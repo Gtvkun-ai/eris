@@ -1,4 +1,4 @@
-[gd_scene load_steps=131 format=3 uid="uid://e1uo7upkrcpq"]
+[gd_scene load_steps=155 format=3 uid="uid://e1uo7upkrcpq"]
 
 [ext_resource type="Texture2D" uid="uid://bk0jvtbammd1q" path="res://asset/Monika/affection1.png" id="1_h35mt"]
 [ext_resource type="Texture2D" uid="uid://bf8retp3qglfp" path="res://asset/Monika/affection2.png" id="2_cjvsd"]
@@ -38,9 +38,14 @@
 [ext_resource type="Texture2D" uid="uid://bg4ctuvgspt2a" path="res://asset/Monika/food2.png" id="35_407mw"]
 [ext_resource type="Texture2D" uid="uid://cmw5lte5qge7m" path="res://asset/Monika/food3.png" id="36_erqyu"]
 [ext_resource type="Texture2D" uid="uid://1j1tgho0ga8b" path="res://asset/Monika/food4.png" id="37_i1fhr"]
+[ext_resource type="Texture2D" uid="uid://dsbfecf04lpfl" path="res://asset/Monika/hop1.png" id="38_3sfql"]
+[ext_resource type="Texture2D" uid="uid://bep3704scq00v" path="res://asset/Monika/jump_1.png" id="38_fod2o"]
 [ext_resource type="Texture2D" uid="uid://c6fmjwtbgrola" path="res://asset/Monika/idle1.png" id="38_l7hi2"]
+[ext_resource type="Texture2D" uid="uid://cut25mmvvghrx" path="res://asset/Monika/hop2.png" id="39_6rtv5"]
 [ext_resource type="Texture2D" uid="uid://c6kbksh2e36im" path="res://asset/Monika/idle2.png" id="39_463dd"]
+[ext_resource type="Texture2D" uid="uid://0uei28hgxqgc" path="res://asset/Monika/jump_2.png" id="39_t64x1"]
 [ext_resource type="Texture2D" uid="uid://vjoeugdf5fm4" path="res://asset/Monika/idle3.png" id="40_7lckp"]
+[ext_resource type="Texture2D" uid="uid://fy0n0gprm6h2" path="res://asset/Monika/jump_3.png" id="40_g1kkl"]
 [ext_resource type="Texture2D" uid="uid://y4x7h8hepyl2" path="res://asset/Monika/idle4.png" id="41_gfyv3"]
 [ext_resource type="Texture2D" uid="uid://cqx631rbp6a51" path="res://asset/Monika/idle5.png" id="42_fod2o"]
 [ext_resource type="Texture2D" uid="uid://brl14vujnlh8f" path="res://asset/Monika/idle6.png" id="43_t64x1"]
@@ -62,8 +67,15 @@
 [ext_resource type="Texture2D" uid="uid://71gxh8s4m3fh" path="res://asset/Monika/sit_up.png" id="60_i1fhr"]
 [ext_resource type="Texture2D" uid="uid://cvlee2fncm4fo" path="res://asset/Monika/stand.png" id="61_l7hi2"]
 [ext_resource type="Texture2D" uid="uid://dm7nuefipbvbe" path="res://asset/Monika/stand2.png" id="62_463dd"]
+[ext_resource type="Texture2D" uid="uid://blsmbmldmwndr" path="res://asset/Monika/sit1.png" id="62_eijyw"]
 [ext_resource type="Texture2D" uid="uid://dgpx8a43eqsgn" path="res://asset/Monika/stand_walk1.png" id="63_463dd"]
+[ext_resource type="Texture2D" uid="uid://72q7gvm8spal" path="res://asset/Monika/sit2.png" id="63_b5iyw"]
 [ext_resource type="Texture2D" uid="uid://5ber0ys4pcg5" path="res://asset/Monika/stand_walk2.png" id="64_7lckp"]
+[ext_resource type="Texture2D" uid="uid://olpou3h5lkg2" path="res://asset/Monika/sit3.png" id="64_anmf0"]
+[ext_resource type="Texture2D" uid="uid://bgpdyaovl6nva" path="res://asset/Monika/sit4.png" id="65_i0gej"]
+[ext_resource type="Texture2D" uid="uid://dkhdglpt7qy2q" path="res://asset/Monika/sleep1.png" id="70_7sqgf"]
+[ext_resource type="Texture2D" uid="uid://v824480kgho2" path="res://asset/Monika/sleep2.png" id="71_gayay"]
+[ext_resource type="Texture2D" uid="uid://d08imc7n6w0os" path="res://asset/Monika/sleep3.png" id="72_5xwi5"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_4ps8q"]
 atlas = ExtResource("1_h35mt")
@@ -217,6 +229,26 @@ region = Rect2(0, 0, 128, 128)
 atlas = ExtResource("37_i1fhr")
 region = Rect2(0, 0, 128, 128)
 
+[sub_resource type="AtlasTexture" id="AtlasTexture_3ayvp"]
+atlas = ExtResource("38_3sfql")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_t2o7t"]
+atlas = ExtResource("39_6rtv5")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_0xaxc"]
+atlas = ExtResource("38_fod2o")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_eijyw"]
+atlas = ExtResource("39_t64x1")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_b5iyw"]
+atlas = ExtResource("40_g1kkl")
+region = Rect2(0, 0, 128, 128)
+
 [sub_resource type="AtlasTexture" id="AtlasTexture_awq51"]
 atlas = ExtResource("38_l7hi2")
 region = Rect2(0, 0, 128, 128)
@@ -301,12 +333,40 @@ region = Rect2(0, 0, 128, 128)
 atlas = ExtResource("58_x4ky7")
 region = Rect2(0, 0, 128, 128)
 
+[sub_resource type="AtlasTexture" id="AtlasTexture_bq01f"]
+atlas = ExtResource("62_eijyw")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_3sfql"]
+atlas = ExtResource("63_b5iyw")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_6rtv5"]
+atlas = ExtResource("64_anmf0")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_7sqgf"]
+atlas = ExtResource("65_i0gej")
+region = Rect2(0, 0, 128, 128)
+
 [sub_resource type="AtlasTexture" id="AtlasTexture_med2x"]
 atlas = ExtResource("13_a4xmm")
 region = Rect2(24, 21, 81, 107)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_7lckp"]
 atlas = ExtResource("60_i1fhr")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_x4ky7"]
+atlas = ExtResource("70_7sqgf")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_0whi7"]
+atlas = ExtResource("71_gayay")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_j4por"]
+atlas = ExtResource("72_5xwi5")
 region = Rect2(0, 0, 128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gfyv3"]
@@ -366,7 +426,7 @@ animations = [{
 }],
 "loop": true,
 "name": &"affection",
-"speed": 5.0
+"speed": 3.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -404,7 +464,7 @@ animations = [{
 }],
 "loop": true,
 "name": &"climb",
-"speed": 5.0
+"speed": 3.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -418,7 +478,7 @@ animations = [{
 }],
 "loop": true,
 "name": &"climb_top",
-"speed": 5.0
+"speed": 3.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -465,9 +525,9 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_okrc0")
 }],
-"loop": true,
+"loop": false,
 "name": &"divine",
-"speed": 5.0
+"speed": 1.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -484,6 +544,31 @@ animations = [{
 }],
 "loop": true,
 "name": &"food",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_3ayvp")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_t2o7t")
+}],
+"loop": true,
+"name": &"hop",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_0xaxc")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_eijyw")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_b5iyw")
+}],
+"loop": true,
+"name": &"jump",
 "speed": 5.0
 }, {
 "frames": [{
@@ -516,7 +601,7 @@ animations = [{
 }],
 "loop": true,
 "name": &"piano",
-"speed": 5.0
+"speed": 3.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -539,7 +624,7 @@ animations = [{
 }],
 "loop": true,
 "name": &"read",
-"speed": 5.0
+"speed": 2.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -566,6 +651,23 @@ animations = [{
 }, {
 "frames": [{
 "duration": 1.0,
+"texture": SubResource("AtlasTexture_bq01f")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_3sfql")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_6rtv5")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_7sqgf")
+}],
+"loop": false,
+"name": &"sit",
+"speed": 2.0
+}, {
+"frames": [{
+"duration": 1.0,
 "texture": SubResource("AtlasTexture_med2x")
 }],
 "loop": true,
@@ -579,6 +681,20 @@ animations = [{
 "loop": true,
 "name": &"sit_up",
 "speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_x4ky7")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_0whi7")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_j4por")
+}],
+"loop": true,
+"name": &"sleep",
+"speed": 2.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -600,10 +716,11 @@ animations = [{
 }],
 "loop": true,
 "name": &"stand_walk",
-"speed": 5.0
+"speed": 3.0
 }]
 
 [node name="Monika" type="AnimatedSprite2D"]
+position = Vector2(533, 346)
 sprite_frames = SubResource("SpriteFrames_uph2y")
-animation = &"stand_walk"
-frame_progress = 0.7617288
+animation = &"divine"
+frame_progress = 0.6316557

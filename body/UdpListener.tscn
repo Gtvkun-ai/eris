@@ -16,14 +16,21 @@ position = Vector2(646, 360)
 animation = &"clone"
 frame_progress = 0.0
 
-[node name="MessageLabel" type="RichTextLabel" parent="Monika2/Monika"]
-clip_contents = false
+[node name="BubbleContainer" type="MarginContainer" parent="Monika2/Monika"]
 offset_left = -200.0
-offset_top = -250.0
+offset_top = -260.0
 offset_right = 200.0
-offset_bottom = -150.0
+offset_bottom = -140.0
+
+[node name="MessageLabel" type="RichTextLabel" parent="Monika2/Monika/BubbleContainer"]
+clip_contents = false
+layout_mode = 2
 fit_content = true
 scroll_active = false
+metadata/_edit_use_anchors_ = true
+
+[node name="Panel" type="Panel" parent="Monika2/Monika/BubbleContainer"]
+layout_mode = 2
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Monika2"]
 position = Vector2(646, 360)

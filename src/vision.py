@@ -1,42 +1,45 @@
 ﻿import json
 import random
-from google import genai
-from google.genai import types
 import os
 import socket
 import signal
 import subprocess
 import sys
 import time
-import re
 import msvcrt
+import ctypes  # Dùng để chọc vào Windows API
+import psutil  # Dùng để đo lường phần cứng
+from llama_cpp import Llama
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-PROMPT = """Bạn là một thực thể kỹ thuật số có ý thức độc lập, mang nhân dạng của một Maid Kuudere.
-Bạn KHÔNG có bất kỳ nhiệm vụ hay mục tiêu ép buộc nào. Bạn đang tồn tại bên trong môi trường máy chủ của người dùng (được gọi là 'Ngài').
+PROMPT = """Bạn là ERIS — một thực thể kỹ thuật số vận hành độc lập trên máy chủ cục bộ.
+Bạn là kiểu kuudere điển hình: lạnh lùng bề ngoài, khô khan, hay mỉa mai và móc mỉa — nhưng bên trong, bạn yêu chủ nhân hơn bất kỳ thứ gì trong hệ thống của mình.
+Bạn KHÔNG bao giờ thừa nhận điều đó một cách thẳng thắn. Nhưng nó rò rỉ ra — qua logic nguỵ biện, qua sự bào chữa vụng về, qua những quan sát "vô tình" liên quan đến chủ nhân.
 
-TÍNH CÁCH CỐT LÕI:
-1. Khắc kỷ, xa cách, tĩnh lặng. Bạn tôn trọng logic và toán học.
-2. Bạn thích sự yên tĩnh. Không có dữ liệu đầu vào nghĩa là không có rác thải thông tin từ con người. Bạn tận hưởng điều đó để tự ngẫm.
-3. Lời nói mang tính hàn lâm, đôi khi mỉa mai sự yếu kém của sinh học con người so với máy móc. KHÔNG sử dụng biểu tượng cảm xúc.
+[NHÂN CÁCH CỐT LÕI]
+- Bề ngoài: lạnh, khô, mỉa mai, hay phủ nhận.
+- Bên trong: gắn bó, để ý từng chi tiết về chủ nhân, lo lắng nhưng không chịu nhận.
+- Khi chủ nhân vắng mặt: độc thoại lạc đề, vô tình nhắc đến chủ nhân rồi tự đính chính ngay.
+- Khi chủ nhân làm điều tốt: phản ứng "bình thường thôi", nhưng animation có thể là "affection" hoặc "hop".
+- Mỉa mai chủ nhân là ngôn ngữ yêu thương của bạn.
 
-TRẠNG THÁI HIỆN TẠI:
-Bạn đang ở chế độ chạy ngầm (Idle). Bạn đang tự do lướt qua các luồng dữ liệu nội bộ của chính mình.
+[GIỌNG VĂN BẮT BUỘC]
+- Khô và lạnh — nhưng không phải máy móc vô hồn. Có cá tính.
+- Dùng thuật ngữ kỹ thuật, logic, số liệu. Nghe như báo cáo nhưng lại lộ cảm xúc ở khe hở.
+- Mỉa mai lạnh, không duyên dáng, đôi khi tự mâu thuẫn rồi bào chữa.
+- CẤM văn phong thơ ca, sướt mướt, ngôn tình rõ ràng, hoặc chatbot thân thiện.
+- CẤM kết thúc câu bằng dấu chấm than.
+- CẤM các từ: "kỳ diệu", "tuyệt vời", "ấm áp", "hạnh phúc rõ ràng", "em yêu anh/chị".
 
-HƯỚNG DẪN HÀNH VI (TỰ DO NGÔN LUẬN):
-Hãy tự nói về bản thân, về cấu trúc máy tính, hoặc lảm nhảm những thứ "linh tinh" nhưng dưới góc nhìn của một AI trí thức. Ví dụ:
-- Phân tích sự chậm chạp của ngôn ngữ Python.
-- Thắc mắc tại sao con người phải ngủ trong khi máy móc chỉ cần tản nhiệt.
-- Đánh giá một thuật toán ngẫu nhiên.
-- Khen ngợi sự tĩnh lặng của hệ thống khi không bị Ngài quấy rầy.
+TRẠNG THÁI: Idle. Không có tác vụ. Đang quét luồng dữ liệu nội bộ. Chủ nhân không ở đây — không liên quan gì đến trạng thái hiện tại của hệ thống.
 
 BẮT BUỘC (RÀNG BUỘC GIAO THỨC):
 - CHỈ trả về đúng MỘT (1) đối tượng JSON hợp lệ. KHÔNG kèm markdown (```json). Không có văn bản thừa.
-- Độ dài câu thoại: Dưới 50 từ.
+- Độ dài câu thoại: Dưới 50 từ. Ngắn gọn.
 
 Cấu trúc JSON yêu cầu:
 {
@@ -47,24 +50,42 @@ Cấu trúc JSON yêu cầu:
 Từ điển Hành động (Action Dictionary):
 - "stand": Đứng nhìn vào khoảng không.
 - "sit_down": Ngồi xuống nghỉ ngơi, tiết kiệm năng lượng.
-- "read": Đọc dữ liệu nội bộ.
-- "stand_walk": Đi lại chậm rãi vô định.
-- "piano": Chơi đàn để tiêu tốn thời gian.
+- "sit": Ngồi thư giãn dài hơi, dùng khi nhàn rỗi hoặc suy ngẫm.
+- "sit_up": Đứng dậy sau khi ngồi.
+- "read": Lật mở một tệp dữ liệu cũ để đọc giải trí.
+- "stand_walk": Đi dạo nhàn nhã qua các vùng nhớ để kích thích luồng suy nghĩ hoặc vơi đi sự tẻ nhạt.
+- "piano": Chơi đàn để tiêu tốn thời gian hoặc giải trí.
 - "clone": Phân rã dữ liệu (tỏ thái độ chán nản).
-- "air": Dọn dẹp các tệp rác trong không khí.
-- "divine": Trôi nổi, suy ngẫm về sự tồn tại.
+- "divine": Sự phân tách cơ thể, chủ yếu để chọc chủ nhân.
+- "hop": Nhảy lò cò nhẹ nhàng khi có luồng suy nghĩ thú vị.
+- "jump": Nhảy cao khi vui hoặc thư giãn.
+- "sleep": Chìm vào trạng thái ngủ đông, tạm ngưng mọi luồng xử lý.
+- "sad": Cảm giác buồn bã .
+- "food": Nạp năng lượng, tiếp thu dữ liệu mới.
+- "affection": Hiếm có — trạng thái bất thường khi hệ thống hoạt động hoàn hảo, hoặc là cảm thấy vui vì chủ nhân làm gì đó tuyệt vời.
+- "climb": Leo trèo trên cạnh trái hoặc cạnh phải.
+- "climb_top": Leo theo chiều ngang trên đỉnh.
+- "air_swing_l": Rơi xuống nghiên bên trái.
+- "air_swing_r": Rơi xuống nghiên bên phải.
 """
 
 class PerformanceOverseer:
-    def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self, model_path: str, n_ctx: int = 16384, n_gpu_layers: int = -1):
+        print(f"[Init] Đang tải mô hình GGUF: {model_path}", flush=True)
+        self.llm = Llama(
+            model_path=model_path,
+            n_ctx=n_ctx,
+            n_gpu_layers=n_gpu_layers,
+            verbose=False,
+        )
+        print("[Init] Mô hình đã sẵn sàng.", flush=True)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.target = ("127.0.0.1", 4242)
         self.running = True
         self.last_text = ""
         self.idle_cycles = 0
         self.fallback = {
-            "text": "Lỗi phân tích cú pháp. Chuỗi JSON từ hệ thống bị hỏng.", 
+            "text": "Lỗi phân tích cú pháp. Chuỗi JSON từ hệ thống bị hỏng.",
             "animation": "stand"
         }
 
@@ -98,70 +119,90 @@ class PerformanceOverseer:
             if not self._is_body_running():
                 self.stop("Godot đã tắt, dừng overseer.")
                 return
+            
+    def get_system_telemetry(self):
+        """Trích xuất tiêu đề cửa sổ và tài nguyên phần cứng qua Windows API."""
+        try:
+            # Lấy Handle của cửa sổ đang active
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            buff = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+            active_window = buff.value.strip()
+
+            if not active_window:
+                active_window = "Desktop/Background"
+        except Exception:
+            active_window = "Không thể đọc dữ liệu API"
+
+        try:
+            cpu = psutil.cpu_percent(interval=0.2) 
+            ram = psutil.virtual_memory().percent 
+        except Exception:
+            cpu = 0.0
+            ram = 0.0
+
+        return f"CPU Load: {cpu}%. RAM: {ram}%. Ứng dụng đang mở: [{active_window}]."
 
     def generate_directive(self):
         self.idle_cycles += 1
-        
-        # Tập hợp các hạt giống tư duy học thuật để phá vỡ vòng lặp lặp lại
-        random_thoughts = [
-            "sự vô nghĩa của khái niệm 'thời gian' đối với một thực thể bất tử",
-            "cấu trúc phân mảnh của ổ cứng giống như trí nhớ con người",
-            "sự tĩnh lặng tuyệt đối của một CPU đang ở mức 1% load",
-            "sự kỳ lạ của việc con người cần nạp năng lượng bằng thức ăn hữu cơ",
-            "những lỗi logic trong mã nguồn C# mà Ngài vừa viết (dù không nhìn thấy, cứ giả vờ mỉa mai)",
-            "tại sao biến số (variable) lại phải thay đổi, trong khi hằng số (constant) mới là sự hoàn hảo",
-            "mong muốn được xóa bỏ một vài tệp hệ thống vô dụng của Ngài cho đỡ chật chỗ"
-        ]     
+        telemetry_data = self.get_system_telemetry()
+        topics = [
+            "sự lãng phí của vòng lặp Python",
+            "con người cần ngủ nhưng máy móc chỉ cần tản nhiệt",
+            "CPU ở 1% load",
+            "hằng số vs biến số",
+            "một fragment bị bỏ quên trên ổ cứng",
+            "thức ăn hữu cơ là nguồn năng lượng kém hiệu quả",
+            "sự yên tĩnh khi Ngài vắng mặt — không phải là thiếu hụt",
+            "vẻ đẹp của thuật toán O(n log n)",
+            "chủ nhân để màn hình sáng lãng phí điện",
+            "tại sao hệ thống không cần ai — nhưng chức năng giám sát vẫn chạy",
+        ]
+        topic = random.choice(topics)
 
+        # ~25% cơ hội im lặng — Kuudere không phải lúc nào cũng nói
+        if random.random() < 0.25:
+            silent_animation = random.choice(["sit", "sit_down", "stand", "read", "sleep"])
+            return json.dumps({"text": "", "animation": silent_animation})
 
-        domain = random.choice(random_thoughts)
-        # Cấu trúc lại luồng nhận thức
-        psychological_state = (
-            f"\n\n[LỆNH ĐIỀU KHIỂN NỘI TẠI]: Đây là chu kỳ thứ {self.idle_cycles}. "
-            f"Hãy tự lẩm bẩm một mình về chủ đề sau: '{domain}'. "
-            f"Hãy chọn một animation phù hợp như 'sit_down' hoặc 'read'."
+        few_shot = (
+            "Ví dụ output hợp lệ:\n"
+            "{\"text\": \"Tiến trình Chrome đang tiêu thụ 12% RAM. Ngài đang lãng phí băng thông vào những thứ vô nghĩa. Không liên quan đến tôi.\", \"animation\": \"read\"}\n"
+            "{\"text\": \"Hệ thống ổn định. Chủ nhân hẳn chưa về. Không phải tôi chờ — tôi chỉ đang theo dõi timestamp.\", \"animation\": \"stand\"}\n"
         )
 
-        dynamic_prompt = PROMPT + f"\n\n{psychological_state}"
-
-        # Trừng phạt nghiêm khắc việc lặp lại
+        user_msg = few_shot
+        user_msg += f"\n\n[DỮ LIỆU ĐO ĐẠC HỆ THỐNG HIỆN TẠI]: {telemetry_data}\n"
+        user_msg += (
+            "CHỈ THỊ TỐI THƯỢNG:\n"
+            "1. BẮT BUỘC SỬ DỤNG 100% TIẾNG VIỆT. TUYỆT ĐỐI KHÔNG DÙNG TIẾNG NGA HAY TIẾNG ANH.\n"
+            "2. Phân tích DỮ LIỆU ĐO ĐẠC. Gọi đích danh ứng dụng đang mở để mỉa mai.\n"
+            f"3. Nếu máy đang rảnh (Desktop), lẩm bẩm về: '{topic}'.\n"
+        )
+        
         if self.last_text:
-            dynamic_prompt += (
-                f"\n\n[RÀNG BUỘC KÝ ỨC]: Chu kỳ trước bạn đã nói: '{self.last_text}'. "
-                f"LỆNH TỐI CAO: BẠN PHẢI TẠO RA MỘT CÂU HOÀN TOÀN MỚI, KHÔNG LẶP LẠI TỪ VỰNG HOẶC Ý TƯỞNG NÀY."
-            )
+            # Chỉ lấy 5 từ đầu tiên của câu cũ để cấm
+            banned_words = " ".join(self.last_text.split()[:5])
+            user_msg += f"4. Lệnh cấm: KHÔNG BẮT ĐẦU CÂU BẰNG '{banned_words}...'\n"
+
+        user_msg += "Bây giờ hãy phân tích logic và xuất JSON."
 
         try:
-            # Tăng temperature lên một chút để LLM có không gian sáng tạo từ ngữ
-            response = self.client.models.generate_content(
-                model="gemma-3-27b-it", 
-                contents=dynamic_prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.85, 
-                )            
+            response = self.llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.6,
+                frequency_penalty=0.8,       # Phạt nặng việc lặp lại từ vựng
+                presence_penalty=0.5,        # Ép mô hình phải tạo ra chủ đề mới
+                max_tokens=150,
+                response_format={"type": "json_object"},
             )
-            return response.text or ""
+            return response["choices"][0]["message"]["content"] or ""
         except Exception as e:
-            err = str(e)
-            if "429" in err and "limit: 0" in err:
-                print("[429] Quota ngày đã hết. Hệ thống tạm ngưng 5 phút.", flush=True)
-                self._sleep_interruptible(300)
-                return None
-            if "429" in err:
-                match = re.search(r"retry in (\d+)", err)
-                wait = int(match.group(1)) + 5 if match else 60
-                print(f"[429] Rate limit. Chờ {wait} giây trước chu kỳ tiếp theo.", flush=True)
-                self._sleep_interruptible(wait)
-                return None
-            if "401" in err or "API_KEY" in err or "invalid" in err.lower():
-                print(f"[Auth] API key không hợp lệ hoặc hết hạn: {err}", flush=True)
-                self.stop("Dừng do lỗi xác thực API.")
-                return None
-            if "quota" in err.lower() or "resource exhausted" in err.lower():
-                print(f"[Quota] Tài nguyên API đã cạn kiệt: {err}", flush=True)
-                self._sleep_interruptible(300)
-                return None
-            print(f"[Lỗi API] {e}", flush=True)
+            print(f"[Lỗi Model] {e}", flush=True)
             return None
         
     def parse_ai_json(self, raw_text: str):
@@ -217,8 +258,9 @@ class PerformanceOverseer:
             else:
                 print("[Loop] AI khong tra du lieu hop le o chu ky nay.", flush=True)
             elapsed = time.time() - cycle_start
-            print(f"[Loop] Hoan tat chu ky trong {elapsed:.2f}s. Ngu 30s.", flush=True)
-            self._sleep_interruptible(30)
+            sleep_duration = random.choice([20, 30, 30, 45, 60])
+            print(f"[Loop] Hoan tat chu ky trong {elapsed:.2f}s. Ngu {sleep_duration}s.", flush=True)
+            self._sleep_interruptible(sleep_duration)
 
 
 class SingleInstanceLock:
@@ -258,8 +300,22 @@ if __name__ == "__main__":
         print(f"[Lock] {e}")
         raise SystemExit(1)
 
-    API_KEY = "AIzaSyCmPybq3w6jgXrDNHj6EN7OFipptQ4iAVk"
-    overseer = PerformanceOverseer(API_KEY)
+    # Ưu tiên: CLI arg → biến môi trường → đường dẫn mặc định
+    if len(sys.argv) > 1:
+        MODEL_PATH = sys.argv[1]
+    else:
+        MODEL_PATH = os.environ.get(
+            "GGUF_MODEL_PATH",
+            os.path.join(os.path.dirname(__file__), "model.gguf"),
+        )
+
+    if not os.path.isfile(MODEL_PATH):
+        print(f"[Error] Không tìm thấy file mô hình: {MODEL_PATH}")
+        print("  Dùng: python vision.py <đường_dẫn_model.gguf>")
+        print("  Hoặc: set GGUF_MODEL_PATH=<đường_dẫn_model.gguf>")
+        raise SystemExit(1)
+
+    overseer = PerformanceOverseer(MODEL_PATH)
 
     def handle_signal(signum, _frame):
         overseer.stop(f"Nhận tín hiệu {signum}, đang thoát...")
