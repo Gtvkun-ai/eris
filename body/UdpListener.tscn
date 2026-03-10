@@ -1,13 +1,90 @@
-[gd_scene load_steps=4 format=3 uid="uid://0cxwsbtda5e7"]
+[gd_scene load_steps=6 format=3 uid="uid://0cxwsbtda5e7"]
 
 [ext_resource type="Script" uid="uid://ckcm0fyajxapn" path="res://body/UdpListener.cs" id="1_bkceq"]
 [ext_resource type="PackedScene" uid="uid://e1uo7upkrcpq" path="res://asset/Resource/Monika.tscn" id="2_monika"]
+[ext_resource type="Texture2D" uid="uid://cyyhsrmchqnk4" path="res://asset/icon/point.png" id="2_r0l71"]
+[ext_resource type="Texture2D" uid="uid://diivueyuuox21" path="res://asset/icon/chat.png" id="3_bcmai"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_qwgmb"]
 size = Vector2(128, 132)
 
 [node name="UdpListener" type="Node2D"]
 script = ExtResource("1_bkceq")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Control" type="Control" parent="CanvasLayer"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/Control"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -40.0
+offset_bottom = 40.0
+grow_horizontal = 0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/Control/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="point" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+tooltip_text = "Tương tác"
+texture_normal = ExtResource("2_r0l71")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="chat" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+tooltip_text = "Chat"
+texture_normal = ExtResource("3_bcmai")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="ChatPanel" type="Panel" parent="CanvasLayer/Control"]
+visible = false
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.1
+anchor_top = 1.0
+anchor_right = 0.9
+anchor_bottom = 1.0
+offset_top = -56.0
+offset_bottom = -8.0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="CanvasLayer/Control/ChatPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 4.0
+offset_top = 4.0
+offset_right = -4.0
+offset_bottom = -4.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="LineEdit" type="LineEdit" parent="CanvasLayer/Control/ChatPanel/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Nhắn tin với ERIS..."
+
+[node name="SendButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer"]
+layout_mode = 2
+text = "Gửi"
+
+[node name="CloseButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer"]
+layout_mode = 2
+text = "✕"
 
 [node name="Monika2" type="CharacterBody2D" parent="."]
 

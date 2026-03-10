@@ -35,10 +35,40 @@ public partial class UdpListener : Node2D
 	private float _climbDownWallX;  // X của tường leo xuống
 	private const float ClimbSpeed = 50f;
 
+	private TextureButton _pointBtn;
+	private TextureButton _chatBtn;
+	private Panel _chatPanel;
+	private LineEdit _chatInput;
+	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	private Tween _textTween;
 	private AudioStreamPlayer _audioPlayer;
 	private readonly Random _rng = new Random();
 	private Control _bubble;
+	private string _nextAction = ""; // Lưu trữ hành động chờ thực thi
+	private string _bounceAction = ""; // animation phát tại tường trước khi đổi chiều (loop mãi)
+	private float _targetX = float.NaN; // target_x tuyệt đối trên màn hình (NaN = không có mục tiêu)
+	private Vector2 _bubbleBasePos; // vị trí gốc của bubble trong không gian local của sprite
+
+	// Alias: ánh xạ tên AI hay hallucinate về tên animation thực
+	private static readonly Dictionary<string, string> _animAliases = new()
+	{
+		{ "walk",       "stand_walk" },
+		{ "walking",    "stand_walk" },
+		{ "run",        "stand_walk" },
+		{ "running",    "stand_walk" },
+		{ "divide",     "divine" },
+		{ "wave",       "stand" },
+		{ "idle",       "stand" },
+	};
+
+	// Toàn bộ animation hợp lệ trong SpriteFrames
+	private static readonly HashSet<string> _validAnimations = new()
+	{
+		"stand", "sit_down", "sit", "sit_up", "read", "stand_walk",
+		"piano", "clone", "divine", "hop", "jump", "sleep", "sad",
+		"food", "affection", "climb", "climb_top", "air_swing_l", "air_swing_r",
+		"air", "shime", "idle",
+	};
 
 	// Các animation có âm thanh lặp lại liên tục
 	private static readonly HashSet<string> _loopingSoundAnims = new()
@@ -77,7 +107,20 @@ public partial class UdpListener : Node2D
 		_body   = GetNode<CharacterBody2D>("Monika2");
 		_monika = GetNode<AnimatedSprite2D>("Monika2/Monika");
 		_label  = GetNode<RichTextLabel>("Monika2/Monika/BubbleContainer/MessageLabel");
-		_bubble = GetNode<Control>("Monika2/Monika/BubbleContainer");
+		_bubble   = GetNode<Control>("Monika2/Monika/BubbleContainer");
+		_pointBtn = GetNode<TextureButton>("CanvasLayer/Control/MarginContainer/VBoxContainer/point");
+		_chatBtn  = GetNode<TextureButton>("CanvasLayer/Control/MarginContainer/VBoxContainer/chat");
+		ConnectButtonEffects(_pointBtn);
+		ConnectButtonEffects(_chatBtn);
+		_chatBtn.Pressed += ToggleChatPanel;
+
+		_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
+		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
+		GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton").Pressed += OnSendPressed;
+		GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton").Pressed += CloseChatPanel;
+		_chatInput.TextSubmitted += _ => OnSendPressed();
+		_chatSend.ConnectToHost("127.0.0.1", 4243);
+
 		var cs  = GetNode<CollisionShape2D>("Monika2/CollisionShape2D");
 
 		// Hoist offset của children vào body, rồi reset children về gốc
@@ -104,6 +147,8 @@ public partial class UdpListener : Node2D
 		_monika.Play("stand");
 		_label.Text = "Chờ lệnh từ AI...";
 
+		_bubbleBasePos = _bubble.Position;
+		_monika.AnimationFinished += OnBounceAnimationFinished;
 		GD.Print($"[Ready] Đang lắng nghe UDP cổng 4242. HalfSize={_spriteHalfSize}");
 		StartVisionProcess();
 	}
@@ -112,6 +157,7 @@ public partial class UdpListener : Node2D
 	{
 		StopVisionProcess();
 		_udp.Close();
+		_chatSend.Close();
 	}
 
 
@@ -155,23 +201,81 @@ public partial class UdpListener : Node2D
 			if (_isWalking)
 			{
 				pos.X += _moveSpeed * _moveDir * d;
-			}
 
-			// Va chạm hai bên tường
-			if (pos.X >= screenSize.X - _spriteHalfSize.X)
-			{
-				pos.X = screenSize.X - _spriteHalfSize.X;
-				_moveDir = -1f;
-			}
-			else if (pos.X <= _spriteHalfSize.X)
-			{
-				pos.X = _spriteHalfSize.X;
-				_moveDir = 1f;
-			}
-		}
+				// --- Di chuyển có mục tiêu vị trí (target_x) ---
+				if (!float.IsNaN(_targetX))
+				{
+					bool reached = (_moveDir > 0f && pos.X >= _targetX) || (_moveDir < 0f && pos.X <= _targetX);
+					if (reached)
+					{
+						pos.X = _targetX;
+						_targetX = float.NaN;
+						if (!string.IsNullOrEmpty(_nextAction))
+						{
+							string action = _nextAction;
+							_nextAction = "";
+							ApplyAnimationCommand(action, 0, "");
+						}
+						else
+						{
+							_isWalking = false;
+							_currentAction = "stand";
+							_monika.Scale = Vector2.One;
+							_bubble.Scale = Vector2.One;
+							_bubble.Position = _bubbleBasePos;
+						}
+					}
+				}
+				else
+				{
+					// Va chạm hai bên tường (chỉ khi không có target)
+					if (pos.X >= screenSize.X - _spriteHalfSize.X)
+					{
+						pos.X = screenSize.X - _spriteHalfSize.X;
+						if (!string.IsNullOrEmpty(_bounceAction)) {
+							// Đổi chiều trước rồi phát bounce animation
+							_moveDir = -1f;
+							_currentAction = _bounceAction;
+							_isWalking = false;
+							_monika.Scale = Vector2.One;
+							_bubble.Scale = Vector2.One;
+							_bubble.Position = _bubbleBasePos;
+							PlaySoundForAnimation(_bounceAction);
+						} else if (!string.IsNullOrEmpty(_nextAction)) {
+							string action = _nextAction;
+							_nextAction = "";
+							int nextDir = (action == "stand_walk") ? -1 : 0;
+							ApplyAnimationCommand(action, nextDir, "");
+						} else {
+							_moveDir = -1f;
+						}
+					}
+					else if (pos.X <= _spriteHalfSize.X)
+					{
+						pos.X = _spriteHalfSize.X;
+						if (!string.IsNullOrEmpty(_bounceAction)) {
+							_moveDir = 1f;
+							_currentAction = _bounceAction;
+							_isWalking = false;
+							_monika.Scale = Vector2.One;
+							_bubble.Scale = Vector2.One;
+							_bubble.Position = _bubbleBasePos;
+							PlaySoundForAnimation(_bounceAction);
+						} else if (!string.IsNullOrEmpty(_nextAction)) {
+							string action = _nextAction;
+							_nextAction = "";
+							int nextDir = (action == "stand_walk") ? 1 : 0;
+							ApplyAnimationCommand(action, nextDir, "");
+						} else {
+							_moveDir = 1f;
+						}
+					}
+				}
+			}		}
 
 		_body.Position = pos;
 		UpdateAnimation();
+		ClampBubbleToScreen();
 
 		//Lắng nghe UDP
 		if (_udp.GetAvailablePacketCount() > 0)
@@ -179,6 +283,56 @@ public partial class UdpListener : Node2D
 			string raw = Encoding.UTF8.GetString(_udp.GetPacket());
 			ParseAndApply(raw);
 		}
+	}
+
+	private void ToggleChatPanel()
+	{
+		if (_chatPanel.Visible)
+			CloseChatPanel();
+		else
+		{
+			_chatPanel.Visible = true;
+			_chatInput.GrabFocus();
+			SendChatSignal("chat_start");
+		}
+	}
+
+	private void CloseChatPanel()
+	{
+		_chatPanel.Visible = false;
+		_chatInput.Text = "";
+		SendChatSignal("chat_end");
+	}
+
+	private void OnSendPressed()
+	{
+		string msg = _chatInput.Text.Trim();
+		if (string.IsNullOrEmpty(msg)) return;
+		_chatInput.Text = "";
+		_chatInput.GrabFocus();
+		string payload = $"{{\"type\":\"chat\",\"message\":{JsonSerializer.Serialize(msg)}}}";
+		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
+		ApplyTypewriterEffect($"[Chủ nhân]: {msg}");
+	}
+
+	private void SendChatSignal(string type)
+	{
+		string payload = $"{{\"type\":\"{type}\"}}";
+		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
+	}
+
+	private void ConnectButtonEffects(TextureButton btn)
+	{
+		btn.MouseEntered += () => TweenButtonColor(btn, new Color(1.4f, 1.4f, 0.8f)); // hover: vàng sáng
+		btn.MouseExited  += () => TweenButtonColor(btn, Colors.White);
+		btn.ButtonDown   += () => TweenButtonColor(btn, new Color(0.6f, 0.85f, 1.0f)); // nhấn: xanh dương
+		btn.ButtonUp     += () => TweenButtonColor(btn, new Color(1.4f, 1.4f, 0.8f));
+	}
+
+	private void TweenButtonColor(TextureButton btn, Color target)
+	{
+		var tween = CreateTween();
+		tween.TweenProperty(btn, "modulate", target, 0.12f);
 	}
 
 	private void ApplyTypewriterEffect(string text){
@@ -207,6 +361,7 @@ public partial class UdpListener : Node2D
 			float scaleX = _climbUpWallX > _body.Position.X ? -1f : 1f;
 			_monika.Scale = new Vector2(scaleX, 1f);
 			_bubble.Scale = new Vector2(scaleX, 1f);
+			_bubble.Position = new Vector2(_bubbleBasePos.X * scaleX, _bubbleBasePos.Y);
 			return;
 		}
 		if (_climbPhase == ClimbPhase.Up || _climbPhase == ClimbPhase.Down)
@@ -216,6 +371,7 @@ public partial class UdpListener : Node2D
 			float scaleX = wallX < GetViewportRect().Size.X / 2f ? 1f : -1f;
 			_monika.Scale = new Vector2(scaleX, 1f);
 			_bubble.Scale = new Vector2(scaleX, 1f);
+			_bubble.Position = new Vector2(_bubbleBasePos.X * scaleX, _bubbleBasePos.Y);
 			return;
 		}
 		if (_climbPhase == ClimbPhase.Top)
@@ -223,6 +379,7 @@ public partial class UdpListener : Node2D
 			if (_monika.Animation != "climb_top") _monika.Play("climb_top");
 			_monika.Scale = new Vector2(1f, -1f);  // lộn ngược
 			_bubble.Scale = new Vector2(1f, -1f);  // counter-scale để text không bị lộn
+			_bubble.Position = _bubbleBasePos;
 			return;
 		}
 
@@ -244,15 +401,34 @@ public partial class UdpListener : Node2D
 				float flipX = _moveDir == 1f ? -1f : 1f;
 				_monika.Scale = new Vector2(flipX, 1f);
 				_bubble.Scale = new Vector2(flipX, 1f);
+				// Bù offset ngược lại để bubble giữ nguyên vị trí thực trên màn hình khi sprite lật
+				_bubble.Position = new Vector2(_bubbleBasePos.X * flipX, _bubbleBasePos.Y);
 			}
 		}
 	}
 
+	private void ClampBubbleToScreen()
+	{
+		Vector2 screenSize = GetViewportRect().Size;
+		Vector2 bubbleGlobal = _bubble.GlobalPosition;
+		float bubbleW = _bubble.Size.X;
+		if (bubbleW <= 0f) return;
+
+		float clampedX = Mathf.Clamp(bubbleGlobal.X, 0f, screenSize.X - bubbleW);
+		if (!Mathf.IsEqualApprox(clampedX, bubbleGlobal.X))
+			_bubble.GlobalPosition = new Vector2(clampedX, bubbleGlobal.Y);
+	}
 
 	private void ParseAndApply(string raw)
     {
         string text = raw;
         string animation = "stand";
+		int direction = 0;
+		string nextAnimation = "";
+		string bounceAction = "";
+		// Reset targets trước khi xử lý lệnh mới
+		_targetX = float.NaN;
+		_bounceAction = ""; 
 
         try
         {
@@ -271,6 +447,32 @@ public partial class UdpListener : Node2D
             var root = doc.RootElement;
             if (root.TryGetProperty("text", out var t)) text = t.GetString() ?? raw;
             if (root.TryGetProperty("animation", out var a)) animation = a.GetString() ?? "stand";
+			if (root.TryGetProperty("direction", out var d) && d.ValueKind == JsonValueKind.Number) 
+            {
+                direction = d.GetInt32(); // 1 = phải, -1 = trái
+            }
+			if (root.TryGetProperty("next_animation", out var na)) nextAnimation = na.GetString() ?? "";
+			if (root.TryGetProperty("bounce_action", out var ba)) bounceAction = ba.GetString() ?? "";
+            
+            // CHỈ XỬ LÝ TARGET_X KHI NÓ >= 0 ---
+            if (root.TryGetProperty("target_x", out var tx) && tx.ValueKind == JsonValueKind.Number)
+            {
+                float rawTx = tx.GetSingle();
+                
+                // Nếu AI truyền -1 (không có đích), ta bỏ qua hoàn toàn khối lệnh này
+                if (rawTx >= 0f) 
+                {
+                    float frac = Mathf.Clamp(rawTx, 0f, 1f); // đảm bảo target_x là tỉ lệ phần trăm giữa 0 và 1
+                    Vector2 sz = GetViewportRect().Size; // kích thước màn hình
+                    
+                    float absX = Mathf.Clamp(frac * sz.X, _spriteHalfSize.X, sz.X - _spriteHalfSize.X);
+                    _targetX = absX;
+                    
+                    direction = (_targetX > _body.Position.X) ? 1 : -1;
+                    animation = "stand_walk"; // Chỉ ép thành đi bộ khi thực sự có target_x hợp lệ
+                    GD.Print($"[Physics] target_x={frac:F2} → absX={absX:F0}, dir={direction}");
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -280,11 +482,34 @@ public partial class UdpListener : Node2D
         }
 
 		ApplyTypewriterEffect(text);
-        ApplyAnimationCommand(animation);
+		_bounceAction = bounceAction; // set trước ApplyAnimationCommand để không bị ghi đè
+        ApplyAnimationCommand(animation, direction, nextAnimation);
     }
 
-	private void ApplyAnimationCommand(string animation)
+	private void ApplyAnimationCommand(string animation, int direction, string nextAnimation)
 	{
+		_nextAction = nextAnimation;
+		// Chuẩn hoá alias trước (walk → stand_walk, v.v.)
+		if (_animAliases.TryGetValue(animation, out var mapped))
+		{
+			GD.Print($"[Anim] Alias '{animation}' → '{mapped}'");
+			animation = mapped;
+		}
+
+		// Kiểm tra animation có hợp lệ không
+		if (!_validAnimations.Contains(animation))
+		{
+			// Nếu có direction → người dùng muốn đi → fallback về stand_walk
+			string fallback = (direction == 1 || direction == -1) ? "stand_walk" : "stand";
+			GD.PrintErr($"[Anim] Animation không hợp lệ: '{animation}', fallback về '{fallback}'.");
+			animation = fallback;
+		}
+		if (direction == 1 || direction == -1)
+        {
+            _moveDir = direction;
+            GD.Print($"[Physics] Đổi hướng di chuyển thành: {direction}");
+        }
+
 		// Ngắt climb đang chạy nếu có
 		if (_climbPhase != ClimbPhase.None)
 		{
@@ -302,6 +527,7 @@ public partial class UdpListener : Node2D
 		{
 			_monika.Scale = new Vector2(1f, 1f);
 			_bubble.Scale = new Vector2(1f, 1f);
+			_bubble.Position = _bubbleBasePos;
 		}
 
 		if (animation == "climb")
@@ -389,6 +615,17 @@ public partial class UdpListener : Node2D
 					_bubble.Scale  = Vector2.One;
 				}
 				break;
+		}
+	}
+
+	private void OnBounceAnimationFinished()
+	{
+		// Sau khi bounce animation kết thúc → tiếp tục đi theo hướng đã flip
+		if (!string.IsNullOrEmpty(_bounceAction) && _currentAction == _bounceAction && !_isWalking)
+		{
+			_currentAction = "stand_walk";
+			_isWalking = true;
+			PlaySoundForAnimation("stand_walk");
 		}
 	}
 
