@@ -1,4 +1,4 @@
-[gd_scene load_steps=6 format=3 uid="uid://0cxwsbtda5e7"]
+[gd_scene format=3 uid="uid://0cxwsbtda5e7"]
 
 [ext_resource type="Script" uid="uid://ckcm0fyajxapn" path="res://body/UdpListener.cs" id="1_bkceq"]
 [ext_resource type="PackedScene" uid="uid://e1uo7upkrcpq" path="res://asset/Resource/Monika.tscn" id="2_monika"]
@@ -8,12 +8,12 @@
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_qwgmb"]
 size = Vector2(128, 132)
 
-[node name="UdpListener" type="Node2D"]
+[node name="UdpListener" type="Node2D" unique_id=2105563881]
 script = ExtResource("1_bkceq")
 
-[node name="CanvasLayer" type="CanvasLayer" parent="."]
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1650100237]
 
-[node name="Control" type="Control" parent="CanvasLayer"]
+[node name="Control" type="Control" parent="CanvasLayer" unique_id=1626532548]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -21,7 +21,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/Control"]
+[node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/Control" unique_id=1661018998]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
@@ -30,11 +30,11 @@ offset_left = -40.0
 offset_bottom = 40.0
 grow_horizontal = 0
 
-[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/Control/MarginContainer"]
+[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/Control/MarginContainer" unique_id=1648130671]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="point" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer"]
+[node name="point" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=1032218217]
 custom_minimum_size = Vector2(36, 36)
 layout_mode = 2
 tooltip_text = "Tương tác"
@@ -42,7 +42,7 @@ texture_normal = ExtResource("2_r0l71")
 ignore_texture_size = true
 stretch_mode = 5
 
-[node name="chat" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer"]
+[node name="chat" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=848400947]
 custom_minimum_size = Vector2(36, 36)
 layout_mode = 2
 tooltip_text = "Chat"
@@ -50,7 +50,7 @@ texture_normal = ExtResource("3_bcmai")
 ignore_texture_size = true
 stretch_mode = 5
 
-[node name="ChatPanel" type="Panel" parent="CanvasLayer/Control"]
+[node name="ChatPanel" type="Panel" parent="CanvasLayer/Control" unique_id=1086222864]
 visible = false
 layout_mode = 1
 anchors_preset = -1
@@ -61,7 +61,7 @@ anchor_bottom = 1.0
 offset_top = -56.0
 offset_bottom = -8.0
 
-[node name="HBoxContainer" type="HBoxContainer" parent="CanvasLayer/Control/ChatPanel"]
+[node name="HBoxContainer" type="HBoxContainer" parent="CanvasLayer/Control/ChatPanel" unique_id=1861192717]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -73,42 +73,42 @@ offset_bottom = -4.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="LineEdit" type="LineEdit" parent="CanvasLayer/Control/ChatPanel/HBoxContainer"]
+[node name="LineEdit" type="LineEdit" parent="CanvasLayer/Control/ChatPanel/HBoxContainer" unique_id=209976]
 layout_mode = 2
 size_flags_horizontal = 3
 placeholder_text = "Nhắn tin với ERIS..."
 
-[node name="SendButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer"]
+[node name="SendButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer" unique_id=576196245]
 layout_mode = 2
 text = "Gửi"
 
-[node name="CloseButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer"]
+[node name="CloseButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer" unique_id=784276559]
 layout_mode = 2
 text = "✕"
 
-[node name="Monika2" type="CharacterBody2D" parent="."]
+[node name="Monika2" type="CharacterBody2D" parent="." unique_id=175824923]
 
-[node name="Monika" parent="Monika2" instance=ExtResource("2_monika")]
+[node name="Monika" parent="Monika2" unique_id=265743738 instance=ExtResource("2_monika")]
 position = Vector2(646, 360)
 animation = &"clone"
 frame_progress = 0.0
 
-[node name="BubbleContainer" type="MarginContainer" parent="Monika2/Monika"]
+[node name="BubbleContainer" type="MarginContainer" parent="Monika2/Monika" unique_id=43338983]
 offset_left = -200.0
 offset_top = -260.0
 offset_right = 200.0
 offset_bottom = -140.0
 
-[node name="MessageLabel" type="RichTextLabel" parent="Monika2/Monika/BubbleContainer"]
+[node name="MessageLabel" type="RichTextLabel" parent="Monika2/Monika/BubbleContainer" unique_id=228289034]
 clip_contents = false
 layout_mode = 2
 fit_content = true
 scroll_active = false
 metadata/_edit_use_anchors_ = true
 
-[node name="Panel" type="Panel" parent="Monika2/Monika/BubbleContainer"]
+[node name="Panel" type="Panel" parent="Monika2/Monika/BubbleContainer" unique_id=572841900]
 layout_mode = 2
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Monika2"]
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Monika2" unique_id=1268289346]
 position = Vector2(646, 360)
 shape = SubResource("RectangleShape2D_qwgmb")

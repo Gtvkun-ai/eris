@@ -713,7 +713,19 @@ public partial class UdpListener : Node2D
 			{
 				if (!string.IsNullOrWhiteSpace(e.Data))
 				{
-					GD.PrintErr($"[vision.py][ERR] {e.Data}");
+					string line = e.Data.Trim();
+					bool looksFatal =
+						line.Contains("Traceback", StringComparison.OrdinalIgnoreCase) ||
+						line.Contains("Exception", StringComparison.OrdinalIgnoreCase) ||
+						line.Contains("error loading model", StringComparison.OrdinalIgnoreCase) ||
+						line.Contains("failed to load model", StringComparison.OrdinalIgnoreCase) ||
+						line.Contains("No connection could be made", StringComparison.OrdinalIgnoreCase) ||
+						line.Contains("JSON không hợp lệ", StringComparison.OrdinalIgnoreCase);
+
+					if (looksFatal)
+						GD.PrintErr($"[vision.py][ERR] {line}");
+					else
+						GD.Print($"[vision.py][stderr] {line}");
 				}
 			};
 			process.Exited += (_, _) =>

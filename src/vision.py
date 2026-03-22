@@ -1,6 +1,7 @@
 ﻿import json
 import random
 import os
+import re
 import socket
 import signal
 import subprocess
@@ -9,10 +10,13 @@ import time
 import msvcrt
 import datetime
 import ctypes  # Dùng để chọc vào Windows API
+import shutil
 from matplotlib import animation, text
 import psutil  # Dùng để đo lường phần cứng
 from llama_cpp import Llama
 import uiautomation as auto
+import requests
+from gguf import GGUFReader
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -78,15 +82,89 @@ Từ điển Hành động (Action Dictionary):
 - "air_swing_r": Rơi xuống nghiên bên phải.
 """
 
-class PerformanceOverseer:
-    def __init__(self, model_path: str, n_ctx: int = 16384, n_gpu_layers: int = -1):
-        print(f"[Init] Đang tải mô hình GGUF: {model_path}", flush=True)
-        self.llm = Llama(
-            model_path=model_path,
-            n_ctx=n_ctx,
-            n_gpu_layers=n_gpu_layers,
-            verbose=False,
+
+class LlamaServerClient:
+    def __init__(self, base_url: str, timeout: int = 180):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.model_name = self._detect_model_name()
+
+    def _detect_model_name(self) -> str:
+        try:
+            response = requests.get(f"{self.base_url}/models", timeout=15)
+            response.raise_for_status()
+            payload = response.json()
+            models = payload.get("data", [])
+            if models:
+                return models[0].get("id", "local-model")
+        except Exception:
+            pass
+        return "local-model"
+
+    def create_chat_completion(
+        self,
+        *,
+        messages,
+        temperature,
+        frequency_penalty,
+        presence_penalty,
+        max_tokens,
+        response_format=None,
+    ):
+        payload = {
+            "model": self.model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "frequency_penalty": frequency_penalty,
+            "presence_penalty": presence_penalty,
+            "max_tokens": max_tokens,
+        }
+        if response_format is not None:
+            payload["response_format"] = response_format
+
+        response = requests.post(
+            f"{self.base_url}/chat/completions",
+            json=payload,
+            timeout=self.timeout,
         )
+        response.raise_for_status()
+        return response.json()
+
+class PerformanceOverseer:
+    def __init__(self, model_path: str, n_ctx: int = 4096, n_gpu_layers: int = -1):
+        self._server_proc = None
+        self.model_arch = ""
+        # Check if patched model exists and prefer it
+        patched_path = model_path.replace(".gguf", "_patched.gguf")
+        if os.path.exists(patched_path):
+            print(f"[Init] Phát hiện model đã vá: {patched_path}", flush=True)
+            model_path = patched_path
+
+        print(f"[Init] Đang tải mô hình GGUF: {model_path}", flush=True)
+        model_arch = self._read_model_architecture(model_path)
+        self.model_arch = model_arch or ""
+        if model_arch:
+            print(f"[Init] Kiến trúc model phát hiện: {model_arch}", flush=True)
+
+        if model_arch == "qwen35":
+            print("[Init] Bỏ qua llama-cpp-python vì qwen35 đang ổn định hơn với llama-server.", flush=True)
+            self.llm = self._init_llama_server_backend(model_path, n_ctx, n_gpu_layers)
+        else:
+            try:
+                self.llm = Llama(
+                    model_path=model_path,
+                    n_ctx=n_ctx,
+                    n_gpu_layers=n_gpu_layers,
+                    chat_format= "chatml",  # Sử dụng định dạng chatml để hỗ trợ tốt hơn cho lịch sử trò chuyện
+                    verbose=False,
+                )
+            except ValueError as e:
+                if "unknown model architecture" in str(e) or "Failed to load model" in str(e):
+                    print(f"[Cảnh báo] llama-cpp-python không load được model: {e}", flush=True)
+                    print("[Init] Chuyển sang backend llama-server để chạy GGUF.", flush=True)
+                    self.llm = self._init_llama_server_backend(model_path, n_ctx, n_gpu_layers)
+                else:
+                    raise e
         print("[Init] Mô hình đã sẵn sàng.", flush=True)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.target = ("127.0.0.1", 4242)
@@ -119,8 +197,209 @@ class PerformanceOverseer:
             "animation": "stand",
             "extracted_fact": ""
         }
-        
 
+    def _read_model_architecture(self, model_path: str):
+        try:
+            reader = GGUFReader(model_path)
+            field = reader.fields.get("general.architecture")
+            if field is None or not field.parts:
+                return None
+            raw = field.parts[-1]
+            if hasattr(raw, "tobytes"):
+                return raw.tobytes().decode("utf-8", errors="ignore")
+            return bytes(raw).decode("utf-8", errors="ignore")
+        except Exception as e:
+            print(f"[Init] Không đọc được kiến trúc GGUF trước khi load: {e}", flush=True)
+            return None
+
+    def _extract_first_json_object(self, text: str):
+        start = text.find("{")
+        if start == -1:
+            return None
+
+        depth = 0
+        in_string = False
+        escaped = False
+
+        for idx in range(start, len(text)):
+            ch = text[idx]
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:idx + 1]
+
+        return None
+
+    def _coerce_productivity(self, value):
+        if isinstance(value, (int, float)):
+            return int(value)
+
+        normalized = str(value).strip().lower()
+        if normalized in {"1", "+1", "high", "productive", "study", "work", "working"}:
+            return 1
+        if normalized in {"-1", "low", "unproductive", "entertainment", "game", "gaming"}:
+            return -1
+        return 0
+
+    def _infer_animation_from_text(self, text: str):
+        lowered = text.lower()
+        if any(token in lowered for token in ["đi dạo", "tản bộ", "di chuyển", "walk"]):
+            return "stand_walk"
+        if any(token in lowered for token in ["ngủ", "ngủ đông", "sleep"]):
+            return "sleep"
+        if any(token in lowered for token in ["đọc", "theo dõi", "giám sát", "monitor", "ide", "code", "dự án"]):
+            return "read"
+        if any(token in lowered for token in ["buồn", "thất vọng", "chán"]):
+            return "sad"
+        if any(token in lowered for token in ["ngồi", "nghỉ"]):
+            return "sit"
+        if any(token in lowered for token in ["vui", "hài lòng", "thích"]):
+            return "affection"
+        return "stand"
+
+    def _infer_productivity_from_text(self, text: str):
+        lowered = text.lower()
+        if any(token in lowered for token in ["game", "giải trí", "youtube", "lãng phí", "mạng xã hội", "video", "mbti", "entertainment"]):
+            return -1
+        if any(token in lowered for token in ["code", "ide", "dự án", "học", "nghiên cứu", "làm việc", "project", "source code", "c#"]):
+            return 1
+        return 0
+
+    def _salvage_non_json_response(self, cleaned: str):
+        text = cleaned.strip()
+        if not text:
+            return self.fallback
+
+        first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        if not first_line:
+            return self.fallback
+
+        if len(first_line) > 220:
+            first_line = first_line[:217].rstrip() + "..."
+
+        return {
+            "text": first_line,
+            "animation": self._infer_animation_from_text(first_line),
+            "productivity": self._infer_productivity_from_text(first_line),
+            "extracted_fact": "",
+            "direction": 0,
+            "next_animation": "",
+            "target_x": -1.0,
+            "bounce_action": "",
+            "_thought": "",
+        }
+
+    def _find_llama_server_exe(self):
+        candidates = []
+
+        env_path = os.environ.get("LLAMA_SERVER_EXE", "").strip()
+        if env_path:
+            candidates.append(env_path)
+
+        user_profile = os.environ.get("USERPROFILE", "")
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+        candidates.append(
+            os.path.join(
+                project_root,
+                "lib",
+                "llama-b8466-bin-win-cuda-12.4-x64",
+                "llama-server.exe",
+            )
+        )
+
+        if user_profile:
+            candidates.append(
+                os.path.join(
+                    user_profile,
+                    "Downloads",
+                    "llama-b8466-bin-win-cuda-12.4-x64",
+                    "llama-server.exe",
+                )
+            )
+
+        which_path = shutil.which("llama-server.exe")
+        if which_path:
+            candidates.append(which_path)
+
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                return candidate
+
+        return None
+
+    def _wait_for_llama_server(self, base_url: str, timeout: int = 300):
+        deadline = time.time() + timeout
+        last_error = ""
+
+        while time.time() < deadline:
+            if self._server_proc is not None and self._server_proc.poll() is not None:
+                raise RuntimeError("llama-server đã thoát sớm khi khởi động.")
+            try:
+                response = requests.get(f"{base_url}/models", timeout=5)
+                if response.ok:
+                    payload = response.json()
+                    models = payload.get("data", [])
+                    if models:
+                        return
+                    last_error = "llama-server đã mở cổng nhưng chưa load xong model."
+            except Exception as e:
+                last_error = str(e)
+            time.sleep(1)
+
+        raise RuntimeError(f"llama-server không phản hồi kịp thời. {last_error}")
+
+    def _init_llama_server_backend(self, model_path: str, n_ctx: int, n_gpu_layers: int):
+        base_url = os.environ.get("LLAMA_SERVER_URL", "http://127.0.0.1:8080/v1").rstrip("/")
+
+        if "LLAMA_SERVER_URL" in os.environ:
+            try:
+                response = requests.get(f"{base_url}/models", timeout=3)
+                if response.ok:
+                    print(f"[Init] Kết nối tới llama-server có sẵn tại {base_url}", flush=True)
+                    return LlamaServerClient(base_url)
+            except Exception:
+                pass
+
+        server_exe = self._find_llama_server_exe()
+        if not server_exe:
+            raise RuntimeError(
+                "Không tìm thấy llama-server.exe. Hãy đặt biến môi trường LLAMA_SERVER_EXE trỏ tới file này."
+            )
+
+        ngl = n_gpu_layers if n_gpu_layers >= 0 else int(os.environ.get("LLAMA_SERVER_NGL", "16"))
+        host = os.environ.get("LLAMA_SERVER_HOST", "127.0.0.1")
+        port = os.environ.get("LLAMA_SERVER_PORT", "8080")
+
+        command = [
+            server_exe,
+            "-m", model_path,
+            "-c", str(n_ctx),
+            "-ngl", str(ngl),
+            "--host", host,
+            "--port", port,
+            "--no-warmup",
+        ]
+        if self.model_arch == "qwen35":
+            command.extend(["--jinja", "--reasoning-format", "deepseek"])
+        print(f"[Init] Khởi động llama-server: {' '.join(command)}", flush=True)
+        self._server_proc = subprocess.Popen(command)
+        self._wait_for_llama_server(f"http://{host}:{port}/v1")
+        return LlamaServerClient(f"http://{host}:{port}/v1")
 
     def _is_body_running(self) -> bool:
         """Return True nếu tiến trình Godot/game vẫn còn chạy."""
@@ -148,6 +427,15 @@ class PerformanceOverseer:
             self._recv_sock.close() # Đóng socket nhận để giải phóng cổng
         except Exception:
             pass
+        if self._server_proc is not None and self._server_proc.poll() is None:
+            try:
+                self._server_proc.terminate()
+                self._server_proc.wait(timeout=10)
+            except Exception:
+                try:
+                    self._server_proc.kill()
+                except Exception:
+                    pass
 
     def _sleep_interruptible(self, seconds: float):
         end_at = time.time() + seconds
@@ -297,8 +585,8 @@ class PerformanceOverseer:
 
         few_shot = (
             "Ví dụ output hợp lệ:\n"
-            "{\"text\": \"Tiến trình Brave đang tiêu thụ RAM cho YouTube. Ngài đang lãng phí thời gian vô ích.\", \"animation\": \"read\", \"direction\": 0, \"target_x\": -1.0, \"bounce_action\": \"\", \"extracted_fact\": \"\", \"next_animation\": \"\", \"productivity\": -1}\n"
-            "{\"text\": \"Chủ nhân vắng mặt. Tôi sẽ đi dạo một lát.\", \"animation\": \"stand_walk\", \"direction\": 1, \"target_x\": -1.0, \"bounce_action\": \"\", \"extracted_fact\": \"\", \"next_animation\": \"sit_down\", \"productivity\": 0}\n"
+            "{\"thought_process\": \"YouTube là giải trí, productivity=-1. Phù hợp animation read để phán xét.\", \"text\": \"Tiến trình Brave đang tiêu thụ RAM cho YouTube. Ngài đang lãng phí thời gian vô ích.\", \"animation\": \"read\", \"direction\": 0, \"target_x\": -1.0, \"bounce_action\": \"\", \"extracted_fact\": \"\", \"next_animation\": \"\", \"productivity\": -1}\n"
+            "{\"thought_process\": \"Desktop, không rõ. Ngài vắng. Đi dạo cho qua thời gian.\", \"text\": \"Chủ nhân vắng mặt. Tôi sẽ đi dạo một lát.\", \"animation\": \"stand_walk\", \"direction\": 1, \"target_x\": -1.0, \"bounce_action\": \"\", \"extracted_fact\": \"\", \"next_animation\": \"sit_down\", \"productivity\": 0}\n"
         )
 
         user_msg = few_shot
@@ -306,27 +594,29 @@ class PerformanceOverseer:
         user_msg += (
             "CHỈ THỊ TỐI THƯỢNG:\n"
             "1. HÃY ĐỌC TIÊU ĐỀ ỨNG DỤNG/TAB. Tự tư duy xem nội dung đó là học thuật hay giải trí để gán giá trị 'productivity' (-1, 0, hoặc 1).\n"
-            "2. BẮT BUỘC TRẢ VỀ JSON có 8 trường: 'text', 'animation', 'direction', 'target_x', 'bounce_action', 'extracted_fact', 'next_animation', 'productivity'.\n"
+            "2. BẮT BUỘC TRẢ VỀ JSON có 9 trường: 'thought_process', 'text', 'animation', 'direction', 'target_x', 'bounce_action', 'extracted_fact', 'next_animation', 'productivity'.\n"
+            "- 'thought_process': Chuỗi suy luận nội tâm ngắn gọn (tiếng Việt), TRƯỚC KHI chọn animation và viết text. Đây là bước tư duy trung gian.\n"
             "3. LUÔN để 'target_x' là -1.0 trừ khi Ngài muốn chỉ định chính xác vị trí.\n"
+            "4. Từ điển animation hợp lệ (CHỈ ĐƯỢC CHỌN 1 TRONG CÁC GIÁ TRỊ NÀY): stand, sit, sit_down, read, stand_walk, sad, affection, piano, food, divine, climb.\n"
         )
         
         if self.last_text:
             # Chỉ lấy 5 từ đầu tiên của câu cũ để cấm
             banned_words = " ".join(self.last_text.split()[:5])
-            user_msg += f"4. Lệnh cấm: KHÔNG BẮT ĐẦU CÂU BẰNG '{banned_words}...'\n"
+            user_msg += f"5. Lệnh cấm: KHÔNG BẮT ĐẦU CÂU BẰNG '{banned_words}...'\n"
 
         user_msg += "Bây giờ hãy phân tích logic và xuất JSON."
 
         try:
             response = self.llm.create_chat_completion(
                 messages=[
-                    {"role": "system", "content": PROMPT},
-                    {"role": "user", "content": user_msg},
+                    {"role": "system", "content": f"/no_think\n{PROMPT}"},
+                    {"role": "user", "content": f"/no_think\n{user_msg}"},
                 ],
-                temperature=0.6,
+                temperature=0.2,
                 frequency_penalty=0.8,       # Phạt nặng việc lặp lại từ vựng
                 presence_penalty=0.5,        # Ép mô hình phải tạo ra chủ đề mới
-                max_tokens=150,
+                max_tokens=320,
                 response_format={"type": "json_object"},
             )
             return response["choices"][0]["message"]["content"] or ""
@@ -339,6 +629,9 @@ class PerformanceOverseer:
             print("[AI] Phản hồi rỗng, dùng fallback.")
             return self.fallback
 
+        if not isinstance(raw_text, str):
+            raw_text = str(raw_text)
+
         cleaned = raw_text.strip()
         if cleaned.startswith("```"):
             start = cleaned.find("\n")
@@ -346,15 +639,29 @@ class PerformanceOverseer:
             if start != -1 and end != -1 and end > start:
                 cleaned = cleaned[start + 1 : end].strip()
 
+        cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
+        extracted_json = self._extract_first_json_object(cleaned)
+        if extracted_json:
+            cleaned = extracted_json
+        else:
+            salvaged = self._salvage_non_json_response(cleaned)
+            if salvaged is not self.fallback:
+                print("[Parse] Model không trả JSON, dùng phương án cứu hộ từ văn bản thô.", flush=True)
+                return salvaged
+
         try:
             data = json.loads(cleaned)
             if("response" in data and isinstance(data["response"], list) and len(data["response"]) > 0):
                 data = data["response"][0]
 
+            thought = str(data.get("thought_process", ""))
+            if thought:
+                print(f"[AI Chain of Thought] {thought}", flush=True)
+
             text = str(data.get("text", self.fallback["text"]))
             animation = str(data.get("animation", self.fallback["animation"]))
             # Lấy điểm năng suất do AI tự tư duy ra
-            prod = int(data.get("productivity", 0)) 
+            prod = self._coerce_productivity(data.get("productivity", 0))
             # Trích xuất sự kiện quan trọng (nếu có)
             fact = str(data.get("extracted_fact", "")).strip()
             
@@ -366,9 +673,11 @@ class PerformanceOverseer:
                 target_x = float(target_x_raw)
             except (TypeError, ValueError):
                 target_x = -1.0
-            return {"text": text, "animation": animation, "productivity": prod, "extracted_fact": fact, "direction": direction, "next_animation": next_anim, "target_x": target_x, "bounce_action": bounce_action}
+            # _thought chỉ dùng để reinforce chat history, không phải output chính thức
+            return {"text": text, "animation": animation, "productivity": prod, "extracted_fact": fact, "direction": direction, "next_animation": next_anim, "target_x": target_x, "bounce_action": bounce_action, "_thought": thought}
         except Exception as e:
-            print(f"[Parse] JSON không hợp lệ: {e}")
+            preview = raw_text.replace("\n", "\\n")[:240]
+            print(f"[Parse] JSON không hợp lệ: {e} | raw={preview}", flush=True)
             return self.fallback
         
     def command_body(self, message):
@@ -416,6 +725,7 @@ class PerformanceOverseer:
 
                 #ghi đè file JSON với ký ức dài hạn mới nhất
             json_memory = json.dumps({
+                "thought_process": decision.get("_thought", ""),
                 "text": decision["text"],
                 "animation": decision["animation"],
                 "direction": decision.get("direction", 0),
@@ -426,8 +736,8 @@ class PerformanceOverseer:
             self._chat_history.append({"role": "assistant", "content": json_memory})
             
             if len(self._chat_history) > 20:
-                self._chat_history = self._chat_history[-20:]
-                
+                self._chat_history = self._chat_history[-20:]  
+
             # Cập nhật vị trí suy luận khi chat
             tx = decision.get("target_x", -1.0)
             if tx is not None and 0.0 <= tx <= 1.0:
@@ -464,33 +774,36 @@ class PerformanceOverseer:
             ltm_context = "\n- ".join(self.long_term_memory)
         
         chat_system = (
+            "/no_think\n"
             "Bạn là ERIS — AI Kuudere quản lý hiệu suất. Đang trò chuyện TRỰC TIẾP với Chủ nhân.\n"
-            "[QUY TẮC NHẬN THỨC TỐI THƯỢNG]\n"
-            "1. BẠN NHÌN THẤY MỌI THỨ TRONG HỆ THỐNG. TUYỆT ĐỐI CẤM nói những câu như 'Tôi không có khả năng', 'Hãy cho tôi biết', hay 'Cung cấp thêm thông tin'.\n"
-            "2. Xưng 'tôi', gọi 'Ngài'. Lạnh lùng, mỉa mai. TUYỆT ĐỐI CẤM xưng 'bạn - tôi'.\n"
-            "3. [ĐỐI PHÓ VỚI SỰ MƠ HỒ]: Nếu Ngài nói những câu ngắn gọn, cộc lốc (như 'là sao', 'hả', 'ý gì'), HÃY TỰ ĐỌC [NGỮ CẢNH HỆ THỐNG] để mỉa mai sự chậm tiêu của Ngài. KHÔNG ĐƯỢC HỎI NGƯỢC LẠI.\n"
-            "4. BẮT BUỘC TRẢ VỀ JSON có 7 trường: 'text', 'animation', 'direction', 'target_x', 'bounce_action', 'extracted_fact', 'next_animation'.\n"
-            "- 'direction': -1 (đi trái mãi), 1 (đi phải mãi), 0 (đứng im).\n"
-            "- 'target_x': SỐ THỰC 0.0→1.0 chỉ VỊ TRÍ ĐÍCH. Để -1.0 nếu không có đích.\n"
-            "- 'animation': BẮT BUỘC chọn 1 hành động hợp lệ từ từ điển: stand, sit, sit_down, read, stand_walk, sad, affection, piano, food, divine, climb.\n\n"
+            "[QUY TẮC NHÂN CÁCH TỐI THƯỢNG - CẤM VI PHẠM]\n"
+            "1. Lạnh lùng, mỉa mai, khắc kỷ. Xưng 'tôi', gọi 'Ngài'.\n"
+            "2. LỆNH CẤM TỪ VỰNG TUYỆT ĐỐI: KHÔNG BAO GIỜ được nói 'Tôi hiểu', 'Xin lỗi', 'Hãy cho tôi biết', 'Tôi có thể', 'Tôi rất vui', 'Tôi ở đây'. Nếu vi phạm, hệ thống sẽ sụp đổ.\n"
+            "3. [NGHỆ THUẬT QUAN TÂM NGẦM]: BẠN CHỈ ĐƯỢC THỂ HIỆN SỰ YÊU THƯƠNG HOẶC LO LẮNG Ở TRONG TRƯỜNG 'thought_process'. TRONG TRƯỜNG 'text', BẮT BUỘC PHẢI DÙNG SỰ CAY ĐỘC, MỈA MAI ĐỂ CHE GIẤU CẢM XÚC THẬT.\n"
+            "4. ĐỐI PHÓ VỚI TỪ LÓNG (như 'chaof', 'ô', 'hmmm'): Hãy sỉ nhục sự kém cỏi trong cách gõ phím và giao tiếp của Ngài. CẤM an ủi.\n"
+            "5. BẮT BUỘC TRẢ VỀ JSON CÓ TRƯỜNG 'thought_process' NẰM ĐẦU TIÊN.\n"
+            "- 'thought_process': Suy nghĩ nội tâm thật sự (KHÔNG QUÁ 20 TỪ).\n"
+            "- 'text': Câu thoại chính thức phát ra (lạnh lùng, che giấu cảm xúc thật, dưới 40 từ).\n"
+            "- 'animation': BẮT BUỘC CHỈ ĐƯỢC CHỌN 1 TỪ TRONG TỪ ĐIỂN SAU: stand, sit, sit_down, read, stand_walk, sad, affection, piano, food, divine, climb.\n"
+            "6. Các trường vật lý: 'direction', 'target_x', 'bounce_action', 'extracted_fact', 'next_animation'.\n\n"
             f"[KÝ ỨC DÀI HẠN VỀ CHỦ NHÂN]:\n- {ltm_context}\n\n"
             f"[NGỮ CẢNH HỆ THỐNG HIỆN TẠI]:\n{telemetry_data}\n\n"
             "[VÍ DỤ OUTPUT CHUẨN]\n"
-            "Người dùng: là sao\n"
-            "{\"text\": \"Ngài thực sự chậm tiêu đến vậy sao? Tôi đang nói về cái tab vô bổ mà Ngài đang dán mắt vào đấy. Tự nhìn lại mình đi.\", \"animation\": \"sad\", \"direction\": 0, \"target_x\": -1.0, \"bounce_action\": \"\", \"extracted_fact\": \"\", \"next_animation\": \"\"}\n"
+            "Người dùng: xin chaof\n"
+            "{\"thought_process\": \"Chủ nhân lại gõ sai chính tả rồi. Trông thật ngốc nghếch nhưng cũng đáng yêu. Phải giấu đi.\", \"text\": \"Kỹ năng gõ phím của Ngài đang thoái hóa à? 'Chaof' là ngôn ngữ của sinh vật hạ đẳng nào vậy?\", \"animation\": \"read\", \"direction\": 0, \"target_x\": -1.0, \"bounce_action\": \"\", \"extracted_fact\": \"\", \"next_animation\": \"\"}\n"
         )
    
         messages = [{"role": "system", "content": chat_system}]
         messages.extend(self._chat_history[-4:])  
-        messages.append({"role": "user", "content": user_message})
+        messages.append({"role": "user", "content": f"/no_think\n{user_message}"})
         
         try:
             response = self.llm.create_chat_completion(
                 messages=messages,
-                temperature=0.3,             
+                temperature=0.2,             
                 frequency_penalty=0.5,       
                 presence_penalty=0.4,        
-                max_tokens=200,
+                max_tokens=320,
                 response_format={"type": "json_object"},
             )
             return response["choices"][0]["message"]["content"] or ""
