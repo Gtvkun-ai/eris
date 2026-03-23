@@ -122,6 +122,11 @@ class RuntimeCoordinator:
                 if self.chat_mode:
                     return
 
+    # run_loop là phương thức chính để chạy vòng lặp của RuntimeCoordinator,
+    #  nó liên tục kiểm tra xem body có đang chạy hay không, xử lý các
+    #  tin nhắn đến, tương tác với LLM để tạo ra các quyết định dựa trên dữ liệu telemetry,
+    #  cập nhật trạng thái tâm trạng và vị trí, và gửi các quyết định đó
+    #  đến transport để thực thi. Vòng lặp cũng bao gồm một cơ chế ngủ có thể bị gián đoạn
     def run_loop(self):
         self.logger.info("--- Overseer text-only mode (vision tam tat) ---")
         while self.running:

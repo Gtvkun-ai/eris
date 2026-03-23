@@ -3,6 +3,11 @@ import datetime
 
 import psutil
 import uiautomation as auto
+# TelemetryMixin là một lớp mixin cung cấp các phương thức để thu thập dữ liệu telemetry hệ thống,
+#  bao gồm việc trích xuất thông tin từ trình duyệt web đang hoạt động,
+#  liệt kê tất cả các cửa sổ đang mở, và thu thập thông tin về trạng thái tâm trạng và vị trí ước tính của hệ thống. 
+# Lớp này sử dụng các thư viện như psutil để lấy thông tin về CPU và RAM,
+#  và uiautomation để tương tác với giao diện người dùng của hệ điều hành Windows để lấy thông tin về cửa sổ đang hoạt động và trình duyệt.
 
 
 class TelemetryMixin:
