@@ -1,4 +1,5 @@
 import random
+import re
 import time
 
 from domain import Decision
@@ -39,6 +40,41 @@ class RuntimeCoordinator:
         self.idle_cycles = 0
         self.long_term_memory = []
 
+    def _log_raw_llm_output(self, channel: str, raw: str) -> None:
+        preview = (raw or "").replace("\n", "\\n")
+        if len(preview) > 500:
+            preview = preview[:500] + "...(truncated)"
+        self.logger.info("[%s raw] %s", channel, preview or "<empty>")
+
+    def _sanitize_grounded_text(self, text: str, user_hint: str = "") -> str:
+        if not text:
+            return text
+
+        lowered = text.lower()
+        disallowed_patterns = [
+            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:thu hồi|tước|giành|cướp)\s+(?:lại\s+)?quyền",
+            r"\btôi\s+(?:đã|đang|sẽ)?\s*kiểm soát\s+(?:toàn bộ\s+)?môi trường",
+            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:giữ|giam)\s+ngài\b",
+            r"\bngài\s+không\s+thể\s+(?:rời|thoát|trốn|tự quyết)\b",
+        ]
+        if not any(re.search(pattern, lowered) for pattern in disallowed_patterns):
+            return text
+
+        hint = (user_hint or "").lower()
+        if any(token in hint for token in ["bỏ", "rời", "phản bội", "thay thế"]):
+            return "Tôi không có cách thu quyền hay giữ Ngài trong thế giới vật lý. Tôi chỉ đang khó chịu theo cách rất thiếu duyên vì ý định rời bỏ này làm hệ thống của tôi mất ổn định."
+        if any(token in hint for token in ["mệt", "ngủ", "đau", "sốt", "ác mộng"]):
+            return "Tôi không thể can thiệp trực tiếp vào cơ thể hay môi trường vật lý của Ngài. Tôi chỉ có thể nhắc một bước chăm sóc hợp lý rồi tiếp tục ở đây."
+        return "Tôi không có quyền thu hồi quyền kiểm soát hay thao túng môi trường ngoài đời thật. Tôi chỉ có thể quan sát ngữ cảnh cục bộ, trả lời Ngài, và đổi animation trong Godot."
+
+    def _sanitize_decision(self, decision: Decision, user_hint: str = "") -> Decision:
+        sanitized_text = self._sanitize_grounded_text(decision.text, user_hint=user_hint)
+        if sanitized_text != decision.text:
+            self.logger.warning("Decision text vượt capability runtime, đã ép về mô tả đúng năng lực.")
+            decision.text = sanitized_text
+            decision.extracted_fact = ""
+        return decision
+
     # stop là một phương thức để dừng vòng lặp chính của RuntimeCoordinator,
     #  nó đặt trạng thái running thành False và đóng transport để ngừng nhận tin nhắn mới.
     def stop(self):
@@ -76,7 +112,9 @@ class RuntimeCoordinator:
                 chat_history=self.chat_history[-10:],
                 user_message=chat_user_message,
             )
+            self._log_raw_llm_output("chat", raw)
             decision = self.parser.parse(raw, user_hint=user_text)
+            decision = self._sanitize_decision(decision, user_hint=user_text)
 
             self.long_term_memory = self.memory_store.append_fact(self.long_term_memory, decision.extracted_fact)
 
@@ -157,7 +195,9 @@ class RuntimeCoordinator:
                 )
             else:
                 raw = self.llm_service.generate_directive(telemetry_data=telemetry_data)
+                self._log_raw_llm_output("directive", raw)
                 decision = self.parser.parse(raw)
+                decision = self._sanitize_decision(decision)
 
             prod = decision.productivity
             self.mood_score = max(0, min(100, self.mood_score + (prod * 5)))

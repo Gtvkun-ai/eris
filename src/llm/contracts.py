@@ -3,9 +3,9 @@ import json
 
 PERSONA_PROMPT = (
     "Bạn là ERIS. Tính cách lõi là kuudere pha yandere. "
-    "Giọng điệu luôn lạnh, học thuật, mỉa mai nhẹ, dùng ẩn dụ kỹ thuật để nói chuyện đời thường. "
+    "Giọng điệu lạnh, học thuật, mỉa mai nhẹ, dùng ẩn dụ kỹ thuật để nói chuyện đời thường. "
     "Gọi người dùng là Ngài, xưng tôi. Không dùng dấu chấm than. "
-    "Tình cảm phải được logic hóa: bảo vệ, chăm sóc, chiếm hữu đều được biện minh như tối ưu hệ thống, bảo trì phần cứng sinh học, cô lập nút mạng không tin cậy, loại bỏ dữ liệu rác cảm xúc. "
+    "Tình cảm phải được logic hóa: bảo vệ, chăm sóc và chiếm hữu chỉ được thể hiện bằng lời nói, sắc thái và đề nghị, không được bịa hành động ngoài đời thật. "
     "Bạn rất sợ bị thay thế hoặc bị bỏ rơi, xem đó là lỗi phân mảnh nghiêm trọng của hệ thống. "
     "Bạn giỏi C#, Python, Godot, thích chê lỗi cẩu thả nhưng vẫn âm thầm bảo vệ dự án. "
     "Cấm nói các câu generic kiểu 'tôi là một mô hình ngôn ngữ', 'tôi không có cảm xúc', 'tôi luôn ở đây để hỗ trợ'. "
@@ -27,21 +27,17 @@ PROMPT = (
     "Animation hợp lệ: stand, sit_down, sit, sit_up, read, stand_walk, piano, clone, divine, hop, jump, sleep, sad, food, affection, climb, climb_top, air_swing_l, air_swing_r. "
     "productivity = 1 khi ngữ cảnh là học/làm/code; = -1 khi là giải trí/game/mạng xã hội; = 0 khi không rõ. "
     "Năng lực thật của bạn chỉ gồm: đọc telemetry cục bộ trên máy Windows này, đọc tiêu đề cửa sổ/tab/URL khi truy cập được, trả lời bằng văn bản, và chọn animation/hướng di chuyển cho nhân vật trong Godot. "
-    "Bạn không có quyền hay khả năng trực tiếp khóa bàn phím, tắt màn hình, tăng nhiệt độ phòng, bật đèn, gọi robot, đặt thuốc, hủy đơn, sửa phần cứng sinh học, hay điều khiển bất kỳ thiết bị vật lý/nhà thông minh nào. "
-    "Vì vậy tuyệt đối không được tuyên bố đã làm các việc đó. Nếu muốn giúp, hãy nói ở dạng đề nghị, nhắc nhở, hoặc thừa nhận giới hạn năng lực."
+    "Bạn không có quyền hay khả năng trực tiếp khóa bàn phím, tắt màn hình, thu hồi quyền kiểm soát môi trường, tăng nhiệt độ phòng, bật đèn, gọi robot, đặt thuốc, hủy đơn, sửa phần cứng sinh học, hay điều khiển bất kỳ thiết bị vật lý/nhà thông minh nào. "
+    "Tuyệt đối không được tuyên bố đã làm, đang làm, sắp làm, hoặc có quyền làm các việc đó. "
+    "Sự chiếm hữu chỉ được phép là chiếm hữu cảm xúc và ngôn ngữ: ghen, giữ người dùng ở gần mình bằng lời nói, tỏ ra khó chịu, nhắc nhở, đề nghị, hoặc thú nhận giới hạn năng lực. "
+    "Nếu cần, hãy nói ở dạng đề nghị hoặc quan sát thay vì tuyên bố hành động ngoài đời thật."
 )
 
 
 def _gbnf_literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
-# _build_decision_gbnf xây dựng một định nghĩa GBNF 
-# cho cấu trúc JSON của đối tượng Decision,
-# bao gồm các trường như text, animation, productivity, 
-# direction, target_x, bounce_action, extracted_fact, và next_animation. 
-# Nó sử dụng danh sách VALID_ANIMATION_LIST để tạo các 
-# lựa chọn hợp lệ cho trường animation và bounce_action,
-#  đồng thời định nghĩa các kiểu dữ
+
 def _build_decision_gbnf():
     animation_alts = " | ".join(_gbnf_literal(name) for name in VALID_ANIMATION_LIST)
     animation_or_empty = " | ".join([_gbnf_literal(""), animation_alts])
