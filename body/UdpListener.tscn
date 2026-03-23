@@ -50,6 +50,18 @@ texture_normal = ExtResource("3_bcmai")
 ignore_texture_size = true
 stretch_mode = 5
 
+[node name="llm" type="Button" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500001]
+custom_minimum_size = Vector2(36, 28)
+layout_mode = 2
+tooltip_text = "Bat/tat llama-server"
+text = "LLM"
+
+[node name="eris" type="Button" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500002]
+custom_minimum_size = Vector2(36, 28)
+layout_mode = 2
+tooltip_text = "Bat/tat vision.py"
+text = "ERIS"
+
 [node name="ChatPanel" type="Panel" parent="CanvasLayer/Control" unique_id=1086222864]
 visible = false
 layout_mode = 1
@@ -94,16 +106,17 @@ animation = &"clone"
 frame_progress = 0.0
 
 [node name="BubbleContainer" type="MarginContainer" parent="Monika2/Monika" unique_id=43338983]
-offset_left = -200.0
-offset_top = -260.0
-offset_right = 200.0
-offset_bottom = -140.0
+offset_left = -280.0
+offset_top = -340.0
+offset_right = 280.0
+offset_bottom = -110.0
 
 [node name="MessageLabel" type="RichTextLabel" parent="Monika2/Monika/BubbleContainer" unique_id=228289034]
 clip_contents = false
+custom_minimum_size = Vector2(520, 200)
 layout_mode = 2
-fit_content = true
-scroll_active = false
+size_flags_horizontal = 3
+size_flags_vertical = 3
 metadata/_edit_use_anchors_ = true
 
 [node name="Panel" type="Panel" parent="Monika2/Monika/BubbleContainer" unique_id=572841900]

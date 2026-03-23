@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
@@ -14,9 +15,17 @@ public partial class UdpListener : Node2D
 	private CharacterBody2D _body;
 	private RichTextLabel _label;
 	private Process _visionProcess;
+	private Process _llamaServerProcess;
 
 	[Export] public string PythonExecutable = "python";
 	[Export] public string VisionScriptPath = "src/vision.py";
+	[Export] public string LlamaServerPath = "lib/llama-b8466-bin-win-cuda-12.4-x64/llama-server.exe";
+	[Export] public string ModelPath = "src/model.gguf";
+	[Export] public bool AutoStartVision = false;
+	[Export] public bool AutoPreloadLlamaServer = false;
+	[Export] public int LlamaServerPort = 8080;
+	[Export] public int LlamaServerNgl = 20;
+	[Export] public int LlamaServerCtx = 4096;
 
 	// Di chuyển
 	private float _moveSpeed = 60f;   // pixel/giây
@@ -37,6 +46,8 @@ public partial class UdpListener : Node2D
 
 	private TextureButton _pointBtn;
 	private TextureButton _chatBtn;
+	private Button _llmBtn;
+	private Button _erisBtn;
 	private Panel _chatPanel;
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
@@ -110,9 +121,13 @@ public partial class UdpListener : Node2D
 		_bubble   = GetNode<Control>("Monika2/Monika/BubbleContainer");
 		_pointBtn = GetNode<TextureButton>("CanvasLayer/Control/MarginContainer/VBoxContainer/point");
 		_chatBtn  = GetNode<TextureButton>("CanvasLayer/Control/MarginContainer/VBoxContainer/chat");
+		_llmBtn   = GetNode<Button>("CanvasLayer/Control/MarginContainer/VBoxContainer/llm");
+		_erisBtn  = GetNode<Button>("CanvasLayer/Control/MarginContainer/VBoxContainer/eris");
 		ConnectButtonEffects(_pointBtn);
 		ConnectButtonEffects(_chatBtn);
 		_chatBtn.Pressed += ToggleChatPanel;
+		_llmBtn.Pressed += ToggleLlamaServerProcess;
+		_erisBtn.Pressed += ToggleVisionProcess;
 
 		_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
@@ -150,12 +165,17 @@ public partial class UdpListener : Node2D
 		_bubbleBasePos = _bubble.Position;
 		_monika.AnimationFinished += OnBounceAnimationFinished;
 		GD.Print($"[Ready] Đang lắng nghe UDP cổng 4242. HalfSize={_spriteHalfSize}");
-		StartVisionProcess();
+		UpdateServiceButtons();
+		if (AutoPreloadLlamaServer)
+			StartLlamaServerProcess();
+		if (AutoStartVision)
+			StartVisionProcess();
 	}
 
 	public override void _ExitTree()
 	{
 		StopVisionProcess();
+		StopLlamaServerProcess();
 		_udp.Close();
 		_chatSend.Close();
 	}
@@ -674,7 +694,7 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		string projectRoot = ProjectSettings.GlobalizePath("res://");
+		string projectRoot = GetProjectRoot();
 		string visionScriptFullPath = Path.Combine(projectRoot, VisionScriptPath.Replace('/', Path.DirectorySeparatorChar));
 
 		if (!File.Exists(visionScriptFullPath))
@@ -685,6 +705,12 @@ public partial class UdpListener : Node2D
 
 		try
 		{
+			if (!IsLlamaServerReachable() && !StartLlamaServerProcess())
+			{
+				GD.PrintErr("[Vision] Không thể khởi động vision.py vì llama-server chưa sẵn sàng.");
+				return;
+			}
+
 			var startInfo = new ProcessStartInfo
 			{
 				FileName = PythonExecutable,
@@ -700,13 +726,16 @@ public partial class UdpListener : Node2D
 			startInfo.Environment["PYTHONUTF8"] = "1";
 			startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
 			startInfo.Environment["PYTHONUNBUFFERED"] = "1";
+			startInfo.Environment["LLAMA_SERVER_EXE"] = GetLlamaServerFullPath();
+			startInfo.Environment["LLAMA_SERVER_URL"] = $"http://127.0.0.1:{LlamaServerPort}/v1";
+			startInfo.Environment["LLAMA_SERVER_NGL"] = LlamaServerNgl.ToString();
 
 			var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 			process.OutputDataReceived += (_, e) =>
 			{
-				if (!string.IsNullOrWhiteSpace(e.Data))
+				if (!string.IsNullOrWhiteSpace(e.Data) && ShouldLogVisionOutput(e.Data))
 				{
-					GD.Print($"[vision.py] {e.Data}");
+					GD.Print($"[vision.py] {e.Data.Trim()}");
 				}
 			};
 			process.ErrorDataReceived += (_, e) =>
@@ -724,13 +753,14 @@ public partial class UdpListener : Node2D
 
 					if (looksFatal)
 						GD.PrintErr($"[vision.py][ERR] {line}");
-					else
+					else if (ShouldLogVisionStderr(line))
 						GD.Print($"[vision.py][stderr] {line}");
 				}
 			};
 			process.Exited += (_, _) =>
 			{
 				GD.Print($"[Vision] vision.py đã thoát (PID={process.Id}, code={process.ExitCode}).");
+				CallDeferred(nameof(UpdateServiceButtons));
 			};
 
 			bool started = process.Start();
@@ -744,6 +774,7 @@ public partial class UdpListener : Node2D
 			process.BeginOutputReadLine();
 			process.BeginErrorReadLine();
 			GD.Print($"[Vision] Đã khởi chạy vision.py PID={process.Id}");
+			UpdateServiceButtons();
 		}
 		catch (Exception ex)
 		{
@@ -775,6 +806,226 @@ public partial class UdpListener : Node2D
 		{
 			_visionProcess.Dispose();
 			_visionProcess = null;
+			UpdateServiceButtons();
+		}
+	}
+
+	private void ToggleVisionProcess()
+	{
+		if (_visionProcess != null && !_visionProcess.HasExited)
+			StopVisionProcess();
+		else
+			StartVisionProcess();
+	}
+
+	private string GetProjectRoot()
+	{
+		return ProjectSettings.GlobalizePath("res://");
+	}
+
+	private string GetLlamaServerFullPath()
+	{
+		return Path.Combine(GetProjectRoot(), LlamaServerPath.Replace('/', Path.DirectorySeparatorChar));
+	}
+
+	private string GetModelFullPath()
+	{
+		return Path.Combine(GetProjectRoot(), ModelPath.Replace('/', Path.DirectorySeparatorChar));
+	}
+
+	private bool IsLlamaServerReachable()
+	{
+		try
+		{
+			using var client = new TcpClient();
+			var result = client.BeginConnect("127.0.0.1", LlamaServerPort, null, null);
+			bool connected = result.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(200));
+			if (!connected)
+				return false;
+			client.EndConnect(result);
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private bool ShouldLogVisionOutput(string line)
+	{
+		if (string.IsNullOrWhiteSpace(line))
+			return false;
+
+		return
+			line.Contains("[Init]", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[Shutdown]", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[Loop] Bat dau", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[Loop] Hoan tat", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[AI Decision]", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[AI Tư duy]", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[AI Chain of Thought]", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[Chat]", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[Parse]", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[Lỗi", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("[Error]", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private bool ShouldLogVisionStderr(string line)
+	{
+		if (string.IsNullOrWhiteSpace(line))
+			return false;
+
+		return
+			line.Contains("Traceback", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("Exception", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("error loading model", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("failed to load model", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("No connection could be made", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("JSON không hợp lệ", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("main: model loaded", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("server is listening", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private bool ShouldLogLlamaOutput(string line)
+	{
+		if (string.IsNullOrWhiteSpace(line))
+			return false;
+
+		return
+			line.Contains("main: model loaded", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("server is listening", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("failed to load model", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("error loading model", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("Traceback", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("Exception", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private bool StartLlamaServerProcess()
+	{
+		if ((_llamaServerProcess != null && !_llamaServerProcess.HasExited) || IsLlamaServerReachable())
+		{
+			GD.Print($"[LLM] llama-server đã sẵn sàng trên cổng {LlamaServerPort}.");
+			UpdateServiceButtons();
+			return true;
+		}
+
+		string serverPath = GetLlamaServerFullPath();
+		string modelPath = GetModelFullPath();
+		if (!File.Exists(serverPath))
+		{
+			GD.PrintErr($"[LLM] Không tìm thấy llama-server.exe: {serverPath}");
+			return false;
+		}
+		if (!File.Exists(modelPath))
+		{
+			GD.PrintErr($"[LLM] Không tìm thấy model.gguf: {modelPath}");
+			return false;
+		}
+
+		try
+		{
+			var startInfo = new ProcessStartInfo
+			{
+				FileName = serverPath,
+				Arguments = $"-m \"{modelPath}\" -c {LlamaServerCtx} -ngl {LlamaServerNgl} --host 127.0.0.1 --port {LlamaServerPort} --no-warmup --jinja --reasoning-format deepseek",
+				WorkingDirectory = Path.GetDirectoryName(serverPath) ?? GetProjectRoot(),
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true,
+				StandardOutputEncoding = Encoding.UTF8,
+				StandardErrorEncoding = Encoding.UTF8,
+			};
+
+			var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+			process.OutputDataReceived += (_, e) =>
+			{
+				if (!string.IsNullOrWhiteSpace(e.Data) && ShouldLogLlamaOutput(e.Data))
+					GD.Print($"[llama-server] {e.Data.Trim()}");
+			};
+			process.ErrorDataReceived += (_, e) =>
+			{
+				if (!string.IsNullOrWhiteSpace(e.Data) && ShouldLogLlamaOutput(e.Data))
+					GD.Print($"[llama-server][stderr] {e.Data.Trim()}");
+			};
+			process.Exited += (_, _) =>
+			{
+				GD.Print($"[LLM] llama-server đã thoát (PID={process.Id}, code={process.ExitCode}).");
+				CallDeferred(nameof(UpdateServiceButtons));
+			};
+
+			bool started = process.Start();
+			if (!started)
+			{
+				GD.PrintErr("[LLM] Không thể khởi động llama-server.");
+				return false;
+			}
+
+			_llamaServerProcess = process;
+			process.BeginOutputReadLine();
+			process.BeginErrorReadLine();
+			GD.Print($"[LLM] Đã khởi chạy llama-server PID={process.Id}");
+			UpdateServiceButtons();
+			return true;
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[LLM] Lỗi khi chạy llama-server: {ex.Message}");
+			return false;
+		}
+	}
+
+	private void StopLlamaServerProcess()
+	{
+		if (_llamaServerProcess == null)
+		{
+			UpdateServiceButtons();
+			return;
+		}
+
+		try
+		{
+			if (!_llamaServerProcess.HasExited)
+			{
+				GD.Print($"[LLM] Đang dừng llama-server PID={_llamaServerProcess.Id}...");
+				_llamaServerProcess.Kill(true);
+				_llamaServerProcess.WaitForExit(3000);
+			}
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[LLM] Không thể dừng llama-server sạch sẽ: {ex.Message}");
+		}
+		finally
+		{
+			_llamaServerProcess.Dispose();
+			_llamaServerProcess = null;
+			UpdateServiceButtons();
+		}
+	}
+
+	private void ToggleLlamaServerProcess()
+	{
+		if ((_llamaServerProcess != null && !_llamaServerProcess.HasExited) || IsLlamaServerReachable())
+			StopLlamaServerProcess();
+		else
+			StartLlamaServerProcess();
+	}
+
+	private void UpdateServiceButtons()
+	{
+		if (_llmBtn != null)
+		{
+			bool llmRunning = (_llamaServerProcess != null && !_llamaServerProcess.HasExited) || IsLlamaServerReachable();
+			_llmBtn.Text = llmRunning ? "LLM ON" : "LLM";
+			_llmBtn.TooltipText = llmRunning ? "Tat llama-server" : "Mo san llama-server";
+		}
+
+		if (_erisBtn != null)
+		{
+			bool visionRunning = _visionProcess != null && !_visionProcess.HasExited;
+			_erisBtn.Text = visionRunning ? "ERIS ON" : "ERIS";
+			_erisBtn.TooltipText = visionRunning ? "Tat vision.py" : "Bat vision.py";
 		}
 	}
 }
