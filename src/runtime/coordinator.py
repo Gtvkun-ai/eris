@@ -2,7 +2,12 @@ import random
 import time
 
 from domain import Decision
-
+# RuntimeCoordinator là một lớp điều phối chính trong runtime của ứng dụng,
+#  chịu trách nhiệm quản lý vòng lặp chính, xử lý các tin nhắn đến, 
+#  tương tác với dịch vụ LLM để tạo ra các quyết định, và gửi
+#  các quyết định đó đến transport để thực thi. Lớp này cũng quản lý trạng thái
+#  của hệ thống, bao gồm việc theo dõi lịch sử trò chuyện, trạng thái
+#  tâm trạng, vị trí ước tính, và bộ nhớ dài hạn.
 
 class RuntimeCoordinator:
     def __init__(
@@ -34,6 +39,8 @@ class RuntimeCoordinator:
         self.idle_cycles = 0
         self.long_term_memory = []
 
+    # stop là một phương thức để dừng vòng lặp chính của RuntimeCoordinator,
+    #  nó đặt trạng thái running thành False và đóng transport để ngừng nhận tin nhắn mới.
     def stop(self):
         self.running = False
         self.transport.close()
@@ -47,6 +54,10 @@ class RuntimeCoordinator:
         elif decision.direction == 1:
             self.inferred_pos_x = min(1.0, self.inferred_pos_x + 0.4)
 
+    # _handle_incoming là một phương thức để xử lý các tin nhắn đến từ transport,
+    #  nó kiểm tra loại tin nhắn và thực hiện các hành động tương ứng,
+    #  bao gồm quản lý chế độ trò chuyện, tương tác với LLM để tạo ra các quyết định, 
+    # cập nhật bộ nhớ dài hạn, và gửi các quyết định đó đến transport để thực thi.
     def _handle_incoming(self, msg: dict):
         msg_type = msg.get("type", "")
         if msg_type == "chat":
@@ -92,6 +103,12 @@ class RuntimeCoordinator:
             self.last_chat_answer = ""
             self.logger.info("Đã thoát chat mode, tiếp tục autonomous.")
 
+    # _sleep_interruptible là một phương thức để thực hiện một khoảng 
+    # thời gian ngủ có thể bị gián đoạn,
+    #  nó sẽ ngủ trong khoảng thời gian đã chỉ định nhưng sẽ kiểm tra định
+    #  kỳ xem trạng thái running có còn là True hay không, và nếu có tin nhắn mới
+    #  đến trong khi đang ngủ, nó sẽ xử lý tin nhắn đó ngay lập tức và có 
+    # thể thoát khỏi chế độ ngủ sớm để phản hồi nhanh hơn trong chế độ trò chuyện.
     def _sleep_interruptible(self, seconds: float):
         end_at = time.time() + seconds
         while self.running and time.time() < end_at:
