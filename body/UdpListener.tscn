@@ -18,6 +18,8 @@ layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+offset_left = 8.0
+offset_right = 8.0
 grow_horizontal = 2
 grow_vertical = 2
 
@@ -53,14 +55,29 @@ stretch_mode = 5
 [node name="llm" type="Button" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500001]
 custom_minimum_size = Vector2(36, 28)
 layout_mode = 2
-tooltip_text = "Bat/tat llama-server"
+tooltip_text = "Bật/tắt llama-server"
 text = "LLM"
 
 [node name="eris" type="Button" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500002]
 custom_minimum_size = Vector2(36, 28)
 layout_mode = 2
-tooltip_text = "Bat/tat vision.py"
+tooltip_text = "Bật/tắt vision.py"
 text = "ERIS"
+
+[node name="ApiKeyInput" type="LineEdit" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500003]
+custom_minimum_size = Vector2(180, 28)
+layout_mode = 2
+placeholder_text = "API key..."
+secret = true
+
+[node name="use_api" type="Button" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500004]
+custom_minimum_size = Vector2(36, 28)
+layout_mode = 2
+tooltip_text = "Bat/tat che do dung API"
+text = "USE API"
+
+[node name="TextureButton" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=144813316]
+layout_mode = 2
 
 [node name="ChatPanel" type="Panel" parent="CanvasLayer/Control" unique_id=1086222864]
 visible = false
@@ -102,7 +119,7 @@ text = "✕"
 
 [node name="Monika" parent="Monika2" unique_id=265743738 instance=ExtResource("2_monika")]
 position = Vector2(646, 360)
-animation = &"clone"
+animation = &"air"
 frame_progress = 0.0
 
 [node name="BubbleContainer" type="MarginContainer" parent="Monika2/Monika" unique_id=43338983]

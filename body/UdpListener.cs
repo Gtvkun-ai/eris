@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
 using System.Text;
 using System.Text.Json;
 
@@ -24,12 +25,18 @@ public partial class UdpListener : Node2D
 	[Export] public bool AutoStartVision = false;
 	[Export] public bool AutoPreloadLlamaServer = false;
 	[Export] public int LlamaServerPort = 8080;
-	[Export] public int LlamaServerNgl = 20;
+	[Export] public string LlamaServerNgl = "all";
 	[Export] public int LlamaServerCtx = 4096;
+	[Export] public bool LlamaServerFlashAttn = true;
+	[Export(PropertyHint.MultilineText)] public string LlamaServerExtraArgs = "";
+	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "sk-TXsQ848zLzayo0cTaYDrykmPbQ5WZAs060Wk1QakFepHECYV";
+	[Export] public string RemoteApiBaseUrl = "https://api-v2.shopaikey.com/v1";
+	[Export] public string RemoteApiModelName = "gemini-3-flash-preview";
 
 	// Di chuyển
 	private float _moveSpeed = 60f;   // pixel/giây
 	private float _moveDir = 1f;      // 1 = phải, -1 = trái
+	private int _facingDir = -1;      // -1 = nhìn trái (gốc asset), 1 = nhìn phải (flip ngang)
 	private bool _isWalking = false;
 	private string _currentAction = "stand";
 	private float _gravity = 980f; // Gia tốc trọng trường tiêu chuẩn
@@ -38,27 +45,32 @@ public partial class UdpListener : Node2D
 	private Vector2 _spriteHalfSize; // Lấy từ CollisionShape2D trong _Ready()
 
 	// Climb
-	private enum ClimbPhase { None, GoingToWall, Up, Top, Down }
+	private enum ClimbPhase { None, GoingToWall, Up, Top, TopHold, Down }
 	private ClimbPhase _climbPhase = ClimbPhase.None;
 	private float _climbUpWallX;    // X của tường leo lên
 	private float _climbDownWallX;  // X của tường leo xuống
+	private float _climbTopTargetX = float.NaN; // Điểm đích trên mép đỉnh; NaN = đi hết mép như cũ
 	private const float ClimbSpeed = 50f;
 
 	private TextureButton _pointBtn;
 	private TextureButton _chatBtn;
 	private Button _llmBtn;
 	private Button _erisBtn;
+	private Button _useApiBtn;
 	private Panel _chatPanel;
+	private LineEdit _apiKeyInput;
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	private Tween _textTween;
 	private AudioStreamPlayer _audioPlayer;
 	private readonly Random _rng = new Random();
 	private Control _bubble;
+	private bool _visionTracebackActive = false;
 	private string _nextAction = ""; // Lưu trữ hành động chờ thực thi
 	private string _bounceAction = ""; // animation phát tại tường trước khi đổi chiều (loop mãi)
 	private float _targetX = float.NaN; // target_x tuyệt đối trên màn hình (NaN = không có mục tiêu)
 	private Vector2 _bubbleBasePos; // vị trí gốc của bubble trong không gian local của sprite
+	private bool _useRemoteApi = false;
 
 	// Alias: ánh xạ tên AI hay hallucinate về tên animation thực
 	private static readonly Dictionary<string, string> _animAliases = new()
@@ -123,11 +135,16 @@ public partial class UdpListener : Node2D
 		_chatBtn  = GetNode<TextureButton>("CanvasLayer/Control/MarginContainer/VBoxContainer/chat");
 		_llmBtn   = GetNode<Button>("CanvasLayer/Control/MarginContainer/VBoxContainer/llm");
 		_erisBtn  = GetNode<Button>("CanvasLayer/Control/MarginContainer/VBoxContainer/eris");
+		_apiKeyInput = GetNode<LineEdit>("CanvasLayer/Control/MarginContainer/VBoxContainer/ApiKeyInput");
+		_useApiBtn = GetNode<Button>("CanvasLayer/Control/MarginContainer/VBoxContainer/use_api");
 		ConnectButtonEffects(_pointBtn);
 		ConnectButtonEffects(_chatBtn);
 		_chatBtn.Pressed += ToggleChatPanel;
 		_llmBtn.Pressed += ToggleLlamaServerProcess;
 		_erisBtn.Pressed += ToggleVisionProcess;
+		_useApiBtn.Pressed += ToggleRemoteApiMode;
+		if (_apiKeyInput != null && string.IsNullOrWhiteSpace(_apiKeyInput.Text) && !string.IsNullOrWhiteSpace(DefaultRemoteApiKey))
+			_apiKeyInput.Text = DefaultRemoteApiKey;
 
 		_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
@@ -394,12 +411,10 @@ public partial class UdpListener : Node2D
 			_bubble.Position = new Vector2(_bubbleBasePos.X * scaleX, _bubbleBasePos.Y);
 			return;
 		}
-		if (_climbPhase == ClimbPhase.Top)
+		if (_climbPhase == ClimbPhase.Top || _climbPhase == ClimbPhase.TopHold)
 		{
 			if (_monika.Animation != "climb_top") _monika.Play("climb_top");
-			_monika.Scale = new Vector2(1f, -1f);  // lộn ngược
-			_bubble.Scale = new Vector2(1f, -1f);  // counter-scale để text không bị lộn
-			_bubble.Position = _bubbleBasePos;
+			ApplyFacingForTopClimb();
 			return;
 		}
 
@@ -418,13 +433,58 @@ public partial class UdpListener : Node2D
 				_monika.Play(_currentAction);
 			if (_isWalking)
 			{
-				float flipX = _moveDir == 1f ? -1f : 1f;
-				_monika.Scale = new Vector2(flipX, 1f);
-				_bubble.Scale = new Vector2(flipX, 1f);
-				// Bù offset ngược lại để bubble giữ nguyên vị trí thực trên màn hình khi sprite lật
-				_bubble.Position = new Vector2(_bubbleBasePos.X * flipX, _bubbleBasePos.Y);
+				ApplyHorizontalFacing(_moveDir >= 0f ? 1 : -1);
+			}
+			else
+			{
+				ApplyFacingForCurrentAction();
 			}
 		}
+	}
+
+	private void ApplyHorizontalFacing(int facingDir)
+	{
+		_facingDir = facingDir >= 0 ? 1 : -1;
+		float flipX = _facingDir == 1 ? -1f : 1f;
+		_monika.Scale = new Vector2(flipX, 1f);
+		_bubble.Scale = new Vector2(flipX, 1f);
+		_bubble.Position = new Vector2(_bubbleBasePos.X * flipX, _bubbleBasePos.Y);
+	}
+
+	private void ApplyFacingForCurrentAction()
+	{
+		if (_currentAction == "air_swing_l")
+		{
+			ApplyHorizontalFacing(-1);
+			return;
+		}
+
+		if (_currentAction == "air_swing_r")
+		{
+			ApplyHorizontalFacing(1);
+			return;
+		}
+
+		ApplyHorizontalFacing(_facingDir);
+	}
+
+	private void ApplyFacingForTopClimb()
+	{
+		int topFacing = _facingDir;
+		if (_climbPhase == ClimbPhase.Top)
+		{
+			float topTargetX = float.IsNaN(_climbTopTargetX) ? _climbDownWallX : _climbTopTargetX;
+			topFacing = topTargetX >= _body.Position.X ? 1 : -1;
+		}
+		else if (_climbPhase == ClimbPhase.TopHold)
+		{
+			if (Mathf.IsEqualApprox(_body.Position.X, _spriteHalfSize.X))
+				topFacing = 1;
+			else if (Mathf.IsEqualApprox(_body.Position.X, GetViewportRect().Size.X - _spriteHalfSize.X))
+				topFacing = -1;
+		}
+
+		ApplyHorizontalFacing(topFacing);
 	}
 
 	private void ClampBubbleToScreen()
@@ -446,6 +506,9 @@ public partial class UdpListener : Node2D
 		int direction = 0;
 		string nextAnimation = "";
 		string bounceAction = "";
+		string debugTrace = "";
+		string parserTrace = "";
+		string parseMode = "";
 		// Reset targets trước khi xử lý lệnh mới
 		_targetX = float.NaN;
 		_bounceAction = ""; 
@@ -473,6 +536,9 @@ public partial class UdpListener : Node2D
             }
 			if (root.TryGetProperty("next_animation", out var na)) nextAnimation = na.GetString() ?? "";
 			if (root.TryGetProperty("bounce_action", out var ba)) bounceAction = ba.GetString() ?? "";
+			if (root.TryGetProperty("debug_trace", out var dt)) debugTrace = dt.GetString() ?? "";
+			if (root.TryGetProperty("parser_trace", out var pt)) parserTrace = pt.GetString() ?? "";
+			if (root.TryGetProperty("parse_mode", out var pm)) parseMode = pm.GetString() ?? "";
             
             // CHỈ XỬ LÝ TARGET_X KHI NÓ >= 0 ---
             if (root.TryGetProperty("target_x", out var tx) && tx.ValueKind == JsonValueKind.Number)
@@ -489,7 +555,11 @@ public partial class UdpListener : Node2D
                     _targetX = absX;
                     
                     direction = (_targetX > _body.Position.X) ? 1 : -1;
-                    animation = "stand_walk"; // Chỉ ép thành đi bộ khi thực sự có target_x hợp lệ
+                    bool movementSequence = animation == "climb" || animation == "climb_top" || nextAnimation == "climb_top";
+                    if (!movementSequence)
+                    {
+                        animation = "stand_walk"; // Chỉ ép thành đi bộ khi đây là mục tiêu mặt đất
+                    }
                     GD.Print($"[Physics] target_x={frac:F2} → absX={absX:F0}, dir={direction}");
                 }
             }
@@ -500,6 +570,15 @@ public partial class UdpListener : Node2D
             text = "Lỗi đường truyền tín hiệu.";
             animation = "stand";
         }
+
+		if (!string.IsNullOrEmpty(parseMode) || !string.IsNullOrEmpty(debugTrace) || !string.IsNullOrEmpty(parserTrace))
+		{
+			GD.Print($"[AI Debug] parse_mode={parseMode}");
+			if (!string.IsNullOrEmpty(debugTrace))
+				GD.Print($"[AI Debug] trace={debugTrace}");
+			if (!string.IsNullOrEmpty(parserTrace))
+				GD.Print($"[AI Debug] parser={parserTrace}");
+		}
 
 		ApplyTypewriterEffect(text);
 		_bounceAction = bounceAction; // set trước ApplyAnimationCommand để không bị ghi đè
@@ -527,6 +606,7 @@ public partial class UdpListener : Node2D
 		if (direction == 1 || direction == -1)
         {
             _moveDir = direction;
+			_facingDir = direction;
             GD.Print($"[Physics] Đổi hướng di chuyển thành: {direction}");
         }
 
@@ -534,6 +614,7 @@ public partial class UdpListener : Node2D
 		if (_climbPhase != ClimbPhase.None)
 		{
 			_climbPhase = ClimbPhase.None;
+			_climbTopTargetX = float.NaN;
 			_monika.Scale = Vector2.One;
 			_bubble.Scale = Vector2.One;
 			_velocityY = 0f;
@@ -545,9 +626,7 @@ public partial class UdpListener : Node2D
 
 		if (!_isWalking)
 		{
-			_monika.Scale = new Vector2(1f, 1f);
-			_bubble.Scale = new Vector2(1f, 1f);
-			_bubble.Position = _bubbleBasePos;
+			ApplyFacingForCurrentAction();
 		}
 
 		if (animation == "climb")
@@ -577,6 +656,10 @@ public partial class UdpListener : Node2D
 			_climbUpWallX   = wallXLeft;
 			_climbDownWallX = wallXRight;
 		}
+
+		_climbTopTargetX = _nextAction == "climb_top"
+			? (!float.IsNaN(_targetX) ? _targetX : _climbUpWallX)
+			: float.NaN;
 
 		_climbPhase = ClimbPhase.GoingToWall;
 		PlaySoundForAnimation("climb");
@@ -611,13 +694,32 @@ public partial class UdpListener : Node2D
 
 			case ClimbPhase.Top:
 				pos.Y = ceilingY;
-				float dx2 = _climbDownWallX - pos.X;
+				float topTargetX = float.IsNaN(_climbTopTargetX) ? _climbDownWallX : _climbTopTargetX;
+				float dx2 = topTargetX - pos.X;
 				pos.X += Mathf.Sign(dx2) * _moveSpeed * d;
 				if (Mathf.Abs(dx2) < _moveSpeed * d + 2f)
 				{
-					pos.X = _climbDownWallX;
-					_climbPhase = ClimbPhase.Down;
+					pos.X = topTargetX;
+					if (float.IsNaN(_climbTopTargetX))
+					{
+						_climbPhase = ClimbPhase.Down;
+					}
+					else
+					{
+						_climbPhase = ClimbPhase.TopHold;
+						_currentAction = "climb_top";
+						_nextAction = "";
+						_targetX = float.NaN;
+					}
 				}
+				break;
+
+			case ClimbPhase.TopHold:
+				pos.Y = ceilingY;
+				if (!float.IsNaN(_climbTopTargetX))
+					pos.X = _climbTopTargetX;
+				_velocityY = 0f;
+				_isFalling = false;
 				break;
 
 			case ClimbPhase.Down:
@@ -631,6 +733,7 @@ public partial class UdpListener : Node2D
 					_isFalling     = false;
 					_currentAction = "stand";
 					_isWalking     = false;
+					_climbTopTargetX = float.NaN;
 					_monika.Scale  = Vector2.One;
 					_bubble.Scale  = Vector2.One;
 				}
@@ -705,7 +808,7 @@ public partial class UdpListener : Node2D
 
 		try
 		{
-			if (!IsLlamaServerReachable() && !StartLlamaServerProcess())
+			if (!_useRemoteApi && !IsLlamaServerReachable() && !StartLlamaServerProcess())
 			{
 				GD.PrintErr("[Vision] Không thể khởi động vision.py vì llama-server chưa sẵn sàng.");
 				return;
@@ -728,7 +831,15 @@ public partial class UdpListener : Node2D
 			startInfo.Environment["PYTHONUNBUFFERED"] = "1";
 			startInfo.Environment["LLAMA_SERVER_EXE"] = GetLlamaServerFullPath();
 			startInfo.Environment["LLAMA_SERVER_URL"] = $"http://127.0.0.1:{LlamaServerPort}/v1";
-			startInfo.Environment["LLAMA_SERVER_NGL"] = LlamaServerNgl.ToString();
+			startInfo.Environment["LLAMA_SERVER_NGL"] = LlamaServerNgl;
+			startInfo.Environment["LLAMA_SERVER_FLASH_ATTN"] = LlamaServerFlashAttn ? "on" : "off";
+			startInfo.Environment["LLAMA_SERVER_EXTRA_ARGS"] = LlamaServerExtraArgs;
+			startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = _useRemoteApi ? "1" : "0";
+			startInfo.Environment["ERIS_REMOTE_API_KEY"] = NormalizeApiKeyInput(_apiKeyInput?.Text ?? "") is string normalizedKey && !string.IsNullOrWhiteSpace(normalizedKey)
+				? normalizedKey
+				: DefaultRemoteApiKey.Trim();
+			startInfo.Environment["ERIS_REMOTE_BASE_URL"] = RemoteApiBaseUrl;
+			startInfo.Environment["ERIS_REMOTE_MODEL"] = RemoteApiModelName;
 
 			var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 			process.OutputDataReceived += (_, e) =>
@@ -742,7 +853,30 @@ public partial class UdpListener : Node2D
 			{
 				if (!string.IsNullOrWhiteSpace(e.Data))
 				{
-					string line = e.Data.Trim();
+					string rawLine = e.Data;
+					string line = rawLine.Trim();
+					if (_visionTracebackActive)
+					{
+						if (string.IsNullOrWhiteSpace(line))
+						{
+							_visionTracebackActive = false;
+						}
+						else
+						{
+							GD.PrintErr($"[vision.py][ERR] {rawLine}");
+							bool tracebackTail =
+								rawLine.StartsWith(" ", StringComparison.Ordinal) ||
+								rawLine.StartsWith("\t", StringComparison.Ordinal) ||
+								line.StartsWith("File ", StringComparison.OrdinalIgnoreCase) ||
+								line.StartsWith("During handling of the above exception", StringComparison.OrdinalIgnoreCase) ||
+								line.Contains("Error:", StringComparison.OrdinalIgnoreCase) ||
+								line.Contains("Exception:", StringComparison.OrdinalIgnoreCase);
+							if (!tracebackTail)
+								_visionTracebackActive = false;
+							return;
+						}
+					}
+
 					bool looksFatal =
 						line.Contains("Traceback", StringComparison.OrdinalIgnoreCase) ||
 						line.Contains("Exception", StringComparison.OrdinalIgnoreCase) ||
@@ -752,7 +886,11 @@ public partial class UdpListener : Node2D
 						line.Contains("JSON không hợp lệ", StringComparison.OrdinalIgnoreCase);
 
 					if (looksFatal)
-						GD.PrintErr($"[vision.py][ERR] {line}");
+					{
+						if (line.Contains("Traceback", StringComparison.OrdinalIgnoreCase))
+							_visionTracebackActive = true;
+						GD.PrintErr($"[vision.py][ERR] {rawLine}");
+					}
 					else if (ShouldLogVisionStderr(line))
 						GD.Print($"[vision.py][stderr] {line}");
 				}
@@ -818,6 +956,52 @@ public partial class UdpListener : Node2D
 			StartVisionProcess();
 	}
 
+	private void ToggleRemoteApiMode()
+	{
+		string apiKey = NormalizeApiKeyInput(_apiKeyInput?.Text ?? "");
+		if (!_useRemoteApi && string.IsNullOrEmpty(apiKey))
+		{
+			GD.PrintErr("[API] Hãy nhập API key trước khi bật chế độ dùng API.");
+			_apiKeyInput?.GrabFocus();
+			return;
+		}
+
+		if (_apiKeyInput != null)
+			_apiKeyInput.Text = apiKey;
+
+		_useRemoteApi = !_useRemoteApi;
+		GD.Print(_useRemoteApi
+			? $"[API] Đã bật chế độ dùng API remote: {RemoteApiModelName}"
+			: "[API] Đã tắt chế độ dùng API remote, quay về AI local.");
+
+		bool visionRunning = _visionProcess != null && !_visionProcess.HasExited;
+		if (visionRunning)
+		{
+			GD.Print("[API] vision.py đang chạy, sẽ restart để áp dụng cấu hình mới.");
+			StopVisionProcess();
+			StartVisionProcess();
+		}
+
+		UpdateServiceButtons();
+	}
+
+	private string NormalizeApiKeyInput(string raw)
+	{
+		string candidate = (raw ?? "").Trim();
+		if (string.IsNullOrEmpty(candidate))
+			return "";
+
+		var quotedMatch = Regex.Match(candidate, "api_key\\s*=\\s*[\"']([^\"']+)[\"']", RegexOptions.IgnoreCase);
+		if (quotedMatch.Success)
+			candidate = quotedMatch.Groups[1].Value.Trim();
+
+		var tokenMatch = Regex.Match(candidate, "\\bsk-[A-Za-z0-9._\\-]+\\b");
+		if (tokenMatch.Success)
+			candidate = tokenMatch.Value;
+
+		return candidate.Trim();
+	}
+
 	private string GetProjectRoot()
 	{
 		return ProjectSettings.GlobalizePath("res://");
@@ -856,18 +1040,24 @@ public partial class UdpListener : Node2D
 		if (string.IsNullOrWhiteSpace(line))
 			return false;
 
+		string trimmed = line.Trim();
+
 		return
-			line.Contains("[Init]", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[Shutdown]", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[Loop] Bat dau", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[Loop] Hoan tat", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[AI Decision]", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[AI Tư duy]", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[AI Chain of Thought]", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[Chat]", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[Parse]", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[Lỗi", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("[Error]", StringComparison.OrdinalIgnoreCase);
+			trimmed.Contains("[Init]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[Shutdown]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[Loop]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[Parse]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[LLM]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[Vision]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[Chat]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[AI Decision]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[AI Tư duy]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[AI Chain of Thought]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[chat raw]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[directive raw]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[raw]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[Lỗi", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[Error]", StringComparison.OrdinalIgnoreCase);
 	}
 
 	private bool ShouldLogVisionStderr(string line)
@@ -924,10 +1114,12 @@ public partial class UdpListener : Node2D
 
 		try
 		{
+			string flashAttnArgs = LlamaServerFlashAttn ? " --flash-attn on" : "";
+			string extraArgs = string.IsNullOrWhiteSpace(LlamaServerExtraArgs) ? "" : $" {LlamaServerExtraArgs}";
 			var startInfo = new ProcessStartInfo
 			{
 				FileName = serverPath,
-				Arguments = $"-m \"{modelPath}\" -c {LlamaServerCtx} -ngl {LlamaServerNgl} --host 127.0.0.1 --port {LlamaServerPort} --no-warmup --jinja --reasoning-format deepseek",
+				Arguments = $"-m \"{modelPath}\" -c {LlamaServerCtx} -ngl {LlamaServerNgl} --host 127.0.0.1 --port {LlamaServerPort} --no-warmup --jinja --reasoning-format deepseek{flashAttnArgs}{extraArgs}",
 				WorkingDirectory = Path.GetDirectoryName(serverPath) ?? GetProjectRoot(),
 				UseShellExecute = false,
 				CreateNoWindow = true,
@@ -1024,8 +1216,17 @@ public partial class UdpListener : Node2D
 		if (_erisBtn != null)
 		{
 			bool visionRunning = _visionProcess != null && !_visionProcess.HasExited;
-			_erisBtn.Text = visionRunning ? "ERIS ON" : "ERIS";
+			string modeLabel = _useRemoteApi ? "API" : "LOCAL";
+			_erisBtn.Text = visionRunning ? $"ERIS {modeLabel} ON" : $"ERIS {modeLabel}";
 			_erisBtn.TooltipText = visionRunning ? "Tat vision.py" : "Bat vision.py";
+		}
+
+		if (_useApiBtn != null)
+		{
+			_useApiBtn.Text = _useRemoteApi ? "API ON" : "USE API";
+			_useApiBtn.TooltipText = _useRemoteApi
+				? $"Dang dung API remote: {RemoteApiModelName}"
+				: "Bat che do dung API remote";
 		}
 	}
 }

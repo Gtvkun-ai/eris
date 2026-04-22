@@ -1,0 +1,62 @@
+{
+  "counts": {
+    "train/persona/persona_code_help.jsonl": 841,
+    "train/persona/persona_general_chat.jsonl": 868,
+    "train/persona/persona_emotional_support.jsonl": 787,
+    "train/persona/persona_safety_refusal.jsonl": 104,
+    "train/persona/persona_capability_boundary_strict.jsonl": 14,
+    "train/desktop/desktop_grounded_code.jsonl": 380,
+    "train/desktop/desktop_grounded_general.jsonl": 268,
+    "train/desktop/desktop_grounded_multiturn.jsonl": 256,
+    "train/desktop/desktop_uncertainty_soft_claim.jsonl": 10,
+    "train/tools/tool_action_result_grounded.jsonl": 10,
+    "quarantine/persona_capability_ambiguous.jsonl": 57,
+    "quarantine/template_artifact.jsonl": 3,
+    "quarantine/desktop_overclaim.jsonl": 9,
+    "quarantine/desktop_safety_manual_review.jsonl": 8
+  },
+  "source_stats": {
+    "dataset_ready_code": {
+      "train/persona/persona_code_help.jsonl": 858
+    },
+    "dataset_ready_general": {
+      "train/persona/persona_general_chat.jsonl": 869
+    },
+    "dataset_special_capability": {
+      "quarantine/template_artifact.jsonl": 2,
+      "quarantine/persona_capability_ambiguous.jsonl": 56,
+      "train/persona/persona_capability_boundary_strict.jsonl": 14
+    },
+    "dataset_special_emotional": {
+      "train/persona/persona_emotional_support.jsonl": 790,
+      "quarantine/template_artifact.jsonl": 1
+    },
+    "dataset_special_safety": {
+      "train/persona/persona_safety_refusal.jsonl": 111
+    },
+    "machine_ready_code": {
+      "train/desktop/desktop_grounded_code.jsonl": 380
+    },
+    "machine_ready_general": {
+      "train/desktop/desktop_grounded_general.jsonl": 268
+    },
+    "machine_review_missing": {
+      "train/persona/persona_safety_refusal.jsonl": 13,
+      "quarantine/persona_capability_ambiguous.jsonl": 3,
+      "train/persona/persona_code_help.jsonl": 39,
+      "train/persona/persona_emotional_support.jsonl": 18,
+      "train/persona/persona_general_chat.jsonl": 46,
+      "train/persona/persona_capability_boundary_strict.jsonl": 1
+    },
+    "machine_review_overclaim": {
+      "quarantine/desktop_overclaim.jsonl": 9
+    },
+    "machine_special_complex": {
+      "quarantine/desktop_safety_manual_review.jsonl": 8
+    },
+    "manual_seed_additions": {
+      "train/desktop/desktop_uncertainty_soft_claim.jsonl": 10,
+      "train/tools/tool_action_result_grounded.jsonl": 10
+    }
+  }
+}

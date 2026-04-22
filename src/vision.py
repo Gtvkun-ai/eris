@@ -1,10 +1,13 @@
-import os
+﻿import os
 import signal
 import subprocess
 import sys
 import msvcrt
+import traceback
 
+from actions import ActionExecutor, ActionRouter
 from app_logging import configure_logging, get_logger
+from cortex import FeRenderer, NiEngine, TiGovernor
 from domain import Decision
 from llm import LlmService
 from llm.process_manager import LlamaServerProcessManager
@@ -20,13 +23,14 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 
-class PerformanceOverseer:
+class AttentionOverseer:
     def __init__(self, model_path: str, n_ctx: int = 4096, n_gpu_layers: int = -1):
         self.logger = get_logger("Vision")
         self.memory_logger = get_logger("Memory")
         self.parse_logger = get_logger("Parse")
         self.process_logger = get_logger("LLM")
         self.loop_logger = get_logger("Loop")
+        self.action_logger = get_logger("Action")
 
         patched_path = model_path.replace(".gguf", "_patched.gguf")
         if os.path.exists(patched_path):
@@ -64,14 +68,24 @@ class PerformanceOverseer:
         )
         self.decision_parser = DecisionParser(fallback_decision, logger=self.parse_logger)
         self.telemetry_service = TelemetryService()
+        self.ni_engine = NiEngine()
+        self.ti_governor = TiGovernor()
+        self.fe_renderer = FeRenderer()
+        self.action_executor = ActionExecutor(logger=self.action_logger)
+        self.action_router = ActionRouter()
         self.coordinator = RuntimeCoordinator(
             logger=self.loop_logger,
             transport=self.transport,
             llm_service=self.llm_service,
             parser=self.decision_parser,
             telemetry_service=self.telemetry_service,
+            ni_engine=self.ni_engine,
+            ti_governor=self.ti_governor,
+            fe_renderer=self.fe_renderer,
             memory_store=self.memory_store,
             body_running_fn=self._is_body_running,
+            action_executor=self.action_executor,
+            action_router=self.action_router,
         )
         self.coordinator.long_term_memory = long_term_memory
 
@@ -130,6 +144,7 @@ class SingleInstanceLock:
 
 if __name__ == "__main__":
     configure_logging()
+    logger = get_logger("Vision")
 
     lock_file = os.path.join(os.path.dirname(__file__), ".vision.lock")
     lock = SingleInstanceLock(lock_file)
@@ -148,13 +163,12 @@ if __name__ == "__main__":
         )
 
     if not os.path.isfile(model_path):
-        logger = get_logger("Vision")
         logger.error("Không tìm thấy file mô hình: %s", model_path)
         logger.error("Dùng: python vision.py <đường_dẫn_model.gguf>")
         logger.error("Hoặc: set GGUF_MODEL_PATH=<đường_dẫn_model.gguf>")
         raise SystemExit(1)
 
-    overseer = PerformanceOverseer(model_path)
+    overseer = AttentionOverseer(model_path)
 
     def handle_signal(signum, _frame):
         overseer.stop(f"Nhận tín hiệu {signum}, đang thoát...")
@@ -168,6 +182,10 @@ if __name__ == "__main__":
         overseer.run_loop()
     except KeyboardInterrupt:
         overseer.stop("KeyboardInterrupt")
+    except Exception as exc:
+        logger.error("vision.py gặp lỗi chưa bắt: %s", exc)
+        traceback.print_exc()
+        raise
     finally:
         overseer.stop("Dừng tiến trình.")
         lock.release()

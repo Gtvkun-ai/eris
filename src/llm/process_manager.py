@@ -5,7 +5,7 @@ import time
 
 import requests
 
-from .client import LlamaServerClient
+from .client import LlamaServerClient, OpenAICompatibleClient
 
 
 class LlamaServerProcessManager:
@@ -14,10 +14,6 @@ class LlamaServerProcessManager:
         self.project_root = project_root
         self._server_proc = None
 
-    # _find_llama_server_exe tìm kiếm file thực thi llama-server.exe trong một số vị trí tiềm năng,
-    # bao gồm đường dẫn được chỉ định trong biến môi trường LLAMA_SERVER_EXE,
-    # thư mục lib trong dự án,  và trong PATH hệ thống. 
-    # Nếu tìm thấy file, nó trả về đường dẫn đầy đủ; nếu không tìm thấy, nó trả về None.
     def _find_llama_server_exe(self):
         candidates = []
         env_path = os.environ.get("LLAMA_SERVER_EXE", "").strip()
@@ -42,21 +38,13 @@ class LlamaServerProcessManager:
                 return candidate
         return None
 
-    # _wait_for_llama_server liên tục kiểm tra xem llama-server
-    #  đã sẵn sàng để nhận yêu cầu hay chưa bằng cách gửi yêu cầu GET 
-    # đến endpoint /models.
-    # Nếu server phản hồi thành công và trả về thông tin về các
-    #  mô hình đã load, hàm sẽ trả về. Nếu server mở cổng nhưng 
-    # chưa load xong model, nó sẽ ghi lại lỗi và tiếp tục chờ. 
-    # Nếu server không phản hồi kịp thời hoặc thoát sớm, 
-    # nó sẽ ném ra lỗi RuntimeError với thông tin chi tiết về lỗi cuối cùng gặp phải.
     def _wait_for_llama_server(self, base_url: str, timeout: int = 300):
         deadline = time.time() + timeout
         last_error = ""
 
         while time.time() < deadline:
             if self._server_proc is not None and self._server_proc.poll() is not None:
-                raise RuntimeError("llama-server đã thoát sớm khi khởi động.")
+                raise RuntimeError("llama-server da thoat som khi khoi dong.")
             try:
                 response = requests.get(f"{base_url}/models", timeout=5)
                 if response.ok:
@@ -64,21 +52,56 @@ class LlamaServerProcessManager:
                     models = payload.get("data", [])
                     if models:
                         return
-                    last_error = "llama-server đã mở cổng nhưng chưa load xong model."
+                    last_error = "llama-server da mo cong nhung chua load xong model."
             except Exception as exc:
                 last_error = str(exc)
             time.sleep(1)
 
-        raise RuntimeError(f"llama-server không phản hồi kịp thời. {last_error}")
+        raise RuntimeError(f"llama-server khong phan hoi kip thoi. {last_error}")
 
-    # build_client là phương thức chính để tạo một instance của LlamaServerClient.
-    # Nó đầu tiên cố gắng tái sử dụng một instance llama-server đang chạy 
-    # nếu có thể kết nối thành công đến endpoint /models. 
-    # Nếu không thể tái sử dụng, nó sẽ tìm kiếm file thực thi llama-server.exe, 
-    # khởi động một tiến trình mới với các tham số cấu hình, và chờ cho đến khi 
-    # server sẵn sàng trước khi trả về một instance LlamaServerClient kết nối đến 
-    # server đó.
+    def _resolve_gpu_layers(self, n_gpu_layers) -> str:
+        if isinstance(n_gpu_layers, int) and n_gpu_layers >= 0:
+            return str(n_gpu_layers)
+
+        raw_value = os.environ.get("LLAMA_SERVER_NGL", "all").strip().lower()
+        if raw_value in {"all", "auto"} or raw_value.isdigit():
+            return raw_value
+
+        self.logger.warning("LLAMA_SERVER_NGL=%r khong hop le, fallback ve 'all'.", raw_value)
+        return "all"
+
+    def _build_optional_args(self):
+        command = []
+
+        flash_attn = os.environ.get("LLAMA_SERVER_FLASH_ATTN", "on").strip().lower()
+        if flash_attn in {"on", "off", "auto"}:
+            command.extend(["--flash-attn", flash_attn])
+
+        extra_args = os.environ.get("LLAMA_SERVER_EXTRA_ARGS", "").strip()
+        if extra_args:
+            command.extend(extra_args.split())
+
+        return command
+
     def build_client(self, *, model_path: str, n_ctx: int, n_gpu_layers: int):
+        remote_enabled = os.environ.get("ERIS_REMOTE_API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if remote_enabled:
+            api_key = os.environ.get("ERIS_REMOTE_API_KEY", "").strip()
+            base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "https://api-v2.shopaikey.com/v1").strip()
+            model_name = os.environ.get("ERIS_REMOTE_MODEL", "gemini-3-flash-preview").strip()
+            if not api_key:
+                raise RuntimeError("ERIS_REMOTE_API_ENABLED dang bat nhung chua co ERIS_REMOTE_API_KEY.")
+
+            self.logger.info("Dung remote API tai %s voi model %s", base_url, model_name)
+            try:
+                return OpenAICompatibleClient(
+                    base_url=base_url,
+                    api_key=api_key,
+                    model_name=model_name,
+                )
+            except ValueError as exc:
+                raise RuntimeError(f"Loi API key remote: {exc}") from exc
+
         base_url = os.environ.get("LLAMA_SERVER_URL", "http://127.0.0.1:8080/v1").rstrip("/")
 
         reuse_deadline = time.time() + 15
@@ -88,7 +111,7 @@ class LlamaServerProcessManager:
                 if response.ok:
                     payload = response.json()
                     if payload.get("data"):
-                        self.logger.info("Tái sử dụng llama-server đang chạy tại %s", base_url)
+                        self.logger.info("Tai su dung llama-server dang chay tai %s", base_url)
                         return LlamaServerClient(base_url)
             except Exception:
                 pass
@@ -96,40 +119,38 @@ class LlamaServerProcessManager:
 
         server_exe = self._find_llama_server_exe()
         if not server_exe:
-            raise RuntimeError("Không tìm thấy llama-server.exe. Hãy đặt biến môi trường LLAMA_SERVER_EXE trỏ tới file này.")
+            raise RuntimeError(
+                "Khong tim thay llama-server.exe. Hay dat bien moi truong LLAMA_SERVER_EXE tro toi file nay."
+            )
 
-        ngl = n_gpu_layers if n_gpu_layers >= 0 else int(os.environ.get("LLAMA_SERVER_NGL", "20"))
+        ngl = self._resolve_gpu_layers(n_gpu_layers)
         host = os.environ.get("LLAMA_SERVER_HOST", "127.0.0.1")
         port = os.environ.get("LLAMA_SERVER_PORT", "8080")
 
-        #build_client là phương thức chính để tạo một instance của LlamaServerClient.
-        # Nó đầu tiên cố gắng tái sử dụng một instance llama-server đang chạy 
-        # nếu có thể kết nối thành công đến endpoint /models. 
-        # Nếu không thể tái sử dụng, nó sẽ tìm kiếm file thực thi llama-server.exe, 
-        # khởi động một tiến trình mới với các tham số cấu hình, 
-        # và chờ cho đến khi server sẵn sàng trước khi trả về một
-        #  instance LlamaServerClient kết nối đến server đó.
         command = [
             server_exe,
-            "-m", model_path,
-            "-c", str(n_ctx),
-            "-ngl", str(ngl),
-            "--host", host,
-            "--port", port,
+            "-m",
+            model_path,
+            "-c",
+            str(n_ctx),
+            "-ngl",
+            str(ngl),
+            "--host",
+            host,
+            "--port",
+            port,
             "--no-warmup",
             "--jinja",
             "--reasoning-format",
             "deepseek",
         ]
-        self.logger.info("Khởi động llama-server: %s", " ".join(command))
+        command.extend(self._build_optional_args())
+
+        self.logger.info("Khoi dong llama-server: %s", " ".join(command))
         self._server_proc = subprocess.Popen(command)
         self._wait_for_llama_server(f"http://{host}:{port}/v1")
         return LlamaServerClient(f"http://{host}:{port}/v1")
 
-    # stop là phương thức để dừng tiến trình llama-server nếu nó đang chạy.
-    # Nó kiểm tra xem tiến trình có tồn tại và đang chạy hay không,
-    # sau đó cố gắng gửi tín hiệu terminate và chờ tiến trình kết thúc trong vòng 10 giây. 
-    # Nếu tiến trình không kết thúc sau khi gửi terminate, nó sẽ cố gắng gửi tín hiệu kill.
     def stop(self):
         if self._server_proc is None or self._server_proc.poll() is not None:
             return

@@ -1,20 +1,20 @@
 from dataclasses import dataclass
-#đóng vai trò như một bản thiết kế cho đối tượng Decision, 
-# thường được sử dụng trong các hệ thống quản lý trạng thái hoạt ảnh hoặc logic
-#  trò chơi — có khả năng là một phần trong tích hợp giữa Python và một Engine như Godot.
-@dataclass(slots=True)
-#Tự động hóa: Nó tự động tạo các phương thức đặc biệt như 
-# __init__, __repr__, và __eq__, loại bỏ việc viết mã lặp lại vô nghĩa.
 
+
+@dataclass(slots=True)
 class Decision:
     text: str
     animation: str
-    productivity: int = 0
     extracted_fact: str = ""
     direction: int = 0
     next_animation: str = ""
-    target_x: float = -1.0 
-    bounce_action: str = "" #được sử dụng để xác định hành động bật lại nào sẽ được thực hiện sau khi hoàn thành hoạt ảnh hiện tại,
+    target_x: float = -1.0
+    bounce_action: str = ""
+    debug_trace: str = ""
+    parser_trace: str = ""
+    parse_mode: str = "json"
+    system_action: str = ""
+    action_input: str = ""
 
     def to_payload(self) -> dict:
         return {
@@ -24,4 +24,9 @@ class Decision:
             "target_x": self.target_x,
             "bounce_action": self.bounce_action,
             "next_animation": self.next_animation,
+            "debug_trace": self.debug_trace,
+            "parser_trace": self.parser_trace,
+            "parse_mode": self.parse_mode,
+            "system_action": self.system_action,
+            "action_input": self.action_input,
         }
