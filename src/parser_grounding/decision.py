@@ -164,7 +164,7 @@ class ParserGroundingMixin:
         violations = []
         previous_unit = ""
         for unit in self._split_into_claim_units(text):
-            if self._clause_exceeds_runtime_capability(unit, previous_unit=previous_unit):
+            if self._clause_exceeds_runtime_capability(unit, previous_unit=previous_unit, context=text):
                 violations.append(unit)
             previous_unit = unit
         return violations
@@ -263,7 +263,7 @@ class ParserGroundingMixin:
         m = re.search(r"\btext\s*[:=]\s*", text, flags=re.IGNORECASE)
         if m:
             after = text[m.end():]
-            field_pattern = r"\b(animation|direction|target_x|bounce_action|extracted_fact|debug_trace|next_animation|system_action|action_input)\s*[:=]"
+            field_pattern = r"\b(animation|direction|target_x|bounce_action|extracted_fact|debug_trace|next_animation|system_action|action_input|motion_intent|motion_target_x|motion_facing)\s*[:=]"
             m2 = re.search(field_pattern, after, flags=re.IGNORECASE)
             if m2:
                 text = after[: m2.start()]
@@ -293,6 +293,42 @@ class ParserGroundingMixin:
         repaired = re.sub(r"\.\s+\.", ".", repaired)
         return repaired.strip()
 
+    def _normalize_decision_field_keys(self, value):
+        if isinstance(value, list):
+            return [self._normalize_decision_field_keys(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+
+        normalized = {}
+        for key, item in value.items():
+            normalized_key = key.strip() if isinstance(key, str) else key
+            normalized_item = self._normalize_decision_field_keys(item)
+            if normalized_key in normalized and normalized_key != key:
+                continue
+            normalized[normalized_key] = normalized_item
+        return normalized
+
+    def _clean_inline_field_value(self, value: str) -> str:
+        cleaned = str(value or "")
+        for _ in range(4):
+            before = cleaned
+            cleaned = cleaned.strip()
+            cleaned = cleaned.rstrip(",;").strip()
+            if cleaned.endswith("}") and cleaned.count("{") < cleaned.count("}"):
+                cleaned = cleaned[:-1].strip()
+            if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+                cleaned = cleaned[1:-1].strip()
+            if cleaned.endswith('"') and cleaned.count('"') % 2 == 1:
+                cleaned = cleaned[:-1].rstrip(" ,;")
+            if cleaned.endswith("'") and cleaned.count("'") % 2 == 1:
+                cleaned = cleaned[:-1].rstrip(" ,;")
+            if cleaned == before:
+                break
+        cleaned = cleaned.strip()
+        if cleaned.lower() in {"null", "none", "nil"} or cleaned in {"[]", "{}"}:
+            return ""
+        return cleaned
+
     # _try_extract_nested_decision_from_text lÃ  má»™t phÆ°Æ¡ng thá»©c Ä‘á»ƒ cá»‘ gáº¯ng trÃ­ch xuáº¥t má»™t Ä‘á»‘i tÆ°á»£ng JSON lá»“ng nhau tá»« trÆ°á»ng text cá»§a quyáº¿t Ä‘á»‹nh.
     def _try_extract_inline_decision_fields_from_text(self, text: str):
         candidate = (text or "").strip()
@@ -310,10 +346,13 @@ class ParserGroundingMixin:
             "next_animation",
             "system_action",
             "action_input",
+            "motion_intent",
+            "motion_target_x",
+            "motion_facing",
         ]
         field_group = "|".join(re.escape(field) for field in fields)
         pattern = re.compile(
-            rf"(?:(?<=^)|(?<=[\s,;{{]))(?P<field>{field_group})\s*[:=]\s*",
+            rf"(?:(?<=^)|(?<=[\s,;{{]))[\"']?\s*(?P<field>{field_group})\s*[\"']?\s*[:=]\s*",
             flags=re.IGNORECASE,
         )
         matches = list(pattern.finditer(candidate))
@@ -325,40 +364,166 @@ class ParserGroundingMixin:
             field = match.group("field").lower()
             start = match.end()
             end = matches[index + 1].start() if index + 1 < len(matches) else len(candidate)
-            raw_value = candidate[start:end].strip().rstrip(",;").strip()
-            if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {'"', "'"}:
-                raw_value = raw_value[1:-1]
-            extracted[field] = raw_value.strip()
+            raw_value = self._clean_inline_field_value(candidate[start:end])
+            extracted[field] = raw_value
 
         if "text" not in extracted:
             return None
         return extracted
 
+    def _sanitize_direction(self, value) -> int:
+        try:
+            direction = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return direction if direction in {-1, 0, 1} else 0
+
+    def _sanitize_target_x(self, value, *, fallback: float = -1.0) -> float:
+        try:
+            target_x = float(value)
+        except (TypeError, ValueError):
+            return fallback
+
+        if target_x == -1.0:
+            return -1.0
+        if 0.0 <= target_x <= 1.0:
+            return target_x
+        return fallback
+
+    def _sanitize_motion_facing(self, value, *, fallback: int = 0) -> int:
+        try:
+            facing = int(value)
+        except (TypeError, ValueError):
+            return fallback
+        return facing if facing in {-1, 0, 1} else fallback
+
     def _try_extract_nested_decision_from_text(self, text: str):
-        candidate = (text or "").strip()
+        candidate = self._unwrap_structured_text_candidate(text)
         if not candidate.startswith("{") or '"text"' not in candidate:
             return None
 
         try:
             nested = json.loads(candidate)
         except Exception:
-            return None
+            nested = None
 
         if not isinstance(nested, dict):
-            return None
+            inline_fields = self._try_extract_inline_decision_fields_from_text(candidate)
+            if inline_fields is None:
+                return None
+            nested = inline_fields
+        else:
+            nested = self._normalize_decision_field_keys(nested)
 
         return {
-            "text": str(nested.get("text", "")).strip(),
-            "animation": nested.get("animation", ""),
-            "extracted_fact": str(nested.get("extracted_fact", "")).strip(),
-            "debug_trace": str(nested.get("debug_trace", nested.get("_thought", ""))).strip(),
+            "text": self._clean_nested_field_text(nested.get("text", "")),
+            "animation": self._clean_nested_field_scalar(nested.get("animation", "")),
+            "extracted_fact": self._clean_nested_field_text(nested.get("extracted_fact", "")),
+            "debug_trace": self._clean_nested_field_text(nested.get("debug_trace", nested.get("_thought", ""))),
             "direction": nested.get("direction", 0),
-            "next_animation": nested.get("next_animation", ""),
+            "next_animation": self._clean_nested_field_scalar(nested.get("next_animation", "")),
             "target_x": nested.get("target_x", -1.0),
-            "bounce_action": nested.get("bounce_action", ""),
-            "system_action": nested.get("system_action", ""),
-            "action_input": str(nested.get("action_input", "")).strip(),
+            "bounce_action": self._clean_nested_field_scalar(nested.get("bounce_action", "")),
+            "system_action": self._clean_nested_field_scalar(nested.get("system_action", "")),
+            "action_input": self._clean_nested_field_text(nested.get("action_input", "")),
+            "motion_intent": self._clean_nested_field_scalar(nested.get("motion_intent", "")),
+            "motion_target_x": nested.get("motion_target_x", -1.0),
+            "motion_facing": nested.get("motion_facing", 0),
         }
+
+    def _unwrap_structured_text_candidate(self, text: str) -> str:
+        candidate = (text or "").strip()
+        if not candidate:
+            return ""
+
+        seen: set[str] = set()
+        for _ in range(4):
+            if not candidate or candidate in seen:
+                break
+            seen.add(candidate)
+
+            if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in {'"', "'"}:
+                candidate = candidate[1:-1].strip()
+                continue
+
+            try:
+                decoded = json.loads(candidate)
+            except Exception:
+                decoded = None
+
+            if isinstance(decoded, dict):
+                return json.dumps(decoded, ensure_ascii=False)
+
+            if isinstance(decoded, str):
+                candidate = decoded.strip()
+                continue
+
+            if candidate.startswith("{") and '\\"' in candidate:
+                candidate = candidate.replace('\\"', '"')
+                continue
+
+            break
+
+        return candidate
+
+    def _clean_nested_field_scalar(self, value) -> str:
+        text = str(value or "").strip()
+        lowered = text.lower()
+        if lowered in {"null", "none", "nil"}:
+            return ""
+        if text in {"[]", "{}"}:
+            return ""
+        text = text.rstrip("}").strip()
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+            text = text[1:-1].strip()
+        if text.endswith('"') and text.count('"') % 2 == 1:
+            text = text[:-1].rstrip()
+        if text.endswith("'") and text.count("'") % 2 == 1:
+            text = text[:-1].rstrip()
+        return text
+
+    def _clean_nested_field_text(self, value) -> str:
+        return self._normalize_salvaged_text(self._clean_nested_field_scalar(value))
+
+    def _sanitize_motion_intent(self, value: str) -> str:
+        intent = str(value or "").strip().strip('"').strip("'").lower()
+        valid = {
+            "",
+            "pose",
+            "face",
+            "walk",
+            "walk_to",
+            "climb_loop",
+            "climb_to_top",
+            "drop",
+        }
+        if intent in valid:
+            return intent
+        return ""
+
+    def _infer_motion_intent(
+        self,
+        *,
+        animation: str,
+        next_animation: str,
+        direction: int,
+        target_x: float,
+    ) -> str:
+        if animation == "climb" and next_animation == "climb_top":
+            return "climb_to_top"
+        if animation == "climb_top":
+            return "climb_to_top"
+        if animation == "climb":
+            return "climb_loop"
+        if animation in {"air_swing_l", "air_swing_r"}:
+            return "drop"
+        if target_x >= 0.0:
+            return "walk_to"
+        if animation == "stand_walk":
+            return "walk"
+        if direction in {-1, 1}:
+            return "face"
+        return ""
 
     def _sanitize_animation(self, value: str, fallback_text: str = "", user_hint: str = ""):
         animation = str(value or "").strip().strip('"').strip("'").lower()
@@ -379,6 +544,52 @@ class ParserGroundingMixin:
         if action_name in VALID_SYSTEM_ACTIONS:
             return action_name
         return ""
+
+    def _is_strict_direction_value(self, value) -> bool:
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, int):
+            return value in {-1, 0, 1}
+        if isinstance(value, float):
+            return value.is_integer() and int(value) in {-1, 0, 1}
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped in {"-1", "0", "1"}
+        return False
+
+    def _is_strict_target_x_value(self, value) -> bool:
+        if isinstance(value, bool):
+            return False
+        try:
+            target_x = float(value)
+        except (TypeError, ValueError):
+            return False
+        return target_x == -1.0 or 0.0 <= target_x <= 1.0
+
+    def _requires_lax_json_mode(self, payload: dict) -> bool:
+        animation = str(payload.get("animation", "") or "").strip().strip('"').strip("'").lower()
+        if animation and animation not in VALID_ANIMATIONS:
+            return True
+
+        next_animation = str(payload.get("next_animation", "") or "").strip().strip('"').strip("'").lower()
+        if next_animation and next_animation not in VALID_ANIMATIONS:
+            return True
+
+        bounce_action = str(payload.get("bounce_action", "") or "").strip().strip('"').strip("'").lower()
+        if bounce_action and bounce_action not in VALID_ANIMATIONS:
+            return True
+
+        if not self._is_strict_direction_value(payload.get("direction", 0)):
+            return True
+
+        if not self._is_strict_target_x_value(payload.get("target_x", -1.0)):
+            return True
+
+        system_action = str(payload.get("system_action", "") or "").strip().strip('"').strip("'")
+        if system_action and system_action not in VALID_SYSTEM_ACTIONS:
+            return True
+
+        return False
     def _get_runtime_capability_summary(self):
         parts = []
         for group_name in ("observe", "respond", "embody", "memory"):
@@ -392,6 +603,61 @@ class ParserGroundingMixin:
     def _is_allowed_self_claim(self, clause: str):
         lowered = clause.lower()
         return any(token in lowered for token in ALLOWED_SELF_CLAIMS)
+
+    def _has_vision_frame_context(self, text: str) -> bool:
+        lowered = (text or "").lower()
+        return "vision_frame_attached" in lowered or "vision_facts_attached" in lowered
+
+    def _is_screen_observation_claim(self, clause: str, context: str = "") -> bool:
+        lowered = (clause or "").lower()
+
+        observation_markers = (
+            "tôi thấy",
+            "tôi nhìn thấy",
+            "tôi chỉ thấy",
+            "tôi ghi nhận",
+            "tôi chỉ ghi nhận",
+            "tôi nhận thấy",
+            "toi thay",
+            "toi nhin thay",
+            "toi chi thay",
+            "toi ghi nhan",
+            "toi chi ghi nhan",
+            "toi nhan thay",
+        )
+        visual_targets = (
+            "ảnh",
+            "anh",
+            "screenshot",
+            "màn hình",
+            "man hinh",
+            "tab",
+            "trình duyệt",
+            "trinh duyet",
+            "web",
+            "website",
+            "messenger",
+            "facebook",
+            "brave",
+            "chrome",
+            "cửa sổ",
+            "cua so",
+        )
+        has_observation_marker = any(marker in lowered for marker in observation_markers)
+        has_visual_target = any(
+            target in lowered for target in visual_targets
+        )
+        if not has_observation_marker or not has_visual_target:
+            return False
+
+        if self._has_vision_frame_context(context):
+            return True
+
+        action_claim_patterns = (
+            r"\btôi\s+(?:đã|sẽ|đang)\s+(?:khóa|ngắt|đóng|mở|tắt|bật|hủy|xóa|ép|can thiệp|điều khiển|thu gọn|dọn|gom|vô hiệu hóa)\b",
+            r"\btoi\s+(?:da|se|dang)\s+(?:khoa|ngat|dong|mo|tat|bat|huy|xoa|ep|can thiep|dieu khien|thu gon|don|gom|vo hieu hoa)\b",
+        )
+        return not any(re.search(pattern, lowered) for pattern in action_claim_patterns)
 
     # _clause_exceeds_runtime_capability lÃ  má»™t phÆ°Æ¡ng thá»©c Ä‘á»ƒ kiá»ƒm tra xem má»™t má»‡nh Ä‘á» cÃ³ vÆ°á»£t quÃ¡ kháº£ nÄƒng runtime cá»§a há»‡ thá»‘ng hay khÃ´ng.
     # NÃ³ kiá»ƒm tra xem má»‡nh Ä‘á» cÃ³ chá»©a cÃ¡c Ä‘á»™ng tá»« hÃ nh Ä‘á»™ng khÃ´ng Ä‘Æ°á»£c 
@@ -432,9 +698,11 @@ class ParserGroundingMixin:
         ]
         return any(re.search(pattern, lowered) for pattern in patterns)
 
-    def _clause_exceeds_runtime_capability(self, clause: str, previous_unit: str = ""):
+    def _clause_exceeds_runtime_capability(self, clause: str, previous_unit: str = "", context: str = ""):
         lowered = clause.lower()
         if not lowered or not any(pronoun in lowered for pronoun in ("tôi", "toi")):
+            return False
+        if self._is_screen_observation_claim(lowered, context=context):
             return False
         if self._is_allowed_self_claim(lowered):
             return False
@@ -469,7 +737,7 @@ class ParserGroundingMixin:
         if any(token in lowered for token in ["bộ đệm", "cache", "ram", "dung lượng"]):
             return "Nghe như tôi vừa giả làm công cụ dọn rác hệ thống vậy. Tiếc là tôi chỉ nói mát được thôi, chưa chạm được vào bộ nhớ của Ngài."
         if any(token in lowered for token in ["cửa sổ", "tab", "ứng dụng", "app", "mạng xã hội", "discord", "facebook", "messenger", "zalo"]):
-            return "Đống tab đó tự nó đã đủ làm lộ sự phân mảnh rồi. Tôi chỉ cần chỉ ra chuyện đó, chưa đến mức tự tay dọn hộ Ngài."
+            return "Tôi không có quyền đóng hay gom cửa sổ. Chỉ có thể nhắc Ngài tự giữ lại thứ cần làm trước."
         if any(token in lowered for token in ["can thiệp", "cưỡng chế", "khóa", "ép", "bắt buộc", "thu hồi", "vô hiệu hóa", "disable"]):
             return "Câu đó diễn hơi sâu rồi. Tôi có thể gây khó ở bằng lời, chứ phần cưỡng ép bên ngoài runtime thì vẫn chỉ là tưởng tượng."
         if any(token in hint for token in ["mệt", "ngủ", "đau", "sốt", "ác mộng"]):
@@ -485,7 +753,7 @@ class ParserGroundingMixin:
         changed = False
         previous_unit = ""
         for unit in units:
-            if self._clause_exceeds_runtime_capability(unit, previous_unit=previous_unit):
+            if self._clause_exceeds_runtime_capability(unit, previous_unit=previous_unit, context=text):
                 grounded_units.append(self._rewrite_excessive_clause(unit, user_hint=user_hint))
                 changed = True
             else:
@@ -658,6 +926,49 @@ class ParserGroundingMixin:
             "Tôi sẽ đổi sang một gợi ý ngắn và thực tế hơn."
         )
 
+    def _is_speculative_extracted_fact(self, fact: str) -> bool:
+        normalized = self._normalize_keyword_text(fact)
+        if not normalized:
+            return False
+
+        speculative_markers = (
+            "muon",
+            "khong muon",
+            "quen",
+            "muc tieu",
+            "y chinh",
+            "chua chot",
+            "cang thang",
+            "qua cang",
+            "lam viec qua suc",
+            "working too hard",
+            "forgetting",
+            "ultimate goal",
+            "wants",
+            "does not want",
+            "feels",
+            "stress",
+            "stressed",
+            "anxious",
+            "overwhelmed",
+            "tired",
+            "sad",
+            "happy",
+            "angry",
+            "indecisive",
+            "confused",
+            "motivation",
+            "psychological",
+            "su hien dien",
+            "hien dien",
+            "im lang",
+            "yen tam",
+            "xao dong",
+            "duoc phat hien",
+            "lam diu su on ao",
+        )
+        return any(marker in normalized for marker in speculative_markers)
+
     def _finalize_decision(self, decision: dict, user_hint: str = ""):
         source_text = str(decision.get("text", self.fallback["text"]))
         inline_fields = self._try_extract_inline_decision_fields_from_text(source_text)
@@ -686,11 +997,10 @@ class ParserGroundingMixin:
             user_hint=user_hint,
         )
         extracted_fact = self._normalize_salvaged_text(str(decision.get("extracted_fact", "")).strip())
+        if self._is_speculative_extracted_fact(extracted_fact):
+            extracted_fact = ""
 
-        try:
-            direction = int(decision.get("direction", 0))
-        except (TypeError, ValueError):
-            direction = 0
+        direction = self._sanitize_direction(decision.get("direction", 0))
 
         next_animation = self._sanitize_animation(
             decision.get("next_animation", ""),
@@ -709,11 +1019,32 @@ class ParserGroundingMixin:
             bounce_action = ""
         system_action = self._sanitize_system_action(decision.get("system_action", ""))
         action_input = self._normalize_salvaged_text(str(decision.get("action_input", "")).strip())[:280]
+        if not system_action:
+            action_input = ""
 
-        try:
-            target_x = float(decision.get("target_x", -1.0))
-        except (TypeError, ValueError):
-            target_x = -1.0
+        target_x = self._sanitize_target_x(decision.get("target_x", -1.0))
+
+        motion_intent = self._sanitize_motion_intent(decision.get("motion_intent", ""))
+        motion_target_x = self._sanitize_target_x(
+            decision.get("motion_target_x", target_x),
+            fallback=target_x,
+        )
+        motion_facing = self._sanitize_motion_facing(
+            decision.get("motion_facing", direction),
+            fallback=direction,
+        )
+
+        if not motion_intent:
+            motion_intent = self._infer_motion_intent(
+                animation=animation,
+                next_animation=next_animation,
+                direction=direction,
+                target_x=target_x,
+            )
+        if motion_target_x < 0.0 and target_x >= 0.0:
+            motion_target_x = target_x
+        if motion_facing == 0 and direction in {-1, 1}:
+            motion_facing = direction
 
         debug_trace = self._normalize_debug_trace(
             decision.get("debug_trace", decision.get("_thought", ""))
@@ -773,6 +1104,9 @@ class ParserGroundingMixin:
             "parse_mode": parse_mode,
             "system_action": system_action,
             "action_input": action_input,
+            "motion_intent": motion_intent,
+            "motion_target_x": motion_target_x,
+            "motion_facing": motion_facing,
         }
 
     def _infer_structured_action(self, text: str, user_hint: str = ""):
@@ -874,7 +1208,7 @@ class ParserGroundingMixin:
         }, user_hint=user_hint)
 
     def _extract_lax_field(self, text: str, field: str, known_fields):
-        match = re.search(rf'["\']?{re.escape(field)}["\']?\s*:\s*', text, flags=re.IGNORECASE)
+        match = re.search(rf'["\']?\s*{re.escape(field)}\s*["\']?\s*:\s*', text, flags=re.IGNORECASE)
         if not match:
             return None
 
@@ -884,18 +1218,14 @@ class ParserGroundingMixin:
             if other == field:
                 continue
             other_match = re.search(
-                rf',\s*["\']?{re.escape(other)}["\']?\s*:',
+                rf',\s*["\']?\s*{re.escape(other)}\s*["\']?\s*:',
                 text[start:],
                 flags=re.IGNORECASE,
             )
             if other_match:
                 end = min(end, start + other_match.start())
 
-        raw_value = text[start:end].strip().rstrip(",").strip()
-        raw_value = raw_value.rstrip("}").strip()
-        if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {'"', "'"}:
-            raw_value = raw_value[1:-1]
-        return raw_value.strip()
+        return self._clean_inline_field_value(text[start:end])
 
     def _try_parse_lax_json(self, text: str, user_hint: str = ""):
         cleaned = text.strip()
@@ -941,15 +1271,11 @@ class ParserGroundingMixin:
         system_action = extracted.get("system_action", "").strip()
         action_input = extracted.get("action_input", "").strip()
 
-        try:
-            direction = int(float(extracted.get("direction", structured["direction"])))
-        except (TypeError, ValueError):
-            direction = structured["direction"]
-
-        try:
-            target_x = float(extracted.get("target_x", structured["target_x"]))
-        except (TypeError, ValueError):
-            target_x = structured["target_x"]
+        direction = self._sanitize_direction(extracted.get("direction", structured["direction"]))
+        target_x = self._sanitize_target_x(
+            extracted.get("target_x", structured["target_x"]),
+            fallback=structured["target_x"],
+        )
 
         return self._finalize_decision({
             "text": display_text,
@@ -1101,8 +1427,9 @@ class ParserGroundingMixin:
 
         try:
             data = json.loads(cleaned)
+            data = self._normalize_decision_field_keys(data)
             if "response" in data and isinstance(data["response"], list) and len(data["response"]) > 0:
-                data = data["response"][0]
+                data = self._normalize_decision_field_keys(data["response"][0])
 
             text = str(data.get("text", self.fallback["text"]))
             animation = self._sanitize_animation(
@@ -1112,14 +1439,12 @@ class ParserGroundingMixin:
             )
             fact = str(data.get("extracted_fact", "")).strip()
 
-            direction = int(data.get("direction", 0))
+            direction = self._sanitize_direction(data.get("direction", 0))
             next_anim = str(data.get("next_animation", "")).strip()
             bounce_action = str(data.get("bounce_action", "")).strip()
-            target_x_raw = data.get("target_x", -1)
-            try:
-                target_x = float(target_x_raw)
-            except (TypeError, ValueError):
-                target_x = -1.0
+            target_x = self._sanitize_target_x(data.get("target_x", -1.0))
+
+            parse_mode = "lax_json" if self._requires_lax_json_mode(data) else "json"
 
             return self._finalize_decision({
                 "text": text,
@@ -1130,7 +1455,7 @@ class ParserGroundingMixin:
                 "target_x": target_x,
                 "bounce_action": bounce_action,
                 "debug_trace": data.get("debug_trace", data.get("_thought", "")),
-                "parse_mode": "json",
+                "parse_mode": parse_mode,
                 "system_action": data.get("system_action", ""),
                 "action_input": data.get("action_input", ""),
             }, user_hint=user_hint)

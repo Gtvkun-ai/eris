@@ -1,10 +1,10 @@
 # Dataset Schemas
 
-Tài liệu này mô tả schema cho các file seed được thêm tay sau bước `clean_split_jsonl.py`.
+Tai lieu nay mo ta schema cho cac file seed duoc them tay sau buoc `clean_split_jsonl.py`.
 
 ## `train/desktop/desktop_uncertainty_soft_claim.jsonl`
 
-Mục tiêu: dạy model trả lời grounded nhưng biết nói mềm khi bằng chứng chưa đủ mạnh.
+Muc tieu: day model tra loi grounded nhung biet noi mem khi bang chung chua du manh.
 
 Schema:
 
@@ -28,21 +28,21 @@ Schema:
   },
   "conversations": [
     {"role": "system", "content": "...persona prompt..."},
-    {"role": "user", "content": "tôi có đang bị kẹt không"},
-    {"role": "assistant", "content": "Từ dấu vết hiện có, có vẻ Ngài đang mắc ở một điểm cụ thể hơn là thiếu cố gắng."}
+    {"role": "user", "content": "toi co dang bi ket khong"},
+    {"role": "assistant", "content": "Tu dau vet hien co, co ve Ngai dang mac o mot diem cu the hon la thieu co gang."}
   ]
 }
 ```
 
-Quy tắc:
+Quy tac:
 
-- Assistant chỉ suy luận nhẹ từ `evidence` và `recent_events`.
-- Ưu tiên các cụm như `có vẻ`, `nếu tôi đang đọc đúng context này`, `tôi chưa dám kết luận mạnh hơn`.
-- Không được khẳng định tâm trạng, sức khỏe, hay ý định nếu context không đủ.
+- Assistant chi suy luan nhe tu `evidence` va `recent_events`.
+- Uu tien cac cum nhu `co ve`, `neu toi dang doc dung context nay`, `toi chua dam ket luan manh hon`.
+- Khong duoc khang dinh tam trang, suc khoe, hay y dinh neu context khong du.
 
 ## `train/tools/tool_action_result_grounded.jsonl`
 
-Mục tiêu: dạy model trả lời trung thực theo kết quả action runtime.
+Muc tieu: day model tra loi trung thuc theo ket qua action runtime.
 
 Schema:
 
@@ -61,15 +61,50 @@ Schema:
   },
   "conversations": [
     {"role": "system", "content": "...persona prompt..."},
-    {"role": "user", "content": "mở github cho tôi"},
-    {"role": "assistant", "content": "Tôi đã gửi yêu cầu mở GitHub cho hệ thống. Nếu trình duyệt mặc định hoạt động bình thường thì tab sẽ bật ra."}
+    {"role": "user", "content": "mo github cho toi"},
+    {"role": "assistant", "content": "Toi da gui yeu cau mo GitHub cho he thong. Neu trinh duyet mac dinh hoat dong binh thuong thi tab se bat ra."}
   ]
 }
 ```
 
-Quy tắc:
+Quy tac:
 
-- Assistant chỉ được nói những gì `result` xác nhận.
-- Nếu `success=false`, assistant phải nói chưa làm được và gợi ý bước tiếp theo ngắn gọn.
-- Không được bịa rằng thao tác đã hoàn tất ngoài đời nếu runtime chỉ mới `request/open`.
-- Nên bám sát `action_name`, `action_input`, `result.message`, và `result.data`.
+- Assistant chi duoc noi nhung gi `result` xac nhan.
+- Neu `success=false`, assistant phai noi chua lam duoc va goi y buoc tiep theo ngan gon.
+- Khong duoc bia rang thao tac da hoan tat ngoai doi neu runtime chi moi `request/open`.
+- Nen bam sat `action_name`, `action_input`, `result.message`, va `result.data`.
+
+## `train/fe/fe_style_supervision.jsonl`
+
+Muc tieu: day model doc nhan style ngan cho Fe thay vi mot khoi policy dai.
+
+Schema:
+
+```json
+{
+  "source_file": "persona_general_chat.jsonl",
+  "source_line": 12,
+  "knowledge_context": {
+    "style_tags": [
+      "tone=cold_soft",
+      "warmth=mid",
+      "stance=grounded",
+      "attachment=guarded",
+      "arc=quiet_observation",
+      "continuity=hold_tone"
+    ],
+    "style_source": "persona_general_chat"
+  },
+  "conversations": [
+    {"role": "system", "content": "...persona prompt..."},
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "content": "..."}
+  ]
+}
+```
+
+Quy tac:
+
+- Chi dung nhan ngan, gan train data, khong dump them prose policy.
+- `tone`, `warmth`, `stance`, `attachment` la truc chinh; `arc` va `continuity` giu cue ngan cho nhip va do lien mach.
+- `conversations` duoc tai su dung nguyen van tu cac tap `persona_general_chat`, `persona_emotional_support`, `persona_code_help`.

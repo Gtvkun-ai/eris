@@ -98,6 +98,7 @@ class TelemetryMixin:
         return {
             "captured_at": current_time,
             "active_window": active_window,
+            "active_app": active_window,
             "browser_url": str(browser_info.get("url", "") or ""),
             "browser_tabs": tuple(browser_info.get("tabs", ()) or ()),
             "open_windows": tuple(all_windows),
@@ -106,6 +107,10 @@ class TelemetryMixin:
             "mood_score": mood_score,
             "inferred_pos_x": inferred_pos_x,
             "idle_seconds": idle_seconds,
+            "recent_events": (),
+            "user_signals": {},
+            "evidence": (),
+            "claim_style": "",
         }
 
     def get_system_telemetry(self, *, mood_score: int, inferred_pos_x: float):

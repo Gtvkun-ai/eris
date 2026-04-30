@@ -47,7 +47,12 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("autonomous mode", system_prompt.lower())
         self.assertIn("search_web", system_prompt)
         self.assertIn("khong nhu thong bao he thong", _norm(system_prompt))
-        self.assertIn("doc thoai", _norm(user_prompt))
+        self.assertIn("dung tu tao chu de rieng", _norm(user_prompt))
+        self.assertIn("machine context chi la nen tham khao", _norm(system_prompt))
+        self.assertIn("khong khi nen", _norm(user_prompt))
+        self.assertIn("speech intent", _norm(user_prompt))
+        self.assertIn("screen_observation", user_prompt)
+        self.assertIn("tranh mo cau bang viec mo ta app", _norm(user_prompt))
 
     def test_chat_reply_repairs_non_json_with_second_pass(self):
         client = _FakeClient(
@@ -67,6 +72,30 @@ class LlmServiceTests(unittest.TestCase):
         self.assertEqual(len(client.calls), 2)
         self.assertIn('"animation":"stand"', raw)
         self.assertIn('"debug_trace":"repair"', raw)
+
+    def test_chat_reply_can_attach_screen_image(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"Toi thay mot trinh duyet.","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_chat_reply(
+            chat_history=[],
+            user_message="ban thay man hinh khong",
+            screen_image_data_uri="data:image/jpeg;base64,abc",
+        )
+
+        content = client.calls[0]["messages"][-1]["content"]
+        self.assertIsInstance(content, list)
+        self.assertEqual(content[0]["type"], "image_url")
+        self.assertEqual(content[0]["image_url"]["url"], "data:image/jpeg;base64,abc")
+        self.assertIn("screenshot", content[1]["text"].lower())
 
     def test_directive_wraps_plain_text_into_safe_json_if_repair_fails(self):
         client = _FakeClient(
@@ -100,18 +129,12 @@ class LlmServiceTests(unittest.TestCase):
         self.assertTrue(raw.startswith("{"))
         self.assertIn('"debug_trace":"embedded"', raw)
 
-    def test_repairs_json_with_invalid_schema_values(self):
+    def test_coerces_json_with_missing_required_fields_without_repair(self):
         client = _FakeClient(
             [
                 (
                     '{"text":"Sai schema","animation":"idle",'
-                    '"direction":"focus","target_x":512,"bounce_action":"","extracted_fact":"",'
-                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
-                ),
-                (
-                    '{"text":"Sai schema","animation":"stand",'
-                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
-                    '"debug_trace":"repair","next_animation":"","system_action":"","action_input":""}'
+                    '"direction":"focus","target_x":512}'
                 ),
             ]
         )
@@ -119,10 +142,74 @@ class LlmServiceTests(unittest.TestCase):
 
         raw = service.generate_directive(telemetry_data="focus=general")
 
-        self.assertEqual(len(client.calls), 2)
-        self.assertIn('"animation":"stand"', raw)
-        self.assertIn('"direction":0', raw)
-        self.assertIn('"target_x":-1.0', raw)
+        self.assertEqual(len(client.calls), 1)
+        self.assertIn('"animation": "stand"', raw)
+        self.assertIn('"direction": 0', raw)
+        self.assertIn('"target_x": -1.0', raw)
+        self.assertNotIn("wrapped non-JSON directive reply", raw)
+        self.assertIn("sanitized decision-like JSON", raw)
+
+    def test_coerces_partial_decision_json_without_wrapping_it_inside_text(self):
+        partial_decision = (
+            '{"text":"Một câu ngắn đã được đặt ở tầng ngoài cùng.",'
+            '"animation":"","direction":0,"target_x":0.5,"bounce_action":"","extracted_fact":""}'
+        )
+        client = _FakeClient([partial_decision])
+        service = LlmService(client)
+
+        raw = service.generate_directive(telemetry_data="focus=general")
+
+        self.assertEqual(len(client.calls), 1)
+        self.assertIn('"text": "Một câu ngắn đã được đặt ở tầng ngoài cùng."', raw)
+        self.assertIn('"animation": "stand"', raw)
+        self.assertIn('"target_x": -1.0', raw)
+        self.assertNotIn('"{ \\"text\\"', raw)
+        self.assertNotIn("wrapped non-JSON directive reply", raw)
+
+    def test_coerces_decision_json_with_spaced_field_names_without_wrapping(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"Co ve moi thu dang chay kha on."," animation":"sit",'
+                    '" direction":0," target_x":0.5," bounce_action":"",'
+                    '" extracted_fact":""," debug_trace":""," next_animation":"",'
+                    '" system_action":""," action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        raw = service.generate_directive(telemetry_data="focus=general")
+
+        self.assertEqual(len(client.calls), 1)
+        self.assertIn('"text": "Co ve moi thu dang chay kha on."', raw)
+        self.assertIn('"animation": "sit"', raw)
+        self.assertIn('"target_x": -1.0', raw)
+        self.assertNotIn('" animation"', raw)
+        self.assertNotIn("wrapped non-JSON directive reply", raw)
+        self.assertIn("sanitized decision-like JSON", raw)
+
+    def test_sanitizes_decision_like_json_without_fallback_wrapping(self):
+        invalid_but_decision_like = (
+            '{"text":"Co ve Ngai dang phan tan mot chut.","animation":"subtle_sigh",'
+            '"direction":"soft","target_x":0.5,"bounce_action":null,'
+            '"extracted_fact":["attention drift"],"debug_trace":["fragmented focus"],'
+            '"next_animation":null,"system_action":"","action_input":"none"}'
+        )
+        client = _FakeClient([invalid_but_decision_like])
+        service = LlmService(client)
+
+        raw = service.generate_directive(telemetry_data="focus=general")
+
+        self.assertEqual(len(client.calls), 1)
+        self.assertIn('"text": "Co ve Ngai dang phan tan mot chut."', raw)
+        self.assertIn('"animation": "stand"', raw)
+        self.assertIn('"direction": 0', raw)
+        self.assertIn('"target_x": -1.0', raw)
+        self.assertIn('"extracted_fact": "attention drift"', raw)
+        self.assertIn('"action_input": ""', raw)
+        self.assertNotIn("wrapped non-JSON directive reply", raw)
+        self.assertIn("sanitized decision-like JSON", raw)
 
     def test_directive_adds_resource_guard_style_constraints(self):
         client = _FakeClient(
@@ -144,6 +231,31 @@ class LlmServiceTests(unittest.TestCase):
         user_prompt = client.calls[0]["messages"][1]["content"]
         self.assertIn("khong mo dau bang 'du lieu he thong'", _norm(user_prompt))
         self.assertIn("toi se bat buoc", _norm(user_prompt))
+        self.assertIn("khong dung an du lung lo", _norm(user_prompt))
+        self.assertIn("may dang nang", _norm(user_prompt))
+
+    def test_directive_prompt_can_exclude_recent_text(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"ngan gon","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_directive(
+            telemetry_data="focus=general",
+            avoid_text="Cửa sổ mở ra thì không ai biết nó sẽ đóng lại lúc nào.",
+        )
+
+        user_prompt = client.calls[0]["messages"][1]["content"]
+        normalized = _norm(user_prompt)
+        self.assertIn("cau gan nhat can tranh lap lai", normalized)
+        self.assertIn("khong duoc lap lai y", normalized)
+        self.assertIn("cua so mo ra", normalized)
 
     def test_directive_prompt_discourages_overmanaged_language(self):
         client = _FakeClient(
@@ -167,6 +279,56 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("dong bo hoa nhip do", _norm(system_prompt))
         self.assertIn("trong ba phut toi", _norm(system_prompt))
         self.assertIn("mot phan mem duy nhat", _norm(user_prompt))
+        normalized_user = _norm(user_prompt)
+        self.assertIn("khong triet ly", normalized_user)
+        self.assertIn("speech intent", normalized_user)
+        self.assertIn("chi neu dieu co trong speech_intent", normalized_user)
+
+    def test_directive_prompt_does_not_seed_background_motion_claim(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"ngan gon","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_directive(
+            telemetry_data="focus=general",
+            ni_context="drift_level=cao",
+            ti_context="Mode: steady_observe.",
+        )
+
+        user_prompt = client.calls[0]["messages"][1]["content"]
+        normalized_user = _norm(user_prompt)
+        self.assertNotIn("chuyen dong nen", normalized_user)
+        self.assertNotIn("nen canh", normalized_user)
+        self.assertIn("thieu screen_facts", normalized_user)
+
+    def test_directive_prompt_uses_requested_speech_intent(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"toi nghe","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_directive(
+            telemetry_data="focus=general",
+            speech_intent="user_requested",
+        )
+
+        user_prompt = client.calls[0]["messages"][1]["content"]
+        normalized_user = _norm(user_prompt)
+        self.assertIn("speech_intent=user_requested", normalized_user)
+        self.assertIn("ngai vua yeu cau noi ngay", normalized_user)
 
 
 if __name__ == "__main__":

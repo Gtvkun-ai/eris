@@ -17,11 +17,14 @@ public partial class UdpListener : Node2D
 	private RichTextLabel _label;
 	private Process _visionProcess;
 	private Process _llamaServerProcess;
+	private MotionController _motion;
 
 	[Export] public string PythonExecutable = "python";
 	[Export] public string VisionScriptPath = "src/vision.py";
 	[Export] public string LlamaServerPath = "lib/llama-b8466-bin-win-cuda-12.4-x64/llama-server.exe";
 	[Export] public string ModelPath = "src/model.gguf";
+	[Export] public bool EnableLocalVisionInput = true;
+	[Export] public string MmprojPath = "src/mmproj-F16.gguf";
 	[Export] public bool AutoStartVision = false;
 	[Export] public bool AutoPreloadLlamaServer = false;
 	[Export] public int LlamaServerPort = 8080;
@@ -52,17 +55,16 @@ public partial class UdpListener : Node2D
 	private float _climbTopTargetX = float.NaN; // Điểm đích trên mép đỉnh; NaN = đi hết mép như cũ
 	private const float ClimbSpeed = 50f;
 
-	private TextureButton _pointBtn;
-	private TextureButton _chatBtn;
-	private Button _llmBtn;
-	private Button _erisBtn;
-	private Button _useApiBtn;
 	private Panel _chatPanel;
-	private LineEdit _apiKeyInput;
+	private Panel _characterContextMenu;
+	private Button _contextChatButton;
+	private Button _contextForceSpeakButton;
+	private Button _contextCloseButton;
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	private Tween _textTween;
 	private AudioStreamPlayer _audioPlayer;
+	private static readonly Vector2 CharacterContextMenuMinSize = new(170f, 116f);
 	private readonly Random _rng = new Random();
 	private Control _bubble;
 	private bool _visionTracebackActive = false;
@@ -70,7 +72,6 @@ public partial class UdpListener : Node2D
 	private string _bounceAction = ""; // animation phát tại tường trước khi đổi chiều (loop mãi)
 	private float _targetX = float.NaN; // target_x tuyệt đối trên màn hình (NaN = không có mục tiêu)
 	private Vector2 _bubbleBasePos; // vị trí gốc của bubble trong không gian local của sprite
-	private bool _useRemoteApi = false;
 
 	// Alias: ánh xạ tên AI hay hallucinate về tên animation thực
 	private static readonly Dictionary<string, string> _animAliases = new()
@@ -131,25 +132,20 @@ public partial class UdpListener : Node2D
 		_monika = GetNode<AnimatedSprite2D>("Monika2/Monika");
 		_label  = GetNode<RichTextLabel>("Monika2/Monika/BubbleContainer/MessageLabel");
 		_bubble   = GetNode<Control>("Monika2/Monika/BubbleContainer");
-		_pointBtn = GetNode<TextureButton>("CanvasLayer/Control/MarginContainer/VBoxContainer/point");
-		_chatBtn  = GetNode<TextureButton>("CanvasLayer/Control/MarginContainer/VBoxContainer/chat");
-		_llmBtn   = GetNode<Button>("CanvasLayer/Control/MarginContainer/VBoxContainer/llm");
-		_erisBtn  = GetNode<Button>("CanvasLayer/Control/MarginContainer/VBoxContainer/eris");
-		_apiKeyInput = GetNode<LineEdit>("CanvasLayer/Control/MarginContainer/VBoxContainer/ApiKeyInput");
-		_useApiBtn = GetNode<Button>("CanvasLayer/Control/MarginContainer/VBoxContainer/use_api");
-		ConnectButtonEffects(_pointBtn);
-		ConnectButtonEffects(_chatBtn);
-		_chatBtn.Pressed += ToggleChatPanel;
-		_llmBtn.Pressed += ToggleLlamaServerProcess;
-		_erisBtn.Pressed += ToggleVisionProcess;
-		_useApiBtn.Pressed += ToggleRemoteApiMode;
-		if (_apiKeyInput != null && string.IsNullOrWhiteSpace(_apiKeyInput.Text) && !string.IsNullOrWhiteSpace(DefaultRemoteApiKey))
-			_apiKeyInput.Text = DefaultRemoteApiKey;
-
-		_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
+	_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
+	_characterContextMenu = GetNode<Panel>("CanvasLayer/Control/CharacterContextMenu");
+	_contextChatButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ChatButton");
+	_contextForceSpeakButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ForceSpeakButton");
+	_contextCloseButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/CloseButton");
+		_characterContextMenu.CustomMinimumSize = CharacterContextMenuMinSize;
+		_characterContextMenu.Size = CharacterContextMenuMinSize;
+		_characterContextMenu.ZIndex = 100;
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
-		GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton").Pressed += OnSendPressed;
-		GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton").Pressed += CloseChatPanel;
+	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton").Pressed += OnSendPressed;
+	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton").Pressed += CloseChatPanel;
+	_contextChatButton.Pressed += OnContextChatPressed;
+	_contextForceSpeakButton.Pressed += OnContextForceSpeakPressed;
+	_contextCloseButton.Pressed += CloseCharacterContextMenu;
 		_chatInput.TextSubmitted += _ => OnSendPressed();
 		_chatSend.ConnectToHost("127.0.0.1", 4243);
 
@@ -166,7 +162,12 @@ public partial class UdpListener : Node2D
 
 		// Đặt nhân vật sát đáy màn hình ngay từ đầu, không cần rơi
 		Vector2 screenSize = GetViewportRect().Size;
-		_body.GlobalPosition = new Vector2(_body.GlobalPosition.X, screenSize.Y - _spriteHalfSize.Y);
+		Vector2 groundedPos = _body.GlobalPosition;
+		_bubbleBasePos = _bubble.Position;
+		_motion = new MotionController(PlaySoundForAnimation);
+		_motion.Configure(_spriteHalfSize, _bubbleBasePos);
+		_motion.PlaceOnFloor(ref groundedPos, screenSize);
+		_body.GlobalPosition = groundedPos;
 		_velocityY = 0f;
 		_isFalling = false;
 
@@ -179,14 +180,10 @@ public partial class UdpListener : Node2D
 		_monika.Play("stand");
 		_label.Text = "Chờ lệnh từ AI...";
 
-		_bubbleBasePos = _bubble.Position;
 		_monika.AnimationFinished += OnBounceAnimationFinished;
 		GD.Print($"[Ready] Đang lắng nghe UDP cổng 4242. HalfSize={_spriteHalfSize}");
-		UpdateServiceButtons();
-		if (AutoPreloadLlamaServer)
-			StartLlamaServerProcess();
-		if (AutoStartVision)
-			StartVisionProcess();
+		StartLlamaServerProcess();
+		StartVisionProcess();
 	}
 
 	public override void _ExitTree()
@@ -202,116 +199,10 @@ public partial class UdpListener : Node2D
 	{
 		float d = (float)delta;
 		Vector2 pos = _body.Position;
-
 		Vector2 screenSize = GetViewportRect().Size;
-
-		if (_climbPhase != ClimbPhase.None)
-		{
-			UpdateClimbMovement(ref pos, screenSize, d);
-		}
-		else
-		{
-			// Xử lý trọng lực trục Y
-			_velocityY += _gravity * d;
-			pos.Y += _velocityY * d;
-
-			//Va chạm đáy màn hình
-			if (pos.Y >= screenSize.Y - _spriteHalfSize.Y)
-			{
-				pos.Y = screenSize.Y - _spriteHalfSize.Y;
-				_velocityY = 0f;
-				_isFalling = false;
-			}
-			else
-			{
-				_isFalling = true;
-			}
-
-			//Va chạm trần
-			if (pos.Y <= _spriteHalfSize.Y)
-			{
-				pos.Y = _spriteHalfSize.Y;
-				_velocityY = 0f;
-			}
-
-			// Xử lý di chuyển khi đang walk
-			if (_isWalking)
-			{
-				pos.X += _moveSpeed * _moveDir * d;
-
-				// --- Di chuyển có mục tiêu vị trí (target_x) ---
-				if (!float.IsNaN(_targetX))
-				{
-					bool reached = (_moveDir > 0f && pos.X >= _targetX) || (_moveDir < 0f && pos.X <= _targetX);
-					if (reached)
-					{
-						pos.X = _targetX;
-						_targetX = float.NaN;
-						if (!string.IsNullOrEmpty(_nextAction))
-						{
-							string action = _nextAction;
-							_nextAction = "";
-							ApplyAnimationCommand(action, 0, "");
-						}
-						else
-						{
-							_isWalking = false;
-							_currentAction = "stand";
-							_monika.Scale = Vector2.One;
-							_bubble.Scale = Vector2.One;
-							_bubble.Position = _bubbleBasePos;
-						}
-					}
-				}
-				else
-				{
-					// Va chạm hai bên tường (chỉ khi không có target)
-					if (pos.X >= screenSize.X - _spriteHalfSize.X)
-					{
-						pos.X = screenSize.X - _spriteHalfSize.X;
-						if (!string.IsNullOrEmpty(_bounceAction)) {
-							// Đổi chiều trước rồi phát bounce animation
-							_moveDir = -1f;
-							_currentAction = _bounceAction;
-							_isWalking = false;
-							_monika.Scale = Vector2.One;
-							_bubble.Scale = Vector2.One;
-							_bubble.Position = _bubbleBasePos;
-							PlaySoundForAnimation(_bounceAction);
-						} else if (!string.IsNullOrEmpty(_nextAction)) {
-							string action = _nextAction;
-							_nextAction = "";
-							int nextDir = (action == "stand_walk") ? -1 : 0;
-							ApplyAnimationCommand(action, nextDir, "");
-						} else {
-							_moveDir = -1f;
-						}
-					}
-					else if (pos.X <= _spriteHalfSize.X)
-					{
-						pos.X = _spriteHalfSize.X;
-						if (!string.IsNullOrEmpty(_bounceAction)) {
-							_moveDir = 1f;
-							_currentAction = _bounceAction;
-							_isWalking = false;
-							_monika.Scale = Vector2.One;
-							_bubble.Scale = Vector2.One;
-							_bubble.Position = _bubbleBasePos;
-							PlaySoundForAnimation(_bounceAction);
-						} else if (!string.IsNullOrEmpty(_nextAction)) {
-							string action = _nextAction;
-							_nextAction = "";
-							int nextDir = (action == "stand_walk") ? 1 : 0;
-							ApplyAnimationCommand(action, nextDir, "");
-						} else {
-							_moveDir = 1f;
-						}
-					}
-				}
-			}		}
-
+		_motion.Step(ref pos, screenSize, d);
 		_body.Position = pos;
-		UpdateAnimation();
+		_motion.ApplyVisualState(_monika, _bubble, _body.Position, screenSize);
 		ClampBubbleToScreen();
 
 		//Lắng nghe UDP
@@ -322,8 +213,59 @@ public partial class UdpListener : Node2D
 		}
 	}
 
+	public override void _Input(InputEvent @event)
+	{
+		if (@event is not InputEventMouseButton mouseEvent || !mouseEvent.Pressed)
+			return;
+
+		if (mouseEvent.ButtonIndex == MouseButton.Right)
+		{
+			if (_characterContextMenu.Visible && IsMouseOverControl(_characterContextMenu, mouseEvent.Position))
+			{
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+
+			if (IsMouseOverCharacter(mouseEvent.Position))
+			{
+				ShowCharacterContextMenu(mouseEvent.Position);
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+
+			if (_characterContextMenu.Visible)
+			{
+				CloseCharacterContextMenu();
+				GetViewport().SetInputAsHandled();
+			}
+
+			return;
+		}
+
+		if (
+			mouseEvent.ButtonIndex == MouseButton.Left
+			&& _characterContextMenu.Visible
+			&& !IsMouseOverControl(_characterContextMenu, mouseEvent.Position)
+		)
+		{
+			CloseCharacterContextMenu();
+		}
+	}
+
+	public override void _UnhandledInput(InputEvent @event)
+	{
+		if (@event is not InputEventMouseButton mouseEvent || !mouseEvent.Pressed)
+			return;
+
+		if (mouseEvent.ButtonIndex == MouseButton.Left && _characterContextMenu.Visible)
+		{
+			CloseCharacterContextMenu();
+		}
+	}
+
 	private void ToggleChatPanel()
 	{
+		CloseCharacterContextMenu();
 		if (_chatPanel.Visible)
 			CloseChatPanel();
 		else
@@ -341,6 +283,54 @@ public partial class UdpListener : Node2D
 		SendChatSignal("chat_end");
 	}
 
+	private void OnContextChatPressed()
+	{
+		CloseCharacterContextMenu();
+		if (!_chatPanel.Visible)
+			ToggleChatPanel();
+		else
+			_chatInput.GrabFocus();
+	}
+
+	private void OnContextForceSpeakPressed()
+	{
+		CloseCharacterContextMenu();
+		SendChatSignal("force_speak");
+	}
+
+	private void ShowCharacterContextMenu(Vector2 mousePosition)
+	{
+		_characterContextMenu.Visible = true;
+		_characterContextMenu.Size = CharacterContextMenuMinSize;
+		_characterContextMenu.ZIndex = 100;
+
+		Vector2 screenSize = GetViewportRect().Size;
+		Vector2 menuSize = _characterContextMenu.Size;
+		Vector2 clamped = new(
+			Mathf.Clamp(mousePosition.X, 0f, Mathf.Max(0f, screenSize.X - menuSize.X)),
+			Mathf.Clamp(mousePosition.Y, 0f, Mathf.Max(0f, screenSize.Y - menuSize.Y)));
+
+		_characterContextMenu.Position = clamped;
+	}
+
+	private void CloseCharacterContextMenu()
+	{
+		_characterContextMenu.Visible = false;
+	}
+
+	private bool IsMouseOverCharacter(Vector2 mousePosition)
+	{
+		Vector2 halfSize = _spriteHalfSize;
+		Rect2 hitRect = new(_body.GlobalPosition - halfSize, halfSize * 2f);
+		return hitRect.HasPoint(mousePosition);
+	}
+
+	private static bool IsMouseOverControl(Control control, Vector2 mousePosition)
+	{
+		Rect2 rect = new(control.GlobalPosition, control.Size);
+		return rect.HasPoint(mousePosition);
+	}
+
 	private void OnSendPressed()
 	{
 		string msg = _chatInput.Text.Trim();
@@ -356,20 +346,6 @@ public partial class UdpListener : Node2D
 	{
 		string payload = $"{{\"type\":\"{type}\"}}";
 		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
-	}
-
-	private void ConnectButtonEffects(TextureButton btn)
-	{
-		btn.MouseEntered += () => TweenButtonColor(btn, new Color(1.4f, 1.4f, 0.8f)); // hover: vàng sáng
-		btn.MouseExited  += () => TweenButtonColor(btn, Colors.White);
-		btn.ButtonDown   += () => TweenButtonColor(btn, new Color(0.6f, 0.85f, 1.0f)); // nhấn: xanh dương
-		btn.ButtonUp     += () => TweenButtonColor(btn, new Color(1.4f, 1.4f, 0.8f));
-	}
-
-	private void TweenButtonColor(TextureButton btn, Color target)
-	{
-		var tween = CreateTween();
-		tween.TweenProperty(btn, "modulate", target, 0.12f);
 	}
 
 	private void ApplyTypewriterEffect(string text){
@@ -499,6 +475,45 @@ public partial class UdpListener : Node2D
 			_bubble.GlobalPosition = new Vector2(clampedX, bubbleGlobal.Y);
 	}
 
+	private string NormalizeAnimationName(string animation, int facingDir, bool allowEmpty = false)
+	{
+		string value = (animation ?? "").Trim();
+		if (string.IsNullOrEmpty(value))
+			return allowEmpty ? "" : "stand";
+
+		if (_animAliases.TryGetValue(value, out var mapped))
+		{
+			GD.Print($"[Anim] Alias '{value}' → '{mapped}'");
+			value = mapped;
+		}
+
+		if (_validAnimations.Contains(value))
+			return value;
+
+		string fallback = (facingDir == 1 || facingDir == -1) ? "stand_walk" : "stand";
+		GD.PrintErr($"[Anim] Animation không hợp lệ: '{value}', fallback về '{fallback}'.");
+		return allowEmpty ? "" : fallback;
+	}
+
+	private static string InferMotionIntent(string animation, string nextAnimation, int facingDir, float targetX)
+	{
+		if (animation == "climb" && nextAnimation == "climb_top")
+			return "climb_to_top";
+		if (animation == "climb_top")
+			return "climb_to_top";
+		if (animation == "climb")
+			return "climb_loop";
+		if (animation == "air_swing_l" || animation == "air_swing_r")
+			return "drop";
+		if (targetX >= 0f)
+			return "walk_to";
+		if (animation == "stand_walk")
+			return "walk";
+		if (facingDir == 1 || facingDir == -1)
+			return "face";
+		return "";
+	}
+
 	private void ParseAndApply(string raw)
     {
         string text = raw;
@@ -509,9 +524,9 @@ public partial class UdpListener : Node2D
 		string debugTrace = "";
 		string parserTrace = "";
 		string parseMode = "";
-		// Reset targets trước khi xử lý lệnh mới
-		_targetX = float.NaN;
-		_bounceAction = ""; 
+		string motionIntent = "";
+		int motionFacing = 0;
+		float motionTargetX = -1f;
 
         try
         {
@@ -532,37 +547,20 @@ public partial class UdpListener : Node2D
             if (root.TryGetProperty("animation", out var a)) animation = a.GetString() ?? "stand";
 			if (root.TryGetProperty("direction", out var d) && d.ValueKind == JsonValueKind.Number) 
             {
-                direction = d.GetInt32(); // 1 = phải, -1 = trái
+                direction = d.GetInt32();
             }
 			if (root.TryGetProperty("next_animation", out var na)) nextAnimation = na.GetString() ?? "";
 			if (root.TryGetProperty("bounce_action", out var ba)) bounceAction = ba.GetString() ?? "";
 			if (root.TryGetProperty("debug_trace", out var dt)) debugTrace = dt.GetString() ?? "";
 			if (root.TryGetProperty("parser_trace", out var pt)) parserTrace = pt.GetString() ?? "";
 			if (root.TryGetProperty("parse_mode", out var pm)) parseMode = pm.GetString() ?? "";
-            
-            // CHỈ XỬ LÝ TARGET_X KHI NÓ >= 0 ---
             if (root.TryGetProperty("target_x", out var tx) && tx.ValueKind == JsonValueKind.Number)
-            {
-                float rawTx = tx.GetSingle();
-                
-                // Nếu AI truyền -1 (không có đích), ta bỏ qua hoàn toàn khối lệnh này
-                if (rawTx >= 0f) 
-                {
-                    float frac = Mathf.Clamp(rawTx, 0f, 1f); // đảm bảo target_x là tỉ lệ phần trăm giữa 0 và 1
-                    Vector2 sz = GetViewportRect().Size; // kích thước màn hình
-                    
-                    float absX = Mathf.Clamp(frac * sz.X, _spriteHalfSize.X, sz.X - _spriteHalfSize.X);
-                    _targetX = absX;
-                    
-                    direction = (_targetX > _body.Position.X) ? 1 : -1;
-                    bool movementSequence = animation == "climb" || animation == "climb_top" || nextAnimation == "climb_top";
-                    if (!movementSequence)
-                    {
-                        animation = "stand_walk"; // Chỉ ép thành đi bộ khi đây là mục tiêu mặt đất
-                    }
-                    GD.Print($"[Physics] target_x={frac:F2} → absX={absX:F0}, dir={direction}");
-                }
-            }
+				motionTargetX = tx.GetSingle();
+			if (root.TryGetProperty("motion_intent", out var mi)) motionIntent = mi.GetString() ?? "";
+			if (root.TryGetProperty("motion_facing", out var mf) && mf.ValueKind == JsonValueKind.Number)
+				motionFacing = mf.GetInt32();
+			if (root.TryGetProperty("motion_target_x", out var mtx) && mtx.ValueKind == JsonValueKind.Number)
+				motionTargetX = mtx.GetSingle();
         }
         catch (Exception ex)
         {
@@ -570,6 +568,15 @@ public partial class UdpListener : Node2D
             text = "Lỗi đường truyền tín hiệu.";
             animation = "stand";
         }
+
+		int resolvedFacing = motionFacing != 0 ? motionFacing : direction;
+		animation = NormalizeAnimationName(animation, resolvedFacing);
+		nextAnimation = NormalizeAnimationName(nextAnimation, resolvedFacing, allowEmpty: true);
+		bounceAction = NormalizeAnimationName(bounceAction, resolvedFacing, allowEmpty: true);
+		if (string.IsNullOrWhiteSpace(motionIntent))
+			motionIntent = InferMotionIntent(animation, nextAnimation, resolvedFacing, motionTargetX);
+		if (motionFacing == 0)
+			motionFacing = resolvedFacing;
 
 		if (!string.IsNullOrEmpty(parseMode) || !string.IsNullOrEmpty(debugTrace) || !string.IsNullOrEmpty(parserTrace))
 		{
@@ -581,8 +588,16 @@ public partial class UdpListener : Node2D
 		}
 
 		ApplyTypewriterEffect(text);
-		_bounceAction = bounceAction; // set trước ApplyAnimationCommand để không bị ghi đè
-        ApplyAnimationCommand(animation, direction, nextAnimation);
+		_motion.ApplyCommand(
+			new MotionCommand(
+				intent: motionIntent,
+				poseAnimation: animation,
+				nextAnimation: nextAnimation,
+				bounceAction: bounceAction,
+				facingDir: motionFacing,
+				targetX: motionTargetX),
+			_body.Position,
+			GetViewportRect().Size);
     }
 
 	private void ApplyAnimationCommand(string animation, int direction, string nextAnimation)
@@ -743,19 +758,14 @@ public partial class UdpListener : Node2D
 
 	private void OnBounceAnimationFinished()
 	{
-		// Sau khi bounce animation kết thúc → tiếp tục đi theo hướng đã flip
-		if (!string.IsNullOrEmpty(_bounceAction) && _currentAction == _bounceAction && !_isWalking)
-		{
-			_currentAction = "stand_walk";
-			_isWalking = true;
-			PlaySoundForAnimation("stand_walk");
-		}
+		_motion.NotifyAnimationFinished();
 	}
 
 	private void OnAudioFinished()
 	{
-		if (_loopingSoundAnims.Contains(_currentAction))
-			PlaySoundForAnimation(_currentAction);
+		string currentAction = _motion?.CurrentAction ?? _currentAction;
+		if (_loopingSoundAnims.Contains(currentAction))
+			PlaySoundForAnimation(currentAction);
 	}
 
 	private void PlaySoundForAnimation(string animation)
@@ -808,7 +818,7 @@ public partial class UdpListener : Node2D
 
 		try
 		{
-			if (!_useRemoteApi && !IsLlamaServerReachable() && !StartLlamaServerProcess())
+			if (!IsLlamaServerReachable() && !StartLlamaServerProcess())
 			{
 				GD.PrintErr("[Vision] Không thể khởi động vision.py vì llama-server chưa sẵn sàng.");
 				return;
@@ -834,12 +844,8 @@ public partial class UdpListener : Node2D
 			startInfo.Environment["LLAMA_SERVER_NGL"] = LlamaServerNgl;
 			startInfo.Environment["LLAMA_SERVER_FLASH_ATTN"] = LlamaServerFlashAttn ? "on" : "off";
 			startInfo.Environment["LLAMA_SERVER_EXTRA_ARGS"] = LlamaServerExtraArgs;
-			startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = _useRemoteApi ? "1" : "0";
-			startInfo.Environment["ERIS_REMOTE_API_KEY"] = NormalizeApiKeyInput(_apiKeyInput?.Text ?? "") is string normalizedKey && !string.IsNullOrWhiteSpace(normalizedKey)
-				? normalizedKey
-				: DefaultRemoteApiKey.Trim();
-			startInfo.Environment["ERIS_REMOTE_BASE_URL"] = RemoteApiBaseUrl;
-			startInfo.Environment["ERIS_REMOTE_MODEL"] = RemoteApiModelName;
+			startInfo.Environment["LLAMA_SERVER_MMPROJ"] = EnableLocalVisionInput ? GetMmprojFullPath() : "";
+			startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = "0";
 
 			var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 			process.OutputDataReceived += (_, e) =>
@@ -956,52 +962,6 @@ public partial class UdpListener : Node2D
 			StartVisionProcess();
 	}
 
-	private void ToggleRemoteApiMode()
-	{
-		string apiKey = NormalizeApiKeyInput(_apiKeyInput?.Text ?? "");
-		if (!_useRemoteApi && string.IsNullOrEmpty(apiKey))
-		{
-			GD.PrintErr("[API] Hãy nhập API key trước khi bật chế độ dùng API.");
-			_apiKeyInput?.GrabFocus();
-			return;
-		}
-
-		if (_apiKeyInput != null)
-			_apiKeyInput.Text = apiKey;
-
-		_useRemoteApi = !_useRemoteApi;
-		GD.Print(_useRemoteApi
-			? $"[API] Đã bật chế độ dùng API remote: {RemoteApiModelName}"
-			: "[API] Đã tắt chế độ dùng API remote, quay về AI local.");
-
-		bool visionRunning = _visionProcess != null && !_visionProcess.HasExited;
-		if (visionRunning)
-		{
-			GD.Print("[API] vision.py đang chạy, sẽ restart để áp dụng cấu hình mới.");
-			StopVisionProcess();
-			StartVisionProcess();
-		}
-
-		UpdateServiceButtons();
-	}
-
-	private string NormalizeApiKeyInput(string raw)
-	{
-		string candidate = (raw ?? "").Trim();
-		if (string.IsNullOrEmpty(candidate))
-			return "";
-
-		var quotedMatch = Regex.Match(candidate, "api_key\\s*=\\s*[\"']([^\"']+)[\"']", RegexOptions.IgnoreCase);
-		if (quotedMatch.Success)
-			candidate = quotedMatch.Groups[1].Value.Trim();
-
-		var tokenMatch = Regex.Match(candidate, "\\bsk-[A-Za-z0-9._\\-]+\\b");
-		if (tokenMatch.Success)
-			candidate = tokenMatch.Value;
-
-		return candidate.Trim();
-	}
-
 	private string GetProjectRoot()
 	{
 		return ProjectSettings.GlobalizePath("res://");
@@ -1015,6 +975,11 @@ public partial class UdpListener : Node2D
 	private string GetModelFullPath()
 	{
 		return Path.Combine(GetProjectRoot(), ModelPath.Replace('/', Path.DirectorySeparatorChar));
+	}
+
+	private string GetMmprojFullPath()
+	{
+		return Path.Combine(GetProjectRoot(), MmprojPath.Replace('/', Path.DirectorySeparatorChar));
 	}
 
 	private bool IsLlamaServerReachable()
@@ -1115,11 +1080,27 @@ public partial class UdpListener : Node2D
 		try
 		{
 			string flashAttnArgs = LlamaServerFlashAttn ? " --flash-attn on" : "";
+			string mmprojPath = GetMmprojFullPath();
+			bool extraArgsHasMmproj = !string.IsNullOrWhiteSpace(LlamaServerExtraArgs) &&
+				LlamaServerExtraArgs.Contains("--mmproj", StringComparison.OrdinalIgnoreCase);
+			bool extraArgsHasMmprojOffload = !string.IsNullOrWhiteSpace(LlamaServerExtraArgs) &&
+				LlamaServerExtraArgs.Contains("mmproj-offload", StringComparison.OrdinalIgnoreCase);
+			string mmprojArgs = "";
+			if (EnableLocalVisionInput && !extraArgsHasMmproj)
+			{
+				if (File.Exists(mmprojPath))
+				{
+					string mmprojOffloadArgs = extraArgsHasMmprojOffload ? "" : " --mmproj-offload";
+					mmprojArgs = $" --mmproj \"{mmprojPath}\"{mmprojOffloadArgs}";
+				}
+				else
+					GD.PrintErr($"[LLM] Vision input đang bật nhưng không tìm thấy mmproj: {mmprojPath}");
+			}
 			string extraArgs = string.IsNullOrWhiteSpace(LlamaServerExtraArgs) ? "" : $" {LlamaServerExtraArgs}";
 			var startInfo = new ProcessStartInfo
 			{
 				FileName = serverPath,
-				Arguments = $"-m \"{modelPath}\" -c {LlamaServerCtx} -ngl {LlamaServerNgl} --host 127.0.0.1 --port {LlamaServerPort} --no-warmup --jinja --reasoning-format deepseek{flashAttnArgs}{extraArgs}",
+				Arguments = $"-m \"{modelPath}\"{mmprojArgs} -c {LlamaServerCtx} -ngl {LlamaServerNgl} --host 127.0.0.1 --port {LlamaServerPort} --no-warmup --jinja --reasoning-format deepseek{flashAttnArgs}{extraArgs}",
 				WorkingDirectory = Path.GetDirectoryName(serverPath) ?? GetProjectRoot(),
 				UseShellExecute = false,
 				CreateNoWindow = true,
@@ -1206,27 +1187,6 @@ public partial class UdpListener : Node2D
 
 	private void UpdateServiceButtons()
 	{
-		if (_llmBtn != null)
-		{
-			bool llmRunning = (_llamaServerProcess != null && !_llamaServerProcess.HasExited) || IsLlamaServerReachable();
-			_llmBtn.Text = llmRunning ? "LLM ON" : "LLM";
-			_llmBtn.TooltipText = llmRunning ? "Tat llama-server" : "Mo san llama-server";
-		}
-
-		if (_erisBtn != null)
-		{
-			bool visionRunning = _visionProcess != null && !_visionProcess.HasExited;
-			string modeLabel = _useRemoteApi ? "API" : "LOCAL";
-			_erisBtn.Text = visionRunning ? $"ERIS {modeLabel} ON" : $"ERIS {modeLabel}";
-			_erisBtn.TooltipText = visionRunning ? "Tat vision.py" : "Bat vision.py";
-		}
-
-		if (_useApiBtn != null)
-		{
-			_useApiBtn.Text = _useRemoteApi ? "API ON" : "USE API";
-			_useApiBtn.TooltipText = _useRemoteApi
-				? $"Dang dung API remote: {RemoteApiModelName}"
-				: "Bat che do dung API remote";
-		}
+		// Không còn nút điều khiển service trên UI.
 	}
 }

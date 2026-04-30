@@ -2,8 +2,6 @@
 
 [ext_resource type="Script" uid="uid://ckcm0fyajxapn" path="res://body/UdpListener.cs" id="1_bkceq"]
 [ext_resource type="PackedScene" uid="uid://e1uo7upkrcpq" path="res://asset/Resource/Monika.tscn" id="2_monika"]
-[ext_resource type="Texture2D" uid="uid://cyyhsrmchqnk4" path="res://asset/icon/point.png" id="2_r0l71"]
-[ext_resource type="Texture2D" uid="uid://diivueyuuox21" path="res://asset/icon/chat.png" id="3_bcmai"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_qwgmb"]
 size = Vector2(128, 132)
@@ -22,62 +20,6 @@ offset_left = 8.0
 offset_right = 8.0
 grow_horizontal = 2
 grow_vertical = 2
-
-[node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/Control" unique_id=1661018998]
-layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -40.0
-offset_bottom = 40.0
-grow_horizontal = 0
-
-[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/Control/MarginContainer" unique_id=1648130671]
-layout_mode = 2
-theme_override_constants/separation = 6
-
-[node name="point" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=1032218217]
-custom_minimum_size = Vector2(36, 36)
-layout_mode = 2
-tooltip_text = "Tương tác"
-texture_normal = ExtResource("2_r0l71")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="chat" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=848400947]
-custom_minimum_size = Vector2(36, 36)
-layout_mode = 2
-tooltip_text = "Chat"
-texture_normal = ExtResource("3_bcmai")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="llm" type="Button" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500001]
-custom_minimum_size = Vector2(36, 28)
-layout_mode = 2
-tooltip_text = "Bật/tắt llama-server"
-text = "LLM"
-
-[node name="eris" type="Button" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500002]
-custom_minimum_size = Vector2(36, 28)
-layout_mode = 2
-tooltip_text = "Bật/tắt vision.py"
-text = "ERIS"
-
-[node name="ApiKeyInput" type="LineEdit" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500003]
-custom_minimum_size = Vector2(180, 28)
-layout_mode = 2
-placeholder_text = "API key..."
-secret = true
-
-[node name="use_api" type="Button" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=122500004]
-custom_minimum_size = Vector2(36, 28)
-layout_mode = 2
-tooltip_text = "Bat/tat che do dung API"
-text = "USE API"
-
-[node name="TextureButton" type="TextureButton" parent="CanvasLayer/Control/MarginContainer/VBoxContainer" unique_id=144813316]
-layout_mode = 2
 
 [node name="ChatPanel" type="Panel" parent="CanvasLayer/Control" unique_id=1086222864]
 visible = false
@@ -114,6 +56,36 @@ text = "Gửi"
 [node name="CloseButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer" unique_id=784276559]
 layout_mode = 2
 text = "✕"
+
+[node name="CharacterContextMenu" type="Panel" parent="CanvasLayer/Control" unique_id=1122334455]
+visible = false
+custom_minimum_size = Vector2(170, 116)
+layout_mode = 0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/Control/CharacterContextMenu" unique_id=1122334456]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 6.0
+offset_top = 6.0
+offset_right = -6.0
+offset_bottom = -6.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 4
+
+[node name="ChatButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334457]
+layout_mode = 2
+text = "Chat"
+
+[node name="ForceSpeakButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334459]
+layout_mode = 2
+text = "Nói ngay"
+
+[node name="CloseButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334458]
+layout_mode = 2
+text = "Dong"
 
 [node name="Monika2" type="CharacterBody2D" parent="." unique_id=175824923]
 

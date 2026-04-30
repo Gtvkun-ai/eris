@@ -57,6 +57,73 @@ class DecisionParserTests(unittest.TestCase):
         self.assertIn("khoe quyen luc", _norm(decision.text))
         self.assertEqual(decision.extracted_fact, "")
 
+    def test_keeps_screen_observation_when_vision_frame_attached(self):
+        raw = (
+            '{"text":"Toi chi thay mot cua so Facebook Messenger va mot so tab khac o phia tren.",'
+            '"animation":"stand","direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"vision_frame_attached",'
+            '"next_animation":"","system_action":"","action_input":""}'
+        )
+        decision = self.parser.parse(raw)
+
+        normalized = _norm(decision.text)
+        self.assertIn("facebook messenger", normalized)
+        self.assertIn("tab khac", normalized)
+        self.assertNotIn("don ho", normalized)
+        self.assertIn("grounding=khong can viet lai", _norm(decision.parser_trace))
+
+    def test_keeps_vietnamese_screen_observation_with_open_window_wording(self):
+        raw = (
+            '{"text":"Tôi chỉ thấy một cửa sổ chat đang mở trên nền YouTube. '
+            'Tôi không có khả năng truy xuất dữ liệu từ các tab khác hoặc bộ nhớ hệ thống bên dưới.",'
+            '"animation":"stand","direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"Raw text parsed directly.",'
+            '"next_animation":"","system_action":"","action_input":""}'
+        )
+        decision = self.parser.parse(raw, user_hint="bạn thấy trên màn hình tôi có gì")
+
+        normalized = _norm(decision.text)
+        self.assertIn("cua so chat dang mo", normalized)
+        self.assertIn("youtube", normalized)
+        self.assertNotIn("dong tab", normalized)
+        self.assertIn("grounding=khong can viet lai", _norm(decision.parser_trace))
+
+    def test_keeps_ghi_nhan_observation_with_open_window_wording(self):
+        raw = (
+            '{"text":"Có vẻ Ngài đang phân tâm một chút. '
+            'Tôi chỉ ghi nhận là có vài cửa sổ đang mở và Ngài đang gõ phím khá nhiều.",'
+            '"animation":"stand","direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"Raw text parsed directly.",'
+            '"next_animation":"","system_action":"","action_input":""}'
+        )
+        decision = self.parser.parse(raw)
+
+        normalized = _norm(decision.text)
+        self.assertIn("toi chi ghi nhan", normalized)
+        self.assertIn("cua so dang mo", normalized)
+        self.assertIn("go phim kha nhieu", normalized)
+        self.assertNotIn("phan manh", normalized)
+        self.assertNotIn("tu tay", normalized)
+        self.assertIn("grounding=khong can viet lai", _norm(decision.parser_trace))
+
+    def test_still_rewrites_direct_window_control_claim(self):
+        raw = (
+            '{"text":"Tôi sẽ đóng cửa sổ chat và gom các tab lại cho Ngài.",'
+            '"animation":"stand","direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"",'
+            '"next_animation":"","system_action":"","action_input":""}'
+        )
+        decision = self.parser.parse(raw)
+
+        normalized = _norm(decision.text)
+        self.assertNotIn("toi se dong cua so", normalized)
+        self.assertNotIn("phan manh", normalized)
+        self.assertNotIn("tu tay", normalized)
+        self.assertIn("grounding=da viet lai", _norm(decision.parser_trace))
+
     def test_salvages_non_json_text(self):
         decision = self.parser.parse("ERIS: toi da monitor code cua du an nay roi")
 
@@ -148,6 +215,66 @@ class DecisionParserTests(unittest.TestCase):
 
         self.assertEqual(decision.text, "Su phan tan sang cac tab phu lam giam toc do xu ly logic.")
 
+    def test_unwraps_json_blob_with_spaced_field_names_inside_text_field(self):
+        raw = (
+            '{"text":"{\\n\\"text\\": \\"Co ve moi thu dang chay kha on.\\",\\n'
+            '\\" animation\\": \\"sit\\",\\n\\" direction\\": 0,\\n\\" target_x\\": 0.5,\\n'
+            '\\" bounce_action\\": \\"\\",\\n\\" extracted_fact\\": \\"\\",\\n'
+            '\\" debug_trace\\": [],\\n\\" next_animation\\": \\"\\",\\n'
+            '\\" system_action\\": \\"\\",\\n\\" action_input\\": \\"\\"\\n}",'
+            '"animation":"stand","direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"LlmService wrapped non-JSON directive reply into valid JSON.",'
+            '"next_animation":"","system_action":"","action_input":""}'
+        )
+
+        decision = self.parser.parse(raw)
+
+        self.assertEqual(decision.text, "Co ve moi thu dang chay kha on.")
+        self.assertEqual(decision.animation, "sit")
+        self.assertEqual(decision.target_x, 0.5)
+        self.assertNotIn('",', decision.text)
+
+    def test_unwraps_json_like_blob_inside_text_field_and_sanitizes_invalid_motion_fields(self):
+        raw = (
+            '{"text":"{\\n\\"text\\": \\"Chuyen nay thi khong can phai len lop dau.\\",\\n'
+            '\\"animation\\": \\"fade_in\\",\\n\\"direction\\": \\"left\\",\\n\\"target_x\\": 10,\\n'
+            '\\"bounce_action\\": null,\\n\\"extracted_fact\\": \\"Ngai dang noi chuyen nhe nhang tren Messenger.\\",\\n'
+            '\\"debug_trace\\": [\\"context: messenger_chat\\"], [\\"tone: casual\\"], [\\"action: soft_grounded_response\\"]\\n}",'
+            '"animation":"stand","direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"LlmService wrapped non-JSON directive reply into valid JSON.",'
+            '"next_animation":"","system_action":"","action_input":""}'
+        )
+
+        decision = self.parser.parse(raw)
+
+        self.assertEqual(decision.text, "Chuyen nay thi khong can phai len lop dau.")
+        self.assertEqual(decision.animation, "stand")
+        self.assertEqual(decision.direction, 0)
+        self.assertEqual(decision.target_x, -1.0)
+        self.assertEqual(decision.extracted_fact, "Ngai dang noi chuyen nhe nhang tren Messenger.")
+
+    def test_unwraps_quoted_escaped_json_blob_inside_text_field(self):
+        raw = (
+            r'{"text": "\"{\\\"text\\\": \\\"Khong co gi buoc phai len lop.\\\"\", '
+            r'\\\"animation\\\": \\\"fade_out\\\", \\\"direction\\\": \\\"down\\\", '
+            r'\\\"target_x\\\": 0, \\\"bounce_action\\\": null, \\\"extracted_fact\\\": null, '
+            r'\\\"debug_trace\\\": [], \\\"next_animation\\\": null, \\\"system_action\\\": \"\", '
+            r'\"action_input\": \"\"}\"", "animation": "stand", "direction": 0, "target_x": -1.0, '
+            r'"bounce_action": "", "extracted_fact": "", '
+            r'"debug_trace": "LlmService wrapped non-JSON directive reply into valid JSON.", '
+            r'"next_animation": "", "system_action": "", "action_input": ""}'
+        )
+
+        decision = self.parser.parse(raw)
+
+        self.assertEqual(decision.text, "Khong co gi buoc phai len lop.")
+        self.assertEqual(decision.animation, "stand")
+        self.assertEqual(decision.direction, 0)
+        self.assertEqual(decision.target_x, 0.0)
+        self.assertEqual(decision.extracted_fact, "")
+
     def test_keeps_normal_text_without_capability_disclaimer(self):
         raw = (
             '{"text":"Hay tap trung hoan thien ERIS bang Python, Godot va C#.",'
@@ -169,6 +296,33 @@ class DecisionParserTests(unittest.TestCase):
         normalized = _norm(decision.text)
         self.assertNotIn("don dep cache", normalized)
         self.assertIn("chi", normalized)
+
+    def test_drops_speculative_extracted_fact(self):
+        raw = (
+            '{"text":"Ngai dang go kha nhieu.",'
+            '"animation":"read","direction":0,"target_x":-1.0,'
+            '"bounce_action":"",'
+            '"extracted_fact":"User is working too hard and forgetting the project ultimate goal.",'
+            '"next_animation":"","system_action":"","action_input":""}'
+        )
+
+        decision = self.parser.parse(raw)
+
+        self.assertEqual(decision.extracted_fact, "")
+
+    def test_drops_abstract_extracted_fact_and_clears_unused_action_input(self):
+        raw = (
+            '{"text":"Nói ít đi cũng đỡ ồn.",'
+            '"animation":"stand","direction":0,"target_x":-1.0,'
+            '"bounce_action":"",'
+            '"extracted_fact":"Sự hiện diện có thể được phát hiện qua các tín hiệu xao động.",'
+            '"next_animation":"","system_action":"","action_input":"none"}'
+        )
+
+        decision = self.parser.parse(raw)
+
+        self.assertEqual(decision.extracted_fact, "")
+        self.assertEqual(decision.action_input, "")
 
     def test_rewrites_overmanaged_language_into_more_natural_text(self):
         raw = (

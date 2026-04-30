@@ -83,6 +83,24 @@ class LlamaServerProcessManager:
 
         return command
 
+    def _resolve_mmproj_path(self) -> str:
+        raw_value = os.environ.get("LLAMA_SERVER_MMPROJ", "").strip()
+        if raw_value.lower() in {"0", "false", "no", "off", "none"}:
+            return ""
+
+        candidates = []
+        if raw_value:
+            candidates.append(raw_value)
+        candidates.append(os.path.join(self.project_root, "src", "mmproj-F16.gguf"))
+
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                return candidate
+
+        if raw_value:
+            self.logger.warning("Khong tim thay mmproj tai %s, chay local model o che do text-only.", raw_value)
+        return ""
+
     def build_client(self, *, model_path: str, n_ctx: int, n_gpu_layers: int):
         remote_enabled = os.environ.get("ERIS_REMOTE_API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
         if remote_enabled:
@@ -126,6 +144,7 @@ class LlamaServerProcessManager:
         ngl = self._resolve_gpu_layers(n_gpu_layers)
         host = os.environ.get("LLAMA_SERVER_HOST", "127.0.0.1")
         port = os.environ.get("LLAMA_SERVER_PORT", "8080")
+        mmproj_path = self._resolve_mmproj_path()
 
         command = [
             server_exe,
@@ -144,7 +163,11 @@ class LlamaServerProcessManager:
             "--reasoning-format",
             "deepseek",
         ]
+        if mmproj_path:
+            command.extend(["--mmproj", mmproj_path])
         command.extend(self._build_optional_args())
+        if mmproj_path and not any("mmproj-offload" in arg for arg in command):
+            command.append("--mmproj-offload")
 
         self.logger.info("Khoi dong llama-server: %s", " ".join(command))
         self._server_proc = subprocess.Popen(command)

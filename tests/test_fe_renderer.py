@@ -6,6 +6,7 @@ import unittest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from cortex.contracts import FeStyleMemory, GoalDriftReport, TelemetrySnapshot, TiPolicyReport
+from cortex.contracts import FeStylePlan
 from cortex.fe import FeRenderer
 
 
@@ -13,6 +14,7 @@ def _norm(text: str) -> str:
     lowered = unicodedata.normalize("NFD", text.lower())
     lowered = "".join(ch for ch in lowered if unicodedata.category(ch) != "Mn")
     lowered = lowered.replace("đ", "d")
+    lowered = lowered.replace("Ä‘", "d")
     return " ".join(lowered.split())
 
 
@@ -57,7 +59,7 @@ class FeRendererTests(unittest.TestCase):
 
         self.assertEqual(plan.intent_label, "ordinary_dialogue")
 
-    def test_style_context_pushes_human_not_log_language(self):
+    def test_style_context_uses_compact_tags_instead_of_policy_dump(self):
         ti_report = TiPolicyReport(
             mode="steady_observe",
             focus_label="general",
@@ -75,8 +77,82 @@ class FeRendererTests(unittest.TestCase):
 
         normalized = _norm(plan.style_context)
 
-        self.assertIn("khong nhu ban log duoc nhan hoa", normalized)
-        self.assertIn("dung lap khung cau kieu 'ngai dang..., con toi...'", normalized)
+        self.assertIn("style_tags:", normalized)
+        self.assertIn("tone=cold_soft", normalized)
+        self.assertIn("stance=grounded", normalized)
+        self.assertIn("attachment=guarded", normalized)
+        self.assertIn("avoid: power_language, system_log_voice, policy_dump", normalized)
+        self.assertNotIn("sarcasm_level", normalized)
+
+    def test_style_context_carries_recent_response_as_do_not_repeat(self):
+        ti_report = TiPolicyReport(
+            mode="steady_observe",
+            focus_label="coding",
+            reason="observe",
+            prompt_context="",
+        )
+        memory = FeStyleMemory(
+            last_response_excerpt="Viết code cho một thế giới đang tàn lụi luôn cần chút sự kiên nhẫn.",
+            continuity_strength=0.4,
+            last_mode="grounded",
+        )
+
+        plan = self.renderer.evaluate_autonomous(
+            snapshot=self.snapshot_coding,
+            ni_report=self.ni_report,
+            ti_report=ti_report,
+            style_memory=memory,
+            last_text="",
+        )
+
+        normalized = _norm(plan.style_context)
+        self.assertIn("do_not_repeat_recent_response", normalized)
+        self.assertIn("change the subject", normalized)
+        self.assertIn("do not mention that motif again", normalized)
+
+    def test_emotional_chat_shifts_to_comforting_with_high_warmth(self):
+        ti_report = TiPolicyReport(
+            mode="chat_emotional",
+            focus_label="chat",
+            reason="emotional",
+            prompt_context="",
+        )
+
+        plan = self.renderer.evaluate_chat(
+            snapshot=self.snapshot_general,
+            ni_report=self.ni_report,
+            ti_report=ti_report,
+            style_memory=self.memory,
+            user_text="toi hoi buon",
+        )
+
+        normalized = _norm(plan.style_context)
+        self.assertEqual(plan.mode, "comforting")
+        self.assertIn("warmth=high", normalized)
+        self.assertIn("stance=comforting", normalized)
+        self.assertEqual(plan.session_arc, "guarded_attachment")
+
+    def test_topic_memory_normalizes_vietnamese_attention_drift(self):
+        plan = FeStylePlan(
+            mode="grounded",
+            tone_label="tone=cold_soft; warmth=low; stance=grounded; attachment=guarded",
+            style_context="",
+            intent_label="ordinary_dialogue",
+        )
+
+        memory = self.renderer.remember_style(
+            self.memory,
+            plan=plan,
+            rendered_text="Có vẻ Ngài đang phân tán sự chú ý khá nhiều.",
+        )
+        memory = self.renderer.remember_style(
+            memory,
+            plan=plan,
+            rendered_text="Có vẻ Ngài đang phân tán một chút.",
+        )
+
+        self.assertEqual(memory.repeated_topic_tag, "attention_drift")
+        self.assertEqual(memory.repeated_topic_streak, 2)
 
 
 if __name__ == "__main__":

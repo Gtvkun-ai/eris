@@ -122,6 +122,17 @@ class NiEngine:
         similarity = self._adjust_similarity(raw_similarity, focus_kind=snapshot.active_window_kind)
         drift_score = max(0.0, min(1.0, 1.0 - similarity))
         drift_level = self._label_drift(drift_score)
+        confidence = self._estimate_confidence(
+            snapshot=snapshot,
+            channels=channels,
+            signal_channels=signal_channels,
+            drift_score=drift_score,
+        )
+        reason_span = self._build_reason_span(
+            snapshot=snapshot,
+            evidence=evidence,
+            drift_score=drift_score,
+        )
 
         self._log_drift_sample(
             focus_kind=snapshot.active_window_kind,
@@ -135,14 +146,18 @@ class NiEngine:
             similarity=similarity,
             drift_score=drift_score,
             drift_level=drift_level,
+            confidence=confidence,
+            should_raise_guard=drift_score >= 0.55,
+            reason_span=reason_span,
             prompt_context=self._build_prompt_context(
-                similarity=similarity,
                 drift_score=drift_score,
                 drift_level=drift_level,
+                confidence=confidence,
+                should_raise_guard=drift_score >= 0.55,
+                reason_span=reason_span,
                 evidence=evidence,
             ),
             evidence=tuple(evidence),
-            should_raise_guard=drift_score >= 0.55,
             vector_method="attention_signal_local",
         )
 
@@ -187,12 +202,6 @@ class NiEngine:
             signal += window_adjust
             signal_channels["window_sprawl"] = max(0.0, min(1.0, signal))
             evidence.append(f"window_adjust={window_adjust:+.2f}")
-
-        resource_adjust = self._resource_adjustment(snapshot.cpu_percent, snapshot.ram_percent)
-        if resource_adjust:
-            signal += resource_adjust
-            signal_channels["resources"] = max(0.0, min(1.0, signal))
-            evidence.append(f"resource_adjust={resource_adjust:+.2f}")
 
         raw_similarity = max(0.0, min(1.0, signal))
         evidence.append(f"attention_signal={raw_similarity:.2f}")
@@ -259,13 +268,6 @@ class NiEngine:
             return -0.05
         return 0.0
 
-    def _resource_adjustment(self, cpu_percent: float, ram_percent: float) -> float:
-        if cpu_percent >= 92 or ram_percent >= 94:
-            return -0.06
-        if cpu_percent >= 85 or ram_percent >= 90:
-            return -0.03
-        return 0.0
-
     def _adjust_similarity(self, raw_similarity: float, *, focus_kind: str) -> float:
         config = FOCUS_BIAS_TABLE.get(focus_kind, {"bias": 0.0, "scale": 1.0})
         try:
@@ -281,29 +283,86 @@ class NiEngine:
 
     def _label_drift(self, drift_score: float) -> str:
         if drift_score >= 0.75:
-            return "nghiem trong"
+            return "nghiêm trọng"
         if drift_score >= 0.55:
             return "cao"
         if drift_score >= 0.35:
-            return "vua"
-        return "thap"
+            return "vừa"
+        return "thấp"
+
+    def _estimate_confidence(
+        self,
+        *,
+        snapshot: TelemetrySnapshot,
+        channels: dict[str, str],
+        signal_channels: dict[str, float],
+        drift_score: float,
+    ) -> float:
+        confidence = 0.50
+        if snapshot.focus_summary:
+            confidence += 0.10
+        if snapshot.active_window:
+            confidence += 0.08
+        if channels.get("current", "").strip():
+            confidence += 0.08
+        if channels.get("browsing", "").strip():
+            confidence += 0.05
+        if len(getattr(snapshot, "evidence", ()) or ()) >= 2:
+            confidence += 0.07
+        if len(signal_channels) >= 3:
+            confidence += 0.05
+        if drift_score >= 0.85:
+            confidence -= 0.05
+        if not (channels.get("focus", "").strip() or channels.get("window", "").strip()):
+            confidence -= 0.18
+        return max(0.10, min(0.95, confidence))
+
+    def _build_reason_span(
+        self,
+        *,
+        snapshot: TelemetrySnapshot,
+        evidence: list[str],
+        drift_score: float,
+    ) -> str:
+        kind = snapshot.active_window_kind or "general"
+        idle = float(getattr(snapshot, "idle_seconds", 0.0) or 0.0)
+        if drift_score >= 0.75:
+            band = "lệch nặng"
+        elif drift_score >= 0.55:
+            band = "lệch rõ"
+        elif drift_score >= 0.35:
+            band = "lệch vừa"
+        else:
+            band = "ổn định"
+
+        if idle >= 900:
+            trigger = "idle dai"
+        elif idle >= 300:
+            trigger = "idle tang"
+        elif any(item.startswith("window_adjust=") for item in evidence):
+            trigger = "window_sprawl"
+        elif any(item.startswith("text_adjust=-") for item in evidence):
+            trigger = "text_ngoai_focus"
+        else:
+            trigger = "signal_tong_hop"
+        return f"{kind}:{band}:{trigger}"
 
     def _build_prompt_context(
         self,
         *,
-        similarity: float,
         drift_score: float,
         drift_level: str,
+        confidence: float,
+        should_raise_guard: bool,
+        reason_span: str,
         evidence: list[str],
     ) -> str:
-        lines = [
-            "Phân tích Ni hiện tại.",
-            f"Tín hiệu chú ý hiện tại: {similarity:.2f}.",
-            f"Mức chệch nhịp quan sát: {drift_score:.2f} ({drift_level}).",
-        ]
+        guard = 1 if should_raise_guard else 0
+        lines = [f"Ni: drift={drift_score:.2f}({drift_level}) conf={confidence:.2f} guard={guard}."]
+        if reason_span:
+            lines.append(f"Reason: {reason_span}.")
         if evidence:
-            lines.append(f"Bằng chứng: {' | '.join(evidence[:4])}.")
-        lines.append("Chỉ dùng nó như nền cảnh quan sát, không biến thành bài chấm hiệu suất.")
+            lines.append(f"Bám vào: {' | '.join(evidence[:3])}.")
         return "\n".join(lines)
 
     def _log_drift_sample(

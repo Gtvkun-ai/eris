@@ -4,16 +4,19 @@
     "train/persona/persona_general_chat.jsonl": 868,
     "train/persona/persona_emotional_support.jsonl": 787,
     "train/persona/persona_safety_refusal.jsonl": 104,
-    "train/persona/persona_capability_boundary_strict.jsonl": 14,
-    "train/desktop/desktop_grounded_code.jsonl": 380,
-    "train/desktop/desktop_grounded_general.jsonl": 268,
-    "train/desktop/desktop_grounded_multiturn.jsonl": 256,
-    "train/desktop/desktop_uncertainty_soft_claim.jsonl": 10,
-    "train/tools/tool_action_result_grounded.jsonl": 10,
+    "train/persona/persona_capability_boundary_strict.jsonl": 164,
+    "train/desktop/desktop_grounded_code.jsonl": 419,
+    "train/desktop/desktop_grounded_general.jsonl": 322,
+    "train/desktop/desktop_grounded_multiturn.jsonl": 253,
+    "train/desktop/desktop_no_evidence_refusal.jsonl": 110,
+    "train/desktop/desktop_uncertainty_soft_claim.jsonl": 334,
+    "train/fe/fe_style_supervision.jsonl": 2494,
+    "train/tools/tool_action_result_grounded.jsonl": 308,
     "quarantine/persona_capability_ambiguous.jsonl": 57,
     "quarantine/template_artifact.jsonl": 3,
     "quarantine/desktop_overclaim.jsonl": 9,
-    "quarantine/desktop_safety_manual_review.jsonl": 8
+    "quarantine/desktop_safety_manual_review.jsonl": 8,
+    "quarantine/quarantine_desktop_overinference.jsonl": 25
   },
   "source_stats": {
     "dataset_ready_code": {
@@ -55,8 +58,15 @@
       "quarantine/desktop_safety_manual_review.jsonl": 8
     },
     "manual_seed_additions": {
-      "train/desktop/desktop_uncertainty_soft_claim.jsonl": 10,
-      "train/tools/tool_action_result_grounded.jsonl": 10
+      "train/desktop/desktop_no_evidence_refusal.jsonl": 110,
+      "train/desktop/desktop_uncertainty_soft_claim.jsonl": 334,
+      "train/tools/tool_action_result_grounded.jsonl": 308
+    },
+    "derived_style_supervision": {
+      "train/fe/fe_style_supervision.jsonl": 2494
+    },
+    "post_clean_refinements": {
+      "quarantine/quarantine_desktop_overinference.jsonl": 25
     }
   }
 }

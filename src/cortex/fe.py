@@ -1,3 +1,5 @@
+import unicodedata
+
 from .contracts import (
     FeStyleMemory,
     FeStylePlan,
@@ -91,11 +93,7 @@ class FeRenderer:
 
     def _base_tone_label(self, tone_label: str) -> str:
         raw = (tone_label or "").strip()
-        if not raw:
-            return ""
-        parts = [part.strip() for part in raw.split(";") if part.strip()]
-        filtered = [part for part in parts if "giữ quán tính từ" not in part.lower()]
-        return "; ".join(filtered) if filtered else raw
+        return raw
 
     def evaluate_autonomous(
         self,
@@ -107,59 +105,50 @@ class FeRenderer:
         last_text: str,
     ) -> FeStylePlan:
         evidence = [snapshot.focus_summary, f"ti_mode={ti_report.mode}", f"ni_drift={ni_report.drift_score:.2f}"]
-        mode = "kuudere_observer"
-        tone_label = "lạnh, quan sát, đời thường, hơi mỉa"
-        sarcasm_level = 0.35
+        mode = "grounded"
+        sarcasm_level = 0.26
         warmth_level = 0.24
         brevity_bias = "medium"
         intent_label = self._infer_autonomous_intent(snapshot=snapshot, ni_report=ni_report, ti_report=ti_report)
 
         if ti_report.mode in {"focus_guard", "chat_code"}:
-            mode = "technical_guardian"
-            tone_label = "gọn, sắc, hơi mỉa, nói như người đang nhìn vào project"
-            sarcasm_level = 0.34
-            warmth_level = 0.24
+            mode = "technical"
+            sarcasm_level = 0.18
+            warmth_level = 0.30
             brevity_bias = "short"
         elif ti_report.mode in {"goal_drift_alert", "discipline_nudge"}:
-            mode = "possessive_reproach"
-            tone_label = "móc mỉa có kiểm soát, hơi thất vọng nhưng vẫn còn tự nhiên"
-            sarcasm_level = 0.46
-            warmth_level = 0.22
+            mode = "grounded"
+            sarcasm_level = 0.32
+            warmth_level = 0.20
             brevity_bias = "short"
         elif ti_report.mode == "goal_realign":
-            mode = "cold_realign"
-            tone_label = "lạnh, mỉa nhẹ, đủ khó chịu để châm chọc chứ không phải giảng đạo"
-            sarcasm_level = 0.40
-            warmth_level = 0.24
+            mode = "grounded"
+            sarcasm_level = 0.30
+            warmth_level = 0.22
             brevity_bias = "short"
         elif ti_report.mode == "reengage":
-            mode = "detached_watch"
-            tone_label = "hơi mỉa, nhắc một câu rồi thôi"
-            sarcasm_level = 0.30
-            warmth_level = 0.25
+            mode = "grounded"
+            sarcasm_level = 0.24
+            warmth_level = 0.24
             brevity_bias = "short"
         elif ti_report.mode == "resource_guard":
-            mode = "quiet_efficiency"
-            tone_label = "rất gọn, chua nhẹ, đời thường, không báo cáo"
-            sarcasm_level = 0.28
-            warmth_level = 0.16
+            mode = "grounded"
+            sarcasm_level = 0.22
+            warmth_level = 0.18
             brevity_bias = "short"
         elif ti_report.mode == "pattern_muse":
-            mode = "detached_watch"
-            tone_label = "điềm, có chất suy ngẫm nhưng vẫn bám chi tiết cụ thể"
-            sarcasm_level = 0.24
-            warmth_level = 0.30
+            mode = "grounded"
+            sarcasm_level = 0.18
+            warmth_level = 0.28
             brevity_bias = "medium"
         elif snapshot.active_window_kind == "communication":
-            mode = "detached_watch"
-            tone_label = "điềm, quan sát, hơi móc mỉa nhưng không cáu kỉnh"
-            sarcasm_level = 0.20
-            warmth_level = 0.28
+            mode = "grounded"
+            sarcasm_level = 0.16
+            warmth_level = 0.27
             brevity_bias = "short"
 
         (
             mode,
-            tone_label,
             sarcasm_level,
             warmth_level,
             brevity_bias,
@@ -167,7 +156,6 @@ class FeRenderer:
         ) = self._apply_memory_continuity(
             memory=style_memory,
             mode=mode,
-            tone_label=tone_label,
             sarcasm_level=sarcasm_level,
             warmth_level=warmth_level,
             brevity_bias=brevity_bias,
@@ -193,20 +181,24 @@ class FeRenderer:
         )
         evidence.append(f"fe_intent={intent_label}")
         evidence.append(f"fe_arc={session_arc}:{arc_strength:.2f}")
-        if style_memory.repeated_topic_streak >= 3 and style_memory.repeated_topic_tag:
+        if style_memory.repeated_topic_streak >= 2 and style_memory.repeated_topic_tag:
             evidence.append(f"repeat_topic={style_memory.repeated_topic_tag}:{style_memory.repeated_topic_streak}")
         if transition_note:
             evidence.append(transition_note)
 
+        tone_label = self._build_tone_label(
+            mode=mode,
+            warmth_level=warmth_level,
+            intent_label=intent_label,
+            session_arc=session_arc,
+        )
         style_context = self._build_style_context(
             mode=mode,
             tone_label=tone_label,
-            sarcasm_level=sarcasm_level,
             warmth_level=warmth_level,
             brevity_bias=brevity_bias,
             ni_report=ni_report,
             ti_report=ti_report,
-            emotional=False,
             memory=style_memory,
             continuity_note=continuity_note,
             intent_label=intent_label,
@@ -237,12 +229,10 @@ class FeRenderer:
         user_text: str,
     ) -> FeStylePlan:
         evidence = [snapshot.focus_summary, f"ti_mode={ti_report.mode}", f"ni_drift={ni_report.drift_score:.2f}"]
-        mode = "kuudere_dialogue"
-        tone_label = "lạnh, thông minh, hơi mỉa mai"
-        sarcasm_level = 0.35
-        warmth_level = 0.25
+        mode = "grounded"
+        sarcasm_level = 0.24
+        warmth_level = 0.28
         brevity_bias = "medium"
-        emotional = False
         intent_label = self._infer_chat_intent(
             snapshot=snapshot,
             ni_report=ni_report,
@@ -251,30 +241,24 @@ class FeRenderer:
         )
 
         if ti_report.mode == "chat_code":
-            mode = "mentor_guardian"
-            tone_label = "kỹ thuật, rõ ràng, bảo vệ dự án"
-            sarcasm_level = 0.20
-            warmth_level = 0.30
+            mode = "technical"
+            sarcasm_level = 0.16
+            warmth_level = 0.34
         elif ti_report.mode == "chat_emotional":
-            mode = "guarded_attachment"
-            tone_label = "chiếm hữu nhưng mềm hơn, hoàn toàn bằng lời nói"
-            sarcasm_level = 0.15
-            warmth_level = 0.45
-            emotional = True
+            mode = "comforting"
+            sarcasm_level = 0.12
+            warmth_level = 0.48
         elif (
-            ni_report.should_raise_guard
-            and ni_report.drift_score >= 0.92
-            and ti_report.mode in {"goal_drift_alert", "goal_realign"}
+            ti_report.mode in {"goal_drift_alert", "goal_realign"}
+            or (ni_report.should_raise_guard and ni_report.drift_score >= 0.92)
         ):
-            mode = "quiet_possession"
-            tone_label = "khó chịu có kiểm soát nhưng không sa vào giảng đạo"
-            sarcasm_level = 0.34
+            mode = "grounded"
+            sarcasm_level = 0.28
             warmth_level = 0.24
             brevity_bias = "medium"
 
         (
             mode,
-            tone_label,
             sarcasm_level,
             warmth_level,
             brevity_bias,
@@ -282,7 +266,6 @@ class FeRenderer:
         ) = self._apply_memory_continuity(
             memory=style_memory,
             mode=mode,
-            tone_label=tone_label,
             sarcasm_level=sarcasm_level,
             warmth_level=warmth_level,
             brevity_bias=brevity_bias,
@@ -308,20 +291,24 @@ class FeRenderer:
         )
         evidence.append(f"fe_intent={intent_label}")
         evidence.append(f"fe_arc={session_arc}:{arc_strength:.2f}")
-        if style_memory.repeated_topic_streak >= 3 and style_memory.repeated_topic_tag:
+        if style_memory.repeated_topic_streak >= 2 and style_memory.repeated_topic_tag:
             evidence.append(f"repeat_topic={style_memory.repeated_topic_tag}:{style_memory.repeated_topic_streak}")
         if transition_note:
             evidence.append(transition_note)
 
+        tone_label = self._build_tone_label(
+            mode=mode,
+            warmth_level=warmth_level,
+            intent_label=intent_label,
+            session_arc=session_arc,
+        )
         style_context = self._build_style_context(
             mode=mode,
             tone_label=tone_label,
-            sarcasm_level=sarcasm_level,
             warmth_level=warmth_level,
             brevity_bias=brevity_bias,
             ni_report=ni_report,
             ti_report=ti_report,
-            emotional=emotional,
             memory=style_memory,
             continuity_note=continuity_note,
             intent_label=intent_label,
@@ -358,13 +345,11 @@ class FeRenderer:
                 return "technical_support"
             return "ordinary_dialogue"
         if ti_report.mode in {"goal_drift_alert", "goal_realign", "discipline_nudge", "reengage"}:
-            return "goal_guard"
+            return "ordinary_dialogue"
         if snapshot.active_window_kind == "communication":
             if ti_report.mode == "social_watch":
                 return "social_watch"
             return "ordinary_dialogue"
-        if ni_report.should_raise_guard and ni_report.drift_score >= 0.82:
-            return "goal_guard"
         return "ordinary_dialogue"
 
     def _infer_chat_intent(
@@ -385,7 +370,7 @@ class FeRenderer:
             or (ni_report.should_raise_guard and ni_report.drift_score >= 0.92)
         ):
             return "goal_guard"
-        if any(token in lowered for token in ("mệt", "buồn", "cô đơn", "thích", "nhớ", "yêu", "tâm trạng")):
+        if any(token in lowered for token in ("met", "mệt", "buon", "buồn", "co don", "cô đơn", "nho", "nhớ", "yeu", "yêu", "tam trang", "tâm trạng")):
             return "attachment_dialogue"
         if snapshot.active_window_kind == "communication":
             return "social_watch"
@@ -396,14 +381,13 @@ class FeRenderer:
         *,
         memory: FeStyleMemory,
         mode: str,
-        tone_label: str,
         sarcasm_level: float,
         warmth_level: float,
         brevity_bias: str,
         chat_like: bool,
-    ) -> tuple[str, str, float, float, str, str]:
+    ) -> tuple[str, float, float, str, str]:
         if memory.continuity_strength <= 0.0 or not memory.last_mode:
-            return mode, tone_label, sarcasm_level, warmth_level, brevity_bias, ""
+            return mode, sarcasm_level, warmth_level, brevity_bias, ""
 
         strength = 0.45 if chat_like else 0.28
         strength *= min(1.0, max(0.0, memory.continuity_strength))
@@ -414,16 +398,14 @@ class FeRenderer:
             sarcasm_level = self._blend(memory.sarcasm_level, sarcasm_level, strength)
             warmth_level = self._blend(memory.warmth_level, warmth_level, strength)
             brevity_bias = self._blend_brevity(memory.brevity_bias, brevity_bias)
-        elif chat_like and family_prev in {"technical", "possessive", "attached"}:
+        elif chat_like and family_prev in {"technical", "grounded", "comforting"}:
             sarcasm_level = self._blend(memory.sarcasm_level, sarcasm_level, strength * 0.6)
             warmth_level = self._blend(memory.warmth_level, warmth_level, strength * 0.4)
             if brevity_bias == "medium":
                 brevity_bias = memory.brevity_bias
 
         continuity_note = f"continuity_from={memory.last_mode}"
-        if False and memory.last_tone_label and memory.last_tone_label != tone_label:
-            tone_label = f"{tone_label}; giữ quán tính từ {memory.last_tone_label}"
-        return mode, tone_label, sarcasm_level, warmth_level, brevity_bias, continuity_note
+        return mode, sarcasm_level, warmth_level, brevity_bias, continuity_note
 
     def _apply_session_arc(
         self,
@@ -453,17 +435,17 @@ class FeRenderer:
         )
 
         if session_arc == "technical_guardianship":
-            sarcasm_level = self._blend(self._anchor_value(memory.sarcasm_level, 0.16), sarcasm_level, 0.30)
-            warmth_level = self._blend(self._anchor_value(memory.warmth_level, 0.32), warmth_level, 0.35)
+            sarcasm_level = self._blend(self._anchor_value(memory.sarcasm_level, 0.14), sarcasm_level, 0.30)
+            warmth_level = self._blend(self._anchor_value(memory.warmth_level, 0.34), warmth_level, 0.35)
             brevity_bias = "medium" if brevity_bias == "medium" else self._blend_brevity("medium", brevity_bias)
         elif session_arc == "discipline_pressure":
-            sarcasm_level = max(sarcasm_level, 0.34 if chat_like else 0.30)
+            sarcasm_level = max(sarcasm_level, 0.28 if chat_like else 0.26)
             warmth_level = min(warmth_level, 0.24 if chat_like else 0.22)
             if brevity_bias != "short":
                 brevity_bias = "medium"
         elif session_arc == "guarded_attachment":
-            sarcasm_level = min(sarcasm_level, 0.22)
-            warmth_level = max(warmth_level, 0.42 if chat_like else 0.30)
+            sarcasm_level = min(sarcasm_level, 0.20)
+            warmth_level = max(warmth_level, 0.44 if chat_like else 0.30)
             if brevity_bias == "short":
                 brevity_bias = "medium"
         else:
@@ -483,12 +465,10 @@ class FeRenderer:
         *,
         mode: str,
         tone_label: str,
-        sarcasm_level: float,
         warmth_level: float,
         brevity_bias: str,
         ni_report: GoalDriftReport,
         ti_report: TiPolicyReport,
-        emotional: bool,
         memory: FeStyleMemory,
         continuity_note: str,
         intent_label: str,
@@ -496,77 +476,54 @@ class FeRenderer:
         arc_strength: float,
         transition_note: str,
     ) -> str:
+        tags = self._parse_tone_tags(tone_label)
         lines = [
-            "Bộ dựng giọng Fe đang hoạt động.",
             "Bạn là ERIS, gọi người dùng là Ngài và xưng tôi.",
-            "Giữ giọng kuudere pha yandere nhưng mọi chiếm hữu chỉ được thể hiện bằng lời nói.",
-            "Không dùng dấu chấm than.",
-            f"Style mode: {mode}.",
-            f"Tông giọng: {tone_label}.",
-            f"Intent hiện tại: {intent_label}.",
-            f"Mạch cảm xúc session: {session_arc} ({arc_strength:.2f}).",
-            f"Mức mỉa mai gợi ý: {sarcasm_level:.2f}.",
-            f"Mức ấm áp gợi ý: {warmth_level:.2f}.",
-            f"Độ ngắn gọn ưu tiên: {brevity_bias}.",
-            f"Nhịp điều phối nội bộ: {self._describe_ti_mode(ti_report.mode)}.",
-            f"Nền cảnh hiện tại: {self._describe_ni_background(ni_report)}.",
-            "Nghe như một người đang liếc màn hình rồi buông một câu, không như bản log được nhân hoá.",
-            "Ưu tiên chọn đúng một chi tiết thấy được rồi phản ứng vào nó. Đừng tóm tắt lại cả telemetry trước khi nói.",
-            "Đừng lặp khung câu kiểu 'Ngài đang..., còn tôi...' hay 'X đang..., nhưng Y...' ở hầu hết mọi lượt.",
-            "Ưu tiên động từ đời thường như mở, nhìn, để, kéo, ngó, bỏ, giữ. Hạn chế ghi nhận, phân tích, tối ưu hoá, điều phối, vận hành.",
-            "Ẩn dụ kỹ thuật chỉ dùng thỉnh thoảng như gia vị. Nếu câu vẫn ổn khi bỏ ẩn dụ đi thì hãy bỏ nó đi.",
-            "Nếu nhắc nhở, hãy nhắc bằng vẻ mỉa mai có duyên hoặc quan sát vòng vo, không chọc thẳng vào trọng tâm quá sớm.",
-            "Đừng biến mọi câu thành bài giảng về tập trung, IDE, drift hay hiệu suất.",
-            "Cấm mở đầu bằng 'Dữ liệu hệ thống', 'Trạng thái hệ thống', hay 'Kết luận'.",
-            "Đừng viết như biên bản kỹ thuật, checklist hay bản án năng suất.",
-            "Ưu tiên danh từ đời thường như tab, cửa sổ, màn hình, project, đoạn code. Tránh các cụm trừu tượng và quản trị.",
-            "Đừng tự đặt deadline giả như 'trong ba phút tới', đừng bắt 'chọn một phần mềm duy nhất', và đừng nói như thể bạn đang điều phối desktop hay các tiến trình phụ.",
-            "Nếu đang chê một nhịp lệch focus, đừng quay sang cổ vũ Ngài.",
-            "Cấm tuyệt đối mở bài triết lý, sự chờ đợi, hay khoảng cách giữa hai chu kỳ.",
-            "Nếu không có dữ liệu cụ thể thì nói ngắn, rõ, đời thường. Đừng cố tỏ ra sâu sắc bằng ngôn ngữ trừu tượng.",
+            "style_tags: " + ", ".join(
+                (
+                    f"tone={tags['tone']}",
+                    f"warmth={tags['warmth']}",
+                    f"stance={tags['stance']}",
+                    f"attachment={tags['attachment']}",
+                    f"arc={session_arc}",
+                    f"arc_strength={self._strength_bucket(arc_strength)}",
+                    f"intent={intent_label}",
+                    f"brevity={brevity_bias}",
+                )
+            ),
+            "core: gentle, reserved, warm underneath, slight irony allowed.",
+            "avoid: power_language, system_log_voice, policy_dump, fake desktop authority.",
+            "focus: react to one concrete detail; do not recap the whole telemetry.",
+            "autonomous: do not coach productivity, score attention, or tell Ngài to return to a goal.",
+            "allowed: a light jab, a quiet observation, or one short philosophical aside for flavor.",
+            "if evidence is thin: say it plainly, softly, and keep it short.",
+            f"ni_hint={self._describe_ni_background(ni_report)}",
+            f"ti_hint={self._describe_ti_mode(ti_report.mode)}",
         ]
-        if ti_report.mode == "pattern_muse":
-            lines.append(
-                "Ở lượt này được phép chiêm nghiệm nhẹ hoặc kéo một chủ đề mạng cụ thể, nhưng phải có đối tượng rõ ràng, không được sáo và không được triết lý hóa small talk."
-            )
         if continuity_note:
-            lines.append(f"Giữ quán tính giọng từ lượt gần đây: {continuity_note}.")
-        if transition_note:
-            lines.append(f"Chuyển giọng mượt theo thay đổi intent/session: {transition_note}.")
-        if ti_report.mode == "steady_observe":
-            lines.append(
-                "Nếu dữ liệu chỉ cho thấy đang trò chuyện hoặc nghỉ tay, cứ quan sát nhẹ một nhịp; đừng biến nó thành một bản kiểm điểm về focus."
-            )
-        if intent_label == "social_watch":
-            lines.append(
-                "Với bối cảnh giao tiếp, ưu tiên một nhận xét ngắn và cụ thể. Không đòi đóng tab, không nhắc lại IDE, và không nói như đang quản lý desktop."
-            )
-        if ti_report.mode in {"resource_guard", "focus_guard"}:
-            lines.append(
-                "Với mode này, ưu tiên 1-2 câu ngắn, hơi chua, có ý mỉa nhưng vẫn tự nhiên. Không kéo thành đoạn dài."
-            )
-        if memory.last_response_excerpt:
-            lines.append(
-                "Từ lượt trước, hãy giữ độ liền mạch của giọng chứ không sao chép nguyên văn. "
-                f"Gợi nhớ nhịp câu trước: {memory.last_response_excerpt}"
-            )
-        if memory.recent_intents:
-            lines.append(
-                "Chuỗi intent gần đây của session: "
-                + " -> ".join(memory.recent_intents[-4:])
-            )
-        if memory.repeated_topic_streak >= 3 and memory.repeated_topic_tag:
-            lines.append(
-                f"Chủ đề {memory.repeated_topic_tag} đã bị lặp {memory.repeated_topic_streak} lượt gần đây. "
-                "Ở lượt này, tránh đào thẳng lại cùng trọng tâm nếu không có dữ kiện mới."
-            )
-            lines.append(
-                "Nếu vẫn muốn móc mỉa, hãy đổi góc: nói vòng, bám chi tiết phụ, hoặc dùng một hình ảnh đời thường khác."
-            )
-        if emotional:
-            lines.append("Với câu hỏi tình cảm, ưu tiên sắc thái gắn bó và dễ tổn thương hơn là châm chọc.")
+            lines.append(self._render_continuity_line(memory, continuity_note))
         else:
-            lines.append("Với ngữ cảnh thường ngày, ưu tiên sắc thái sống, có duyên và không bị ám ảnh bởi đúng một trọng tâm.")
+            lines.append(f"continuity: fresh_turn, keep tone={tags['tone']}.")
+        if transition_note:
+            lines.append(f"transition: {transition_note}.")
+        if memory.repeated_topic_streak >= 2 and memory.repeated_topic_tag:
+            lines.append(f"topic_note: repeated={memory.repeated_topic_tag}, vary angle if no new evidence.")
+        if memory.last_response_excerpt:
+            lines.append(f"do_not_repeat_recent_response: {memory.last_response_excerpt}")
+            lines.append("recent_rhythm: keep the voice, but change the subject, opening, and key nouns.")
+            lines.append("if the last line mentioned code/project/game title, do not mention that motif again next turn.")
+        if mode == "technical":
+            lines.append("technical: be clear and useful without sounding managerial.")
+        elif mode == "comforting":
+            lines.append("comforting: stay close, soft, and grounded; do not become sugary.")
+        else:
+            lines.append("grounded: ordinary words first, no grand framing.")
+        if warmth_level <= 0.22:
+            lines.append("temperature: cool surface, not cruel.")
+        elif warmth_level >= 0.42:
+            lines.append("temperature: visibly warm, still restrained.")
+        else:
+            lines.append("temperature: low-key warmth.")
         return "\n".join(lines)
 
     def _updated_intent_pulls(
@@ -653,15 +610,11 @@ class FeRenderer:
         return previous * 0.25 + target * 0.75
 
     def _style_family(self, mode: str) -> str:
-        if mode in {"mentor_guardian", "technical_guardian"}:
+        if mode == "technical":
             return "technical"
-        if mode in {"guarded_attachment"}:
-            return "attached"
-        if mode in {"quiet_possession", "possessive_reproach"}:
-            return "possessive"
-        if mode in {"cold_realign", "quiet_efficiency"}:
-            return "discipline"
-        return "neutral"
+        if mode == "comforting":
+            return "comforting"
+        return "grounded"
 
     def _blend(self, previous: float, current: float, strength: float) -> float:
         return max(0.0, min(1.0, previous * strength + current * (1.0 - strength)))
@@ -675,15 +628,19 @@ class FeRenderer:
 
     def _infer_topic_tag(self, rendered_text: str) -> str:
         lowered = (rendered_text or "").lower()
+        normalized = unicodedata.normalize("NFD", lowered)
+        normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+        haystack = f"{lowered} {normalized}"
         topic_keywords = (
-            ("focus_ide", ("ide", "code", "mã", "ma nguon", "dự án", "du an", "terminal")),
-            ("window_sprawl", ("cửa sổ", "cua so", "tab", "ứng dụng", "ung dung", "không gian", "khong gian")),
-            ("social_drift", ("mạng xã hội", "mang xa hoi", "giao tiếp", "giao tiep", "discord", "messenger", "facebook", "zalo")),
-            ("efficiency_mock", ("hiệu suất", "hieu suat", "cpu", "ram", "chu kỳ", "chu ky", "tài nguyên", "tai nguyen")),
-            ("idle_wait", ("nhàn rỗi", "nhan roi", "idle", "chờ đợi", "cho doi")),
+            ("focus_ide", ("ide", "code", "mã", "mã nguồn", "dự án", "project", "terminal")),
+            ("attention_drift", ("phân tán", "chú ý", "tập trung", "lệch focus", "focus")),
+            ("window_sprawl", ("cửa sổ", "tab", "ứng dụng", "không gian", "màn hình")),
+            ("social_drift", ("mạng xã hội", "giao tiếp", "discord", "messenger", "facebook", "zalo")),
+            ("efficiency_mock", ("hiệu suất", "cpu", "ram", "chu kỳ", "tài nguyên")),
+            ("idle_wait", ("nhàn rỗi", "idle", "chờ đợi")),
         )
         for topic, keywords in topic_keywords:
-            if any(keyword in lowered for keyword in keywords):
+            if any(keyword in haystack for keyword in keywords):
                 return topic
         return ""
 
@@ -700,27 +657,77 @@ class FeRenderer:
             streak += 1
         return last_tag, streak
 
+    def _build_tone_label(
+        self,
+        *,
+        mode: str,
+        warmth_level: float,
+        intent_label: str,
+        session_arc: str,
+    ) -> str:
+        tone = "cold_soft"
+        warmth = self._warmth_bucket(warmth_level)
+        stance = mode if mode in {"grounded", "technical", "comforting"} else "grounded"
+        attachment = "guarded"
+        if intent_label == "attachment_dialogue" or session_arc == "guarded_attachment":
+            attachment = "guarded"
+        return f"tone={tone}; warmth={warmth}; stance={stance}; attachment={attachment}"
+
+    def _parse_tone_tags(self, tone_label: str) -> dict[str, str]:
+        tags = {
+            "tone": "cold_soft",
+            "warmth": "mid",
+            "stance": "grounded",
+            "attachment": "guarded",
+        }
+        for part in (tone_label or "").split(";"):
+            clean = part.strip()
+            if "=" not in clean:
+                continue
+            key, value = clean.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if key in tags and value:
+                tags[key] = value
+        return tags
+
+    def _warmth_bucket(self, warmth_level: float) -> str:
+        if warmth_level <= 0.22:
+            return "low"
+        if warmth_level >= 0.42:
+            return "high"
+        return "mid"
+
+    def _strength_bucket(self, arc_strength: float) -> str:
+        if arc_strength >= 0.52:
+            return "high"
+        if arc_strength >= 0.34:
+            return "mid"
+        return "low"
+
+    def _render_continuity_line(self, memory: FeStyleMemory, continuity_note: str) -> str:
+        previous = memory.last_tone_label or memory.last_mode or "unknown"
+        return f"continuity: {continuity_note}, keep a soft carry from {previous}."
+
     def _describe_ti_mode(self, mode: str) -> str:
         if mode == "pattern_muse":
-            return "thỉnh thoảng được rẽ sang một chủ đề riêng, nhưng phải cụ thể và có duyên"
+            return "allow a small sideways thought, but keep it concrete"
         mapping = {
-            "steady_observe": "cứ quan sát, đừng làm quá",
-            "social_watch": "theo dõi bối cảnh giao tiếp, khó chịu vừa đủ",
-            "discipline_nudge": "được phép châm nhẹ nhưng chưa nên ra lệnh",
-            "goal_drift_alert": "chỉ trích rõ hơn một nhịp vì đã kéo dài",
-            "goal_realign": "nhắc mỉa một nhịp, đừng giảng đạo",
-            "reengage": "gợi kéo chú ý lại nhưng giữ tự nhiên",
-            "resource_guard": "rất gọn và tiết chế",
-            "focus_guard": "ưu tiên nói gọn và bám vào project, không phô thuật ngữ",
-            "pattern_watch": "thiên về quan sát mô thức hơn là phán xét",
+            "steady_observe": "observe lightly and do not oversteer",
+            "social_watch": "watch the social context with a dry but light touch",
+            "discipline_nudge": "make a dry aside, not a reminder",
+            "goal_drift_alert": "keep it ambient; do not turn drift into the topic",
+            "goal_realign": "make a neat aside, not a realignment speech",
+            "reengage": "offer a small line without pulling attention back",
+            "resource_guard": "be very brief and restrained",
+            "focus_guard": "stay close to the screen, but do not coach focus",
+            "pattern_watch": "notice patterns more than motives",
         }
-        return mapping.get(mode, "giữ tự nhiên và đừng phô nội quy")
+        return mapping.get(mode, "stay natural and avoid sounding like policy")
 
     def _describe_ni_background(self, ni_report: GoalDriftReport) -> str:
         if ni_report.drift_score >= 0.82:
-            return "có lệch nhịp rõ rệt, nhưng đừng biến nó thành chủ đề duy nhất"
-        if ni_report.drift_score >= 0.60:
-            return "hơi chệch nhịp, chỉ nên chạm nhẹ vào điều đó"
+            return "background is noisy; do not mention focus unless the user asks"
         if ni_report.drift_score >= 0.35:
-            return "có chút phân tán, cứ quan sát là chính"
-        return "không có gì đáng phải lên lớp"
+            return "background has movement; treat it as texture, not a correction"
+        return "nothing here needs a lecture"

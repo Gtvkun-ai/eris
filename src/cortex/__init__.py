@@ -1,4 +1,11 @@
-from .contracts import FeStyleMemory, FeStylePlan, GoalDriftReport, TelemetrySnapshot, TiPolicyReport
+from .contracts import (
+    FeStyleMemory,
+    FeStylePlan,
+    GoalDriftReport,
+    TelemetrySnapshot,
+    TiPolicyReport,
+    UserSignals,
+)
 from .fe import FeRenderer
 from .ni import NiEngine
 from .se import SeLens
@@ -14,4 +21,5 @@ __all__ = [
     "TelemetrySnapshot",
     "TiGovernor",
     "TiPolicyReport",
+    "UserSignals",
 ]
