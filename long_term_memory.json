@@ -1,7 +1,274 @@
-[
-	"Phiên bản 0.9.1 đã được cập nhật.",
-	"null",
-	"Người dùng bắt đầu cuộc hội thoại bằng lời chào.",
-	"System is in general mode.",
-    "Hệ thống không có khả năng truy xuất dữ liệu lịch sử."
-]
+{
+	"version": 2,
+	"working": [
+		{
+			"timestamp": "13:54",
+			"cycle_id": "autonomous-1",
+			"channel": "autonomous",
+			"summary": "autonomous -> Giao diện video call có hai người tham gia, một người đang hiển thị ảnh đại diện màu tím và người kia hiển thị ảnh đạ... | Trang web YouTube đang hiển thị danh sách video về trò chơi Elysium Legacy. -> Nghe người ta nói về một thế giới khác qu...",
+			"outcome": "json",
+			"salience": 0.6
+		},
+		{
+			"timestamp": "13:55",
+			"cycle_id": "force_speak-2",
+			"channel": "force_speak",
+			"summary": "force_speak -> Trang tin nhắn Facebook đang hiển thị một khung chat với dòng chữ tiếng Việt. | Một cửa sổ ứng dụng mở lên trên cùng che phủ phần lớn màn hình. -> Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó. -> json",
+			"outcome": "json",
+			"salience": 0.632
+		},
+		{
+			"timestamp": "13:56",
+			"cycle_id": "force_speak-3",
+			"channel": "force_speak",
+			"summary": "force_speak -> force_speak requested | Trang tin nhắn Facebook đang hiển thị một khung chat với dòng chữ tiếng Việt. -> Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó. -> json",
+			"outcome": "json",
+			"salience": 0.562
+		},
+		{
+			"timestamp": "13:56",
+			"cycle_id": "force_speak-4",
+			"channel": "force_speak",
+			"summary": "force_speak -> Cửa sổ ứng dụng ERIS đang được mở trên nền một cuộc họp Google Meet. | force_speak requested -> Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó. -> json",
+			"outcome": "json",
+			"salience": 0.593
+		},
+		{
+			"timestamp": "13:57",
+			"cycle_id": "autonomous-5",
+			"channel": "autonomous",
+			"summary": "autonomous -> Cửa sổ ứng dụng ERIS đang được mở trên nền một cuộc họp Google Meet. -> ambient_silence",
+			"outcome": "ambient_silence",
+			"salience": 0.526
+		}
+	],
+	"episodic": [
+		{
+			"timestamp": "13:54",
+			"cycle_id": "autonomous-1",
+			"channel": "autonomous",
+			"seen": [
+				"Giao diện video call có hai người tham gia, một người đang hiển thị ảnh đại diện màu tím và người kia hiển thị ảnh đạ...",
+				"Trang web YouTube đang hiển thị danh sách video về trò chơi Elysium Legacy.",
+                "Dưới cùng màn hình có thanh công cụ điều khiển cuộc gọi với nút gọi và các biểu tượng chức năng."
+			],
+			"said": "Nghe người ta nói về một thế giới khác qua màn hình. Ngài có vẻ đang khá thoải mái.",
+			"outcome": "json",
+			"tags": [
+				"autonomous",
+				"screen_observation",
+				"observe",
+                "vision_fact"
+			],
+			"salience": 0.6
+		},
+		{
+			"timestamp": "13:55",
+			"cycle_id": "force_speak-2",
+			"channel": "force_speak",
+			"seen": [
+				"Trang tin nhắn Facebook đang hiển thị một khung chat với dòng chữ tiếng Việt.",
+				"Một cửa sổ ứng dụng mở lên trên cùng che phủ phần lớn màn hình.",
+                "force_speak requested"
+			],
+			"said": "Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",
+			"outcome": "json",
+			"tags": [
+				"force_speak",
+				"user_requested",
+				"mirror",
+                "vision_fact"
+			],
+			"salience": 0.632
+		},
+		{
+			"timestamp": "13:56",
+			"cycle_id": "force_speak-3",
+			"channel": "force_speak",
+			"seen": [
+				"force_speak requested",
+                "Trang tin nhắn Facebook đang hiển thị một khung chat với dòng chữ tiếng Việt."
+			],
+			"said": "Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",
+			"outcome": "json",
+			"tags": [
+				"force_speak",
+				"user_requested",
+				"mirror",
+                "user_force_speak"
+			],
+			"salience": 0.562
+		},
+		{
+			"timestamp": "13:56",
+			"cycle_id": "force_speak-4",
+			"channel": "force_speak",
+			"seen": [
+				"Cửa sổ ứng dụng ERIS đang được mở trên nền một cuộc họp Google Meet.",
+                "force_speak requested"
+			],
+			"said": "Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",
+			"outcome": "json",
+			"tags": [
+				"force_speak",
+				"user_requested",
+				"mirror",
+                "vision_fact"
+			],
+			"salience": 0.593
+		},
+		{
+			"timestamp": "13:57",
+			"cycle_id": "autonomous-5",
+			"channel": "autonomous",
+			"seen": [
+                "Cửa sổ ứng dụng ERIS đang được mở trên nền một cuộc họp Google Meet."
+			],
+			"said": "",
+			"outcome": "ambient_silence",
+			"tags": [
+				"autonomous",
+				"no_speech",
+                "vision_fact"
+			],
+			"salience": 0.526
+		}
+	],
+	"semantic": [
+		{
+			"text": "Phiên bản 0.9.1 đã được cập nhật.",
+			"source": "legacy_long_term_memory",
+			"confidence": 0.75,
+			"observations": 1,
+			"first_seen_at": "2026-05-01T23:51:24+0700",
+			"updated_at": "2026-05-01T23:51:24+0700"
+		},
+		{
+			"text": "null",
+			"source": "legacy_long_term_memory",
+			"confidence": 0.75,
+			"observations": 1,
+			"first_seen_at": "2026-05-01T23:51:24+0700",
+			"updated_at": "2026-05-01T23:51:24+0700"
+		},
+		{
+			"text": "Người dùng bắt đầu cuộc hội thoại bằng lời chào.",
+			"source": "legacy_long_term_memory",
+			"confidence": 0.75,
+			"observations": 1,
+			"first_seen_at": "2026-05-01T23:51:24+0700",
+			"updated_at": "2026-05-01T23:51:24+0700"
+		},
+		{
+			"text": "System is in general mode.",
+			"source": "legacy_long_term_memory",
+			"confidence": 0.75,
+			"observations": 1,
+			"first_seen_at": "2026-05-01T23:51:24+0700",
+			"updated_at": "2026-05-01T23:51:24+0700"
+		},
+		{
+			"text": "Hệ thống không có khả năng truy xuất dữ liệu lịch sử.",
+			"source": "legacy_long_term_memory",
+			"confidence": 0.75,
+			"observations": 1,
+			"first_seen_at": "2026-05-01T23:51:24+0700",
+			"updated_at": "2026-05-01T23:51:24+0700"
+		},
+		{
+			"text": "User profile: Cao Nguyen Yen Hoa, born 2006-06-30, AI/IT student at Sai Gon University.",
+			"source": "user_profile_seed",
+			"confidence": 0.95,
+			"observations": 1,
+			"first_seen_at": "2026-05-02T13:30:00+0700",
+			"updated_at": "2026-05-02T13:30:00+0700"
+		},
+		{
+			"text": "User identifies with INTP and Tritype 538, values logic, rational EQ, emotional control, skepticism, and high commitment in relationships.",
+			"source": "user_profile_seed",
+			"confidence": 0.95,
+			"observations": 1,
+			"first_seen_at": "2026-05-02T13:30:00+0700",
+			"updated_at": "2026-05-02T13:30:00+0700"
+		},
+		{
+			"text": "User builds Ashes of a Dying World in Godot/C# and is developing ERIS, a Kuudere/INFJ digital persona, with Python and Unsloth fine-tuning work.",
+			"source": "user_profile_seed",
+			"confidence": 0.95,
+			"observations": 1,
+			"first_seen_at": "2026-05-02T13:30:00+0700",
+			"updated_at": "2026-05-02T13:30:00+0700"
+		},
+		{
+			"text": "User is learning piano and organ with attention to music theory and chord progressions; likes complex strategy/management games such as Toram Online, RimWorld, and Factorio.",
+			"source": "user_profile_seed",
+			"confidence": 0.95,
+			"observations": 1,
+			"first_seen_at": "2026-05-02T13:30:00+0700",
+			"updated_at": "2026-05-02T13:30:00+0700"
+		},
+		{
+			"text": "User likes psychologically deep and tactical works such as Re:Zero, was class monitor for three years in high school, and has a deep connection with an INFJ friend.",
+			"source": "user_profile_seed",
+			"confidence": 0.95,
+			"observations": 1,
+			"first_seen_at": "2026-05-02T13:30:00+0700",
+			"updated_at": "2026-05-02T13:30:00+0700"
+		},
+		{
+			"text": "Trang web YouTube đang hiển thị danh sách video về trò chơi Elysium Legacy.",
+			"source": "decision_extracted_fact",
+			"confidence": 0.75,
+			"observations": 1,
+			"first_seen_at": "13:54",
+			"updated_at": "13:54"
+		}
+	],
+	"norm": {
+		"observations": 16,
+		"feature_counts": {
+			"active_window_kind": {
+				"general": 12,
+				"communication": 4
+			},
+			"active_app": {
+				"edge": 4,
+				"eris (debug)": 3,
+				"desktop": 1
+			},
+			"focus_summary": {
+				"Ngài đang ở bối cảnh giao tiếp: Meet - nqu-mrjx-hkh - Personal - Microsoft​ Edge": 4,
+				"Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": 3,
+				"Ngài đang ở bối cảnh tổng quát: Desktop": 1
+			},
+			"idle_bucket": {
+				"active": 16
+			},
+			"window_spread": {
+				"high": 9,
+				"medium": 7
+			},
+			"focus_pattern": {
+				"steady": 10,
+				"conversation": 4,
+				"fragmented": 2
+			}
+		},
+		"last_seen_at": {
+			"active_window_kind:general": "13:56",
+			"idle_bucket:active": "13:57",
+			"window_spread:medium": "13:06",
+			"focus_pattern:steady": "13:56",
+			"active_window_kind:communication": "13:57",
+			"active_app:edge": "13:57",
+			"focus_summary:Ngài đang ở bối cảnh giao tiếp: Meet - nqu-mrjx-hkh - Personal - Microsoft​ Edge": "13:57",
+			"focus_pattern:conversation": "13:57",
+			"active_app:desktop": "13:17",
+			"focus_summary:Ngài đang ở bối cảnh tổng quát: Desktop": "13:17",
+			"window_spread:high": "13:57",
+			"focus_pattern:fragmented": "13:20",
+			"active_app:eris (debug)": "13:56",
+			"focus_summary:Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": "13:56"
+		}
+	}
+}

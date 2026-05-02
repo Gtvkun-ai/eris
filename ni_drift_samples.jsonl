@@ -263,3 +263,19 @@
 {"focus_kind": "communication", "raw_similarity": 0.66, "drift_score": 0.21999999999999997, "should_raise_guard": false, "channels": {"baseline": 0.62, "text": 0.66}}
 {"focus_kind": "general", "raw_similarity": 0.54, "drift_score": 0.41999999999999993, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54}}
 {"focus_kind": "general", "raw_similarity": 0.54, "drift_score": 0.41999999999999993, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54}}
+{"focus_kind": "general", "raw_similarity": 0.54, "drift_score": 0.41999999999999993, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54}}
+{"focus_kind": "general", "raw_similarity": 0.54, "drift_score": 0.41999999999999993, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54}}
+{"focus_kind": "general", "raw_similarity": 0.54, "drift_score": 0.41999999999999993, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54}}
+{"focus_kind": "general", "raw_similarity": 0.54, "drift_score": 0.41999999999999993, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54}}
+{"focus_kind": "general", "raw_similarity": 0.54, "drift_score": 0.41999999999999993, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54}}
+{"focus_kind": "general", "raw_similarity": 0.54, "drift_score": 0.41999999999999993, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54}}
+{"focus_kind": "communication", "raw_similarity": 0.74, "drift_score": 0.14, "should_raise_guard": false, "channels": {"baseline": 0.62, "text": 0.74}}
+{"focus_kind": "general", "raw_similarity": 0.49000000000000005, "drift_score": 0.47, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54, "window_sprawl": 0.49000000000000005}}
+{"focus_kind": "general", "raw_similarity": 0.49000000000000005, "drift_score": 0.47, "should_raise_guard": false, "channels": {"baseline": 0.46, "text": 0.54, "window_sprawl": 0.49000000000000005}}
+{"focus_kind": "communication", "raw_similarity": 0.6, "drift_score": 0.28, "should_raise_guard": false, "channels": {"baseline": 0.62, "text": 0.6}}
+{"focus_kind": "general", "raw_similarity": 0.37000000000000005, "drift_score": 0.59, "should_raise_guard": true, "channels": {"baseline": 0.46, "text": 0.42000000000000004, "window_sprawl": 0.37000000000000005}}
+{"focus_kind": "communication", "raw_similarity": 0.6, "drift_score": 0.28, "should_raise_guard": false, "channels": {"baseline": 0.62, "text": 0.6}}
+{"focus_kind": "general", "raw_similarity": 0.37000000000000005, "drift_score": 0.59, "should_raise_guard": true, "channels": {"baseline": 0.46, "text": 0.42000000000000004, "window_sprawl": 0.37000000000000005}}
+{"focus_kind": "general", "raw_similarity": 0.37000000000000005, "drift_score": 0.59, "should_raise_guard": true, "channels": {"baseline": 0.46, "text": 0.42000000000000004, "window_sprawl": 0.37000000000000005}}
+{"focus_kind": "general", "raw_similarity": 0.37000000000000005, "drift_score": 0.59, "should_raise_guard": true, "channels": {"baseline": 0.46, "text": 0.42000000000000004, "window_sprawl": 0.37000000000000005}}
+{"focus_kind": "communication", "raw_similarity": 0.66, "drift_score": 0.21999999999999997, "should_raise_guard": false, "channels": {"baseline": 0.62, "text": 0.66}}

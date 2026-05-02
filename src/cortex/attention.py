@@ -1,0 +1,325 @@
+import re
+import unicodedata
+
+from .contracts import AttentionCandidate, CognitiveBroadcast, PerceptEvent
+
+'''File attention.py là “bộ chọn chú ý” (attention selector): nó nhận một danh sách PerceptEvent 
+(các tín hiệu như user_message, active_window, recent_event, vision_fact…), chấm điểm từng cái, 
+lấy top-N, rồi tạo ra một CognitiveBroadcast (tóm tắt tín hiệu nổi bật nhất để downstream dùng)'''
+def _bounded(value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    return max(minimum, min(maximum, float(value)))
+
+
+def _normalize_tokens(text: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", (text or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = re.sub(r"[^a-z0-9_\s]+", " ", normalized)
+    stop_words = {
+        "a",
+        "an",
+        "and",
+        "at",
+        "cua",
+        "dang",
+        "for",
+        "in",
+        "is",
+        "la",
+        "of",
+        "on",
+        "the",
+        "to",
+        "toi",
+        "trong",
+        "va",
+    }
+    return {token for token in normalized.split() if len(token) >= 3 and token not in stop_words}
+
+
+class AttentionWorkspace:
+    SCORE_KEYS = (
+        "novelty",
+        "specificity",
+        "user_relevance",
+        "risk",
+        "social_charge",
+        "recency",
+        "memory_resonance",
+    )
+    WEIGHTS = {
+        "novelty": 0.18,
+        "specificity": 0.16,
+        "user_relevance": 0.20,
+        "risk": 0.16,
+        "social_charge": 0.10,
+        "recency": 0.10,
+        "memory_resonance": 0.10,
+    }
+    RISK_TERMS = (
+        "crash",
+        "cpu",
+        "error",
+        "exception",
+        "failed",
+        "ram",
+        "traceback",
+        "warning",
+        "loi",
+        "lỗi",
+    )
+    SOCIAL_TERMS = (
+        "chat",
+        "discord",
+        "dm",
+        "mail",
+        "message",
+        "messenger",
+        "slack",
+        "zalo",
+        "tin nhan",
+        "tin nhắn",
+    )
+
+    def __init__(
+        self,
+        *,
+        broadcast_threshold: float = 0.50,
+        secondary_margin: float = 0.14,
+        max_candidates: int = 6,
+        max_winners: int = 3,
+    ):
+        self.broadcast_threshold = broadcast_threshold
+        self.secondary_margin = secondary_margin
+        self.max_candidates = max_candidates
+        self.max_winners = max_winners
+
+    def select(
+        self,
+        percepts: tuple[PerceptEvent, ...],
+        *,
+        channel: str = "",
+        snapshot=None,
+        user_text: str = "",
+        long_term_memory: tuple[str, ...] | list[str] = (),
+    ) -> tuple[tuple[AttentionCandidate, ...], CognitiveBroadcast]:
+        candidates = self.rank(
+            percepts,
+            channel=channel,
+            snapshot=snapshot,
+            user_text=user_text,
+            long_term_memory=long_term_memory,
+        )
+        return candidates, self.build_broadcast(candidates)
+
+    def rank(
+        self,
+        percepts: tuple[PerceptEvent, ...],
+        *,
+        channel: str = "",
+        snapshot=None,
+        user_text: str = "",
+        long_term_memory: tuple[str, ...] | list[str] = (),
+    ) -> tuple[AttentionCandidate, ...]:
+        candidates = [
+            self.score_event(
+                percept,
+                channel=channel,
+                snapshot=snapshot,
+                user_text=user_text,
+                long_term_memory=long_term_memory,
+            )
+            for percept in percepts
+        ]
+        candidates.sort(key=lambda item: item.score, reverse=True)
+        return tuple(candidates[: self.max_candidates])
+
+    def build_broadcast(self, candidates: tuple[AttentionCandidate, ...]) -> CognitiveBroadcast:
+        if not candidates:
+            return CognitiveBroadcast(reason="attention_workspace:no_percepts")
+
+        top = candidates[0]
+        winners: list[AttentionCandidate] = []
+        for candidate in candidates:
+            if candidate.label == "cycle_channel":
+                continue
+            if candidate.score < self.broadcast_threshold:
+                continue
+            if top.score - candidate.score > self.secondary_margin:
+                continue
+            winners.append(candidate)
+            if len(winners) >= self.max_winners:
+                break
+
+        if not winners:
+            return CognitiveBroadcast(
+                label="low_salience",
+                content="",
+                score=top.score,
+                source=top.source,
+                reason=(
+                    "attention_workspace:top_below_threshold; "
+                    f"top={top.label}:{top.score:.2f}"
+                ),
+            )
+
+        primary = winners[0]
+        return CognitiveBroadcast(
+            label=primary.label,
+            content=" | ".join(item.content for item in winners),
+            score=primary.score,
+            source=primary.source,
+            reason=(
+                "attention_workspace:winners="
+                + ",".join(f"{item.label}:{item.score:.2f}" for item in winners)
+            ),
+            evidence=tuple(dict.fromkeys(item for winner in winners for item in winner.evidence))[:6],
+            items=tuple(winners),
+        )
+
+    def score_event(
+        self,
+        percept: PerceptEvent,
+        *,
+        channel: str = "",
+        snapshot=None,
+        user_text: str = "",
+        long_term_memory: tuple[str, ...] | list[str] = (),
+    ) -> AttentionCandidate:
+        parts = {
+            "novelty": self._score_novelty(percept),
+            "specificity": self._score_specificity(percept),
+            "user_relevance": self._score_user_relevance(
+                percept,
+                channel=channel,
+                snapshot=snapshot,
+                user_text=user_text,
+            ),
+            "risk": self._score_risk(percept),
+            "social_charge": self._score_social_charge(percept, snapshot=snapshot),
+            "recency": self._score_recency(percept),
+            "memory_resonance": self._score_memory_resonance(percept, long_term_memory),
+        }
+        raw_score = sum(parts[key] * self.WEIGHTS[key] for key in self.SCORE_KEYS)
+        confidence_scale = 0.75 + 0.25 * _bounded(percept.confidence, minimum=0.05, maximum=1.0)
+        score = _bounded(raw_score * confidence_scale)
+        reason = "; ".join(f"{key}={parts[key]:.2f}" for key in self.SCORE_KEYS)
+        return AttentionCandidate(
+            label=percept.kind,
+            content=percept.content,
+            score=score,
+            source=percept.source,
+            reason=reason,
+            evidence=percept.evidence,
+            privacy_level=percept.privacy_level,
+            novelty_hint=percept.novelty_hint,
+            score_parts={key: round(parts[key], 3) for key in self.SCORE_KEYS},
+        )
+
+    def _score_novelty(self, percept: PerceptEvent) -> float:
+        hint = (percept.novelty_hint or "").lower()
+        if hint in {"direct_user_input", "explicit_request"}:
+            return 1.0
+        if hint in {"new_screen_fact", "threshold_crossed"}:
+            return 0.92
+        if hint in {"baseline_deviation"}:
+            return 0.84
+        if hint in {"concrete_telemetry", "duration_threshold"}:
+            return 0.72
+        if hint in {"screen_fact"}:
+            return 0.66
+        if hint in {"cached_screen_fact", "repeated_screen_fact"}:
+            return 0.34
+        if hint in {"routine_telemetry", "ambient_context", "cycle_marker", "none"}:
+            return 0.16
+        return 0.30
+
+    def _score_specificity(self, percept: PerceptEvent) -> float:
+        if percept.kind == "cycle_channel":
+            return 0.05
+        if percept.kind in {"active_window", "focus_context"}:
+            return 0.18
+        tokens = _normalize_tokens(percept.content)
+        score = 0.25 + min(0.45, len(tokens) * 0.045)
+        if percept.evidence:
+            score += 0.12
+        if any(char.isdigit() for char in percept.content):
+            score += 0.08
+        if percept.kind == "vision_fact":
+            score += 0.18
+        elif percept.kind == "resource_pressure":
+            score += 0.10
+        elif percept.kind == "norm_deviation":
+            score += 0.10
+        return _bounded(score)
+
+    def _score_user_relevance(self, percept: PerceptEvent, *, channel: str, snapshot=None, user_text: str = "") -> float:
+        if percept.kind in {"user_message", "user_force_speak"}:
+            return 1.0
+        if channel in {"chat", "force_speak"} and percept.kind in {"vision_fact", "recent_event", "evidence"}:
+            return 0.68
+        if percept.kind == "resource_pressure":
+            return 0.70
+        if percept.kind == "vision_fact":
+            return 0.70
+        if percept.kind == "norm_deviation":
+            return 0.45
+        if percept.kind in {"recent_event", "evidence"}:
+            return 0.50
+        if percept.kind in {"active_window", "focus_context"}:
+            return 0.18
+
+        content_tokens = _normalize_tokens(percept.content)
+        user_tokens = _normalize_tokens(user_text)
+        if content_tokens and user_tokens:
+            overlap = len(content_tokens & user_tokens) / max(1, len(user_tokens))
+            return _bounded(0.30 + overlap * 0.55)
+        return 0.25
+
+    def _score_risk(self, percept: PerceptEvent) -> float:
+        lowered = percept.content.lower()
+        if percept.kind == "resource_pressure":
+            return 0.95
+        if any(term in lowered for term in self.RISK_TERMS):
+            return 0.78
+        if percept.kind == "idle_state" and "600" in lowered:
+            return 0.42
+        return 0.05
+
+    def _score_social_charge(self, percept: PerceptEvent, *, snapshot=None) -> float:
+        lowered = percept.content.lower()
+        kind = str(getattr(snapshot, "active_window_kind", "") or "")
+        if percept.kind == "user_message":
+            return 0.70
+        if kind == "communication":
+            return 0.42
+        if any(term in lowered for term in self.SOCIAL_TERMS):
+            return 0.54
+        return 0.05
+
+    def _score_recency(self, percept: PerceptEvent) -> float:
+        hint = (percept.novelty_hint or "").lower()
+        if hint in {"direct_user_input", "explicit_request", "new_screen_fact", "threshold_crossed"}:
+            return 0.90
+        if hint in {"baseline_deviation"}:
+            return 0.82
+        if hint in {"concrete_telemetry", "duration_threshold", "screen_fact"}:
+            return 0.72
+        if hint in {"cached_screen_fact", "repeated_screen_fact"}:
+            return 0.34
+        if hint in {"ambient_context", "routine_telemetry", "cycle_marker"}:
+            return 0.18
+        return 0.35
+
+    def _score_memory_resonance(
+        self,
+        percept: PerceptEvent,
+        long_term_memory: tuple[str, ...] | list[str],
+    ) -> float:
+        content_tokens = _normalize_tokens(" ".join((percept.content, *percept.evidence)))
+        if not content_tokens:
+            return 0.0
+        memory_tokens = _normalize_tokens(" ".join(str(item) for item in (long_term_memory or ())[-8:]))
+        if not memory_tokens:
+            return 0.0
+        overlap = len(content_tokens & memory_tokens)
+        return _bounded(overlap / max(4, min(len(content_tokens), 12)))

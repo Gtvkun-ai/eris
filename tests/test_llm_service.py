@@ -49,10 +49,88 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("khong nhu thong bao he thong", _norm(system_prompt))
         self.assertIn("dung tu tao chu de rieng", _norm(user_prompt))
         self.assertIn("machine context chi la nen tham khao", _norm(system_prompt))
-        self.assertIn("khong khi nen", _norm(user_prompt))
+        self.assertIn("speech evidence da loc", _norm(user_prompt))
+        self.assertIn("khong phai telemetry tho", _norm(user_prompt))
         self.assertIn("speech intent", _norm(user_prompt))
         self.assertIn("screen_observation", user_prompt)
         self.assertIn("tranh mo cau bang viec mo ta app", _norm(user_prompt))
+
+    def test_directive_includes_appraisal_context_as_preverbal_state(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"ngan gon","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_directive(
+            telemetry_data="focus=general",
+            appraisal_context=(
+                "expressive/appraisal state: pre-verbal attitude only, "
+                "not an inner feeling claim."
+            ),
+        )
+
+        system_prompt = client.calls[0]["messages"][0]["content"]
+        self.assertIn("expressive/appraisal state", system_prompt)
+        self.assertIn("pre-verbal attitude", system_prompt)
+        self.assertIn("not an inner feeling claim", system_prompt)
+
+    def test_directive_includes_typed_memory_context(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"ngan gon","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_directive(
+            telemetry_data="focus=general",
+            memory_context="norm_memory:\n- deviation: active_app current=YouTube baseline=VS Code",
+        )
+
+        system_prompt = client.calls[0]["messages"][0]["content"]
+        self.assertIn("Memory context for continuity", system_prompt)
+        self.assertIn("norm_memory", system_prompt)
+        self.assertIn("Do not treat memory as current screen evidence", system_prompt)
+
+    def test_directive_includes_action_plan_context(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"ngan gon","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_directive(
+            telemetry_data="focus=general",
+            ti_context=(
+                "Mode: steady_observe.\n"
+                "ActionPlanner decision before LLM:\n"
+                "- should_speak=true\n"
+                "- speech_act=observe\n"
+                "- reason_to_speak=Concrete signal is available before LLM\n"
+                "- risk_flags=none"
+            ),
+            speech_intent="screen_observation",
+        )
+
+        user_prompt = client.calls[0]["messages"][1]["content"]
+        self.assertIn("Action plan bắt buộc", user_prompt)
+        self.assertIn("speech_act=observe", user_prompt)
+        self.assertIn("reason_to_speak=Concrete signal is available before LLM", user_prompt)
 
     def test_chat_reply_repairs_non_json_with_second_pass(self):
         client = _FakeClient(
@@ -282,7 +360,7 @@ class LlmServiceTests(unittest.TestCase):
         normalized_user = _norm(user_prompt)
         self.assertIn("khong triet ly", normalized_user)
         self.assertIn("speech intent", normalized_user)
-        self.assertIn("chi neu dieu co trong speech_intent", normalized_user)
+        self.assertIn("chi neu dieu co trong speech_evidence da loc", normalized_user)
 
     def test_directive_prompt_does_not_seed_background_motion_claim(self):
         client = _FakeClient(

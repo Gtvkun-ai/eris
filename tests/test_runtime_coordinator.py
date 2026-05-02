@@ -7,6 +7,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from domain import Decision
+from cortex.contracts import CognitiveBroadcast
 from runtime.coordinator import RuntimeCoordinator
 
 
@@ -36,16 +37,40 @@ class _DummyLlmService:
     def __init__(self):
         self.chat_calls = 0
         self.directive_calls = 0
+        self.last_chat_kwargs = {}
         self.last_directive_kwargs = {}
 
     def generate_chat_reply(self, **kwargs):
         self.chat_calls += 1
+        self.last_chat_kwargs = kwargs
         return '{"text":"phan hoi dau tien","animation":"stand","direction":0,"target_x":-1.0,"bounce_action":"","next_animation":"","system_action":"","action_input":""}'
 
     def generate_directive(self, **kwargs):
         self.directive_calls += 1
         self.last_directive_kwargs = kwargs
         return '{"text":"toi len tieng ngay day","animation":"stand","direction":0,"target_x":-1.0,"bounce_action":"","next_animation":"","system_action":"","action_input":""}'
+
+
+class _VisionFactLlmService(_DummyLlmService):
+    def __init__(self, facts):
+        super().__init__()
+        self.facts = tuple(facts)
+        self.screen_fact_calls = 0
+
+    def generate_screen_facts(self, **kwargs):
+        self.screen_fact_calls += 1
+        return list(self.facts), "vision_facts_v1"
+
+
+class _RepeatingForceSpeakLlmService(_DummyLlmService):
+    def generate_directive(self, **kwargs):
+        self.directive_calls += 1
+        self.last_directive_kwargs = kwargs
+        return (
+            '{"text":"Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",'
+            '"animation":"stand","direction":0,"target_x":-1.0,'
+            '"bounce_action":"","next_animation":"","system_action":"","action_input":""}'
+        )
 
 
 class _DummyParser:
@@ -101,6 +126,19 @@ class _SignalTelemetry(_DummyTelemetry):
         snapshot.recent_events = ("file_saved",)
         snapshot.evidence = ("active editor changed",)
         return snapshot
+
+
+class _PressureSignalTelemetry(_SignalTelemetry):
+    def capture_snapshot(self, **kwargs):
+        snapshot = super().capture_snapshot(**kwargs)
+        snapshot.cpu_percent = 22.0
+        snapshot.ram_percent = 91.0
+        return snapshot
+
+
+class _ScreenTelemetry(_DummyTelemetry):
+    def capture_screen_frame_data_uri(self):
+        return "data:image/jpeg;base64,AAAA"
 
 
 class _CommunicationTelemetry:
@@ -307,21 +345,188 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "direct_action")
         self.assertIn("hỏi lại cùng một ý", coordinator.transport.sent[-1]["text"].lower())
 
-    def test_force_speak_generates_immediate_directive_and_updates_cooldown(self):
+    def test_force_speak_low_signal_withdraws_before_llm(self):
         coordinator = self._make_coordinator()
         coordinator.last_text = "Một câu cũ."
         coordinator.last_autonomous_spoken_at = 1.0
 
         coordinator._handle_incoming({"type": "force_speak"})
 
-        self.assertEqual(coordinator.llm_service.directive_calls, 1)
-        self.assertIn("force_speak", coordinator.llm_service.last_directive_kwargs["ti_context"])
-        self.assertIn("Không có screen_facts mới", coordinator.llm_service.last_directive_kwargs["ti_context"])
-        self.assertEqual(coordinator.llm_service.last_directive_kwargs["speech_intent"], "user_requested")
-        self.assertEqual(coordinator.llm_service.last_directive_kwargs["avoid_text"], "Một câu cũ.")
-        self.assertEqual(coordinator.transport.sent[-1]["text"], "phan hoi dau tien")
-        self.assertEqual(coordinator.last_text, "phan hoi dau tien")
+        self.assertEqual(coordinator.llm_service.directive_calls, 0)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "action_plan_withdraw")
+        self.assertEqual(
+            coordinator.transport.sent[-1]["text"],
+            "Không có gì mới đáng nói. Tôi chỉ đang để mắt thôi.",
+        )
+        self.assertEqual(coordinator.last_text, coordinator.transport.sent[-1]["text"])
         self.assertGreater(coordinator.last_autonomous_spoken_at, 1.0)
+
+    def test_force_speak_with_concrete_signal_reaches_llm_through_action_planner(self):
+        coordinator = self._make_coordinator(telemetry_service=_SignalTelemetry())
+        coordinator.last_text = "Một câu cũ."
+
+        coordinator._handle_incoming({"type": "force_speak"})
+
+        self.assertEqual(coordinator.llm_service.directive_calls, 1)
+        self.assertIn("ActionPlanner decision before LLM", coordinator.llm_service.last_directive_kwargs["ti_context"])
+        self.assertIn("speech_act=observe", coordinator.llm_service.last_directive_kwargs["ti_context"])
+        self.assertEqual(coordinator.llm_service.last_directive_kwargs["speech_intent"], "screen_observation")
+        self.assertEqual(coordinator.llm_service.last_directive_kwargs["avoid_text"], "Một câu cũ.")
+        self.assertIn("speech_evidence=", coordinator.llm_service.last_directive_kwargs["telemetry_data"])
+        self.assertNotIn("ambient cues", coordinator.llm_service.last_directive_kwargs["telemetry_data"])
+        self.assertEqual(coordinator.transport.sent[-1]["text"], "phan hoi dau tien")
+
+    def test_force_speak_moderate_resource_pressure_does_not_override_screen_signal(self):
+        coordinator = self._make_coordinator(telemetry_service=_PressureSignalTelemetry())
+        coordinator.last_text = "Mot cau cu."
+
+        coordinator._handle_incoming({"type": "force_speak"})
+
+        frame = coordinator.last_cognitive_frame
+        self.assertEqual(coordinator.llm_service.directive_calls, 1)
+        self.assertEqual(frame.action_plan.speech_act, "observe")
+        self.assertEqual(frame.action_plan.speech_intent, "screen_observation")
+        self.assertNotIn("resource_pressure", frame.action_plan.risk_flags)
+        self.assertNotEqual(frame.action_plan.speech_intent, "system_warning")
+
+    def test_force_speak_repeat_guard_blocks_generic_ack_loop(self):
+        coordinator = self._make_coordinator(
+            llm_service=_RepeatingForceSpeakLlmService(),
+            parser=_JsonParser(),
+            telemetry_service=_SignalTelemetry(),
+        )
+
+        coordinator._handle_incoming({"type": "force_speak"})
+        first = coordinator.transport.sent[-1]
+        coordinator._handle_incoming({"type": "force_speak"})
+        second = coordinator.transport.sent[-1]
+
+        self.assertEqual(first["parse_mode"], "force_speak_repeat_guard")
+        self.assertEqual(second["parse_mode"], "force_speak_repeat_guard")
+        self.assertNotEqual(first["text"], second["text"])
+        self.assertNotIn("vừa yêu cầu tôi nói ngay", first["text"])
+        self.assertNotIn("vừa yêu cầu tôi nói ngay", second["text"])
+
+    def test_force_speak_filters_low_value_vision_fact_before_llm(self):
+        llm_service = _VisionFactLlmService(
+            (
+                "Bang dieu khien ben phai dang hien thi RefCounted.",
+            )
+        )
+        coordinator = self._make_coordinator(
+            llm_service=llm_service,
+            telemetry_service=_ScreenTelemetry(),
+        )
+
+        coordinator._handle_incoming({"type": "force_speak"})
+
+        self.assertEqual(llm_service.screen_fact_calls, 1)
+        self.assertEqual(coordinator.vision_facts, ())
+        self.assertEqual(coordinator.llm_service.directive_calls, 0)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "action_plan_withdraw")
+
+    def test_screen_fact_filter_drops_self_debug_and_decor_observations(self):
+        coordinator = self._make_coordinator()
+
+        cleaned = coordinator._sanitize_screen_facts(
+            (
+                "Bon cay pixel art va ba cua so dang chay o goc duoi phai.",
+                "Mot nhan vat anime toc hong dang ngoi o goc duoi cung.",
+                "Khung debug cua toi dang chay tren nen mot buc anh pixel art rat nho.",
+                "Trang tin nhan Facebook dang hien thi mot khung cua so debug cua phan mem ERIS.",
+                "Terminal shows a Python traceback.",
+            )
+        )
+
+        self.assertEqual(cleaned, ("Terminal shows a Python traceback.",))
+
+    def test_force_speak_records_cognitive_frame(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._handle_incoming({"type": "force_speak"})
+
+        frame = coordinator.last_cognitive_frame
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame.channel, "force_speak")
+        self.assertTrue(frame.action_plan.should_speak)
+        self.assertEqual(frame.action_plan.speech_intent, "user_requested")
+        self.assertEqual(frame.action_plan.speech_act, "withdraw")
+        self.assertIn("force_speak_low_signal", frame.action_plan.risk_flags)
+        self.assertEqual(frame.final_decision["parse_mode"], "action_plan_withdraw")
+        self.assertTrue(any(percept.kind == "user_force_speak" for percept in frame.percepts))
+
+    def test_chat_records_cognitive_frame(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._handle_incoming({"type": "chat", "message": "nhìn giúp tôi"})
+
+        frame = coordinator.last_cognitive_frame
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame.channel, "chat")
+        self.assertTrue(frame.action_plan.should_speak)
+        self.assertEqual(frame.action_plan.speech_intent, "user_requested")
+        self.assertEqual(frame.final_decision["text"], "phan hoi dau tien")
+        self.assertTrue(any(percept.kind == "user_message" for percept in frame.percepts))
+        self.assertEqual(frame.appraisal.state_type, "expressive_appraisal_state")
+        self.assertIn("agency", frame.appraisal.to_dict())
+        self.assertIn("expressive/appraisal state", coordinator.llm_service.last_chat_kwargs["appraisal_context"])
+
+    def test_percept_events_use_normalized_schema_for_telemetry_and_vision(self):
+        coordinator = self._make_coordinator()
+        coordinator.vision_last_trace = "vision_facts_v1"
+        coordinator.vision_facts_novelty_hint = "new_screen_fact"
+        snapshot = SimpleNamespace(
+            captured_at="12:34",
+            active_window="main.py - Visual Studio Code",
+            active_window_kind="coding",
+            focus_summary="coding workspace",
+            idle_seconds=0.0,
+            recent_events=("file_saved",),
+            evidence=("terminal traceback visible",),
+            cpu_percent=20.0,
+            ram_percent=40.0,
+        )
+
+        events = coordinator._collect_percept_events(
+            channel="autonomous",
+            snapshot=snapshot,
+            vision_facts=("terminal shows traceback",),
+        )
+
+        required = {
+            "kind",
+            "content",
+            "evidence",
+            "confidence",
+            "source",
+            "timestamp",
+            "privacy_level",
+            "novelty_hint",
+        }
+        self.assertTrue(events)
+        for event in events:
+            self.assertEqual(set(event.to_dict()).intersection(required), required)
+            self.assertEqual(event.timestamp, "12:34")
+
+        vision_event = next(event for event in events if event.kind == "vision_fact")
+        self.assertEqual(vision_event.source, "vision")
+        self.assertEqual(vision_event.privacy_level, "screen_context")
+        self.assertEqual(vision_event.novelty_hint, "new_screen_fact")
+        self.assertIn("vision_facts_v1", vision_event.evidence)
+
+    def test_attach_screen_facts_keeps_telemetry_recent_events_raw(self):
+        coordinator = self._make_coordinator()
+        snapshot = SimpleNamespace(
+            recent_events=("general_window_active",),
+            evidence=(),
+        )
+
+        marker = coordinator._attach_screen_facts(snapshot, ("terminal shows traceback",))
+
+        self.assertEqual(marker, "vision_facts_attached")
+        self.assertEqual(snapshot.recent_events, ("general_window_active",))
+        self.assertEqual(snapshot.vision_facts, ("terminal shows traceback",))
+        self.assertTrue(coordinator._has_concrete_screen_signal(snapshot))
 
     def test_autonomous_no_speech_intent_skips_llm_on_low_signal(self):
         llm_service = _DummyLlmService()
@@ -332,8 +537,14 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertEqual(coordinator.transport.sent, [])
         self.assertEqual(llm_service.directive_calls, 0)
+        frame = coordinator.last_cognitive_frame
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame.channel, "autonomous")
+        self.assertFalse(frame.action_plan.should_speak)
+        self.assertEqual(frame.action_plan.speech_intent, "no_speech")
+        self.assertEqual(frame.final_decision["parse_mode"], "no_speech")
 
-    def test_speech_intent_selects_system_warning_for_resource_pressure(self):
+    def test_speech_intent_ignores_resource_pressure(self):
         coordinator = self._make_coordinator()
         snapshot = SimpleNamespace(
             active_window_kind="general",
@@ -352,7 +563,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             repeat_count=1,
         )
 
-        self.assertEqual(decision.intent, "system_warning")
+        self.assertEqual(decision.intent, "no_speech")
 
     def test_generic_derived_telemetry_is_not_concrete_screen_signal(self):
         coordinator = self._make_coordinator()
@@ -382,6 +593,39 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertFalse(coordinator._has_concrete_screen_signal(snapshot))
         self.assertEqual(decision.intent, "no_speech")
 
+    def test_passive_media_and_open_meet_are_not_speakable_screen_signals(self):
+        coordinator = self._make_coordinator()
+        snapshot = SimpleNamespace(
+            active_window_kind="communication",
+            idle_seconds=4.0,
+            recent_events=("communication_window_active",),
+            evidence=("active window is Meet - Personal - Microsoft Edge",),
+            vision_facts=(
+                "Trang web YouTube dang hien thi danh sach video ve tro choi Elysium Legacy.",
+                "Meet dang mo trong Microsoft Edge.",
+            ),
+            cpu_percent=20.0,
+            ram_percent=40.0,
+        )
+
+        self.assertFalse(coordinator._has_concrete_screen_signal(snapshot))
+        self.assertEqual(coordinator._build_speech_evidence_context(snapshot), "speech_evidence=<none>")
+
+    def test_traceback_is_speakable_screen_signal(self):
+        coordinator = self._make_coordinator()
+        snapshot = SimpleNamespace(
+            active_window_kind="coding",
+            idle_seconds=4.0,
+            recent_events=(),
+            evidence=(),
+            vision_facts=("Terminal shows a Python traceback.",),
+            cpu_percent=20.0,
+            ram_percent=40.0,
+        )
+
+        self.assertTrue(coordinator._has_concrete_screen_signal(snapshot))
+        self.assertIn("Terminal shows a Python traceback.", coordinator._build_speech_evidence_context(snapshot))
+
     def test_explicit_runtime_event_counts_as_concrete_screen_signal(self):
         coordinator = self._make_coordinator()
         snapshot = SimpleNamespace(
@@ -405,7 +649,30 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(decision.intent, "screen_observation")
         self.assertIn("file_saved", decision.reason)
 
-    def test_speech_intent_selects_playful_aside_for_pattern_muse(self):
+    def test_attention_workspace_gates_screen_observation_when_not_broadcast(self):
+        coordinator = self._make_coordinator()
+        snapshot = SimpleNamespace(
+            active_window_kind="coding",
+            idle_seconds=4.0,
+            recent_events=("file_saved",),
+            evidence=("active editor changed",),
+            cpu_percent=20.0,
+            ram_percent=40.0,
+        )
+        ti_report = SimpleNamespace(mode="steady_observe")
+
+        decision = coordinator._choose_autonomous_speech_intent(
+            snapshot=snapshot,
+            ni_report=SimpleNamespace(drift_score=0.0),
+            ti_report=ti_report,
+            repeat_count=1,
+            attention_broadcast=CognitiveBroadcast(label="low_salience", score=0.22),
+        )
+
+        self.assertEqual(decision.intent, "no_speech")
+        self.assertIn("AttentionWorkspace", decision.reason)
+
+    def test_pattern_muse_without_speakable_evidence_stays_silent(self):
         coordinator = self._make_coordinator()
         snapshot = SimpleNamespace(
             active_window_kind="general",
@@ -424,7 +691,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             repeat_count=1,
         )
 
-        self.assertEqual(decision.intent, "playful_aside")
+        self.assertEqual(decision.intent, "no_speech")
 
     def test_idle_repeated_low_signal_stays_silent(self):
         coordinator = self._make_coordinator(action_executor=_DummyActionExecutor())

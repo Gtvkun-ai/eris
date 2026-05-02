@@ -7,6 +7,18 @@ import unicodedata
 
 from dataclasses import dataclass
 
+from cortex.action_planner import ACTION_SPACE, ActionPlanner
+from cortex.attention import AttentionWorkspace
+from cortex.appraisal import AppraisalEngine
+from cortex.contracts import (
+    AttentionCandidate,
+    CognitiveActionPlan,
+    CognitiveAppraisal,
+    CognitiveBroadcast,
+    CognitiveFrame,
+    CognitiveMemoryUpdate,
+    PerceptEvent,
+)
 from cortex.ni import NiStateMachine
 from domain import Decision
 
@@ -63,6 +75,9 @@ class RuntimeCoordinator:
         self.body_running_fn = body_running_fn
         self.action_executor = action_executor
         self.action_router = action_router
+        self.attention_workspace = AttentionWorkspace()
+        self.appraisal_engine = AppraisalEngine()
+        self.action_planner = ActionPlanner()
 
         self.chat_mode = False
         self.chat_history = []
@@ -78,7 +93,13 @@ class RuntimeCoordinator:
         self.last_autonomous_signature = ""
         self.repeated_autonomous_count = 0
         self.last_autonomous_spoken_at = 0.0
+        self.force_speak_repeat_guard_count = 0
+        self.cognitive_cycle_index = 0
+        self.cognitive_frames: list[CognitiveFrame] = []
+        self.last_cognitive_frame: CognitiveFrame | None = None
         self.long_term_memory = []
+        self.memory_state = self._load_memory_state()
+        self.long_term_memory = self._memory_recall_texts()
         self.fe_style_memory = self.fe_renderer.create_memory()
         self.vision_facts_enabled, self.vision_interval_sec, self.vision_fact_max_items, self.vision_fact_max_len = (
             self._load_vision_fact_settings()
@@ -89,6 +110,7 @@ class RuntimeCoordinator:
         self.vision_failure_count = 0
         self.vision_last_trace = ""
         self.vision_facts_signature = ""
+        self.vision_facts_novelty_hint = "none"
         # NiStateMachine giữ state drift rời rạc theo thời gian (ON_GOAL / BORDERLINE / OFF_GOAL)
         #  dựa trên chuỗi GoalDriftReport, thay vì chỉ nhìn một snapshot đơn lẻ.
         self.autonomous_ni_state = NiStateMachine()
@@ -113,6 +135,700 @@ class RuntimeCoordinator:
         if len(preview) > limit:
             preview = preview[:limit] + "...(truncated)"
         return preview or "<empty>"
+
+    def _load_memory_state(self):
+        loader = getattr(self.memory_store, "load_state", None)
+        if not callable(loader):
+            return None
+        try:
+            return loader()
+        except Exception as exc:
+            self.logger.warning("Memory state load error: %s", exc)
+            return None
+
+    def _has_structured_memory_store(self) -> bool:
+        return self.memory_state is not None and callable(getattr(self.memory_store, "remember_cycle", None))
+
+    #Lưu trạng thái bộ nhớ sau mỗi chu kỳ, nếu bộ nhớ có hỗ trợ.
+    def _save_memory_state(self) -> None:
+        if self.memory_state is None:
+            return
+        saver = getattr(self.memory_store, "save_state", None)
+        if not callable(saver):
+            return
+        try:
+            saver(self.memory_state)
+        except Exception as exc:
+            self.logger.warning("Memory state save error: %s", exc)
+
+    #Truy vấn bộ nhớ dài hạn để lấy các thông tin đã ghi nhớ trước đó, nếu bộ nhớ có hỗ trợ.
+    def _memory_recall_texts(self, *, snapshot=None) -> list[str]:
+        recall = getattr(self.memory_store, "recall_texts", None) #hàm này trả về một iterable các đoạn text đã ghi nhớ, có thể dựa trên snapshot hiện tại để lọc/định hướng
+        if self.memory_state is not None and callable(recall): #nếu bộ nhớ có trạng thái cấu trúc và hỗ trợ truy vấn, thì gọi hàm recall để lấy các đoạn text đã ghi nhớ, có thể dựa trên snapshot hiện tại để lọc/định hướng
+            try:
+                return list(recall(self.memory_state, snapshot=snapshot))
+            except Exception as exc:
+                self.logger.warning("Memory recall error: %s", exc)
+        return list(getattr(self, "long_term_memory", []) or []) #nếu không có bộ nhớ cấu trúc hoặc truy vấn lỗi, thì fallback về long_term_memory đã lưu ở coordinator, vốn được cập nhật sau mỗi chu kỳ
+
+    def _build_memory_context(self, snapshot=None) -> str:
+        renderer = getattr(self.memory_store, "render_context", None)
+        if self.memory_state is not None and callable(renderer):
+            try:
+                return renderer(self.memory_state, snapshot=snapshot)
+            except Exception as exc:
+                self.logger.warning("Memory context render error: %s", exc)
+        return ""
+
+    #So sánh snapshot hiện tại với chuẩn đã xây dựng trong bộ nhớ, trả về các điểm khác biệt đáng chú ý để làm tín hiệu cho tầng đánh giá và quyết định.
+    def _norm_deviation_texts(self, snapshot) -> tuple[str, ...]:
+        comparator = getattr(self.memory_store, "compare_to_norms", None)
+        if self.memory_state is None or not callable(comparator):
+            return ()
+        try:
+            deviations = comparator(self.memory_state, snapshot)
+        except Exception as exc:
+            self.logger.warning("Norm memory compare error: %s", exc)
+            return ()
+        rendered: list[str] = []
+        for deviation in deviations or ():
+            to_event_text = getattr(deviation, "to_event_text", None)
+            if callable(to_event_text):
+                rendered.append(str(to_event_text()))
+            else:
+                rendered.append(str(deviation))
+        return tuple(item for item in rendered if item.strip())
+
+    #Ghi nhận snapshot hiện tại vào bộ nhớ để cập nhật chuẩn, nếu bộ nhớ có hỗ trợ. Điều này nên được gọi sau khi đã quyết định xong broadcast và action plan, để tránh việc chuẩn bị bị ảnh hưởng bởi những thay đổi trong chu kỳ hiện tại.
+    def _note_norm_observation(self, snapshot) -> None:
+        updater = getattr(self.memory_store, "update_norms", None)
+        if self.memory_state is None or not callable(updater):
+            return
+        try:
+            self.memory_state = updater(self.memory_state, snapshot, timestamp=self._event_timestamp(snapshot))
+            self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
+            self._save_memory_state()
+        except Exception as exc:
+            self.logger.warning("Norm memory update error: %s", exc)
+
+    #Ghi nhận một chu kỳ hoàn chỉnh vào bộ nhớ, bao gồm những gì đã thấy (seen), đã nói (said), kết quả (outcome), và các tag liên quan. Điều này giúp xây dựng bộ nhớ dài hạn dựa trên trải nghiệm thực tế của ERIS, và có thể được sử dụng để cải thiện các quyết định trong tương lai.
+    def _remember_cognitive_frame(self, frame: CognitiveFrame) -> None:
+        remember_cycle = getattr(self.memory_store, "remember_cycle", None)
+        #Kiểm tra memory store có hỗ trợ ghi structured memory không
+        if self.memory_state is None or not callable(remember_cycle):
+            return
+
+        timestamp = ""
+        if frame.percepts: #Ưu tiên timestamp của percept đầu tiên trong frame.
+            timestamp = frame.percepts[0].timestamp
+        if not timestamp: #Nếu không có thì fallback sang thời gian started_at của cycle, hoặc time.now
+            timestamp = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(frame.started_at or time.time()))
+
+        # Ưu tiên nội dung từ frame.broadcast.items (tín hiệu đã được attention chọn).
+        if frame.broadcast.items:#Nếu có broadcast items, lấy content của chúng làm "seen", vì đây là những thông tin đã được chọn để chú ý trong chu kỳ này.
+            seen = tuple(item.content for item in frame.broadcast.items if item.content)
+        elif frame.broadcast.content: #Nếu không có items nhưng có broadcast content, thì lấy content này làm "seen", vì đây là tín hiệu tổng quát đã được phát đi trong chu kỳ này.
+            seen = (frame.broadcast.content,) 
+        else: #Nếu vẫn không có thì fallback lấy tối đa 2 attention_candidates đầu tiên.
+            seen = tuple(item.content for item in frame.attention_candidates[:2] if item.content)
+
+        final_text = str(frame.final_decision.get("text", "") or "")
+        parse_mode = str(frame.final_decision.get("parse_mode", "") or "")
+        outcome = parse_mode or frame.action_plan.speech_intent or "cycle"
+        if frame.action_plan.system_action:
+            outcome = f"{outcome}:{frame.action_plan.system_action}"
+
+        tags = tuple( #Tags giúp filter/truy vết episode sau này.
+            item
+            for item in (
+                frame.channel,
+                frame.action_plan.speech_intent,
+                frame.action_plan.speech_act,
+                frame.broadcast.label,
+            )
+            if item
+        )
+        explicit_user_facts = tuple(
+            fact
+            for fact in (
+                self._extract_explicit_user_memory_fact(percept.content)
+                for percept in tuple(frame.percepts or ())
+                if percept.kind == "user_message"
+            )
+            if fact
+        )
+        semantic_fact = frame.memory_update.remembered_fact or (explicit_user_facts[0] if explicit_user_facts else "")
+        before_episodes = len(getattr(self.memory_state, "episodic", []) or [])
+        try:
+            self.memory_state = remember_cycle(
+                self.memory_state,
+                cycle_id=frame.cycle_id,
+                channel=frame.channel,
+                timestamp=timestamp,
+                seen=tuple(seen),
+                said=final_text,
+                outcome=outcome,
+                salience=float(frame.broadcast.score or 0.0),
+                tags=tags,
+                semantic_fact=semantic_fact,
+                system_action=frame.action_plan.system_action,
+            )
+            remember_fact = getattr(self.memory_store, "remember_semantic_fact", None)
+            if callable(remember_fact):
+                remaining_user_facts = explicit_user_facts[1:] if semantic_fact in explicit_user_facts else explicit_user_facts
+                for fact in remaining_user_facts:
+                    if fact and fact != semantic_fact:
+                        self.memory_state = remember_fact(
+                            self.memory_state,
+                            fact,
+                            source="explicit_user_statement",
+                            timestamp=timestamp,
+                        )
+            if semantic_fact and not frame.memory_update.semantic_fact:
+                frame.memory_update.semantic_fact = semantic_fact
+            if getattr(self.memory_state, "working", None):
+                frame.memory_update.working_summary = self.memory_state.working[-1].summary
+            episodes = getattr(self.memory_state, "episodic", []) or []
+            if len(episodes) > before_episodes:
+                frame.memory_update.episodic_summary = episodes[-1].summary()
+            self.long_term_memory = self._memory_recall_texts()
+            self._save_memory_state()
+        except Exception as exc:
+            self.logger.warning("Cognitive memory commit error: %s", exc)
+
+    def _extract_explicit_user_memory_fact(self, user_text: str) -> str:
+        normalized = self._normalize_user_message(user_text)
+        if not normalized:
+            return ""
+
+        stable_markers = (
+            "toi thich",
+            "toi khong thich",
+            "toi thuong",
+            "toi hay",
+            "goi toi la",
+            "cu goi toi",
+            "quy uoc",
+            "nho rang",
+            "hay nho",
+            "i prefer",
+            "i usually",
+            "call me",
+            "remember that",
+        )
+        if not any(marker in normalized for marker in stable_markers):
+            return ""
+        compact = re.sub(r"\s+", " ", str(user_text or "").strip())
+        if not compact:
+            return ""
+        return f"User stated: {compact[:180]}"
+
+    def _next_cognitive_cycle_id(self, channel: str) -> str:
+        self.cognitive_cycle_index += 1
+        return f"{channel}-{self.cognitive_cycle_index}"
+
+    def _bounded_float(self, value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
+        return max(minimum, min(maximum, float(value)))
+
+    # _event_timestamp là hàm tạo “mốc thời gian” (timestamp dạng chuỗi) để gắn cho các event/percept trong một chu kỳ.
+    def _event_timestamp(self, snapshot=None, *, started_at: float | None = None) -> str:
+        captured_at = str(getattr(snapshot, "captured_at", "") or getattr(snapshot, "time", "") or "").strip()
+        if captured_at:
+            return captured_at
+        return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(started_at or time.time()))
+
+    #chống “spam evidence”, tránh trùng lặp, và giữ payload gọn/ổn định khi log/telemetry.
+    def _normalize_event_evidence(self, evidence, *, limit: int = 4) -> tuple[str, ...]:
+        items: list[str] = []
+        seen: set[str] = set()
+        for item in evidence or ():
+            text = str(item or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            items.append(text[:160])
+            seen.add(key)
+            if len(items) >= limit:
+                break
+        return tuple(items)
+
+    #hàm này đảm bảo event tạo ra luôn có content thật, các field không bị rỗng/bẩn, và payload không bị phình
+    def _make_percept_event(
+        self,
+        *,
+        #Nhận các field
+        kind: str,
+        content: str,
+        timestamp: str,
+        evidence=(),
+        confidence: float = 1.0,
+        source: str = "runtime",
+        privacy_level: str = "internal",
+        novelty_hint: str = "routine",
+    ) -> PerceptEvent | None:
+        text = str(content or "").strip()
+        if not text:
+            return None
+        return PerceptEvent(
+            kind=str(kind or "unknown").strip() or "unknown",
+            content=text[:260],
+            evidence=self._normalize_event_evidence(evidence),
+            confidence=self._bounded_float(confidence),
+            source=str(source or "runtime").strip() or "runtime",
+            timestamp=timestamp,
+            privacy_level=str(privacy_level or "internal").strip() or "internal",
+            novelty_hint=str(novelty_hint or "routine").strip() or "routine",
+        )
+
+    # quyết định mức “nhạy cảm/riêng tư” (privacy_level) theo loại telemetry
+    def _telemetry_event_privacy_level(self, kind: str) -> str:
+        if kind == "resource_pressure":
+            return "system_metric" #chỉ số hệ thống kiểu CPU/RAM
+        if kind == "idle_state": #trạng thái hoạt động/nhàn rỗi
+            return "activity_state"
+        return "local_context" #ngữ cảnh cục bộ như cửa sổ đang active, focus summary, recent events, evidence
+
+    #quyết định “gợi ý độ mới/tính chất” (novelty_hint) để phân loại event cho downstream (chọn chú ý, ghi nhớ, log
+    def _telemetry_event_novelty_hint(self, kind: str, content: str) -> str:
+        if kind == "resource_pressure": #threshold_crossed vượt ngưỡng
+            return "threshold_crossed"
+        if kind == "idle_state":
+            return "duration_threshold"
+        if kind in {"recent_event", "evidence"}:
+            if kind == "recent_event" and self._is_generic_screen_event(content):
+                return "routine_telemetry" #telemetry lặp/nhạt, như "đã mở Chrome" hay "đang ở desktop"
+            if kind == "evidence" and self._is_generic_screen_evidence(content):
+                return "routine_telemetry" # telemetry lặp/nhạt
+            return "concrete_telemetry" #telemetry cụ thể, đáng chú ý hơn
+        if kind in {"active_window", "focus_context"}:
+            return "ambient_context"
+        return "routine"
+
+    def _collect_percept_events(
+        self,
+        *,
+        channel: str,
+        snapshot,
+        user_text: str = "",
+        vision_facts: tuple[str, ...] = (),
+        force_speak: bool = False,
+        started_at: float | None = None,
+    ) -> tuple[PerceptEvent, ...]:
+        percepts: list[PerceptEvent] = []
+        timestamp = self._event_timestamp(snapshot, started_at=started_at)
+
+        def add(
+            kind: str,
+            content: str,
+            *,
+            source: str = "runtime",
+            confidence: float = 1.0,
+            evidence=(),
+            privacy_level: str = "internal",
+            novelty_hint: str = "routine",
+        ) -> None:
+            event = self._make_percept_event(
+                kind=kind,
+                content=content,
+                evidence=evidence,
+                confidence=confidence,
+                source=source,
+                timestamp=timestamp,
+                privacy_level=privacy_level,
+                novelty_hint=novelty_hint,
+            )
+            if event is not None:
+                percepts.append(event)
+
+        if user_text:
+            add(
+                "user_message",
+                user_text,
+                source="chat",
+                confidence=1.0,
+                privacy_level="user_private",
+                novelty_hint="direct_user_input",
+            )
+        if force_speak:
+            add(
+                "user_force_speak",
+                "force_speak requested",
+                source="ui",
+                confidence=1.0,
+                privacy_level="internal",
+                novelty_hint="explicit_request",
+            )
+
+        active_window = getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "")
+        add(
+            "active_window",
+            active_window,
+            source="telemetry",
+            confidence=0.72,
+            privacy_level=self._telemetry_event_privacy_level("active_window"),
+            novelty_hint=self._telemetry_event_novelty_hint("active_window", str(active_window)),
+        )
+        focus_summary = getattr(snapshot, "focus_summary", "")
+        add(
+            "focus_context",
+            focus_summary,
+            source="telemetry",
+            confidence=0.68,
+            privacy_level=self._telemetry_event_privacy_level("focus_context"),
+            novelty_hint=self._telemetry_event_novelty_hint("focus_context", str(focus_summary)),
+        )
+
+        for deviation_text in self._norm_deviation_texts(snapshot):
+            add(
+                "norm_deviation",
+                deviation_text,
+                source="memory",
+                confidence=0.66,
+                evidence=("norm_memory",),
+                privacy_level="internal",
+                novelty_hint="baseline_deviation",
+            )
+
+        idle_seconds = float(getattr(snapshot, "idle_seconds", 0.0) or 0.0)
+        if idle_seconds >= 180:
+            idle_content = f"idle={int(idle_seconds)}s ({getattr(snapshot, 'idle_label', '') or 'idle'})"
+            add(
+                "idle_state",
+                idle_content,
+                source="telemetry",
+                confidence=0.64,
+                privacy_level=self._telemetry_event_privacy_level("idle_state"),
+                novelty_hint=self._telemetry_event_novelty_hint("idle_state", idle_content),
+            )
+
+        vision_fact_keys = {str(item or "").strip().lower() for item in tuple(vision_facts or ())}
+        for event in tuple(getattr(snapshot, "recent_events", ()) or ())[:6]:
+            event_text = str(event)
+            if event_text.strip().lower() in vision_fact_keys:
+                continue
+            add(
+                "recent_event",
+                event_text,
+                source="telemetry",
+                confidence=0.76,
+                privacy_level=self._telemetry_event_privacy_level("recent_event"),
+                novelty_hint=self._telemetry_event_novelty_hint("recent_event", event_text),
+            )
+        for item in tuple(getattr(snapshot, "evidence", ()) or ())[:6]:
+            evidence_text = str(item)
+            add(
+                "evidence",
+                evidence_text,
+                source="telemetry",
+                confidence=0.72,
+                privacy_level=self._telemetry_event_privacy_level("evidence"),
+                novelty_hint=self._telemetry_event_novelty_hint("evidence", evidence_text),
+            )
+        for fact in tuple(vision_facts or ())[: self.vision_fact_max_items]:
+            add(
+                "vision_fact",
+                str(fact),
+                source="vision",
+                confidence=0.86,
+                evidence=(self.vision_last_trace or "vision_facts",),
+                privacy_level="screen_context",
+                novelty_hint=getattr(self, "vision_facts_novelty_hint", "") or "screen_fact",
+            )
+
+        add(
+            "cycle_channel",
+            channel,
+            source="runtime",
+            confidence=0.50,
+            privacy_level="internal",
+            novelty_hint="cycle_marker",
+        )
+        return tuple(percepts[:18])
+
+    def _collect_cognitive_percepts(self, **kwargs) -> tuple[PerceptEvent, ...]:
+        return self._collect_percept_events(**kwargs)
+
+    def _score_attention_candidate(self, percept: PerceptEvent) -> tuple[float, str]:
+        candidate = self.attention_workspace.score_event(
+            percept,
+            long_term_memory=tuple(self.long_term_memory),
+        )
+        return candidate.score, candidate.reason
+
+        base_by_kind = {
+            "user_message": 0.96,
+            "user_force_speak": 0.91,
+            "resource_pressure": 0.88,
+            "vision_fact": 0.84,
+            "recent_event": 0.66,
+            "evidence": 0.58,
+            "idle_state": 0.48,
+            "active_window": 0.42,
+            "focus_context": 0.40,
+            "cycle_channel": 0.20,
+        }
+        score = base_by_kind.get(percept.kind, 0.36) * percept.confidence
+        reason_parts = [f"kind={percept.kind}", f"confidence={percept.confidence:.2f}"]
+        lowered = percept.content.lower()
+
+        if percept.source == "vision":
+            score += 0.08
+            reason_parts.append("vision")
+        if len(percept.content) >= 28:
+            score += 0.04
+            reason_parts.append("specific")
+        if any(token in lowered for token in ("error", "failed", "lỗi", "cpu", "ram", "đã đọc", "message", "tin nhắn")):
+            score += 0.08
+            reason_parts.append("charged")
+        if percept.kind == "recent_event" and self._is_generic_screen_event(percept.content):
+            score -= 0.18
+            reason_parts.append("generic_event")
+        if percept.kind == "evidence" and self._is_generic_screen_evidence(percept.content):
+            score -= 0.18
+            reason_parts.append("generic_evidence")
+
+        return self._bounded_float(score), ", ".join(reason_parts)
+
+    def _build_attention_candidates(
+        self,
+        percepts: tuple[PerceptEvent, ...],
+        *,
+        channel: str = "",
+        snapshot=None,
+        user_text: str = "",
+    ) -> tuple[AttentionCandidate, ...]:
+        return self.attention_workspace.rank(
+            percepts,
+            channel=channel,
+            snapshot=snapshot,
+            user_text=user_text,
+            long_term_memory=tuple(self.long_term_memory),
+        )
+
+    def _build_broadcast(self, candidates: tuple[AttentionCandidate, ...]) -> CognitiveBroadcast:
+        return self.attention_workspace.build_broadcast(candidates)
+
+    def _build_cognitive_appraisal(
+        self,
+        *,
+        snapshot,
+        ni_report,
+        ti_report,
+        fe_plan,
+        broadcast,
+        channel: str = "",
+        user_text: str = "",
+        force_speak: bool = False,
+    ) -> CognitiveAppraisal:
+        return self.appraisal_engine.evaluate(
+            snapshot=snapshot,
+            ni_report=ni_report,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            broadcast=broadcast,
+            channel=channel,
+            user_text=user_text,
+            force_speak=force_speak,
+        )
+
+    def _build_appraisal_context(self, appraisal: CognitiveAppraisal) -> str:
+        return self.appraisal_engine.render_prompt_context(appraisal)
+
+    def _start_cognitive_frame(
+        self,
+        *,
+        channel: str,
+        started_at: float,
+        snapshot,
+        ni_report,
+        ti_report,
+        fe_plan,
+        user_text: str = "",
+        vision_facts: tuple[str, ...] = (),
+        force_speak: bool = False,
+    ) -> CognitiveFrame:
+        percepts = self._collect_percept_events(
+            channel=channel,
+            snapshot=snapshot,
+            user_text=user_text,
+            vision_facts=vision_facts,
+            force_speak=force_speak,
+            started_at=started_at,
+        )
+        candidates = self._build_attention_candidates(
+            percepts,
+            channel=channel,
+            snapshot=snapshot,
+            user_text=user_text,
+        )
+        broadcast = self._build_broadcast(candidates)
+        appraisal = self._build_cognitive_appraisal(
+            snapshot=snapshot,
+            ni_report=ni_report,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            broadcast=broadcast,
+            channel=channel,
+            user_text=user_text,
+            force_speak=force_speak,
+        )
+        frame = CognitiveFrame(
+            cycle_id=self._next_cognitive_cycle_id(channel),
+            channel=channel,
+            started_at=started_at,
+            percepts=percepts,
+            attention_candidates=candidates,
+            broadcast=broadcast,
+            appraisal=appraisal,
+        )
+        self._note_norm_observation(snapshot)
+        return frame
+
+    def _speech_act_for_intent(self, speech_intent: str, *, ti_mode: str = "", fe_intent: str = "") -> str:
+        if speech_intent == "system_warning":
+            return "protect"
+        if speech_intent == "screen_observation":
+            return "observe"
+        if speech_intent == "playful_aside":
+            return "tease"
+        if speech_intent == "brief_ack":
+            return "mirror"
+        if speech_intent == "user_requested":
+            if ti_mode == "chat_emotional" or fe_intent == "attachment_dialogue":
+                return "reassure"
+            return "mirror"
+        if speech_intent == "no_speech":
+            return "withdraw"
+        return "observe"
+
+    def _set_cognitive_action_plan(
+        self,
+        frame: CognitiveFrame,
+        *,
+        should_speak: bool,
+        speech_intent: str,
+        reason: str,
+        snapshot=None,
+        user_text: str = "",
+        force_speak: bool = False,
+        concrete_signals: tuple[str, ...] = (),
+        ti_report=None,
+        fe_plan=None,
+        system_action: str = "",
+        speech_act: str = "",
+        notes: tuple[str, ...] = (),
+    ) -> None:
+        proposed_intent = speech_intent or ("brief_ack" if should_speak else "no_speech")
+        frame.action_plan = self.action_planner.plan(
+            channel=frame.channel,
+            snapshot=snapshot,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            appraisal=frame.appraisal,
+            broadcast=frame.broadcast,
+            user_text=user_text,
+            force_speak=force_speak,
+            proposed_intent=proposed_intent,
+            proposed_reason=reason,
+            proposed_speech_act=speech_act,
+            system_action=system_action,
+            notes=tuple(notes),
+            concrete_signals=tuple(concrete_signals or ()),
+        )
+
+    def _build_action_plan_context(self, action_plan: CognitiveActionPlan) -> str:
+        flags = ", ".join(action_plan.risk_flags) if action_plan.risk_flags else "none"
+        reason = action_plan.reason_to_speak or action_plan.reason or "none"
+        return (
+            "ActionPlanner decision before LLM:\n"
+            f"- action_space={', '.join(ACTION_SPACE)}\n"
+            f"- should_speak={str(action_plan.should_speak).lower()}\n"
+            f"- speech_act={action_plan.speech_act}\n"
+            f"- reason_to_speak={reason}\n"
+            f"- risk_flags={flags}\n"
+            "Honor this plan. Do not upgrade withdraw/no_speech into observation, teasing, or reassurance."
+        )
+
+    def _build_llm_ti_context(self, ti_report, action_plan: CognitiveActionPlan) -> str:
+        mode = str(getattr(ti_report, "mode", "") or "steady_observe")
+        animation = str(getattr(ti_report, "animation_hint", "") or "stand")
+        return (
+            f"Mode: {mode}. Animation hint: {animation}.\n"
+            f"{self._build_action_plan_context(action_plan)}\n"
+            "Telemetry is internal routing data only. Do not mention window, focus, CPU, RAM, idle, tabs, or app names "
+            "unless they appear in speech_evidence."
+        )
+
+    def _build_speech_evidence_context(self, snapshot, *, limit: int = 2) -> str:
+        signals = self._concrete_screen_signals(snapshot)[:limit]
+        if not signals:
+            return "speech_evidence=<none>"
+        return "speech_evidence=" + " | ".join(str(item) for item in signals)
+
+    def _build_planned_withdraw_decision(self, action_plan: CognitiveActionPlan) -> Decision:
+        return Decision(
+            text="Kh\u00f4ng c\u00f3 g\u00ec m\u1edbi \u0111\u00e1ng n\u00f3i. T\u00f4i ch\u1ec9 \u0111ang \u0111\u1ec3 m\u1eaft th\u00f4i.",
+            animation=action_plan.animation_hint or "stand",
+            parse_mode="action_plan_withdraw",
+            debug_trace=(
+                "action_plan=withdraw"
+                + (f"; risk_flags={','.join(action_plan.risk_flags)}" if action_plan.risk_flags else "")
+            ),
+        )
+
+    def _decision_to_frame_dict(self, decision: Decision | None) -> dict[str, object]:
+        if decision is None:
+            return {}
+        return {
+            "text": decision.text,
+            "animation": decision.animation,
+            "parse_mode": decision.parse_mode,
+            "system_action": decision.system_action,
+            "action_input": decision.action_input,
+            "debug_trace": decision.debug_trace,
+        }
+
+    def _set_cognitive_memory_update(
+        self,
+        frame: CognitiveFrame,
+        *,
+        decision: Decision | None = None,
+        notes: tuple[str, ...] = (),
+    ) -> None:
+        remembered_fact = (decision.extracted_fact if decision else "") or ""
+        norm_deviation = " | ".join(
+            percept.content
+            for percept in tuple(frame.percepts or ())
+            if percept.kind == "norm_deviation" and percept.content
+        )[:220]
+        frame.memory_update = CognitiveMemoryUpdate(
+            remembered_fact=remembered_fact,
+            remembered_style_excerpt=(decision.text if decision else "")[:140] if decision else "",
+            last_text=(self.last_text or "")[:140],
+            system_action=(decision.system_action if decision else "") or "",
+            notes=tuple(notes),
+            semantic_fact=remembered_fact,
+            norm_deviation=norm_deviation,
+        )
+
+    def _finalize_cognitive_frame(self, frame: CognitiveFrame) -> None:
+        self.last_cognitive_frame = frame
+        self.cognitive_frames.append(frame)
+        self.cognitive_frames = self.cognitive_frames[-12:]
+        self._remember_cognitive_frame(frame)
+        self.logger.info(
+            "[cognitive_frame] id=%s | channel=%s | broadcast=%s:%.2f | appraisal=%s | action=%s/%s | final=%s",
+            frame.cycle_id,
+            frame.channel,
+            frame.broadcast.label or "<none>",
+            frame.broadcast.score,
+            frame.appraisal.stance,
+            frame.action_plan.speech_intent,
+            frame.action_plan.speech_act,
+            self._preview_text(str(frame.final_decision.get("text", "")), limit=120),
+        )
 
     def _log_pre_parser(self, channel: str, raw: str) -> None:
         self.logger.info("[%s pre_parser] raw=%s", channel, self._preview_text(raw, limit=320))
@@ -277,6 +993,69 @@ class RuntimeCoordinator:
         )
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
 
+    def _is_near_duplicate_text(self, text: str, other: str) -> bool:
+        left = self._normalize_user_message(text)
+        right = self._normalize_user_message(other)
+        if not left or not right:
+            return False
+        if left == right:
+            return True
+
+        left_tokens = set(left.split())
+        right_tokens = set(right.split())
+        if not left_tokens or not right_tokens:
+            return False
+        overlap = len(left_tokens & right_tokens) / max(1, min(len(left_tokens), len(right_tokens)))
+        return overlap >= 0.82
+
+    def _is_generic_force_speak_ack(self, text: str) -> bool:
+        normalized = self._normalize_user_message(text)
+        if not normalized:
+            return False
+        generic_patterns = (
+            "ngai vua yeu cau toi noi ngay",
+            "toi se giu loi do",
+            "toi nghe roi toi se giu loi",
+            "toi len tieng ngay day",
+        )
+        return any(pattern in normalized for pattern in generic_patterns)
+
+    def _guard_force_speak_repetition(self, decision: Decision) -> Decision:
+        text = decision.text or ""
+        should_guard = self._is_near_duplicate_text(text, self.last_text) or self._is_generic_force_speak_ack(text)
+        if not should_guard:
+            self.force_speak_repeat_guard_count = 0
+            return decision
+
+        self.force_speak_repeat_guard_count += 1
+        fallbacks = (
+            "Tôi nghe rồi. Không có tín hiệu mới đủ chắc để nói thêm.",
+            "Tôi vẫn ở đây. Lần này tôi không bịa thêm cảnh ngoài dữ kiện.",
+            "Có mặt. Nhưng tôi không kéo một câu cũ ra nói lại nữa.",
+        )
+        replacement = fallbacks[(self.force_speak_repeat_guard_count - 1) % len(fallbacks)]
+        if self._is_near_duplicate_text(replacement, self.last_text):
+            replacement = fallbacks[self.force_speak_repeat_guard_count % len(fallbacks)]
+
+        trace = decision.debug_trace or ""
+        guard_trace = f"{trace} | force_speak_repeat_guard" if trace else "force_speak_repeat_guard"
+        return Decision(
+            text=replacement,
+            animation=decision.animation or "stand",
+            direction=decision.direction,
+            next_animation=decision.next_animation,
+            target_x=decision.target_x,
+            bounce_action=decision.bounce_action,
+            debug_trace=guard_trace,
+            parser_trace=decision.parser_trace,
+            parse_mode="force_speak_repeat_guard",
+            system_action="",
+            action_input="",
+            motion_intent=decision.motion_intent,
+            motion_target_x=decision.motion_target_x,
+            motion_facing=decision.motion_facing,
+        )
+
     def _handle_incoming(self, msg: dict):
         msg_type = msg.get("type", "")
         if msg_type == "force_speak":
@@ -284,6 +1063,7 @@ class RuntimeCoordinator:
             return
 
         if msg_type == "chat":
+            cycle_start = time.time()
             user_text = msg.get("message", "").strip()
             if not user_text:
                 return
@@ -294,6 +1074,8 @@ class RuntimeCoordinator:
                 mood_score=self.mood_score,
                 inferred_pos_x=self.inferred_pos_x,
             )
+            self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
+            memory_context = self._build_memory_context(snapshot)
             ni_report = self.ni_engine.evaluate_chat(
                 snapshot=snapshot,
                 long_term_memory=self.long_term_memory,
@@ -322,6 +1104,15 @@ class RuntimeCoordinator:
                 style_memory=self.fe_style_memory,
                 user_text=user_text,
             )
+            frame = self._start_cognitive_frame(
+                channel="chat",
+                started_at=cycle_start,
+                snapshot=snapshot,
+                ni_report=ni_report,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                user_text=user_text,
+            )
 
             self.chat_mode = True
             self.logger.info("Người dùng: %s", user_text)
@@ -345,25 +1136,68 @@ class RuntimeCoordinator:
 
             direct_decision = self._build_direct_action_decision(user_text, ti_report, snapshot, repeat_count=repeat_count)
             if direct_decision is not None:
-                self._commit_chat_decision(direct_decision, fe_plan)
+                self._set_cognitive_action_plan(
+                    frame,
+                    should_speak=True,
+                    speech_intent="user_requested",
+                    reason="Direct action route selected before LLM chat.",
+                    snapshot=snapshot,
+                    user_text=user_text,
+                    concrete_signals=self._concrete_screen_signals(snapshot),
+                    ti_report=ti_report,
+                    fe_plan=fe_plan,
+                    system_action=direct_decision.system_action,
+                    notes=("direct_action",),
+                )
+                self._commit_chat_decision(direct_decision, fe_plan, frame=frame)
                 return
 
             repeat_decision = self._build_repeat_guard_decision(user_text, ti_report, repeat_count)
             if repeat_decision is not None:
-                self._commit_chat_decision(repeat_decision, fe_plan)
+                self._set_cognitive_action_plan(
+                    frame,
+                    should_speak=True,
+                    speech_intent="user_requested",
+                    speech_act="refuse",
+                    reason=f"User repeated the same request {repeat_count} times.",
+                    snapshot=snapshot,
+                    user_text=user_text,
+                    concrete_signals=self._concrete_screen_signals(snapshot),
+                    ti_report=ti_report,
+                    fe_plan=fe_plan,
+                    notes=("repeat_guard",),
+                )
+                self._commit_chat_decision(repeat_decision, fe_plan, frame=frame)
                 return
 
+            self._set_cognitive_action_plan(
+                frame,
+                should_speak=True,
+                speech_intent="user_requested",
+                reason=ti_report.reason,
+                snapshot=snapshot,
+                user_text=user_text,
+                concrete_signals=self._concrete_screen_signals(snapshot),
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                notes=("chat_reply",),
+            )
             chat_user_message = self.parser.build_chat_user_message(
                 user_message=user_text,
                 last_chat_answer=self.last_chat_answer,
             )
             screen_image_data_uri = self._capture_screen_frame_for_chat(user_text)
+            planned_ti_context = (
+                f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}"
+            )
             raw = self.llm_service.generate_chat_reply(
                 chat_history=self.chat_history[-10:],
                 user_message=chat_user_message,
                 ni_context=ni_report.prompt_context,
-                ti_context=ti_report.prompt_context,
+                ti_context=planned_ti_context,
                 fe_context=fe_plan.style_context,
+                appraisal_context=self._build_appraisal_context(frame.appraisal),
+                memory_context=memory_context,
                 screen_image_data_uri=screen_image_data_uri,
             )
             self._log_raw_llm_output("chat", raw)
@@ -374,7 +1208,7 @@ class RuntimeCoordinator:
             decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
             self._log_decision_stage("chat", "post_ti", decision)
             decision = self._execute_system_action(decision, snapshot=snapshot)
-            self._commit_chat_decision(decision, fe_plan)
+            self._commit_chat_decision(decision, fe_plan, frame=frame)
             return
 
         if msg_type == "chat_end":
@@ -398,7 +1232,9 @@ class RuntimeCoordinator:
         vision_facts = self._maybe_update_screen_facts()
         if vision_facts:
             vision_marker = self._attach_screen_facts(snapshot, vision_facts)
-        telemetry_data = self.telemetry_service.format_directive_snapshot(snapshot)
+        telemetry_data = self._build_speech_evidence_context(snapshot)
+        self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
+        memory_context = self._build_memory_context(snapshot)
         ni_report = self.ni_engine.evaluate_autonomous(
             snapshot=snapshot,
             long_term_memory=self.long_term_memory,
@@ -422,9 +1258,68 @@ class RuntimeCoordinator:
             style_memory=self.fe_style_memory,
             last_text=self.last_text,
         )
+        frame = self._start_cognitive_frame(
+            channel="force_speak",
+            started_at=cycle_start,
+            snapshot=snapshot,
+            ni_report=ni_report,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            vision_facts=vision_facts,
+            force_speak=True,
+        )
+        self._set_cognitive_action_plan(
+            frame,
+            should_speak=True,
+            speech_intent="user_requested",
+            reason="Context menu requested immediate speech.",
+            snapshot=snapshot,
+            force_speak=True,
+            concrete_signals=self._concrete_screen_signals(snapshot),
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            notes=("force_speak",),
+        )
+        if not frame.action_plan.should_speak:
+            frame.final_decision = {
+                "text": "",
+                "animation": "",
+                "parse_mode": "action_plan_no_speech",
+                "system_action": "",
+                "reason": frame.action_plan.reason_to_speak,
+            }
+            self._set_cognitive_memory_update(frame, notes=("force_speak_no_speech",))
+            self._finalize_cognitive_frame(frame)
+            self.logger.info(
+                "[force_speak skipped] action_plan=%s | reason=%s",
+                frame.action_plan.speech_act,
+                frame.action_plan.reason_to_speak,
+            )
+            return
+
+        if frame.action_plan.speech_act == "withdraw":
+            decision = self._build_planned_withdraw_decision(frame.action_plan)
+            self.fe_style_memory = self.fe_renderer.remember_style(
+                self.fe_style_memory,
+                plan=fe_plan,
+                rendered_text=decision.text,
+            )
+            self.last_text = decision.text
+            self.last_autonomous_spoken_at = time.time()
+            self._apply_position_update(decision)
+            frame.final_decision = self._decision_to_frame_dict(decision)
+            self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_withdraw",))
+            self._finalize_cognitive_frame(frame)
+            self.logger.info(
+                '[force_speak] ActionPlanner withdrew with text="%s" | elapsed=%.2fs',
+                decision.text,
+                time.time() - cycle_start,
+            )
+            self.transport.send_json(decision.to_payload())
+            return
 
         forced_ti_context = (
-            f"{ti_report.prompt_context}\n"
+            f"{self._build_llm_ti_context(ti_report, frame.action_plan)}\n"
             "Context menu force_speak: Ngài vừa yêu cầu ERIS nói ngay. "
             "Bỏ qua cooldown im lặng cho đúng một lượt này. "
             "Nói một câu mới, tự nhiên; đừng nhắc telemetry hay chuyện menu trừ khi thật sự duyên. "
@@ -434,14 +1329,16 @@ class RuntimeCoordinator:
         )
         if not vision_marker:
             forced_ti_context += " Không có screen_facts mới; nói thật gọn, không dựng cảnh ngoài dữ kiện."
-        self.logger.info("[force_speak] context menu requested immediate speech.")
+            self.logger.info("[force_speak] context menu requested immediate speech.")
         raw = self.llm_service.generate_directive(
             telemetry_data=telemetry_data,
-            ni_context=ni_report.prompt_context,
+            ni_context="",
             ti_context=forced_ti_context,
             fe_context=fe_plan.style_context,
+            appraisal_context=self._build_appraisal_context(frame.appraisal),
+            memory_context=memory_context,
             avoid_text=self.last_text,
-            speech_intent="user_requested",
+            speech_intent=frame.action_plan.speech_intent,
             vision_trace_marker=vision_marker,
         )
         self._log_raw_llm_output("force_speak", raw)
@@ -452,6 +1349,7 @@ class RuntimeCoordinator:
         decision = self.ti_governor.enforce_decision(decision, ti_report)
         self._log_decision_stage("force_speak", "post_ti", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot)
+        decision = self._guard_force_speak_repetition(decision)
 
         self.fe_style_memory = self.fe_renderer.remember_style(
             self.fe_style_memory,
@@ -461,6 +1359,9 @@ class RuntimeCoordinator:
         self.last_text = decision.text
         self.last_autonomous_spoken_at = time.time()
         self._apply_position_update(decision)
+        frame.final_decision = self._decision_to_frame_dict(decision)
+        self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_commit",))
+        self._finalize_cognitive_frame(frame)
 
         self.logger.info(
             '[force_speak] Decision text="%s" | animation="%s" | elapsed=%.2fs',
@@ -472,13 +1373,14 @@ class RuntimeCoordinator:
         self.logger.info("[force_speak parser] %s", decision.parser_trace or "<empty>")
         self.transport.send_json(decision.to_payload())
 
-    def _commit_chat_decision(self, decision: Decision, fe_plan) -> None:
+    def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
         self.fe_style_memory = self.fe_renderer.remember_style(
             self.fe_style_memory,
             plan=fe_plan,
             rendered_text=decision.text,
         )
-        self.long_term_memory = self.memory_store.append_fact(self.long_term_memory, decision.extracted_fact)
+        if not self._has_structured_memory_store():
+            self.long_term_memory = self.memory_store.append_fact(self.long_term_memory, decision.extracted_fact)
 
         self.last_chat_answer = decision.text
         self.last_system_action = decision.system_action
@@ -487,6 +1389,10 @@ class RuntimeCoordinator:
             self.chat_history = self.chat_history[-32:]
 
         self._apply_position_update(decision)
+        if frame is not None:
+            frame.final_decision = self._decision_to_frame_dict(decision)
+            self._set_cognitive_memory_update(frame, decision=decision, notes=("chat_commit",))
+            self._finalize_cognitive_frame(frame)
         self.logger.info("ERIS: %s", decision.text)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[chat parser] %s", decision.parser_trace or "<empty>")
@@ -564,6 +1470,167 @@ class RuntimeCoordinator:
             backoff,
         )
 
+    def _is_low_value_screen_fact(self, fact: str) -> bool:
+        normalized = self._normalize_user_message(fact)
+        if not normalized:
+            return True
+
+        useful_terms = {
+            "build",
+            "chat",
+            "code",
+            "crash",
+            "diff",
+            "error",
+            "exception",
+            "failed",
+            "file",
+            "git",
+            "loi",
+            "message",
+            "meeting",
+            "meet",
+            "popup",
+            "script",
+            "terminal",
+            "test",
+            "traceback",
+            "warning",
+        }
+        if any(term in normalized for term in useful_terms):
+            return False
+
+        low_value_patterns = (
+            "bang dieu khien ben phai",
+            "bang dieu khien ben trai",
+            "panel ben phai",
+            "panel ben trai",
+            "right panel",
+            "left panel",
+            "inspector",
+            "refcounted",
+            "vai cua so",
+            "cua so khac",
+            "cua so dang chay",
+            "ba cua so",
+            "bon cua so",
+            "goc duoi",
+            "goc duoi phai",
+            "goc duoi cung",
+            "some windows",
+            "other windows",
+            "running windows",
+            "pixel art",
+            "cay pixel",
+            "bon cay",
+            "ba cay",
+            "nhan vat anime",
+            "toc hong",
+            "anime toc hong",
+            "eris debug",
+            "eris",
+            "debug cua toi",
+            "khung debug",
+            "debug window",
+            "facebook",
+            "trang tin nhan facebook",
+        )
+        if any(pattern in normalized for pattern in low_value_patterns):
+            return True
+
+        layout_terms = (
+            "ben phai",
+            "ben trai",
+            "goc duoi",
+            "goc tren",
+            "right side",
+            "left side",
+            "bottom",
+            "corner",
+        )
+        chrome_terms = (
+            "bang dieu khien",
+            "panel",
+            "sidebar",
+            "dock",
+            "cua so",
+            "window",
+            "debug",
+        )
+        return any(term in normalized for term in layout_terms) and any(
+            term in normalized for term in chrome_terms
+        )
+
+    def _speech_evidence_score(self, text: str, *, kind: str = "") -> float:
+        normalized = self._normalize_user_message(text)
+        if not normalized:
+            return 0.0
+        if kind == "vision_fact" and self._is_low_value_screen_fact(text):
+            return 0.0
+        if kind == "recent_event" and self._is_generic_screen_event(text):
+            return 0.0
+        if kind == "evidence" and self._is_generic_screen_evidence(text):
+            return 0.0
+
+        strong_terms = (
+            "traceback",
+            "exception",
+            "error",
+            "failed",
+            "failure",
+            "build failed",
+            "test failed",
+            "crash",
+            "warning",
+            "compiler",
+            "stack trace",
+            "terminal",
+            "loi",
+        )
+        if any(term in normalized for term in strong_terms):
+            return 0.95
+
+        message_terms = ("tin nhan", "message", "dm", "inbox")
+        message_change_terms = ("moi", "unread", "vua nhan", "received", "sent", "reply", "ping")
+        if any(term in normalized for term in message_terms):
+            return 0.82 if any(term in normalized for term in message_change_terms) else 0.20
+
+        meet_terms = ("meet", "meeting", "cuoc goi", "call")
+        meet_change_terms = ("joined", "waiting", "started", "ended", "microphone", "camera", "invited", "request")
+        if any(term in normalized for term in meet_terms):
+            return 0.80 if any(term in normalized for term in meet_change_terms) else 0.18
+
+        passive_media_terms = (
+            "youtube",
+            "video",
+            "danh sach video",
+            "playlist",
+            "dang hien thi danh sach",
+            "trang web youtube",
+            "elysium legacy",
+        )
+        if any(term in normalized for term in passive_media_terms):
+            return 0.15
+
+        task_change_terms = (
+            "file_saved",
+            "file saved",
+            "active editor changed",
+            "opened file",
+            "modified file",
+            "git diff",
+            "pull request",
+            "test passed",
+            "build succeeded",
+        )
+        if any(term in normalized for term in task_change_terms):
+            return 0.72
+
+        return 0.0
+
+    def _is_speakable_evidence(self, text: str, *, kind: str = "") -> bool:
+        return self._speech_evidence_score(text, kind=kind) >= 0.65
+
     def _sanitize_screen_facts(self, facts: list[str] | tuple[str, ...]) -> tuple[str, ...]:
         if not facts:
             return ()
@@ -572,6 +1639,8 @@ class RuntimeCoordinator:
         for item in facts:
             text = re.sub(r"\s+", " ", str(item or "").strip())
             if not text:
+                continue
+            if self._is_low_value_screen_fact(text):
                 continue
             key = text.lower()
             if key in seen:
@@ -587,12 +1656,15 @@ class RuntimeCoordinator:
 
     def _maybe_update_screen_facts(self) -> tuple[str, ...]:
         if not self.vision_facts_enabled:
+            self.vision_facts_novelty_hint = "none"
             return ()
 
         now = time.time()
         if now < self.vision_disabled_until:
+            self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
             return self.vision_facts
         if self.vision_last_capture_at and (now - self.vision_last_capture_at) < self.vision_interval_sec:
+            self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
             return self.vision_facts
 
         try:
@@ -605,6 +1677,8 @@ class RuntimeCoordinator:
             self.vision_last_capture_at = now
             self.vision_facts = ()
             self.vision_last_trace = ""
+            self.vision_facts_signature = ""
+            self.vision_facts_novelty_hint = "none"
             return self.vision_facts
 
         try:
@@ -617,6 +1691,13 @@ class RuntimeCoordinator:
         self.vision_failure_count = 0
         self.vision_disabled_until = 0.0
         cleaned = self._sanitize_screen_facts(facts)
+        signature = "\n".join(cleaned)
+        self.vision_facts_novelty_hint = (
+            "new_screen_fact"
+            if cleaned and signature != self.vision_facts_signature
+            else ("repeated_screen_fact" if cleaned else "none")
+        )
+        self.vision_facts_signature = signature
         self.vision_facts = cleaned
         self.vision_last_trace = trace or ""
         return self.vision_facts
@@ -624,8 +1705,7 @@ class RuntimeCoordinator:
     def _attach_screen_facts(self, snapshot, facts: tuple[str, ...]) -> str:
         if not facts:
             return ""
-        existing = tuple(getattr(snapshot, "recent_events", ()) or ())
-        snapshot.recent_events = (*facts, *existing)
+        snapshot.vision_facts = tuple(facts)
         return VISION_TRACE_MARKER
 
     # đếm số chu kỳ lặp lại bối cảnh
@@ -638,6 +1718,8 @@ class RuntimeCoordinator:
 
         user_signals = getattr(snapshot, "user_signals", None)
         focus_pattern = str(getattr(user_signals, "focus_pattern", "") or "")
+        vision_facts = tuple(getattr(snapshot, "vision_facts", ()) or ())
+        vision_signature = "|".join(str(item)[:48].lower() for item in vision_facts[:2])
 
         parts = [
             f"mode={getattr(ti_report, 'mode', '') or ''}",
@@ -645,6 +1727,7 @@ class RuntimeCoordinator:
             f"focus={getattr(snapshot, 'focus_summary', '') or ''}",
             f"window={active_window[:96]}",
             f"browser={browser_host}",
+            f"vision={vision_signature}",
             f"idle={self._bucket_idle_seconds(float(getattr(snapshot, 'idle_seconds', 0.0) or 0.0))}",
             f"spread={self._bucket_window_spread(getattr(snapshot, 'open_windows', ()), getattr(snapshot, 'browser_tabs', ()))}",
             f"pattern={focus_pattern}",
@@ -693,9 +1776,7 @@ class RuntimeCoordinator:
         return False
 
     def _has_resource_pressure_signal(self, snapshot) -> bool:
-        cpu = float(getattr(snapshot, "cpu_percent", 0.0) or 0.0)
-        ram = float(getattr(snapshot, "ram_percent", 0.0) or 0.0)
-        return cpu >= 90.0 or ram >= 92.0
+        return False
 
     def _is_generic_screen_event(self, event: str) -> bool:
         se_lens = getattr(self.telemetry_service, "se_lens", None)
@@ -746,14 +1827,39 @@ class RuntimeCoordinator:
         return False
 
     def _concrete_screen_signals(self, snapshot) -> tuple[str, ...]:
+        vision_facts = tuple(getattr(snapshot, "vision_facts", ()) or ())
         recent_events = tuple(getattr(snapshot, "recent_events", ()) or ())
         evidence = tuple(getattr(snapshot, "evidence", ()) or ())
-        concrete_events = [str(event) for event in recent_events if not self._is_generic_screen_event(event)]
-        concrete_evidence = [str(item) for item in evidence if not self._is_generic_screen_evidence(item)]
-        return tuple((*concrete_events, *concrete_evidence)[:4])
+        concrete_vision = [
+            str(item)
+            for item in vision_facts
+            if str(item or "").strip() and self._is_speakable_evidence(str(item), kind="vision_fact")
+        ]
+        concrete_events = [
+            str(event)
+            for event in recent_events
+            if self._is_speakable_evidence(str(event), kind="recent_event")
+        ]
+        concrete_evidence = [
+            str(item)
+            for item in evidence
+            if self._is_speakable_evidence(str(item), kind="evidence")
+        ]
+        return tuple((*concrete_vision, *concrete_events, *concrete_evidence)[:4])
 
     def _has_concrete_screen_signal(self, snapshot) -> bool:
         return bool(self._concrete_screen_signals(snapshot))
+
+    def _broadcast_screen_winners(self, broadcast: CognitiveBroadcast | None) -> tuple[AttentionCandidate, ...]:
+        if broadcast is None:
+            return ()
+        concrete_labels = {"vision_fact", "recent_event", "evidence"}
+        return tuple(
+            item
+            for item in tuple(getattr(broadcast, "items", ()) or ())
+            if item.label in concrete_labels and item.score >= self.attention_workspace.broadcast_threshold
+            and self._is_speakable_evidence(item.content, kind=item.label)
+        )
 
     def _choose_autonomous_speech_intent(
         self,
@@ -762,28 +1868,12 @@ class RuntimeCoordinator:
         ni_report,
         ti_report,
         repeat_count: int,
+        attention_broadcast: CognitiveBroadcast | None = None,
         ni_state_label: str = "",
         repeated_topic_tag: str = "",
         repeated_topic_streak: int = 0,
     ) -> SpeechIntentDecision:
         mode = str(getattr(ti_report, "mode", "") or "")
-
-        if mode == "resource_guard" or self._has_resource_pressure_signal(snapshot):
-            return SpeechIntentDecision(
-                intent="system_warning",
-                reason="Có tín hiệu tài nguyên/hệ thống đủ cụ thể.",
-            )
-
-        if mode == "pattern_muse":
-            if repeat_count >= 2 and not self._has_concrete_screen_signal(snapshot):
-                return SpeechIntentDecision(
-                    intent="no_speech",
-                    reason="pattern_muse đã lặp mà không có tín hiệu mới; im để tránh nói đại.",
-                )
-            return SpeechIntentDecision(
-                intent="playful_aside",
-                reason="pattern_muse cho phép một aside ngắn.",
-            )
 
         if self._should_suppress_autonomous_reply(
             ti_report=ti_report,
@@ -800,12 +1890,27 @@ class RuntimeCoordinator:
 
         concrete_signals = self._concrete_screen_signals(snapshot)
         if concrete_signals:
+            if attention_broadcast is not None:
+                screen_winners = self._broadcast_screen_winners(attention_broadcast)
+                if not screen_winners:
+                    return SpeechIntentDecision(
+                        intent="no_speech",
+                        reason="AttentionWorkspace did not broadcast a screen winner.",
+                    )
+                return SpeechIntentDecision(
+                    intent="screen_observation",
+                    reason=(
+                        "AttentionWorkspace broadcast screen winner: "
+                        + ", ".join(f"{item.label}:{item.score:.2f}" for item in screen_winners[:2])
+                    ),
+                )
             return SpeechIntentDecision(
                 intent="screen_observation",
                 reason=f"Có screen signal cụ thể: {', '.join(concrete_signals[:2])}.",
             )
 
         quiet_modes = {
+            "pattern_muse",
             "steady_observe",
             "focus_guard",
             "system_watch",
@@ -866,12 +1971,8 @@ class RuntimeCoordinator:
     #  để tránh tạo pattern lặp lại quá đều đặn.
     def _choose_autonomous_sleep_duration(self, *, suppressed: bool, ti_mode: str) -> int:
         if suppressed:
-            if ti_mode == "resource_guard":
-                return random.choice([60, 90, 120])
-            return random.choice([90, 120, 150, 180])
-        if ti_mode == "resource_guard":
-            return random.choice([30, 45, 60])
-        return random.choice([45, 60, 75, 90, 120])
+            return random.choice([180, 240, 300, 360])
+        return random.choice([120, 150, 180, 240])
 
     def run_loop(self):
         self.logger.info("--- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---")
@@ -900,7 +2001,9 @@ class RuntimeCoordinator:
             vision_facts = self._maybe_update_screen_facts()
             if vision_facts:
                 vision_marker = self._attach_screen_facts(snapshot, vision_facts)
-            telemetry_data = self.telemetry_service.format_directive_snapshot(snapshot)
+            telemetry_data = self._build_speech_evidence_context(snapshot)
+            self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
+            memory_context = self._build_memory_context(snapshot)
             ni_report = self.ni_engine.evaluate_autonomous(
                 snapshot=snapshot,
                 long_term_memory=self.long_term_memory,
@@ -932,6 +2035,15 @@ class RuntimeCoordinator:
                 style_memory=self.fe_style_memory,
                 last_text=self.last_text,
             )
+            frame = self._start_cognitive_frame(
+                channel="autonomous",
+                started_at=cycle_start,
+                snapshot=snapshot,
+                ni_report=ni_report,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                vision_facts=vision_facts,
+            )
             self.logger.info(
                 "[ni auto] drift=%.2f | level=%s | state=%s | streak=%d",
                 ni_report.drift_score,
@@ -956,6 +2068,7 @@ class RuntimeCoordinator:
                 ni_report=ni_report,
                 ti_report=ti_report,
                 repeat_count=repeat_count,
+                attention_broadcast=frame.broadcast,
                 ni_state_label=ni_state_label,
                 repeated_topic_tag=repeated_topic_tag,
                 repeated_topic_streak=repeated_topic_streak,
@@ -965,12 +2078,32 @@ class RuntimeCoordinator:
                 speech_intent.intent,
                 speech_intent.reason,
             )
-            if speech_intent.intent == "no_speech":
+            self._set_cognitive_action_plan(
+                frame,
+                should_speak=speech_intent.intent != "no_speech",
+                speech_intent=speech_intent.intent,
+                reason=speech_intent.reason,
+                snapshot=snapshot,
+                concrete_signals=self._concrete_screen_signals(snapshot),
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                notes=(f"repeat_count={repeat_count}",),
+            )
+            if not frame.action_plan.should_speak:
                 elapsed = time.time() - cycle_start
                 sleep_duration = self._choose_autonomous_sleep_duration(
                     suppressed=True,
                     ti_mode=ti_report.mode,
                 )
+                frame.final_decision = {
+                    "text": "",
+                    "animation": "",
+                    "parse_mode": "no_speech",
+                    "system_action": "",
+                    "reason": frame.action_plan.reason_to_speak,
+                }
+                self._set_cognitive_memory_update(frame, notes=("no_speech",))
+                self._finalize_cognitive_frame(frame)
                 self.logger.info(
                     "[directive skipped] speech_intent=no_speech | mode=%s | repeat=%d | topic=%s:%d | signature=%s",
                     ti_report.mode,
@@ -999,6 +2132,26 @@ class RuntimeCoordinator:
                     ti_mode=ti_report.mode,
                 )
                 cooldown = self._ambient_silence_cooldown_seconds(snapshot, ti_report)
+                self._set_cognitive_action_plan(
+                    frame,
+                    should_speak=False,
+                    speech_intent="no_speech",
+                    reason=f"Ambient silence cooldown held this cycle after {cooldown}s window.",
+                    snapshot=snapshot,
+                    concrete_signals=self._concrete_screen_signals(snapshot),
+                    ti_report=ti_report,
+                    fe_plan=fe_plan,
+                    notes=("ambient_silence", f"original_intent={speech_intent.intent}"),
+                )
+                frame.final_decision = {
+                    "text": "",
+                    "animation": "",
+                    "parse_mode": "ambient_silence",
+                    "system_action": "",
+                    "reason": "ambient_silence",
+                }
+                self._set_cognitive_memory_update(frame, notes=("ambient_silence",))
+                self._finalize_cognitive_frame(frame)
                 self.logger.info(
                     "[directive skipped] ambient_silence mode=%s | cooldown=%ss | last_text=%s",
                     ti_report.mode,
@@ -1013,13 +2166,18 @@ class RuntimeCoordinator:
                 self._sleep_interruptible(sleep_duration)
                 continue
 
+            planned_ti_context = (
+                self._build_llm_ti_context(ti_report, frame.action_plan)
+            )
             raw = self.llm_service.generate_directive(
                 telemetry_data=telemetry_data,
-                ni_context=ni_report.prompt_context,
-                ti_context=ti_report.prompt_context,
+                ni_context="",
+                ti_context=planned_ti_context,
                 fe_context=fe_plan.style_context,
+                appraisal_context=self._build_appraisal_context(frame.appraisal),
+                memory_context=memory_context,
                 avoid_text=self.last_text,
-                speech_intent=speech_intent.intent,
+                speech_intent=frame.action_plan.speech_intent,
                 vision_trace_marker=vision_marker,
             )
             self._log_raw_llm_output("directive", raw)
@@ -1040,6 +2198,9 @@ class RuntimeCoordinator:
             self.last_text = decision.text
             self.last_autonomous_spoken_at = time.time()
             self._apply_position_update(decision)
+            frame.final_decision = self._decision_to_frame_dict(decision)
+            self._set_cognitive_memory_update(frame, decision=decision, notes=("autonomous_commit",))
+            self._finalize_cognitive_frame(frame)
 
             self.logger.info("Tâm trạng giữ nguyên: %s", self.mood_score)
             self.logger.info('Decision text="%s" | animation="%s"', decision.text, decision.animation)
@@ -1102,6 +2263,7 @@ class RuntimeCoordinator:
         idle_label = getattr(snapshot, "idle_label", "") or ""
         recent_events = getattr(snapshot, "recent_events", ()) or ()
         user_signals = getattr(snapshot, "user_signals", None)
+        vision_facts = getattr(snapshot, "vision_facts", ()) or ()
         evidence = getattr(snapshot, "evidence", ()) or ()
         claim_style = getattr(snapshot, "claim_style", "") or ""
         parts = [
@@ -1126,6 +2288,8 @@ class RuntimeCoordinator:
                 )
         if evidence:
             parts.append("evidence=" + " | ".join(str(item) for item in evidence[:2]))
+        if vision_facts:
+            parts.append("vision_facts=" + " | ".join(str(item) for item in vision_facts[:2]))
         if claim_style:
             parts.append(f"claim_style={claim_style}")
         return " | ".join(parts)

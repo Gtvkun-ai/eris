@@ -433,6 +433,32 @@ class LlmService:
         compact = re.sub(r"\s+", " ", (text or "").strip())
         return compact[:160]
 
+    def _extract_action_plan_context(self, text: str) -> str:
+        marker = "ActionPlanner decision before LLM:"
+        source = text or ""
+        start = source.find(marker)
+        if start < 0:
+            return ""
+        compact = re.sub(r"\s+", " ", source[start:].strip())
+        return compact[:420]
+
+    def _build_style_block(self, *, fe_context: str, appraisal_context: str = "") -> str:
+        style_block = fe_context or STYLE_FALLBACK_PROMPT
+        appraisal_block = (appraisal_context or "").strip()
+        if appraisal_block:
+            style_block = f"{style_block}\n\n{appraisal_block}"
+        return style_block
+
+    def _build_memory_context_block(self, memory_context: str = "") -> str:
+        compact = re.sub(r"\n{3,}", "\n\n", (memory_context or "").strip())
+        if not compact:
+            return ""
+        return (
+            "Memory context for continuity, separated by type. "
+            "Do not treat memory as current screen evidence; use norm_memory only to compare this scene with the user's baseline.\n"
+            f"{compact}"
+        )
+
     def _build_directive_mode_addendum(self, ti_context: str) -> str:
         lowered = (ti_context or "").lower()
         if not lowered:
@@ -483,6 +509,7 @@ class LlmService:
             "user_requested": (
                 "speech_intent=user_requested. Ngài vừa yêu cầu nói ngay; trả một câu trực tiếp, tự nhiên. "
                 "Đừng biến lượt này thành báo cáo telemetry; nếu thiếu chất liệu quan sát thì thừa nhận rất gọn, không bịa cảnh."
+                " Screen facts are props, not the topic: use them lightly, do not list visible objects."
             ),
             "system_warning": (
                 "speech_intent=system_warning. Chỉ nêu cảnh báo cụ thể về tài nguyên/hệ thống; "
@@ -502,16 +529,25 @@ class LlmService:
         ti_context: str = "",
         ni_context: str = "",
         fe_context: str = "",
+        appraisal_context: str = "",
+        memory_context: str = "",
         avoid_text: str = "",
         speech_intent: str = "screen_observation",
         vision_trace_marker: str = "",
     ):
         ti_hint = self._compress_internal_context(ti_context, kind="ti")
+        action_plan_hint = self._extract_action_plan_context(ti_context)
         ni_hint = self._compress_internal_context(ni_context, kind="ni")
         mode_addendum = self._build_directive_mode_addendum(ti_context)
         intent_guidance = self._build_speech_intent_guidance(speech_intent)
-        style_block = fe_context or STYLE_FALLBACK_PROMPT
+        style_block = self._build_style_block(
+            fe_context=fe_context,
+            appraisal_context=appraisal_context,
+        )
+        memory_block = self._build_memory_context_block(memory_context)
         system_prompt = f"{style_block}\n\n{RUNTIME_RULES_PROMPT}\n\n{AUTONOMOUS_BEHAVIOR_PROMPT}"
+        if memory_block:
+            system_prompt = f"{style_block}\n\n{memory_block}\n\n{RUNTIME_RULES_PROMPT}\n\n{AUTONOMOUS_BEHAVIOR_PROMPT}"
         lowered_ti = (ti_context or "").lower()
         is_resource_guard = "resource_guard" in lowered_ti
         allows_muse = "pattern_muse" in lowered_ti
@@ -519,16 +555,17 @@ class LlmService:
         user_msg = (
                 (f"Ghi chú nền: {ni_hint}\n" if ni_hint else "")
                 + (f"Gợi ý điều phối: {ti_hint}\n" if ti_hint else "")
+                + (f"Action plan bắt buộc: {action_plan_hint}\n" if action_plan_hint else "")
                 + f"Speech intent: {intent_guidance}\n"
                 + (
                     f"Câu gần nhất cần tránh lặp lại: {avoid_line}\n"
                     if avoid_line
                     else ""
                 )
-                + f"Không khí nền, không đọc lại như telemetry: {telemetry_data}\n"
+                + f"Speech evidence đã lọc, không phải telemetry thô: {telemetry_data}\n"
                 + "Trả về JSON quyết định cho runtime.\n"
                 + "Nếu ngữ cảnh đang nhàn hoặc không có biến động rõ, đừng tự tạo chủ đề riêng; chỉ nói khi speech_intent thật sự có lý do. "
-                + "Chỉ nêu điều có trong speech_intent, recent_events/evidence, hoặc telemetry rõ; phần không biết thì để trống. "
+                + "Chỉ nêu điều có trong speech_evidence đã lọc; nếu speech_evidence=<none> thì không dựng cảnh. "
                 + "Không suy diễn trạng thái tập trung hay phân tâm chỉ từ việc có video, nhạc, hay tab; nếu nhắc thì nói trung tính. "
                 + "Nếu đang móc mỉa, hãy đi vòng hoặc đổi góc nhìn thay vì đào thẳng một trọng tâm cũ. "
                 + "Không nhắc Ngài tập trung, quay lại mục tiêu, đóng tab, hay bớt phân tâm trừ khi Ngài hỏi trực tiếp. "
@@ -579,7 +616,11 @@ class LlmService:
                 "text": (
                     "Trich toi da 3 fact ngan ve noi dung man hinh. "
                     "Chi dua fact nhin thay ro. Neu chu qua nho/bi mo/bi che, bo qua. "
-                    "Khong suy doan. Khong nhac ve ti le, so dem neu khong chac.\n\n"
+                    "Khong suy doan. Khong nhac ve ti le, so dem neu khong chac. "
+                    "Bo qua UI chrome tinh nhu panel trai/phai, inspector, class/resource label "
+                    "kieu RefCounted, hoac 'co vai cua so' neu chung khong bao loi hay viec dang lam ro. "
+                    "Bo qua avatar/nhan vat ERIS, cua so debug/Godot, pixel art nho, cay/canh trang tri, "
+                    "va cac vat nam o goc man hinh neu do chi la nen/decor.\n\n"
                     "Schema:\n"
                     "{\n"
                     '  \"facts\": [\"fact 1\", \"fact 2\"],\n'
@@ -630,10 +671,18 @@ class LlmService:
         ti_context: str = "",
         ni_context: str = "",
         fe_context: str = "",
+        appraisal_context: str = "",
+        memory_context: str = "",
         screen_image_data_uri: str = "",
     ):
-        style_block = fe_context or STYLE_FALLBACK_PROMPT
+        style_block = self._build_style_block(
+            fe_context=fe_context,
+            appraisal_context=appraisal_context,
+        )
         chat_system = f"{style_block}\n\n{CHAT_RULES_PROMPT}"
+        memory_block = self._build_memory_context_block(memory_context)
+        if memory_block:
+            chat_system = f"{style_block}\n\n{memory_block}\n\n{CHAT_RULES_PROMPT}"
         if ni_context:
             chat_system = f"{chat_system}\n\nNi context:\n{ni_context}"
         if ti_context:

@@ -54,10 +54,12 @@ class AttentionOverseer:
         self.transport = UdpTransport("127.0.0.1", 4242, "127.0.0.1", 4243)
         self.memory_store = MemoryStore("long_term_memory.json")
         try:
-            long_term_memory = self.memory_store.load()
+            memory_state = self.memory_store.load_state()
+            long_term_memory = self.memory_store.recall_texts(memory_state)
             if long_term_memory:
                 self.memory_logger.info("Đã nạp %s mảnh ký ức cốt lõi.", len(long_term_memory))
         except Exception as exc:
+            memory_state = None
             long_term_memory = []
             self.memory_logger.warning("Lỗi đọc tệp ký ức: %s", exc)
 
@@ -87,6 +89,8 @@ class AttentionOverseer:
             action_executor=self.action_executor,
             action_router=self.action_router,
         )
+        if memory_state is not None:
+            self.coordinator.memory_state = memory_state
         self.coordinator.long_term_memory = long_term_memory
 
     def _is_body_running(self) -> bool:

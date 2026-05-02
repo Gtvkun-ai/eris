@@ -37,6 +37,7 @@ class TelemetrySnapshot:
     user_signals: UserSignals = field(default_factory=UserSignals)
     evidence: tuple[str, ...] = ()
     claim_style: str = "soft_grounded"
+    vision_facts: tuple[str, ...] = ()
 
     def to_machine_context(self) -> dict[str, object]:
         context: dict[str, object] = {
@@ -46,6 +47,7 @@ class TelemetrySnapshot:
             "recent_events": list(self.recent_events),
             "user_signals": self.user_signals.to_dict(),
             "evidence": list(self.evidence),
+            "vision_facts": list(self.vision_facts),
             "claim_style": self.claim_style,
             "active_window_kind": self.active_window_kind,
             "focus_summary": self.focus_summary,
@@ -131,3 +133,202 @@ class FeStyleMemory:
     discipline_pull: float = 0.20
     attachment_pull: float = 0.20
     neutral_pull: float = 0.20
+
+
+@dataclass(slots=True)
+class PerceptEvent:
+    kind: str
+    content: str
+    evidence: tuple[str, ...] = ()
+    confidence: float = 1.0
+    source: str = "runtime"
+    timestamp: str = ""
+    privacy_level: str = "internal"
+    novelty_hint: str = "routine"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "kind": self.kind,
+            "content": self.content,
+            "evidence": list(self.evidence),
+            "confidence": round(float(self.confidence), 3),
+            "source": self.source,
+            "timestamp": self.timestamp,
+            "privacy_level": self.privacy_level,
+            "novelty_hint": self.novelty_hint,
+        }
+
+
+CognitivePercept = PerceptEvent
+
+
+@dataclass(slots=True)
+class AttentionCandidate:
+    label: str
+    content: str
+    score: float
+    source: str = "runtime"
+    reason: str = ""
+    evidence: tuple[str, ...] = ()
+    privacy_level: str = "internal"
+    novelty_hint: str = "routine"
+    score_parts: dict[str, float] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "content": self.content,
+            "score": round(float(self.score), 3),
+            "source": self.source,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+            "privacy_level": self.privacy_level,
+            "novelty_hint": self.novelty_hint,
+            "score_parts": {
+                key: round(float(value), 3)
+                for key, value in self.score_parts.items()
+            },
+        }
+
+
+@dataclass(slots=True)
+class CognitiveBroadcast:
+    label: str = ""
+    content: str = ""
+    score: float = 0.0
+    source: str = ""
+    reason: str = ""
+    evidence: tuple[str, ...] = ()
+    items: tuple[AttentionCandidate, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "content": self.content,
+            "score": round(float(self.score), 3),
+            "source": self.source,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+            "items": [item.to_dict() for item in self.items],
+        }
+
+
+@dataclass(slots=True)
+class CognitiveAppraisal:
+    state_type: str = "expressive_appraisal_state"
+    stance: str = "grounded"
+    valence: float = 0.0
+    arousal: float = 0.0
+    certainty: float = 0.0
+    agency: float = 0.0
+    controllability: float = 0.0
+    intimacy: float = 0.0
+    threat: float = 0.0
+    protectiveness: float = 0.0
+    jealousy_lite: float = 0.0
+    amusement: float = 0.0
+    fatigue: float = 0.0
+    tenderness: float = 0.0
+    summary: str = ""
+    evidence: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "state_type": self.state_type,
+            "stance": self.stance,
+            "valence": round(float(self.valence), 3),
+            "arousal": round(float(self.arousal), 3),
+            "certainty": round(float(self.certainty), 3),
+            "agency": round(float(self.agency), 3),
+            "controllability": round(float(self.controllability), 3),
+            "intimacy": round(float(self.intimacy), 3),
+            "threat": round(float(self.threat), 3),
+            "protectiveness": round(float(self.protectiveness), 3),
+            "jealousy_lite": round(float(self.jealousy_lite), 3),
+            "amusement": round(float(self.amusement), 3),
+            "fatigue": round(float(self.fatigue), 3),
+            "tenderness": round(float(self.tenderness), 3),
+            "summary": self.summary,
+            "evidence": list(self.evidence),
+        }
+
+
+@dataclass(slots=True)
+class CognitiveActionPlan:
+    should_speak: bool = False
+    speech_intent: str = "no_speech"
+    speech_act: str = "no_speech"
+    reason_to_speak: str = ""
+    reason: str = ""
+    animation_hint: str = "stand"
+    system_action: str = ""
+    risk_flags: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        reason = self.reason_to_speak or self.reason
+        return {
+            "should_speak": self.should_speak,
+            "speech_intent": self.speech_intent,
+            "speech_act": self.speech_act,
+            "reason_to_speak": reason,
+            "reason": reason,
+            "animation_hint": self.animation_hint,
+            "system_action": self.system_action,
+            "risk_flags": list(self.risk_flags),
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(slots=True)
+class CognitiveMemoryUpdate:
+    remembered_fact: str = ""
+    remembered_style_excerpt: str = ""
+    last_text: str = ""
+    system_action: str = ""
+    notes: tuple[str, ...] = ()
+    working_summary: str = ""
+    episodic_summary: str = ""
+    semantic_fact: str = ""
+    norm_deviation: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "remembered_fact": self.remembered_fact,
+            "remembered_style_excerpt": self.remembered_style_excerpt,
+            "last_text": self.last_text,
+            "system_action": self.system_action,
+            "notes": list(self.notes),
+            "working_summary": self.working_summary,
+            "episodic_summary": self.episodic_summary,
+            "semantic_fact": self.semantic_fact,
+            "norm_deviation": self.norm_deviation,
+        }
+
+
+@dataclass(slots=True)
+class CognitiveFrame:
+    cycle_id: str
+    channel: str
+    started_at: float
+    percepts: tuple[PerceptEvent, ...] = ()
+    attention_candidates: tuple[AttentionCandidate, ...] = ()
+    broadcast: CognitiveBroadcast = field(default_factory=CognitiveBroadcast)
+    appraisal: CognitiveAppraisal = field(default_factory=CognitiveAppraisal)
+    action_plan: CognitiveActionPlan = field(default_factory=CognitiveActionPlan)
+    final_decision: dict[str, object] = field(default_factory=dict)
+    memory_update: CognitiveMemoryUpdate = field(default_factory=CognitiveMemoryUpdate)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "cycle_id": self.cycle_id,
+            "channel": self.channel,
+            "started_at": round(float(self.started_at), 3),
+            "percepts": [item.to_dict() for item in self.percepts],
+            "attention_candidates": [item.to_dict() for item in self.attention_candidates],
+            "broadcast": self.broadcast.to_dict(),
+            "appraisal": self.appraisal.to_dict(),
+            "action_plan": self.action_plan.to_dict(),
+            "final_decision": dict(self.final_decision),
+            "memory_update": self.memory_update.to_dict(),
+        }

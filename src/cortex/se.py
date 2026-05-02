@@ -141,6 +141,7 @@ class SeLens:
             user_signals=user_signals,
             evidence=evidence,
             claim_style=claim_style,
+            vision_facts=self._normalize_string_tuple(raw.get("vision_facts", ())),
         )
 
     def build_machine_context(self, raw: dict) -> dict[str, object]:
@@ -255,6 +256,8 @@ class SeLens:
 
     def _build_prompt_screen_facts(self, snapshot: TelemetrySnapshot) -> list[str]:
         facts: list[str] = []
+        for item in getattr(snapshot, "vision_facts", ()) or ():
+            facts.append(str(item))
         for event in snapshot.recent_events:
             if not self._is_generic_prompt_event(event):
                 facts.append(str(event))

@@ -27,7 +27,7 @@ CAPABILITY_PROFILE = {
         "đổi animation, hướng di chuyển và vị trí nhân vật trong Godot",
     ],
     "memory": [
-        "lưu một số fact ngắn vào long_term_memory.json",
+        "lưu working/episodic/semantic/norm memory trong long_term_memory.json",
     ],
 }
 

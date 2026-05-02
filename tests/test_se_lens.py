@@ -160,6 +160,23 @@ class SeLensTests(unittest.TestCase):
         self.assertIn("traceback is visible in terminal", formatted)
         self.assertNotIn("2 windows are open", formatted)
 
+    def test_directive_snapshot_reads_vision_facts_without_polluting_recent_events(self):
+        raw = {
+            "captured_at": "14:10",
+            "active_window": "VS Code",
+            "recent_events": ["general_window_active"],
+            "evidence": ["active window is VS Code"],
+            "vision_facts": ["terminal shows traceback"],
+        }
+
+        snapshot = self.se_lens.build_snapshot(raw)
+        formatted = self.se_lens.format_directive_snapshot(snapshot)
+
+        self.assertEqual(snapshot.recent_events, ("general_window_active",))
+        self.assertEqual(snapshot.vision_facts, ("terminal shows traceback",))
+        self.assertIn("screen_facts", formatted)
+        self.assertIn("terminal shows traceback", formatted)
+
     def test_high_resources_remain_raw_telemetry_not_behavior_cues(self):
         raw = {
             "captured_at": "22:15",
