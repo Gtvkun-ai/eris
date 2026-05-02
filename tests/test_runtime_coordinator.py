@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from domain import Decision
 from cortex.contracts import CognitiveBroadcast
+from memory import MemoryStore
 from runtime.coordinator import RuntimeCoordinator
 
 
@@ -73,6 +75,50 @@ class _RepeatingForceSpeakLlmService(_DummyLlmService):
         )
 
 
+class _GenericThenSocialLlmService(_DummyLlmService):
+    def __init__(self):
+        super().__init__()
+        self._texts = [
+            "Ngài muốn tôi nói gì đây.",
+            "Tạm bỏ màn hình qua một bên. Ngài thích buổi sáng yên hay buổi đêm yên hơn.",
+        ]
+
+    def generate_directive(self, **kwargs):
+        self.directive_calls += 1
+        self.last_directive_kwargs = kwargs
+        text = self._texts.pop(0)
+        return json.dumps(
+            {
+                "text": text,
+                "animation": "stand",
+                "direction": 0,
+                "target_x": -1.0,
+                "bounce_action": "",
+                "next_animation": "",
+                "system_action": "",
+                "action_input": "",
+            }
+        )
+
+
+class _MindreadingForceSpeakLlmService(_DummyLlmService):
+    def generate_directive(self, **kwargs):
+        self.directive_calls += 1
+        self.last_directive_kwargs = kwargs
+        return json.dumps(
+            {
+                "text": "Co ve Ngai dang met.",
+                "animation": "stand",
+                "direction": 0,
+                "target_x": -1.0,
+                "bounce_action": "",
+                "next_animation": "",
+                "system_action": "",
+                "action_input": "",
+            }
+        )
+
+
 class _DummyParser:
     def build_chat_user_message(self, *, user_message, last_chat_answer):
         return user_message
@@ -115,6 +161,14 @@ class _DummyTelemetry:
 
     def format_directive_snapshot(self, snapshot):
         return "ambient cues"
+
+
+class _LongIdleTelemetry(_DummyTelemetry):
+    def capture_snapshot(self, **kwargs):
+        snapshot = super().capture_snapshot(**kwargs)
+        snapshot.idle_seconds = 500.0
+        snapshot.idle_label = "idle"
+        return snapshot
 
 
 class _SignalTelemetry(_DummyTelemetry):
@@ -345,21 +399,49 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "direct_action")
         self.assertIn("hỏi lại cùng một ý", coordinator.transport.sent[-1]["text"].lower())
 
-    def test_force_speak_low_signal_withdraws_before_llm(self):
+    def test_force_speak_low_signal_surfaces_inner_thought_before_llm(self):
         coordinator = self._make_coordinator()
         coordinator.last_text = "Một câu cũ."
         coordinator.last_autonomous_spoken_at = 1.0
 
         coordinator._handle_incoming({"type": "force_speak"})
 
-        self.assertEqual(coordinator.llm_service.directive_calls, 0)
-        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "action_plan_withdraw")
-        self.assertEqual(
-            coordinator.transport.sent[-1]["text"],
-            "Không có gì mới đáng nói. Tôi chỉ đang để mắt thôi.",
-        )
+        self.assertEqual(coordinator.llm_service.directive_calls, 1)
+        self.assertIn("SpeechCore mode", coordinator.llm_service.last_directive_kwargs["ti_context"])
+        self.assertIn("topic_seed=present_whim", coordinator.llm_service.last_directive_kwargs["ti_context"])
+        self.assertIn("do not use canned phrases", coordinator.llm_service.last_directive_kwargs["ti_context"])
+        self.assertEqual(coordinator.llm_service.last_directive_kwargs["avoid_text"], "Một câu cũ.")
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "inner_thought")
+        self.assertEqual(coordinator.transport.sent[-1]["text"], "phan hoi dau tien")
         self.assertEqual(coordinator.last_text, coordinator.transport.sent[-1]["text"])
         self.assertGreater(coordinator.last_autonomous_spoken_at, 1.0)
+
+    def test_force_speak_inner_thought_repairs_generic_meta_ack(self):
+        llm_service = _GenericThenSocialLlmService()
+        coordinator = self._make_coordinator(
+            llm_service=llm_service,
+            parser=_JsonParser(),
+        )
+
+        coordinator._handle_incoming({"type": "force_speak"})
+
+        self.assertEqual(llm_service.directive_calls, 2)
+        self.assertIn("SpeechCore repair", llm_service.last_directive_kwargs["ti_context"])
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "inner_thought")
+        self.assertNotIn("muốn tôi nói gì", coordinator.transport.sent[-1]["text"])
+        self.assertIn("buổi", coordinator.transport.sent[-1]["text"])
+
+    def test_force_speak_anti_mindreading_filter_rewrites_unfounded_emotion_claim(self):
+        coordinator = self._make_coordinator(
+            llm_service=_MindreadingForceSpeakLlmService(),
+            parser=_JsonParser(),
+        )
+
+        coordinator._handle_incoming({"type": "force_speak"})
+
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "inner_thought")
+        self.assertNotIn("ngai dang met", coordinator.transport.sent[-1]["text"].lower())
+        self.assertNotEqual(coordinator.transport.sent[-1]["text"], "Co ve Ngai dang met.")
 
     def test_force_speak_with_concrete_signal_reaches_llm_through_action_planner(self):
         coordinator = self._make_coordinator(telemetry_service=_SignalTelemetry())
@@ -369,7 +451,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertEqual(coordinator.llm_service.directive_calls, 1)
         self.assertIn("ActionPlanner decision before LLM", coordinator.llm_service.last_directive_kwargs["ti_context"])
-        self.assertIn("speech_act=observe", coordinator.llm_service.last_directive_kwargs["ti_context"])
+        self.assertIn("speech_act=telemetry_comment", coordinator.llm_service.last_directive_kwargs["ti_context"])
         self.assertEqual(coordinator.llm_service.last_directive_kwargs["speech_intent"], "screen_observation")
         self.assertEqual(coordinator.llm_service.last_directive_kwargs["avoid_text"], "Một câu cũ.")
         self.assertIn("speech_evidence=", coordinator.llm_service.last_directive_kwargs["telemetry_data"])
@@ -384,7 +466,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         frame = coordinator.last_cognitive_frame
         self.assertEqual(coordinator.llm_service.directive_calls, 1)
-        self.assertEqual(frame.action_plan.speech_act, "observe")
+        self.assertEqual(frame.action_plan.speech_act, "telemetry_comment")
         self.assertEqual(frame.action_plan.speech_intent, "screen_observation")
         self.assertNotIn("resource_pressure", frame.action_plan.risk_flags)
         self.assertNotEqual(frame.action_plan.speech_intent, "system_warning")
@@ -422,8 +504,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertEqual(llm_service.screen_fact_calls, 1)
         self.assertEqual(coordinator.vision_facts, ())
-        self.assertEqual(coordinator.llm_service.directive_calls, 0)
-        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "action_plan_withdraw")
+        self.assertEqual(coordinator.llm_service.directive_calls, 1)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "inner_thought")
+        self.assertEqual(coordinator.transport.sent[-1]["text"], "phan hoi dau tien")
 
     def test_screen_fact_filter_drops_self_debug_and_decor_observations(self):
         coordinator = self._make_coordinator()
@@ -450,10 +533,26 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(frame.channel, "force_speak")
         self.assertTrue(frame.action_plan.should_speak)
         self.assertEqual(frame.action_plan.speech_intent, "user_requested")
-        self.assertEqual(frame.action_plan.speech_act, "withdraw")
-        self.assertIn("force_speak_low_signal", frame.action_plan.risk_flags)
-        self.assertEqual(frame.final_decision["parse_mode"], "action_plan_withdraw")
+        self.assertEqual(frame.action_plan.speech_act, "inner_whim")
+        self.assertTrue(frame.inner_thought.should_surface)
+        self.assertEqual(frame.inner_thought.intent, "inner_whim")
+        self.assertEqual(frame.speech_core.speech_source, "freeform")
+        self.assertIn("no_screen_claim", frame.action_plan.risk_flags)
+        self.assertEqual(frame.final_decision["parse_mode"], "inner_thought")
         self.assertTrue(any(percept.kind == "user_force_speak" for percept in frame.percepts))
+
+    def test_force_speak_inner_thought_records_relationship_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            coordinator = self._make_coordinator(
+                memory_store=MemoryStore(os.path.join(tmpdir, "memory.json")),
+            )
+
+            coordinator._handle_incoming({"type": "force_speak"})
+
+            reflections = [item.text for item in coordinator.memory_state.relationship]
+            self.assertTrue(any("force_speak" in item for item in reflections))
+            self.assertTrue(any("thiếu screen signal" in item for item in reflections))
+            self.assertIn("relationship_reflection", coordinator.last_cognitive_frame.memory_update.to_dict())
 
     def test_chat_records_cognitive_frame(self):
         coordinator = self._make_coordinator()
@@ -470,6 +569,25 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(frame.appraisal.state_type, "expressive_appraisal_state")
         self.assertIn("agency", frame.appraisal.to_dict())
         self.assertIn("expressive/appraisal state", coordinator.llm_service.last_chat_kwargs["appraisal_context"])
+
+    def test_chat_style_preference_records_relationship_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            coordinator = self._make_coordinator(
+                memory_store=MemoryStore(os.path.join(tmpdir, "memory.json")),
+            )
+
+            coordinator._handle_incoming(
+                {
+                    "type": "chat",
+                    "message": "tôi thích giọng lạnh nhẹ nhưng không thích báo cáo telemetry",
+                }
+            )
+
+            reflections = [item.text for item in coordinator.memory_state.relationship]
+            self.assertIn(
+                "Ngài thích giọng lạnh nhẹ, nhưng không thích báo cáo telemetry.",
+                reflections,
+            )
 
     def test_percept_events_use_normalized_schema_for_telemetry_and_vision(self):
         coordinator = self._make_coordinator()
@@ -543,6 +661,23 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertFalse(frame.action_plan.should_speak)
         self.assertEqual(frame.action_plan.speech_intent, "no_speech")
         self.assertEqual(frame.final_decision["parse_mode"], "no_speech")
+
+    def test_autonomous_long_idle_generates_inner_thought_with_llm(self):
+        llm_service = _DummyLlmService()
+        coordinator = self._make_coordinator(
+            llm_service=llm_service,
+            telemetry_service=_LongIdleTelemetry(),
+        )
+        coordinator._sleep_interruptible = lambda seconds: coordinator.stop()
+
+        coordinator.run_loop()
+
+        self.assertEqual(llm_service.directive_calls, 1)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "inner_thought")
+        self.assertEqual(coordinator.last_cognitive_frame.action_plan.speech_act, "inner_whim")
+        self.assertTrue(coordinator.last_cognitive_frame.inner_thought.should_surface)
+        self.assertIn("no_screen_claim", coordinator.last_cognitive_frame.action_plan.risk_flags)
+        self.assertIn("topic_seed=quiet_whim", llm_service.last_directive_kwargs["ti_context"])
 
     def test_speech_intent_ignores_resource_pressure(self):
         coordinator = self._make_coordinator()

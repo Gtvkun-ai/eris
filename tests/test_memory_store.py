@@ -32,7 +32,7 @@ def _snapshot(
 
 
 class MemoryStoreTests(unittest.TestCase):
-    def test_memory_state_keeps_four_memory_types_separate(self):
+    def test_memory_state_keeps_memory_types_separate(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "memory.json")
             store = MemoryStore(path, max_items=30)
@@ -50,6 +50,12 @@ class MemoryStoreTests(unittest.TestCase):
                 tags=("user_requested",),
                 semantic_fact="User prefers explicit memory architecture.",
             )
+            state = store.remember_relationship_reflection(
+                state,
+                "Ngài thích giọng lạnh nhẹ, nhưng không thích báo cáo telemetry.",
+                pattern="style_preference",
+                timestamp="2026-05-01T10:00:00+0700",
+            )
             state = store.update_norms(state, _snapshot())
             store.save_state(state)
 
@@ -59,11 +65,33 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertEqual(len(loaded.working), 1)
             self.assertEqual(len(loaded.episodic), 1)
             self.assertEqual(loaded.semantic[0].text, "User prefers explicit memory architecture.")
+            self.assertEqual(loaded.relationship[0].pattern, "style_preference")
             self.assertEqual(loaded.norm.observations, 1)
             self.assertIn("working_memory", context)
             self.assertIn("episodic_memory", context)
             self.assertIn("semantic_user_memory", context)
+            self.assertIn("relationship_memory", context)
             self.assertIn("norm_memory", context)
+            self.assertIn("not current screen evidence", context)
+
+    def test_relationship_memory_dedupes_and_appears_in_recall(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(os.path.join(tmpdir, "memory.json"), max_items=30)
+            state = store.load_state()
+
+            for _ in range(2):
+                state = store.remember_relationship_reflection(
+                    state,
+                    "Khi thiếu screen signal, ERIS nên hỏi lại hoặc mở một câu tò mò, không giả vờ thấy gì.",
+                    pattern="no_screen_signal_social_fallback",
+                    evidence=("force_speak",),
+                )
+
+            recalled = store.recall_texts(state)
+
+            self.assertEqual(len(state.relationship), 1)
+            self.assertEqual(state.relationship[0].observations, 2)
+            self.assertTrue(any(item.startswith("relationship/no_screen_signal") for item in recalled))
 
     def test_norm_memory_compares_new_scene_to_prior_baseline(self):
         with tempfile.TemporaryDirectory() as tmpdir:

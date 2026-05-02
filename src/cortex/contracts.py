@@ -281,6 +281,60 @@ class CognitiveActionPlan:
 
 
 @dataclass(slots=True)
+class InnerThought:
+    intent: str = ""
+    motive: str = ""
+    topic_seed: str = ""
+    evidence_anchor: str = ""
+    certainty: float = 0.0
+    should_surface: bool = False
+    risk_flags: tuple[str, ...] = ()
+    cooldown_seconds: int = 0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "intent": self.intent,
+            "motive": self.motive,
+            "topic_seed": self.topic_seed,
+            "evidence_anchor": self.evidence_anchor,
+            "certainty": round(float(self.certainty), 3),
+            "should_surface": self.should_surface,
+            "risk_flags": list(self.risk_flags),
+            "cooldown_seconds": int(self.cooldown_seconds),
+        }
+
+
+@dataclass(slots=True)
+class AgentSpeechCore:
+    perception: tuple[str, ...] = ()
+    mood: str = "neutral"
+    impulse: str = "silent"
+    utterance_type: str = "no_speech"
+    grounding: str = "none"
+    speech_source: str = "none"
+    reason: str = ""
+    should_speak: bool = False
+    safety_flags: tuple[str, ...] = ()
+    delivery: str = "silence"
+    inner_thought: InnerThought = field(default_factory=InnerThought)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "perception": list(self.perception),
+            "mood": self.mood,
+            "impulse": self.impulse,
+            "utterance_type": self.utterance_type,
+            "grounding": self.grounding,
+            "speech_source": self.speech_source,
+            "reason": self.reason,
+            "should_speak": self.should_speak,
+            "safety_flags": list(self.safety_flags),
+            "delivery": self.delivery,
+            "inner_thought": self.inner_thought.to_dict(),
+        }
+
+
+@dataclass(slots=True)
 class CognitiveMemoryUpdate:
     remembered_fact: str = ""
     remembered_style_excerpt: str = ""
@@ -291,6 +345,7 @@ class CognitiveMemoryUpdate:
     episodic_summary: str = ""
     semantic_fact: str = ""
     norm_deviation: str = ""
+    relationship_reflection: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -303,6 +358,7 @@ class CognitiveMemoryUpdate:
             "episodic_summary": self.episodic_summary,
             "semantic_fact": self.semantic_fact,
             "norm_deviation": self.norm_deviation,
+            "relationship_reflection": self.relationship_reflection,
         }
 
 
@@ -315,6 +371,8 @@ class CognitiveFrame:
     attention_candidates: tuple[AttentionCandidate, ...] = ()
     broadcast: CognitiveBroadcast = field(default_factory=CognitiveBroadcast)
     appraisal: CognitiveAppraisal = field(default_factory=CognitiveAppraisal)
+    speech_core: AgentSpeechCore = field(default_factory=AgentSpeechCore)
+    inner_thought: InnerThought = field(default_factory=InnerThought)
     action_plan: CognitiveActionPlan = field(default_factory=CognitiveActionPlan)
     final_decision: dict[str, object] = field(default_factory=dict)
     memory_update: CognitiveMemoryUpdate = field(default_factory=CognitiveMemoryUpdate)
@@ -328,6 +386,8 @@ class CognitiveFrame:
             "attention_candidates": [item.to_dict() for item in self.attention_candidates],
             "broadcast": self.broadcast.to_dict(),
             "appraisal": self.appraisal.to_dict(),
+            "speech_core": self.speech_core.to_dict(),
+            "inner_thought": self.inner_thought.to_dict(),
             "action_plan": self.action_plan.to_dict(),
             "final_decision": dict(self.final_decision),
             "memory_update": self.memory_update.to_dict(),

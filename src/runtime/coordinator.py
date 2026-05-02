@@ -11,15 +11,19 @@ from cortex.action_planner import ACTION_SPACE, ActionPlanner
 from cortex.attention import AttentionWorkspace
 from cortex.appraisal import AppraisalEngine
 from cortex.contracts import (
+    AgentSpeechCore,
     AttentionCandidate,
     CognitiveActionPlan,
     CognitiveAppraisal,
     CognitiveBroadcast,
     CognitiveFrame,
+    InnerThought,
     CognitiveMemoryUpdate,
     PerceptEvent,
 )
+from cortex.inner_thought import InnerThoughtEngine
 from cortex.ni import NiStateMachine
+from cortex.speech_core import SpeechCoreEngine
 from domain import Decision
 
 '''coordinator.py là “bộ điều phối runtime” (orchestrator) cho ERIS: nó đứng giữa telemetry 
@@ -77,6 +81,8 @@ class RuntimeCoordinator:
         self.action_router = action_router
         self.attention_workspace = AttentionWorkspace()
         self.appraisal_engine = AppraisalEngine()
+        self.inner_thought_engine = InnerThoughtEngine()
+        self.speech_core_engine = SpeechCoreEngine(inner_thought_engine=self.inner_thought_engine)
         self.action_planner = ActionPlanner()
 
         self.chat_mode = False
@@ -94,6 +100,8 @@ class RuntimeCoordinator:
         self.repeated_autonomous_count = 0
         self.last_autonomous_spoken_at = 0.0
         self.force_speak_repeat_guard_count = 0
+        self.recent_inner_thought_intents: tuple[str, ...] = ()
+        self.recent_inner_thought_seeds: tuple[str, ...] = ()
         self.cognitive_cycle_index = 0
         self.cognitive_frames: list[CognitiveFrame] = []
         self.last_cognitive_frame: CognitiveFrame | None = None
@@ -284,6 +292,7 @@ class RuntimeCoordinator:
                             source="explicit_user_statement",
                             timestamp=timestamp,
                         )
+            self._remember_relationship_reflections(frame, timestamp=timestamp)
             if semantic_fact and not frame.memory_update.semantic_fact:
                 frame.memory_update.semantic_fact = semantic_fact
             if getattr(self.memory_state, "working", None):
@@ -295,6 +304,141 @@ class RuntimeCoordinator:
             self._save_memory_state()
         except Exception as exc:
             self.logger.warning("Cognitive memory commit error: %s", exc)
+
+    def _remember_relationship_reflections(self, frame: CognitiveFrame, *, timestamp: str) -> None:
+        remember_reflection = getattr(self.memory_store, "remember_relationship_reflection", None)
+        if self.memory_state is None or not callable(remember_reflection):
+            return
+
+        reflections = self._derive_relationship_reflections(frame)
+        if not reflections:
+            return
+
+        recorded: list[str] = []
+        for pattern, text, evidence in reflections:
+            self.memory_state = remember_reflection(
+                self.memory_state,
+                text,
+                pattern=pattern,
+                source="cognitive_frame_reflection",
+                timestamp=timestamp,
+                evidence=evidence,
+            )
+            recorded.append(text)
+        frame.memory_update.relationship_reflection = " | ".join(recorded)[:260]
+
+    def _derive_relationship_reflections(self, frame: CognitiveFrame) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+        reflections: list[tuple[str, str, tuple[str, ...]]] = []
+        channel = str(frame.channel or "")
+        speech_act = str(getattr(frame.action_plan, "speech_act", "") or "")
+        parse_mode = str(frame.final_decision.get("parse_mode", "") or "")
+        notes = tuple(str(item) for item in (getattr(frame.action_plan, "notes", ()) or ()))
+        risk_flags = tuple(str(item) for item in (getattr(frame.action_plan, "risk_flags", ()) or ()))
+        inner = getattr(frame, "inner_thought", None)
+        inner_intent = str(getattr(inner, "intent", "") or "")
+        inner_motive = str(getattr(inner, "motive", "") or "")
+        inner_seed = str(getattr(inner, "topic_seed", "") or "")
+
+        if channel == "force_speak" and parse_mode == "inner_thought":
+            reflections.append(
+                (
+                    "force_speak_presence",
+                    "Ngài hay bấm force_speak khi muốn ERIS hiện diện hơn là cần thông tin.",
+                    (
+                        f"speech_act={speech_act}",
+                        f"inner_intent={inner_intent}",
+                        f"said={str(frame.final_decision.get('text', '') or '')[:80]}",
+                    ),
+                )
+            )
+
+        if parse_mode == "inner_thought" and "no_screen_claim" in risk_flags:
+            reflections.append(
+                (
+                    "no_screen_signal_social_fallback",
+                    "Khi thiếu screen signal, ERIS nên hỏi lại hoặc mở một câu tò mò, không giả vờ thấy gì.",
+                    (
+                        f"channel={channel}",
+                        f"motive={inner_motive}",
+                        f"seed={inner_seed[:80]}",
+                    ),
+                )
+            )
+
+        user_texts = tuple(
+            percept.content
+            for percept in tuple(frame.percepts or ())
+            if percept.kind == "user_message" and percept.content
+        )
+        for text in user_texts:
+            style_reflection = self._extract_relationship_style_reflection(text)
+            if style_reflection:
+                reflections.append(style_reflection)
+
+        if any("inner_thought=" in note for note in notes) and parse_mode == "inner_thought":
+            reflections.append(
+                (
+                    "social_initiative_rhythm",
+                    "ERIS có thể giữ nhịp hiện diện bằng một câu meta hoặc check-in ngắn, miễn là không dựng cảnh màn hình.",
+                    (f"channel={channel}", f"speech_act={speech_act}"),
+                )
+            )
+
+        deduped: list[tuple[str, str, tuple[str, ...]]] = []
+        seen: set[str] = set()
+        for pattern, text, evidence in reflections:
+            key = self._normalize_user_message(f"{pattern} {text}")
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append((pattern, text, evidence))
+        return tuple(deduped[:4])
+
+    def _extract_relationship_style_reflection(self, user_text: str) -> tuple[str, str, tuple[str, ...]] | None:
+        normalized = self._normalize_user_message(user_text)
+        if not normalized:
+            return None
+
+        likes_cold_soft = any(
+            marker in normalized
+            for marker in (
+                "giong lanh",
+                "lanh nhe",
+                "giong lanh nhe",
+                "cold soft",
+                "hoi lanh",
+            )
+        )
+        dislikes_telemetry = any(
+            marker in normalized
+            for marker in (
+                "khong thich bao cao telemetry",
+                "khong thich giong telemetry",
+                "dung bao cao telemetry",
+                "tranh bao cao telemetry",
+                "khong nhu log",
+                "dung noi nhu log",
+            )
+        )
+        if likes_cold_soft and dislikes_telemetry:
+            return (
+                "style_preference",
+                "Ngài thích giọng lạnh nhẹ, nhưng không thích báo cáo telemetry.",
+                (f"user_text={user_text[:120]}",),
+            )
+        if likes_cold_soft:
+            return (
+                "style_preference",
+                "Ngài thích giọng lạnh nhẹ và có kiểm soát.",
+                (f"user_text={user_text[:120]}",),
+            )
+        if dislikes_telemetry:
+            return (
+                "style_preference",
+                "Ngài không thích ERIS nói như báo cáo telemetry hoặc log hệ thống.",
+                (f"user_text={user_text[:120]}",),
+            )
+        return None
 
     def _extract_explicit_user_memory_fact(self, user_text: str) -> str:
         normalized = self._normalize_user_message(user_text)
@@ -636,6 +780,81 @@ class RuntimeCoordinator:
     def _build_appraisal_context(self, appraisal: CognitiveAppraisal) -> str:
         return self.appraisal_engine.render_prompt_context(appraisal)
 
+    def _build_inner_thought(
+        self,
+        *,
+        channel: str,
+        snapshot,
+        frame: CognitiveFrame,
+        concrete_signals: tuple[str, ...] = (),
+        repeat_count: int = 1,
+        repeated_topic_tag: str = "",
+        repeated_topic_streak: int = 0,
+    ) -> InnerThought:
+        return self.inner_thought_engine.evaluate(
+            channel=channel,
+            snapshot=snapshot,
+            appraisal=frame.appraisal,
+            broadcast=frame.broadcast,
+            style_memory=self.fe_style_memory,
+            concrete_signals=tuple(concrete_signals or ()),
+            last_text=self.last_text,
+            repeat_count=repeat_count,
+            repeated_topic_tag=repeated_topic_tag,
+            repeated_topic_streak=repeated_topic_streak,
+            recent_inner_intents=self.recent_inner_thought_intents,
+            recent_inner_seeds=self.recent_inner_thought_seeds,
+        )
+
+    def _build_speech_core(
+        self,
+        *,
+        channel: str,
+        snapshot,
+        frame: CognitiveFrame,
+        ti_report,
+        fe_plan,
+        ni_report=None,
+        ni_state_label: str = "",
+        repeat_count: int = 1,
+        repeated_topic_tag: str = "",
+        repeated_topic_streak: int = 0,
+    ) -> AgentSpeechCore:
+        concrete_signals = self._concrete_screen_signals(snapshot)
+        screen_comment_allowed = channel == "force_speak"
+        if concrete_signals and channel != "force_speak":
+            screen_comment_allowed = bool(self._broadcast_screen_winners(frame.broadcast))
+        speech_core = self.speech_core_engine.evaluate(
+            channel=channel,
+            snapshot=snapshot,
+            appraisal=frame.appraisal,
+            broadcast=frame.broadcast,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            style_memory=self.fe_style_memory,
+            concrete_signals=concrete_signals,
+            vision_signals=self._concrete_vision_signals(snapshot),
+            telemetry_signals=self._concrete_telemetry_signals(snapshot),
+            screen_comment_allowed=screen_comment_allowed,
+            repeat_count=repeat_count,
+            repeated_topic_tag=repeated_topic_tag,
+            repeated_topic_streak=repeated_topic_streak,
+            recent_inner_intents=self.recent_inner_thought_intents,
+            recent_inner_seeds=self.recent_inner_thought_seeds,
+            ni_state_label=ni_state_label,
+            ni_report=ni_report,
+        )
+        frame.speech_core = speech_core
+        frame.inner_thought = speech_core.inner_thought
+        return speech_core
+
+    def _remember_inner_thought_rhythm(self, inner_thought: InnerThought | None) -> None:
+        if inner_thought is None or not inner_thought.intent:
+            return
+        self.recent_inner_thought_intents = (*self.recent_inner_thought_intents, inner_thought.intent)[-6:]
+        if inner_thought.topic_seed:
+            self.recent_inner_thought_seeds = (*self.recent_inner_thought_seeds, inner_thought.topic_seed)[-8:]
+
     def _start_cognitive_frame(
         self,
         *,
@@ -686,23 +905,6 @@ class RuntimeCoordinator:
         self._note_norm_observation(snapshot)
         return frame
 
-    def _speech_act_for_intent(self, speech_intent: str, *, ti_mode: str = "", fe_intent: str = "") -> str:
-        if speech_intent == "system_warning":
-            return "protect"
-        if speech_intent == "screen_observation":
-            return "observe"
-        if speech_intent == "playful_aside":
-            return "tease"
-        if speech_intent == "brief_ack":
-            return "mirror"
-        if speech_intent == "user_requested":
-            if ti_mode == "chat_emotional" or fe_intent == "attachment_dialogue":
-                return "reassure"
-            return "mirror"
-        if speech_intent == "no_speech":
-            return "withdraw"
-        return "observe"
-
     def _set_cognitive_action_plan(
         self,
         frame: CognitiveFrame,
@@ -719,8 +921,26 @@ class RuntimeCoordinator:
         system_action: str = "",
         speech_act: str = "",
         notes: tuple[str, ...] = (),
+        inner_thought: InnerThought | None = None,
     ) -> None:
         proposed_intent = speech_intent or ("brief_ack" if should_speak else "no_speech")
+        if (
+            getattr(frame, "speech_core", None) is not None
+            and (
+                frame.channel in {"autonomous", "force_speak"}
+                or frame.speech_core.should_speak
+                or frame.speech_core.speech_source != "none"
+                or frame.speech_core.reason
+            )
+        ):
+            notes = self._merge_speech_core_notes(notes, frame.speech_core)
+        if inner_thought is not None:
+            frame.inner_thought = inner_thought
+            if inner_thought.should_surface and not speech_act:
+                speech_act = inner_thought.intent
+                if inner_thought.topic_seed:
+                    reason = f"{reason} InnerThought: {inner_thought.topic_seed}"
+            notes = self._merge_inner_thought_notes(notes, inner_thought)
         frame.action_plan = self.action_planner.plan(
             channel=frame.channel,
             snapshot=snapshot,
@@ -738,16 +958,65 @@ class RuntimeCoordinator:
             concrete_signals=tuple(concrete_signals or ()),
         )
 
+    def _speech_intent_from_core(self, speech_core: AgentSpeechCore, *, channel: str) -> str:
+        if not speech_core.should_speak:
+            return "no_speech"
+        if speech_core.utterance_type in {"telemetry_comment", "vision_comment"}:
+            return "screen_observation"
+        if channel == "force_speak":
+            return "user_requested"
+        return "brief_ack"
+
+    def _merge_speech_core_notes(
+        self,
+        notes: tuple[str, ...],
+        speech_core: AgentSpeechCore,
+    ) -> tuple[str, ...]:
+        merged = list(notes or ())
+        if speech_core.speech_source:
+            merged.append(f"speech_source={speech_core.speech_source}")
+        if speech_core.grounding:
+            merged.append(f"grounding={speech_core.grounding}")
+        if speech_core.delivery:
+            merged.append(f"delivery={speech_core.delivery}")
+        if speech_core.reason:
+            merged.append(f"speech_core_reason={speech_core.reason}")
+        return tuple(dict.fromkeys(str(item) for item in merged if str(item or "").strip()))
+
+    def _merge_inner_thought_notes(self, notes: tuple[str, ...], inner_thought: InnerThought) -> tuple[str, ...]:
+        merged = list(notes or ())
+        if inner_thought.intent:
+            merged.append(f"inner_thought={inner_thought.intent}")
+        if inner_thought.motive:
+            merged.append(f"inner_motive={inner_thought.motive}")
+        if inner_thought.topic_seed:
+            merged.append(f"inner_seed={inner_thought.topic_seed}")
+        return tuple(dict.fromkeys(str(item) for item in merged if str(item or "").strip()))
+
+    def _is_inner_thought_speech_act(self, speech_act: str) -> bool:
+        return speech_act in {
+            "meta_reply",
+            "random_chatter",
+            "inner_whim",
+            "curious_question",
+            "relational_checkin",
+            "light_muse",
+            "soft_boundary",
+        }
+
     def _build_action_plan_context(self, action_plan: CognitiveActionPlan) -> str:
         flags = ", ".join(action_plan.risk_flags) if action_plan.risk_flags else "none"
+        notes = " | ".join(action_plan.notes) if action_plan.notes else "none"
         reason = action_plan.reason_to_speak or action_plan.reason or "none"
         return (
             "ActionPlanner decision before LLM:\n"
             f"- action_space={', '.join(ACTION_SPACE)}\n"
             f"- should_speak={str(action_plan.should_speak).lower()}\n"
             f"- speech_act={action_plan.speech_act}\n"
+            f"- utterance_type={action_plan.speech_act}\n"
             f"- reason_to_speak={reason}\n"
             f"- risk_flags={flags}\n"
+            f"- notes={notes}\n"
             "Honor this plan. Do not upgrade withdraw/no_speech into observation, teasing, or reassurance."
         )
 
@@ -776,6 +1045,28 @@ class RuntimeCoordinator:
                 "action_plan=withdraw"
                 + (f"; risk_flags={','.join(action_plan.risk_flags)}" if action_plan.risk_flags else "")
             ),
+        )
+
+    def _build_speech_core_ti_context(
+        self,
+        ti_report,
+        action_plan: CognitiveActionPlan,
+        inner_thought: InnerThought,
+    ) -> str:
+        topic_seed = str(getattr(inner_thought, "topic_seed", "") or "open_presence")
+        return (
+            f"{self._build_llm_ti_context(ti_report, action_plan)}\n"
+            "SpeechCore mode: pick a freeform line from relationship_memory, recent rhythm, style_context, "
+            "or a small safe curiosity. The topic_seed is abstract, not wording to copy.\n"
+            f"- inner_intent={inner_thought.intent or action_plan.speech_act}\n"
+            f"- inner_motive={inner_thought.motive or 'social_initiative'}\n"
+            f"- topic_seed={topic_seed}\n"
+            f"- evidence_anchor={inner_thought.evidence_anchor or 'none'}\n"
+            "Write a fresh line; do not use canned phrases or reusable templates. "
+            "Do not mention force_speak, context menu, telemetry, window, tab, idle, CPU, RAM, or vision facts unless speech_evidence contains them. "
+            "If speech_evidence=<none>, do not claim to see the screen; talk as a present companion, ask a small real question, or make a concise meta remark. "
+            "Do not ask 'Ngài muốn tôi nói gì' or answer that there is no signal; choose a small social topic instead. "
+            "Avoid repeating the last sentence, its main nouns, and its structure."
         )
 
     def _decision_to_frame_dict(self, decision: Decision | None) -> dict[str, object]:
@@ -811,6 +1102,7 @@ class RuntimeCoordinator:
             notes=tuple(notes),
             semantic_fact=remembered_fact,
             norm_deviation=norm_deviation,
+            relationship_reflection=getattr(frame.memory_update, "relationship_reflection", ""),
         )
 
     def _finalize_cognitive_frame(self, frame: CognitiveFrame) -> None:
@@ -819,11 +1111,13 @@ class RuntimeCoordinator:
         self.cognitive_frames = self.cognitive_frames[-12:]
         self._remember_cognitive_frame(frame)
         self.logger.info(
-            "[cognitive_frame] id=%s | channel=%s | broadcast=%s:%.2f | appraisal=%s | action=%s/%s | final=%s",
+            "[cognitive_frame] id=%s | channel=%s | broadcast=%s:%.2f | speech=%s/%s | appraisal=%s | action=%s/%s | final=%s",
             frame.cycle_id,
             frame.channel,
             frame.broadcast.label or "<none>",
             frame.broadcast.score,
+            frame.speech_core.speech_source or "none",
+            frame.speech_core.utterance_type or "no_speech",
             frame.appraisal.stance,
             frame.action_plan.speech_intent,
             frame.action_plan.speech_act,
@@ -1013,12 +1307,97 @@ class RuntimeCoordinator:
         if not normalized:
             return False
         generic_patterns = (
+            "ngai muon toi noi gi",
+            "ngai muon toi noi cai gi",
             "ngai vua yeu cau toi noi ngay",
+            "khong co tin hieu moi du chac",
+            "khong co gi moi",
             "toi se giu loi do",
             "toi nghe roi toi se giu loi",
             "toi len tieng ngay day",
         )
         return any(pattern in normalized for pattern in generic_patterns)
+
+    def _contains_mindreading_claim(self, text: str) -> bool:
+        normalized = self._normalize_user_message(text)
+        if not normalized:
+            return False
+        patterns = (
+            "co ve ngai dang",
+            "hinh nhu ngai dang",
+            "chac ngai dang",
+            "ngai dang muon",
+            "ngai dang can",
+            "ngai dang buon",
+            "ngai dang met",
+            "ngai dang cang",
+            "ngai can mot",
+        )
+        return any(pattern in normalized for pattern in patterns)
+
+    def _speech_core_safe_fallback_text(
+        self,
+        speech_core: AgentSpeechCore,
+        *,
+        repeated: bool = False,
+    ) -> str:
+        perception = next((item for item in speech_core.perception if str(item or "").strip()), "")
+        if speech_core.utterance_type in {"telemetry_comment", "vision_comment"} and perception:
+            return f"Tôi chỉ dám bám vào chỗ này: {perception}."
+        if speech_core.utterance_type == "curious_question":
+            return (
+                "Tạm rời màn hình một nhịp. Hôm nay đầu óc Ngài đang nghiêng về thứ gì nhất."
+                if repeated
+                else "Tôi hỏi nhẹ một câu thôi: hôm nay đầu óc Ngài đang nghiêng về thứ gì nhất."
+            )
+        if speech_core.utterance_type == "relational_checkin":
+            return "Tôi không đoán tâm trạng Ngài hộ đâu. Nếu muốn, Ngài cứ nói thẳng phần đang nặng nhất."
+        if speech_core.utterance_type == "random_chatter":
+            return "Có vài lúc một câu lạc đề nhỏ lại làm căn phòng bớt phẳng."
+        return (
+            "Có một ý nghĩ nhỏ vừa lướt qua thôi, nên tôi để nó nằm đây."
+            if not repeated
+            else "Tôi đổi góc một nhịp thôi, không nhắc lại câu cũ nữa."
+        )
+
+    def _apply_anti_mindreading_filter(
+        self,
+        decision: Decision,
+        *,
+        speech_core: AgentSpeechCore,
+    ) -> Decision:
+        if speech_core is None:
+            return decision
+        if "anti_mindreading" not in speech_core.safety_flags and not (
+            speech_core.utterance_type == "relational_checkin"
+            and "explicit_emotional_signal" not in speech_core.safety_flags
+        ):
+            return decision
+        if not self._contains_mindreading_claim(decision.text or "") and not (
+            speech_core.utterance_type == "relational_checkin"
+            and "explicit_emotional_signal" not in speech_core.safety_flags
+        ):
+            return decision
+
+        replacement = self._speech_core_safe_fallback_text(speech_core)
+        trace = decision.debug_trace or ""
+        filtered_trace = f"{trace} | anti_mindreading_filter" if trace else "anti_mindreading_filter"
+        return Decision(
+            text=replacement,
+            animation=decision.animation or "stand",
+            direction=decision.direction,
+            next_animation=decision.next_animation,
+            target_x=decision.target_x,
+            bounce_action=decision.bounce_action,
+            debug_trace=filtered_trace,
+            parser_trace=decision.parser_trace,
+            parse_mode=decision.parse_mode,
+            system_action="",
+            action_input="",
+            motion_intent=decision.motion_intent,
+            motion_target_x=decision.motion_target_x,
+            motion_facing=decision.motion_facing,
+        )
 
     def _guard_force_speak_repetition(self, decision: Decision) -> Decision:
         text = decision.text or ""
@@ -1032,6 +1411,11 @@ class RuntimeCoordinator:
             "Tôi nghe rồi. Không có tín hiệu mới đủ chắc để nói thêm.",
             "Tôi vẫn ở đây. Lần này tôi không bịa thêm cảnh ngoài dữ kiện.",
             "Có mặt. Nhưng tôi không kéo một câu cũ ra nói lại nữa.",
+        )
+        fallbacks = (
+            "Đổi hướng nhé. Hôm nay có điều gì nhỏ nhưng cứ lởn vởn trong đầu Ngài không.",
+            "Tạm bỏ màn hình qua một bên. Ngài thích buổi sáng yên hay buổi đêm yên hơn.",
+            "Tôi ở đây. Ngài muốn một câu dịu, một câu châm nhẹ, hay một câu hỏi lạ.",
         )
         replacement = fallbacks[(self.force_speak_repeat_guard_count - 1) % len(fallbacks)]
         if self._is_near_duplicate_text(replacement, self.last_text):
@@ -1055,6 +1439,50 @@ class RuntimeCoordinator:
             motion_target_x=decision.motion_target_x,
             motion_facing=decision.motion_facing,
         )
+
+    def _apply_repetition_filter(
+        self,
+        decision: Decision,
+        *,
+        channel: str,
+        speech_core: AgentSpeechCore,
+    ) -> Decision:
+        if channel == "force_speak":
+            return self._guard_force_speak_repetition(decision)
+        if not self._is_near_duplicate_text(decision.text or "", self.last_text):
+            return decision
+
+        replacement = self._speech_core_safe_fallback_text(speech_core, repeated=True)
+        if self._is_near_duplicate_text(replacement, self.last_text):
+            return decision
+        trace = decision.debug_trace or ""
+        repeat_trace = f"{trace} | repetition_filter" if trace else "repetition_filter"
+        return Decision(
+            text=replacement,
+            animation=decision.animation or "stand",
+            direction=decision.direction,
+            next_animation=decision.next_animation,
+            target_x=decision.target_x,
+            bounce_action=decision.bounce_action,
+            debug_trace=repeat_trace,
+            parser_trace=decision.parser_trace,
+            parse_mode="speech_repeat_guard",
+            system_action="",
+            action_input="",
+            motion_intent=decision.motion_intent,
+            motion_target_x=decision.motion_target_x,
+            motion_facing=decision.motion_facing,
+        )
+
+    def _apply_post_generation_filters(
+        self,
+        decision: Decision,
+        *,
+        channel: str,
+        speech_core: AgentSpeechCore,
+    ) -> Decision:
+        decision = self._apply_anti_mindreading_filter(decision, speech_core=speech_core)
+        return self._apply_repetition_filter(decision, channel=channel, speech_core=speech_core)
 
     def _handle_incoming(self, msg: dict):
         msg_type = msg.get("type", "")
@@ -1268,17 +1696,28 @@ class RuntimeCoordinator:
             vision_facts=vision_facts,
             force_speak=True,
         )
+        speech_core = self._build_speech_core(
+            channel="force_speak",
+            snapshot=snapshot,
+            frame=frame,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            ni_report=ni_report,
+            ni_state_label=ni_state_label,
+        )
         self._set_cognitive_action_plan(
             frame,
-            should_speak=True,
-            speech_intent="user_requested",
-            reason="Context menu requested immediate speech.",
+            should_speak=speech_core.should_speak,
+            speech_intent=self._speech_intent_from_core(speech_core, channel="force_speak"),
+            speech_act=speech_core.utterance_type,
+            reason=speech_core.reason or "Context menu requested immediate speech.",
             snapshot=snapshot,
             force_speak=True,
             concrete_signals=self._concrete_screen_signals(snapshot),
             ti_report=ti_report,
             fe_plan=fe_plan,
             notes=("force_speak",),
+            inner_thought=speech_core.inner_thought,
         )
         if not frame.action_plan.should_speak:
             frame.final_decision = {
@@ -1318,6 +1757,91 @@ class RuntimeCoordinator:
             self.transport.send_json(decision.to_payload())
             return
 
+        if self._is_inner_thought_speech_act(frame.action_plan.speech_act):
+            inner_ti_context = self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought)
+            raw = self.llm_service.generate_directive(
+                telemetry_data=telemetry_data,
+                ni_context="",
+                ti_context=inner_ti_context,
+                fe_context=fe_plan.style_context,
+                appraisal_context=self._build_appraisal_context(frame.appraisal),
+                memory_context=memory_context,
+                avoid_text=self.last_text,
+                speech_intent=frame.action_plan.speech_intent,
+                vision_trace_marker=vision_marker,
+            )
+            self._log_raw_llm_output("force_speak_inner_thought", raw)
+            self._log_pre_parser("force_speak_inner_thought", raw)
+            decision = self.parser.parse(raw)
+            self._log_decision_stage("force_speak_inner_thought", "post_parser", decision)
+            decision.debug_trace = (
+                f"{decision.debug_trace} | inner_thought={speech_core.inner_thought.intent}"
+                if decision.debug_trace
+                else f"inner_thought={speech_core.inner_thought.intent}"
+            )
+            decision.parse_mode = "inner_thought"
+            self._log_decision_stage("force_speak_inner_thought", "pre_ti", decision)
+            decision = self.ti_governor.enforce_decision(decision, ti_report)
+            self._log_decision_stage("force_speak_inner_thought", "post_ti", decision)
+            decision = self._execute_system_action(decision, snapshot=snapshot)
+            if self._is_near_duplicate_text(decision.text or "", self.last_text) or self._is_generic_force_speak_ack(decision.text or ""):
+                repair_ti_context = (
+                    inner_ti_context
+                    + "\nSpeechCore repair: the previous draft was generic or repeated. "
+                    "Reject meta_ack/no_signal wording and choose a different social topic seed. "
+                    "Prefer small_curiosity, quiet_whim, or light_presence; write a new line."
+                )
+                raw = self.llm_service.generate_directive(
+                    telemetry_data=telemetry_data,
+                    ni_context="",
+                    ti_context=repair_ti_context,
+                    fe_context=fe_plan.style_context,
+                    appraisal_context=self._build_appraisal_context(frame.appraisal),
+                    memory_context=memory_context,
+                    avoid_text=self.last_text,
+                    speech_intent=frame.action_plan.speech_intent,
+                    vision_trace_marker=vision_marker,
+                )
+                self._log_raw_llm_output("force_speak_inner_thought_repair", raw)
+                self._log_pre_parser("force_speak_inner_thought_repair", raw)
+                decision = self.parser.parse(raw)
+                self._log_decision_stage("force_speak_inner_thought_repair", "post_parser", decision)
+                decision.debug_trace = (
+                    f"{decision.debug_trace} | inner_thought_repair={speech_core.inner_thought.intent}"
+                    if decision.debug_trace
+                    else f"inner_thought_repair={speech_core.inner_thought.intent}"
+                )
+                decision.parse_mode = "inner_thought"
+                self._log_decision_stage("force_speak_inner_thought_repair", "pre_ti", decision)
+                decision = self.ti_governor.enforce_decision(decision, ti_report)
+                self._log_decision_stage("force_speak_inner_thought_repair", "post_ti", decision)
+                decision = self._execute_system_action(decision, snapshot=snapshot)
+            decision = self._apply_post_generation_filters(
+                decision,
+                channel="force_speak",
+                speech_core=speech_core,
+            )
+            self._remember_inner_thought_rhythm(speech_core.inner_thought)
+            self.fe_style_memory = self.fe_renderer.remember_style(
+                self.fe_style_memory,
+                plan=fe_plan,
+                rendered_text=decision.text,
+            )
+            self.last_text = decision.text
+            self.last_autonomous_spoken_at = time.time()
+            self._apply_position_update(decision)
+            frame.final_decision = self._decision_to_frame_dict(decision)
+            self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_inner_thought",))
+            self._finalize_cognitive_frame(frame)
+            self.logger.info(
+                '[force_speak] InnerThought generated text="%s" | act=%s | elapsed=%.2fs',
+                decision.text,
+                frame.action_plan.speech_act,
+                time.time() - cycle_start,
+            )
+            self.transport.send_json(decision.to_payload())
+            return
+
         forced_ti_context = (
             f"{self._build_llm_ti_context(ti_report, frame.action_plan)}\n"
             "Context menu force_speak: Ngài vừa yêu cầu ERIS nói ngay. "
@@ -1349,7 +1873,11 @@ class RuntimeCoordinator:
         decision = self.ti_governor.enforce_decision(decision, ti_report)
         self._log_decision_stage("force_speak", "post_ti", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot)
-        decision = self._guard_force_speak_repetition(decision)
+        decision = self._apply_post_generation_filters(
+            decision,
+            channel="force_speak",
+            speech_core=speech_core,
+        )
 
         self.fe_style_memory = self.fe_renderer.remember_style(
             self.fe_style_memory,
@@ -1827,14 +2355,19 @@ class RuntimeCoordinator:
         return False
 
     def _concrete_screen_signals(self, snapshot) -> tuple[str, ...]:
+        return tuple((*self._concrete_vision_signals(snapshot), *self._concrete_telemetry_signals(snapshot))[:4])
+
+    def _concrete_vision_signals(self, snapshot) -> tuple[str, ...]:
         vision_facts = tuple(getattr(snapshot, "vision_facts", ()) or ())
-        recent_events = tuple(getattr(snapshot, "recent_events", ()) or ())
-        evidence = tuple(getattr(snapshot, "evidence", ()) or ())
-        concrete_vision = [
+        return tuple(
             str(item)
             for item in vision_facts
             if str(item or "").strip() and self._is_speakable_evidence(str(item), kind="vision_fact")
-        ]
+        )[:2]
+
+    def _concrete_telemetry_signals(self, snapshot) -> tuple[str, ...]:
+        recent_events = tuple(getattr(snapshot, "recent_events", ()) or ())
+        evidence = tuple(getattr(snapshot, "evidence", ()) or ())
         concrete_events = [
             str(event)
             for event in recent_events
@@ -1845,7 +2378,7 @@ class RuntimeCoordinator:
             for item in evidence
             if self._is_speakable_evidence(str(item), kind="evidence")
         ]
-        return tuple((*concrete_vision, *concrete_events, *concrete_evidence)[:4])
+        return tuple((*concrete_events, *concrete_evidence)[:2])
 
     def _has_concrete_screen_signal(self, snapshot) -> bool:
         return bool(self._concrete_screen_signals(snapshot))
@@ -1869,6 +2402,7 @@ class RuntimeCoordinator:
         ti_report,
         repeat_count: int,
         attention_broadcast: CognitiveBroadcast | None = None,
+        inner_thought: InnerThought | None = None,
         ni_state_label: str = "",
         repeated_topic_tag: str = "",
         repeated_topic_streak: int = 0,
@@ -1907,6 +2441,16 @@ class RuntimeCoordinator:
             return SpeechIntentDecision(
                 intent="screen_observation",
                 reason=f"Có screen signal cụ thể: {', '.join(concrete_signals[:2])}.",
+            )
+
+        if inner_thought is not None and inner_thought.should_surface:
+            return SpeechIntentDecision(
+                intent="brief_ack",
+                reason=(
+                    "InnerThought social initiative: "
+                    f"{inner_thought.intent} / {inner_thought.motive}; "
+                    "no screen claim allowed."
+                ),
             )
 
         quiet_modes = {
@@ -2063,15 +2607,21 @@ class RuntimeCoordinator:
             signature, repeat_count = self._track_autonomous_signature(snapshot, ti_report)
             repeated_topic_tag = str(getattr(self.fe_style_memory, "repeated_topic_tag", "") or "")
             repeated_topic_streak = int(getattr(self.fe_style_memory, "repeated_topic_streak", 0) or 0)
-            speech_intent = self._choose_autonomous_speech_intent(
+            speech_core = self._build_speech_core(
+                channel="autonomous",
                 snapshot=snapshot,
-                ni_report=ni_report,
+                frame=frame,
                 ti_report=ti_report,
-                repeat_count=repeat_count,
-                attention_broadcast=frame.broadcast,
+                fe_plan=fe_plan,
+                ni_report=ni_report,
                 ni_state_label=ni_state_label,
+                repeat_count=repeat_count,
                 repeated_topic_tag=repeated_topic_tag,
                 repeated_topic_streak=repeated_topic_streak,
+            )
+            speech_intent = SpeechIntentDecision(
+                intent=self._speech_intent_from_core(speech_core, channel="autonomous"),
+                reason=speech_core.reason,
             )
             self.logger.info(
                 "[speech_intent] intent=%s | reason=%s",
@@ -2080,13 +2630,15 @@ class RuntimeCoordinator:
             )
             self._set_cognitive_action_plan(
                 frame,
-                should_speak=speech_intent.intent != "no_speech",
+                should_speak=speech_core.should_speak,
                 speech_intent=speech_intent.intent,
+                speech_act=speech_core.utterance_type,
                 reason=speech_intent.reason,
                 snapshot=snapshot,
                 concrete_signals=self._concrete_screen_signals(snapshot),
                 ti_report=ti_report,
                 fe_plan=fe_plan,
+                inner_thought=speech_core.inner_thought,
                 notes=(f"repeat_count={repeat_count}",),
             )
             if not frame.action_plan.should_speak:
@@ -2166,6 +2718,68 @@ class RuntimeCoordinator:
                 self._sleep_interruptible(sleep_duration)
                 continue
 
+            if self._is_inner_thought_speech_act(frame.action_plan.speech_act):
+                inner_ti_context = self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought)
+                raw = self.llm_service.generate_directive(
+                    telemetry_data=telemetry_data,
+                    ni_context="",
+                    ti_context=inner_ti_context,
+                    fe_context=fe_plan.style_context,
+                    appraisal_context=self._build_appraisal_context(frame.appraisal),
+                    memory_context=memory_context,
+                    avoid_text=self.last_text,
+                    speech_intent=frame.action_plan.speech_intent,
+                    vision_trace_marker=vision_marker,
+                )
+                self._log_raw_llm_output("directive_inner_thought", raw)
+                self._log_pre_parser("directive_inner_thought", raw)
+                decision = self.parser.parse(raw)
+                self._log_decision_stage("directive_inner_thought", "post_parser", decision)
+                decision.debug_trace = (
+                    f"{decision.debug_trace} | inner_thought={speech_core.inner_thought.intent}"
+                    if decision.debug_trace
+                    else f"inner_thought={speech_core.inner_thought.intent}"
+                )
+                decision.parse_mode = "inner_thought"
+                self._log_decision_stage("directive_inner_thought", "pre_ti", decision)
+                decision = self.ti_governor.enforce_decision(decision, ti_report)
+                self._log_decision_stage("directive_inner_thought", "post_ti", decision)
+                decision = self._execute_system_action(decision, snapshot=snapshot)
+                decision = self._apply_post_generation_filters(
+                    decision,
+                    channel="autonomous",
+                    speech_core=speech_core,
+                )
+                self._remember_inner_thought_rhythm(speech_core.inner_thought)
+                self.fe_style_memory = self.fe_renderer.remember_style(
+                    self.fe_style_memory,
+                    plan=fe_plan,
+                    rendered_text=decision.text,
+                )
+
+                self.last_text = decision.text
+                self.last_autonomous_spoken_at = time.time()
+                self._apply_position_update(decision)
+                frame.final_decision = self._decision_to_frame_dict(decision)
+                self._set_cognitive_memory_update(frame, decision=decision, notes=("autonomous_inner_thought",))
+                self._finalize_cognitive_frame(frame)
+
+                self.logger.info(
+                    '[directive inner_thought] text="%s" | act=%s',
+                    decision.text,
+                    frame.action_plan.speech_act,
+                )
+                self.transport.send_json(decision.to_payload())
+
+                elapsed = time.time() - cycle_start
+                sleep_duration = self._choose_autonomous_sleep_duration(
+                    suppressed=False,
+                    ti_mode=ti_report.mode,
+                )
+                self.logger.info("HoÃ n táº¥t chu ká»³ trong %.2fs. Ngá»§ %ss.", elapsed, sleep_duration)
+                self._sleep_interruptible(sleep_duration)
+                continue
+
             planned_ti_context = (
                 self._build_llm_ti_context(ti_report, frame.action_plan)
             )
@@ -2188,6 +2802,11 @@ class RuntimeCoordinator:
             decision = self.ti_governor.enforce_decision(decision, ti_report)
             self._log_decision_stage("directive", "post_ti", decision)
             decision = self._execute_system_action(decision, snapshot=snapshot)
+            decision = self._apply_post_generation_filters(
+                decision,
+                channel="autonomous",
+                speech_core=speech_core,
+            )
 
             self.fe_style_memory = self.fe_renderer.remember_style(
                 self.fe_style_memory,

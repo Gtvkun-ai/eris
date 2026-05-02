@@ -11,6 +11,15 @@ ACTION_SPACE = (
     "reassure",
     "refuse",
     "mirror",
+    "meta_reply",
+    "telemetry_comment",
+    "vision_comment",
+    "random_chatter",
+    "inner_whim",
+    "curious_question",
+    "relational_checkin",
+    "light_muse",
+    "soft_boundary",
     "system_action",
 )
 
@@ -160,9 +169,24 @@ class ActionPlanner:
             return "system_warning"
         if speech_act == "observe":
             return "screen_observation"
+        if speech_act in {"telemetry_comment", "vision_comment"}:
+            return "screen_observation"
         if speech_act == "tease":
             return "playful_aside"
-        if speech_act in {"mirror", "withdraw", "ask", "reassure", "refuse"}:
+        if speech_act in {
+            "mirror",
+            "withdraw",
+            "ask",
+            "reassure",
+            "refuse",
+            "meta_reply",
+            "random_chatter",
+            "inner_whim",
+            "curious_question",
+            "relational_checkin",
+            "light_muse",
+            "soft_boundary",
+        }:
             return "user_requested" if channel in {"chat", "force_speak"} else "brief_ack"
         if intent:
             return intent
@@ -194,7 +218,19 @@ class ActionPlanner:
             flags.append("system_action_requested")
         if "ambient_silence" in notes:
             flags.append("cooldown_suppression")
-        if speech_act in {"observe", "tease"} and not concrete_signals and not self._broadcast_has_signal(broadcast):
+        if any(str(note).startswith("inner_thought=") for note in notes):
+            flags.append("inner_thought_surface")
+        if speech_act in {
+            "meta_reply",
+            "random_chatter",
+            "inner_whim",
+            "curious_question",
+            "relational_checkin",
+            "light_muse",
+            "soft_boundary",
+        }:
+            flags.append("no_screen_claim")
+        if speech_act in {"observe", "tease", "telemetry_comment", "vision_comment"} and not concrete_signals and not self._broadcast_has_signal(broadcast):
             flags.append("avoid_fabrication")
         return tuple(dict.fromkeys(flags))
 
@@ -214,7 +250,19 @@ class ActionPlanner:
                 "force_speak is a strong user percept, but there is no new concrete signal; "
                 "acknowledge the request without inventing context."
             )
-        if concrete_signals and speech_act == "observe":
+        if speech_act in {
+            "meta_reply",
+            "random_chatter",
+            "inner_whim",
+            "curious_question",
+            "relational_checkin",
+            "light_muse",
+            "soft_boundary",
+        }:
+            return proposed_reason or (
+                "InnerThought selected a social initiative without screen claims."
+            )
+        if concrete_signals and speech_act in {"observe", "telemetry_comment", "vision_comment"}:
             return "Concrete signal is available before LLM: " + ", ".join(concrete_signals[:2])
         if risk_flags:
             return proposed_reason or "Planner selected action with risk flags: " + ", ".join(risk_flags)

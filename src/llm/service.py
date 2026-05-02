@@ -550,6 +550,13 @@ class LlmService:
             system_prompt = f"{style_block}\n\n{memory_block}\n\n{RUNTIME_RULES_PROMPT}\n\n{AUTONOMOUS_BEHAVIOR_PROMPT}"
         lowered_ti = (ti_context or "").lower()
         is_resource_guard = "resource_guard" in lowered_ti
+        is_inner_thought = "innerthought mode" in lowered_ti or "speechcore mode" in lowered_ti
+        if is_inner_thought:
+            intent_guidance = (
+                "speech_intent=inner_thought. Ngài đang yêu cầu sự hiện diện, không phải báo cáo màn hình. "
+                "Nếu speech_evidence=<none>, hãy tự chọn một chủ đề xã hội nhỏ từ relationship_memory, gu/sở thích, "
+                "một câu hỏi thật, hoặc một ý tò mò an toàn; không thừa nhận thiếu telemetry như nội dung chính."
+            )
         allows_muse = "pattern_muse" in lowered_ti
         avoid_line = re.sub(r"\s+", " ", (avoid_text or "").strip())[:180]
         user_msg = (
@@ -574,7 +581,7 @@ class LlmService:
                     if is_resource_guard
                     else (
                         "Chỉ pattern_muse mới được chiêm nghiệm nhẹ; các mode còn lại hãy châm ngắn và cụ thể. "
-                        if not allows_muse
+                        if not allows_muse and not is_inner_thought
                         else "Có thể nói một câu châm chọc nhẹ hoặc chiêm nghiệm ngắn cho vui. "
                     )
                 )
@@ -585,8 +592,17 @@ class LlmService:
             user_msg += " Không được lặp lại ý, hình ảnh, danh từ chính, hoặc nhịp câu của câu gần nhất."
         if vision_trace_marker:
             user_msg += f"\nTrong trường debug_trace của JSON, hãy thêm marker: {vision_trace_marker}."
+        if is_inner_thought:
+            user_msg += (
+                " SpeechCore override: thiếu telemetry không có nghĩa là thiếu chủ đề. "
+                "Hãy tìm một chủ đề xã hội nhỏ từ relationship_memory, gu/sở thích, một câu hỏi thật, hoặc một ý tò mò an toàn. "
+                "Không trả lời bằng 'không có tín hiệu', 'không có gì để nói', 'không có gì mới', hoặc hỏi lại 'Ngài muốn tôi nói gì'. "
+                "topic_seed là hướng chọn chủ đề, không phải câu để sao chép."
+            )
         if is_resource_guard:
             user_msg += " Khi resource_guard đang bật, không tự đảo sang chiêm nghiệm; chỉ nói một câu sát tình trạng máy hoặc chọn im gọn."
+        elif is_inner_thought:
+            user_msg += " Được tự mở chủ đề xã hội ngắn; không cần neo vào màn hình."
         elif not allows_muse:
             user_msg += " Không tự đảo sang chiêm nghiệm; nếu thiếu tín hiệu, giữ câu sát speech_intent và đừng lấp chỗ trống bằng triết lý."
         else:

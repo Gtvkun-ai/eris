@@ -134,6 +134,43 @@ class SemanticMemoryItem:
 
 
 @dataclass(slots=True)
+class RelationshipMemoryItem:
+    text: str
+    pattern: str = "relationship_reflection"
+    source: str = "runtime"
+    confidence: float = 0.68
+    observations: int = 1
+    first_seen_at: str = ""
+    updated_at: str = ""
+    evidence: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "pattern": self.pattern,
+            "source": self.source,
+            "confidence": round(float(self.confidence), 3),
+            "observations": int(self.observations),
+            "first_seen_at": self.first_seen_at,
+            "updated_at": self.updated_at,
+            "evidence": list(self.evidence),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RelationshipMemoryItem":
+        return cls(
+            text=str(data.get("text", "") or ""),
+            pattern=str(data.get("pattern", "") or "relationship_reflection"),
+            source=str(data.get("source", "") or "runtime"),
+            confidence=float(data.get("confidence", 0.68) or 0.68),
+            observations=int(data.get("observations", 1) or 1),
+            first_seen_at=str(data.get("first_seen_at", "") or ""),
+            updated_at=str(data.get("updated_at", "") or ""),
+            evidence=tuple(str(item) for item in (data.get("evidence") or ()) if str(item or "").strip()),
+        )
+
+
+@dataclass(slots=True)
 class NormMemory:
     observations: int = 0
     feature_counts: dict[str, dict[str, int]] = field(default_factory=dict)
@@ -197,10 +234,11 @@ class NormDeviation:
 
 @dataclass(slots=True)
 class MemoryState:
-    version: int = 2
+    version: int = 3
     working: list[WorkingMemoryItem] = field(default_factory=list)
     episodic: list[EpisodicMemoryItem] = field(default_factory=list)
     semantic: list[SemanticMemoryItem] = field(default_factory=list)
+    relationship: list[RelationshipMemoryItem] = field(default_factory=list)
     norm: NormMemory = field(default_factory=NormMemory)
 
     def to_dict(self) -> dict[str, Any]:
@@ -209,6 +247,7 @@ class MemoryState:
             "working": [item.to_dict() for item in self.working],
             "episodic": [item.to_dict() for item in self.episodic],
             "semantic": [item.to_dict() for item in self.semantic],
+            "relationship": [item.to_dict() for item in self.relationship],
             "norm": self.norm.to_dict(),
         }
 
@@ -222,6 +261,7 @@ class MemoryStore:
         max_working_items: int = 6,
         max_episodic_items: int = 80,
         max_semantic_items: int | None = None,
+        max_relationship_items: int = 16,
         max_norm_values_per_feature: int = 12,
     ):
         self.path = path
@@ -229,6 +269,7 @@ class MemoryStore:
         self.max_working_items = max_working_items
         self.max_episodic_items = max_episodic_items
         self.max_semantic_items = max_semantic_items or max_items
+        self.max_relationship_items = max_relationship_items
         self.max_norm_values_per_feature = max_norm_values_per_feature
 
     def load(self) -> list[str]:
@@ -305,6 +346,54 @@ class MemoryStore:
         return state
 
     # Ghi nhận một chu kỳ hoàn chỉnh: người dùng thấy cái gì, ERIS nói gì, kết quả thế nào.
+    def remember_relationship_reflection(
+        self,
+        state: MemoryState,
+        reflection: str,
+        *,
+        pattern: str = "relationship_reflection",
+        source: str = "runtime_reflection",
+        confidence: float = 0.68,
+        timestamp: str | None = None,
+        evidence: tuple[str, ...] = (),
+    ) -> MemoryState:
+        text = _compact_text(reflection, limit=240)
+        if not text:
+            return state
+
+        now = timestamp or _now_timestamp()
+        key = _dedupe_key(text)
+        clean_evidence = tuple(
+            dict.fromkeys(
+                _compact_text(item, limit=120)
+                for item in (evidence or ())
+                if _compact_text(item, limit=120)
+            )
+        )[:4]
+        for item in state.relationship:
+            if _dedupe_key(item.text) == key:
+                item.observations += 1
+                item.confidence = min(0.98, max(float(item.confidence), confidence) + 0.03)
+                item.updated_at = now
+                if clean_evidence:
+                    item.evidence = tuple(dict.fromkeys((*item.evidence, *clean_evidence)))[-4:]
+                return state
+
+        state.relationship.append(
+            RelationshipMemoryItem(
+                text=text,
+                pattern=_compact_text(pattern, limit=80) or "relationship_reflection",
+                source=source,
+                confidence=confidence,
+                observations=1,
+                first_seen_at=now,
+                updated_at=now,
+                evidence=clean_evidence,
+            )
+        )
+        state.relationship = state.relationship[-self.max_relationship_items :]
+        return state
+
     def remember_cycle(
         self,
         state: MemoryState,
@@ -454,6 +543,10 @@ class MemoryStore:
             if item.text:
                 recalled.append(f"semantic/user: {item.text}")
 
+        for item in state.relationship[-6:]:
+            if item.text:
+                recalled.append(f"relationship/{item.pattern}: {item.text}")
+
         for item in state.episodic[-5:]:
             summary = item.summary()
             if summary:
@@ -486,6 +579,16 @@ class MemoryStore:
         if semantic:
             sections.append("semantic_user_memory:\n" + "\n".join(f"- {item}" for item in semantic))
 
+        relationship = [item for item in state.relationship[-6:] if item.text]
+        if relationship:
+            sections.append(
+                "relationship_memory:\n"
+                + "\n".join(
+                    f"- {item.text} (pattern={item.pattern}, observations={item.observations})"
+                    for item in relationship
+                )
+            )
+
         norm_lines: list[str] = []
         baseline = self._render_norm_baseline_line(state)
         if baseline:
@@ -501,7 +604,8 @@ class MemoryStore:
             return ""
         return (
             "Memory is split by type. Working memory is only recent cycles; episodic memory is what was seen/said/outcome; "
-            "semantic_user_memory is stable facts/preferences; norm_memory is the user's baseline for comparing the current scene.\n"
+            "semantic_user_memory is stable facts/preferences; relationship_memory is ERIS' reflected interaction rhythm with the user, not current screen evidence; "
+            "norm_memory is the user's baseline for comparing the current scene.\n"
             + "\n\n".join(sections)
         )
 
@@ -545,12 +649,18 @@ class MemoryStore:
             for item in (data.get("semantic") or [])
             if isinstance(item, dict)
         ]
+        relationship = [
+            RelationshipMemoryItem.from_dict(item)
+            for item in (data.get("relationship") or data.get("reflections") or [])
+            if isinstance(item, dict)
+        ]
         norm = NormMemory.from_dict(data.get("norm") or {})
         return MemoryState(
-            version=int(data.get("version", 2) or 2),
+            version=max(3, int(data.get("version", 2) or 2)),
             working=working[-self.max_working_items :],
             episodic=episodic[-self.max_episodic_items :],
             semantic=semantic[-self.max_semantic_items :],
+            relationship=relationship[-self.max_relationship_items :],
             norm=norm,
         )
 

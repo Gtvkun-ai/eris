@@ -4,6 +4,7 @@ from .store import (
     MemoryStore,
     NormDeviation,
     NormMemory,
+    RelationshipMemoryItem,
     SemanticMemoryItem,
     WorkingMemoryItem,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "MemoryStore",
     "NormDeviation",
     "NormMemory",
+    "RelationshipMemoryItem",
     "SemanticMemoryItem",
     "WorkingMemoryItem",
 ]

@@ -120,7 +120,7 @@ class LlmServiceTests(unittest.TestCase):
                 "Mode: steady_observe.\n"
                 "ActionPlanner decision before LLM:\n"
                 "- should_speak=true\n"
-                "- speech_act=observe\n"
+                "- speech_act=telemetry_comment\n"
                 "- reason_to_speak=Concrete signal is available before LLM\n"
                 "- risk_flags=none"
             ),
@@ -129,7 +129,7 @@ class LlmServiceTests(unittest.TestCase):
 
         user_prompt = client.calls[0]["messages"][1]["content"]
         self.assertIn("Action plan bắt buộc", user_prompt)
-        self.assertIn("speech_act=observe", user_prompt)
+        self.assertIn("speech_act=telemetry_comment", user_prompt)
         self.assertIn("reason_to_speak=Concrete signal is available before LLM", user_prompt)
 
     def test_chat_reply_repairs_non_json_with_second_pass(self):
@@ -407,6 +407,36 @@ class LlmServiceTests(unittest.TestCase):
         normalized_user = _norm(user_prompt)
         self.assertIn("speech_intent=user_requested", normalized_user)
         self.assertIn("ngai vua yeu cau noi ngay", normalized_user)
+
+    def test_inner_thought_prompt_overrides_no_telemetry_refusal(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"toi hoi mot cau khac","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_directive(
+            telemetry_data="speech_evidence=<none>",
+            ti_context=(
+                "Mode: steady_observe.\n"
+                "SpeechCore mode: pick a freeform line.\n"
+                "- topic_seed=small_curiosity\n"
+            ),
+            speech_intent="user_requested",
+        )
+
+        user_prompt = client.calls[0]["messages"][1]["content"]
+        normalized_user = _norm(user_prompt)
+        self.assertIn("speech_intent=inner_thought", normalized_user)
+        self.assertIn("thieu telemetry khong co nghia la thieu chu de", normalized_user)
+        self.assertIn("duoc tu mo chu de xa hoi ngan", normalized_user)
+        self.assertIn("khong tra loi bang", normalized_user)
+        self.assertIn("ngai muon toi noi gi", normalized_user)
 
 
 if __name__ == "__main__":

@@ -1,274 +1,756 @@
 {
-	"version": 2,
-	"working": [
-		{
-			"timestamp": "13:54",
-			"cycle_id": "autonomous-1",
-			"channel": "autonomous",
-			"summary": "autonomous -> Giao diện video call có hai người tham gia, một người đang hiển thị ảnh đại diện màu tím và người kia hiển thị ảnh đạ... | Trang web YouTube đang hiển thị danh sách video về trò chơi Elysium Legacy. -> Nghe người ta nói về một thế giới khác qu...",
-			"outcome": "json",
-			"salience": 0.6
-		},
-		{
-			"timestamp": "13:55",
-			"cycle_id": "force_speak-2",
-			"channel": "force_speak",
-			"summary": "force_speak -> Trang tin nhắn Facebook đang hiển thị một khung chat với dòng chữ tiếng Việt. | Một cửa sổ ứng dụng mở lên trên cùng che phủ phần lớn màn hình. -> Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó. -> json",
-			"outcome": "json",
-			"salience": 0.632
-		},
-		{
-			"timestamp": "13:56",
-			"cycle_id": "force_speak-3",
-			"channel": "force_speak",
-			"summary": "force_speak -> force_speak requested | Trang tin nhắn Facebook đang hiển thị một khung chat với dòng chữ tiếng Việt. -> Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó. -> json",
-			"outcome": "json",
-			"salience": 0.562
-		},
-		{
-			"timestamp": "13:56",
-			"cycle_id": "force_speak-4",
-			"channel": "force_speak",
-			"summary": "force_speak -> Cửa sổ ứng dụng ERIS đang được mở trên nền một cuộc họp Google Meet. | force_speak requested -> Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó. -> json",
-			"outcome": "json",
-			"salience": 0.593
-		},
-		{
-			"timestamp": "13:57",
-			"cycle_id": "autonomous-5",
-			"channel": "autonomous",
-			"summary": "autonomous -> Cửa sổ ứng dụng ERIS đang được mở trên nền một cuộc họp Google Meet. -> ambient_silence",
-			"outcome": "ambient_silence",
-			"salience": 0.526
-		}
-	],
-	"episodic": [
-		{
-			"timestamp": "13:54",
-			"cycle_id": "autonomous-1",
-			"channel": "autonomous",
-			"seen": [
-				"Giao diện video call có hai người tham gia, một người đang hiển thị ảnh đại diện màu tím và người kia hiển thị ảnh đạ...",
-				"Trang web YouTube đang hiển thị danh sách video về trò chơi Elysium Legacy.",
+    "version": 3,
+    "working": [
+        {
+            "timestamp": "21:21",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "summary": "autonomous -> active_app=visual studio code differs from norm eris (debug) (0/32 vs 12/32) | active_window_kind=coding differs from norm general (0/32 vs 26/32) -> no_speech",
+            "outcome": "no_speech",
+            "salience": 0.53
+        },
+        {
+            "timestamp": "21:23",
+            "cycle_id": "force_speak-2",
+            "channel": "force_speak",
+            "summary": "force_speak -> force_speak requested -> Ngài muốn tôi ở đây, dù chỉ bằng một câu hỏi nhỏ. -> inner_thought",
+            "outcome": "inner_thought",
+            "salience": 0.587
+        },
+        {
+            "timestamp": "21:23",
+            "cycle_id": "force_speak-3",
+            "channel": "force_speak",
+            "summary": "force_speak -> force_speak requested -> Đổi hướng nhé. Hôm nay có điều gì nhỏ nhưng cứ lởn vởn trong đầu Ngài không. -> force_speak_repeat_guard",
+            "outcome": "force_speak_repeat_guard",
+            "salience": 0.587
+        },
+        {
+            "timestamp": "21:24",
+            "cycle_id": "chat-4",
+            "channel": "chat",
+            "summary": "chat -> không có -> Đổi hướng nhé. Hôm nay có điều gì nhỏ nhưng cứ lởn vởn trong đầu Ngài không. -> json",
+            "outcome": "json",
+            "salience": 0.62
+        },
+        {
+            "timestamp": "21:24",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "summary": "autonomous -> Bên phải là một bảng ghi chú với các dòng chữ tiếng Việt. | Trang chủ có một bảng mã nguồn Python bên trái. -> no_speech",
+            "outcome": "no_speech",
+            "salience": 0.565
+        },
+        {
+            "timestamp": "21:24",
+            "cycle_id": "force_speak-6",
+            "channel": "force_speak",
+            "summary": "force_speak -> force_speak requested | active_app=godot differs from norm eris (debug) (0/37 vs 16/37) -> Tôi thấy Ngài đang cần một chút sự hiện diện hơn là những con số trên màn hình. Cứ để tôi ở đây. -> inner_thought",
+            "outcome": "inner_thought",
+            "salience": 0.587
+        }
+    ],
+    "episodic": [
+        {
+            "timestamp": "13:54",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "Giao diện video call có hai người tham gia, một người đang hiển thị ảnh đại diện màu tím và người kia hiển thị ảnh đạ...",
+                "Trang web YouTube đang hiển thị danh sách video về trò chơi Elysium Legacy.",
                 "Dưới cùng màn hình có thanh công cụ điều khiển cuộc gọi với nút gọi và các biểu tượng chức năng."
-			],
-			"said": "Nghe người ta nói về một thế giới khác qua màn hình. Ngài có vẻ đang khá thoải mái.",
-			"outcome": "json",
-			"tags": [
-				"autonomous",
-				"screen_observation",
-				"observe",
+            ],
+            "said": "Nghe người ta nói về một thế giới khác qua màn hình. Ngài có vẻ đang khá thoải mái.",
+            "outcome": "json",
+            "tags": [
+                "autonomous",
+                "screen_observation",
+                "observe",
                 "vision_fact"
-			],
-			"salience": 0.6
-		},
-		{
-			"timestamp": "13:55",
-			"cycle_id": "force_speak-2",
-			"channel": "force_speak",
-			"seen": [
-				"Trang tin nhắn Facebook đang hiển thị một khung chat với dòng chữ tiếng Việt.",
-				"Một cửa sổ ứng dụng mở lên trên cùng che phủ phần lớn màn hình.",
+            ],
+            "salience": 0.6
+        },
+        {
+            "timestamp": "13:55",
+            "cycle_id": "force_speak-2",
+            "channel": "force_speak",
+            "seen": [
+                "Trang tin nhắn Facebook đang hiển thị một khung chat với dòng chữ tiếng Việt.",
+                "Một cửa sổ ứng dụng mở lên trên cùng che phủ phần lớn màn hình.",
                 "force_speak requested"
-			],
-			"said": "Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",
-			"outcome": "json",
-			"tags": [
-				"force_speak",
-				"user_requested",
-				"mirror",
+            ],
+            "said": "Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",
+            "outcome": "json",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "mirror",
                 "vision_fact"
-			],
-			"salience": 0.632
-		},
-		{
-			"timestamp": "13:56",
-			"cycle_id": "force_speak-3",
-			"channel": "force_speak",
-			"seen": [
-				"force_speak requested",
+            ],
+            "salience": 0.632
+        },
+        {
+            "timestamp": "13:56",
+            "cycle_id": "force_speak-3",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested",
                 "Trang tin nhắn Facebook đang hiển thị một khung chat với dòng chữ tiếng Việt."
-			],
-			"said": "Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",
-			"outcome": "json",
-			"tags": [
-				"force_speak",
-				"user_requested",
-				"mirror",
+            ],
+            "said": "Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",
+            "outcome": "json",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "mirror",
                 "user_force_speak"
-			],
-			"salience": 0.562
-		},
-		{
-			"timestamp": "13:56",
-			"cycle_id": "force_speak-4",
-			"channel": "force_speak",
-			"seen": [
-				"Cửa sổ ứng dụng ERIS đang được mở trên nền một cuộc họp Google Meet.",
+            ],
+            "salience": 0.562
+        },
+        {
+            "timestamp": "13:56",
+            "cycle_id": "force_speak-4",
+            "channel": "force_speak",
+            "seen": [
+                "Cửa sổ ứng dụng ERIS đang được mở trên nền một cuộc họp Google Meet.",
                 "force_speak requested"
-			],
-			"said": "Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",
-			"outcome": "json",
-			"tags": [
-				"force_speak",
-				"user_requested",
-				"mirror",
+            ],
+            "said": "Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",
+            "outcome": "json",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "mirror",
                 "vision_fact"
-			],
-			"salience": 0.593
-		},
-		{
-			"timestamp": "13:57",
-			"cycle_id": "autonomous-5",
-			"channel": "autonomous",
-			"seen": [
+            ],
+            "salience": 0.593
+        },
+        {
+            "timestamp": "13:57",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
                 "Cửa sổ ứng dụng ERIS đang được mở trên nền một cuộc họp Google Meet."
-			],
-			"said": "",
-			"outcome": "ambient_silence",
-			"tags": [
-				"autonomous",
-				"no_speech",
+            ],
+            "said": "",
+            "outcome": "ambient_silence",
+            "tags": [
+                "autonomous",
+                "no_speech",
                 "vision_fact"
-			],
-			"salience": 0.526
-		}
-	],
-	"semantic": [
-		{
-			"text": "Phiên bản 0.9.1 đã được cập nhật.",
-			"source": "legacy_long_term_memory",
-			"confidence": 0.75,
-			"observations": 1,
-			"first_seen_at": "2026-05-01T23:51:24+0700",
-			"updated_at": "2026-05-01T23:51:24+0700"
-		},
-		{
-			"text": "null",
-			"source": "legacy_long_term_memory",
-			"confidence": 0.75,
-			"observations": 1,
-			"first_seen_at": "2026-05-01T23:51:24+0700",
-			"updated_at": "2026-05-01T23:51:24+0700"
-		},
-		{
-			"text": "Người dùng bắt đầu cuộc hội thoại bằng lời chào.",
-			"source": "legacy_long_term_memory",
-			"confidence": 0.75,
-			"observations": 1,
-			"first_seen_at": "2026-05-01T23:51:24+0700",
-			"updated_at": "2026-05-01T23:51:24+0700"
-		},
-		{
-			"text": "System is in general mode.",
-			"source": "legacy_long_term_memory",
-			"confidence": 0.75,
-			"observations": 1,
-			"first_seen_at": "2026-05-01T23:51:24+0700",
-			"updated_at": "2026-05-01T23:51:24+0700"
-		},
-		{
-			"text": "Hệ thống không có khả năng truy xuất dữ liệu lịch sử.",
-			"source": "legacy_long_term_memory",
-			"confidence": 0.75,
-			"observations": 1,
-			"first_seen_at": "2026-05-01T23:51:24+0700",
-			"updated_at": "2026-05-01T23:51:24+0700"
-		},
-		{
-			"text": "User profile: Cao Nguyen Yen Hoa, born 2006-06-30, AI/IT student at Sai Gon University.",
-			"source": "user_profile_seed",
-			"confidence": 0.95,
-			"observations": 1,
-			"first_seen_at": "2026-05-02T13:30:00+0700",
-			"updated_at": "2026-05-02T13:30:00+0700"
-		},
-		{
-			"text": "User identifies with INTP and Tritype 538, values logic, rational EQ, emotional control, skepticism, and high commitment in relationships.",
-			"source": "user_profile_seed",
-			"confidence": 0.95,
-			"observations": 1,
-			"first_seen_at": "2026-05-02T13:30:00+0700",
-			"updated_at": "2026-05-02T13:30:00+0700"
-		},
-		{
-			"text": "User builds Ashes of a Dying World in Godot/C# and is developing ERIS, a Kuudere/INFJ digital persona, with Python and Unsloth fine-tuning work.",
-			"source": "user_profile_seed",
-			"confidence": 0.95,
-			"observations": 1,
-			"first_seen_at": "2026-05-02T13:30:00+0700",
-			"updated_at": "2026-05-02T13:30:00+0700"
-		},
-		{
-			"text": "User is learning piano and organ with attention to music theory and chord progressions; likes complex strategy/management games such as Toram Online, RimWorld, and Factorio.",
-			"source": "user_profile_seed",
-			"confidence": 0.95,
-			"observations": 1,
-			"first_seen_at": "2026-05-02T13:30:00+0700",
-			"updated_at": "2026-05-02T13:30:00+0700"
-		},
-		{
-			"text": "User likes psychologically deep and tactical works such as Re:Zero, was class monitor for three years in high school, and has a deep connection with an INFJ friend.",
-			"source": "user_profile_seed",
-			"confidence": 0.95,
-			"observations": 1,
-			"first_seen_at": "2026-05-02T13:30:00+0700",
-			"updated_at": "2026-05-02T13:30:00+0700"
-		},
-		{
-			"text": "Trang web YouTube đang hiển thị danh sách video về trò chơi Elysium Legacy.",
-			"source": "decision_extracted_fact",
-			"confidence": 0.75,
-			"observations": 1,
-			"first_seen_at": "13:54",
-			"updated_at": "13:54"
-		}
-	],
-	"norm": {
-		"observations": 16,
-		"feature_counts": {
-			"active_window_kind": {
-				"general": 12,
-				"communication": 4
-			},
-			"active_app": {
-				"edge": 4,
-				"eris (debug)": 3,
-				"desktop": 1
-			},
-			"focus_summary": {
-				"Ngài đang ở bối cảnh giao tiếp: Meet - nqu-mrjx-hkh - Personal - Microsoft​ Edge": 4,
-				"Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": 3,
-				"Ngài đang ở bối cảnh tổng quát: Desktop": 1
-			},
-			"idle_bucket": {
-				"active": 16
-			},
-			"window_spread": {
-				"high": 9,
-				"medium": 7
-			},
-			"focus_pattern": {
-				"steady": 10,
-				"conversation": 4,
-				"fragmented": 2
-			}
-		},
-		"last_seen_at": {
-			"active_window_kind:general": "13:56",
-			"idle_bucket:active": "13:57",
-			"window_spread:medium": "13:06",
-			"focus_pattern:steady": "13:56",
-			"active_window_kind:communication": "13:57",
-			"active_app:edge": "13:57",
-			"focus_summary:Ngài đang ở bối cảnh giao tiếp: Meet - nqu-mrjx-hkh - Personal - Microsoft​ Edge": "13:57",
-			"focus_pattern:conversation": "13:57",
-			"active_app:desktop": "13:17",
-			"focus_summary:Ngài đang ở bối cảnh tổng quát: Desktop": "13:17",
-			"window_spread:high": "13:57",
-			"focus_pattern:fragmented": "13:20",
-			"active_app:eris (debug)": "13:56",
-			"focus_summary:Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": "13:56"
-		}
-	}
+            ],
+            "salience": 0.526
+        },
+        {
+            "timestamp": "19:49",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "Trang tin nhắn Messenger đang hiển thị một cuộc trò chuyện với người dùng 'Phan Anh Khang'.",
+                "Giao diện ứng dụng đang được mở trên trình duyệt web Chrome với thanh công cụ ở trên cùng.",
+                "Nội dung tin nhắn bao gồm các câu hỏi về việc cài đặt AI và các lệnh điều khiển máy tính."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.673
+        },
+        {
+            "timestamp": "19:51",
+            "cycle_id": "force_speak-2",
+            "channel": "force_speak",
+            "seen": [
+                "Trang giao diện hiển thị một khung chat màu đen với dòng chữ tiếng Việt 'Chờ lệnh từ AI...' ở giữa.",
+                "Dưới khung chat là một biểu tượng người nữ nhỏ màu hồng, và góc dưới cùng có một thanh log ghi các dòng tin nhắn hệ t...",
+                "force_speak requested"
+            ],
+            "said": "Ngài đang muốn tôi nói cái gì đây.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "meta_reply",
+                "vision_fact"
+            ],
+            "salience": 0.689
+        },
+        {
+            "timestamp": "19:51",
+            "cycle_id": "force_speak-3",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested",
+                "Trang giao diện hiển thị một khung chat màu đen với dòng chữ tiếng Việt 'Chờ lệnh từ AI...' ở giữa.",
+                "Dưới khung chat là một biểu tượng người nữ nhỏ màu hồng, và góc dưới cùng có một thanh log ghi các dòng tin nhắn hệ t..."
+            ],
+            "said": "Hôm nay Ngài như nào.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "relational_checkin",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        },
+        {
+            "timestamp": "19:51",
+            "cycle_id": "force_speak-4",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested",
+                "Trang giao diện hiển thị một khung chat màu đen với dòng chữ tiếng Việt 'Chờ lệnh từ AI...' ở giữa.",
+                "Dưới khung chat là một biểu tượng người nữ nhỏ màu hồng, và góc dưới cùng có một thanh log ghi các dòng tin nhắn hệ t..."
+            ],
+            "said": "Ngài đang muốn tôi nói cái gì đây.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "meta_reply",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        },
+        {
+            "timestamp": "19:51",
+            "cycle_id": "force_speak-5",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested",
+                "Trang giao diện hiển thị một khung chat màu đen với dòng chữ tiếng Việt 'Chờ lệnh từ AI...' ở giữa.",
+                "Dưới khung chat là một biểu tượng người nữ nhỏ màu hồng, và góc dưới cùng có một thanh log ghi các dòng tin nhắn hệ t..."
+            ],
+            "said": "Hôm nay Ngài như nào.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "relational_checkin",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        },
+        {
+            "timestamp": "19:51",
+            "cycle_id": "force_speak-6",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested",
+                "Trang giao diện hiển thị một khung chat màu đen với dòng chữ tiếng Việt 'Chờ lệnh từ AI...' ở giữa.",
+                "Dưới khung chat là một biểu tượng người nữ nhỏ màu hồng, và góc dưới cùng có một thanh log ghi các dòng tin nhắn hệ t..."
+            ],
+            "said": "Ngài đang muốn tôi nói cái gì đây.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "meta_reply",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        },
+        {
+            "timestamp": "19:59",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "Trang tin nhắn Messenger đang hiển thị một bảng thông tin kỹ năng tên 'Dual Sword Skills'.",
+                "Dòng tin nhắn cuối cùng của người dùng có nội dung 'hôm 8m thì srd bị giảm phản đòn'.",
+                "Bảng kỹ năng này mô tả chi tiết các hiệu ứng của 'Lunar Misfortune' và 'Twin Buster Blade'."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.633
+        },
+        {
+            "timestamp": "20:00",
+            "cycle_id": "force_speak-2",
+            "channel": "force_speak",
+            "seen": [
+                "Một khung cửa sổ nhỏ đang hiển thị dòng văn bản tiếng Việt và một biểu tượng nhân vật nhỏ.",
+                "Trang tin vi duong dung giao diện IDE với các cửa sổ hiển thị file và thư mục.",
+                "force_speak requested"
+            ],
+            "said": "Ngài muốn tôi nói gì đây.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "meta_reply",
+                "vision_fact"
+            ],
+            "salience": 0.617
+        },
+        {
+            "timestamp": "20:01",
+            "cycle_id": "force_speak-3",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested",
+                "focus_summary=Ngài đang ở bối cảnh tổng quát: Desktop differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (1/24 vs 9/24)",
+                "active_app=desktop differs from norm eris (debug) (1/24 vs 9/24)"
+            ],
+            "said": "Tôi nghe rồi. Không có tín hiệu mới đủ chắc để nói thêm.",
+            "outcome": "force_speak_repeat_guard",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "meta_reply",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        },
+        {
+            "timestamp": "20:01",
+            "cycle_id": "force_speak-4",
+            "channel": "force_speak",
+            "seen": [
+                "Giao diện game hiển thị các nút kỹ năng và bản đồ nhỏ ở các góc.",
+                "Trang bô cò đang giao tranh với hai nhân vật khác.",
+                "force_speak requested"
+            ],
+            "said": "Ngài muốn tôi nói gì đây.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "meta_reply",
+                "vision_fact"
+            ],
+            "salience": 0.609
+        },
+        {
+            "timestamp": "20:02",
+            "cycle_id": "force_speak-5",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested",
+                "focus_summary=Ngài đang ở bối cảnh tổng quát: Tôi hủy diệt cả Map với Combo Vô Hạn Titan Mớ... differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)...",
+                "active_app=brave differs from norm eris (debug) (3/26 vs 9/26)"
+            ],
+            "said": "Tôi nghe rồi. Không có tín hiệu mới đủ chắc để nói thêm.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "meta_reply",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        },
+        {
+            "timestamp": "20:14",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "Hai nhân vật đang ôm nhau rất gần.",
+                "Bức ảnh có dòng chữ 'PHẦN THƯỞNG NGON NHẤT KHI SỞ HỮU 2 SKIN'."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.576
+        },
+        {
+            "timestamp": "20:15",
+            "cycle_id": "force_speak-2",
+            "channel": "force_speak",
+            "seen": [
+                "Cửa sổ ứng dụng đang hiển thị một khung chat màu xám với dòng chữ 'Chờ tín hiệu từ AI...' ở giữa.",
+                "Dưới khung chat là một biểu tượng nhân vật anime nhỏ màu hồng đang đứng.",
+                "Phía dưới cùng của màn hình là thanh công cụ của ứng dụng Messenger với các biểu tượng gửi tin và biểu tượng cảm xúc."
+            ],
+            "said": "Ngài muốn tôi ở đây chứ, dù chỉ bằng một câu hỏi nhỏ.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "meta_reply",
+                "vision_fact"
+            ],
+            "salience": 0.656
+        },
+        {
+            "timestamp": "20:16",
+            "cycle_id": "force_speak-3",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested",
+                "Cửa sổ ứng dụng đang hiển thị một khung chat màu xám với dòng chữ 'Chờ tín hiệu từ AI...' ở giữa.",
+                "Dưới khung chat là một biểu tượng nhân vật anime nhỏ màu hồng đang đứng."
+            ],
+            "said": "Tôi thấy Ngài đang muốn một chút sự hiện diện, dù chỉ bằng một câu hỏi nhỏ.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "relational_checkin",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        },
+        {
+            "timestamp": "20:17",
+            "cycle_id": "force_speak-4",
+            "channel": "force_speak",
+            "seen": [
+                "Một cửa sổ ứng dụng có giao diện tối màu đang được mở lên trên video.",
+                "Cửa sổ này có một thanh công cụ chứa các nút điều khiển và một khung hiển thị văn bản nhỏ ở giữa.",
+                "force_speak requested"
+            ],
+            "said": "Tôi đang ở đây, dù chỉ bằng một câu hỏi nhỏ.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "curious_question",
+                "vision_fact"
+            ],
+            "salience": 0.593
+        },
+        {
+            "timestamp": "20:17",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
+                "focus_summary=Ngài đang ở bối cảnh tổng quát: Cầu thủ gây thất vọng nhất Blue Lock #anime #... differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)...",
+                "active_app=brave differs from norm eris (debug) (5/31 vs 12/31)"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "norm_deviation"
+            ],
+            "salience": 0.546
+        },
+        {
+            "timestamp": "21:21",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "active_app=visual studio code differs from norm eris (debug) (0/32 vs 12/32)",
+                "active_window_kind=coding differs from norm general (0/32 vs 26/32)",
+                "focus_pattern=deep_work differs from norm steady (0/32 vs 24/32)"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "norm_deviation"
+            ],
+            "salience": 0.53
+        },
+        {
+            "timestamp": "21:23",
+            "cycle_id": "force_speak-2",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested"
+            ],
+            "said": "Ngài muốn tôi ở đây, dù chỉ bằng một câu hỏi nhỏ.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "inner_whim",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        },
+        {
+            "timestamp": "21:23",
+            "cycle_id": "force_speak-3",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested"
+            ],
+            "said": "Đổi hướng nhé. Hôm nay có điều gì nhỏ nhưng cứ lởn vởn trong đầu Ngài không.",
+            "outcome": "force_speak_repeat_guard",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "curious_question",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        },
+        {
+            "timestamp": "21:24",
+            "cycle_id": "chat-4",
+            "channel": "chat",
+            "seen": [
+                "không có"
+            ],
+            "said": "Đổi hướng nhé. Hôm nay có điều gì nhỏ nhưng cứ lởn vởn trong đầu Ngài không.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "mirror",
+                "user_message"
+            ],
+            "salience": 0.62
+        },
+        {
+            "timestamp": "21:24",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
+                "Bên phải là một bảng ghi chú với các dòng chữ tiếng Việt.",
+                "Trang chủ có một bảng mã nguồn Python bên trái."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.565
+        },
+        {
+            "timestamp": "21:24",
+            "cycle_id": "force_speak-6",
+            "channel": "force_speak",
+            "seen": [
+                "force_speak requested",
+                "active_app=godot differs from norm eris (debug) (0/37 vs 16/37)",
+                "active_window_kind=coding differs from norm general (1/37 vs 30/37)"
+            ],
+            "said": "Tôi thấy Ngài đang cần một chút sự hiện diện hơn là những con số trên màn hình. Cứ để tôi ở đây.",
+            "outcome": "inner_thought",
+            "tags": [
+                "force_speak",
+                "user_requested",
+                "random_chatter",
+                "user_force_speak"
+            ],
+            "salience": 0.587
+        }
+    ],
+    "semantic": [
+        {
+            "text": "Phiên bản 0.9.1 đã được cập nhật.",
+            "source": "legacy_long_term_memory",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "2026-05-01T23:51:24+0700",
+            "updated_at": "2026-05-01T23:51:24+0700"
+        },
+        {
+            "text": "null",
+            "source": "legacy_long_term_memory",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "2026-05-01T23:51:24+0700",
+            "updated_at": "2026-05-01T23:51:24+0700"
+        },
+        {
+            "text": "Người dùng bắt đầu cuộc hội thoại bằng lời chào.",
+            "source": "legacy_long_term_memory",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "2026-05-01T23:51:24+0700",
+            "updated_at": "2026-05-01T23:51:24+0700"
+        },
+        {
+            "text": "System is in general mode.",
+            "source": "legacy_long_term_memory",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "2026-05-01T23:51:24+0700",
+            "updated_at": "2026-05-01T23:51:24+0700"
+        },
+        {
+            "text": "Hệ thống không có khả năng truy xuất dữ liệu lịch sử.",
+            "source": "legacy_long_term_memory",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "2026-05-01T23:51:24+0700",
+            "updated_at": "2026-05-01T23:51:24+0700"
+        },
+        {
+            "text": "User profile: Cao Nguyen Yen Hoa, born 2006-06-30, AI/IT student at Sai Gon University.",
+            "source": "user_profile_seed",
+            "confidence": 0.95,
+            "observations": 1,
+            "first_seen_at": "2026-05-02T13:30:00+0700",
+            "updated_at": "2026-05-02T13:30:00+0700"
+        },
+        {
+            "text": "User identifies with INTP and Tritype 538, values logic, rational EQ, emotional control, skepticism, and high commitment in relationships.",
+            "source": "user_profile_seed",
+            "confidence": 0.95,
+            "observations": 1,
+            "first_seen_at": "2026-05-02T13:30:00+0700",
+            "updated_at": "2026-05-02T13:30:00+0700"
+        },
+        {
+            "text": "User builds Ashes of a Dying World in Godot/C# and is developing ERIS, a Kuudere/INFJ digital persona, with Python and Unsloth fine-tuning work.",
+            "source": "user_profile_seed",
+            "confidence": 0.95,
+            "observations": 1,
+            "first_seen_at": "2026-05-02T13:30:00+0700",
+            "updated_at": "2026-05-02T13:30:00+0700"
+        },
+        {
+            "text": "User is learning piano and organ with attention to music theory and chord progressions; likes complex strategy/management games such as Toram Online, RimWorld, and Factorio.",
+            "source": "user_profile_seed",
+            "confidence": 0.95,
+            "observations": 1,
+            "first_seen_at": "2026-05-02T13:30:00+0700",
+            "updated_at": "2026-05-02T13:30:00+0700"
+        },
+        {
+            "text": "User likes psychologically deep and tactical works such as Re:Zero, was class monitor for three years in high school, and has a deep connection with an INFJ friend.",
+            "source": "user_profile_seed",
+            "confidence": 0.95,
+            "observations": 1,
+            "first_seen_at": "2026-05-02T13:30:00+0700",
+            "updated_at": "2026-05-02T13:30:00+0700"
+        },
+        {
+            "text": "Trang web YouTube đang hiển thị danh sách video về trò chơi Elysium Legacy.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "13:54",
+            "updated_at": "13:54"
+        }
+    ],
+    "relationship": [
+        {
+            "text": "Ngài hay bấm force_speak khi muốn ERIS hiện diện hơn là cần thông tin.",
+            "pattern": "force_speak_presence",
+            "source": "cognitive_frame_reflection",
+            "confidence": 0.98,
+            "observations": 13,
+            "first_seen_at": "19:51",
+            "updated_at": "21:24",
+            "evidence": [
+                "said=Ngài muốn tôi ở đây, dù chỉ bằng một câu hỏi nhỏ.",
+                "speech_act=random_chatter",
+                "inner_intent=random_chatter",
+                "said=Tôi thấy Ngài đang cần một chút sự hiện diện hơn là những con số trên màn hình."
+            ]
+        },
+        {
+            "text": "Khi thiếu screen signal, ERIS nên hỏi lại hoặc mở một câu tò mò, không giả vờ thấy gì.",
+            "pattern": "no_screen_signal_social_fallback",
+            "source": "cognitive_frame_reflection",
+            "confidence": 0.98,
+            "observations": 13,
+            "first_seen_at": "19:51",
+            "updated_at": "21:24",
+            "evidence": [
+                "channel=force_speak",
+                "seed=present_whim",
+                "motive=light_presence",
+                "seed=light_presence"
+            ]
+        },
+        {
+            "text": "ERIS có thể giữ nhịp hiện diện bằng một câu meta hoặc check-in ngắn, miễn là không dựng cảnh màn hình.",
+            "pattern": "social_initiative_rhythm",
+            "source": "cognitive_frame_reflection",
+            "confidence": 0.98,
+            "observations": 13,
+            "first_seen_at": "19:51",
+            "updated_at": "21:24",
+            "evidence": [
+                "speech_act=curious_question",
+                "speech_act=inner_whim",
+                "channel=force_speak",
+                "speech_act=random_chatter"
+            ]
+        }
+    ],
+    "norm": {
+        "observations": 38,
+        "feature_counts": {
+            "active_window_kind": {
+                "general": 30,
+                "communication": 6,
+                "coding": 2
+            },
+            "active_app": {
+                "eris (debug)": 16,
+                "brave": 6,
+                "edge": 4,
+                "desktop": 2,
+                "visual studio code": 1,
+                "godot": 1
+            },
+            "focus_summary": {
+                "Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": 16,
+                "Ngài đang ở bối cảnh giao tiếp: Meet - nqu-mrjx-hkh - Personal - Microsoft​ Edge": 4,
+                "Ngài đang ở bối cảnh giao tiếp: Messenger | Facebook - Brave": 2,
+                "Ngài đang ở bối cảnh tổng quát: Desktop": 2,
+                "Ngài đang ở bối cảnh tổng quát: Tôi hủy diệt cả Map với Combo Vô Hạn Titan Mớ...": 2,
+                "Ngài đang ở bối cảnh tổng quát: YouTube - Brave": 1,
+                "Ngài đang ở bối cảnh tổng quát: Cầu thủ gây thất vọng nhất Blue Lock #anime #...": 1,
+                "Ngài đang ở bối cảnh code hoặc project: Codex Diff - eris - Visual Studio Code": 1,
+                "Ngài đang ở bối cảnh code hoặc project: UdpListener.tscn - Eris - Godot Engine": 1
+            },
+            "idle_bucket": {
+                "active": 37,
+                "short_idle": 1
+            },
+            "window_spread": {
+                "medium": 23,
+                "high": 15
+            },
+            "focus_pattern": {
+                "steady": 28,
+                "conversation": 6,
+                "fragmented": 2,
+                "deep_work": 2
+            }
+        },
+        "last_seen_at": {
+            "active_window_kind:general": "21:24",
+            "idle_bucket:active": "21:24",
+            "window_spread:medium": "20:17",
+            "focus_pattern:steady": "21:24",
+            "active_window_kind:communication": "19:59",
+            "active_app:edge": "13:57",
+            "focus_summary:Ngài đang ở bối cảnh giao tiếp: Meet - nqu-mrjx-hkh - Personal - Microsoft​ Edge": "13:57",
+            "focus_pattern:conversation": "19:59",
+            "active_app:desktop": "20:01",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Desktop": "20:01",
+            "window_spread:high": "21:24",
+            "focus_pattern:fragmented": "13:20",
+            "active_app:eris (debug)": "21:24",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": "21:24",
+            "active_app:brave": "20:17",
+            "focus_summary:Ngài đang ở bối cảnh giao tiếp: Messenger | Facebook - Brave": "19:59",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Tôi hủy diệt cả Map với Combo Vô Hạn Titan Mớ...": "20:02",
+            "idle_bucket:short_idle": "20:02",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: YouTube - Brave": "20:14",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Cầu thủ gây thất vọng nhất Blue Lock #anime #...": "20:17",
+            "active_window_kind:coding": "21:24",
+            "active_app:visual studio code": "21:21",
+            "focus_summary:Ngài đang ở bối cảnh code hoặc project: Codex Diff - eris - Visual Studio Code": "21:21",
+            "focus_pattern:deep_work": "21:24",
+            "active_app:godot": "21:24",
+            "focus_summary:Ngài đang ở bối cảnh code hoặc project: UdpListener.tscn - Eris - Godot Engine": "21:24"
+        }
+    }
 }

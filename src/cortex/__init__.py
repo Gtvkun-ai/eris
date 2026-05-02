@@ -1,4 +1,5 @@
 from .contracts import (
+    AgentSpeechCore,
     AttentionCandidate,
     CognitiveActionPlan,
     CognitiveAppraisal,
@@ -20,9 +21,11 @@ from .appraisal import AppraisalEngine
 from .fe import FeRenderer
 from .ni import NiEngine
 from .se import SeLens
+from .speech_core import SpeechCoreEngine
 from .ti import TiGovernor
 
 __all__ = [
+    "AgentSpeechCore",
     "AttentionCandidate",
     "AppraisalEngine",
     "AttentionWorkspace",
@@ -41,6 +44,7 @@ __all__ = [
     "NiEngine",
     "PerceptEvent",
     "SeLens",
+    "SpeechCoreEngine",
     "TelemetrySnapshot",
     "TiGovernor",
     "TiPolicyReport",
