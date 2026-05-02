@@ -1,6 +1,6 @@
-# Godot 4+ specific ignores
 .godot/
-/android/
-
-# Model files
+src/__pycache__/
+*.pyc
 *.gguf
+*.log
+lib/llama-b8466-bin-win-cuda-12.4-x64/
