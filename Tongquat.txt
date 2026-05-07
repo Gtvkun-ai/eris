@@ -1,189 +1,355 @@
-Tổng Quan
-Project này là một hệ lai Godot + C# cho phần “thân” nhân vật và Python cho phần “não” AI. Luồng chính là: Godot hiển thị nhân vật Monika, chạy UI/chat, nhận Decision qua UDP ở cổng 4242; Python chạy vision.py, thu telemetry màn hình, dựng trạng thái nhận thức, gọi model qua llama-server hoặc API compatible, parse kết quả thành JSON quyết định, rồi gửi ngược lại cho Godot. Nói ngắn: Godot là body, Python là cognition/runtime, UDP là dây thần kinh, llama-server/model.gguf là bộ sinh quyết định.
+TONG QUAN PROJECT ERIS
+======================
 
-Tầng Godot / C#
+Project nay la mot he lai:
 
+- Godot + C#: phan "than" cua nhan vat, phu trach hien thi, UI/chat, animation, am thanh va tuong tac.
+- Python: phan "nao" AI, phu trach telemetry, nhan thuc, suy luan, memory, parser va dieu phoi hanh vi.
+- UDP: cau noi giao tiep giua Godot va Python.
+- llama-server / model.gguf: bo phan sinh quyet dinh va hoi dap.
 
-project.godot
-: cấu hình dự án Godot, chọn scene khởi động là body/UdpListener.tscn, bật C#/.NET.
-
-Eris.csproj
-: project .NET cho script Godot, target net8.0.
-
-body/UdpListener.tscn
-: scene gốc của app; dựng CanvasLayer, ChatPanel, CharacterContextMenu, CharacterBody2D, bubble text và gắn script UdpListener.cs.
-
-body/UdpListener.cs
-: file trung tâm phía Godot. Nó bind UDP 4242, nhận JSON từ Python, parse text/animation/direction/motion, cập nhật bubble chat, bật typewriter effect, mở chat panel, gửi tín hiệu chat về Python qua UDP 4243, khởi chạy vision.py, khởi chạy llama-server, phát sound theo animation, và xử lý chuột phải force_speak.
-
-body/MotionController.cs
-: tách riêng state machine chuyển động khỏi UdpListener; chịu trách nhiệm walk, walk_to, face, climb_loop, climb_to_top, drop, gravity, chạm tường, bounce action, giữ hướng sprite/bubble. Đây là “bộ máy animation vật lý”.
-
-asset/Resource/Monika.tscn
-: định nghĩa AnimatedSprite2D với toàn bộ SpriteFrames; bản chất là mapping từ tên animation sang danh sách frame PNG.
-
-asset/Resource/chat.tres
-, 
-asset/Resource/point.tres
-: resource atlas cho icon UI.
-asset/Monika/*.png, asset/Monika/sound/*.wav: dữ liệu hình và âm thanh cho các animation như stand, read, sleep, climb, affection.
-*.import, *.uid: metadata của Godot, không phải logic nghiệp vụ.
-Tầng Python Runtime
+Tom tat ngan:
+Godot la body, Python la cognition/runtime, UDP la day than kinh, con model la bo may ra quyet dinh.
 
 
-src/vision.py
-: entrypoint Python. Nó cấu hình log, khóa single-instance bằng .vision.lock, tạo AttentionOverseer, build toàn bộ service, rồi gọi RuntimeCoordinator.run_loop().
+1. Tang Godot / C#
+------------------
 
-src/runtime/coordinator.py
-: trái tim của hệ thống. File này làm 4 việc lớn: nhận tín hiệu chat_start/chat/chat_end/force_speak, chụp telemetry định kỳ, dựng “cognitive frame” qua các module SE/Attention/Appraisal/SpeechCore/ActionPlanner/Ni/Ti/Fe, gọi LLM để sinh Decision, rồi commit memory và gửi Decision sang Godot.
+`project.godot`
+- Cau hinh du an Godot.
+- Scene khoi dong la `body/UdpListener.tscn`.
+- Bat C# / .NET.
 
-src/domain/decision.py
-: dataclass chuẩn hóa output cuối cùng; ngoài text và animation còn có direction, target_x, next_animation, system_action, motion_intent. Đây là “hợp đồng” giữa AI runtime và Godot.
+`Eris.csproj`
+- Project .NET cho script Godot.
+- Target `net8.0`.
 
-src/transport/udp.py
-: transport 2 chiều bằng UDP; gửi quyết định sang Godot và poll tín hiệu từ Godot.
+`body/UdpListener.tscn`
+- Scene goc cua app.
+- Dung `CanvasLayer`, `ChatPanel`, `CharacterContextMenu`, `CharacterBody2D`, bubble text.
+- Gan script `UdpListener.cs`.
 
-src/app_logging.py
-: log formatter theo category như Vision, LLM, Loop, Action.
-Tầng LLM
+`body/UdpListener.cs`
+- File trung tam ben Godot.
+- Bind UDP cong `4242`.
+- Nhan JSON tu Python.
+- Parse `text`, `animation`, `direction`, `motion`.
+- Cap nhat bubble chat, typewriter effect, chat panel.
+- Gui tin hieu chat ve Python qua cong `4243`.
+- Khoi chay `vision.py`.
+- Khoi chay `llama-server`.
+- Phat sound theo animation.
+- Xu ly chuot phai `force_speak`.
 
+`body/MotionController.cs`
+- Tach state machine chuyen dong khoi `UdpListener`.
+- Phu trach `walk`, `walk_to`, `face`, `climb_loop`, `climb_to_top`, `drop`, gravity, va collision.
+- Giu huong sprite va bubble.
+- Day la "bo may animation vat ly".
 
-src/llm/client.py
-: HTTP client nói chuyện với llama-server hoặc một OpenAI-compatible API. Có 2 lớp: LlamaServerClient và OpenAICompatibleClient.
+`asset/Resource/Monika.tscn`
+- Dinh nghia `AnimatedSprite2D`.
+- Mapping ten animation sang danh sach frame PNG.
 
-src/llm/process_manager.py
-: quyết định tái sử dụng server đang chạy hay tự spawn llama-server.exe, nạp model.gguf, mmproj-F16.gguf, chờ server sẵn sàng.
+`asset/Resource/chat.tres`, `asset/Resource/point.tres`
+- Resource atlas cho icon UI.
 
-src/llm/service.py
-: lớp “bọc” model. Nó ép model trả về JSON quyết định hợp lệ, sửa JSON lỗi, fallback nếu model trả prose, sinh directive, sinh chat reply, sinh screen facts.
+`asset/Monika/*.png`, `asset/Monika/sound/*.wav`
+- Tai nguyen hinh anh va am thanh cho cac animation nhu `stand`, `read`, `sleep`, `climb`, `affection`.
 
-src/llm/contracts.py
-: prompt/rule/GBNF grammar/animation whitelist/system action whitelist. Đây là nơi định nghĩa “model phải trả JSON như thế nào”.
-Tầng Parser / Grounding
-
-
-src/parser_grounding/service.py
-: DecisionParser public API.
-
-src/parser_grounding/decision.py
-: lớp cực quan trọng để “hạ cánh” output model. Nó salvage text khi JSON hỏng, suy animation từ câu chữ, chặn overclaim capability, hỗ trợ các lệnh embodied như leo, nhìn trái, rơi xuống, đi phải, climb_top.
-Điểm hay của parser: model có thể trả hơi lệch, parser vẫn cố biến thành Decision an toàn và chạy được.
-Tầng Telemetry / Perception
-
-
-src/telemetry/system.py
-: đọc cửa sổ foreground, tab browser qua UIAutomation, CPU/RAM, idle time, danh sách window mở.
-
-src/telemetry/service.py
-: bọc TelemetryMixin, đổi raw telemetry thành TelemetrySnapshot, và có thêm capture_screen_frame_data_uri() để chụp màn hình JPEG base64.
-
-src/cortex/se.py
-: “SeLens” diễn giải raw telemetry thành semantic snapshot: phân loại ngữ cảnh coding/documentation/communication/entertainment/system, recent events, user signals, evidence, claim_style.
-
-src/cortex/contracts.py
-: toàn bộ dataclass dữ liệu nội bộ như TelemetrySnapshot, GoalDriftReport, FeStylePlan, PerceptEvent, CognitiveBroadcast, CognitiveAppraisal, CognitiveActionPlan, InnerThought, CognitiveFrame.
-Tầng Nhận Thức
+`*.import`, `*.uid`
+- Metadata cua Godot.
+- Khong phai logic nghiep vu.
 
 
-src/cortex/attention.py
-: chấm điểm percept nào đáng chú ý nhất, tạo AttentionCandidate và CognitiveBroadcast.
+2. Tang Python Runtime
+----------------------
 
-src/cortex/ni.py
-: Ni đánh giá “attention drift” từ focus/window/browser/memory/current text. Nó trả drift_score, drift_level, confidence, và có NiStateMachine để làm mượt trạng thái qua thời gian.
+`src/vision.py`
+- Entrypoint Python.
+- Cau hinh log.
+- Khoa single-instance bang `.vision.lock`.
+- Tao `AttentionOverseer`.
+- Build service.
+- Goi `RuntimeCoordinator.run_loop()`.
 
-src/cortex/ti.py
-: Ti là lớp governor. Nó đặt mode như steady_observe, chat_code, chat_emotional, resource_guard; kiểm tra capability violation; chỉnh câu chữ để bớt giọng báo cáo/meta/quyền lực giả.
+`src/runtime/coordinator.py`
+- Trai tim cua he thong.
+- Nhan cac tin hieu `chat_start`, `chat`, `chat_end`, `force_speak`.
+- Chup telemetry dinh ky.
+- Dung "cognitive frame" qua cac module SE / Attention / Appraisal / SpeechCore / ActionPlanner / Ni / Ti / Fe.
+- Goi LLM de sinh `Decision`.
+- Commit memory va gui ket qua sang Godot.
 
-src/cortex/fe.py
-: FE định giọng trả lời, warmth, sarcasm, continuity, session arc; tức là “nói kiểu nào”.
+`src/domain/decision.py`
+- Dataclass chuan hoa output cuoi cung.
+- Gom `text`, `animation`, `direction`, `target_x`, `next_animation`, `system_action`, `motion_intent`.
+- Day la "hop dong" giua AI runtime va Godot.
 
-src/cortex/appraisal.py
-: dựng trạng thái appraisal tiền-ngôn-ngữ như threat, certainty, intimacy, protectiveness, tenderness; đây là lớp “sắc thái nội tâm vận hành”.
+`src/transport/udp.py`
+- Transport 2 chieu bang UDP.
+- Gui quyet dinh sang Godot va poll tin hieu tu Godot.
 
-src/cortex/inner_thought.py
-: sinh động cơ xã hội nhẹ cho force_speak hoặc autonomous khi thiếu signal màn hình.
-
-src/cortex/speech_core.py
-: quyết định có nên nói không, nói từ nguồn nào (vision, telemetry, freeform, random), và utterance type là gì.
-
-src/cortex/action_planner.py
-: chọn speech act trước khi gọi LLM như observe, protect, mirror, reassure, system_action, withdraw.
-
-src/cortex/tune_ni_focus.py
-: script offline để tune bias/scale cho Ni dựa trên log drift thực tế.
-Tầng Action / Tool Runtime
-
-
-src/actions/router.py
-: regex router biến câu chat thành action như open_url, focus_window, launch_app, get_now_playing, search_web, get_weather.
-
-src/actions/executor.py
-: thực thi action thật trên Windows hoặc qua web API.
-
-src/actions/contracts.py
-: định nghĩa whitelist action và result dataclass.
-Lưu ý kiến trúc: action được route trước, còn nếu model cũng trả system_action thì coordinator vẫn có lớp _execute_system_action() để thực thi sau parser/Ti.
-Memory / Data / Training
+`src/app_logging.py`
+- Log formatter theo nhom nhu `Vision`, `LLM`, `Loop`, `Action`.
 
 
-src/memory/store.py
-: bộ nhớ dài hạn dạng file JSON. Có working, episodic, semantic, relationship, norm; đây là file rất quan trọng vì nó cho ERIS continuity và baseline behavior của người dùng.
+3. Tang LLM
+-----------
 
-long_term_memory.json
-: dữ liệu memory đang được runtime dùng thật.
+`src/llm/client.py`
+- HTTP client noi chuyen voi `llama-server` hoac OpenAI-compatible API.
+- Co 2 lop:
+  `LlamaServerClient`
+  `OpenAICompatibleClient`
 
-goal_memory.json
-, 
-goal_profiles.json
-, 
-focus_context_config.json
-, 
-ni_focus_config.json
-: file policy/bias cho việc hiểu focus. Đây là các “niềm tin nền” chứ không phải code.
+`src/llm/process_manager.py`
+- Tai su dung server dang chay hoac tu spawn `llama-server.exe`.
+- Nap `model.gguf`, `mmproj-F16.gguf`.
+- Cho server san sang.
 
-src/full_train_dataset.py
-: builder biến dataset.jsonl thành HuggingFace Dataset, chèn machine/action/knowledge context thành system message.
+`src/llm/service.py`
+- Lop "boc" model.
+- Ep model tra ve JSON hop le.
+- Sua JSON loi.
+- Fallback neu model tra prose.
+- Sinh directive, chat reply, va screen facts.
 
-src/datasets_clean/README.md
-, 
-src/datasets_clean/SCHEMA.md
-: giải thích cấu trúc tập train/quarantine/supervision.
-src/datasets_clean/train/...: dữ liệu train sạch cho desktop grounding, persona, FE style, SE supervision, tool action grounding.
-src/datasets_clean/quarantine/...: các mẫu bị loại vì overclaim, overinference, ambiguous capability, malformed.
+`src/llm/contracts.py`
+- Dinh nghia prompt, rule, GBNF grammar, animation whitelist, system action whitelist.
+- Noi quy dinh "model phai tra JSON nhu the nao".
 
-scripts/clean_split_jsonl.py
-, 
-scripts/build_fe_style_supervision.py
-, 
-scripts/build_se_supervision.py
- và các script extend/prune/rewrite/split/uniqueify/quarantine: toolchain offline để dọn dữ liệu và tạo supervision mới.
-Tests
 
-tests/test_runtime_coordinator.py: test lớn nhất, kiểm tra luồng orchestration, repeat guard, force_speak, action route, vision facts.
-tests/test_decision_parser.py, tests/test_parser_climb.py: đảm bảo parser hiểu JSON lỗi, embodied command, climb/drop/target.
-tests/test_llm_service.py: đảm bảo lớp LLM service sửa và ép JSON đúng.
-tests/test_memory_store.py: kiểm tra working/episodic/semantic/relationship/norm memory.
-tests/test_se_lens.py, tests/test_attention_workspace.py, tests/test_appraisal_engine.py, tests/test_speech_core.py, tests/test_inner_thought.py, tests/test_ti_governor.py, tests/test_fe_renderer.py: test riêng từng tầng nhận thức.
-tests/test_action_router.py: test mapping chat -> system action.
-tests/test_full_train_dataset.py, tests/test_build_fe_style_supervision.py: test pipeline dữ liệu train.
-Luồng Chạy End-to-End
+4. Tang Parser / Grounding
+--------------------------
 
-Khi mở app, Godot vào UdpListener.tscn, UdpListener.cs bind cổng 4242, lấy node nhân vật, bubble, chat UI, rồi cố khởi động llama-server và vision.py.
-vision.py tạo RuntimeCoordinator, UdpTransport(send=4242, recv=4243), memory store, parser, telemetry, Ni/Ti/Fe/Attention/Appraisal/SpeechCore/ActionPlanner.
-Trong vòng lặp autonomous: coordinator chụp telemetry, có thể chụp màn hình để rút vision_facts, gọi SeLens dựng snapshot, gọi Ni để tính drift, gọi Ti để chọn mode hành vi, gọi Fe để chọn style, dựng CognitiveFrame, chọn percept nổi bật, appraisal, speech core, action plan, rồi mới gọi LlmService.generate_directive().
-Kết quả model đi qua DecisionParser, rồi TiGovernor.enforce_decision(), rồi nếu có system_action thì ActionExecutor chạy thật, sau đó commit memory và transport.send_json(decision.to_payload()).
-Godot nhận JSON, ParseAndApply() lấy text để hiện bubble, lấy motion_intent/animation/direction/target_x để đưa vào MotionController, và phát sound/animation tương ứng.
-Trong chat mode: Godot gửi {"type":"chat","message":"..."} sang Python qua 4243; coordinator build context chat, có thể đính kèm screenshot nếu cần, gọi generate_chat_reply(), parse lại và gửi Decision về Godot.
-Trong force_speak: coordinator đi qua một nhánh riêng; nếu có signal màn hình thì nói grounded, nếu không có thì InnerThoughtEngine + SpeechCore sẽ tạo một line “hiện diện xã hội” không bịa màn hình.
-Điểm Quan Trọng Khi Đọc Project
+`src/parser_grounding/service.py`
+- Public API cua `DecisionParser`.
 
-UdpListener.cs hiện vẫn chứa rất nhiều trách nhiệm cùng lúc: UI, process management, audio, networking, parse payload, animation fallback. MotionController.cs là bước tách tốt nhưng UdpListener vẫn là “god object” phía C#.
-runtime/coordinator.py cũng là “god object” phía Python: gần như mọi lớp đều tụ vào đây. Nếu bạn muốn phân tích sâu hơn, đây là file nên ưu tiên đọc nhiều vòng.
-Project có dấu hiệu vừa phát triển tính năng vừa nghiên cứu prompt/cognition/training, nên sẽ có cảm giác “runtime thật + lab dữ liệu” sống chung một repo.
-Có hardcoded key trong 
-body/UdpListener.cs
- và 
-src/actions/executor.py
-; đây là điểm rủi ro bảo mật đáng chú ý.
-Nếu bạn muốn, ở lượt tiếp theo mình có thể làm tiếp một bản còn sâu hơn theo đúng kiểu: “đọc từng file source một, giải thích function chính của từng file và vẽ lại luồng bằng sơ đồ chữ từ đầu tới cuối”.
+`src/parser_grounding/decision.py`
+- Lop quan trong de "ha canh" output cua model.
+- Co the salvage text khi JSON hong.
+- Suy animation tu cau chu.
+- Chan overclaim capability.
+- Ho tro lenh embodied nhu leo, nhin trai, roi xuong, di phai, `climb_top`.
 
+Diem manh cua parser:
+- Model co the tra lech mot chut, nhung parser van co gang bien no thanh `Decision` an toan va chay duoc.
+
+
+5. Tang Telemetry / Perception
+------------------------------
+
+`src/telemetry/system.py`
+- Doc cua so foreground.
+- Doc tab browser qua UIAutomation.
+- Lay CPU, RAM, idle time, danh sach window dang mo.
+
+`src/telemetry/service.py`
+- Boc `TelemetryMixin`.
+- Doi raw telemetry thanh `TelemetrySnapshot`.
+- Co them `capture_screen_frame_data_uri()` de chup man hinh dang JPEG base64.
+
+`src/cortex/se.py`
+- `SeLens` dien giai raw telemetry thanh semantic snapshot.
+- Phan loai ngu canh:
+  `coding`
+  `documentation`
+  `communication`
+  `entertainment`
+  `system`
+- Rut ra recent events, user signals, evidence va claim style.
+
+`src/cortex/contracts.py`
+- Chua cac dataclass noi bo nhu:
+  `TelemetrySnapshot`
+  `GoalDriftReport`
+  `FeStylePlan`
+  `PerceptEvent`
+  `CognitiveBroadcast`
+  `CognitiveAppraisal`
+  `CognitiveActionPlan`
+  `InnerThought`
+  `CognitiveFrame`
+
+
+6. Tang Nhan Thuc
+-----------------
+
+`src/cortex/attention.py`
+- Cham diem percept nao dang chu y nhat.
+- Tao `AttentionCandidate` va `CognitiveBroadcast`.
+
+`src/cortex/ni.py`
+- Danh gia `attention drift` tu focus, window, browser, memory va current text.
+- Tra `drift_score`, `drift_level`, `confidence`.
+- Co `NiStateMachine` de lam muot trang thai theo thoi gian.
+
+`src/cortex/ti.py`
+- Lop governor.
+- Dat mode nhu:
+  `steady_observe`
+  `chat_code`
+  `chat_emotional`
+  `resource_guard`
+- Kiem tra capability violation.
+- Chinh cau chu de bot giong bao cao / meta / quyen luc gia.
+
+`src/cortex/fe.py`
+- Dinh giong tra loi, warmth, sarcasm, continuity, session arc.
+- Tuc la quyet dinh "noi theo kieu nao".
+
+`src/cortex/appraisal.py`
+- Dung trang thai appraisal tien-ngon-ngu nhu `threat`, `certainty`, `intimacy`, `protectiveness`, `tenderness`.
+- Day la lop "sac thai noi tam van hanh".
+
+`src/cortex/inner_thought.py`
+- Sinh dong co xa hoi nhe cho `force_speak` hoac autonomous khi thieu signal man hinh.
+
+`src/cortex/speech_core.py`
+- Quyet dinh co nen noi khong.
+- Neu noi thi noi tu nguon nao: vision, telemetry, freeform, hay random.
+- Chon `utterance type`.
+
+`src/cortex/action_planner.py`
+- Chon speech act truoc khi goi LLM nhu `observe`, `protect`, `mirror`, `reassure`, `system_action`, `withdraw`.
+
+`src/cortex/tune_ni_focus.py`
+- Script offline de tune bias / scale cho Ni dua tren log drift thuc te.
+
+
+7. Tang Action / Tool Runtime
+-----------------------------
+
+`src/actions/router.py`
+- Regex router bien cau chat thanh action nhu:
+  `open_url`
+  `focus_window`
+  `launch_app`
+  `get_now_playing`
+  `search_web`
+  `get_weather`
+
+`src/actions/executor.py`
+- Thuc thi action that tren Windows hoac qua web API.
+
+`src/actions/contracts.py`
+- Dinh nghia whitelist action va result dataclass.
+
+Luu y kien truc:
+- Action duoc route truoc.
+- Neu model van tra `system_action`, coordinator van co `_execute_system_action()` de xu ly sau parser / Ti.
+
+
+8. Memory / Data / Training
+---------------------------
+
+`src/memory/store.py`
+- Bo nho dai han dang JSON.
+- Gom `working`, `episodic`, `semantic`, `relationship`, `norm`.
+- Rat quan trong vi no giu continuity va baseline behavior cua ERIS voi nguoi dung.
+
+`long_term_memory.json`
+- Du lieu memory runtime dang dung that.
+
+`goal_memory.json`, `goal_profiles.json`, `focus_context_config.json`, `ni_focus_config.json`
+- Cac file policy / bias cho viec hieu focus.
+- Dong vai tro nhu "niem tin nen", khong phai code.
+
+`src/full_train_dataset.py`
+- Builder bien `dataset.jsonl` thanh HuggingFace Dataset.
+- Chen machine / action / knowledge context thanh system message.
+
+`src/datasets_clean/README.md`, `src/datasets_clean/SCHEMA.md`
+- Giai thich cau truc tap train / quarantine / supervision.
+
+`src/datasets_clean/train/...`
+- Du lieu train sach cho desktop grounding, persona, FE style, SE supervision, tool action grounding.
+
+`src/datasets_clean/quarantine/...`
+- Cac mau bi loai vi overclaim, overinference, ambiguous capability, hoac malformed.
+
+`scripts/clean_split_jsonl.py`, `scripts/build_fe_style_supervision.py`, `scripts/build_se_supervision.py`
+- Mot phan trong toolchain offline de don du lieu, rewrite, split, uniqueify, quarantine va tao supervision moi.
+
+
+9. Tests
+--------
+
+`tests/test_runtime_coordinator.py`
+- Bai test lon nhat.
+- Kiem tra orchestration, repeat guard, `force_speak`, action route, vision facts.
+
+`tests/test_decision_parser.py`, `tests/test_parser_climb.py`
+- Dam bao parser hieu JSON loi, embodied command, `climb`, `drop`, `target`.
+
+`tests/test_llm_service.py`
+- Dam bao lop LLM service sua va ep JSON dung.
+
+`tests/test_memory_store.py`
+- Kiem tra memory `working`, `episodic`, `semantic`, `relationship`, `norm`.
+
+`tests/test_se_lens.py`, `tests/test_attention_workspace.py`, `tests/test_appraisal_engine.py`, `tests/test_speech_core.py`, `tests/test_inner_thought.py`, `tests/test_ti_governor.py`, `tests/test_fe_renderer.py`
+- Test rieng tung tang nhan thuc.
+
+`tests/test_action_router.py`
+- Test mapping chat -> system action.
+
+`tests/test_full_train_dataset.py`, `tests/test_build_fe_style_supervision.py`
+- Test pipeline du lieu train.
+
+
+10. Luong Chay End-to-End
+-------------------------
+
+1. Khi mo app, Godot vao `UdpListener.tscn`.
+2. `UdpListener.cs` bind cong `4242`, lay node nhan vat, bubble, chat UI, roi co khoi dong `llama-server` va `vision.py`.
+3. `vision.py` tao `RuntimeCoordinator`, `UdpTransport(send=4242, recv=4243)`, memory store, parser, telemetry, Ni / Ti / Fe / Attention / Appraisal / SpeechCore / ActionPlanner.
+4. Trong vong lap autonomous:
+   - Chup telemetry.
+   - Co the chup man hinh de rut `vision_facts`.
+   - Goi `SeLens` de dung snapshot.
+   - Goi `Ni` de tinh drift.
+   - Goi `Ti` de chon mode hanh vi.
+   - Goi `Fe` de chon style.
+   - Dung `CognitiveFrame`.
+   - Chon percept noi bat, appraisal, speech core, action plan.
+   - Sau do moi goi `LlmService.generate_directive()`.
+5. Ket qua model di qua `DecisionParser`, roi qua `TiGovernor.enforce_decision()`.
+6. Neu co `system_action` thi `ActionExecutor` chay that.
+7. Sau cung runtime commit memory va `transport.send_json(decision.to_payload())`.
+8. Godot nhan JSON, `ParseAndApply()` lay text de hien bubble, lay `motion_intent` / `animation` / `direction` / `target_x` de dua vao `MotionController`, roi phat sound va animation tuong ung.
+9. Trong chat mode:
+   - Godot gui `{"type":"chat","message":"..."}` sang Python qua `4243`.
+   - Coordinator build context chat.
+   - Co the dinh kem screenshot neu can.
+   - Goi `generate_chat_reply()`.
+   - Parse lai va gui `Decision` ve Godot.
+10. Trong `force_speak`:
+   - Coordinator di qua nhanh rieng.
+   - Neu co signal man hinh thi noi grounded.
+   - Neu khong co thi `InnerThoughtEngine` + `SpeechCore` tao mot line "hien dien xa hoi" khong bia man hinh.
+
+
+11. Diem Quan Trong Khi Doc Project
+-----------------------------------
+
+- `UdpListener.cs` van gom qua nhieu trach nhiem cung luc: UI, process management, audio, networking, parse payload, animation fallback.
+- `MotionController.cs` la buoc tach tot, nhung `UdpListener` van la "god object" ben C#.
+- `runtime/coordinator.py` cung la "god object" ben Python: gan nhu moi lop deu tu ve day.
+- Neu muon phan tich sau hon, day la file nen uu tien doc nhieu vong.
+- Project co dau hieu vua phat trien tinh nang vua nghien cuu prompt / cognition / training, nen co cam giac "runtime that + lab du lieu" song chung mot repo.
+- Co hardcoded key trong `body/UdpListener.cs` va `src/actions/executor.py`.
+- Day la diem rui ro bao mat dang chu y.
+
+
+12. Goi Y Huong Doc Tiep
+------------------------
+
+Neu muon dao sau hon, huong doc hop ly la:
+
+1. Doc `src/runtime/coordinator.py` de nam luong dieu phoi tong.
+2. Doc `src/parser_grounding/decision.py` de hieu co che ha canh output model.
+3. Doc `body/UdpListener.cs` + `body/MotionController.cs` de thay cach Godot nhan va bieu dien quyet dinh.
+4. Doc `src/llm/service.py` + `src/llm/contracts.py` de hieu cach runtime rang buoc model.
+5. Doc cac file trong `src/cortex/` de hieu lop nhan thuc va phong cach hoi dap.

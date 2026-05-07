@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from cortex.contracts import FeStyleMemory, GoalDriftReport, TelemetrySnapshot, TiPolicyReport
 from cortex.contracts import FeStylePlan
 from cortex.fe import FeRenderer
+from cortex.internal_state import PersistentInternalState
 
 
 def _norm(text: str) -> str:
@@ -40,6 +41,7 @@ class FeRendererTests(unittest.TestCase):
             drift_level="thap",
             prompt_context="",
         )
+        self.state = PersistentInternalState()
 
     def test_resource_guard_general_stays_ordinary_instead_of_forcing_technical_arc(self):
         ti_report = TiPolicyReport(
@@ -54,6 +56,7 @@ class FeRendererTests(unittest.TestCase):
             ni_report=self.ni_report,
             ti_report=ti_report,
             style_memory=self.memory,
+            internal_state=self.state,
             last_text="",
         )
 
@@ -72,6 +75,7 @@ class FeRendererTests(unittest.TestCase):
             ni_report=self.ni_report,
             ti_report=ti_report,
             style_memory=self.memory,
+            internal_state=self.state,
             last_text="",
         )
 
@@ -102,6 +106,7 @@ class FeRendererTests(unittest.TestCase):
             ni_report=self.ni_report,
             ti_report=ti_report,
             style_memory=memory,
+            internal_state=self.state,
             last_text="",
         )
 
@@ -123,6 +128,7 @@ class FeRendererTests(unittest.TestCase):
             ni_report=self.ni_report,
             ti_report=ti_report,
             style_memory=self.memory,
+            internal_state=self.state,
             user_text="toi hoi buon",
         )
 
@@ -153,6 +159,32 @@ class FeRendererTests(unittest.TestCase):
 
         self.assertEqual(memory.repeated_topic_tag, "attention_drift")
         self.assertEqual(memory.repeated_topic_streak, 2)
+
+    def test_internal_state_bias_warms_and_shortens_style(self):
+        ti_report = TiPolicyReport(
+            mode="steady_observe",
+            focus_label="general",
+            reason="observe",
+            prompt_context="",
+        )
+
+        plan = self.renderer.evaluate_autonomous(
+            snapshot=self.snapshot_general,
+            ni_report=self.ni_report,
+            ti_report=ti_report,
+            style_memory=self.memory,
+            internal_state=PersistentInternalState(
+                attachment=0.72,
+                tenderness=0.62,
+                protectiveness=0.64,
+                fatigue=0.44,
+            ),
+            last_text="",
+        )
+
+        self.assertGreater(plan.warmth_level, 0.24)
+        self.assertEqual(plan.brevity_bias, "short")
+        self.assertTrue(any("internal_state_bias" in item for item in plan.evidence))
 
 
 if __name__ == "__main__":

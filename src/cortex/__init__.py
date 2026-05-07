@@ -19,6 +19,7 @@ from .attention import AttentionWorkspace
 from .action_planner import ACTION_SPACE, ActionPlanner
 from .appraisal import AppraisalEngine
 from .fe import FeRenderer
+from .internal_state import InternalStateEngine, PersistentInternalState
 from .ni import NiEngine
 from .se import SeLens
 from .speech_core import SpeechCoreEngine
@@ -41,8 +42,10 @@ __all__ = [
     "FeStyleMemory",
     "FeStylePlan",
     "GoalDriftReport",
+    "InternalStateEngine",
     "NiEngine",
     "PerceptEvent",
+    "PersistentInternalState",
     "SeLens",
     "SpeechCoreEngine",
     "TelemetrySnapshot",

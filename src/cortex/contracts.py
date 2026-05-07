@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 
+from .internal_state import PersistentInternalState
+
 
 @dataclass(slots=True)
 class UserSignals:
@@ -376,6 +378,8 @@ class CognitiveFrame:
     action_plan: CognitiveActionPlan = field(default_factory=CognitiveActionPlan)
     final_decision: dict[str, object] = field(default_factory=dict)
     memory_update: CognitiveMemoryUpdate = field(default_factory=CognitiveMemoryUpdate)
+    internal_state_before: PersistentInternalState | None = None
+    internal_state_after: PersistentInternalState | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -391,4 +395,6 @@ class CognitiveFrame:
             "action_plan": self.action_plan.to_dict(),
             "final_decision": dict(self.final_decision),
             "memory_update": self.memory_update.to_dict(),
+            "internal_state_before": self.internal_state_before.to_dict() if self.internal_state_before is not None else None,
+            "internal_state_after": self.internal_state_after.to_dict() if self.internal_state_after is not None else None,
         }

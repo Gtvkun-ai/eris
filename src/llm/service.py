@@ -442,11 +442,20 @@ class LlmService:
         compact = re.sub(r"\s+", " ", source[start:].strip())
         return compact[:420]
 
-    def _build_style_block(self, *, fe_context: str, appraisal_context: str = "") -> str:
+    def _build_style_block(
+        self,
+        *,
+        fe_context: str,
+        appraisal_context: str = "",
+        internal_state_context: str = "",
+    ) -> str:
         style_block = fe_context or STYLE_FALLBACK_PROMPT
         appraisal_block = (appraisal_context or "").strip()
         if appraisal_block:
             style_block = f"{style_block}\n\n{appraisal_block}"
+        state_block = (internal_state_context or "").strip()
+        if state_block:
+            style_block = f"{style_block}\n\n{state_block}"
         return style_block
 
     def _build_memory_context_block(self, memory_context: str = "") -> str:
@@ -530,6 +539,7 @@ class LlmService:
         ni_context: str = "",
         fe_context: str = "",
         appraisal_context: str = "",
+        internal_state_context: str = "",
         memory_context: str = "",
         avoid_text: str = "",
         speech_intent: str = "screen_observation",
@@ -543,6 +553,7 @@ class LlmService:
         style_block = self._build_style_block(
             fe_context=fe_context,
             appraisal_context=appraisal_context,
+            internal_state_context=internal_state_context,
         )
         memory_block = self._build_memory_context_block(memory_context)
         system_prompt = f"{style_block}\n\n{RUNTIME_RULES_PROMPT}\n\n{AUTONOMOUS_BEHAVIOR_PROMPT}"
@@ -688,12 +699,14 @@ class LlmService:
         ni_context: str = "",
         fe_context: str = "",
         appraisal_context: str = "",
+        internal_state_context: str = "",
         memory_context: str = "",
         screen_image_data_uri: str = "",
     ):
         style_block = self._build_style_block(
             fe_context=fe_context,
             appraisal_context=appraisal_context,
+            internal_state_context=internal_state_context,
         )
         chat_system = f"{style_block}\n\n{CHAT_RULES_PROMPT}"
         memory_block = self._build_memory_context_block(memory_context)

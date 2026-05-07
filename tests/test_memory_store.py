@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
+from cortex.internal_state import PersistentInternalState
 from memory import MemoryStore
 
 
@@ -131,6 +132,38 @@ class MemoryStoreTests(unittest.TestCase):
 
             self.assertEqual([item.text for item in state.semantic], ["User likes concise replies."])
             self.assertEqual(store.load(), ["User likes concise replies."])
+
+    def test_internal_state_round_trips_through_memory_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "memory.json")
+            store = MemoryStore(path)
+            state = store.load_state()
+            state.internal_state = PersistentInternalState(
+                attachment=0.64,
+                silence_pressure=0.58,
+                cycle_count=7,
+                recent_notes=("continuity",),
+            )
+            store.save_state(state)
+
+            loaded = store.load_state()
+
+            self.assertEqual(loaded.internal_state.cycle_count, 7)
+            self.assertAlmostEqual(loaded.internal_state.attachment, 0.64, places=2)
+            self.assertAlmostEqual(loaded.internal_state.silence_pressure, 0.58, places=2)
+            self.assertEqual(loaded.internal_state.recent_notes, ("continuity",))
+
+    def test_missing_internal_state_field_loads_default_safely(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "memory.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write('{"version":3,"working":[],"episodic":[],"semantic":[],"relationship":[],"norm":{}}')
+
+            store = MemoryStore(path)
+            state = store.load_state()
+
+            self.assertEqual(state.version, 4)
+            self.assertEqual(state.internal_state.cycle_count, 0)
 
 
 if __name__ == "__main__":

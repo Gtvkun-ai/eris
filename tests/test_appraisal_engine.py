@@ -7,21 +7,21 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from cortex.appraisal import AppraisalEngine
 from cortex.contracts import CognitiveBroadcast
+from cortex.internal_state import PersistentInternalState
 
 
 class AppraisalEngineTests(unittest.TestCase):
     def setUp(self):
         self.engine = AppraisalEngine()
 
-    def test_resource_pressure_builds_protective_expressive_appraisal_state(self):
+    def test_protective_mode_and_persistent_guard_build_protective_appraisal(self):
         appraisal = self.engine.evaluate(
-            snapshot=SimpleNamespace(
-                active_window_kind="system",
-                idle_seconds=8.0,
-                cpu_percent=94.0,
-                ram_percent=91.0,
-                user_signals=SimpleNamespace(focus_pattern="steady", window_switching="low"),
-                claim_style="soft_grounded",
+            internal_state=PersistentInternalState(
+                last_focus_kind="system",
+                protectiveness=0.78,
+                irritation=0.24,
+                confidence=0.68,
+                arousal=0.52,
             ),
             ni_report=SimpleNamespace(drift_score=0.12, confidence=0.70, should_raise_guard=False),
             ti_report=SimpleNamespace(mode="resource_guard"),
@@ -57,15 +57,14 @@ class AppraisalEngineTests(unittest.TestCase):
         self.assertGreaterEqual(appraisal.protectiveness, 0.80)
         self.assertNotIn("emotion", appraisal.summary.lower())
 
-    def test_resource_metrics_alone_do_not_raise_protective_appraisal(self):
+    def test_low_persistent_guard_does_not_raise_protective_appraisal(self):
         appraisal = self.engine.evaluate(
-            snapshot=SimpleNamespace(
-                active_window_kind="general",
-                idle_seconds=4.0,
-                cpu_percent=99.0,
-                ram_percent=98.0,
-                user_signals=SimpleNamespace(focus_pattern="steady", window_switching="low"),
-                claim_style="soft_grounded",
+            internal_state=PersistentInternalState(
+                last_focus_kind="general",
+                protectiveness=0.08,
+                irritation=0.04,
+                confidence=0.70,
+                arousal=0.18,
             ),
             ni_report=SimpleNamespace(drift_score=0.0, confidence=0.70, should_raise_guard=False),
             ti_report=SimpleNamespace(mode="steady_observe"),
@@ -84,13 +83,12 @@ class AppraisalEngineTests(unittest.TestCase):
 
     def test_attachment_chat_raises_intimacy_and_tenderness_without_calling_it_feeling(self):
         appraisal = self.engine.evaluate(
-            snapshot=SimpleNamespace(
-                active_window_kind="general",
-                idle_seconds=0.0,
-                cpu_percent=20.0,
-                ram_percent=35.0,
-                user_signals=SimpleNamespace(focus_pattern="steady", window_switching="low"),
-                claim_style="soft_grounded",
+            internal_state=PersistentInternalState(
+                last_focus_kind="general",
+                attachment=0.72,
+                social_energy=0.66,
+                tenderness=0.58,
+                confidence=0.64,
             ),
             ni_report=SimpleNamespace(drift_score=0.10, confidence=0.68, should_raise_guard=False),
             ti_report=SimpleNamespace(mode="chat_emotional"),

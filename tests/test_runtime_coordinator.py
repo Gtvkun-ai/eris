@@ -531,6 +531,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         frame = coordinator.last_cognitive_frame
         self.assertIsNotNone(frame)
         self.assertEqual(frame.channel, "force_speak")
+        self.assertIsNotNone(frame.internal_state_before)
+        self.assertIsNotNone(frame.internal_state_after)
         self.assertTrue(frame.action_plan.should_speak)
         self.assertEqual(frame.action_plan.speech_intent, "user_requested")
         self.assertEqual(frame.action_plan.speech_act, "inner_whim")
@@ -1108,6 +1110,24 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 now=120.0,
             )
         )
+
+    def test_internal_state_persists_across_restart_with_memory_store(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "memory.json")
+            coordinator = self._make_coordinator(
+                memory_store=MemoryStore(path),
+            )
+
+            coordinator._handle_incoming({"type": "force_speak"})
+            first_state = coordinator.memory_state.internal_state
+
+            restarted = self._make_coordinator(
+                memory_store=MemoryStore(path),
+            )
+
+            self.assertGreater(first_state.cycle_count, 0)
+            self.assertEqual(restarted.memory_state.internal_state.cycle_count, first_state.cycle_count)
+            self.assertEqual(restarted.memory_state.internal_state.last_channel, first_state.last_channel)
 
 
 if __name__ == "__main__":

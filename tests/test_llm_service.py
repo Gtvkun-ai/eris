@@ -80,6 +80,27 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("pre-verbal attitude", system_prompt)
         self.assertIn("not an inner feeling claim", system_prompt)
 
+    def test_directive_includes_persistent_internal_state_context(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"ngan gon","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_directive(
+            telemetry_data="focus=general",
+            internal_state_context="persistent_internal_state: runtime continuity only, not current screen evidence.",
+        )
+
+        system_prompt = client.calls[0]["messages"][0]["content"]
+        self.assertIn("persistent_internal_state", system_prompt)
+        self.assertIn("not current screen evidence", system_prompt)
+
     def test_directive_includes_typed_memory_context(self):
         client = _FakeClient(
             [

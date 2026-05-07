@@ -21,6 +21,7 @@ class InnerThoughtEngine:
         *,
         channel: str,
         snapshot=None,
+        internal_state=None,
         appraisal=None,
         broadcast=None,
         style_memory=None,
@@ -42,6 +43,7 @@ class InnerThoughtEngine:
         if channel == "force_speak":
             return self._force_speak_thought(
                 broadcast=broadcast,
+                internal_state=internal_state,
                 style_memory=style_memory,
                 recent_inner_intents=recent_inner_intents,
                 recent_inner_seeds=recent_inner_seeds,
@@ -50,6 +52,7 @@ class InnerThoughtEngine:
         if channel == "autonomous":
             return self._autonomous_thought(
                 snapshot=snapshot,
+                internal_state=internal_state,
                 appraisal=appraisal,
                 broadcast=broadcast,
                 style_memory=style_memory,
@@ -66,12 +69,28 @@ class InnerThoughtEngine:
         self,
         *,
         broadcast,
+        internal_state,
         style_memory,
         recent_inner_intents: tuple[str, ...],
         recent_inner_seeds: tuple[str, ...],
     ) -> InnerThought:
+        candidates = self.FORCE_SPEAK_CANDIDATES
+        attachment = self._float(getattr(internal_state, "attachment", 0.0) if internal_state is not None else 0.0)
+        fatigue = self._float(getattr(internal_state, "fatigue", 0.0) if internal_state is not None else 0.0)
+        if fatigue >= 0.44:
+            candidates = (
+                ("random_chatter", "light_presence", "light_presence"),
+                ("inner_whim", "user_requested_presence", "present_whim"),
+                ("curious_question", "small_curiosity", "small_curiosity"),
+            )
+        elif attachment >= 0.52:
+            candidates = (
+                ("inner_whim", "user_requested_presence", "present_whim"),
+                ("curious_question", "small_curiosity", "small_curiosity"),
+                ("random_chatter", "light_presence", "light_presence"),
+            )
         intent, motive, seed = self._choose_candidate(
-            self.FORCE_SPEAK_CANDIDATES,
+            candidates,
             style_memory=style_memory,
             recent_inner_intents=recent_inner_intents,
             recent_inner_seeds=recent_inner_seeds,
@@ -92,6 +111,7 @@ class InnerThoughtEngine:
         self,
         *,
         snapshot,
+        internal_state,
         appraisal,
         broadcast,
         style_memory,
@@ -102,6 +122,9 @@ class InnerThoughtEngine:
         recent_inner_seeds: tuple[str, ...],
     ) -> InnerThought:
         idle_seconds = self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0)
+        silence_pressure = self._float(getattr(internal_state, "silence_pressure", 0.0) if internal_state is not None else 0.0)
+        boredom = self._float(getattr(internal_state, "boredom", 0.0) if internal_state is not None else 0.0)
+        social_energy = self._float(getattr(internal_state, "social_energy", 0.0) if internal_state is not None else 0.0)
         mode = str(getattr(style_memory, "last_mode", "") or "")
         tenderness = self._float(getattr(appraisal, "tenderness", 0.0) if appraisal is not None else 0.0)
         fatigue = self._float(getattr(appraisal, "fatigue", 0.0) if appraisal is not None else 0.0)
@@ -115,14 +138,14 @@ class InnerThoughtEngine:
                 risk_flags=("repeat_guard", "no_screen_claim"),
             )
 
-        long_quiet = idle_seconds >= 420
-        socially_warm = tenderness >= 0.42 and idle_seconds >= 240
-        tired_room = fatigue >= 0.30 and idle_seconds >= 300
+        long_quiet = idle_seconds >= 420 or silence_pressure >= 0.54
+        socially_warm = tenderness >= 0.42 and (idle_seconds >= 240 or social_energy >= 0.52)
+        tired_room = fatigue >= 0.30 and (idle_seconds >= 300 or boredom >= 0.40)
         low_enough_noise = broadcast_score <= 0.58 and certainty <= 0.72
         if not ((long_quiet or socially_warm or tired_room) and low_enough_noise):
             return InnerThought(
                 motive="not_enough_social_motive",
-                evidence_anchor=f"idle={int(idle_seconds)}s",
+                evidence_anchor=f"idle={int(idle_seconds)}s; silence={silence_pressure:.2f}",
                 risk_flags=("no_screen_claim",),
             )
 

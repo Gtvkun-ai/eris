@@ -22,6 +22,7 @@ from cortex.contracts import (
     PerceptEvent,
 )
 from cortex.inner_thought import InnerThoughtEngine
+from cortex.internal_state import InternalStateEngine, PersistentInternalState
 from cortex.ni import NiStateMachine
 from cortex.speech_core import SpeechCoreEngine
 from domain import Decision
@@ -81,6 +82,7 @@ class RuntimeCoordinator:
         self.action_router = action_router
         self.attention_workspace = AttentionWorkspace()
         self.appraisal_engine = AppraisalEngine()
+        self.internal_state_engine = InternalStateEngine()
         self.inner_thought_engine = InnerThoughtEngine()
         self.speech_core_engine = SpeechCoreEngine(inner_thought_engine=self.inner_thought_engine)
         self.action_planner = ActionPlanner()
@@ -131,6 +133,7 @@ class RuntimeCoordinator:
         self.ni_meta_env_enabled = env_enabled
         self.ni_meta_chat_enabled = env_enabled and chat_cfg
         self.ni_meta_auto_enabled = env_enabled and auto_cfg
+        self._ensure_internal_state()
 
     def _log_raw_llm_output(self, channel: str, raw: str) -> None:
         preview = (raw or "").replace("\n", "\\n")
@@ -156,6 +159,26 @@ class RuntimeCoordinator:
 
     def _has_structured_memory_store(self) -> bool:
         return self.memory_state is not None and callable(getattr(self.memory_store, "remember_cycle", None))
+
+    def _ensure_internal_state(self) -> None:
+        if self.memory_state is None:
+            return
+        if getattr(self.memory_state, "internal_state", None) is None:
+            self.memory_state.internal_state = PersistentInternalState()
+
+    def _get_internal_state(self) -> PersistentInternalState:
+        if self.memory_state is not None and getattr(self.memory_state, "internal_state", None) is not None:
+            return self.memory_state.internal_state
+        return PersistentInternalState()
+
+    def _set_internal_state(self, state: PersistentInternalState) -> None:
+        if self.memory_state is None:
+            return
+        self.memory_state.internal_state = state
+        self._save_memory_state()
+
+    def _build_internal_state_context(self) -> str:
+        return self.internal_state_engine.render_prompt_context(self._get_internal_state())
 
     #Lưu trạng thái bộ nhớ sau mỗi chu kỳ, nếu bộ nhớ có hỗ trợ.
     def _save_memory_state(self) -> None:
@@ -757,7 +780,7 @@ class RuntimeCoordinator:
     def _build_cognitive_appraisal(
         self,
         *,
-        snapshot,
+        internal_state,
         ni_report,
         ti_report,
         fe_plan,
@@ -767,7 +790,7 @@ class RuntimeCoordinator:
         force_speak: bool = False,
     ) -> CognitiveAppraisal:
         return self.appraisal_engine.evaluate(
-            snapshot=snapshot,
+            internal_state=internal_state,
             ni_report=ni_report,
             ti_report=ti_report,
             fe_plan=fe_plan,
@@ -811,6 +834,7 @@ class RuntimeCoordinator:
         *,
         channel: str,
         snapshot,
+        internal_state,
         frame: CognitiveFrame,
         ti_report,
         fe_plan,
@@ -827,6 +851,7 @@ class RuntimeCoordinator:
         speech_core = self.speech_core_engine.evaluate(
             channel=channel,
             snapshot=snapshot,
+            internal_state=internal_state,
             appraisal=frame.appraisal,
             broadcast=frame.broadcast,
             ti_report=ti_report,
@@ -861,6 +886,8 @@ class RuntimeCoordinator:
         channel: str,
         started_at: float,
         snapshot,
+        internal_state_before,
+        sensed_internal_state,
         ni_report,
         ti_report,
         fe_plan,
@@ -884,7 +911,7 @@ class RuntimeCoordinator:
         )
         broadcast = self._build_broadcast(candidates)
         appraisal = self._build_cognitive_appraisal(
-            snapshot=snapshot,
+            internal_state=sensed_internal_state,
             ni_report=ni_report,
             ti_report=ti_report,
             fe_plan=fe_plan,
@@ -901,6 +928,8 @@ class RuntimeCoordinator:
             attention_candidates=candidates,
             broadcast=broadcast,
             appraisal=appraisal,
+            internal_state_before=internal_state_before,
+            internal_state_after=sensed_internal_state,
         )
         self._note_norm_observation(snapshot)
         return frame
@@ -1104,6 +1133,28 @@ class RuntimeCoordinator:
             norm_deviation=norm_deviation,
             relationship_reflection=getattr(frame.memory_update, "relationship_reflection", ""),
         )
+
+    def _commit_internal_state_for_frame(
+        self,
+        frame: CognitiveFrame,
+        *,
+        snapshot=None,
+        ti_report=None,
+    ) -> None:
+        base_state = frame.internal_state_before or self._get_internal_state()
+        committed = self.internal_state_engine.commit_turn(
+            base_state if frame.internal_state_after is None else frame.internal_state_after,
+            channel=frame.channel,
+            snapshot=snapshot,
+            ti_report=ti_report,
+            appraisal=frame.appraisal,
+            speech_core=frame.speech_core,
+            action_plan=frame.action_plan,
+            inner_thought=frame.inner_thought,
+            was_spoken=bool(str(frame.final_decision.get("text", "") or "").strip()),
+        )
+        frame.internal_state_after = committed
+        self._set_internal_state(committed)
 
     def _finalize_cognitive_frame(self, frame: CognitiveFrame) -> None:
         self.last_cognitive_frame = frame
@@ -1525,17 +1576,30 @@ class RuntimeCoordinator:
                 ni_report=ni_report,
                 user_text=user_text,
             )
+            internal_state_before = self._get_internal_state()
             fe_plan = self.fe_renderer.evaluate_chat(
                 snapshot=snapshot,
                 ni_report=ni_report,
                 ti_report=ti_report,
                 style_memory=self.fe_style_memory,
+                internal_state=internal_state_before,
+                user_text=user_text,
+            )
+            sensed_internal_state = self.internal_state_engine.sense_update(
+                internal_state_before,
+                channel="chat",
+                snapshot=snapshot,
+                ni_report=ni_report,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
                 user_text=user_text,
             )
             frame = self._start_cognitive_frame(
                 channel="chat",
                 started_at=cycle_start,
                 snapshot=snapshot,
+                internal_state_before=internal_state_before,
+                sensed_internal_state=sensed_internal_state,
                 ni_report=ni_report,
                 ti_report=ti_report,
                 fe_plan=fe_plan,
@@ -1625,6 +1689,7 @@ class RuntimeCoordinator:
                 ti_context=planned_ti_context,
                 fe_context=fe_plan.style_context,
                 appraisal_context=self._build_appraisal_context(frame.appraisal),
+                internal_state_context=self.internal_state_engine.render_prompt_context(sensed_internal_state),
                 memory_context=memory_context,
                 screen_image_data_uri=screen_image_data_uri,
             )
@@ -1679,17 +1744,31 @@ class RuntimeCoordinator:
             idle_cycles=self.idle_cycles,
             last_text=self.last_text,
         )
+        internal_state_before = self._get_internal_state()
         fe_plan = self.fe_renderer.evaluate_autonomous(
             snapshot=snapshot,
             ni_report=ni_report,
             ti_report=ti_report,
             style_memory=self.fe_style_memory,
+            internal_state=internal_state_before,
             last_text=self.last_text,
+        )
+        sensed_internal_state = self.internal_state_engine.sense_update(
+            internal_state_before,
+            channel="force_speak",
+            snapshot=snapshot,
+            ni_report=ni_report,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            broadcast=None,
+            force_speak=True,
         )
         frame = self._start_cognitive_frame(
             channel="force_speak",
             started_at=cycle_start,
             snapshot=snapshot,
+            internal_state_before=internal_state_before,
+            sensed_internal_state=sensed_internal_state,
             ni_report=ni_report,
             ti_report=ti_report,
             fe_plan=fe_plan,
@@ -1699,6 +1778,7 @@ class RuntimeCoordinator:
         speech_core = self._build_speech_core(
             channel="force_speak",
             snapshot=snapshot,
+            internal_state=sensed_internal_state,
             frame=frame,
             ti_report=ti_report,
             fe_plan=fe_plan,
@@ -1728,6 +1808,7 @@ class RuntimeCoordinator:
                 "reason": frame.action_plan.reason_to_speak,
             }
             self._set_cognitive_memory_update(frame, notes=("force_speak_no_speech",))
+            self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
             self._finalize_cognitive_frame(frame)
             self.logger.info(
                 "[force_speak skipped] action_plan=%s | reason=%s",
@@ -1748,6 +1829,7 @@ class RuntimeCoordinator:
             self._apply_position_update(decision)
             frame.final_decision = self._decision_to_frame_dict(decision)
             self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_withdraw",))
+            self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
             self._finalize_cognitive_frame(frame)
             self.logger.info(
                 '[force_speak] ActionPlanner withdrew with text="%s" | elapsed=%.2fs',
@@ -1765,6 +1847,7 @@ class RuntimeCoordinator:
                 ti_context=inner_ti_context,
                 fe_context=fe_plan.style_context,
                 appraisal_context=self._build_appraisal_context(frame.appraisal),
+                internal_state_context=self.internal_state_engine.render_prompt_context(sensed_internal_state),
                 memory_context=memory_context,
                 avoid_text=self.last_text,
                 speech_intent=frame.action_plan.speech_intent,
@@ -1797,6 +1880,7 @@ class RuntimeCoordinator:
                     ti_context=repair_ti_context,
                     fe_context=fe_plan.style_context,
                     appraisal_context=self._build_appraisal_context(frame.appraisal),
+                    internal_state_context=self.internal_state_engine.render_prompt_context(sensed_internal_state),
                     memory_context=memory_context,
                     avoid_text=self.last_text,
                     speech_intent=frame.action_plan.speech_intent,
@@ -1832,6 +1916,7 @@ class RuntimeCoordinator:
             self._apply_position_update(decision)
             frame.final_decision = self._decision_to_frame_dict(decision)
             self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_inner_thought",))
+            self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
             self._finalize_cognitive_frame(frame)
             self.logger.info(
                 '[force_speak] InnerThought generated text="%s" | act=%s | elapsed=%.2fs',
@@ -1860,6 +1945,7 @@ class RuntimeCoordinator:
             ti_context=forced_ti_context,
             fe_context=fe_plan.style_context,
             appraisal_context=self._build_appraisal_context(frame.appraisal),
+            internal_state_context=self.internal_state_engine.render_prompt_context(sensed_internal_state),
             memory_context=memory_context,
             avoid_text=self.last_text,
             speech_intent=frame.action_plan.speech_intent,
@@ -1889,6 +1975,7 @@ class RuntimeCoordinator:
         self._apply_position_update(decision)
         frame.final_decision = self._decision_to_frame_dict(decision)
         self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_commit",))
+        self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
         self._finalize_cognitive_frame(frame)
 
         self.logger.info(
@@ -1920,6 +2007,7 @@ class RuntimeCoordinator:
         if frame is not None:
             frame.final_decision = self._decision_to_frame_dict(decision)
             self._set_cognitive_memory_update(frame, decision=decision, notes=("chat_commit",))
+            self._commit_internal_state_for_frame(frame)
             self._finalize_cognitive_frame(frame)
         self.logger.info("ERIS: %s", decision.text)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
@@ -2572,17 +2660,29 @@ class RuntimeCoordinator:
                 idle_cycles=self.idle_cycles,
                 last_text=self.last_text,
             )
+            internal_state_before = self._get_internal_state()
             fe_plan = self.fe_renderer.evaluate_autonomous(
                 snapshot=snapshot,
                 ni_report=ni_report,
                 ti_report=ti_report,
                 style_memory=self.fe_style_memory,
+                internal_state=internal_state_before,
                 last_text=self.last_text,
+            )
+            sensed_internal_state = self.internal_state_engine.sense_update(
+                internal_state_before,
+                channel="autonomous",
+                snapshot=snapshot,
+                ni_report=ni_report,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
             )
             frame = self._start_cognitive_frame(
                 channel="autonomous",
                 started_at=cycle_start,
                 snapshot=snapshot,
+                internal_state_before=internal_state_before,
+                sensed_internal_state=sensed_internal_state,
                 ni_report=ni_report,
                 ti_report=ti_report,
                 fe_plan=fe_plan,
@@ -2610,6 +2710,7 @@ class RuntimeCoordinator:
             speech_core = self._build_speech_core(
                 channel="autonomous",
                 snapshot=snapshot,
+                internal_state=sensed_internal_state,
                 frame=frame,
                 ti_report=ti_report,
                 fe_plan=fe_plan,
@@ -2655,6 +2756,7 @@ class RuntimeCoordinator:
                     "reason": frame.action_plan.reason_to_speak,
                 }
                 self._set_cognitive_memory_update(frame, notes=("no_speech",))
+                self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
                 self._finalize_cognitive_frame(frame)
                 self.logger.info(
                     "[directive skipped] speech_intent=no_speech | mode=%s | repeat=%d | topic=%s:%d | signature=%s",
@@ -2703,6 +2805,7 @@ class RuntimeCoordinator:
                     "reason": "ambient_silence",
                 }
                 self._set_cognitive_memory_update(frame, notes=("ambient_silence",))
+                self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
                 self._finalize_cognitive_frame(frame)
                 self.logger.info(
                     "[directive skipped] ambient_silence mode=%s | cooldown=%ss | last_text=%s",
@@ -2726,6 +2829,7 @@ class RuntimeCoordinator:
                     ti_context=inner_ti_context,
                     fe_context=fe_plan.style_context,
                     appraisal_context=self._build_appraisal_context(frame.appraisal),
+                    internal_state_context=self.internal_state_engine.render_prompt_context(sensed_internal_state),
                     memory_context=memory_context,
                     avoid_text=self.last_text,
                     speech_intent=frame.action_plan.speech_intent,
@@ -2762,6 +2866,7 @@ class RuntimeCoordinator:
                 self._apply_position_update(decision)
                 frame.final_decision = self._decision_to_frame_dict(decision)
                 self._set_cognitive_memory_update(frame, decision=decision, notes=("autonomous_inner_thought",))
+                self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
                 self._finalize_cognitive_frame(frame)
 
                 self.logger.info(
@@ -2789,6 +2894,7 @@ class RuntimeCoordinator:
                 ti_context=planned_ti_context,
                 fe_context=fe_plan.style_context,
                 appraisal_context=self._build_appraisal_context(frame.appraisal),
+                internal_state_context=self.internal_state_engine.render_prompt_context(sensed_internal_state),
                 memory_context=memory_context,
                 avoid_text=self.last_text,
                 speech_intent=frame.action_plan.speech_intent,
@@ -2819,6 +2925,7 @@ class RuntimeCoordinator:
             self._apply_position_update(decision)
             frame.final_decision = self._decision_to_frame_dict(decision)
             self._set_cognitive_memory_update(frame, decision=decision, notes=("autonomous_commit",))
+            self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
             self._finalize_cognitive_frame(frame)
 
             self.logger.info("Tâm trạng giữ nguyên: %s", self.mood_score)

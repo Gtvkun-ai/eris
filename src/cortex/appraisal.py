@@ -1,44 +1,35 @@
 import unicodedata
 
 from .contracts import CognitiveAppraisal
+from .internal_state import PersistentInternalState
 
 
 class AppraisalEngine:
-    """Builds ERIS' pre-verbal expressive/appraisal state for a scene."""
+    """Builds ERIS' pre-verbal expressive/appraisal state from continuity state."""
 
     state_type = "expressive_appraisal_state"
 
     def evaluate(
         self,
         *,
-        snapshot, # ảnh chụp trạng thái hiện tại của hệ thống/người dùng
+        internal_state: PersistentInternalState,
         ni_report,
         ti_report,
-        fe_plan, #kế hoạch biểu đạt/FE
-        broadcast, #: tín hiệu phát sóng/cảnh báo
+        fe_plan,
+        broadcast,
         channel: str = "",
         user_text: str = "",
         force_speak: bool = False,
     ) -> CognitiveAppraisal:
+        state = internal_state or PersistentInternalState()
         drift = self._clamp01(getattr(ni_report, "drift_score", 0.0) or 0.0)
-        ni_confidence = self._clamp01(getattr(ni_report, "confidence", 0.0) or 0.0)
-        if ni_confidence <= 0.0:
-            ni_confidence = 0.55
-
+        ni_confidence = self._clamp01(getattr(ni_report, "confidence", 0.0) or 0.0) or 0.55
         warmth = self._clamp01(getattr(fe_plan, "warmth_level", 0.0) or 0.0)
         sarcasm = self._clamp01(getattr(fe_plan, "sarcasm_level", 0.0) or 0.0)
         fe_intent = str(getattr(fe_plan, "intent_label", "") or "")
         session_arc = str(getattr(fe_plan, "session_arc", "") or "")
-
         mode = str(getattr(ti_report, "mode", "") or "")
-        kind = str(getattr(snapshot, "active_window_kind", "") or "")
-        idle_seconds = self._nonnegative_float(getattr(snapshot, "idle_seconds", 0.0) or 0.0) #thời gian nhàn rỗi của người dùng
-        resource_pressure = 0.0
-
-        user_signals = getattr(snapshot, "user_signals", None) #tín hiệu về trạng thái tập trung và chuyển đổi cửa sổ của người dùng
-        focus_pattern = str(getattr(user_signals, "focus_pattern", "") or "")
-        switching = str(getattr(user_signals, "window_switching", "") or "")
-        claim_style = str(getattr(snapshot, "claim_style", "") or "")
+        kind = str(getattr(state, "last_focus_kind", "") or "")
         broadcast_score = self._clamp01(getattr(broadcast, "score", 0.0) or 0.0)
         broadcast_label = str(getattr(broadcast, "label", "") or "")
 
@@ -46,30 +37,41 @@ class AppraisalEngine:
         direct_user = bool(normalized_user_text) or channel == "chat" or force_speak
         attachment_cue = self._has_attachment_cue(normalized_user_text)
         social_scene = kind == "communication" or mode == "social_watch" or fe_intent == "social_watch"
-        # CPU/RAM are telemetry only; they must not steer mode, speech intent, or appraisal.
+
+        state_valence = self._clamp(getattr(state, "valence", 0.0), minimum=-1.0, maximum=1.0)
+        state_arousal = self._clamp01(getattr(state, "arousal", 0.0))
+        state_attachment = self._clamp01(getattr(state, "attachment", 0.0))
+        state_social_energy = self._clamp01(getattr(state, "social_energy", 0.0))
+        state_irritation = self._clamp01(getattr(state, "irritation", 0.0))
+        state_protectiveness = self._clamp01(getattr(state, "protectiveness", 0.0))
+        state_confidence = self._clamp01(getattr(state, "confidence", 0.0))
+        state_fatigue = self._clamp01(getattr(state, "fatigue", 0.0))
+        state_tenderness = self._clamp01(getattr(state, "tenderness", 0.0))
+        state_silence_pressure = self._clamp01(getattr(state, "silence_pressure", 0.0))
+        state_curiosity = self._clamp01(getattr(state, "curiosity", 0.0))
+
         threat = self._estimate_threat(
+            state_protectiveness=state_protectiveness,
+            state_irritation=state_irritation,
             drift=drift,
             mode=mode,
-            kind=kind,
-            resource_pressure=resource_pressure,
             broadcast_score=broadcast_score,
             ni_guard=bool(getattr(ni_report, "should_raise_guard", False)),
         )
-        # Tính arousal từ broadcast, threat, drift, direct_user, focus_pattern, và switching.
         arousal = self._clamp01(
             max(
+                state_arousal,
                 broadcast_score,
                 threat,
-                drift * 0.78, # drift là tín hiệu về sự lệch khỏi mục tiêu hoặc trạng thái
-                0.34 if direct_user else 0.0,
-                0.30 if focus_pattern in {"fragmented", "stuck", "absent"} else 0.0,
-                0.28 if switching == "high" else 0.0,
+                drift * 0.74,
+                0.32 if direct_user else 0.0,
+                state_silence_pressure * 0.42,
             )
         )
         certainty = self._estimate_certainty(
             broadcast_score=broadcast_score,
             ni_confidence=ni_confidence,
-            claim_style=claim_style,
+            state_confidence=state_confidence,
             direct_user=direct_user,
         )
         agency = self._estimate_agency(
@@ -78,14 +80,14 @@ class AppraisalEngine:
             direct_user=direct_user,
             broadcast_score=broadcast_score,
             threat=threat,
+            social_energy=state_social_energy,
         )
         controllability = self._estimate_controllability(
             mode=mode,
             kind=kind,
             direct_user=direct_user,
-            resource_pressure=resource_pressure,
             threat=threat,
-            idle_seconds=idle_seconds,
+            confidence=certainty,
         )
         intimacy = self._estimate_intimacy(
             direct_user=direct_user,
@@ -95,13 +97,14 @@ class AppraisalEngine:
             fe_intent=fe_intent,
             session_arc=session_arc,
             warmth=warmth,
+            attachment=state_attachment,
+            social_energy=state_social_energy,
         )
         protectiveness = self._estimate_protectiveness(
             mode=mode,
-            kind=kind,
             threat=threat,
-            resource_pressure=resource_pressure,
             intimacy=intimacy,
+            state_protectiveness=state_protectiveness,
         )
         jealousy_lite = self._estimate_jealousy_lite(
             mode=mode,
@@ -110,25 +113,31 @@ class AppraisalEngine:
             threat=threat,
         )
         amusement = self._clamp01(
-            sarcasm * 0.82
+            sarcasm * 0.72
+            + state_curiosity * 0.16
             + (0.18 if mode == "pattern_muse" else 0.0)
             + (0.07 if mode == "social_watch" else 0.0)
             - threat * 0.18
         )
         fatigue = self._estimate_fatigue(
-            idle_seconds=idle_seconds,
-            resource_pressure=resource_pressure,
-            focus_pattern=focus_pattern,
+            state_fatigue=state_fatigue,
+            silence_pressure=state_silence_pressure,
         )
         tenderness = self._clamp01(
-            warmth
+            state_tenderness * 0.72
+            + warmth * 0.22
             + intimacy * 0.36
             + (0.10 if attachment_cue else 0.0)
             + (0.08 if social_scene else 0.0)
             - threat * 0.10
         )
         valence = self._clamp(
-            0.12 + warmth * 0.32 + amusement * 0.16 + tenderness * 0.18 - threat * 0.44 - fatigue * 0.22,
+            state_valence * 0.64
+            + warmth * 0.16
+            + amusement * 0.14
+            + tenderness * 0.14
+            - threat * 0.36
+            - fatigue * 0.18,
             minimum=-1.0,
             maximum=1.0,
         )
@@ -150,7 +159,8 @@ class AppraisalEngine:
             f"ti_mode={mode or 'unknown'}",
             f"fe_intent={fe_intent or 'unknown'}",
             f"broadcast={broadcast_label or 'none'}:{broadcast_score:.2f}",
-            f"resource_pressure={resource_pressure:.2f}",
+            f"internal_state_focus={kind or 'unknown'}",
+            f"internal_attachment={state_attachment:.2f}",
         )
         summary = (
             f"{self.state_type}; stance={stance}; "
@@ -176,12 +186,7 @@ class AppraisalEngine:
             evidence=evidence,
         )
 
-    # Hàm render_prompt_context chuyển appraisal thành text cho prompt downstream
     def render_prompt_context(self, appraisal: CognitiveAppraisal) -> str:
-        #giải thích đây là trạng thái tiền-ngôn-ngữ, không phải “cảm xúc nội tâm”
-        #stance hiện tại
-        #các axes chính
-        #appraisal_bias, tức hướng dẫn cách nói theo stance
         axes = (
             f"valence={appraisal.valence:.2f}, "
             f"arousal={appraisal.arousal:.2f}, "
@@ -205,14 +210,13 @@ class AppraisalEngine:
             )
         )
 
-    #Hàm này tính mức đe dọa tổng hợp.
     def _estimate_threat(
         self,
         *,
+        state_protectiveness: float,
+        state_irritation: float,
         drift: float,
-        mode: str, #mode như resource_guard, goal_drift_alert, system_warning
-        kind: str, # kind là system
-        resource_pressure: float,
+        mode: str,
         broadcast_score: float,
         ni_guard: bool,
     ) -> float:
@@ -224,10 +228,9 @@ class AppraisalEngine:
             "focus_guard": 0.32,
             "system_warning": 0.60,
         }.get(mode, 0.0)
-        kind_threat = 0.22 if kind == "system" else 0.0
         guard_threat = 0.18 if ni_guard else 0.0
         return self._clamp01(
-            max(mode_threat, kind_threat, drift * 0.66, broadcast_score * 0.44)
+            max(mode_threat, state_protectiveness * 0.84, state_irritation * 0.60, drift * 0.66, broadcast_score * 0.44)
             + guard_threat
         )
 
@@ -236,18 +239,14 @@ class AppraisalEngine:
         *,
         broadcast_score: float,
         ni_confidence: float,
-        claim_style: str,
+        state_confidence: float,
         direct_user: bool,
     ) -> float:
-        certainty = max(0.20, broadcast_score * 0.84, ni_confidence * 0.70)
-        if direct_user: #nếu direct_user, certainty tối thiểu được đẩy lên 0.48
+        certainty = max(0.20, state_confidence * 0.70, broadcast_score * 0.44, ni_confidence * 0.66)
+        if direct_user:
             certainty = max(certainty, 0.48)
-        lowered = claim_style.strip().lower()
-        if any(marker in lowered for marker in ("no_evidence", "uncertainty", "soft_claim")):
-            certainty -= 0.12 #nếu claim_style chứa no_evidence, uncertainty, soft_claim thì certainty bị trừ 0.12
-        return self._clamp01(certainty) # trực tiếp với người dùng thì phải dám nói rõ hơn, nhưng nếu claim style báo mơ hồ thì phải hạ độ chắc chắn.
+        return self._clamp01(certainty)
 
-    #Agency là cảm giác “mình đang có quyền điều khiển tình huống”.
     def _estimate_agency(
         self,
         *,
@@ -256,8 +255,9 @@ class AppraisalEngine:
         direct_user: bool,
         broadcast_score: float,
         threat: float,
+        social_energy: float,
     ) -> float:
-        agency = 0.22 + broadcast_score * 0.20
+        agency = 0.18 + social_energy * 0.30 + broadcast_score * 0.14
         if direct_user:
             agency += 0.42
         if mode in {"chat_code", "resource_guard", "focus_guard", "goal_realign"}:
@@ -270,16 +270,14 @@ class AppraisalEngine:
             agency += 0.08
         return self._clamp01(agency)
 
-    # Controllability là “mình kiểm soát được việc này không”.
     def _estimate_controllability(
         self,
         *,
         mode: str,
         kind: str,
         direct_user: bool,
-        resource_pressure: float,
         threat: float,
-        idle_seconds: float,
+        confidence: float,
     ) -> float:
         controllability = 0.34
         if direct_user:
@@ -290,13 +288,12 @@ class AppraisalEngine:
             controllability += 0.18
         if kind == "communication":
             controllability -= 0.08
-        if idle_seconds >= 600:
+        if confidence <= 0.32:
             controllability -= 0.08
         if threat >= 0.78 and mode not in {"resource_guard", "chat_code"}:
             controllability -= 0.06
         return self._clamp01(controllability)
 
-    # Đây là phần đẩy hệ thống sang giọng gần gũi, đặc biệt khi text người dùng có sắc thái tình cảm hoặc gắn bó.
     def _estimate_intimacy(
         self,
         *,
@@ -307,8 +304,10 @@ class AppraisalEngine:
         fe_intent: str,
         session_arc: str,
         warmth: float,
+        attachment: float,
+        social_energy: float,
     ) -> float:
-        intimacy = 0.10 + warmth * 0.26
+        intimacy = 0.08 + attachment * 0.42 + social_energy * 0.18 + warmth * 0.10
         if direct_user:
             intimacy += 0.18
         if social_scene:
@@ -321,27 +320,21 @@ class AppraisalEngine:
             intimacy += 0.18
         return self._clamp01(intimacy)
 
-    #Protectiveness gần như là threat + intimacy được trộn lại.
-    # 0.16 + threat * 0.58 + intimacy * 0.18
     def _estimate_protectiveness(
         self,
         *,
         mode: str,
-        kind: str,
         threat: float,
-        resource_pressure: float,
         intimacy: float,
+        state_protectiveness: float,
     ) -> float:
-        protectiveness = 0.16 + threat * 0.58 + intimacy * 0.18
+        protectiveness = state_protectiveness * 0.64 + threat * 0.36 + intimacy * 0.14
         if mode == "resource_guard":
             protectiveness = max(protectiveness, 0.82)
         elif mode in {"goal_drift_alert", "goal_realign", "focus_guard"}:
             protectiveness = max(protectiveness, 0.46)
-        elif kind in {"system", "coding"}:
-            protectiveness = max(protectiveness, 0.38)
-        return self._clamp01(protectiveness) #càng thấy nguy cơ hoặc càng gắn bó thì càng muốn “giữ”
+        return self._clamp01(protectiveness)
 
-    #Đây là một sắc thái xã hội nhẹ, không phải ghen mạnh.
     def _estimate_jealousy_lite(
         self,
         *,
@@ -357,24 +350,14 @@ class AppraisalEngine:
             jealousy_lite += 0.12
         return self._clamp(jealousy_lite, minimum=0.0, maximum=0.48)
 
-    #Đây là chỉ báo cho trạng thái “chậm lại, cạn pin, ít hoạt động”.
     def _estimate_fatigue(
         self,
         *,
-        idle_seconds: float,
-        resource_pressure: float,
-        focus_pattern: str,
+        state_fatigue: float,
+        silence_pressure: float,
     ) -> float:
-        fatigue = 0.0
-        if idle_seconds >= 600:
-            fatigue += 0.32
-        elif idle_seconds >= 180:
-            fatigue += 0.16
-        if focus_pattern in {"stuck", "absent", "passive_consumption"}:
-            fatigue += 0.12
-        return self._clamp01(fatigue)
+        return self._clamp01(state_fatigue * 0.82 + silence_pressure * 0.12)
 
-    # Sau khi có các trục, hệ thống chọn stance biểu cảm.
     def _choose_stance(
         self,
         *,
@@ -401,28 +384,22 @@ class AppraisalEngine:
         if certainty <= 0.30 and broadcast_score <= 0.32:
             return "soft_uncertain"
         return "grounded"
-    #nếu threat cao, nó sẽ chặn mọi thứ khác và chọn protective
-    #nếu không nguy hiểm nhưng có độ gần gũi, nó sẽ chuyển sang tender_under_cold
-    #nếu ít dữ kiện, nó sẽ thận trọng với soft_uncertain
-
 
     def _stance_guidance(self, appraisal: CognitiveAppraisal) -> str:
-        #Đây là phần map stance sang chỉ dẫn hành vi:
         stance = appraisal.stance
-        if stance == "protective":#protective: nói ngắn, cụ thể, cẩn trọng
+        if stance == "protective":
             return "speak briefly, concrete first, with guarded care; avoid theatrical alarm."
-        if stance == "watchful":#watchful: hơi sở hữu nhẹ, nhưng không cáo buộc
+        if stance == "watchful":
             return "let the line carry mild possessive watchfulness, kept light and non-accusatory."
-        if stance == "tender_under_cold": #tender_under_cold: bề mặt tiết chế, bên dưới có ấm
+        if stance == "tender_under_cold":
             return "make the surface restrained while letting warmth show through the wording."
-        if stance == "tired": #tired: chậm lại, ít hoạt động, cạn pin
+        if stance == "tired":
             return "slow the rhythm and keep the sentence spare."
-        if stance == "dry_playful": #dry_playful: có một chút khô khan dí dỏm
+        if stance == "dry_playful":
             return "allow a small dry aside, but keep it grounded in the scene."
-        if stance == "soft_uncertain": #soft_uncertain: mềm hoá, không bịa
+        if stance == "soft_uncertain":
             return "soften claims and avoid inventing motives or details."
-        #grounded: giữ trung tính, đáp lại cue mạnh nhất
-        return "stay grounded, reserved, and responsive to the strongest cue." 
+        return "stay grounded, reserved, and responsive to the strongest cue."
 
     def _has_attachment_cue(self, normalized_text: str) -> bool:
         if not normalized_text:
@@ -450,15 +427,6 @@ class AppraisalEngine:
         normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
         normalized = normalized.replace("đ", "d")
         return " ".join(normalized.split())
-
-    def _nonnegative_float(self, value) -> float:
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError):
-            return 0.0
-        if numeric != numeric:
-            return 0.0
-        return max(0.0, numeric)
 
     def _clamp01(self, value) -> float:
         return self._clamp(value, minimum=0.0, maximum=1.0)

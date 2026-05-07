@@ -5,6 +5,8 @@ import time
 
 from dataclasses import dataclass, field
 from typing import Any
+
+from cortex.internal_state import PersistentInternalState
 '''
 Working memory: những gì vừa xảy ra (tối đa 6 items)
 Episodic memory: các sự kiện được nhớ rõ (tối đa 80 items)
@@ -234,12 +236,13 @@ class NormDeviation:
 
 @dataclass(slots=True)
 class MemoryState:
-    version: int = 3
+    version: int = 4
     working: list[WorkingMemoryItem] = field(default_factory=list)
     episodic: list[EpisodicMemoryItem] = field(default_factory=list)
     semantic: list[SemanticMemoryItem] = field(default_factory=list)
     relationship: list[RelationshipMemoryItem] = field(default_factory=list)
     norm: NormMemory = field(default_factory=NormMemory)
+    internal_state: PersistentInternalState = field(default_factory=PersistentInternalState)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -249,6 +252,7 @@ class MemoryState:
             "semantic": [item.to_dict() for item in self.semantic],
             "relationship": [item.to_dict() for item in self.relationship],
             "norm": self.norm.to_dict(),
+            "internal_state": self.internal_state.to_dict(),
         }
 
 
@@ -655,13 +659,15 @@ class MemoryStore:
             if isinstance(item, dict)
         ]
         norm = NormMemory.from_dict(data.get("norm") or {})
+        internal_state = PersistentInternalState.from_dict(data.get("internal_state") or {})
         return MemoryState(
-            version=max(3, int(data.get("version", 2) or 2)),
+            version=max(4, int(data.get("version", 2) or 2)),
             working=working[-self.max_working_items :],
             episodic=episodic[-self.max_episodic_items :],
             semantic=semantic[-self.max_semantic_items :],
             relationship=relationship[-self.max_relationship_items :],
             norm=norm,
+            internal_state=internal_state,
         )
 
     def _snapshot_features(self, snapshot) -> dict[str, str]:

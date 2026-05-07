@@ -1,4 +1,5 @@
 from .contracts import AgentSpeechCore
+from .internal_state import PersistentInternalState
 from .inner_thought import InnerThoughtEngine
 
 
@@ -37,6 +38,7 @@ class SpeechCoreEngine:
         *,
         channel: str,
         snapshot=None,
+        internal_state: PersistentInternalState | None = None,
         appraisal=None,
         broadcast=None,
         ti_report=None,
@@ -62,6 +64,7 @@ class SpeechCoreEngine:
         inner_thought = self.inner_thought_engine.evaluate(
             channel=channel_name,
             snapshot=snapshot,
+            internal_state=internal_state,
             appraisal=appraisal,
             broadcast=broadcast,
             style_memory=style_memory,
@@ -80,6 +83,7 @@ class SpeechCoreEngine:
             repeated_topic_streak=repeated_topic_streak,
             ni_state_label=ni_state_label,
             ni_report=ni_report,
+            internal_state=internal_state,
         ):
             return AgentSpeechCore(
                 perception=tuple(concrete_signals or ()),
@@ -101,6 +105,7 @@ class SpeechCoreEngine:
             telemetry_signals=telemetry_signals,
             screen_comment_allowed=screen_comment_allowed,
             inner_thought=inner_thought,
+            internal_state=internal_state,
         )
         utterance_type = self._choose_utterance_type(
             channel=channel_name,
@@ -159,10 +164,14 @@ class SpeechCoreEngine:
         repeated_topic_streak: int,
         ni_state_label: str,
         ni_report,
+        internal_state: PersistentInternalState | None,
     ) -> bool:
         drift_score = self._float(getattr(ni_report, "drift_score", 1.0) if ni_report is not None else 1.0)
+        silence_pressure = self._float(getattr(internal_state, "silence_pressure", 0.0) if internal_state is not None else 0.0)
         if ti_mode == "focus_guard" and ni_state_label == "ON_GOAL" and drift_score <= 0.35:
             return True
+        if silence_pressure >= 0.58 and repeat_count <= 1:
+            return False
         if repeat_count >= 2 and ti_mode in self.QUIET_MODES:
             return True
         if repeat_count >= 3:
@@ -179,12 +188,21 @@ class SpeechCoreEngine:
         telemetry_signals: tuple[str, ...],
         screen_comment_allowed: bool,
         inner_thought,
+        internal_state: PersistentInternalState | None,
     ) -> str:
         if screen_comment_allowed and vision_signals:
             return "vision"
         if screen_comment_allowed and telemetry_signals:
             return "telemetry"
         if inner_thought.should_surface:
+            return "freeform"
+        silence_pressure = self._float(getattr(internal_state, "silence_pressure", 0.0) if internal_state is not None else 0.0)
+        attachment = self._float(getattr(internal_state, "attachment", 0.0) if internal_state is not None else 0.0)
+        social_energy = self._float(getattr(internal_state, "social_energy", 0.0) if internal_state is not None else 0.0)
+        boredom = self._float(getattr(internal_state, "boredom", 0.0) if internal_state is not None else 0.0)
+        if channel == "autonomous" and (silence_pressure >= 0.54 or boredom >= 0.46):
+            return "freeform"
+        if channel == "force_speak" and (attachment >= 0.36 or social_energy >= 0.34):
             return "freeform"
         if channel == "force_speak":
             return "random"
@@ -206,11 +224,7 @@ class SpeechCoreEngine:
             return "relational_checkin"
 
         inner_intent = str(getattr(inner_thought, "intent", "") or "")
-        if inner_intent in {
-            "random_chatter",
-            "inner_whim",
-            "curious_question",
-        }:
+        if inner_intent in {"random_chatter", "inner_whim", "curious_question"}:
             return inner_intent
         if speech_source == "random" and channel == "force_speak":
             return "random_chatter"
@@ -322,4 +336,4 @@ class SpeechCoreEngine:
             return 0.0
         if numeric != numeric:
             return 0.0
-        return numeric
+        return max(0.0, min(1.0, numeric)) if numeric <= 1.0 else numeric

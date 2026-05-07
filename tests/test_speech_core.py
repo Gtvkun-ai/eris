@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
+from cortex.internal_state import PersistentInternalState
 from cortex.speech_core import SpeechCoreEngine
 
 
@@ -20,6 +21,7 @@ class SpeechCoreEngineTests(unittest.TestCase):
             broadcast=SimpleNamespace(label="user_force_speak", content="", score=0.8),
             ti_report=SimpleNamespace(mode="steady_observe"),
             fe_plan=SimpleNamespace(tone_label=""),
+            internal_state=PersistentInternalState(),
         )
 
         self.assertTrue(core.should_speak)
@@ -39,6 +41,7 @@ class SpeechCoreEngineTests(unittest.TestCase):
             concrete_signals=("Terminal shows a Python traceback.",),
             vision_signals=("Terminal shows a Python traceback.",),
             screen_comment_allowed=True,
+            internal_state=PersistentInternalState(),
         )
 
         self.assertTrue(core.should_speak)
@@ -55,6 +58,7 @@ class SpeechCoreEngineTests(unittest.TestCase):
             ti_report=SimpleNamespace(mode="social_watch"),
             fe_plan=SimpleNamespace(tone_label=""),
             repeat_count=1,
+            internal_state=PersistentInternalState(silence_pressure=0.62, boredom=0.48),
         )
 
         self.assertTrue(core.should_speak)
@@ -69,6 +73,7 @@ class SpeechCoreEngineTests(unittest.TestCase):
             broadcast=SimpleNamespace(label="user_force_speak", content="", score=0.8),
             ti_report=SimpleNamespace(mode="steady_observe"),
             fe_plan=SimpleNamespace(tone_label=""),
+            internal_state=PersistentInternalState(),
         )
         emotional = self.engine.evaluate(
             channel="force_speak",
@@ -77,6 +82,7 @@ class SpeechCoreEngineTests(unittest.TestCase):
             broadcast=SimpleNamespace(label="user_force_speak", content="toi buon", score=0.8),
             ti_report=SimpleNamespace(mode="steady_observe"),
             fe_plan=SimpleNamespace(tone_label=""),
+            internal_state=PersistentInternalState(),
         )
 
         self.assertNotEqual(calm.utterance_type, "relational_checkin")
@@ -92,11 +98,27 @@ class SpeechCoreEngineTests(unittest.TestCase):
             ti_report=SimpleNamespace(mode="steady_observe"),
             fe_plan=SimpleNamespace(tone_label=""),
             repeat_count=3,
+            internal_state=PersistentInternalState(silence_pressure=0.10),
         )
 
         self.assertFalse(core.should_speak)
         self.assertEqual(core.delivery, "silence")
         self.assertEqual(core.utterance_type, "no_speech")
+
+    def test_autonomous_silence_pressure_can_surface_freeform_presence(self):
+        core = self.engine.evaluate(
+            channel="autonomous",
+            snapshot=SimpleNamespace(mood_label="neutral", idle_seconds=30.0),
+            appraisal=SimpleNamespace(stance="grounded", tenderness=0.12, fatigue=0.08, certainty=0.32),
+            broadcast=SimpleNamespace(label="low_salience", content="", score=0.12),
+            ti_report=SimpleNamespace(mode="steady_observe"),
+            fe_plan=SimpleNamespace(tone_label=""),
+            repeat_count=1,
+            internal_state=PersistentInternalState(silence_pressure=0.72, boredom=0.54),
+        )
+
+        self.assertTrue(core.should_speak)
+        self.assertEqual(core.speech_source, "freeform")
 
 
 if __name__ == "__main__":

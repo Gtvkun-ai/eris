@@ -1,5 +1,6 @@
 import unicodedata
 
+from .internal_state import PersistentInternalState
 from .contracts import (
     FeStyleMemory,
     FeStylePlan,
@@ -102,6 +103,7 @@ class FeRenderer:
         ni_report: GoalDriftReport,
         ti_report: TiPolicyReport,
         style_memory: FeStyleMemory,
+        internal_state: PersistentInternalState | None = None,
         last_text: str,
     ) -> FeStylePlan:
         evidence = [snapshot.focus_summary, f"ti_mode={ti_report.mode}", f"ni_drift={ni_report.drift_score:.2f}"]
@@ -146,6 +148,15 @@ class FeRenderer:
             sarcasm_level = 0.16
             warmth_level = 0.27
             brevity_bias = "short"
+
+        sarcasm_level, warmth_level, brevity_bias, internal_note = self._apply_internal_state_bias(
+            internal_state=internal_state,
+            sarcasm_level=sarcasm_level,
+            warmth_level=warmth_level,
+            brevity_bias=brevity_bias,
+        )
+        if internal_note:
+            evidence.append(internal_note)
 
         (
             mode,
@@ -226,6 +237,7 @@ class FeRenderer:
         ni_report: GoalDriftReport,
         ti_report: TiPolicyReport,
         style_memory: FeStyleMemory,
+        internal_state: PersistentInternalState | None = None,
         user_text: str,
     ) -> FeStylePlan:
         evidence = [snapshot.focus_summary, f"ti_mode={ti_report.mode}", f"ni_drift={ni_report.drift_score:.2f}"]
@@ -256,6 +268,15 @@ class FeRenderer:
             sarcasm_level = 0.28
             warmth_level = 0.24
             brevity_bias = "medium"
+
+        sarcasm_level, warmth_level, brevity_bias, internal_note = self._apply_internal_state_bias(
+            internal_state=internal_state,
+            sarcasm_level=sarcasm_level,
+            warmth_level=warmth_level,
+            brevity_bias=brevity_bias,
+        )
+        if internal_note:
+            evidence.append(internal_note)
 
         (
             mode,
@@ -406,6 +427,41 @@ class FeRenderer:
 
         continuity_note = f"continuity_from={memory.last_mode}"
         return mode, sarcasm_level, warmth_level, brevity_bias, continuity_note
+
+    def _apply_internal_state_bias(
+        self,
+        *,
+        internal_state: PersistentInternalState | None,
+        sarcasm_level: float,
+        warmth_level: float,
+        brevity_bias: str,
+    ) -> tuple[float, float, str, str]:
+        state = internal_state or PersistentInternalState()
+        attachment = self._float(getattr(state, "attachment", 0.0))
+        tenderness = self._float(getattr(state, "tenderness", 0.0))
+        irritation = self._float(getattr(state, "irritation", 0.0))
+        protectiveness = self._float(getattr(state, "protectiveness", 0.0))
+        fatigue = self._float(getattr(state, "fatigue", 0.0))
+        social_energy = self._float(getattr(state, "social_energy", 0.0))
+
+        warmth_level = self._clamp(
+            warmth_level
+            + attachment * 0.10
+            + tenderness * 0.14
+            + social_energy * 0.04
+            - fatigue * 0.08
+        )
+        sarcasm_level = self._clamp(
+            sarcasm_level
+            + irritation * 0.08
+            - protectiveness * 0.10
+            - fatigue * 0.12
+        )
+        if protectiveness >= 0.56 or fatigue >= 0.40:
+            brevity_bias = "short"
+        elif social_energy >= 0.66 and brevity_bias == "short":
+            brevity_bias = "medium"
+        return sarcasm_level, warmth_level, brevity_bias, f"internal_state_bias={attachment:.2f}/{protectiveness:.2f}/{fatigue:.2f}"
 
     def _apply_session_arc(
         self,
@@ -731,3 +787,15 @@ class FeRenderer:
         if ni_report.drift_score >= 0.35:
             return "background has movement; treat it as texture, not a correction"
         return "nothing here needs a lecture"
+
+    def _float(self, value) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if numeric != numeric:
+            return 0.0
+        return max(0.0, min(1.0, numeric))
+
+    def _clamp(self, value) -> float:
+        return self._float(value)
