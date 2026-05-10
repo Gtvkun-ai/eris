@@ -32,6 +32,8 @@ class InnerThoughtEngine:
         repeated_topic_streak: int = 0,
         recent_inner_intents: tuple[str, ...] = (),
         recent_inner_seeds: tuple[str, ...] = (),
+        subconscious_seed=None,
+        thought_surface=None,
     ) -> InnerThought:
         if concrete_signals:
             return InnerThought(
@@ -61,10 +63,12 @@ class InnerThoughtEngine:
                 repeated_topic_streak=repeated_topic_streak,
                 recent_inner_intents=recent_inner_intents,
                 recent_inner_seeds=recent_inner_seeds,
+                thought_surface=thought_surface if thought_surface is not None else subconscious_seed,
             )
 
         return InnerThought()
 
+    #tạo inner thought bắt buộc nói khi force_speak được bật
     def _force_speak_thought(
         self,
         *,
@@ -79,7 +83,7 @@ class InnerThoughtEngine:
         fatigue = self._float(getattr(internal_state, "fatigue", 0.0) if internal_state is not None else 0.0)
         if fatigue >= 0.44:
             candidates = (
-                ("random_chatter", "light_presence", "light_presence"),
+                ("random_chatter", "light_presence", "light_presence"), # nói chuyện phiếm nhẹ nhàng
                 ("inner_whim", "user_requested_presence", "present_whim"),
                 ("curious_question", "small_curiosity", "small_curiosity"),
             )
@@ -120,6 +124,7 @@ class InnerThoughtEngine:
         repeated_topic_streak: int,
         recent_inner_intents: tuple[str, ...],
         recent_inner_seeds: tuple[str, ...],
+        thought_surface=None,
     ) -> InnerThought:
         idle_seconds = self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0)
         silence_pressure = self._float(getattr(internal_state, "silence_pressure", 0.0) if internal_state is not None else 0.0)
@@ -137,6 +142,13 @@ class InnerThoughtEngine:
                 evidence_anchor="recent autonomous topic repeated",
                 risk_flags=("repeat_guard", "no_screen_claim"),
             )
+
+        stream_thought = self._thought_from_thought_surface(
+            thought_surface,
+            recent_inner_seeds=recent_inner_seeds,
+        )
+        if stream_thought.should_surface:
+            return stream_thought
 
         long_quiet = idle_seconds >= 420 or silence_pressure >= 0.54
         socially_warm = tenderness >= 0.42 and (idle_seconds >= 240 or social_energy >= 0.52)
@@ -167,6 +179,63 @@ class InnerThoughtEngine:
             should_surface=True,
             risk_flags=("no_screen_claim", "no_desktop_claim", "social_initiative", "needs_generation"),
             cooldown_seconds=240,
+        )
+
+    def _thought_from_thought_surface(
+        self,
+        thought_surface,
+        *,
+        recent_inner_seeds: tuple[str, ...],
+    ) -> InnerThought:
+        mode = str(getattr(thought_surface, "mode", "") or "")
+        topic_seed = str(getattr(thought_surface, "topic_seed", "") or "")
+        if not mode or not topic_seed:
+            return InnerThought()
+        if topic_seed in set(str(item) for item in recent_inner_seeds[-4:]):
+            return InnerThought(
+                motive="thought_stream_repeat_guard",
+                evidence_anchor="thought stream surface repeated",
+                risk_flags=("repeat_guard", "no_screen_claim"),
+            )
+        pressure = self._float(getattr(thought_surface, "pressure", 0.0))
+        novelty = self._float(getattr(thought_surface, "novelty", 0.0))
+        affordance = str(getattr(thought_surface, "affordance", "") or "")
+        if affordance and affordance != "speech":
+            return InnerThought(
+                motive="thought_stream_no_speech_affordance",
+                topic_seed=topic_seed,
+                evidence_anchor=mode,
+                risk_flags=("no_screen_claim",),
+            )
+        if pressure < 0.52 or novelty < 0.35:
+            return InnerThought(
+                motive="thought_stream_below_surface",
+                topic_seed=topic_seed,
+                evidence_anchor=mode,
+                risk_flags=("no_screen_claim",),
+            )
+        if mode == "memory_replay":
+            intent = "curious_question"
+        elif mode in {"quiet_self_muse", "associative_drift"}:
+            intent = "inner_whim"
+        else:
+            intent = "random_chatter"
+        risk_flags = tuple(
+            dict.fromkeys(
+                ("no_screen_claim", "anti_mindreading", "social_initiative", "needs_generation")
+                + ("thought_stream_surface", "subconscious_seed")
+                + tuple(str(item) for item in (getattr(thought_surface, "risk_flags", ()) or ()))
+            )
+        )
+        return InnerThought(
+            intent=intent,
+            motive=f"thought_stream_{mode}",
+            topic_seed=topic_seed,
+            evidence_anchor=f"thought_stream:{mode}",
+            certainty=min(0.86, max(0.56, pressure)),
+            should_surface=True,
+            risk_flags=risk_flags,
+            cooldown_seconds=180,
         )
 
     def _choose_candidate(

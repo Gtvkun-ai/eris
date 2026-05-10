@@ -1,9 +1,12 @@
 from .store import (
     EpisodicMemoryItem,
+    MemoryActivation,
+    MemoryResonanceReport,
     MemoryState,
     MemoryStore,
     NormDeviation,
     NormMemory,
+    ProceduralMemoryItem,
     RelationshipMemoryItem,
     SemanticMemoryItem,
     WorkingMemoryItem,
@@ -11,10 +14,13 @@ from .store import (
 
 __all__ = [
     "EpisodicMemoryItem",
+    "MemoryActivation",
+    "MemoryResonanceReport",
     "MemoryState",
     "MemoryStore",
     "NormDeviation",
     "NormMemory",
+    "ProceduralMemoryItem",
     "RelationshipMemoryItem",
     "SemanticMemoryItem",
     "WorkingMemoryItem",

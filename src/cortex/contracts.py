@@ -165,6 +165,30 @@ CognitivePercept = PerceptEvent
 
 
 @dataclass(slots=True)
+class CognitiveDisturbance:
+    """An input spike that perturbs the ongoing cognition stream."""
+
+    channel: str
+    kind: str
+    content: str
+    evidence: tuple[str, ...] = ()
+    intensity: float = 1.0
+    timestamp: float = 0.0
+    closes_loop: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "channel": self.channel,
+            "kind": self.kind,
+            "content": self.content,
+            "evidence": list(self.evidence),
+            "intensity": round(float(self.intensity), 3),
+            "timestamp": round(float(self.timestamp), 3),
+            "closes_loop": bool(self.closes_loop),
+        }
+
+
+@dataclass(slots=True)
 class AttentionCandidate:
     label: str
     content: str
@@ -307,6 +331,370 @@ class InnerThought:
 
 
 @dataclass(slots=True)
+class ThoughtObject:
+    """An unresolved cognition fragment that can persist without being spoken."""
+
+    thought_id: str = ""
+    mode: str = ""
+    topic_seed: str = ""
+    partial_text: str = ""
+    prediction_key: str = ""
+    unresolved_reason: str = ""
+    source_memory: str = ""
+    associations: tuple[str, ...] = ()
+    tension: float = 0.0
+    novelty: float = 0.0
+    persistence: float = 0.0
+    recurrence_count: int = 0
+    surfaced_count: int = 0
+    resolved: bool = False
+    evidence: tuple[str, ...] = ()
+    risk_flags: tuple[str, ...] = ()
+    created_at: float = 0.0
+    updated_at: float = 0.0
+    last_reactivated_at: float = 0.0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "thought_id": self.thought_id,
+            "mode": self.mode,
+            "topic_seed": self.topic_seed,
+            "partial_text": self.partial_text,
+            "prediction_key": self.prediction_key,
+            "unresolved_reason": self.unresolved_reason,
+            "source_memory": self.source_memory,
+            "associations": list(self.associations),
+            "tension": round(float(self.tension), 3),
+            "novelty": round(float(self.novelty), 3),
+            "persistence": round(float(self.persistence), 3),
+            "recurrence_count": int(self.recurrence_count),
+            "surfaced_count": int(self.surfaced_count),
+            "resolved": bool(self.resolved),
+            "evidence": list(self.evidence),
+            "risk_flags": list(self.risk_flags),
+            "created_at": round(float(self.created_at), 3),
+            "updated_at": round(float(self.updated_at), 3),
+            "last_reactivated_at": round(float(self.last_reactivated_at), 3),
+        }
+
+
+@dataclass(slots=True)
+class UnresolvedTensionLoop:
+    """A loop of unfinished thoughts strong enough to pull attention back."""
+
+    loop_id: str = ""
+    topic_seed: str = ""
+    thought_ids: tuple[str, ...] = ()
+    score: float = 0.0
+    tension: float = 0.0
+    persistence: float = 0.0
+    recurrence_count: int = 0
+    unresolved_count: int = 0
+    attractor: bool = False
+    evidence: tuple[str, ...] = ()
+    risk_flags: tuple[str, ...] = ()
+    updated_at: float = 0.0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "loop_id": self.loop_id,
+            "topic_seed": self.topic_seed,
+            "thought_ids": list(self.thought_ids),
+            "score": round(float(self.score), 3),
+            "tension": round(float(self.tension), 3),
+            "persistence": round(float(self.persistence), 3),
+            "recurrence_count": int(self.recurrence_count),
+            "unresolved_count": int(self.unresolved_count),
+            "attractor": bool(self.attractor),
+            "evidence": list(self.evidence),
+            "risk_flags": list(self.risk_flags),
+            "updated_at": round(float(self.updated_at), 3),
+        }
+
+
+@dataclass(slots=True)
+class CognitiveMomentum:
+    """A derived inertia signal from an unresolved thought, not a new claim."""
+
+    thought_id: str = ""
+    mode: str = ""
+    topic_seed: str = ""
+    score: float = 0.0
+    tension: float = 0.0
+    persistence: float = 0.0
+    recurrence_count: int = 0
+    unresolved: bool = False
+    user_project_relevance: float = 0.0
+    affordance: str = ""
+    closure_state: str = "open"
+    evidence: tuple[str, ...] = ()
+    risk_flags: tuple[str, ...] = ()
+    updated_at: float = 0.0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "thought_id": self.thought_id,
+            "mode": self.mode,
+            "topic_seed": self.topic_seed,
+            "score": round(float(self.score), 3),
+            "tension": round(float(self.tension), 3),
+            "persistence": round(float(self.persistence), 3),
+            "recurrence_count": int(self.recurrence_count),
+            "unresolved": bool(self.unresolved),
+            "user_project_relevance": round(float(self.user_project_relevance), 3),
+            "affordance": self.affordance,
+            "closure_state": self.closure_state,
+            "evidence": list(self.evidence),
+            "risk_flags": list(self.risk_flags),
+            "updated_at": round(float(self.updated_at), 3),
+        }
+
+
+@dataclass(slots=True)
+class ThoughtSurface:
+    """The small visible tip selected from the thought stream."""
+
+    mode: str = ""
+    topic_seed: str = ""
+    source_memory: str = ""
+    association: str = ""
+    pressure: float = 0.0
+    novelty: float = 0.0
+    evidence: tuple[str, ...] = ()
+    risk_flags: tuple[str, ...] = ()
+    created_at: float = 0.0
+    thought_id: str = ""
+    tension: float = 0.0
+    unresolved_reason: str = ""
+    partial_text: str = ""
+    recurrence_count: int = 0
+    surfaced_count: int = 0
+    momentum_score: float = 0.0
+    affordance: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "topic_seed": self.topic_seed,
+            "source_memory": self.source_memory,
+            "association": self.association,
+            "pressure": round(float(self.pressure), 3),
+            "novelty": round(float(self.novelty), 3),
+            "evidence": list(self.evidence),
+            "risk_flags": list(self.risk_flags),
+            "created_at": round(float(self.created_at), 3),
+            "thought_id": self.thought_id,
+            "tension": round(float(self.tension), 3),
+            "unresolved_reason": self.unresolved_reason,
+            "partial_text": self.partial_text,
+            "recurrence_count": int(self.recurrence_count),
+            "surfaced_count": int(self.surfaced_count),
+            "momentum_score": round(float(self.momentum_score), 3),
+            "affordance": self.affordance,
+        }
+
+
+# Compatibility name for older callers. The runtime now treats this as a
+# surfaced thought, not as the thought itself.
+SubconsciousSeed = ThoughtSurface
+
+
+@dataclass(slots=True)
+class SubconsciousReport:
+    latest_seed: ThoughtSurface = field(default_factory=ThoughtSurface)
+    recent_seeds: tuple[ThoughtSurface, ...] = ()
+    surface_pressure: float = 0.0
+    suppression_reason: str = ""
+    latest_thought: ThoughtObject = field(default_factory=ThoughtObject)
+    recent_thoughts: tuple[ThoughtObject, ...] = ()
+    momentum: CognitiveMomentum = field(default_factory=CognitiveMomentum)
+    recent_momentum: tuple[CognitiveMomentum, ...] = ()
+    active_attractor: UnresolvedTensionLoop = field(default_factory=UnresolvedTensionLoop)
+    unresolved_loops: tuple[UnresolvedTensionLoop, ...] = ()
+    stream_tension: float = 0.0
+    unresolved_count: int = 0
+    continuity_notes: tuple[str, ...] = ()
+    disturbances: tuple[CognitiveDisturbance, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "latest_seed": self.latest_seed.to_dict(),
+            "recent_seeds": [item.to_dict() for item in self.recent_seeds],
+            "surface_pressure": round(float(self.surface_pressure), 3),
+            "suppression_reason": self.suppression_reason,
+            "latest_thought": self.latest_thought.to_dict(),
+            "latest_surface": self.latest_seed.to_dict(),
+            "recent_thoughts": [item.to_dict() for item in self.recent_thoughts],
+            "recent_surfaces": [item.to_dict() for item in self.recent_seeds],
+            "momentum": self.momentum.to_dict(),
+            "recent_momentum": [item.to_dict() for item in self.recent_momentum],
+            "active_attractor": self.active_attractor.to_dict(),
+            "unresolved_loops": [item.to_dict() for item in self.unresolved_loops],
+            "stream_tension": round(float(self.stream_tension), 3),
+            "unresolved_count": int(self.unresolved_count),
+            "continuity_notes": list(self.continuity_notes),
+            "disturbances": [item.to_dict() for item in self.disturbances],
+        }
+
+
+ThoughtStreamReport = SubconsciousReport
+
+
+@dataclass(slots=True)
+class MotivationalUrge:
+    label: str = ""
+    score: float = 0.0
+    utterance_type: str = "no_speech"
+    speech_source: str = "none"
+    grounding: str = "none"
+    reason: str = ""
+    evidence: tuple[str, ...] = ()
+    safety_flags: tuple[str, ...] = ()
+    blocked: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "score": round(float(self.score), 3),
+            "utterance_type": self.utterance_type,
+            "speech_source": self.speech_source,
+            "grounding": self.grounding,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+            "safety_flags": list(self.safety_flags),
+            "blocked": bool(self.blocked),
+        }
+
+
+@dataclass(slots=True)
+class MotivationalPressureReport:
+    winner: MotivationalUrge = field(default_factory=MotivationalUrge)
+    threshold: float = 0.0
+    candidates: tuple[MotivationalUrge, ...] = ()
+    suppressed_by: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "winner": self.winner.to_dict(),
+            "threshold": round(float(self.threshold), 3),
+            "candidates": [item.to_dict() for item in self.candidates],
+            "suppressed_by": self.suppressed_by,
+        }
+
+
+@dataclass(slots=True)
+class IdentityCore:
+    """Stable identity rules for ERIS; not claims about real emotion."""
+
+    identity_label: str = "grounded_presence"
+    rules: tuple[str, ...] = (
+        "grounded_presence",
+        "no_overclaim",
+        "continuity_over_randomness",
+        "speak_less_without_affordance",
+        "help_user_design_cognition_concretely",
+        "no_screen_or_mind_claim_without_evidence",
+    )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "identity_label": self.identity_label,
+            "rules": list(self.rules),
+            "control_layer": "identity_core",
+            "not_a_claim": "not real emotion, consciousness, or screen access",
+        }
+
+
+@dataclass(slots=True)
+class CurrentSelfState:
+    """Current operational state derived from runtime signals."""
+
+    state_label: str = "settled"
+    overload: float = 0.0
+    engagement: float = 0.0
+    initiative_bias: float = 0.0
+    brevity_bias: str = "medium"
+    embodiment_bias: str = "neutral"
+    affordance_label: str = "low"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "state_label": self.state_label,
+            "overload": round(float(self.overload), 3),
+            "engagement": round(float(self.engagement), 3),
+            "initiative_bias": round(float(self.initiative_bias), 3),
+            "brevity_bias": self.brevity_bias,
+            "embodiment_bias": self.embodiment_bias,
+            "affordance_label": self.affordance_label,
+        }
+
+
+@dataclass(slots=True)
+class SelfNarrative:
+    """Compact continuity line about how ERIS is operating now."""
+
+    continuity_label: str = "quiet_continuity"
+    summary: str = "ERIS is maintaining grounded continuity without adding unsupported claims."
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "continuity_label": self.continuity_label,
+            "summary": self.summary,
+            "notes": list(self.notes),
+            "not_roleplay": True,
+        }
+
+
+@dataclass(slots=True)
+class SelfState:
+    state_label: str = "settled"
+    identity_label: str = "grounded_presence"
+    overload: float = 0.0
+    engagement: float = 0.0
+    initiative_bias: float = 0.0
+    brevity_bias: str = "medium"
+    embodiment_bias: str = "neutral"
+    affordance_label: str = "low"
+    identity_core: IdentityCore = field(default_factory=IdentityCore)
+    current_state: CurrentSelfState = field(default_factory=CurrentSelfState)
+    narrative: SelfNarrative = field(default_factory=SelfNarrative)
+    prompt_context: str = ""
+    evidence: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.current_state == CurrentSelfState():
+            self.current_state = CurrentSelfState(
+                state_label=self.state_label,
+                overload=self.overload,
+                engagement=self.engagement,
+                initiative_bias=self.initiative_bias,
+                brevity_bias=self.brevity_bias,
+                embodiment_bias=self.embodiment_bias,
+                affordance_label=self.affordance_label,
+            )
+        if self.identity_core == IdentityCore() and self.identity_label != self.identity_core.identity_label:
+            self.identity_core = IdentityCore(identity_label=self.identity_label)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "state_label": self.state_label,
+            "identity_label": self.identity_label,
+            "overload": round(float(self.overload), 3),
+            "engagement": round(float(self.engagement), 3),
+            "initiative_bias": round(float(self.initiative_bias), 3),
+            "brevity_bias": self.brevity_bias,
+            "embodiment_bias": self.embodiment_bias,
+            "affordance_label": self.affordance_label,
+            "identity_core": self.identity_core.to_dict(),
+            "current_state": self.current_state.to_dict(),
+            "narrative": self.narrative.to_dict(),
+            "prompt_context": self.prompt_context,
+            "evidence": list(self.evidence),
+        }
+
+
+@dataclass(slots=True)
 class AgentSpeechCore:
     perception: tuple[str, ...] = ()
     mood: str = "neutral"
@@ -319,6 +707,7 @@ class AgentSpeechCore:
     safety_flags: tuple[str, ...] = ()
     delivery: str = "silence"
     inner_thought: InnerThought = field(default_factory=InnerThought)
+    motivation_pressure: MotivationalPressureReport = field(default_factory=MotivationalPressureReport)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -333,6 +722,7 @@ class AgentSpeechCore:
             "safety_flags": list(self.safety_flags),
             "delivery": self.delivery,
             "inner_thought": self.inner_thought.to_dict(),
+            "motivation_pressure": self.motivation_pressure.to_dict(),
         }
 
 
@@ -373,6 +763,10 @@ class CognitiveFrame:
     attention_candidates: tuple[AttentionCandidate, ...] = ()
     broadcast: CognitiveBroadcast = field(default_factory=CognitiveBroadcast)
     appraisal: CognitiveAppraisal = field(default_factory=CognitiveAppraisal)
+    self_state: SelfState = field(default_factory=SelfState)
+    subconscious_report: SubconsciousReport = field(default_factory=SubconsciousReport)
+    thought_stream_report: ThoughtStreamReport = field(default_factory=ThoughtStreamReport)
+    memory_resonance: object | None = None
     speech_core: AgentSpeechCore = field(default_factory=AgentSpeechCore)
     inner_thought: InnerThought = field(default_factory=InnerThought)
     action_plan: CognitiveActionPlan = field(default_factory=CognitiveActionPlan)
@@ -390,6 +784,14 @@ class CognitiveFrame:
             "attention_candidates": [item.to_dict() for item in self.attention_candidates],
             "broadcast": self.broadcast.to_dict(),
             "appraisal": self.appraisal.to_dict(),
+            "self_state": self.self_state.to_dict(),
+            "subconscious_report": self.subconscious_report.to_dict(),
+            "thought_stream_report": self.thought_stream_report.to_dict(),
+            "memory_resonance": (
+                self.memory_resonance.to_dict()
+                if self.memory_resonance is not None and callable(getattr(self.memory_resonance, "to_dict", None))
+                else self.memory_resonance
+            ),
             "speech_core": self.speech_core.to_dict(),
             "inner_thought": self.inner_thought.to_dict(),
             "action_plan": self.action_plan.to_dict(),

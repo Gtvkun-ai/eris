@@ -8,9 +8,10 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from domain import Decision
-from cortex.contracts import CognitiveBroadcast
+from cortex.contracts import CognitiveBroadcast, CognitiveMomentum, ThoughtStreamReport, UnresolvedTensionLoop
+from cortex.internal_state import PersistentInternalState
 from memory import MemoryStore
-from runtime.coordinator import RuntimeCoordinator
+from runtime.coordinator import FALLBACK_BY_INTENT, RuntimeCoordinator
 
 
 class _DummyLogger:
@@ -108,6 +109,28 @@ class _MindreadingForceSpeakLlmService(_DummyLlmService):
         return json.dumps(
             {
                 "text": "Co ve Ngai dang met.",
+                "animation": "stand",
+                "direction": 0,
+                "target_x": -1.0,
+                "bounce_action": "",
+                "next_animation": "",
+                "system_action": "",
+                "action_input": "",
+            }
+        )
+
+
+class _StaticDirectiveLlmService(_DummyLlmService):
+    def __init__(self, text):
+        super().__init__()
+        self.text = text
+
+    def generate_directive(self, **kwargs):
+        self.directive_calls += 1
+        self.last_directive_kwargs = kwargs
+        return json.dumps(
+            {
+                "text": self.text,
                 "animation": "stand",
                 "direction": 0,
                 "target_x": -1.0,
@@ -367,6 +390,123 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         params.update(overrides)
         return RuntimeCoordinator(**params)
 
+    def test_subconscious_loop_starts_and_stops_cleanly(self):
+        coordinator = self._make_coordinator()
+        coordinator.subconscious_loop.interval_seconds = 60.0
+
+        coordinator.subconscious_loop.start()
+        self.assertTrue(coordinator.subconscious_loop.is_running)
+        coordinator.stop()
+
+        self.assertFalse(coordinator.subconscious_loop.is_running)
+
+    def test_subconscious_report_appears_in_cognitive_frame_dict(self):
+        coordinator = self._make_coordinator()
+        frame = coordinator._start_cognitive_frame(
+            channel="autonomous",
+            started_at=1.0,
+            snapshot=coordinator.telemetry_service.capture_snapshot(),
+            internal_state_before=PersistentInternalState(),
+            sensed_internal_state=PersistentInternalState(),
+            ni_report=SimpleNamespace(drift_score=0.0, confidence=0.50, should_raise_guard=False),
+            ti_report=SimpleNamespace(mode="steady_observe"),
+            fe_plan=SimpleNamespace(warmth_level=0.0, sarcasm_level=0.0),
+        )
+
+        self.assertIn("subconscious_report", frame.to_dict())
+        self.assertIn("latest_seed", frame.to_dict()["subconscious_report"])
+        self.assertIn("self_state", frame.to_dict())
+        self.assertIn(frame.to_dict()["self_state"]["state_label"], {"settled", "watchful", "engaged", "overloaded"})
+
+    def test_chat_event_disturbs_continuous_substrate(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._handle_incoming({"type": "chat", "message": "continuous substrate please"})
+
+        frame = coordinator.last_cognitive_frame
+        self.assertIs(coordinator.cognitive_substrate, coordinator.thought_stream)
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame.channel, "chat")
+        self.assertEqual(frame.thought_stream_report.disturbances[0].channel, "chat")
+        self.assertEqual(frame.thought_stream_report.disturbances[0].kind, "user_message")
+        self.assertEqual(frame.thought_stream_report.latest_thought.mode, "input_disturbance")
+        self.assertTrue(any(percept.kind == "substrate_disturbance" for percept in frame.percepts))
+
+    def test_cognitive_momentum_report_enters_attention_as_internal_percept(self):
+        coordinator = self._make_coordinator()
+        report = ThoughtStreamReport(
+            momentum=CognitiveMomentum(
+                thought_id="thought_1",
+                mode="associative_drift",
+                topic_seed="associative_drift:project_eris_tests",
+                score=0.74,
+                tension=0.82,
+                recurrence_count=2,
+                unresolved=True,
+                user_project_relevance=0.82,
+                affordance="attention",
+                evidence=("reactivations=2", "momentum=0.74"),
+                risk_flags=("no_screen_claim", "cognitive_momentum"),
+            )
+        )
+
+        percepts = coordinator._collect_percept_events(
+            channel="autonomous",
+            snapshot=coordinator.telemetry_service.capture_snapshot(),
+            thought_stream_report=report,
+        )
+        candidates = coordinator._build_attention_candidates(percepts, channel="autonomous")
+        broadcast = coordinator._build_broadcast(candidates)
+
+        self.assertIn("cognitive_momentum", {item.kind for item in percepts})
+        self.assertEqual(broadcast.label, "cognitive_momentum")
+
+    def test_unresolved_tension_attractor_enters_attention_as_internal_percept(self):
+        coordinator = self._make_coordinator()
+        report = ThoughtStreamReport(
+            active_attractor=UnresolvedTensionLoop(
+                loop_id="loop_1",
+                topic_seed="associative_drift:project_eris_tests",
+                thought_ids=("thought_1", "thought_2"),
+                score=0.78,
+                tension=0.84,
+                recurrence_count=3,
+                unresolved_count=2,
+                attractor=True,
+                evidence=("loop_score=0.78", "attractor=1"),
+                risk_flags=("no_screen_claim", "cognitive_attractor"),
+            )
+        )
+
+        percepts = coordinator._collect_percept_events(
+            channel="autonomous",
+            snapshot=coordinator.telemetry_service.capture_snapshot(),
+            thought_stream_report=report,
+        )
+        candidates = coordinator._build_attention_candidates(percepts, channel="autonomous")
+        broadcast = coordinator._build_broadcast(candidates)
+
+        self.assertIn("cognitive_attractor", {item.kind for item in percepts})
+        self.assertEqual(broadcast.label, "cognitive_attractor")
+
+    def test_queued_subconscious_seed_is_consumed_once(self):
+        coordinator = self._make_coordinator()
+        coordinator.memory_state = SimpleNamespace(
+            internal_state=PersistentInternalState(
+                subconscious_pressure=0.82,
+                memory_replay_pressure=0.82,
+            )
+        )
+        coordinator.long_term_memory = ("relationship/no_signal: User likes small curiosity without screen claims.",)
+        coordinator.subconscious_loop.tick_once()
+
+        first = coordinator._pop_subconscious_report_for_autonomous()
+        second = coordinator._pop_subconscious_report_for_autonomous()
+
+        self.assertEqual(first.latest_seed.mode, "memory_replay")
+        self.assertFalse(second.latest_seed.mode)
+        self.assertEqual(second.suppression_reason, "no_surface_seed")
+
     def test_repeated_chat_message_triggers_repeat_guard(self):
         coordinator = self._make_coordinator()
 
@@ -442,6 +582,168 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "inner_thought")
         self.assertNotIn("ngai dang met", coordinator.transport.sent[-1]["text"].lower())
         self.assertNotEqual(coordinator.transport.sent[-1]["text"], "Co ve Ngai dang met.")
+
+    def test_force_speak_curious_question_reports_fail_for_no_signal_non_question(self):
+        coordinator = self._make_coordinator(
+            llm_service=_StaticDirectiveLlmService("Kh\u00f4ng c\u1ea7n n\u00f3i g\u00ec th\u00eam."),
+            parser=_JsonParser(),
+        )
+        coordinator.recent_inner_thought_intents = ("inner_whim",)
+        coordinator.recent_inner_thought_seeds = ("present_whim",)
+
+        coordinator._handle_incoming({"type": "force_speak"})
+
+        sent = coordinator.transport.sent[-1]
+        normalized = coordinator._normalize_user_message(sent["text"])
+        self.assertEqual(coordinator.last_cognitive_frame.inner_thought.intent, "curious_question")
+        self.assertIn("intent_alignment_guard", sent["debug_trace"])
+        self.assertIn("semantic_repair_failed", sent["debug_trace"])
+        self.assertEqual(sent["parse_mode"], "semantic_repair_failed")
+        self.assertEqual(sent["text"], "")
+        self.assertNotIn("khong can noi", normalized)
+
+    def test_force_speak_curious_question_shapes_raw_statement(self):
+        coordinator = self._make_coordinator()
+        speech_core = SimpleNamespace(
+            utterance_type="curious_question",
+            inner_thought=SimpleNamespace(
+                intent="curious_question",
+                topic_seed="associative_drift:cognition_layer",
+            ),
+            perception=(),
+            safety_flags=("anti_mindreading",),
+        )
+        snapshot = SimpleNamespace(
+            active_window="thought_stream.py - Visual Studio Code",
+            active_window_kind="coding",
+        )
+
+        decision = coordinator._apply_post_generation_filters(
+            Decision(text="Dự án này đang vướng ở tầng cognition.", animation="stand"),
+            channel="force_speak",
+            speech_core=speech_core,
+            snapshot=snapshot,
+            momentum_topic="associative_drift:cognition_layer",
+        )
+
+        self.assertEqual(decision.text, "Dự án này đang vướng ở tầng cognition à?")
+        self.assertIn("question_shape", decision.debug_trace)
+
+    def test_force_speak_curious_question_does_not_invent_context_fallback(self):
+        coordinator = self._make_coordinator()
+        speech_core = SimpleNamespace(
+            utterance_type="curious_question",
+            inner_thought=SimpleNamespace(
+                intent="curious_question",
+                topic_seed="associative_drift:cognitive_tension",
+            ),
+            perception=(),
+            safety_flags=("anti_mindreading",),
+        )
+        snapshot = SimpleNamespace(
+            active_window="coordinator.py - Visual Studio Code",
+            active_window_kind="coding",
+        )
+
+        decision = coordinator._apply_post_generation_filters(
+            Decision(text="Không cần nói gì thêm.", animation="stand"),
+            channel="force_speak",
+            speech_core=speech_core,
+            snapshot=snapshot,
+            momentum_topic="associative_drift:cognitive_tension",
+        )
+
+        self.assertEqual(decision.text, "")
+        self.assertEqual(decision.parse_mode, "semantic_repair_failed")
+        self.assertIn("semantic_repair_failed", decision.debug_trace)
+
+    def test_force_speak_phrase_family_guard_replaces_work_or_withdrawal_templates(self):
+        cases = (
+            "Ng\u00e0i c\u1ee9 l\u00e0m vi\u1ec7c, t\u00f4i kh\u00f4ng c\u1ea7n n\u00f3i g\u00ec.",
+            "T\u00f4i l\u00f9i l\u1ea1i m\u1ed9t ch\u00fat, kh\u00f4ng c\u00f3 g\u00ec m\u1edbi.",
+        )
+        for text in cases:
+            with self.subTest(text=text):
+                coordinator = self._make_coordinator(
+                    llm_service=_StaticDirectiveLlmService(text),
+                    parser=_JsonParser(),
+                )
+
+                coordinator._handle_incoming({"type": "force_speak"})
+
+                sent = coordinator.transport.sent[-1]
+                normalized = coordinator._normalize_user_message(sent["text"])
+                self.assertIn("phrase_family_guard", sent["debug_trace"])
+                self.assertNotIn("cu lam viec", normalized)
+                self.assertNotIn("lui lai", normalized)
+                self.assertNotIn("khong can noi", normalized)
+
+    def test_force_speak_semantic_family_guard_blocks_small_story_listener_loop(self):
+        coordinator = self._make_coordinator()
+        coordinator.last_text = "Một câu chuyện nhỏ thì không cần màn hình."
+        speech_core = SimpleNamespace(
+            utterance_type="random_chatter",
+            inner_thought=SimpleNamespace(intent="random_chatter"),
+            perception=(),
+            safety_flags=(),
+        )
+
+        decision = coordinator._apply_post_generation_filters(
+            Decision(text="Tôi chỉ thử làm một người nghe ở đây.", animation="stand"),
+            channel="force_speak",
+            speech_core=speech_core,
+        )
+
+        self.assertIn("small_story_listener", decision.debug_trace)
+        self.assertIn(decision.text, FALLBACK_BY_INTENT["random_chatter"])
+        normalized = coordinator._normalize_user_message(decision.text)
+        self.assertNotIn("cau chuyen nho", normalized)
+        self.assertNotIn("mot nguoi nghe", normalized)
+
+    def test_force_speak_semantic_family_guard_blocks_log_meta_loop(self):
+        coordinator = self._make_coordinator()
+        coordinator.cognitive_frames = [
+            SimpleNamespace(final_decision={"text": "Tôi không muốn ngồi nhìn log như vậy."}),
+        ]
+        speech_core = SimpleNamespace(
+            utterance_type="inner_whim",
+            inner_thought=SimpleNamespace(intent="inner_whim"),
+            perception=(),
+            safety_flags=(),
+        )
+
+        decision = coordinator._apply_post_generation_filters(
+            Decision(text="Đừng biến tôi thành một dòng log khô khan.", animation="stand"),
+            channel="force_speak",
+            speech_core=speech_core,
+        )
+
+        self.assertIn("log_meta", decision.debug_trace)
+        self.assertIn(decision.text, FALLBACK_BY_INTENT["inner_whim"])
+
+    def test_force_speak_intent_guard_fallbacks_rotate(self):
+        coordinator = self._make_coordinator()
+        speech_core = SimpleNamespace(
+            utterance_type="inner_whim",
+            inner_thought=SimpleNamespace(intent="inner_whim"),
+            perception=(),
+            safety_flags=(),
+        )
+
+        first = coordinator._apply_post_generation_filters(
+            Decision(text="Ng\u00e0i c\u1ee9 l\u00e0m vi\u1ec7c.", animation="stand"),
+            channel="force_speak",
+            speech_core=speech_core,
+        )
+        second = coordinator._apply_post_generation_filters(
+            Decision(text="T\u00f4i l\u00f9i l\u1ea1i.", animation="stand"),
+            channel="force_speak",
+            speech_core=speech_core,
+        )
+
+        self.assertIn("phrase_family_guard", first.debug_trace)
+        self.assertIn("phrase_family_guard", second.debug_trace)
+        self.assertNotEqual(first.text, second.text)
 
     def test_force_speak_with_concrete_signal_reaches_llm_through_action_planner(self):
         coordinator = self._make_coordinator(telemetry_service=_SignalTelemetry())
@@ -539,6 +841,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertTrue(frame.inner_thought.should_surface)
         self.assertEqual(frame.inner_thought.intent, "inner_whim")
         self.assertEqual(frame.speech_core.speech_source, "freeform")
+        self.assertEqual(frame.speech_core.motivation_pressure.winner.label, "user_requested_presence")
+        self.assertIn("motivation_pressure", frame.to_dict()["speech_core"])
         self.assertIn("no_screen_claim", frame.action_plan.risk_flags)
         self.assertEqual(frame.final_decision["parse_mode"], "inner_thought")
         self.assertTrue(any(percept.kind == "user_force_speak" for percept in frame.percepts))
@@ -571,6 +875,32 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(frame.appraisal.state_type, "expressive_appraisal_state")
         self.assertIn("agency", frame.appraisal.to_dict())
         self.assertIn("expressive/appraisal state", coordinator.llm_service.last_chat_kwargs["appraisal_context"])
+
+    def test_chat_activates_layered_memory_resonance_without_treating_it_as_evidence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(os.path.join(tmpdir, "memory.json"))
+            state = store.load_state()
+            state = store.remember_relationship_reflection(
+                state,
+                "User dislikes fake output and prefers direct grounded analysis.",
+                pattern="grounded_style",
+            )
+            state = store.remember_procedural_rule(
+                state,
+                "When output is being squeezed by a guard, inspect post-generation filters first.",
+                trigger="post_generation_guard",
+            )
+            store.save_state(state)
+            coordinator = self._make_coordinator(memory_store=store)
+
+            coordinator._handle_incoming({"type": "chat", "message": "output bi guard bop roi"})
+
+            frame = coordinator.last_cognitive_frame
+            self.assertIsNotNone(frame.memory_resonance)
+            self.assertGreater(frame.memory_resonance.score, 0.0)
+            self.assertIn("memory_resonance", frame.to_dict())
+            self.assertIn("active_memory_resonance", coordinator.llm_service.last_chat_kwargs["memory_context"])
+            self.assertIn("not treat it as current screen evidence", coordinator.llm_service.last_chat_kwargs["memory_context"])
 
     def test_chat_style_preference_records_relationship_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:

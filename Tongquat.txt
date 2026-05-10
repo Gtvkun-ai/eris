@@ -77,8 +77,10 @@ Godot la body, Python la cognition/runtime, UDP la day than kinh, con model la b
 - Trai tim cua he thong.
 - Nhan cac tin hieu `chat_start`, `chat`, `chat_end`, `force_speak`.
 - Chup telemetry dinh ky.
-- Dung "cognitive frame" qua cac module SE / Attention / Appraisal / SpeechCore / ActionPlanner / Ni / Ti / Fe.
+- Dung "cognitive frame" qua cac module SE / Attention / Appraisal / SelfModel / SpeechCore / ActionPlanner / Ni / Ti / Fe.
+- Chay them `SubconsciousLoop` nen rieng de tao seed noi tam tru tuong cho autonomous.
 - Goi LLM de sinh `Decision`.
+- Co post-generation guard cho `force_speak` inner thought: chan cac cum withdrawal/no-signal lap lai nhu `lui lai`, `khong can noi gi`, `Ngai cu lam viec`, va ep text phai khop `inner_thought.intent`.
 - Commit memory va gui ket qua sang Godot.
 
 `src/domain/decision.py`
@@ -114,6 +116,7 @@ Godot la body, Python la cognition/runtime, UDP la day than kinh, con model la b
 - Sua JSON loi.
 - Fallback neu model tra prose.
 - Sinh directive, chat reply, va screen facts.
+- Prompt inner-thought co contract rieng cho `curious_question`, `inner_whim`, `random_chatter` de tranh intent label mot kieu nhung raw text mot kieu.
 
 `src/llm/contracts.py`
 - Dinh nghia prompt, rule, GBNF grammar, animation whitelist, system action whitelist.
@@ -170,6 +173,11 @@ Diem manh cua parser:
   `CognitiveAppraisal`
   `CognitiveActionPlan`
   `InnerThought`
+  `SelfState`
+  `SubconsciousSeed`
+  `SubconsciousReport`
+  `MotivationalUrge`
+  `MotivationalPressureReport`
   `CognitiveFrame`
 
 
@@ -203,16 +211,65 @@ Diem manh cua parser:
 - Dung trang thai appraisal tien-ngon-ngu nhu `threat`, `certainty`, `intimacy`, `protectiveness`, `tenderness`.
 - Day la lop "sac thai noi tam van hanh".
 
+`src/cortex/internal_state.py`
+- Giu trang thai lien tuc dai hon mot frame, khong phai bang chung ve cam xuc that.
+- Theo doi cac truc co ban nhu `valence`, `arousal`, `curiosity`, `boredom`, `social_energy`, `attachment`, `fatigue`, `silence_pressure`.
+- Da co them cac truc ap luc hanh vi:
+  `social_pressure`
+  `curiosity_pressure`
+  `protective_pressure`
+  `tender_pressure`
+  `playful_pressure`
+  `watchful_pressure`
+  `restraint_pressure`
+  `subconscious_pressure`
+  `memory_replay_pressure`
+  `association_pressure`
+- Commit moi turn de cap nhat streak im lang/noi, recent speech acts, recent subconscious seeds, recent self-state labels.
+- Render prompt context cho LLM theo rule: chi dung de giu rhythm/continuity, khong duoc xem la bang chung man hinh hay cam xuc an cua user.
+
+`src/cortex/self_model.py`
+- Tao `SelfState` runtime cho ERIS.
+- Danh gia cac nhan nhu:
+  `settled`
+  `watchful`
+  `engaged`
+  `overloaded`
+- Tinh `overload`, `engagement`, `initiative_bias`, `brevity_bias`, `embodiment_bias`.
+- Neu overloaded thi thien ve ngan gon, it chu dong, han che animation bieu cam.
+- Neu engaged thi cho phep chu dong va bieu cam hon, nhung van bi rang buoc boi grounding.
+- Context cua self-state duoc ghep vao prompt cung persistent internal state.
+
+`src/cortex/subconscious.py`
+- Tao cac "seed" noi tam tru tuong, khong tu tao cau noi truc tiep.
+- Co cac mode:
+  `memory_replay`
+  `associative_drift`
+  `attention_drift`
+  `quiet_self_muse`
+- Dung internal pressure, idle time, focus pattern, long-term memory va recent seeds de chon seed.
+- Co repeat guard, novelty check, restraint suppression va risk flags nhu `no_screen_claim`, `anti_mindreading`, `needs_generation`.
+- `SubconsciousLoop` chay nen theo interval `ERIS_SUBCONSCIOUS_INTERVAL_SEC`, co the tat bang `ERIS_SUBCONSCIOUS_LOOP=0`.
+- Autonomous loop pop seed tu queue, moi seed chi duoc tieu thu mot lan.
+
 `src/cortex/inner_thought.py`
 - Sinh dong co xa hoi nhe cho `force_speak` hoac autonomous khi thieu signal man hinh.
+- Co the bien `SubconsciousSeed` thanh `InnerThought` khi pressure/novelty du cao.
+- Van co repeat guard va safety flags de tranh lap lai hoac bia noi dung man hinh.
 
 `src/cortex/speech_core.py`
 - Quyet dinh co nen noi khong.
 - Neu noi thi noi tu nguon nao: vision, telemetry, freeform, hay random.
 - Chon `utterance type`.
+- Da them `MotivationalPressureReport`: cac urge canh tranh voi nhau truoc khi noi.
+- Cac urge hien co gom screen vision, screen telemetry, force_speak presence, protective guard, tender check-in, subconscious seed, social presence, curiosity, playful aside, watchful boundary va silence restraint.
+- Autonomous phai vuot threshold moi duoc noi; threshold tang khi self-state overloaded va giam nhe khi engaged.
+- Tin hieu man hinh cu the van uu tien hon subconscious/freeform.
 
 `src/cortex/action_planner.py`
 - Chon speech act truoc khi goi LLM nhu `observe`, `protect`, `mirror`, `reassure`, `system_action`, `withdraw`.
+- Nhan `SelfState` de chinh animation hint va notes.
+- Overloaded self-state lam giam hanh vi bieu cam tu phat; engaged/expressive co the chon animation am hon nhu `affection` hoac `hop` khi phu hop.
 
 `src/cortex/tune_ni_focus.py`
 - Script offline de tune bias / scale cho Ni dua tren log drift thuc te.
@@ -247,6 +304,7 @@ Luu y kien truc:
 `src/memory/store.py`
 - Bo nho dai han dang JSON.
 - Gom `working`, `episodic`, `semantic`, `relationship`, `norm`.
+- Luu/nap duoc `PersistentInternalState` voi cac pressure axes, subconscious history va self-state history.
 - Rat quan trong vi no giu continuity va baseline behavior cua ERIS voi nguoi dung.
 
 `long_term_memory.json`
@@ -279,6 +337,7 @@ Luu y kien truc:
 `tests/test_runtime_coordinator.py`
 - Bai test lon nhat.
 - Kiem tra orchestration, repeat guard, `force_speak`, action route, vision facts.
+- Co test force_speak intent-alignment: `curious_question` phai ra cau hoi that, va cac phrase family kieu `lui lai` / `khong can noi` / `Ngai cu lam viec` phai bi thay bang fallback xoay vong.
 
 `tests/test_decision_parser.py`, `tests/test_parser_climb.py`
 - Dam bao parser hieu JSON loi, embodied command, `climb`, `drop`, `target`.
@@ -291,6 +350,15 @@ Luu y kien truc:
 
 `tests/test_se_lens.py`, `tests/test_attention_workspace.py`, `tests/test_appraisal_engine.py`, `tests/test_speech_core.py`, `tests/test_inner_thought.py`, `tests/test_ti_governor.py`, `tests/test_fe_renderer.py`
 - Test rieng tung tang nhan thuc.
+
+`tests/test_self_model.py`
+- Test self-state overloaded/engaged/watchful/settled va prompt context tuong ung.
+
+`tests/test_subconscious.py`
+- Test memory replay, associative drift, repeat suppression va restraint suppression.
+
+`tests/test_internal_state.py`
+- Test pressure axes, decay khi urge duoc thoa man, subconscious fields va self-state labels.
 
 `tests/test_action_router.py`
 - Test mapping chat -> system action.
@@ -305,7 +373,9 @@ Luu y kien truc:
 1. Khi mo app, Godot vao `UdpListener.tscn`.
 2. `UdpListener.cs` bind cong `4242`, lay node nhan vat, bubble, chat UI, roi co khoi dong `llama-server` va `vision.py`.
 3. `vision.py` tao `RuntimeCoordinator`, `UdpTransport(send=4242, recv=4243)`, memory store, parser, telemetry, Ni / Ti / Fe / Attention / Appraisal / SpeechCore / ActionPlanner.
+   - Coordinator cung tao `SelfModelEngine` va `SubconsciousLoop`.
 4. Trong vong lap autonomous:
+   - `SubconsciousLoop` chay nen, thinh thoang tao seed tu internal state / memory / telemetry.
    - Chup telemetry.
    - Co the chup man hinh de rut `vision_facts`.
    - Goi `SeLens` de dung snapshot.
@@ -313,11 +383,13 @@ Luu y kien truc:
    - Goi `Ti` de chon mode hanh vi.
    - Goi `Fe` de chon style.
    - Dung `CognitiveFrame`.
-   - Chon percept noi bat, appraisal, speech core, action plan.
+   - Chon percept noi bat, appraisal, self-state, speech core, action plan.
+   - Autonomous pop mot subconscious seed neu co; seed nay co the di vao `InnerThought` roi `SpeechCore`.
+   - `SpeechCore` cho cac urge canh tranh bang motivational pressure, roi moi quyet dinh noi/im lang.
    - Sau do moi goi `LlmService.generate_directive()`.
 5. Ket qua model di qua `DecisionParser`, roi qua `TiGovernor.enforce_decision()`.
 6. Neu co `system_action` thi `ActionExecutor` chay that.
-7. Sau cung runtime commit memory va `transport.send_json(decision.to_payload())`.
+7. Sau cung runtime commit memory/internal state va `transport.send_json(decision.to_payload())`.
 8. Godot nhan JSON, `ParseAndApply()` lay text de hien bubble, lay `motion_intent` / `animation` / `direction` / `target_x` de dua vao `MotionController`, roi phat sound va animation tuong ung.
 9. Trong chat mode:
    - Godot gui `{"type":"chat","message":"..."}` sang Python qua `4243`.
@@ -329,6 +401,10 @@ Luu y kien truc:
    - Coordinator di qua nhanh rieng.
    - Neu co signal man hinh thi noi grounded.
    - Neu khong co thi `InnerThoughtEngine` + `SpeechCore` tao mot line "hien dien xa hoi" khong bia man hinh.
+   - Force speak van duoc noi ke ca self-state overloaded, nhung noi ngan va giam freeform neu can.
+   - Sau LLM/Ti, runtime ap dung intent-alignment guard:
+     `curious_question` phai la cau hoi; `inner_whim` va `random_chatter` khong duoc bien thanh refusal/no-signal/withdrawal.
+   - Neu model recycle personality phrase nhu `lui lai`, `khong can noi gi`, `Ngai cu lam viec`, coordinator thay bang fallback nho duoc xoay vong va gan debug trace nhu `intent_alignment_guard` hoac `phrase_family_guard`.
 
 
 11. Diem Quan Trong Khi Doc Project

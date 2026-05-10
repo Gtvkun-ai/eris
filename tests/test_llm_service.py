@@ -458,6 +458,42 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("duoc tu mo chu de xa hoi ngan", normalized_user)
         self.assertIn("khong tra loi bang", normalized_user)
         self.assertIn("ngai muon toi noi gi", normalized_user)
+        self.assertIn("inner_intent=curious_question must produce one real question", normalized_user)
+        self.assertIn("inner_intent=inner_whim must produce one short thought", normalized_user)
+        self.assertIn("khong can noi gi", normalized_user)
+        self.assertIn("ngai cu lam viec", normalized_user)
+
+    def test_random_chatter_prompt_blocks_poetic_soft_story_family(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"mot cau vo dung","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_directive(
+            telemetry_data="speech_evidence=<none>",
+            ti_context=(
+                "SpeechCore mode: pick a freeform line.\n"
+                "- inner_intent=random_chatter\n"
+                "- topic_seed=light_presence\n"
+            ),
+            speech_intent="user_requested",
+        )
+
+        user_prompt = client.calls[0]["messages"][1]["content"]
+        normalized_user = _norm(user_prompt)
+        self.assertIn("do not be poetic", normalized_user)
+        self.assertIn("do not mention stories, listening, silence, screen, or logs", normalized_user)
+        self.assertIn("prefer mundane, playful, concrete one-liners", normalized_user)
+        self.assertIn("slightly absurd", normalized_user)
+        self.assertIn("not emotional or dramatic", normalized_user)
+        self.assertIn("cau chuyen nho", normalized_user)
+        self.assertIn("dong log kho khan", normalized_user)
 
 
 if __name__ == "__main__":

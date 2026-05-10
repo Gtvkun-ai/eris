@@ -72,6 +72,7 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertIn("episodic_memory", context)
             self.assertIn("semantic_user_memory", context)
             self.assertIn("relationship_memory", context)
+            self.assertIn("procedural_memory", context)
             self.assertIn("norm_memory", context)
             self.assertIn("not current screen evidence", context)
 
@@ -141,6 +142,9 @@ class MemoryStoreTests(unittest.TestCase):
             state.internal_state = PersistentInternalState(
                 attachment=0.64,
                 silence_pressure=0.58,
+                social_pressure=0.41,
+                curiosity_pressure=0.32,
+                restraint_pressure=0.23,
                 cycle_count=7,
                 recent_notes=("continuity",),
             )
@@ -151,6 +155,9 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertEqual(loaded.internal_state.cycle_count, 7)
             self.assertAlmostEqual(loaded.internal_state.attachment, 0.64, places=2)
             self.assertAlmostEqual(loaded.internal_state.silence_pressure, 0.58, places=2)
+            self.assertAlmostEqual(loaded.internal_state.social_pressure, 0.41, places=2)
+            self.assertAlmostEqual(loaded.internal_state.curiosity_pressure, 0.32, places=2)
+            self.assertAlmostEqual(loaded.internal_state.restraint_pressure, 0.23, places=2)
             self.assertEqual(loaded.internal_state.recent_notes, ("continuity",))
 
     def test_missing_internal_state_field_loads_default_safely(self):
@@ -164,6 +171,38 @@ class MemoryStoreTests(unittest.TestCase):
 
             self.assertEqual(state.version, 4)
             self.assertEqual(state.internal_state.cycle_count, 0)
+            self.assertEqual(state.internal_state.social_pressure, 0.0)
+            self.assertEqual(state.internal_state.restraint_pressure, 0.0)
+
+    def test_active_memory_resonance_separates_silent_bias_from_surface(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(os.path.join(tmpdir, "memory.json"), max_items=30)
+            state = store.load_state()
+            state = store.remember_relationship_reflection(
+                state,
+                "User dislikes fake output and prefers direct grounded analysis.",
+                pattern="grounded_style",
+                evidence=("bad fake output",),
+            )
+            state = store.remember_procedural_rule(
+                state,
+                "When output is being squeezed by a guard, inspect post-generation filters first.",
+                trigger="post_generation_guard",
+            )
+
+            report = store.activate_memory_resonance(
+                state,
+                user_text="output bi guard bop, dung sua prompt voi",
+                channel="chat",
+            )
+            context = report.render_prompt_context()
+
+            self.assertGreater(report.score, 0.0)
+            self.assertIn(report.dominant_layer, {"procedural", "relationship"})
+            self.assertGreater(report.attention_bias, 0.0)
+            self.assertIn("silent cognitive bias", context)
+            self.assertIn("not treat it as current screen evidence", context)
+            self.assertTrue(report.to_attention_lines())
 
 
 if __name__ == "__main__":

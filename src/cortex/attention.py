@@ -80,6 +80,18 @@ class AttentionWorkspace:
         "tin nhắn",
     )
 
+    CURRENT_SIGNAL_LABELS = {
+        "user_message",
+        "user_force_speak",
+        "vision_fact",
+        "resource_pressure",
+        "norm_deviation",
+        "cognitive_attractor",
+        "substrate_disturbance",
+        "recent_event",
+        "evidence",
+    }
+
     def __init__(
         self,
         *,
@@ -137,9 +149,15 @@ class AttentionWorkspace:
         if not candidates:
             return CognitiveBroadcast(reason="attention_workspace:no_percepts")
 
-        top = candidates[0]
+        current_winners = tuple(
+            candidate
+            for candidate in candidates
+            if candidate.label in self.CURRENT_SIGNAL_LABELS and candidate.score >= self.broadcast_threshold
+        )
+        pool = current_winners if current_winners else candidates
+        top = pool[0]
         winners: list[AttentionCandidate] = []
-        for candidate in candidates:
+        for candidate in pool:
             if candidate.label == "cycle_channel":
                 continue
             if candidate.score < self.broadcast_threshold:
@@ -219,10 +237,16 @@ class AttentionWorkspace:
         hint = (percept.novelty_hint or "").lower()
         if hint in {"direct_user_input", "explicit_request"}:
             return 1.0
+        if hint in {"input_disturbance"} or percept.kind == "substrate_disturbance":
+            return 0.74
         if hint in {"new_screen_fact", "threshold_crossed"}:
             return 0.92
         if hint in {"baseline_deviation"}:
             return 0.84
+        if hint in {"cognitive_attractor"} or percept.kind == "cognitive_attractor":
+            return 0.92
+        if hint in {"cognitive_momentum"} or percept.kind == "cognitive_momentum":
+            return 0.86
         if hint in {"concrete_telemetry", "duration_threshold"}:
             return 0.72
         if hint in {"screen_fact"}:
@@ -236,6 +260,22 @@ class AttentionWorkspace:
     def _score_specificity(self, percept: PerceptEvent) -> float:
         if percept.kind == "cycle_channel":
             return 0.05
+        if percept.kind == "cognitive_attractor":
+            score = 0.74
+            if percept.evidence:
+                score += 0.12
+            if "topic=" in percept.content or "loop=" in percept.content:
+                score += 0.08
+            return _bounded(score)
+        if percept.kind == "cognitive_momentum":
+            score = 0.62
+            if percept.evidence:
+                score += 0.12
+            if "topic=" in percept.content or "thought=" in percept.content:
+                score += 0.08
+            return _bounded(score)
+        if percept.kind == "substrate_disturbance":
+            return 0.50 + (0.12 if percept.evidence else 0.0)
         if percept.kind in {"active_window", "focus_context"}:
             return 0.18
         tokens = _normalize_tokens(percept.content)
@@ -255,6 +295,12 @@ class AttentionWorkspace:
     def _score_user_relevance(self, percept: PerceptEvent, *, channel: str, snapshot=None, user_text: str = "") -> float:
         if percept.kind in {"user_message", "user_force_speak"}:
             return 1.0
+        if percept.kind == "substrate_disturbance":
+            return 0.72
+        if percept.kind == "cognitive_attractor":
+            return 0.90
+        if percept.kind == "cognitive_momentum":
+            return 0.82
         if channel in {"chat", "force_speak"} and percept.kind in {"vision_fact", "recent_event", "evidence"}:
             return 0.68
         if percept.kind == "resource_pressure":
@@ -279,6 +325,12 @@ class AttentionWorkspace:
         lowered = percept.content.lower()
         if percept.kind == "resource_pressure":
             return 0.95
+        if percept.kind == "cognitive_attractor":
+            return 0.10
+        if percept.kind == "cognitive_momentum":
+            return 0.08
+        if percept.kind == "substrate_disturbance":
+            return 0.12
         if any(term in lowered for term in self.RISK_TERMS):
             return 0.78
         if percept.kind == "idle_state" and "600" in lowered:
@@ -290,6 +342,12 @@ class AttentionWorkspace:
         kind = str(getattr(snapshot, "active_window_kind", "") or "")
         if percept.kind == "user_message":
             return 0.70
+        if percept.kind == "substrate_disturbance":
+            return 0.42
+        if percept.kind == "cognitive_attractor":
+            return 0.34
+        if percept.kind == "cognitive_momentum":
+            return 0.30
         if kind == "communication":
             return 0.42
         if any(term in lowered for term in self.SOCIAL_TERMS):
@@ -300,8 +358,14 @@ class AttentionWorkspace:
         hint = (percept.novelty_hint or "").lower()
         if hint in {"direct_user_input", "explicit_request", "new_screen_fact", "threshold_crossed"}:
             return 0.90
+        if hint in {"input_disturbance"} or percept.kind == "substrate_disturbance":
+            return 0.78
         if hint in {"baseline_deviation"}:
             return 0.82
+        if hint in {"cognitive_attractor"} or percept.kind == "cognitive_attractor":
+            return 0.88
+        if hint in {"cognitive_momentum"} or percept.kind == "cognitive_momentum":
+            return 0.84
         if hint in {"concrete_telemetry", "duration_threshold", "screen_fact"}:
             return 0.72
         if hint in {"cached_screen_fact", "repeated_screen_fact"}:
@@ -318,8 +382,41 @@ class AttentionWorkspace:
         content_tokens = _normalize_tokens(" ".join((percept.content, *percept.evidence)))
         if not content_tokens:
             return 0.0
-        memory_tokens = _normalize_tokens(" ".join(str(item) for item in (long_term_memory or ())[-8:]))
-        if not memory_tokens:
+        best = 0.0
+        for raw_memory in (long_term_memory or ())[-12:]:
+            memory = str(raw_memory or "")
+            memory_tokens = _normalize_tokens(memory)
+            if not memory_tokens:
+                continue
+            overlap = len(content_tokens & memory_tokens)
+            if overlap <= 0:
+                continue
+            layer_weight = self._memory_layer_weight(memory)
+            score = (overlap / max(4, min(len(content_tokens), 12))) * layer_weight
+            if "active_memory_resonance/" in memory:
+                score += self._extract_resonance_score(memory) * 0.24
+            best = max(best, score)
+        return _bounded(best)
+
+    def _memory_layer_weight(self, memory: str) -> float:
+        lowered = (memory or "").lower()
+        if "active_memory_resonance/working" in lowered or lowered.startswith("working:"):
+            return 1.10
+        if "active_memory_resonance/procedural" in lowered or lowered.startswith("procedural"):
+            return 1.06
+        if "active_memory_resonance/relationship" in lowered or lowered.startswith("relationship/"):
+            return 1.00
+        if "active_memory_resonance/episodic" in lowered or lowered.startswith("episodic:"):
+            return 0.96
+        if "active_memory_resonance/semantic" in lowered or lowered.startswith("semantic/"):
+            return 0.90
+        return 0.82
+
+    def _extract_resonance_score(self, memory: str) -> float:
+        match = re.search(r"\bscore=([0-9.]+)", memory or "")
+        if not match:
             return 0.0
-        overlap = len(content_tokens & memory_tokens)
-        return _bounded(overlap / max(4, min(len(content_tokens), 12)))
+        try:
+            return _bounded(float(match.group(1)))
+        except ValueError:
+            return 0.0

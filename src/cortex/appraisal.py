@@ -12,7 +12,7 @@ class AppraisalEngine:
     def evaluate(
         self,
         *,
-        internal_state: PersistentInternalState,
+        internal_state: PersistentInternalState, #là đối tượng lưu trữ trạng thái nội bộ của ERIS, có thể chứa thông tin về cảm xúc, sự chú ý, và các yếu tố khác liên quan đến trạng thái hiện tại của ERIS.
         ni_report,
         ti_report,
         fe_plan,
@@ -20,6 +20,7 @@ class AppraisalEngine:
         channel: str = "",
         user_text: str = "",
         force_speak: bool = False,
+        memory_resonance=None,
     ) -> CognitiveAppraisal:
         state = internal_state or PersistentInternalState()
         drift = self._clamp01(getattr(ni_report, "drift_score", 0.0) or 0.0)
@@ -32,23 +33,31 @@ class AppraisalEngine:
         kind = str(getattr(state, "last_focus_kind", "") or "")
         broadcast_score = self._clamp01(getattr(broadcast, "score", 0.0) or 0.0)
         broadcast_label = str(getattr(broadcast, "label", "") or "")
+        resonance_score = self._clamp01(getattr(memory_resonance, "score", 0.0) if memory_resonance is not None else 0.0)
+        resonance_appraisal = self._clamp01(
+            getattr(memory_resonance, "appraisal_bias", 0.0) if memory_resonance is not None else 0.0
+        )
+        resonance_silence = self._clamp01(
+            getattr(memory_resonance, "silence_bias", 0.0) if memory_resonance is not None else 0.0
+        )
+        resonance_layer = str(getattr(memory_resonance, "dominant_layer", "") if memory_resonance is not None else "")
 
         normalized_user_text = self._normalize_text(user_text)
         direct_user = bool(normalized_user_text) or channel == "chat" or force_speak
         attachment_cue = self._has_attachment_cue(normalized_user_text)
         social_scene = kind == "communication" or mode == "social_watch" or fe_intent == "social_watch"
 
-        state_valence = self._clamp(getattr(state, "valence", 0.0), minimum=-1.0, maximum=1.0)
-        state_arousal = self._clamp01(getattr(state, "arousal", 0.0))
-        state_attachment = self._clamp01(getattr(state, "attachment", 0.0))
-        state_social_energy = self._clamp01(getattr(state, "social_energy", 0.0))
-        state_irritation = self._clamp01(getattr(state, "irritation", 0.0))
-        state_protectiveness = self._clamp01(getattr(state, "protectiveness", 0.0))
-        state_confidence = self._clamp01(getattr(state, "confidence", 0.0))
-        state_fatigue = self._clamp01(getattr(state, "fatigue", 0.0))
-        state_tenderness = self._clamp01(getattr(state, "tenderness", 0.0))
-        state_silence_pressure = self._clamp01(getattr(state, "silence_pressure", 0.0))
-        state_curiosity = self._clamp01(getattr(state, "curiosity", 0.0))
+        state_valence = self._clamp(getattr(state, "valence", 0.0), minimum=-1.0, maximum=1.0) # valence là một trục cảm xúc phổ biến trong tâm lý học, thường được định nghĩa từ -1 (rất tiêu cực) đến +1 (rất tích cực). Trong trường hợp này, giá trị valence được lấy từ trạng thái nội bộ của ERIS và được giới hạn trong khoảng từ -1.0 đến 1.0 để đảm bảo rằng nó nằm trong phạm vi hợp lệ cho trục cảm xúc này.
+        state_arousal = self._clamp01(getattr(state, "arousal", 0.0)) # arousal là một trục cảm xúc khác, thường được định nghĩa từ 0 (rất bình tĩnh) đến 1 (rất kích thích). 
+        state_attachment = self._clamp01(getattr(state, "attachment", 0.0)) # attachment có thể đề cập đến mức độ gắn bó hoặc kết nối cảm xúc của ERIS với người dùng hoặc tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
+        state_social_energy = self._clamp01(getattr(state, "social_energy", 0.0)) # social_energy có thể đề cập đến mức độ năng lượng xã hội hoặc sự sẵn sàng tương tác của ERIS trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
+        state_irritation = self._clamp01(getattr(state, "irritation", 0.0)) # irritation có thể đề cập đến mức độ khó chịu hoặc bực bội của ERIS trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
+        state_protectiveness = self._clamp01(getattr(state, "protectiveness", 0.0)) # protectiveness có thể đề cập đến mức độ bảo vệ hoặc phòng thủ của ERIS trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
+        state_confidence = self._clamp01(getattr(state, "confidence", 0.0)) # confidence có thể đề cập đến mức độ tự tin của ERIS trong việc hiểu hoặc xử lý tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
+        state_fatigue = self._clamp01(getattr(state, "fatigue", 0.0)) # fatigue có thể đề cập đến mức độ mệt mỏi hoặc kiệt sức của ERIS trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
+        state_tenderness = self._clamp01(getattr(state, "tenderness", 0.0)) # tenderness có thể đề cập đến mức độ dịu dàng hoặc quan tâm của ERIS trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
+        state_silence_pressure = self._clamp01(getattr(state, "silence_pressure", 0.0)) # silence_pressure có thể đề cập đến mức độ áp lực hoặc căng thẳng mà ERIS cảm thấy khi phải giữ im lặng hoặc không phản hồi trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
+        state_curiosity = self._clamp01(getattr(state, "curiosity", 0.0)) # curiosity có thể đề cập đến mức độ tò mò hoặc mong muốn khám phá của ERIS trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
 
         threat = self._estimate_threat(
             state_protectiveness=state_protectiveness,
@@ -62,6 +71,7 @@ class AppraisalEngine:
             max(
                 state_arousal,
                 broadcast_score,
+                resonance_score * 0.36,
                 threat,
                 drift * 0.74,
                 0.32 if direct_user else 0.0,
@@ -123,10 +133,21 @@ class AppraisalEngine:
             state_fatigue=state_fatigue,
             silence_pressure=state_silence_pressure,
         )
+        if resonance_layer == "relationship":
+            intimacy = self._clamp01(intimacy + resonance_score * 0.16)
+        elif resonance_layer == "procedural":
+            threat = self._clamp01(threat + resonance_appraisal * 0.16)
+            protectiveness = self._clamp01(protectiveness + resonance_appraisal * 0.14)
+        elif resonance_layer == "episodic":
+            arousal = self._clamp01(max(arousal, resonance_score * 0.42))
+        if resonance_silence > 0.0:
+            certainty = self._clamp01(certainty - resonance_silence * 0.10)
+            fatigue = self._clamp01(fatigue + resonance_silence * 0.07)
         tenderness = self._clamp01(
             state_tenderness * 0.72
             + warmth * 0.22
             + intimacy * 0.36
+            + (resonance_score * 0.08 if resonance_layer == "relationship" else 0.0)
             + (0.10 if attachment_cue else 0.0)
             + (0.08 if social_scene else 0.0)
             - threat * 0.10
@@ -159,6 +180,7 @@ class AppraisalEngine:
             f"ti_mode={mode or 'unknown'}",
             f"fe_intent={fe_intent or 'unknown'}",
             f"broadcast={broadcast_label or 'none'}:{broadcast_score:.2f}",
+            f"memory_resonance={resonance_layer or 'none'}:{resonance_score:.2f}",
             f"internal_state_focus={kind or 'unknown'}",
             f"internal_attachment={state_attachment:.2f}",
         )

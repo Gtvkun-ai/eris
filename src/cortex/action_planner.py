@@ -1,4 +1,4 @@
-from .contracts import CognitiveActionPlan
+from .contracts import CognitiveActionPlan, SelfState
 
 
 ACTION_SPACE = (
@@ -44,6 +44,7 @@ class ActionPlanner:
         system_action: str = "",
         notes: tuple[str, ...] = (),
         concrete_signals: tuple[str, ...] = (),
+        self_state: SelfState | None = None,
     ) -> CognitiveActionPlan:
         speech_act = self._choose_speech_act(
             channel=channel,
@@ -88,6 +89,9 @@ class ActionPlanner:
             speech_act=speech_act,
             ti_report=ti_report,
             system_action=system_action,
+            channel=channel,
+            force_speak=force_speak,
+            self_state=self_state,
         )
         return CognitiveActionPlan(
             should_speak=should_speak,
@@ -98,7 +102,7 @@ class ActionPlanner:
             animation_hint=animation_hint,
             system_action=system_action,
             risk_flags=risk_flags,
-            notes=tuple(notes),
+            notes=self._append_self_state_notes(notes, self_state),
         )
 
     def _choose_speech_act(
@@ -268,17 +272,59 @@ class ActionPlanner:
             return proposed_reason or "Planner selected action with risk flags: " + ", ".join(risk_flags)
         return proposed_reason or f"Planner selected {speech_act}."
 
-    def _animation_hint(self, *, speech_act: str, ti_report, system_action: str) -> str:
+    def _animation_hint(
+        self,
+        *,
+        speech_act: str,
+        ti_report,
+        system_action: str,
+        channel: str,
+        force_speak: bool,
+        self_state: SelfState | None,
+    ) -> str:
         fallback = str(getattr(ti_report, "animation_hint", "") or "stand")
         if system_action == "get_now_playing":
             return "read"
         if system_action in {"open_url", "focus_window", "launch_app"}:
             return "stand_walk"
+        state_label = str(getattr(self_state, "state_label", "") or "")
+        embodiment = str(getattr(self_state, "embodiment_bias", "") or "")
+        explicit = channel in {"chat", "force_speak"} or force_speak
+        expressive_acts = {
+            "tease",
+            "random_chatter",
+            "inner_whim",
+            "curious_question",
+            "relational_checkin",
+            "light_muse",
+            "reassure",
+        }
+        if state_label == "overloaded" and not explicit:
+            if speech_act in expressive_acts:
+                return "stand"
+            if speech_act in {"observe", "telemetry_comment", "vision_comment", "protect", "soft_boundary"}:
+                return "read" if fallback == "read" else "stand"
         if speech_act == "protect":
             return fallback or "read"
         if speech_act == "withdraw":
             return "stand"
+        if state_label == "engaged" or embodiment == "expressive":
+            if speech_act in {"relational_checkin", "reassure"}:
+                return "affection"
+            if speech_act in {"inner_whim", "random_chatter", "curious_question", "light_muse", "tease"}:
+                return fallback if fallback != "stand" else "hop"
         return fallback
+
+    def _append_self_state_notes(self, notes: tuple[str, ...], self_state: SelfState | None) -> tuple[str, ...]:
+        merged = list(notes or ())
+        if self_state is not None and getattr(self_state, "state_label", ""):
+            merged.append(f"self_state={self_state.state_label}")
+            merged.append(f"self_initiative_bias={float(self_state.initiative_bias):.2f}")
+            if self_state.brevity_bias:
+                merged.append(f"self_brevity={self_state.brevity_bias}")
+            if self_state.embodiment_bias:
+                merged.append(f"self_embodiment={self_state.embodiment_bias}")
+        return tuple(dict.fromkeys(str(item) for item in merged if str(item or "").strip()))
 
     def _broadcast_has_signal(self, broadcast) -> bool:
         if broadcast is None:
@@ -287,6 +333,7 @@ class ActionPlanner:
             "low_salience",
             "cycle_channel",
             "user_force_speak",
+            "substrate_disturbance",
             "resource_pressure",
             "active_window",
             "focus_context",

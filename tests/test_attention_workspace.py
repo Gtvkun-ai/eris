@@ -120,6 +120,59 @@ class AttentionWorkspaceTests(unittest.TestCase):
         self.assertGreater(candidate.score_parts["novelty"], 0.8)
         self.assertGreater(candidate.score_parts["user_relevance"], 0.4)
 
+    def test_cognitive_momentum_can_reenter_attention_when_alone(self):
+        percepts = (
+            PerceptEvent(
+                kind="active_window",
+                content="Visual Studio Code",
+                source="telemetry",
+                confidence=0.72,
+                novelty_hint="ambient_context",
+            ),
+            PerceptEvent(
+                kind="cognitive_momentum",
+                content="thought=thought_1; mode=associative_drift; topic=project_eris_tests",
+                evidence=("reactivations=1", "momentum=0.72"),
+                confidence=0.86,
+                source="thought_stream",
+                novelty_hint="cognitive_momentum",
+            ),
+        )
+
+        candidates, broadcast = self.workspace.select(percepts)
+
+        self.assertEqual(candidates[0].label, "cognitive_momentum")
+        self.assertEqual(broadcast.label, "cognitive_momentum")
+        self.assertEqual(broadcast.items[0].source, "thought_stream")
+
+    def test_cognitive_momentum_does_not_override_current_signal(self):
+        percepts = (
+            PerceptEvent(
+                kind="cognitive_momentum",
+                content="thought=thought_1; mode=associative_drift; topic=project_eris_tests",
+                evidence=("reactivations=2", "momentum=0.91"),
+                confidence=1.0,
+                source="thought_stream",
+                novelty_hint="cognitive_momentum",
+            ),
+            PerceptEvent(
+                kind="vision_fact",
+                content="terminal shows a Python traceback",
+                evidence=("vision_facts_v1",),
+                confidence=0.86,
+                source="vision",
+                novelty_hint="new_screen_fact",
+            ),
+        )
+
+        _, broadcast = self.workspace.select(
+            percepts,
+            snapshot=SimpleNamespace(active_window_kind="coding"),
+        )
+
+        self.assertEqual(broadcast.label, "vision_fact")
+        self.assertNotIn("cognitive_momentum", {item.label for item in broadcast.items})
+
 
 if __name__ == "__main__":
     unittest.main()

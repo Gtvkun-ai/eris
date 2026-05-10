@@ -562,11 +562,19 @@ class LlmService:
         lowered_ti = (ti_context or "").lower()
         is_resource_guard = "resource_guard" in lowered_ti
         is_inner_thought = "innerthought mode" in lowered_ti or "speechcore mode" in lowered_ti
+        is_random_chatter = "inner_intent=random_chatter" in lowered_ti or "speech_act=random_chatter" in lowered_ti
         if is_inner_thought:
             intent_guidance = (
                 "speech_intent=inner_thought. Ngài đang yêu cầu sự hiện diện, không phải báo cáo màn hình. "
                 "Nếu speech_evidence=<none>, hãy tự chọn một chủ đề xã hội nhỏ từ relationship_memory, gu/sở thích, "
-                "một câu hỏi thật, hoặc một ý tò mò an toàn; không thừa nhận thiếu telemetry như nội dung chính."
+                "một câu hỏi thật, hoặc một ý tò mò an toàn; không thừa nhận thiếu telemetry như nội dung chính. "
+                "Intent contracts: inner_intent=curious_question must produce one real question; "
+                "inner_intent=inner_whim must produce one short thought, not refusal/no-signal wording; "
+                "inner_intent=random_chatter must produce a mundane, playful, concrete one-liner, not meta explanation. "
+                "For random_chatter: do not be poetic; do not mention stories, listening, silence, screen, or logs; "
+                "prefer mundane, playful, concrete one-liners; it may be slightly absurd, but not emotional or dramatic. "
+                "Ban phrase families: lui lai, khong can noi gi, khong co gi de noi, Ngai cu lam viec, "
+                "cau chuyen nho, mot nguoi nghe, khong can man hinh, dong log kho khan, ngoi nhin log."
             )
         allows_muse = "pattern_muse" in lowered_ti
         avoid_line = re.sub(r"\s+", " ", (avoid_text or "").strip())[:180]
@@ -608,7 +616,14 @@ class LlmService:
                 " SpeechCore override: thiếu telemetry không có nghĩa là thiếu chủ đề. "
                 "Hãy tìm một chủ đề xã hội nhỏ từ relationship_memory, gu/sở thích, một câu hỏi thật, hoặc một ý tò mò an toàn. "
                 "Không trả lời bằng 'không có tín hiệu', 'không có gì để nói', 'không có gì mới', hoặc hỏi lại 'Ngài muốn tôi nói gì'. "
+                "Không dùng các cụm lặp kiểu lui lai, khong can noi gi, Ngai cu lam viec, cau chuyen nho, mot nguoi nghe, "
+                "khong can man hinh, dong log kho khan, hoặc ngoi nhin log. "
                 "topic_seed là hướng chọn chủ đề, không phải câu để sao chép."
+            )
+        if is_random_chatter:
+            user_msg += (
+                " Random_chatter rule: Do not be poetic. Do not mention stories, listening, silence, screen, or logs. "
+                "Prefer mundane, playful, concrete one-liners. It may be slightly absurd, but not emotional or dramatic."
             )
         if is_resource_guard:
             user_msg += " Khi resource_guard đang bật, không tự đảo sang chiêm nghiệm; chỉ nói một câu sát tình trạng máy hoặc chọn im gọn."
