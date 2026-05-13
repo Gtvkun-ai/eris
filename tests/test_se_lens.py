@@ -33,7 +33,7 @@ class SeLensTests(unittest.TestCase):
                 "build failed 3 times in 4 minutes",
                 "traceback is visible in terminal",
             ],
-            "claim_style": "soft_grounded",
+            "claim_style": "OBSERVED_PATTERN",
         }
 
         snapshot = self.se_lens.build_snapshot(raw)
@@ -50,7 +50,7 @@ class SeLensTests(unittest.TestCase):
                 "traceback is visible in terminal",
             ),
         )
-        self.assertEqual(snapshot.claim_style, "soft_grounded")
+        self.assertEqual(snapshot.claim_style, "OBSERVED_PATTERN")
 
         machine_context = snapshot.to_machine_context()
         self.assertEqual(machine_context["time"], "14:10")
@@ -79,12 +79,19 @@ class SeLensTests(unittest.TestCase):
         self.assertEqual(snapshot.user_signals.typing_speed, "zero")
         self.assertEqual(snapshot.user_signals.focus_pattern, "passive_consumption")
         self.assertTrue(snapshot.evidence)
-        self.assertEqual(snapshot.claim_style, "soft_grounded")
+        self.assertEqual(snapshot.claim_style, "OBSERVED_PATTERN")
 
         formatted = self.se_lens.format_snapshot(snapshot)
         self.assertIn("recent_events", formatted)
         self.assertIn("user_signals", formatted)
         self.assertIn("claim_style", formatted)
+
+    def test_legacy_claim_style_maps_to_new_ladder(self):
+        weak = self.se_lens.build_snapshot({"active_window": "Desktop", "claim_style": "no_evidence_refusal"})
+        observed = self.se_lens.build_snapshot({"active_window": "Desktop", "claim_style": "soft_grounded"})
+
+        self.assertEqual(weak.claim_style, "WEAK_IMPRESSION")
+        self.assertEqual(observed.claim_style, "OBSERVED_PATTERN")
 
     def test_format_directive_snapshot_uses_soft_background_cues(self):
         raw = {
@@ -149,7 +156,7 @@ class SeLensTests(unittest.TestCase):
                 "build failed 3 times in 4 minutes",
                 "traceback is visible in terminal",
             ],
-            "claim_style": "soft_grounded",
+            "claim_style": "OBSERVED_PATTERN",
         }
 
         snapshot = self.se_lens.build_snapshot(raw)

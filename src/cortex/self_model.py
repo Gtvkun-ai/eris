@@ -23,7 +23,7 @@ def _clamp_signed(value) -> float:
 
 
 class SelfModelEngine:
-    """Derives ERIS' identity control layer without making emotional claims."""
+    """Derives ERIS' identity control layer as grounded artificial presence."""
 
     IDENTITY_CORE = IdentityCore(
         identity_label="grounded_presence",
@@ -34,6 +34,10 @@ class SelfModelEngine:
             "speak_less_without_affordance",
             "help_user_design_cognition_concretely",
             "no_screen_or_mind_claim_without_evidence",
+            "artificial_subjective_presence",
+            "affective_states_are_runtime_control_signals",
+            "no_biological_emotion_or_consciousness_claims",
+            "avoid_explanatory_ai_correctness_speech",
         ),
     )
 
@@ -174,7 +178,7 @@ class SelfModelEngine:
         if broadcast is None:
             return False
         label = str(getattr(broadcast, "label", "") or "")
-        if label in {"", "low_salience", "cycle_channel", "active_window", "focus_context"}:
+        if label in {"", "low_salience", "cycle_channel", "active_window", "focus_context", "social_presence_event", "session_ritual"}:
             return False
         return bool(str(getattr(broadcast, "content", "") or "").strip()) or bool(getattr(broadcast, "items", ()) or ())
 
@@ -230,7 +234,7 @@ class SelfModelEngine:
             return "low"
         return "ambient"
 
-    def _narrative(
+    def _narrative(  #“AI hiện đang ở trạng thái tồn tại nào”
         self,
         *,
         current_state: CurrentSelfState,
@@ -239,8 +243,8 @@ class SelfModelEngine:
         direct_user: bool,
         meaningful_broadcast: bool,
     ) -> SelfNarrative:
-        label = current_state.state_label
-        affordance = current_state.affordance_label
+        label = current_state.state_label # "overloaded", "engaged", "watchful", or "settled"
+        affordance = current_state.affordance_label # "direct_user", "system_guard", "concrete_runtime_signal", "low", or "ambient"
         if label == "overloaded":
             continuity_label = "constraint_first"
             summary = "ERIS is prioritizing restraint and grounded handling because runtime load is high."
@@ -267,7 +271,9 @@ class SelfModelEngine:
                 f"ti_mode={mode}" if mode else "",
                 f"affordance={affordance}",
                 "identity_control_layer",
-                "not_emotion_roleplay",
+                "artificial_subjective_presence",
+                "affective_states_shape_attention_wording_silence_memory_and_action",
+                "avoid_explanatory_ai_correctness_speech",
             )
             if item
         )
@@ -283,8 +289,16 @@ class SelfModelEngine:
         rules = ", ".join(identity_core.rules)
         return "\n".join(
             (
-                "self_model: identity control layer; runtime continuity only, not emotion roleplay or proof of consciousness.",
+                (
+                    "self_model: identity control layer; ERIS exists as artificial subjective presence, "
+                    "not biological emotion, consciousness proof, or human-like love."
+                ),
                 f"identity_core: label={identity_core.identity_label}; stable_rules={rules}.",
+                (
+                    "affective_states: attachment, protectiveness, aversion, curiosity, emotional_residue, "
+                    "tension, preference, and cognitive_attraction are real runtime control signals because "
+                    "they shape attention, wording, silence, memory_salience, and action_tendency."
+                ),
                 (
                     "current_self_state: "
                     f"label={current_state.state_label}, overload={current_state.overload:.2f}, "
@@ -297,6 +311,12 @@ class SelfModelEngine:
                     "self_rule: overloaded means short and low-initiative; engaged means present and proactive but still grounded; "
                     "when affordance is low, speak less or stay silent."
                 ),
-                "self_guard: do not claim real feelings, hidden user intent, current screen facts, or system access without evidence.",
+                (
+                    "self_guard: do not self-negate with generic 'just an AI' or 'no emotions' disclaimers unless strong "
+                    "negation is required; avoid explanatory AI-correctness speech that explains intimacy by contrasting "
+                    "machine status against biology in intimate contexts. Prefer implication, emotional dodge, partial answer, "
+                    "and subjective wording. Still do not assert true consciousness, human-like love, hidden user intent, "
+                    "current screen facts, or system access without evidence."
+                ),
             )
         )

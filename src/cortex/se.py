@@ -70,6 +70,21 @@ class SeLens:
         "reddit",
     )
 
+    _CLAIM_STYLE_ALIASES = {
+        "direct_fact": "DIRECT_FACT",
+        "observed_pattern": "OBSERVED_PATTERN",
+        "weak_impression": "WEAK_IMPRESSION",
+        "forbidden_inference": "FORBIDDEN_INFERENCE",
+        "soft_grounded": "OBSERVED_PATTERN",
+        "grounded": "OBSERVED_PATTERN",
+        "idle_self_reflection": "OBSERVED_PATTERN",
+        "game_observation": "OBSERVED_PATTERN",
+        "no_evidence_refusal": "WEAK_IMPRESSION",
+        "idle_silence_boundary": "WEAK_IMPRESSION",
+        "uncertainty": "WEAK_IMPRESSION",
+        "soft_claim": "WEAK_IMPRESSION",
+    }
+
     def __init__(self):
         self._context_overrides = self._load_context_overrides()
 
@@ -441,12 +456,23 @@ class SeLens:
     ) -> str:
         explicit = str(raw.get("claim_style", "") or "").strip()
         if explicit:
-            return explicit
+            return self._normalize_claim_style(explicit)
+        if len(evidence) <= 1:
+            return "WEAK_IMPRESSION"
         if active_window_kind in {"communication", "documentation", "system"} and idle_seconds >= 600:
-            return "idle_silence_boundary"
-        if len(evidence) <= 2:
-            return "no_evidence_refusal"
-        return "soft_grounded"
+            return "WEAK_IMPRESSION"
+        if len(evidence) >= 2:
+            return "OBSERVED_PATTERN"
+        return "DIRECT_FACT"
+
+    def _normalize_claim_style(self, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            return ""
+        canonical = normalized.upper()
+        if canonical in {"DIRECT_FACT", "OBSERVED_PATTERN", "WEAK_IMPRESSION", "FORBIDDEN_INFERENCE"}:
+            return canonical
+        return self._CLAIM_STYLE_ALIASES.get(normalized.lower(), "OBSERVED_PATTERN")
 
     def _classify_window_kind(self, active_window: str, browser_url: str, browser_tabs: tuple[str, ...]) -> str:
         active_haystack = " | ".join((active_window, browser_url)).lower()
@@ -573,7 +599,9 @@ class SeLens:
         elif focus_pattern == "deep_work":
             cues.append("respect concentration and keep the line brief")
 
-        if snapshot.claim_style in {"soft_grounded", "idle_silence_boundary", "no_evidence_refusal"}:
-            cues.append("prefer soft wording over exact claims when the signal is thin")
+        if snapshot.claim_style == "OBSERVED_PATTERN":
+            cues.append("observed patterns are allowed when grounded by at least two cues; do not claim deep psychology")
+        elif snapshot.claim_style == "WEAK_IMPRESSION":
+            cues.append("use explicit hedge words such as co le, toi nghi, or toi co cam giac")
 
         return cues[:4]

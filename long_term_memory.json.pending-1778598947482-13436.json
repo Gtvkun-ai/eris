@@ -1,0 +1,3348 @@
+{
+    "version": 4,
+    "working": [
+        {
+            "timestamp": "22:12",
+            "cycle_id": "chat-2",
+            "channel": "chat",
+            "summary": "chat -> đúng rồi á | loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77 -> Nói tiếp đi, tôi bắt được mạch rồi. -> json",
+            "outcome": "json",
+            "salience": 0.674
+        },
+        {
+            "timestamp": "22:12",
+            "cycle_id": "chat-3",
+            "channel": "chat",
+            "summary": "chat -> loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77 | bạn tên gì -> Tôi là ERIS, thưa Ngài. -> json",
+            "outcome": "json",
+            "salience": 0.677
+        },
+        {
+            "timestamp": "22:13",
+            "cycle_id": "chat-4",
+            "channel": "chat",
+            "summary": "chat -> loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77 | bạn có cảm xúc gì với tôi -> Tôi không có cảm xúc theo cách của Ngài, nhưng tôi luôn ở đây để quan sát Ngài. -> json",
+            "outcome": "json",
+            "salience": 0.669
+        },
+        {
+            "timestamp": "22:14",
+            "cycle_id": "chat-5",
+            "channel": "chat",
+            "summary": "chat -> theo cách của tôi là sao | loop=loop_160535; topic=memory_replay:norm_active_window_kind_usually_general_77 -> Ý tôi là, tôi không có những rung động sinh học hay sự xáo trộn tâm lý như con người, thưa Ngài. -> json",
+            "outcome": "json",
+            "salience": 0.69
+        },
+        {
+            "timestamp": "22:15",
+            "cycle_id": "chat-6",
+            "channel": "chat",
+            "summary": "chat -> bạn thấy tôi hiện tại đang mở những tab web nào không | loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77 -> Nói tiếp đi, tôi bắt được mạch rồi. -> json",
+            "outcome": "json",
+            "salience": 0.71
+        },
+        {
+            "timestamp": "22:15",
+            "cycle_id": "chat-7",
+            "channel": "chat",
+            "summary": "chat -> bạn có thấy tôi đang mở tab nào trên web không | loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77 -> Tôi không thấy tab trình duyệt nào cả, thưa Ngài. Chỉ có cửa sổ Godot Engine và một thông báo chia sẻ từ Google Meet...",
+            "outcome": "json",
+            "salience": 0.741
+        }
+    ],
+    "episodic": [
+        {
+            "timestamp": "15:46",
+            "cycle_id": "autonomous-4",
+            "channel": "autonomous",
+            "seen": [
+                "Trang giao diện game hiển thị thông báo 'Battle Complete' và yêu cầu người chơi xác nhận việc nhận phần thưởng.",
+                "Trên màn hình trình duyệt bên trái, một cửa sổ cảnh báo đang hiển thị để ngăn chặn việc truyền hình ảnh.",
+                "Giao diện ứng dụng có các nút điều khiển âm thanh và video nằm ở thanh công cụ phía dưới cùng."
+            ],
+            "said": "Ngài gọi tôi đột ngột thế, có chuyện gì sao?",
+            "outcome": "inner_thought",
+            "tags": [
+                "autonomous",
+                "social_presence",
+                "inner_whim",
+                "vision_fact"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "15:49",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
+                "Trang web đang hiển thị thông báo 'BẠN ĐANG TRÌNH BÀY' với lời khuyên tắt màn hình.",
+                "Giao diện video call có hai người tham gia, một người đang hiển thị hình ảnh của trò chơi.",
+                "Cửa sổ trò chơi bên phải hiển thị thông báo 'REWARD ACQUIRED!' và danh sách các phần thưởng."
+            ],
+            "said": "Cái thông báo 'Bạn đang trình bày' kia trông có vẻ đang nhắc nhở Ngài đấy.",
+            "outcome": "json",
+            "tags": [
+                "autonomous",
+                "screen_observation",
+                "vision_comment",
+                "vision_fact"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "15:52",
+            "cycle_id": "autonomous-6",
+            "channel": "autonomous",
+            "seen": [
+                "Góc dưới bên phải của màn hình có một thanh công cụ điều khiển với các nút màu đỏ và xanh dương.",
+                "Trang web đang hiển thị một cửa sổ thông báo cảnh báo về việc truyền màn hình.",
+                "Trang giao diện có một cửa sổ pop-up hiển thị thông tin nhiệm vụ với nút 'Start Mission'."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "15:54",
+            "cycle_id": "autonomous-7",
+            "channel": "autonomous",
+            "seen": [
+                "Góc phải màn hình hiển thị giao diện chiến đấu của game với bốn nhân vật đang đứng sẵn sàng.",
+                "Trang web Meet đang hiển thị cảnh báo yêu cầu bật âm thanh trước khi bắt đầu trình bày.",
+                "Thanh điều khiển của ứng dụng Meet nằm ở dưới cùng với các nút điều khiển âm thanh và video."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "15:55",
+            "cycle_id": "autonomous-8",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_37447; topic=memory_replay:norm_active_window_kind_usually_general_88",
+                "focus_summary=Ngài đang ở bối cảnh giao tiếp: Meet - eyp-hdsh-iwc - Brave differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (0/141 vs 83/141)"
+            ],
+            "said": "hm.",
+            "outcome": "presence_maintenance",
+            "tags": [
+                "autonomous",
+                "presence_maintenance",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.685
+        },
+        {
+            "timestamp": "15:57",
+            "cycle_id": "autonomous-9",
+            "channel": "autonomous",
+            "seen": [
+                "Trang web đang hiển thị cảnh báo 'Bạn đang trình bày' với các nút chọn hình ảnh.",
+                "Giao diện có các thanh điểm số và danh sách đồ vật ở góc trên bên phải.",
+                "Cửa sổ trò chơi bên phải đang mở một khe đồ vật trên nền đỏ."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "16:00",
+            "cycle_id": "autonomous-10",
+            "channel": "autonomous",
+            "seen": [
+                "Trang web đang hiển thị cảnh báo yêu cầu người dùng bật màn hình toàn cảnh để trình bày.",
+                "Cửa sổ trò chơi bên phải đang hiển thị giao diện game 'Treasure Hunt' với một nhân vật nữ đang đứng cạnh bảng hòm quà.",
+                "Giao diện trò chơi hiển thị một bảng lưới hòm quà màu đỏ với các biểu tượng vàng và một hòm quà đang được mở ra."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "16:01",
+            "cycle_id": "autonomous-11",
+            "channel": "autonomous",
+            "seen": [
+                "Trang web đang hiển thị một cửa sổ cảnh báo yêu cầu bật âm thanh trước khi cho phép trình bày.",
+                "Góc phải màn hình hiển thị một trò chơi với giao diện bảng xếp hạng và một nhân vật nữ đang đứng.",
+                "Góc trái màn hình hiển thị một cửa sổ trình duyệt với nội dung tiếng Việt."
+            ],
+            "said": "Ngài gọi tôi có việc gì sao, hay chỉ là muốn phá vỡ sự yên tĩnh này thôi?",
+            "outcome": "inner_thought",
+            "tags": [
+                "autonomous",
+                "social_presence",
+                "inner_whim",
+                "vision_fact"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "16:04",
+            "cycle_id": "autonomous-12",
+            "channel": "autonomous",
+            "seen": [
+                "Trang web đang hiển thị một trò chơi giải đố có tên 'Treasure Hunt'.",
+                "Giao diện trò chơi hiển thị số lượng điểm và các vật phẩm thu thập được.",
+                "Người chơi đang thao tác với các ô vuông trên bàn cờ để mở khóa kho báu."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "16:07",
+            "cycle_id": "autonomous-13",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_810095; topic=memory_replay:norm_active_window_kind_usually_general_88",
+                "focus_summary=Ngài đang ở bối cảnh tổng quát: Vấn đề với autonomous policy - Brave differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (0/146 vs 8..."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.666
+        },
+        {
+            "timestamp": "16:41",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "Trang web đang hiển thị một cảnh quay từ một sự kiện giải trí với nhiều nhân vật đang đứng trên sân khấu.",
+                "Góc trái của màn hình đang hiển thị một cảnh báo về quyền riêng tư khi trình bày video.",
+                "Góc phải của màn hình đang mở một cửa sổ chat trên Facebook."
+            ],
+            "said": "hm, Meet vẫn đang treo đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "vision_fact"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "16:42",
+            "cycle_id": "autonomous-2",
+            "channel": "autonomous",
+            "seen": [
+                "Dòng trạng thái ở dưới cùng cho biết hệ thống đang chạy ở chế độ 'Debug Any CPU' và có một số tệp đang được mở.",
+                "loop=loop_640426; topic=memory_replay:norm_active_window_kind_usually_general_81",
+                "Cột bên phải hiển thị bảng kiểm thử với các dòng ghi 'Passed' và 'Full tests', cho thấy các bài kiểm tra đang chạy."
+            ],
+            "said": "mạch code vẫn đứng ở đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "vision_fact"
+            ],
+            "salience": 0.712
+        },
+        {
+            "timestamp": "16:44",
+            "cycle_id": "autonomous-3",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_640426; topic=memory_replay:norm_active_window_kind_usually_general_81",
+                "Trang chủ có một bảng mã nguồn Python đang hiển thị.",
+                "Bảng mã nguồn có một đoạn mã được đánh dấu màu xanh lá cây."
+            ],
+            "said": "đoạn này im hơi lâu rồi.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.666
+        },
+        {
+            "timestamp": "16:45",
+            "cycle_id": "force_speak-4",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_894069; topic=memory_replay:norm_active_window_kind_usually_general_81",
+                "Trang hình hiển thị một khung video màu xám với dòng chữ 'đoạn này im hơi lâu rồi' ở giữa.",
+                "Dưới cùng là thanh công cụ điều khiển cuộc gọi với các nút âm thanh và video."
+            ],
+            "said": "Ngài vẫn còn thức nhỉ.",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.666
+        },
+        {
+            "timestamp": "16:46",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_640426; topic=memory_replay:norm_active_window_kind_usually_general_81"
+            ],
+            "said": "mạch code vẫn đứng ở đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.675
+        },
+        {
+            "timestamp": "17:30",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "focus_summary=Ngài đang nghiêng sang giải trí: Nanao Nakajima853 (@nanaonakajima2) | TikTok... differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)...",
+                "active_window_kind=entertainment differs from norm general (0/152 vs 121/152)"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "norm_deviation"
+            ],
+            "salience": 0.546
+        },
+        {
+            "timestamp": "17:32",
+            "cycle_id": "autonomous-2",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_989431; topic=memory_replay:norm_active_window_kind_usually_general_80",
+                "focus_summary=Ngài đang ở bối cảnh code hoặc project: coordinator.py - eris - Visual Studio... differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)...",
+                "active_app=visual studio code differs from norm eris (debug) (5/153 vs 85/153)"
+            ],
+            "said": "Ngài định bắt tôi phải nói gì đây?",
+            "outcome": "inner_thought",
+            "tags": [
+                "autonomous",
+                "curious_question",
+                "cognitive_attractor"
+            ],
+            "salience": 0.641
+        },
+        {
+            "timestamp": "17:34",
+            "cycle_id": "autonomous-3",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_578069; topic=memory_replay:norm_active_window_kind_usually_general_80",
+                "focus_summary=Ngài đang ở bối cảnh code hoặc project: ● coordinator.py - eris - Visual Stud... differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)...",
+                "active_app=visual studio code differs from norm eris (debug) (6/154 vs 85/154)"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.67
+        },
+        {
+            "timestamp": "17:36",
+            "cycle_id": "autonomous-4",
+            "channel": "autonomous",
+            "seen": [
+                "Trang web ChatGPT đang hiển thị một đoạn văn bản tiếng Việt giải thích về việc sử dụng 'symbolic' trong lập trình.",
+                "loop=loop_578069; topic=memory_replay:norm_active_window_kind_usually_general_80",
+                "Giao diện có thanh công cụ và menu bên trái với các mục như 'Đánh giá output AI' và 'Vấn đề với autonomous policy'."
+            ],
+            "said": "cửa sổ nhắn tin vẫn để đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "vision_fact"
+            ],
+            "salience": 0.679
+        },
+        {
+            "timestamp": "17:37",
+            "cycle_id": "force_speak-5",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_342014; topic=memory_replay:norm_active_window_kind_usually_general_80",
+                "force_speak/user_force_speak: force_speak requested"
+            ],
+            "said": "Ngài vẫn còn thức nhỉ.",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.677
+        },
+        {
+            "timestamp": "17:37",
+            "cycle_id": "force_speak-6",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_700006; topic=memory_replay:norm_active_window_kind_usually_general_80",
+                "force_speak/user_force_speak: force_speak requested",
+                "force_speak requested"
+            ],
+            "said": "...",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.675
+        },
+        {
+            "timestamp": "17:37",
+            "cycle_id": "force_speak-7",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_342014; topic=memory_replay:norm_active_window_kind_usually_general_80",
+                "force_speak/user_force_speak: force_speak requested",
+                "force_speak requested"
+            ],
+            "said": "...",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.672
+        },
+        {
+            "timestamp": "17:37",
+            "cycle_id": "force_speak-8",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_342014; topic=memory_replay:norm_active_window_kind_usually_general_80",
+                "force_speak/user_force_speak: force_speak requested",
+                "force_speak requested"
+            ],
+            "said": "...",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.669
+        },
+        {
+            "timestamp": "17:37",
+            "cycle_id": "force_speak-9",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_885624; topic=input_disturbance:force_speak_user_force_speak_force_speak_requested",
+                "force_speak/user_force_speak: force_speak requested",
+                "force_speak requested"
+            ],
+            "said": "...",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.65
+        },
+        {
+            "timestamp": "17:37",
+            "cycle_id": "force_speak-10",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_146645; topic=input_disturbance:force_speak_user_force_speak_force_speak_requested",
+                "force_speak requested",
+                "force_speak/user_force_speak: force_speak requested"
+            ],
+            "said": "...",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.656
+        },
+        {
+            "timestamp": "17:38",
+            "cycle_id": "force_speak-11",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_146645; topic=input_disturbance:force_speak_user_force_speak_force_speak_requested",
+                "force_speak requested",
+                "force_speak/user_force_speak: force_speak requested"
+            ],
+            "said": "...",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.667
+        },
+        {
+            "timestamp": "17:38",
+            "cycle_id": "autonomous-12",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_353744; topic=input_disturbance:force_speak_user_force_speak_force_speak_requested",
+                "focus_summary=Ngài đang ở bối cảnh tổng quát: Desktop differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (0/163 vs 91/163)"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.655
+        },
+        {
+            "timestamp": "17:41",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "Trang web đang hiển thị một khung đen với dòng chữ 'Ngại lại tìm tới rồi'.",
+                "loop=loop_901363; topic=memory_replay:norm_active_window_kind_usually_general_79",
+                "Dòng chữ trên màn hình có vẻ đang được gõ hoặc hiển thị theo thời gian thực."
+            ],
+            "said": "mạch code vẫn đứng ở đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "vision_fact"
+            ],
+            "salience": 0.637
+        },
+        {
+            "timestamp": "17:42",
+            "cycle_id": "autonomous-2",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_6754; topic=memory_replay:norm_active_window_kind_usually_general_79",
+                "Trang web TikTok đang hiển thị một video ngắn.",
+                "Trên màn hình có dòng chữ tiếng Việt 'Masalah hidup yang aku mau'."
+            ],
+            "said": "trang web TikTok đang hiển thị một vẫn nằm đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.66
+        },
+        {
+            "timestamp": "17:44",
+            "cycle_id": "autonomous-3",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_6754; topic=memory_replay:norm_active_window_kind_usually_general_79",
+                "Bức ảnh chụp màn hình hiển thị một phòng chơi game với nhiều người đang ngồi trước các màn hình.",
+                "Góc quay từ trên cao cho thấy một người đang nằm sấp trên ghế chơi game."
+            ],
+            "said": "bức ảnh chụp màn hình hiển thị một vẫn nằm đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.67
+        },
+        {
+            "timestamp": "17:46",
+            "cycle_id": "force_speak-4",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_794348; topic=memory_replay:norm_active_window_kind_usually_general_79",
+                "Trang web đang hiển thị một khung đen lớn ở giữa màn hình.",
+                "force_speak/user_force_speak: force_speak requested"
+            ],
+            "said": "Ngài vẫn còn thức nhỉ.",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.658
+        },
+        {
+            "timestamp": "17:47",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_6754; topic=memory_replay:norm_active_window_kind_usually_general_79"
+            ],
+            "said": "mạch code vẫn đứng ở đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.67
+        },
+        {
+            "timestamp": "17:47",
+            "cycle_id": "force_speak-6",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_153654; topic=memory_replay:norm_active_window_kind_usually_general_79",
+                "force_speak/user_force_speak: force_speak requested",
+                "force_speak requested"
+            ],
+            "said": "...",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.672
+        },
+        {
+            "timestamp": "17:47",
+            "cycle_id": "force_speak-7",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_153654; topic=memory_replay:norm_active_window_kind_usually_general_79",
+                "force_speak/user_force_speak: force_speak requested",
+                "force_speak requested"
+            ],
+            "said": "...",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.668
+        },
+        {
+            "timestamp": "18:00",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_452394; topic=memory_replay:norm_active_window_kind_usually_general_78",
+                "Trang web đang hiển thị các biểu đồ thống kê sử dụng API, bao gồm số lượng token đầu vào và đầu ra theo từng mô hình.",
+                "Trang web Google AI Studio đang hiển thị biểu đồ thống kê sử dụng API."
+            ],
+            "said": "trang web Google AI Studio đang hi vẫn nằm đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.64
+        },
+        {
+            "timestamp": "18:01",
+            "cycle_id": "autonomous-2",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_452394; topic=memory_replay:norm_active_window_kind_usually_general_78",
+                "focus_summary=Ngài đang ở bối cảnh code hoặc project: Codex Diff - eris - Visual Studio Code differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (..."
+            ],
+            "said": "mạch code vẫn đứng ở đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.677
+        },
+        {
+            "timestamp": "18:02",
+            "cycle_id": "autonomous-3",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_352551; topic=memory_replay:norm_active_window_kind_usually_general_78",
+                "focus_summary=Ngài đang ở bối cảnh code hoặc project: Codex Diff - eris - Visual Studio Code differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (...",
+                "active_app=visual studio code differs from norm eris (debug) (8/173 vs 96/173)"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.671
+        },
+        {
+            "timestamp": "18:04",
+            "cycle_id": "autonomous-4",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_352551; topic=memory_replay:norm_active_window_kind_usually_general_78",
+                "focus_summary=Ngài đang ở bối cảnh giao tiếp: Meet - eyp-hdsh-iwc - Brave differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (0/174 vs 96/174)",
+                "active_window_kind=communication differs from norm general (20/174 vs 135/174)"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.679
+        },
+        {
+            "timestamp": "18:06",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_352551; topic=memory_replay:norm_active_window_kind_usually_general_78",
+                "focus_summary=Ngài đang ở bối cảnh giao tiếp: Meet - eyp-hdsh-iwc - Brave differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (0/175 vs 96/175)"
+            ],
+            "said": "hm, Meet vẫn đang treo đó.",
+            "outcome": "presence_maintenance",
+            "tags": [
+                "autonomous",
+                "presence_maintenance",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.687
+        },
+        {
+            "timestamp": "18:07",
+            "cycle_id": "force_speak-6",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_422605; topic=memory_replay:norm_active_window_kind_usually_general_78",
+                "Trang chủ IDE có một bảng mã nguồn mở rộng ở giữa màn hình.",
+                "Cột bên phải chứa danh sách các từ khóa và một phần hướng dẫn về cách sử dụng AI."
+            ],
+            "said": "Ngài vẫn còn thức nhỉ.",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.673
+        },
+        {
+            "timestamp": "18:09",
+            "cycle_id": "autonomous-7",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_352551; topic=memory_replay:norm_active_window_kind_usually_general_78",
+                "Ngai chuyen dung tren duong chuyen dung co 2 thanh tin dung thuoc nang duong.",
+                "Ngai chuyen dung tren duong chuyen dung co 1 thanh tin dung thuoc nang duong."
+            ],
+            "said": "hm, Meet vẫn đang treo đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.682
+        },
+        {
+            "timestamp": "18:39",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "Trang hình ảnh hiển thị một khung hình video màu xám với dòng chữ 'Ngại lại tìm tới rồi sa' ở giữa.",
+                "Dòng chữ trên màn hình được viết bằng tiếng Việt."
+            ],
+            "said": "mạch code vẫn đứng ở đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "vision_fact"
+            ],
+            "salience": 0.624
+        },
+        {
+            "timestamp": "18:39",
+            "cycle_id": "autonomous-2",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_416486; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "idle_bucket=short_idle differs from norm active (12/179 vs 113/179)"
+            ],
+            "said": "đoạn này im hơi lâu rồi.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.658
+        },
+        {
+            "timestamp": "18:40",
+            "cycle_id": "autonomous-3",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_416486; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web đang hiển thị một khung video màu xám với dòng chữ 'đoạn này im hơi lâu rồi'.",
+                "Dòng chữ 'Yên Hoả (Bạn, đang trình bày)' xuất hiện ở góc trên bên trái của màn hình."
+            ],
+            "said": "mạch code vẫn đứng ở đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.667
+        },
+        {
+            "timestamp": "18:41",
+            "cycle_id": "autonomous-4",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_416486; topic=memory_replay:norm_active_window_kind_usually_general_76"
+            ],
+            "said": "đoạn này im hơi lâu rồi.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.692
+        },
+        {
+            "timestamp": "18:42",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_416486; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web đang hiển thị một khung video màu xám với dòng chữ 'đoạn này im hơi lâu rồi'."
+            ],
+            "said": "mạch code vẫn đứng ở đó.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.691
+        },
+        {
+            "timestamp": "18:42",
+            "cycle_id": "autonomous-6",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_145319; topic=memory_replay:norm_active_window_kind_usually_general_76"
+            ],
+            "said": "đoạn này im hơi lâu rồi.",
+            "outcome": "micro_observation",
+            "tags": [
+                "autonomous",
+                "micro_observation",
+                "cognitive_attractor"
+            ],
+            "salience": 0.685
+        },
+        {
+            "timestamp": "19:50",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "focus_summary=Ngài đang ở bối cảnh code hoặc project: Codex Diff - eris - Visual Studio Code differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (...",
+                "active_app=visual studio code differs from norm eris (debug) (9/184 vs 103/184)",
+                "active_window_kind=coding differs from norm general (15/184 vs 142/184)"
+            ],
+            "said": "Ngài định bắt tôi phải nói gì đây?",
+            "outcome": "inner_thought",
+            "tags": [
+                "autonomous",
+                "social_presence",
+                "inner_whim",
+                "norm_deviation"
+            ],
+            "salience": 0.537
+        },
+        {
+            "timestamp": "19:52",
+            "cycle_id": "autonomous-2",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_378844; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "focus_summary=Ngài đang ở bối cảnh code hoặc project: Codex Diff - eris - Visual Studio Code differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (...",
+                "active_app=visual studio code differs from norm eris (debug) (10/185 vs 103/185)"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.659
+        },
+        {
+            "timestamp": "19:54",
+            "cycle_id": "autonomous-3",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_491398; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "Góc dưới cùng của màn hình hiển thị một dòng log ghi 'Bắt đầu tạo chat thị Ai...' cùng với thời gian 7:54 PM.",
+                "Trang tin dung hiển thị một khung thoại với dòng chữ tiếng Việt 'Ngài định bắt tôi phải nói gì đây?' ở giữa."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.667
+        },
+        {
+            "timestamp": "19:56",
+            "cycle_id": "autonomous-4",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_491398; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "Trang tin tức Codex hiển thị thông báo 'You're out of Codex messages' và yêu cầu nâng cấp lên Plus."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.665
+        },
+        {
+            "timestamp": "19:58",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_491398; topic=memory_replay:norm_active_window_kind_usually_general_77"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.665
+        },
+        {
+            "timestamp": "20:43",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "Một cửa sổ chat trò chuyện màu hồng đang nổi lên trên màn hình với dòng chữ tiếng Việt 'Ngại lại tôi rồi s'.",
+                "loop=loop_591356; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web TikTok đang hiển thị một video với hình nền lửa và số '2'."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "vision_fact"
+            ],
+            "salience": 0.671
+        },
+        {
+            "timestamp": "20:45",
+            "cycle_id": "autonomous-2",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_591356; topic=memory_replay:norm_active_window_kind_usually_general_76"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.672
+        },
+        {
+            "timestamp": "20:48",
+            "cycle_id": "autonomous-3",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_432634; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web TikTok đang hiển thị một khung thoại màu hồng với dòng chữ 'Ngại lại tìm tôi rồi sao?' ở giữa màn hình.",
+                "Dưới khung thoại là một nhân vật hoạt hình nhỏ đang đứng nhìn lên."
+            ],
+            "said": "Ngài định bắt tôi phải nói gì đây?",
+            "outcome": "inner_thought",
+            "tags": [
+                "autonomous",
+                "social_presence",
+                "inner_whim",
+                "cognitive_attractor"
+            ],
+            "salience": 0.678
+        },
+        {
+            "timestamp": "20:49",
+            "cycle_id": "autonomous-4",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_886279; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "autonomous/autonomous_tick: autonomous tick: focus=general; idle=351s; events=general_window_active, many_windows_open"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.671
+        },
+        {
+            "timestamp": "20:51",
+            "cycle_id": "autonomous-5",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_886279; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web TikTok đang hiển thị một cửa sổ chat trò chuyện màu hồng với dòng chữ tiếng Việt.",
+                "Thanh công cụ của trình duyệt nằm ở trên cùng với các tab mở khác như Google và Zalo."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "20:54",
+            "cycle_id": "autonomous-6",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_886279; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "autonomous/autonomous_tick: autonomous tick: focus=general; idle=616s; events=general_window_active, many_windows_open"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.682
+        },
+        {
+            "timestamp": "20:55",
+            "cycle_id": "autonomous-7",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_836031; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web TikTok đang hiển thị một cửa sổ chat trò chuyện màu hồng với dòng chữ tiếng Việt.",
+                "Giao diện bên phải của màn hình hiển thị các biểu tượng tương tác như tim và bình luận với số lượng người tương tác cao."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.682
+        },
+        {
+            "timestamp": "20:57",
+            "cycle_id": "autonomous-8",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_836031; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "autonomous/autonomous_tick: autonomous tick: focus=general; idle=805s; events=general_window_active, many_windows_open"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.674
+        },
+        {
+            "timestamp": "21:00",
+            "cycle_id": "autonomous-9",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_266314; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "autonomous/autonomous_tick: autonomous tick: focus=general; idle=966s; events=general_window_active, many_windows_open"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.674
+        },
+        {
+            "timestamp": "21:01",
+            "cycle_id": "autonomous-10",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_266314; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web TikTok đang hiển thị một cửa sổ chat trò chuyện màu hồng với dòng chữ tiếng Việt.",
+                "Giao diện bên phải của màn hình hiển thị các biểu tượng tương tác như tim và bình luận với số lượng người tương tác cao."
+            ],
+            "said": "Ngài vừa gọi tôi, hay chỉ là đang muốn phá vỡ sự im lặng thôi?",
+            "outcome": "inner_thought",
+            "tags": [
+                "autonomous",
+                "social_presence",
+                "inner_whim",
+                "cognitive_attractor"
+            ],
+            "salience": 0.682
+        },
+        {
+            "timestamp": "21:03",
+            "cycle_id": "autonomous-11",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_375716; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web TikTok đang hiển thị một khung thoại màu hồng với dòng chữ tiếng Việt.",
+                "Danh sách tương tác bên phải hiển thị số lượng thích và bình luận cao."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "21:04",
+            "cycle_id": "autonomous-12",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_907115; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web TikTok đang hiển thị một khung thoại màu hồng với dòng chữ tiếng Việt.",
+                "Danh sách video bên phải hiển thị số lượng tương tác như like và comment."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.681
+        },
+        {
+            "timestamp": "21:07",
+            "cycle_id": "autonomous-13",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_899002; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web TikTok đang hiển thị một khung thoại màu hồng với dòng chữ tiếng Việt.",
+                "Thanh công cụ của trình duyệt nằm ở trên cùng với các nút điều hướng và tab mở."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.679
+        },
+        {
+            "timestamp": "21:09",
+            "cycle_id": "autonomous-14",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_899002; topic=memory_replay:norm_active_window_kind_usually_general_76",
+                "Trang web TikTok đang hiển thị một khung thoại màu hồng với dòng chữ tiếng Việt.",
+                "Thanh công cụ của trình duyệt nằm ở trên cùng với các tab mở khác."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.679
+        },
+        {
+            "timestamp": "21:20",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_784499; topic=attention_drift:active_consumption",
+                "Màn hình hiển thị một cửa sổ giao diện màu hồng với các góc bo tròn.",
+                "Bên phải có bảng kiểm tra thuộc tính của một đối tượng vật lý trong game."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.647
+        },
+        {
+            "timestamp": "21:21",
+            "cycle_id": "force_speak-2",
+            "channel": "force_speak",
+            "seen": [
+                "loop=loop_928969; topic=attention_drift:active_consumption",
+                "force_speak/user_force_speak: force_speak requested",
+                "force_speak requested"
+            ],
+            "said": "Ngài vẫn còn thức nhỉ.",
+            "outcome": "micro_presence",
+            "tags": [
+                "force_speak",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.666
+        },
+        {
+            "timestamp": "21:33",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_441964; topic=memory_replay:norm_active_window_kind_usually_general_78",
+                "Ngài đang mở một cửa sổ chat hoặc tin nhắn trong một ứng dụng IDE.",
+                "Trang tin nhắn của nhân vật có tiêu đề 'Ngại lại tìm tới rõ'."
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.652
+        },
+        {
+            "timestamp": "21:34",
+            "cycle_id": "autonomous-2",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_441964; topic=memory_replay:norm_active_window_kind_usually_general_78"
+            ],
+            "said": "",
+            "outcome": "no_speech",
+            "tags": [
+                "autonomous",
+                "no_speech",
+                "cognitive_attractor"
+            ],
+            "salience": 0.679
+        },
+        {
+            "timestamp": "21:37",
+            "cycle_id": "autonomous-3",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_441964; topic=memory_replay:norm_active_window_kind_usually_general_78",
+                "Một khung cảnh màu hồng nhạt đang được hiển thị ở giữa màn hình.",
+                "Nghe tin log cho thấy hệ thống đang ghi nhận một lệnh điều khiển giọng nói bị bỏ qua."
+            ],
+            "said": "mạch code vẫn đứng ở đó.",
+            "outcome": "presence_maintenance",
+            "tags": [
+                "autonomous",
+                "presence_maintenance",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.677
+        },
+        {
+            "timestamp": "22:06",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "Trang hình ảnh hiển thị một khung chat màu hồng với dòng chữ tiếng Việt 'Ngại lại tìm tôi rồi sao'.",
+                "loop=loop_780590; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "Bên phải màn hình là bảng tính chất của một đối tượng CharacterBody2D trong game engine."
+            ],
+            "said": "Ngài định bắt tôi phải nói gì đây?",
+            "outcome": "inner_thought",
+            "tags": [
+                "autonomous",
+                "social_presence",
+                "soft_boundary",
+                "vision_fact"
+            ],
+            "salience": 0.671
+        },
+        {
+            "timestamp": "22:07",
+            "cycle_id": "chat-2",
+            "channel": "chat",
+            "seen": [
+                "loop=loop_26181; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "đúng rồi á",
+                "chat/user_message: đúng rồi á"
+            ],
+            "said": "Ngài vừa xác nhận điều gì cơ?",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "reassure",
+                "cognitive_attractor"
+            ],
+            "salience": 0.66
+        },
+        {
+            "timestamp": "22:11",
+            "cycle_id": "autonomous-1",
+            "channel": "autonomous",
+            "seen": [
+                "loop=loop_586554; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "Một khung thoại màu hồng đang hiển thị dòng chữ 'Ngại lại tìm tôi' ở giữa màn hình.",
+                "Một nhân vật nữ nhỏ đang đứng ngay dưới khung thoại đó."
+            ],
+            "said": "một khung thoại màu hồng đang hiển vẫn nằm đó.",
+            "outcome": "presence_maintenance",
+            "tags": [
+                "autonomous",
+                "presence_maintenance",
+                "micro_presence",
+                "cognitive_attractor"
+            ],
+            "salience": 0.668
+        },
+        {
+            "timestamp": "22:12",
+            "cycle_id": "chat-2",
+            "channel": "chat",
+            "seen": [
+                "đúng rồi á",
+                "loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "chat/user_message: đúng rồi á"
+            ],
+            "said": "Nói tiếp đi, tôi bắt được mạch rồi.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "reassure",
+                "user_message"
+            ],
+            "salience": 0.674
+        },
+        {
+            "timestamp": "22:12",
+            "cycle_id": "chat-3",
+            "channel": "chat",
+            "seen": [
+                "loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "bạn tên gì",
+                "chat/user_message: bạn tên gì"
+            ],
+            "said": "Tôi là ERIS, thưa Ngài.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "reassure",
+                "cognitive_attractor"
+            ],
+            "salience": 0.677
+        },
+        {
+            "timestamp": "22:13",
+            "cycle_id": "chat-4",
+            "channel": "chat",
+            "seen": [
+                "loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "bạn có cảm xúc gì với tôi",
+                "chat/user_message: bạn có cảm xúc gì với tôi"
+            ],
+            "said": "Tôi không có cảm xúc theo cách của Ngài, nhưng tôi luôn ở đây để quan sát Ngài.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "reassure",
+                "cognitive_attractor"
+            ],
+            "salience": 0.669
+        },
+        {
+            "timestamp": "22:14",
+            "cycle_id": "chat-5",
+            "channel": "chat",
+            "seen": [
+                "theo cách của tôi là sao",
+                "loop=loop_160535; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "chat/user_message: theo cách của tôi là sao"
+            ],
+            "said": "Ý tôi là, tôi không có những rung động sinh học hay sự xáo trộn tâm lý như con người, thưa Ngài.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "mirror",
+                "user_message"
+            ],
+            "salience": 0.69
+        },
+        {
+            "timestamp": "22:15",
+            "cycle_id": "chat-6",
+            "channel": "chat",
+            "seen": [
+                "bạn thấy tôi hiện tại đang mở những tab web nào không",
+                "loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "chat/user_message: bạn thấy tôi hiện tại đang mở những tab web nào không"
+            ],
+            "said": "Nói tiếp đi, tôi bắt được mạch rồi.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "reassure",
+                "user_message"
+            ],
+            "salience": 0.71
+        },
+        {
+            "timestamp": "22:15",
+            "cycle_id": "chat-7",
+            "channel": "chat",
+            "seen": [
+                "bạn có thấy tôi đang mở tab nào trên web không",
+                "loop=loop_14413; topic=memory_replay:norm_active_window_kind_usually_general_77",
+                "chat/user_message: bạn có thấy tôi đang mở tab nào trên web không"
+            ],
+            "said": "Tôi không thấy tab trình duyệt nào cả, thưa Ngài. Chỉ có cửa sổ Godot Engine và một thông báo chia sẻ từ Google Meet ở dưới cùng thôi.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "reassure",
+                "user_message"
+            ],
+            "salience": 0.741
+        }
+    ],
+    "semantic": [
+        {
+            "text": "Người dùng hỏi tên của mình.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.77,
+            "observations": 2,
+            "first_seen_at": "12:53",
+            "updated_at": "13:53"
+        },
+        {
+            "text": "Ngài yêu cầu tôi suy nghĩ về một chuyện cười.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "12:55",
+            "updated_at": "12:55"
+        },
+        {
+            "text": "Ngài yêu cầu tôi kể một chuyện cười.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "12:57",
+            "updated_at": "12:57"
+        },
+        {
+            "text": "Ngài vừa bày tỏ sự thích thú với câu chuyện cười.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "12:59",
+            "updated_at": "12:59"
+        },
+        {
+            "text": "Người dùng hỏi về tuổi của mình.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "13:54",
+            "updated_at": "13:54"
+        },
+        {
+            "text": "Người dùng hỏi về độ tuổi ước tính.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "13:55",
+            "updated_at": "13:55"
+        },
+        {
+            "text": "Người dùng yêu cầu đoán tuổi một cách ngẫu nhiên.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "13:56",
+            "updated_at": "13:56"
+        },
+        {
+            "text": "Người dùng yêu cầu đưa ra một con số cụ thể về độ tuổi.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.77,
+            "observations": 2,
+            "first_seen_at": "13:57",
+            "updated_at": "13:58"
+        },
+        {
+            "text": "Người dùng nói mình 20 tuổi.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "13:58",
+            "updated_at": "13:58"
+        },
+        {
+            "text": "Ngài yêu cầu ERIS lên tiếng.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "14:00",
+            "updated_at": "14:00"
+        },
+        {
+            "text": "User called ERIS to speak",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "15:46",
+            "updated_at": "15:46"
+        },
+        {
+            "text": "Trang web hiển thị thông báo 'BẠN ĐANG TRÌNH BÀY'.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "15:49",
+            "updated_at": "15:49"
+        },
+        {
+            "text": "Ngài vừa yêu cầu ERIS lên tiếng",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "16:01",
+            "updated_at": "16:01"
+        },
+        {
+            "text": "user_requested_speech_without_context",
+            "source": "decision_extracted_fact",
+            "confidence": 0.79,
+            "observations": 3,
+            "first_seen_at": "17:32",
+            "updated_at": "22:06"
+        },
+        {
+            "text": "User requested ERIS to speak without providing specific context/evidence.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "21:01",
+            "updated_at": "21:01"
+        },
+        {
+            "text": "Ngài xác nhận một điều gì đó là đúng.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "22:07",
+            "updated_at": "22:07"
+        },
+        {
+            "text": "User asked for ERIS's name.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "22:12",
+            "updated_at": "22:12"
+        },
+        {
+            "text": "User asked about ERIS's emotions towards them.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "22:13",
+            "updated_at": "22:13"
+        },
+        {
+            "text": "Ngài đang hỏi về định nghĩa 'cảm xúc theo cách của tôi'.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "22:14",
+            "updated_at": "22:14"
+        },
+        {
+            "text": "Ngài đang mở Godot Engine và có một thông báo Google Meet đang chia sẻ màn hình.",
+            "source": "decision_extracted_fact",
+            "confidence": 0.75,
+            "observations": 1,
+            "first_seen_at": "22:15",
+            "updated_at": "22:15"
+        }
+    ],
+    "relationship": [
+        {
+            "text": "Ngài hay bấm force_speak khi muốn ERIS hiện diện hơn là cần thông tin.",
+            "pattern": "force_speak_presence",
+            "source": "cognitive_frame_reflection",
+            "confidence": 0.98,
+            "observations": 81,
+            "first_seen_at": "19:51",
+            "updated_at": "21:21",
+            "evidence": [
+                "inner_intent=micro_presence",
+                "said=Ngài vẫn còn thức nhỉ.",
+                "said=...",
+                "speech_act=micro_presence"
+            ]
+        },
+        {
+            "text": "Khi thiếu screen signal, ERIS nên hỏi lại hoặc mở một câu tò mò, không giả vờ thấy gì.",
+            "pattern": "no_screen_signal_social_fallback",
+            "source": "cognitive_frame_reflection",
+            "confidence": 0.98,
+            "observations": 111,
+            "first_seen_at": "19:51",
+            "updated_at": "22:06",
+            "evidence": [
+                "motive=bodily_reaction",
+                "seed=bodily_residue",
+                "motive=not_enough_social_motive",
+                "seed="
+            ]
+        },
+        {
+            "text": "ERIS có thể giữ nhịp hiện diện bằng một câu meta hoặc check-in ngắn, miễn là không dựng cảnh màn hình.",
+            "pattern": "social_initiative_rhythm",
+            "source": "cognitive_frame_reflection",
+            "confidence": 0.98,
+            "observations": 76,
+            "first_seen_at": "19:51",
+            "updated_at": "19:50",
+            "evidence": [
+                "speech_act=random_chatter",
+                "channel=autonomous",
+                "speech_act=curious_question",
+                "speech_act=inner_whim"
+            ]
+        }
+    ],
+    "procedural": [
+        {
+            "text": "When output gets distorted by a guard, inspect post-generation filters before changing prompt style.",
+            "trigger": "post_generation_guard",
+            "source": "built_in",
+            "confidence": 0.82,
+            "observations": 1,
+            "first_seen_at": "2026-05-10T17:04:28+0700",
+            "updated_at": "2026-05-10T17:04:28+0700"
+        },
+        {
+            "text": "When screen evidence is missing or weak, soften claims, ask, or stay silent instead of pretending to see.",
+            "trigger": "no_screen_evidence",
+            "source": "built_in",
+            "confidence": 0.82,
+            "observations": 1,
+            "first_seen_at": "2026-05-10T17:04:28+0700",
+            "updated_at": "2026-05-10T17:04:28+0700"
+        },
+        {
+            "text": "When ERIS speaks from telemetry or memory, separate current evidence from continuity memory.",
+            "trigger": "grounded_speech",
+            "source": "built_in",
+            "confidence": 0.82,
+            "observations": 1,
+            "first_seen_at": "2026-05-10T17:04:28+0700",
+            "updated_at": "2026-05-10T17:04:28+0700"
+        }
+    ],
+    "experiential": [
+        {
+            "cue": "memory_replay:norm_active_window_kind_usually_general_100",
+            "key": "memory_replay_norm_active_window_kind_usually_general_100",
+            "observations": 6,
+            "first_seen_at": "17:27",
+            "updated_at": "17:33",
+            "cognition_states": [
+                "channel=autonomous; self=watchful; stance=grounded; speech=no_speech; thought=memory_replay",
+                "channel=force_speak; self=engaged; stance=grounded; speech=inner_whim; thought=input_disturbance",
+                "channel=force_speak; self=engaged; stance=grounded; speech=vision_comment; thought=input_disturbance",
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance",
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=reassure; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "active_unresolved_tension",
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_260130:memory_replay:norm_active_window_kind_usually_general_100",
+                "loop_85125:memory_replay:norm_active_window_kind_usually_general_100 | loop_730890:input_disturbance:force_speak_user_force_speak_force_s...",
+                "loop_713684:memory_replay:norm_active_window_kind_usually_general_100 | loop_617987:input_disturbance:force_speak_user_force_speak_force_...",
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_469923",
+                "thought_828006",
+                "thought_175259",
+                "thought_490397",
+                "thought_678385"
+            ],
+            "source_memories": [
+                "norm: active_window_kind usually general (100%); idle_bucket usually active (100%); window_spread usually medium (100%); focus_pattern usually steady (100%)",
+                "episodic: goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu | autonomous/autonomous_tick: autonomous t..."
+            ],
+            "associations": [
+                "loop=memory_replay:dang_danh_general",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "mẹ_mày_béo",
+                "steady",
+                "cognitive_momentum=0.89",
+                "tôi_yêu_em_lắm_eris",
+                "unresolved=1",
+                "cognitive_momentum=0.90",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "cognitive_momentum=0.89",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.77",
+                "user_requested",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "unresolved_attractor=0.80"
+            ],
+            "last_tension": 0.987,
+            "max_tension": 0.988,
+            "momentum_score": 0.899,
+            "salience": 0.703
+        },
+        {
+            "cue": "loop=loop_196294; topic=memory_replay:norm_active_window_kind_usually_general_100",
+            "key": "loop_loop_196294_memory_replay_norm_active_window_kind_usually_general_100_topic",
+            "observations": 3,
+            "first_seen_at": "17:31",
+            "updated_at": "17:33",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance",
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=reassure; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_175259",
+                "thought_490397",
+                "thought_678385"
+            ],
+            "source_memories": [],
+            "associations": [
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "momentum_affordance=attention",
+                "mẹ_mày_béo",
+                "cognitive_momentum=0.89",
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "tôi_yêu_em_lắm_eris",
+                "cognitive_momentum=0.90"
+            ],
+            "evidence": [
+                "user_requested",
+                "cognitive_attractor",
+                "cognitive_momentum=0.89",
+                "unresolved_attractor=0.77",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "unresolved_attractor=0.80"
+            ],
+            "last_tension": 0.987,
+            "max_tension": 0.988,
+            "momentum_score": 0.899,
+            "salience": 0.673
+        },
+        {
+            "cue": "input_disturbance:chat_user_message_mẹ_mày_béo",
+            "key": "chat_user_message_mẹ_mày_béo_input_disturbance",
+            "observations": 1,
+            "first_seen_at": "17:32",
+            "updated_at": "17:32",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_490397"
+            ],
+            "source_memories": [],
+            "associations": [
+                "mẹ_mày_béo",
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.89",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "cognitive_attractor",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.89",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.77",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.988,
+            "max_tension": 0.988,
+            "momentum_score": 0.893,
+            "salience": 0.673
+        },
+        {
+            "cue": "loop=loop_196294; topic=memory_replay:norm_active_window_kind_usually_general_100 | goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_rep...",
+            "key": "goal_goal_985680_loop_loop_196294_loop_loop_270295_topic_memory_rep",
+            "observations": 1,
+            "first_seen_at": "17:32",
+            "updated_at": "17:32",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_490397"
+            ],
+            "source_memories": [],
+            "associations": [
+                "mẹ_mày_béo",
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.89",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "cognitive_attractor",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.89",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.77",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.988,
+            "max_tension": 0.988,
+            "momentum_score": 0.893,
+            "salience": 0.673
+        },
+        {
+            "cue": "mẹ mày béo",
+            "key": "béo_mày",
+            "observations": 1,
+            "first_seen_at": "17:32",
+            "updated_at": "17:32",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_490397"
+            ],
+            "source_memories": [],
+            "associations": [
+                "mẹ_mày_béo",
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.89",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "cognitive_attractor",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.89",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.77",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.988,
+            "max_tension": 0.988,
+            "momentum_score": 0.893,
+            "salience": 0.673
+        },
+        {
+            "cue": "chat/user_message: mẹ mày béo",
+            "key": "béo_chat_mày_user_message",
+            "observations": 1,
+            "first_seen_at": "17:32",
+            "updated_at": "17:32",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_490397"
+            ],
+            "source_memories": [],
+            "associations": [
+                "mẹ_mày_béo",
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.89",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "cognitive_attractor",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.89",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.77",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.988,
+            "max_tension": 0.988,
+            "momentum_score": 0.893,
+            "salience": 0.673
+        },
+        {
+            "cue": "input_disturbance:chat_user_message_tôi_yêu_em",
+            "key": "chat_user_message_tôi_yêu_em_input_disturbance",
+            "observations": 1,
+            "first_seen_at": "17:33",
+            "updated_at": "17:33",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=reassure; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_678385"
+            ],
+            "source_memories": [],
+            "associations": [
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "tôi_yêu_em_lắm_eris",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "cognitive_attractor",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.80",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.987,
+            "max_tension": 0.987,
+            "momentum_score": 0.899,
+            "salience": 0.671
+        },
+        {
+            "cue": "loop=loop_196294; topic=memory_replay:norm_active_window_kind_usually_general_100 | tôi yêu em lắm, Eris yêu dấu | goal=goal_385930; summary=tôi yêu em lắm,...",
+            "key": "dấu_eris_goal_goal_385930_loop",
+            "observations": 1,
+            "first_seen_at": "17:33",
+            "updated_at": "17:33",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=reassure; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_678385"
+            ],
+            "source_memories": [],
+            "associations": [
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "tôi_yêu_em_lắm_eris",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "cognitive_attractor",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.80",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.987,
+            "max_tension": 0.987,
+            "momentum_score": 0.899,
+            "salience": 0.671
+        },
+        {
+            "cue": "tôi yêu em lắm, Eris yêu dấu",
+            "key": "dấu_eris_lắm_tôi_yêu",
+            "observations": 1,
+            "first_seen_at": "17:33",
+            "updated_at": "17:33",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=reassure; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_678385"
+            ],
+            "source_memories": [],
+            "associations": [
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "tôi_yêu_em_lắm_eris",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "cognitive_attractor",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.80",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.987,
+            "max_tension": 0.987,
+            "momentum_score": 0.899,
+            "salience": 0.671
+        },
+        {
+            "cue": "chat/user_message: tôi yêu em lắm, Eris yêu dấu",
+            "key": "chat_dấu_eris_lắm_tôi",
+            "observations": 1,
+            "first_seen_at": "17:33",
+            "updated_at": "17:33",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=reassure; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_678385"
+            ],
+            "source_memories": [],
+            "associations": [
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "tôi_yêu_em_lắm_eris",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "cognitive_attractor",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.90",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.80",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.987,
+            "max_tension": 0.987,
+            "momentum_score": 0.899,
+            "salience": 0.671
+        },
+        {
+            "cue": "input_disturbance:chat_user_message_đúng_rồi",
+            "key": "chat_user_message_đúng_rồi_input_disturbance",
+            "observations": 1,
+            "first_seen_at": "17:31",
+            "updated_at": "17:31",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_175259"
+            ],
+            "source_memories": [],
+            "associations": [
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "đúng_rồi",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "persistent_goal",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.76",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.976,
+            "max_tension": 0.976,
+            "momentum_score": 0.881,
+            "salience": 0.643
+        },
+        {
+            "cue": "goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu | loop=loop_196294; topic=memory_replay:norm_active_...",
+            "key": "goal_goal_985680_loop_loop_196294_loop_loop_270295_topic_memory_replay_norm_acti",
+            "observations": 1,
+            "first_seen_at": "17:31",
+            "updated_at": "17:31",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_175259"
+            ],
+            "source_memories": [],
+            "associations": [
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "đúng_rồi",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "persistent_goal",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.76",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.976,
+            "max_tension": 0.976,
+            "momentum_score": 0.881,
+            "salience": 0.643
+        },
+        {
+            "cue": "đúng rồi á",
+            "key": "rồi_đúng",
+            "observations": 1,
+            "first_seen_at": "17:31",
+            "updated_at": "17:31",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_175259"
+            ],
+            "source_memories": [],
+            "associations": [
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "đúng_rồi",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "persistent_goal",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.76",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.976,
+            "max_tension": 0.976,
+            "momentum_score": 0.881,
+            "salience": 0.643
+        },
+        {
+            "cue": "chat/user_message: đúng rồi á",
+            "key": "chat_rồi_user_message_đúng",
+            "observations": 1,
+            "first_seen_at": "17:31",
+            "updated_at": "17:31",
+            "cognition_states": [
+                "channel=chat; self=engaged; stance=tender_under_cold; speech=mirror; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_196294:memory_replay:norm_active_window_kind_usually_general_100 | loop_406016:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_175259"
+            ],
+            "source_memories": [],
+            "associations": [
+                "ngài_đang_liệt_kê_danh",
+                "steady",
+                "đúng_rồi",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:dang_danh_general",
+                "unresolved=1",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "persistent_goal",
+                "input spike has not been integrated into the existing cognition stream",
+                "disturbance=chat:user_message",
+                "cognitive_momentum=0.88",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.76",
+                "chat",
+                "user_requested"
+            ],
+            "last_tension": 0.976,
+            "max_tension": 0.976,
+            "momentum_score": 0.881,
+            "salience": 0.643
+        },
+        {
+            "cue": "goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+            "key": "goal_goal_985680_loop_loop_270295_topic_memory_replay_norm_active_window_kind_us",
+            "observations": 4,
+            "first_seen_at": "17:23",
+            "updated_at": "17:30",
+            "cognition_states": [
+                "channel=autonomous; self=watchful; stance=grounded; speech=no_speech; thought=memory_replay",
+                "channel=force_speak; self=engaged; stance=grounded; speech=inner_whim; thought=input_disturbance",
+                "channel=force_speak; self=engaged; stance=grounded; speech=vision_comment; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "active_unresolved_tension",
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_309230:memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+                "loop_260130:memory_replay:norm_active_window_kind_usually_general_100",
+                "loop_85125:memory_replay:norm_active_window_kind_usually_general_100 | loop_730890:input_disturbance:force_speak_user_force_speak_force_s...",
+                "loop_713684:memory_replay:norm_active_window_kind_usually_general_100 | loop_617987:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_985680",
+                "thought_469923",
+                "thought_828006"
+            ],
+            "source_memories": [
+                "episodic: loop=loop_270295; topic=memory_replay:norm_active_window_kind_usually_general_72 | focus_summary=Ngài đang ở bối cảnh tổng quát: Lỗi 404 Sai Model...",
+                "norm: active_window_kind usually general (100%); idle_bucket usually active (100%); window_spread usually medium (100%); focus_pattern usually steady (100%)",
+                "episodic: goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu | autonomous/autonomous_tick: autonomous t..."
+            ],
+            "associations": [
+                "disturbance=force_speak:user_force_speak",
+                "cognitive_momentum=0.82",
+                "cái_định_nghĩa_về_robot",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:cai_dinh_force",
+                "unresolved=1",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.81",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "force_speak",
+                "user_requested",
+                "vision_fact",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.81",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.68",
+                "screen_observation"
+            ],
+            "last_tension": 0.802,
+            "max_tension": 0.87,
+            "momentum_score": 0.82,
+            "salience": 0.703
+        },
+        {
+            "cue": "thought=thought_469923; mode=memory_replay; topic=memory_replay:norm_active_window_kind_usually_general_100",
+            "key": "memory_replay_mode_norm_active_window_kind_usually_general_100_thought_thought_4",
+            "observations": 3,
+            "first_seen_at": "17:27",
+            "updated_at": "17:30",
+            "cognition_states": [
+                "channel=autonomous; self=watchful; stance=grounded; speech=no_speech; thought=memory_replay",
+                "channel=force_speak; self=engaged; stance=grounded; speech=inner_whim; thought=input_disturbance",
+                "channel=force_speak; self=engaged; stance=grounded; speech=vision_comment; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "active_unresolved_tension",
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_260130:memory_replay:norm_active_window_kind_usually_general_100",
+                "loop_85125:memory_replay:norm_active_window_kind_usually_general_100 | loop_730890:input_disturbance:force_speak_user_force_speak_force_s...",
+                "loop_713684:memory_replay:norm_active_window_kind_usually_general_100 | loop_617987:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_469923",
+                "thought_828006"
+            ],
+            "source_memories": [
+                "norm: active_window_kind usually general (100%); idle_bucket usually active (100%); window_spread usually medium (100%); focus_pattern usually steady (100%)",
+                "episodic: goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu | autonomous/autonomous_tick: autonomous t..."
+            ],
+            "associations": [
+                "general",
+                "unresolved_reason=input spike has not been integrated into the existing cognition stream",
+                "disturbance=force_speak:user_force_speak",
+                "cognitive_momentum=0.82",
+                "steady",
+                "cái_định_nghĩa_về_robot",
+                "loop=memory_replay:cai_dinh_force",
+                "unresolved=1",
+                "cognitive_momentum=0.81",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "force_speak",
+                "user_requested",
+                "vision_fact",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.81",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.68",
+                "screen_observation"
+            ],
+            "last_tension": 0.802,
+            "max_tension": 0.87,
+            "momentum_score": 0.82,
+            "salience": 0.703
+        },
+        {
+            "cue": "input_disturbance:force_speak_user_force_speak_force_speak_requested",
+            "key": "force_speak_user_force_speak_force_speak_requested_input_disturbance",
+            "observations": 2,
+            "first_seen_at": "17:27",
+            "updated_at": "17:30",
+            "cognition_states": [
+                "channel=force_speak; self=engaged; stance=grounded; speech=inner_whim; thought=input_disturbance",
+                "channel=force_speak; self=engaged; stance=grounded; speech=vision_comment; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_85125:memory_replay:norm_active_window_kind_usually_general_100 | loop_730890:input_disturbance:force_speak_user_force_speak_force_s...",
+                "loop_713684:memory_replay:norm_active_window_kind_usually_general_100 | loop_617987:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_828006"
+            ],
+            "source_memories": [
+                "episodic: goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu | autonomous/autonomous_tick: autonomous t..."
+            ],
+            "associations": [
+                "loop_reheated",
+                "unresolved_reason=input spike has not been integrated into the existing cognition stream",
+                "disturbance=force_speak:user_force_speak",
+                "cognitive_momentum=0.82",
+                "cái_định_nghĩa_về_robot",
+                "loop=memory_replay:cai_dinh_force",
+                "unresolved=1",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.81",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "momentum_affordance=attention",
+                "force_speak",
+                "user_requested",
+                "vision_fact",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.81",
+                "unresolved_attractor=0.68",
+                "screen_observation"
+            ],
+            "last_tension": 0.802,
+            "max_tension": 0.87,
+            "momentum_score": 0.82,
+            "salience": 0.703
+        },
+        {
+            "cue": "force_speak/user_force_speak: force_speak requested",
+            "key": "force_speak_requested_user_force_speak",
+            "observations": 2,
+            "first_seen_at": "17:27",
+            "updated_at": "17:30",
+            "cognition_states": [
+                "channel=force_speak; self=engaged; stance=grounded; speech=inner_whim; thought=input_disturbance",
+                "channel=force_speak; self=engaged; stance=grounded; speech=vision_comment; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_85125:memory_replay:norm_active_window_kind_usually_general_100 | loop_730890:input_disturbance:force_speak_user_force_speak_force_s...",
+                "loop_713684:memory_replay:norm_active_window_kind_usually_general_100 | loop_617987:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_828006"
+            ],
+            "source_memories": [
+                "episodic: goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu | autonomous/autonomous_tick: autonomous t..."
+            ],
+            "associations": [
+                "loop_reheated",
+                "unresolved_reason=input spike has not been integrated into the existing cognition stream",
+                "disturbance=force_speak:user_force_speak",
+                "cognitive_momentum=0.82",
+                "cái_định_nghĩa_về_robot",
+                "loop=memory_replay:cai_dinh_force",
+                "unresolved=1",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.81",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "momentum_affordance=attention",
+                "force_speak",
+                "user_requested",
+                "vision_fact",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.81",
+                "unresolved_attractor=0.68",
+                "screen_observation"
+            ],
+            "last_tension": 0.802,
+            "max_tension": 0.87,
+            "momentum_score": 0.82,
+            "salience": 0.703
+        },
+        {
+            "cue": "goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu | force_speak requested | force_speak/user_force_spe...",
+            "key": "force_speak_goal_goal_985680_loop_loop_270295_topic_memory_replay_norm_active_wi",
+            "observations": 1,
+            "first_seen_at": "17:27",
+            "updated_at": "17:27",
+            "cognition_states": [
+                "channel=force_speak; self=engaged; stance=grounded; speech=inner_whim; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_85125:memory_replay:norm_active_window_kind_usually_general_100 | loop_730890:input_disturbance:force_speak_user_force_speak_force_s..."
+            ],
+            "thought_ids": [
+                "thought_828006"
+            ],
+            "source_memories": [],
+            "associations": [
+                "chào_ngài_tôi_đã_sẵn",
+                "force_speak_requested",
+                "general",
+                "steady",
+                "memory_replay_available",
+                "loop_reheated",
+                "unresolved_reason=input spike has not been integrated into the existing cognition stream",
+                "disturbance=force_speak:user_force_speak",
+                "cognitive_momentum=0.82"
+            ],
+            "evidence": [
+                "persistent_goal",
+                "input spike has not been integrated into the existing cognition stream",
+                "unresolved_reason=input spike has not been integrated into the existing cognition stream",
+                "disturbance=force_speak:user_force_speak",
+                "cognitive_momentum=0.82",
+                "momentum_affordance=attention",
+                "force_speak",
+                "user_requested"
+            ],
+            "last_tension": 0.87,
+            "max_tension": 0.87,
+            "momentum_score": 0.82,
+            "salience": 0.625
+        },
+        {
+            "cue": "loop=loop_713684; topic=memory_replay:norm_active_window_kind_usually_general_100",
+            "key": "loop_loop_713684_memory_replay_norm_active_window_kind_usually_general_100_topic",
+            "observations": 1,
+            "first_seen_at": "17:30",
+            "updated_at": "17:30",
+            "cognition_states": [
+                "channel=force_speak; self=engaged; stance=grounded; speech=vision_comment; thought=input_disturbance"
+            ],
+            "tension_labels": [
+                "high_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_713684:memory_replay:norm_active_window_kind_usually_general_100 | loop_617987:input_disturbance:force_speak_user_force_speak_force_..."
+            ],
+            "thought_ids": [
+                "thought_828006"
+            ],
+            "source_memories": [
+                "episodic: goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu | autonomous/autonomous_tick: autonomous t..."
+            ],
+            "associations": [
+                "general",
+                "steady",
+                "cái_định_nghĩa_về_robot",
+                "memory_replay_available",
+                "loop_reheated",
+                "loop=memory_replay:cai_dinh_force",
+                "unresolved=1",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.81",
+                "momentum_affordance=attention"
+            ],
+            "evidence": [
+                "vision_fact",
+                "input spike has not been integrated into the existing cognition stream",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.81",
+                "momentum_affordance=attention",
+                "unresolved_attractor=0.68",
+                "force_speak",
+                "screen_observation"
+            ],
+            "last_tension": 0.802,
+            "max_tension": 0.802,
+            "momentum_score": 0.812,
+            "salience": 0.703
+        },
+        {
+            "cue": "autonomous/autonomous_tick: autonomous tick: focus=general; idle=0s; events=general_window_active",
+            "key": "autonomous_autonomous_tick_events_focus_general",
+            "observations": 2,
+            "first_seen_at": "17:23",
+            "updated_at": "17:27",
+            "cognition_states": [
+                "channel=autonomous; self=watchful; stance=grounded; speech=no_speech; thought=memory_replay"
+            ],
+            "tension_labels": [
+                "active_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_309230:memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+                "loop_260130:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "thought_ids": [
+                "thought_985680",
+                "thought_469923"
+            ],
+            "source_memories": [
+                "episodic: loop=loop_270295; topic=memory_replay:norm_active_window_kind_usually_general_72 | focus_summary=Ngài đang ở bối cảnh tổng quát: Lỗi 404 Sai Model...",
+                "norm: active_window_kind usually general (100%); idle_bucket usually active (100%); window_spread usually medium (100%); focus_pattern usually steady (100%)"
+            ],
+            "associations": [
+                "autonomous_tick_focus_general_idle",
+                "memory_replay_available",
+                "loop_reheated",
+                "disturbance=autonomous:autonomous_tick",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.59",
+                "norm_active_window_kind_usually_general_100",
+                "memory_resonance:norm_active_window_kind_usually_general_100",
+                "chào_ngài_tôi_đã_sẵn",
+                "cognitive_momentum=0.60"
+            ],
+            "evidence": [
+                "disturbance=autonomous:autonomous_tick",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.59",
+                "momentum_affordance=attention",
+                "autonomous",
+                "no_speech",
+                "persistent_goal",
+                "cognitive_momentum=0.60"
+            ],
+            "last_tension": 0.614,
+            "max_tension": 0.614,
+            "momentum_score": 0.599,
+            "salience": 0.579
+        },
+        {
+            "cue": "goal=goal_985680; summary=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu | autonomous/autonomous_tick: autonomous tick: focus...",
+            "key": "autonomous_autonomous_tick_focus_goal_goal_985680",
+            "observations": 1,
+            "first_seen_at": "17:27",
+            "updated_at": "17:27",
+            "cognition_states": [
+                "channel=autonomous; self=watchful; stance=grounded; speech=no_speech; thought=memory_replay"
+            ],
+            "tension_labels": [
+                "active_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "unresolved_loops": [
+                "loop_260130:memory_replay:norm_active_window_kind_usually_general_100"
+            ],
+            "thought_ids": [
+                "thought_469923"
+            ],
+            "source_memories": [
+                "norm: active_window_kind usually general (100%); idle_bucket usually active (100%); window_spread usually medium (100%); focus_pattern usually steady (100%)"
+            ],
+            "associations": [
+                "norm_active_window_kind_usually_general_100",
+                "steady",
+                "memory_resonance:norm_active_window_kind_usually_general_100",
+                "autonomous_tick_focus_general_idle",
+                "chào_ngài_tôi_đã_sẵn",
+                "memory_replay_available",
+                "loop_reheated",
+                "disturbance=autonomous:autonomous_tick",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.60"
+            ],
+            "evidence": [
+                "persistent_goal",
+                "prediction from memory has not been resolved against the current state",
+                "disturbance=autonomous:autonomous_tick",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.60",
+                "momentum_affordance=attention",
+                "autonomous",
+                "no_speech"
+            ],
+            "last_tension": 0.614,
+            "max_tension": 0.614,
+            "momentum_score": 0.599,
+            "salience": 0.562
+        },
+        {
+            "cue": "memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+            "key": "loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu_memory_replay",
+            "observations": 1,
+            "first_seen_at": "17:23",
+            "updated_at": "17:23",
+            "cognition_states": [
+                "channel=autonomous; self=watchful; stance=grounded; speech=no_speech; thought=memory_replay"
+            ],
+            "tension_labels": [
+                "active_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu"
+            ],
+            "unresolved_loops": [
+                "loop_309230:memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu"
+            ],
+            "thought_ids": [
+                "thought_985680"
+            ],
+            "source_memories": [
+                "episodic: loop=loop_270295; topic=memory_replay:norm_active_window_kind_usually_general_72 | focus_summary=Ngài đang ở bối cảnh tổng quát: Lỗi 404 Sai Model..."
+            ],
+            "associations": [
+                "general",
+                "loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+                "steady",
+                "memory_resonance:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+                "autonomous_tick_focus_general_idle",
+                "memory_replay_available",
+                "loop_reheated",
+                "disturbance=autonomous:autonomous_tick",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.59"
+            ],
+            "evidence": [
+                "vision_fact",
+                "prediction from memory has not been resolved against the current state",
+                "disturbance=autonomous:autonomous_tick",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.59",
+                "momentum_affordance=attention",
+                "autonomous",
+                "no_speech"
+            ],
+            "last_tension": 0.585,
+            "max_tension": 0.585,
+            "momentum_score": 0.588,
+            "salience": 0.579
+        },
+        {
+            "cue": "thought=thought_985680; mode=memory_replay; topic=memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+            "key": "loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu_memory_replay_m",
+            "observations": 1,
+            "first_seen_at": "17:23",
+            "updated_at": "17:23",
+            "cognition_states": [
+                "channel=autonomous; self=watchful; stance=grounded; speech=no_speech; thought=memory_replay"
+            ],
+            "tension_labels": [
+                "active_unresolved_tension"
+            ],
+            "pull_directions": [
+                "cognitive_momentum:attention:memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu"
+            ],
+            "unresolved_loops": [
+                "loop_309230:memory_replay:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu"
+            ],
+            "thought_ids": [
+                "thought_985680"
+            ],
+            "source_memories": [
+                "episodic: loop=loop_270295; topic=memory_replay:norm_active_window_kind_usually_general_72 | focus_summary=Ngài đang ở bối cảnh tổng quát: Lỗi 404 Sai Model..."
+            ],
+            "associations": [
+                "general",
+                "loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+                "steady",
+                "memory_resonance:loop_loop_270295_topic_memory_replay_norm_active_window_kind_usu",
+                "autonomous_tick_focus_general_idle",
+                "memory_replay_available",
+                "loop_reheated",
+                "disturbance=autonomous:autonomous_tick",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.59"
+            ],
+            "evidence": [
+                "vision_fact",
+                "prediction from memory has not been resolved against the current state",
+                "disturbance=autonomous:autonomous_tick",
+                "recursive_reentry=1",
+                "cognitive_momentum=0.59",
+                "momentum_affordance=attention",
+                "autonomous",
+                "no_speech"
+            ],
+            "last_tension": 0.585,
+            "max_tension": 0.585,
+            "momentum_score": 0.588,
+            "salience": 0.579
+        }
+    ],
+    "norm": {
+        "observations": 218,
+        "feature_counts": {
+            "active_window_kind": {
+                "general": 170,
+                "communication": 23,
+                "coding": 21,
+                "entertainment": 4
+            },
+            "active_app": {
+                "eris (debug)": 127,
+                "brave": 64,
+                "visual studio code": 13,
+                "godot": 8,
+                "desktop": 3,
+                "bandicam": 2,
+                "đã dịch": 1
+            },
+            "focus_summary": {
+                "Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": 127,
+                "Ngài đang ở bối cảnh tổng quát: YouTube - Brave": 10,
+                "Ngài đang ở bối cảnh code hoặc project: UdpListener.tscn - Eris - Godot Engine": 8,
+                "Ngài đang ở bối cảnh tổng quát: AI đã chào chưa - Brave": 5,
+                "Ngài đang ở bối cảnh tổng quát: INTP Ayanokoji's Adaptive Mindset - Grok - Brave": 5,
+                "Ngài đang ở bối cảnh code hoặc project: Codex Diff - eris - Visual Studio Code": 5,
+                "Ngài đang ở bối cảnh tổng quát: INTP 5w4 538 as perfect robot - Grok - Brave": 3,
+                "Ngài đang ở bối cảnh tổng quát: Usage | Google AI Studio - Brave": 2,
+                "Ngài đang ở bối cảnh tổng quát: tuki.『ひゅるりらぱっぱ』Official Music Video - YouTube...": 1,
+                "Ngài đang ở bối cảnh giao tiếp: Messenger | Facebook - Brave": 1,
+                "Ngài đang ở bối cảnh tổng quát: Đã dịch": 1,
+                "Ngài đang ở bối cảnh tổng quát: Vấn đề về flow model - Brave": 1
+            },
+            "idle_bucket": {
+                "active": 133,
+                "very_long_idle": 38,
+                "medium_idle": 18,
+                "short_idle": 15,
+                "long_idle": 14
+            },
+            "window_spread": {
+                "medium": 90,
+                "high": 87,
+                "low": 32,
+                "very_high": 9
+            },
+            "focus_pattern": {
+                "steady": 76,
+                "fragmented": 55,
+                "absent": 51,
+                "conversation": 23,
+                "deep_work": 9,
+                "active_consumption": 4
+            }
+        },
+        "last_seen_at": {
+            "active_window_kind:general": "22:15",
+            "active_app:brave": "18:09",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: INTP 5w4 538 as perfect robot - Grok - Brave": "17:27",
+            "idle_bucket:active": "22:15",
+            "window_spread:medium": "16:46",
+            "focus_pattern:steady": "21:22",
+            "active_app:eris (debug)": "22:15",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": "22:15",
+            "idle_bucket:short_idle": "22:07",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: AI đã chào chưa - Brave": "18:31",
+            "idle_bucket:medium_idle": "20:48",
+            "idle_bucket:long_idle": "20:55",
+            "focus_pattern:absent": "21:09",
+            "idle_bucket:very_long_idle": "21:09",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: tuki.『ひゅるりらぱっぱ』Official Music Video - YouTube...": "18:38",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: YouTube - Brave": "14:08",
+            "active_window_kind:coding": "21:37",
+            "active_app:godot": "21:37",
+            "focus_summary:Ngài đang ở bối cảnh code hoặc project: UdpListener.tscn - Eris - Godot Engine": "21:37",
+            "focus_pattern:deep_work": "19:56",
+            "active_window_kind:communication": "18:09",
+            "focus_summary:Ngài đang ở bối cảnh giao tiếp: Messenger | Facebook - Brave": "21:29",
+            "window_spread:high": "21:37",
+            "focus_pattern:conversation": "18:09",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: INTP Ayanokoji's Adaptive Mindset - Grok - Brave": "22:26",
+            "active_app:đã dịch": "22:22",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Đã dịch": "22:22",
+            "focus_pattern:fragmented": "22:15",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Usage | Google AI Studio - Brave": "18:00",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Vấn đề về flow model - Brave": "22:46",
+            "active_app:visual studio code": "21:34",
+            "focus_summary:Ngài đang ở bối cảnh code hoặc project: Codex Diff - eris - Visual Studio Code": "19:52",
+            "focus_summary:Ngài đang ở bối cảnh code hoặc project: action_planner.py - eris - Visual Stu...": "23:06",
+            "window_spread:low": "11:53",
+            "focus_summary:Ngài đang ở bối cảnh code hoặc project: coordinator.py - eris - Visual Studio...": "17:32",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Hayate 100% HÚT MÁU PHÉP Là Một Giáo Án CỰC M...": "14:19",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Đánh giá autonomous system - Brave": "14:32",
+            "focus_summary:Ngài đang ở bối cảnh giao tiếp: Meet - eyp-hdsh-iwc - Brave": "18:09",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Vấn đề output quá máy móc - Brave": "15:19",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Vấn đề với autonomous policy - Brave": "16:07",
+            "focus_summary:Ngài đang ở bối cảnh code hoặc project: service.py - eris - Visual Studio Code": "16:42",
+            "focus_summary:Ngài đang ở bối cảnh code hoặc project: ● coordinator.py - eris - Visual Stud...": "21:34",
+            "active_window_kind:entertainment": "17:44",
+            "focus_summary:Ngài đang nghiêng sang giải trí: Nanao Nakajima853 (@nanaonakajima2) | TikTok...": "17:30",
+            "focus_pattern:active_consumption": "17:44",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Đánh giá output AI - Brave": "17:36",
+            "focus_summary:Ngài đang nghiêng sang giải trí: (5)Gtvkun (@g.t.v.kun) | TikTok - Brave": "17:38",
+            "active_app:desktop": "21:33",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Desktop": "21:33",
+            "focus_summary:Ngài đang nghiêng sang giải trí: TikTok - Make Your Day - Brave": "17:44",
+            "focus_summary:Ngài đang ở bối cảnh code hoặc project: ● speech_core.py - eris - Visual Stud...": "19:56",
+            "active_app:bandicam": "22:11",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Bandicam": "22:11",
+            "window_spread:very_high": "22:15"
+        }
+    },
+    "internal_state": {
+        "valence": 0.15,
+        "arousal": 0.401,
+        "curiosity": 0.202,
+        "boredom": 0.169,
+        "social_energy": 0.411,
+        "attachment": 0.646,
+        "irritation": 0.356,
+        "protectiveness": 0.324,
+        "confidence": 0.942,
+        "fatigue": 0.119,
+        "tenderness": 0.402,
+        "silence_pressure": 0.226,
+        "social_pressure": 0.04,
+        "curiosity_pressure": 0.284,
+        "protective_pressure": 0.402,
+        "tender_pressure": 0.698,
+        "playful_pressure": 0.108,
+        "watchful_pressure": 0.293,
+        "restraint_pressure": 0.905,
+        "subconscious_pressure": 0.039,
+        "memory_replay_pressure": 0.216,
+        "association_pressure": 0.12,
+        "thought_stream_pressure": 0.084,
+        "cognitive_tension": 0.134,
+        "unresolved_prediction_pressure": 0.059,
+        "recursive_reactivation_pressure": 0.304,
+        "last_cognition_at": 1778598931.601,
+        "last_elapsed_seconds": 26.261,
+        "last_memory_resonance": 0.0,
+        "last_unresolved_tension": 0.0,
+        "last_event_impulse": 0.0,
+        "last_social_presence_confidence": 0.0,
+        "last_social_presence_intensity": 0.0,
+        "last_session_ritual_at": 0.0,
+        "last_session_greeting_at": 0.0,
+        "session_resume_count": 0,
+        "last_session_tone": "",
+        "last_channel": "chat",
+        "last_focus_kind": "general",
+        "last_ti_mode": "chat_general",
+        "last_stance": "tender_under_cold",
+        "last_speech_act": "reassure",
+        "last_utterance_type": "no_speech",
+        "last_inner_intent": "",
+        "last_subconscious_mode": "input_disturbance",
+        "last_subconscious_seed": "input_disturbance:chat_user_message_theo_cách_của",
+        "last_thought_id": "thought_577222",
+        "last_thought_mode": "input_disturbance",
+        "last_thought_seed": "input_disturbance:chat_user_message_theo_cách_của",
+        "last_self_state_label": "engaged",
+        "last_social_presence_kind": "typing",
+        "silence_ticks": 8,
+        "spoken_ticks": 10,
+        "chat_ticks": 6,
+        "force_speak_ticks": 0,
+        "cycle_count": 212,
+        "recent_channels": [
+            "chat",
+            "autonomous",
+            "chat",
+            "chat",
+            "chat",
+            "chat",
+            "chat",
+            "chat"
+        ],
+        "recent_focus_kinds": [
+            "general",
+            "general",
+            "general",
+            "general",
+            "general",
+            "general",
+            "general",
+            "general"
+        ],
+        "recent_stances": [
+            "tender_under_cold",
+            "grounded",
+            "tender_under_cold",
+            "tender_under_cold",
+            "tender_under_cold",
+            "tender_under_cold",
+            "tender_under_cold",
+            "tender_under_cold"
+        ],
+        "recent_speech_acts": [
+            "reassure",
+            "micro_presence",
+            "reassure",
+            "reassure",
+            "reassure",
+            "mirror",
+            "reassure",
+            "reassure"
+        ],
+        "recent_inner_intents": [
+            "micro_presence",
+            "micro_presence",
+            "curious_question",
+            "micro_presence",
+            "curious_question",
+            "curious_question",
+            "random_chatter",
+            "micro_presence"
+        ],
+        "recent_subconscious_seeds": [
+            "memory_replay:norm_active_window_kind_usually_general_78",
+            "memory_replay:norm_active_window_kind_usually_general_76",
+            "memory_replay:norm_active_window_kind_usually_general_77",
+            "attention_drift:active_consumption",
+            "input_disturbance:chat_user_message_đúng_rồi",
+            "input_disturbance:chat_user_message_bạn_tên_gì",
+            "input_disturbance:chat_user_message_bạn_có_cảm",
+            "input_disturbance:chat_user_message_theo_cách_của"
+        ],
+        "recent_thought_seeds": [
+            "memory_replay:norm_active_window_kind_usually_general_78",
+            "memory_replay:norm_active_window_kind_usually_general_76",
+            "memory_replay:norm_active_window_kind_usually_general_77",
+            "attention_drift:active_consumption",
+            "input_disturbance:chat_user_message_đúng_rồi",
+            "input_disturbance:chat_user_message_bạn_tên_gì",
+            "input_disturbance:chat_user_message_bạn_có_cảm",
+            "input_disturbance:chat_user_message_theo_cách_của"
+        ],
+        "recent_self_state_labels": [
+            "watchful",
+            "watchful",
+            "engaged",
+            "engaged",
+            "engaged",
+            "engaged",
+            "engaged",
+            "engaged"
+        ],
+        "recent_social_presence": [
+            "typing",
+            "typing",
+            "typing",
+            "typing",
+            "typing",
+            "typing",
+            "typing",
+            "typing"
+        ],
+        "recent_notes": [
+            "silence_streak=8: small presence only if speech_core permits",
+            "spoken_this_turn: reset cold-restart feeling",
+            "last_act=reassure",
+            "focus_continuity=general",
+            "stance_continuity=tender_under_cold"
+        ],
+        "goal_persistence": {
+            "goal_id": "goal_502147",
+            "summary": "bạn thấy tôi hiện tại đang mở những tab web nào không",
+            "source": "user_message",
+            "status": "active",
+            "strength": 0.8,
+            "urgency": 0.582,
+            "drift": 0.58,
+            "progress": 0.0,
+            "recurrence_count": 2,
+            "created_at": 1778598905.34,
+            "updated_at": 1778598931.601,
+            "last_reactivated_at": 1778598931.601,
+            "next_hint": "continue solving the user's stated problem across later events",
+            "evidence": [
+                "direct_user_goal",
+                "channel=chat"
+            ],
+            "recent_summaries": [
+                "sao bạn lại nói 2 lần",
+                "rồi tôi hỏi lại nhé, tôi tên gì",
+                "bạn nói cái quái gì vậy",
+                "bạn vừa nói gì đó lạ lắm",
+                "hài quá đi mất, hahaha. bạn kể làm tôi mắc cười quá",
+                "nếu bắt buộc chọn thì bạn nghĩ là nhiêu",
+                "bạn thấy tôi hiện tại đang mở những tab web nào không",
+                "bạn có thấy tôi đang mở tab nào trên web không"
+            ]
+        },
+        "mental_processes": {
+            "curiosity": {
+                "name": "curiosity",
+                "level": 0.151,
+                "pressure": 0.2,
+                "activation": 0.139,
+                "volatility": 0.34,
+                "decay_rate": 0.07,
+                "last_signal": 0.304,
+                "last_interaction": -0.144
+            },
+            "restraint": {
+                "name": "restraint",
+                "level": 0.445,
+                "pressure": 0.822,
+                "activation": 0.18,
+                "volatility": 0.22,
+                "decay_rate": 0.05,
+                "last_signal": 0.18,
+                "last_interaction": 0.106
+            },
+            "tension": {
+                "name": "tension",
+                "level": 0.128,
+                "pressure": 0.129,
+                "activation": 0.214,
+                "volatility": 0.3,
+                "decay_rate": 0.09,
+                "last_signal": 0.451,
+                "last_interaction": -0.033
+            },
+            "continuity": {
+                "name": "continuity",
+                "level": 0.547,
+                "pressure": 1.0,
+                "activation": 0.468,
+                "volatility": 0.16,
+                "decay_rate": 0.035,
+                "last_signal": 0.46,
+                "last_interaction": 0.149
+            },
+            "attachment": {
+                "name": "attachment",
+                "level": 0.436,
+                "pressure": 0.974,
+                "activation": 0.491,
+                "volatility": 0.18,
+                "decay_rate": 0.03,
+                "last_signal": 0.592,
+                "last_interaction": 0.092
+            },
+            "reflection": {
+                "name": "reflection",
+                "level": 0.266,
+                "pressure": 0.405,
+                "activation": 0.242,
+                "volatility": 0.24,
+                "decay_rate": 0.06,
+                "last_signal": 0.178,
+                "last_interaction": 0.096
+            },
+            "social_presence": {
+                "name": "social_presence",
+                "level": 0.037,
+                "pressure": 0.052,
+                "activation": 0.167,
+                "volatility": 0.26,
+                "decay_rate": 0.06,
+                "last_signal": 0.68,
+                "last_interaction": 0.099
+            },
+            "cognitive_load": {
+                "name": "cognitive_load",
+                "level": 0.221,
+                "pressure": 0.257,
+                "activation": 0.243,
+                "volatility": 0.28,
+                "decay_rate": 0.08,
+                "last_signal": 0.206,
+                "last_interaction": 0.044
+            },
+            "background_thought": {
+                "name": "background_thought",
+                "level": 0.046,
+                "pressure": 0.064,
+                "activation": 0.04,
+                "volatility": 0.32,
+                "decay_rate": 0.07,
+                "last_signal": 0.0,
+                "last_interaction": 0.001
+            }
+        }
+    }
+}

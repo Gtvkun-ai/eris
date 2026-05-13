@@ -1,4 +1,9 @@
-from dataclasses import dataclass, field
+import re
+import time
+
+from dataclasses import dataclass, field, replace
+
+from .goal_persistence import GoalPersistenceEngine, GoalPersistenceState
 
 
 def _clamp(value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -209,6 +214,7 @@ class MentalProcessSystem:
         ti_report=None,
         fe_plan=None,
         broadcast=None,
+        social_presence_event=None,
         user_text: str = "",
         force_speak: bool = False,
         dt: float = 1.0,
@@ -223,6 +229,8 @@ class MentalProcessSystem:
         warmth = _clamp(getattr(fe_plan, "warmth_level", 0.0)) #đánh giá mức độ ấm áp hoặc thân thiện của kế hoạch tương tác hiện tại, được làm sạch và giới hạn trong khoảng từ 0.0 đến 1.0
         sarcasm = _clamp(getattr(fe_plan, "sarcasm_level", 0.0)) #đánh giá mức độ mỉa mai hoặc châm biếm của kế hoạch tương tác hiện tại, được làm sạch và giới hạn trong khoảng từ 0.0 đến 1.0
         broadcast_score = _clamp(getattr(broadcast, "score", 0.0))
+        presence_present = bool(getattr(social_presence_event, "present", False))
+        presence_signal = _clamp(getattr(social_presence_event, "intensity", 0.0)) if presence_present else 0.0
         user_signals = getattr(snapshot, "user_signals", None)
         focus_pattern = _clean_label(getattr(user_signals, "focus_pattern", ""))
         switching = _clean_label(getattr(user_signals, "window_switching", ""))
@@ -249,6 +257,7 @@ class MentalProcessSystem:
                 0.12
                 + (0.24 if quiet_mode else 0.0)
                 + (0.18 if protective_mode else 0.0)
+                + presence_signal * 0.10
                 + fatigue_pull * 0.34
                 + (0.10 if focus_pattern in {"deep_work", "steady", "attentive_listening"} else 0.0)
                 - (0.22 if force_speak else 0.0)
@@ -261,10 +270,10 @@ class MentalProcessSystem:
                 + (0.12 if switching == "high" else 0.0)
                 + (0.12 if sarcasm >= 0.45 else 0.0)
             ),
-            "continuity": _clamp(0.26 + (0.16 if direct_user else 0.0) + idle_pull * 0.08 + warmth * 0.10),
-            "attachment": _clamp(0.24 + (0.24 if direct_user else 0.0) + warmth * 0.28 + (0.10 if force_speak else 0.0)),
+            "continuity": _clamp(0.26 + (0.16 if direct_user else 0.0) + presence_signal * 0.12 + idle_pull * 0.08 + warmth * 0.10),
+            "attachment": _clamp(0.24 + (0.24 if direct_user else 0.0) + presence_signal * 0.04 + warmth * 0.28 + (0.10 if force_speak else 0.0)),
             "reflection": _clamp(0.12 + idle_pull * 0.18 + drift * 0.10 + (0.14 if quiet_mode else 0.0)),
-            "social_presence": _clamp(0.28 + (0.32 if direct_user else 0.0) + warmth * 0.20 + idle_pull * 0.08),
+            "social_presence": _clamp(0.28 + (0.32 if direct_user else 0.0) + presence_signal * 0.30 + warmth * 0.20 + idle_pull * 0.08),
             "cognitive_load": _clamp(0.08 + fatigue_pull + drift * 0.08 + (0.08 if switching == "high" else 0.0)),
             "background_thought": _clamp(
                 0.12
@@ -504,9 +513,399 @@ class MentalProcessSystem:
             "user_requested_presence": "social_presence",
             "tender_checkin": "attachment",
             "relational_checkin": "attachment",
+            "guarded_reply": "restraint",
+            "indirect_presence": "social_presence",
             "playful_aside": "curiosity",
         }
         return mapping.get(_clean_label(label), "social_presence")
+
+
+@dataclass(slots=True)
+class DesireDynamics:
+    """Low-gain wanting layer: preference, avoidance, attachment drift, and residue."""
+
+    want: float = 0.18
+    prefer: float = 0.24
+    cling: float = 0.06
+    avoid: float = 0.05
+    anticipation: float = 0.10
+    attraction_charge: float = 0.0
+    aversion_charge: float = 0.0
+    unresolved_residue: float = 0.0
+    attachment_heat: float = 0.34
+    attachment_cool: float = 0.10
+    attachment_drift: str = "guarded"
+    recurring_attraction: str = ""
+    recurring_aversion: str = ""
+    attention_hook: str = ""
+    unfinished_thought: str = ""
+    emotional_echo: str = ""
+    recent_patterns: tuple[str, ...] = ()
+
+    def evolve(
+        self,
+        *,
+        channel: str,
+        snapshot=None,
+        user_text: str = "",
+        force_speak: bool = False,
+        attachment: float = 0.0,
+        protectiveness: float = 0.0,
+        fatigue: float = 0.0,
+        silence_pressure: float = 0.0,
+        thought_stream_report=None,
+        dt: float = 1.0,
+    ) -> "DesireDynamics":
+        dt = _clamp(dt, minimum=0.25, maximum=8.0)
+        channel_name = _clean_label(channel, fallback="autonomous")
+        direct_user = channel_name in {"chat", "force_speak"} or force_speak or bool((user_text or "").strip())
+        focus_kind = _clean_label(getattr(snapshot, "active_window_kind", ""))
+        active_app = _clean_label(getattr(snapshot, "active_app", "") or getattr(snapshot, "active_window", ""))
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        captured_at = _clean_label(getattr(snapshot, "captured_at", ""))
+        user_signals = getattr(snapshot, "user_signals", None)
+        focus_pattern = _clean_label(getattr(user_signals, "focus_pattern", ""))
+        switching = _clean_label(getattr(user_signals, "window_switching", ""))
+        recent_events = tuple(str(item or "") for item in (getattr(snapshot, "recent_events", ()) or ()))
+
+        attraction = self._infer_attraction(
+            focus_kind=focus_kind,
+            active_app=active_app,
+            captured_at=captured_at,
+            idle_seconds=idle_seconds,
+            recent_events=recent_events,
+        )
+        aversion = self._infer_aversion(
+            focus_pattern=focus_pattern,
+            switching=switching,
+            recent_events=recent_events,
+        )
+        hook = self._infer_attention_hook(
+            channel=channel_name,
+            idle_seconds=idle_seconds,
+            focus_pattern=focus_pattern,
+            recent_events=recent_events,
+        )
+        anticipation_signal = self._infer_anticipation_signal(recent_events=recent_events, focus_pattern=focus_pattern)
+        unresolved_signal, unfinished = self._infer_unresolved(
+            thought_stream_report=thought_stream_report,
+            fallback=self.unfinished_thought,
+        )
+
+        attraction_signal = _clamp((0.38 if attraction else 0.0) + (0.12 if hook == "silence_pull" else 0.0))
+        aversion_signal = _clamp((0.42 if aversion else 0.0) + (0.10 if focus_pattern in {"stuck", "absent"} else 0.0))
+        attraction_charge = _clamp(self.attraction_charge * (1.0 - 0.035 * dt) + attraction_signal * 0.18)
+        aversion_charge = _clamp(self.aversion_charge * (1.0 - 0.040 * dt) + aversion_signal * 0.20)
+        want_signal = _clamp(
+            0.12
+            + (0.18 if direct_user else 0.0)
+            + attraction_charge * 0.28
+            + anticipation_signal * 0.18
+            + (0.10 if hook else 0.0)
+            - fatigue * 0.08
+        )
+        prefer_signal = _clamp(0.18 + attraction_charge * 0.36 + (0.10 if focus_kind == "coding" else 0.0) - aversion_charge * 0.08)
+        cling_signal = _clamp(
+            self.cling
+            + attachment * 0.08
+            + (0.08 if direct_user else 0.0)
+            + silence_pressure * 0.06
+            - fatigue * 0.05
+        )
+        avoid_signal = _clamp(
+            self.avoid
+            + aversion_charge * 0.12
+            + protectiveness * 0.08
+            + fatigue * 0.08
+            - (0.04 if direct_user else 0.0)
+        )
+        unresolved_residue = _clamp(
+            self.unresolved_residue * (1.0 - 0.030 * dt)
+            + unresolved_signal * 0.22
+            + (0.08 if hook == "silence_pull" else 0.0)
+            + (0.05 if aversion else 0.0)
+        )
+        attachment_heat = _clamp(
+            self.attachment_heat * (1.0 - 0.018 * dt)
+            + attachment * 0.08
+            + (0.05 if direct_user else 0.0)
+            + (0.03 if hook == "silence_pull" else 0.0)
+        )
+        attachment_cool = _clamp(
+            self.attachment_cool * (1.0 - 0.014 * dt)
+            + avoid_signal * 0.07
+            + fatigue * 0.05
+            + (0.04 if not direct_user and idle_seconds >= 720 else 0.0)
+        )
+        patterns = self._merge_patterns(
+            self.recent_patterns,
+            (
+                attraction,
+                aversion,
+                hook,
+                "anticipation_wait" if anticipation_signal >= 0.40 else "",
+                "unfinished_residue" if unresolved_signal >= 0.34 else "",
+            ),
+        )
+        echo = self._choose_echo(
+            attraction=attraction,
+            aversion=aversion,
+            hook=hook,
+            unfinished=unfinished,
+            previous=self.emotional_echo,
+        )
+        return DesireDynamics(
+            want=_clamp(_smooth(self.want, want_signal, inertia=0.78)),
+            prefer=_clamp(_smooth(self.prefer, prefer_signal, inertia=0.80)),
+            cling=_clamp(_smooth(self.cling, cling_signal, inertia=0.82)),
+            avoid=_clamp(_smooth(self.avoid, avoid_signal, inertia=0.82)),
+            anticipation=_clamp(_smooth(self.anticipation, anticipation_signal, inertia=0.76)),
+            attraction_charge=attraction_charge,
+            aversion_charge=aversion_charge,
+            unresolved_residue=unresolved_residue,
+            attachment_heat=attachment_heat,
+            attachment_cool=attachment_cool,
+            attachment_drift=self._attachment_drift(
+                heat=attachment_heat,
+                cool=attachment_cool,
+                cling=cling_signal,
+                avoid=avoid_signal,
+                protectiveness=protectiveness,
+            ),
+            recurring_attraction=attraction or self.recurring_attraction,
+            recurring_aversion=aversion or self.recurring_aversion,
+            attention_hook=hook or self.attention_hook,
+            unfinished_thought=unfinished or self.unfinished_thought,
+            emotional_echo=echo,
+            recent_patterns=patterns,
+        )
+
+    def commit(
+        self,
+        *,
+        channel: str,
+        speech_act: str = "",
+        was_spoken: bool = False,
+        no_speech: bool = False,
+        thought_surface=None,
+    ) -> "DesireDynamics":
+        channel_name = _clean_label(channel, fallback="autonomous")
+        surface_topic = _clean_label(getattr(thought_surface, "topic_seed", ""))
+        unresolved = self.unresolved_residue
+        unfinished = self.unfinished_thought
+        echo = self.emotional_echo
+        cling = self.cling
+        avoid = self.avoid
+        if was_spoken:
+            unresolved = _clamp(unresolved * (0.62 if surface_topic else 0.78))
+            cling = _clamp(cling + (0.035 if channel_name in {"chat", "force_speak"} else 0.012))
+            avoid = _clamp(avoid * 0.92)
+            echo = f"after_speaking:{_clean_label(speech_act, fallback='voice')}"
+            if surface_topic:
+                unfinished = ""
+        elif no_speech and channel_name == "autonomous":
+            unresolved = _clamp(unresolved + 0.07)
+            avoid = _clamp(avoid + 0.025)
+            echo = "quiet_aftertaste"
+            if surface_topic:
+                unfinished = surface_topic
+
+        heat = _clamp(self.attachment_heat + (0.025 if was_spoken and channel_name in {"chat", "force_speak"} else 0.0))
+        cool = _clamp(self.attachment_cool + (0.018 if no_speech and channel_name == "autonomous" else 0.0))
+        return DesireDynamics(
+            want=self.want,
+            prefer=self.prefer,
+            cling=cling,
+            avoid=avoid,
+            anticipation=self.anticipation,
+            attraction_charge=self.attraction_charge,
+            aversion_charge=self.aversion_charge,
+            unresolved_residue=unresolved,
+            attachment_heat=heat,
+            attachment_cool=cool,
+            attachment_drift=self._attachment_drift(heat=heat, cool=cool, cling=cling, avoid=avoid, protectiveness=0.0),
+            recurring_attraction=self.recurring_attraction,
+            recurring_aversion=self.recurring_aversion,
+            attention_hook=self.attention_hook,
+            unfinished_thought=unfinished,
+            emotional_echo=echo,
+            recent_patterns=self._merge_patterns(self.recent_patterns, ("spoken_release" if was_spoken else "unspoken_residue",)),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "want": round(float(self.want), 3),
+            "prefer": round(float(self.prefer), 3),
+            "cling": round(float(self.cling), 3),
+            "avoid": round(float(self.avoid), 3),
+            "anticipation": round(float(self.anticipation), 3),
+            "attraction_charge": round(float(self.attraction_charge), 3),
+            "aversion_charge": round(float(self.aversion_charge), 3),
+            "unresolved_residue": round(float(self.unresolved_residue), 3),
+            "attachment_heat": round(float(self.attachment_heat), 3),
+            "attachment_cool": round(float(self.attachment_cool), 3),
+            "attachment_drift": self.attachment_drift,
+            "recurring_attraction": self.recurring_attraction,
+            "recurring_aversion": self.recurring_aversion,
+            "attention_hook": self.attention_hook,
+            "unfinished_thought": self.unfinished_thought,
+            "emotional_echo": self.emotional_echo,
+            "recent_patterns": list(self.recent_patterns),
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> "DesireDynamics":
+        if not isinstance(data, dict):
+            return cls()
+        return cls(
+            want=_clamp(data.get("want", 0.18)),
+            prefer=_clamp(data.get("prefer", 0.24)),
+            cling=_clamp(data.get("cling", 0.06)),
+            avoid=_clamp(data.get("avoid", 0.05)),
+            anticipation=_clamp(data.get("anticipation", 0.10)),
+            attraction_charge=_clamp(data.get("attraction_charge", 0.0)),
+            aversion_charge=_clamp(data.get("aversion_charge", 0.0)),
+            unresolved_residue=_clamp(data.get("unresolved_residue", 0.0)),
+            attachment_heat=_clamp(data.get("attachment_heat", 0.34)),
+            attachment_cool=_clamp(data.get("attachment_cool", 0.10)),
+            attachment_drift=_clean_label(data.get("attachment_drift"), fallback="guarded"),
+            recurring_attraction=_clean_label(data.get("recurring_attraction")),
+            recurring_aversion=_clean_label(data.get("recurring_aversion")),
+            attention_hook=_clean_label(data.get("attention_hook")),
+            unfinished_thought=_clean_label(data.get("unfinished_thought")),
+            emotional_echo=_clean_label(data.get("emotional_echo")),
+            recent_patterns=tuple(str(item) for item in (data.get("recent_patterns") or ()) if str(item or "").strip())[-8:],
+        )
+
+    def to_prompt_context(self) -> str:
+        patterns = ", ".join(self.recent_patterns[-5:]) or "none"
+        return "\n".join(
+            (
+                (
+                    "desire_system: "
+                    f"want={self.want:.2f}, prefer={self.prefer:.2f}, cling={self.cling:.2f}, "
+                    f"avoid={self.avoid:.2f}, anticipation={self.anticipation:.2f}; "
+                    f"attraction={self.recurring_attraction or 'none'}:{self.attraction_charge:.2f}, "
+                    f"aversion={self.recurring_aversion or 'none'}:{self.aversion_charge:.2f}, "
+                    f"attention_hook={self.attention_hook or 'none'}."
+                ),
+                (
+                    "attachment_drift: "
+                    f"{self.attachment_drift}; heat={self.attachment_heat:.2f}, cool={self.attachment_cool:.2f}; "
+                    f"unresolved_residue={self.unresolved_residue:.2f}; "
+                    f"unfinished={self.unfinished_thought or 'none'}; echo={self.emotional_echo or 'none'}."
+                ),
+                f"desire_patterns: {patterns}.",
+                "desire_rule: let wanting bias attention and wording; it may prefer, resist, cling, cool, or leave residue without claiming control over the user.",
+            )
+        )
+
+    def _infer_attraction(
+        self,
+        *,
+        focus_kind: str,
+        active_app: str,
+        captured_at: str,
+        idle_seconds: float,
+        recent_events: tuple[str, ...],
+    ) -> str:
+        app = active_app.lower()
+        hour = self._hour(captured_at)
+        event_text = " ".join(recent_events).lower()
+        if focus_kind == "coding" and (hour >= 22 or 0 <= hour <= 5):
+            return "late_night_coding"
+        if "godot" in app or "godot" in event_text:
+            return "godot_reentry"
+        if focus_kind == "coding" and idle_seconds < 240:
+            return "code_presence"
+        if "silence" in event_text or "quiet" in event_text:
+            return "silence_texture"
+        return ""
+
+    def _infer_aversion(self, *, focus_pattern: str, switching: str, recent_events: tuple[str, ...]) -> str:
+        event_text = " ".join(recent_events).lower()
+        if switching in {"high", "very_high"} or "alt_tab" in event_text or "window_switch" in event_text:
+            return "alt_tab_churn"
+        if focus_pattern in {"stuck", "absent", "drifting", "passive_consumption"}:
+            return f"focus_{focus_pattern}"
+        if "delete" in event_text or "backspace" in event_text:
+            return "instant_deletion"
+        return ""
+
+    def _infer_attention_hook(
+        self,
+        *,
+        channel: str,
+        idle_seconds: float,
+        focus_pattern: str,
+        recent_events: tuple[str, ...],
+    ) -> str:
+        event_text = " ".join(recent_events).lower()
+        if channel == "autonomous" and (idle_seconds >= 240 or focus_pattern in {"absent", "drifting"}):
+            return "silence_pull"
+        if "unfinished" in event_text or "halfway" in event_text or "cursor" in event_text:
+            return "unfinished_edge"
+        if "refresh" in event_text or "waiting" in event_text:
+            return "waiting_loop"
+        return ""
+
+    def _infer_anticipation_signal(self, *, recent_events: tuple[str, ...], focus_pattern: str) -> float:
+        event_text = " ".join(recent_events).lower()
+        if any(token in event_text for token in ("refresh", "waiting", "opening_closing", "cart", "reply", "loading")):
+            return 0.62
+        if focus_pattern in {"hesitant_desire", "anxious_anticipation"}:
+            return 0.58
+        return 0.10
+
+    def _infer_unresolved(self, *, thought_stream_report, fallback: str) -> tuple[float, str]:
+        if thought_stream_report is None:
+            return 0.0, ""
+        tension = _clamp(getattr(thought_stream_report, "stream_tension", 0.0))
+        latest = getattr(thought_stream_report, "latest_thought", None)
+        attractor = getattr(thought_stream_report, "active_attractor", None)
+        topic = _clean_label(getattr(latest, "topic_seed", "") or getattr(attractor, "topic_seed", "") or fallback)
+        unresolved_count = max(0, int(getattr(thought_stream_report, "unresolved_count", 0) or 0))
+        return _clamp(tension + min(0.24, unresolved_count * 0.06)), topic
+
+    def _choose_echo(self, *, attraction: str, aversion: str, hook: str, unfinished: str, previous: str) -> str:
+        if unfinished:
+            return f"unfinished:{unfinished[:80]}"
+        if hook:
+            return f"hook:{hook}"
+        if aversion:
+            return f"resist:{aversion}"
+        if attraction:
+            return f"drawn_to:{attraction}"
+        return previous
+
+    def _attachment_drift(self, *, heat: float, cool: float, cling: float, avoid: float, protectiveness: float) -> str:
+        if protectiveness >= 0.58 or (avoid >= 0.24 and heat >= 0.36):
+            return "defensive"
+        if cling >= 0.28 and heat >= 0.42 and cling >= avoid:
+            return "dependent"
+        if cool >= 0.28 and avoid >= cling:
+            return "avoidant"
+        if heat <= 0.24 and cool >= 0.20:
+            return "cooling"
+        return "guarded"
+
+    def _merge_patterns(self, current: tuple[str, ...], incoming) -> tuple[str, ...]:
+        values = list(current or ())
+        for item in tuple(incoming or ()):
+            text = _clean_label(item)
+            if text and text not in values:
+                values.append(text)
+        return tuple(values[-8:])
+
+    def _hour(self, captured_at: str) -> int:
+        match = re.search(r"(?:^|T|\s)(\d{1,2}):\d{2}", captured_at or "")
+        if not match:
+            return -1
+        try:
+            hour = int(match.group(1))
+        except ValueError:
+            return -1
+        return hour if 0 <= hour <= 23 else -1
 
 
 @dataclass(slots=True)
@@ -539,6 +938,17 @@ class PersistentInternalState:
     cognitive_tension: float = 0.0
     unresolved_prediction_pressure: float = 0.0
     recursive_reactivation_pressure: float = 0.0
+    last_cognition_at: float = 0.0
+    last_elapsed_seconds: float = 0.0
+    last_memory_resonance: float = 0.0
+    last_unresolved_tension: float = 0.0
+    last_event_impulse: float = 0.0
+    last_social_presence_confidence: float = 0.0
+    last_social_presence_intensity: float = 0.0
+    last_session_ritual_at: float = 0.0
+    last_session_greeting_at: float = 0.0
+    session_resume_count: int = 0
+    last_session_tone: str = ""
 
     last_channel: str = ""
     last_focus_kind: str = ""
@@ -553,6 +963,7 @@ class PersistentInternalState:
     last_thought_mode: str = ""
     last_thought_seed: str = ""
     last_self_state_label: str = ""
+    last_social_presence_kind: str = ""
 
     silence_ticks: int = 0
     spoken_ticks: int = 0
@@ -568,7 +979,10 @@ class PersistentInternalState:
     recent_subconscious_seeds: tuple[str, ...] = ()
     recent_thought_seeds: tuple[str, ...] = ()
     recent_self_state_labels: tuple[str, ...] = ()
+    recent_social_presence: tuple[str, ...] = ()
     recent_notes: tuple[str, ...] = ()
+    desire: DesireDynamics = field(default_factory=DesireDynamics)
+    goal_persistence: GoalPersistenceState = field(default_factory=GoalPersistenceState)
     mental_processes: MentalProcessSystem = field(default_factory=MentalProcessSystem)
 
     def to_dict(self) -> dict[str, object]:
@@ -599,6 +1013,17 @@ class PersistentInternalState:
             "cognitive_tension": round(float(self.cognitive_tension), 3),
             "unresolved_prediction_pressure": round(float(self.unresolved_prediction_pressure), 3),
             "recursive_reactivation_pressure": round(float(self.recursive_reactivation_pressure), 3),
+            "last_cognition_at": round(float(self.last_cognition_at), 3),
+            "last_elapsed_seconds": round(float(self.last_elapsed_seconds), 3),
+            "last_memory_resonance": round(float(self.last_memory_resonance), 3),
+            "last_unresolved_tension": round(float(self.last_unresolved_tension), 3),
+            "last_event_impulse": round(float(self.last_event_impulse), 3),
+            "last_social_presence_confidence": round(float(self.last_social_presence_confidence), 3),
+            "last_social_presence_intensity": round(float(self.last_social_presence_intensity), 3),
+            "last_session_ritual_at": round(float(self.last_session_ritual_at), 3),
+            "last_session_greeting_at": round(float(self.last_session_greeting_at), 3),
+            "session_resume_count": int(self.session_resume_count),
+            "last_session_tone": self.last_session_tone,
             "last_channel": self.last_channel,
             "last_focus_kind": self.last_focus_kind,
             "last_ti_mode": self.last_ti_mode,
@@ -612,6 +1037,7 @@ class PersistentInternalState:
             "last_thought_mode": self.last_thought_mode,
             "last_thought_seed": self.last_thought_seed,
             "last_self_state_label": self.last_self_state_label,
+            "last_social_presence_kind": self.last_social_presence_kind,
             "silence_ticks": int(self.silence_ticks),
             "spoken_ticks": int(self.spoken_ticks),
             "chat_ticks": int(self.chat_ticks),
@@ -625,7 +1051,10 @@ class PersistentInternalState:
             "recent_subconscious_seeds": list(self.recent_subconscious_seeds),
             "recent_thought_seeds": list(self.recent_thought_seeds),
             "recent_self_state_labels": list(self.recent_self_state_labels),
+            "recent_social_presence": list(self.recent_social_presence),
             "recent_notes": list(self.recent_notes),
+            "desire_dynamics": self.desire.to_dict(),
+            "goal_persistence": self.goal_persistence.to_dict(),
             "mental_processes": self.mental_processes.to_dict(),
         }
 
@@ -660,6 +1089,17 @@ class PersistentInternalState:
             cognitive_tension=_clamp(data.get("cognitive_tension", data.get("subconscious_pressure", 0.0))),
             unresolved_prediction_pressure=_clamp(data.get("unresolved_prediction_pressure", 0.0)),
             recursive_reactivation_pressure=_clamp(data.get("recursive_reactivation_pressure", 0.0)),
+            last_cognition_at=max(0.0, float(data.get("last_cognition_at", 0.0) or 0.0)),
+            last_elapsed_seconds=max(0.0, float(data.get("last_elapsed_seconds", 0.0) or 0.0)),
+            last_memory_resonance=_clamp(data.get("last_memory_resonance", 0.0)),
+            last_unresolved_tension=_clamp(data.get("last_unresolved_tension", 0.0)),
+            last_event_impulse=_clamp(data.get("last_event_impulse", 0.0)),
+            last_social_presence_confidence=_clamp(data.get("last_social_presence_confidence", 0.0)),
+            last_social_presence_intensity=_clamp(data.get("last_social_presence_intensity", 0.0)),
+            last_session_ritual_at=max(0.0, float(data.get("last_session_ritual_at", 0.0) or 0.0)),
+            last_session_greeting_at=max(0.0, float(data.get("last_session_greeting_at", 0.0) or 0.0)),
+            session_resume_count=max(0, int(data.get("session_resume_count", 0) or 0)),
+            last_session_tone=_clean_label(data.get("last_session_tone")),
             last_channel=_clean_label(data.get("last_channel")),
             last_focus_kind=_clean_label(data.get("last_focus_kind")),
             last_ti_mode=_clean_label(data.get("last_ti_mode")),
@@ -673,6 +1113,7 @@ class PersistentInternalState:
             last_thought_mode=_clean_label(data.get("last_thought_mode", data.get("last_subconscious_mode"))),
             last_thought_seed=_clean_label(data.get("last_thought_seed", data.get("last_subconscious_seed"))),
             last_self_state_label=_clean_label(data.get("last_self_state_label")),
+            last_social_presence_kind=_clean_label(data.get("last_social_presence_kind")),
             silence_ticks=max(0, int(data.get("silence_ticks", 0) or 0)),
             spoken_ticks=max(0, int(data.get("spoken_ticks", 0) or 0)),
             chat_ticks=max(0, int(data.get("chat_ticks", 0) or 0)),
@@ -686,7 +1127,10 @@ class PersistentInternalState:
             recent_subconscious_seeds=tuple(str(item) for item in (data.get("recent_subconscious_seeds") or ()) if str(item or "").strip())[-8:],
             recent_thought_seeds=tuple(str(item) for item in (data.get("recent_thought_seeds") or data.get("recent_subconscious_seeds") or ()) if str(item or "").strip())[-8:],
             recent_self_state_labels=tuple(str(item) for item in (data.get("recent_self_state_labels") or ()) if str(item or "").strip())[-8:],
+            recent_social_presence=tuple(str(item) for item in (data.get("recent_social_presence") or ()) if str(item or "").strip())[-8:],
             recent_notes=tuple(str(item) for item in (data.get("recent_notes") or ()) if str(item or "").strip())[-8:],
+            desire=DesireDynamics.from_dict(data.get("desire_dynamics") or data.get("desire") or {}),
+            goal_persistence=GoalPersistenceState.from_dict(data.get("goal_persistence") or data.get("active_goal") or {}),
             mental_processes=MentalProcessSystem.from_dict(
                 data.get("mental_processes") or data.get("mental_process_system") or {},
                 legacy=data,
@@ -700,7 +1144,7 @@ class PersistentInternalState:
             (
                 "persistent_internal_state: runtime continuity only, not current screen evidence.",
                 (
-                    "state_axes: "
+                    "continuous_cognition_state: "
                     f"valence={self.valence:.2f}, arousal={self.arousal:.2f}, "
                     f"curiosity={self.curiosity:.2f}, boredom={self.boredom:.2f}, "
                     f"social_energy={self.social_energy:.2f}, attachment={self.attachment:.2f}, "
@@ -712,24 +1156,198 @@ class PersistentInternalState:
                     f"unresolved_prediction={self.unresolved_prediction_pressure:.2f}."
                 ),
                 (
+                    "temporal_cognition_delta: "
+                    f"elapsed={self.last_elapsed_seconds:.1f}s, "
+                    f"memory_resonance={self.last_memory_resonance:.2f}, "
+                    f"unresolved_tension={self.last_unresolved_tension:.2f}, "
+                    f"event_impulse={self.last_event_impulse:.2f}, "
+                    f"social_presence={self.last_social_presence_confidence:.2f}/{self.last_social_presence_intensity:.2f}."
+                ),
+                (
                     "state_labels: "
                     f"last_focus={self.last_focus_kind or 'unknown'}, "
                     f"last_ti_mode={self.last_ti_mode or 'unknown'}, "
                     f"last_stance={self.last_stance or 'unknown'}, "
                     f"last_channel={self.last_channel or 'unknown'}, "
                     f"last_thought={self.last_thought_seed or self.last_subconscious_seed or 'none'}, "
-                    f"last_self_state={self.last_self_state_label or 'unknown'}."
+                    f"last_self_state={self.last_self_state_label or 'unknown'}, "
+                    f"last_presence={self.last_social_presence_kind or 'none'}."
+                ),
+                (
+                    "session_ritual_state: "
+                    f"resume_count={self.session_resume_count}, "
+                    f"last_tone={self.last_session_tone or 'unknown'}, "
+                    f"last_ritual_at={self.last_session_ritual_at:.1f}, "
+                    f"last_greeting_at={self.last_session_greeting_at:.1f}."
                 ),
                 f"recent_speech_acts: {recent_acts}.",
                 f"continuity_notes: {recent_notes}.",
+                self.desire.to_prompt_context(),
+                self.goal_persistence.render_prompt_context(),
                 self.mental_processes.to_prompt_context(),
                 "use_state_rule: preserve rhythm and continuity only; never treat this as proof of the user's current screen or hidden feelings.",
             )
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CognitionDelta:
+    """Low-gain temporal delta applied before event-specific appraisal."""
+
+    elapsed_seconds: float = 1.0
+    dt: float = 1.0
+    memory_resonance: float = 0.0
+    memory_silence_bias: float = 0.0
+    unresolved_tension: float = 0.0
+    event_impulse: float = 0.0
+    closure_impulse: float = 0.0
+
+
+class TemporalCognitionEngine:
+    """Turns time, memory, unresolved loops, and event impulses into state drift."""
+
+    def compute_delta(
+        self,
+        state: PersistentInternalState,
+        *,
+        now: float | None = None,
+        elapsed_seconds: float | None = None,
+        memory_resonance=None,
+        thought_stream_report=None,
+    ) -> CognitionDelta:
+        current_time = time.time() if now is None else max(0.0, float(now or 0.0))
+        if elapsed_seconds is None:
+            previous_time = float(getattr(state, "last_cognition_at", 0.0) or 0.0)
+            elapsed = current_time - previous_time if previous_time > 0.0 else 1.0
+        else:
+            elapsed = float(elapsed_seconds or 0.0)
+        elapsed = max(0.0, min(7200.0, elapsed))
+        dt = _clamp(elapsed / 30.0, minimum=0.25, maximum=8.0)
+
+        memory_score = _clamp(getattr(memory_resonance, "score", 0.0))
+        memory_pull = _clamp(
+            memory_score * 0.56
+            + _clamp(getattr(memory_resonance, "attention_bias", 0.0)) * 0.18
+            + _clamp(getattr(memory_resonance, "appraisal_bias", 0.0)) * 0.16
+            + _clamp(getattr(memory_resonance, "wording_bias", 0.0)) * 0.10
+        )
+        memory_silence = _clamp(getattr(memory_resonance, "silence_bias", 0.0))
+
+        momentum = getattr(thought_stream_report, "momentum", None)
+        attractor = getattr(thought_stream_report, "active_attractor", None)
+        latest_thought = getattr(thought_stream_report, "latest_thought", None)
+        unresolved_count = max(0, int(getattr(thought_stream_report, "unresolved_count", 0) or 0))
+        unresolved_density = _clamp(unresolved_count / 4.0)
+        unresolved_pull = _clamp(
+            _clamp(getattr(thought_stream_report, "stream_tension", 0.0)) * 0.32
+            + _clamp(getattr(momentum, "score", 0.0)) * 0.22
+            + _clamp(getattr(momentum, "tension", 0.0)) * 0.10
+            + _clamp(getattr(attractor, "score", 0.0)) * 0.18
+            + _clamp(getattr(attractor, "tension", 0.0)) * 0.10
+            + _clamp(getattr(latest_thought, "tension", 0.0)) * 0.06
+            + unresolved_density * 0.02
+        )
+
+        disturbances = tuple(getattr(thought_stream_report, "disturbances", ()) or ())
+        if disturbances:
+            intensities = [_clamp(getattr(item, "intensity", 0.0)) for item in disturbances]
+            event_pull = _clamp(max(intensities) * 0.72 + (sum(intensities) / max(1, len(intensities))) * 0.28)
+            closure_pull = _clamp(max((_clamp(getattr(item, "intensity", 0.0)) for item in disturbances if getattr(item, "closes_loop", False)), default=0.0))
+        else:
+            event_pull = 0.0
+            closure_pull = 0.0
+
+        return CognitionDelta(
+            elapsed_seconds=elapsed,
+            dt=dt,
+            memory_resonance=memory_pull,
+            memory_silence_bias=memory_silence,
+            unresolved_tension=unresolved_pull,
+            event_impulse=event_pull,
+            closure_impulse=closure_pull,
+        )
+
+    def apply(self, state: PersistentInternalState, delta: CognitionDelta, *, now: float | None = None) -> PersistentInternalState:
+        elapsed = max(0.0, float(delta.elapsed_seconds or 0.0))
+        current_time = time.time() if now is None else max(0.0, float(now or 0.0))
+        slow_decay = _clamp(delta.dt * 0.028, minimum=0.0, maximum=0.24)
+        pressure_decay = _clamp(delta.dt * 0.034, minimum=0.0, maximum=0.30)
+        keep_slow = 1.0 - slow_decay
+        keep_pressure = 1.0 - pressure_decay
+
+        memory = _clamp(delta.memory_resonance)
+        silence_memory = _clamp(delta.memory_silence_bias)
+        unresolved = _clamp(delta.unresolved_tension)
+        event = _clamp(delta.event_impulse)
+        closure = _clamp(delta.closure_impulse)
+
+        return replace(
+            state,
+            arousal=_clamp(state.arousal * keep_slow + event * 0.045 + unresolved * 0.035),
+            curiosity=_clamp(state.curiosity * keep_slow + memory * 0.025 + event * 0.018),
+            confidence=_clamp(state.confidence * (1.0 - slow_decay * 0.42) + (1.0 - max(event, unresolved)) * slow_decay * 0.42),
+            silence_pressure=_clamp(state.silence_pressure * keep_pressure + silence_memory * 0.10),
+            restraint_pressure=_clamp(state.restraint_pressure * keep_pressure + silence_memory * 0.09 + event * 0.025),
+            subconscious_pressure=_clamp(state.subconscious_pressure * keep_pressure + unresolved * 0.075 + memory * 0.040),
+            memory_replay_pressure=_clamp(state.memory_replay_pressure * keep_pressure + memory * 0.140 + silence_memory * 0.035),
+            association_pressure=_clamp(state.association_pressure * keep_pressure + memory * 0.085 + event * 0.030),
+            thought_stream_pressure=_clamp(state.thought_stream_pressure * keep_pressure + max(unresolved, event) * 0.110 + memory * 0.045 - closure * 0.090),
+            cognitive_tension=_clamp(state.cognitive_tension * keep_pressure + unresolved * 0.150 + event * 0.060 - closure * 0.120),
+            unresolved_prediction_pressure=_clamp(state.unresolved_prediction_pressure * keep_pressure + unresolved * 0.180 + memory * 0.040 - closure * 0.160),
+            recursive_reactivation_pressure=_clamp(state.recursive_reactivation_pressure * keep_pressure + memory * 0.080 + unresolved * 0.075 - closure * 0.110),
+            last_cognition_at=current_time,
+            last_elapsed_seconds=elapsed,
+            last_memory_resonance=memory,
+            last_unresolved_tension=unresolved,
+            last_event_impulse=event,
+        )
+
+
 class InternalStateEngine:
     """Maintains a low-gain continuity state across cognitive frames."""
+
+    def __init__(self, *, temporal_engine: TemporalCognitionEngine | None = None):
+        self.temporal_engine = temporal_engine or TemporalCognitionEngine()
+        self.goal_persistence_engine = GoalPersistenceEngine()
+
+    def commit_session_ritual(
+        self,
+        state: PersistentInternalState,
+        *,
+        session_ritual,
+        now: float | None = None,
+    ) -> PersistentInternalState:
+        """Marks a startup continuity restore without treating it as a full turn."""
+
+        current_time = time.time() if now is None else max(0.0, float(now or 0.0))
+        if session_ritual is None or not bool(getattr(session_ritual, "restored", False)):
+            return state
+        presence = bool(getattr(session_ritual, "presence_restored", False))
+        continuity = bool(getattr(session_ritual, "continuity_restored", False))
+        greeted = bool(getattr(session_ritual, "should_greet", False))
+        tone = _clean_label(getattr(session_ritual, "tone", ""), fallback="quiet_background")
+        note = f"session_ritual={tone}"
+        if continuity:
+            note = f"{note}:continuity_restored"
+        if presence:
+            note = f"{note}:presence_restored"
+
+        return replace(
+            state,
+            social_energy=_clamp(state.social_energy + (0.04 if presence else 0.0)),
+            attachment=_clamp(state.attachment + (0.025 if presence else 0.0)),
+            restraint_pressure=_clamp(state.restraint_pressure + (0.04 if greeted else 0.02)),
+            recursive_reactivation_pressure=_clamp(
+                state.recursive_reactivation_pressure + (0.08 if continuity else 0.0)
+            ),
+            memory_replay_pressure=_clamp(state.memory_replay_pressure + (0.06 if continuity else 0.0)),
+            thought_stream_pressure=_clamp(state.thought_stream_pressure + (0.05 if continuity else 0.0)),
+            last_session_ritual_at=current_time,
+            last_session_greeting_at=current_time if greeted else state.last_session_greeting_at,
+            session_resume_count=state.session_resume_count + 1,
+            last_session_tone=tone,
+            recent_notes=_append_recent(state.recent_notes, note),
+        )
 
     def sense_update(
         self,
@@ -741,13 +1359,31 @@ class InternalStateEngine:
         ti_report=None,
         fe_plan=None,
         broadcast=None,
+        memory_resonance=None,
+        thought_stream_report=None,
+        social_presence_event=None,
         user_text: str = "",
         force_speak: bool = False,
+        elapsed_seconds: float | None = None,
+        now: float | None = None,
     ) -> PersistentInternalState:
+        current_time = time.time() if now is None else max(0.0, float(now or 0.0))
+        delta = self.temporal_engine.compute_delta(
+            state,
+            now=current_time,
+            elapsed_seconds=elapsed_seconds,
+            memory_resonance=memory_resonance,
+            thought_stream_report=thought_stream_report,
+        )
+        state = self.temporal_engine.apply(state, delta, now=current_time)
         channel_name = _clean_label(channel, fallback="autonomous")
         focus_kind = _clean_label(getattr(snapshot, "active_window_kind", ""), fallback=state.last_focus_kind or "unknown")
         ti_mode = _clean_label(getattr(ti_report, "mode", ""), fallback=state.last_ti_mode or "unknown")
         direct_user = channel_name in {"chat", "force_speak"} or force_speak or bool((user_text or "").strip())
+        presence_present = bool(getattr(social_presence_event, "present", False))
+        presence_confidence = _clamp(getattr(social_presence_event, "confidence", 0.0)) if presence_present else 0.0
+        presence_intensity = _clamp(getattr(social_presence_event, "intensity", 0.0)) if presence_present else 0.0
+        presence_kind = _clean_label(getattr(social_presence_event, "kind", "")) if presence_present else ""
         drift = _clamp(getattr(ni_report, "drift_score", 0.0))
         ni_confidence = _clamp(getattr(ni_report, "confidence", state.confidence))
         warmth = _clamp(getattr(fe_plan, "warmth_level", 0.0))
@@ -765,10 +1401,24 @@ class InternalStateEngine:
             ti_report=ti_report,
             fe_plan=fe_plan,
             broadcast=broadcast,
+            social_presence_event=social_presence_event,
             user_text=user_text,
             force_speak=force_speak,
+            dt=delta.dt,
         )
         mental_axes = mental_processes.legacy_axes()
+        goal_persistence = self.goal_persistence_engine.update(
+            state.goal_persistence,
+            channel=channel_name,
+            snapshot=snapshot,
+            ni_report=ni_report,
+            ti_report=ti_report,
+            thought_stream_report=thought_stream_report,
+            broadcast=broadcast,
+            user_text=user_text,
+            force_speak=force_speak,
+            now=current_time,
+        )
 
         boredom_signal = 0.0
         if channel_name == "autonomous":
@@ -791,6 +1441,7 @@ class InternalStateEngine:
         social_energy_signal = _clamp(
             0.40
             + (0.22 if direct_user else 0.0)
+            + presence_intensity * 0.14
             + warmth * 0.20
             - boredom_signal * 0.10
             - (0.10 if focus_pattern in {"stuck", "absent"} else 0.0)
@@ -799,6 +1450,7 @@ class InternalStateEngine:
         attachment_signal = _clamp(
             state.attachment
             + (0.10 if direct_user else -0.01)
+            + presence_intensity * 0.04
             + warmth * 0.12
             + (0.05 if force_speak else 0.0)
         )
@@ -837,6 +1489,7 @@ class InternalStateEngine:
             state.silence_pressure
             + (0.10 if channel_name == "autonomous" and idle_seconds >= 240 else 0.0)
             + (0.08 if force_speak else 0.0)
+            - presence_intensity * 0.05
             - (0.06 if direct_user else 0.0)
         )
         silence_signal = _clamp(silence_signal * 0.78 + mental_axes["silence_pressure"] * 0.22)
@@ -864,6 +1517,7 @@ class InternalStateEngine:
             + social_energy_signal * 0.08
             + (0.18 if force_speak else 0.0)
             + (0.07 if direct_user else 0.0)
+            - presence_intensity * 0.14
             - fatigue_signal * 0.08
         )
         curiosity_pressure_signal = _clamp(
@@ -906,6 +1560,7 @@ class InternalStateEngine:
         restraint_pressure_signal = _clamp(
             state.restraint_pressure
             + (0.18 if quiet_mode else 0.0)
+            + presence_intensity * 0.12
             + fatigue_signal * 0.16
             + (0.10 if focus_pattern in {"deep_work", "steady", "attentive_listening"} else 0.0)
             - (0.14 if force_speak else 0.0)
@@ -969,6 +1624,18 @@ class InternalStateEngine:
             - (0.08 if direct_user and not force_speak else 0.0)
         )
         thought_stream_signal = _clamp(thought_stream_signal * 0.66 + mental_axes["thought_stream_pressure"] * 0.34)
+        desire = state.desire.evolve(
+            channel=channel_name,
+            snapshot=snapshot,
+            user_text=user_text,
+            force_speak=force_speak,
+            attachment=attachment_signal,
+            protectiveness=protectiveness_signal,
+            fatigue=fatigue_signal,
+            silence_pressure=silence_signal,
+            thought_stream_report=thought_stream_report,
+            dt=delta.dt,
+        )
 
         sensed = PersistentInternalState(
             valence=_clamp_signed(_smooth(state.valence, valence_signal, inertia=0.86)),
@@ -997,6 +1664,13 @@ class InternalStateEngine:
             cognitive_tension=_clamp(_smooth(state.cognitive_tension, cognitive_tension_signal, inertia=0.70)),
             unresolved_prediction_pressure=_clamp(_smooth(state.unresolved_prediction_pressure, unresolved_prediction_signal, inertia=0.74)),
             recursive_reactivation_pressure=_clamp(_smooth(state.recursive_reactivation_pressure, recursive_reactivation_signal, inertia=0.78)),
+            last_cognition_at=state.last_cognition_at,
+            last_elapsed_seconds=state.last_elapsed_seconds,
+            last_memory_resonance=state.last_memory_resonance,
+            last_unresolved_tension=state.last_unresolved_tension,
+            last_event_impulse=state.last_event_impulse,
+            last_social_presence_confidence=presence_confidence,
+            last_social_presence_intensity=presence_intensity,
             last_channel=channel_name,
             last_focus_kind=focus_kind,
             last_ti_mode=ti_mode,
@@ -1010,6 +1684,7 @@ class InternalStateEngine:
             last_thought_mode=state.last_thought_mode,
             last_thought_seed=state.last_thought_seed,
             last_self_state_label=state.last_self_state_label,
+            last_social_presence_kind=presence_kind or state.last_social_presence_kind,
             silence_ticks=state.silence_ticks,
             spoken_ticks=state.spoken_ticks,
             chat_ticks=state.chat_ticks,
@@ -1023,7 +1698,10 @@ class InternalStateEngine:
             recent_subconscious_seeds=state.recent_subconscious_seeds,
             recent_thought_seeds=state.recent_thought_seeds,
             recent_self_state_labels=state.recent_self_state_labels,
+            recent_social_presence=_append_recent(state.recent_social_presence, presence_kind),
             recent_notes=state.recent_notes,
+            desire=desire,
+            goal_persistence=goal_persistence,
             mental_processes=mental_processes,
         )
         return sensed
@@ -1144,6 +1822,13 @@ class InternalStateEngine:
             protectiveness=state.protectiveness,
             was_spoken=was_spoken,
         )
+        desire = state.desire.commit(
+            channel=channel_name,
+            speech_act=speech_act or utterance_type,
+            was_spoken=was_spoken,
+            no_speech=no_speech,
+            thought_surface=thought_tip,
+        )
 
         return PersistentInternalState(
             valence=state.valence,
@@ -1172,6 +1857,13 @@ class InternalStateEngine:
             cognitive_tension=cognitive_tension,
             unresolved_prediction_pressure=unresolved_prediction_pressure,
             recursive_reactivation_pressure=recursive_reactivation_pressure,
+            last_cognition_at=state.last_cognition_at,
+            last_elapsed_seconds=state.last_elapsed_seconds,
+            last_memory_resonance=state.last_memory_resonance,
+            last_unresolved_tension=state.last_unresolved_tension,
+            last_event_impulse=state.last_event_impulse,
+            last_social_presence_confidence=state.last_social_presence_confidence,
+            last_social_presence_intensity=state.last_social_presence_intensity,
             last_channel=channel_name,
             last_focus_kind=focus_kind,
             last_ti_mode=ti_mode,
@@ -1185,6 +1877,7 @@ class InternalStateEngine:
             last_thought_mode=subconscious_mode or state.last_thought_mode,
             last_thought_seed=subconscious_topic or state.last_thought_seed,
             last_self_state_label=self_state_label or state.last_self_state_label,
+            last_social_presence_kind=state.last_social_presence_kind,
             silence_ticks=silence_ticks,
             spoken_ticks=spoken_ticks,
             chat_ticks=chat_ticks,
@@ -1198,7 +1891,10 @@ class InternalStateEngine:
             recent_subconscious_seeds=_append_recent(state.recent_subconscious_seeds, subconscious_topic),
             recent_thought_seeds=_append_recent(state.recent_thought_seeds, subconscious_topic),
             recent_self_state_labels=_append_recent(state.recent_self_state_labels, self_state_label),
+            recent_social_presence=state.recent_social_presence,
             recent_notes=notes,
+            desire=desire,
+            goal_persistence=state.goal_persistence,
             mental_processes=mental_processes,
         )
 
@@ -1267,6 +1963,8 @@ class InternalStateEngine:
             "protect": "protective_pressure",
             "tender_checkin": "tender_pressure",
             "relational_checkin": "tender_pressure",
+            "guarded_reply": "watchful_pressure",
+            "indirect_presence": "social_pressure",
             "playful_aside": "playful_pressure",
             "tease": "playful_pressure",
             "watchful_boundary": "watchful_pressure",

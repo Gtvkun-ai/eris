@@ -22,10 +22,10 @@ class InnerThoughtEngineTests(unittest.TestCase):
         )
 
         self.assertTrue(thought.should_surface)
-        self.assertEqual(thought.intent, "inner_whim")
-        self.assertEqual(thought.topic_seed, "present_whim")
-        self.assertIn("no_screen_claim", thought.risk_flags)
-        self.assertIn("needs_generation", thought.risk_flags)
+        self.assertEqual(thought.intent, "micro_presence")
+        self.assertEqual(thought.topic_seed, "screen_residue")
+        self.assertIn("situated_residue", thought.risk_flags)
+        self.assertIn("needs_seeded_generation", thought.risk_flags)
 
     def test_force_speak_rotates_recent_topic_seeds(self):
         thought = self.engine.evaluate(

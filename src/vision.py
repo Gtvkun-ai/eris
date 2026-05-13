@@ -24,7 +24,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 
 class AttentionOverseer:
-    def __init__(self, model_path: str, n_ctx: int = 4096, n_gpu_layers: int = -1):
+    def __init__(self, model_path: str, n_ctx: int = 8192, n_gpu_layers: int = -1):
         self.logger = get_logger("Vision")
         self.memory_logger = get_logger("Memory")
         self.parse_logger = get_logger("Parse")
@@ -37,7 +37,11 @@ class AttentionOverseer:
             self.logger.info("Phát hiện model đã vá: %s", patched_path)
             model_path = patched_path
 
-        self.logger.info("Đang tải mô hình GGUF: %s", model_path)
+        remote_enabled = os.environ.get("ERIS_REMOTE_API_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+        if remote_enabled:
+            self.logger.info("Đang dùng remote API làm cognition chính.")
+        else:
+            self.logger.info("Đang tải mô hình GGUF làm cognition chính: %s", model_path)
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         self.process_manager = LlamaServerProcessManager(
             logger=self.process_logger,
@@ -48,7 +52,26 @@ class AttentionOverseer:
             n_ctx=n_ctx,
             n_gpu_layers=n_gpu_layers,
         )
-        self.llm_service = LlmService(self.llm_client)
+        style_client = self.process_manager.build_style_client(
+            model_path=model_path,
+            n_ctx=min(n_ctx, 4096),
+            n_gpu_layers=n_gpu_layers,
+        )
+        if style_client is not None:
+            self.logger.info("Local GGUF style rewrite đã sẵn sàng.")
+        vision_client = self.process_manager.build_vision_client(
+            model_path=model_path,
+            n_ctx=min(n_ctx, 4096),
+            n_gpu_layers=n_gpu_layers,
+        )
+        if vision_client is not None:
+            self.logger.info("Local GGUF vision facts đã sẵn sàng với mmproj.")
+        self.llm_service = LlmService(
+            self.llm_client,
+            style_client=style_client,
+            vision_client=vision_client,
+            logger=self.logger,
+        )
         self.logger.info("Mô hình đã sẵn sàng.")
 
         self.transport = UdpTransport("127.0.0.1", 4242, "127.0.0.1", 4243)
@@ -166,13 +189,23 @@ if __name__ == "__main__":
             os.path.join(os.path.dirname(__file__), "model.gguf"),
         )
 
-    if not os.path.isfile(model_path):
+    remote_enabled = os.environ.get("ERIS_REMOTE_API_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+    style_enabled = os.environ.get("ERIS_LOCAL_STYLE_REWRITE_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+    if not os.path.isfile(model_path) and (not remote_enabled or style_enabled):
         logger.error("Không tìm thấy file mô hình: %s", model_path)
         logger.error("Dùng: python vision.py <đường_dẫn_model.gguf>")
         logger.error("Hoặc: set GGUF_MODEL_PATH=<đường_dẫn_model.gguf>")
         raise SystemExit(1)
 
-    overseer = AttentionOverseer(model_path)
+    raw_ctx = os.environ.get("ERIS_N_CTX", "").strip()
+    n_ctx = 8192
+    if raw_ctx:
+        try:
+            n_ctx = int(raw_ctx)
+        except ValueError:
+            logger.warning("ERIS_N_CTX=%r khong hop le, dung mac dinh %d.", raw_ctx, n_ctx)
+
+    overseer = AttentionOverseer(model_path, n_ctx=n_ctx)
 
     def handle_signal(signum, _frame):
         overseer.stop(f"Nhận tín hiệu {signum}, đang thoát...")

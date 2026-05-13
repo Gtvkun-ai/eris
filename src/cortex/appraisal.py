@@ -21,6 +21,7 @@ class AppraisalEngine:
         user_text: str = "",
         force_speak: bool = False,
         memory_resonance=None,
+        personality_lens=None,
     ) -> CognitiveAppraisal:
         state = internal_state or PersistentInternalState()
         drift = self._clamp01(getattr(ni_report, "drift_score", 0.0) or 0.0)
@@ -41,6 +42,9 @@ class AppraisalEngine:
             getattr(memory_resonance, "silence_bias", 0.0) if memory_resonance is not None else 0.0
         )
         resonance_layer = str(getattr(memory_resonance, "dominant_layer", "") if memory_resonance is not None else "")
+        lens_interpretation = str(getattr(personality_lens, "interpretation", "") or "")
+        lens_stance = str(getattr(personality_lens, "stance", "") or "")
+        lens_distance = str(getattr(personality_lens, "social_distance", "") or "")
 
         normalized_user_text = self._normalize_text(user_text)
         direct_user = bool(normalized_user_text) or channel == "chat" or force_speak
@@ -140,18 +144,45 @@ class AppraisalEngine:
             protectiveness = self._clamp01(protectiveness + resonance_appraisal * 0.14)
         elif resonance_layer == "episodic":
             arousal = self._clamp01(max(arousal, resonance_score * 0.42))
+        elif resonance_layer == "emotional_residue":
+            arousal = self._clamp01(max(arousal, resonance_score * 0.36))
+            tenderness = self._clamp01(tenderness + resonance_appraisal * 0.06)
+            certainty = self._clamp01(certainty - resonance_score * 0.04)
         if resonance_silence > 0.0:
             certainty = self._clamp01(certainty - resonance_silence * 0.10)
             fatigue = self._clamp01(fatigue + resonance_silence * 0.07)
+        if lens_interpretation in {"avoidance", "unfinished_intention", "hesitation", "cognitive_stall", "scattered_attention", "escape_from_friction"}:
+            certainty = self._clamp01(certainty - 0.04)
+            protectiveness = self._clamp01(protectiveness + 0.03)
+        if lens_interpretation == "requested_presence":
+            intimacy = self._clamp01(intimacy + 0.07)
+        if lens_stance == "guarded_protective":
+            threat = self._clamp01(threat + 0.05)
+            protectiveness = self._clamp01(protectiveness + 0.08)
+        elif lens_stance == "guarded_tender":
+            intimacy = self._clamp01(intimacy + 0.06)
+        elif lens_stance == "withdrawn_sparse":
+            fatigue = self._clamp01(fatigue + 0.06)
+        if lens_distance == "near_guarded":
+            intimacy = self._clamp01(intimacy + 0.04)
+        elif lens_distance == "far_observing":
+            intimacy = self._clamp01(intimacy - 0.03)
         tenderness = self._clamp01(
             state_tenderness * 0.72
             + warmth * 0.22
             + intimacy * 0.36
             + (resonance_score * 0.08 if resonance_layer == "relationship" else 0.0)
-            + (0.10 if attachment_cue else 0.0)
+            + (resonance_score * 0.06 if resonance_layer == "emotional_residue" else 0.0)
+            + (0.04 if attachment_cue else 0.0)
             + (0.08 if social_scene else 0.0)
             - threat * 0.10
         )
+        if lens_interpretation in {"avoidance", "unfinished_intention", "hesitation", "cognitive_stall", "scattered_attention", "escape_from_friction"}:
+            tenderness = self._clamp01(tenderness + 0.04)
+        if lens_interpretation == "requested_presence":
+            tenderness = self._clamp01(tenderness + 0.05)
+        if lens_stance == "guarded_tender":
+            tenderness = self._clamp01(tenderness + 0.03)
         valence = self._clamp(
             state_valence * 0.64
             + warmth * 0.16
@@ -181,6 +212,7 @@ class AppraisalEngine:
             f"fe_intent={fe_intent or 'unknown'}",
             f"broadcast={broadcast_label or 'none'}:{broadcast_score:.2f}",
             f"memory_resonance={resonance_layer or 'none'}:{resonance_score:.2f}",
+            f"personality_lens={lens_interpretation or 'none'}:{lens_stance or 'none'}",
             f"internal_state_focus={kind or 'unknown'}",
             f"internal_attachment={state_attachment:.2f}",
         )
@@ -335,11 +367,11 @@ class AppraisalEngine:
         if social_scene:
             intimacy += 0.12
         if attachment_cue:
-            intimacy += 0.34
+            intimacy += 0.16
         if mode == "chat_emotional" or fe_intent == "attachment_dialogue":
-            intimacy += 0.34
+            intimacy += 0.16
         if session_arc == "guarded_attachment":
-            intimacy += 0.18
+            intimacy += 0.08
         return self._clamp01(intimacy)
 
     def _estimate_protectiveness(
@@ -397,7 +429,7 @@ class AppraisalEngine:
             return "protective"
         if jealousy_lite >= 0.32:
             return "watchful"
-        if tenderness >= 0.52 or intimacy >= 0.58:
+        if tenderness >= 0.68 or intimacy >= 0.72:
             return "tender_under_cold"
         if fatigue >= 0.42:
             return "tired"

@@ -204,6 +204,81 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertIn("not treat it as current screen evidence", context)
             self.assertTrue(report.to_attention_lines())
 
+    def test_experiential_association_tracks_cognition_tension_and_loops(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(os.path.join(tmpdir, "memory.json"), max_items=30)
+            state = store.load_state()
+
+            state = store.remember_cycle(
+                state,
+                cycle_id="chat-42",
+                channel="chat",
+                timestamp="2026-05-10T21:00:00+0700",
+                seen=("Experiential association architecture",),
+                said="wire the inner trace",
+                outcome="inner_trace",
+                salience=0.74,
+                tags=("cognitive_momentum",),
+                experience_cues=("A", "experiential association"),
+                cognition_state="channel=chat; self=engaged; thought=input_disturbance",
+                tension=0.81,
+                pull_direction="cognitive_momentum:attention:experiential association",
+                unresolved_loop="loop_1:experiential association",
+                thought_id="thought_1",
+                associations=("memory_resonance:A",),
+                momentum_score=0.77,
+            )
+            store.save_state(state)
+
+            loaded = store.load_state()
+            matches = store.query_experiential_associations(loaded, "A")
+            recalled = store.recall_texts(loaded)
+            context = store.render_context(loaded)
+
+            self.assertTrue(matches)
+            self.assertIn("channel=chat", matches[0].cognition_states[0])
+            self.assertIn("high_unresolved_tension", matches[0].tension_labels)
+            self.assertIn("cognitive_momentum:attention", matches[0].pull_directions[0])
+            self.assertIn("loop_1", matches[0].unresolved_loops[0])
+            self.assertTrue(any(item.startswith("experiential/") for item in recalled))
+            self.assertIn("experiential_association_network", context)
+
+    def test_emotional_residue_memory_tracks_aftertaste_not_just_facts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(os.path.join(tmpdir, "memory.json"), max_items=30)
+            state = store.load_state()
+
+            state = store.remember_cycle(
+                state,
+                cycle_id="auto-9",
+                channel="autonomous",
+                timestamp="2026-05-13T01:40:00+0700",
+                seen=("Godot stayed open through a long quiet night",),
+                said="",
+                outcome="no_speech",
+                salience=0.72,
+                tags=("silent", "godot"),
+                cognition_state="channel=autonomous; desire=silence_pull",
+                tension=0.62,
+                unresolved_loop="unfinished:voice_distillation",
+            )
+            store.save_state(state)
+
+            loaded = store.load_state()
+            recalled = store.recall_texts(loaded)
+            context = store.render_context(loaded)
+            report = store.activate_memory_resonance(
+                loaded,
+                user_text="Godot quiet night residue",
+                channel="chat",
+            )
+
+            self.assertTrue(loaded.emotional_residue)
+            self.assertIn(loaded.emotional_residue[0].residue_type, {"silent_residue", "godot_recurrence"})
+            self.assertTrue(any(item.startswith("emotional_residue/") for item in recalled))
+            self.assertIn("emotional_residue_memory", context)
+            self.assertTrue(any(item.layer == "emotional_residue" for item in report.activations))
+
 
 if __name__ == "__main__":
     unittest.main()

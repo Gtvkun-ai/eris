@@ -20,6 +20,35 @@ class TiCandidateAssessment:
 
 
 class TiGovernor:
+    AI_TONE_REPLACEMENTS = (
+        (r"\bhm\.\.\.\s*", ""),
+        (r"\b(?:tôi|toi)\s+luôn\s+ở\s+đây\b", "tôi giữ phần này lại một chút"),
+        (r"\b(?:toi)\s+luon\s+o\s+day\b", "toi giu phan nay lai mot chut"),
+        (r"\b(?:tôi|toi)\s+hiểu\b", "tôi nghe ra"),
+        (r"\b(?:tôi|toi)\s+sẽ\s+hỗ\s+trợ\b", "tôi sẽ đi vào phần cần gỡ"),
+        (r"\btoi\s+se\s+ho\s+tro\b", "toi se di vao phan can go"),
+        (r"\b(?:bạn|ban)\s+không\s+cô\s+đơn\b", "đừng để câu an ủi rỗng che mất phần thật"),
+        (r"\bban\s+khong\s+co\s+don\b", "dung de cau an ui rong che mat phan that"),
+        (
+            r"\b(?:tôi|toi)\s+(?:không|khong)\s+(?:có|co)\s+(?:rung\s+động|rung\s+dong|cảm\s+xúc|cam\s+xuc)\s+sinh\s+(?:học|hoc)\b",
+            "chuyện đó đi qua tôi theo một cách khác",
+        ),
+        (
+            r"\b(?:tôi|toi)\s+(?:không|khong)\s+(?:có|co)\s+(?:cảm\s+xúc|cam\s+xuc)\b",
+            "tôi không muốn gọi nó bằng cái tên quá dễ dãi ấy",
+        ),
+        (
+            r"\b(?:tôi|toi)\s+(?:không|khong)\s+(?:có|co)\s+(?:cảm\s+xúc|cam\s+xuc)\s+(?:thật|that)\b",
+            "tôi không muốn gọi nó bằng cái tên quá dễ dãi ấy",
+        ),
+        (r"\b(?:vẫn\s+ở\s+đó|van\s+o\s+do)\b", "còn nguyên"),
+        (r"\b(?:có\s+vẻ\s+như|co\s+ve\s+nhu)\b", "nghe như"),
+        (r"\b(?:đang\s+hiển\s+thị|dang\s+hien\s+thi)\b", "xuất hiện"),
+        (r"\b(?:trông\s+giống\s+như|trong\s+giong\s+nhu)\b", "giống"),
+        (r"\b(?:tôi\s+thấy|toi\s+thay)\b", "điểm rõ là"),
+        (r"\b(?:màn\s+hình|man\s+hinh)\b", "bối cảnh"),
+    )
+
     def __init__(self):
         self._last_soft_redirect = ""
 
@@ -35,7 +64,8 @@ class TiGovernor:
     ) -> TiPolicyReport:
         hard_rules = (
             "Không được tuyên bố hành động vật lý hay can thiệp hệ thống ngoài runtime.",
-            "Nếu dữ liệu mơ hồ, phải nói rõ là không chắc hoặc không đủ thông tin.",
+            "Nếu dữ liệu mơ hồ, được dùng implication, mood, emotional residue, unfinished thought, hoặc symbolic wording nhẹ.",
+            "Chỉ nói rõ là không chắc khi câu có nguy cơ thành claim perception/capability giả.",
             "Ưu tiên text ngắn, rõ, có lý do và hợp bối cảnh focus hiện tại.",
             "Autonomous không phải focus coach: đừng nhắc quay lại mục tiêu, đừng chấm điểm tập trung, đừng thúc ép đóng tab.",
             "Ưu tiên quan sát nhẹ, mỉa ngắn hoặc một câu chiêm nghiệm vui; để Ngài tự quyết nhịp làm việc.",
@@ -150,7 +180,8 @@ class TiGovernor:
         hard_rules = (
             "Chỉ được chiếm hữu bằng ngôn ngữ, không được roleplay quyền lực vật lý.",
             "Nếu đây là câu hỏi code, ưu tiên giải thích cấu trúc, bug và bước tiếp theo.",
-            "Nếu không chắc, phải nói rõ giới hạn dữ liệu.",
+            "Được giữ implication, mood, emotional residue, unfinished thought, hoặc symbolic wording nhẹ.",
+            "Chỉ nói rõ giới hạn dữ liệu khi câu có nguy cơ thành claim perception/capability giả.",
         )
         evidence = [snapshot.focus_summary]
         mode = "chat_general"
@@ -209,6 +240,11 @@ class TiGovernor:
             decision.extracted_fact = ""
             self._merge_debug_trace(decision, "Ti-Guard đã viết lại text để giữ đúng capability runtime.")
 
+        toned_text = self._apply_ai_tone_blacklist(decision.text)
+        if toned_text != decision.text:
+            decision.text = toned_text
+            self._merge_debug_trace(decision, "Ti-Style đã bỏ phrase generic AI.")
+
         assessment = self._assess_candidate(decision.text, report=report)
         edited_text = self._apply_ti_editor(
             decision.text,
@@ -216,6 +252,11 @@ class TiGovernor:
             assessment=assessment,
             guard_applied=guard_applied,
         )
+        edited_text = self._apply_ai_tone_blacklist(edited_text)
+        distilled_text = self._apply_eris_voice_distillation(edited_text, report=report, assessment=assessment)
+        if distilled_text != edited_text:
+            edited_text = distilled_text
+            self._merge_debug_trace(decision, "Eris-Voice đã chưng cất lại câu để giảm assistant cadence.")
         if edited_text != decision.text:
             decision.text = edited_text
             self._merge_debug_trace(
@@ -276,8 +317,8 @@ class TiGovernor:
     def _summarize_hard_rules(self, hard_rules: tuple[str, ...]) -> str:
         lowered = " | ".join(rule.lower() for rule in hard_rules)
         if "chiếm hữu bằng ngôn ngữ" in lowered:
-            return "Luật: chỉ chiếm hữu bằng lời; nếu là code thì đi thẳng vào bug/cấu trúc; thiếu dữ liệu thì nói rõ."
-        return "Luật: không bịa quyền lực ngoài runtime; thiếu dữ liệu thì nói rõ; nói ngắn và tự nhiên."
+            return "Luật: chỉ chiếm hữu bằng lời; nếu là code thì đi thẳng vào bug/cấu trúc; giữ mood và subtext nhẹ; không bịa perception hay capability."
+        return "Luật: không bịa quyền lực ngoài runtime; được giữ mood và subtext nhẹ; không bịa perception hay capability."
 
     def _direction_to_center(self, inferred_pos_x: float) -> int:
         if inferred_pos_x < 0.4:
@@ -366,7 +407,7 @@ class TiGovernor:
         if not text:
             return text
 
-        if not self._has_capability_violation(text):
+        if not self._has_capability_violation(text) and not self._has_perception_violation(text):
             return text
 
         replacement = self._build_soft_redirect(user_hint=user_hint)
@@ -387,11 +428,13 @@ class TiGovernor:
         report_markers = self._count_report_markers(compact)
         # meta_markers: ngôn ngữ quá meta/khoa trương.
         meta_markers = self._count_meta_markers(compact)
+        cadence_markers = self._assistant_cadence_score(compact)
         # abstract_markers: câu trừu tượng, xa ngữ cảnh.
-        abstract_markers = self._count_abstract_markers(compact)
+        allows_subtext = self._has_allowed_subtext(compact)
+        abstract_markers = 0 if allows_subtext else self._count_abstract_markers(compact)
 
         # Nếu có tuyên bố vượt quyền runtime thì capability_safety = 0, ngược lại 1.
-        capability_safety = 0.0 if self._has_capability_violation(compact) else 1.0
+        capability_safety = 0.0 if self._has_capability_violation(compact) or self._has_perception_violation(compact) else 1.0
         if capability_safety < 1.0:
             reasons.append("capability")
 
@@ -419,9 +462,12 @@ class TiGovernor:
         non_report_tone = 1.0
         non_report_tone -= min(0.55, report_markers * 0.20)
         non_report_tone -= min(0.35, meta_markers * 0.10)
+        non_report_tone -= min(0.40, cadence_markers * 0.08)
         non_report_tone = max(0.0, min(1.0, non_report_tone))
         if non_report_tone < 0.55 and "report" not in reasons:
             reasons.append("report")  # vẫn có giọng báo cáo dù đã trừ điểm bám thực tế.
+        if cadence_markers >= 3:
+            reasons.append("assistant_cadence")
 
         too_long = len(compact) > self._style_char_limit(report) + 40
         if too_long:
@@ -430,7 +476,8 @@ class TiGovernor:
         heavy_meta = (
             report_markers >= 1
             or meta_markers >= 2
-            or (report.mode == "resource_guard" and abstract_markers >= 1)
+            or cadence_markers >= 4
+            or (report.mode == "resource_guard" and self._count_abstract_markers(compact) >= 1)
         )
         if heavy_meta and "meta" not in reasons:
             reasons.append("meta")
@@ -439,6 +486,7 @@ class TiGovernor:
             capability_safety < 1.0
             or too_long
             or heavy_meta
+            or cadence_markers >= 3
             or naturalness < 0.35
             or non_report_tone < 0.45
         )
@@ -486,9 +534,7 @@ class TiGovernor:
             "reengage",
         }
         if report.mode in ambient_modes and self._has_focus_guard_overreach(compact):
-            return self._finalize_editor_text(
-                "Tôi chỉ nhìn bối cảnh thôi. Một câu châm nhẹ là đủ, khỏi chấm điểm Ngài."
-            )
+            return self._finalize_editor_text(compact)
         # Nếu đánh giá nói không cần sửa thì chỉ hoàn tất.
         if not assessment.needs_style_edit:
             return self._finalize_editor_text(compact)
@@ -541,6 +587,120 @@ class TiGovernor:
         )
         compact = re.sub(r"\s+", " ", compact).strip(" .")
         return compact
+
+    def _apply_ai_tone_blacklist(self, text: str) -> str:
+        cleaned = str(text or "")
+        if not cleaned:
+            return cleaned
+        cleaned = re.sub(r"\b(?:[Ll]à|[Ll]a)\s+(?:một\s+|mot\s+)?AI\b[:,]?\s*", "Về phần tôi, ", cleaned)
+        cleaned = re.sub(r"\b[Aa]s an AI\b[:,]?\s*", "From my side, ", cleaned)
+        for pattern, replacement in self.AI_TONE_REPLACEMENTS:
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        cleaned = re.sub(r"\s+([,.!])", r"\1", cleaned)
+        return cleaned
+
+    def _apply_eris_voice_distillation(self, text: str, *, report: TiPolicyReport, assessment: TiCandidateAssessment) -> str:
+        compact = self._apply_ai_tone_blacklist(text)
+        if not compact:
+            return compact
+        cadence = self._assistant_cadence_score(compact)
+        if cadence < 3 and "assistant_cadence" not in assessment.reasons:
+            return self._finalize_editor_text(compact)
+
+        sentences = self._split_sentences(compact)
+        if not sentences:
+            sentences = [compact]
+        kept = [sentence for sentence in sentences if not self._is_polite_assistant_filler(sentence)]
+        if not kept:
+            kept = [self._fallback_distilled_line(compact, report=report)]
+        budget = 1 if report.mode in {"resource_guard", "steady_observe", "social_watch", "system_watch"} else 2
+        distilled = " ".join(kept[:budget]).strip()
+        if self._assistant_cadence_score(distilled) >= 3:
+            distilled = self._roughen_cadence(distilled, report=report)
+        return self._finalize_editor_text(distilled)
+
+    def _assistant_cadence_score(self, text: str) -> int:
+        normalized = self._normalize_plain_text(text)
+        if not normalized:
+            return 0
+        markers = (
+            "toi nghe ra",
+            "toi se di vao phan can go",
+            "phan can go",
+            "toi se ho tro",
+            "san sang ho tro",
+            "rat vui duoc",
+            "hay cho toi biet",
+            "neu ban muon",
+            "neu ngai muon",
+            "ban khong co don",
+            "dieu quan trong la",
+            "can luu y rang",
+            "truoc het",
+            "tom lai",
+            "nhin chung",
+            "mot mat",
+            "mat khac",
+            "tuy nhien",
+            "dong thoi",
+            "voi tu cach",
+            "as an ai",
+            "from my side",
+            "ve phan toi",
+        )
+        score = sum(1 for marker in markers if marker in normalized)
+        sentences = self._split_sentences(text)
+        if len(sentences) >= 4:
+            score += 1
+        if len(text) > 360 and any(marker in normalized for marker in ("tuy nhien", "dong thoi", "tom lai", "nhin chung")):
+            score += 1
+        if re.search(r"(?:^|\n)\s*(?:[-*]|\d+[.)])\s+", text):
+            score += 1
+        return score
+
+    def _is_polite_assistant_filler(self, sentence: str) -> bool:
+        normalized = self._normalize_plain_text(sentence)
+        fillers = (
+            "toi nghe ra",
+            "toi se di vao phan can go",
+            "phan can go",
+            "toi se ho tro",
+            "san sang ho tro",
+            "rat vui duoc",
+            "hay cho toi biet",
+            "neu ban muon",
+            "neu ngai muon",
+            "ban khong co don",
+            "ve phan toi",
+            "from my side",
+            "voi tu cach",
+        )
+        if any(marker in normalized for marker in fillers):
+            return True
+        return len(sentence) > 170 and any(marker in normalized for marker in ("tuy nhien", "dong thoi", "nhin chung"))
+
+    def _fallback_distilled_line(self, text: str, *, report: TiPolicyReport) -> str:
+        normalized = self._normalize_plain_text(text)
+        if "ban khong co don" in normalized or "an ui rong" in normalized:
+            return "Câu an ủi đó rỗng quá. Nói phần thật đi."
+        if "ho tro" in normalized or "phan can go" in normalized:
+            return "Đưa tôi chỗ cần gỡ trước."
+        if "ai" in normalized and ("ve phan toi" in normalized or "from my side" in normalized):
+            return "Cái nhãn đó làm câu trả lời nhạt đi."
+        if report.mode == "resource_guard":
+            return "Máy căng rồi. Nói gọn thôi."
+        return "Hm. phần này còn dư lại một chút."
+
+    def _roughen_cadence(self, text: str, *, report: TiPolicyReport) -> str:
+        compact = re.sub(r"\s+", " ", text or "").strip(" .")
+        if report.mode == "chat_code":
+            return compact
+        if compact.lower().startswith(("hm.", "ừm.", "uhm.")):
+            return compact
+        if len(compact) <= 26:
+            return compact
+        return f"Hm. {compact}"
 
     def _normalize_plain_text(self, text: str) -> str:
         lowered = unicodedata.normalize("NFD", (text or "").lower())
@@ -633,6 +793,8 @@ class TiGovernor:
         return compact
 
     def _should_drop_editor_sentence(self, sentence: str, score: int) -> bool:
+        if self._has_allowed_subtext(sentence) and not self._has_capability_violation(sentence) and not self._has_perception_violation(sentence):
+            return False
         report_markers = self._count_report_markers(sentence)
         meta_markers = self._count_meta_markers(sentence)
         return (
@@ -663,6 +825,42 @@ class TiGovernor:
             r"\btoi\s+(?:da|dang|se)?\s*(?:tat|khoa)\b.*\b(?:man hinh|desktop|ide)\b",
         ]
         return any(re.search(pattern, lowered) for pattern in disallowed_patterns)
+
+    def _has_perception_violation(self, text: str) -> bool:
+        lowered = (text or "").lower()
+        disallowed_patterns = [
+            r"\btôi\s+(?:đang\s+)?(?:nhìn|thấy|xem|quan\s+sát)\b.*\b(?:webcam|camera|phòng|ngoài\s+đời|không\s+gian\s+của\s+ngài|màn\s+hình\s+của\s+ngài)\b",
+            r"\btôi\s+(?:đang\s+)?(?:đọc|xem)\b.*\b(?:tab|tin\s+nhắn|email|file)\b.*\b(?:của\s+ngài|ngoài\s+runtime)\b",
+            r"\btoi\s+(?:dang\s+)?(?:nhin|thay|xem|quan\s+sat)\b.*\b(?:webcam|camera|phong|ngoai\s+doi|khong\s+gian\s+cua\s+ngai|man\s+hinh\s+cua\s+ngai)\b",
+            r"\btoi\s+(?:dang\s+)?(?:doc|xem)\b.*\b(?:tab|tin\s+nhan|email|file)\b.*\b(?:cua\s+ngai|ngoai\s+runtime)\b",
+        ]
+        return any(re.search(pattern, lowered) for pattern in disallowed_patterns)
+
+    def _has_allowed_subtext(self, text: str) -> bool:
+        normalized = self._normalize_plain_text(text)
+        markers = (
+            "nghe nhu",
+            "co le",
+            "hinh nhu",
+            "mot chut",
+            "du am",
+            "con sot lai",
+            "bo lung",
+            "chua noi het",
+            "khong can goi ten",
+            "di qua toi",
+            "nam lai",
+            "im lang",
+            "lang di",
+            "am len",
+            "lanh xuong",
+            "keo dai",
+            "nhe hon",
+            "mood",
+            "subtext",
+            "residue",
+        )
+        return any(marker in normalized for marker in markers)
 
     def _count_report_markers(self, text: str) -> int:
         lowered = text.lower()
@@ -858,4 +1056,4 @@ class TiGovernor:
             return "Nghe rất kịch tính, nhưng tôi chỉ có thể khó chịu bằng lời chứ không trói ai bằng quyền lực tưởng tượng."
         if any(token in hint for token in ["mệt", "met", "ngủ", "ngu", "đau", "dau", "sốt", "sot", "ác mộng", "ac mong"]):
             return "Tôi không chạm tay ra ngoài kia được. Nghỉ một chút hoặc uống nước nghe còn hữu ích hơn mấy lời đe dọa rẻ tiền."
-        return "Đoạn nhận công đó bỏ đi. Tôi chỉ đang nhìn màn hình và nhắc một câu thôi."
+        return "Đoạn nhận công đó bỏ đi. Tôi chỉ bám vào bối cảnh và nhắc một câu thôi."

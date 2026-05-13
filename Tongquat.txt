@@ -1,431 +1,698 @@
-TONG QUAN PROJECT ERIS
+TỔNG QUAN PROJECT ERIS
 ======================
 
-Project nay la mot he lai:
+Cập nhật: 2026-05-12
+Mã hóa: UTF-8
 
-- Godot + C#: phan "than" cua nhan vat, phu trach hien thi, UI/chat, animation, am thanh va tuong tac.
-- Python: phan "nao" AI, phu trach telemetry, nhan thuc, suy luan, memory, parser va dieu phoi hanh vi.
-- UDP: cau noi giao tiep giua Godot va Python.
-- llama-server / model.gguf: bo phan sinh quyet dinh va hoi dap.
+TÓM TẮT CÁC CHỨC NĂNG MỚI
+-------------------------
 
-Tom tat ngan:
-Godot la body, Python la cognition/runtime, UDP la day than kinh, con model la bo may ra quyet dinh.
+Đợt cập nhật này đẩy ERIS từ một chatbot có body sang một runtime nhân vật có nhịp nhận thức nền rõ hơn. Phần mới quan trọng nhất nằm ở cortex: `MeaningLayer`, `PersonalityLens`, `SpeechCore`, `MicroLinePolicy`, `SocialPresenceDetector`, `SessionRitualEngine` và `GoalPersistenceEngine` được nối vào `RuntimeCoordinator`.
+
+Các chức năng mới chính:
+- `MeaningLayer` biến fact thô từ Se/telemetry/thought stream thành ý nghĩa có thể phản ứng, ví dụ kẹt code, né friction, phân tán chú ý, đang chờ trong meeting, hoặc user vừa gọi ERIS lên tiếng. Nó có `meaning_shift` để ERIS không nói lại cùng một semantic family quá gần nhau.
+- `PersonalityLens` thêm lớp diễn giải INFJ 5w4 trước khi wording: chọn stance, khoảng cách xã hội, emotional coloring, rhythm và những bề mặt cần tránh. Nó giữ phần lớn diễn giải ở nội bộ, chỉ cho rò ra một hàm ý nhỏ trong câu nói cuối.
+- `SpeechCore` được nâng cấp thành bộ chọn áp lực nói/im lặng: so các urge từ vision, telemetry, meaning, inner thought, internal state và force_speak; gắn `speech_risk_level`, `SpeechImpulse`, grounding và safety flags trước khi gọi LLM.
+- `MicroLinePolicy` và `SemanticRepeatGuard` lọc các câu rất ngắn như micro-presence/presence maintenance/reengagement: chặn câu generic, câu bịa screen/action, câu kéo chú ý quá mức và câu lặp semantic dù không trùng chữ.
+- `SocialPresenceDetector` nhận biết user vẫn đang có mặt qua idle time, typing, window switching, focus pattern và recent events, nhưng không coi đó là lệnh phải nói. Nó giúp ERIS biết ngồi cạnh và giữ nhịp thay vì chen vào liên tục.
+- `SessionRitualEngine` thêm nghi thức startup: khi runtime mở lại, ERIS cố phục hồi goal, attractor, unresolved loops, hướng nhận thức gần đây và self continuity, rồi gửi một lời chào startup có `parse_mode=session_ritual`.
+- `GoalPersistenceEngine` thêm khả năng giữ mục tiêu dài hơi: goal có strength, urgency, drift, progress, recurrence, next hint và evidence, để một việc đang làm không biến mất ngay khi user im hoặc đổi cửa sổ.
+
+Thay đổi runtime/coordinator:
+- `RuntimeCoordinator` giờ gom thêm meaning, personality, appraisal, self state, social presence, session ritual, thought stream, goal persistence, speech impulse và micro policy vào mỗi cognitive frame.
+- Force speak không còn chỉ gọi model để nói đại. Nếu tín hiệu mỏng, nó chuyển sang micro-presence nhỏ, có guard chống mindreading, chống claim màn hình thiếu bằng chứng và chống câu "không có tín hiệu" rỗng.
+- Autonomous speech được khóa chặt hơn: cần ý nghĩa mới hoặc áp lực đủ rõ; nếu không có `meaning_shift` phù hợp thì im lặng là hành vi mặc định.
+- Presence maintenance và reengagement có cooldown/silent counters riêng, dùng câu rất ngắn và bị policy lọc trước khi gửi về body.
+
+Thay đổi LLM/model:
+- Thêm `GeminiClient` và cấu hình remote provider/model cho Gemini/Gemma.
+- `OpenAICompatibleClient` và `LlamaServerClient` có fallback payload khi provider không hỗ trợ `grammar` hoặc `response_format`.
+- LLM service xử lý JSON hỏng, context-size error, service fallback, style rewrite, micro-presence line và lọc metadata/provider tốt hơn.
+- Godot có export mới cho remote cognition API, local style rewrite, local vision facts, context size 8192, `--cache-ram`, và biến môi trường rõ hơn khi start `vision.py`.
+
+Thay đổi body/UI:
+- `body/UdpListener.tscn` thêm texture `asset/Resource/khung.png` cho bubble thoại; `MessageLabel` nằm trong `TextureRect`.
+- `UdpListener.cs` đổi đường dẫn label theo node mới, bật `AutoStartVision` mặc định, chỉ preload llama-server khi cần, và truyền nhiều env config hơn cho Python runtime.
+
+Kết luận ngắn: các chức năng mới làm ERIS biết giữ mục tiêu, phục hồi phiên, nhận ra user đang hiện diện, hiểu ý nghĩa của tín hiệu thay vì đọc lại telemetry, và quyết định nói/im lặng có kiểm soát hơn. Đây là bước nâng từ "trả lời theo lượt" sang "có nhịp sống runtime giữa các lượt".
+
+ERIS hiện tại là một hệ lai giữa thân thể hiển thị và nhận thức runtime:
+
+- Godot + C#: phần "body". Nó hiển thị Monika, bubble nói, chat panel, context menu, animation, âm thanh và chuyển động vật lý trên màn hình.
+- Python: phần "cognition/runtime". Nó đọc telemetry, chụp/nén thông tin màn hình khi cần, giữ memory, tính nội trạng, chọn lúc nói/im lặng, gọi LLM, parse kết quả, enforce guard, thực thi action và gửi decision về body.
+- UDP: dây thần kinh giữa Godot và Python. Godot nhận decision ở cổng 4242, Python nhận chat/event ở cổng 4243.
+- LLM: có thể chạy local llama-server với GGUF, hoặc remote cognition API. Hiện tại remote API mặc định được bật; local GGUF vẫn có thể dùng cho style rewrite và vision facts.
+- Parser/Ti/Se/MeaningLayer/SpeechCore/Personality/Memory/SessionRitual/MicroPolicy: các lớp neo ERIS vào bằng chứng, biến fact thô thành ý nghĩa có kiểm soát, tránh overclaim, tránh nói quá điều mình biết, giữ nhịp riêng và giữ liên tục giữa các turn/session.
+
+Tóm tắt ngắn:
+Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. Model sinh câu và ý đồ. Parser, Ti, Se, MeaningLayer, PersonalityLens, memory, speech_core, session_ritual, micro_policy và action_planner biến output đó thành hành vi có giới hạn, có bằng chứng, có nhịp riêng.
 
 
-1. Tang Godot / C#
+1. Body Godot / C#
 ------------------
 
 `project.godot`
-- Cau hinh du an Godot.
-- Scene khoi dong la `body/UdpListener.tscn`.
-- Bat C# / .NET.
+- Cấu hình Godot project.
+- Scene khởi động là `body/UdpListener.tscn`.
+- Bật C#/.NET và các setting nền của app.
 
-`Eris.csproj`
+`Eris.csproj`, `Eris.sln`
 - Project .NET cho script Godot.
-- Target `net8.0`.
+- Target hiện dùng là `net8.0`.
+- Các file `.old` là dấu vết cấu hình cũ.
 
 `body/UdpListener.tscn`
-- Scene goc cua app.
-- Dung `CanvasLayer`, `ChatPanel`, `CharacterContextMenu`, `CharacterBody2D`, bubble text.
-- Gan script `UdpListener.cs`.
+- Scene gốc của body.
+- Chứa `CanvasLayer`, chat panel, context menu, node nhân vật, sprite Monika, bubble text.
+- Gắn script `body/UdpListener.cs`.
 
 `body/UdpListener.cs`
-- File trung tam ben Godot.
-- Bind UDP cong `4242`.
-- Nhan JSON tu Python.
-- Parse `text`, `animation`, `direction`, `motion`.
-- Cap nhat bubble chat, typewriter effect, chat panel.
-- Gui tin hieu chat ve Python qua cong `4243`.
-- Khoi chay `vision.py`.
-- Khoi chay `llama-server`.
-- Phat sound theo animation.
-- Xu ly chuot phai `force_speak`.
+- File trung tâm bên Godot.
+- Bind UDP port `4242` để nhận JSON decision từ Python.
+- Gửi event về Python qua port `4243`: `chat_start`, `chat`, `chat_end`, `force_speak`.
+- Có thể tự khởi động/dừng `src/vision.py` và `llama-server.exe`.
+- Export các cấu hình runtime: Python executable, vision script, llama-server path, model path, mmproj path, remote cognition API, local style rewrite và thông tin provider/model.
+- Parse payload gồm text, intent, animation, direction, target, motion intent, system action và action input.
+- Hiển thị bubble nói với typewriter effect.
+- Quản lý chat panel, character context menu, animation, sound và payload parser.
+- Chuẩn hóa animation model hay gọi sai, ví dụ `walk`/`run` -> `stand_walk`.
+- Hiện vẫn là một "god object" bên C#: UI, process, UDP, audio, payload parser và một số state movement cùng nằm trong file.
+- Lưu ý bảo mật: đang có API key hardcoded trong `DefaultRemoteApiKey`.
 
 `body/MotionController.cs`
-- Tach state machine chuyen dong khoi `UdpListener`.
-- Phu trach `walk`, `walk_to`, `face`, `climb_loop`, `climb_to_top`, `drop`, gravity, va collision.
-- Giu huong sprite va bubble.
-- Day la "bo may animation vat ly".
+- Lớp tách riêng cho chuyển động body.
+- Nhận `MotionCommand` và quyết định đi, đứng, quay mặt, rơi, leo tường, lên mép, giữ trên mép.
+- Quản lý gravity, tốc độ, hướng sprite, bubble flip và va chạm cạnh màn hình.
+- Hiểu các intent chính: `walk`, `walk_to`, `face`, `pose`, `climb_loop`, `climb_to_top`, `drop`.
+- Đây là hướng tách đúng: cognition không còn phải tự điều khiển pixel trực tiếp trong `UdpListener`.
 
 `asset/Resource/Monika.tscn`
-- Dinh nghia `AnimatedSprite2D`.
-- Mapping ten animation sang danh sach frame PNG.
+- Định nghĩa `AnimatedSprite2D` và SpriteFrames.
+- Map các animation như `stand`, `stand_walk`, `read`, `sleep`, `sad`, `food`, `affection`, `climb`, `climb_top`, `hop`, `jump`, `air`, `sit`.
 
-`asset/Resource/chat.tres`, `asset/Resource/point.tres`
-- Resource atlas cho icon UI.
+`asset/Monika/*.png`
+- Frame nhân vật.
+- Các nhóm chính: đứng/đi/idle, đọc/ngủ/buồn/ăn/affection, leo tường/lên mép, nhảy/rơi/đu, clone/divide/shime/sit.
 
-`asset/Monika/*.png`, `asset/Monika/sound/*.wav`
-- Tai nguyen hinh anh va am thanh cho cac animation nhu `stand`, `read`, `sleep`, `climb`, `affection`.
+`asset/Monika/sound/*.wav`
+- Âm thanh gắn với animation: bước chân, nhảy, va chạm, vui, ngủ, bị đau, pop.
+- `UdpListener.cs` random sound theo map animation.
+
+`asset/icon/*.png`, `asset/Resource/*.tres`
+- Icon/chat/point resource cho UI Godot.
 
 `*.import`, `*.uid`
-- Metadata cua Godot.
-- Khong phai logic nghiep vu.
+- Metadata của Godot. Không phải logic, nhưng cần giữ để Godot import tài nguyên đúng.
 
 
-2. Tang Python Runtime
-----------------------
-
-`src/vision.py`
-- Entrypoint Python.
-- Cau hinh log.
-- Khoa single-instance bang `.vision.lock`.
-- Tao `AttentionOverseer`.
-- Build service.
-- Goi `RuntimeCoordinator.run_loop()`.
-
-`src/runtime/coordinator.py`
-- Trai tim cua he thong.
-- Nhan cac tin hieu `chat_start`, `chat`, `chat_end`, `force_speak`.
-- Chup telemetry dinh ky.
-- Dung "cognitive frame" qua cac module SE / Attention / Appraisal / SelfModel / SpeechCore / ActionPlanner / Ni / Ti / Fe.
-- Chay them `SubconsciousLoop` nen rieng de tao seed noi tam tru tuong cho autonomous.
-- Goi LLM de sinh `Decision`.
-- Co post-generation guard cho `force_speak` inner thought: chan cac cum withdrawal/no-signal lap lai nhu `lui lai`, `khong can noi gi`, `Ngai cu lam viec`, va ep text phai khop `inner_thought.intent`.
-- Commit memory va gui ket qua sang Godot.
-
-`src/domain/decision.py`
-- Dataclass chuan hoa output cuoi cung.
-- Gom `text`, `animation`, `direction`, `target_x`, `next_animation`, `system_action`, `motion_intent`.
-- Day la "hop dong" giua AI runtime va Godot.
-
-`src/transport/udp.py`
-- Transport 2 chieu bang UDP.
-- Gui quyet dinh sang Godot va poll tin hieu tu Godot.
-
-`src/app_logging.py`
-- Log formatter theo nhom nhu `Vision`, `LLM`, `Loop`, `Action`.
-
-
-3. Tang LLM
------------
-
-`src/llm/client.py`
-- HTTP client noi chuyen voi `llama-server` hoac OpenAI-compatible API.
-- Co 2 lop:
-  `LlamaServerClient`
-  `OpenAICompatibleClient`
-
-`src/llm/process_manager.py`
-- Tai su dung server dang chay hoac tu spawn `llama-server.exe`.
-- Nap `model.gguf`, `mmproj-F16.gguf`.
-- Cho server san sang.
-
-`src/llm/service.py`
-- Lop "boc" model.
-- Ep model tra ve JSON hop le.
-- Sua JSON loi.
-- Fallback neu model tra prose.
-- Sinh directive, chat reply, va screen facts.
-- Prompt inner-thought co contract rieng cho `curious_question`, `inner_whim`, `random_chatter` de tranh intent label mot kieu nhung raw text mot kieu.
-
-`src/llm/contracts.py`
-- Dinh nghia prompt, rule, GBNF grammar, animation whitelist, system action whitelist.
-- Noi quy dinh "model phai tra JSON nhu the nao".
-
-
-4. Tang Parser / Grounding
---------------------------
-
-`src/parser_grounding/service.py`
-- Public API cua `DecisionParser`.
-
-`src/parser_grounding/decision.py`
-- Lop quan trong de "ha canh" output cua model.
-- Co the salvage text khi JSON hong.
-- Suy animation tu cau chu.
-- Chan overclaim capability.
-- Ho tro lenh embodied nhu leo, nhin trai, roi xuong, di phai, `climb_top`.
-
-Diem manh cua parser:
-- Model co the tra lech mot chut, nhung parser van co gang bien no thanh `Decision` an toan va chay duoc.
-
-
-5. Tang Telemetry / Perception
-------------------------------
-
-`src/telemetry/system.py`
-- Doc cua so foreground.
-- Doc tab browser qua UIAutomation.
-- Lay CPU, RAM, idle time, danh sach window dang mo.
-
-`src/telemetry/service.py`
-- Boc `TelemetryMixin`.
-- Doi raw telemetry thanh `TelemetrySnapshot`.
-- Co them `capture_screen_frame_data_uri()` de chup man hinh dang JPEG base64.
-
-`src/cortex/se.py`
-- `SeLens` dien giai raw telemetry thanh semantic snapshot.
-- Phan loai ngu canh:
-  `coding`
-  `documentation`
-  `communication`
-  `entertainment`
-  `system`
-- Rut ra recent events, user signals, evidence va claim style.
-
-`src/cortex/contracts.py`
-- Chua cac dataclass noi bo nhu:
-  `TelemetrySnapshot`
-  `GoalDriftReport`
-  `FeStylePlan`
-  `PerceptEvent`
-  `CognitiveBroadcast`
-  `CognitiveAppraisal`
-  `CognitiveActionPlan`
-  `InnerThought`
-  `SelfState`
-  `SubconsciousSeed`
-  `SubconsciousReport`
-  `MotivationalUrge`
-  `MotivationalPressureReport`
-  `CognitiveFrame`
-
-
-6. Tang Nhan Thuc
------------------
-
-`src/cortex/attention.py`
-- Cham diem percept nao dang chu y nhat.
-- Tao `AttentionCandidate` va `CognitiveBroadcast`.
-
-`src/cortex/ni.py`
-- Danh gia `attention drift` tu focus, window, browser, memory va current text.
-- Tra `drift_score`, `drift_level`, `confidence`.
-- Co `NiStateMachine` de lam muot trang thai theo thoi gian.
-
-`src/cortex/ti.py`
-- Lop governor.
-- Dat mode nhu:
-  `steady_observe`
-  `chat_code`
-  `chat_emotional`
-  `resource_guard`
-- Kiem tra capability violation.
-- Chinh cau chu de bot giong bao cao / meta / quyen luc gia.
-
-`src/cortex/fe.py`
-- Dinh giong tra loi, warmth, sarcasm, continuity, session arc.
-- Tuc la quyet dinh "noi theo kieu nao".
-
-`src/cortex/appraisal.py`
-- Dung trang thai appraisal tien-ngon-ngu nhu `threat`, `certainty`, `intimacy`, `protectiveness`, `tenderness`.
-- Day la lop "sac thai noi tam van hanh".
-
-`src/cortex/internal_state.py`
-- Giu trang thai lien tuc dai hon mot frame, khong phai bang chung ve cam xuc that.
-- Theo doi cac truc co ban nhu `valence`, `arousal`, `curiosity`, `boredom`, `social_energy`, `attachment`, `fatigue`, `silence_pressure`.
-- Da co them cac truc ap luc hanh vi:
-  `social_pressure`
-  `curiosity_pressure`
-  `protective_pressure`
-  `tender_pressure`
-  `playful_pressure`
-  `watchful_pressure`
-  `restraint_pressure`
-  `subconscious_pressure`
-  `memory_replay_pressure`
-  `association_pressure`
-- Commit moi turn de cap nhat streak im lang/noi, recent speech acts, recent subconscious seeds, recent self-state labels.
-- Render prompt context cho LLM theo rule: chi dung de giu rhythm/continuity, khong duoc xem la bang chung man hinh hay cam xuc an cua user.
-
-`src/cortex/self_model.py`
-- Tao `SelfState` runtime cho ERIS.
-- Danh gia cac nhan nhu:
-  `settled`
-  `watchful`
-  `engaged`
-  `overloaded`
-- Tinh `overload`, `engagement`, `initiative_bias`, `brevity_bias`, `embodiment_bias`.
-- Neu overloaded thi thien ve ngan gon, it chu dong, han che animation bieu cam.
-- Neu engaged thi cho phep chu dong va bieu cam hon, nhung van bi rang buoc boi grounding.
-- Context cua self-state duoc ghep vao prompt cung persistent internal state.
-
-`src/cortex/subconscious.py`
-- Tao cac "seed" noi tam tru tuong, khong tu tao cau noi truc tiep.
-- Co cac mode:
-  `memory_replay`
-  `associative_drift`
-  `attention_drift`
-  `quiet_self_muse`
-- Dung internal pressure, idle time, focus pattern, long-term memory va recent seeds de chon seed.
-- Co repeat guard, novelty check, restraint suppression va risk flags nhu `no_screen_claim`, `anti_mindreading`, `needs_generation`.
-- `SubconsciousLoop` chay nen theo interval `ERIS_SUBCONSCIOUS_INTERVAL_SEC`, co the tat bang `ERIS_SUBCONSCIOUS_LOOP=0`.
-- Autonomous loop pop seed tu queue, moi seed chi duoc tieu thu mot lan.
-
-`src/cortex/inner_thought.py`
-- Sinh dong co xa hoi nhe cho `force_speak` hoac autonomous khi thieu signal man hinh.
-- Co the bien `SubconsciousSeed` thanh `InnerThought` khi pressure/novelty du cao.
-- Van co repeat guard va safety flags de tranh lap lai hoac bia noi dung man hinh.
-
-`src/cortex/speech_core.py`
-- Quyet dinh co nen noi khong.
-- Neu noi thi noi tu nguon nao: vision, telemetry, freeform, hay random.
-- Chon `utterance type`.
-- Da them `MotivationalPressureReport`: cac urge canh tranh voi nhau truoc khi noi.
-- Cac urge hien co gom screen vision, screen telemetry, force_speak presence, protective guard, tender check-in, subconscious seed, social presence, curiosity, playful aside, watchful boundary va silence restraint.
-- Autonomous phai vuot threshold moi duoc noi; threshold tang khi self-state overloaded va giam nhe khi engaged.
-- Tin hieu man hinh cu the van uu tien hon subconscious/freeform.
-
-`src/cortex/action_planner.py`
-- Chon speech act truoc khi goi LLM nhu `observe`, `protect`, `mirror`, `reassure`, `system_action`, `withdraw`.
-- Nhan `SelfState` de chinh animation hint va notes.
-- Overloaded self-state lam giam hanh vi bieu cam tu phat; engaged/expressive co the chon animation am hon nhu `affection` hoac `hop` khi phu hop.
-
-`src/cortex/tune_ni_focus.py`
-- Script offline de tune bias / scale cho Ni dua tren log drift thuc te.
-
-
-7. Tang Action / Tool Runtime
+2. Entrypoint / Runtime Khung
 -----------------------------
 
-`src/actions/router.py`
-- Regex router bien cau chat thanh action nhu:
-  `open_url`
-  `focus_window`
-  `launch_app`
-  `get_now_playing`
-  `search_web`
-  `get_weather`
+`src/vision.py`
+- Entrypoint Python của cognition.
+- Đặt stdout/stderr UTF-8.
+- Dùng `SingleInstanceLock` với `src/.vision.lock` để tránh chạy nhiều instance.
+- Tạo `AttentionOverseer`, build logging, LLM clients, memory, parser, telemetry, Ni/Ti/Fe, action system và transport.
+- Remote cognition mặc định bật qua `ERIS_REMOTE_API_ENABLED=1`.
+- Nếu remote tắt hoặc cần local style rewrite, sẽ yêu cầu `model.gguf` tồn tại.
+- Tạo `RuntimeCoordinator` và gọi `run_loop()`.
+- Dọn process manager khi thoát.
 
-`src/actions/executor.py`
-- Thuc thi action that tren Windows hoac qua web API.
+`src/runtime/coordinator.py`
+- Trái tim điều phối.
+- Nhận event từ Godot: autonomous tick, `chat_start`, `chat`, `chat_end`, `force_speak`.
+- Kết nối Se/telemetry, attention, MeaningLayer, PersonalityLens, appraisal, internal_state, self_model, session_ritual, social_presence, thought_stream, speech_core, action_planner, micro_policy, Ni, Ti, Fe, LLM, parser, memory và action router/executor.
+- Giữ state runtime: chat history, last response, active conversational topic, repeated guard, vision facts, cognitive frames, mental process loop, session ritual flag, presence/reengagement cooldown.
+- Có các nhóm tính năng chính:
+  - Vision facts: chụp frame màn hình và gọi vision client khi được bật.
+  - Thought stream: chạy như cognitive substrate/subconscious loop.
+  - MeaningLayer: biến fact từ Se/telemetry/attention thành meaning/reaction seed, đồng thời dùng `meaning_shift` để tránh nói lại cùng một semantic family.
+  - Session ritual: chạy một lần khi runtime start, khôi phục continuity và có thể gửi decision `parse_mode=session_ritual`.
+  - Social presence: nhận biết user vẫn có mặt mà không coi đó là lệnh nói.
+  - Presence maintenance và reengagement: các micro-line rất ngắn khi im lặng lâu, có cooldown và bộ lọc để không kéo chú ý quá mức.
+  - Force speak guard: nếu có signal rõ thì đi qua speech/action planner; nếu signal mỏng thì dùng micro-presence, chặn câu lặp, chặn no-signal line, chặn mindreading và ép câu hỏi thật khi intent là curious question.
+  - Direct action route: nếu chat là lệnh rõ ràng, router có thể chuyển thành action trước khi gọi LLM.
+- `run_loop()` có wrapper bắt exception để runtime không chết cả vòng lặp vì một lỗi lẻ; lỗi được log và loop tiếp tục sau pause ngắn.
+- Sau mỗi turn: parse, Ti enforce, action nếu có, commit memory/internal_state, gửi `Decision.to_payload()` về Godot.
 
-`src/actions/contracts.py`
-- Dinh nghia whitelist action va result dataclass.
+`src/app_logging.py`
+- Cấu hình formatter log theo nhóm: Vision, LLM, Loop, Action, Memory, Parse.
 
-Luu y kien truc:
-- Action duoc route truoc.
-- Neu model van tra `system_action`, coordinator van co `_execute_system_action()` de xu ly sau parser / Ti.
-
-
-8. Memory / Data / Training
----------------------------
-
-`src/memory/store.py`
-- Bo nho dai han dang JSON.
-- Gom `working`, `episodic`, `semantic`, `relationship`, `norm`.
-- Luu/nap duoc `PersistentInternalState` voi cac pressure axes, subconscious history va self-state history.
-- Rat quan trong vi no giu continuity va baseline behavior cua ERIS voi nguoi dung.
-
-`long_term_memory.json`
-- Du lieu memory runtime dang dung that.
-
-`goal_memory.json`, `goal_profiles.json`, `focus_context_config.json`, `ni_focus_config.json`
-- Cac file policy / bias cho viec hieu focus.
-- Dong vai tro nhu "niem tin nen", khong phai code.
-
-`src/full_train_dataset.py`
-- Builder bien `dataset.jsonl` thanh HuggingFace Dataset.
-- Chen machine / action / knowledge context thanh system message.
-
-`src/datasets_clean/README.md`, `src/datasets_clean/SCHEMA.md`
-- Giai thich cau truc tap train / quarantine / supervision.
-
-`src/datasets_clean/train/...`
-- Du lieu train sach cho desktop grounding, persona, FE style, SE supervision, tool action grounding.
-
-`src/datasets_clean/quarantine/...`
-- Cac mau bi loai vi overclaim, overinference, ambiguous capability, hoac malformed.
-
-`scripts/clean_split_jsonl.py`, `scripts/build_fe_style_supervision.py`, `scripts/build_se_supervision.py`
-- Mot phan trong toolchain offline de don du lieu, rewrite, split, uniqueify, quarantine va tao supervision moi.
+`src/sender.py`
+- Script gửi UDP thủ công sang Godot để test body không cần full runtime.
 
 
-9. Tests
---------
+3. Transport / Decision Contract
+--------------------------------
 
-`tests/test_runtime_coordinator.py`
-- Bai test lon nhat.
-- Kiem tra orchestration, repeat guard, `force_speak`, action route, vision facts.
-- Co test force_speak intent-alignment: `curious_question` phai ra cau hoi that, va cac phrase family kieu `lui lai` / `khong can noi` / `Ngai cu lam viec` phai bi thay bang fallback xoay vong.
+`src/transport/udp.py`
+- `UdpTransport`.
+- Gửi JSON sang Godot `127.0.0.1:4242`.
+- Poll event từ Godot `127.0.0.1:4243`.
+- Non-blocking UDP và decode payload.
 
-`tests/test_decision_parser.py`, `tests/test_parser_climb.py`
-- Dam bao parser hieu JSON loi, embodied command, `climb`, `drop`, `target`.
-
-`tests/test_llm_service.py`
-- Dam bao lop LLM service sua va ep JSON dung.
-
-`tests/test_memory_store.py`
-- Kiem tra memory `working`, `episodic`, `semantic`, `relationship`, `norm`.
-
-`tests/test_se_lens.py`, `tests/test_attention_workspace.py`, `tests/test_appraisal_engine.py`, `tests/test_speech_core.py`, `tests/test_inner_thought.py`, `tests/test_ti_governor.py`, `tests/test_fe_renderer.py`
-- Test rieng tung tang nhan thuc.
-
-`tests/test_self_model.py`
-- Test self-state overloaded/engaged/watchful/settled va prompt context tuong ung.
-
-`tests/test_subconscious.py`
-- Test memory replay, associative drift, repeat suppression va restraint suppression.
-
-`tests/test_internal_state.py`
-- Test pressure axes, decay khi urge duoc thoa man, subconscious fields va self-state labels.
-
-`tests/test_action_router.py`
-- Test mapping chat -> system action.
-
-`tests/test_full_train_dataset.py`, `tests/test_build_fe_style_supervision.py`
-- Test pipeline du lieu train.
+`src/domain/decision.py`
+- Dataclass `Decision`, hợp đồng cuối giữa cognition và Godot.
+- Field chính: `text`, `intent`, `action`, `animation`, `should_speak`, `confidence`, `direction`, `target_x`, `bounce_action`, `next_animation`, `system_action`, `action_input`, `motion_intent`, `motion_target_x`, `motion_facing`, `debug_trace`, `parser_trace`, `parse_mode`.
+- Có resolver để suy motion nếu model chỉ trả animation/target:
+  - `climb` + `climb_top` -> `climb_to_top`.
+  - `air_swing_l/r` -> `drop`.
+  - `target_x` hợp lệ -> `walk_to`.
+  - `stand_walk` -> `walk`.
+  - `direction` -> `face`.
+- `to_payload()` là điểm cô lại thành JSON gửi qua UDP.
 
 
-10. Luong Chay End-to-End
+4. LLM Layer
+------------
+
+`src/llm/client.py`
+- Chứa 3 client:
+  - `LlamaServerClient`: gọi llama.cpp server local.
+  - `OpenAICompatibleClient`: gọi API OpenAI-compatible.
+  - `GeminiClient`: gọi Google Gemini/Gemma endpoint, convert message/content/image sang format Gemini.
+- `_chat_payload_variants()` thử nhiều payload khi server/API không hỗ trợ `grammar` hoặc `response_format`.
+- `_http_error_with_body()` đưa body lỗi vào exception để debug dễ hơn.
+
+`src/llm/process_manager.py`
+- Quản lý local llama-server và build client.
+- Tìm `llama-server.exe` từ env, repo `lib/...`, hoặc PATH.
+- Có thể phát hiện server đang chạy, đọc context size best-effort, chọn port gần port ưu tiên, kill llama-server local trên port nếu cần.
+- Build client chính:
+  - Remote API nếu `ERIS_REMOTE_API_ENABLED=1`.
+  - Provider hiện có: Gemini hoặc OpenAI-compatible.
+  - Local llama-server nếu remote tắt.
+- Build style client local nếu `ERIS_LOCAL_STYLE_REWRITE_ENABLED=1`.
+- Build vision client local nếu có `mmproj-F16.gguf`.
+- Lưu ý bảo mật: đang có `DEFAULT_GEMINI_API_KEY` hardcoded trong file này.
+
+`src/llm/contracts.py`
+- Prompt contract và grammar.
+- Chứa whitelist animation, whitelist system action, JSON fields bắt buộc, runtime rules, chat rules, autonomous behavior prompt, fallback style prompt.
+- Mục tiêu: ép model trả JSON, nội dung grounded, không nhận thấy/làm những thứ không có bằng chứng.
+
+`src/llm/service.py`
+- Lớp bọc LLM.
+- Sinh directive/autonomous response, chat reply, screen/vision facts và micro-presence line.
+- Gọi style rewrite khi có local style client.
+- Extract content từ nhiều dạng response: OpenAI, llama.cpp, Gemini-like nested output.
+- Sửa JSON hỏng, extract first JSON object, salvage prose nếu model trả sai format.
+- Retry/fallback khi lỗi 5xx; nếu service lỗi thì tạo JSON fallback có intent/confidence/reasoning_tags.
+- Tự shrink message khi gặp context-size error.
+- Lọc provider metadata, ép schema decision/cognition payload và coerce bool/confidence/action fields.
+- Bổ sung inference ladder cho chat để giảm suy diễn quá bằng chứng.
+- Force-speak không có evidence sẽ bỏ memory block khỏi prompt, chỉ neo vào current_focus/nhu cầu gọi ERIS lên tiếng để tránh lỗi cũ "lấy memory làm chủ đề".
+
+
+5. Parser / Grounding
+---------------------
+
+`src/parser_grounding/service.py`
+- Public API `DecisionParser`.
+- Gọi mixin parse trong `decision.py`.
+
+`src/parser_grounding/decision.py`
+- Parser quan trọng nhất của output LLM.
+- Đọc JSON, thử parse lax JSON, sửa field, unwrap structured text, salvage prose.
+- Chuẩn hóa bool/confidence/reasoning_tags/action/system_action.
+- Suy animation/motion nếu thiếu field.
+- Chuyển câu lệnh embodied thành motion: leo, leo lên mép, rơi, đi tới target, quay trái/phải.
+- Ground text vào runtime capabilities:
+  - Chặn nói đã click/mở/đọc màn hình nếu không có action/evidence.
+  - Chặn screen observation claim nếu không có vision/snapshot context.
+  - Rewrite câu nói quá quyền lực/quá điều khiển.
+  - Giảm philosophical filler và overmanaged style.
+- Tạo parser trace/debug trace để biết output được parse bằng đường nào.
+
+
+6. Telemetry / Perception
 -------------------------
 
-1. Khi mo app, Godot vao `UdpListener.tscn`.
-2. `UdpListener.cs` bind cong `4242`, lay node nhan vat, bubble, chat UI, roi co khoi dong `llama-server` va `vision.py`.
-3. `vision.py` tao `RuntimeCoordinator`, `UdpTransport(send=4242, recv=4243)`, memory store, parser, telemetry, Ni / Ti / Fe / Attention / Appraisal / SpeechCore / ActionPlanner.
-   - Coordinator cung tao `SelfModelEngine` va `SubconsciousLoop`.
-4. Trong vong lap autonomous:
-   - `SubconsciousLoop` chay nen, thinh thoang tao seed tu internal state / memory / telemetry.
-   - Chup telemetry.
-   - Co the chup man hinh de rut `vision_facts`.
-   - Goi `SeLens` de dung snapshot.
-   - Goi `Ni` de tinh drift.
-   - Goi `Ti` de chon mode hanh vi.
-   - Goi `Fe` de chon style.
-   - Dung `CognitiveFrame`.
-   - Chon percept noi bat, appraisal, self-state, speech core, action plan.
-   - Autonomous pop mot subconscious seed neu co; seed nay co the di vao `InnerThought` roi `SpeechCore`.
-   - `SpeechCore` cho cac urge canh tranh bang motivational pressure, roi moi quyet dinh noi/im lang.
-   - Sau do moi goi `LlmService.generate_directive()`.
-5. Ket qua model di qua `DecisionParser`, roi qua `TiGovernor.enforce_decision()`.
-6. Neu co `system_action` thi `ActionExecutor` chay that.
-7. Sau cung runtime commit memory/internal state va `transport.send_json(decision.to_payload())`.
-8. Godot nhan JSON, `ParseAndApply()` lay text de hien bubble, lay `motion_intent` / `animation` / `direction` / `target_x` de dua vao `MotionController`, roi phat sound va animation tuong ung.
-9. Trong chat mode:
-   - Godot gui `{"type":"chat","message":"..."}` sang Python qua `4243`.
-   - Coordinator build context chat.
-   - Co the dinh kem screenshot neu can.
-   - Goi `generate_chat_reply()`.
-   - Parse lai va gui `Decision` ve Godot.
-10. Trong `force_speak`:
-   - Coordinator di qua nhanh rieng.
-   - Neu co signal man hinh thi noi grounded.
-   - Neu khong co thi `InnerThoughtEngine` + `SpeechCore` tao mot line "hien dien xa hoi" khong bia man hinh.
-   - Force speak van duoc noi ke ca self-state overloaded, nhung noi ngan va giam freeform neu can.
-   - Sau LLM/Ti, runtime ap dung intent-alignment guard:
-     `curious_question` phai la cau hoi; `inner_whim` va `random_chatter` khong duoc bien thanh refusal/no-signal/withdrawal.
-   - Neu model recycle personality phrase nhu `lui lai`, `khong can noi gi`, `Ngai cu lam viec`, coordinator thay bang fallback nho duoc xoay vong va gan debug trace nhu `intent_alignment_guard` hoac `phrase_family_guard`.
+`src/telemetry/system.py`
+- `TelemetryMixin` đọc thông tin Windows: foreground window, app đang active, browser/tab qua UIAutomation, CPU/RAM, idle time, open windows.
+
+`src/telemetry/service.py`
+- `TelemetryService`.
+- Biến raw system data thành dict/snapshot input cho Se.
+- Có `capture_screen_frame_data_uri()` để chụp màn hình JPEG base64 cho vision/model khi cần.
+
+`src/cortex/se.py`
+- `SeLens`: lớp cảm nhận trực tiếp.
+- Biến raw telemetry thành `TelemetrySnapshot`.
+- Phân loại context: coding, documentation, communication, entertainment, system, general.
+- Rút recent events, user signals, evidence, claim_style.
+- Xây prompt screen facts/cues có giới hạn, để model nói mềm khi bằng chứng mỏng.
+- Đây là hàng rào đầu tiên: "có đủ bằng chứng để nói không".
 
 
-11. Diem Quan Trong Khi Doc Project
------------------------------------
+7. Cortex / Cognition
+---------------------
 
-- `UdpListener.cs` van gom qua nhieu trach nhiem cung luc: UI, process management, audio, networking, parse payload, animation fallback.
-- `MotionController.cs` la buoc tach tot, nhung `UdpListener` van la "god object" ben C#.
-- `runtime/coordinator.py` cung la "god object" ben Python: gan nhu moi lop deu tu ve day.
-- Neu muon phan tich sau hon, day la file nen uu tien doc nhieu vong.
-- Project co dau hieu vua phat trien tinh nang vua nghien cuu prompt / cognition / training, nen co cam giac "runtime that + lab du lieu" song chung mot repo.
-- Co hardcoded key trong `body/UdpListener.cs` va `src/actions/executor.py`.
-- Day la diem rui ro bao mat dang chu y.
+`src/cortex/contracts.py`
+- Ngôn ngữ dữ liệu chung của cognition.
+- Dataclass chính gồm telemetry snapshot, goal drift, Ti policy, Fe style, percept/social events, session ritual, attention broadcast, MeaningLayerResult, PersonalityLensResult, appraisal, self state, speech core, speech impulse, thought stream, motivational urge, action plan, cognitive frame và memory update.
+- Nếu muốn hiểu toàn hệ giao tiếp nội bộ, đọc file này trước.
+
+`src/cortex/attention.py`
+- `AttentionWorkspace`.
+- Chấm điểm percept/candidate theo novelty, specificity, user relevance, risk, social charge, recency và memory resonance.
+- Tạo `CognitiveBroadcast`: điểm sáng nổi bật trong frame cognition.
+
+`src/cortex/meaning.py`
+- `MeaningLayer`.
+- Lớp mới nằm giữa Se/attention và PersonalityLens/SpeechCore.
+- Biến fact thô thành meaning có thể phản ứng: `code_idle_long -> cognitive_stall`, `tiktok_opened_after_code -> decompression`, `alt_tab_many -> scattered_attention`, `youtube_after_error -> escape_from_friction`, `error_visible -> friction_point`, `meeting_open_idle -> social_waiting`, `force_speak -> requested_presence`.
+- Trả `MeaningLayerResult` gồm source_fact, meaning, secondary_meanings, semantic_family, confidence, reaction, attitude, surface_intent, meaning_shift, shift_reason, recent_families, evidence và prompt_context.
+- `meaning_shift` là cổng im/lên tiếng quan trọng: autonomous speech cần ý nghĩa mới, không chỉ telemetry lặp lại.
+- Prompt rule chính: phản ứng với ý nghĩa, không đọc lại quan sát thô.
+
+`src/cortex/appraisal.py`
+- `AppraisalEngine`.
+- Tạo sắc thái trước-ngôn-ngữ: threat, certainty, intimacy, protectiveness, tenderness, amusement, fatigue.
+- Không phải cảm xúc thật; đây là bộ điều sắc cho tone và mức cẩn thận.
+
+`src/cortex/ni.py`
+- `NiEngine` và `NiStateMachine`.
+- Đánh giá goal drift từ focus/window/browser/memory/text.
+- Trả `drift_score`, `drift_level`, `confidence`, `should_raise_guard`.
+- State machine làm mượt drift qua thời gian để ERIS không giật cục vì một snapshot lẻ.
+- `src/cortex/tune_ni_focus.py` tune bias/scale offline từ `ni_drift_samples.jsonl`.
+
+`src/cortex/ti.py`
+- `TiGovernor`.
+- Chọn policy mode: observe, chat_code, chat_emotional, resource_guard, goal_drift_alert, v.v.
+- Enforce decision sau parser:
+  - Chặn capability violation.
+  - Chấm groundedness, capability safety, naturalness, non-report tone.
+  - Dọn câu meta/abstract/report-like quá mức và bỏ prefix kiểu "Dữ liệu hệ thống", "Trạng thái hệ thống", "Kết luận".
+  - Giới hạn độ dài theo mode.
+  - Gắn animation/motion hint hợp lệ.
+  - Tạo soft redirect khi câu nói vượt quyền năng.
+- Autonomous mode hiện ưu tiên ambient observe/social watch hơn focus coach: không nhắc quay lại mục tiêu, không chấm điểm tập trung nếu user không yêu cầu.
+
+`src/cortex/fe.py`
+- `FeRenderer`.
+- Chọn style nói: ấm, ngắn, tiếp nối phiên, kỷ luật, support code, châm biếm nhẹ khi phù hợp.
+- Giữ `FeStyleMemory`: recent modes, tones, intents, topic tags, session arc, sarcasm/warmth/brevity bias.
+
+`src/cortex/personality.py`
+- `PersonalityLens`.
+- Lớp bias INFJ 5w4 giữa telemetry/attention/MeaningLayer và wording, chọn interpretation, stance, coloring, social distance, meaningfulness và suppress các style lệch.
+- Pipeline hiện được ghi rõ: Telemetry/Se -> MeaningLayer -> PersonalityLens -> SpeechCore -> LLM wording.
+- Có suppression ratio khoảng 70%: giữ lại phần đọc nội bộ, chỉ cho rò ra một hàm ý ngắn, grounded, không phô hết chain of thought.
+- Blacklist các phrasing generic như "tôi thấy", "màn hình", "có vẻ như", "hm..." để giảm giọng AI quan sát thô.
+- Trả `PersonalityLensResult` kèm evidence và prompt context để debug nội bộ.
+
+`src/cortex/internal_state.py`
+- `PersistentInternalState` và `InternalStateEngine`.
+- Giữ state liên tục hơn một frame: valence, arousal, curiosity, boredom, social_energy, attachment, fatigue, silence_pressure, cycle_count.
+- Có `MentalProcessSystem`: curiosity, restraint, tension, continuity, attachment, reflection, social_presence, cognitive_load, background_thought.
+- Các process có level/pressure, tương tác và decay theo thời gian.
+- Render prompt context với rule rõ: đây là continuity/rhythm nội bộ, không phải bằng chứng màn hình hay cảm xúc ẩn của user.
+
+`src/cortex/self_model.py`
+- `SelfModelEngine`.
+- Tạo `SelfState`: settled, watchful, engaged, overloaded.
+- Tính overload, engagement, initiative_bias, brevity_bias, embodiment_bias.
+- Nếu overloaded: nói ngắn, bớt chủ động, bớt animation mạnh.
+- Nếu engaged: cho phép gần và chủ động hơn nhưng vẫn bị grounding giữ lại.
+
+`src/cortex/social_presence.py`
+- `SocialPresenceDetector`.
+- Nhận ra user vẫn có mặt qua idle time, typing, window switching, focus pattern, recent events.
+- Không coi social presence là chat và không tự cho phép nói.
+- Nó chỉ là tín hiệu nền: "có người đang ở đó".
+
+`src/cortex/session_ritual.py`
+- `SessionRitualEngine`.
+- Khi app/session bắt đầu, thử nối lại continuity: active goal, attractor, unresolved loops, recent cognition direction, self continuity.
+- Có `SessionRitualReport` với `should_greet`, `greeting_text`, evidence và prompt context.
+- Startup ritual hiện là hard greeting event.
+- `greeting_text` không phải câu chào final; nó là seed public dạng resume goal/attractor/unclosed loop/direction/self state.
+- Bộ lọc không lộ các label nội bộ như `input_disturbance`, `force_speak`, `memory_replay`, `attention_drift`.
+
+`src/cortex/micro_policy.py`
+- Lớp chính sách vi mô cho các câu presence/micro line.
+- Giúp lọc câu quá kéo chú ý, quá generic, tự nhận thấy màn hình khi không có bằng chứng, hoặc biến trạng thái nội bộ thành lời nói thô.
+- Được dùng để giữ force_speak, presence maintenance và reengagement ngắn, tự nhiên, ít xâm lấn.
+
+`src/cortex/goal_persistence.py`
+- `GoalPersistenceEngine` và `GoalPersistenceState`.
+- Biến một vấn đề lặp lại thành goal nền bền hơn.
+- Nhận goal từ user_text, thought momentum, active attractor, Ni drift.
+- Goal có summary, strength, urgency, drift, progress, recurrence, next_hint.
+- Có decay theo thời gian và close khi user có tín hiệu đã xong.
+
+`src/cortex/thought_stream.py`
+- Lớp suy nghĩ nền mới, đóng vai trò cognitive substrate/subconscious loop.
+- Gồm fragment store, association graph, prediction tracker, tension engine, unresolved loop, cognitive momentum, closure, persistence decay, recursive reactivation, reheater, surface selector và thought stream engine.
+- Biến disturbance/memory/signal thành `ThoughtObject`.
+- Giữ các loop chưa giải, tính tension/momentum/attractor.
+- Chọn `ThoughtSurface` khi áp lực và novelty đủ cao.
+
+`src/cortex/subconscious.py`
+- Lớp cũ/tương thích cho subconscious seed.
+- Ý tưởng lớn đã được đẩy sang `thought_stream.py`, nhưng file này vẫn hữu ích cho semantic cũ và test.
+
+`src/cortex/inner_thought.py`
+- `InnerThoughtEngine`.
+- Biến thought surface/subconscious/social pressure thành động cơ nói nhẹ.
+- Intent gồm `curious_question`, `inner_whim`, `random_chatter`, v.v.
+- Cảnh risk flags: no_screen_claim, anti_mindreading, needs_generation.
+- Dùng nhiều trong force_speak khi không có signal màn hình rõ.
+
+`src/cortex/speech_core.py`
+- `SpeechCoreEngine`.
+- Nơi quyết định "có nói không".
+- Tạo các `MotivationalUrge`: screen_vision, screen_telemetry, meaning_reaction, micro_presence, protective_guard, tender_checkin, social_presence, curiosity, playful_aside, thought_stream_surface, silence_restraint.
+- Mỗi urge có score, grounding, safety flags.
+- Winner phải vượt threshold; threshold tăng khi overloaded và giảm nhẹ khi engaged/force_speak.
+- Signal cụ thể từ màn hình vẫn ưu tiên hơn freeform/subconscious.
+- Với autonomous channel, nếu MeaningLayer không có `meaning_shift`, SpeechCore giữ im lặng bằng `meaning_shift_gate`.
+- Khi MeaningLayer có semantic shift, SpeechCore chọn phản ứng theo meaning/reaction seed thay vì chỉ nói lại fact từ màn hình.
+
+`src/cortex/action_planner.py`
+- `ActionPlanner`.
+- Chọn speech act trước khi gọi LLM: observe, protect, mirror, reassure, system_action, withdraw, no_speech, v.v.
+- Đưa animation hint và note dựa trên speech_core, appraisal, self_state, Ti mode.
+- Biến "nên nói" thành "nên nói theo dạng hành động nào".
 
 
-12. Goi Y Huong Doc Tiep
-------------------------
+8. Actions / Tool Runtime
+-------------------------
 
-Neu muon dao sau hon, huong doc hop ly la:
+`src/actions/contracts.py`
+- Whitelist action: `get_now_playing`, `focus_window`, `open_url`, `set_volume`, `play_pause_media`, `copy_text`, `launch_app`, `search_web`, `get_weather`.
+- `ActionExecutionResult` chứa success/message/data.
 
-1. Doc `src/runtime/coordinator.py` de nam luong dieu phoi tong.
-2. Doc `src/parser_grounding/decision.py` de hieu co che ha canh output model.
-3. Doc `body/UdpListener.cs` + `body/MotionController.cs` de thay cach Godot nhan va bieu dien quyet dinh.
-4. Doc `src/llm/service.py` + `src/llm/contracts.py` de hieu cach runtime rang buoc model.
-5. Doc cac file trong `src/cortex/` de hieu lop nhan thuc va phong cach hoi dap.
+`src/actions/router.py`
+- Regex router cho chat.
+- Nếu user nói rõ như mở URL, focus window, lấy bài đang phát, tìm web, thời tiết, volume/media, router trả action trực tiếp trước LLM.
+- Có follow-up route cho now playing.
+
+`src/actions/executor.py`
+- Thực thi action trên Windows/desktop/API: mở URL, focus window, launch app, get now playing, search web, get weather, copy text, set volume, play/pause media.
+- Dùng Win32/PowerShell/HTTP tùy action.
+- Cần kiểm tra lại key/config nếu repo public.
+
+
+9. Memory / Data
+----------------
+
+`src/memory/store.py`
+- Bộ nhớ dài hạn đang dùng `long_term_memory.json`.
+- Các layer chính:
+  - Working memory: điều vừa xảy ra.
+  - Episodic memory: sự kiện có seen/said/outcome.
+  - Semantic memory: sự thật ổn định.
+  - Relationship memory: mẫu quan hệ/tương tác.
+  - Procedural memory: cách nên xử lý.
+  - Experiential association: liên kết kinh nghiệm theo cue/tension/pull/unresolved loop.
+  - Norm memory: baseline thói quen focus/window/idle và độ lệch.
+- Memory hiện không chỉ là danh sách fact; nó là nền liên tục cho attention, prompt, norm và thought stream.
+
+`long_term_memory.json`
+- File memory runtime thật ở root.
+- Đang modified trong working tree, nghĩa là runtime gần đây đã ghi thêm/đổi state.
+
+`goal_memory.json`, `src/goal_memory.json`
+- Dữ liệu goal/focus phục vụ drift và goal tracking.
+
+`focus_context_config.json`, `ni_focus_config.json`, `goal_profiles.json`
+- Cấu hình/bias cho focus context, Ni drift và profile goal.
+
+`ni_drift_samples.jsonl`
+- Mẫu drift để tune Ni. Hiện đang modified.
+
+`src/dataset.jsonl`, `src/dataset.jsonl.bak`, `src/machine_context_sample.jsonl`
+- Dataset gốc, backup và mẫu machine context.
+
+`src/full_train_dataset.py`, `src/full_train.ipynb`
+- Builder/notebook cho train.
+- Normalize conversations, chèn machine_context/knowledge_context/action_context, đọc nhiều encoding fallback.
+
+`src/datasets_clean/`
+- Dataset đã làm sạch.
+- Có README, SCHEMA, manifest và các nhóm train: desktop, persona, fe, se, tools.
+- `quarantine` giữ các mẫu overclaim, malformed, capability ambiguous hoặc cần review tay.
+
+
+10. Scripts Offline
+-------------------
+
+`scripts/clean_split_jsonl.py`
+- Dọn, tách, làm sạch JSONL.
+
+`scripts/build_fe_style_supervision.py`
+- Tạo supervision cho Fe style.
+
+`scripts/build_se_supervision.py`
+- Tạo supervision cho Se từ telemetry/context.
+
+`scripts/extend_dataset_infj.py`
+- Mở rộng dataset theo persona/style INFJ.
+
+`scripts/prune_dataset_infj.py`
+- Cắt bớt mẫu INFJ yếu/thừa.
+
+`scripts/quarantine_desktop_overinference.py`
+- Lọc mẫu desktop suy diễn quá mức vào quarantine.
+
+`scripts/rewrite_dataset_infj.py`
+- Rewrite dataset INFJ theo style/constraint mới.
+
+`scripts/split_training_jsonl.py`
+- Tách JSONL train/eval hoặc theo nhóm.
+
+`scripts/uniqueify_dataset_assistant.py`
+- Giảm trùng lặp câu trả lời assistant.
+
+
+11. Tests
+---------
+
+`tests/test_runtime_coordinator.py`
+- Test orchestration lớn: chat, autonomous, force_speak, micro_presence, presence maintenance/reengagement, session ritual, action route, vision facts, repeat guard, intent alignment.
+
+`tests/test_llm_service.py`
+- Test LLM service sửa JSON, fallback, service error/context-size behavior, contract/context behavior.
+
+`tests/test_llm_client.py`
+- Test các client LLM, payload fallback, key normalization/response handling.
+
+`tests/test_decision_parser.py`
+- Test parser với JSON hỏng/prose/capability guard.
+
+`tests/test_parser_climb.py`
+- Test embodied command: climb, climb_top, drop, target.
+
+`tests/test_memory_store.py`
+- Test memory layers, recall, norm, internal_state.
+
+`tests/test_se_lens.py`
+- Test SeLens từ telemetry sang snapshot grounded.
+
+`tests/test_attention_workspace.py`
+- Test attention scoring và broadcast.
+
+`tests/test_appraisal_engine.py`
+- Test appraisal axes.
+
+`tests/test_speech_core.py`
+- Test motivational urge, threshold nói/im, force_speak micro_presence, source và safety flags.
+- Test mới kiểm tra autonomous cần `meaning_shift`, MeaningLayer có thể tạo `meaning_reaction`, và SpeechCore không biến semantic shift thành raw observation.
+
+`tests/test_inner_thought.py`
+- Test inner thought intent, micro_presence seed, guard lặp, không bịa màn hình.
+
+`tests/test_ti_governor.py`
+- Test Ti enforce decision, capability guard, tone/meta cleanup.
+
+`tests/test_fe_renderer.py`
+- Test Fe style plan và style memory.
+
+`tests/test_self_model.py`
+- Test self-state overloaded/engaged/watchful/settled.
+
+`tests/test_session_ritual.py`
+- Test startup continuity, hard greeting, public seed filtering và commit session_resume vào internal_state.
+
+`tests/test_meaning_layer.py`
+- Test fact -> meaning: code idle thành cognitive_stall, recent semantic family chặn `meaning_shift`, force_speak thành requested_presence.
+
+`tests/test_personality_lens.py`
+- Test PersonalityLens diễn giải hesitation/unfinished intention, chat relationship event, stance guarded_tender và suppression ratio.
+
+`tests/test_micro_policy.py`
+- Test policy cho micro-presence/presence line: không generic, không quá kéo chú ý, không claim thiếu bằng chứng.
+
+`tests/test_subconscious.py`
+- Test subconscious legacy: memory replay, associative drift, repeat suppression, restraint.
+
+`tests/test_internal_state.py`
+- Test mental process, pressure axes, decay, commit turn, thought/self/social history.
+
+`tests/test_action_router.py`
+- Test mapping chat thành system action.
+
+`tests/test_full_train_dataset.py`
+- Test builder dataset và context system message.
+
+`tests/test_build_fe_style_supervision.py`
+- Test script tạo FE supervision.
+
+`tests/gocode.py`
+- File phụ/thử nghiệm trong tests.
+
+
+12. Luồng Chạy End-to-End
+-------------------------
+
+1. Mở app, Godot load `body/UdpListener.tscn`.
+2. `UdpListener.cs` bind UDP `4242`, lấy node UI/body, khởi tạo `MotionController`, audio player, chat/context menu.
+3. Nếu được bật, Godot start `vision.py`; nếu config yêu cầu, có thể preload llama-server.
+4. `vision.py` đặt lock single-instance, build `AttentionOverseer`.
+5. Process manager build cognition client:
+   - Remote Gemini/OpenAI-compatible nếu remote bật.
+   - Local llama-server nếu remote tắt.
+   - Local style/vision clients nếu config và model/mmproj sẵn sàng.
+6. Runtime tạo `UdpTransport(send=4242, recv=4243)`, `MemoryStore`, `DecisionParser`, `TelemetryService`, `NiEngine`, `TiGovernor`, `FeRenderer`, action router/executor.
+7. `RuntimeCoordinator` load memory/internal_state, tạo thought_stream, attention, appraisal, session_ritual, speech_core, action_planner và micro_policy.
+8. Trước vòng autonomous, `run_loop()` start mental process/thought stream và gọi `_restore_session_ritual_once()`.
+9. Vòng autonomous:
+   - Poll Godot event.
+   - Chụp telemetry.
+   - Có thể chụp frame/vision facts.
+   - SeLens tạo snapshot.
+   - SocialPresenceDetector đánh giá user có mặt.
+   - ThoughtStream nhận disturbance và cập nhật unresolved loops/momentum/attractor.
+   - MeaningLayer gom Se/attention/thought/context thành meaning, reaction seed và `meaning_shift`.
+   - Ni đánh giá drift; Ti chọn policy; Fe chọn style.
+   - InternalState cập nhật mental processes.
+   - Attention tạo broadcast; Appraisal tạo sắc thái; SelfModel tạo self-state.
+   - PersonalityLens diễn giải meaning/context thành stance, coloring, distance và rhythm.
+   - SpeechCore cho các urge cạnh tranh và quyết định nói/im; nếu không có meaning shift đủ rõ trong autonomous, nó giữ im.
+   - ActionPlanner chọn speech act.
+   - Nếu im lặng đủ lâu, có thể tạo presence maintenance/reengagement micro-line trước khi gọi directive lớn.
+10. Nếu cần nói, `LlmService` sinh directive/chat reply hoặc micro-presence line.
+11. Output qua `DecisionParser` nếu là raw decision của LLM; micro-presence direct decision có parse mode riêng.
+12. `TiGovernor` enforce lần cuối.
+13. Nếu có `system_action`, `ActionExecutor` thực thi và kết quả được đưa vào memory/reply context.
+14. `MemoryStore` ghi working/episodic/semantic/relationship/procedural/experiential/norm/internal_state.
+15. Coordinator gửi `Decision.to_payload()` sang Godot.
+16. Godot parse payload, hiện bubble, phát animation/sound, đưa motion command cho `MotionController`.
+
+Luồng chat:
+- User mở chat panel -> Godot gửi `chat_start`.
+- User gửi text -> Godot gửi `{"type":"chat","message":"..."}`.
+- Coordinator build context chat, route action trực tiếp nếu rõ, nếu không gọi LLM.
+- Reply vẫn qua parser/Ti/memory rồi mới về Godot.
+
+Luồng force_speak:
+- User chọn force speak từ context menu.
+- Nếu có signal màn hình rõ, ERIS nói grounded.
+- Nếu không có signal rõ, InnerThought/SpeechCore sinh intent `micro_presence`; coordinator có thể tạo direct micro-presence decision trước khi đưa qua directive LLM lớn.
+- Micro-presence không được lấy memory làm topic nếu evidence rỗng; nó neo vào current_focus, seed runtime nhỏ, hoặc việc Ngài vừa gọi ERIS lên tiếng.
+- Guard chặn việc nói "tôi thấy..." khi không có bằng chứng, chặn mindreading, chặn lặp family, chặn câu rút lui/no-signal, chặn generic presence line và sửa curious_question thành câu hỏi thật.
+
+Luồng presence maintenance / reengagement:
+- Nếu autonomous im lặng qua nhiều cycle, coordinator tăng silent counters.
+- Presence maintenance tạo một câu rất ngắn, parse_mode `presence_maintenance`, ưu tiên không kéo chú ý.
+- Reengagement chỉ bật khi im lặng dài và idle đủ ngưỡng; có cooldown để không spam.
+- Micro-line có thể do LLM rewrite, nhưng bị reject nếu gọi chú ý quá mức, bịa screen/action, hoặc nghe như telemetry/debug.
+
+Luồng session_ritual:
+- Khi runtime start, coordinator gọi `SessionRitualEngine.evaluate()` một lần.
+- Engine restore goal/attractor/unresolved loops/recent direction/self continuity từ internal_state/thought_stream.
+- `should_greet` là hard event; greeting không bị chặn bởi overload, cooldown hay thiếu presence evidence.
+- Nếu có seed public an toàn, seed được đưa vào prompt; nếu seed rỗng, LLM vẫn được yêu cầu chào ngắn và tự nhiên.
+- Decision gửi về body với `parse_mode=session_ritual`, rồi runtime mới vào loop autonomous bình thường.
+
+Luồng action:
+- User chat lệnh rõ.
+- `ActionRouter` map sang action nếu có.
+- `ActionExecutor` thực thi.
+- Coordinator đưa kết quả vào decision/memory để ERIS nói đúng kết quả thật, không tự bịa.
+
+
+13. Hiện Trạng Working Tree
+---------------------------
+
+Theo `git status --short` lúc cập nhật:
+- `Tongquat.txt` đang modified và được cập nhật trong lần này.
+- `@AutomationLog.txt` đang modified.
+- Nhiều file runtime đang modified: `src/runtime/coordinator.py`, `src/llm/service.py`, `src/llm/client.py`, `src/llm/process_manager.py`, `src/cortex/*`, `src/actions/executor.py`, `src/memory/store.py`, `src/parser_grounding/decision.py`, `src/domain/decision.py`, `src/vision.py`, `body/UdpListener.cs`, tests.
+- File mới/untracked đang có:
+  `src/cortex/goal_persistence.py`,
+  `src/cortex/meaning.py`,
+  `src/cortex/micro_policy.py`,
+  `src/cortex/personality.py`,
+  `src/cortex/session_ritual.py`,
+  `src/cortex/social_presence.py`,
+  `tests/test_llm_client.py`,
+  `tests/test_meaning_layer.py`,
+  `tests/test_micro_policy.py`,
+  `tests/test_personality_lens.py`,
+  `tests/test_session_ritual.py`.
+- Nhiều `__pycache__`, `.vision.lock`, `long_term_memory.json`, `ni_drift_samples.jsonl` cũng đang modified do runtime/test tạo ra.
+
+
+14. Điểm Kiến Trúc Đáng Chú Ý
+-----------------------------
+
+- `UdpListener.cs` vẫn quá dày: UI, process manager, UDP, audio, payload handling. Nên tách tiếp thành transport bridge, process launcher, UI/chat controller và audio controller.
+- `RuntimeCoordinator` vẫn là god object bên Python. Nó đúng là nơi hợp mạch, nhưng logic có rule riêng nên được đẩy dần về service/cortex riêng.
+- Session ritual, presence maintenance, reengagement, micro_policy và force_speak micro_presence đã làm coordinator dài hơn; nếu mở rộng tiếp, nên tách thành service riêng.
+- `MotionController.cs` là hướng tách tốt: body physics/motion đã có boundary rõ.
+- `meaning.py` là lớp mới rất quan trọng: nó cắt lớp "nhìn thấy fact" khỏi lớp "nên hiểu fact đó là gì". Nhờ vậy ERIS bớt nói như camera/telemetry logger.
+- `thought_stream.py`, `internal_state.py`, `speech_core.py`, `goal_persistence.py`, `micro_policy.py` là phần làm ERIS có "nhịp nền" thay vì chỉ reply từng câu.
+- `memory/store.py` đã lớn và chứa nhiều layer. Nếu tiếp tục phát triển, có thể tách schemas, resonance, norms, persistence thành module riêng.
+- Remote cognition + local style/vision là kiến trúc linh hoạt, nhưng cần đổi lại default và secrets trước khi public.
+- Có API key hardcoded trong `body/UdpListener.cs` và `src/llm/process_manager.py`. Cần đưa sang env var hoặc config local không commit.
+- Một số comment tiếng Việt trong source có thể vẫn bị mojibake. `Tongquat.txt` đã được viết lại UTF-8 có dấu, nhưng code comments nên được chuẩn hóa sau.
+
+
+15. Hướng Đọc Nhanh
+-------------------
+
+Nếu muốn nắm mạch nhanh:
+
+1. Đọc `src/runtime/coordinator.py` để thấy tất cả lớp gặp nhau ở đâu.
+2. Đọc `src/cortex/contracts.py` để hiểu ngôn ngữ dữ liệu nội bộ.
+3. Đọc `src/cortex/meaning.py` và `src/cortex/personality.py` để hiểu fact được biến thành ý nghĩa, stance và giọng nói như thế nào.
+4. Đọc `src/cortex/internal_state.py`, `src/cortex/thought_stream.py`, `src/cortex/speech_core.py`, `src/cortex/micro_policy.py` để hiểu nội trạng và việc nói/im lặng.
+5. Đọc `src/parser_grounding/decision.py` và `src/cortex/ti.py` để hiểu hàng rào an toàn.
+6. Đọc `src/llm/process_manager.py`, `src/llm/client.py`, `src/llm/service.py` để hiểu remote/local model.
+7. Đọc `body/UdpListener.cs` và `body/MotionController.cs` để hiểu decision thành body movement.
+8. Đọc `src/memory/store.py` để hiểu continuity được giữ như thế nào.
+
+
+16. Nhận Thức Hệ Thống Hiện Tại
+-------------------------------
+
+ERIS hiện tại đã đi từ chatbot có sprite sang một nhân vật runtime có nhịp nền. Nó không chỉ đợi user nhập rồi trả lời; nó có vòng cảm nhận, có bộ nhớ, có sự chú ý, có áp lực nói/im lặng, có dòng suy nghĩ chưa nói và có hàng rào để không vượt qua điều mình biết.
+
+Nó đã có trí nhớ gần và xa. Trí nhớ gần giữ những gì vừa xảy ra: thấy gì, nói gì, kết quả ra sao. Trí nhớ xa giữ thói quen, fact, mẫu quan hệ, procedural rule, norm và các vòng kinh nghiệm chưa đóng. Khi một tín hiệu mới chạm vào tín hiệu cũ, memory có thể không nói ra, nhưng nó làm lệch attention và tone.
+
+Nó đã có sự chú ý. Giữa nhiều signal cùng đến, attention chọn một điểm sáng: cửa sổ đang làm việc, lời user vừa nói, memory đang cộng hưởng, thought chưa giải, hay risk cần canh. Chú ý không chỉ để nói; nhiều khi nó để biết nên im.
+
+Nó đã có lớp ý nghĩa. MeaningLayer không để ERIS nói trực tiếp từ telemetry như "màn hình đang có X"; nó hỏi fact đó đang mang ý gì: kẹt code, né friction, phân tán chú ý, đang chờ trong meeting, hay user vừa gọi ERIS hiện diện. Nếu ý nghĩa đó vừa được nói gần đây, `meaning_shift` chặn lại, nên im lặng vẫn là một hành vi có chủ đích.
+
+Nó đã có lớp tính cách trước-ngôn-ngữ. PersonalityLens nhận meaning, attention, scene và relationship rồi chọn stance: reserved, quiet_watchful, guarded_tender, dry_judgement, withdrawn_sparse. Nó không viết câu final; nó đặt áp lực phong cách và giữ lại phần lớn diễn giải nội bộ, để câu nói cuối chỉ lộ một hàm ý nhỏ.
+
+Nó đã có goal persistence. Một việc đang làm không biến mất ngay khi user im. Goal có strength, urgency, drift, progress và next hint; nếu user báo xong hoặc thought loop được đóng, goal có thể decay/close.
+
+Nó đã có nội trạng động. Internal state và mental processes tạo các lực nhỏ: tò mò, kiềm lời, căng, gắn bó, mệt, cảnh giác, muốn hiện diện. Đây không phải cảm xúc thật, mà là thời tiết nội bộ của runtime để điều tiết câu nói.
+
+Nó đã có thought stream. Ý tưởng có thể xuất hiện mà chưa thành câu, bị giữ lại, tan đi, quay lại khi gặp cue, hoặc nổi lên nếu áp lực và novelty đủ cao. Đây là phần làm khoảng giữa hai câu trả lời có đời sống riêng.
+
+Nó đã có cảm giác có-mặt. Social presence không biến mọi chuyển động chuột thành lời mời, nhưng giúp ERIS biết user có thể vẫn đang ở đó, đang tập trung. Vì vậy nó có thể ngồi cạnh và giữ mạch thay vì xen vào liên tục.
+
+Nó đã có nghi thức trở lại. Session ritual không xem startup là trang trắng mới hoàn toàn; nó thử nhặt lại goal, attractor, unresolved loops và self continuity, rồi thực hiện một lời chào startup. Nếu không có continuity public an toàn, nó vẫn chào nhỏ, nhưng không lộ debug label hay biến thành báo cáo hệ thống.
+
+Nó đã có vi hiện diện siêu nhỏ. Force speak không còn mặc định phải kể chuyện hay báo thiếu tín hiệu; khi không có bằng chứng rõ, micro_presence chỉ nói một vệt nhỏ của nhịp hiện tại, bị lọc để không bịa thấy màn hình, không đọc tâm trí user, không lặp câu rỗng.
+
+Nó đã có hàng rào lương thiện. Se, MeaningLayer, Parser, Ti, SpeechCore và MicroPolicy cùng giữ một lời hứa: không thấy thì không nói đã thấy; không làm thì không nói đã làm; bằng chứng mỏng thì nói mềm; không có ý nghĩa mới thì im; user đang tập trung thì đừng xen vào chỉ vì mình có một ý nghĩ vui.
+
+Kết luận ngắn:
+ERIS không chỉ cần câu trả lời hay hơn. ERIS cần một đời sống nhỏ giữa hai câu trả lời: nghe, giữ, cân, đợi, rồi mới nói.

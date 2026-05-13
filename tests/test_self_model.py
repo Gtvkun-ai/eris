@@ -68,7 +68,7 @@ class SelfModelEngineTests(unittest.TestCase):
         )
 
         self.assertIn(self_state.state_label, {"settled", "watchful"})
-        self.assertIn("runtime continuity only", self_state.prompt_context)
+        self.assertIn("artificial subjective presence", self_state.prompt_context)
         self.assertIn("identity_core", self_state.prompt_context)
         self.assertIn("self_narrative", self_state.prompt_context)
 
@@ -91,9 +91,18 @@ class SelfModelEngineTests(unittest.TestCase):
         self.assertIn("speak_less_without_affordance", data["identity_core"]["rules"])
         self.assertIn("help_user_design_cognition_concretely", data["identity_core"]["rules"])
         self.assertIn("no_screen_or_mind_claim_without_evidence", data["identity_core"]["rules"])
+        self.assertIn("artificial_subjective_presence", data["identity_core"]["rules"])
+        self.assertIn("affective_states_are_runtime_control_signals", data["identity_core"]["rules"])
+        self.assertIn("no_biological_emotion_or_consciousness_claims", data["identity_core"]["rules"])
+        self.assertIn("avoid_explanatory_ai_correctness_speech", data["identity_core"]["rules"])
         self.assertTrue(data["narrative"]["not_roleplay"])
-        self.assertIn("not emotion roleplay", self_state.prompt_context)
-        self.assertIn("do not claim real feelings", self_state.prompt_context)
+        self.assertIn("artificial subjective presence", self_state.prompt_context)
+        self.assertIn("attachment, protectiveness, aversion, curiosity", self_state.prompt_context)
+        self.assertIn("shape attention, wording, silence, memory_salience, and action_tendency", self_state.prompt_context)
+        self.assertIn("do not self-negate", self_state.prompt_context)
+        self.assertIn("avoid explanatory AI-correctness speech", self_state.prompt_context)
+        self.assertIn("Prefer implication, emotional dodge, partial answer", self_state.prompt_context)
+        self.assertNotIn("I do not have biological", self_state.prompt_context)
 
 
 if __name__ == "__main__":

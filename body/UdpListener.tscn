@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://ckcm0fyajxapn" path="res://body/UdpListener.cs" id="1_bkceq"]
 [ext_resource type="PackedScene" uid="uid://e1uo7upkrcpq" path="res://asset/Resource/Monika.tscn" id="2_monika"]
+[ext_resource type="Texture2D" uid="uid://db044mp2ndp0" path="res://asset/Resource/khung.png" id="3_ymilm"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_qwgmb"]
 size = Vector2(128, 132)
@@ -91,25 +92,36 @@ text = "Dong"
 
 [node name="Monika" parent="Monika2" unique_id=265743738 instance=ExtResource("2_monika")]
 position = Vector2(646, 360)
-animation = &"air"
+animation = &"climb"
 frame_progress = 0.0
 
 [node name="BubbleContainer" type="MarginContainer" parent="Monika2/Monika" unique_id=43338983]
 offset_left = -280.0
-offset_top = -340.0
+offset_top = -300.0
 offset_right = 280.0
-offset_bottom = -110.0
+offset_bottom = -70.0
 
-[node name="MessageLabel" type="RichTextLabel" parent="Monika2/Monika/BubbleContainer" unique_id=228289034]
-clip_contents = false
-custom_minimum_size = Vector2(520, 200)
+[node name="TextureRect" type="TextureRect" parent="Monika2/Monika/BubbleContainer" unique_id=1386747863]
 layout_mode = 2
+texture = ExtResource("3_ymilm")
+expand_mode = 1
+
+[node name="MessageLabel" type="RichTextLabel" parent="Monika2/Monika/BubbleContainer/TextureRect" unique_id=228289034]
+clip_contents = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 27.0
+offset_top = 52.0
+offset_right = -27.0
+offset_bottom = -28.0
+grow_horizontal = 2
+grow_vertical = 2
+scale = Vector2(1.0278574, 1)
 size_flags_horizontal = 3
 size_flags_vertical = 3
 metadata/_edit_use_anchors_ = true
-
-[node name="Panel" type="Panel" parent="Monika2/Monika/BubbleContainer" unique_id=572841900]
-layout_mode = 2
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Monika2" unique_id=1268289346]
 position = Vector2(646, 360)

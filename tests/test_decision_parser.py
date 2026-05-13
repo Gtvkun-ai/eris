@@ -35,6 +35,14 @@ class DecisionParserTests(unittest.TestCase):
         self.assertEqual(decision.text, "xin chao")
         self.assertEqual(decision.animation, "read")
 
+    def test_payload_blocks_placeholder_text(self):
+        decision = Decision(text="...", animation="stand", should_speak=True)
+
+        payload = decision.to_payload()
+
+        self.assertEqual(payload["text"], "")
+        self.assertFalse(payload["should_speak"])
+
     def test_unwraps_nested_json_in_text(self):
         raw = (
             '{"text":"{\\"text\\":\\"\\",\\"animation\\":\\"stand\\",\\"system_action\\":\\"\\",\\"action_input\\":\\"\\"}",'

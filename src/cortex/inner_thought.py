@@ -5,9 +5,9 @@ class InnerThoughtEngine:
     """Builds a social motive; it never writes the final spoken line."""
 
     FORCE_SPEAK_CANDIDATES = (
-        ("inner_whim", "user_requested_presence", "present_whim"),
-        ("curious_question", "small_curiosity", "small_curiosity"),
-        ("random_chatter", "light_presence", "light_presence"),
+        ("micro_presence", "grounded_observation", "screen_residue"),
+        ("micro_presence", "bodily_reaction", "bodily_residue"),
+        ("micro_presence", "social_residue", "social_residue"),
     )
 
     AUTONOMOUS_CANDIDATES = (
@@ -83,15 +83,15 @@ class InnerThoughtEngine:
         fatigue = self._float(getattr(internal_state, "fatigue", 0.0) if internal_state is not None else 0.0)
         if fatigue >= 0.44:
             candidates = (
-                ("random_chatter", "light_presence", "light_presence"), # nói chuyện phiếm nhẹ nhàng
-                ("inner_whim", "user_requested_presence", "present_whim"),
-                ("curious_question", "small_curiosity", "small_curiosity"),
+                ("micro_presence", "bodily_reaction", "bodily_residue"),
+                ("micro_presence", "social_residue", "social_residue"),
+                ("micro_presence", "grounded_observation", "screen_residue"),
             )
         elif attachment >= 0.52:
             candidates = (
-                ("inner_whim", "user_requested_presence", "present_whim"),
-                ("curious_question", "small_curiosity", "small_curiosity"),
-                ("random_chatter", "light_presence", "light_presence"),
+                ("micro_presence", "social_residue", "social_residue"),
+                ("micro_presence", "grounded_observation", "screen_residue"),
+                ("micro_presence", "bodily_reaction", "bodily_residue"),
             )
         intent, motive, seed = self._choose_candidate(
             candidates,
@@ -107,7 +107,7 @@ class InnerThoughtEngine:
             evidence_anchor=anchor,
             certainty=0.66,
             should_surface=True,
-            risk_flags=("no_screen_claim", "social_initiative", "needs_generation"),
+            risk_flags=("situated_residue", "micro_presence", "needs_seeded_generation"),
             cooldown_seconds=0,
         )
 
@@ -150,10 +150,10 @@ class InnerThoughtEngine:
         if stream_thought.should_surface:
             return stream_thought
 
-        long_quiet = idle_seconds >= 420 or silence_pressure >= 0.54
-        socially_warm = tenderness >= 0.42 and (idle_seconds >= 240 or social_energy >= 0.52)
-        tired_room = fatigue >= 0.30 and (idle_seconds >= 300 or boredom >= 0.40)
-        low_enough_noise = broadcast_score <= 0.58 and certainty <= 0.72
+        long_quiet = idle_seconds >= 240 or silence_pressure >= 0.45
+        socially_warm = tenderness >= 0.36 and (idle_seconds >= 150 or social_energy >= 0.46)
+        tired_room = fatigue >= 0.26 and (idle_seconds >= 210 or boredom >= 0.34)
+        low_enough_noise = broadcast_score <= 0.66 and certainty <= 0.78
         if not ((long_quiet or socially_warm or tired_room) and low_enough_noise):
             return InnerThought(
                 motive="not_enough_social_motive",
@@ -178,7 +178,7 @@ class InnerThoughtEngine:
             certainty=0.54,
             should_surface=True,
             risk_flags=("no_screen_claim", "no_desktop_claim", "social_initiative", "needs_generation"),
-            cooldown_seconds=240,
+            cooldown_seconds=150,
         )
 
     def _thought_from_thought_surface(

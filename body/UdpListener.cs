@@ -25,16 +25,19 @@ public partial class UdpListener : Node2D
 	[Export] public string ModelPath = "src/model.gguf";
 	[Export] public bool EnableLocalVisionInput = true;
 	[Export] public string MmprojPath = "src/mmproj-F16.gguf";
-	[Export] public bool AutoStartVision = false;
+	[Export] public bool AutoStartVision = true;
 	[Export] public bool AutoPreloadLlamaServer = false;
 	[Export] public int LlamaServerPort = 8080;
 	[Export] public string LlamaServerNgl = "all";
-	[Export] public int LlamaServerCtx = 4096;
+	[Export] public int LlamaServerCtx = 8192;
 	[Export] public bool LlamaServerFlashAttn = true;
 	[Export(PropertyHint.MultilineText)] public string LlamaServerExtraArgs = "";
-	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "sk-TXsQ848zLzayo0cTaYDrykmPbQ5WZAs060Wk1QakFepHECYV";
-	[Export] public string RemoteApiBaseUrl = "https://api-v2.shopaikey.com/v1";
-	[Export] public string RemoteApiModelName = "gemini-3-flash-preview";
+	[Export] public bool EnableRemoteCognitionApi = true;
+	[Export] public bool EnableLocalStyleRewrite = true;
+	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "AIzaSyDzKTsvNUyYGWpT62Ggnd8m7MuzV9ITCkc";
+	[Export] public string RemoteApiProvider = "gemini";
+	[Export] public string RemoteApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
+	[Export] public string RemoteApiModelName = "gemma-4-26b-a4b-it";
 
 	// Di chuyển
 	private float _moveSpeed = 60f;   // pixel/giây
@@ -130,7 +133,7 @@ public partial class UdpListener : Node2D
 		_udp.Bind(_port);
 		_body   = GetNode<CharacterBody2D>("Monika2");
 		_monika = GetNode<AnimatedSprite2D>("Monika2/Monika");
-		_label  = GetNode<RichTextLabel>("Monika2/Monika/BubbleContainer/MessageLabel");
+		_label  = GetNode<RichTextLabel>("Monika2/Monika/BubbleContainer/TextureRect/MessageLabel");
 		_bubble   = GetNode<Control>("Monika2/Monika/BubbleContainer");
 	_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
 	_characterContextMenu = GetNode<Panel>("CanvasLayer/Control/CharacterContextMenu");
@@ -182,8 +185,10 @@ public partial class UdpListener : Node2D
 
 		_monika.AnimationFinished += OnBounceAnimationFinished;
 		GD.Print($"[Ready] Đang lắng nghe UDP cổng 4242. HalfSize={_spriteHalfSize}");
-		StartLlamaServerProcess();
-		StartVisionProcess();
+		if (AutoPreloadLlamaServer)
+			StartLlamaServerProcess();
+		if (AutoStartVision)
+			StartVisionProcess();
 	}
 
 	public override void _ExitTree()
@@ -818,7 +823,8 @@ public partial class UdpListener : Node2D
 
 		try
 		{
-			if (!IsLlamaServerReachable() && !StartLlamaServerProcess())
+			bool needsLocalLlmServer = EnableLocalStyleRewrite || EnableLocalVisionInput;
+			if (needsLocalLlmServer && !IsLlamaServerReachable() && !StartLlamaServerProcess())
 			{
 				GD.PrintErr("[Vision] Không thể khởi động vision.py vì llama-server chưa sẵn sàng.");
 				return;
@@ -841,11 +847,22 @@ public partial class UdpListener : Node2D
 			startInfo.Environment["PYTHONUNBUFFERED"] = "1";
 			startInfo.Environment["LLAMA_SERVER_EXE"] = GetLlamaServerFullPath();
 			startInfo.Environment["LLAMA_SERVER_URL"] = $"http://127.0.0.1:{LlamaServerPort}/v1";
+			startInfo.Environment["LLAMA_SERVER_HOST"] = "127.0.0.1";
+			startInfo.Environment["LLAMA_SERVER_PORT"] = LlamaServerPort.ToString();
 			startInfo.Environment["LLAMA_SERVER_NGL"] = LlamaServerNgl;
 			startInfo.Environment["LLAMA_SERVER_FLASH_ATTN"] = LlamaServerFlashAttn ? "on" : "off";
 			startInfo.Environment["LLAMA_SERVER_EXTRA_ARGS"] = LlamaServerExtraArgs;
 			startInfo.Environment["LLAMA_SERVER_MMPROJ"] = EnableLocalVisionInput ? GetMmprojFullPath() : "";
-			startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = "0";
+			startInfo.Environment["GGUF_MODEL_PATH"] = GetModelFullPath();
+			startInfo.Environment["ERIS_N_CTX"] = LlamaServerCtx.ToString();
+			startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = EnableRemoteCognitionApi ? "1" : "0";
+			startInfo.Environment["ERIS_REMOTE_PROVIDER"] = RemoteApiProvider;
+			startInfo.Environment["ERIS_REMOTE_BASE_URL"] = RemoteApiBaseUrl;
+			startInfo.Environment["ERIS_REMOTE_MODEL"] = RemoteApiModelName;
+			startInfo.Environment["ERIS_REMOTE_API_KEY"] = DefaultRemoteApiKey;
+			startInfo.Environment["GEMINI_API_KEY"] = DefaultRemoteApiKey;
+			startInfo.Environment["ERIS_LOCAL_STYLE_REWRITE_ENABLED"] = EnableLocalStyleRewrite ? "1" : "0";
+			startInfo.Environment["ERIS_LOCAL_VISION_FACTS"] = EnableLocalVisionInput ? "1" : "0";
 
 			var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 			process.OutputDataReceived += (_, e) =>
@@ -1085,6 +1102,8 @@ public partial class UdpListener : Node2D
 				LlamaServerExtraArgs.Contains("--mmproj", StringComparison.OrdinalIgnoreCase);
 			bool extraArgsHasMmprojOffload = !string.IsNullOrWhiteSpace(LlamaServerExtraArgs) &&
 				LlamaServerExtraArgs.Contains("mmproj-offload", StringComparison.OrdinalIgnoreCase);
+			bool extraArgsHasCacheRam = !string.IsNullOrWhiteSpace(LlamaServerExtraArgs) &&
+				LlamaServerExtraArgs.Contains("--cache-ram", StringComparison.OrdinalIgnoreCase);
 			string mmprojArgs = "";
 			if (EnableLocalVisionInput && !extraArgsHasMmproj)
 			{
@@ -1096,11 +1115,12 @@ public partial class UdpListener : Node2D
 				else
 					GD.PrintErr($"[LLM] Vision input đang bật nhưng không tìm thấy mmproj: {mmprojPath}");
 			}
+			string cacheRamArgs = extraArgsHasCacheRam ? "" : " --cache-ram 1024";
 			string extraArgs = string.IsNullOrWhiteSpace(LlamaServerExtraArgs) ? "" : $" {LlamaServerExtraArgs}";
 			var startInfo = new ProcessStartInfo
 			{
 				FileName = serverPath,
-				Arguments = $"-m \"{modelPath}\"{mmprojArgs} -c {LlamaServerCtx} -ngl {LlamaServerNgl} --host 127.0.0.1 --port {LlamaServerPort} --no-warmup --jinja --reasoning-format deepseek{flashAttnArgs}{extraArgs}",
+				Arguments = $"-m \"{modelPath}\"{mmprojArgs} -c {LlamaServerCtx} -ngl {LlamaServerNgl} --host 127.0.0.1 --port {LlamaServerPort} --no-warmup --jinja --reasoning-format deepseek{cacheRamArgs}{flashAttnArgs}{extraArgs}",
 				WorkingDirectory = Path.GetDirectoryName(serverPath) ?? GetProjectRoot(),
 				UseShellExecute = false,
 				CreateNoWindow = true,

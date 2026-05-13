@@ -308,6 +308,98 @@ class ParserGroundingMixin:
             normalized[normalized_key] = normalized_item
         return normalized
 
+    def _coerce_bool(self, value, *, fallback: bool = True) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value != 0
+        text = str(value or "").strip().lower()
+        if text in {"true", "yes", "y", "1", "speak", "noi", "nói"}:
+            return True
+        if text in {"false", "no", "n", "0", "silent", "silence", "im", "im_lang", "im lặng"}:
+            return False
+        return fallback
+
+    def _coerce_confidence(self, value, *, fallback: float = 0.0) -> float:
+        if isinstance(value, bool):
+            return fallback
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError):
+            return fallback
+        return max(0.0, min(1.0, confidence))
+
+    def _coerce_reasoning_tags(self, value) -> tuple[str, ...]:
+        if isinstance(value, str):
+            raw_items = re.split(r"[,|;/]+", value)
+        elif isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = []
+
+        tags: list[str] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            tag = str(item or "").strip().lower()
+            tag = unicodedata.normalize("NFD", tag)
+            tag = "".join(ch for ch in tag if unicodedata.category(ch) != "Mn")
+            tag = re.sub(r"[^a-z0-9_\-\s]+", "", tag)
+            tag = re.sub(r"\s+", "_", tag).strip("_")
+            if not tag or tag in seen:
+                continue
+            tags.append(tag[:40])
+            seen.add(tag)
+            if len(tags) >= 8:
+                break
+        return tuple(tags)
+
+    def _action_field(self, action, *names, default=None):
+        if not isinstance(action, dict):
+            return default
+        for name in names:
+            if name in action:
+                return action.get(name)
+        return default
+
+    def _apply_cognition_action_defaults(self, data: dict, user_hint: str = "") -> dict:
+        action = data.get("action")
+        if not isinstance(action, dict):
+            if isinstance(action, str) and action.strip() and "system_action" not in data:
+                data["system_action"] = action.strip()
+            return data
+
+        merged = dict(data)
+        text = str(merged.get("text", "") or "")
+        structured = self._infer_structured_action(
+            " ".join(str(action.get(key, "")) for key in ("type", "name", "intent", "description", "motion_intent")),
+            user_hint=f"{user_hint}\n{text}",
+        )
+
+        if "animation" not in merged or not str(merged.get("animation", "")).strip():
+            merged["animation"] = self._action_field(action, "animation", "pose", default=structured["animation"] or "stand")
+        if "direction" not in merged:
+            merged["direction"] = self._action_field(action, "direction", "facing", default=structured["direction"])
+        if "target_x" not in merged:
+            merged["target_x"] = self._action_field(action, "target_x", "x", default=structured["target_x"])
+        if "next_animation" not in merged:
+            merged["next_animation"] = self._action_field(action, "next_animation", default=structured["next_animation"])
+        if "bounce_action" not in merged:
+            merged["bounce_action"] = self._action_field(action, "bounce_action", default=structured["bounce_action"])
+        if "motion_intent" not in merged:
+            merged["motion_intent"] = self._action_field(action, "motion_intent", "type", "name", default="")
+        if "motion_target_x" not in merged:
+            merged["motion_target_x"] = self._action_field(action, "motion_target_x", "target_x", "x", default=merged.get("target_x", -1.0))
+        if "motion_facing" not in merged:
+            merged["motion_facing"] = self._action_field(action, "motion_facing", "direction", "facing", default=merged.get("direction", 0))
+
+        system_action = self._action_field(action, "system_action", "systemAction", "tool", "name", default="")
+        if system_action and not str(merged.get("system_action", "")).strip():
+            merged["system_action"] = system_action
+        action_input = self._action_field(action, "action_input", "input", "query", "url", "argument", default="")
+        if action_input and not str(merged.get("action_input", "")).strip():
+            merged["action_input"] = action_input
+        return merged
+
     def _clean_inline_field_value(self, value: str) -> str:
         cleaned = str(value or "")
         for _ in range(4):
@@ -970,6 +1062,7 @@ class ParserGroundingMixin:
         return any(marker in normalized for marker in speculative_markers)
 
     def _finalize_decision(self, decision: dict, user_hint: str = ""):
+        decision = self._apply_cognition_action_defaults(dict(decision or {}), user_hint=user_hint)
         source_text = str(decision.get("text", self.fallback["text"]))
         inline_fields = self._try_extract_inline_decision_fields_from_text(source_text)
         if inline_fields is not None:
@@ -1002,20 +1095,22 @@ class ParserGroundingMixin:
 
         direction = self._sanitize_direction(decision.get("direction", 0))
 
-        next_animation = self._sanitize_animation(
-            decision.get("next_animation", ""),
-            fallback_text=text,
-            user_hint=user_hint,
+        raw_next_animation = str(decision.get("next_animation", "") or "").strip()
+        next_animation = (
+            self._sanitize_animation(raw_next_animation, fallback_text=text, user_hint=user_hint)
+            if raw_next_animation
+            else ""
         )
-        if next_animation == self.fallback["animation"] and str(decision.get("next_animation", "")).strip():
+        if next_animation == self.fallback["animation"] and raw_next_animation:
             next_animation = ""
 
-        bounce_action = self._sanitize_animation(
-            decision.get("bounce_action", ""),
-            fallback_text=text,
-            user_hint=user_hint,
+        raw_bounce_action = str(decision.get("bounce_action", "") or "").strip()
+        bounce_action = (
+            self._sanitize_animation(raw_bounce_action, fallback_text=text, user_hint=user_hint)
+            if raw_bounce_action
+            else ""
         )
-        if bounce_action == self.fallback["animation"] and str(decision.get("bounce_action", "")).strip():
+        if bounce_action == self.fallback["animation"] and raw_bounce_action:
             bounce_action = ""
         system_action = self._sanitize_system_action(decision.get("system_action", ""))
         action_input = self._normalize_salvaged_text(str(decision.get("action_input", "")).strip())[:280]
@@ -1049,6 +1144,11 @@ class ParserGroundingMixin:
         debug_trace = self._normalize_debug_trace(
             decision.get("debug_trace", decision.get("_thought", ""))
         )
+        intent = self._normalize_salvaged_text(str(decision.get("intent", "")).strip())[:80]
+        action = decision.get("action", "")
+        reasoning_tags = self._coerce_reasoning_tags(decision.get("reasoning_tags", ()))
+        should_speak = self._coerce_bool(decision.get("should_speak", bool(text)), fallback=bool(text))
+        confidence = self._coerce_confidence(decision.get("confidence", 0.0))
         parse_mode = str(decision.get("parse_mode", "json")).strip() or "json"
         grounded_text, changed = self._ground_text_to_runtime_capabilities(text, user_hint=user_hint)
         if changed:
@@ -1093,6 +1193,11 @@ class ParserGroundingMixin:
 
         return {
             "text": text if text is not None else self.fallback["text"],
+            "intent": intent,
+            "action": action,
+            "reasoning_tags": reasoning_tags,
+            "should_speak": should_speak,
+            "confidence": confidence,
             "animation": animation,
             "extracted_fact": extracted_fact,
             "direction": direction,
@@ -1430,6 +1535,7 @@ class ParserGroundingMixin:
             data = self._normalize_decision_field_keys(data)
             if "response" in data and isinstance(data["response"], list) and len(data["response"]) > 0:
                 data = self._normalize_decision_field_keys(data["response"][0])
+            data = self._apply_cognition_action_defaults(data, user_hint=user_hint)
 
             text = str(data.get("text", self.fallback["text"]))
             animation = self._sanitize_animation(
@@ -1448,6 +1554,11 @@ class ParserGroundingMixin:
 
             return self._finalize_decision({
                 "text": text,
+                "intent": data.get("intent", ""),
+                "action": data.get("action", ""),
+                "reasoning_tags": data.get("reasoning_tags", ()),
+                "should_speak": data.get("should_speak", bool(text)),
+                "confidence": data.get("confidence", 0.0),
                 "animation": animation,
                 "extracted_fact": fact,
                 "direction": direction,

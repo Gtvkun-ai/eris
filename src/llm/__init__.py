@@ -1,7 +1,8 @@
-from .client import LlamaServerClient
+from .client import GeminiClient, LlamaServerClient
 from .contracts import (
     CHAT_RULES_PROMPT,
     DECISION_GBNF,
+    INFERENCE_LADDER_PROMPT,
     PERSONA_PROMPT,
     PROMPT,
     RUNTIME_RULES_PROMPT,
@@ -16,9 +17,11 @@ from .service import LlmService
 
 __all__ = [
     "DECISION_GBNF",
+    "GeminiClient",
     "LlamaServerClient",
     "LlmService",
     "CHAT_RULES_PROMPT",
+    "INFERENCE_LADDER_PROMPT",
     "PERSONA_PROMPT",
     "PROMPT",
     "RUNTIME_RULES_PROMPT",

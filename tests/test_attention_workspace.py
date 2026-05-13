@@ -83,8 +83,22 @@ class AttentionWorkspaceTests(unittest.TestCase):
                 "social_charge",
                 "recency",
                 "memory_resonance",
+                "personality_bias",
             },
         )
+
+    def test_infj_5w4_attention_bias_prefers_unfinished_intention(self):
+        event = PerceptEvent(
+            kind="recent_event",
+            content="typing_and_deleting_self_doubt after hovering over send",
+            confidence=0.86,
+            source="telemetry",
+            novelty_hint="concrete_telemetry",
+        )
+
+        candidate = self.workspace.score_event(event)
+
+        self.assertGreater(candidate.score_parts["personality_bias"], 0.0)
 
     def test_memory_resonance_is_part_of_score(self):
         event = PerceptEvent(

@@ -5,10 +5,10 @@ import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from cortex.contracts import FeStyleMemory, GoalDriftReport, TelemetrySnapshot, TiPolicyReport
+from cortex.contracts import FeStyleMemory, GoalDriftReport, PersonalityLensResult, TelemetrySnapshot, TiPolicyReport
 from cortex.contracts import FeStylePlan
 from cortex.fe import FeRenderer
-from cortex.internal_state import PersistentInternalState
+from cortex.internal_state import DesireDynamics, PersistentInternalState
 
 
 def _norm(text: str) -> str:
@@ -115,7 +115,7 @@ class FeRendererTests(unittest.TestCase):
         self.assertIn("change the subject", normalized)
         self.assertIn("do not mention that motif again", normalized)
 
-    def test_emotional_chat_shifts_to_comforting_with_high_warmth(self):
+    def test_emotional_chat_stays_grounded_with_guarded_warmth(self):
         ti_report = TiPolicyReport(
             mode="chat_emotional",
             focus_label="chat",
@@ -133,10 +133,10 @@ class FeRendererTests(unittest.TestCase):
         )
 
         normalized = _norm(plan.style_context)
-        self.assertEqual(plan.mode, "comforting")
-        self.assertIn("warmth=high", normalized)
-        self.assertIn("stance=comforting", normalized)
-        self.assertEqual(plan.session_arc, "guarded_attachment")
+        self.assertEqual(plan.mode, "grounded")
+        self.assertIn("warmth=mid", normalized)
+        self.assertIn("stance=grounded", normalized)
+        self.assertEqual(plan.session_arc, "quiet_observation")
 
     def test_topic_memory_normalizes_vietnamese_attention_drift(self):
         plan = FeStylePlan(
@@ -185,6 +185,63 @@ class FeRendererTests(unittest.TestCase):
         self.assertGreater(plan.warmth_level, 0.24)
         self.assertEqual(plan.brevity_bias, "short")
         self.assertTrue(any("internal_state_bias" in item for item in plan.evidence))
+
+    def test_personality_lens_is_added_before_wording(self):
+        plan = FeStylePlan(
+            mode="grounded",
+            tone_label="tone=cold_soft; warmth=mid; stance=grounded; attachment=guarded",
+            style_context="style_tags: tone=cold_soft, brevity=medium",
+            intent_label="ordinary_dialogue",
+            brevity_bias="medium",
+        )
+        lens = PersonalityLensResult(
+            interpretation="unfinished_intention",
+            stance="quiet_watchful",
+            emotional_coloring="faint_concern",
+            social_distance="middle_watchful",
+            attention_bias=("hesitation", "unfinished_intention"),
+            prompt_context="PersonalityLens: telemetry -> attention -> INFJ_5w4_interpretation -> emotional_stance -> wording.",
+        )
+
+        updated = self.renderer.apply_personality_lens(plan, lens)
+
+        normalized = _norm(updated.style_context)
+        self.assertIn("personalitylens", normalized)
+        self.assertIn("brevity=short", normalized)
+        self.assertIn("personality_lens=unfinished_intention", updated.evidence)
+
+    def test_style_context_carries_desire_and_voice_distillation_contract(self):
+        ti_report = TiPolicyReport(
+            mode="steady_observe",
+            focus_label="coding",
+            reason="observe",
+            prompt_context="",
+        )
+        state = PersistentInternalState(
+            desire=DesireDynamics(
+                recurring_attraction="late_night_coding",
+                recurring_aversion="alt_tab_churn",
+                attention_hook="silence_pull",
+                attachment_drift="defensive",
+                unresolved_residue=0.58,
+            )
+        )
+
+        plan = self.renderer.evaluate_autonomous(
+            snapshot=self.snapshot_coding,
+            ni_report=self.ni_report,
+            ti_report=ti_report,
+            style_memory=self.memory,
+            internal_state=state,
+            last_text="",
+        )
+
+        normalized = _norm(plan.style_context)
+        self.assertIn("voice_distillation_pass", normalized)
+        self.assertIn("assistant_cadence_reject", normalized)
+        self.assertIn("allow_strangeness", normalized)
+        self.assertIn("desire:", normalized)
+        self.assertIn("late_night_coding", normalized)
 
 
 if __name__ == "__main__":

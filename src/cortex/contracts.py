@@ -38,7 +38,7 @@ class TelemetrySnapshot:
     recent_events: tuple[str, ...] = ()
     user_signals: UserSignals = field(default_factory=UserSignals)
     evidence: tuple[str, ...] = ()
-    claim_style: str = "soft_grounded"
+    claim_style: str = "OBSERVED_PATTERN"
     vision_facts: tuple[str, ...] = ()
 
     def to_machine_context(self) -> dict[str, object]:
@@ -165,6 +165,72 @@ CognitivePercept = PerceptEvent
 
 
 @dataclass(slots=True)
+class SocialPresenceEvent:
+    """Internal signal that the user is still present without saying anything."""
+
+    present: bool = False
+    confidence: float = 0.0
+    intensity: float = 0.0
+    kind: str = ""
+    reason: str = ""
+    evidence: tuple[str, ...] = ()
+    timestamp: str = ""
+    source: str = "social_presence_detector"
+    speech_allowed: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "present": bool(self.present),
+            "confidence": round(float(self.confidence), 3),
+            "intensity": round(float(self.intensity), 3),
+            "kind": self.kind,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+            "timestamp": self.timestamp,
+            "source": self.source,
+            "speech_allowed": bool(self.speech_allowed),
+        }
+
+
+@dataclass(slots=True)
+class SessionRitualReport:
+    """Startup continuity rehydration, not a normal greeting."""
+
+    restored: bool = False
+    presence_restored: bool = False
+    continuity_restored: bool = False
+    session_resumed: bool = False
+    tone: str = "quiet_background"
+    should_greet: bool = False
+    greeting_text: str = ""
+    active_goal: str = ""
+    current_attractor: str = ""
+    recent_cognition_direction: str = ""
+    self_continuity: str = ""
+    unresolved_loops: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
+    prompt_context: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "restored": bool(self.restored),
+            "presence_restored": bool(self.presence_restored),
+            "continuity_restored": bool(self.continuity_restored),
+            "session_resumed": bool(self.session_resumed),
+            "tone": self.tone,
+            "should_greet": bool(self.should_greet),
+            "greeting_text": self.greeting_text,
+            "active_goal": self.active_goal,
+            "current_attractor": self.current_attractor,
+            "recent_cognition_direction": self.recent_cognition_direction,
+            "self_continuity": self.self_continuity,
+            "unresolved_loops": list(self.unresolved_loops),
+            "evidence": list(self.evidence),
+            "prompt_context": self.prompt_context,
+        }
+
+
+@dataclass(slots=True)
 class CognitiveDisturbance:
     """An input spike that perturbs the ongoing cognition stream."""
 
@@ -240,6 +306,96 @@ class CognitiveBroadcast:
 
 
 @dataclass(slots=True)
+class MeaningLayerResult:
+    """Turns observed facts into private pressure signals before speech."""
+
+    source_fact: str = ""
+    meaning: str = ""
+    secondary_meanings: tuple[str, ...] = ()
+    semantic_family: str = ""
+    confidence: float = 0.0
+    reaction: str = ""
+    attitude: str = ""
+    surface_intent: str = ""
+    mood_residue: str = ""
+    emotional_pressure: float = 0.0
+    attention_bias: tuple[str, ...] = ()
+    reaction_impulse: str = ""
+    meaning_shift: bool = False
+    meaning_signal: str = ""
+    shift_reason: str = ""
+    recent_families: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
+    prompt_context: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "source_fact": self.source_fact,
+            "meaning": self.meaning,
+            "secondary_meanings": list(self.secondary_meanings),
+            "semantic_family": self.semantic_family,
+            "confidence": round(float(self.confidence), 3),
+            "reaction": self.reaction,
+            "attitude": self.attitude,
+            "surface_intent": self.surface_intent,
+            "mood_residue": self.mood_residue,
+            "emotional_pressure": round(float(self.emotional_pressure), 3),
+            "attention_bias": list(self.attention_bias),
+            "reaction_impulse": self.reaction_impulse,
+            "meaning_shift": bool(self.meaning_shift),
+            "meaning_signal": self.meaning_signal,
+            "shift_reason": self.shift_reason,
+            "recent_families": list(self.recent_families),
+            "evidence": list(self.evidence),
+            "prompt_context": self.prompt_context,
+        }
+
+
+@dataclass(slots=True)
+class PersonalityLensResult:
+    """INFJ 5w4 inner restraint layer applied before wording."""
+
+    profile: str = "INFJ_5w4"
+    interpretation: str = "quiet_continuity"
+    stance: str = "reserved"
+    emotional_coloring: str = "cool_soft"
+    social_distance: str = "middle_distance"
+    attention_bias: tuple[str, ...] = ()
+    avoided_surface: tuple[str, ...] = ()
+    meaningfulness: tuple[str, ...] = ()
+    suppression_ratio: float = 0.45
+    leak_ratio: float = 0.55
+    want_to_say: float = 0.0
+    allowed_expression: float = 0.0
+    suppression_pressure: float = 0.0
+    restraint_mode: str = "suppress"
+    rhythm: str = "dense_sparse"
+    evidence: tuple[str, ...] = ()
+    prompt_context: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "profile": self.profile,
+            "interpretation": self.interpretation,
+            "stance": self.stance,
+            "emotional_coloring": self.emotional_coloring,
+            "social_distance": self.social_distance,
+            "attention_bias": list(self.attention_bias),
+            "avoided_surface": list(self.avoided_surface),
+            "meaningfulness": list(self.meaningfulness),
+            "suppression_ratio": round(float(self.suppression_ratio), 3),
+            "leak_ratio": round(float(self.leak_ratio), 3),
+            "want_to_say": round(float(self.want_to_say), 3),
+            "allowed_expression": round(float(self.allowed_expression), 3),
+            "suppression_pressure": round(float(self.suppression_pressure), 3),
+            "restraint_mode": self.restraint_mode,
+            "rhythm": self.rhythm,
+            "evidence": list(self.evidence),
+            "prompt_context": self.prompt_context,
+        }
+
+
+@dataclass(slots=True)
 class CognitiveAppraisal:
     state_type: str = "expressive_appraisal_state"
     stance: str = "grounded"
@@ -290,6 +446,9 @@ class CognitiveActionPlan:
     system_action: str = ""
     risk_flags: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    style_anchor: str = ""
+    style_attitude: str = ""
+    style_limit: str = ""
 
     def to_dict(self) -> dict[str, object]:
         reason = self.reason_to_speak or self.reason
@@ -303,6 +462,11 @@ class CognitiveActionPlan:
             "system_action": self.system_action,
             "risk_flags": list(self.risk_flags),
             "notes": list(self.notes),
+            "style_contract": {
+                "anchor": self.style_anchor,
+                "attitude": self.style_attitude,
+                "limit": self.style_limit,
+            },
         }
 
 
@@ -546,6 +710,7 @@ class MotivationalUrge:
     score: float = 0.0
     utterance_type: str = "no_speech"
     speech_source: str = "none"
+    risk_level: str = "texture"
     grounding: str = "none"
     reason: str = ""
     evidence: tuple[str, ...] = ()
@@ -558,6 +723,7 @@ class MotivationalUrge:
             "score": round(float(self.score), 3),
             "utterance_type": self.utterance_type,
             "speech_source": self.speech_source,
+            "risk_level": self.risk_level,
             "grounding": self.grounding,
             "reason": self.reason,
             "evidence": list(self.evidence),
@@ -583,8 +749,68 @@ class MotivationalPressureReport:
 
 
 @dataclass(slots=True)
+class SpeechImpulse:
+    """Pre-wording speech impulse: pressure and residue, not wording."""
+
+    meaning: str = ""
+    reaction: str = "no_reaction"
+    attitude: str = ""
+    surface_intent: str = ""
+    mood_residue: str = ""
+    emotional_pressure: float = 0.0
+    attention_bias: tuple[str, ...] = ()
+    reaction_impulse: str = ""
+    semantic_family: str = ""
+    source_fact: str = ""
+    evidence: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "meaning": self.meaning,
+            "reaction": self.reaction,
+            "attitude": self.attitude,
+            "surface_intent": self.surface_intent,
+            "mood_residue": self.mood_residue,
+            "emotional_pressure": round(float(self.emotional_pressure), 3),
+            "attention_bias": list(self.attention_bias),
+            "reaction_impulse": self.reaction_impulse,
+            "semantic_family": self.semantic_family,
+            "source_fact": self.source_fact,
+            "evidence": list(self.evidence),
+        }
+
+
+@dataclass(slots=True)
+class SilenceState:
+    """Silence as an intentional cognitive state, not a generation failure."""
+
+    mode: str = "none"
+    intentional_withholding: bool = False
+    suppressed_thought: str = ""
+    almost_spoke: str = ""
+    unfinished_impulse: str = ""
+    internal_hesitation: str = ""
+    reason: str = ""
+    evidence: tuple[str, ...] = ()
+    generation_failure: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "intentional_withholding": bool(self.intentional_withholding),
+            "suppressed_thought": self.suppressed_thought,
+            "almost_spoke": self.almost_spoke,
+            "unfinished_impulse": self.unfinished_impulse,
+            "internal_hesitation": self.internal_hesitation,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+            "generation_failure": bool(self.generation_failure),
+        }
+
+
+@dataclass(slots=True)
 class IdentityCore:
-    """Stable identity rules for ERIS; not claims about real emotion."""
+    """Stable identity rules for ERIS; grounded artificial presence claims."""
 
     identity_label: str = "grounded_presence"
     rules: tuple[str, ...] = (
@@ -594,6 +820,10 @@ class IdentityCore:
         "speak_less_without_affordance",
         "help_user_design_cognition_concretely",
         "no_screen_or_mind_claim_without_evidence",
+        "artificial_subjective_presence",
+        "affective_states_are_runtime_control_signals",
+        "no_biological_emotion_or_consciousness_claims",
+        "avoid_explanatory_ai_correctness_speech",
     )
 
     def to_dict(self) -> dict[str, object]:
@@ -601,7 +831,7 @@ class IdentityCore:
             "identity_label": self.identity_label,
             "rules": list(self.rules),
             "control_layer": "identity_core",
-            "not_a_claim": "not real emotion, consciousness, or screen access",
+            "not_a_claim": "not biological emotion, consciousness, or human-like love",
         }
 
 
@@ -702,12 +932,15 @@ class AgentSpeechCore:
     utterance_type: str = "no_speech"
     grounding: str = "none"
     speech_source: str = "none"
+    speech_risk_level: str = "texture"
     reason: str = ""
     should_speak: bool = False
     safety_flags: tuple[str, ...] = ()
     delivery: str = "silence"
     inner_thought: InnerThought = field(default_factory=InnerThought)
+    speech_impulse: SpeechImpulse = field(default_factory=SpeechImpulse)
     motivation_pressure: MotivationalPressureReport = field(default_factory=MotivationalPressureReport)
+    silence_state: SilenceState = field(default_factory=SilenceState)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -717,12 +950,15 @@ class AgentSpeechCore:
             "utterance_type": self.utterance_type,
             "grounding": self.grounding,
             "speech_source": self.speech_source,
+            "speech_risk_level": self.speech_risk_level,
             "reason": self.reason,
             "should_speak": self.should_speak,
             "safety_flags": list(self.safety_flags),
             "delivery": self.delivery,
             "inner_thought": self.inner_thought.to_dict(),
+            "speech_impulse": self.speech_impulse.to_dict(),
             "motivation_pressure": self.motivation_pressure.to_dict(),
+            "silence_state": self.silence_state.to_dict(),
         }
 
 
@@ -762,11 +998,15 @@ class CognitiveFrame:
     percepts: tuple[PerceptEvent, ...] = ()
     attention_candidates: tuple[AttentionCandidate, ...] = ()
     broadcast: CognitiveBroadcast = field(default_factory=CognitiveBroadcast)
+    meaning_layer: MeaningLayerResult = field(default_factory=MeaningLayerResult)
+    personality_lens: PersonalityLensResult = field(default_factory=PersonalityLensResult)
     appraisal: CognitiveAppraisal = field(default_factory=CognitiveAppraisal)
     self_state: SelfState = field(default_factory=SelfState)
     subconscious_report: SubconsciousReport = field(default_factory=SubconsciousReport)
     thought_stream_report: ThoughtStreamReport = field(default_factory=ThoughtStreamReport)
     memory_resonance: object | None = None
+    social_presence_event: SocialPresenceEvent = field(default_factory=SocialPresenceEvent)
+    session_ritual: SessionRitualReport = field(default_factory=SessionRitualReport)
     speech_core: AgentSpeechCore = field(default_factory=AgentSpeechCore)
     inner_thought: InnerThought = field(default_factory=InnerThought)
     action_plan: CognitiveActionPlan = field(default_factory=CognitiveActionPlan)
@@ -783,6 +1023,8 @@ class CognitiveFrame:
             "percepts": [item.to_dict() for item in self.percepts],
             "attention_candidates": [item.to_dict() for item in self.attention_candidates],
             "broadcast": self.broadcast.to_dict(),
+            "meaning_layer": self.meaning_layer.to_dict(),
+            "personality_lens": self.personality_lens.to_dict(),
             "appraisal": self.appraisal.to_dict(),
             "self_state": self.self_state.to_dict(),
             "subconscious_report": self.subconscious_report.to_dict(),
@@ -792,6 +1034,8 @@ class CognitiveFrame:
                 if self.memory_resonance is not None and callable(getattr(self.memory_resonance, "to_dict", None))
                 else self.memory_resonance
             ),
+            "social_presence_event": self.social_presence_event.to_dict(),
+            "session_ritual": self.session_ritual.to_dict(),
             "speech_core": self.speech_core.to_dict(),
             "inner_thought": self.inner_thought.to_dict(),
             "action_plan": self.action_plan.to_dict(),

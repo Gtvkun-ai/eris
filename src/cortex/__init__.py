@@ -18,6 +18,8 @@ from .contracts import (
     PerceptEvent,
     SelfNarrative,
     SelfState,
+    SessionRitualReport,
+    SocialPresenceEvent,
     SubconsciousReport,
     SubconsciousSeed,
     TelemetrySnapshot,
@@ -32,12 +34,15 @@ from .attention import AttentionWorkspace
 from .action_planner import ACTION_SPACE, ActionPlanner
 from .appraisal import AppraisalEngine
 from .fe import FeRenderer
+from .goal_persistence import GoalPersistenceEngine, GoalPersistenceState
 from .internal_state import (
     AttachmentProcess,
     BackgroundThoughtProcess,
+    CognitionDelta,
     CognitiveLoadProcess,
     ContinuityProcess,
     CuriosityProcess,
+    DesireDynamics,
     InternalStateEngine,
     MentalProcess,
     MentalProcessSystem,
@@ -45,12 +50,15 @@ from .internal_state import (
     ReflectionProcess,
     RestraintProcess,
     SocialPresenceProcess,
+    TemporalCognitionEngine,
     TensionProcess,
 )
 from .ni import NiEngine
 from .se import SeLens
 from .self_model import SelfModelEngine
+from .session_ritual import SessionRitualEngine
 from .speech_core import SpeechCoreEngine
+from .social_presence import SocialPresenceDetector
 from .subconscious import SubconsciousEngine, SubconsciousLoop
 from .thought_stream import (
     AssociationGraph,
@@ -82,6 +90,7 @@ __all__ = [
     "CognitiveAppraisal",
     "CognitiveBroadcast",
     "CognitiveFrame",
+    "CognitionDelta",
     "CognitiveMemoryUpdate",
     "CognitiveMomentum",
     "CognitivePercept",
@@ -93,8 +102,11 @@ __all__ = [
     "FeStyleMemory",
     "FeStylePlan",
     "FragmentStore",
+    "GoalPersistenceEngine",
+    "GoalPersistenceState",
     "GoalDriftReport",
     "CurrentSelfState",
+    "DesireDynamics",
     "IdentityCore",
     "InternalStateEngine",
     "AttachmentProcess",
@@ -119,13 +131,18 @@ __all__ = [
     "SelfModelEngine",
     "SelfNarrative",
     "SelfState",
+    "SessionRitualEngine",
+    "SessionRitualReport",
     "SpeechCoreEngine",
+    "SocialPresenceDetector",
+    "SocialPresenceEvent",
     "SocialPresenceProcess",
     "SubconsciousEngine",
     "SubconsciousLoop",
     "SubconsciousReport",
     "SubconsciousSeed",
     "SurfaceSelector",
+    "TemporalCognitionEngine",
     "TelemetrySnapshot",
     "TensionProcess",
     "ThoughtObject",

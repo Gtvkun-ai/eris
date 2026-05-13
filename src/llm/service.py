@@ -1,5 +1,11 @@
 import json
+import logging
 import re
+import unicodedata
+
+import time
+
+import requests
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
 from .contracts import (
@@ -7,6 +13,7 @@ from .contracts import (
     CHAT_RULES_PROMPT,
     DECISION_GBNF,
     DECISION_JSON_FIELDS,
+    INFERENCE_LADDER_PROMPT,
     RUNTIME_RULES_PROMPT,
     STYLE_FALLBACK_PROMPT,
     VALID_ANIMATIONS,
@@ -14,8 +21,252 @@ from .contracts import (
 
 
 class LlmService:
-    def __init__(self, client):
+    _RETRYABLE_HTTP_STATUS = {500, 502, 503, 504}
+
+    def __init__(self, client, style_client=None, vision_client=None, logger=None):
         self.client = client
+        self.style_client = style_client
+        self.vision_client = vision_client or style_client
+        self.logger = logger or logging.getLogger(__name__)
+
+    def _http_status_code(self, exc: Exception) -> int | None:
+        if not isinstance(exc, requests.HTTPError):
+            return None
+        response = getattr(exc, "response", None)
+        if response is None:
+            return None
+        status = getattr(response, "status_code", None)
+        try:
+            return int(status) if status is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _is_retryable_http_5xx(self, exc: Exception) -> bool:
+        status = self._http_status_code(exc)
+        return status in self._RETRYABLE_HTTP_STATUS
+
+    def _build_service_error_fallback(self, *, channel: str, reason: str, fallback_text: str = "") -> str:
+        payload = {
+            "text": self._safe_fallback_text(fallback_text, channel=channel),
+            "intent": "fallback_reply",
+            "action": {"type": "none"},
+            "reasoning_tags": ["fallback", channel, "service_error"],
+            "should_speak": True,
+            "confidence": 0.1,
+            "animation": "stand",
+            "direction": 0,
+            "target_x": -1.0,
+            "bounce_action": "",
+            "extracted_fact": "",
+            "debug_trace": reason,
+            "next_animation": "",
+            "system_action": "",
+            "action_input": "",
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _message_text(self, message: dict) -> str:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return content
+        return " ".join(self._collect_text_chunks(content))
+
+    def _normalize_vietnamese_ascii(self, text: str) -> str:
+        normalized = unicodedata.normalize("NFD", text or "")
+        normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+        normalized = normalized.replace("đ", "d").replace("Đ", "D")
+        normalized = re.sub(r"[^\w\s]", " ", normalized, flags=re.UNICODE)
+        normalized = re.sub(r"\s+", " ", normalized.lower()).strip()
+        return normalized
+
+    def _contextual_service_fallback_text(self, messages: list[dict], *, channel: str) -> str:
+        if channel != "chat":
+            return ""
+
+        user_texts = [
+            self._message_text(message).strip()
+            for message in messages
+            if str(message.get("role")) == "user" and self._message_text(message).strip()
+        ]
+        assistant_texts = [
+            self._message_text(message).strip()
+            for message in messages
+            if str(message.get("role")) == "assistant" and self._message_text(message).strip()
+        ]
+        latest_user = user_texts[-1] if user_texts else ""
+        previous_user = " ".join(user_texts[:-1])
+        normalized_latest = self._normalize_vietnamese_ascii(latest_user)
+        normalized_previous = self._normalize_vietnamese_ascii(previous_user)
+
+        asks_to_try = any(
+            marker in normalized_latest
+            for marker in (
+                "noi thu xem",
+                "thu noi xem",
+                "ban noi thu",
+                "noi di",
+            )
+        )
+        asks_user_knowledge = any(
+            marker in normalized_previous or marker in normalized_latest
+            for marker in (
+                "biet gi ve toi",
+                "biet gi ve minh",
+                "ban biet gi",
+            )
+        )
+        if asks_user_knowledge and asks_to_try:
+            return (
+                "Tôi vẫn theo mạch câu trước: tôi chỉ biết những gì Ngài đã nói trong cuộc trò chuyện "
+                "và những ký ức runtime còn lưu, nhưng lượt gọi model vừa lỗi nên tôi chưa dám bịa thêm."
+            )
+        if asks_user_knowledge:
+            return (
+                "Tôi chỉ biết những gì có trong cuộc trò chuyện này và bộ nhớ runtime còn lưu; "
+                "lượt gọi model vừa lỗi nên tôi sẽ không tự dựng thêm chi tiết."
+            )
+        if assistant_texts and asks_to_try:
+            return f"Tôi vẫn theo mạch vừa rồi: {assistant_texts[-1]}"
+        return ""
+
+    def _log_final_prompt(self, messages: list[dict], *, channel: str, stage: str) -> None:
+        try:
+            dumped = json.dumps(messages, ensure_ascii=False, indent=2)
+        except TypeError:
+            dumped = repr(messages)
+        self.logger.info("[LLM FINAL PROMPT] channel=%s stage=%s\n%s", channel, stage, dumped[:12000])
+
+    def _preview_log_text(self, text: str, *, limit: int = 12000) -> str:
+        preview = (text or "").replace("\n", "\\n").strip()
+        if len(preview) > limit:
+            preview = preview[:limit] + "...(truncated)"
+        return preview or "<empty>"
+
+    def _log_raw_api_text(self, channel: str, raw: str) -> None:
+        self.logger.info("[%s raw_api_text] %s", channel, self._preview_log_text(raw))
+
+    def _is_context_size_error(self, exc: Exception) -> bool:
+        text = str(exc)
+        return (
+            "exceed_context_size_error" in text
+            or "exceeds the available context size" in text
+            or ("available context size" in text and "n_ctx" in text)
+        )
+
+    def _parse_context_error_stats(self, exc: Exception) -> tuple[int | None, int | None]:
+        text = str(exc)
+        n_prompt = None
+        n_ctx = None
+
+        prompt_match = re.search(r"\"n_prompt_tokens\"\s*:\s*(\d+)", text)
+        if prompt_match:
+            try:
+                n_prompt = int(prompt_match.group(1))
+            except ValueError:
+                n_prompt = None
+
+        ctx_match = re.search(r"\"n_ctx\"\s*:\s*(\d+)", text)
+        if ctx_match:
+            try:
+                n_ctx = int(ctx_match.group(1))
+            except ValueError:
+                n_ctx = None
+
+        return n_ctx, n_prompt
+
+    def _content_text_len(self, content) -> int:
+        if isinstance(content, str):
+            return len(content)
+        if isinstance(content, list):
+            total = 0
+            for item in content:
+                if isinstance(item, dict):
+                    if isinstance(item.get("text"), str):
+                        total += len(item["text"])
+                    nested = item.get("content")
+                    if nested is not None:
+                        total += self._content_text_len(nested)
+                elif isinstance(item, str):
+                    total += len(item)
+            return total
+        if isinstance(content, dict):
+            return self._content_text_len(content.get("text")) + self._content_text_len(content.get("content"))
+        return 0
+
+    def _truncate_content(self, content, *, max_chars: int, keep: str) -> object:
+        if max_chars <= 0:
+            max_chars = 1
+
+        if isinstance(content, str):
+            if len(content) <= max_chars:
+                return content
+            if keep == "tail":
+                return content[-max_chars:]
+            return content[:max_chars]
+
+        if isinstance(content, list):
+            truncated: list[object] = []
+            for item in content:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    new_item = dict(item)
+                    new_item["text"] = self._truncate_content(item["text"], max_chars=max_chars, keep=keep)
+                    truncated.append(new_item)
+                else:
+                    truncated.append(item)
+            return truncated
+
+        return content
+
+    def _shrink_messages_for_context(
+        self,
+        messages: list[dict],
+        *,
+        n_ctx: int,
+        max_tokens: int,
+        margin_tokens: int = 160,
+    ) -> list[dict]:
+        if not messages:
+            return messages
+
+        system_msgs = [msg for msg in messages if str(msg.get("role")) == "system"]
+        non_system = [msg for msg in messages if str(msg.get("role")) != "system"]
+        # Keep enough short-term dialogue for follow-ups like "nói thử xem".
+        # Sixteen messages is roughly the latest 8 user/assistant turns.
+        if len(non_system) > 16:
+            non_system = non_system[-16:]
+        reduced = [*system_msgs, *non_system]
+
+        budget_tokens = max(256, int(n_ctx) - int(max_tokens) - int(margin_tokens))
+        budget_chars = budget_tokens * 4  # rough heuristic
+        current_chars = sum(self._content_text_len(msg.get("content")) for msg in reduced)
+        if current_chars <= budget_chars:
+            return reduced
+
+        ratio = max(0.10, min(0.95, budget_chars / max(1, current_chars)))
+        shrunk: list[dict] = []
+        for msg in reduced:
+            role = str(msg.get("role") or "")
+            content = msg.get("content")
+            size = self._content_text_len(content)
+
+            # Do not truncate system prompts (they contain the contracts and memory context).
+            if role == "system":
+                shrunk.append(msg)
+                continue
+
+            base = max(200, int(size * ratio))
+            if role == "user":
+                base = max(base, 900)
+                keep = "head"
+            else:
+                base = max(base, 480)
+                keep = "tail"
+
+            new_msg = dict(msg)
+            new_msg["content"] = self._truncate_content(content, max_chars=base, keep=keep)
+            shrunk.append(new_msg)
+
+        return shrunk
 
     def _collect_text_chunks(self, value) -> list[str]:
         chunks: list[str] = []
@@ -38,6 +289,8 @@ class LlmService:
                 "reasoning_content",
                 "reasoning",
                 "refusal",
+                "parts",
+                "candidates",
             ):
                 if key in value:
                     chunks.extend(self._collect_text_chunks(value.get(key)))
@@ -70,6 +323,11 @@ class LlmService:
 
         data = response.get("data")
         chunks = self._collect_text_chunks(data)
+        if chunks:
+            return "\n".join(chunk for chunk in chunks if chunk)
+
+        candidates = response.get("candidates")
+        chunks = self._collect_text_chunks(candidates)
         if chunks:
             return "\n".join(chunk for chunk in chunks if chunk)
 
@@ -135,6 +393,8 @@ class LlmService:
         if not isinstance(payload, dict):
             return False
         if not all(field in payload for field in DECISION_JSON_FIELDS):
+            if self._is_valid_cognition_payload(payload):
+                return True
             return False
         if not self._is_valid_text_field(payload.get("text")):
             return False
@@ -160,9 +420,34 @@ class LlmService:
             return False
         return True
 
+    def _is_valid_cognition_payload(self, payload: dict | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        required = {"text", "intent", "action", "animation", "reasoning_tags", "should_speak", "confidence"}
+        if not required.issubset(payload.keys()):
+            return False
+        if not self._is_valid_text_field(payload.get("text")):
+            return False
+        if not self._is_valid_text_field(payload.get("intent")):
+            return False
+        if not isinstance(payload.get("action"), (dict, str)):
+            return False
+        if not self._is_valid_animation_field(payload.get("animation"), allow_empty=False):
+            return False
+        if not isinstance(payload.get("reasoning_tags"), list):
+            return False
+        if not isinstance(payload.get("should_speak"), bool):
+            return False
+        confidence = payload.get("confidence")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+            return False
+        return 0.0 <= float(confidence) <= 1.0
+
     def _is_decision_like_payload(self, payload: dict | None) -> bool:
         if not isinstance(payload, dict):
             return False
+        if "text" in payload and any(field in payload for field in ("intent", "action", "reasoning_tags", "should_speak", "confidence")):
+            return True
         if all(field in payload for field in DECISION_JSON_FIELDS):
             return True
         if "text" in payload and any(field in payload for field in DECISION_JSON_FIELDS if field != "text"):
@@ -174,6 +459,60 @@ class LlmService:
                 "text" in item and any(field in item for field in DECISION_JSON_FIELDS if field != "text")
             )
         return False
+
+    def _coerce_bool_value(self, value, *, fallback: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value != 0
+        text = str(value or "").strip().lower()
+        if text in {"true", "yes", "y", "1", "speak", "noi", "nói"}:
+            return True
+        if text in {"false", "no", "n", "0", "silent", "silence", "im", "im_lang", "im lặng"}:
+            return False
+        return fallback
+
+    def _coerce_confidence_value(self, value) -> float:
+        if isinstance(value, bool):
+            return 0.0
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _coerce_reasoning_tags_value(self, value) -> list[str]:
+        if isinstance(value, str):
+            items = re.split(r"[,|;/]+", value)
+        elif isinstance(value, list):
+            items = value
+        else:
+            items = []
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            tag = re.sub(r"\s+", "_", str(item or "").strip().lower())
+            tag = re.sub(r"[^a-z0-9_\-]+", "", tag)
+            if not tag or tag in seen:
+                continue
+            cleaned.append(tag[:40])
+            seen.add(tag)
+            if len(cleaned) >= 8:
+                break
+        return cleaned
+
+    def _coerce_action_value(self, value):
+        if isinstance(value, dict):
+            return value
+        text = str(value or "").strip()
+        return text
+
+    def _action_field(self, action, *names, default=None):
+        if not isinstance(action, dict):
+            return default
+        for name in names:
+            if name in action:
+                return action.get(name)
+        return default
 
     def _is_valid_text_field(self, value) -> bool:
         return isinstance(value, str)
@@ -276,26 +615,46 @@ class LlmService:
         if isinstance(response, list) and response and isinstance(response[0], dict):
             source = response[0]
 
-        animation = self._coerce_animation_value(source.get("animation"), allow_empty=False)
-        direction = self._coerce_direction_value(source.get("direction", 0))
-        next_animation = self._coerce_animation_value(source.get("next_animation"), allow_empty=True)
-        bounce_action = self._coerce_animation_value(source.get("bounce_action"), allow_empty=True)
+        action = self._coerce_action_value(source.get("action", ""))
+        animation = self._coerce_animation_value(
+            source.get("animation") or self._action_field(action, "animation", "pose"),
+            allow_empty=False,
+        )
+        direction = self._coerce_direction_value(source.get("direction", self._action_field(action, "direction", "facing", default=0)))
+        next_animation = self._coerce_animation_value(
+            source.get("next_animation") or self._action_field(action, "next_animation"),
+            allow_empty=True,
+        )
+        bounce_action = self._coerce_animation_value(
+            source.get("bounce_action") or self._action_field(action, "bounce_action"),
+            allow_empty=True,
+        )
         allow_motion_target = (
             direction != 0
             or animation in {"stand_walk", "climb", "climb_top"}
             or next_animation in {"stand_walk", "climb_top"}
         )
         target_x = self._coerce_target_x_value(
-            source.get("target_x", -1.0),
+            source.get("target_x", self._action_field(action, "target_x", "x", default=-1.0)),
             allow_motion_target=allow_motion_target,
         )
         debug_trace = self._coerce_text_value(source.get("debug_trace", "")).strip()
         service_trace = "LlmService sanitized decision-like JSON before parser."
         debug_trace = f"{debug_trace} | {service_trace}" if debug_trace else service_trace
-        system_action = self._coerce_system_action_value(source.get("system_action", ""))
+        system_action = self._coerce_system_action_value(
+            source.get("system_action", "") or self._action_field(action, "system_action", "tool", "name", default="")
+        )
+        action_input = self._coerce_text_value(
+            source.get("action_input", "") or self._action_field(action, "action_input", "input", "query", "url", "argument", default="")
+        )
 
         sanitized = {
             "text": self._coerce_text_value(source.get("text", "")),
+            "intent": self._coerce_text_value(source.get("intent", "")),
+            "action": action,
+            "reasoning_tags": self._coerce_reasoning_tags_value(source.get("reasoning_tags", [])),
+            "should_speak": self._coerce_bool_value(source.get("should_speak", bool(source.get("text", ""))), fallback=bool(source.get("text", ""))),
+            "confidence": self._coerce_confidence_value(source.get("confidence", 0.0)),
             "animation": animation,
             "direction": direction,
             "target_x": target_x,
@@ -304,7 +663,7 @@ class LlmService:
             "debug_trace": debug_trace,
             "next_animation": next_animation,
             "system_action": system_action,
-            "action_input": self._coerce_text_value(source.get("action_input", "")) if system_action else "",
+            "action_input": action_input if system_action else "",
         }
         return json.dumps(sanitized, ensure_ascii=False)
 
@@ -341,8 +700,14 @@ class LlmService:
         return ""
 
     def _build_json_fallback(self, raw_text: str, *, channel: str) -> str:
+        raw_text = self._safe_fallback_text(raw_text, channel=channel)
         payload = {
             "text": (raw_text or "").strip(),
+            "intent": "fallback_reply",
+            "action": {"type": "none"},
+            "reasoning_tags": ["fallback", channel],
+            "should_speak": bool((raw_text or "").strip()),
+            "confidence": 0.2,
             "animation": "stand",
             "direction": 0,
             "target_x": -1.0,
@@ -354,6 +719,141 @@ class LlmService:
             "action_input": "",
         }
         return json.dumps(payload, ensure_ascii=False)
+
+    def _looks_like_provider_metadata(self, text: str) -> bool:
+        candidate = (text or "").strip()
+        if not candidate.startswith("{"):
+            return False
+        payload = self._parse_json_object(candidate)
+        if not isinstance(payload, dict):
+            return False
+        provider_keys = {"candidates", "usageMetadata", "modelVersion", "responseId", "promptFeedback"}
+        return any(key in payload for key in provider_keys)
+
+    def _looks_like_markdown_json_stub(self, text: str) -> bool:
+        normalized = (text or "").strip().lower()
+        return (
+            normalized.startswith("here is the json")
+            or normalized in {"```json", "```"}
+            or normalized.endswith("```json")
+        )
+
+    def _safe_fallback_text(self, raw_text: str, *, channel: str) -> str:
+        text = (raw_text or "").strip()
+        if not text or self._looks_like_provider_metadata(text) or self._looks_like_markdown_json_stub(text):
+            if channel == "chat":
+                return "Nói tiếp đi, tôi bắt được mạch rồi."
+            return "Một câu nhỏ thôi, khỏi dựng sân khấu."
+        return text
+
+    def _build_empty_text_fallback(self, *, channel: str) -> str:
+        fallback_text = "Một câu nhỏ thôi, khỏi dựng sân khấu."
+        if channel == "chat":
+            fallback_text = "Nói tiếp đi, tôi bắt được mạch rồi."
+        payload = {
+            "text": fallback_text,
+            "animation": "stand",
+            "direction": 0,
+            "target_x": -1.0,
+            "bounce_action": "",
+            "extracted_fact": "",
+            "debug_trace": f"LlmService filled empty {channel} text with safe fallback.",
+            "next_animation": "",
+            "system_action": "",
+            "action_input": "",
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _decision_needs_non_empty_text(self, raw_text: str) -> bool:
+        payload = self._parse_json_object(raw_text)
+        if not isinstance(payload, dict):
+            return False
+        text = self._coerce_text_value(payload.get("text", "")).strip()
+        system_action = self._coerce_system_action_value(payload.get("system_action", ""))
+        return not text and not system_action
+
+    def _decision_text_is_invalid(self, raw_text: str) -> bool:
+        payload = self._parse_json_object(raw_text)
+        if not isinstance(payload, dict):
+            return False
+        system_action = self._coerce_system_action_value(payload.get("system_action", ""))
+        if system_action:
+            return False
+        text = self._coerce_text_value(payload.get("text", "")).strip()
+        return (
+            not text
+            or self._looks_like_provider_metadata(text)
+            or self._looks_like_markdown_json_stub(text)
+        )
+
+    def _with_non_empty_text_rule(self, messages: list[dict]) -> list[dict]:
+        rule = (
+            "Runtime requirement for this call: text must be a non-empty, speakable sentence "
+            "unless system_action is non-empty. If evidence is thin, react to the nearest interaction rhythm; "
+            "do not return an empty text field."
+        )
+        if not messages:
+            return [{"role": "user", "content": rule}]
+        updated = [dict(message) for message in messages]
+        last = dict(updated[-1])
+        content = last.get("content", "")
+        if isinstance(content, str):
+            last["content"] = f"{content}\n\n{rule}"
+        elif isinstance(content, list):
+            last["content"] = [*content, {"type": "text", "text": rule}]
+        else:
+            last["content"] = f"{content}\n\n{rule}"
+        updated[-1] = last
+        return updated
+
+    def _repair_empty_decision_text(self, *, messages: list[dict], channel: str, previous_json: str) -> str:
+        retry_messages = self._with_non_empty_text_rule(messages)
+        retry_messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Your previous JSON had an empty text field, which is invalid for this speaking turn. "
+                    "Return the same schema again with a non-empty text field. "
+                    "Do not add unsupported screen/action claims.\n"
+                    f"Previous JSON:\n{previous_json}"
+                ),
+            }
+        )
+        try:
+            try:
+                response = self.client.create_chat_completion(
+                    messages=retry_messages,
+                    temperature=0.25,
+                    frequency_penalty=0.5 if channel == "chat" else 0.8,
+                    presence_penalty=0.4 if channel == "chat" else 0.5,
+                    max_tokens=320,
+                    response_format={"type": "json_object"},
+                    grammar=DECISION_GBNF,
+                )
+            except requests.HTTPError as exc:
+                if self._is_retryable_http_5xx(exc):
+                    time.sleep(0.15)
+                    response = self.client.create_chat_completion(
+                        messages=retry_messages,
+                        temperature=0.25,
+                        frequency_penalty=0.5 if channel == "chat" else 0.8,
+                        presence_penalty=0.4 if channel == "chat" else 0.5,
+                        max_tokens=320,
+                        response_format={"type": "json_object"},
+                        grammar=DECISION_GBNF,
+                    )
+                else:
+                    raise
+            raw = self._extract_content(response)
+            repaired = self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
+            if repaired and not self._decision_text_is_invalid(repaired):
+                return repaired
+        except Exception:
+            pass
+        return self._build_service_error_fallback(
+            channel=channel,
+            reason=f"http_5xx_fallback stage=repair_empty_decision_text channel={channel}",
+        )
 
     def _repair_decision_json(self, raw_text: str, *, channel: str) -> str:
         repaired = self._coerce_json_candidate(raw_text)
@@ -369,39 +869,269 @@ class LlmService:
         repair_user = (
             f"Channel: {channel}\n"
             "Return exactly one JSON object with fields:\n"
-            "text, animation, direction, target_x, bounce_action, "
+            "text, intent, action, animation, reasoning_tags, should_speak, confidence, "
+            "direction, target_x, bounce_action, "
             "extracted_fact, debug_trace, next_animation, system_action, action_input.\n"
+            "action can be an object like {\"type\":\"none\"} or a whitelisted system action request.\n"
             "If the raw answer is plain prose, put it into text and keep other fields safe.\n"
             "Raw assistant answer:\n"
             f"{raw_text}"
         )
-        response = self.client.create_chat_completion(
-            messages=[
-                {"role": "system", "content": repair_system},
-                {"role": "user", "content": repair_user},
-            ],
-            temperature=0.0,
-            frequency_penalty=0.0,
-            presence_penalty=0.0,
-            max_tokens=320,
-            response_format={"type": "json_object"},
-            grammar=DECISION_GBNF,
-        )
+        try:
+            response = self.client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": repair_system},
+                    {"role": "user", "content": repair_user},
+                ],
+                temperature=0.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=320,
+                response_format={"type": "json_object"},
+                grammar=DECISION_GBNF,
+            )
+        except requests.HTTPError as exc:
+            if self._is_retryable_http_5xx(exc):
+                time.sleep(0.15)
+                response = self.client.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": repair_system},
+                        {"role": "user", "content": repair_user},
+                    ],
+                    temperature=0.0,
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0,
+                    max_tokens=320,
+                    response_format={"type": "json_object"},
+                    grammar=DECISION_GBNF,
+                )
+            else:
+                raise
         repaired = self._extract_content(response)
-        return self._coerce_json_candidate(repaired) or self._build_json_fallback(raw_text, channel=channel)
+        repaired_candidate = self._coerce_json_candidate(repaired)
+        if repaired_candidate and not self._decision_text_is_invalid(repaired_candidate):
+            return repaired_candidate
+        return self._build_json_fallback(raw_text, channel=channel)
+
+    def _contains_forbidden_user_inference(self, text: str) -> bool:
+        normalized = self._normalize_vietnamese_ascii(text or "")
+        if not normalized:
+            return False
+        forbidden_patterns = (
+            r"\bngai\b.{0,24}\bco don\b",
+            r"\bngai\b.{0,32}\bton thuong\b",
+            r"\bngai\b.{0,32}\bton thuong sau\b",
+            r"\bngai\b.{0,32}\btrauma\b",
+            r"\bngai\b.{0,32}\bsang chan\b",
+            r"\bnoi dau sau\b",
+            r"\bvet thuong tam ly\b",
+            r"\bhidden wound",
+            r"\battachment wound",
+        )
+        return any(re.search(pattern, normalized) for pattern in forbidden_patterns)
+
+    def _guard_forbidden_inference(self, raw_json: str, *, channel: str) -> str:
+        payload = self._parse_json_object(raw_json)
+        if not isinstance(payload, dict):
+            return raw_json
+        text = self._coerce_text_value(payload.get("text", "")).strip()
+        extracted_fact = self._coerce_text_value(payload.get("extracted_fact", "")).strip()
+        if not (self._contains_forbidden_user_inference(text) or self._contains_forbidden_user_inference(extracted_fact)):
+            return raw_json
+
+        payload["text"] = "Tôi chưa đủ căn cứ để kết luận sâu về Ngài; tôi chỉ thấy vài dấu hiệu bề mặt thôi."
+        payload["extracted_fact"] = ""
+        tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
+        if "forbidden_inference_guard" not in tags:
+            tags.append("forbidden_inference_guard")
+        payload["reasoning_tags"] = tags[:8]
+        payload["confidence"] = min(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.35)
+        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
+        guard_trace = f"FORBIDDEN_INFERENCE blocked by LlmService channel={channel}"
+        payload["debug_trace"] = f"{debug_trace} | {guard_trace}" if debug_trace else guard_trace
+        payload["system_action"] = self._coerce_system_action_value(payload.get("system_action", ""))
+        payload["action_input"] = self._coerce_text_value(payload.get("action_input", "")) if payload["system_action"] else ""
+        return json.dumps(payload, ensure_ascii=False)
 
     def _complete_decision(self, *, messages: list[dict], channel: str) -> str:
-        response = self.client.create_chat_completion(
-            messages=messages,
-            temperature=0.2,
-            frequency_penalty=0.5 if channel == "chat" else 0.8,
-            presence_penalty=0.4 if channel == "chat" else 0.5,
-            max_tokens=320,
-            response_format={"type": "json_object"},
-            grammar=DECISION_GBNF,
-        )
+        max_tokens = 512
+        messages = self._with_non_empty_text_rule(messages)
+        def _call(messages_value: list[dict], *, stage: str):
+            self._log_final_prompt(messages_value, channel=channel, stage=stage)
+            return self.client.create_chat_completion(
+                messages=messages_value,
+                temperature=0.2,
+                frequency_penalty=0.5 if channel == "chat" else 0.8,
+                presence_penalty=0.4 if channel == "chat" else 0.5,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+                grammar=DECISION_GBNF,
+            )
+
+        try:
+            response = _call(messages, stage="initial")
+        except requests.HTTPError as exc:
+            if self._is_context_size_error(exc):
+                n_ctx, _n_prompt = self._parse_context_error_stats(exc)
+                ctx_value = n_ctx or 4096
+                shrunk = self._shrink_messages_for_context(
+                    messages,
+                    n_ctx=ctx_value,
+                    max_tokens=max_tokens,
+                )
+                if shrunk == messages:
+                    raise
+                response = _call(shrunk, stage="context_shrunk")
+            elif self._is_retryable_http_5xx(exc):
+                # Retry once on transient upstream 5xx.
+                time.sleep(0.15)
+                try:
+                    response = _call(messages, stage="http_5xx_retry")
+                except Exception as exc2:
+                    status = self._http_status_code(exc2) or self._http_status_code(exc)
+                    return self._build_service_error_fallback(
+                        channel=channel,
+                        reason=(
+                            f"http_5xx_fallback stage=complete_decision channel={channel} status={status}"
+                        ),
+                        fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
+                    )
+            else:
+                raise
+        except Exception as exc:
+            return self._build_service_error_fallback(
+                channel=channel,
+                reason=f"exception_fallback stage=complete_decision channel={channel} type={type(exc).__name__}",
+                fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
+            )
+
         raw = self._extract_content(response)
-        return self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
+        self._log_raw_api_text(channel, raw)
+        candidate = self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
+        if self._decision_text_is_invalid(candidate):
+            return self._repair_empty_decision_text(messages=messages, channel=channel, previous_json=candidate)
+        return self._guard_forbidden_inference(candidate, channel=channel)
+
+    def _normalize_for_claim_diff(self, text: str) -> str:
+        normalized = (text or "").lower()
+        normalized = re.sub(r"[^\w\s?]", " ", normalized, flags=re.UNICODE)
+        return re.sub(r"\s+", " ", normalized).strip()
+
+    def _style_rewrite_is_safe(self, original: str, rewritten: str) -> bool:
+        original = (original or "").strip()
+        rewritten = (rewritten or "").strip()
+        if not rewritten:
+            return False
+        if not original:
+            return len(rewritten) <= 180
+        if len(rewritten) > max(280, int(len(original) * 2.2)):
+            return False
+        if "?" in original and "?" not in rewritten:
+            return False
+
+        original_norm = self._normalize_for_claim_diff(original)
+        rewritten_norm = self._normalize_for_claim_diff(rewritten)
+        original_tokens = set(original_norm.split())
+        rewritten_tokens = set(rewritten_norm.split())
+        if original_tokens and rewritten_tokens:
+            overlap = len(original_tokens & rewritten_tokens) / max(1, min(len(original_tokens), len(rewritten_tokens)))
+            if overlap < 0.28:
+                return False
+
+        claim_triggers = (
+            "toi thay",
+            "tôi thấy",
+            "toi da",
+            "tôi đã",
+            "da mo",
+            "đã mở",
+            "da click",
+            "đã click",
+            "da doc",
+            "đã đọc",
+            "man hinh",
+            "màn hình",
+            "cua so",
+            "cửa sổ",
+            "tab",
+            "file",
+            "code",
+            "thoi tiet",
+            "thời tiết",
+        )
+        for trigger in claim_triggers:
+            if trigger in rewritten_norm and trigger not in original_norm:
+                return False
+        return True
+
+    def rewrite_text_with_local_style(self, decision, *, channel: str = ""):
+        if self.style_client is None:
+            self.logger.info(
+                "[%s after_style_rewrite] skipped=no_style_client | text=\"%s\"",
+                channel or "style",
+                self._preview_log_text(str(getattr(decision, "text", "") or ""), limit=320),
+            )
+            return decision
+        original_text = str(getattr(decision, "text", "") or "").strip()
+        if not original_text:
+            self.logger.info("[%s after_style_rewrite] skipped=empty_text", channel or "style")
+            return decision
+
+        system_prompt = (
+            "You are ERIS local style adapter. Rewrite only the text field in ERIS' trained voice. "
+            "Do not add facts, screen claims, weather claims, action claims, or new intentions. "
+            "Do not change meaning. Do not change any JSON field except text. "
+            "Return one JSON object only: {\"text\":\"...\"}."
+        )
+        user_prompt = (
+            f"Channel: {channel}\n"
+            f"Original text:\n{original_text}\n\n"
+            "Rewrite it in Vietnamese, concise, natural, same meaning. "
+            "No new claims. Return JSON only."
+        )
+        try:
+            response = self.style_client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.35,
+                frequency_penalty=0.25,
+                presence_penalty=0.0,
+                max_tokens=180,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+            raw = self._extract_content(response)
+            extracted = self._extract_first_json_object(raw) or raw
+            payload = self._parse_json_object(extracted) or {}
+            rewritten = self._coerce_text_value(payload.get("text", "")).strip()
+        except Exception:
+            self.logger.info(
+                "[%s after_style_rewrite] skipped=exception | text=\"%s\"",
+                channel or "style",
+                self._preview_log_text(original_text, limit=320),
+            )
+            return decision
+
+        if not self._style_rewrite_is_safe(original_text, rewritten):
+            self.logger.info(
+                "[%s after_style_rewrite] skipped=unsafe | text=\"%s\"",
+                channel or "style",
+                self._preview_log_text(original_text, limit=320),
+            )
+            return decision
+
+        decision.text = rewritten
+        trace = "local_style_rewrite"
+        decision.debug_trace = f"{decision.debug_trace};{trace}" if decision.debug_trace else trace
+        self.logger.info(
+            "[%s after_style_rewrite] text=\"%s\" | original=\"%s\"",
+            channel or "style",
+            self._preview_log_text(rewritten, limit=320),
+            self._preview_log_text(original_text, limit=320),
+        )
+        return decision
 
     def _compress_internal_context(self, text: str, *, kind: str) -> str:
         lowered = (text or "").lower()
@@ -456,6 +1186,12 @@ class LlmService:
         state_block = (internal_state_context or "").strip()
         if state_block:
             style_block = f"{style_block}\n\n{state_block}"
+        style_block = (
+            f"{style_block}\n\n"
+            "Style principle: anchor the line in the current context when evidence is clear; "
+            "when evidence is thin, answer the nearest rhythm instead of explaining the gap. "
+            "Keep it short, cold_soft, lightly teasing, quiet, embodied."
+        )
         return style_block
 
     def _build_memory_context_block(self, memory_context: str = "") -> str:
@@ -464,8 +1200,18 @@ class LlmService:
             return ""
         return (
             "Memory context for continuity, separated by type. "
-            "Do not treat memory as current screen evidence; use norm_memory only to compare this scene with the user's baseline.\n"
+            "Do not treat memory as current screen evidence; use norm_memory only to compare this scene with the user's baseline. "
+            "semantic_user_memory may support DIRECT_FACT; relationship_memory may support OBSERVED_PATTERN only when at least two memories or turns point the same way.\n"
             f"{compact}"
+        )
+
+    def _is_force_speak_without_speech_evidence(self, *, telemetry_data: str, ti_context: str) -> bool:
+        telemetry = (telemetry_data or "").lower()
+        ti = (ti_context or "").lower()
+        return "speech_evidence=<none>" in telemetry and (
+            "force_speak" in ti
+            or "context menu force_speak" in ti
+            or "force_speak_percept" in ti
         )
 
     def _build_directive_mode_addendum(self, ti_context: str) -> str:
@@ -475,31 +1221,21 @@ class LlmService:
 
         if "resource_guard" in lowered:
             return (
-                "\nHướng dẫn thêm cho lượt này:\n"
-                "- Không mở đầu bằng 'Dữ liệu hệ thống', 'Trạng thái hệ thống', hoặc 'Kết luận'.\n"
-                "- Nói như nhận xét đời thường, không dùng giọng báo cáo kỹ thuật.\n"
-                "- Cấm 'tôi đã dọn dẹp', 'tôi sẽ ép', 'tôi sẽ bắt buộc', hay bất kỳ lời khoe quyền lực desktop nào.\n"
-                "- Tránh các cụm cứng như 'mức tiêu thụ điện năng của phần cứng', 'kết quả hữu ích', hay 'tiến trình phụ'.\n"
-                "- Không dùng ẩn dụ lửng lơ kiểu cửa sổ đóng/mở, định mệnh, tồn tại, hay thời gian trôi.\n"
-                "- Ưu tiên 1 câu ngắn, chua nhẹ, có neo cụ thể vào việc máy đang nặng."
+                "\nMode hint: resource_guard. "
+                "Một câu ngắn, đời thường, chua nhẹ; nếu có bằng chứng tài nguyên rõ thì chạm vào chuyện máy đang nặng. "
+                "Không biến nó thành báo cáo hệ thống hay khoe quyền desktop."
             )
 
         if "focus_guard" in lowered:
             return (
-                "\nHướng dẫn thêm cho lượt này:\n"
-                "- Giữ giọng gọn, sắc, hơi mỉa, không giáo huấn.\n"
-                "- Không nhắc tập trung, không chấm điểm năng suất, không kéo Ngài về mục tiêu.\n"
-                "- Không nói như đang quản lý desktop, đóng tab, hẹn giờ, hay ép người dùng.\n"
-                "- Ưu tiên tối đa 2 câu ngắn: một lời bình nhẹ, hoặc một câu triết lý nhỏ."
+                "\nMode hint: focus_guard. "
+                "Giữ giọng gọn, sắc, hơi mỉa; phản ứng như một lời bình nhỏ, không như quản lý desktop."
             )
 
         if "social_watch" in lowered or "steady_observe" in lowered:
             return (
-                "\nHướng dẫn thêm cho lượt này:\n"
-                "- Ưu tiên 1 hoặc 2 câu ngắn.\n"
-                "- Mỉa nhẹ, hơi lười, có duyên; đừng lặp lại bài giảng về focus, tab hay IDE.\n"
-                "- Không khoe quyền lực, không ra lệnh, không quản lý desktop.\n"
-                "- Tránh kiểu nói quá mô hình như 'đồng bộ hóa nhịp độ', 'người quản lý cấp cao', 'trong ba phút tới', hay 'một phần mềm duy nhất'."
+                "\nMode hint: steady_observe/social_watch. "
+                "Một câu quan sát nhẹ, hơi hờ hững; dùng nhịp hiện tại làm chất liệu, không giảng."
             )
 
         return ""
@@ -508,27 +1244,39 @@ class LlmService:
         intent = (speech_intent or "screen_observation").strip()
         guidance = {
             "brief_ack": (
-                "speech_intent=brief_ack. Nói tối đa một câu rất ngắn; không quan sát lan man, "
-                "không triết lý, không bịa tâm trạng."
+                "speech_intent=brief_ack. Một phản ứng rất ngắn, đủ sắc thái."
             ),
             "screen_observation": (
-                "speech_intent=screen_observation. Chỉ nói nếu bám được vào recent_events/evidence hoặc "
-                "một thay đổi màn hình rõ; câu phải cụ thể và ngắn. Không biến telemetry mơ hồ thành chi tiết nhìn thấy."
+                "speech_intent=screen_observation. Nếu evidence rõ, chạm vào một chi tiết hiện tại; nếu mỏng, giữ câu theo nhịp gần nhất."
             ),
             "user_requested": (
-                "speech_intent=user_requested. Ngài vừa yêu cầu nói ngay; trả một câu trực tiếp, tự nhiên. "
-                "Đừng biến lượt này thành báo cáo telemetry; nếu thiếu chất liệu quan sát thì thừa nhận rất gọn, không bịa cảnh."
-                " Screen facts are props, not the topic: use them lightly, do not list visible objects."
+                "speech_intent=user_requested. Ngài vừa yêu cầu nói ngay; trả một câu trực tiếp, tự nhiên, không dựng cảnh."
             ),
             "system_warning": (
-                "speech_intent=system_warning. Chỉ nêu cảnh báo cụ thể về tài nguyên/hệ thống; "
-                "không dùng thơ, không persona hóa."
+                "speech_intent=system_warning. Nói gọn về rủi ro cụ thể, vẫn giữ giọng ERIS."
             ),
             "playful_aside": (
-                "speech_intent=playful_aside. Được châm nhẹ hoặc aside một câu, nhưng phải đời thường "
-                "và có vai xã hội rõ."
+                "speech_intent=playful_aside. Một aside đời thường, châm nhẹ, có duyên."
+            ),
+            "curious_question": (
+                "speech_intent=curious_question. Hỏi đúng một câu tò mò nhỏ, có neo nếu có chất liệu."
+            ),
+            "social_presence": (
+                "speech_intent=social_presence. Một câu hiện diện rất nhẹ: observational irony, tiny curiosity, hoặc ambient commentary."
             ),
         }
+        guidance["guarded_reply"] = (
+            "speech_intent=guarded_reply. Respond to the feeling indirectly and briefly; do not reassure, comfort, or stabilize unless explicitly asked."
+        )
+        guidance["indirect_presence"] = (
+            "speech_intent=indirect_presence. One small nearby line; imply presence without emotional support framing."
+        )
+        guidance["micro_presence"] = (
+            "speech_intent=micro_presence. Rewrite một seed runtime thành một câu nhỏ có bối cảnh."
+        )
+        guidance["session_ritual"] = (
+            "speech_intent=session_ritual. Ngài vừa mở ERIS lên; viết một câu chào ngắn, tự nhiên, có thể gợi rất nhẹ mạch cũ nếu rõ."
+        )
         return guidance.get(intent, guidance["screen_observation"])
 
     def generate_directive(
@@ -555,7 +1303,11 @@ class LlmService:
             appraisal_context=appraisal_context,
             internal_state_context=internal_state_context,
         )
-        memory_block = self._build_memory_context_block(memory_context)
+        force_speak_no_evidence = self._is_force_speak_without_speech_evidence(
+            telemetry_data=telemetry_data,
+            ti_context=ti_context,
+        )
+        memory_block = "" if force_speak_no_evidence else self._build_memory_context_block(memory_context)
         system_prompt = f"{style_block}\n\n{RUNTIME_RULES_PROMPT}\n\n{AUTONOMOUS_BEHAVIOR_PROMPT}"
         if memory_block:
             system_prompt = f"{style_block}\n\n{memory_block}\n\n{RUNTIME_RULES_PROMPT}\n\n{AUTONOMOUS_BEHAVIOR_PROMPT}"
@@ -565,16 +1317,14 @@ class LlmService:
         is_random_chatter = "inner_intent=random_chatter" in lowered_ti or "speech_act=random_chatter" in lowered_ti
         if is_inner_thought:
             intent_guidance = (
-                "speech_intent=inner_thought. Ngài đang yêu cầu sự hiện diện, không phải báo cáo màn hình. "
-                "Nếu speech_evidence=<none>, hãy tự chọn một chủ đề xã hội nhỏ từ relationship_memory, gu/sở thích, "
-                "một câu hỏi thật, hoặc một ý tò mò an toàn; không thừa nhận thiếu telemetry như nội dung chính. "
-                "Intent contracts: inner_intent=curious_question must produce one real question; "
-                "inner_intent=inner_whim must produce one short thought, not refusal/no-signal wording; "
-                "inner_intent=random_chatter must produce a mundane, playful, concrete one-liner, not meta explanation. "
-                "For random_chatter: do not be poetic; do not mention stories, listening, silence, screen, or logs; "
-                "prefer mundane, playful, concrete one-liners; it may be slightly absurd, but not emotional or dramatic. "
-                "Ban phrase families: lui lai, khong can noi gi, khong co gi de noi, Ngai cu lam viec, "
-                "cau chuyen nho, mot nguoi nghe, khong can man hinh, dong log kho khan, ngoi nhin log."
+                "speech_intent=inner_thought. Dùng topic_seed, current atmosphere, relationship rhythm, "
+                "hoặc một tò mò nhỏ làm chất liệu. Nếu evidence mỏng, phản ứng vào nhịp/không khí gần nhất thay vì báo thiếu dữ liệu."
+            )
+        if force_speak_no_evidence:
+            intent_guidance = (
+                "speech_intent=micro_presence. speech_evidence=<none>. Look around current_focus/atmosphere/rhythm, "
+                "then rewrite the micro_presence seed into ambient awareness residue, 1-8 words. "
+                "The force_speak request is only a trigger, not a topic; do not entertain, explain, or narrate UI."
             )
         allows_muse = "pattern_muse" in lowered_ti
         avoid_line = re.sub(r"\s+", " ", (avoid_text or "").strip())[:180]
@@ -588,51 +1338,41 @@ class LlmService:
                     if avoid_line
                     else ""
                 )
-                + f"Speech evidence đã lọc, không phải telemetry thô: {telemetry_data}\n"
-                + "Trả về JSON quyết định cho runtime.\n"
-                + "Nếu ngữ cảnh đang nhàn hoặc không có biến động rõ, đừng tự tạo chủ đề riêng; chỉ nói khi speech_intent thật sự có lý do. "
-                + "Chỉ nêu điều có trong speech_evidence đã lọc; nếu speech_evidence=<none> thì không dựng cảnh. "
-                + "Không suy diễn trạng thái tập trung hay phân tâm chỉ từ việc có video, nhạc, hay tab; nếu nhắc thì nói trung tính. "
-                + "Nếu đang móc mỉa, hãy đi vòng hoặc đổi góc nhìn thay vì đào thẳng một trọng tâm cũ. "
-                + "Không nhắc Ngài tập trung, quay lại mục tiêu, đóng tab, hay bớt phân tâm trừ khi Ngài hỏi trực tiếp. "
-                + (
-                    "Ở resource_guard, đừng triết lý hay dùng ẩn dụ lửng lơ; neo vào việc máy đang căng hoặc im gọn. "
-                    if is_resource_guard
-                    else (
-                        "Chỉ pattern_muse mới được chiêm nghiệm nhẹ; các mode còn lại hãy châm ngắn và cụ thể. "
-                        if not allows_muse and not is_inner_thought
-                        else "Có thể nói một câu châm chọc nhẹ hoặc chiêm nghiệm ngắn cho vui. "
-                    )
-                )
-                + "Tránh mở câu bằng việc mô tả app, project, code, cửa sổ, tab, typing, idle hay telemetry trừ khi có biến động thật rõ. "
-                + "Chỉ dùng search_web nếu chủ đề thật sự cần dữ liệu mới."
+                + f"Speech evidence đã lọc: {telemetry_data}\n"
+                + "Writing principle: Nói như một phản ứng tự nhiên trong bối cảnh hiện tại. "
+                + "Nếu evidence rõ, dùng nó; nếu evidence mỏng, dùng nhịp/tình huống gần nhất. "
+                + "Inner mood/style chỉ là texture, không phải báo cáo. Một câu ngắn, có sắc thái. "
+                + "Hard bans: không claim screen/action facts without evidence/action; không báo telemetry/parse_mode/system/debug; "
+                + "không dùng generic presence lines như 'Tôi đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'. "
+                + "Prefer a vivid, imperfect, situated line over a perfectly safe generic line. Do not over-explain. Speak once. "
+                + "Return only valid JSON. No analysis."
         )
         if avoid_line:
-            user_msg += " Không được lặp lại ý, hình ảnh, danh từ chính, hoặc nhịp câu của câu gần nhất."
+            user_msg += " Đổi nhịp và hình ảnh so với câu gần nhất."
+        if force_speak_no_evidence:
+            user_msg += (
+                " Memory context was intentionally omitted for this call; keep the line on current_focus, atmosphere, or interaction rhythm."
+            )
         if vision_trace_marker:
             user_msg += f"\nTrong trường debug_trace của JSON, hãy thêm marker: {vision_trace_marker}."
         if is_inner_thought:
             user_msg += (
-                " SpeechCore override: thiếu telemetry không có nghĩa là thiếu chủ đề. "
-                "Hãy tìm một chủ đề xã hội nhỏ từ relationship_memory, gu/sở thích, một câu hỏi thật, hoặc một ý tò mò an toàn. "
-                "Không trả lời bằng 'không có tín hiệu', 'không có gì để nói', 'không có gì mới', hoặc hỏi lại 'Ngài muốn tôi nói gì'. "
-                "Không dùng các cụm lặp kiểu lui lai, khong can noi gi, Ngai cu lam viec, cau chuyen nho, mot nguoi nghe, "
-                "khong can man hinh, dong log kho khan, hoặc ngoi nhin log. "
-                "topic_seed là hướng chọn chủ đề, không phải câu để sao chép."
+                " SpeechCore mode: topic_seed là hướng chọn chủ đề, không phải câu để sao chép; giữ phản ứng nhỏ và sống."
             )
         if is_random_chatter:
             user_msg += (
-                " Random_chatter rule: Do not be poetic. Do not mention stories, listening, silence, screen, or logs. "
-                "Prefer mundane, playful, concrete one-liners. It may be slightly absurd, but not emotional or dramatic."
+                " Random_chatter mode: mundane, playful, concrete one-liner."
             )
         if is_resource_guard:
-            user_msg += " Khi resource_guard đang bật, không tự đảo sang chiêm nghiệm; chỉ nói một câu sát tình trạng máy hoặc chọn im gọn."
+            user_msg += " Khi resource_guard đang bật, chỉ nói nếu câu sát tình trạng máy hoặc nhịp hiện tại."
+        elif force_speak_no_evidence:
+            user_msg += " Khong dung memory lam topic; khong mo social filler; khong ke UI; chi de lai residue 1-8 tu."
         elif is_inner_thought:
-            user_msg += " Được tự mở chủ đề xã hội ngắn; không cần neo vào màn hình."
+            user_msg += " Neu evidence mong, khong mo y xa hoi rieng; chi phan ung vao topic_seed/rhythm/khong khi dang co."
         elif not allows_muse:
-            user_msg += " Không tự đảo sang chiêm nghiệm; nếu thiếu tín hiệu, giữ câu sát speech_intent và đừng lấp chỗ trống bằng triết lý."
+            user_msg += " Neu thieu tin hieu, giu cau sat speech_intent."
         else:
-            user_msg += " Trong pattern_muse chỉ được chiêm nghiệm một nhịp ngắn, có neo vào không khí hiện tại."
+            user_msg += " Pattern_muse: duoc chiem nghiem mot nhip ngan neu co khong khi hien tai."
         if mode_addendum:
             user_msg += mode_addendum
         return self._complete_decision(
@@ -643,9 +1383,109 @@ class LlmService:
             channel="directive",
         )
 
+    def generate_micro_presence_line(
+        self,
+        *,
+        seed: str = "",
+        context: dict | None = None,
+        signal_score: float | None = None,
+        kind: str = "micro_presence",
+        fallback_text: str = "",
+        avoid_text: str = "",
+        focus_kind: str = "",
+        focus_summary: str = "",
+        idle_seconds: float = 0.0,
+        seeds: tuple[str, ...] = (),
+        micro_context: dict[str, str] | None = None,
+        **kwargs,
+    ) -> str:
+        kind_name = (kind or "presence_maintenance").strip()
+        is_reengagement = kind_name in {"re_engagement", "reengagement"}
+        max_words = 8
+        if seed:
+            seeds = (str(seed), *tuple(seeds or ()))
+        if context and not micro_context:
+            micro_context = context
+        if not fallback_text:
+            fallback_text = str(seed or "").strip() or "Mạch này vẫn hơi nghẽn."
+        system_prompt = (
+            "You are ERIS's micro-presence wording layer. "
+            "Return one JSON object only: {\"text\":\"short Vietnamese line\"}. "
+            "No analysis. Write ambient awareness residue, not proof that ERIS is alive."
+        )
+        seed_lines = tuple(str(item).strip() for item in (seeds or ()) if str(item).strip())[:5]
+        context = micro_context or {}
+        user_msg = (
+            f"Kind: {kind_name}\n"
+            f"Safe fallback: {fallback_text}\n"
+            f"Runtime seeds: {' | '.join(seed_lines) if seed_lines else fallback_text}\n"
+            f"Micro context: {json.dumps(context, ensure_ascii=False)}\n"
+            f"Signal score: {float(signal_score or 0.0):.2f}\n"
+            f"Avoid repeating: {avoid_text}\n"
+            f"focus_kind={focus_kind}; focus_summary={focus_summary}; idle_seconds={int(float(idle_seconds or 0.0))}\n\n"
+            "Principle:\n"
+            f"- Vietnamese only, 1-{max_words} words; one tiny line.\n"
+            "- This is residue: atmosphere, tiny observation, social leak.\n"
+            "- No status report, no system narration, no UI narration, no explaining.\n"
+            "- Do not describe frames, panels, screens, colors, buttons, or text boxes.\n"
+            "- Do not mention telemetry, evidence, signal, debug, idle, CPU, RAM.\n"
+            "- Let it feel like a small residue left by awareness.\n"
+            "- Hard bans: no unsupported screen/action claim; no telemetry/system/debug report; no hollow presence line like 'Tôi đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'.\n"
+            "- Speak once.\n"
+        )
+        if is_reengagement:
+            user_msg += (
+                "- Re-engagement may be a soft, light check-in.\n"
+            )
+        else:
+            user_msg += "- Presence maintenance should feel like a small aside.\n"
+
+        try:
+            response = self.client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.35,
+                frequency_penalty=0.7,
+                presence_penalty=0.2,
+                max_tokens=80,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+        except requests.HTTPError as exc:
+            if self._is_retryable_http_5xx(exc):
+                time.sleep(0.15)
+                try:
+                    response = self.client.create_chat_completion(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_msg},
+                        ],
+                        temperature=0.35,
+                        frequency_penalty=0.7,
+                        presence_penalty=0.2,
+                        max_tokens=80,
+                        response_format={"type": "json_object"},
+                        grammar=None,
+                    )
+                except Exception:
+                    return ""
+            else:
+                raise
+        except Exception:
+            return ""
+
+        raw = self._extract_content(response)
+        extracted = self._extract_first_json_object(raw) or raw
+        payload = self._parse_json_object(extracted) or {}
+        payload = self._normalize_payload_keys(payload) if isinstance(payload, dict) else {}
+        return self._coerce_text_value(payload.get("text", "")).strip()
+
     def generate_screen_facts(self, *, screen_image_data_uri: str) -> tuple[list[str], str]:
         if not screen_image_data_uri:
             return [], "no_image"
+        vision_client = self.vision_client or self.client
 
         system_prompt = (
             "You are a vision captioning module for ERIS. "
@@ -671,18 +1511,42 @@ class LlmService:
                 ),
             },
         ]
-        response = self.client.create_chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.1,
-            frequency_penalty=0.0,
-            presence_penalty=0.0,
-            max_tokens=240,
-            response_format={"type": "json_object"},
-            grammar=None,
-        )
+        try:
+            response = vision_client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.1,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=240,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+        except requests.HTTPError as exc:
+            if self._is_retryable_http_5xx(exc):
+                time.sleep(0.15)
+                try:
+                    response = vision_client.create_chat_completion(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_content},
+                        ],
+                        temperature=0.1,
+                        frequency_penalty=0.0,
+                        presence_penalty=0.0,
+                        max_tokens=240,
+                        response_format={"type": "json_object"},
+                        grammar=None,
+                    )
+                except Exception:
+                    status = self._http_status_code(exc)
+                    return [], f"vision_http_5xx_fallback status={status}"
+            else:
+                raise
+        except Exception as exc:
+            return [], f"vision_exception_fallback type={type(exc).__name__}"
         raw = self._extract_content(response)
         extracted = self._extract_first_json_object(raw) or raw
         payload = self._parse_json_object(extracted) or {}
@@ -723,10 +1587,10 @@ class LlmService:
             appraisal_context=appraisal_context,
             internal_state_context=internal_state_context,
         )
-        chat_system = f"{style_block}\n\n{CHAT_RULES_PROMPT}"
+        chat_system = f"{style_block}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
         memory_block = self._build_memory_context_block(memory_context)
         if memory_block:
-            chat_system = f"{style_block}\n\n{memory_block}\n\n{CHAT_RULES_PROMPT}"
+            chat_system = f"{style_block}\n\n{memory_block}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
         if ni_context:
             chat_system = f"{chat_system}\n\nNi context:\n{ni_context}"
         if ti_context:

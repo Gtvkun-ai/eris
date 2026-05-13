@@ -1,5 +1,7 @@
 from .store import (
     EpisodicMemoryItem,
+    ExperientialAssociationItem,
+    ExperientialAssociationNetwork,
     MemoryActivation,
     MemoryResonanceReport,
     MemoryState,
@@ -14,6 +16,8 @@ from .store import (
 
 __all__ = [
     "EpisodicMemoryItem",
+    "ExperientialAssociationItem",
+    "ExperientialAssociationNetwork",
     "MemoryActivation",
     "MemoryResonanceReport",
     "MemoryState",

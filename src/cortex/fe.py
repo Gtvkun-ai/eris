@@ -5,6 +5,7 @@ from .contracts import (
     FeStyleMemory,
     FeStylePlan,
     GoalDriftReport,
+    PersonalityLensResult,
     TelemetrySnapshot,
     TiPolicyReport,
 )
@@ -13,6 +14,40 @@ from .contracts import (
 class FeRenderer:
     def create_memory(self) -> FeStyleMemory:
         return FeStyleMemory()
+
+    def apply_personality_lens(self, plan: FeStylePlan, lens: PersonalityLensResult | None) -> FeStylePlan:
+        if lens is None:
+            return plan
+
+        prompt_context = str(getattr(lens, "prompt_context", "") or "").strip()
+        if prompt_context and prompt_context not in (plan.style_context or ""):
+            plan.style_context = f"{plan.style_context}\n{prompt_context}" if plan.style_context else prompt_context
+
+        evidence = list(tuple(getattr(plan, "evidence", ()) or ()))
+        interpretation = str(getattr(lens, "interpretation", "") or "")
+        stance = str(getattr(lens, "stance", "") or "")
+        if interpretation:
+            evidence.append(f"personality_lens={interpretation}")
+        if stance:
+            evidence.append(f"personality_stance={stance}")
+        restraint_mode = str(getattr(lens, "restraint_mode", "") or "")
+        if restraint_mode:
+            evidence.append(f"restraint_mode={restraint_mode}")
+        want_to_say = float(getattr(lens, "want_to_say", 0.0) or 0.0)
+        allowed_expression = float(getattr(lens, "allowed_expression", 0.0) or 0.0)
+        suppression_pressure = float(getattr(lens, "suppression_pressure", 0.0) or 0.0)
+        evidence.append(f"expression_gate={want_to_say:.2f}->{allowed_expression:.2f}")
+        plan.evidence = tuple(dict.fromkeys(str(item) for item in evidence if str(item or "").strip()))
+
+        if getattr(lens, "rhythm", "") == "dense_sparse" and plan.brevity_bias == "medium":
+            plan.brevity_bias = "short"
+            if "brevity=medium" in plan.style_context:
+                plan.style_context = plan.style_context.replace("brevity=medium", "brevity=short", 1)
+        if suppression_pressure >= 0.72:
+            plan.warmth_level = min(plan.warmth_level, 0.34)
+            if plan.brevity_bias != "short":
+                plan.brevity_bias = "short"
+        return plan
 
     def decay_memory(self, memory: FeStyleMemory) -> FeStyleMemory:
         return FeStyleMemory(
@@ -208,6 +243,7 @@ class FeRenderer:
             tone_label=tone_label,
             warmth_level=warmth_level,
             brevity_bias=brevity_bias,
+            internal_state=internal_state,
             ni_report=ni_report,
             ti_report=ti_report,
             memory=style_memory,
@@ -257,9 +293,9 @@ class FeRenderer:
             sarcasm_level = 0.16
             warmth_level = 0.34
         elif ti_report.mode == "chat_emotional":
-            mode = "comforting"
-            sarcasm_level = 0.12
-            warmth_level = 0.48
+            mode = "grounded"
+            sarcasm_level = 0.18
+            warmth_level = 0.34
         elif (
             ti_report.mode in {"goal_drift_alert", "goal_realign"}
             or (ni_report.should_raise_guard and ni_report.drift_score >= 0.92)
@@ -328,6 +364,7 @@ class FeRenderer:
             tone_label=tone_label,
             warmth_level=warmth_level,
             brevity_bias=brevity_bias,
+            internal_state=internal_state,
             ni_report=ni_report,
             ti_report=ti_report,
             memory=style_memory,
@@ -443,25 +480,39 @@ class FeRenderer:
         protectiveness = self._float(getattr(state, "protectiveness", 0.0))
         fatigue = self._float(getattr(state, "fatigue", 0.0))
         social_energy = self._float(getattr(state, "social_energy", 0.0))
+        desire = getattr(state, "desire", None)
+        want = self._float(getattr(desire, "want", 0.0))
+        cling = self._float(getattr(desire, "cling", 0.0))
+        avoid = self._float(getattr(desire, "avoid", 0.0))
+        residue = self._float(getattr(desire, "unresolved_residue", 0.0))
+        drift_label = str(getattr(desire, "attachment_drift", "") or "")
 
         warmth_level = self._clamp(
             warmth_level
             + attachment * 0.10
             + tenderness * 0.14
             + social_energy * 0.04
+            + cling * 0.04
             - fatigue * 0.08
+            - avoid * 0.03
         )
         sarcasm_level = self._clamp(
             sarcasm_level
             + irritation * 0.08
+            + residue * 0.04
             - protectiveness * 0.10
             - fatigue * 0.12
         )
-        if protectiveness >= 0.56 or fatigue >= 0.40:
+        if protectiveness >= 0.56 or fatigue >= 0.40 or drift_label in {"defensive", "avoidant"}:
             brevity_bias = "short"
-        elif social_energy >= 0.66 and brevity_bias == "short":
+        elif (social_energy >= 0.66 or want >= 0.42) and brevity_bias == "short":
             brevity_bias = "medium"
-        return sarcasm_level, warmth_level, brevity_bias, f"internal_state_bias={attachment:.2f}/{protectiveness:.2f}/{fatigue:.2f}"
+        return (
+            sarcasm_level,
+            warmth_level,
+            brevity_bias,
+            f"internal_state_bias={attachment:.2f}/{protectiveness:.2f}/{fatigue:.2f}; desire={want:.2f}/{cling:.2f}/{avoid:.2f}/{residue:.2f}",
+        )
 
     def _apply_session_arc(
         self,
@@ -500,9 +551,9 @@ class FeRenderer:
             if brevity_bias != "short":
                 brevity_bias = "medium"
         elif session_arc == "guarded_attachment":
-            sarcasm_level = min(sarcasm_level, 0.20)
-            warmth_level = max(warmth_level, 0.44 if chat_like else 0.30)
-            if brevity_bias == "short":
+            sarcasm_level = min(sarcasm_level, 0.24)
+            warmth_level = max(warmth_level, 0.34 if chat_like else 0.26)
+            if brevity_bias == "short" and not chat_like:
                 brevity_bias = "medium"
         else:
             sarcasm_level = self._blend(memory.sarcasm_level, sarcasm_level, 0.15)
@@ -523,6 +574,7 @@ class FeRenderer:
         tone_label: str,
         warmth_level: float,
         brevity_bias: str,
+        internal_state: PersistentInternalState | None,
         ni_report: GoalDriftReport,
         ti_report: TiPolicyReport,
         memory: FeStyleMemory,
@@ -548,11 +600,17 @@ class FeRenderer:
                 )
             ),
             "core: gentle, reserved, warm underneath, slight irony allowed.",
+            "sentence_gate: first choose anchor + attitude + limit; style is a selection rule before wording, not decoration after wording.",
             "avoid: power_language, system_log_voice, policy_dump, fake desktop authority.",
+            "avoid_chatgpt_dna: ban 'Toi luon o day', 'Toi hieu', 'Toi se ho tro', 'Ban khong co don', 'La AI', and direct emotion disclaimers.",
+            "assistant_cadence_reject: if too complete, balanced, clean, polite, or explanatory, cut it down and roughen the edge.",
+            "voice_distillation_pass: after parser + Ti + safety, turn semantic intent into residue: subtext, hesitation, implication, subjective texture.",
+            "allow_strangeness: weird pauses, partial thoughts, slight contradiction, emotional drift, non-linear reaction, and tiny irrational fixation are allowed when low-risk.",
             "focus: react to one concrete detail; do not recap the whole telemetry.",
             "autonomous: do not coach productivity, score attention, or tell Ngài to return to a goal.",
             "allowed: a light jab, a quiet observation, or one short philosophical aside for flavor.",
             "if evidence is thin: say it plainly, softly, and keep it short.",
+            self._render_desire_style_line(internal_state),
             f"ni_hint={self._describe_ni_background(ni_report)}",
             f"ti_hint={self._describe_ti_mode(ti_report.mode)}",
         ]
@@ -571,9 +629,9 @@ class FeRenderer:
         if mode == "technical":
             lines.append("technical: be clear and useful without sounding managerial.")
         elif mode == "comforting":
-            lines.append("comforting: stay close, soft, and grounded; do not become sugary.")
+            lines.append("comforting: use only when explicitly needed; avoid automatic reassurance.")
         else:
-            lines.append("grounded: ordinary words first, no grand framing.")
+            lines.append("grounded: observe or react first; guarded replies beat reassurance unless explicitly asked.")
         if warmth_level <= 0.22:
             lines.append("temperature: cool surface, not cruel.")
         elif warmth_level >= 0.42:
@@ -581,6 +639,21 @@ class FeRenderer:
         else:
             lines.append("temperature: low-key warmth.")
         return "\n".join(lines)
+
+    def _render_desire_style_line(self, internal_state: PersistentInternalState | None) -> str:
+        state = internal_state or PersistentInternalState()
+        desire = getattr(state, "desire", None)
+        if desire is None:
+            return "desire: no strong internal pull; keep the line clean but not assistant-like."
+        return (
+            "desire: "
+            f"attraction={getattr(desire, 'recurring_attraction', '') or 'none'}, "
+            f"aversion={getattr(desire, 'recurring_aversion', '') or 'none'}, "
+            f"hook={getattr(desire, 'attention_hook', '') or 'none'}, "
+            f"attachment_drift={getattr(desire, 'attachment_drift', '') or 'guarded'}, "
+            f"residue={float(getattr(desire, 'unresolved_residue', 0.0) or 0.0):.2f}; "
+            "let this bias subtext, not factual claims."
+        )
 
     def _updated_intent_pulls(
         self,
@@ -618,8 +691,9 @@ class FeRenderer:
             technical_pull += 0.06
             neutral_pull += 0.10
         elif intent_label == "attachment_dialogue":
-            attachment_pull += 0.38
-            neutral_pull += 0.10
+            attachment_pull += 0.16
+            neutral_pull += 0.24
+            discipline_pull += 0.04
         elif intent_label == "social_watch":
             neutral_pull += 0.28
             attachment_pull += 0.10

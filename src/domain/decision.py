@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from typing import Any
+import re
 
 
 @dataclass(slots=True)
@@ -6,6 +8,11 @@ class Decision:
     text: str
     animation: str
     extracted_fact: str = ""
+    intent: str = ""
+    action: Any = ""
+    reasoning_tags: tuple[str, ...] = ()
+    should_speak: bool = True
+    confidence: float = 0.0
     direction: int = 0
     next_animation: str = ""
     target_x: float = -1.0
@@ -58,10 +65,23 @@ class Decision:
             return 1
         return 0
 
+    def _payload_text(self) -> tuple[str, bool]:
+        text = str(self.text or "")
+        normalized = re.sub(r"\s+", " ", text.strip()).lower()
+        if normalized in {"...", "…", "hm", "hm.", "um", "um."}:
+            return "", False
+        return text, bool(self.should_speak)
+
     def to_payload(self) -> dict:
+        text, should_speak = self._payload_text()
         return {
-            "text": self.text,
+            "text": text,
+            "intent": self.intent,
+            "action": self.action,
             "animation": self.animation,
+            "reasoning_tags": list(self.reasoning_tags),
+            "should_speak": should_speak,
+            "confidence": self.confidence,
             "direction": self.direction,
             "target_x": self.target_x,
             "bounce_action": self.bounce_action,

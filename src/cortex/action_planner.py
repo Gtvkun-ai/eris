@@ -9,11 +9,19 @@ ACTION_SPACE = (
     "withdraw",
     "ask",
     "reassure",
+    "react",
+    "hesitate",
+    "suppress",
+    "indirect_presence",
+    "guarded_reply",
     "refuse",
     "mirror",
     "meta_reply",
     "telemetry_comment",
     "vision_comment",
+    "micro_observation",
+    "micro_presence",
+    "reengagement",
     "random_chatter",
     "inner_whim",
     "curious_question",
@@ -93,6 +101,22 @@ class ActionPlanner:
             force_speak=force_speak,
             self_state=self_state,
         )
+        style_anchor = self._style_anchor(
+            channel=channel,
+            snapshot=snapshot,
+            broadcast=broadcast,
+            user_text=user_text,
+            force_speak=force_speak,
+            speech_act=speech_act,
+            concrete_signals=concrete_signals,
+        )
+        style_attitude = self._style_attitude(
+            channel=channel,
+            speech_act=speech_act,
+            appraisal=appraisal,
+            force_speak=force_speak,
+        )
+        style_limit = self._style_limit(channel=channel, speech_act=speech_act)
         return CognitiveActionPlan(
             should_speak=should_speak,
             speech_intent=speech_intent,
@@ -103,6 +127,9 @@ class ActionPlanner:
             system_action=system_action,
             risk_flags=risk_flags,
             notes=self._append_self_state_notes(notes, self_state),
+            style_anchor=style_anchor,
+            style_attitude=style_attitude,
+            style_limit=style_limit,
         )
 
     def _choose_speech_act(
@@ -149,7 +176,7 @@ class ActionPlanner:
             if self._looks_like_question(user_text):
                 return "ask" if self._is_empty_or_vague(user_text) else "mirror"
             if self._is_attachment_dialogue(ti_report=ti_report, fe_plan=fe_plan, appraisal=appraisal):
-                return "reassure"
+                return "guarded_reply"
             return "mirror"
 
         if self._appraisal_value(appraisal, "protectiveness") >= 0.72:
@@ -175,16 +202,39 @@ class ActionPlanner:
             return "screen_observation"
         if speech_act in {"telemetry_comment", "vision_comment"}:
             return "screen_observation"
+        if speech_act == "micro_observation":
+            return "micro_observation"
+        if speech_act == "micro_presence" and channel == "force_speak":
+            return "micro_presence"
+        if speech_act == "micro_presence":
+            return "presence_maintenance"
+        if speech_act == "reengagement":
+            return "re_engagement"
         if speech_act == "tease":
             return "playful_aside"
+        if intent in {"curious_question", "social_presence"} and speech_act in {
+            "random_chatter",
+            "inner_whim",
+            "curious_question",
+            "light_muse",
+            "soft_boundary",
+        }:
+            return intent
         if speech_act in {
             "mirror",
             "withdraw",
             "ask",
             "reassure",
+            "react",
+            "hesitate",
+            "suppress",
+            "indirect_presence",
+            "guarded_reply",
             "refuse",
             "meta_reply",
             "random_chatter",
+            "micro_presence",
+            "reengagement",
             "inner_whim",
             "curious_question",
             "relational_checkin",
@@ -227,14 +277,20 @@ class ActionPlanner:
         if speech_act in {
             "meta_reply",
             "random_chatter",
+            "micro_presence",
+            "reengagement",
             "inner_whim",
             "curious_question",
             "relational_checkin",
             "light_muse",
             "soft_boundary",
+            "indirect_presence",
+            "guarded_reply",
+            "react",
+            "hesitate",
         }:
             flags.append("no_screen_claim")
-        if speech_act in {"observe", "tease", "telemetry_comment", "vision_comment"} and not concrete_signals and not self._broadcast_has_signal(broadcast):
+        if speech_act in {"observe", "tease", "telemetry_comment", "vision_comment", "micro_observation"} and not concrete_signals and not self._broadcast_has_signal(broadcast):
             flags.append("avoid_fabrication")
         return tuple(dict.fromkeys(flags))
 
@@ -257,16 +313,22 @@ class ActionPlanner:
         if speech_act in {
             "meta_reply",
             "random_chatter",
+            "micro_presence",
+            "reengagement",
             "inner_whim",
             "curious_question",
             "relational_checkin",
             "light_muse",
             "soft_boundary",
+            "indirect_presence",
+            "guarded_reply",
+            "react",
+            "hesitate",
         }:
             return proposed_reason or (
                 "InnerThought selected a social initiative without screen claims."
             )
-        if concrete_signals and speech_act in {"observe", "telemetry_comment", "vision_comment"}:
+        if concrete_signals and speech_act in {"observe", "telemetry_comment", "vision_comment", "micro_observation"}:
             return "Concrete signal is available before LLM: " + ", ".join(concrete_signals[:2])
         if risk_flags:
             return proposed_reason or "Planner selected action with risk flags: " + ", ".join(risk_flags)
@@ -326,6 +388,92 @@ class ActionPlanner:
                 merged.append(f"self_embodiment={self_state.embodiment_bias}")
         return tuple(dict.fromkeys(str(item) for item in merged if str(item or "").strip()))
 
+    def _style_anchor(
+        self,
+        *,
+        channel: str,
+        snapshot,
+        broadcast,
+        user_text: str,
+        force_speak: bool,
+        speech_act: str,
+        concrete_signals: tuple[str, ...],
+    ) -> str:
+        if concrete_signals:
+            return self._compact(str(concrete_signals[0]), fallback="current concrete signal")
+        if channel == "force_speak" or force_speak:
+            return "Ngai vua goi ERIS len tieng"
+        if user_text and channel == "chat":
+            return "Ngai vua noi: " + self._compact(user_text, fallback="tin nhan hien tai", limit=90)
+
+        broadcast_text = self._broadcast_anchor_text(broadcast)
+        if broadcast_text:
+            return broadcast_text
+
+        focus = self._compact(
+            str(getattr(snapshot, "focus_summary", "") if snapshot is not None else ""),
+            fallback="",
+            limit=90,
+        )
+        if focus:
+            return focus
+        idle_seconds = self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0)
+        if channel == "autonomous" and idle_seconds >= 90:
+            return f"man hinh yen khoang {int(idle_seconds)}s"
+        if speech_act == "no_speech":
+            return "khong co tin hieu du dang de noi"
+        return "nhip hien tai dang yen"
+
+    def _style_attitude(
+        self,
+        *,
+        channel: str,
+        speech_act: str,
+        appraisal,
+        force_speak: bool,
+    ) -> str:
+        if speech_act in {"reassure", "relational_checkin"}:
+            return "quan tam kin"
+        if speech_act in {"guarded_reply", "indirect_presence", "hesitate", "suppress"}:
+            return "giu lai, dap ung gian tiep"
+        if speech_act in {"tease", "random_chatter", "light_muse"}:
+            return "mia nhe"
+        if speech_act in {"protect", "refuse", "soft_boundary", "withdraw", "system_action"}:
+            return "lanh nhe"
+        if channel == "force_speak" or force_speak:
+            return "mia nhe"
+        if self._appraisal_value(appraisal, "tenderness") >= 0.52:
+            return "quan tam kin"
+        return "lanh nhe"
+
+    def _style_limit(self, *, channel: str, speech_act: str) -> str:
+        if speech_act == "no_speech":
+            return "im lang; khong chen them cau trang tri"
+        if speech_act == "curious_question":
+            return "dung mot cau hoi ngan; khong triet ly; khong giai thich dai"
+        if channel == "chat":
+            return "tra loi gon theo viec Ngai hoi; khong triet ly neu khong can"
+        return "toi da hai cau ngan; khong triet ly; khong dung anchor gia"
+
+    def _broadcast_anchor_text(self, broadcast) -> str:
+        if broadcast is None:
+            return ""
+        for candidate in (
+            str(getattr(broadcast, "content", "") or ""),
+            str(getattr(broadcast, "label", "") or ""),
+            str(getattr(broadcast, "reason", "") or ""),
+        ):
+            text = self._compact(candidate, fallback="", limit=100)
+            if text:
+                return text
+        return ""
+
+    def _compact(self, value: str, *, fallback: str, limit: int = 120) -> str:
+        text = " ".join(str(value or "").split())
+        if not text:
+            return fallback
+        return text[:limit]
+
     def _broadcast_has_signal(self, broadcast) -> bool:
         if broadcast is None:
             return False
@@ -337,6 +485,8 @@ class ActionPlanner:
             "resource_pressure",
             "active_window",
             "focus_context",
+            "social_presence_event",
+            "session_ritual",
         }:
             return False
         return bool(str(getattr(broadcast, "content", "") or "").strip())

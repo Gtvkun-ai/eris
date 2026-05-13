@@ -21,7 +21,7 @@ class ActionExecutor:
     _VK_VOLUME_MUTE = 0xAD
     _VK_VOLUME_DOWN = 0xAE
     _VK_VOLUME_UP = 0xAF
-    _GEMINI_API_KEY = "AIzaSyAuPnptWhtNdcFv3S215OL7ETtBuzP0YK8"
+    _GEMINI_API_KEY = "AIzaSyDzKTsvNUyYGWpT62Ggnd8m7MuzV9ITCkc"
     _GEMINI_SEARCH_MODEL = "gemini-2.5-flash-lite"
 
     def __init__(self, logger=None):

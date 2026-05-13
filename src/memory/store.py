@@ -177,6 +177,56 @@ class RelationshipMemoryItem:
 
 
 @dataclass(slots=True)
+class EmotionalResidueMemoryItem:
+    text: str
+    residue_type: str = "emotional_echo"
+    source: str = "runtime_residue"
+    confidence: float = 0.66
+    intensity: float = 0.0
+    valence: float = 0.0
+    observations: int = 1
+    first_seen_at: str = ""
+    updated_at: str = ""
+    evidence: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "residue_type": self.residue_type,
+            "source": self.source,
+            "confidence": round(float(self.confidence), 3),
+            "intensity": round(float(self.intensity), 3),
+            "valence": round(float(self.valence), 3),
+            "observations": int(self.observations),
+            "first_seen_at": self.first_seen_at,
+            "updated_at": self.updated_at,
+            "evidence": list(self.evidence),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "EmotionalResidueMemoryItem":
+        return cls(
+            text=str(data.get("text", "") or ""),
+            residue_type=str(data.get("residue_type", "") or data.get("type", "") or "emotional_echo"),
+            source=str(data.get("source", "") or "runtime_residue"),
+            confidence=float(data.get("confidence", 0.66) or 0.66),
+            intensity=_bounded(float(data.get("intensity", 0.0) or 0.0)),
+            valence=max(-1.0, min(1.0, float(data.get("valence", 0.0) or 0.0))),
+            observations=int(data.get("observations", 1) or 1),
+            first_seen_at=str(data.get("first_seen_at", "") or ""),
+            updated_at=str(data.get("updated_at", "") or ""),
+            evidence=tuple(str(item) for item in (data.get("evidence") or ()) if str(item or "").strip())[-6:],
+        )
+
+    def to_recall_text(self) -> str:
+        evidence = ", ".join(self.evidence[-3:]) or "no_evidence"
+        return _compact_text(
+            f"{self.text} (type={self.residue_type}, intensity={self.intensity:.2f}, evidence={evidence})",
+            limit=260,
+        )
+
+
+@dataclass(slots=True)
 class ProceduralMemoryItem:
     text: str
     trigger: str = ""
@@ -208,6 +258,213 @@ class ProceduralMemoryItem:
             first_seen_at=str(data.get("first_seen_at", "") or ""),
             updated_at=str(data.get("updated_at", "") or ""),
         )
+
+
+@dataclass(slots=True)
+class ExperientialAssociationItem:
+    """A thing remembered by the cognition states it has pulled through."""
+
+    cue: str
+    key: str = ""
+    observations: int = 1
+    first_seen_at: str = ""
+    updated_at: str = ""
+    cognition_states: tuple[str, ...] = ()
+    tension_labels: tuple[str, ...] = ()
+    pull_directions: tuple[str, ...] = ()
+    unresolved_loops: tuple[str, ...] = ()
+    thought_ids: tuple[str, ...] = ()
+    source_memories: tuple[str, ...] = ()
+    associations: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
+    last_tension: float = 0.0
+    max_tension: float = 0.0
+    momentum_score: float = 0.0
+    salience: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cue": self.cue,
+            "key": self.key,
+            "observations": int(self.observations),
+            "first_seen_at": self.first_seen_at,
+            "updated_at": self.updated_at,
+            "cognition_states": list(self.cognition_states),
+            "tension_labels": list(self.tension_labels),
+            "pull_directions": list(self.pull_directions),
+            "unresolved_loops": list(self.unresolved_loops),
+            "thought_ids": list(self.thought_ids),
+            "source_memories": list(self.source_memories),
+            "associations": list(self.associations),
+            "evidence": list(self.evidence),
+            "last_tension": round(float(self.last_tension), 3),
+            "max_tension": round(float(self.max_tension), 3),
+            "momentum_score": round(float(self.momentum_score), 3),
+            "salience": round(float(self.salience), 3),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ExperientialAssociationItem":
+        return cls(
+            cue=str(data.get("cue", "") or ""),
+            key=str(data.get("key", "") or ""),
+            observations=int(data.get("observations", 1) or 1),
+            first_seen_at=str(data.get("first_seen_at", "") or ""),
+            updated_at=str(data.get("updated_at", "") or ""),
+            cognition_states=tuple(str(item) for item in (data.get("cognition_states") or ()) if str(item or "").strip())[-8:],
+            tension_labels=tuple(str(item) for item in (data.get("tension_labels") or ()) if str(item or "").strip())[-8:],
+            pull_directions=tuple(str(item) for item in (data.get("pull_directions") or ()) if str(item or "").strip())[-8:],
+            unresolved_loops=tuple(str(item) for item in (data.get("unresolved_loops") or ()) if str(item or "").strip())[-8:],
+            thought_ids=tuple(str(item) for item in (data.get("thought_ids") or ()) if str(item or "").strip())[-8:],
+            source_memories=tuple(str(item) for item in (data.get("source_memories") or ()) if str(item or "").strip())[-6:],
+            associations=tuple(str(item) for item in (data.get("associations") or ()) if str(item or "").strip())[-10:],
+            evidence=tuple(str(item) for item in (data.get("evidence") or ()) if str(item or "").strip())[-8:],
+            last_tension=_bounded(float(data.get("last_tension", 0.0) or 0.0)),
+            max_tension=_bounded(float(data.get("max_tension", 0.0) or 0.0)),
+            momentum_score=_bounded(float(data.get("momentum_score", 0.0) or 0.0)),
+            salience=_bounded(float(data.get("salience", 0.0) or 0.0)),
+        )
+
+    def to_recall_text(self) -> str:
+        states = ", ".join(self.cognition_states[-3:]) or "unknown"
+        tensions = ", ".join(self.tension_labels[-3:]) or "none"
+        pulls = ", ".join(self.pull_directions[-3:]) or "none"
+        loops = ", ".join(self.unresolved_loops[-3:]) or "none"
+        return _compact_text(
+            f"{self.cue} appeared in {states}; tension={tensions}; pulls={pulls}; unresolved_loops={loops}",
+            limit=260,
+        )
+
+
+class ExperientialAssociationNetwork:
+    """Updates object/topic associations from lived cognition traces."""
+
+    def __init__(self, *, limit: int = 48):
+        self.limit = max(8, int(limit))
+
+    def remember( # dựa trên một cue và các trạng thái liên quan, ghi nhớ hoặc cập nhật một mục trong bộ nhớ kinh nghiệm, bao gồm việc gán nhãn độ căng thẳng, hướng kéo, vòng lặp chưa giải quyết, và các liên kết với các ký ức khác.
+        self,
+        items: list[ExperientialAssociationItem],
+        *,
+        cue: str,
+        cognition_state: str = "",
+        tension: float = 0.0,
+        tension_label: str = "",
+        pull_direction: str = "",
+        unresolved_loop: str = "",
+        thought_id: str = "",
+        source_memory: str = "",
+        associations: tuple[str, ...] = (),
+        evidence: tuple[str, ...] = (),
+        momentum_score: float = 0.0,
+        salience: float = 0.0,
+        timestamp: str | None = None,
+    ) -> list[ExperientialAssociationItem]:
+        clean_cue = _compact_text(cue, limit=160)
+        if not clean_cue:
+            return items
+
+        now = timestamp or _now_timestamp() # nếu không có timestamp được cung cấp, sử dụng thời gian hiện tại để đánh dấu khi nào cue này được ghi nhớ hoặc cập nhật trong bộ nhớ kinh nghiệm. Điều này giúp theo dõi sự phát triển của các liên kết kinh nghiệm theo thời gian và có thể hữu ích cho việc truy xuất sau này dựa trên độ mới nhất hoặc cũ nhất của các liên kết đó.
+        key = self.key_for(clean_cue)
+        label = _compact_text(tension_label or self.tension_label(tension), limit=80)
+        state = _compact_text(cognition_state, limit=140)
+        pull = _compact_text(pull_direction, limit=140)
+        loop = _compact_text(unresolved_loop, limit=140)
+        tid = _compact_text(thought_id, limit=80)
+        memory = _compact_text(source_memory, limit=160)
+        clean_associations = self._recent_unique((), associations, limit=10)
+        clean_evidence = self._recent_unique((), evidence, limit=8)
+
+        for index, item in enumerate(items): # duyệt qua các mục hiện có trong bộ nhớ kinh nghiệm để tìm xem đã có mục nào có cùng key hoặc cue đã được làm sạch hay chưa. Nếu tìm thấy một mục như vậy, nó sẽ được cập nhật với thông tin mới từ lần ghi nhớ này, bao gồm việc tăng số lần quan sát, cập nhật trạng thái nhận thức, nhãn độ căng thẳng, hướng kéo, vòng lặp chưa giải quyết, ID suy nghĩ, ký ức nguồn, liên kết và bằng chứng liên quan đến cue này. Nếu không tìm thấy mục nào phù hợp, một mục mới sẽ được tạo ra và thêm vào bộ nhớ kinh nghiệm.
+            if item.key == key or _dedupe_key(item.cue) == _dedupe_key(clean_cue):
+                merged = ExperientialAssociationItem(
+                    cue=item.cue or clean_cue,
+                    key=item.key or key,
+                    observations=item.observations + 1,
+                    first_seen_at=item.first_seen_at or now,
+                    updated_at=now,
+                    cognition_states=self._recent_unique(item.cognition_states, (state,), limit=8),
+                    tension_labels=self._recent_unique(item.tension_labels, (label,), limit=8),
+                    pull_directions=self._recent_unique(item.pull_directions, (pull,), limit=8),
+                    unresolved_loops=self._recent_unique(item.unresolved_loops, (loop,), limit=8),
+                    thought_ids=self._recent_unique(item.thought_ids, (tid,), limit=8),
+                    source_memories=self._recent_unique(item.source_memories, (memory,), limit=6),
+                    associations=self._recent_unique(item.associations, clean_associations, limit=10),
+                    evidence=self._recent_unique(item.evidence, clean_evidence, limit=8),
+                    last_tension=_bounded(tension),
+                    max_tension=max(float(item.max_tension), _bounded(tension)),
+                    momentum_score=max(float(item.momentum_score), _bounded(momentum_score)),
+                    salience=max(float(item.salience), _bounded(salience)),
+                )
+                items[index] = merged
+                return self._trim(items)
+
+        items.append(
+            ExperientialAssociationItem(
+                cue=clean_cue,
+                key=key,
+                observations=1,
+                first_seen_at=now,
+                updated_at=now,
+                cognition_states=self._recent_unique((), (state,), limit=8),
+                tension_labels=self._recent_unique((), (label,), limit=8),
+                pull_directions=self._recent_unique((), (pull,), limit=8),
+                unresolved_loops=self._recent_unique((), (loop,), limit=8),
+                thought_ids=self._recent_unique((), (tid,), limit=8),
+                source_memories=self._recent_unique((), (memory,), limit=6),
+                associations=clean_associations,
+                evidence=clean_evidence,
+                last_tension=_bounded(tension),
+                max_tension=_bounded(tension),
+                momentum_score=_bounded(momentum_score),
+                salience=_bounded(salience),
+            )
+        )
+        return self._trim(items)
+
+    def key_for(self, cue: str) -> str:
+        tokens = self._tokens(cue)
+        if not tokens:
+            return _dedupe_key(cue)[:80]
+        return "_".join(sorted(tokens)[:5])[:80]
+
+    def tension_label(self, tension: float) -> str:
+        value = _bounded(tension)
+        if value >= 0.72:
+            return "high_unresolved_tension"
+        if value >= 0.46:
+            return "active_unresolved_tension"
+        if value >= 0.22:
+            return "low_residual_tension"
+        return "settled_trace"
+
+    def _tokens(self, text: str) -> set[str]:
+        return {
+            token
+            for token in re.findall(r"[0-9a-zA-Z_\u00C0-\u1EF9]+", str(text or "").lower())
+            if len(token) >= 3 and token not in {"the", "and", "for", "from", "this", "that", "with"}
+        }
+
+    def _recent_unique(self, current: tuple[str, ...], incoming, *, limit: int) -> tuple[str, ...]:
+        values = list(current or ())
+        for item in tuple(incoming or ()):
+            text = _compact_text(item, limit=180)
+            if text and text not in values:
+                values.append(text)
+        return tuple(values[-limit:])
+
+    def _trim(self, items: list[ExperientialAssociationItem]) -> list[ExperientialAssociationItem]:
+        items.sort(
+            key=lambda item: (
+                float(item.max_tension),
+                float(item.momentum_score),
+                float(item.salience),
+                int(item.observations),
+                item.updated_at,
+            ),
+            reverse=True,
+        )
+        return items[: self.limit]
 
 
 @dataclass(slots=True)
@@ -354,7 +611,9 @@ class MemoryState:
     episodic: list[EpisodicMemoryItem] = field(default_factory=list)
     semantic: list[SemanticMemoryItem] = field(default_factory=list)
     relationship: list[RelationshipMemoryItem] = field(default_factory=list)
+    emotional_residue: list[EmotionalResidueMemoryItem] = field(default_factory=list)
     procedural: list[ProceduralMemoryItem] = field(default_factory=list)
+    experiential: list[ExperientialAssociationItem] = field(default_factory=list)
     norm: NormMemory = field(default_factory=NormMemory)
     internal_state: PersistentInternalState = field(default_factory=PersistentInternalState)
 
@@ -365,7 +624,9 @@ class MemoryState:
             "episodic": [item.to_dict() for item in self.episodic],
             "semantic": [item.to_dict() for item in self.semantic],
             "relationship": [item.to_dict() for item in self.relationship],
+            "emotional_residue": [item.to_dict() for item in self.emotional_residue],
             "procedural": [item.to_dict() for item in self.procedural],
+            "experiential": [item.to_dict() for item in self.experiential],
             "norm": self.norm.to_dict(),
             "internal_state": self.internal_state.to_dict(),
         }
@@ -381,7 +642,9 @@ class MemoryStore:
         max_episodic_items: int = 80,
         max_semantic_items: int | None = None,
         max_relationship_items: int = 16,
+        max_emotional_residue_items: int = 32,
         max_procedural_items: int = 24,
+        max_experiential_items: int = 48,
         max_norm_values_per_feature: int = 12,
     ):
         self.path = path
@@ -390,7 +653,10 @@ class MemoryStore:
         self.max_episodic_items = max_episodic_items
         self.max_semantic_items = max_semantic_items or max_items
         self.max_relationship_items = max_relationship_items
+        self.max_emotional_residue_items = max_emotional_residue_items
         self.max_procedural_items = max_procedural_items
+        self.max_experiential_items = max_experiential_items
+        self.experiential_network = ExperientialAssociationNetwork(limit=max_experiential_items)
         self.max_norm_values_per_feature = max_norm_values_per_feature
 
     def load(self) -> list[str]:
@@ -421,8 +687,40 @@ class MemoryStore:
         self.save_state(state)
 
     def save_state(self, state: MemoryState) -> None:
-        with open(self.path, "w", encoding="utf-8") as handle:
-            json.dump(state.to_dict(), handle, ensure_ascii=False, indent=4)
+        data = state.to_dict()
+        directory = os.path.dirname(os.path.abspath(self.path)) or "."
+        base_name = os.path.basename(self.path)
+        stamp = f"{int(time.time() * 1000)}-{os.getpid()}"
+        temp_path = os.path.join(directory, f".{base_name}.{stamp}.tmp")
+        pending_path = os.path.join(directory, f"{base_name}.pending-{stamp}.json")
+
+        try:
+            with open(temp_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=4)
+                handle.write("\n")
+            os.replace(temp_path, self.path)
+        except PermissionError:
+            try:
+                if os.path.exists(temp_path):
+                    os.replace(temp_path, pending_path)
+                else:
+                    with open(pending_path, "w", encoding="utf-8") as handle:
+                        json.dump(data, handle, ensure_ascii=False, indent=4)
+                        handle.write("\n")
+            except OSError:
+                try:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                except OSError:
+                    pass
+            raise
+        except Exception:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+            raise
 
     def append_fact(self, current_items: list[str], fact: str) -> list[str]:
         state = self.load_state()
@@ -515,6 +813,61 @@ class MemoryStore:
         state.relationship = state.relationship[-self.max_relationship_items :]
         return state
 
+    def remember_emotional_residue(
+        self,
+        state: MemoryState,
+        residue: str,
+        *,
+        residue_type: str = "emotional_echo",
+        source: str = "runtime_residue",
+        confidence: float = 0.66,
+        intensity: float = 0.0,
+        valence: float = 0.0,
+        timestamp: str | None = None,
+        evidence: tuple[str, ...] = (),
+    ) -> MemoryState:
+        text = _compact_text(residue, limit=240)
+        if not text:
+            return state
+
+        now = timestamp or _now_timestamp()
+        clean_type = _compact_text(residue_type, limit=80) or "emotional_echo"
+        clean_evidence = tuple(
+            dict.fromkeys(
+                _compact_text(item, limit=120)
+                for item in (evidence or ())
+                if _compact_text(item, limit=120)
+            )
+        )[:6]
+        key = _dedupe_key(f"{clean_type}:{text}")
+        for item in state.emotional_residue:
+            if _dedupe_key(f"{item.residue_type}:{item.text}") == key:
+                item.observations += 1
+                item.confidence = min(0.98, max(float(item.confidence), confidence) + 0.025)
+                item.intensity = max(float(item.intensity), _bounded(float(intensity or 0.0)))
+                item.valence = max(-1.0, min(1.0, (float(item.valence) + float(valence or 0.0)) / 2.0))
+                item.updated_at = now
+                if clean_evidence:
+                    item.evidence = tuple(dict.fromkeys((*item.evidence, *clean_evidence)))[-6:]
+                return state
+
+        state.emotional_residue.append(
+            EmotionalResidueMemoryItem(
+                text=text,
+                residue_type=clean_type,
+                source=source,
+                confidence=confidence,
+                intensity=_bounded(float(intensity or 0.0)),
+                valence=max(-1.0, min(1.0, float(valence or 0.0))),
+                observations=1,
+                first_seen_at=now,
+                updated_at=now,
+                evidence=clean_evidence,
+            )
+        )
+        state.emotional_residue = state.emotional_residue[-self.max_emotional_residue_items :]
+        return state
+
     def remember_procedural_rule(
         self,
         state: MemoryState,
@@ -553,6 +906,42 @@ class MemoryStore:
         state.procedural = state.procedural[-self.max_procedural_items :]
         return state
 
+    def remember_experiential_association(
+        self,
+        state: MemoryState,
+        cue: str,
+        *,
+        cognition_state: str = "",
+        tension: float = 0.0,
+        tension_label: str = "",
+        pull_direction: str = "",
+        unresolved_loop: str = "",
+        thought_id: str = "",
+        source_memory: str = "",
+        associations: tuple[str, ...] = (),
+        evidence: tuple[str, ...] = (),
+        momentum_score: float = 0.0,
+        salience: float = 0.0,
+        timestamp: str | None = None,
+    ) -> MemoryState:
+        state.experiential = self.experiential_network.remember(
+            list(state.experiential or []),
+            cue=cue,
+            cognition_state=cognition_state,
+            tension=tension,
+            tension_label=tension_label,
+            pull_direction=pull_direction,
+            unresolved_loop=unresolved_loop,
+            thought_id=thought_id,
+            source_memory=source_memory,
+            associations=associations,
+            evidence=evidence,
+            momentum_score=momentum_score,
+            salience=salience,
+            timestamp=timestamp,
+        )
+        return state
+
     def remember_cycle(
         self,
         state: MemoryState,
@@ -567,6 +956,21 @@ class MemoryStore:
         tags: tuple[str, ...] = (),
         semantic_fact: str = "",
         system_action: str = "",
+        emotional_residue: str = "",
+        emotional_residue_type: str = "",
+        emotional_intensity: float = 0.0,
+        emotional_valence: float = 0.0,
+        experience_cues: tuple[str, ...] = (),
+        cognition_state: str = "",
+        tension: float = 0.0,
+        tension_label: str = "",
+        pull_direction: str = "",
+        unresolved_loop: str = "",
+        thought_id: str = "",
+        source_memory: str = "",
+        associations: tuple[str, ...] = (),
+        momentum_score: float = 0.0,
+        experience_evidence: tuple[str, ...] = (),
     ) -> MemoryState:
         clean_seen = tuple(
             dict.fromkeys(
@@ -618,8 +1022,174 @@ class MemoryStore:
                 source="decision_extracted_fact",
                 timestamp=timestamp,
             )
+        residue_text, residue_type, residue_intensity, residue_valence, residue_evidence = self._resolve_emotional_residue(
+            emotional_residue=emotional_residue,
+            emotional_residue_type=emotional_residue_type,
+            emotional_intensity=emotional_intensity,
+            emotional_valence=emotional_valence,
+            seen=clean_seen,
+            said=clean_said,
+            outcome=clean_outcome,
+            tags=clean_tags,
+            channel=channel,
+            salience=salience,
+            cognition_state=cognition_state,
+            tension=tension,
+            unresolved_loop=unresolved_loop,
+        )
+        if residue_text:
+            state = self.remember_emotional_residue(
+                state,
+                residue_text,
+                residue_type=residue_type,
+                source="cycle_residue",
+                intensity=residue_intensity,
+                valence=residue_valence,
+                timestamp=timestamp,
+                evidence=residue_evidence,
+            )
+        clean_experience_cues = tuple(
+            dict.fromkeys(
+                _compact_text(item, limit=160)
+                for item in (experience_cues or ())
+                if _compact_text(item, limit=160)
+            )
+        )[:6]
+        if clean_experience_cues:
+            for cue in clean_experience_cues:
+                state = self.remember_experiential_association(
+                    state,
+                    cue,
+                    cognition_state=cognition_state or f"{channel}:{outcome}",
+                    tension=tension,
+                    tension_label=tension_label,
+                    pull_direction=pull_direction,
+                    unresolved_loop=unresolved_loop,
+                    thought_id=thought_id,
+                    source_memory=source_memory,
+                    associations=associations,
+                    evidence=tuple(dict.fromkeys((*experience_evidence, *clean_tags, f"cycle={cycle_id}", clean_outcome)))[:8],
+                    momentum_score=momentum_score,
+                    salience=salience,
+                    timestamp=timestamp,
+                )
         return state
     # Kích hoạt cộng hưởng bộ nhớ dựa trên snapshot hiện tại và ngữ cảnh, trả về báo cáo chi tiết về các mục bộ nhớ liên quan và điểm số tổng thể.
+    def _resolve_emotional_residue(
+        self,
+        *,
+        emotional_residue: str,
+        emotional_residue_type: str,
+        emotional_intensity: float,
+        emotional_valence: float,
+        seen: tuple[str, ...],
+        said: str,
+        outcome: str,
+        tags: tuple[str, ...],
+        channel: str,
+        salience: float,
+        cognition_state: str,
+        tension: float,
+        unresolved_loop: str,
+    ) -> tuple[str, str, float, float, tuple[str, ...]]:
+        explicit = _compact_text(emotional_residue, limit=240)
+        if explicit:
+            return (
+                explicit,
+                _compact_text(emotional_residue_type, limit=80) or "emotional_echo",
+                _bounded(float(emotional_intensity or salience or tension or 0.0)),
+                max(-1.0, min(1.0, float(emotional_valence or 0.0))),
+                tuple(dict.fromkeys((*seen[:3], *tags[:3], outcome)))[:6],
+            )
+
+        haystack = self._residue_haystack(
+            seen=seen,
+            said=said,
+            outcome=outcome,
+            tags=tags,
+            channel=channel,
+            cognition_state=cognition_state,
+            unresolved_loop=unresolved_loop,
+        )
+        if not haystack:
+            return "", "", 0.0, 0.0, ()
+
+        anchor = _compact_text(seen[0] if seen else said or outcome or channel, limit=120)
+        intensity = _bounded(max(float(salience or 0.0), float(tension or 0.0), 0.42 if tags else 0.0))
+        evidence = tuple(dict.fromkeys((*seen[:3], *tags[:3], outcome, cognition_state, unresolved_loop)))[:6]
+        checks: tuple[tuple[str, tuple[str, ...], str, float], ...] = (
+            (
+                "silent_residue",
+                ("silence", "silent", "no_speech", "im lang", "im_lặng", "idle", "quiet", "yen"),
+                f"Đêm hoặc khoảng im dài để lại một vệt căng quanh: {anchor}",
+                -0.08,
+            ),
+            (
+                "unfinished_thought",
+                ("unfinished", "unresolved", "bo do", "bỏ dở", "chua xong", "chưa xong", "halfway", "ellipsis"),
+                f"Một ý bị bỏ dở, chưa chịu khép lại: {anchor}",
+                -0.05,
+            ),
+            (
+                "voice_shift",
+                ("doi giong", "đổi giọng", "tone shift", "cold", "lanh", "lạnh"),
+                f"Giọng đổi rất nhẹ nhưng còn dư âm: {anchor}",
+                -0.02,
+            ),
+            (
+                "godot_recurrence",
+                ("godot", "game engine", "scene tree"),
+                f"Godot cứ hiện lại như một điểm kéo chú ý: {anchor}",
+                0.05,
+            ),
+            (
+                "attention_friction",
+                ("alt tab", "alt_tab", "window switch", "switching", "tab", "doi cua so", "đổi cửa sổ"),
+                f"Nhịp đổi cửa sổ để lại một ma sát khó chịu: {anchor}",
+                -0.12,
+            ),
+            (
+                "attachment_echo",
+                ("force_speak", "attachment", "presence", "goi eris", "gọi eris", "can eris"),
+                f"Lời gọi ERIS giống nhu cầu hiện diện hơn là nhu cầu thông tin: {anchor}",
+                0.04,
+            ),
+        )
+        for residue_type, markers, text, valence in checks:
+            if any(marker in haystack for marker in markers):
+                return text, residue_type, max(intensity, 0.44), valence, evidence
+
+        if tension >= 0.55 or salience >= 0.74:
+            return (
+                f"Có áp lực chưa tan hết quanh: {anchor}",
+                "unresolved_pressure",
+                max(intensity, 0.50),
+                -0.04,
+                evidence,
+            )
+        return "", "", 0.0, 0.0, ()
+
+    def _residue_haystack(
+        self,
+        *,
+        seen: tuple[str, ...],
+        said: str,
+        outcome: str,
+        tags: tuple[str, ...],
+        channel: str,
+        cognition_state: str,
+        unresolved_loop: str,
+    ) -> str:
+        text = " ".join(str(part or "") for part in (*seen, said, outcome, *tags, channel, cognition_state, unresolved_loop))
+        lowered = text.lower()
+        try:
+            remojibake = lowered.encode("latin1").decode("utf-8")
+            if remojibake:
+                lowered = remojibake
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+        return re.sub(r"\s+", " ", lowered).strip()
+
     def activate_memory_resonance(
         self,
         state: MemoryState,
@@ -642,6 +1212,7 @@ class MemoryStore:
 
         activations: list[MemoryActivation] = []
         layer_items = (
+            ("emotional_residue", state.emotional_residue[-12:], 1.02),
             ("working", state.working[-6:], 1.08), # working memory có trọng số cao nhất vì là thông tin mới nhất và thường liên quan trực tiếp đến tương tác hiện tại
             ("episodic", state.episodic[-16:], 0.92), # episodic memory có trọng số cao vì chứa các sự kiện cụ thể đã xảy ra, có thể cung cấp ngữ cảnh quan trọng cho tình huống hiện tại
             ("semantic", state.semantic[-12:], 0.82), # semantic memory có trọng số trung bình vì chứa các sự thật ổn định và sở thích của người dùng, có thể hữu ích nhưng không phải lúc nào cũng liên quan trực tiếp đến tình huống hiện tại
@@ -676,6 +1247,31 @@ class MemoryStore:
                     )
                 )
         # Sắp xếp các kích hoạt theo điểm số và chỉ giữ lại một số lượng nhất định các mục hàng đầu để báo cáo
+        for index, item in enumerate(state.experiential[-14:]):
+            text, evidence, confidence = self._activation_payload("experiential", item)
+            if not text:
+                continue
+            memory_tokens = self._tokenize(" ".join((text, *evidence)))
+            if not memory_tokens:
+                continue
+            overlap = len(query_tokens & memory_tokens)
+            if overlap <= 0:
+                continue
+            coverage = overlap / max(3, min(len(query_tokens), 16))
+            specificity = min(0.20, len(memory_tokens) / 220)
+            recency = (index + 1) / max(1, len(state.experiential[-14:]))
+            score = _bounded((coverage + specificity) * 1.04 * (0.82 + recency * 0.18) * confidence)
+            if score >= 0.12:
+                activations.append(
+                    MemoryActivation(
+                        layer="experiential",
+                        text=_compact_text(text, limit=220),
+                        score=score,
+                        surface_policy=self._surface_policy(layer="experiential", score=score, query=query),
+                        evidence=evidence[:4],
+                    )
+                )
+
         activations.sort(key=lambda item: item.score, reverse=True)
         activations = activations[:max_items]
         if not activations:
@@ -685,10 +1281,10 @@ class MemoryStore:
         score = _bounded(sum(item.score for item in activations[:3]) / min(3, len(activations)) + top.score * 0.22)
         silence_bias = self._silence_bias(activations, query=query)
         wording_bias = _bounded(
-            max((item.score for item in activations if item.layer in {"relationship", "semantic", "procedural"}), default=0.0)
+            max((item.score for item in activations if item.layer in {"relationship", "semantic", "procedural", "experiential", "emotional_residue"}), default=0.0)
         )
         appraisal_bias = _bounded(
-            max((item.score for item in activations if item.layer in {"episodic", "relationship", "procedural"}), default=0.0)
+            max((item.score for item in activations if item.layer in {"episodic", "relationship", "procedural", "experiential", "emotional_residue"}), default=0.0)
         )
         should_surface = any(item.surface_policy.startswith("surface") for item in activations[:2]) and score >= 0.56
         return MemoryResonanceReport(
@@ -789,10 +1385,18 @@ class MemoryStore:
             if item.text:
                 recalled.append(f"relationship/{item.pattern}: {item.text}")
 
+        for item in state.emotional_residue[-6:]:
+            if item.text:
+                recalled.append(f"emotional_residue/{item.residue_type}: {item.to_recall_text()}")
+
         for item in state.procedural[-5:]:
             if item.text:
                 prefix = f"procedural/{item.trigger}" if item.trigger else "procedural"
                 recalled.append(f"{prefix}: {item.text}")
+
+        for item in state.experiential[-8:]:
+            if item.cue:
+                recalled.append(f"experiential/{item.key or _dedupe_key(item.cue)}: {item.to_recall_text()}")
 
         for item in state.episodic[-5:]:
             summary = item.summary()
@@ -836,6 +1440,16 @@ class MemoryStore:
                 )
             )
 
+        residue = [item for item in state.emotional_residue[-6:] if item.text]
+        if residue:
+            sections.append(
+                "emotional_residue_memory:\n"
+                + "\n".join(
+                    f"- {item.text} (type={item.residue_type}, intensity={item.intensity:.2f}, observations={item.observations})"
+                    for item in residue
+                )
+            )
+
         procedural = [item for item in state.procedural[-6:] if item.text]
         if procedural:
             sections.append(
@@ -844,6 +1458,19 @@ class MemoryStore:
                     f"- when {item.trigger or 'a matching pattern appears'}: {item.text} "
                     f"(observations={item.observations})"
                     for item in procedural
+                )
+            )
+
+        experiential = [item for item in state.experiential[-8:] if item.cue]
+        if experiential:
+            sections.append(
+                "experiential_association_network:\n"
+                + "\n".join(
+                    f"- {item.cue}: states={', '.join(item.cognition_states[-3:]) or 'unknown'}; "
+                    f"tension={item.tension_labels[-1] if item.tension_labels else 'none'}({item.max_tension:.2f}); "
+                    f"pull={item.pull_directions[-1] if item.pull_directions else 'none'}; "
+                    f"loops={', '.join(item.unresolved_loops[-2:]) or 'none'}"
+                    for item in experiential
                 )
             )
 
@@ -863,9 +1490,43 @@ class MemoryStore:
         return (
             "Memory is split by type. Working memory is only recent cycles; episodic memory is what was seen/said/outcome; "
             "semantic_user_memory is stable facts/preferences; relationship_memory is ERIS' reflected interaction rhythm with the user, not current screen evidence; "
-            "procedural_memory is learned handling policy; norm_memory is the user's baseline for comparing the current scene.\n"
+            "emotional_residue_memory stores aftertaste, pressure, unfinished thought, and affective echo, not factual claims; "
+            "procedural_memory is learned handling policy; experiential_association_network stores what cognition states a cue has passed through, not current screen evidence; "
+            "norm_memory is the user's baseline for comparing the current scene.\n"
             + "\n\n".join(sections)
         )
+
+    def query_experiential_associations( # Truy vấn mạng liên kết kinh nghiệm để tìm các mục liên quan đến một gợi ý nhất định, dựa trên sự chồng chéo token và các yếu tố khác, trả về một danh sách các mục được xếp hạng theo điểm số liên quan.
+        self,
+        state: MemoryState,
+        cue: str,
+        *,
+        max_items: int = 5,
+    ) -> tuple[ExperientialAssociationItem, ...]:
+        cue_tokens = self._tokenize(cue) # Token hóa gợi ý để so sánh với các mục trong mạng liên kết kinh nghiệm. Điểm số sẽ được tính dựa trên sự chồng chéo token giữa gợi ý và các mục, cũng như sự khớp chính xác của khóa, mức độ căng thẳng tối đa đã trải qua, điểm động lượng và các yếu tố khác.
+        cue_key = self.experiential_network.key_for(cue) # Tạo một khóa duy nhất cho gợi ý để so sánh với các mục trong mạng liên kết kinh nghiệm. Nếu khóa của một mục khớp chính xác với khóa của gợi ý, nó sẽ nhận được điểm số cao hơn.
+        scored: list[tuple[float, ExperientialAssociationItem]] = []
+        for item in tuple(state.experiential or ()):
+            item_tokens = self._tokenize(
+                " ".join(
+                    (
+                        item.cue,
+                        item.key,
+                        " ".join(item.cognition_states),
+                        " ".join(item.tension_labels),
+                        " ".join(item.pull_directions),
+                        " ".join(item.unresolved_loops),
+                        " ".join(item.associations),
+                    )
+                )
+            )
+            overlap = len(cue_tokens & item_tokens) if cue_tokens and item_tokens else 0
+            exact = 1.0 if item.key == cue_key or _dedupe_key(item.cue) == _dedupe_key(cue) else 0.0
+            score = exact + overlap * 0.18 + item.max_tension * 0.16 + item.momentum_score * 0.12
+            if score > 0.0:
+                scored.append((score, item))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return tuple(item for _, item in scored[:max_items])
 
     def _state_from_json(self, data: Any) -> MemoryState:
         if isinstance(data, list):
@@ -912,9 +1573,19 @@ class MemoryStore:
             for item in (data.get("relationship") or data.get("reflections") or [])
             if isinstance(item, dict)
         ]
+        emotional_residue = [
+            EmotionalResidueMemoryItem.from_dict(item)
+            for item in (data.get("emotional_residue") or data.get("emotional_residue_memory") or [])
+            if isinstance(item, dict)
+        ]
         procedural = [
             ProceduralMemoryItem.from_dict(item)
             for item in (data.get("procedural") or [])
+            if isinstance(item, dict)
+        ]
+        experiential = [
+            ExperientialAssociationItem.from_dict(item)
+            for item in (data.get("experiential") or data.get("experiential_associations") or [])
             if isinstance(item, dict)
         ]
         norm = NormMemory.from_dict(data.get("norm") or {})
@@ -925,7 +1596,9 @@ class MemoryStore:
             episodic=episodic[-self.max_episodic_items :],
             semantic=semantic[-self.max_semantic_items :],
             relationship=relationship[-self.max_relationship_items :],
+            emotional_residue=emotional_residue[-self.max_emotional_residue_items :],
             procedural=procedural[-self.max_procedural_items :],
+            experiential=experiential[-self.max_experiential_items :],
             norm=norm,
             internal_state=internal_state,
         )
@@ -1012,8 +1685,19 @@ class MemoryStore:
             return item.text, (item.source,), self._memory_confidence(item)
         if layer == "relationship":
             return item.text, (item.pattern, *item.evidence[:3]), self._memory_confidence(item)
+        if layer == "emotional_residue":
+            return item.to_recall_text(), (item.residue_type, *item.evidence[:3]), self._memory_confidence(item)
         if layer == "procedural":
             return item.text, (item.trigger, item.source), self._memory_confidence(item)
+        if layer == "experiential":
+            evidence = (
+                *item.cognition_states[-3:],
+                *item.tension_labels[-3:],
+                *item.pull_directions[-3:],
+                *item.unresolved_loops[-3:],
+                *item.associations[-3:],
+            )
+            return item.to_recall_text(), tuple(str(part) for part in evidence if str(part or "").strip()), self._memory_confidence(item)
         return "", (), 0.0
 
     def _memory_confidence(self, item) -> float:
@@ -1029,6 +1713,8 @@ class MemoryStore:
             return "surface_if_user_asks"
         if layer == "procedural" and score >= 0.50: #Nếu mục bộ nhớ thuộc lớp "procedural" và điểm số kích hoạt đủ cao, thì chính sách là "surface_if_needed_for_fix", có nghĩa là mục bộ nhớ này sẽ được hiển thị nếu nó cần thiết để sửa chữa một vấn đề hoặc cải thiện hiệu suất của ERIS.
             return "surface_if_needed_for_fix"
+        if layer == "emotional_residue" and score >= 0.66:
+            return "surface_if_contextual"
         if layer in {"working", "episodic"} and score >= 0.62: #Nếu mục bộ nhớ thuộc lớp "working" hoặc "episodic" và điểm số kích hoạt đủ cao, thì chính sách là "surface_if_contextual", có nghĩa là mục bộ nhớ này sẽ được hiển thị nếu nó liên quan đến ngữ cảnh của truy vấn.
             return "surface_if_contextual"
         return "silent_bias"

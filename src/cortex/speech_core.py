@@ -1,4 +1,4 @@
-from .contracts import AgentSpeechCore, MotivationalPressureReport, MotivationalUrge, SelfState
+from .contracts import AgentSpeechCore, MotivationalPressureReport, MotivationalUrge, SelfState, SilenceState, SpeechImpulse
 from .internal_state import PersistentInternalState
 from .inner_thought import InnerThoughtEngine
 
@@ -58,6 +58,9 @@ class SpeechCoreEngine:
         subconscious_seed=None,
         thought_surface=None,
         self_state: SelfState | None = None,
+        meaning_layer=None,
+        personality_lens=None,
+        safe_small_talk_allowed: bool = False,
     ) -> AgentSpeechCore:
         channel_name = str(channel or "autonomous")
         surface = thought_surface if thought_surface is not None else subconscious_seed
@@ -81,6 +84,70 @@ class SpeechCoreEngine:
             thought_surface=surface,
         )
 
+        # nếu là autonomous channel và meaning_layer có meaning_shift nhưng không phải là một meaning_shift_gate thì sẽ bị giữ 
+        # im lặng với lý do là cần một meaning shift để nói, và sẽ xây dựng một pressure_report với reason là
+        #  meaning_shift_gate và threshold dựa trên channel_name và self_state, và concrete_signals sẽ được truyền vào
+        #  để làm bằng chứng cho pressure_report, sau đó sẽ trả về một AgentSpeechCore với impulse là silent, utterance_type 
+        # là no_speech, grounding là none, speech_source là none, reason giải thích lý do giữ im lặng, should_speak là False, 
+        # safety_flags có meaning_shift_gate, delivery là silence, inner_thought được đánh giá ở trên, speech_impulse được xây 
+        # dựng dựa trên channel_name, meaning_layer, winner của pressure_report và should_speak là False, và motivation_pressure là pressure_report
+        if (
+            channel_name == "autonomous"
+            and meaning_layer is not None
+            and not bool(getattr(meaning_layer, "meaning_shift", False))
+            and self._meaning_shift_required_for_layer(meaning_layer)
+            and not self._allows_soft_non_shift_speech(
+                meaning_layer=meaning_layer,
+                snapshot=snapshot,
+                internal_state=internal_state,
+            )
+        ):
+            pressure_report = self._build_suppressed_pressure_report(
+                reason="meaning_shift_gate",
+                threshold=self._threshold_for_channel(channel_name, self_state=self_state),
+                concrete_signals=concrete_signals,
+            )
+            speech_impulse = self._build_speech_impulse(
+                channel=channel_name,
+                meaning_layer=meaning_layer,
+                winner=pressure_report.winner,
+                should_speak=False,
+            )
+            safety_flags = ("meaning_shift_gate",)
+            return AgentSpeechCore(
+                perception=tuple(concrete_signals or ()),
+                mood=self._resolve_mood(snapshot=snapshot, appraisal=appraisal, fe_plan=fe_plan),
+                impulse="silent",
+                utterance_type="no_speech",
+                grounding="none",
+                speech_source="none",
+                speech_risk_level="texture",
+                reason=(
+                    "MeaningLayer held silence because this speech shape needs a meaning shift: "
+                    f"{str(getattr(meaning_layer, 'shift_reason', '') or 'no_meaning_shift')}."
+                ),
+                should_speak=False,
+                safety_flags=safety_flags,
+                delivery="silence",
+                inner_thought=inner_thought,
+                speech_impulse=speech_impulse,
+                motivation_pressure=pressure_report,
+                silence_state=self._build_silence_state(
+                    reason="meaning_shift_gate",
+                    inner_thought=inner_thought,
+                    pressure_report=pressure_report,
+                    speech_impulse=speech_impulse,
+                    personality_lens=personality_lens,
+                    safety_flags=safety_flags,
+                ),
+            )
+        # nếu là autonomous channel và _should_stay_silent trả về True thì sẽ bị giữ im lặng với lý do
+        #  là quiet_guard và sẽ xây dựng một pressure_report với reason là quiet_guard và threshold dựa trên channel_name
+        #  và self_state, và concrete_signals sẽ được truyền vào để làm bằng chứng cho pressure_report, sau đó sẽ trả về một 
+        # AgentSpeechCore với impulse là silent, utterance_type là no_speech, grounding là none, speech_source là none, reason 
+        # giải thích lý do giữ im lặng, should_speak là False, safety_flags có repeat_guard nếu repeat_count >= 2 hoặc
+        #  repeated_topic_streak >= 2, delivery là silence, inner_thought được đánh giá ở trên, speech_impulse được xây dựng dựa trên
+        #  channel_name, meaning_layer, winner của pressure_report và should_speak là False, và motivation_pressure là pressure_report
         if channel_name == "autonomous" and self._should_stay_silent(
             ti_mode=str(getattr(ti_report, "mode", "") or ""),
             repeat_count=repeat_count,
@@ -96,6 +163,13 @@ class SpeechCoreEngine:
                 threshold=self._threshold_for_channel(channel_name, self_state=self_state),
                 concrete_signals=concrete_signals,
             )
+            speech_impulse = self._build_speech_impulse(
+                channel=channel_name,
+                meaning_layer=meaning_layer,
+                winner=pressure_report.winner,
+                should_speak=False,
+            )
+            safety_flags = ("repeat_guard",) if repeat_count >= 2 or repeated_topic_streak >= 2 else ()
             return AgentSpeechCore(
                 perception=tuple(concrete_signals or ()),
                 mood=self._resolve_mood(snapshot=snapshot, appraisal=appraisal, fe_plan=fe_plan),
@@ -103,15 +177,26 @@ class SpeechCoreEngine:
                 utterance_type="no_speech",
                 grounding="none",
                 speech_source="none",
+                speech_risk_level="texture",
                 reason="SpeechCore held silence because the autonomous context is repeating or quiet.",
                 should_speak=False,
-                safety_flags=("repeat_guard",) if repeat_count >= 2 or repeated_topic_streak >= 2 else (),
+                safety_flags=safety_flags,
                 delivery="silence",
-                inner_thought=inner_thought,
-                motivation_pressure=pressure_report,
+                inner_thought=inner_thought, # inner_thought vẫn được đánh giá và truyền vào AgentSpeechCore ngay cả khi giữ im lặng, vì inner_thought có thể chứa thông tin quan trọng cho các phần khác của hệ thống hoặc để giải thích lý do giữ im lặng
+                speech_impulse=speech_impulse,
+                motivation_pressure=pressure_report, # trả về pressure_report để giải thích lý do giữ im lặng
+                silence_state=self._build_silence_state(
+                    reason="quiet_guard",
+                    inner_thought=inner_thought,
+                    pressure_report=pressure_report,
+                    speech_impulse=speech_impulse,
+                    personality_lens=personality_lens,
+                    safety_flags=safety_flags,
+                ),
             )
 
-        pressure_report = self._evaluate_motivational_pressure(
+        # đánh giá áp lực động lực bằng cách gọi _evaluate_motivational_pressure với các tham số phù hợp, sau đó xác định winner, speech_source, utterance_type, should_speak dựa trên winner, và nếu channel_name là force_speak thì sẽ ép should_speak là True và điều chỉnh speech_source và utterance_type nếu cần thiết
+        pressure_report = self._evaluate_motivational_pressure( 
             channel=channel_name,
             snapshot=snapshot,
             vision_signals=vision_signals,
@@ -125,6 +210,9 @@ class SpeechCoreEngine:
             emotional_signal=emotional_signal,
             thought_surface=surface,
             self_state=self_state,
+            meaning_layer=meaning_layer,
+            personality_lens=personality_lens,
+            safe_small_talk_allowed=safe_small_talk_allowed,
         )
         winner = pressure_report.winner
         speech_source = winner.speech_source or "none"
@@ -135,7 +223,23 @@ class SpeechCoreEngine:
             if speech_source == "none":
                 speech_source = "random"
             if utterance_type == "no_speech":
-                utterance_type = "random_chatter"
+                utterance_type = "micro_presence"
+                winner = MotivationalUrge(
+                    label="force_speak_fallback_presence",
+                    score=1.0,
+                    utterance_type=utterance_type,
+                    speech_source=speech_source,
+                    risk_level="micro_presence",
+                    grounding="situated_residue",
+                    reason="Force speak fell back to a tiny situated presence line.",
+                    evidence=("force_speak requested",),
+                    safety_flags=("force_speak_required", "situated_residue", "micro_presence"),
+                )
+        speech_risk_level = self._risk_level_for_winner(
+            winner=winner,
+            speech_source=speech_source,
+            utterance_type=utterance_type,
+        )
 
         perception = self._resolve_perception(
             speech_source=speech_source,
@@ -151,13 +255,21 @@ class SpeechCoreEngine:
             emotional_signal=emotional_signal,
             inner_thought=inner_thought,
         )
+        safety_flags = tuple(dict.fromkeys((*safety_flags, *tuple(winner.safety_flags or ()))))
+        speech_impulse = self._build_speech_impulse(
+            channel=channel_name,
+            meaning_layer=meaning_layer,
+            winner=winner,
+            should_speak=should_speak,
+        )
         return AgentSpeechCore(
             perception=perception,
             mood=self._resolve_mood(snapshot=snapshot, appraisal=appraisal, fe_plan=fe_plan),
             impulse="must_speak" if channel_name == "force_speak" else ("speak" if should_speak else "silent"),
             utterance_type=utterance_type if should_speak else "no_speech",
-            grounding=self._grounding_for_source(speech_source),
+            grounding=(winner.grounding or self._grounding_for_source(speech_source)),
             speech_source=speech_source if should_speak else "none",
+            speech_risk_level=speech_risk_level if should_speak else "texture",
             reason=self._build_reason(
                 channel=channel_name,
                 speech_source=speech_source,
@@ -169,7 +281,20 @@ class SpeechCoreEngine:
             safety_flags=safety_flags,
             delivery="speak" if should_speak else "silence",
             inner_thought=inner_thought,
+            speech_impulse=speech_impulse,
             motivation_pressure=pressure_report,
+            silence_state=(
+                SilenceState()
+                if should_speak
+                else self._build_silence_state(
+                    reason=pressure_report.suppressed_by or "below_threshold",
+                    inner_thought=inner_thought,
+                    pressure_report=pressure_report,
+                    speech_impulse=speech_impulse,
+                    personality_lens=personality_lens,
+                    safety_flags=safety_flags,
+                )
+            ),
         )
 
     def _evaluate_motivational_pressure(
@@ -188,6 +313,9 @@ class SpeechCoreEngine:
         emotional_signal: bool,
         thought_surface,
         self_state: SelfState | None,
+        meaning_layer,
+        personality_lens,
+        safe_small_talk_allowed: bool,
     ) -> MotivationalPressureReport:
         threshold = self._threshold_for_channel(channel, self_state=self_state)
         candidates = self._build_urge_candidates(
@@ -204,8 +332,15 @@ class SpeechCoreEngine:
             emotional_signal=emotional_signal,
             thought_surface=thought_surface,
             self_state=self_state,
+            meaning_layer=meaning_layer,
+            safe_small_talk_allowed=safe_small_talk_allowed,
         )
         candidates = self._apply_self_state_to_candidates(candidates, channel=channel, self_state=self_state)
+        candidates = self._apply_personality_restraint_to_candidates(
+            candidates,
+            channel=channel,
+            personality_lens=personality_lens,
+        )
         ranked = tuple(sorted(candidates, key=lambda item: item.score, reverse=True))
         winner = next((item for item in ranked if not item.blocked), MotivationalUrge(label="silence_restraint", blocked=True))
         suppressed_by = ""
@@ -238,8 +373,16 @@ class SpeechCoreEngine:
         emotional_signal: bool,
         thought_surface,
         self_state: SelfState | None,
+        meaning_layer,
+        safe_small_talk_allowed: bool,
     ) -> tuple[MotivationalUrge, ...]:
         state = internal_state or PersistentInternalState()
+        desire = getattr(state, "desire", None)
+        desire_want = self._float(getattr(desire, "want", 0.0))
+        desire_cling = self._float(getattr(desire, "cling", 0.0))
+        desire_avoid = self._float(getattr(desire, "avoid", 0.0))
+        desire_anticipation = self._float(getattr(desire, "anticipation", 0.0))
+        desire_residue = self._float(getattr(desire, "unresolved_residue", 0.0))
         threat = self._float(getattr(appraisal, "threat", 0.0) if appraisal is not None else 0.0)
         protectiveness = self._float(getattr(appraisal, "protectiveness", 0.0) if appraisal is not None else 0.0)
         tenderness = self._float(getattr(appraisal, "tenderness", 0.0) if appraisal is not None else 0.0)
@@ -257,32 +400,91 @@ class SpeechCoreEngine:
         surface_novelty = self._float(getattr(thought_surface, "novelty", 0.0) if thought_surface is not None else 0.0)
         surface_affordance = str(getattr(thought_surface, "affordance", "") or "")
         surface_momentum = self._float(getattr(thought_surface, "momentum_score", 0.0) if thought_surface is not None else 0.0)
+        meaning_ready = (
+            channel == "autonomous"
+            and bool(str(getattr(meaning_layer, "meaning", "") or ""))
+            and bool(getattr(meaning_layer, "meaning_shift", False))
+        )
 
         candidates: list[MotivationalUrge] = []
         candidates.append(
             MotivationalUrge(
                 label="screen_vision",
-                score=1.18 if screen_comment_allowed and vision_signals else 0.0,
+                score=0.0 if meaning_ready else (1.18 if screen_comment_allowed and vision_signals else 0.0),
                 utterance_type="vision_comment",
                 speech_source="vision",
+                risk_level="hard_claim",
                 grounding="screen_vision",
                 reason="Visual evidence is concrete enough to speak from.",
                 evidence=tuple(vision_signals[:2]),
                 safety_flags=("grounded_screen_comment",),
-                blocked=not (screen_comment_allowed and vision_signals),
+                blocked=meaning_ready or not (screen_comment_allowed and vision_signals),
             )
         )
         candidates.append(
             MotivationalUrge(
                 label="screen_telemetry",
-                score=1.10 if screen_comment_allowed and telemetry_signals else 0.0,
+                score=0.0 if meaning_ready else (1.10 if screen_comment_allowed and telemetry_signals else 0.0),
                 utterance_type="telemetry_comment",
                 speech_source="telemetry",
+                risk_level="hard_claim",
                 grounding="screen_telemetry",
                 reason="Runtime telemetry evidence is concrete enough to speak from.",
                 evidence=tuple(telemetry_signals[:2]),
                 safety_flags=("grounded_screen_comment",),
-                blocked=not (screen_comment_allowed and telemetry_signals),
+                blocked=meaning_ready or not (screen_comment_allowed and telemetry_signals),
+            )
+        )
+
+        meaning = str(getattr(meaning_layer, "meaning", "") or "")
+        meaning_shift = bool(getattr(meaning_layer, "meaning_shift", False))
+        meaning_signal = str(getattr(meaning_layer, "meaning_signal", "") or "")
+        meaning_reaction = str(getattr(meaning_layer, "reaction", "") or "")
+        meaning_score = self._meaning_reaction_score(
+            channel=channel,
+            meaning_layer=meaning_layer,
+            concrete_signals=concrete_signals,
+        )
+        candidates.append(
+            MotivationalUrge(
+                label="meaning_reaction",
+                score=meaning_score,
+                utterance_type=(
+                    self._utterance_for_reaction(meaning_reaction, channel=channel, meaning=meaning)
+                    if meaning_shift
+                    else "micro_presence"
+                ),
+                speech_source="meaning",
+                risk_level="soft_read",
+                grounding="meaning_layer",
+                reason="MeaningLayer found a semantic shift; SpeechCore should choose a reaction, not an observation.",
+                evidence=tuple(str(item) for item in (getattr(meaning_layer, "evidence", ()) or ()))[:3],
+                safety_flags=("meaning_layer_reaction", "meaning_not_speech", "react_to_residue_not_label"),
+                blocked=channel != "autonomous" or not meaning_shift or not meaning or meaning_score <= 0.0,
+            )
+        )
+
+        soft_meaning_score = self._soft_meaning_presence_score(
+            channel=channel,
+            meaning_layer=meaning_layer,
+            snapshot=snapshot,
+            internal_state=state,
+        )
+        candidates.append(
+            MotivationalUrge(
+                label="soft_meaning_presence",
+                score=soft_meaning_score,
+                utterance_type="micro_presence",
+                speech_source="freeform",
+                risk_level="micro_presence",
+                grounding="subjective_vibe",
+                reason="MeaningLayer only has weak/ambient/vibe signal, so speak as a soft impression rather than a hard observation.",
+                evidence=tuple(str(item) for item in (getattr(meaning_layer, "evidence", ()) or ()))[:3],
+                safety_flags=("soft_impression", "no_hard_fact_claim", meaning_signal or "weak_meaning"),
+                blocked=channel != "autonomous"
+                or meaning_shift
+                or soft_meaning_score <= 0.0
+                or meaning_signal not in {"weak_meaning", "ambient_meaning", "vibe_signal"},
             )
         )
 
@@ -294,14 +496,15 @@ class SpeechCoreEngine:
         )
         candidates.append(
             MotivationalUrge(
-                label="user_requested_presence",
+                label="micro_presence",
                 score=user_requested_score if channel == "force_speak" else 0.0,
-                utterance_type=self._inner_utterance(inner_intent, fallback="inner_whim"),
+                utterance_type=self._inner_utterance(inner_intent, fallback="micro_presence"),
                 speech_source="freeform",
-                grounding="ungrounded",
-                reason="User explicitly requested presence.",
+                risk_level="micro_presence",
+                grounding="situated_residue",
+                reason="User explicitly requested a small situated residue, not a presence declaration.",
                 evidence=(self._inner_anchor(inner_thought) or "force_speak requested",),
-                safety_flags=("force_speak_required", "no_screen_claim", "anti_mindreading"),
+                safety_flags=("force_speak_required", "situated_residue", "micro_presence", "anti_presence_declaration"),
                 blocked=channel != "force_speak",
             )
         )
@@ -313,6 +516,7 @@ class SpeechCoreEngine:
                 score=protective_score,
                 utterance_type="soft_boundary",
                 speech_source="freeform",
+                risk_level="soft_read",
                 grounding="ungrounded",
                 reason="Protective pressure is high enough to prefer a guarded boundary.",
                 evidence=(f"protectiveness={protectiveness:.2f}; threat={threat:.2f}",),
@@ -323,15 +527,16 @@ class SpeechCoreEngine:
 
         tender_score = max(tenderness, intimacy * 0.90, self._pressure(state, "tender_pressure"))
         if emotional_signal:
-            tender_score = max(tender_score, 1.04)
+            tender_score = max(tender_score, 0.96)
         candidates.append(
             MotivationalUrge(
-                label="tender_checkin",
+                label="guarded_reply",
                 score=tender_score,
-                utterance_type="relational_checkin",
+                utterance_type="guarded_reply",
                 speech_source="freeform",
+                risk_level="soft_read",
                 grounding="ungrounded",
-                reason="Explicit emotional signal or tender pressure asks for a check-in.",
+                reason="Explicit emotional signal asks for a guarded reply, not automatic reassurance.",
                 evidence=(self._inner_anchor(inner_thought) or "emotional_signal",),
                 safety_flags=("no_screen_claim", "anti_mindreading", "explicit_emotional_signal") if emotional_signal else ("no_screen_claim", "anti_mindreading", "relational_checkin_blocked"),
                 blocked=not emotional_signal,
@@ -343,14 +548,15 @@ class SpeechCoreEngine:
             surface_momentum,
             0.68 if inner_surface and surface_mode else 0.0,
         )
-        if surface_novelty < 0.35:
-            thought_surface_score *= 0.72
+        if surface_novelty < 0.20:
+            thought_surface_score *= 0.88
         candidates.append(
             MotivationalUrge(
                 label="thought_stream_surface",
                 score=min(1.0, thought_surface_score),
                 utterance_type=self._inner_utterance(inner_intent, fallback="inner_whim"),
                 speech_source="freeform",
+                risk_level="texture",
                 grounding="ungrounded",
                 reason="A thought stream surface has enough cognitive tension to become freeform speech.",
                 evidence=(inner_seed or self._inner_anchor(inner_thought) or surface_mode,),
@@ -376,27 +582,36 @@ class SpeechCoreEngine:
             self._pressure(state, "social_pressure"),
             self._float(getattr(state, "silence_pressure", 0.0)),
             self._float(getattr(state, "boredom", 0.0)) * 0.90,
+            desire_cling * 0.88,
+            desire_residue * 0.62,
             0.62 if inner_surface else 0.0,
         )
-        if idle_seconds >= 420:
+        if not inner_surface and idle_seconds >= 20:
             social_score += 0.10
+        if not inner_surface and idle_seconds >= 40:
+            social_score += 0.08
+        if not inner_surface and idle_seconds >= 90:
+            social_score += 0.12
         candidates.append(
             MotivationalUrge(
                 label="social_presence",
                 score=min(1.0, social_score),
                 utterance_type=self._inner_utterance(inner_intent, fallback="inner_whim"),
                 speech_source="freeform",
+                risk_level="micro_presence" if inner_intent == "micro_presence" else "texture",
                 grounding="ungrounded",
                 reason="Social presence pressure wants a small ungrounded line.",
                 evidence=(self._inner_anchor(inner_thought) or f"idle={int(idle_seconds)}s",),
                 safety_flags=("no_screen_claim", "anti_mindreading"),
-                blocked=bool(concrete_signals) or (not inner_surface and social_score < 0.54),
+                blocked=bool(concrete_signals) or (not inner_surface and social_score < 0.38),
             )
         )
 
         curiosity_score = max(
             self._pressure(state, "curiosity_pressure"),
             self._float(getattr(state, "curiosity", 0.0)) * 0.72,
+            desire_want * 0.64,
+            desire_anticipation * 0.52,
             0.64 if inner_intent == "curious_question" else 0.0,
         )
         candidates.append(
@@ -405,26 +620,28 @@ class SpeechCoreEngine:
                 score=curiosity_score,
                 utterance_type="curious_question",
                 speech_source="freeform",
+                risk_level="texture",
                 grounding="ungrounded",
                 reason="Curiosity pressure wants a small question.",
                 evidence=(inner_seed or self._inner_anchor(inner_thought) or "curiosity_pressure",),
                 safety_flags=("no_screen_claim", "anti_mindreading"),
-                blocked=bool(concrete_signals) or curiosity_score < 0.50,
+                blocked=bool(concrete_signals) or curiosity_score < 0.44,
             )
         )
 
-        playful_score = max(self._pressure(state, "playful_pressure"), amusement)
+        playful_score = max(self._pressure(state, "playful_pressure"), amusement, desire_want * 0.36 - desire_avoid * 0.10)
         candidates.append(
             MotivationalUrge(
                 label="playful_aside",
                 score=playful_score,
                 utterance_type="light_muse",
                 speech_source="freeform",
+                risk_level="texture",
                 grounding="ungrounded",
                 reason="Playful pressure is present but stays low priority.",
                 evidence=(f"amusement={amusement:.2f}",),
                 safety_flags=("no_screen_claim", "anti_mindreading"),
-                blocked=bool(concrete_signals) or playful_score < 0.56,
+                blocked=bool(concrete_signals) or playful_score < 0.50,
             )
         )
 
@@ -435,11 +652,40 @@ class SpeechCoreEngine:
                 score=watchful_score,
                 utterance_type="soft_boundary",
                 speech_source="freeform",
+                risk_level="soft_read",
                 grounding="ungrounded",
                 reason="Watchful pressure wants restraint with a boundary.",
                 evidence=(f"watchful={watchful_score:.2f}",),
                 safety_flags=("no_screen_claim", "anti_mindreading"),
                 blocked=bool(concrete_signals) or watchful_score < 0.58,
+            )
+        )
+
+        current_window = str(
+            getattr(snapshot, "active_window", "")
+            or getattr(snapshot, "active_app", "")
+            or getattr(snapshot, "focus_summary", "")
+            or ""
+        ).strip()
+        small_talk_anchor = current_window[:80] if current_window else f"idle={int(idle_seconds)}s"
+        candidates.append(
+            MotivationalUrge(
+                label="safe_small_talk_budget",
+                score=0.62 if safe_small_talk_allowed else 0.0,
+                utterance_type="micro_presence",
+                speech_source="freeform",
+                risk_level="micro_presence",
+                grounding="small_talk_budget",
+                reason="Safe small-talk budget permits one tiny low-claim line.",
+                evidence=(small_talk_anchor,),
+                safety_flags=(
+                    "safe_small_talk_budget",
+                    "no_screen_claim",
+                    "anti_mindreading",
+                    "no_hard_fact_claim",
+                    "under_12_words",
+                ),
+                blocked=channel != "autonomous" or not safe_small_talk_allowed or bool(concrete_signals),
             )
         )
 
@@ -472,14 +718,14 @@ class SpeechCoreEngine:
             score = candidate.score
             evidence = tuple(candidate.evidence or ())
             if channel == "autonomous":
-                if label == "overloaded" and candidate.label != "silence_restraint":
-                    if candidate.speech_source in {"freeform", "none"}:
+                if label == "overloaded" and candidate.label != "silence_restraint": 
+                    if candidate.speech_source in {"freeform", "meaning", "none"}:
                         score *= max(0.58, 1.0 - overload * 0.34)
                     elif candidate.speech_source in {"vision", "telemetry"}:
                         score *= max(0.82, 1.0 - overload * 0.12)
                 if label == "engaged" and candidate.label in {"social_presence", "curiosity", "thought_stream_surface", "subconscious_seed"}:
                     score += engagement * 0.12
-            elif channel == "force_speak" and label == "overloaded" and candidate.speech_source in {"freeform", "random"}:
+            elif channel == "force_speak" and label == "overloaded" and candidate.speech_source in {"freeform", "meaning", "random"}:
                 score *= max(0.82, 1.0 - overload * 0.12)
 
             if candidate.label == "silence_restraint" and label == "overloaded":
@@ -493,10 +739,62 @@ class SpeechCoreEngine:
                     score=self._clamp01(score),
                     utterance_type=candidate.utterance_type,
                     speech_source=candidate.speech_source,
+                    risk_level=candidate.risk_level,
                     grounding=candidate.grounding,
                     reason=candidate.reason,
                     evidence=evidence,
                     safety_flags=candidate.safety_flags,
+                    blocked=candidate.blocked,
+                )
+            )
+        return tuple(adjusted)
+
+    def _apply_personality_restraint_to_candidates(
+        self,
+        candidates: tuple[MotivationalUrge, ...],
+        *,
+        channel: str,
+        personality_lens,
+    ) -> tuple[MotivationalUrge, ...]:
+        if personality_lens is None or channel != "autonomous":
+            return candidates
+
+        suppression = self._clamp01(getattr(personality_lens, "suppression_pressure", 0.0))
+        allowed = self._clamp01(getattr(personality_lens, "allowed_expression", 1.0))
+        want = self._clamp01(getattr(personality_lens, "want_to_say", 0.0))
+        mode = str(getattr(personality_lens, "restraint_mode", "") or "")
+        if suppression <= 0.0 and not mode:
+            return candidates
+
+        expression_factor = max(0.34, min(1.0, 0.58 + allowed * 0.80 - suppression * 0.28))
+        adjusted: list[MotivationalUrge] = []
+        for candidate in candidates:
+            score = candidate.score
+            evidence = tuple(candidate.evidence or ())
+            flags = tuple(candidate.safety_flags or ())
+            if candidate.label == "silence_restraint":
+                score += suppression * 0.18
+                if mode:
+                    evidence = (*evidence, f"restraint_mode={mode}")
+            elif candidate.label == "meaning_reaction":
+                score += allowed * 0.08
+                evidence = (*evidence, f"expression_gate={want:.2f}->{allowed:.2f}")
+                flags = (*flags, "personality_restraint")
+            elif candidate.speech_source == "freeform":
+                score *= expression_factor
+                evidence = (*evidence, f"expression_gate={want:.2f}->{allowed:.2f}")
+                flags = (*flags, "personality_restraint")
+            adjusted.append(
+                MotivationalUrge(
+                    label=candidate.label,
+                    score=self._clamp01(score),
+                    utterance_type=candidate.utterance_type,
+                    speech_source=candidate.speech_source,
+                    risk_level=candidate.risk_level,
+                    grounding=candidate.grounding,
+                    reason=candidate.reason,
+                    evidence=evidence,
+                    safety_flags=tuple(dict.fromkeys(flags)),
                     blocked=candidate.blocked,
                 )
             )
@@ -534,6 +832,7 @@ class SpeechCoreEngine:
             score=self._clamp01(score),
             utterance_type="no_speech",
             speech_source="none",
+            risk_level="texture",
             grounding="none",
             reason=reason,
             evidence=evidence,
@@ -541,11 +840,229 @@ class SpeechCoreEngine:
             blocked=blocked,
         )
 
+    def _build_silence_state(
+        self,
+        *,
+        reason: str,
+        inner_thought,
+        pressure_report: MotivationalPressureReport,
+        speech_impulse: SpeechImpulse,
+        personality_lens,
+        safety_flags: tuple[str, ...] = (),
+    ) -> SilenceState:
+        candidates = tuple(getattr(pressure_report, "candidates", ()) or ())
+        spoken_candidate = next(
+            (
+                item
+                for item in candidates
+                if not getattr(item, "blocked", False)
+                and getattr(item, "speech_source", "") != "none"
+                and getattr(item, "utterance_type", "") != "no_speech"
+            ),
+            None,
+        )
+        suppressed_thought = (
+            str(getattr(speech_impulse, "surface_intent", "") or "")
+            or str(getattr(inner_thought, "topic_seed", "") or "")
+            or str(getattr(inner_thought, "motive", "") or "")
+        )
+        almost_spoke = ""
+        if spoken_candidate is not None:
+            almost_spoke = str(getattr(spoken_candidate, "utterance_type", "") or getattr(spoken_candidate, "label", "") or "")
+        elif bool(getattr(inner_thought, "should_surface", False)):
+            almost_spoke = str(getattr(inner_thought, "intent", "") or "inner_thought")
+
+        unfinished_impulse = (
+            str(getattr(speech_impulse, "reaction_impulse", "") or "")
+            or str(getattr(speech_impulse, "surface_intent", "") or "")
+            or str(getattr(inner_thought, "intent", "") or "")
+        )
+        biases = tuple(str(item) for item in (getattr(speech_impulse, "attention_bias", ()) or ()))
+        lens_biases = tuple(str(item) for item in (getattr(personality_lens, "attention_bias", ()) or ())) if personality_lens is not None else ()
+        hesitation_terms = {"hesitation", "unfinished_intention", "cognitive_stall"}
+        internal_hesitation = next((item for item in (*biases, *lens_biases) if item in hesitation_terms), "")
+        if not internal_hesitation and (
+            "hesitat" in str(getattr(pressure_report, "suppressed_by", "") or "")
+            or "repeat_guard" in set(str(item) for item in safety_flags)
+        ):
+            internal_hesitation = "internal_hesitation"
+
+        evidence = tuple(
+            dict.fromkeys(
+                item
+                for item in (
+                    reason,
+                    str(getattr(pressure_report, "suppressed_by", "") or ""),
+                    str(getattr(inner_thought, "evidence_anchor", "") or ""),
+                    *(str(item) for item in (getattr(getattr(pressure_report, "winner", None), "evidence", ()) or ())),
+                    *safety_flags,
+                )
+                if str(item or "").strip()
+            )
+        )
+        return SilenceState(
+            mode="intentional_withholding",
+            intentional_withholding=True,
+            suppressed_thought=suppressed_thought,
+            almost_spoke=almost_spoke,
+            unfinished_impulse=unfinished_impulse,
+            internal_hesitation=internal_hesitation,
+            reason=reason or "speech_withheld",
+            evidence=evidence,
+            generation_failure=False,
+        )
+
+    def _meaning_reaction_score(
+        self,
+        *,
+        channel: str,
+        meaning_layer,
+        concrete_signals: tuple[str, ...],
+    ) -> float:
+        meaning = str(getattr(meaning_layer, "meaning", "") or "")
+        if not meaning:
+            return 0.0
+        confidence = self._clamp01(getattr(meaning_layer, "confidence", 0.0))
+        if channel != "autonomous":
+            return 0.0
+        meaning_shift = bool(getattr(meaning_layer, "meaning_shift", False))
+        signal = str(getattr(meaning_layer, "meaning_signal", "") or "")
+        score = max(0.46, confidence * 0.68)
+        if meaning_shift:
+            score += 0.12
+        elif signal in {"weak_meaning", "ambient_meaning", "vibe_signal"}:
+            score += 0.08
+        if concrete_signals:
+            score += 0.12
+        if meaning in {"cognitive_stall", "escape_from_friction", "scattered_attention", "friction_point"}:
+            score += 0.05
+        return self._clamp01(score)
+
+    # cho phép nói những tín hiệu mềm như weak_meaning, ambient_meaning, vibe_signal mà không cần meaning_shift nếu đã im lặng đủ lâu hoặc có đủ áp lực im lặng hoặc chán nản, để tránh việc giữ im lặng quá mức khi không có tín hiệu mạnh nào có thể kích hoạt speech
+    def _allows_soft_non_shift_speech(self, *, meaning_layer, snapshot, internal_state: PersistentInternalState | None) -> bool:
+        signal = str(getattr(meaning_layer, "meaning_signal", "") or "")
+        if signal in {"weak_meaning", "ambient_meaning", "vibe_signal"}:
+            return True
+        idle_seconds = max(0.0, self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0))
+        silence_pressure = self._float(getattr(internal_state, "silence_pressure", 0.0) if internal_state is not None else 0.0)
+        boredom = self._float(getattr(internal_state, "boredom", 0.0) if internal_state is not None else 0.0)
+        return idle_seconds >= 20 or silence_pressure >= 0.35 or boredom >= 0.32
+
+    def _meaning_shift_required_for_layer(self, meaning_layer) -> bool:
+        signal = str(getattr(meaning_layer, "meaning_signal", "") or "")
+        if signal in {"", "none", "weak_meaning", "ambient_meaning", "vibe_signal"}:
+            return False
+        reaction = str(getattr(meaning_layer, "reaction", "") or "")
+        intent = str(getattr(meaning_layer, "surface_intent", "") or "").lower()
+        hard_shapes = (
+            "observation",
+            "advice",
+            "advise",
+            "goal",
+            "interpret",
+            "realign",
+            "recommend",
+        )
+        soft_reactions = {"quiet_tease", "soft_tease", "dry_marker", "relationship_ack"}
+        if reaction in soft_reactions:
+            return False
+        return any(shape in intent for shape in hard_shapes)
+
+    def _risk_level_for_winner(self, *, winner: MotivationalUrge, speech_source: str, utterance_type: str) -> str:
+        risk = str(getattr(winner, "risk_level", "") or "").strip()
+        if risk in {"hard_claim", "soft_read", "micro_presence", "texture"}:
+            return risk
+        if speech_source in {"vision", "telemetry"}:
+            return "hard_claim"
+        if speech_source == "meaning":
+            return "soft_read"
+        if utterance_type == "micro_presence":
+            return "micro_presence"
+        if utterance_type in {"relational_checkin", "guarded_reply", "soft_boundary"}:
+            return "soft_read"
+        return "texture"
+
+    # đánh giá điểm số cho việc nói những tín hiệu mềm từ meaning_layer dựa trên confidence, thời gian im lặng, áp lực im lặng và mức độ chán nản, để quyết định xem có nên phản ứng với những tín hiệu này hay không
+    def _soft_meaning_presence_score(
+        self,
+        *,
+        channel: str,
+        meaning_layer,
+        snapshot,
+        internal_state: PersistentInternalState | None,
+    ) -> float:
+        if channel != "autonomous" or meaning_layer is None:
+            return 0.0
+        if bool(getattr(meaning_layer, "meaning_shift", False)):
+            return 0.0
+        signal = str(getattr(meaning_layer, "meaning_signal", "") or "")
+        if signal not in {"weak_meaning", "ambient_meaning", "vibe_signal"}:
+            return 0.0
+        idle_seconds = max(0.0, self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0))
+        silence_pressure = self._float(getattr(internal_state, "silence_pressure", 0.0) if internal_state is not None else 0.0)
+        boredom = self._float(getattr(internal_state, "boredom", 0.0) if internal_state is not None else 0.0)
+        confidence = self._clamp01(getattr(meaning_layer, "confidence", 0.0))
+        score = max(0.50, confidence * 0.64)
+        if idle_seconds >= 20:
+            score += 0.10
+        if idle_seconds >= 40:
+            score += 0.10
+        if idle_seconds >= 60:
+            score += 0.08
+        if silence_pressure >= 0.35 or boredom >= 0.32:
+            score += 0.18
+        return self._clamp01(score)
+
+    def _utterance_for_reaction(self, reaction: str, *, channel: str, meaning: str) -> str:
+        if channel == "force_speak" or meaning == "requested_presence":
+            return "micro_presence"
+        if reaction in {"quiet_tease", "soft_tease", "dry_marker"}:
+            return "inner_whim"
+        if reaction == "focused_concern":
+            return "soft_boundary"
+        if reaction == "relationship_ack":
+            return "indirect_presence"
+        return "inner_whim"
+
+    def _build_speech_impulse(
+        self,
+        *,
+        channel: str,
+        meaning_layer,
+        winner: MotivationalUrge,
+        should_speak: bool,
+    ) -> SpeechImpulse:
+        meaning = str(getattr(meaning_layer, "meaning", "") or "")
+        if meaning:
+            reaction = str(getattr(meaning_layer, "reaction", "") or "")
+            return SpeechImpulse(
+                meaning=meaning,
+                reaction=reaction or ("relationship_ack" if channel == "force_speak" else "quiet_reaction"),
+                attitude=str(getattr(meaning_layer, "attitude", "") or ""),
+                surface_intent=str(getattr(meaning_layer, "surface_intent", "") or ""),
+                mood_residue=str(getattr(meaning_layer, "mood_residue", "") or ""),
+                emotional_pressure=self._clamp01(getattr(meaning_layer, "emotional_pressure", 0.0)),
+                attention_bias=tuple(str(item) for item in (getattr(meaning_layer, "attention_bias", ()) or ()))[:4],
+                reaction_impulse=str(getattr(meaning_layer, "reaction_impulse", "") or ""),
+                semantic_family=str(getattr(meaning_layer, "semantic_family", "") or meaning),
+                source_fact=str(getattr(meaning_layer, "source_fact", "") or ""),
+                evidence=tuple(str(item) for item in (getattr(meaning_layer, "evidence", ()) or ()))[:4],
+            )
+        if not should_speak:
+            return SpeechImpulse(reaction="no_reaction", surface_intent="stay silent")
+        return SpeechImpulse(
+            meaning=str(getattr(winner, "label", "") or ""),
+            reaction=str(getattr(winner, "utterance_type", "") or "brief_reaction"),
+            attitude="light",
+            surface_intent=str(getattr(winner, "reason", "") or "speak briefly"),
+            evidence=tuple(str(item) for item in (getattr(winner, "evidence", ()) or ()))[:4],
+        )
+
     def _threshold_for_channel(self, channel: str, *, self_state: SelfState | None = None) -> float:
         if channel == "autonomous":
             overload = self._clamp01(getattr(self_state, "overload", 0.0) if self_state is not None else 0.0)
             engagement = self._clamp01(getattr(self_state, "engagement", 0.0) if self_state is not None else 0.0)
-            return self._clamp01(0.55 + overload * 0.16 - engagement * 0.08)
+            return self._clamp01(0.40 + overload * 0.12 - engagement * 0.12)
         if channel == "force_speak":
             return 0.0
         return 0.45
@@ -555,14 +1072,14 @@ class SpeechCoreEngine:
         mode = str(getattr(ti_report, "mode", "") or "")
         score = (
             0.20
-            + self._pressure(state, "restraint_pressure") * 0.54
+            + self._pressure(state, "restraint_pressure") * 0.44
             + self._float(getattr(state, "fatigue", 0.0)) * 0.16
-            - self._float(getattr(state, "silence_pressure", 0.0)) * 0.18
+            - self._float(getattr(state, "silence_pressure", 0.0)) * 0.24
         )
         if mode in self.QUIET_MODES or mode == "social_watch":
-            score += 0.18
+            score += 0.12
         if mode == "focus_guard":
-            score += 0.16
+            score += 0.12
         if self_state is not None:
             score += self._clamp01(getattr(self_state, "overload", 0.0)) * 0.18
             score -= self._clamp01(getattr(self_state, "engagement", 0.0)) * 0.06
@@ -572,7 +1089,7 @@ class SpeechCoreEngine:
         return self._float(getattr(state, name, 0.0))
 
     def _inner_utterance(self, inner_intent: str, *, fallback: str) -> str:
-        if inner_intent in {"random_chatter", "inner_whim", "curious_question"}:
+        if inner_intent in {"random_chatter", "inner_whim", "curious_question", "micro_presence"}:
             return inner_intent
         return fallback
 
@@ -600,11 +1117,11 @@ class SpeechCoreEngine:
                 return True
         if silence_pressure >= 0.58 and repeat_count <= 1:
             return False
-        if repeat_count >= 2 and ti_mode in self.QUIET_MODES:
+        if repeat_count >= 3 and ti_mode in self.QUIET_MODES:
             return True
-        if repeat_count >= 3:
+        if repeat_count >= 4:
             return True
-        if repeated_topic_tag and repeated_topic_streak >= 2 and ti_mode in self.QUIET_MODES:
+        if repeated_topic_tag and repeated_topic_streak >= 3 and ti_mode in self.QUIET_MODES:
             return True
         return False
 
@@ -649,7 +1166,7 @@ class SpeechCoreEngine:
         if speech_source == "telemetry":
             return "telemetry_comment"
         if emotional_signal and speech_source in {"freeform", "random"}:
-            return "relational_checkin"
+            return "guarded_reply"
 
         inner_intent = str(getattr(inner_thought, "intent", "") or "")
         if inner_intent in {"random_chatter", "inner_whim", "curious_question"}:
@@ -673,6 +1190,11 @@ class SpeechCoreEngine:
             return tuple(vision_signals[:2])
         if speech_source == "telemetry":
             return tuple(telemetry_signals[:2])
+        if speech_source == "meaning":
+            if concrete_signals:
+                return tuple(concrete_signals[:2])
+            if getattr(inner_thought, "evidence_anchor", ""):
+                return (str(inner_thought.evidence_anchor),)
         if speech_source in {"freeform", "random"} and getattr(inner_thought, "evidence_anchor", ""):
             return (str(inner_thought.evidence_anchor),)
         return tuple(concrete_signals[:2])
@@ -692,11 +1214,18 @@ class SpeechCoreEngine:
         if speech_source in {"freeform", "random"}:
             flags.append("no_screen_claim")
             flags.append("anti_mindreading")
+            if utterance_type == "micro_presence":
+                flags.append("situated_residue")
+                flags.append("anti_presence_declaration")
         if speech_source in {"vision", "telemetry"}:
             flags.append("grounded_screen_comment")
+        if speech_source == "meaning":
+            flags.append("meaning_layer_reaction")
+            flags.append("meaning_not_speech")
+            flags.append("react_to_residue_not_label")
         if emotional_signal:
             flags.append("explicit_emotional_signal")
-        if utterance_type == "relational_checkin" and not emotional_signal:
+        if utterance_type in {"relational_checkin", "guarded_reply"} and not emotional_signal:
             flags.append("relational_checkin_blocked")
         if getattr(inner_thought, "risk_flags", ()):
             flags.extend(str(item) for item in inner_thought.risk_flags)
@@ -715,7 +1244,11 @@ class SpeechCoreEngine:
             return "SpeechCore chose a screen-grounded line from visual evidence."
         if speech_source == "telemetry":
             return "SpeechCore chose a screen-grounded line from runtime telemetry."
+        if speech_source == "meaning":
+            return "SpeechCore chose a wording impulse from MeaningLayer residue, not the internal meaning label."
         if speech_source == "freeform":
+            if utterance_type == "micro_presence":
+                return "SpeechCore chose micro-presence as situated cognition residue."
             return (
                 "SpeechCore chose a freeform line from inner initiative: "
                 f"{utterance_type or getattr(inner_thought, 'intent', '')}."
@@ -735,6 +1268,8 @@ class SpeechCoreEngine:
             return "screen_vision"
         if speech_source == "telemetry":
             return "screen_telemetry"
+        if speech_source == "meaning":
+            return "meaning_layer"
         if speech_source in {"freeform", "random"}:
             return "ungrounded"
         return "none"

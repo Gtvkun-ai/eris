@@ -36,6 +36,14 @@ def _normalize_tokens(text: str) -> set[str]:
     return {token for token in normalized.split() if len(token) >= 3 and token not in stop_words}
 
 
+def _normalize_for_bias(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", (text or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.replace("đ", "d")
+    normalized = re.sub(r"[^a-z0-9_#\s]+", " ", normalized)
+    return " ".join(normalized.split())
+
+
 class AttentionWorkspace:
     SCORE_KEYS = (
         "novelty",
@@ -45,15 +53,17 @@ class AttentionWorkspace:
         "social_charge",
         "recency",
         "memory_resonance",
+        "personality_bias",
     )
     WEIGHTS = {
-        "novelty": 0.18,
-        "specificity": 0.16,
-        "user_relevance": 0.20,
-        "risk": 0.16,
+        "novelty": 0.16,
+        "specificity": 0.14,
+        "user_relevance": 0.18,
+        "risk": 0.14,
         "social_charge": 0.10,
-        "recency": 0.10,
-        "memory_resonance": 0.10,
+        "recency": 0.08,
+        "memory_resonance": 0.08,
+        "personality_bias": 0.12,
     }
     RISK_TERMS = (
         "crash",
@@ -79,6 +89,86 @@ class AttentionWorkspace:
         "tin nhan",
         "tin nhắn",
     )
+    PERSONALITY_BIAS_TERMS = {
+        "hesitation": (
+            "hesitation",
+            "hesitant",
+            "hover",
+            "hovering",
+            "pause",
+            "paused",
+            "pausing",
+            "stalled",
+            "stuck",
+            "khung lai",
+            "luong lu",
+            "ngap ngung",
+        ),
+        "mood_shift": (
+            "angry",
+            "rage",
+            "resigned",
+            "sigh",
+            "heavy_sigh",
+            "tired",
+            "sad",
+            "stress",
+            "buc",
+            "buon",
+            "cam chiu",
+            "met",
+        ),
+        "avoidance": (
+            "avoid",
+            "avoidance",
+            "hiding",
+            "minimize",
+            "minimizing",
+            "panic",
+            "fragmented",
+            "absent",
+            "switching",
+            "tranh",
+        ),
+        "continuity": (
+            "again",
+            "repeat",
+            "repeated",
+            "resume",
+            "continuity",
+            "memory",
+            "unresolved",
+            "loop",
+            "momentum",
+            "lap lai",
+        ),
+        "emotional_undertone": (
+            "attachment",
+            "lonely",
+            "connection",
+            "voice_call",
+            "message",
+            "social",
+            "fear",
+            "quiet",
+            "co don",
+            "tam trang",
+        ),
+        "unfinished_intention": (
+            "unfinished",
+            "intention",
+            "draft",
+            "deleting",
+            "half",
+            "blank",
+            "no_edits",
+            "no_typing",
+            "typing_and_deleting",
+            "hovering_voice_call",
+            "dang do",
+            "chua xong",
+        ),
+    }
 
     CURRENT_SIGNAL_LABELS = {
         "user_message",
@@ -88,6 +178,7 @@ class AttentionWorkspace:
         "norm_deviation",
         "cognitive_attractor",
         "substrate_disturbance",
+        "persistent_goal",
         "recent_event",
         "evidence",
     }
@@ -216,6 +307,7 @@ class AttentionWorkspace:
             "social_charge": self._score_social_charge(percept, snapshot=snapshot),
             "recency": self._score_recency(percept),
             "memory_resonance": self._score_memory_resonance(percept, long_term_memory),
+            "personality_bias": self._score_personality_bias(percept, snapshot=snapshot),
         }
         raw_score = sum(parts[key] * self.WEIGHTS[key] for key in self.SCORE_KEYS)
         confidence_scale = 0.75 + 0.25 * _bounded(percept.confidence, minimum=0.05, maximum=1.0)
@@ -247,6 +339,12 @@ class AttentionWorkspace:
             return 0.92
         if hint in {"cognitive_momentum"} or percept.kind == "cognitive_momentum":
             return 0.86
+        if hint in {"persistent_goal"} or percept.kind == "persistent_goal":
+            return 0.80
+        if hint in {"presence_background"} or percept.kind == "social_presence_event":
+            return 0.18
+        if hint in {"session_resume"} or percept.kind == "session_ritual":
+            return 0.38
         if hint in {"concrete_telemetry", "duration_threshold"}:
             return 0.72
         if hint in {"screen_fact"}:
@@ -260,6 +358,10 @@ class AttentionWorkspace:
     def _score_specificity(self, percept: PerceptEvent) -> float:
         if percept.kind == "cycle_channel":
             return 0.05
+        if percept.kind == "social_presence_event":
+            return 0.18
+        if percept.kind == "session_ritual":
+            return 0.32
         if percept.kind == "cognitive_attractor":
             score = 0.74
             if percept.evidence:
@@ -272,6 +374,13 @@ class AttentionWorkspace:
             if percept.evidence:
                 score += 0.12
             if "topic=" in percept.content or "thought=" in percept.content:
+                score += 0.08
+            return _bounded(score)
+        if percept.kind == "persistent_goal":
+            score = 0.66
+            if percept.evidence:
+                score += 0.12
+            if "goal=" in percept.content:
                 score += 0.08
             return _bounded(score)
         if percept.kind == "substrate_disturbance":
@@ -301,6 +410,12 @@ class AttentionWorkspace:
             return 0.90
         if percept.kind == "cognitive_momentum":
             return 0.82
+        if percept.kind == "persistent_goal":
+            return 0.86
+        if percept.kind == "social_presence_event":
+            return 0.20
+        if percept.kind == "session_ritual":
+            return 0.38
         if channel in {"chat", "force_speak"} and percept.kind in {"vision_fact", "recent_event", "evidence"}:
             return 0.68
         if percept.kind == "resource_pressure":
@@ -329,6 +444,12 @@ class AttentionWorkspace:
             return 0.10
         if percept.kind == "cognitive_momentum":
             return 0.08
+        if percept.kind == "persistent_goal":
+            return 0.06
+        if percept.kind == "social_presence_event":
+            return 0.02
+        if percept.kind == "session_ritual":
+            return 0.02
         if percept.kind == "substrate_disturbance":
             return 0.12
         if any(term in lowered for term in self.RISK_TERMS):
@@ -348,6 +469,12 @@ class AttentionWorkspace:
             return 0.34
         if percept.kind == "cognitive_momentum":
             return 0.30
+        if percept.kind == "persistent_goal":
+            return 0.32
+        if percept.kind == "social_presence_event":
+            return 0.16
+        if percept.kind == "session_ritual":
+            return 0.20
         if kind == "communication":
             return 0.42
         if any(term in lowered for term in self.SOCIAL_TERMS):
@@ -366,6 +493,12 @@ class AttentionWorkspace:
             return 0.88
         if hint in {"cognitive_momentum"} or percept.kind == "cognitive_momentum":
             return 0.84
+        if hint in {"persistent_goal"} or percept.kind == "persistent_goal":
+            return 0.78
+        if hint in {"presence_background"} or percept.kind == "social_presence_event":
+            return 0.22
+        if hint in {"session_resume"} or percept.kind == "session_ritual":
+            return 0.42
         if hint in {"concrete_telemetry", "duration_threshold", "screen_fact"}:
             return 0.72
         if hint in {"cached_screen_fact", "repeated_screen_fact"}:
@@ -397,6 +530,47 @@ class AttentionWorkspace:
                 score += self._extract_resonance_score(memory) * 0.24
             best = max(best, score)
         return _bounded(best)
+
+    def _score_personality_bias(self, percept: PerceptEvent, *, snapshot=None) -> float:
+        text_parts = [
+            str(percept.content or ""),
+            " ".join(str(item) for item in (percept.evidence or ())),
+            str(percept.kind or ""),
+            str(percept.novelty_hint or ""),
+        ]
+        if snapshot is not None:
+            user_signals = getattr(snapshot, "user_signals", None)
+            text_parts.extend(
+                (
+                    str(getattr(snapshot, "focus_summary", "") or ""),
+                    str(getattr(snapshot, "mood_label", "") or ""),
+                    " ".join(str(item) for item in (getattr(snapshot, "recent_events", ()) or ())),
+                    str(getattr(user_signals, "typing_speed", "") if user_signals is not None else ""),
+                    str(getattr(user_signals, "window_switching", "") if user_signals is not None else ""),
+                    str(getattr(user_signals, "focus_pattern", "") if user_signals is not None else ""),
+                )
+            )
+        normalized = _normalize_for_bias(" ".join(part for part in text_parts if part))
+        if not normalized:
+            return 0.0
+
+        hits: list[str] = []
+        if percept.kind == "persistent_goal":
+            hits.append("continuity")
+        for category, terms in self.PERSONALITY_BIAS_TERMS.items():
+            if any(term in normalized for term in terms):
+                hits.append(category)
+        if not hits:
+            return 0.0
+
+        score = 0.38 + min(0.42, len(hits) * 0.12)
+        if percept.kind in {"cognitive_momentum", "cognitive_attractor"} and "continuity" in hits:
+            score += 0.18
+        if percept.kind in {"user_message", "user_force_speak"}:
+            score += 0.10
+        if percept.kind in {"recent_event", "vision_fact", "substrate_disturbance"}:
+            score += 0.08
+        return _bounded(score)
 
     def _memory_layer_weight(self, memory: str) -> float:
         lowered = (memory or "").lower()
