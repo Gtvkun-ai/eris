@@ -48,19 +48,19 @@ grow_vertical = 2
 [node name="LineEdit" type="LineEdit" parent="CanvasLayer/Control/ChatPanel/HBoxContainer" unique_id=209976]
 layout_mode = 2
 size_flags_horizontal = 3
-placeholder_text = "Nhắn tin với ERIS..."
+placeholder_text = "Nhan tin voi ERIS..."
 
 [node name="SendButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer" unique_id=576196245]
 layout_mode = 2
-text = "Gửi"
+text = "Gui"
 
 [node name="CloseButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer" unique_id=784276559]
 layout_mode = 2
-text = "✕"
+text = "X"
 
 [node name="CharacterContextMenu" type="Panel" parent="CanvasLayer/Control" unique_id=1122334455]
 visible = false
-custom_minimum_size = Vector2(170, 116)
+custom_minimum_size = Vector2(170, 152)
 layout_mode = 0
 
 [node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/Control/CharacterContextMenu" unique_id=1122334456]
@@ -80,9 +80,13 @@ theme_override_constants/separation = 4
 layout_mode = 2
 text = "Chat"
 
+[node name="TouchButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334460]
+layout_mode = 2
+text = "Cham / Nem"
+
 [node name="ForceSpeakButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334459]
 layout_mode = 2
-text = "Nói ngay"
+text = "Noi ngay"
 
 [node name="CloseButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334458]
 layout_mode = 2

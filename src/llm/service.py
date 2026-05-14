@@ -1397,7 +1397,10 @@ class LlmService:
         appraisal_context: str = "",
         internal_state_context: str = "",
     ) -> str:
-        style_block = fe_context or STYLE_FALLBACK_PROMPT
+        style_block = STYLE_FALLBACK_PROMPT
+        fe_block = (fe_context or "").strip()
+        if fe_block and fe_block not in style_block:
+            style_block = f"{style_block}\n\n{fe_block}"
         appraisal_block = (appraisal_context or "").strip()
         if appraisal_block:
             style_block = f"{style_block}\n\n{appraisal_block}"
@@ -1631,6 +1634,7 @@ class LlmService:
             "Return exactly one valid JSON object with this schema: "
             "{\"text\": string}. "
             "The text value must be the actual Vietnamese line to speak, not a label, not a placeholder. "
+            "Use Vietnamese with full diacritics only. "
             "No analysis. No markdown. No English placeholder text. "
             "Write ambient awareness residue, not proof that ERIS is alive."
         )
@@ -1645,7 +1649,7 @@ class LlmService:
             f"Avoid repeating: {avoid_text}\n"
             f"focus_kind={focus_kind}; focus_summary={focus_summary}; idle_seconds={int(float(idle_seconds or 0.0))}\n\n"
             "Principle:\n"
-            f"- Vietnamese only, 1-{max_words} words; one tiny line.\n"
+            f"- Vietnamese only, 1-{max_words} words; one tiny line with full diacritics.\n"
             "- This is residue: atmosphere, tiny observation, social leak.\n"
             "- No status report, no system narration, no UI narration, no explaining.\n"
             "- Do not describe frames, panels, screens, colors, buttons, or text boxes.\n"
@@ -1666,7 +1670,7 @@ class LlmService:
             "- Shape: {\"text\":\"actual Vietnamese line\"}\n"
             "- The value of text must be the final sentence to speak.\n"
             "- Never return placeholder text such as 'short Vietnamese line'.\n"
-            "- text must be Vietnamese only.\n"
+            "- text must be Vietnamese only and keep full diacritics.\n"
             "- text must be speakable as-is.\n"
         )
 

@@ -1,10 +1,8 @@
 using Godot;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
-using System.Text.RegularExpressions;
 using System.Text;
 using System.Text.Json;
 
@@ -15,9 +13,11 @@ public partial class UdpListener : Node2D
 	private AnimatedSprite2D _monika;
 	private CharacterBody2D _body;
 	private RichTextLabel _label;
-	private Process _visionProcess;
-	private Process _llamaServerProcess;
 	private MotionController _motion;
+	private LocalBodyAutonomy _bodyAutonomy;
+	private BodyAudioController _audio;
+	private ErisProcessManager _processes;
+	private UdpDecisionParser _decisionParser = new();
 
 	[Export] public string PythonExecutable = "python";
 	[Export] public string VisionScriptPath = "src/vision.py";
@@ -38,17 +38,21 @@ public partial class UdpListener : Node2D
 	[Export] public string RemoteApiProvider = "gemini";
 	[Export] public string RemoteApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
 	[Export] public string RemoteApiModelName = "gemma-4-26b-a4b-it";
+	[ExportGroup("Desktop Overlay")]
+	[Export] public bool EnableDesktopOverlayWindow = true;
+	[Export] public bool KeepWindowAlwaysOnTop = true;
+	[Export] public bool UseBorderlessWindow = true;
+	[Export] public bool UseTransparentWindow = true;
 
-	// Di chuyển
-	private float _moveSpeed = 60f;   // pixel/giây
-	private float _moveDir = 1f;      // 1 = phải, -1 = trái
-	private int _facingDir = -1;      // -1 = nhìn trái (gốc asset), 1 = nhìn phải (flip ngang)
+	private float _moveSpeed = 60f;   
+	private float _moveDir = 1f;      
+	private int _facingDir = -1;      
 	private bool _isWalking = false;
 	private string _currentAction = "stand";
 	private float _gravity = 980f; // Gia tốc trọng trường tiêu chuẩn
 	private float _velocityY = 0f;
     private bool _isFalling = false;
-	private Vector2 _spriteHalfSize; // Lấy từ CollisionShape2D trong _Ready()
+	private Vector2 _spriteHalfSize; // Láº¥y tá»« CollisionShape2D trong _Ready()
 
 	// Climb
 	private enum ClimbPhase { None, GoingToWall, Up, Top, TopHold, Down }
@@ -61,20 +65,40 @@ public partial class UdpListener : Node2D
 	private Panel _chatPanel;
 	private Panel _characterContextMenu;
 	private Button _contextChatButton;
+	private Button _contextTouchButton;
 	private Button _contextForceSpeakButton;
 	private Button _contextCloseButton;
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	private Tween _textTween;
-	private AudioStreamPlayer _audioPlayer;
-	private static readonly Vector2 CharacterContextMenuMinSize = new(170f, 116f);
+	private static readonly Vector2 CharacterContextMenuMinSize = new(170f, 152f);
 	private readonly Random _rng = new Random();
 	private Control _bubble;
-	private bool _visionTracebackActive = false;
+	private bool _grabModeArmed = false;
+	private bool _isDraggingCharacter = false;
+	private Vector2 _dragOffset = Vector2.Zero;
+	private Vector2 _lastDragMousePos = Vector2.Zero;
+	private Vector2 _previousDragMousePos = Vector2.Zero;
+	private double _previousDragSampleAt = 0.0;
+	private double _lastDragSampleAt = 0.0;
 	private string _nextAction = ""; // Lưu trữ hành động chờ thực thi
 	private string _bounceAction = ""; // animation phát tại tường trước khi đổi chiều (loop mãi)
 	private float _targetX = float.NaN; // target_x tuyệt đối trên màn hình (NaN = không có mục tiêu)
 	private Vector2 _bubbleBasePos; // vị trí gốc của bubble trong không gian local của sprite
+	private float _autonomousMoveCooldown = 0f;
+	private double _lastRemoteMotionAt = 0.0;
+
+	[Export] public bool EnableAutonomousIdleMovement = true;
+	[Export] public float AutonomousIdleMoveMinSeconds = 5.0f;
+	[Export] public float AutonomousIdleMoveMaxSeconds = 10.0f;
+	[Export(PropertyHint.Range, "0,1,0.01")] public float AutonomousIdleWalkChance = 0.72f;
+	[Export(PropertyHint.Range, "0,1,0.01")] public float AutonomousIdleFaceChance = 0.20f;
+	[Export] public float AutonomousIdleRemoteCooldownSeconds = 2.5f;
+	[Export] public bool EnableLegacyRemoteMotionCommands = false;
+	[Export] public bool EnableBodyAutonomyDebugLog = false;
+	[Export] public float ThrowVelocityScale = 7.5f;
+	[Export] public float ThrowVerticalBoostScale = 3.5f;
+	[Export(PropertyHint.Range, "0,1,0.01")] public float ThrowClingChance = 0.45f;
 
 	// Alias: ánh xạ tên AI hay hallucinate về tên animation thực
 	private static readonly Dictionary<string, string> _animAliases = new()
@@ -103,7 +127,7 @@ public partial class UdpListener : Node2D
 		"stand_walk", "sleep", "hop", "climb",
 	};
 
-	// Animation → danh sách sound (tên ngẫu nhiên, sẽ rename sau)
+	// Animation -> danh sách sound (tên ngẫu nhiên, sẽ rename sau)
 	private static readonly Dictionary<string, string[]> _soundMap = new()
 	{
 		{ "affection",   new[] { "res://asset/Monika/sound/Cuddling.wav", "res://asset/Monika/sound/Giggle.wav", "res://asset/Monika/sound/Happy_Squeals.wav", "res://asset/Monika/sound/Squeal_Happy.wav" } },
@@ -130,6 +154,7 @@ public partial class UdpListener : Node2D
 
 	public override void _Ready()
 	{
+		ConfigureDesktopOverlayWindow();
 		_udp.Bind(_port);
 		_body   = GetNode<CharacterBody2D>("Monika2");
 		_monika = GetNode<AnimatedSprite2D>("Monika2/Monika");
@@ -138,6 +163,7 @@ public partial class UdpListener : Node2D
 	_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
 	_characterContextMenu = GetNode<Panel>("CanvasLayer/Control/CharacterContextMenu");
 	_contextChatButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ChatButton");
+	_contextTouchButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/TouchButton");
 	_contextForceSpeakButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ForceSpeakButton");
 	_contextCloseButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/CloseButton");
 		_characterContextMenu.CustomMinimumSize = CharacterContextMenuMinSize;
@@ -147,6 +173,7 @@ public partial class UdpListener : Node2D
 	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton").Pressed += OnSendPressed;
 	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton").Pressed += CloseChatPanel;
 	_contextChatButton.Pressed += OnContextChatPressed;
+	_contextTouchButton.Pressed += OnContextTouchPressed;
 	_contextForceSpeakButton.Pressed += OnContextForceSpeakPressed;
 	_contextCloseButton.Pressed += CloseCharacterContextMenu;
 		_chatInput.TextSubmitted += _ => OnSendPressed();
@@ -160,24 +187,31 @@ public partial class UdpListener : Node2D
 		cs.Position        = Vector2.Zero;
 		_body.GlobalPosition = startPos;
 
-		// Lấy half-size từ shape thực sự thay vì hardcode
+		// Láº¥y half-size tá»« shape thá»±c sá»± thay vÃ¬ hardcode
 		_spriteHalfSize = ((RectangleShape2D)cs.Shape).Size / 2;
 
 		// Đặt nhân vật sát đáy màn hình ngay từ đầu, không cần rơi
 		Vector2 screenSize = GetViewportRect().Size;
 		Vector2 groundedPos = _body.GlobalPosition;
 		_bubbleBasePos = _bubble.Position;
+		_audio = new BodyAudioController();
+		_audio.Attach(this, () => _motion?.CurrentAction ?? "stand");
 		_motion = new MotionController(PlaySoundForAnimation);
 		_motion.Configure(_spriteHalfSize, _bubbleBasePos);
+		_bodyAutonomy = new LocalBodyAutonomy
+		{
+			TickMinSeconds = AutonomousIdleMoveMinSeconds,
+			TickMaxSeconds = AutonomousIdleMoveMaxSeconds,
+			EnableDebugLog = EnableBodyAutonomyDebugLog,
+		};
 		_motion.PlaceOnFloor(ref groundedPos, screenSize);
 		_body.GlobalPosition = groundedPos;
+		ResetAutonomousIdleMovementCooldown();
 		_velocityY = 0f;
 		_isFalling = false;
 
 		// Khởi tạo AudioStreamPlayer
-		_audioPlayer = new AudioStreamPlayer();
-		AddChild(_audioPlayer);
-		_audioPlayer.Finished += OnAudioFinished;
+		_processes = new ErisProcessManager(UpdateServiceButtons);
 
 		// Trạng thái mặc định khi khởi động
 		_monika.Play("stand");
@@ -189,6 +223,21 @@ public partial class UdpListener : Node2D
 			StartLlamaServerProcess();
 		if (AutoStartVision)
 			StartVisionProcess();
+	}
+
+	private void ConfigureDesktopOverlayWindow()
+	{
+		if (!EnableDesktopOverlayWindow)
+			return;
+
+		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.AlwaysOnTop, KeepWindowAlwaysOnTop);
+		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.Borderless, UseBorderlessWindow);
+
+		if (UseTransparentWindow)
+		{
+			DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.Transparent, true);
+			GetViewport().TransparentBg = true;
+		}
 	}
 
 	public override void _ExitTree()
@@ -205,12 +254,21 @@ public partial class UdpListener : Node2D
 		float d = (float)delta;
 		Vector2 pos = _body.Position;
 		Vector2 screenSize = GetViewportRect().Size;
-		_motion.Step(ref pos, screenSize, d);
-		_body.Position = pos;
+		if (_isDraggingCharacter)
+		{
+			pos = ClampDraggedPosition(pos, screenSize);
+			_body.Position = pos;
+		}
+		else
+		{
+			_motion.Step(ref pos, screenSize, d);
+			_body.Position = pos;
+			UpdateLocalBodyAutonomy(d);
+		}
 		_motion.ApplyVisualState(_monika, _bubble, _body.Position, screenSize);
 		ClampBubbleToScreen();
 
-		//Lắng nghe UDP
+		//Láº¯ng nghe UDP
 		if (_udp.GetAvailablePacketCount() > 0)
 		{
 			string raw = Encoding.UTF8.GetString(_udp.GetPacket());
@@ -220,11 +278,45 @@ public partial class UdpListener : Node2D
 
 	public override void _Input(InputEvent @event)
 	{
-		if (@event is not InputEventMouseButton mouseEvent || !mouseEvent.Pressed)
+		if (@event is InputEventMouseMotion mouseMotion && _isDraggingCharacter)
+		{
+			UpdateDrag(mouseMotion.Position);
+			GetViewport().SetInputAsHandled();
+			return;
+		}
+
+		if (@event is not InputEventMouseButton mouseEvent)
+			return;
+
+		if (_grabModeArmed && mouseEvent.ButtonIndex == MouseButton.Left)
+		{
+			if (mouseEvent.Pressed && IsMouseOverCharacter(mouseEvent.Position))
+			{
+				BeginDrag(mouseEvent.Position);
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+
+			if (!mouseEvent.Pressed && _isDraggingCharacter)
+			{
+				EndDrag(mouseEvent.Position);
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+		}
+
+		if (!mouseEvent.Pressed)
 			return;
 
 		if (mouseEvent.ButtonIndex == MouseButton.Right)
 		{
+			if (_grabModeArmed || _isDraggingCharacter)
+			{
+				CancelGrabMode();
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+
 			if (_characterContextMenu.Visible && IsMouseOverControl(_characterContextMenu, mouseEvent.Position))
 			{
 				GetViewport().SetInputAsHandled();
@@ -233,6 +325,7 @@ public partial class UdpListener : Node2D
 
 			if (IsMouseOverCharacter(mouseEvent.Position))
 			{
+				_bodyAutonomy?.RecordUserInteraction();
 				ShowCharacterContextMenu(mouseEvent.Position);
 				GetViewport().SetInputAsHandled();
 				return;
@@ -259,6 +352,12 @@ public partial class UdpListener : Node2D
 
 	public override void _UnhandledInput(InputEvent @event)
 	{
+		if (@event is InputEventMouseButton releaseEvent && releaseEvent.ButtonIndex == MouseButton.Left && !releaseEvent.Pressed && _isDraggingCharacter)
+		{
+			EndDrag(releaseEvent.Position);
+			return;
+		}
+
 		if (@event is not InputEventMouseButton mouseEvent || !mouseEvent.Pressed)
 			return;
 
@@ -275,6 +374,7 @@ public partial class UdpListener : Node2D
 			CloseChatPanel();
 		else
 		{
+			_bodyAutonomy?.RecordUserInteraction();
 			_chatPanel.Visible = true;
 			_chatInput.GrabFocus();
 			SendChatSignal("chat_start");
@@ -283,6 +383,7 @@ public partial class UdpListener : Node2D
 
 	private void CloseChatPanel()
 	{
+		_bodyAutonomy?.RecordUserInteraction();
 		_chatPanel.Visible = false;
 		_chatInput.Text = "";
 		SendChatSignal("chat_end");
@@ -297,10 +398,92 @@ public partial class UdpListener : Node2D
 			_chatInput.GrabFocus();
 	}
 
+	private void OnContextTouchPressed()
+	{
+		CloseCharacterContextMenu();
+		_bodyAutonomy?.RecordUserInteraction();
+		_grabModeArmed = true;
+	}
+
 	private void OnContextForceSpeakPressed()
 	{
 		CloseCharacterContextMenu();
+		_bodyAutonomy?.RecordUserInteraction();
 		SendChatSignal("force_speak");
+	}
+
+	private void BeginDrag(Vector2 mousePosition)
+	{
+		CloseCharacterContextMenu();
+		_bodyAutonomy?.RecordUserInteraction();
+		_grabModeArmed = false;
+		_isDraggingCharacter = true;
+		_dragOffset = _body.GlobalPosition - mousePosition;
+		_previousDragMousePos = mousePosition;
+		_lastDragMousePos = mousePosition;
+		_previousDragSampleAt = GetRuntimeSeconds();
+		_lastDragSampleAt = GetRuntimeSeconds();
+		int facing = mousePosition.X >= _body.GlobalPosition.X ? 1 : -1;
+		string touchPose = facing >= 0 ? "air_swing_r" : "air_swing_l";
+		_motion.ApplyCommand(
+			new MotionCommand(
+				intent: "pose",
+				poseAnimation: touchPose,
+				nextAnimation: "",
+				bounceAction: "",
+				facingDir: facing,
+				targetX: -1f),
+			_body.Position,
+			GetViewportRect().Size);
+		SendChatSignal("force_speak");
+	}
+
+	private void UpdateDrag(Vector2 mousePosition)
+	{
+		_previousDragSampleAt = _lastDragSampleAt;
+		_previousDragMousePos = _lastDragMousePos;
+		_lastDragMousePos = mousePosition;
+		_lastDragSampleAt = GetRuntimeSeconds();
+		_body.GlobalPosition = ClampDraggedPosition(mousePosition + _dragOffset, GetViewportRect().Size);
+	}
+
+	private void EndDrag(Vector2 mousePosition)
+	{
+		if (!_isDraggingCharacter)
+			return;
+
+		UpdateDrag(mousePosition);
+		_isDraggingCharacter = false;
+		_bodyAutonomy?.RecordRoughHandling();
+
+		double dt = Math.Max(0.016, _lastDragSampleAt - _previousDragSampleAt);
+		Vector2 delta = _lastDragMousePos - _previousDragMousePos;
+		float impulseX = Mathf.Clamp((float)(delta.X / dt) * ThrowVelocityScale * 0.06f, -760f, 760f);
+		float impulseY = Mathf.Clamp((float)(delta.Y / dt) * ThrowVerticalBoostScale * 0.04f, -560f, 320f);
+		int facing = impulseX >= 0f ? 1 : -1;
+		string airPose = facing >= 0 ? "air_swing_r" : "air_swing_l";
+		float clingChance = Mathf.Clamp(ThrowClingChance + (Math.Abs(impulseX) >= 420f ? 0.18f : 0f), 0f, 0.9f);
+
+		_motion.ApplyCommand(
+			new MotionCommand(
+				intent: "throw",
+				poseAnimation: airPose,
+				nextAnimation: "",
+				bounceAction: "",
+				facingDir: facing,
+				targetX: -1f,
+				impulseX: impulseX,
+				impulseY: impulseY,
+				clingChance: clingChance),
+			_body.Position,
+			GetViewportRect().Size);
+	}
+
+	private void CancelGrabMode()
+	{
+		_grabModeArmed = false;
+		if (_isDraggingCharacter)
+			EndDrag(_lastDragMousePos);
 	}
 
 	private void ShowCharacterContextMenu(Vector2 mousePosition)
@@ -336,10 +519,18 @@ public partial class UdpListener : Node2D
 		return rect.HasPoint(mousePosition);
 	}
 
+	private Vector2 ClampDraggedPosition(Vector2 desiredGlobalPosition, Vector2 screenSize)
+	{
+		return new Vector2(
+			Mathf.Clamp(desiredGlobalPosition.X, _spriteHalfSize.X, screenSize.X - _spriteHalfSize.X),
+			Mathf.Clamp(desiredGlobalPosition.Y, _spriteHalfSize.Y, screenSize.Y - _spriteHalfSize.Y));
+	}
+
 	private void OnSendPressed()
 	{
 		string msg = _chatInput.Text.Trim();
 		if (string.IsNullOrEmpty(msg)) return;
+		_bodyAutonomy?.RecordUserInteraction();
 		_chatInput.Text = "";
 		_chatInput.GrabFocus();
 		string payload = $"{{\"type\":\"chat\",\"message\":{JsonSerializer.Serialize(msg)}}}";
@@ -367,7 +558,7 @@ public partial class UdpListener : Node2D
 		float speedPerChar = 0.05f;
 		float totalDuration = text.Length * speedPerChar;
 
-		//thực thi hiệu ứng gõ chữ
+		// thực thi hiệu ứng gõ chữ
 		_textTween.TweenProperty(_label, "visible_characters", text.Length, totalDuration);
 	}
 	private void UpdateAnimation()
@@ -480,6 +671,105 @@ public partial class UdpListener : Node2D
 			_bubble.GlobalPosition = new Vector2(clampedX, bubbleGlobal.Y);
 	}
 
+	private void UpdateLocalBodyAutonomy(float delta)
+	{
+		if (!EnableAutonomousIdleMovement || _bodyAutonomy == null || _motion == null)
+			return;
+
+		_bodyAutonomy.TickMinSeconds = AutonomousIdleMoveMinSeconds;
+		_bodyAutonomy.TickMaxSeconds = AutonomousIdleMoveMaxSeconds;
+		_bodyAutonomy.EnableDebugLog = EnableBodyAutonomyDebugLog;
+
+		var context = new BodyAutonomyContext(
+			bodyPosition: _body.Position,
+			screenSize: GetViewportRect().Size,
+			currentAction: _motion.CurrentAction,
+			motionBusy: _motion.IsBusy,
+			chatVisible: _chatPanel != null && _chatPanel.Visible,
+			isTopPerched: _motion.IsTopPerched);
+
+		if (!_bodyAutonomy.TryUpdate(delta, context, out var decision))
+			return;
+
+		_motion.ApplyCommand(decision.Command, _body.Position, GetViewportRect().Size);
+		if (!string.IsNullOrWhiteSpace(decision.OptionalSpeech))
+			ApplyTypewriterEffect(decision.OptionalSpeech);
+	}
+
+	private void UpdateAutonomousIdleMovement(float delta)
+	{
+		if (!EnableAutonomousIdleMovement || _motion == null)
+			return;
+		if (_motion.IsBusy || _motion.CurrentAction != "stand")
+			return;
+		if (_chatPanel != null && _chatPanel.Visible)
+			return;
+		if (GetRuntimeSeconds() - _lastRemoteMotionAt < Math.Max(0.5f, AutonomousIdleRemoteCooldownSeconds))
+			return;
+
+		_autonomousMoveCooldown -= delta;
+		if (_autonomousMoveCooldown > 0f)
+			return;
+
+		float roll = (float)_rng.NextDouble();
+		if (roll <= Mathf.Clamp(AutonomousIdleWalkChance, 0f, 1f))
+		{
+			float target = 0.12f + (float)_rng.NextDouble() * 0.76f;
+			int facing = target >= (_body.Position.X / Math.Max(1f, GetViewportRect().Size.X)) ? 1 : -1;
+			_motion.ApplyCommand(
+				new MotionCommand(
+					intent: "walk_to",
+					poseAnimation: "stand_walk",
+					nextAnimation: "stand",
+					bounceAction: "",
+					facingDir: facing,
+					targetX: target),
+				_body.Position,
+				GetViewportRect().Size);
+		}
+		else if (roll <= Mathf.Clamp(AutonomousIdleWalkChance + AutonomousIdleFaceChance, 0f, 1f))
+		{
+			int facing = _rng.NextDouble() >= 0.5 ? 1 : -1;
+			_motion.ApplyCommand(
+				new MotionCommand(
+					intent: "face",
+					poseAnimation: "stand",
+					nextAnimation: "",
+					bounceAction: "",
+					facingDir: facing,
+					targetX: -1f),
+				_body.Position,
+				GetViewportRect().Size);
+		}
+
+		ResetAutonomousIdleMovementCooldown();
+	}
+
+	private void ResetAutonomousIdleMovementCooldown()
+	{
+		float min = Math.Max(1f, AutonomousIdleMoveMinSeconds);
+		float max = Math.Max(min, AutonomousIdleMoveMaxSeconds);
+		_autonomousMoveCooldown = (float)(min + _rng.NextDouble() * (max - min));
+	}
+
+	private static bool HasRemoteMotionCommand(string motionIntent, string animation, string nextAnimation, int motionFacing, float motionTargetX)
+	{
+		if (!string.IsNullOrWhiteSpace(motionIntent))
+			return true;
+		if (motionFacing != 0)
+			return true;
+		if (motionTargetX >= 0f)
+			return true;
+		if (!string.IsNullOrWhiteSpace(nextAnimation))
+			return true;
+		return !string.Equals(animation, "stand", StringComparison.Ordinal);
+	}
+
+	private static double GetRuntimeSeconds()
+	{
+		return Time.GetTicksMsec() / 1000.0;
+	}
+
 	private string NormalizeAnimationName(string animation, int facingDir, bool allowEmpty = false)
 	{
 		string value = (animation ?? "").Trim();
@@ -488,7 +778,7 @@ public partial class UdpListener : Node2D
 
 		if (_animAliases.TryGetValue(value, out var mapped))
 		{
-			GD.Print($"[Anim] Alias '{value}' → '{mapped}'");
+			GD.Print($"[Anim] Alias '{value}' -> '{mapped}'");
 			value = mapped;
 		}
 
@@ -520,98 +810,37 @@ public partial class UdpListener : Node2D
 	}
 
 	private void ParseAndApply(string raw)
-    {
-        string text = raw;
-        string animation = "stand";
-		int direction = 0;
-		string nextAnimation = "";
-		string bounceAction = "";
-		string debugTrace = "";
-		string parserTrace = "";
-		string parseMode = "";
-		string motionIntent = "";
-		int motionFacing = 0;
-		float motionTargetX = -1f;
+	{
+		var payload = _decisionParser.Parse(raw);
+		if (payload.HasBodyBias)
+			_bodyAutonomy?.ApplyCognitionBias(payload.BodyBias);
 
-        try
-        {
-            string cleaned = raw.Trim();
-            if (cleaned.StartsWith("```"))
-            {
-                int start = cleaned.IndexOf('\n') + 1;
-                int end = cleaned.LastIndexOf("```");
-                if (start > 0 && end > start)
-                {
-                    cleaned = cleaned.Substring(start, end - start).Trim();
-                }
-            }
-
-            using var doc = JsonDocument.Parse(cleaned);
-            var root = doc.RootElement;
-            if (root.TryGetProperty("text", out var t)) text = t.GetString() ?? raw;
-            if (root.TryGetProperty("animation", out var a)) animation = a.GetString() ?? "stand";
-			if (root.TryGetProperty("direction", out var d) && d.ValueKind == JsonValueKind.Number) 
-            {
-                direction = d.GetInt32();
-            }
-			if (root.TryGetProperty("next_animation", out var na)) nextAnimation = na.GetString() ?? "";
-			if (root.TryGetProperty("bounce_action", out var ba)) bounceAction = ba.GetString() ?? "";
-			if (root.TryGetProperty("debug_trace", out var dt)) debugTrace = dt.GetString() ?? "";
-			if (root.TryGetProperty("parser_trace", out var pt)) parserTrace = pt.GetString() ?? "";
-			if (root.TryGetProperty("parse_mode", out var pm)) parseMode = pm.GetString() ?? "";
-            if (root.TryGetProperty("target_x", out var tx) && tx.ValueKind == JsonValueKind.Number)
-				motionTargetX = tx.GetSingle();
-			if (root.TryGetProperty("motion_intent", out var mi)) motionIntent = mi.GetString() ?? "";
-			if (root.TryGetProperty("motion_facing", out var mf) && mf.ValueKind == JsonValueKind.Number)
-				motionFacing = mf.GetInt32();
-			if (root.TryGetProperty("motion_target_x", out var mtx) && mtx.ValueKind == JsonValueKind.Number)
-				motionTargetX = mtx.GetSingle();
-        }
-        catch (Exception ex)
-        {
-            GD.PrintErr($"[Parse] Khung dữ liệu bị hỏng: {ex.Message}");
-            text = "Lỗi đường truyền tín hiệu.";
-            animation = "stand";
-        }
-
-		int resolvedFacing = motionFacing != 0 ? motionFacing : direction;
-		animation = NormalizeAnimationName(animation, resolvedFacing);
-		nextAnimation = NormalizeAnimationName(nextAnimation, resolvedFacing, allowEmpty: true);
-		bounceAction = NormalizeAnimationName(bounceAction, resolvedFacing, allowEmpty: true);
-		if (string.IsNullOrWhiteSpace(motionIntent))
-			motionIntent = InferMotionIntent(animation, nextAnimation, resolvedFacing, motionTargetX);
-		if (motionFacing == 0)
-			motionFacing = resolvedFacing;
-
-		if (!string.IsNullOrEmpty(parseMode) || !string.IsNullOrEmpty(debugTrace) || !string.IsNullOrEmpty(parserTrace))
+		if (!string.IsNullOrEmpty(payload.ParseMode) || !string.IsNullOrEmpty(payload.DebugTrace) || !string.IsNullOrEmpty(payload.ParserTrace))
 		{
-			GD.Print($"[AI Debug] parse_mode={parseMode}");
-			if (!string.IsNullOrEmpty(debugTrace))
-				GD.Print($"[AI Debug] trace={debugTrace}");
-			if (!string.IsNullOrEmpty(parserTrace))
-				GD.Print($"[AI Debug] parser={parserTrace}");
+			GD.Print($"[AI Debug] parse_mode={payload.ParseMode}");
+			if (!string.IsNullOrEmpty(payload.DebugTrace))
+				GD.Print($"[AI Debug] trace={payload.DebugTrace}");
+			if (!string.IsNullOrEmpty(payload.ParserTrace))
+				GD.Print($"[AI Debug] parser={payload.ParserTrace}");
 		}
 
-		ApplyTypewriterEffect(text);
-		_motion.ApplyCommand(
-			new MotionCommand(
-				intent: motionIntent,
-				poseAnimation: animation,
-				nextAnimation: nextAnimation,
-				bounceAction: bounceAction,
-				facingDir: motionFacing,
-				targetX: motionTargetX),
-			_body.Position,
-			GetViewportRect().Size);
-    }
+		if (payload.HasRemoteMotion)
+			_lastRemoteMotionAt = GetRuntimeSeconds();
+
+		if (payload.ShouldSpeak && (payload.HasTextField || !payload.ParsedJson) && !string.IsNullOrWhiteSpace(payload.Text))
+			ApplyTypewriterEffect(payload.Text);
+
+		if (EnableLegacyRemoteMotionCommands && payload.HasRemoteMotion)
+			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
+	}
 
 	private void ApplyAnimationCommand(string animation, int direction, string nextAnimation)
 	{
 		_nextAction = nextAnimation;
-		// Chuẩn hoá alias trước (walk → stand_walk, v.v.)
+		// Chuẩn hoá alias trước (walk -> stand_walk, v.v.)
 		if (_animAliases.TryGetValue(animation, out var mapped))
 		{
-			GD.Print($"[Anim] Alias '{animation}' → '{mapped}'");
+			GD.Print($"[Anim] Alias '{animation}' -> '{mapped}'");
 			animation = mapped;
 		}
 
@@ -768,24 +997,13 @@ public partial class UdpListener : Node2D
 
 	private void OnAudioFinished()
 	{
-		string currentAction = _motion?.CurrentAction ?? _currentAction;
-		if (_loopingSoundAnims.Contains(currentAction))
-			PlaySoundForAnimation(currentAction);
 	}
 
 	private void PlaySoundForAnimation(string animation)
 	{
-		if (!_soundMap.TryGetValue(animation, out var sounds)) return;
-		string path = sounds[_rng.Next(sounds.Length)];
-		var stream = GD.Load<AudioStream>(path);
-		if (stream == null)
-		{
-			GD.PrintErr($"[Sound] Không tải được: {path}");
-			return;
-		}
-		_audioPlayer.Stream = stream;
-		_audioPlayer.Play();
+		_audio?.PlayForAnimation(animation);
 	}
+
 	private void ApplyAnimation(string animation)
 	{
 		GD.Print($"[Anim] Áp dụng animation: \"{animation}\"");
@@ -806,177 +1024,17 @@ public partial class UdpListener : Node2D
 
 	private void StartVisionProcess()
 	{
-		if (_visionProcess != null && !_visionProcess.HasExited)
-		{
-			GD.Print($"[Vision] Đã chạy sẵn, PID={_visionProcess.Id}");
-			return;
-		}
-
-		string projectRoot = GetProjectRoot();
-		string visionScriptFullPath = Path.Combine(projectRoot, VisionScriptPath.Replace('/', Path.DirectorySeparatorChar));
-
-		if (!File.Exists(visionScriptFullPath))
-		{
-			GD.PrintErr($"[Vision] Không tìm thấy script: {visionScriptFullPath}");
-			return;
-		}
-
-		try
-		{
-			bool needsLocalLlmServer = EnableLocalStyleRewrite || EnableLocalVisionInput;
-			if (needsLocalLlmServer && !IsLlamaServerReachable() && !StartLlamaServerProcess())
-			{
-				GD.PrintErr("[Vision] Không thể khởi động vision.py vì llama-server chưa sẵn sàng.");
-				return;
-			}
-
-			var startInfo = new ProcessStartInfo
-			{
-				FileName = PythonExecutable,
-				Arguments = $"\"{visionScriptFullPath}\"",
-				WorkingDirectory = projectRoot,
-				UseShellExecute = false,
-				CreateNoWindow = true,
-				RedirectStandardOutput = true,
-				RedirectStandardError = true,
-				StandardOutputEncoding = Encoding.UTF8,
-				StandardErrorEncoding = Encoding.UTF8,
-			};
-			startInfo.Environment["PYTHONUTF8"] = "1";
-			startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
-			startInfo.Environment["PYTHONUNBUFFERED"] = "1";
-			startInfo.Environment["LLAMA_SERVER_EXE"] = GetLlamaServerFullPath();
-			startInfo.Environment["LLAMA_SERVER_URL"] = $"http://127.0.0.1:{LlamaServerPort}/v1";
-			startInfo.Environment["LLAMA_SERVER_HOST"] = "127.0.0.1";
-			startInfo.Environment["LLAMA_SERVER_PORT"] = LlamaServerPort.ToString();
-			startInfo.Environment["LLAMA_SERVER_NGL"] = LlamaServerNgl;
-			startInfo.Environment["LLAMA_SERVER_FLASH_ATTN"] = LlamaServerFlashAttn ? "on" : "off";
-			startInfo.Environment["LLAMA_SERVER_EXTRA_ARGS"] = LlamaServerExtraArgs;
-			startInfo.Environment["LLAMA_SERVER_MMPROJ"] = EnableLocalVisionInput ? GetMmprojFullPath() : "";
-			startInfo.Environment["GGUF_MODEL_PATH"] = GetModelFullPath();
-			startInfo.Environment["ERIS_N_CTX"] = LlamaServerCtx.ToString();
-			startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = EnableRemoteCognitionApi ? "1" : "0";
-			startInfo.Environment["ERIS_REMOTE_PROVIDER"] = RemoteApiProvider;
-			startInfo.Environment["ERIS_REMOTE_BASE_URL"] = RemoteApiBaseUrl;
-			startInfo.Environment["ERIS_REMOTE_MODEL"] = RemoteApiModelName;
-			startInfo.Environment["ERIS_REMOTE_API_KEY"] = DefaultRemoteApiKey;
-			startInfo.Environment["GEMINI_API_KEY"] = DefaultRemoteApiKey;
-			startInfo.Environment["ERIS_LOCAL_STYLE_REWRITE_ENABLED"] = EnableLocalStyleRewrite ? "1" : "0";
-			startInfo.Environment["ERIS_LOCAL_VISION_FACTS"] = EnableLocalVisionInput ? "1" : "0";
-
-			var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-			process.OutputDataReceived += (_, e) =>
-			{
-				if (!string.IsNullOrWhiteSpace(e.Data) && ShouldLogVisionOutput(e.Data))
-				{
-					GD.Print($"[vision.py] {e.Data.Trim()}");
-				}
-			};
-			process.ErrorDataReceived += (_, e) =>
-			{
-				if (!string.IsNullOrWhiteSpace(e.Data))
-				{
-					string rawLine = e.Data;
-					string line = rawLine.Trim();
-					if (_visionTracebackActive)
-					{
-						if (string.IsNullOrWhiteSpace(line))
-						{
-							_visionTracebackActive = false;
-						}
-						else
-						{
-							GD.PrintErr($"[vision.py][ERR] {rawLine}");
-							bool tracebackTail =
-								rawLine.StartsWith(" ", StringComparison.Ordinal) ||
-								rawLine.StartsWith("\t", StringComparison.Ordinal) ||
-								line.StartsWith("File ", StringComparison.OrdinalIgnoreCase) ||
-								line.StartsWith("During handling of the above exception", StringComparison.OrdinalIgnoreCase) ||
-								line.Contains("Error:", StringComparison.OrdinalIgnoreCase) ||
-								line.Contains("Exception:", StringComparison.OrdinalIgnoreCase);
-							if (!tracebackTail)
-								_visionTracebackActive = false;
-							return;
-						}
-					}
-
-					bool looksFatal =
-						line.Contains("Traceback", StringComparison.OrdinalIgnoreCase) ||
-						line.Contains("Exception", StringComparison.OrdinalIgnoreCase) ||
-						line.Contains("error loading model", StringComparison.OrdinalIgnoreCase) ||
-						line.Contains("failed to load model", StringComparison.OrdinalIgnoreCase) ||
-						line.Contains("No connection could be made", StringComparison.OrdinalIgnoreCase) ||
-						line.Contains("JSON không hợp lệ", StringComparison.OrdinalIgnoreCase);
-
-					if (looksFatal)
-					{
-						if (line.Contains("Traceback", StringComparison.OrdinalIgnoreCase))
-							_visionTracebackActive = true;
-						GD.PrintErr($"[vision.py][ERR] {rawLine}");
-					}
-					else if (ShouldLogVisionStderr(line))
-						GD.Print($"[vision.py][stderr] {line}");
-				}
-			};
-			process.Exited += (_, _) =>
-			{
-				GD.Print($"[Vision] vision.py đã thoát (PID={process.Id}, code={process.ExitCode}).");
-				CallDeferred(nameof(UpdateServiceButtons));
-			};
-
-			bool started = process.Start();
-			if (!started)
-			{
-				GD.PrintErr("[Vision] Không thể khởi chạy vision.py.");
-				return;
-			}
-
-			_visionProcess = process;
-			process.BeginOutputReadLine();
-			process.BeginErrorReadLine();
-			GD.Print($"[Vision] Đã khởi chạy vision.py PID={process.Id}");
-			UpdateServiceButtons();
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"[Vision] Lỗi khi chạy vision.py: {ex.Message}");
-		}
+		_processes?.StartVision(BuildServiceConfig());
 	}
 
 	private void StopVisionProcess()
 	{
-		if (_visionProcess == null)
-		{
-			return;
-		}
-
-		try
-		{
-			if (!_visionProcess.HasExited)
-			{
-				GD.Print($"[Vision] Đang dừng vision.py PID={_visionProcess.Id}...");
-				_visionProcess.Kill(true);
-				_visionProcess.WaitForExit(3000);
-			}
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"[Vision] Không thể dừng vision.py sạch sẽ: {ex.Message}");
-		}
-		finally
-		{
-			_visionProcess.Dispose();
-			_visionProcess = null;
-			UpdateServiceButtons();
-		}
+		_processes?.StopVision();
 	}
 
 	private void ToggleVisionProcess()
 	{
-		if (_visionProcess != null && !_visionProcess.HasExited)
-			StopVisionProcess();
-		else
-			StartVisionProcess();
+		_processes?.ToggleVision(BuildServiceConfig());
 	}
 
 	private string GetProjectRoot()
@@ -1074,135 +1132,41 @@ public partial class UdpListener : Node2D
 
 	private bool StartLlamaServerProcess()
 	{
-		if ((_llamaServerProcess != null && !_llamaServerProcess.HasExited) || IsLlamaServerReachable())
-		{
-			GD.Print($"[LLM] llama-server đã sẵn sàng trên cổng {LlamaServerPort}.");
-			UpdateServiceButtons();
-			return true;
-		}
-
-		string serverPath = GetLlamaServerFullPath();
-		string modelPath = GetModelFullPath();
-		if (!File.Exists(serverPath))
-		{
-			GD.PrintErr($"[LLM] Không tìm thấy llama-server.exe: {serverPath}");
-			return false;
-		}
-		if (!File.Exists(modelPath))
-		{
-			GD.PrintErr($"[LLM] Không tìm thấy model.gguf: {modelPath}");
-			return false;
-		}
-
-		try
-		{
-			string flashAttnArgs = LlamaServerFlashAttn ? " --flash-attn on" : "";
-			string mmprojPath = GetMmprojFullPath();
-			bool extraArgsHasMmproj = !string.IsNullOrWhiteSpace(LlamaServerExtraArgs) &&
-				LlamaServerExtraArgs.Contains("--mmproj", StringComparison.OrdinalIgnoreCase);
-			bool extraArgsHasMmprojOffload = !string.IsNullOrWhiteSpace(LlamaServerExtraArgs) &&
-				LlamaServerExtraArgs.Contains("mmproj-offload", StringComparison.OrdinalIgnoreCase);
-			bool extraArgsHasCacheRam = !string.IsNullOrWhiteSpace(LlamaServerExtraArgs) &&
-				LlamaServerExtraArgs.Contains("--cache-ram", StringComparison.OrdinalIgnoreCase);
-			string mmprojArgs = "";
-			if (EnableLocalVisionInput && !extraArgsHasMmproj)
-			{
-				if (File.Exists(mmprojPath))
-				{
-					string mmprojOffloadArgs = extraArgsHasMmprojOffload ? "" : " --mmproj-offload";
-					mmprojArgs = $" --mmproj \"{mmprojPath}\"{mmprojOffloadArgs}";
-				}
-				else
-					GD.PrintErr($"[LLM] Vision input đang bật nhưng không tìm thấy mmproj: {mmprojPath}");
-			}
-			string cacheRamArgs = extraArgsHasCacheRam ? "" : " --cache-ram 1024";
-			string extraArgs = string.IsNullOrWhiteSpace(LlamaServerExtraArgs) ? "" : $" {LlamaServerExtraArgs}";
-			var startInfo = new ProcessStartInfo
-			{
-				FileName = serverPath,
-				Arguments = $"-m \"{modelPath}\"{mmprojArgs} -c {LlamaServerCtx} -ngl {LlamaServerNgl} --host 127.0.0.1 --port {LlamaServerPort} --no-warmup --jinja --reasoning-format deepseek{cacheRamArgs}{flashAttnArgs}{extraArgs}",
-				WorkingDirectory = Path.GetDirectoryName(serverPath) ?? GetProjectRoot(),
-				UseShellExecute = false,
-				CreateNoWindow = true,
-				RedirectStandardOutput = true,
-				RedirectStandardError = true,
-				StandardOutputEncoding = Encoding.UTF8,
-				StandardErrorEncoding = Encoding.UTF8,
-			};
-
-			var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-			process.OutputDataReceived += (_, e) =>
-			{
-				if (!string.IsNullOrWhiteSpace(e.Data) && ShouldLogLlamaOutput(e.Data))
-					GD.Print($"[llama-server] {e.Data.Trim()}");
-			};
-			process.ErrorDataReceived += (_, e) =>
-			{
-				if (!string.IsNullOrWhiteSpace(e.Data) && ShouldLogLlamaOutput(e.Data))
-					GD.Print($"[llama-server][stderr] {e.Data.Trim()}");
-			};
-			process.Exited += (_, _) =>
-			{
-				GD.Print($"[LLM] llama-server đã thoát (PID={process.Id}, code={process.ExitCode}).");
-				CallDeferred(nameof(UpdateServiceButtons));
-			};
-
-			bool started = process.Start();
-			if (!started)
-			{
-				GD.PrintErr("[LLM] Không thể khởi động llama-server.");
-				return false;
-			}
-
-			_llamaServerProcess = process;
-			process.BeginOutputReadLine();
-			process.BeginErrorReadLine();
-			GD.Print($"[LLM] Đã khởi chạy llama-server PID={process.Id}");
-			UpdateServiceButtons();
-			return true;
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"[LLM] Lỗi khi chạy llama-server: {ex.Message}");
-			return false;
-		}
+		return _processes?.StartLlamaServer(BuildServiceConfig()) ?? false;
 	}
 
 	private void StopLlamaServerProcess()
 	{
-		if (_llamaServerProcess == null)
-		{
-			UpdateServiceButtons();
-			return;
-		}
-
-		try
-		{
-			if (!_llamaServerProcess.HasExited)
-			{
-				GD.Print($"[LLM] Đang dừng llama-server PID={_llamaServerProcess.Id}...");
-				_llamaServerProcess.Kill(true);
-				_llamaServerProcess.WaitForExit(3000);
-			}
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"[LLM] Không thể dừng llama-server sạch sẽ: {ex.Message}");
-		}
-		finally
-		{
-			_llamaServerProcess.Dispose();
-			_llamaServerProcess = null;
-			UpdateServiceButtons();
-		}
+		_processes?.StopLlamaServer();
 	}
 
 	private void ToggleLlamaServerProcess()
 	{
-		if ((_llamaServerProcess != null && !_llamaServerProcess.HasExited) || IsLlamaServerReachable())
-			StopLlamaServerProcess();
-		else
-			StartLlamaServerProcess();
+		_processes?.ToggleLlamaServer(BuildServiceConfig());
+	}
+
+	private ErisServiceConfig BuildServiceConfig()
+	{
+		return new ErisServiceConfig
+		{
+			PythonExecutable = PythonExecutable,
+			VisionScriptPath = VisionScriptPath,
+			LlamaServerPath = LlamaServerPath,
+			ModelPath = ModelPath,
+			MmprojPath = MmprojPath,
+			EnableLocalVisionInput = EnableLocalVisionInput,
+			LlamaServerPort = LlamaServerPort,
+			LlamaServerNgl = LlamaServerNgl,
+			LlamaServerCtx = LlamaServerCtx,
+			LlamaServerFlashAttn = LlamaServerFlashAttn,
+			LlamaServerExtraArgs = LlamaServerExtraArgs,
+			EnableRemoteCognitionApi = EnableRemoteCognitionApi,
+			EnableLocalStyleRewrite = EnableLocalStyleRewrite,
+			DefaultRemoteApiKey = DefaultRemoteApiKey,
+			RemoteApiProvider = RemoteApiProvider,
+			RemoteApiBaseUrl = RemoteApiBaseUrl,
+			RemoteApiModelName = RemoteApiModelName,
+		};
 	}
 
 	private void UpdateServiceButtons()

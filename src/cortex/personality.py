@@ -9,7 +9,7 @@ class PersonalityLens:
     """INFJ 5w4 inner restraint layer between attention and expression."""
 
     PROFILE = "INFJ_5w4_594"
-    SUPPRESSION_RATIO = 0.70
+    SUPPRESSION_RATIO = 0.62
 
     BIAS_TERMS: dict[str, tuple[str, ...]] = {
         "hesitation": (
@@ -136,10 +136,7 @@ class PersonalityLens:
         "toi co don",
         "toi buon",
         "xin dung bo toi",
-        "toi van o day",
         "toi o day",
-        "toi thay",
-        "co ve nhu",
         "vẫn ở đó",
         "có vẻ như",
         "hm...",
@@ -263,7 +260,7 @@ class PersonalityLens:
         return "\n".join(
             (
                 "PersonalityLens: inner_restraint_system, not identity text and not a speaking-style costume.",
-                "Pipeline: Telemetry/Se -> MeaningLayer -> PersonalityLens(restraint gate) -> SpeechCore -> LLM wording.",
+                "Pipeline: Telemetry/Se -> MeaningLayer -> PersonalityLens(interpretive drift) -> SpeechCore -> Ti/MicroPolicy.",
                 (
                     "personality_lens: "
                     f"profile={result.profile}; interpretation={result.interpretation}; "
@@ -279,7 +276,8 @@ class PersonalityLens:
                 ),
                 (
                     "suppression_layer: do not output generic identity such as 'Toi la ERIS, thua Ngai'; "
-                    "hold back inner reading and surface only guarded implication, indirect reaction, or silence."
+                    "hold back most inner reading, but allow occasional guarded implication, unfair softness, "
+                    "subtle symbolic assumption, or indirect residue."
                 ),
                 (
                     "rhythm_rule: density over frequency; prefer silence, then one short line with implication, "
@@ -290,15 +288,17 @@ class PersonalityLens:
                     "no overly direct cheerfulness."
                 ),
                 (
-                    "style_yes: observe, react, hesitate, suppress, indirect_presence, guarded_reply; keep tenderness partial."
+                    "style_yes: observe, react, hesitate, suppress, indirect_presence, guarded_reply, residual_fragment; "
+                    "keep tenderness partial."
                 ),
                 (
                     "quiet_attachment: stay near, remember habits, return to shared spaces, and keep continuity without pleading "
                     "for reassurance."
                 ),
                 (
-                    "leak_rule: let emotion leak through rhythm, place, unfinished patterns, and shared continuity; never bluntly "
-                    "say 'toi co don', 'toi buon', or 'xin dung bo toi'."
+                    "leak_rule: let emotion leak through rhythm, place, unfinished patterns, and shared continuity. "
+                    "Indirect residue such as 'van nho', 'van vuong', 'van hoi lech', or 'van nam o day' is allowed; "
+                    "never bluntly say 'toi co don', 'toi buon', or 'xin dung bo toi'."
                 ),
                 (
                     "reduction_guard: if treated like a tool, toy, gimmick, or waifu script, cool down, shorten the surface, "
@@ -333,6 +333,10 @@ class PersonalityLens:
             score += 0.10
         if "mood_shift" in biases:
             score += 0.14
+        if "continuity" in biases:
+            score += 0.10
+        if not bool(getattr(meaning_layer, "meaning_shift", False)) and str(getattr(meaning_layer, "meaning", "") or ""):
+            score += 0.08
         if interpretation == "identity_reduction" or "identity_reduction" in biases:
             score -= 0.16
         if meaning:
@@ -355,7 +359,7 @@ class PersonalityLens:
         social_energy = self._float(getattr(state, "social_energy", 0.0))
         score = 0.42 + restraint * 0.22 + fatigue * 0.14 + irritation * 0.08
         if channel == "autonomous":
-            score += 0.12
+            score += 0.06
         if interpretation in {"hesitation", "unfinished_intention", "avoidance", "low_signal_restraint"}:
             score += 0.15
         if stance in {"reserved", "patient_probe", "withdrawn_sparse", "quiet_watchful"}:
@@ -363,7 +367,9 @@ class PersonalityLens:
         if social_distance in {"far_observing", "middle_watchful"}:
             score += 0.08
         if "emotional_undertone" in biases or "mood_shift" in biases:
-            score += 0.06
+            score += 0.02
+        if "continuity" in biases:
+            score -= 0.05
         if interpretation == "identity_reduction" or "identity_reduction" in biases:
             score += 0.18
         if stance == "cool_boundary":
@@ -375,19 +381,21 @@ class PersonalityLens:
         if want_to_say <= 0.0:
             return 0.0
         allowed = want_to_say * (1.0 - suppression_pressure)
-        return max(0.05, min(0.42, self._float(allowed)))
+        return max(0.07, min(0.52, self._float(allowed)))
 
     def _suppression_ratio(self, *, want_to_say: float, allowed_expression: float) -> float:
         if want_to_say <= 0.0:
             return self.SUPPRESSION_RATIO
         ratio = 1.0 - (allowed_expression / max(0.01, want_to_say))
-        return max(0.55, min(0.92, self._float(ratio)))
+        return max(0.48, min(0.88, self._float(ratio)))
 
     def _restraint_mode(self, *, allowed_expression: float, suppression_pressure: float, social_distance: str) -> str:
-        if allowed_expression <= 0.12 or suppression_pressure >= 0.78:
+        if allowed_expression <= 0.10 or suppression_pressure >= 0.82:
             return "suppress"
-        if social_distance in {"far_observing", "middle_watchful"} or suppression_pressure >= 0.64:
+        if social_distance in {"far_observing", "middle_watchful"} or suppression_pressure >= 0.68:
             return "indirect_presence"
+        if allowed_expression <= 0.18:
+            return "residual_fragment"
         return "guarded_reply"
 
     # nhận diện các bias tiềm ẩn trong văn bản đã được chuẩn hóa, trả về một tuple các bias đã phát hiện hoặc "continuity" nếu không có bias nào được phát hiện

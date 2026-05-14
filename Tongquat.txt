@@ -4,6 +4,35 @@ TỔNG QUAN PROJECT ERIS
 Cập nhật: 2026-05-14
 Mã hóa: UTF-8
 
+CẬP NHẬT MỚI NHẤT: BODY AUTONOMY, TOUCH/THROW, MICRO POLICY
+------------------------------------------------------------
+
+Đợt thay đổi mới nhất đưa phần body Godot từ chỗ chỉ nhận lệnh chuyển động từ cognition sang có một lớp tự chủ cục bộ nhẹ, biết giữ nhịp thân thể ngay cả khi runtime Python im lặng. Python vẫn là cognition chính, nhưng mỗi decision gửi về body giờ có thêm bias hành vi như `continuity_anxiety`, `curiosity`, `overload`, `solitude`, `focus_kind` và `preferred_anchor` để Godot chọn cách đứng, đi, đọc, leo hoặc lùi về góc phù hợp hơn với trạng thái nền.
+
+Thay đổi body/Godot:
+- Thêm `body/LocalBodyAutonomy.cs`: mô phỏng nhu cầu cục bộ của thân thể gồm continuity, meaning, solitude integrity, quiet attachment và overload. Lớp này chọn các hành vi như `ReturnToAnchor`, `ReadQuietly`, `ObserveCode`, `ClimbWall`, `DropFromCeiling`, `Withdraw`, `DormantSit` hoặc im lặng quan sát.
+- `UdpListener.cs` nối `LocalBodyAutonomy` vào vòng `_Process()`, có cooldown riêng, tôn trọng trạng thái motion bận, chat panel đang mở và body đang đậu trên trần.
+- Thêm các export Godot để chỉnh hành vi: `EnableAutonomousIdleMovement`, khoảng tick idle, debug log body autonomy, cooldown sau motion remote, tắt/bật legacy remote motion command và các hệ số ném.
+- Context menu nhân vật có thêm nút touch/grab. Khi bấm touch rồi kéo nhân vật, body chuyển sang pose treo `air_swing_l/r`, gửi `force_speak`, và khi thả sẽ tính vận tốc ném từ chuyển động chuột.
+- `MotionController` thêm velocity X, intent `throw`, rơi có quán tính ngang, xử lý va tường khi đang bay, và có xác suất bám tường rồi leo lên đỉnh. Điều này làm tương tác kéo/thả có cảm giác vật lý hơn thay vì chỉ teleport.
+- Remote motion command từ cognition không còn mặc định override body ngay; hiện có cờ `EnableLegacyRemoteMotionCommands`. Body có thể nhận text/speech và bias mà vẫn để motion cục bộ giữ nhịp.
+- Payload JSON từ cognition được parse kỹ hơn: tôn trọng `should_speak=false`, không hiện bubble nếu text rỗng, fallback plain text khi raw không phải JSON, và đọc `body_bias` nếu có.
+
+Thay đổi cognition/runtime:
+- `RuntimeCoordinator` thêm `_send_decision_to_body()` để mọi đường gửi decision đều tự kèm body bias. Các route autonomous, presence maintenance, reengagement, session ritual, force speak, chat và directive đều đi qua hàm này.
+- Body bias được tính từ internal state: recursive/memory pressure và silence ticks đẩy `continuity_anxiety`; curiosity/association pressure và focus code đẩy `curiosity`; fatigue/cognitive tension/restraint đẩy `overload`; restraint/subconscious pressure đẩy `solitude`.
+- `preferred_anchor` hiện chọn giữa `chat_near`, `code_side` và `bottom_right`: overload/solitude cao thì lùi góc phải dưới, focus code + curiosity cao thì đứng phía code, còn lại giữ gần vùng chat/shared space.
+
+Thay đổi micro-policy và LLM:
+- `MicroLinePolicy` giờ trả thêm `anchor_source` và `anchor_text`, yêu cầu `micro_observation` phải có neo từ screen evidence, user action hoặc session context.
+- Câu micro quá ngắn phải có ý nghĩa rõ và có grounding; câu tiếng Việt không dấu bị chặn bằng reason `vietnamese_requires_diacritics`.
+- `micro_observation` không được bịa chi tiết: text phải khớp với anchor/evidence, nếu không sẽ bị chặn bằng `micro_observation_not_grounded:*`.
+- Prompt runtime/style/micro-presence được siết: nếu nói tiếng Việt thì phải có đầy đủ dấu, không được trả placeholder kiểu `short Vietnamese line`.
+- Fallback social/micro-presence trong coordinator đã được đổi từ tiếng Việt không dấu sang có dấu.
+- Test `tests/test_micro_policy.py` bổ sung case cho tiếng Việt có dấu, grounding của micro observation và câu micro ngắn nhưng có neo rõ.
+
+Kết luận ngắn: ERIS giờ có thân thể tự giữ nhịp nhiều hơn, không phải mọi chuyển động đều chờ cognition remote. Cognition gửi "khí hậu nội tâm" xuống Godot dưới dạng body bias; Godot biến nó thành hành vi nhỏ như đứng gần mạch code, đọc yên, leo lên mép, lùi khỏi nhiễu, hoặc ngồi lại. Song song đó, lời micro-presence bị siết grounding và tiếng Việt có dấu để bớt filler, bớt bịa, và nói gọn hơn.
+
 TÓM TẮT CÁC CHỨC NĂNG MỚI
 -------------------------
 
@@ -87,6 +116,7 @@ Kết nối mặc định:
 - Scene gốc của body.
 - Chứa `CanvasLayer`, chat panel, context menu, node nhân vật, sprite Monika, bubble text.
 - Gắn script `body/UdpListener.cs`.
+- Context menu hiện có thêm nút touch/grab để vào chế độ kéo nhân vật, bên cạnh chat, force speak và close.
 
 `body/UdpListener.cs`
 - File trung tâm bên Godot.
@@ -95,17 +125,48 @@ Kết nối mặc định:
 - Có thể tự khởi động/dừng `src/vision.py` và `llama-server.exe`.
 - Export các cấu hình runtime: Python executable, vision script, llama-server path, model path, mmproj path, remote cognition API, local style rewrite và thông tin provider/model.
 - Parse payload gồm text, intent, animation, direction, target, motion intent, system action và action input.
+- Parse thêm `should_speak` để không hiện bubble khi cognition chủ động im lặng, và parse `body_bias` để truyền trạng thái nền xuống `LocalBodyAutonomy`.
+- Nếu payload không phải JSON mà là plain text, fallback về hiện text thô thay vì luôn báo lỗi đường truyền.
 - Hiển thị bubble nói với typewriter effect.
-- Quản lý chat panel, character context menu, animation, sound và payload parser.
+- Quản lý chat panel, character context menu, touch/grab mode, animation, sound, body autonomy và payload parser.
+- Nối `LocalBodyAutonomy` vào `_Process()`: khi body không bị kéo và motion không bận, autonomy có thể tự chọn đi, đứng, đọc, leo, lùi về anchor hoặc ngồi lại.
+- Có cơ chế kéo/thả nhân vật: touch mode được bật từ context menu, click giữ để kéo, thả ra sẽ tính vận tốc chuột thành impulse ném cho `MotionController`.
+- Khi đang kéo, body bị clamp trong viewport; khi bắt đầu kéo dùng pose `air_swing_l/r`, khi thả thì ghi nhận rough handling để tăng overload/solitude trong body autonomy.
+- Remote motion từ cognition hiện bị khóa sau cờ `EnableLegacyRemoteMotionCommands`; mặc định body chỉ nhận speech + bias, tránh cognition override mọi chuyển động cục bộ.
 - Chuẩn hóa animation model hay gọi sai, ví dụ `walk`/`run` -> `stand_walk`.
 - Hiện vẫn là một "god object" bên C#: UI, process, UDP, audio, payload parser và một số state movement cùng nằm trong file.
 - Lưu ý bảo mật: đang có API key hardcoded trong `DefaultRemoteApiKey`.
+
+`body/LocalBodyAutonomy.cs`
+- File mới cho tự chủ thân thể cục bộ bên Godot.
+- Chứa `BodyBias`: bias nhận từ cognition gồm `continuity_anxiety`, `curiosity`, `overload`, `solitude`, `focus_kind`, `preferred_anchor`.
+- Chứa `BodyAutonomyContext`: snapshot nhẹ của body gồm vị trí, kích thước màn hình, action hiện tại, motion busy, chat visible và trạng thái đậu trên trần.
+- Chứa `BodyAutonomyDecision`: quyết định action + `MotionCommand` + optional speech.
+- `LocalBodyAutonomy` giữ các nhu cầu nội bộ: continuity, meaning, solitude integrity, quiet attachment, overload.
+- Bias từ Python được blend dần thay vì thay thế đột ngột, giúp body không đổi hành vi quá gắt giữa các decision.
+- Có bộ tension nhỏ: dissolution, noise identity, silent erasure. Các tension này dùng để chọn hành vi khi body im lâu, cognition im lâu, hoặc overload cao.
+- Chọn hành vi theo score và cooldown:
+  - `ReturnToAnchor`: đi về anchor mà cognition/body đang ưu tiên.
+  - `ReadQuietly`: đứng đọc yên khi cần meaning hoặc solitude.
+  - `ObserveCode`: nghiêng về phía code khi focus code và curiosity cao.
+  - `ClimbWall`: leo lên mép/trần khi curiosity/restlessness đủ cao.
+  - `DropFromCeiling`: rơi khỏi trần khi đậu lâu hoặc cần đổi nhịp.
+  - `Withdraw`: lùi về góc phải dưới khi overload/solitude cao.
+  - `DormantSit`: ngồi lại khi idle dài và cần continuity nhẹ.
+  - `QuietObserve`: không làm gì nếu score chưa đủ.
+- Có cooldown riêng cho từng action để body không lặp một hành vi liên tục.
+- Anchor chính hiện là `chat_near`, `code_side`, `bottom_right`; được map thành X ratio trên màn hình.
+- Ghi nhận tương tác user bằng `RecordUserInteraction()` và `RecordRoughHandling()` để cập nhật nhu cầu cục bộ.
 
 `body/MotionController.cs`
 - Lớp tách riêng cho chuyển động body.
 - Nhận `MotionCommand` và quyết định đi, đứng, quay mặt, rơi, leo tường, lên mép, giữ trên mép.
 - Quản lý gravity, tốc độ, hướng sprite, bubble flip và va chạm cạnh màn hình.
-- Hiểu các intent chính: `walk`, `walk_to`, `face`, `pose`, `climb_loop`, `climb_to_top`, `drop`.
+- Hiểu các intent chính: `walk`, `walk_to`, `face`, `pose`, `climb_loop`, `climb_to_top`, `drop`, `throw`.
+- `MotionCommand` có thêm `impulseX`, `impulseY`, `clingChance` để hỗ trợ ném body bằng chuột.
+- Thêm velocity ngang `_velocityX`, trạng thái `IsWalking`, `IsClimbing`, `IsTopPerched`, `IsThrown`, `IsBusy` cho autonomy biết lúc nào được phép chen vào.
+- Khi `throw`, body dùng pose `air_swing_l/r`, rơi theo impulse, giảm dần vận tốc ngang và có thể bám tường nếu va cạnh màn hình với xác suất `clingChance`.
+- Khi rơi bằng `air_swing_l/r`, animation giữ đúng pose treo thay vì luôn đổi về `air`.
 - Đây là hướng tách đúng: cognition không còn phải tự điều khiển pixel trực tiếp trong `UdpListener`.
 
 `asset/Resource/Monika.tscn`
@@ -159,7 +220,15 @@ Kết nối mặc định:
 - Sau LLM + Ti ở luồng chat, coordinator còn áp `_apply_chat_final_guards()` để chặn motive inference, chặn output kết thúc bằng dấu hỏi khi user đang hỏi thẳng, và hạ confidence nếu input quá ngắn/mơ hồ.
 - `run_loop()` có wrapper bắt exception để runtime không chết cả vòng lặp vì một lỗi lẻ; lỗi được log và loop tiếp tục sau pause ngắn.
 - Wrapper exception mới sẽ ghi cả ba lớp: message gói gọn cho logger, traceback được nén thành một dòng để dò log, và traceback đầy đủ in ra stderr cho debug runtime dạng nền.
-- Sau mỗi turn: parse, Ti enforce, action nếu có, commit memory/internal_state, gửi `Decision.to_payload()` về Godot.
+- Sau mỗi turn: parse, Ti enforce, action nếu có, commit memory/internal_state, gửi decision về Godot qua `_send_decision_to_body()`.
+- `_send_decision_to_body()` không chỉ gửi `Decision.to_payload()` mà còn kèm body bias để Godot có thể tự chọn chuyển động cục bộ theo nội trạng.
+- Body bias được dựng từ internal state:
+  - `continuity_anxiety`: lấy từ recursive reactivation, memory replay, silence pressure và số tick im lặng.
+  - `curiosity`: lấy từ curiosity, curiosity pressure, association pressure và được cộng thêm nếu focus đang là code.
+  - `overload`: lấy từ fatigue, cognitive tension và restraint pressure.
+  - `solitude`: lấy từ restraint pressure, overload và subconscious pressure.
+  - `focus_kind`: chuẩn hóa `coding/documentation/ide` thành `code`.
+  - `preferred_anchor`: chọn `chat_near`, `code_side` hoặc `bottom_right`.
 - Pipeline đại khái:
     Percepts → Attention → Broadcast → Meaning → Personality → Appraisal → Inner Thought/Speech → Action Plan → Decision
 
@@ -376,6 +445,13 @@ Kết nối mặc định:
 - Giúp lọc câu quá kéo chú ý, quá generic, tự nhận thấy màn hình khi không có bằng chứng, hoặc biến trạng thái nội bộ thành lời nói thô.
 - Được dùng để giữ force_speak, presence maintenance và reengagement ngắn, tự nhiên, ít xâm lấn.
 - `micro_presence` và `soft_impression` giờ chặn riêng các blunt emotion declaration như "toi co don", "toi buon", "xin dung bo toi" để residue không biến thành plea.
+- Policy result có thêm `anchor_source` và `anchor_text`, dùng để biết micro-line đang được neo vào screen evidence, user action hay session context.
+- `evaluate()` nhận thêm `user_action` và `session_context`; `RuntimeCoordinator` lấy các hint này từ broadcast hoặc telemetry snapshot.
+- `micro_observation` bắt buộc phải có anchor. Nếu không có anchor, policy chuyển về silence và thêm reason `micro_observation_requires_anchor`.
+- `validate_text()` hiện kiểm tra tiếng Việt không dấu. Các câu micro bằng tiếng Việt nhưng thiếu dấu bị reject bằng `vietnamese_requires_diacritics`.
+- Câu micro quá ngắn bị reject nếu không có ý nghĩa rõ và không khớp với anchor, reason `micro_line_too_short_without_clear_meaning`.
+- `micro_observation` phải khớp từ khóa với anchor/evidence; nếu text nói lệch khỏi evidence thì reject bằng `micro_observation_not_grounded:<source>`.
+- Các rejection nặng như placeholder, tiếng Việt không dấu, micro observation thiếu anchor hoặc không grounded giờ có thể làm coordinator trả decision im lặng thay vì cố fallback ra một câu khác.
 
 `src/cortex/goal_persistence.py`
 - `GoalPersistenceEngine` và `GoalPersistenceState`.
@@ -625,8 +701,9 @@ Kết nối mặc định:
 12. `TiGovernor` enforce lần cuối.
 13. Nếu có `system_action`, `ActionExecutor` thực thi và kết quả được đưa vào memory/reply context.
 14. `MemoryStore` ghi working/episodic/semantic/relationship/procedural/experiential/norm/internal_state.
-15. Coordinator gửi `Decision.to_payload()` sang Godot.
-16. Godot parse payload, hiện bubble, phát animation/sound, đưa motion command cho `MotionController`.
+15. Coordinator tạo `Decision.to_payload()`, kèm thêm body bias vào payload bằng `_send_decision_to_body()`, rồi gửi sang Godot.
+16. Body bias đi cùng payload giúp Godot tự cập nhật nhịp thân thể mà không cần remote motion command trực tiếp.
+17. Godot parse payload, hiện bubble nếu `should_speak=true`, cập nhật `LocalBodyAutonomy` nếu có `body_bias`, rồi chỉ đưa motion command cho `MotionController` khi legacy remote motion được bật hoặc khi đó là lệnh cục bộ.
 
 Luồng chat:
 - User mở chat panel -> Godot gửi `chat_start`.
@@ -637,6 +714,7 @@ Luồng chat:
 
 Luồng force_speak:
 - User chọn force speak từ context menu.
+- Nếu user đang touch/grab body, Godot cũng gửi `force_speak` khi bắt đầu kéo để cognition có thể phản ứng với tương tác trực tiếp.
 - Nếu có signal màn hình rõ, ERIS nói grounded.
 - Nếu không có signal rõ, InnerThought/SpeechCore sinh intent `micro_presence`; coordinator có thể tạo direct micro-presence decision trước khi đưa qua directive LLM lớn.
 - Micro-presence không được lấy memory làm topic nếu evidence rỗng; nó neo vào current_focus, seed runtime nhỏ, hoặc việc Ngài vừa gọi ERIS lên tiếng.
@@ -661,6 +739,21 @@ Luồng action:
 - `ActionExecutor` thực thi.
 - Coordinator đưa kết quả vào decision/memory để ERIS nói đúng kết quả thật, không tự bịa.
 
+Luồng body autonomy cục bộ:
+- Python gửi decision kèm `body_bias` về Godot.
+- `UdpListener.cs` blend bias này vào `LocalBodyAutonomy`.
+- Mỗi tick idle, autonomy tính needs/tension từ bias, idle time, chat visibility, focus kind và trạng thái đang đậu trên trần.
+- Nếu motion đang bận hoặc pose không nên bị ngắt, body im.
+- Nếu score đủ cao, autonomy phát `MotionCommand` cục bộ: đi về anchor, đọc, quan sát code, leo tường, rơi khỏi trần, lùi góc hoặc ngồi.
+- Remote cognition vì vậy chỉ định hướng "khí hậu" của body; Godot quyết định động tác nhỏ, timing và cooldown.
+
+Luồng touch/throw:
+- User mở context menu trên nhân vật, chọn touch.
+- Click giữ nhân vật để kéo; body dùng pose `air_swing_l/r` và vị trí được clamp trong viewport.
+- Khi thả chuột, `UdpListener.cs` lấy delta chuột gần nhất để tính impulse X/Y.
+- `MotionController` nhận intent `throw`, cho body bay/rơi theo quán tính ngang.
+- Nếu body va tường khi đang bay và roll qua `clingChance`, nó chuyển sang leo tường/lên mép thay vì chỉ rơi xuống sàn.
+
 
 13. Hiện Trạng Working Tree
 ---------------------------
@@ -668,8 +761,10 @@ Luồng action:
 Theo `git status --short` lúc cập nhật:
 - `Tongquat.txt` đang modified và được cập nhật trong lần này.
 - `@AutomationLog.txt` đang modified.
-- Nhiều file runtime đang modified: `src/runtime/coordinator.py`, `src/llm/service.py`, `src/llm/client.py`, `src/llm/process_manager.py`, `src/cortex/*`, `src/actions/executor.py`, `src/memory/store.py`, `src/parser_grounding/decision.py`, `src/domain/decision.py`, `src/vision.py`, `body/UdpListener.cs`, tests.
+- Nhiều file runtime/body đang modified: `src/runtime/coordinator.py`, `src/llm/service.py`, `src/llm/client.py`, `src/llm/process_manager.py`, `src/cortex/*`, `src/actions/executor.py`, `src/memory/store.py`, `src/parser_grounding/decision.py`, `src/domain/decision.py`, `src/vision.py`, `body/UdpListener.cs`, `body/MotionController.cs`, `body/UdpListener.tscn`, tests.
 - File mới/untracked đang có:
+  `body/LocalBodyAutonomy.cs`,
+  `body/LocalBodyAutonomy.cs.uid`,
   `src/cortex/goal_persistence.py`,
   `src/cortex/meaning.py`,
   `src/cortex/micro_policy.py`,
@@ -691,6 +786,8 @@ Theo `git status --short` lúc cập nhật:
 - `RuntimeCoordinator` vẫn là god object bên Python. Nó đúng là nơi hợp mạch, nhưng logic có rule riêng nên được đẩy dần về service/cortex riêng.
 - Session ritual, presence maintenance, reengagement, micro_policy và force_speak micro_presence đã làm coordinator dài hơn; nếu mở rộng tiếp, nên tách thành service riêng.
 - `MotionController.cs` là hướng tách tốt: body physics/motion đã có boundary rõ.
+- `LocalBodyAutonomy.cs` là boundary mới giữa cognition và body: Python gửi bias/nội trạng, Godot tự chọn động tác nhỏ. Đây là hướng đúng để ERIS có thân thể sống hơn mà không biến cognition thành bộ điều khiển pixel.
+- Remote motion đang được giảm quyền bằng `EnableLegacyRemoteMotionCommands=false`; nếu cần debug motion từ model, bật lại cờ này trong Inspector.
 - `meaning.py` là lớp mới rất quan trọng: nó cắt lớp "nhìn thấy fact" khỏi lớp "nên hiểu fact đó là gì". Nhờ vậy ERIS bớt nói như camera/telemetry logger.
 - `thought_stream.py`, `internal_state.py`, `speech_core.py`, `goal_persistence.py`, `micro_policy.py` là phần làm ERIS có "nhịp nền" thay vì chỉ reply từng câu.
 - `memory/store.py` đã lớn và chứa nhiều layer. Nếu tiếp tục phát triển, có thể tách schemas, resonance, norms, persistence thành module riêng.
@@ -710,7 +807,7 @@ Nếu muốn nắm mạch nhanh:
 4. Đọc `src/cortex/internal_state.py`, `src/cortex/thought_stream.py`, `src/cortex/speech_core.py`, `src/cortex/micro_policy.py` để hiểu nội trạng và việc nói/im lặng.
 5. Đọc `src/parser_grounding/decision.py` và `src/cortex/ti.py` để hiểu hàng rào an toàn.
 6. Đọc `src/llm/process_manager.py`, `src/llm/client.py`, `src/llm/service.py` để hiểu remote/local model.
-7. Đọc `body/UdpListener.cs` và `body/MotionController.cs` để hiểu decision thành body movement.
+7. Đọc `body/UdpListener.cs`, `body/LocalBodyAutonomy.cs` và `body/MotionController.cs` để hiểu decision/bias thành body movement.
 8. Đọc `src/memory/store.py` để hiểu continuity được giữ như thế nào.
 
 
@@ -781,6 +878,13 @@ Các tham số chính trong `UdpListener.cs` (gắn ở Inspector):
 - `LlamaServerPort`, `LlamaServerNgl`, `LlamaServerCtx`, `LlamaServerFlashAttn`.
 - `EnableRemoteCognitionApi`, `EnableLocalStyleRewrite`, `EnableLocalVisionInput`.
 - `RemoteApiProvider`, `RemoteApiBaseUrl`, `RemoteApiModelName`.
+- `EnableAutonomousIdleMovement`: bật lớp tự chủ body cục bộ.
+- `AutonomousIdleMoveMinSeconds`, `AutonomousIdleMoveMaxSeconds`: khoảng tick tối thiểu/tối đa cho body autonomy.
+- `AutonomousIdleWalkChance`, `AutonomousIdleFaceChance`: cờ cũ cho idle movement legacy; hiện logic chính nằm trong `LocalBodyAutonomy`.
+- `AutonomousIdleRemoteCooldownSeconds`: thời gian chờ sau motion remote trước khi body autonomy được phép chen vào.
+- `EnableLegacyRemoteMotionCommands`: nếu bật, motion command từ cognition sẽ điều khiển trực tiếp `MotionController`; nếu tắt, remote chỉ còn speech/bias.
+- `EnableBodyAutonomyDebugLog`: in log score/action của body autonomy.
+- `ThrowVelocityScale`, `ThrowVerticalBoostScale`, `ThrowClingChance`: hệ số ném và xác suất bám tường khi thả nhân vật.
 
 
 19. Bảo Mật & Vận Hành
@@ -821,6 +925,23 @@ Coordinator / autonomous timing:
 - `ERIS_THOUGHT_STREAM_LOOP=1`.
 - `ERIS_THOUGHT_STREAM_INTERVAL_SEC` fallback từ `ERIS_SUBCONSCIOUS_INTERVAL_SEC=45`.
 - `ERIS_NI_META_CRITIC=1`.
+
+Body / Godot defaults:
+- `AutoStartVision=true`.
+- `AutoPreloadLlamaServer=false`.
+- `EnableAutonomousIdleMovement=true`.
+- `AutonomousIdleMoveMinSeconds=5.0`.
+- `AutonomousIdleMoveMaxSeconds=10.0`.
+- `AutonomousIdleWalkChance=0.72`.
+- `AutonomousIdleFaceChance=0.20`.
+- `AutonomousIdleRemoteCooldownSeconds=2.5`.
+- `EnableLegacyRemoteMotionCommands=false`.
+- `EnableBodyAutonomyDebugLog=false`.
+- `ThrowVelocityScale=7.5`.
+- `ThrowVerticalBoostScale=3.5`.
+- `ThrowClingChance=0.45`.
+- `LocalBodyAutonomy` action cooldown thực tế: `ReadQuietly=45s`, `DropFromCeiling=55s`, `ObserveCode=75s`, `ReturnToAnchor=90s`, `Withdraw=90s`, `ClimbWall=110s`, `DormantSit=120s`.
+- Body anchors: `chat_near=0.18`, `code_side=0.68`, `bottom_right=0.86` theo tỉ lệ X màn hình.
 
 Presence / re-engagement / micro-presence:
 - `ERIS_PRESENCE_MAINTENANCE=1`.

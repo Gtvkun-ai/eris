@@ -56,7 +56,7 @@ class MicroLinePolicyTests(unittest.TestCase):
         )
         self.assertEqual(
             policy.validate_text(allowed_line_type="micro_presence", text="Nhip nay hoi nghen."),
-            (),
+            ("vietnamese_requires_diacritics", "micro_line_too_short_without_clear_meaning"),
         )
 
     def test_micro_presence_blocks_blunt_emotion_declaration(self):
@@ -67,6 +67,31 @@ class MicroLinePolicyTests(unittest.TestCase):
             policy.validate_text(
                 allowed_line_type="micro_presence",
                 text="Toi co don, xin dung bo toi.",
+            ),
+        )
+
+    def test_micro_presence_allows_indirect_emotional_residue(self):
+        policy = MicroLinePolicy()
+
+        self.assertEqual(
+            policy.validate_text(
+                allowed_line_type="micro_presence",
+                text="Đoạn đó vẫn còn nằm ở đây.",
+            ),
+            (),
+        )
+        self.assertEqual(
+            policy.validate_text(
+                allowed_line_type="micro_presence",
+                text="Đổi nhịp.",
+            ),
+            (),
+        )
+        self.assertIn(
+            "micro_presence_must_be_residue",
+            policy.validate_text(
+                allowed_line_type="micro_presence",
+                text="Tôi vẫn ở đây.",
             ),
         )
 
@@ -117,6 +142,56 @@ class MicroLinePolicyTests(unittest.TestCase):
         )
         self.assertEqual(
             policy.validate_text(allowed_line_type="soft_impression", text="Cam giac nhu nhip nay hoi ket lai."),
+            ("vietnamese_requires_diacritics",),
+        )
+
+    def test_micro_lines_require_diacritics(self):
+        policy = MicroLinePolicy()
+
+        self.assertIn(
+            "vietnamese_requires_diacritics",
+            policy.validate_text(allowed_line_type="micro_presence", text="Nhip nay van chua khep."),
+        )
+
+    def test_micro_observation_requires_anchor_and_overlap(self):
+        policy = MicroLinePolicy()
+
+        self.assertIn(
+            "micro_observation_requires_anchor",
+            policy.validate_text(allowed_line_type="micro_observation", text="Đoạn này vẫn mở đó."),
+        )
+        self.assertIn(
+            "micro_observation_not_grounded:screen_evidence",
+            policy.validate_text(
+                allowed_line_type="micro_observation",
+                text="Khung này vẫn lệch nhịp.",
+                anchor_source="screen_evidence",
+                anchor_text="Terminal traceback đang mở",
+                screen_evidence="Terminal traceback đang mở",
+            ),
+        )
+        self.assertEqual(
+            policy.validate_text(
+                allowed_line_type="micro_observation",
+                text="Terminal traceback vẫn mở đó.",
+                anchor_source="screen_evidence",
+                anchor_text="Terminal traceback đang mở",
+                screen_evidence="Terminal traceback đang mở",
+            ),
+            (),
+        )
+
+    def test_short_micro_line_can_pass_if_clear_and_grounded(self):
+        policy = MicroLinePolicy()
+
+        self.assertEqual(
+            policy.validate_text(
+                allowed_line_type="micro_observation",
+                text="Terminal vẫn mở.",
+                anchor_source="screen_evidence",
+                anchor_text="Terminal đang mở",
+                screen_evidence="Terminal đang mở",
+            ),
             (),
         )
 

@@ -709,6 +709,35 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(sent["parse_mode"], "micro_presence")
         self.assertIn("source=local_low_signal", sent["debug_trace"])
 
+    def test_local_micro_presence_seeds_pass_diacritic_policy(self):
+        coordinator = self._make_coordinator()
+        snapshot = SimpleNamespace(
+            active_window="main.py - Visual Studio Code",
+            active_window_kind="coding",
+            focus_summary="coding workspace",
+            idle_seconds=3.0,
+            recent_events=(),
+        )
+        synthesis = coordinator._synthesize_micro_presence(
+            snapshot=snapshot,
+            social_presence_event=coordinator_module.SocialPresenceEvent(
+                present=True,
+                kind="quiet_wait",
+                confidence=0.8,
+            ),
+        )
+
+        text = coordinator._local_grounded_micro_presence_text(synthesis)
+        reasons = coordinator.micro_line_policy.validate_text(
+            allowed_line_type="micro_presence",
+            text=text,
+            speech_risk_level="micro_presence",
+        )
+
+        self.assertTrue(text)
+        self.assertNotIn("vietnamese_requires_diacritics", reasons)
+        self.assertEqual(reasons, ())
+
     def test_forced_micro_presence_llm_supports_generate_micro_presence_api(self):
         llm_service = _ModernMicroLlmService("Tin hieu nay du ro.")
         coordinator = self._make_coordinator(llm_service=llm_service)

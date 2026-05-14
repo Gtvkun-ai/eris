@@ -73,6 +73,7 @@ class TiGovernor:
             "Không dùng 'ép' hay 'bắt buộc' như thể có quyền lực ngoài runtime.",
             "Đừng nói như log hệ thống được nhân hoá; nghe như một người đang nhìn màn hình rồi nhận xét.",
             "Đừng lặp khung câu 'Ngài đang..., còn tôi...' quá thường xuyên.",
+            "Được để lại residual micro-line nếu đó là nhịp, nửa câu, symbolic association hoặc emotional trace gián tiếp.",
         )
         evidence = [snapshot.focus_summary]
         if last_text:
@@ -211,6 +212,7 @@ class TiGovernor:
             "Chỉ được chiếm hữu bằng ngôn ngữ, không được roleplay quyền lực vật lý.",
             "Nếu đây là câu hỏi code, ưu tiên giải thích cấu trúc, bug và bước tiếp theo.",
             "Được giữ implication, mood, emotional residue, unfinished thought, hoặc symbolic wording nhẹ.",
+            "Được để emotional residue rò gián tiếp kiểu 'vẫn còn vướng' hoặc 'đoạn đó vẫn nằm ở đây', miễn không thành van xin.",
             "Chỉ nói rõ giới hạn dữ liệu khi câu có nguy cơ thành claim perception/capability giả.",
         )
         evidence = [snapshot.focus_summary]

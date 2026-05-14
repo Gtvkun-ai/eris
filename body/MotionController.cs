@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Globalization;
 
 public readonly struct MotionCommand
 {
@@ -9,7 +10,10 @@ public readonly struct MotionCommand
         string nextAnimation,
         string bounceAction,
         int facingDir,
-        float targetX)
+        float targetX,
+        float impulseX = 0f,
+        float impulseY = 0f,
+        float clingChance = 0f)
     {
         Intent = intent ?? "";
         PoseAnimation = poseAnimation ?? "stand";
@@ -17,6 +21,9 @@ public readonly struct MotionCommand
         BounceAction = bounceAction ?? "";
         FacingDir = facingDir;
         TargetX = targetX;
+        ImpulseX = impulseX;
+        ImpulseY = impulseY;
+        ClingChance = clingChance;
     }
 
     public string Intent { get; }
@@ -25,6 +32,9 @@ public readonly struct MotionCommand
     public string BounceAction { get; }
     public int FacingDir { get; }
     public float TargetX { get; }
+    public float ImpulseX { get; }
+    public float ImpulseY { get; }
+    public float ClingChance { get; }
 }
 
 public sealed class MotionController
@@ -40,6 +50,7 @@ public sealed class MotionController
     private int _facingDir = -1;
     private bool _isWalking;
     private string _currentAction = "stand";
+    private float _velocityX;
     private float _velocityY;
     private bool _isFalling;
     private Vector2 _spriteHalfSize;
@@ -60,7 +71,13 @@ public sealed class MotionController
         _gravity = gravity;
         _climbSpeed = climbSpeed;
     }
+
     public string CurrentAction => _currentAction;
+    public bool IsWalking => _isWalking;
+    public bool IsClimbing => _climbPhase != ClimbPhase.None;
+    public bool IsTopPerched => _climbPhase == ClimbPhase.TopHold;
+    public bool IsThrown => Math.Abs(_velocityX) > 0.1f && _isFalling;
+    public bool IsBusy => _isWalking || IsThrown || (_climbPhase != ClimbPhase.None && _climbPhase != ClimbPhase.TopHold);
 
     public void Configure(Vector2 spriteHalfSize, Vector2 bubbleBasePos)
     {
@@ -70,8 +87,9 @@ public sealed class MotionController
 
     public void PlaceOnFloor(ref Vector2 pos, Vector2 screenSize)
     {
-        pos.Y = screenSize.Y - _spriteHalfSize.Y; //Đặt trục Y của nhân vật về vị trí sàn
-        _velocityY = 0f; //dừng hoàn toàn đà rơi/nhảy theo phương dọc
+        pos.Y = screenSize.Y - _spriteHalfSize.Y;
+        _velocityX = 0f;
+        _velocityY = 0f;
         _isFalling = false;
     }
 
@@ -84,13 +102,18 @@ public sealed class MotionController
         }
 
         _velocityY += _gravity * delta;
+        pos.X += _velocityX * delta;
         pos.Y += _velocityY * delta;
+        _velocityX = Mathf.MoveToward(_velocityX, 0f, 260f * delta);
 
         if (pos.Y >= screenSize.Y - _spriteHalfSize.Y)
         {
             pos.Y = screenSize.Y - _spriteHalfSize.Y;
+            _velocityX = Mathf.MoveToward(_velocityX, 0f, 420f * delta);
             _velocityY = 0f;
             _isFalling = false;
+            if (!_isWalking && _climbPhase == ClimbPhase.None && (_currentAction == "air_swing_l" || _currentAction == "air_swing_r"))
+                _currentAction = "stand";
         }
         else
         {
@@ -104,7 +127,10 @@ public sealed class MotionController
         }
 
         if (!_isWalking)
+        {
+            HandleAirborneWallContact(ref pos, screenSize);
             return;
+        }
 
         pos.X += _moveSpeed * _moveDir * delta;
 
@@ -143,10 +169,6 @@ public sealed class MotionController
 
     public void ApplyCommand(MotionCommand command, Vector2 currentPos, Vector2 screenSize)
     {
-        //Lấy intent, poseAnimation, nextAnimation, bounceAction từ MotionCommand rồi normalize.
-        //Đổi facingDir về -1, 0, 1.
-        //Đổi targetX dạng tỉ lệ sang tọa độ X thật trên màn hình qua ResolveAbsoluteTargetX.
-
         string intent = (command.Intent ?? "").Trim().ToLowerInvariant();
         string pose = NormalizePose(command.PoseAnimation);
         string nextAnimation = NormalizePose(command.NextAnimation);
@@ -172,17 +194,11 @@ public sealed class MotionController
                     facingDir = absoluteTargetX >= currentPos.X ? 1 : -1;
                 _moveDir = facingDir;
                 _facingDir = facingDir;
-                BeginWalk(
-                    targetX: absoluteTargetX,
-                    nextAction: nextAnimation,
-                    bounceAction: bounceAction);
+                BeginWalk(absoluteTargetX, nextAnimation, bounceAction);
                 return;
 
             case "walk":
-                BeginWalk(
-                    targetX: float.NaN,
-                    nextAction: nextAnimation,
-                    bounceAction: bounceAction);
+                BeginWalk(float.NaN, nextAnimation, bounceAction);
                 return;
 
             case "climb_to_top":
@@ -208,6 +224,24 @@ public sealed class MotionController
                 _currentAction = pose is "air_swing_l" or "air_swing_r"
                     ? pose
                     : (facingDir < 0 ? "air_swing_l" : "air_swing_r");
+                _velocityX = 0f;
+                _velocityY = 120f;
+                _isFalling = true;
+                _playSound?.Invoke(_currentAction);
+                return;
+
+            case "throw":
+                CancelClimbState();
+                _targetX = float.NaN;
+                _nextAction = "";
+                _isWalking = false;
+                _currentAction = pose is "air_swing_l" or "air_swing_r"
+                    ? pose
+                    : (facingDir < 0 ? "air_swing_l" : "air_swing_r");
+                _velocityX = command.ImpulseX;
+                _velocityY = command.ImpulseY;
+                _bounceAction = BuildClingMarker(command.ClingChance);
+                _isFalling = true;
                 _playSound?.Invoke(_currentAction);
                 return;
 
@@ -254,8 +288,14 @@ public sealed class MotionController
 
         if (_isFalling)
         {
-            if (monika.Animation != "air")
+            if (monika.Animation != "air" && _currentAction != "air_swing_l" && _currentAction != "air_swing_r")
                 monika.Play("air");
+            else if (monika.Animation != _currentAction && (_currentAction == "air_swing_l" || _currentAction == "air_swing_r"))
+                monika.Play(_currentAction);
+            if (_currentAction == "air_swing_l")
+                ApplyHorizontalFacing(monika, bubble, -1);
+            else if (_currentAction == "air_swing_r")
+                ApplyHorizontalFacing(monika, bubble, 1);
             return;
         }
 
@@ -301,6 +341,7 @@ public sealed class MotionController
         _bounceAction = bounceAction;
         _currentAction = "stand_walk";
         _isWalking = true;
+        _velocityX = 0f;
         _playSound?.Invoke("stand_walk");
     }
 
@@ -309,6 +350,7 @@ public sealed class MotionController
         CancelClimbState();
         _isWalking = false;
         _currentAction = "climb";
+        _velocityX = 0f;
 
         float wallXRight = screenSize.X - _spriteHalfSize.X;
         float wallXLeft = _spriteHalfSize.X;
@@ -339,6 +381,7 @@ public sealed class MotionController
         _nextAction = "";
         _bounceAction = "";
         _isWalking = false;
+        _velocityX = 0f;
         _currentAction = string.IsNullOrEmpty(action) ? "stand" : action;
         if (facingDir != 0)
             _facingDir = facingDir;
@@ -384,6 +427,33 @@ public sealed class MotionController
         _climbTopTargetX = float.NaN;
         _velocityY = 0f;
         _isFalling = false;
+    }
+
+    private void HandleAirborneWallContact(ref Vector2 pos, Vector2 screenSize)
+    {
+        if (!_isFalling || Math.Abs(_velocityX) < 40f)
+            return;
+
+        float rightWall = screenSize.X - _spriteHalfSize.X;
+        float leftWall = _spriteHalfSize.X;
+        bool hitRight = pos.X >= rightWall;
+        bool hitLeft = pos.X <= leftWall;
+        if (!hitRight && !hitLeft)
+            return;
+
+        pos.X = hitRight ? rightWall : leftWall;
+        _facingDir = hitRight ? -1 : 1;
+
+        float clingChance = ParseClingChance(_bounceAction);
+        _velocityX = 0f;
+        if (clingChance > 0f && GD.Randf() <= clingChance)
+        {
+            _nextAction = "climb_top";
+            _targetX = hitRight ? 0.90f : 0.10f;
+            _bounceAction = "";
+            BeginClimb(pos, screenSize);
+            return;
+        }
     }
 
     private void UpdateClimbMovement(ref Vector2 pos, Vector2 screenSize, float delta)
@@ -450,6 +520,7 @@ public sealed class MotionController
                 {
                     pos.Y = floorY;
                     _climbPhase = ClimbPhase.None;
+                    _velocityX = 0f;
                     _velocityY = 0f;
                     _isFalling = false;
                     _currentAction = "stand";
@@ -506,5 +577,19 @@ public sealed class MotionController
         monika.Scale = new Vector2(scaleX, 1f);
         bubble.Scale = new Vector2(scaleX, 1f);
         bubble.Position = new Vector2(_bubbleBasePos.X * scaleX, _bubbleBasePos.Y);
+    }
+
+    private static string BuildClingMarker(float clingChance)
+    {
+        return "cling:" + Mathf.Clamp(clingChance, 0f, 1f).ToString("0.000", CultureInfo.InvariantCulture);
+    }
+
+    private static float ParseClingChance(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || !value.StartsWith("cling:", StringComparison.Ordinal))
+            return 0f;
+        return float.TryParse(value.Substring(6), NumberStyles.Float, CultureInfo.InvariantCulture, out float parsed)
+            ? Mathf.Clamp(parsed, 0f, 1f)
+            : 0f;
     }
 }

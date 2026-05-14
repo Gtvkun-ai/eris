@@ -51,6 +51,7 @@ from cortex.session_ritual import SessionRitualEngine
 from cortex.speech_core import SpeechCoreEngine
 from cortex.thought_stream import ThoughtStream
 from domain import Decision
+from runtime.body_bias import BodyBiasProjector
 
 '''coordinator.py là “bộ điều phối runtime” (orchestrator) cho ERIS: nó đứng giữa telemetry 
 (màn hình/hành vi), các tầng đánh giá (Ni/Ti/FE), LLM + parser, action system và kênh transport để quyết định
@@ -130,15 +131,15 @@ FALLBACK_BY_INTENT = {
     ),
 
     "social_presence": (
-        "Toi van giu cho nay.",
-        "Khoang yen nay van chua dut.",
-        "Toi de nhip nay nam lai mot chut.",
+        "Tôi vẫn giữ chỗ này.",
+        "Khoảng yên này vẫn chưa dứt.",
+        "Tôi để nhịp này nằm lại một chút.",
     ),
 
     "micro_presence": (
-        "Nhip nay vua cham lai mot chut.",
-        "Co mot mach van chua khep.",
-        "Cho nay van con du am.",
+        "Nhịp này vừa chậm lại một chút.",
+        "Có một mạch vẫn chưa khép.",
+        "Chỗ này vẫn còn dư âm.",
     ),
 
     "indirect_presence": (
@@ -258,6 +259,7 @@ class RuntimeCoordinator:
         self.action_planner = ActionPlanner()
         self.semantic_repeat_guard = SemanticRepeatGuard()
         self.micro_line_policy = MicroLinePolicy(repeat_guard=self.semantic_repeat_guard)
+        self.body_bias_projector = BodyBiasProjector(self._get_internal_state)
         self._state_lock = threading.RLock()
 
         '''Các biến này lưu trạng thái hội thoại:
@@ -436,6 +438,22 @@ class RuntimeCoordinator:
             self._save_memory_state()
 
     #Hàm này dựng text context để đưa vào prompt LLM.
+    def _send_decision_to_body(self, decision: Decision) -> None:
+        payload = decision.to_payload()
+        payload.update(self._build_body_bias_payload())
+        self.transport.send_json(payload)
+
+    def _build_body_bias_payload(self) -> dict[str, object]:
+        return self.body_bias_projector.build_payload()
+
+    @staticmethod
+    def _body_bias_clamp(value: object) -> float:
+        return BodyBiasProjector.clamp(value)
+
+    @staticmethod
+    def _normalize_body_focus_kind(value: str) -> str:
+        return BodyBiasProjector.normalize_focus_kind(value)
+
     def _build_internal_state_context(self, state: PersistentInternalState | None = None, self_state=None) -> str:
         #Chuyển internal state thành text
         state_context = self.internal_state_engine.render_prompt_context(state or self._get_internal_state())
@@ -1778,10 +1796,16 @@ class RuntimeCoordinator:
 
     def _apply_micro_line_policy_to_action_plan(self, frame: CognitiveFrame, *, vision_fact: str = "") -> None:
         action_plan = frame.action_plan
+        user_action_hint, session_context_hint = self._micro_policy_anchor_hints(
+            broadcast=frame.broadcast,
+            snapshot=None,
+        )
         policy = self.micro_line_policy.evaluate(
             speech_intent=action_plan.speech_intent,
             broadcast=frame.broadcast,
             vision_fact=vision_fact,
+            user_action=user_action_hint,
+            session_context=session_context_hint,
             last_lines=self._recent_spoken_texts(limit=20),
             channel=frame.channel,
         )
@@ -1800,6 +1824,37 @@ class RuntimeCoordinator:
             action_plan.reason = action_plan.reason_to_speak
         action_plan.notes = tuple(dict.fromkeys(str(item) for item in notes if str(item or "").strip()))
         action_plan.risk_flags = tuple(dict.fromkeys(str(item) for item in flags if str(item or "").strip()))
+
+    def _micro_policy_anchor_hints(self, *, broadcast=None, snapshot=None) -> tuple[str, str]:
+        user_action = ""
+        session_context = ""
+        if broadcast is not None:
+            for item in (broadcast, *tuple(getattr(broadcast, "items", ()) or ())):
+                label = str(getattr(item, "label", "") or "").strip().lower()
+                content = str(getattr(item, "content", "") or "").strip()
+                if not content:
+                    continue
+                if not user_action and label in {"user_action", "action_context", "recent_event"}:
+                    user_action = content
+                if not session_context and label in {"focus_context", "session_context", "active_window", "focus_summary"}:
+                    session_context = content
+        if snapshot is not None:
+            if not user_action:
+                recent_events = tuple(
+                    str(item or "").strip().replace("_", " ")
+                    for item in (getattr(snapshot, "recent_events", ()) or ())
+                    if str(item or "").strip()
+                )
+                user_action = next((item for item in recent_events if item), "")
+            if not session_context:
+                session_context = str(
+                    getattr(snapshot, "focus_summary", "")
+                    or getattr(snapshot, "active_window", "")
+                    or getattr(snapshot, "active_app", "")
+                    or getattr(snapshot, "active_window_kind", "")
+                    or ""
+                ).strip()
+        return user_action, session_context
 
     def _speech_intent_from_core(self, speech_core: AgentSpeechCore, *, channel: str) -> str:
         if not speech_core.should_speak:
@@ -2415,7 +2470,7 @@ class RuntimeCoordinator:
             decision.text,
             score,
         )
-        self.transport.send_json(decision.to_payload())
+        self._send_decision_to_body(decision)
 
         elapsed = time.time() - cycle_start
         sleep_duration = self._choose_autonomous_sleep_duration(
@@ -2482,20 +2537,20 @@ class RuntimeCoordinator:
         seeds: list[str] = []
         haystack = self._normalize_user_message(" ".join((active_window, focus_summary, focus_kind, " ".join(recent_events))))
         if "godot" in haystack:
-            seeds.append("Godot van mo.")
+            seeds.append("Godot vẫn mở ở đó thêm chút.")
         elif focus_kind in {"coding", "documentation"} or any(term in haystack for term in ("code", "vscode", "visual studio", "debug")):
-            seeds.append("mach code nay van giu cho.")
+            seeds.append("mạch code này vẫn giữ chỗ.")
         elif active_window:
             title = re.sub(r"\s+", " ", active_window).strip()
             if title and not self._looks_internal_topic(title):
-                seeds.append(f"{title[:36]} van mo.")
+                seeds.append(f"{title[:36]} vẫn mở ở đó thêm chút.")
 
         if any("log" in self._normalize_user_message(item) for item in recent_events):
-            seeds.append("log cu lap lai.")
+            seeds.append("log cũ lại lặp thêm một nhịp.")
         if idle_seconds >= 240:
-            seeds.append("nhip nay im kha lau.")
+            seeds.append("nhịp này im khá lâu rồi.")
         elif not seeds and focus_summary:
-            seeds.append(f"{focus_summary[:48]} van yen.")
+            seeds.append(f"{focus_summary[:48]} vẫn yên thêm một chút.")
 
         thought_seeds = self._thought_residue_seeds(thought_stream_report)
         if thought_seeds:
@@ -2503,16 +2558,16 @@ class RuntimeCoordinator:
             seeds.extend(thought_seeds)
 
         if kind == "bodily_residue":
-            seeds = ["Mach nay van hoi nghen."] + seeds
+            seeds = ["Mạch này vẫn hơi nghẽn lại."] + seeds
         elif kind == "social_residue" or bool(getattr(social_presence_event, "present", False)):
             kind = "social_residue"
             if focus_kind == "coding":
-                seeds.insert(0, "mach do van chua tha.")
+                seeds.insert(0, "mạch đó vẫn chưa chịu thả.")
             else:
-                seeds.insert(0, "khoang yen nay van giu cho.")
+                seeds.insert(0, "khoảng yên này vẫn giữ chỗ.")
 
         seeds = tuple(dict.fromkeys(seed for seed in seeds if str(seed or "").strip()))[:5]
-        fallback = seeds[0] if seeds else "Mach nay van hoi nghen."
+        fallback = seeds[0] if seeds else "Mạch này vẫn hơi nghẽn lại."
         return MicroPresenceSynthesis(
             kind=kind,
             seeds=seeds,
@@ -2799,7 +2854,7 @@ class RuntimeCoordinator:
             decision.text,
             silent_cycles,
         )
-        self.transport.send_json(decision.to_payload())
+        self._send_decision_to_body(decision)
 
         elapsed = time.time() - cycle_start
         sleep_duration = self._choose_autonomous_sleep_duration(
@@ -3010,7 +3065,7 @@ class RuntimeCoordinator:
             decision.text,
             quiet_cycles,
         )
-        self.transport.send_json(decision.to_payload())
+        self._send_decision_to_body(decision)
 
         elapsed = time.time() - cycle_start
         sleep_duration = self._choose_autonomous_sleep_duration(
@@ -3157,7 +3212,7 @@ class RuntimeCoordinator:
                 self.last_text = decision.text
                 self._note_autonomous_spoken(now=time.time())
                 self.logger.info('[session_ritual] sent LLM greeting text="%s"', decision.text)
-                self.transport.send_json(decision.to_payload())
+                self._send_decision_to_body(decision)
 
         updated_state = self.internal_state_engine.commit_session_ritual(
             internal_state,
@@ -3928,8 +3983,8 @@ class RuntimeCoordinator:
     ) -> str:
         if focus_kind == "coding":
             pool = (
-                "Toi giu cho cho mach code nay.",
-                "Phan code nay toi de no lien mach.",
+                "Tôi giữ chỗ cho mạch code này.",
+                "Phần code này tôi để nó liền mạch.",
             )
         else:
             pool = FALLBACK_BY_INTENT["social_presence"]
@@ -4628,10 +4683,16 @@ class RuntimeCoordinator:
     ) -> Decision:
         intent = self._policy_intent_for_speech_core(speech_core, channel=channel)
         vision_fact = str((self._concrete_vision_signals(snapshot) or ("",))[0] or "") if snapshot is not None else ""
+        user_action_hint, session_context_hint = self._micro_policy_anchor_hints(
+            broadcast=None,
+            snapshot=snapshot,
+        )
         policy = self.micro_line_policy.evaluate(
             speech_intent=intent,
             broadcast=None,
             vision_fact=vision_fact,
+            user_action=user_action_hint,
+            session_context=session_context_hint,
             last_lines=self._recent_spoken_texts(limit=20),
             channel=channel,
             speech_risk_level=str(getattr(speech_core, "speech_risk_level", "") or ""),
@@ -4641,6 +4702,11 @@ class RuntimeCoordinator:
                 allowed_line_type=policy.allowed_line_type,
                 text=decision.text or "",
                 speech_risk_level=policy.risk_level,
+                anchor_source=policy.anchor_source,
+                anchor_text=policy.anchor_text,
+                user_action=user_action_hint,
+                session_context=session_context_hint,
+                screen_evidence=vision_fact,
             )
         )
         semantic = self.semantic_repeat_guard.check(
@@ -4655,6 +4721,42 @@ class RuntimeCoordinator:
 
         marker = "micro_line_policy=" + ",".join(reasons)
         replacement = ""
+        silence_reasons = (
+            "vietnamese_requires_diacritics",
+            "micro_line_too_short_without_clear_meaning",
+            "micro_observation_requires_anchor",
+            "placeholder_text_blocked",
+        )
+        if channel == "force_speak" and any(reason in silence_reasons for reason in reasons):
+            fallback = self._speech_core_safe_fallback_text(
+                speech_core,
+                repeated=semantic.rejected,
+                snapshot=snapshot,
+                momentum_topic=momentum_topic,
+            )
+            fallback_reasons = self.micro_line_policy.validate_text(
+                allowed_line_type=policy.allowed_line_type,
+                text=fallback,
+                speech_risk_level=policy.risk_level,
+                anchor_source=policy.anchor_source,
+                anchor_text=policy.anchor_text,
+                user_action=user_action_hint,
+                session_context=session_context_hint,
+                screen_evidence=vision_fact,
+            )
+            if fallback and not fallback_reasons:
+                return self._copy_decision_with_text(
+                    decision,
+                    text=fallback,
+                    trace_marker=f"{marker}; fallback_after_micro_policy",
+                )
+        if any(reason == "no_speech_blocks_final" or reason.startswith("micro_observation_not_grounded:") or reason in silence_reasons for reason in reasons):
+            return self._copy_decision_with_text(
+                decision,
+                text="",
+                trace_marker=marker,
+                parse_mode="no_speech_policy",
+            )
         if "curious_question_requires_question" in reasons:
             shaped = self._reshape_statement_as_question(decision.text or "")
             if shaped and not self._is_near_duplicate_text(shaped, self.last_text):
@@ -4673,14 +4775,6 @@ class RuntimeCoordinator:
                 snapshot=snapshot,
                 momentum_topic=momentum_topic,
             )
-        elif "no_speech_blocks_final" in reasons:
-            return self._copy_decision_with_text(
-                decision,
-                text="",
-                trace_marker=marker,
-                parse_mode="no_speech_policy",
-            )
-
         if not replacement:
             replacement = self._speech_core_safe_fallback_text(
                 speech_core,
@@ -5133,7 +5227,7 @@ class RuntimeCoordinator:
                 decision.text,
                 time.time() - cycle_start,
             )
-            self.transport.send_json(decision.to_payload())
+            self._send_decision_to_body(decision)
             return
 
         if frame.action_plan.speech_act == "micro_presence":
@@ -5204,7 +5298,7 @@ class RuntimeCoordinator:
                 synthesis.kind,
                 time.time() - cycle_start,
             )
-            self.transport.send_json(decision.to_payload())
+            self._send_decision_to_body(decision)
             return
 
         if self._is_inner_thought_speech_act(frame.action_plan.speech_act):
@@ -5296,7 +5390,7 @@ class RuntimeCoordinator:
                 frame.action_plan.speech_act,
                 time.time() - cycle_start,
             )
-            self.transport.send_json(decision.to_payload())
+            self._send_decision_to_body(decision)
             return
 
         forced_ti_context = (
@@ -5366,7 +5460,7 @@ class RuntimeCoordinator:
         )
         self.logger.info("[force_speak debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[force_speak parser] %s", decision.parser_trace or "<empty>")
-        self.transport.send_json(decision.to_payload())
+        self._send_decision_to_body(decision)
 
     def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
         self.fe_style_memory = self.fe_renderer.remember_style(
@@ -5392,7 +5486,7 @@ class RuntimeCoordinator:
         self.logger.info("ERIS: %s", decision.text)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[chat parser] %s", decision.parser_trace or "<empty>")
-        self.transport.send_json(decision.to_payload())
+        self._send_decision_to_body(decision)
 
     def _sleep_interruptible(self, seconds: float):
         end_at = time.time() + seconds
@@ -6473,7 +6567,7 @@ class RuntimeCoordinator:
                 decision.text,
                 frame.action_plan.speech_act,
             )
-            self.transport.send_json(decision.to_payload())
+            self._send_decision_to_body(decision)
 
             elapsed = time.time() - cycle_start
             sleep_duration = self._choose_autonomous_sleep_duration(
@@ -6534,7 +6628,7 @@ class RuntimeCoordinator:
         self.logger.info('Decision text="%s" | animation="%s"', decision.text, decision.animation)
         self.logger.info("[directive debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[directive parser] %s", decision.parser_trace or "<empty>")
-        self.transport.send_json(decision.to_payload())
+        self._send_decision_to_body(decision)
 
         elapsed = time.time() - cycle_start
         sleep_duration = self._choose_autonomous_sleep_duration(

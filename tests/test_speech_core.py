@@ -370,6 +370,45 @@ class SpeechCoreEngineTests(unittest.TestCase):
         self.assertEqual(core.silence_state.internal_hesitation, "hesitation")
         self.assertFalse(core.silence_state.generation_failure)
 
+    def test_non_shift_continuity_pull_can_surface_residual_fragment(self):
+        core = self.engine.evaluate(
+            channel="autonomous",
+            snapshot=SimpleNamespace(mood_label="neutral", idle_seconds=35.0),
+            appraisal=SimpleNamespace(stance="grounded", tenderness=0.18, fatigue=0.08, certainty=0.30),
+            broadcast=SimpleNamespace(label="low_salience", content="", score=0.10),
+            ti_report=SimpleNamespace(mode="steady_observe"),
+            fe_plan=SimpleNamespace(tone_label=""),
+            repeat_count=1,
+            internal_state=PersistentInternalState(
+                silence_pressure=0.26,
+                attachment=0.42,
+                tenderness=0.32,
+                restraint_pressure=0.04,
+            ),
+            meaning_layer=SimpleNamespace(
+                meaning="cognitive_stall",
+                semantic_family="cognitive_stall",
+                meaning_shift=False,
+                meaning_signal="semantic_signal",
+                shift_reason="recent_semantic_family=cognitive_stall",
+                reaction="focused_concern",
+                attitude="held back",
+                surface_intent="leave a half-line from the residue",
+                mood_residue="careful_residue",
+                emotional_pressure=0.42,
+                attention_bias=("continuity", "unfinished_intention"),
+                reaction_impulse="half_line",
+                source_fact="code_idle_long",
+                evidence=("idle=35s",),
+            ),
+        )
+
+        self.assertTrue(core.should_speak)
+        self.assertEqual(core.utterance_type, "micro_presence")
+        self.assertEqual(core.motivation_pressure.winner.label, "residual_continuity_pull")
+        self.assertIn("residual_continuity", core.safety_flags)
+        self.assertEqual(core.speech_impulse.reaction_impulse, "half_line")
+
 
 if __name__ == "__main__":
     unittest.main()

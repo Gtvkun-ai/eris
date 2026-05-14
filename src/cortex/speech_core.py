@@ -84,13 +84,8 @@ class SpeechCoreEngine:
             thought_surface=surface,
         )
 
-        # nếu là autonomous channel và meaning_layer có meaning_shift nhưng không phải là một meaning_shift_gate thì sẽ bị giữ 
-        # im lặng với lý do là cần một meaning shift để nói, và sẽ xây dựng một pressure_report với reason là
-        #  meaning_shift_gate và threshold dựa trên channel_name và self_state, và concrete_signals sẽ được truyền vào
-        #  để làm bằng chứng cho pressure_report, sau đó sẽ trả về một AgentSpeechCore với impulse là silent, utterance_type 
-        # là no_speech, grounding là none, speech_source là none, reason giải thích lý do giữ im lặng, should_speak là False, 
-        # safety_flags có meaning_shift_gate, delivery là silence, inner_thought được đánh giá ở trên, speech_impulse được xây 
-        # dựng dựa trên channel_name, meaning_layer, winner của pressure_report và should_speak là False, và motivation_pressure là pressure_report
+        # Non-shift meaning is usually quiet, but not sterile. A repeated semantic family can still
+        # leak as a low-energy residual fragment when continuity, resonance, or atmosphere pulls.
         if (
             channel_name == "autonomous"
             and meaning_layer is not None
@@ -488,6 +483,44 @@ class SpeechCoreEngine:
             )
         )
 
+        residual_score = self._residual_continuity_score(
+            channel=channel,
+            meaning_layer=meaning_layer,
+            snapshot=snapshot,
+            internal_state=state,
+            thought_surface=thought_surface,
+        )
+        candidates.append(
+            MotivationalUrge(
+                label="residual_continuity_pull",
+                score=residual_score,
+                utterance_type="micro_presence",
+                speech_source="freeform",
+                risk_level="micro_presence",
+                grounding="situated_residue",
+                reason=(
+                    "No semantic novelty, but continuity/resonance has enough pull for a low-energy "
+                    "residue fragment."
+                ),
+                evidence=tuple(
+                    str(item)
+                    for item in (
+                        f"meaning_signal={meaning_signal or 'none'}",
+                        f"shift={meaning_shift}",
+                        *(getattr(meaning_layer, "attention_bias", ()) or ()),
+                    )
+                    if str(item or "").strip()
+                )[:5],
+                safety_flags=(
+                    "residual_continuity",
+                    "low_energy_fragment",
+                    "no_hard_fact_claim",
+                    "meaning_not_speech",
+                ),
+                blocked=channel != "autonomous" or meaning_shift or not meaning or residual_score <= 0.0,
+            )
+        )
+
         user_requested_score = (
             0.92
             + self._pressure(state, "social_pressure") * 0.20
@@ -766,18 +799,22 @@ class SpeechCoreEngine:
         if suppression <= 0.0 and not mode:
             return candidates
 
-        expression_factor = max(0.34, min(1.0, 0.58 + allowed * 0.80 - suppression * 0.28))
+        expression_factor = max(0.44, min(1.08, 0.66 + allowed * 0.92 - suppression * 0.22))
         adjusted: list[MotivationalUrge] = []
         for candidate in candidates:
             score = candidate.score
             evidence = tuple(candidate.evidence or ())
             flags = tuple(candidate.safety_flags or ())
             if candidate.label == "silence_restraint":
-                score += suppression * 0.18
+                score += suppression * 0.12
                 if mode:
                     evidence = (*evidence, f"restraint_mode={mode}")
             elif candidate.label == "meaning_reaction":
-                score += allowed * 0.08
+                score += allowed * 0.14
+                evidence = (*evidence, f"expression_gate={want:.2f}->{allowed:.2f}")
+                flags = (*flags, "personality_restraint")
+            elif candidate.label == "residual_continuity_pull":
+                score += allowed * 0.18 + want * 0.06
                 evidence = (*evidence, f"expression_gate={want:.2f}->{allowed:.2f}")
                 flags = (*flags, "personality_restraint")
             elif candidate.speech_source == "freeform":
@@ -946,7 +983,16 @@ class SpeechCoreEngine:
         idle_seconds = max(0.0, self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0))
         silence_pressure = self._float(getattr(internal_state, "silence_pressure", 0.0) if internal_state is not None else 0.0)
         boredom = self._float(getattr(internal_state, "boredom", 0.0) if internal_state is not None else 0.0)
-        return idle_seconds >= 20 or silence_pressure >= 0.35 or boredom >= 0.32
+        attachment = self._float(getattr(internal_state, "attachment", 0.0) if internal_state is not None else 0.0)
+        tenderness = self._float(getattr(internal_state, "tenderness", 0.0) if internal_state is not None else 0.0)
+        attention_bias = set(str(item) for item in (getattr(meaning_layer, "attention_bias", ()) or ()))
+        continuity_pull = bool(attention_bias & {"continuity", "friction_residue", "unfinished_intention", "indirect_presence"})
+        return (
+            idle_seconds >= 20
+            or silence_pressure >= 0.35
+            or boredom >= 0.32
+            or (continuity_pull and (attachment >= 0.42 or tenderness >= 0.28 or idle_seconds >= 20))
+        )
 
     def _meaning_shift_required_for_layer(self, meaning_layer) -> bool:
         signal = str(getattr(meaning_layer, "meaning_signal", "") or "")
@@ -1011,6 +1057,46 @@ class SpeechCoreEngine:
             score += 0.08
         if silence_pressure >= 0.35 or boredom >= 0.32:
             score += 0.18
+        return self._clamp01(score)
+
+    def _residual_continuity_score(
+        self,
+        *,
+        channel: str,
+        meaning_layer,
+        snapshot,
+        internal_state: PersistentInternalState | None,
+        thought_surface,
+    ) -> float:
+        if channel != "autonomous" or meaning_layer is None:
+            return 0.0
+        if bool(getattr(meaning_layer, "meaning_shift", False)):
+            return 0.0
+        meaning = str(getattr(meaning_layer, "meaning", "") or "")
+        if not meaning:
+            return 0.0
+
+        idle_seconds = max(0.0, self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0))
+        state = internal_state or PersistentInternalState()
+        attention_bias = set(str(item) for item in (getattr(meaning_layer, "attention_bias", ()) or ()))
+        signal = str(getattr(meaning_layer, "meaning_signal", "") or "")
+        surface_pressure = self._float(getattr(thought_surface, "pressure", 0.0) if thought_surface is not None else 0.0)
+        surface_momentum = self._float(getattr(thought_surface, "momentum_score", 0.0) if thought_surface is not None else 0.0)
+
+        score = 0.22
+        if signal in {"weak_meaning", "ambient_meaning", "vibe_signal"}:
+            score += 0.16
+        if attention_bias & {"continuity", "friction_residue", "unfinished_intention", "indirect_presence"}:
+            score += 0.14
+        if idle_seconds >= 18:
+            score += 0.08
+        if idle_seconds >= 45:
+            score += 0.08
+        score += self._float(getattr(state, "silence_pressure", 0.0)) * 0.20
+        score += self._float(getattr(state, "boredom", 0.0)) * 0.10
+        score += self._float(getattr(state, "attachment", 0.0)) * 0.10
+        score += self._float(getattr(state, "tenderness", 0.0)) * 0.08
+        score += max(surface_pressure, surface_momentum) * 0.12
         return self._clamp01(score)
 
     def _utterance_for_reaction(self, reaction: str, *, channel: str, meaning: str) -> str:

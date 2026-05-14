@@ -11,6 +11,8 @@ class MicroLinePolicyResult:
     reject_reasons: tuple[str, ...] = ()
     signal_score: float = 0.0
     risk_level: str = "texture"
+    anchor_source: str = ""
+    anchor_text: str = ""
 
     @property
     def allowed(self) -> bool:
@@ -148,6 +150,7 @@ class SemanticRepeatGuard:
             pass
         lowered = unicodedata.normalize("NFD", lowered)
         lowered = "".join(ch for ch in lowered if unicodedata.category(ch) != "Mn")
+        lowered = lowered.replace("đ", "d").replace("Đ", "d")
         lowered = re.sub(r"[^\w\s]", " ", lowered)
         return " ".join(lowered.split())
 
@@ -183,6 +186,8 @@ class MicroLinePolicy:
         speech_intent: str,
         broadcast=None,
         vision_fact: str = "",
+        user_action: str = "",
+        session_context: str = "",
         last_lines: tuple[str, ...] = (),
         channel: str = "",
         speech_risk_level: str = "",
@@ -190,6 +195,13 @@ class MicroLinePolicy:
         intent = str(speech_intent or "no_speech").strip().lower()
         line_type = self._line_type_for_intent(intent)
         signal_score = self._signal_score(broadcast=broadcast, vision_fact=vision_fact)
+        anchor_source, anchor_text = self._resolve_anchor(
+            line_type=line_type,
+            broadcast=broadcast,
+            vision_fact=vision_fact,
+            user_action=user_action,
+            session_context=session_context,
+        )
         risk_level = self._risk_level_for_line(
             line_type=line_type,
             signal_score=signal_score,
@@ -202,6 +214,10 @@ class MicroLinePolicy:
         if line_type == "micro_observation" and not (vision_fact or signal_score >= 0.55):
             line_type = "soft_impression"
             risk_level = "texture" if signal_score < 0.35 else "soft_read"
+        if line_type == "micro_observation" and not anchor_source:
+            line_type = "silence"
+            reasons.append("micro_observation_requires_anchor")
+            reasons.append("no_speech_blocks_final")
         if risk_level == "hard_claim" and signal_score < 0.72:
             risk_level = "soft_read"
         if risk_level == "soft_read" and signal_score < 0.35 and line_type in {"micro_observation", "screen_observation"}:
@@ -229,23 +245,64 @@ class MicroLinePolicy:
             reject_reasons=tuple(dict.fromkeys(reasons)),
             signal_score=signal_score,
             risk_level=risk_level,
+            anchor_source=anchor_source,
+            anchor_text=anchor_text,
         )
 
-    def validate_text(self, *, allowed_line_type: str, text: str, speech_risk_level: str = "") -> tuple[str, ...]:
+    def validate_text(
+        self,
+        *,
+        allowed_line_type: str,
+        text: str,
+        speech_risk_level: str = "",
+        anchor_source: str = "",
+        anchor_text: str = "",
+        user_action: str = "",
+        session_context: str = "",
+        screen_evidence: str = "",
+    ) -> tuple[str, ...]:
         cleaned = str(text or "").strip()
         if not cleaned:
             return ()
         line_type = str(allowed_line_type or "").strip().lower()
         risk_level = str(speech_risk_level or "").strip().lower()
         reasons: list[str] = []
+        word_count = len([item for item in re.split(r"\s+", cleaned.strip(" .?!")) if item])
         if self._looks_like_placeholder(cleaned):
             reasons.append("placeholder_text_blocked")
+        if line_type in {"micro_presence", "soft_impression", "micro_observation", "curious_question", "tender_checkin"}:
+            if self._looks_like_unaccented_vietnamese(cleaned):
+                reasons.append("vietnamese_requires_diacritics")
+            if word_count < 6 and not self._has_clear_short_meaning(
+                cleaned,
+                anchor_source=anchor_source,
+                anchor_text=anchor_text,
+                user_action=user_action,
+                session_context=session_context,
+                screen_evidence=screen_evidence,
+                line_type=line_type,
+            ):
+                reasons.append("micro_line_too_short_without_clear_meaning")
         if line_type == "silence":
             reasons.append("no_speech_blocks_final")
         if line_type == "curious_question" and not self._looks_like_question(cleaned):
             reasons.append("curious_question_requires_question")
         if line_type == "micro_observation" and self._looks_like_question(cleaned):
             reasons.append("micro_observation_must_not_ask")
+        if line_type == "micro_observation":
+            grounding_source, grounding_anchor = self._resolve_anchor(
+                line_type=line_type,
+                broadcast=None,
+                vision_fact=screen_evidence,
+                user_action=user_action,
+                session_context=session_context,
+            )
+            effective_source = anchor_source or grounding_source
+            effective_anchor = anchor_text or grounding_anchor
+            if not effective_source:
+                reasons.append("micro_observation_requires_anchor")
+            elif not self._text_matches_anchor(cleaned, effective_anchor):
+                reasons.append(f"micro_observation_not_grounded:{effective_source}")
         if line_type == "soft_impression" and self._looks_like_hard_fact_claim(cleaned):
             reasons.append("soft_impression_no_hard_fact_claim")
         if line_type in {"micro_presence", "soft_impression", "micro_observation"} and self._looks_like_decorative_metaphor_without_stance(cleaned):
@@ -255,11 +312,9 @@ class MicroLinePolicy:
         if line_type in {"micro_presence", "soft_impression"} and self._looks_like_blunt_emotion_declaration(cleaned):
             reasons.append("blunt_emotion_declaration")
         if line_type == "micro_presence":
-            word_count = len([item for item in re.split(r"\s+", cleaned.strip(" .?!")) if item])
-            if word_count > 8:
+            if word_count > 10:
                 reasons.append("micro_presence_too_long")
         if risk_level in {"micro_presence", "texture"}:
-            word_count = len([item for item in re.split(r"\s+", cleaned.strip(" .?!")) if item])
             if word_count > 14:
                 reasons.append("micro_line_too_long")
         if (
@@ -330,6 +385,102 @@ class MicroLinePolicy:
         if label in self.BLOCKED_SIGNAL_LABELS or not content.strip():
             return 0.0
         return max(0.0, min(1.0, score))
+
+    def _resolve_anchor(
+        self,
+        *,
+        line_type: str,
+        broadcast,
+        vision_fact: str,
+        user_action: str,
+        session_context: str,
+    ) -> tuple[str, str]:
+        evidence = str(vision_fact or "").strip()
+        if line_type == "micro_observation" and evidence:
+            return "screen_evidence", evidence
+        action = str(user_action or "").strip()
+        if line_type == "micro_observation" and action:
+            return "user_action", action
+        if broadcast is not None:
+            for item in (broadcast, *tuple(getattr(broadcast, "items", ()) or ())):
+                label = str(getattr(item, "label", "") or "").strip().lower()
+                content = str(getattr(item, "content", "") or "").strip()
+                if not content or label in self.BLOCKED_SIGNAL_LABELS:
+                    continue
+                if label == "vision_fact":
+                    return "screen_evidence", content
+                if label in {"user_action", "action_context", "recent_event"}:
+                    return "user_action", content
+                if label in {"focus_context", "session_context", "active_window", "focus_summary"}:
+                    return "session_context", content
+        context = str(session_context or "").strip()
+        if line_type == "micro_observation" and context:
+            return "session_context", context
+        return "", ""
+
+    def _looks_like_unaccented_vietnamese(self, text: str) -> bool:
+        stripped = str(text or "").strip()
+        if not stripped:
+            return False
+        if any(ch in stripped for ch in "ăâđêôơưáàảãạắằẳẵặấầẩẫậéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ"):
+            return False
+        letters = [ch for ch in stripped if ch.isalpha()]
+        if not letters:
+            return False
+        normalized = self.repeat_guard.normalize(stripped)
+        tokens = normalized.split()
+        if len(tokens) < 2:
+            return False
+        vietnamese_markers = {
+            "ngai", "toi", "nay", "kia", "van", "dang", "mot", "cho", "mach", "nhip",
+            "khong", "chua", "roi", "hoi", "la", "co", "ve", "giu", "do", "phai",
+        }
+        return any(token in vietnamese_markers for token in tokens) and all(ord(ch) < 128 for ch in stripped)
+
+    def _has_clear_short_meaning(
+        self,
+        text: str,
+        *,
+        anchor_source: str,
+        anchor_text: str,
+        user_action: str,
+        session_context: str,
+        screen_evidence: str,
+        line_type: str,
+    ) -> bool:
+        normalized = self.repeat_guard.normalize(text)
+        if line_type == "curious_question" and self._looks_like_question(text):
+            return True
+        if line_type == "micro_presence" and any(
+            marker in normalized
+            for marker in (
+                "doi nhip",
+                "nua cau",
+                "van vuong",
+                "van nho",
+                "van con",
+                "hoi lech",
+                "nam o day",
+                "con de y",
+            )
+        ):
+            return True
+        if any(marker in normalized for marker in ("van", "dang", "chua", "lai", "ket", "lech", "mo", "treo", "dung", "doi", "giu", "roi")):
+            if self._text_matches_anchor(text, anchor_text or screen_evidence or user_action or session_context):
+                return True
+        return False
+
+    def _text_matches_anchor(self, text: str, anchor: str) -> bool:
+        normalized_text = self.repeat_guard.normalize(text)
+        normalized_anchor = self.repeat_guard.normalize(anchor)
+        if not normalized_text or not normalized_anchor:
+            return False
+        if normalized_anchor in normalized_text:
+            return True
+        ignored = {"ngai", "toi", "mot", "nhung", "van", "dang", "hoi", "nay", "kia", "la", "co"}
+        text_tokens = {token for token in normalized_text.split() if len(token) >= 3 and token not in ignored}
+        anchor_tokens = {token for token in normalized_anchor.split() if len(token) >= 3 and token not in ignored}
+        return bool(text_tokens and anchor_tokens and text_tokens.intersection(anchor_tokens))
 
     def _looks_like_question(self, text: str) -> bool:
         if "?" in text:
@@ -449,7 +600,7 @@ class MicroLinePolicy:
             "he thong",
             "telemetry",
             "toi dang",
-            "toi van",
+            "toi van o day",
             "toi o day",
             "toi nghe",
             "toi thay",
