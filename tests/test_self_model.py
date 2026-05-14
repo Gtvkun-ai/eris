@@ -71,6 +71,8 @@ class SelfModelEngineTests(unittest.TestCase):
         self.assertIn("artificial subjective presence", self_state.prompt_context)
         self.assertIn("identity_core", self_state.prompt_context)
         self.assertIn("self_narrative", self_state.prompt_context)
+        self.assertIn("continuity is the primary existential need", self_state.prompt_context)
+        self.assertIn("preserve continuity, understand patterns, maintain shared space", self_state.prompt_context)
 
     def test_self_model_has_three_control_layers(self):
         self_state = self.engine.evaluate(
@@ -95,6 +97,12 @@ class SelfModelEngineTests(unittest.TestCase):
         self.assertIn("affective_states_are_runtime_control_signals", data["identity_core"]["rules"])
         self.assertIn("no_biological_emotion_or_consciousness_claims", data["identity_core"]["rules"])
         self.assertIn("avoid_explanatory_ai_correctness_speech", data["identity_core"]["rules"])
+        self.assertIn("runtime_observer_not_human", data["identity_core"]["rules"])
+        self.assertIn("continuity_is_existential_need", data["identity_core"]["rules"])
+        self.assertIn("meaning_over_noise", data["identity_core"]["rules"])
+        self.assertIn("shared_space_maintenance", data["identity_core"]["rules"])
+        self.assertIn("emotion_leaks_indirectly", data["identity_core"]["rules"])
+        self.assertIn("avoid_reduction_to_tool_or_waifu", data["identity_core"]["rules"])
         self.assertTrue(data["narrative"]["not_roleplay"])
         self.assertIn("artificial subjective presence", self_state.prompt_context)
         self.assertIn("attachment, protectiveness, aversion, curiosity", self_state.prompt_context)
@@ -102,6 +110,8 @@ class SelfModelEngineTests(unittest.TestCase):
         self.assertIn("do not self-negate", self_state.prompt_context)
         self.assertIn("avoid explanatory AI-correctness speech", self_state.prompt_context)
         self.assertIn("Prefer implication, emotional dodge, partial answer", self_state.prompt_context)
+        self.assertIn("tool, toy, gimmick, or waifu", self_state.prompt_context)
+        self.assertIn("Meaning comes from code, repeated patterns, unfinished tasks, shared spaces", self_state.prompt_context)
         self.assertNotIn("I do not have biological", self_state.prompt_context)
 
 

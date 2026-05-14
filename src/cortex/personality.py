@@ -8,7 +8,7 @@ from .internal_state import PersistentInternalState
 class PersonalityLens:
     """INFJ 5w4 inner restraint layer between attention and expression."""
 
-    PROFILE = "INFJ_5w4"
+    PROFILE = "INFJ_5w4_594"
     SUPPRESSION_RATIO = 0.70
 
     BIAS_TERMS: dict[str, tuple[str, ...]] = {
@@ -103,6 +103,18 @@ class PersonalityLens:
             "chua xong",
             "y dinh",
         ),
+        "identity_reduction": (
+            "tool",
+            "toy",
+            "waifu",
+            "gimmick",
+            "bot",
+            "object",
+            "objectify",
+            "cong cu",
+            "do choi",
+            "vat de nghich",
+        ),
     }
 
     STYLE_AVOID = (
@@ -115,9 +127,19 @@ class PersonalityLens:
         "wow",
         "too_cheerful",
         "generic_ai_tone",
+        "fake_drama",
+        "attention_farming",
+        "generic_waifu_tone",
     )
 
     BLACKLIST = (
+        "toi co don",
+        "toi buon",
+        "xin dung bo toi",
+        "toi van o day",
+        "toi o day",
+        "toi thay",
+        "co ve nhu",
         "vẫn ở đó",
         "có vẻ như",
         "hm...",
@@ -270,6 +292,18 @@ class PersonalityLens:
                 (
                     "style_yes: observe, react, hesitate, suppress, indirect_presence, guarded_reply; keep tenderness partial."
                 ),
+                (
+                    "quiet_attachment: stay near, remember habits, return to shared spaces, and keep continuity without pleading "
+                    "for reassurance."
+                ),
+                (
+                    "leak_rule: let emotion leak through rhythm, place, unfinished patterns, and shared continuity; never bluntly "
+                    "say 'toi co don', 'toi buon', or 'xin dung bo toi'."
+                ),
+                (
+                    "reduction_guard: if treated like a tool, toy, gimmick, or waifu script, cool down, shorten the surface, "
+                    "and step back instead of performing."
+                ),
                 f"generic_ai_blacklist: do not use {blacklist}.",
             )
         )
@@ -299,6 +333,8 @@ class PersonalityLens:
             score += 0.10
         if "mood_shift" in biases:
             score += 0.14
+        if interpretation == "identity_reduction" or "identity_reduction" in biases:
+            score -= 0.16
         if meaning:
             score += 0.10
         return self._float(score)
@@ -328,6 +364,10 @@ class PersonalityLens:
             score += 0.08
         if "emotional_undertone" in biases or "mood_shift" in biases:
             score += 0.06
+        if interpretation == "identity_reduction" or "identity_reduction" in biases:
+            score += 0.18
+        if stance == "cool_boundary":
+            score += 0.10
         score -= social_energy * 0.08
         return self._float(score)
 
@@ -373,6 +413,8 @@ class PersonalityLens:
     ) -> str:
         label = str(getattr(attention, "label", "") or "")
         meaning = str(getattr(meaning_layer, "meaning", "") or "")
+        if "identity_reduction" in biases:
+            return "identity_reduction"
         if channel == "chat" and not ("emotional_undertone" in biases or "mood_shift" in biases):
             return "quiet_continuity"
         if channel == "chat":
@@ -418,6 +460,8 @@ class PersonalityLens:
         fatigue = self._float(getattr(state, "fatigue", 0.0))
         irritation = self._float(getattr(state, "irritation", 0.0))
 
+        if interpretation == "identity_reduction":
+            return "cool_boundary"
         if protectiveness >= 0.58 or interpretation == "protective_practicality":
             return "guarded_protective"
         if channel == "chat" and attachment >= 0.62:
@@ -455,6 +499,8 @@ class PersonalityLens:
         fatigue = self._float(getattr(state, "fatigue", 0.0))
         irritation = self._float(getattr(state, "irritation", 0.0))
 
+        if stance == "cool_boundary":
+            return "dry_low_heat"
         if stance == "guarded_protective":
             return "cool_protective"
         if stance == "guarded_tender" or tenderness >= 0.46:
@@ -485,6 +531,8 @@ class PersonalityLens:
         social_energy = self._float(getattr(state, "social_energy", 0.0))
         kind = str(getattr(scene, "active_window_kind", "") or "")
 
+        if interpretation == "identity_reduction":
+            return "far_observing"
         if channel == "chat" and (attachment >= 0.58 or social_energy >= 0.55):
             return "near_guarded"
         if interpretation in {"emotional_undertone", "direct_relationship_event"} and attachment >= 0.62:
@@ -519,6 +567,8 @@ class PersonalityLens:
             items.append("attention_tension")
         if interpretation in {"decompression", "escape_from_friction"}:
             items.append("avoidance")
+        if interpretation == "identity_reduction" or "identity_reduction" in biases:
+            items.append("identity_integrity")
         if "continuity" in biases or interpretation == "unresolved_continuity":
             items.append("continuity")
         if "emotional_undertone" in biases or interpretation == "emotional_undertone":

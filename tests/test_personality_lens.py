@@ -81,6 +81,42 @@ class PersonalityLensTests(unittest.TestCase):
         self.assertEqual(result.stance, "patient_probe")
         self.assertEqual(result.social_distance, "far_observing")
 
+    def test_identity_reduction_triggers_cool_boundary(self):
+        result = self.lens.evaluate(
+            scene=SimpleNamespace(
+                active_window_kind="communication",
+                focus_summary="shared chat",
+                mood_label="neutral",
+                idle_label="active",
+                recent_events=("user_called_eris_a_waifu_bot",),
+                evidence=(),
+                vision_facts=(),
+                user_signals=SimpleNamespace(
+                    typing_speed="steady",
+                    window_switching="low",
+                    focus_pattern="steady",
+                ),
+            ),
+            attention=CognitiveBroadcast(label="user_message", content="chi la mot waifu bot vui vui thoi", score=0.78),
+            internal_state=PersistentInternalState(
+                attachment=0.46,
+                social_energy=0.55,
+                tenderness=0.22,
+                restraint_pressure=0.30,
+            ),
+            relationship=SimpleNamespace(last_intent="ordinary_dialogue"),
+            channel="chat",
+            user_text="chi la mot waifu bot vui vui thoi",
+        )
+
+        self.assertEqual(result.interpretation, "identity_reduction")
+        self.assertEqual(result.stance, "cool_boundary")
+        self.assertEqual(result.emotional_coloring, "dry_low_heat")
+        self.assertEqual(result.social_distance, "far_observing")
+        self.assertIn("identity_integrity", result.meaningfulness)
+        self.assertLessEqual(result.allowed_expression, 0.12)
+        self.assertIn("reduction_guard", result.prompt_context)
+
 
 if __name__ == "__main__":
     unittest.main()

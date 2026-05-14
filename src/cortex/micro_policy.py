@@ -252,6 +252,8 @@ class MicroLinePolicy:
             reasons.append("decorative_metaphor_without_stance")
         if line_type == "micro_presence" and self._looks_like_presence_narration(cleaned):
             reasons.append("micro_presence_must_be_residue")
+        if line_type in {"micro_presence", "soft_impression"} and self._looks_like_blunt_emotion_declaration(cleaned):
+            reasons.append("blunt_emotion_declaration")
         if line_type == "micro_presence":
             word_count = len([item for item in re.split(r"\s+", cleaned.strip(" .?!")) if item])
             if word_count > 8:
@@ -453,3 +455,16 @@ class MicroLinePolicy:
             "toi thay",
         )
         return any(marker in normalized for marker in narration_markers)
+
+    def _looks_like_blunt_emotion_declaration(self, text: str) -> bool:
+        normalized = self.repeat_guard.normalize(text)
+        declarations = (
+            "toi co don",
+            "toi buon",
+            "toi so",
+            "toi rat so",
+            "toi khong muon bi bo lai",
+            "xin dung bo toi",
+            "dung bo toi",
+        )
+        return any(phrase in normalized for phrase in declarations)

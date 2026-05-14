@@ -146,7 +146,6 @@ class AppraisalEngine:
             arousal = self._clamp01(max(arousal, resonance_score * 0.42))
         elif resonance_layer == "emotional_residue":
             arousal = self._clamp01(max(arousal, resonance_score * 0.36))
-            tenderness = self._clamp01(tenderness + resonance_appraisal * 0.06)
             certainty = self._clamp01(certainty - resonance_score * 0.04)
         if resonance_silence > 0.0:
             certainty = self._clamp01(certainty - resonance_silence * 0.10)
@@ -177,6 +176,8 @@ class AppraisalEngine:
             + (0.08 if social_scene else 0.0)
             - threat * 0.10
         )
+        if resonance_layer == "emotional_residue":
+            tenderness = self._clamp01(tenderness + resonance_appraisal * 0.06)
         if lens_interpretation in {"avoidance", "unfinished_intention", "hesitation", "cognitive_stall", "scattered_attention", "escape_from_friction"}:
             tenderness = self._clamp01(tenderness + 0.04)
         if lens_interpretation == "requested_presence":

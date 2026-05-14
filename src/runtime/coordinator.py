@@ -6,9 +6,19 @@ import threading
 import time
 import traceback
 import unicodedata
-
+#json: xử lý dữ liệu JSON.
+#os: đọc biến môi trường, config hệ thống.
+#random: chọn ngẫu nhiên fallback text, thời gian sleep.
+#re: regex để normalize, lọc text.
+#threading: chạy loop nền, lock state.
+#time: timestamp, cooldown, delay.
+#traceback: log lỗi chi tiết.
+#unicodedata: chuẩn hóa Unicode, ví dụ tiếng Việt dấu má, thứ mà máy tính ghét bằng một tình yêu thầm kín.
 from dataclasses import dataclass, replace
-
+'''
+dataclass: tạo class dữ liệu gọn hơn.
+replace: copy dataclass và đổi vài field.
+'''
 from cortex.action_planner import ACTION_SPACE, ActionPlanner
 from cortex.attention import AttentionWorkspace
 from cortex.appraisal import AppraisalEngine
@@ -49,22 +59,25 @@ from domain import Decision
 
 
 SPEECH_INTENTS = (
-    "no_speech",
-    "brief_ack",
-    "screen_observation",
-    "micro_observation",
-    "user_requested",
-    "system_warning",
-    "playful_aside",
-    "presence_maintenance",
-    "micro_presence",
-    "re_engagement",
-    "curious_question",
-    "social_presence",
+    "no_speech", #không nói
+    "brief_ack", # đáp ngắn
+    "screen_observation", # nhận xét màn hình 
+    "micro_observation", # nhận xét nhỏ
+    "user_requested", #người dùng yêu cầu nói
+    "system_warning",# cảnh báo hệ thống
+    "playful_aside", #nhận xét vui vẻ
+    "presence_maintenance", #giữ cảm giác hiện diện
+    "micro_presence",# cảm giác hiện diện nhỏ
+    "re_engagement",#tái kết nối khi cảm thấy có cơ hội
+    "curious_question", # hỏi lại tò mò
+    "social_presence", # giữ lại cảm giác hiện diện
 )
 
+#đánh dấu rằng dữ kiện từ vision đã được gắn vào context
 VISION_TRACE_MARKER = "vision_facts_attached"
+#khi ép AI nói, kiểm tra 5 nhóm ý gần nhất để tránh lặp
 FORCE_SPEAK_RECENT_FAMILY_WINDOW = 5
+#Đây là blacklist các kiểu câu không muốn lặp khi force_speak
 FORCE_SPEAK_BANNED_FAMILIES = {
     "presence_declaration": (
         "tôi đang hiện diện",
@@ -73,6 +86,12 @@ FORCE_SPEAK_BANNED_FAMILIES = {
         "tôi nghe đây",
         "tôi vẫn đang quan sát",
         "tôi vẫn đang theo dõi",
+    ),
+    "blunt_emotion": (
+        "toi co don",
+        "toi buon",
+        "xin dung bo toi",
+        "dung bo toi",
     ),
     "small_story_listener": (
         "câu chuyện nhỏ",
@@ -91,83 +110,102 @@ FORCE_SPEAK_BANNED_FAMILIES = {
         "friction_point",
         "decompression",
         "avoidance",
-        "ngai dang ne friction",
-        "ngai dang ne tranh",
-        "ngai dang bi ket nhan thuc",
-        "ngai dang phan tan chu y",
+        "ngài đang né friction",
+        "ngài đang né tranh",
+        "ngài đang bị kết nhận thức",
+        "ngài đang phân tán chú ý",
     ),
 }
 FALLBACK_BY_INTENT = {
     "random_chatter": (
-        "hm. đoạn này có mùi né việc.",
-        "yên quá. tôi bắt đầu nghi ngờ rồi đấy.",
+        "Yên quá. Tôi tưởng Ngài bỏ dở luôn rồi.",
+        "Không khí này bắt đầu đứng lại rồi đấy.",
+        "Ngài im hơi lâu hơn mọi hôm.",
     ),
+
     "inner_whim": (
-        "cái im lặng này không sạch lắm.",
-        "mạch này vẫn hơi lệch một chút.",
+        "Có gì đó vẫn chưa chịu thành lời.",
+        "Mạch này còn vướng nhẹ ở đâu đó.",
+        "Tôi thấy đoạn nghĩ đó vẫn chưa khép lại.",
     ),
+
     "social_presence": (
-        "Ngài bỏ tôi canh nhịp này à.",
-        "yên thế này là hơi đáng ngờ.",
+        "Toi van giu cho nay.",
+        "Khoang yen nay van chua dut.",
+        "Toi de nhip nay nam lai mot chut.",
     ),
+
     "micro_presence": (
-        "nhịp này vẫn hơi nghẽn.",
-        "không khí hiện tại hơi lệch.",
+        "Nhip nay vua cham lai mot chut.",
+        "Co mot mach van chua khep.",
+        "Cho nay van con du am.",
     ),
+
     "indirect_presence": (
-        "toi nghe phan do, nhung chua voi goi ten.",
-        "cu de no nam do mot chut.",
+        "Tôi nghe phần đó rồi.",
+        "Cứ để nó nằm yên thêm chút nữa đi.",
+        "Có vài thứ chưa cần gọi tên ngay.",
     ),
+
     "guarded_reply": (
-        "toi nghe roi. do la phan nang, khong can vo ve voi vang.",
-        "co gi do nang that, nhung toi se khong lam no sen.",
+        "Tôi hiểu. Phần đó không nhẹ đâu.",
+        "Có gì đó nặng thật, nhưng chưa cần ép nó thành lời.",
+        "Tôi nghe rồi. Không cần làm nó mềm đi vội.",
     ),
+
     "micro_observation": (
-        "lại thấy {anchor} trên màn hình rồi.",
-        "{anchor} vẫn đang mở đó à.",
+        "{anchor} vẫn còn mở đó à.",
+        "Ngài cứ quay lại chỗ {anchor} mãi.",
+        "Hôm nay {anchor} xuất hiện hơi nhiều đấy.",
     ),
+
     "curious_question": (
-        "Tôi tò mò một chút: Ngài muốn giữ nhịp này yên hơn hay sắc hơn?",
-        "Có phần nào trong mạch này đang làm Ngài muốn nhìn kỹ hơn không?",
+        "Ngài muốn giữ nhịp này yên thêm chút nữa không?",
+        "Có đoạn nào trong đó làm Ngài dừng lại không?",
+        "Ngài đang quan sát nó, hay đang tránh nó?",
     ),
+
     "screen_observation": (
-        "Tôi chỉ dám bám vào chỗ này: {anchor}.",
-        "Điểm rõ nhất hiện tại là: {anchor}.",
+        "Điểm rõ nhất hiện tại vẫn là {anchor}.",
+        "Tôi chỉ thật sự bám được vào {anchor}.",
+        "{anchor} là thứ đọng lại rõ nhất lúc này.",
     ),
 }
 
-
 @dataclass(frozen=True, slots=True)
 class SpeechIntentDecision:
-    intent: str
-    reason: str
+    intent: str #kiểu nói
+    reason: str #lý do chọn intent đó
+    #frozen=True: không cho sửa sau khi tạo.
+    #slots=True: tiết kiệm RAM, truy cập nhanh hơn.
 
 
 @dataclass(frozen=True, slots=True)
 class MicroPresenceSynthesis:
-    kind: str
-    seeds: tuple[str, ...] = ()
-    context: dict[str, str] | None = None
-    fallback_text: str = "Mạch này vẫn hơi nghẽn."
+    kind: str #loại hiện diện
+    seeds: tuple[str, ...] = () #mầm ý tưởng
+    context: dict[str, str] | None = None #ngữ cảnh phụ
+    fallback_text: str = "Khoảng lặng này làm tôi nghĩ hơi nhiều."
     should_verbalize: bool = True
 
 
 @dataclass(frozen=True, slots=True)
 class SocialPresenceEvent:
-    present: bool
-    kind: str = ""
-    confidence: float = 0.0
-    intensity: float = 0.0
-    speech_allowed: bool = False
-    reason: str = ""
-    evidence: tuple[str, ...] = ()
-    timestamp: str = ""
+    present: bool #có event không
+    kind: str = "" #loại event
+    confidence: float = 0.0 #độ tin cậy
+    intensity: float = 0.0 #cường độ
+    speech_allowed: bool = False #có được phép nói không
+    reason: str = "" # lý do
+    evidence: tuple[str, ...] = () # bằng chứng
+    timestamp: str = "" #thời điểm
 
+    #Chuyển object thành dict để log hoặc serialize
     def to_dict(self) -> dict[str, object]:
         return {
             "present": bool(self.present),
-            "confidence": round(float(self.confidence), 3),
-            "intensity": round(float(self.intensity), 3),
+            "confidence": round(float(self.confidence), 3), # làm tròn 3 chữ số
+            "intensity": round(float(self.intensity), 3), # làm tròn 3 chữ số
             "kind": self.kind,
             "reason": self.reason,
             "evidence": list(self.evidence),
@@ -178,21 +216,22 @@ class SocialPresenceEvent:
 
 
 class RuntimeCoordinator:
+    #Đây là trung tâm điều phối.
     def __init__(
         self,
         *,
-        logger,
-        transport,
-        llm_service,
-        parser,
-        telemetry_service,
-        ni_engine,
-        ti_governor,
-        fe_renderer,
-        memory_store,
-        body_running_fn,
-        action_executor=None,
-        action_router=None,
+        logger, #ghi log
+        transport, #gửi dữ liệu ra body/Godot
+        llm_service, #gọi LLM
+        parser, #parse output LLM
+        telemetry_service, #đọc màn hình/hành vi
+        ni_engine, #tầng đánh giá Ni
+        ti_governor,#tầng đánh giá Ti
+        fe_renderer,#tầng đánh giá FE
+        memory_store,# bộ nhớ
+        body_running_fn,#kiểm tra body/Godot còn chạy không
+        action_executor=None, #thực thi
+        action_router=None,#định tuyến action
     ):
         self.logger = logger
         self.transport = transport
@@ -206,6 +245,7 @@ class RuntimeCoordinator:
         self.body_running_fn = body_running_fn
         self.action_executor = action_executor
         self.action_router = action_router
+        # Khởi tạo các engine con
         self.attention_workspace = AttentionWorkspace()
         self.meaning_layer = MeaningLayer()
         self.personality_lens = PersonalityLens()
@@ -220,6 +260,17 @@ class RuntimeCoordinator:
         self.micro_line_policy = MicroLinePolicy(repeat_guard=self.semantic_repeat_guard)
         self._state_lock = threading.RLock()
 
+        '''Các biến này lưu trạng thái hội thoại:
+        có đang chat không,
+        lịch sử chat,
+        câu trả lời gần nhất,
+        intent gần nhất,
+        topic đang active,
+        text cuối cùng đã nói,
+        mood score,
+        idle cycles,
+        các guard chống lặp.
+        '''
         self.chat_mode = False
         self.chat_history = []
         self.last_chat_answer = ""
@@ -230,14 +281,21 @@ class RuntimeCoordinator:
         self.repeated_user_count = 0
         self.running = True
         self.last_text = ""
-        self.mood_score = 50
-        self.inferred_pos_x = 0.5
+        self.mood_score = 50 #mô phỏng trạng thái cảm xúc
+        self.inferred_pos_x = 0.5 # vị trí avatar
         self.idle_cycles = 0
         self.last_autonomous_signature = ""
         self.repeated_autonomous_count = 0
         self.last_autonomous_spoken_at = 0.0
         self.presence_maintenance_silent_cycles = 0
         self.last_presence_maintenance_at = 0.0
+        #Các hàm _load... đọc config/env.
+        '''
+        khi nào ERIS được tự nói để duy trì hiện diện,
+        im bao lâu thì re-engage,
+        cooldown bao nhiêu giây,
+        có dùng LLM cho micro presence không.
+        '''
         self.presence_maintenance_enabled = self._load_presence_maintenance_enabled()
         self.presence_maintenance_silent_loop_threshold = self._load_presence_maintenance_silent_loop_threshold()
         self.presence_maintenance_cooldown_sec = self._load_presence_maintenance_cooldown()
@@ -263,6 +321,7 @@ class RuntimeCoordinator:
         self.recent_inner_thought_intents: tuple[str, ...] = ()
         self.recent_inner_thought_seeds: tuple[str, ...] = ()
         self.recent_meaning_families: tuple[str, ...] = ()
+        #Mỗi vòng xử lý tạo ra một CognitiveFrame: ảnh chụp đầy đủ của một chu kỳ nhận thức.
         self.cognitive_cycle_index = 0
         self.cognitive_frames: list[CognitiveFrame] = []
         self.last_cognitive_frame: CognitiveFrame | None = None
@@ -270,6 +329,7 @@ class RuntimeCoordinator:
         self.mental_process_enabled = self._load_mental_process_enabled()
         self._mental_process_stop_event = threading.Event()
         self._mental_process_thread: threading.Thread | None = None
+        #Load bộ nhớ dài hạn từ memory_store.
         self.long_term_memory = []
         self.memory_state = self._load_memory_state()
         self.long_term_memory = self._memory_recall_texts()
@@ -289,34 +349,40 @@ class RuntimeCoordinator:
         #  dựa trên chuỗi GoalDriftReport, thay vì chỉ nhìn một snapshot đơn lẻ.
         self.autonomous_ni_state = NiStateMachine()
         self.chat_ni_state = NiStateMachine()
+        #ThoughtStream là dòng suy nghĩ nền. Nó có thể sinh seed, tension, unresolved loops, attractor
+        #nó giữ “mạch suy nghĩ ngầm” để ERIS không reset như cá vàng sau mỗi message
         self.thought_stream = ThoughtStream(
             context_provider=self._build_thought_stream_context,
             logger=self.logger,
         )
         self.subconscious_loop = self.thought_stream
         self.cognitive_substrate = self.thought_stream
-        # Bật/tắt tầng suy luận nhẹ của Ni theo mode.
-        # Giữ tên env/config cũ để tương thích ngược.
+        # Đọc biến môi trường để bật/tắt tầng Ni meta critic.
         flag = os.environ.get("ERIS_NI_META_CRITIC", "1").strip().lower()
         env_enabled = flag not in {"0", "false", "no", "off"}
         chat_cfg, auto_cfg = self._load_ni_meta_mode_flags()
         self.ni_meta_env_enabled = env_enabled
+        #Tách riêng mode chat và autonomous.
         self.ni_meta_chat_enabled = env_enabled and chat_cfg
         self.ni_meta_auto_enabled = env_enabled and auto_cfg
+        #Đảm bảo trong memory_state có internal_state. Nếu thiếu thì tạo mới.
         self._ensure_internal_state()
 
+    #log output thô từ LLM
     def _log_raw_llm_output(self, channel: str, raw: str) -> None:
         preview = (raw or "").replace("\n", "\\n")
-        if len(preview) > 500:
-            preview = preview[:500] + "...(truncated)"
+        if len(preview) > 5500:
+            preview = preview[:5500] + "...(truncated)"
         self.logger.info("[%s raw] %s", channel, preview or "<empty>")
 
-    def _preview_text(self, text: str, *, limit: int = 240) -> str:
+    #tạo bản preview ngắn của một đoạn text.
+    def _preview_text(self, text: str, *, limit: int = 1000) -> str:
         preview = (text or "").replace("\n", "\\n").strip()
         if len(preview) > limit:
             preview = preview[:limit] + "...(truncated)"
         return preview or "<empty>"
 
+    #suy ra chủ đề hội thoại hiện tại từ tin nhắn người dùng và report của các tầng khác
     def _infer_active_conversational_topic(self, user_text: str, *, fe_plan=None, ti_report=None) -> str:
         normalized = self._normalize_user_message(user_text)
         if any(marker in normalized for marker in ("biết gì về tôi", "biết gì về mình", "bạn biết gì về tôi")):
@@ -329,6 +395,7 @@ class RuntimeCoordinator:
         mode = str(getattr(ti_report, "mode", "") or "").strip()
         return mode[:80] if mode else ""
 
+    #Hàm này load trạng thái bộ nhớ từ memory_store.
     def _load_memory_state(self):
         loader = getattr(self.memory_store, "load_state", None)
         if not callable(loader):
@@ -338,45 +405,61 @@ class RuntimeCoordinator:
         except Exception as exc:
             self.logger.warning("Memory state load error: %s", exc)
             return None
-
+        
+    #Kiểm tra memory store có phải dạng structured memory không.
     def _has_structured_memory_store(self) -> bool:
         return self.memory_state is not None and callable(getattr(self.memory_store, "remember_cycle", None))
 
+    #Đảm bảo memory_state có internal_state.
     def _ensure_internal_state(self) -> None:
         if self.memory_state is None:
             return
+        #Nếu có memory nhưng chưa có internal state:
         if getattr(self.memory_state, "internal_state", None) is None:
             self.memory_state.internal_state = PersistentInternalState()
 
+    #Lấy internal state hiện tại.
     def _get_internal_state(self) -> PersistentInternalState:
         if self.memory_state is not None and getattr(self.memory_state, "internal_state", None) is not None:
             return self.memory_state.internal_state
+        #Nếu không có thì tạo state tạm:
         return PersistentInternalState()
 
+    #Cập nhật internal state mới vào memory.
     def _set_internal_state(self, state: PersistentInternalState) -> None:
+        #Không có memory thì không set.
         if self.memory_state is None:
             return
+        #Dùng lock để tránh nhiều thread sửa state cùng lúc.
         with self._state_lock:
             self.memory_state.internal_state = state
             self._save_memory_state()
 
+    #Hàm này dựng text context để đưa vào prompt LLM.
     def _build_internal_state_context(self, state: PersistentInternalState | None = None, self_state=None) -> str:
+        #Chuyển internal state thành text
         state_context = self.internal_state_engine.render_prompt_context(state or self._get_internal_state())
+        #Nếu self_state có prompt_context, lấy thêm.
+        #self_state thường là mô hình tự nhận thức của agent: “mình đang ở mode nào”, “nên giữ phong cách nào”.
         prompt_context = str(getattr(self_state, "prompt_context", "") or "").strip()
+        #Nếu có, nối vào.
         if prompt_context:
             return f"{state_context}\n{prompt_context}"
         return state_context
 
+    #Hàm này dựng context cho ThoughtStream.
     def _build_thought_stream_context(self) -> dict[str, object]:
+        #Nó lấy snapshot hệ thống + memory + trạng thái gần đây.
         with self._state_lock:
-            mood_score = self.mood_score
-            inferred_pos_x = self.inferred_pos_x
-            internal_state = self._get_internal_state()
-            long_term_memory = tuple(self.long_term_memory or ())
-            last_text = self.last_text
-            recent_inner_seeds = tuple(self.recent_inner_thought_seeds or ())
-            recent_thought_seeds = tuple(getattr(internal_state, "recent_thought_seeds", ()) or ())
-            recent_subconscious = tuple(getattr(internal_state, "recent_subconscious_seeds", ()) or ())
+            mood_score = self.mood_score #trạng thái mood hiện tại
+            inferred_pos_x = self.inferred_pos_x #vị trí
+            internal_state = self._get_internal_state() # pose suy luận
+            long_term_memory = tuple(self.long_term_memory or ()) #memory dài hạn
+            last_text = self.last_text #câu vừa nói gần nhất
+            recent_inner_seeds = tuple(self.recent_inner_thought_seeds or ()) #các seed suy nghĩ gần đây
+            recent_thought_seeds = tuple(getattr(internal_state, "recent_thought_seeds", ()) or ()) #các seed suy nghĩ gần đây được lưu trong internal state
+            recent_subconscious = tuple(getattr(internal_state, "recent_subconscious_seeds", ()) or ()) #subconscious seed gần đây
+        #Lấy snapshot từ telemetry.
         snapshot = self.telemetry_service.capture_snapshot(
             mood_score=mood_score,
             inferred_pos_x=inferred_pos_x,
@@ -1568,24 +1651,28 @@ class RuntimeCoordinator:
             user_text=user_text,
         )
         broadcast = self._build_broadcast(candidates)
-        meaning_layer = self._build_meaning_layer(
-            snapshot=snapshot,
-            broadcast=broadcast,
-            internal_state=sensed_internal_state,
-            thought_stream_report=thought_stream_report,
-            channel=channel,
-            user_text=user_text,
-            force_speak=force_speak,
-        )
-        personality_lens = self._build_personality_lens(
-            snapshot=snapshot,
-            broadcast=broadcast,
-            internal_state=sensed_internal_state,
-            meaning_layer=meaning_layer,
-            channel=channel,
-            user_text=user_text,
-        )
-        fe_plan = self._apply_personality_lens_to_fe_plan(fe_plan, personality_lens)
+        if channel == "chat":
+            meaning_layer = MeaningLayerResult()
+            personality_lens = PersonalityLensResult()
+        else:
+            meaning_layer = self._build_meaning_layer(
+                snapshot=snapshot,
+                broadcast=broadcast,
+                internal_state=sensed_internal_state,
+                thought_stream_report=thought_stream_report,
+                channel=channel,
+                user_text=user_text,
+                force_speak=force_speak,
+            )
+            personality_lens = self._build_personality_lens(
+                snapshot=snapshot,
+                broadcast=broadcast,
+                internal_state=sensed_internal_state,
+                meaning_layer=meaning_layer,
+                channel=channel,
+                user_text=user_text,
+            )
+            fe_plan = self._apply_personality_lens_to_fe_plan(fe_plan, personality_lens)
         appraisal = self._build_cognitive_appraisal(
             internal_state=sensed_internal_state,
             ni_report=ni_report,
@@ -1595,7 +1682,7 @@ class RuntimeCoordinator:
             channel=channel,
             user_text=user_text,
             force_speak=force_speak,
-            personality_lens=personality_lens,
+            personality_lens=None if channel == "chat" else personality_lens,
         )
         frame = CognitiveFrame(
             cycle_id=self._next_cognitive_cycle_id(channel),
@@ -2109,33 +2196,33 @@ class RuntimeCoordinator:
         if "banner" in haystack and any(term in haystack for term in ("trinh bay", "present", "presentation", "share")):
             lines.extend(
                 (
-                    "cái banner trình bày kia vẫn nằm đó.",
-                    "banner trình bày vẫn mắc ở một góc.",
+                    "cai banner trinh bay kia van nam do.",
+                    "banner trinh bay van mac o mot goc.",
                 )
             )
         if "meet" in haystack or "meeting" in haystack or "cuoc goi" in haystack:
             lines.extend(
                 (
-                    "hm, Meet vẫn đang treo đó.",
-                    "vẫn là cái phòng Meet đó à.",
-                    "cửa sổ Meet im hơi lâu rồi.",
-                    "Ngài đang để màn hình chia sẻ mở hơi lâu rồi.",
+                    "phong Meet kia van chua gap lai.",
+                    "van la nhip Meet do a.",
+                    "cuoc goi do im hoi lau roi.",
+                    "nhip chia se do mo hoi lau roi.",
                 )
             )
         elif "youtube" in haystack or "music youtube" in haystack:
-            lines.extend(("tab YouTube vẫn mở ở đó.", "nhạc vẫn chạy nền khe khẽ."))
+            lines.extend(("tab YouTube van mo o do.", "nhac van chay nen khe khe."))
         elif focus_kind in {"coding", "documentation"} or any(term in haystack for term in ("code", "visual studio", "vscode", "python", "debug")):
-            lines.extend(("mạch code vẫn đứng ở đó.", "đoạn này im hơi lâu rồi."))
+            lines.extend(("mach code nay van giu cho.", "doan nay dung hoi lau roi."))
         elif focus_kind == "communication" or any(term in haystack for term in ("chat", "message", "zalo", "discord", "slack")):
-            lines.extend(("khung chat vẫn yên một nhịp.", "cửa sổ nhắn tin vẫn để đó."))
+            lines.extend(("nhip trao doi nay van yen mot chut.", "doan doi dap do van de nguyen."))
 
         subject = self._micro_line_subject(compact_cue or summary or window or focus_kind)
         if subject:
-            lines.append(f"{subject} vẫn nằm đó.")
+            lines.append(f"{subject} van chua khep.")
             if presence:
-                lines.append(f"{subject} im hơi lâu rồi.")
+                lines.append(f"{subject} im hoi lau roi.")
         if not lines:
-            lines.append("cửa sổ này im hơi lâu rồi.")
+            lines.append("nhip nay im hoi lau roi.")
 
         return tuple(dict.fromkeys(self._clean_micro_line(line) for line in lines if self._clean_micro_line(line)))[:5]
 
@@ -2395,20 +2482,20 @@ class RuntimeCoordinator:
         seeds: list[str] = []
         haystack = self._normalize_user_message(" ".join((active_window, focus_summary, focus_kind, " ".join(recent_events))))
         if "godot" in haystack:
-            seeds.append("Godot vẫn mở.")
+            seeds.append("Godot van mo.")
         elif focus_kind in {"coding", "documentation"} or any(term in haystack for term in ("code", "vscode", "visual studio", "debug")):
-            seeds.append("mạch code vẫn đứng đó.")
+            seeds.append("mach code nay van giu cho.")
         elif active_window:
             title = re.sub(r"\s+", " ", active_window).strip()
             if title and not self._looks_internal_topic(title):
-                seeds.append(f"{title[:36]} vẫn mở.")
+                seeds.append(f"{title[:36]} van mo.")
 
         if any("log" in self._normalize_user_message(item) for item in recent_events):
-            seeds.append("log cứ lặp lại.")
+            seeds.append("log cu lap lai.")
         if idle_seconds >= 240:
-            seeds.append("màn hình im khá lâu.")
+            seeds.append("nhip nay im kha lau.")
         elif not seeds and focus_summary:
-            seeds.append(f"{focus_summary[:48]} vẫn yên.")
+            seeds.append(f"{focus_summary[:48]} van yen.")
 
         thought_seeds = self._thought_residue_seeds(thought_stream_report)
         if thought_seeds:
@@ -2416,16 +2503,16 @@ class RuntimeCoordinator:
             seeds.extend(thought_seeds)
 
         if kind == "bodily_residue":
-            seeds = ["Mạch này vẫn hơi nghẽn."] + seeds
+            seeds = ["Mach nay van hoi nghen."] + seeds
         elif kind == "social_residue" or bool(getattr(social_presence_event, "present", False)):
             kind = "social_residue"
             if focus_kind == "coding":
-                seeds.insert(0, "vẫn đang debug à.")
+                seeds.insert(0, "mach do van chua tha.")
             else:
-                seeds.insert(0, "Ngài vẫn còn thức nhỉ.")
+                seeds.insert(0, "khoang yen nay van giu cho.")
 
         seeds = tuple(dict.fromkeys(seed for seed in seeds if str(seed or "").strip()))[:5]
-        fallback = seeds[0] if seeds else "Mạch này vẫn hơi nghẽn."
+        fallback = seeds[0] if seeds else "Mach nay van hoi nghen."
         return MicroPresenceSynthesis(
             kind=kind,
             seeds=seeds,
@@ -3841,8 +3928,8 @@ class RuntimeCoordinator:
     ) -> str:
         if focus_kind == "coding":
             pool = (
-                "Tôi vẫn ở cạnh mạch code này, không kéo nó lệch thêm.",
-                "Tôi đứng yên một nhịp để phần code tự lộ ra.",
+                "Toi giu cho cho mach code nay.",
+                "Phan code nay toi de no lien mach.",
             )
         else:
             pool = FALLBACK_BY_INTENT["social_presence"]
@@ -3999,6 +4086,72 @@ class RuntimeCoordinator:
         if len(shaped) > 160:
             shaped = shaped[:157].rstrip() + "..."
         return f"{shaped} à?"
+
+    def _chat_text_contains_intent_inference(self, text: str) -> bool:
+        normalized = self._normalize_user_message(text)
+        if not normalized:
+            return False
+        patterns = (
+            "ngai muon",
+            "ngai dinh",
+            "ngai dang thu",
+            "ngai tim toi vi",
+            "ngai dang ne",
+            "ngai dang tranh",
+            "toi biet ngai dang",
+            "co ve ngai muon",
+            "co ve ngai dang",
+            "hinh nhu ngai dang",
+            "chac ngai dang",
+        )
+        return any(pattern in normalized for pattern in patterns)
+
+    def _rewrite_chat_question_tail(self, text: str) -> str:
+        compact = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not compact:
+            return "Tôi chưa đủ chắc để đoán ý Ngài."
+        sentences = re.split(r"(?<=[\.\!\?])\s+", compact)
+        if len(sentences) > 1 and sentences[-1].endswith("?"):
+            kept = " ".join(part.strip() for part in sentences[:-1] if part.strip()).strip()
+            if kept:
+                return kept
+        if compact.endswith("?"):
+            return "Tôi chưa đủ chắc để đoán ý Ngài."
+        return compact
+
+    def _is_short_or_ambiguous_chat_text(self, user_text: str) -> bool:
+        normalized = self._normalize_user_message(user_text)
+        if not normalized:
+            return True
+        if self._is_low_signal_chat_message(user_text):
+            return True
+        return len(normalized.split()) <= 3
+
+    def _apply_chat_final_guards(self, decision: Decision, *, user_text: str) -> Decision:
+        text = str(decision.text or "").strip()
+        if not text:
+            return decision
+
+        trace_parts: list[str] = []
+        if self._chat_text_contains_intent_inference(text):
+            decision.text = "Tôi chưa đủ chắc để đoán ý Ngài."
+            decision.confidence = min(self._bounded_float(decision.confidence), 0.65)
+            trace_parts.append("chat_no_mindreading")
+            text = decision.text
+
+        if self._looks_like_question_text(user_text) and text.endswith("?"):
+            decision.text = self._rewrite_chat_question_tail(text)
+            decision.confidence = min(self._bounded_float(decision.confidence), 0.55)
+            trace_parts.append("chat_answer_contract")
+
+        if self._is_short_or_ambiguous_chat_text(user_text):
+            decision.confidence = min(self._bounded_float(decision.confidence), 0.60)
+            trace_parts.append("chat_confidence_short")
+
+        if trace_parts:
+            suffix = " | ".join(trace_parts)
+            decision.debug_trace = f"{decision.debug_trace} | {suffix}" if decision.debug_trace else suffix
+        return decision
 
     def _copy_decision_with_text(
         self,
@@ -4641,7 +4794,7 @@ class RuntimeCoordinator:
                 user_text=user_text,
                 channel="chat",
                 fragments=(
-                    *(tuple(self.chat_history[-2:]) if self.chat_history else ()),
+                    *(tuple(self._chat_history_for_llm(limit=2)) if self.chat_history else ()),
                     *self._thought_stream_resonance_fragments(),
                 ),
             )
@@ -4728,8 +4881,9 @@ class RuntimeCoordinator:
                 ti_report=ti_report,
             )
             repeat_count = self._track_repeated_user_message(user_text)
-            self.chat_history.append({"role": "user", "content": user_text})
-            self.logger.info("[CHAT HISTORY] %s", self.chat_history[-8:])
+            self._maybe_invalidate_last_assistant_history(user_text)
+            self._append_chat_history("user", user_text)
+            self.logger.info("[CHAT HISTORY] %s", self._chat_history_for_llm(limit=8))
             self.logger.info("[LAST USER INTENT] %s", self.last_user_intent or "<empty>")
             self.logger.info("[ACTIVE_TOPIC] %s", self.active_conversational_topic or "<empty>")
 
@@ -4792,11 +4946,12 @@ class RuntimeCoordinator:
             # The current user message is sent as the final user message below.
             # Passing it inside chat_history as well wastes one short-term slot
             # and can push out the previous turn during context shrink.
-            llm_chat_history = self.chat_history[:-1][-16:]
+            llm_chat_history = self._chat_history_for_llm(limit=16)[:-1]
             self.logger.info("[LLM CHAT HISTORY] %s", llm_chat_history[-8:])
             raw = self.llm_service.generate_chat_reply(
                 chat_history=llm_chat_history,
                 user_message=chat_user_message,
+                raw_user_text=user_text,
                 ni_context=ni_report.prompt_context,
                 ti_context=planned_ti_context,
                 fe_context=fe_plan.style_context,
@@ -4813,6 +4968,7 @@ class RuntimeCoordinator:
             decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
             self._log_decision_stage("chat", "after_ti", decision)
             decision = self._execute_system_action(decision, snapshot=snapshot)
+            decision = self._apply_chat_final_guards(decision, user_text=user_text)
             self._commit_chat_decision(decision, fe_plan, frame=frame)
             return
 
@@ -5223,7 +5379,7 @@ class RuntimeCoordinator:
 
         self.last_chat_answer = decision.text
         self.last_system_action = decision.system_action
-        self.chat_history.append({"role": "assistant", "content": decision.text})
+        self._append_chat_history("assistant", decision.text)
         if len(self.chat_history) > 32:
             self.chat_history = self.chat_history[-32:]
 
@@ -6409,16 +6565,19 @@ class RuntimeCoordinator:
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception:
-                log_exception = getattr(self.logger, "exception", None)
-                if callable(log_exception):
-                    log_exception("Unhandled exception inside run_loop; continuing.")
+                formatted = traceback.format_exc()
+                formatted_single = " | ".join(
+                    line.strip() for line in formatted.strip().splitlines() if line.strip()
+                )
+                log_error = getattr(self.logger, "error", None)
+                if callable(log_error):
+                    log_error("Unhandled exception inside run_loop; continuing. %s", formatted_single)
                 else:
-                    formatted = traceback.format_exc()
-                    log_error = getattr(self.logger, "error", None)
-                    if callable(log_error):
-                        log_error("Unhandled exception inside run_loop; continuing.\n%s", formatted)
-                    else:
-                        self.logger.warning("Unhandled exception inside run_loop; continuing.\n%s", formatted)
+                    self.logger.warning("Unhandled exception inside run_loop; continuing. %s", formatted_single)
+                try:
+                    traceback.print_exc()
+                except Exception:
+                    pass
                 time.sleep(0.25)
                 continue
 
@@ -6536,6 +6695,63 @@ class RuntimeCoordinator:
         if len(tokens) <= 2 and all(token in low_signal_phrases for token in tokens):
             return True
         return False
+
+    def _chat_history_for_llm(self, *, limit: int = 16) -> list[dict]:
+        valid_entries = [
+            {"role": str(item.get("role", "")), "content": str(item.get("content", ""))}
+            for item in self.chat_history
+            if not bool(item.get("invalid")) and str(item.get("role", "")) in {"system", "user", "assistant"}
+        ]
+        return valid_entries[-limit:]
+
+    def _append_chat_history(self, role: str, content: str, *, invalid: bool = False) -> None:
+        entry = {"role": role, "content": content}
+        if invalid:
+            entry["invalid"] = True
+        self.chat_history.append(entry)
+
+    def _user_denies_last_assistant_assumption(self, user_text: str) -> bool:
+        normalized = self._normalize_user_message(user_text)
+        if not normalized or not self.last_chat_answer.strip():
+            return False
+        denial_prefixes = (
+            "khong phai",
+            "sai",
+            "sai roi",
+            "y toi khong phai",
+            "y minh khong phai",
+            "ban hieu sai",
+            "cau do sai",
+            "khong dung",
+        )
+        denial_exact = {"khong", "dau"}
+        denial_phrases = (
+            "khong phai y toi",
+            "khong phai y minh",
+            "toi khong noi vay",
+            "toi dau co noi vay",
+            "ban doan sai roi",
+            "ban hieu lech roi",
+        )
+        if normalized in denial_exact:
+            return True
+        if any(normalized.startswith(prefix) for prefix in denial_prefixes):
+            return True
+        return any(phrase in normalized for phrase in denial_phrases)
+
+    def _invalidate_last_assistant_history(self, *, note: str) -> None:
+        for item in reversed(self.chat_history):
+            if str(item.get("role", "")) == "assistant" and not bool(item.get("invalid")):
+                item["invalid"] = True
+                break
+        self._append_chat_history("system", note)
+
+    def _maybe_invalidate_last_assistant_history(self, user_text: str) -> None:
+        if not self._user_denies_last_assistant_assumption(user_text):
+            return
+        note = "Previous assistant inference was wrong. Do not build on it."
+        self._invalidate_last_assistant_history(note=note)
+        self.logger.info("[CHAT HISTORY] invalidated last assistant turn after user denial.")
 
     def _looks_like_no_evidence_style(self, claim_style: str) -> bool:
         lowered = (claim_style or "").strip().lower()
@@ -6893,3 +7109,4 @@ class RuntimeCoordinator:
                 return cleaned
 
         return ""
+

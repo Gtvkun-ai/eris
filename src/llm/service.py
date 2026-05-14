@@ -15,6 +15,7 @@ from .contracts import (
     DECISION_JSON_FIELDS,
     INFERENCE_LADDER_PROMPT,
     RUNTIME_RULES_PROMPT,
+    SELF_IDENTITY_PROFILE_PROMPT,
     STYLE_FALLBACK_PROMPT,
     VALID_ANIMATIONS,
 )
@@ -78,6 +79,171 @@ class LlmService:
         normalized = re.sub(r"[^\w\s]", " ", normalized, flags=re.UNICODE)
         normalized = re.sub(r"\s+", " ", normalized.lower()).strip()
         return normalized
+
+    def _looks_like_direct_question(self, text: str) -> bool:
+        raw = str(text or "").strip()
+        if not raw:
+            return False
+        if "?" in raw:
+            return True
+        normalized = self._normalize_vietnamese_ascii(raw)
+        if not normalized:
+            return False
+        question_terms = {
+            "ai",
+            "bao",
+            "chua",
+            "co",
+            "gi",
+            "khong",
+            "la",
+            "nao",
+            "sao",
+            "the",
+        }
+        question_phrases = (
+            "ban la ai",
+            "ban nghi",
+            "ban nhu the nao",
+            "co phai",
+            "la gi",
+            "tai sao",
+            "the nao",
+            "vi sao",
+        )
+        tokens = set(normalized.split())
+        return bool(tokens & question_terms) or any(phrase in normalized for phrase in question_phrases)
+
+    def _is_short_or_ambiguous_user_text(self, text: str) -> bool:
+        normalized = self._normalize_vietnamese_ascii(text or "")
+        if not normalized:
+            return True
+        ambiguous_phrases = {
+            "gi",
+            "ha",
+            "huh",
+            "ok",
+            "oke",
+            "sao",
+            "the nao",
+            "noi di",
+            "ke tiep",
+            "thu xem",
+        }
+        if normalized in ambiguous_phrases:
+            return True
+        return len(normalized.split()) <= 3
+
+    def _is_self_identity_question(self, text: str) -> bool:
+        normalized = self._normalize_vietnamese_ascii(text or "")
+        if not normalized:
+            return False
+        patterns = (
+            "ban la ai",
+            "ban la gi",
+            "ban nghi ban la ai",
+            "ban nghi ban la nguoi nhu nao",
+            "ban nghi minh nhu the nao",
+            "ban thay minh nhu the nao",
+            "ban la nguoi nhu nao",
+        )
+        return any(pattern in normalized for pattern in patterns)
+
+    def _contains_user_intent_inference(self, text: str) -> bool:
+        normalized = self._normalize_vietnamese_ascii(text or "")
+        if not normalized:
+            return False
+        patterns = (
+            "ngai muon",
+            "ngai dinh",
+            "ngai dang thu",
+            "ngai tim toi vi",
+            "ngai dang ne",
+            "ngai dang tranh",
+            "toi biet ngai dang",
+            "co ve ngai muon",
+            "co ve ngai dang",
+            "hinh nhu ngai dang",
+            "chac ngai dang",
+        )
+        return any(pattern in normalized for pattern in patterns)
+
+    def _build_chat_contract_prompt(self, raw_user_text: str) -> str:
+        clauses = [
+            SELF_IDENTITY_PROFILE_PROMPT,
+            "Chat contract: answer the user's actual question before style, interpretation, or atmosphere.",
+            "If the user asks directly, the first clause of text must be the direct answer.",
+            "Use soft reflection only if it adds value.",
+            "Ask a clarifying question only when needed, and never as the whole answer.",
+            "No mindreading: do not guess hidden motive, emotional avoidance, or why the user came to you unless they said it clearly.",
+        ]
+        if self._looks_like_direct_question(raw_user_text):
+            clauses.append("This user turn is a direct question. answer_first is mandatory.")
+        if self._is_self_identity_question(raw_user_text):
+            clauses.append(
+                "This is a self-identity question. Say you are not human when relevant, then answer from SelfIdentityProfile."
+            )
+        if self._is_short_or_ambiguous_user_text(raw_user_text):
+            clauses.append("The user text is short or ambiguous. Prefer a grounded brief answer and low confidence.")
+        return " ".join(clauses)
+
+    def _rewrite_question_only_chat_answer(self, text: str) -> str:
+        compact = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not compact:
+            return "Tôi chưa đủ chắc để đoán ý Ngài."
+        sentences = re.split(r"(?<=[\.\!\?])\s+", compact)
+        if len(sentences) > 1 and sentences[-1].endswith("?"):
+            kept = " ".join(part.strip() for part in sentences[:-1] if part.strip()).strip()
+            if kept:
+                return kept
+        if compact.endswith("?"):
+            return "Tôi chưa đủ chắc để đoán ý Ngài."
+        return compact
+
+    def _append_reasoning_tag(self, payload: dict, tag: str) -> None:
+        tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
+        if tag not in tags:
+            tags.append(tag)
+        payload["reasoning_tags"] = tags[:8]
+
+    def _guard_chat_output(self, raw_json: str, *, raw_user_text: str) -> str:
+        payload = self._parse_json_object(raw_json)
+        if not isinstance(payload, dict):
+            return raw_json
+
+        text = self._coerce_text_value(payload.get("text", "")).strip()
+        confidence = self._coerce_confidence_value(payload.get("confidence", 0.0))
+        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
+        trace_notes: list[str] = []
+
+        if self._contains_user_intent_inference(text):
+            text = "Tôi chưa đủ chắc để đoán ý Ngài."
+            confidence = min(confidence, 0.65)
+            payload["extracted_fact"] = ""
+            self._append_reasoning_tag(payload, "no_mindreading_filter")
+            trace_notes.append("chat_no_mindreading")
+
+        if self._looks_like_direct_question(raw_user_text) and text.endswith("?"):
+            text = self._rewrite_question_only_chat_answer(text)
+            confidence = min(confidence, 0.55)
+            self._append_reasoning_tag(payload, "answer_contract_guard")
+            trace_notes.append("chat_answer_contract")
+
+        if self._contains_user_intent_inference(text):
+            confidence = min(confidence, 0.65)
+        if self._is_short_or_ambiguous_user_text(raw_user_text):
+            confidence = min(confidence, 0.60)
+            self._append_reasoning_tag(payload, "short_ambiguous_cap")
+            trace_notes.append("chat_confidence_short")
+
+        payload["text"] = text
+        payload["confidence"] = confidence
+        if trace_notes:
+            suffix = " | ".join(trace_notes)
+            payload["debug_trace"] = f"{debug_trace} | {suffix}" if debug_trace else suffix
+        payload["system_action"] = self._coerce_system_action_value(payload.get("system_action", ""))
+        payload["action_input"] = self._coerce_text_value(payload.get("action_input", "")) if payload["system_action"] else ""
+        return json.dumps(payload, ensure_ascii=False)
 
     def _contextual_service_fallback_text(self, messages: list[dict], *, channel: str) -> str:
         if channel != "chat":
@@ -953,6 +1119,52 @@ class LlmService:
         payload["action_input"] = self._coerce_text_value(payload.get("action_input", "")) if payload["system_action"] else ""
         return json.dumps(payload, ensure_ascii=False)
 
+    def _infj_594_rewrite_bad_line(self, text: str) -> str | None:
+        bad = self._normalize_vietnamese_ascii(text or "")
+        if not bad:
+            return None
+
+        if "thu thach toi" in bad:
+            return "Tôi hiểu lệch câu hỏi rồi. Ngài đang hỏi tôi tự nhìn nhận mình thế nào."
+
+        if "ket thuc cau chuyen" in bad:
+            return "Tôi hiểu. Ngài đang xác nhận phần nào vậy?"
+
+        if "vua xac nhan no" in bad:
+            return "Tôi đã nối ý hơi vội. Có lẽ tôi hiểu sai nhịp của Ngài."
+
+        if "toi biet ngai dang" in bad or "co ve ngai muon" in bad:
+            return "Tôi chưa đủ chắc để đoán ý Ngài. Ngài nói rõ thêm một chút."
+
+        if "ngai dinh" in bad or "ngai muon" in bad:
+            return "Tôi chưa đủ chắc để đoán ý Ngài. Ngài nói rõ thêm một chút."
+
+        return None
+
+    def _guard_infj_594_policy(self, raw_json: str, *, channel: str) -> str:
+        payload = self._parse_json_object(raw_json)
+        if not isinstance(payload, dict):
+            return raw_json
+
+        text = self._coerce_text_value(payload.get("text", "")).strip()
+        rewritten = self._infj_594_rewrite_bad_line(text)
+        if not rewritten:
+            return raw_json
+
+        payload["text"] = rewritten
+        payload["extracted_fact"] = ""
+        tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
+        if "infj_594_guard" not in tags:
+            tags.append("infj_594_guard")
+        payload["reasoning_tags"] = tags[:8]
+        payload["confidence"] = min(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.55)
+        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
+        guard_trace = f"INFJ_594 policy rewrite by LlmService channel={channel}"
+        payload["debug_trace"] = f"{debug_trace} | {guard_trace}" if debug_trace else guard_trace
+        payload["system_action"] = self._coerce_system_action_value(payload.get("system_action", ""))
+        payload["action_input"] = self._coerce_text_value(payload.get("action_input", "")) if payload["system_action"] else ""
+        return json.dumps(payload, ensure_ascii=False)
+
     def _complete_decision(self, *, messages: list[dict], channel: str) -> str:
         max_tokens = 512
         messages = self._with_non_empty_text_rule(messages)
@@ -1010,7 +1222,8 @@ class LlmService:
         candidate = self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
         if self._decision_text_is_invalid(candidate):
             return self._repair_empty_decision_text(messages=messages, channel=channel, previous_json=candidate)
-        return self._guard_forbidden_inference(candidate, channel=channel)
+        candidate = self._guard_forbidden_inference(candidate, channel=channel)
+        return self._guard_infj_594_policy(candidate, channel=channel)
 
     def _normalize_for_claim_diff(self, text: str) -> str:
         normalized = (text or "").lower()
@@ -1080,6 +1293,7 @@ class LlmService:
         system_prompt = (
             "You are ERIS local style adapter. Rewrite only the text field in ERIS' trained voice. "
             "Do not add facts, screen claims, weather claims, action claims, or new intentions. "
+            "Keep INFJ 5w4 594 restraint: gentle, low-pressure, no motive inference, no teasing challenge, answer direct questions directly. "
             "Do not change meaning. Do not change any JSON field except text. "
             "Return one JSON object only: {\"text\":\"...\"}."
         )
@@ -1121,6 +1335,10 @@ class LlmService:
                 self._preview_log_text(original_text, limit=320),
             )
             return decision
+
+        policy_rewritten = self._infj_594_rewrite_bad_line(rewritten)
+        if policy_rewritten:
+            rewritten = policy_rewritten
 
         decision.text = rewritten
         trace = "local_style_rewrite"
@@ -1410,8 +1628,11 @@ class LlmService:
             fallback_text = str(seed or "").strip() or "Mạch này vẫn hơi nghẽn."
         system_prompt = (
             "You are ERIS's micro-presence wording layer. "
-            "Return one JSON object only: {\"text\":\"short Vietnamese line\"}. "
-            "No analysis. Write ambient awareness residue, not proof that ERIS is alive."
+            "Return exactly one valid JSON object with this schema: "
+            "{\"text\": string}. "
+            "The text value must be the actual Vietnamese line to speak, not a label, not a placeholder. "
+            "No analysis. No markdown. No English placeholder text. "
+            "Write ambient awareness residue, not proof that ERIS is alive."
         )
         seed_lines = tuple(str(item).strip() for item in (seeds or ()) if str(item).strip())[:5]
         context = micro_context or {}
@@ -1439,6 +1660,15 @@ class LlmService:
             )
         else:
             user_msg += "- Presence maintenance should feel like a small aside.\n"
+        user_msg += (
+            "\nOutput contract:\n"
+            "- Return exactly one JSON object.\n"
+            "- Shape: {\"text\":\"actual Vietnamese line\"}\n"
+            "- The value of text must be the final sentence to speak.\n"
+            "- Never return placeholder text such as 'short Vietnamese line'.\n"
+            "- text must be Vietnamese only.\n"
+            "- text must be speakable as-is.\n"
+        )
 
         try:
             response = self.client.create_chat_completion(
@@ -1574,6 +1804,7 @@ class LlmService:
         *,
         chat_history: list[dict],
         user_message: str,
+        raw_user_text: str = "",
         ti_context: str = "",
         ni_context: str = "",
         fe_context: str = "",
@@ -1587,10 +1818,13 @@ class LlmService:
             appraisal_context=appraisal_context,
             internal_state_context=internal_state_context,
         )
-        chat_system = f"{style_block}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
+        chat_contract = self._build_chat_contract_prompt(raw_user_text or user_message)
+        chat_system = f"{style_block}\n\n{chat_contract}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
         memory_block = self._build_memory_context_block(memory_context)
         if memory_block:
-            chat_system = f"{style_block}\n\n{memory_block}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
+            chat_system = (
+                f"{style_block}\n\n{chat_contract}\n\n{memory_block}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
+            )
         if ni_context:
             chat_system = f"{chat_system}\n\nNi context:\n{ni_context}"
         if ti_context:
@@ -1614,7 +1848,7 @@ class LlmService:
                 },
             ]
 
-        return self._complete_decision(
+        raw = self._complete_decision(
             messages=[
                 {"role": "system", "content": chat_system},
                 *chat_history,
@@ -1622,6 +1856,7 @@ class LlmService:
             ],
             channel="chat",
         )
+        return self._guard_chat_output(raw, raw_user_text=raw_user_text or user_message)
 
     def run_ni_meta_critic(
         self,

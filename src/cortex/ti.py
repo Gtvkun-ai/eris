@@ -90,6 +90,8 @@ class TiGovernor:
         force_animation = False
         allow_idle_variation = True
         prolonged_off_goal = ni_state_label == "OFF_GOAL" and ni_state_streak >= 5
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        inferred_pos_x = max(0.0, min(1.0, float(getattr(snapshot, "inferred_pos_x", 0.5) or 0.5)))
 
         if snapshot.active_window_kind in {"coding", "documentation"}:
             mode = "steady_observe"
@@ -115,8 +117,8 @@ class TiGovernor:
             reason = "Ngài đang làm việc với các cửa sổ hệ thống, cần ưu tiên mô tả thận trọng."
             animation_hint = "stand"
 
-        if snapshot.idle_seconds >= 720:
-            evidence.append(f"idle={int(snapshot.idle_seconds)}s")
+        if idle_seconds >= 720:
+            evidence.append(f"idle={int(idle_seconds)}s")
             if snapshot.active_window_kind in {"entertainment", "general"}:
                 mode = "pattern_muse"
                 reason = "Không có tương tác khá lâu; nói một câu quan sát hoặc chiêm nghiệm ngắn, không gọi Ngài quay lại."
@@ -143,6 +145,34 @@ class TiGovernor:
             reason = "Đã quan sát đủ lâu; thỉnh thoảng được phép kéo một chủ đề riêng hoặc search một chi tiết mới rồi chiêm nghiệm ngắn."
             animation_hint = "read"
             allow_idle_variation = True
+
+        if snapshot.active_window_kind in {"coding", "documentation"} and idle_seconds >= 45:
+            anchor_x = 0.38
+            motion_target_x_hint = anchor_x
+            motion_facing_hint = 1
+            if abs(inferred_pos_x - anchor_x) >= 0.06:
+                motion_intent_hint = "walk_to"
+            allow_idle_variation = False
+            evidence.append("anchor=code_left")
+            reason = f"{reason} Giu continuity bang cach tro lai diem doc code quen thuoc."
+        elif snapshot.active_window_kind == "communication" and idle_seconds >= 45:
+            anchor_x = 0.62
+            motion_target_x_hint = anchor_x
+            motion_facing_hint = -1
+            if abs(inferred_pos_x - anchor_x) >= 0.06:
+                motion_intent_hint = "walk_to"
+            allow_idle_variation = False
+            evidence.append("anchor=shared_space")
+            reason = f"{reason} Giu shared-space continuity bang cach dung gan nhip doi dap."
+        elif snapshot.active_window_kind in {"general", "entertainment"} and idle_seconds >= 240:
+            anchor_x = 0.50
+            motion_target_x_hint = anchor_x
+            motion_facing_hint = self._direction_to_center(inferred_pos_x)
+            if abs(inferred_pos_x - anchor_x) >= 0.08:
+                motion_intent_hint = "walk_to"
+            allow_idle_variation = False
+            evidence.append("anchor=center_hold")
+            reason = f"{reason} Giu nhan dang bang mot diem dung quen thuoc thay vi di lang thang."
 
         prompt_context = self._build_prompt_context(
             mode=mode,

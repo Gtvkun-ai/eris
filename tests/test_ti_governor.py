@@ -398,6 +398,30 @@ class TiGovernorTests(unittest.TestCase):
         self.assertTrue(report.allow_idle_variation)
         self.assertNotIn("resource", report.prompt_context.lower())
 
+    def test_autonomous_coding_idle_anchors_back_to_code_corner(self):
+        snapshot = SimpleNamespace(
+            active_window_kind="coding",
+            focus_summary="coding workspace",
+            idle_seconds=120.0,
+            cpu_percent=35.0,
+            ram_percent=58.0,
+            inferred_pos_x=0.74,
+        )
+
+        report = self.governor.evaluate_autonomous(
+            snapshot=snapshot,
+            ni_report=None,
+            idle_cycles=2,
+            last_text="",
+        )
+
+        self.assertEqual(report.animation_hint, "read")
+        self.assertEqual(report.motion_intent_hint, "walk_to")
+        self.assertAlmostEqual(report.motion_target_x_hint, 0.38)
+        self.assertEqual(report.motion_facing_hint, 1)
+        self.assertFalse(report.allow_idle_variation)
+        self.assertIn("anchor=code_left", report.evidence)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -59,6 +59,17 @@ class MicroLinePolicyTests(unittest.TestCase):
             (),
         )
 
+    def test_micro_presence_blocks_blunt_emotion_declaration(self):
+        policy = MicroLinePolicy()
+
+        self.assertIn(
+            "blunt_emotion_declaration",
+            policy.validate_text(
+                allowed_line_type="micro_presence",
+                text="Toi co don, xin dung bo toi.",
+            ),
+        )
+
     def test_semantic_repeat_guard_rejects_family_inside_window(self):
         guard = SemanticRepeatGuard(window_seconds=240.0)
         guard.remember("Mach code van dung do.", timestamp=100.0)

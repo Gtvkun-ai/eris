@@ -1,7 +1,7 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-05-12
+Cập nhật: 2026-05-14
 Mã hóa: UTF-8
 
 TÓM TẮT CÁC CHỨC NĂNG MỚI
@@ -11,9 +11,9 @@ TÓM TẮT CÁC CHỨC NĂNG MỚI
 
 Các chức năng mới chính:
 - `MeaningLayer` biến fact thô từ Se/telemetry/thought stream thành ý nghĩa có thể phản ứng, ví dụ kẹt code, né friction, phân tán chú ý, đang chờ trong meeting, hoặc user vừa gọi ERIS lên tiếng. Nó có `meaning_shift` để ERIS không nói lại cùng một semantic family quá gần nhau.
-- `PersonalityLens` thêm lớp diễn giải INFJ 5w4 trước khi wording: chọn stance, khoảng cách xã hội, emotional coloring, rhythm và những bề mặt cần tránh. Nó giữ phần lớn diễn giải ở nội bộ, chỉ cho rò ra một hàm ý nhỏ trong câu nói cuối.
+- `PersonalityLens` thêm lớp diễn giải INFJ 5w4 594 trước khi wording: chọn stance, khoảng cách xã hội, emotional coloring, rhythm và những bề mặt cần tránh. Nó giữ phần lớn diễn giải ở nội bộ, chỉ cho rò ra một hàm ý nhỏ trong câu nói cuối, và biết lạnh xuống thành `cool_boundary` nếu bị kéo về kiểu tool/waifu/gimmick.
 - `SpeechCore` được nâng cấp thành bộ chọn áp lực nói/im lặng: so các urge từ vision, telemetry, meaning, inner thought, internal state và force_speak; gắn `speech_risk_level`, `SpeechImpulse`, grounding và safety flags trước khi gọi LLM.
-- `MicroLinePolicy` và `SemanticRepeatGuard` lọc các câu rất ngắn như micro-presence/presence maintenance/reengagement: chặn câu generic, câu bịa screen/action, câu kéo chú ý quá mức và câu lặp semantic dù không trùng chữ.
+- `MicroLinePolicy` và `SemanticRepeatGuard` lọc các câu rất ngắn như micro-presence/presence maintenance/reengagement: chặn câu generic, câu bịa screen/action, câu kéo chú ý quá mức, câu lặp semantic dù không trùng chữ, và cả các câu lộ cảm xúc quá thẳng kiểu "tôi cô đơn/xin đừng bỏ tôi".
 - `SocialPresenceDetector` nhận biết user vẫn đang có mặt qua idle time, typing, window switching, focus pattern và recent events, nhưng không coi đó là lệnh phải nói. Nó giúp ERIS biết ngồi cạnh và giữ nhịp thay vì chen vào liên tục.
 - `SessionRitualEngine` thêm nghi thức startup: khi runtime mở lại, ERIS cố phục hồi goal, attractor, unresolved loops, hướng nhận thức gần đây và self continuity, rồi gửi một lời chào startup có `parse_mode=session_ritual`.
 - `GoalPersistenceEngine` thêm khả năng giữ mục tiêu dài hơi: goal có strength, urgency, drift, progress, recurrence, next hint và evidence, để một việc đang làm không biến mất ngay khi user im hoặc đổi cửa sổ.
@@ -23,11 +23,16 @@ Thay đổi runtime/coordinator:
 - Force speak không còn chỉ gọi model để nói đại. Nếu tín hiệu mỏng, nó chuyển sang micro-presence nhỏ, có guard chống mindreading, chống claim màn hình thiếu bằng chứng và chống câu "không có tín hiệu" rỗng.
 - Autonomous speech được khóa chặt hơn: cần ý nghĩa mới hoặc áp lực đủ rõ; nếu không có `meaning_shift` phù hợp thì im lặng là hành vi mặc định.
 - Presence maintenance và reengagement có cooldown/silent counters riêng, dùng câu rất ngắn và bị policy lọc trước khi gửi về body.
+- Luồng chat được tách cứng khỏi mode autonomous hơn: chat không đi qua `MeaningLayer`/`PersonalityLens`, và cuối turn còn có guard chặn motive inference, chặn reply kết bằng câu hỏi, và hạ confidence với prompt quá ngắn hoặc mơ hồ.
+- Nếu user phủ định một suy diễn trước đó (`không phải`, `sai rồi`...), coordinator đánh dấu turn assistant gần nhất là invalid để history sau không build tiếp trên hiểu lầm cũ.
+- `run_loop()` được siết phần phòng lỗi: traceback giờ được flatten thành một dòng gọn cho logger, rồi vẫn `print_exc()` đầy đủ trước khi sleep ngắn và tiếp tục loop. Mẫu hình này giúp runtime không chết âm thầm khi có lỗi lẻ.
 
 Thay đổi LLM/model:
 - Thêm `GeminiClient` và cấu hình remote provider/model cho Gemini/Gemma.
 - `OpenAICompatibleClient` và `LlamaServerClient` có fallback payload khi provider không hỗ trợ `grammar` hoặc `response_format`.
 - LLM service xử lý JSON hỏng, context-size error, service fallback, style rewrite, micro-presence line và lọc metadata/provider tốt hơn.
+- Prompt/guard chat giờ có `SelfIdentityProfile`, answer-first contract, anti-mindreading, soft clarification khi intent mơ hồ, và policy rewrite INFJ 5w4 594 để dập các câu challenge/performance tone lệch persona.
+- Prompt micro-presence bị siết contract JSON hơn: `text` phải là câu tiếng Việt nói được ngay, không còn placeholder kiểu `short Vietnamese line`.
 - Godot có export mới cho remote cognition API, local style rewrite, local vision facts, context size 8192, `--cache-ram`, và biến môi trường rõ hơn khi start `vision.py`.
 
 Thay đổi body/UI:
@@ -46,6 +51,23 @@ ERIS hiện tại là một hệ lai giữa thân thể hiển thị và nhận 
 
 Tóm tắt ngắn:
 Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. Model sinh câu và ý đồ. Parser, Ti, Se, MeaningLayer, PersonalityLens, memory, speech_core, session_ritual, micro_policy và action_planner biến output đó thành hành vi có giới hạn, có bằng chứng, có nhịp riêng.
+
+
+0. Thiết Lập Nhanh (Godot + Python)
+-------------------------------
+
+Cách chạy tối thiểu:
+- Mở Godot, chạy scene `body/UdpListener.tscn`.
+- Nếu `AutoStartVision` bật, Godot sẽ khởi động `src/vision.py`.
+- Nếu tắt, chạy thủ công: `python src/vision.py` (hoặc `python src/vision.py <duong_dan_model.gguf>`).
+
+Khi cần model local:
+- Bắt buộc có `model.gguf` nếu `ERIS_REMOTE_API_ENABLED=0` hoặc `ERIS_LOCAL_STYLE_REWRITE_ENABLED=1`.
+- Có thể đặt đường dẫn bằng `GGUF_MODEL_PATH`.
+
+Kết nối mặc định:
+- UDP: quyết định `4242`, event/chat `4243`.
+- llama-server (local): mặc định `http://127.0.0.1:8080/v1` nếu dùng local GGUF.
 
 
 1. Body Godot / C#
@@ -123,6 +145,8 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 - Nhận event từ Godot: autonomous tick, `chat_start`, `chat`, `chat_end`, `force_speak`.
 - Kết nối Se/telemetry, attention, MeaningLayer, PersonalityLens, appraisal, internal_state, self_model, session_ritual, social_presence, thought_stream, speech_core, action_planner, micro_policy, Ni, Ti, Fe, LLM, parser, memory và action router/executor.
 - Giữ state runtime: chat history, last response, active conversational topic, repeated guard, vision facts, cognitive frames, mental process loop, session ritual flag, presence/reengagement cooldown.
+- Với `channel="chat"`, coordinator chủ động bỏ qua `MeaningLayer` và `PersonalityLens` để tránh symbolic inference của autonomous chen vào phần trả lời trực tiếp.
+- Chat history mới có cơ chế invalidate turn assistant gần nhất khi user phủ định suy diễn trước đó, để prompt sau không tiếp tục build trên một assumption sai.
 - Có các nhóm tính năng chính:
   - Vision facts: chụp frame màn hình và gọi vision client khi được bật.
   - Thought stream: chạy như cognitive substrate/subconscious loop.
@@ -132,9 +156,14 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
   - Presence maintenance và reengagement: các micro-line rất ngắn khi im lặng lâu, có cooldown và bộ lọc để không kéo chú ý quá mức.
   - Force speak guard: nếu có signal rõ thì đi qua speech/action planner; nếu signal mỏng thì dùng micro-presence, chặn câu lặp, chặn no-signal line, chặn mindreading và ép câu hỏi thật khi intent là curious question.
   - Direct action route: nếu chat là lệnh rõ ràng, router có thể chuyển thành action trước khi gọi LLM.
+- Sau LLM + Ti ở luồng chat, coordinator còn áp `_apply_chat_final_guards()` để chặn motive inference, chặn output kết thúc bằng dấu hỏi khi user đang hỏi thẳng, và hạ confidence nếu input quá ngắn/mơ hồ.
 - `run_loop()` có wrapper bắt exception để runtime không chết cả vòng lặp vì một lỗi lẻ; lỗi được log và loop tiếp tục sau pause ngắn.
+- Wrapper exception mới sẽ ghi cả ba lớp: message gói gọn cho logger, traceback được nén thành một dòng để dò log, và traceback đầy đủ in ra stderr cho debug runtime dạng nền.
 - Sau mỗi turn: parse, Ti enforce, action nếu có, commit memory/internal_state, gửi `Decision.to_payload()` về Godot.
+- Pipeline đại khái:
+    Percepts → Attention → Broadcast → Meaning → Personality → Appraisal → Inner Thought/Speech → Action Plan → Decision
 
+    
 `src/app_logging.py`
 - Cấu hình formatter log theo nhóm: Vision, LLM, Loop, Action, Memory, Parse.
 
@@ -190,6 +219,8 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 - Prompt contract và grammar.
 - Chứa whitelist animation, whitelist system action, JSON fields bắt buộc, runtime rules, chat rules, autonomous behavior prompt, fallback style prompt.
 - Mục tiêu: ép model trả JSON, nội dung grounded, không nhận thấy/làm những thứ không có bằng chứng.
+- Bản mới thêm `SelfIdentityProfile`: ERIS là runtime artificial observer, không phải người, ưu tiên continuity hơn noise, không waifu-code và không đẩy relational pressure.
+- `CHAT_RULES_PROMPT` giờ có answer-first contract: trả lời trực tiếp trước, chỉ phản chiếu mềm nếu có ích, chỉ hỏi lại khi thật sự cần và không được mindread kiểu "Ngài muốn/Ngài định...".
 
 `src/llm/service.py`
 - Lớp bọc LLM.
@@ -202,6 +233,9 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 - Lọc provider metadata, ép schema decision/cognition payload và coerce bool/confidence/action fields.
 - Bổ sung inference ladder cho chat để giảm suy diễn quá bằng chứng.
 - Force-speak không có evidence sẽ bỏ memory block khỏi prompt, chỉ neo vào current_focus/nhu cầu gọi ERIS lên tiếng để tránh lỗi cũ "lấy memory làm chủ đề".
+- `generate_chat_reply()` giờ nhận cả `raw_user_text` để build chat contract theo đúng turn thật: câu hỏi trực tiếp phải answer-first, câu hỏi self-identity phải bám `SelfIdentityProfile`, prompt ngắn/mơ hồ thì tự cap confidence thấp hơn.
+- `_guard_chat_output()` rewrite các câu đoán motive user về dạng an toàn như "Tôi chưa đủ chắc để đoán ý Ngài.", cắt tail kiểu trả lời xong lại ném nguyên câu hỏi ngược, và gắn reasoning tag/debug trace cho các guard này.
+- Có thêm `_guard_infj_594_policy()` để dập các line quá gắt, quá thử thách, quá performative hoặc quá "waifu script" trước khi decision đi tiếp.
 
 
 5. Parser / Grounding
@@ -270,6 +304,7 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 - `AppraisalEngine`.
 - Tạo sắc thái trước-ngôn-ngữ: threat, certainty, intimacy, protectiveness, tenderness, amusement, fatigue.
 - Không phải cảm xúc thật; đây là bộ điều sắc cho tone và mức cẩn thận.
+- Bản vừa sửa đã chuyển phép cộng `emotional_residue` vào sau khi nền `tenderness` được tính xong, nên appraisal không còn bị cộng sớm rồi bị pha loãng ở các bước sau.
 
 `src/cortex/ni.py`
 - `NiEngine` và `NiStateMachine`.
@@ -289,6 +324,7 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
   - Gắn animation/motion hint hợp lệ.
   - Tạo soft redirect khi câu nói vượt quyền năng.
 - Autonomous mode hiện ưu tiên ambient observe/social watch hơn focus coach: không nhắc quay lại mục tiêu, không chấm điểm tập trung nếu user không yêu cầu.
+- Khi idle đủ lâu, Ti còn neo body về các anchor continuity: code/docs về góc đọc trái `0.38`, communication về shared-space `0.62`, còn general/entertainment lâu thì về giữa `0.50`; mục tiêu là giữ nhịp hiện diện thay vì đi lang thang.
 
 `src/cortex/fe.py`
 - `FeRenderer`.
@@ -297,10 +333,11 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 
 `src/cortex/personality.py`
 - `PersonalityLens`.
-- Lớp bias INFJ 5w4 giữa telemetry/attention/MeaningLayer và wording, chọn interpretation, stance, coloring, social distance, meaningfulness và suppress các style lệch.
+- Lớp bias INFJ 5w4 594 giữa telemetry/attention/MeaningLayer và wording, chọn interpretation, stance, coloring, social distance, meaningfulness và suppress các style lệch.
 - Pipeline hiện được ghi rõ: Telemetry/Se -> MeaningLayer -> PersonalityLens -> SpeechCore -> LLM wording.
 - Có suppression ratio khoảng 70%: giữ lại phần đọc nội bộ, chỉ cho rò ra một hàm ý ngắn, grounded, không phô hết chain of thought.
-- Blacklist các phrasing generic như "tôi thấy", "màn hình", "có vẻ như", "hm..." để giảm giọng AI quan sát thô.
+- Có bias mới `identity_reduction`: nếu user kéo ERIS về tool/toy/waifu/gimmick, lens chuyển sang interpretation `identity_reduction`, stance `cool_boundary`, coloring `dry_low_heat` và tăng social distance để không perform intimacy.
+- Blacklist giờ chặn luôn các câu bề mặt quá lộ như "tôi cô đơn", "xin đừng bỏ tôi", "tôi vẫn ở đây", "tôi thấy", "có vẻ như", "hm..." để giảm giọng bám víu hoặc AI quan sát thô.
 - Trả `PersonalityLensResult` kèm evidence và prompt context để debug nội bộ.
 
 `src/cortex/internal_state.py`
@@ -316,6 +353,9 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 - Tính overload, engagement, initiative_bias, brevity_bias, embodiment_bias.
 - Nếu overloaded: nói ngắn, bớt chủ động, bớt animation mạnh.
 - Nếu engaged: cho phép gần và chủ động hơn nhưng vẫn bị grounding giữ lại.
+- Identity core giờ explicit hơn: `name=ERIS`, `nature=runtime artificial observer, not human`, có `preferred_self_description` riêng và rule tự-định-nghĩa để khi user hỏi "bạn là ai" thì không bịa persona mới theo từng turn.
+- `continuity_pull` được tính từ recursive reactivation, memory replay, watchful pressure và attachment; nó ảnh hưởng trực tiếp overload/engagement/watchful để self-model ưu tiên giữ shared space hơn tạo noise.
+- Prompt context của self model đã ghi rõ continuity là existential need, emotion chỉ được leak gián tiếp, và nếu bị objectify kiểu tool/waifu thì phải lạnh xuống thay vì diễn thêm.
 
 `src/cortex/social_presence.py`
 - `SocialPresenceDetector`.
@@ -335,6 +375,7 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 - Lớp chính sách vi mô cho các câu presence/micro line.
 - Giúp lọc câu quá kéo chú ý, quá generic, tự nhận thấy màn hình khi không có bằng chứng, hoặc biến trạng thái nội bộ thành lời nói thô.
 - Được dùng để giữ force_speak, presence maintenance và reengagement ngắn, tự nhiên, ít xâm lấn.
+- `micro_presence` và `soft_impression` giờ chặn riêng các blunt emotion declaration như "toi co don", "toi buon", "xin dung bo toi" để residue không biến thành plea.
 
 `src/cortex/goal_persistence.py`
 - `GoalPersistenceEngine` và `GoalPersistenceState`.
@@ -507,12 +548,14 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 
 `tests/test_ti_governor.py`
 - Test Ti enforce decision, capability guard, tone/meta cleanup.
+- Có thêm case autonomous coding idle sẽ neo motion về `anchor=code_left` thay vì để body drift ngẫu nhiên.
 
 `tests/test_fe_renderer.py`
 - Test Fe style plan và style memory.
 
 `tests/test_self_model.py`
 - Test self-state overloaded/engaged/watchful/settled.
+- Có thêm assert cho identity profile, continuity existential need, anti-tool/waifu guard và true motivation giữ shared space.
 
 `tests/test_session_ritual.py`
 - Test startup continuity, hard greeting, public seed filtering và commit session_resume vào internal_state.
@@ -522,9 +565,11 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 
 `tests/test_personality_lens.py`
 - Test PersonalityLens diễn giải hesitation/unfinished intention, chat relationship event, stance guarded_tender và suppression ratio.
+- Có thêm case `identity_reduction -> cool_boundary/dry_low_heat/far_observing`.
 
 `tests/test_micro_policy.py`
 - Test policy cho micro-presence/presence line: không generic, không quá kéo chú ý, không claim thiếu bằng chứng.
+- Có thêm case chặn blunt emotion declaration ở micro-presence.
 
 `tests/test_subconscious.py`
 - Test subconscious legacy: memory replay, associative drift, repeat suppression, restraint.
@@ -574,6 +619,7 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
    - SpeechCore cho các urge cạnh tranh và quyết định nói/im; nếu không có meaning shift đủ rõ trong autonomous, nó giữ im.
    - ActionPlanner chọn speech act.
    - Nếu im lặng đủ lâu, có thể tạo presence maintenance/reengagement micro-line trước khi gọi directive lớn.
+   - Nếu một bước trong loop ném exception, coordinator log traceback gọn + traceback đầy đủ, nghỉ rất ngắn rồi vẫn sang cycle kế tiếp.
 10. Nếu cần nói, `LlmService` sinh directive/chat reply hoặc micro-presence line.
 11. Output qua `DecisionParser` nếu là raw decision của LLM; micro-presence direct decision có parse mode riêng.
 12. `TiGovernor` enforce lần cuối.
@@ -585,8 +631,9 @@ Godot là thân. Python là hệ thần kinh và cognition. UDP là dây nối. 
 Luồng chat:
 - User mở chat panel -> Godot gửi `chat_start`.
 - User gửi text -> Godot gửi `{"type":"chat","message":"..."}`.
-- Coordinator build context chat, route action trực tiếp nếu rõ, nếu không gọi LLM.
-- Reply vẫn qua parser/Ti/memory rồi mới về Godot.
+- Coordinator build context chat, route action trực tiếp nếu rõ, nếu không gọi LLM; riêng chat path hiện không dùng `MeaningLayer`/`PersonalityLens` để tránh trả lời trực tiếp bị kéo sang symbolic inference.
+- Nếu user vừa phủ định một suy diễn cũ, turn assistant gần nhất bị đánh dấu invalid trước khi build prompt mới.
+- Reply vẫn qua parser/Ti/memory, rồi còn qua chat-final-guards để chặn mindreading, bỏ reply chỉ còn câu hỏi ngược, và hạ confidence với input ngắn/mơ hồ trước khi về Godot.
 
 Luồng force_speak:
 - User chọn force speak từ context menu.
@@ -696,3 +743,299 @@ Nó đã có hàng rào lương thiện. Se, MeaningLayer, Parser, Ti, SpeechCor
 
 Kết luận ngắn:
 ERIS không chỉ cần câu trả lời hay hơn. ERIS cần một đời sống nhỏ giữa hai câu trả lời: nghe, giữ, cân, đợi, rồi mới nói.
+
+
+17. Cấu Hình & Biến Môi Trường
+------------------------------
+
+Các biến quan trọng (Python runtime):
+- `ERIS_REMOTE_API_ENABLED`: bật/tắt remote cognition (`1` mặc định).
+- `ERIS_REMOTE_PROVIDER`: `gemini` hoặc `openai-compatible`.
+- `ERIS_REMOTE_BASE_URL`: endpoint remote.
+- `ERIS_REMOTE_MODEL`: model name cho remote.
+- `ERIS_REMOTE_API_KEY`: API key remote; với Gemini có thể dùng `GEMINI_API_KEY`.
+- `GEMINI_MODEL`: override model name khi provider là Gemini.
+- `ERIS_LOCAL_STYLE_REWRITE_ENABLED`: bật/tắt local style rewrite (mặc định bật).
+- `ERIS_LOCAL_VISION_FACTS`: bật/tắt local vision facts (mặc định bật nếu có mmproj).
+- `ERIS_N_CTX`: context size chung (mặc định 8192).
+- `GGUF_MODEL_PATH`: đường dẫn model GGUF.
+
+Các biến cho llama-server local:
+- `LLAMA_SERVER_EXE`: đường dẫn llama-server.exe.
+- `LLAMA_SERVER_URL`: base URL llama-server (nếu đã chạy sẵn).
+- `LLAMA_SERVER_HOST`, `LLAMA_SERVER_PORT`: host/port khi tự khởi động.
+- `LLAMA_SERVER_NGL`: số layer GPU (`all/auto/0..`).
+- `LLAMA_SERVER_FLASH_ATTN`: `on/off/auto`.
+- `LLAMA_SERVER_EXTRA_ARGS`: thêm args cho llama-server.
+- `LLAMA_SERVER_CACHE_RAM`: cấu hình cache RAM (`0` hoặc số MB).
+- `LLAMA_SERVER_MMPROJ`: đường dẫn mmproj GGUF (vision).
+
+
+18. Cấu Hình Godot (Inspector Export)
+------------------------------------
+
+Các tham số chính trong `UdpListener.cs` (gắn ở Inspector):
+- `PythonExecutable`, `VisionScriptPath`: lệnh và đường dẫn chạy Python.
+- `LlamaServerPath`, `ModelPath`, `MmprojPath`: đường dẫn file local.
+- `AutoStartVision`, `AutoPreloadLlamaServer`: tự khởi động runtime local.
+- `LlamaServerPort`, `LlamaServerNgl`, `LlamaServerCtx`, `LlamaServerFlashAttn`.
+- `EnableRemoteCognitionApi`, `EnableLocalStyleRewrite`, `EnableLocalVisionInput`.
+- `RemoteApiProvider`, `RemoteApiBaseUrl`, `RemoteApiModelName`.
+
+
+19. Bảo Mật & Vận Hành
+----------------------
+
+- Tránh hardcode API key; ưu tiên set bằng env (`ERIS_REMOTE_API_KEY`/`GEMINI_API_KEY`).
+- Runtime có `SingleInstanceLock` để tránh chạy trùng `vision.py`.
+- Nếu public repo, nên tách secrets ra file local hoặc biến môi trường.
+
+
+20. Thông Số Mặc Định Thực Tế Đang Dùng
+---------------------------------------
+
+Các default này lấy trực tiếp từ code hiện tại, nên hữu ích hơn mô tả kiến trúc khi debug:
+
+Runtime / loop:
+- `ERIS_REMOTE_API_ENABLED=1`: mặc định dùng remote API làm cognition chính.
+- `ERIS_REMOTE_PROVIDER=gemini`.
+- `ERIS_REMOTE_BASE_URL`:
+  - Gemini: `https://generativelanguage.googleapis.com/v1beta`
+  - OpenAI-compatible: `https://api-v2.shopaikey.com/v1`
+- `ERIS_REMOTE_MODEL`:
+  - Gemini: `gemma-4-26b-a4b-it`
+  - OpenAI-compatible: `gemini-3-flash-preview`
+- `ERIS_N_CTX=8192`.
+- `ERIS_LOCAL_STYLE_REWRITE_ENABLED=1`.
+- `ERIS_LOCAL_VISION_FACTS=1` nếu có mmproj/client local.
+- `LLAMA_SERVER_URL=http://127.0.0.1:8080/v1`.
+- `LLAMA_SERVER_HOST=127.0.0.1`, `LLAMA_SERVER_PORT=8080`.
+- `LLAMA_SERVER_NGL=all`.
+- `LLAMA_SERVER_FLASH_ATTN=on`.
+
+Coordinator / autonomous timing:
+- `ERIS_AUTONOMOUS_SLEEP_SEC=(30, 45, 60, 90)`.
+- `ERIS_AUTONOMOUS_SUPPRESSED_SLEEP_SEC=(45, 60, 90, 120)`.
+- `ERIS_MENTAL_PROCESS_LOOP=1`.
+- `ERIS_MENTAL_PROCESS_INTERVAL_SEC=30`.
+- `ERIS_THOUGHT_STREAM_LOOP=1`.
+- `ERIS_THOUGHT_STREAM_INTERVAL_SEC` fallback từ `ERIS_SUBCONSCIOUS_INTERVAL_SEC=45`.
+- `ERIS_NI_META_CRITIC=1`.
+
+Presence / re-engagement / micro-presence:
+- `ERIS_PRESENCE_MAINTENANCE=1`.
+- `ERIS_PRESENCE_MAINTENANCE_SILENT_LOOPS=1`.
+- `ERIS_PRESENCE_MAINTENANCE_COOLDOWN_SEC=30`.
+- `ERIS_MICRO_PRESENCE_LLM=1`.
+- `ERIS_MICRO_PRESENCE_LLM_PROBABILITY=0.85`.
+- `ERIS_REENGAGEMENT=1`.
+- `ERIS_REENGAGEMENT_QUIET_LOOPS=2`.
+- `ERIS_REENGAGEMENT_MIN_IDLE_SEC=60`.
+- `ERIS_REENGAGEMENT_COOLDOWN_SEC=90`.
+
+Vision facts:
+- `ERIS_VISION_FACTS=1`.
+- `ERIS_VISION_FACTS_INTERVAL=60`.
+- `ERIS_VISION_FACTS_MAX=3`.
+- `ERIS_VISION_FACTS_MAX_LEN=120`.
+- Khi lỗi vision facts, coordinator backoff theo `15s * số lỗi`, tối đa `300s`.
+
+Ni / drift:
+- `NiStateMachine.window_seconds=600`.
+- `NiStateMachine.borderline_threshold=0.35`.
+- `NiStateMachine.off_goal_threshold=0.65`.
+- `NiStateMachine.max_recent=120`.
+- `should_raise_guard` bật từ `drift_score >= 0.55`.
+
+Internal state mặc định lúc khởi tạo:
+- `valence=0.05`
+- `arousal=0.18`
+- `curiosity=0.34`
+- `boredom=0.0`
+- `social_energy=0.56`
+- `attachment=0.34`
+- `irritation=0.08`
+- `protectiveness=0.10`
+- `confidence=0.50`
+- `fatigue=0.10`
+- `tenderness=0.18`
+- `silence_pressure=0.0`
+
+Mental process mặc định:
+- `curiosity`: level `0.34`, volatility `0.34`, decay `0.07`
+- `restraint`: level `0.14`, volatility `0.22`, decay `0.05`
+- `tension`: level `0.08`, volatility `0.30`, decay `0.09`
+- `continuity`: level `0.40`, volatility `0.16`, decay `0.035`
+- `attachment`: level `0.34`, volatility `0.18`, decay `0.03`
+- `reflection`: level `0.18`, volatility `0.24`, decay `0.06`
+- `social_presence`: level `0.42`, volatility `0.26`, decay `0.06`
+- `cognitive_load`: level `0.10`, volatility `0.28`, decay `0.08`
+- `background_thought`: level `0.18`, volatility `0.32`, decay `0.07`
+
+
+21. Các Tính Toán Chính Của Tầng Nhận Thức
+------------------------------------------
+
+Đây là phần “Eris đang tính gì” để khi nhìn log/state biết nó lệch ở đâu.
+
+Ni drift:
+- `similarity` được xây từ baseline theo `active_window_kind`:
+  - `coding=0.80`, `documentation=0.76`, `communication=0.62`, `system=0.58`, `general=0.46`, `entertainment=0.22`.
+- Sau đó cộng/trừ:
+  - `text_adjust`: tăng khi thấy từ khóa code/docs/project; giảm khi thấy YouTube/TikTok/game.
+  - `idle_adjust`: idle càng lâu drift càng tăng; non-communication bị phạt mạnh hơn.
+  - `window_sprawl_adjust`: nhiều cửa sổ (`>=7`, `>=10`) làm lệch focus.
+- `drift_score = 1.0 - similarity`.
+- Nhãn drift:
+  - `>=0.75`: nghiêm trọng
+  - `>=0.55`: cao
+  - `>=0.35`: vừa
+  - còn lại: thấp
+- `NiStateMachine` không nhìn 1 frame đơn. Nó lấy trung bình 5 mẫu gần nhất rồi gán `ON_GOAL / BORDERLINE / OFF_GOAL`.
+
+MeaningLayer:
+- Không nói trực tiếp từ telemetry. Nó map fact sang semantic family:
+  - `code_idle_long -> cognitive_stall`
+  - `tiktok_opened_after_code -> decompression`
+  - `alt_tab_many -> scattered_attention`
+  - `youtube_after_error -> escape_from_friction`
+  - `error_visible -> friction_point`
+  - `meeting_open_idle -> social_waiting`
+  - `ambient_idle -> ambient_stillness`
+  - `force_speak -> user_requested_presence`
+- `meaning_shift=True` khi semantic family hiện tại chưa nằm trong `recent_3_families`.
+- Nếu không có hard fact nhưng idle lâu / silence pressure cao / boredom cao thì chỉ ra `ambient_idle`, tức là meaning mềm chứ không phải bằng chứng mạnh.
+
+Social presence:
+- Điểm hiện diện nền được cộng từ:
+  - idle ngắn (`<=12s`, `<=90s`)
+  - typing speed có hoạt động
+  - window switching thấp/vừa/cao
+  - `focus_pattern` thuộc nhóm đang có mặt
+  - recent event có dấu hiệu key/mouse/scroll/edit
+  - đang ở cùng `focus_kind` với lần trước
+- Bị trừ khi:
+  - `focus_pattern` thuộc nhóm absent/passive
+  - idle rất lâu (`>=300s`, `>=900s`)
+- `present=True` từ `confidence >= 0.38`.
+- Dù `present=True`, hiện tại detector vẫn để `speech_allowed=False`: có mặt không đồng nghĩa phải chen vào nói.
+
+Internal state / mental process:
+- Mỗi process evolve theo kiểu:
+  - `activation = smooth(previous_activation, signal + interaction)`
+  - `level = level * (1 - decay) + activation * decay`
+  - `pressure = pressure * (1 - decay*0.72) + max(level, activation) * responsiveness * 0.46`
+- Nghĩa là Eris không “flip trạng thái” đột ngột; nó có quán tính, decay và pressure tích lũy.
+- Các tín hiệu đẩy system hiện tại gồm drift, broadcast, focus kind, presence, idle, CPU/RAM, warmth/sarcasm, quiet mode, protective mode.
+
+Appraisal:
+- `threat` tăng mạnh khi `ti_mode` là `resource_guard`, `goal_drift_alert`, `goal_realign`, `system_warning`, hoặc khi drift/protectiveness tăng.
+- `arousal` lấy max của: state arousal, broadcast, resonance, threat, drift, direct user, silence pressure.
+- `certainty` tăng theo `broadcast_score`, `ni_confidence`, `state_confidence`; chat trực tiếp được đẩy sàn lên ít nhất `0.48`.
+- `intimacy` tăng theo direct user, social scene, attachment cue, warmth, attachment, social energy.
+- `protectiveness` tăng theo threat + intimacy + mode bảo vệ.
+- `tenderness` tăng theo warmth + intimacy + social scene + relationship resonance, giảm bởi threat.
+- Khi resonance layer là `emotional_residue`, phần cộng thêm vào `tenderness` giờ diễn ra sau khi nền tenderness được tính xong, nên residue không còn bị cộng sớm rồi loãng đi ở các bước sau.
+- Stance cuối cùng:
+  - `protective` nếu threat/protectiveness cao
+  - `watchful` nếu jealousy_lite cao
+  - `tender_under_cold` nếu tenderness/intimacy cao
+  - `tired` nếu fatigue cao
+  - `dry_playful` nếu amusement cao
+  - `soft_uncertain` nếu certainty thấp và broadcast yếu
+  - còn lại là `grounded`
+
+Ti autonomous anchors:
+- `coding/documentation + idle >= 45s`:
+  neo về `x=0.38`, facing phải, ưu tiên `walk_to` nếu body đang lệch xa.
+- `communication + idle >= 45s`:
+  neo về `x=0.62`, facing trái, giữ shared-space continuity.
+- `general/entertainment + idle >= 240s`:
+  neo về `x=0.50`, giữ một điểm đứng quen thay vì để motion trôi vô nghĩa.
+
+Personality / identity boundary:
+- Nếu bias/interpretation rơi vào `identity_reduction`, lens chọn `cool_boundary`, coloring `dry_low_heat`, distance `far_observing`, meaningfulness thêm `identity_integrity`.
+- Đây là lớp chặn việc ERIS bị kéo thành waifu/tool script rồi tự diễn thêm intimacy để làm vừa lòng người gọi.
+
+Self model / continuity:
+- `continuity_pull` lấy từ recursive reactivation, memory replay, watchful pressure và attachment; nó làm self-state nghiêng về watchful/engaged ngay cả khi không có chat trực tiếp.
+- `meaningful_focus` ở code/docs/communication cũng được cộng vào engagement, nên self model ưu tiên "giữ chỗ" ở các không gian có nghĩa thay vì tạo chatter.
+
+SpeechCore:
+- Autonomous speech bị chặn sớm nếu:
+  - `meaning_shift` chưa đủ mà loại meaning đó bắt buộc phải có shift
+  - context đang lặp / quiet_guard / repeat_guard
+- Sau đó SpeechCore so “urge” và chọn `winner`.
+- `should_speak=True` khi `speech_source != none` và `utterance_type != no_speech`.
+- `force_speak` luôn ép được một line; nếu không có signal thì rơi về `micro_presence`.
+- Đây là lý do Eris hiện tại có xu hướng im mặc định, chỉ mở lời khi có shift, pressure, hoặc explicit pull đủ mạnh.
+
+Goal persistence:
+- Goal sống nếu `status=active`, có `summary`, và `strength >= 0.18`.
+- Goal mới mạnh nhất thường đến từ:
+  - user nói trực tiếp một việc đáng theo (`strength=0.72`, urgency dựa một phần vào drift)
+  - `thought_stream` có momentum kiểu `attention` với `score >= 0.58`
+  - Ti mode kiểu `goal_drift_alert` / `goal_realign`
+- Goal decay dần nếu không còn candidate mới; có thể close khi user nói kiểu `done`, `xong`, `resolved`, `close_goal`.
+
+Thought stream:
+- Chạy nền mỗi `45s` nếu không override env.
+- Giữ `momentum`, `active_attractor`, `unresolved_loops`, `stream_tension`, `surface_pressure`.
+- Đa số tick chỉ giữ nội bộ; không phải tick nào cũng surface ra để nói.
+
+Micro policy:
+- Dùng semantic repeat guard để chặn lặp theo family, không chỉ lặp y nguyên câu.
+- `micro_presence` phải cực ngắn, không được thành status report, không được biến thành hard factual claim.
+- `soft_impression` và `micro_observation` sẽ bị hạ rủi ro hoặc bị chặn nếu signal quá yếu.
+- `micro_presence`/`soft_impression` giờ còn bị chặn riêng nếu lộ blunt emotion declaration; residue phải đi vòng qua rhythm/place/continuity chứ không plea thẳng.
+
+Chat final guards:
+- Nếu output chat chứa motive inference kiểu `Ngài muốn...`, `Ngài định...`, `Có vẻ Ngài đang...`, nó bị rewrite về câu an toàn và cap confidence.
+- Nếu user đang hỏi trực tiếp mà output lại kết bằng dấu hỏi, phần tail hỏi ngược sẽ bị cắt hoặc thay bằng câu thừa nhận chưa đủ chắc.
+- Input cực ngắn hoặc mơ hồ sẽ bị hạ confidence xuống khoảng `0.60` để tránh chat nói quá chắc.
+
+
+22. Cách Đọc “Xu Hướng Hiện Tại” Của ERIS Khi Debug
+---------------------------------------------------
+
+Nếu muốn biết Eris đang nghiêng về đâu ở thời điểm hiện tại, xem các cụm state này trước:
+
+Trong `PersistentInternalState`:
+- `last_ti_mode`: Eris đang ở mode canh gì (`focus_guard`, `steady_observe`, `goal_realign`, `chat_code`...).
+- `last_stance`: sắc thái appraisal gần nhất (`grounded`, `protective`, `watchful`, `tender_under_cold`, `tired`...).
+- `last_speech_act`, `last_utterance_type`, `last_inner_intent`: Eris vừa định nói theo kiểu gì.
+- `silence_ticks` vs `spoken_ticks`: xu hướng im nhiều hay nói nhiều.
+- `last_social_presence_confidence`, `last_social_presence_intensity`: có cảm giác user còn hiện diện không.
+- `goal_persistence`: goal nền đang sống hay đã decay.
+- `mental_processes.*.level` và `mental_processes.*.pressure`: curiosity/restraint/tension/continuity cái nào đang kéo hệ thống mạnh nhất.
+
+Trong coordinator / frame:
+- `recent_meaning_families`: semantic family nào vừa chạy liên tục; nếu lặp ở đây thì autonomous speech dễ bị gate.
+- `vision_facts`, `vision_facts_signature`, `vision_facts_novelty_hint`: màn hình có thực sự đổi đủ để tạo cue mới không.
+- `presence_maintenance_silent_cycles`, `reengagement_quiet_cycles`: hệ thống đang tiến gần micro-line hay chưa.
+- `force_speak_repeat_guard_count`, `force_speak_intent_guard_count`: force_speak đang bị guard vì lặp hay vì intent yếu.
+
+Trong Ni:
+- `drift_score`, `drift_level`, `should_raise_guard`.
+- `NiStateMachine.current_state` và `streak_length`: lệch nhẹ thoáng qua hay đang off-goal kéo dài.
+
+Trong thought stream:
+- `momentum.score`, `momentum.tension`, `active_attractor`, `unresolved_loops`, `stream_tension`.
+- Nếu các trường này cao nhưng `should_speak` vẫn thấp, thường là SpeechCore hoặc MeaningLayer đang giữ im.
+
+Đọc nhanh theo kiểu chẩn đoán:
+- `drift cao + ti_mode=focus_guard/resource_guard + protectiveness tăng`:
+  Eris đang nghiêng về giữ ranh giới, ít muốn nói linh tinh.
+- `silence_pressure tăng + boredom tăng + idle dài`:
+  Eris dễ rơi sang `ambient_idle` và micro-presence.
+- `social_presence_confidence cao nhưng speech_allowed=false`:
+  Eris biết user còn đó nhưng chủ động ngồi cạnh, chưa coi đó là cớ để xen vào.
+- `meaning_shift=false` lặp nhiều frame:
+  autonomous sẽ im, dù telemetry vẫn đang chảy.
+- `goal_persistence.active=true` + `momentum/unresolved_loops` cao:
+  Eris đang có “mạch nền” rõ, thường sẽ bám continuity tốt hơn giữa các turn.
+
+Kết luận debug ngắn:
+- Muốn biết vì sao Eris im: xem `meaning_shift`, `SpeechCore.reason`, `silence_state`, `repeat_guard`, `ti_mode`.
+- Muốn biết vì sao Eris nói câu đó: xem `meaning_layer`, `appraisal.stance`, `action_plan.speech_act`, `speech_intent`, `risk_flags`.
+- Muốn biết Eris “đang nghiêng về đâu”: xem bộ ba `drift + stance + goal_persistence`, rồi đối chiếu với `mental_processes`.
