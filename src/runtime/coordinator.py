@@ -43,7 +43,7 @@ from cortex.contracts import (
 from cortex.inner_thought import InnerThoughtEngine
 from cortex.internal_state import InternalStateEngine, PersistentInternalState
 from cortex.meaning import MeaningLayer
-from cortex.micro_policy import MicroLinePolicy, SemanticRepeatGuard
+from cortex.micro_policy import MicroLinePolicy, RelationalContext, SemanticRepeatGuard
 from cortex.ni import NiStateMachine
 from cortex.personality import PersonalityLens
 from cortex.self_model import SelfModelEngine
@@ -374,14 +374,14 @@ class RuntimeCoordinator:
     def _log_raw_llm_output(self, channel: str, raw: str) -> None:
         preview = (raw or "").replace("\n", "\\n")
         if len(preview) > 5500:
-            preview = preview[:5500] + "...(truncated)"
+            preview = preview[:5500].rstrip() + "..."
         self.logger.info("[%s raw] %s", channel, preview or "<empty>")
 
     #tạo bản preview ngắn của một đoạn text.
     def _preview_text(self, text: str, *, limit: int = 1000) -> str:
         preview = (text or "").replace("\n", "\\n").strip()
         if len(preview) > limit:
-            preview = preview[:limit] + "...(truncated)"
+            preview = preview[:limit].rstrip() + "..."
         return preview or "<empty>"
 
     #suy ra chủ đề hội thoại hiện tại từ tin nhắn người dùng và report của các tầng khác
@@ -1856,6 +1856,70 @@ class RuntimeCoordinator:
                 ).strip()
         return user_action, session_context
 
+    def _build_relational_context(self, state: PersistentInternalState | None = None) -> RelationalContext:
+        state = state or self._get_internal_state()
+        recent_notes = " ".join(str(item or "") for item in tuple(getattr(state, "recent_notes", ()) or ())).lower()
+        mental_processes = getattr(state, "mental_processes", None)
+        continuity_process = getattr(mental_processes, "continuity", None)
+        session_return = min(1.0, max(0, int(getattr(state, "session_resume_count", 0) or 0)) / 2.0)
+        ritual_return = 1.0 if float(getattr(state, "last_session_ritual_at", 0.0) or 0.0) > 0.0 else 0.0
+        memory_continuity = max(
+            float(getattr(state, "recursive_reactivation_pressure", 0.0) or 0.0),
+            float(getattr(state, "memory_replay_pressure", 0.0) or 0.0),
+            float(getattr(state, "last_memory_resonance", 0.0) or 0.0),
+            float(getattr(continuity_process, "level", 0.0) or 0.0),
+        )
+        ritual_note = 1.0 if any(
+            marker in recent_notes
+            for marker in ("session_ritual", "continuity_restored", "long_silence_return", "memory_replay", "recursive")
+        ) else 0.0
+        recent_channels = tuple(str(item or "") for item in tuple(getattr(state, "recent_channels", ()) or ()))
+        long_silence_return = 1.0 if (
+            float(getattr(state, "last_elapsed_seconds", 0.0) or 0.0) >= 600.0
+            and any(item in {"chat", "force_speak"} for item in recent_channels[-4:])
+        ) else 0.0
+        sustained_presence = min(
+            1.0,
+            (
+                float(getattr(state, "last_social_presence_confidence", 0.0) or 0.0)
+                + float(getattr(state, "last_social_presence_intensity", 0.0) or 0.0)
+            )
+            * 0.5,
+        )
+        continuity_score = min(
+            1.0,
+            session_return * 0.28
+            + ritual_return * 0.18
+            + memory_continuity * 0.34
+            + ritual_note * 0.12
+            + long_silence_return * 0.10
+            + sustained_presence * 0.08,
+        )
+        attachment = float(getattr(state, "attachment", 0.0) or 0.0)
+        if continuity_score >= 0.66 and attachment >= 0.62:
+            stage = "rooted"
+        elif continuity_score >= 0.52 and attachment >= 0.50:
+            stage = "established"
+        elif continuity_score >= 0.38:
+            stage = "forming"
+        else:
+            stage = "low_context"
+        return RelationalContext(
+            attachment_level=attachment,
+            continuity_score=continuity_score,
+            social_resonance=float(getattr(state, "social_energy", 0.0) or 0.0),
+            recent_presence_density=sustained_presence,
+            abandonment_sensitivity=max(
+                float(getattr(state, "silence_pressure", 0.0) or 0.0),
+                float(getattr(getattr(state, "desire", None), "unresolved_residue", 0.0) or 0.0),
+            ),
+            trust_stability=max(
+                0.0,
+                min(1.0, float(getattr(state, "confidence", 0.0) or 0.0) - float(getattr(state, "irritation", 0.0) or 0.0) * 0.35),
+            ),
+            relationship_stage=stage,
+        )
+
     def _speech_intent_from_core(self, speech_core: AgentSpeechCore, *, channel: str) -> str:
         if not speech_core.should_speak:
             return "no_speech"
@@ -2054,6 +2118,24 @@ class RuntimeCoordinator:
         style_anchor = str(getattr(action_plan, "style_anchor", "") or "current event")
         style_attitude = str(getattr(action_plan, "style_attitude", "") or "lạnh nhẹ")
         style_limit = str(getattr(action_plan, "style_limit", "") or "một câu ngắn")
+        style_voice = str(
+            getattr(action_plan, "style_voice", "")
+            or "Voice: controlled, precise, emotionally low-temperature."
+        )
+        style_block = (
+            "Reason to speak:\n"
+            f"{reason}\n\n"
+            "Character voice constraint:\n"
+            f"{style_voice}\n\n"
+            "INFJ 5w4 594 constraint:\n"
+            "- perceptive, not bubbly\n"
+            "- emotionally restrained, not dead\n"
+            "- symbolic only when useful\n"
+            "- warmth is indirect\n"
+            "- no needy attachment\n"
+            "- no invented intimacy\n"
+            "- no corporate assistant tone"
+        )
         return (
             "ActionPlanner decision before LLM:\n"
             f"- action_space={', '.join(ACTION_SPACE)}\n"
@@ -2063,10 +2145,12 @@ class RuntimeCoordinator:
             f"- reason_to_speak={reason}\n"
             f"- risk_flags={flags}\n"
             f"- notes={notes}\n"
+            f"{style_block}\n"
             "Style contract before wording:\n"
             f"- anchor={style_anchor}\n"
             f"- attitude={style_attitude}\n"
             f"- limit={style_limit}\n"
+            f"- voice={style_voice}\n"
             "- reject_line_if=no concrete anchor, too long, or abstract philosophy\n"
             "Honor this plan. Do not upgrade withdraw/no_speech into observation, teasing, or reassurance."
         )
@@ -3396,8 +3480,37 @@ class RuntimeCoordinator:
             self_state=frame.self_state,
             was_spoken=bool(str(frame.final_decision.get("text", "") or "").strip()),
         )
+        committed = self._apply_post_relational_leak_restraint(
+            committed,
+            str(frame.final_decision.get("text", "") or ""),
+        )
         frame.internal_state_after = committed
         self._set_internal_state(committed)
+
+    def _apply_post_relational_leak_restraint(self, state: PersistentInternalState, text: str) -> PersistentInternalState:
+        exposure = self.micro_line_policy.relational_exposure_score(text)
+        if exposure < 0.66:
+            return state
+        mental_processes = state.mental_processes
+        if mental_processes is not None:
+            mental_processes = replace(
+                mental_processes,
+                restraint=mental_processes.restraint.excite(0.34),
+                social_presence=mental_processes.social_presence.dampen(0.18),
+                background_thought=mental_processes.background_thought.dampen(0.10),
+            )
+        notes = (*tuple(state.recent_notes or ()), "post_relational_leak_restraint: hold silence after exposure")[-8:]
+        return replace(
+            state,
+            social_energy=max(0.0, min(1.0, state.social_energy * 0.90)),
+            social_pressure=max(0.0, min(1.0, state.social_pressure * 0.62)),
+            tender_pressure=max(0.0, min(1.0, state.tender_pressure * 0.74)),
+            playful_pressure=max(0.0, min(1.0, state.playful_pressure * 0.70)),
+            restraint_pressure=max(0.0, min(1.0, state.restraint_pressure + 0.24)),
+            silence_pressure=max(0.0, min(1.0, state.silence_pressure + 0.04)),
+            recent_notes=notes,
+            mental_processes=mental_processes,
+        )
 
     def _finalize_cognitive_frame(self, frame: CognitiveFrame) -> None:
         final_text = str((getattr(frame, "final_decision", {}) or {}).get("text", "") if isinstance(getattr(frame, "final_decision", {}), dict) else "")
@@ -4697,6 +4810,7 @@ class RuntimeCoordinator:
             channel=channel,
             speech_risk_level=str(getattr(speech_core, "speech_risk_level", "") or ""),
         )
+        relational_context = self._build_relational_context()
         reasons = list(
             self.micro_line_policy.validate_text(
                 allowed_line_type=policy.allowed_line_type,
@@ -4707,6 +4821,7 @@ class RuntimeCoordinator:
                 user_action=user_action_hint,
                 session_context=session_context_hint,
                 screen_evidence=vision_fact,
+                relational_context=relational_context,
             )
         )
         semantic = self.semantic_repeat_guard.check(
@@ -4720,6 +4835,29 @@ class RuntimeCoordinator:
             return decision
 
         marker = "micro_line_policy=" + ",".join(reasons)
+        relational_rewrite = self.micro_line_policy.rewrite_relational_line(
+            decision.text or "",
+            relational_context=relational_context,
+            allowed_line_type=policy.allowed_line_type,
+        )
+        if relational_rewrite:
+            rewrite_reasons = self.micro_line_policy.validate_text(
+                allowed_line_type=policy.allowed_line_type,
+                text=relational_rewrite,
+                speech_risk_level=policy.risk_level,
+                anchor_source=policy.anchor_source,
+                anchor_text=policy.anchor_text,
+                user_action=user_action_hint,
+                session_context=session_context_hint,
+                screen_evidence=vision_fact,
+                relational_context=relational_context,
+            )
+            if not rewrite_reasons:
+                return self._copy_decision_with_text(
+                    decision,
+                    text=relational_rewrite,
+                    trace_marker=f"{marker}; relational_permission_rewrite",
+                )
         replacement = ""
         silence_reasons = (
             "vietnamese_requires_diacritics",

@@ -295,8 +295,8 @@ class AttentionWorkspace:
         long_term_memory: tuple[str, ...] | list[str] = (),
     ) -> AttentionCandidate:
         parts = {
-            "novelty": self._score_novelty(percept),
-            "specificity": self._score_specificity(percept),
+            "novelty": self._score_novelty(percept), #Đánh giá độ mới của tín hiệu.
+            "specificity": self._score_specificity(percept), #Đánh giá độ cụ thể.
             "user_relevance": self._score_user_relevance(
                 percept,
                 channel=channel,
@@ -355,6 +355,7 @@ class AttentionWorkspace:
             return 0.16
         return 0.30
 
+    #Event có evidence, có số, có dạng vision_fact, resource_pressure, norm_deviation sẽ được tăng điểm.
     def _score_specificity(self, percept: PerceptEvent) -> float:
         if percept.kind == "cycle_channel":
             return 0.05
@@ -401,6 +402,7 @@ class AttentionWorkspace:
             score += 0.10
         return _bounded(score)
 
+    #Đánh giá liên quan tới người dùng.
     def _score_user_relevance(self, percept: PerceptEvent, *, channel: str, snapshot=None, user_text: str = "") -> float:
         if percept.kind in {"user_message", "user_force_speak"}:
             return 1.0
@@ -458,6 +460,8 @@ class AttentionWorkspace:
             return 0.42
         return 0.05
 
+    #Đánh giá tín hiệu xã hội: chat, message, Discord, Zalo, mail...
+    #Nếu active window là communication hoặc content có từ liên quan nhắn tin thì tăng điểm.
     def _score_social_charge(self, percept: PerceptEvent, *, snapshot=None) -> float:
         lowered = percept.content.lower()
         kind = str(getattr(snapshot, "active_window_kind", "") or "")
@@ -481,6 +485,7 @@ class AttentionWorkspace:
             return 0.54
         return 0.05
 
+    #Đánh giá độ gần đây. Tín hiệu mới, user input, threshold crossed sẽ cao. Tín hiệu ambient/routine sẽ thấp.
     def _score_recency(self, percept: PerceptEvent) -> float:
         hint = (percept.novelty_hint or "").lower()
         if hint in {"direct_user_input", "explicit_request", "new_screen_fact", "threshold_crossed"}:
@@ -507,6 +512,7 @@ class AttentionWorkspace:
             return 0.18
         return 0.35
 
+    #Nó normalize token rồi tính overlap với tối đa 12 memory gần nhất. Một số memory layer có trọng số khác nhau:
     def _score_memory_resonance(
         self,
         percept: PerceptEvent,
@@ -531,6 +537,8 @@ class AttentionWorkspace:
             best = max(best, score)
         return _bounded(best)
 
+    #Nếu event dính các từ như “stuck”, “stress”, “unfinished”, “lonely”, “repeat”... thì tăng bias.
+    #Đây là phần làm hệ thống chú ý tới các pattern hành vi/tâm trạng, không chỉ dữ liệu khô.
     def _score_personality_bias(self, percept: PerceptEvent, *, snapshot=None) -> float:
         text_parts = [
             str(percept.content or ""),

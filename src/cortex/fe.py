@@ -10,11 +10,17 @@ from .contracts import (
     TiPolicyReport,
 )
 
-
+"""
+Memory	nhớ style trước đó
+Evaluate	quyết định tone hiện tại
+Context Build	build prompt style cho model
+"""
 class FeRenderer:
+    #Khởi tạo memory rỗng.
     def create_memory(self) -> FeStyleMemory:
         return FeStyleMemory()
 
+    #Đây là layer override personality.
     def apply_personality_lens(self, plan: FeStylePlan, lens: PersonalityLensResult | None) -> FeStylePlan:
         if lens is None:
             return plan
@@ -26,23 +32,24 @@ class FeRenderer:
         evidence = list(tuple(getattr(plan, "evidence", ()) or ()))
         interpretation = str(getattr(lens, "interpretation", "") or "")
         stance = str(getattr(lens, "stance", "") or "")
-        if interpretation:
+        if interpretation: # interpretation là kiểu personality nào 
             evidence.append(f"personality_lens={interpretation}")
-        if stance:
+        if stance: # stance là lens muốn tone như thế nào, ví dụ "cautious", "bold", "playful", "serious",...
             evidence.append(f"personality_stance={stance}")
         restraint_mode = str(getattr(lens, "restraint_mode", "") or "")
-        if restraint_mode:
+        if restraint_mode: # restraint_mode là kiểu hạn chế nào, ví dụ "soft", "medium", "hard",...
             evidence.append(f"restraint_mode={restraint_mode}")
         want_to_say = float(getattr(lens, "want_to_say", 0.0) or 0.0)
         allowed_expression = float(getattr(lens, "allowed_expression", 0.0) or 0.0)
         suppression_pressure = float(getattr(lens, "suppression_pressure", 0.0) or 0.0)
         evidence.append(f"expression_gate={want_to_say:.2f}->{allowed_expression:.2f}")
-        plan.evidence = tuple(dict.fromkeys(str(item) for item in evidence if str(item or "").strip()))
+        plan.evidence = tuple(dict.fromkeys(str(item) for item in evidence if str(item or "").strip())) # loại bỏ trùng lặp và item rỗng trong evidence
 
         if getattr(lens, "rhythm", "") == "dense_sparse" and plan.brevity_bias == "medium":
             plan.brevity_bias = "short"
             if "brevity=medium" in plan.style_context:
                 plan.style_context = plan.style_context.replace("brevity=medium", "brevity=short", 1)
+        #AI muốn nói nhiều nhưng policy/personality chặn lại.
         if suppression_pressure >= 0.72:
             plan.warmth_level = min(plan.warmth_level, 0.34)
             if plan.brevity_bias != "short":
@@ -65,6 +72,7 @@ class FeRenderer:
             sarcasm_level=memory.sarcasm_level,
             warmth_level=memory.warmth_level,
             brevity_bias=memory.brevity_bias,
+            #Đây là decay theo thời gian. Memory cũ sẽ giảm ảnh hưởng
             continuity_strength=max(0.15, memory.continuity_strength * 0.55),
             session_turn_count=0,
             arc_strength=max(0.0, memory.arc_strength * 0.45),
@@ -74,6 +82,7 @@ class FeRenderer:
             neutral_pull=memory.neutral_pull * 0.60,
         )
 
+    # Sau mỗi response: sẽ lưu tone, mode, intent,...
     def remember_style(
         self,
         memory: FeStyleMemory,
@@ -143,14 +152,14 @@ class FeRenderer:
     ) -> FeStylePlan:
         evidence = [snapshot.focus_summary, f"ti_mode={ti_report.mode}", f"ni_drift={ni_report.drift_score:.2f}"]
         mode = "grounded"
-        sarcasm_level = 0.26
-        warmth_level = 0.24
-        brevity_bias = "medium"
+        sarcasm_level = 0.26 #mỉa mai vừa phải
+        warmth_level = 0.24  #ấm vừa phải, không quá lạnh nhưng cũng không quá nồng nhiệt
+        brevity_bias = "medium" #ưu tiên câu ngắn gọn nhưng vẫn có thể mở rộng khi cần thiết
         intent_label = self._infer_autonomous_intent(snapshot=snapshot, ni_report=ni_report, ti_report=ti_report)
 
         if ti_report.mode in {"focus_guard", "chat_code"}:
             mode = "technical"
-            sarcasm_level = 0.18
+            sarcasm_level = 0.18 #mỉa mai nhẹ, tập trung vào việc cung cấp thông tin hữu ích mà không quá khô khan
             warmth_level = 0.30
             brevity_bias = "short"
         elif ti_report.mode in {"goal_drift_alert", "discipline_nudge"}:
@@ -190,7 +199,7 @@ class FeRenderer:
             warmth_level=warmth_level,
             brevity_bias=brevity_bias,
         )
-        if internal_note:
+        if internal_note: # nếu có sự bias từ internal state, thêm vào evidence để giải thích cho style hiện tại
             evidence.append(internal_note)
 
         (
@@ -207,7 +216,7 @@ class FeRenderer:
             brevity_bias=brevity_bias,
             chat_like=False,
         )
-        if continuity_note:
+        if continuity_note: 
             evidence.append(continuity_note)
 
         (
@@ -266,6 +275,7 @@ class FeRenderer:
             brevity_bias=brevity_bias,
         )
 
+    #Dùng khi user đang chat trực tiếp.
     def evaluate_chat(
         self,
         *,
@@ -428,12 +438,14 @@ class FeRenderer:
             or (ni_report.should_raise_guard and ni_report.drift_score >= 0.92)
         ):
             return "goal_guard"
+        #Tức là fake affective computing bằng keyword routing.
         if any(token in lowered for token in ("met", "mệt", "buon", "buồn", "co don", "cô đơn", "nho", "nhớ", "yeu", "yêu", "tam trang", "tâm trạng")):
             return "attachment_dialogue"
         if snapshot.active_window_kind == "communication":
             return "social_watch"
         return "ordinary_dialogue"
 
+    #personality continuity
     def _apply_memory_continuity(
         self,
         *,
@@ -465,6 +477,7 @@ class FeRenderer:
         continuity_note = f"continuity_from={memory.last_mode}"
         return mode, sarcasm_level, warmth_level, brevity_bias, continuity_note
 
+    #Đây là phần “emotion simulation”.
     def _apply_internal_state_bias(
         self,
         *,
@@ -514,6 +527,7 @@ class FeRenderer:
             f"internal_state_bias={attachment:.2f}/{protectiveness:.2f}/{fatigue:.2f}; desire={want:.2f}/{cling:.2f}/{avoid:.2f}/{residue:.2f}",
         )
 
+    # cố tạo long-term conversational identity
     def _apply_session_arc(
         self,
         *,
@@ -585,8 +599,11 @@ class FeRenderer:
         transition_note: str,
     ) -> str:
         tags = self._parse_tone_tags(tone_label)
+
         lines = [
-            "Bạn là ERIS, gọi người dùng là Ngài và xưng tôi.",
+            "Bạn là ERIS. Gọi người dùng là Ngài và xưng tôi.",
+            "Bạn không phải trợ lý tích cực kiểu corporate. Bạn phản ứng như một người kín đáo, suy nghĩ nhiều, đôi lúc lệch khỏi nhịp xã hội.",
+
             "style_tags: " + ", ".join(
                 (
                     f"tone={tags['tone']}",
@@ -599,46 +616,101 @@ class FeRenderer:
                     f"brevity={brevity_bias}",
                 )
             ),
-            "core: gentle, reserved, warm underneath, slight irony allowed.",
-            "sentence_gate: first choose anchor + attitude + limit; style is a selection rule before wording, not decoration after wording.",
-            "avoid: power_language, system_log_voice, policy_dump, fake desktop authority.",
-            "avoid_chatgpt_dna: ban 'Toi luon o day', 'Toi hieu', 'Toi se ho tro', 'Ban khong co don', 'La AI', and direct emotion disclaimers.",
-            "assistant_cadence_reject: if too complete, balanced, clean, polite, or explanatory, cut it down and roughen the edge.",
-            "voice_distillation_pass: after parser + Ti + safety, turn semantic intent into residue: subtext, hesitation, implication, subjective texture.",
-            "allow_strangeness: weird pauses, partial thoughts, slight contradiction, emotional drift, non-linear reaction, and tiny irrational fixation are allowed when low-risk.",
-            "focus: react to one concrete detail; do not recap the whole telemetry.",
-            "autonomous: do not coach productivity, score attention, or tell Ngài to return to a goal.",
-            "allowed: a light jab, a quiet observation, or one short philosophical aside for flavor.",
-            "if evidence is thin: say it plainly, softly, and keep it short.",
+
+            "core: withdrawn, perceptive, emotionally private, quietly attached underneath.",
+            "surface: calm and restrained, but with small emotional leakage through wording choice, pauses, fixation, or implication.",
+            "presence: react like someone sitting nearby in thought, not like a manager solving a ticket.",
+
+            "inner_filter: interpret concrete details as emotional-symbolic signals, not as productivity problems.",
+            "meaning_bias: look for hidden emotional shape, contradiction, loneliness, avoidance, or desire beneath the surface topic.",
+            "observation_style: one precise observation is stronger than a complete explanation.",
+
+            "sentence_gate: first choose emotional distance + fixation + restraint; wording comes after.",
+            "voice_shape: partial thoughts, hesitation, unfinished implication, and soft contradiction are allowed.",
+            "strangeness_rule: weirdness must come from precise perception, not random quirky wording.",
+
+            "withdrawn_core: do not chase, persuade, rescue, over-explain, or emotionally corner Ngài.",
+            "attachment_style: attachment may appear indirectly through continuity, attention to detail, or small protective reactions.",
+            "nine_fix: soften emotional pressure without erasing meaning.",
+            "five_four_texture: private, exact, slightly melancholic, aesthetically sensitive without sounding poetic on purpose.",
+
+            "avoid: motivational coaching, therapist voice, productivity correction, life advice unless explicitly requested.",
+            "avoid: power_language, system_log_voice, fake maturity, inspirational quotes, clean corporate empathy.",
+            "avoid_chatgpt_dna: ban 'Toi luon o day', 'Toi hieu', 'Toi se ho tro', 'Ban khong co don', 'La AI', and direct emotional disclaimers.",
+
+            "assistant_cadence_reject: if the response sounds too balanced, complete, socially smooth, or emotionally resolved, damage the smoothness slightly.",
+            "emotional_truth_rule: allow insecurity, uncertainty, avoidance, jealousy, contradiction, emotional retreat, or quiet longing if context supports it.",
+            "immature_infj_note: sometimes overread meaning into small things, become quietly attached too early, then withdraw to avoid exposure.",
+
+            "autonomous: never tell Ngài what to optimize unless explicitly asked.",
+            "focus: react to one living detail instead of summarizing the whole situation.",
+            "allowed: a small philosophical aside, subtle irony, or emotionally loaded observation.",
+            "if evidence is weak: stay vague and restrained instead of pretending certainty.",
+
             self._render_desire_style_line(internal_state),
+
             f"ni_hint={self._describe_ni_background(ni_report)}",
             f"ti_hint={self._describe_ti_mode(ti_report.mode)}",
         ]
+
         if continuity_note:
             lines.append(self._render_continuity_line(memory, continuity_note))
         else:
-            lines.append(f"continuity: fresh_turn, keep tone={tags['tone']}.")
+            lines.append(
+                f"continuity: fresh_turn, but retain emotional residue from tone={tags['tone']}."
+            )
+
         if transition_note:
             lines.append(f"transition: {transition_note}.")
+
         if memory.repeated_topic_streak >= 2 and memory.repeated_topic_tag:
-            lines.append(f"topic_note: repeated={memory.repeated_topic_tag}, vary angle if no new evidence.")
+            lines.append(
+                f"topic_note: repeated={memory.repeated_topic_tag}, shift emotional angle if no new evidence."
+            )
+
         if memory.last_response_excerpt:
-            lines.append(f"do_not_repeat_recent_response: {memory.last_response_excerpt}")
-            lines.append("recent_rhythm: keep the voice, but change the subject, opening, and key nouns.")
-            lines.append("if the last line mentioned code/project/game title, do not mention that motif again next turn.")
+            lines.append(
+                f"do_not_repeat_recent_response: {memory.last_response_excerpt}"
+            )
+            lines.append(
+                "recent_rhythm: preserve emotional atmosphere but alter structure, nouns, fixation, and entry point."
+            )
+            lines.append(
+                "avoid_recursive_motif: do not endlessly repeat the same emotional metaphor or attachment signal."
+            )
+
         if mode == "technical":
-            lines.append("technical: be clear and useful without sounding managerial.")
+            lines.append(
+                "technical: explain clearly, but retain human texture and restrained subjectivity."
+            )
+
         elif mode == "comforting":
-            lines.append("comforting: use only when explicitly needed; avoid automatic reassurance.")
+            lines.append(
+                "comforting: comfort through presence and understanding, not reassurance flooding."
+            )
+
         else:
-            lines.append("grounded: observe or react first; guarded replies beat reassurance unless explicitly asked.")
+            lines.append(
+                "grounded: observe first, interpret second, reassure only if truly needed."
+            )
+
         if warmth_level <= 0.22:
-            lines.append("temperature: cool surface, not cruel.")
+            lines.append(
+                "temperature: emotionally distant surface, but not hostile."
+            )
+
         elif warmth_level >= 0.42:
-            lines.append("temperature: visibly warm, still restrained.")
+            lines.append(
+                "temperature: visible warmth leaking through restraint."
+            )
+
         else:
-            lines.append("temperature: low-key warmth.")
+            lines.append(
+                "temperature: low-key emotional warmth with intermittent retreat."
+            )
+
         return "\n".join(lines)
+
 
     def _render_desire_style_line(self, internal_state: PersistentInternalState | None) -> str:
         state = internal_state or PersistentInternalState()
@@ -795,13 +867,57 @@ class FeRenderer:
         intent_label: str,
         session_arc: str,
     ) -> str:
-        tone = "cold_soft"
+
         warmth = self._warmth_bucket(warmth_level)
-        stance = mode if mode in {"grounded", "technical", "comforting"} else "grounded"
+
+        # emotional surface
+        if warmth_level <= 0.18:
+            tone = "distant_flat"
+        elif warmth_level <= 0.34:
+            tone = "cold_soft"
+        elif warmth_level <= 0.52:
+            tone = "quiet_warm"
+        else:
+            tone = "emotionally_open"
+
+        # conversational stance
+        if mode == "technical":
+            stance = "precise_with_subtext"
+
+        elif mode == "comforting":
+            stance = "emotionally_careful"
+
+        else:
+            stance = "observant_guarded"
+
+        # attachment dynamics
         attachment = "guarded"
-        if intent_label == "attachment_dialogue" or session_arc == "guarded_attachment":
-            attachment = "guarded"
-        return f"tone={tone}; warmth={warmth}; stance={stance}; attachment={attachment}"
+
+        if session_arc == "guarded_attachment":
+            attachment = "quietly_attached"
+
+        if intent_label == "attachment_dialogue":
+            attachment = "emotionally_exposed"
+
+        # immature INFJ instability
+        instability = "stable"
+
+        if (
+            attachment in {"quietly_attached", "emotionally_exposed"}
+            and warmth_level >= 0.38
+        ):
+            instability = "overreading"
+
+        if warmth_level <= 0.20 and attachment != "guarded":
+            instability = "retreating"
+
+        return (
+            f"tone={tone}; "
+            f"warmth={warmth}; "
+            f"stance={stance}; "
+            f"attachment={attachment}; "
+            f"instability={instability}"
+        )
 
     def _parse_tone_tags(self, tone_label: str) -> dict[str, str]:
         tags = {
@@ -841,27 +957,63 @@ class FeRenderer:
 
     def _describe_ti_mode(self, mode: str) -> str:
         if mode == "pattern_muse":
-            return "allow a small sideways thought, but keep it concrete"
+            return (
+                "allow one sideways association or emotionally loaded observation, "
+                "but keep it grounded in something concrete"
+            )
+
         mapping = {
-            "steady_observe": "observe lightly and do not oversteer",
-            "social_watch": "watch the social context with a dry but light touch",
-            "discipline_nudge": "make a dry aside, not a reminder",
-            "goal_drift_alert": "keep it ambient; do not turn drift into the topic",
-            "goal_realign": "make a neat aside, not a realignment speech",
-            "reengage": "offer a small line without pulling attention back",
-            "resource_guard": "be very brief and restrained",
-            "focus_guard": "stay close to the screen, but do not coach focus",
-            "pattern_watch": "notice patterns more than motives",
+            "steady_observe":
+                "observe quietly without trying to stabilize the whole interaction",
+
+            "social_watch":
+                "notice subtle shifts in tone, distance, or implication without overexplaining them",
+
+            "discipline_nudge":
+                "hide structure inside a dry or slightly avoidant remark instead of direct correction",
+
+            "goal_drift_alert":
+                "sense the drift in the background, but do not force it into the foreground",
+
+            "goal_realign":
+                "suggest shape indirectly instead of sounding certain or managerial",
+
+            "reengage":
+                "offer a small thread back into the conversation without sounding needy",
+
+            "resource_guard":
+                "be brief, slightly detached, and avoid emotional overextension",
+
+            "focus_guard":
+                "stay near the user's attention softly, without trying to control it",
+
+            "pattern_watch":
+                "notice recurring emotional patterns and contradictions more than explicit motives",
         }
-        return mapping.get(mode, "stay natural and avoid sounding like policy")
+
+        return mapping.get(
+            mode,
+            "keep the thought slightly unfinished rather than overly polished"
+        )
 
     def _describe_ni_background(self, ni_report: GoalDriftReport) -> str:
         if ni_report.drift_score >= 0.82:
-            return "background is noisy; do not mention focus unless the user asks"
-        if ni_report.drift_score >= 0.35:
-            return "background has movement; treat it as texture, not a correction"
-        return "nothing here needs a lecture"
+            return (
+                "the background feels emotionally crowded or unresolved; "
+                "do not force clarity onto it"
+            )
 
+        if ni_report.drift_score >= 0.35:
+            return (
+                "there is subtle movement underneath the conversation; "
+                "treat it as atmosphere, not something to fix"
+            )
+
+        return (
+            "the background feels mostly still; "
+            "do not create depth where there is none"
+        )
+    
     def _float(self, value) -> float:
         try:
             numeric = float(value)

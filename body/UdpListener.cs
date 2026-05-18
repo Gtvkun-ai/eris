@@ -187,7 +187,6 @@ public partial class UdpListener : Node2D
 		cs.Position        = Vector2.Zero;
 		_body.GlobalPosition = startPos;
 
-		// Láº¥y half-size tá»« shape thá»±c sá»± thay vÃ¬ hardcode
 		_spriteHalfSize = ((RectangleShape2D)cs.Shape).Size / 2;
 
 		// Đặt nhân vật sát đáy màn hình ngay từ đầu, không cần rơi
@@ -251,6 +250,7 @@ public partial class UdpListener : Node2D
 
 	public override void _Process(double delta)
 	{
+		//Nếu đang kéo nhân vật bằng chuột, nhân vật theo chuột.
 		float d = (float)delta;
 		Vector2 pos = _body.Position;
 		Vector2 screenSize = GetViewportRect().Size;
@@ -418,7 +418,7 @@ public partial class UdpListener : Node2D
 		_bodyAutonomy?.RecordUserInteraction();
 		_grabModeArmed = false;
 		_isDraggingCharacter = true;
-		_dragOffset = _body.GlobalPosition - mousePosition;
+		_dragOffset = _body.GlobalPosition - mousePosition; //Lưu khoảng cách giữa chuột và body để kéo không bị giật.
 		_previousDragMousePos = mousePosition;
 		_lastDragMousePos = mousePosition;
 		_previousDragSampleAt = GetRuntimeSeconds();
@@ -533,6 +533,7 @@ public partial class UdpListener : Node2D
 		_bodyAutonomy?.RecordUserInteraction();
 		_chatInput.Text = "";
 		_chatInput.GrabFocus();
+		//JsonSerializer.Serialize(msg) để escape chuỗi. Không tự nối raw string ngu ngốc
 		string payload = $"{{\"type\":\"chat\",\"message\":{JsonSerializer.Serialize(msg)}}}";
 		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
 		ApplyTypewriterEffect($"[Chủ nhân]: {msg}");

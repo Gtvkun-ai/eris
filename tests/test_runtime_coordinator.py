@@ -1913,6 +1913,14 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
         )
 
+    def test_preview_text_truncates_without_truncated_suffix(self):
+        coordinator = self._make_coordinator()
+
+        preview = coordinator._preview_text("abcdefghijklmnopqrstuvwxyz", limit=10)
+
+        self.assertEqual(preview, "abcdefghij...")
+        self.assertNotIn("truncated", preview)
+
     def test_ambient_silence_holds_quiet_autonomous_modes_after_recent_line(self):
         coordinator = self._make_coordinator()
         coordinator.last_text = "Một câu vừa nói xong."

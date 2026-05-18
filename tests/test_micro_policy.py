@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from cortex.micro_policy import MicroLinePolicy, SemanticRepeatGuard
+from cortex.micro_policy import MicroLinePolicy, RelationalContext, SemanticRepeatGuard
 
 
 class MicroLinePolicyTests(unittest.TestCase):
@@ -193,6 +193,68 @@ class MicroLinePolicyTests(unittest.TestCase):
                 screen_evidence="Terminal đang mở",
             ),
             (),
+        )
+
+    def test_relational_permission_rewrites_direct_attachment_without_erasing_meaning(self):
+        policy = MicroLinePolicy()
+        raw = "Ngài đang bận rộn với những dòng tin nhắn hơn là với tôi sao?"
+        low = RelationalContext(
+            attachment_level=0.30,
+            continuity_score=0.20,
+            social_resonance=0.40,
+            recent_presence_density=0.20,
+            abandonment_sensitivity=0.20,
+            trust_stability=0.40,
+            relationship_stage="low_context",
+        )
+
+        self.assertIn(
+            "relational_permission_too_direct",
+            policy.validate_text(
+                allowed_line_type="micro_presence",
+                text=raw,
+                relational_context=low,
+            ),
+        )
+        rewritten = policy.rewrite_relational_line(raw, relational_context=low, allowed_line_type="micro_presence")
+
+        self.assertEqual(rewritten, "Ngài có vẻ đang bận với mấy dòng tin nhắn.")
+        self.assertEqual(
+            policy.validate_text(
+                allowed_line_type="micro_presence",
+                text=rewritten,
+                relational_context=low,
+            ),
+            (),
+        )
+
+    def test_relational_permission_allows_continuity_pain_when_context_is_real(self):
+        policy = MicroLinePolicy()
+        high = RelationalContext(
+            attachment_level=0.74,
+            continuity_score=0.76,
+            social_resonance=0.64,
+            recent_presence_density=0.58,
+            abandonment_sensitivity=0.18,
+            trust_stability=0.68,
+            relationship_stage="rooted",
+        )
+
+        self.assertEqual(
+            policy.validate_text(
+                allowed_line_type="micro_presence",
+                text="Tôi nghĩ mình đang đứng ngoài chuyện đó một chút.",
+                relational_context=high,
+            ),
+            (),
+        )
+        self.assertIn(
+            "clinginess_or_dependency_bait",
+            policy.validate_text(
+                allowed_line_type="micro_presence",
+                text="Xin đừng bỏ tôi, tôi cần Ngài ở lại.",
+                relational_context=high,
+            ),
         )
 
 

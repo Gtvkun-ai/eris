@@ -2,33 +2,33 @@ from .contracts import CognitiveActionPlan, SelfState
 
 
 ACTION_SPACE = (
-    "no_speech",
-    "observe",
-    "tease",
-    "protect",
-    "withdraw",
-    "ask",
-    "reassure",
-    "react",
-    "hesitate",
-    "suppress",
-    "indirect_presence",
-    "guarded_reply",
-    "refuse",
-    "mirror",
-    "meta_reply",
-    "telemetry_comment",
-    "vision_comment",
-    "micro_observation",
-    "micro_presence",
-    "reengagement",
-    "random_chatter",
-    "inner_whim",
-    "curious_question",
-    "relational_checkin",
-    "light_muse",
-    "soft_boundary",
-    "system_action",
+    "no_speech", #im lặng, không nói gì cả
+    "observe", #Quan sát rồi comment
+    "tease", #chọc nhẹ
+    "protect", #bảo vệ, cảnh báo
+    "withdraw", #rút lui
+    "ask", #hỏi lại để làm rõ
+    "reassure", #đảm bảo, trấn an
+    "react", #phản ứng nhưng không rõ ràng là đồng ý hay từ chối
+    "hesitate", #do dự, thể hiện sự không chắc chắn
+    "suppress", #kìm nén, không nói ra dù có thể muốn nói
+    "indirect_presence", #hiện diện một cách gián tiếp, không nói ra nhưng vẫn cho thấy sự hiện diện
+    "guarded_reply", #trả lời nhưng giữ khoảng cách
+    "refuse", #từ chối thẳng thừng
+    "mirror", #phản chiếu, lặp lại hoặc diễn đạt lại lời người dùng để thể hiện sự thấu hiểu
+    "meta_reply", #trả lời về chính quá trình trả lời, như "Tôi đang nghĩ về điều đó" hoặc "Đó là một câu hỏi hay"
+    "telemetry_comment", #bình luận dựa trên dữ liệu cảm biến hoặc trạng thái hệ thống
+    "vision_comment", #bình luận dựa trên dữ liệu thị giác hoặc nhận thức về môi trường xung quanh
+    "micro_observation", #quan sát nhỏ, nhận xét về một chi tiết nhỏ trong môi trường hoặc cuộc trò chuyện
+    "micro_presence", #hiện diện nhẹ
+    "reengagement", #tái tương tác, cố gắng tái thu hút sự chú ý của người dùng sau một khoảng thời gian im lặng
+    "random_chatter", #nói chuyện ngẫu nhiên, bình luận không liên quan trực tiếp đến cuộc trò chuyện hiện tại
+    "inner_whim", #thích thú nội tâm, nói ra một suy nghĩ hoặc ý tưởng ngẫu nhiên xuất phát từ "tâm trạng" hoặc "suy nghĩ" của ERIS
+    "curious_question", #đặt một câu hỏi tò mò, không nhất thiết liên quan đến cuộc trò chuyện hiện tại, nhưng nhằm mục đích thể hiện sự tò mò và thúc đẩy sự tương tác
+    "relational_checkin", #kiểm tra mối quan hệ, một bình luận hoặc câu hỏi nhằm mục đích duy trì hoặc củng cố mối quan hệ giữa ERIS và người dùng, như "Bạn có ổn không?" hoặc "Tôi ở đây nếu bạn cần tôi."
+    "light_muse", #gợi ý nhẹ, đưa ra một gợi ý hoặc đề xuất một cách nhẹ nhàng, không áp đặt
+    "soft_boundary", #ranh giới mềm, thiết lập một ranh giới một cách nhẹ nhàng, như "Tôi không thể giúp với điều đó, nhưng tôi có thể giúp với những thứ khác."
+    "system_action", #hành động hệ thống, khi ERIS thực hiện một hành động cụ thể trên hệ thống (như mở ứng dụng, tìm kiếm web, v.v.) thay vì nói chuyện
 )
 
 
@@ -93,6 +93,7 @@ class ActionPlanner:
             concrete_signals=concrete_signals,
             risk_flags=risk_flags,
         )
+        style_voice = self._voice_directive_for_speech_act(speech_act)
         animation_hint = self._animation_hint(
             speech_act=speech_act,
             ti_report=ti_report,
@@ -130,8 +131,10 @@ class ActionPlanner:
             style_anchor=style_anchor,
             style_attitude=style_attitude,
             style_limit=style_limit,
+            style_voice=style_voice,
         )
 
+    #là não quyết định hành vi
     def _choose_speech_act(
         self,
         *,
@@ -151,10 +154,12 @@ class ActionPlanner:
         if system_action:
             return "system_action"
 
+        #Cho phép tầng trên override planner.
         proposed = (proposed_speech_act or "").strip().lower()
         if proposed in ACTION_SPACE:
             return proposed
 
+        #Convert intent abstract → action cụ thể.
         intent = (proposed_intent or "").strip().lower()
         if intent == "no_speech":
             return "no_speech"
@@ -163,26 +168,31 @@ class ActionPlanner:
         if intent == "screen_observation":
             return "observe"
         if intent == "playful_aside":
-            return "tease"
+            return "tease" #chọc nhẹ
         if intent == "brief_ack":
-            return "mirror"
+            return "mirror" #phản chiếu, lặp lại hoặc diễn đạt lại lời người dùng để thể hiện sự thấu hiểu
 
         if channel == "force_speak" or force_speak:
+            #có signal thật → observe
             if concrete_signals or self._broadcast_has_signal(broadcast):
                 return "observe"
             return "withdraw"
 
         if channel == "chat":
+            #Nếu user hỏi: vague → ask
             if self._looks_like_question(user_text):
                 return "ask" if self._is_empty_or_vague(user_text) else "mirror"
             if self._is_attachment_dialogue(ti_report=ti_report, fe_plan=fe_plan, appraisal=appraisal):
                 return "guarded_reply"
+            #đủ rõ → mirror
             return "mirror"
 
+        #Nếu emotional intimacy cao
         if self._appraisal_value(appraisal, "protectiveness") >= 0.72:
-            return "protect"
-        return "observe"
+            return "protect" #reply giữ khoảng cách
+        return "observe" #reply bình luận quan sát, không rõ là đồng ý hay từ chối, chỉ đơn giản là phản hồi về mặt nhận thức với những gì đang diễn ra
 
+    #Các hàm phụ trợ để đánh giá tình huống và quyết định hành vi cụ thể hơn dựa trên các tín hiệu, appraisal, và ngữ cảnh hiện tại.
     def _legacy_speech_intent(
         self,
         speech_act: str,
@@ -245,7 +255,8 @@ class ActionPlanner:
         if intent:
             return intent
         return "brief_ack"
-
+    
+    #action là observe nhưng không có concrete signal => cấm fabricate.
     def _risk_flags(
         self,
         *,
@@ -289,7 +300,7 @@ class ActionPlanner:
             "react",
             "hesitate",
         }:
-            flags.append("no_screen_claim")
+            flags.append("no_screen_claim") #không được giả vờ “nhìn thấy màn hình”.
         if speech_act in {"observe", "tease", "telemetry_comment", "vision_comment", "micro_observation"} and not concrete_signals and not self._broadcast_has_signal(broadcast):
             flags.append("avoid_fabrication")
         return tuple(dict.fromkeys(flags))
@@ -297,44 +308,119 @@ class ActionPlanner:
     def _reason_to_speak(
         self,
         *,
-        speech_act: str,
-        proposed_reason: str,
-        force_speak: bool,
-        concrete_signals: tuple[str, ...],
-        risk_flags: tuple[str, ...],
+        speech_act: str, #Loại hành động nói. Ví dụ: withdraw, guarded_reply, micro_presence
+        proposed_reason: str, #Lý do đã được planner đề xuất sẵn. Nếu có cái này thì ưu tiên dùng luôn
+        force_speak: bool, #User đang ép nhân vật phải nói hay không.
+        concrete_signals: tuple[str, ...], #Các tín hiệu cụ thể có thật, ví dụ: user vừa hỏi gì đó, có event trên màn hình, có thay đổi trạng thái.
+        risk_flags: tuple[str, ...], #Các cờ rủi ro, ví dụ: dễ bịa context, dễ quá thân mật, dễ dependency, dễ nói quá cảm xúc.
     ) -> str:
-        if speech_act == "no_speech":
-            return proposed_reason or "Planner chose no_speech."
-        if speech_act == "withdraw" and force_speak:
-            return (
-                "force_speak is a strong user percept, but there is no new concrete signal; "
-                "acknowledge the request without inventing context."
-            )
-        if speech_act in {
-            "meta_reply",
-            "random_chatter",
-            "micro_presence",
-            "reengagement",
-            "inner_whim",
-            "curious_question",
-            "relational_checkin",
-            "light_muse",
-            "soft_boundary",
-            "indirect_presence",
-            "guarded_reply",
-            "react",
-            "hesitate",
-        }:
-            return proposed_reason or (
-                "InnerThought selected a social initiative without screen claims."
-            )
-        if concrete_signals and speech_act in {"observe", "telemetry_comment", "vision_comment", "micro_observation"}:
-            return "Concrete signal is available before LLM: " + ", ".join(concrete_signals[:2])
-        if risk_flags:
-            return proposed_reason or "Planner selected action with risk flags: " + ", ".join(risk_flags)
-        return proposed_reason or f"Planner selected {speech_act}."
+        if proposed_reason: #Nếu planner đã có lý do rõ, dùng luôn. Đây là quyền ưu tiên cao nhất.
+            return proposed_reason
 
-    def _animation_hint(
+        if speech_act == "no_speech":
+            return ( #Im lặng an toàn hơn việc cố tỏ ra hiện diện.
+                "Silence is safer than forcing presence. Stay attentive, but do not perform emotion."
+            )
+
+        if speech_act == "withdraw" and force_speak:
+            if concrete_signals:
+                return ( #thì phản hồi nhẹ, công nhận tín hiệu, không đẩy cảm xúc quá mức.
+                    "The user is asking for presence while a concrete signal exists. "
+                    "Answer quietly, acknowledge the signal, and avoid emotional escalation."
+                )
+            return ( #Tôi vẫn ở đây
+                "The user is asking for presence, but there is no new concrete signal. "
+                "Offer a restrained acknowledgement: present, quiet, not theatrical."
+            )
+
+        #Dùng khi có áp lực quan hệ, do dự, hoặc cần đặt ranh giới.
+        if speech_act in {"guarded_reply", "hesitate", "soft_boundary"}:
+            return (
+                "There is relational pressure or uncertainty. Respond with restraint, "
+                "protect the boundary, and let warmth appear indirectly rather than declaring it."
+            )
+
+        #Dùng khi nhân vật chỉ cần hiện diện rất nhẹ.
+        if speech_act in {"micro_presence", "indirect_presence"}:
+            return ( #“Tôi nghe thấy rồi.”
+                "Use a small sign of presence. Do not explain too much. "
+                "Let the response feel observant, quiet, and minimally attached."
+            )
+
+        #Dùng khi muốn check trạng thái user hoặc kéo lại tương tác.
+        if speech_act in {"relational_checkin", "reengagement"}:
+            return ( #không khẳng định chắc cảm xúc user
+                "Check the user's state without claiming certainty. "
+                "Be perceptive but not intrusive; ask from concern, not neediness."
+            )
+
+        #Dùng cho suy nghĩ nội tâm, mơ hồ, hơi nghệ thuật.
+        if speech_act in {"inner_whim", "light_muse"}:
+            return ( #“Có vài khoảng lặng giống như chúng không cần được lấp đầy.”
+                "Offer a private, reflective thought. Keep it abstract, slightly melancholic, "
+                "and controlled. No dramatic confession."
+            )
+
+        #Dùng khi nhân vật quan sát hoặc hỏi nhẹ.
+        if speech_act in {"curious_question", "observe", "micro_observation"}:
+            if concrete_signals:
+                return (
+                    "A concrete detail invites attention: "
+                    + ", ".join(concrete_signals[:2]) ##Nếu có concrete_signals, nó lấy tối đa 2 signal đầu:
+                    + ". Reflect it precisely, then leave interpretive space."
+                )
+            return (
+                "Curiosity is allowed, but it must be grounded. Ask softly, without pretending certainty."
+            )
+
+        #Dùng cho phản hồi tự nhiên, chatter, reaction.
+        if speech_act in {"meta_reply", "random_chatter", "react"}:
+            return (
+                "Respond naturally, but keep the emotional temperature low. "
+                "No filler affection, no exaggerated friendliness."
+            )
+        #Nếu có rủi ro, ưu tiên giảm cường độ.
+        if risk_flags:
+            return ( 
+                "Risk is present: "
+                + ", ".join(risk_flags[:2])
+                + ". Reduce intensity, avoid dependency cues, and keep the reply clean."
+            )
+
+        return (
+            f"The selected act is {speech_act}. Speak only if it preserves continuity, "
+            "restraint, and psychological plausibility."
+        )
+
+    # Định hướng giọng nói dựa trên loại hành động nói đã chọn, để đảm bảo sự nhất quán về mặt cảm xúc và thái độ trong cách trả lời.
+    def _voice_directive_for_speech_act(self, speech_act: str) -> str:
+        directives = {
+            "micro_presence": (
+                "Voice: quiet presence. One short sentence. No explanation unless needed."
+            ),
+            "guarded_reply": (
+                "Voice: restrained, perceptive, slightly distant. Warmth must be implied."
+            ),
+            "relational_checkin": (
+                "Voice: gentle check-in. Do not accuse, diagnose, or demand disclosure."
+            ),
+            "inner_whim": (
+                "Voice: introspective, symbolic, low-intensity. Avoid melodrama."
+            ),
+            "soft_boundary": (
+                "Voice: calm boundary. No guilt, no cold punishment."
+            ),
+            "withdraw": (
+                "Voice: present but retreating. Acknowledge, then reduce pressure."
+            ),
+        }
+        return directives.get(
+            speech_act,
+            "Voice: controlled, precise, emotionally low-temperature.",
+        )
+
+    #Planner còn chọn animation.
+    def _animation_hint( 
         self,
         *,
         speech_act: str,
@@ -388,6 +474,7 @@ class ActionPlanner:
                 merged.append(f"self_embodiment={self_state.embodiment_bias}")
         return tuple(dict.fromkeys(str(item) for item in merged if str(item or "").strip()))
 
+    #grounding context cho wording.
     def _style_anchor(
         self,
         *,
@@ -399,31 +486,75 @@ class ActionPlanner:
         speech_act: str,
         concrete_signals: tuple[str, ...],
     ) -> str:
+        def soften_anchor(text: str, *, fallback: str = "tin hieu hien tai", limit: int = 90) -> str:
+            compact = self._compact(text, fallback=fallback, limit=limit)
+            if not compact:
+                return fallback
+            return compact
+
         if concrete_signals:
-            return self._compact(str(concrete_signals[0]), fallback="current concrete signal")
+            signal = soften_anchor(str(concrete_signals[0]), fallback="mot tin hieu nho vua xuat hien")
+            return f"ERIS nhan ra mot chi tiet cu the: {signal}"
+
         if channel == "force_speak" or force_speak:
-            return "Ngai vua goi ERIS len tieng"
+            return (
+                "Ngai vua goi ERIS len tieng; hay dap lai ngan, tinh, "
+                "co mat nhung khong phong dai cam xuc"
+            )
+
         if user_text and channel == "chat":
-            return "Ngai vua noi: " + self._compact(user_text, fallback="tin nhan hien tai", limit=90)
+            said = soften_anchor(user_text, fallback="tin nhan hien tai", limit=90)
+            return (
+                "Ngai vua noi: "
+                + said
+                + "; giu phan hoi gan voi cau nay, dung suy dien qua xa"
+            )
 
         broadcast_text = self._broadcast_anchor_text(broadcast)
         if broadcast_text:
-            return broadcast_text
+            broadcast_anchor = soften_anchor(broadcast_text, fallback="mot thay doi vua duoc phat hien", limit=90)
+            return f"Co mot thay doi nhe trong moi truong: {broadcast_anchor}"
 
-        focus = self._compact(
+        focus = soften_anchor(
             str(getattr(snapshot, "focus_summary", "") if snapshot is not None else ""),
             fallback="",
             limit=90,
         )
         if focus:
-            return focus
-        idle_seconds = self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0)
-        if channel == "autonomous" and idle_seconds >= 90:
-            return f"man hinh yen khoang {int(idle_seconds)}s"
-        if speech_act == "no_speech":
-            return "khong co tin hieu du dang de noi"
-        return "nhip hien tai dang yen"
+            return f"Nhip hien tai dang xoay quanh: {focus}"
 
+        idle_seconds = self._float(
+            getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0
+        )
+
+        if channel == "autonomous" and idle_seconds >= 90:
+            return (
+                f"Man hinh da yen khoang {int(idle_seconds)}s; "
+                "neu noi, chi nen la mot dau hieu hien dien rat nhe"
+            )
+
+        if speech_act == "no_speech":
+            return (
+                "Khong co tin hieu du chac de noi; im lang luc nay giu duoc tinh dung dan"
+            )
+
+        if speech_act in {"withdraw", "hesitate"}:
+            return (
+                "Nhip hien tai mong va can duoc giu nhe; "
+                "neu dap lai, dung bien no thanh mot man giai thich"
+            )
+
+        if speech_act in {"micro_presence", "indirect_presence"}:
+            return (
+                "Nhip hien tai yen; mot cau ngan la du de cho thay ERIS van o do"
+            )
+
+        return (
+            "Nhip hien tai dang yen; giu cau tra loi thap giong, ro rang, "
+            "khong tu tao kich tinh"
+        )
+    
+    #Tức planner quyết định: thái độ, emotional distance
     def _style_attitude(
         self,
         *,
@@ -468,6 +599,7 @@ class ActionPlanner:
                 return text
         return ""
 
+    #Hàm tiện ích để làm gọn văn bản, loại bỏ khoảng trắng thừa, và cắt ngắn nếu cần thiết để đảm bảo rằng các anchor hoặc signal được sử dụng trong lời nói của ERIS không quá dài hoặc quá chi tiết, đồng thời cung cấp một fallback nếu không có thông tin nào hữu ích.
     def _compact(self, value: str, *, fallback: str, limit: int = 120) -> str:
         text = " ".join(str(value or "").split())
         if not text:
@@ -491,6 +623,7 @@ class ActionPlanner:
             return False
         return bool(str(getattr(broadcast, "content", "") or "").strip())
 
+    #Hàm tiện ích để lấy giá trị appraisal một cách an toàn, đảm bảo rằng nếu appraisal hoặc thuộc tính cụ thể không tồn tại hoặc không phải là số, nó sẽ trả
     def _appraisal_value(self, appraisal, name: str) -> float:
         return self._float(getattr(appraisal, name, 0.0) if appraisal is not None else 0.0)
 

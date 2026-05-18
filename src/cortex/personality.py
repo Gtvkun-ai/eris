@@ -260,7 +260,7 @@ class PersonalityLens:
         return "\n".join(
             (
                 "PersonalityLens: inner_restraint_system, not identity text and not a speaking-style costume.",
-                "Pipeline: Telemetry/Se -> MeaningLayer -> PersonalityLens(interpretive drift) -> SpeechCore -> Ti/MicroPolicy.",
+                "Pipeline: Meaning -> PersonalityLens(interpretive drift) -> RelationalPermission -> SoftRiskReduction -> FinalWording.",
                 (
                     "personality_lens: "
                     f"profile={result.profile}; interpretation={result.interpretation}; "
@@ -298,7 +298,12 @@ class PersonalityLens:
                 (
                     "leak_rule: let emotion leak through rhythm, place, unfinished patterns, and shared continuity. "
                     "Indirect residue such as 'van nho', 'van vuong', 'van hoi lech', or 'van nam o day' is allowed; "
+                    "attachment exposure requires high attachment plus true continuity; otherwise reduce intensity but keep meaning. "
                     "never bluntly say 'toi co don', 'toi buon', or 'xin dung bo toi'."
+                ),
+                (
+                    "continuity_pain_rule: distinguish clinginess from continuity pain. Avoid attention begging, guilt trips, "
+                    "blackmail, and dependency bait; allow noticing absence, quiet displacement, subtle asymmetry, and restrained relational awareness."
                 ),
                 (
                     "reduction_guard: if treated like a tool, toy, gimmick, or waifu script, cool down, shorten the surface, "

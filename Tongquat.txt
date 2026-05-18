@@ -4,34 +4,7 @@ TỔNG QUAN PROJECT ERIS
 Cập nhật: 2026-05-14
 Mã hóa: UTF-8
 
-CẬP NHẬT MỚI NHẤT: BODY AUTONOMY, TOUCH/THROW, MICRO POLICY
-------------------------------------------------------------
 
-Đợt thay đổi mới nhất đưa phần body Godot từ chỗ chỉ nhận lệnh chuyển động từ cognition sang có một lớp tự chủ cục bộ nhẹ, biết giữ nhịp thân thể ngay cả khi runtime Python im lặng. Python vẫn là cognition chính, nhưng mỗi decision gửi về body giờ có thêm bias hành vi như `continuity_anxiety`, `curiosity`, `overload`, `solitude`, `focus_kind` và `preferred_anchor` để Godot chọn cách đứng, đi, đọc, leo hoặc lùi về góc phù hợp hơn với trạng thái nền.
-
-Thay đổi body/Godot:
-- Thêm `body/LocalBodyAutonomy.cs`: mô phỏng nhu cầu cục bộ của thân thể gồm continuity, meaning, solitude integrity, quiet attachment và overload. Lớp này chọn các hành vi như `ReturnToAnchor`, `ReadQuietly`, `ObserveCode`, `ClimbWall`, `DropFromCeiling`, `Withdraw`, `DormantSit` hoặc im lặng quan sát.
-- `UdpListener.cs` nối `LocalBodyAutonomy` vào vòng `_Process()`, có cooldown riêng, tôn trọng trạng thái motion bận, chat panel đang mở và body đang đậu trên trần.
-- Thêm các export Godot để chỉnh hành vi: `EnableAutonomousIdleMovement`, khoảng tick idle, debug log body autonomy, cooldown sau motion remote, tắt/bật legacy remote motion command và các hệ số ném.
-- Context menu nhân vật có thêm nút touch/grab. Khi bấm touch rồi kéo nhân vật, body chuyển sang pose treo `air_swing_l/r`, gửi `force_speak`, và khi thả sẽ tính vận tốc ném từ chuyển động chuột.
-- `MotionController` thêm velocity X, intent `throw`, rơi có quán tính ngang, xử lý va tường khi đang bay, và có xác suất bám tường rồi leo lên đỉnh. Điều này làm tương tác kéo/thả có cảm giác vật lý hơn thay vì chỉ teleport.
-- Remote motion command từ cognition không còn mặc định override body ngay; hiện có cờ `EnableLegacyRemoteMotionCommands`. Body có thể nhận text/speech và bias mà vẫn để motion cục bộ giữ nhịp.
-- Payload JSON từ cognition được parse kỹ hơn: tôn trọng `should_speak=false`, không hiện bubble nếu text rỗng, fallback plain text khi raw không phải JSON, và đọc `body_bias` nếu có.
-
-Thay đổi cognition/runtime:
-- `RuntimeCoordinator` thêm `_send_decision_to_body()` để mọi đường gửi decision đều tự kèm body bias. Các route autonomous, presence maintenance, reengagement, session ritual, force speak, chat và directive đều đi qua hàm này.
-- Body bias được tính từ internal state: recursive/memory pressure và silence ticks đẩy `continuity_anxiety`; curiosity/association pressure và focus code đẩy `curiosity`; fatigue/cognitive tension/restraint đẩy `overload`; restraint/subconscious pressure đẩy `solitude`.
-- `preferred_anchor` hiện chọn giữa `chat_near`, `code_side` và `bottom_right`: overload/solitude cao thì lùi góc phải dưới, focus code + curiosity cao thì đứng phía code, còn lại giữ gần vùng chat/shared space.
-
-Thay đổi micro-policy và LLM:
-- `MicroLinePolicy` giờ trả thêm `anchor_source` và `anchor_text`, yêu cầu `micro_observation` phải có neo từ screen evidence, user action hoặc session context.
-- Câu micro quá ngắn phải có ý nghĩa rõ và có grounding; câu tiếng Việt không dấu bị chặn bằng reason `vietnamese_requires_diacritics`.
-- `micro_observation` không được bịa chi tiết: text phải khớp với anchor/evidence, nếu không sẽ bị chặn bằng `micro_observation_not_grounded:*`.
-- Prompt runtime/style/micro-presence được siết: nếu nói tiếng Việt thì phải có đầy đủ dấu, không được trả placeholder kiểu `short Vietnamese line`.
-- Fallback social/micro-presence trong coordinator đã được đổi từ tiếng Việt không dấu sang có dấu.
-- Test `tests/test_micro_policy.py` bổ sung case cho tiếng Việt có dấu, grounding của micro observation và câu micro ngắn nhưng có neo rõ.
-
-Kết luận ngắn: ERIS giờ có thân thể tự giữ nhịp nhiều hơn, không phải mọi chuyển động đều chờ cognition remote. Cognition gửi "khí hậu nội tâm" xuống Godot dưới dạng body bias; Godot biến nó thành hành vi nhỏ như đứng gần mạch code, đọc yên, leo lên mép, lùi khỏi nhiễu, hoặc ngồi lại. Song song đó, lời micro-presence bị siết grounding và tiếng Việt có dấu để bớt filler, bớt bịa, và nói gọn hơn.
 
 TÓM TẮT CÁC CHỨC NĂNG MỚI
 -------------------------

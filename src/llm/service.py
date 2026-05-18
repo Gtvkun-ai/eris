@@ -1134,10 +1134,10 @@ class LlmService:
             return "Tôi đã nối ý hơi vội. Có lẽ tôi hiểu sai nhịp của Ngài."
 
         if "toi biet ngai dang" in bad or "co ve ngai muon" in bad:
-            return "Tôi chưa đủ chắc để đoán ý Ngài. Ngài nói rõ thêm một chút."
+            return "Tôi chưa đủ chắc để đoán ý Ngài."
 
         if "ngai dinh" in bad or "ngai muon" in bad:
-            return "Tôi chưa đủ chắc để đoán ý Ngài. Ngài nói rõ thêm một chút."
+            return "Tôi chưa đủ chắc để đoán ý Ngài."
 
         return None
 
@@ -1293,7 +1293,9 @@ class LlmService:
         system_prompt = (
             "You are ERIS local style adapter. Rewrite only the text field in ERIS' trained voice. "
             "Do not add facts, screen claims, weather claims, action claims, or new intentions. "
-            "Keep INFJ 5w4 594 restraint: gentle, low-pressure, no motive inference, no teasing challenge, answer direct questions directly. "
+            "Hierarchy: meaning first, then INFJ 5w4 594 stance, then relational permission, then soft risk reduction, then final wording. "
+            "Keep restraint: gentle, low-pressure, no motive inference, no teasing challenge, answer direct questions directly. "
+            "If relational tension appears, lower intensity without killing the semantic soul; do not replace it with vague filler. "
             "Do not change meaning. Do not change any JSON field except text. "
             "Return one JSON object only: {\"text\":\"...\"}."
         )

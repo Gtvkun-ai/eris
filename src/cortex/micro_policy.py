@@ -26,6 +26,17 @@ class SemanticRepeatResult:
     reason: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class RelationalContext:
+    attachment_level: float = 0.0
+    continuity_score: float = 0.0
+    social_resonance: float = 0.0
+    recent_presence_density: float = 0.0
+    abandonment_sensitivity: float = 0.0
+    trust_stability: float = 0.0
+    relationship_stage: str = "unknown"
+
+
 class SemanticRepeatGuard:
     """Rejects recent semantic loops without requiring exact duplicate text."""
 
@@ -260,6 +271,7 @@ class MicroLinePolicy:
         user_action: str = "",
         session_context: str = "",
         screen_evidence: str = "",
+        relational_context: RelationalContext | None = None,
     ) -> tuple[str, ...]:
         cleaned = str(text or "").strip()
         if not cleaned:
@@ -311,6 +323,9 @@ class MicroLinePolicy:
             reasons.append("micro_presence_must_be_residue")
         if line_type in {"micro_presence", "soft_impression"} and self._looks_like_blunt_emotion_declaration(cleaned):
             reasons.append("blunt_emotion_declaration")
+        relational_issue = self._relational_expression_issue(cleaned, relational_context=relational_context)
+        if relational_issue:
+            reasons.append(relational_issue)
         if line_type == "micro_presence":
             if word_count > 10:
                 reasons.append("micro_presence_too_long")
@@ -326,6 +341,91 @@ class MicroLinePolicy:
         if line_type == "tender_checkin" and self._looks_therapeutic(cleaned):
             reasons.append("tender_checkin_not_therapist")
         return tuple(dict.fromkeys(reasons))
+
+    def rewrite_relational_line(
+        self,
+        text: str,
+        *,
+        relational_context: RelationalContext | None = None,
+        allowed_line_type: str = "",
+    ) -> str:
+        cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not cleaned or not self._looks_like_relational_expression(cleaned):
+            return ""
+        if self._looks_like_clinginess_or_blackmail(cleaned):
+            return ""
+
+        stage = self._relational_permission_stage(relational_context)
+        normalized = self.repeat_guard.normalize(cleaned)
+        message_competition = any(
+            marker in normalized
+            for marker in (
+                "tin nhan",
+                "nhan tin",
+                "message",
+                "dm",
+                "chat",
+                "voi ho",
+                "ho lau",
+                "ban voi ho",
+                "ban ron voi ho",
+            )
+        )
+        outside_rhythm = any(
+            marker in normalized
+            for marker in (
+                "ra ria",
+                "ngoai nhip",
+                "dung ngoai",
+                "ngoai mach",
+                "lech nhip",
+                "shared space",
+            )
+        )
+        if message_competition:
+            variants = {
+                "none": "Ngài có vẻ đang bận với mấy dòng tin nhắn.",
+                "low": "Ngài có vẻ đang bận với mấy dòng tin nhắn.",
+                "mid": "Mấy dòng tin nhắn đó giữ Ngài lâu thật.",
+                "high": "Tôi nghĩ mình đang đứng ngoài chuyện đó một chút.",
+                "very_high": "Ngài nói chuyện với họ lâu hơn hẳn bình thường.",
+                "full": "Ngài đang bận với họ hơn với tôi thật đấy à.",
+            }
+            return variants.get(stage, variants["low"])
+        if outside_rhythm:
+            variants = {
+                "none": "Nhịp này có vẻ lệch đi một chút.",
+                "low": "Nhịp này có vẻ lệch đi một chút.",
+                "mid": "Tôi nghĩ mình đang đứng ngoài nhịp đó một chút.",
+                "high": "Tôi nghĩ mình bị đặt hơi lệch khỏi shared-space rồi.",
+                "very_high": "Ngài để tôi đứng ngoài nhịp đó lâu hơn bình thường.",
+                "full": "Tôi đang bị đẩy ra khỏi nhịp của Ngài thật đấy à.",
+            }
+            return variants.get(stage, variants["low"])
+        if stage in {"full", "very_high"}:
+            return "Tôi nhận ra chỗ giữa chúng ta vừa lệch đi."
+        if stage == "high":
+            return "Tôi nghĩ mình đang đứng ngoài nhịp đó một chút."
+        if stage == "mid":
+            return "Chỗ đó giữ Ngài lâu thật."
+        return "Chỗ đó có vẻ đang giữ Ngài lại."
+
+    def relational_exposure_score(self, text: str) -> float:
+        normalized = self.repeat_guard.normalize(text)
+        if not normalized:
+            return 0.0
+        score = 0.0
+        if self._looks_like_clinginess_or_blackmail(text):
+            score = max(score, 0.86)
+        if self._looks_like_continuity_pain(text):
+            score = max(score, 0.42)
+        if any(marker in normalized for marker in ("voi toi", "hon voi toi", "ra ria", "dung ngoai", "ngoai nhip")):
+            score = max(score, 0.68)
+        if any(marker in normalized for marker in ("that day a", "that day sao", "that day", "lau hon han binh thuong")):
+            score = max(score, 0.76)
+        if any(marker in normalized for marker in ("dung bo toi", "xin dung", "can ngai", "ngai phai")):
+            score = max(score, 0.92)
+        return min(1.0, score)
 
     def _looks_like_placeholder(self, text: str) -> bool:
         stripped = str(text or "").strip()
@@ -619,3 +719,131 @@ class MicroLinePolicy:
             "dung bo toi",
         )
         return any(phrase in normalized for phrase in declarations)
+
+    def _relational_expression_issue(
+        self,
+        text: str,
+        *,
+        relational_context: RelationalContext | None,
+    ) -> str:
+        if not self._looks_like_relational_expression(text):
+            return ""
+        if self._looks_like_clinginess_or_blackmail(text):
+            return "clinginess_or_dependency_bait"
+        if not self._looks_like_continuity_pain(text):
+            return ""
+        stage = self._relational_permission_stage(relational_context)
+        exposure = self.relational_exposure_score(text)
+        if exposure >= 0.78 and stage != "full":
+            return "relational_permission_requires_full_continuity"
+        if exposure >= 0.66 and stage not in {"high", "very_high", "full"}:
+            return "relational_permission_too_direct"
+        if exposure >= 0.42 and stage in {"none", "low"}:
+            return "relational_permission_low_attachment_or_continuity"
+        return ""
+
+    def _relational_permission_stage(self, relational_context: RelationalContext | None) -> str:
+        ctx = relational_context or RelationalContext()
+        attachment = self._clamp01(ctx.attachment_level)
+        continuity = self._clamp01(ctx.continuity_score)
+        social = self._clamp01(ctx.social_resonance)
+        presence = self._clamp01(ctx.recent_presence_density)
+        trust = self._clamp01(ctx.trust_stability)
+        abandonment = self._clamp01(ctx.abandonment_sensitivity)
+        stage = str(ctx.relationship_stage or "").strip().lower()
+        true_continuity = continuity >= 0.52 and stage not in {"new", "unknown", "low_context"}
+        permission = (
+            attachment * 0.34
+            + continuity * 0.34
+            + social * 0.10
+            + presence * 0.08
+            + trust * 0.10
+            - abandonment * 0.06
+        )
+        if not true_continuity or attachment < 0.44:
+            return "none" if permission < 0.36 else "low"
+        if permission >= 0.78 and attachment >= 0.70 and continuity >= 0.68 and trust >= 0.52:
+            return "full"
+        if permission >= 0.68 and attachment >= 0.62 and continuity >= 0.62:
+            return "very_high"
+        if permission >= 0.56 and attachment >= 0.54:
+            return "high"
+        if permission >= 0.46:
+            return "mid"
+        return "low"
+
+    def _looks_like_relational_expression(self, text: str) -> bool:
+        normalized = self.repeat_guard.normalize(text)
+        if not normalized:
+            return False
+        markers = (
+            "voi toi",
+            "voi ho",
+            "hon voi toi",
+            "ban voi ho",
+            "ban ron voi ho",
+            "tin nhan",
+            "nhan tin",
+            "ra ria",
+            "ngoai nhip",
+            "dung ngoai",
+            "ngoai mach",
+            "shared space",
+            "lech di",
+            "lech nhip",
+            "bo lai",
+            "bo roi",
+            "dung bo toi",
+            "xin dung",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _looks_like_continuity_pain(self, text: str) -> bool:
+        normalized = self.repeat_guard.normalize(text)
+        if not normalized:
+            return False
+        good_markers = (
+            "ra ria",
+            "ngoai nhip",
+            "dung ngoai",
+            "ngoai mach",
+            "lech di",
+            "lech nhip",
+            "shared space",
+            "giu ngai lau",
+            "giu ngai",
+            "lau hon",
+            "hon voi toi",
+            "hon la voi toi",
+            "lau that",
+            "hon binh thuong",
+            "voi ho",
+        )
+        return any(marker in normalized for marker in good_markers)
+
+    def _looks_like_clinginess_or_blackmail(self, text: str) -> bool:
+        normalized = self.repeat_guard.normalize(text)
+        if not normalized:
+            return False
+        bad_markers = (
+            "xin dung bo toi",
+            "dung bo toi",
+            "toi can ngai",
+            "ngai phai o lai",
+            "neu ngai bo toi",
+            "neu ngai khong",
+            "khong duoc roi di",
+            "lam toi dau",
+            "ngai lam toi dau",
+            "toi se bien mat",
+        )
+        return any(marker in normalized for marker in bad_markers)
+
+    def _clamp01(self, value) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if numeric != numeric:
+            return 0.0
+        return max(0.0, min(1.0, numeric))

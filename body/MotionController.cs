@@ -4,6 +4,7 @@ using System.Globalization;
 
 public readonly struct MotionCommand
 {
+    //MotionCommand là gói lệnh đầu vào:
     public MotionCommand(
         string intent,
         string poseAnimation,
@@ -46,17 +47,17 @@ public sealed class MotionController
     private readonly float _gravity;
     private readonly float _climbSpeed;
 
-    private float _moveDir = 1f;
-    private int _facingDir = -1;
+    private float _moveDir = 1f; //hướng di chuyển vật lý, -1 trái, 1 phải.
+    private int _facingDir = -1; //hướng mặt nhân vật.
     private bool _isWalking;
     private string _currentAction = "stand";
-    private float _velocityX;
-    private float _velocityY;
+    private float _velocityX; //vận tốc khi rơi/bị ném
+    private float _velocityY; //vận tốc khi rơi/bị ném
     private bool _isFalling;
     private Vector2 _spriteHalfSize;
     private Vector2 _bubbleBasePos;
     private string _nextAction = "";
-    private string _bounceAction = "";
+    private string _bounceAction = ""; //animation/phản ứng khi đụng tường
     private float _targetX = float.NaN;
 
     private ClimbPhase _climbPhase = ClimbPhase.None;
@@ -93,18 +94,20 @@ public sealed class MotionController
         _isFalling = false;
     }
 
+    //Đây là lõi runtime.
     public void Step(ref Vector2 pos, Vector2 screenSize, float delta)
     {
+        //Tức là khi leo, controller bỏ qua gravity bình thường và dùng logic leo riêng.
         if (_climbPhase != ClimbPhase.None)
         {
             UpdateClimbMovement(ref pos, screenSize, delta);
             return;
         }
 
-        _velocityY += _gravity * delta;
+        _velocityY += _gravity * delta; //tăng vận tốc rơi theo gravity
         pos.X += _velocityX * delta;
-        pos.Y += _velocityY * delta;
-        _velocityX = Mathf.MoveToward(_velocityX, 0f, 260f * delta);
+        pos.Y += _velocityY * delta; //cộng vận tốc vào vị trí
+        _velocityX = Mathf.MoveToward(_velocityX, 0f, 260f * delta); //giảm dần vận tốc ngang
 
         if (pos.Y >= screenSize.Y - _spriteHalfSize.Y)
         {
@@ -155,6 +158,7 @@ public sealed class MotionController
             return;
         }
 
+        //Nếu không có target, đi tới tường thì gọi:
         if (pos.X >= screenSize.X - _spriteHalfSize.X)
         {
             pos.X = screenSize.X - _spriteHalfSize.X;
@@ -167,6 +171,7 @@ public sealed class MotionController
         }
     }
 
+    //Nó dịch MotionCommand thành state nội bộ
     public void ApplyCommand(MotionCommand command, Vector2 currentPos, Vector2 screenSize)
     {
         string intent = (command.Intent ?? "").Trim().ToLowerInvariant();
@@ -388,6 +393,7 @@ public sealed class MotionController
         _playSound?.Invoke(_currentAction);
     }
 
+    //Va tường khi đi bộ
     private void HandleWallHit(int nextWalkDir)
     {
         if (!string.IsNullOrEmpty(_bounceAction))

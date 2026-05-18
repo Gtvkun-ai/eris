@@ -12,18 +12,18 @@ class AppraisalEngine:
     def evaluate(
         self,
         *,
-        internal_state: PersistentInternalState, #là đối tượng lưu trữ trạng thái nội bộ của ERIS, có thể chứa thông tin về cảm xúc, sự chú ý, và các yếu tố khác liên quan đến trạng thái hiện tại của ERIS.
-        ni_report,
-        ti_report,
-        fe_plan,
-        broadcast,
+        internal_state: PersistentInternalState, ##trạng thái lâu dài
+        ni_report, #intuition / drift / guard
+        ti_report, #reasoning mode
+        fe_plan, #social strategy
+        broadcast, #urgency/global salience
         channel: str = "",
         user_text: str = "",
         force_speak: bool = False,
-        memory_resonance=None,
-        personality_lens=None,
+        memory_resonance=None, #ký ức vang vọng
+        personality_lens=None, #cách interpret user
     ) -> CognitiveAppraisal:
-        state = internal_state or PersistentInternalState()
+        state = internal_state or PersistentInternalState() 
         drift = self._clamp01(getattr(ni_report, "drift_score", 0.0) or 0.0)
         ni_confidence = self._clamp01(getattr(ni_report, "confidence", 0.0) or 0.0) or 0.55
         warmth = self._clamp01(getattr(fe_plan, "warmth_level", 0.0) or 0.0)
@@ -51,8 +51,8 @@ class AppraisalEngine:
         attachment_cue = self._has_attachment_cue(normalized_user_text)
         social_scene = kind == "communication" or mode == "social_watch" or fe_intent == "social_watch"
 
-        state_valence = self._clamp(getattr(state, "valence", 0.0), minimum=-1.0, maximum=1.0) # valence là một trục cảm xúc phổ biến trong tâm lý học, thường được định nghĩa từ -1 (rất tiêu cực) đến +1 (rất tích cực). Trong trường hợp này, giá trị valence được lấy từ trạng thái nội bộ của ERIS và được giới hạn trong khoảng từ -1.0 đến 1.0 để đảm bảo rằng nó nằm trong phạm vi hợp lệ cho trục cảm xúc này.
-        state_arousal = self._clamp01(getattr(state, "arousal", 0.0)) # arousal là một trục cảm xúc khác, thường được định nghĩa từ 0 (rất bình tĩnh) đến 1 (rất kích thích). 
+        state_valence = self._clamp(getattr(state, "valence", 0.0), minimum=-1.0, maximum=1.0) # valence là “hedonic tone”., thường được định nghĩa từ -1 (rất tiêu cực) đến +1 (rất tích cực). Trong trường hợp này, giá trị valence được lấy từ trạng thái nội bộ của ERIS và được giới hạn trong khoảng từ -1.0 đến 1.0 để đảm bảo rằng nó nằm trong phạm vi hợp lệ cho trục cảm xúc này.
+        state_arousal = self._clamp01(getattr(state, "arousal", 0.0)) # arousal là mức activation, thường được định nghĩa từ 0 (rất bình tĩnh) đến 1 (rất kích thích). 
         state_attachment = self._clamp01(getattr(state, "attachment", 0.0)) # attachment có thể đề cập đến mức độ gắn bó hoặc kết nối cảm xúc của ERIS với người dùng hoặc tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
         state_social_energy = self._clamp01(getattr(state, "social_energy", 0.0)) # social_energy có thể đề cập đến mức độ năng lượng xã hội hoặc sự sẵn sàng tương tác của ERIS trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
         state_irritation = self._clamp01(getattr(state, "irritation", 0.0)) # irritation có thể đề cập đến mức độ khó chịu hoặc bực bội của ERIS trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
@@ -63,6 +63,7 @@ class AppraisalEngine:
         state_silence_pressure = self._clamp01(getattr(state, "silence_pressure", 0.0)) # silence_pressure có thể đề cập đến mức độ áp lực hoặc căng thẳng mà ERIS cảm thấy khi phải giữ im lặng hoặc không phản hồi trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
         state_curiosity = self._clamp01(getattr(state, "curiosity", 0.0)) # curiosity có thể đề cập đến mức độ tò mò hoặc mong muốn khám phá của ERIS trong tình huống hiện tại. Giá trị này cũng được giới hạn trong khoảng từ 0.0 đến 1.0.
 
+        #Đây là defensive nervous system.
         threat = self._estimate_threat(
             state_protectiveness=state_protectiveness,
             state_irritation=state_irritation,
@@ -194,7 +195,7 @@ class AppraisalEngine:
             minimum=-1.0,
             maximum=1.0,
         )
-
+        #Đây là distilled expressive mode.
         stance = self._choose_stance(
             certainty=certainty,
             threat=threat,
@@ -241,6 +242,7 @@ class AppraisalEngine:
             evidence=evidence,
         )
 
+    #là cầu nối sang LLM
     def render_prompt_context(self, appraisal: CognitiveAppraisal) -> str:
         axes = (
             f"valence={appraisal.valence:.2f}, "

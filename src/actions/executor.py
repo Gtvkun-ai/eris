@@ -27,6 +27,20 @@ class ActionExecutor:
     def __init__(self, logger=None):
         self.logger = logger
 
+    #execute() là trung tâm điều phối
+    '''
+    AI output
+   ↓
+    execute()
+    ↓
+    validate action
+    ↓
+    tìm handler (_set_volume, _open_url...)
+    ↓
+    try execute
+    ↓
+    return ActionExecutionResult
+    '''
     def execute(self, action_name: str, action_input: str = "") -> ActionExecutionResult:
         action_name = (action_name or "").strip()
         action_input = (action_input or "").strip()
@@ -35,32 +49,36 @@ class ActionExecutor:
                 action_name=action_name,
                 action_input=action_input,
                 success=False,
-                message="Action khong hop le hoac chua duoc cap quyen.",
+                message="Action không hợp lệ hoặc chưa được cấp quyền.",
             )
 
+        #Dynamic dispatch.
         handler = getattr(self, f"_{action_name}", None)
         if handler is None:
             return ActionExecutionResult(
                 action_name=action_name,
                 action_input=action_input,
                 success=False,
-                message="Action chua co implementation.",
+                message="Action chưa có implementation.",
             )
 
         try:
             result = handler(action_input)
         except Exception as exc:
-            self._log("warning", "Action %s that bai: %s", action_name, exc)
+            self._log("warning", "Action %s thất bại: %s", action_name, exc)
             return ActionExecutionResult(
                 action_name=action_name,
                 action_input=action_input,
                 success=False,
-                message=f"Khong thuc thi duoc action {action_name}: {exc}",
+                message=f"Không thực thi được action {action_name}: {exc}",
             )
 
         self._log("info", "[action] %s(%s) -> %s", action_name, action_input or "<empty>", result.message)
         return result
 
+    # Nó gọi PowerShell:
+    # subprocess.run(["powershell", ...])
+    # và dùng Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager để đọc media session Windows.
     def _get_now_playing(self, action_input: str) -> ActionExecutionResult:
         script = r"""
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -97,7 +115,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             return ActionExecutionResult(
                 action_name="get_now_playing",
                 success=False,
-                message="Khong doc duoc media session hien tai.",
+                message="Không đọc được media session hiện tại.",
             )
 
         try:
@@ -106,14 +124,14 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             return ActionExecutionResult(
                 action_name="get_now_playing",
                 success=False,
-                message="Phan hoi media session khong hop le.",
+                message="Phản hồi media session không hợp lệ.",
             )
 
         if not payload.get("available"):
             return ActionExecutionResult(
                 action_name="get_now_playing",
                 success=False,
-                message="Chua thay media session nao dang phat.",
+                message="Chưa thấy media session nào đang phát.",
                 data={"reason": str(payload.get("reason", ""))},
             )
 
@@ -122,11 +140,11 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
         album = str(payload.get("album", "")).strip()
         source = str(payload.get("source", "")).strip()
         if title and artist:
-            message = f"Dang phat: {title} - {artist}."
+            message = f"Đang phát: {title} - {artist}."
         elif title:
-            message = f"Dang phat: {title}."
+            message = f"Đang phát: {title}."
         else:
-            message = "Da thay media session dang phat nhung khong lay duoc tieu de bai."
+            message = "Đã thấy media session đang phát nhưng không lấy được tiêu đề bài."
         return ActionExecutionResult(
             action_name="get_now_playing",
             success=bool(title or artist or source),
@@ -139,6 +157,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             },
         )
 
+    #Dùng Win32 API qua ctypes: Nó enumerate tất cả window:rồi tìm title match keyword.
     def _focus_window(self, action_input: str) -> ActionExecutionResult:
         title_hint = (action_input or "").strip().lower()
         if not title_hint:
@@ -146,7 +165,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="focus_window",
                 action_input=action_input,
                 success=False,
-                message="Thieu tieu de hoac tu khoa cua cua so can focus.",
+                message="Thiếu tiêu đề hoặc từ khóa của cửa sổ cần focus.",
             )
 
         user32 = ctypes.windll.user32
@@ -176,7 +195,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="focus_window",
                 action_input=action_input,
                 success=True,
-                message=f"Da dua cua so '{title}' len foreground.",
+                message=f"Đã đưa cửa sổ '{title}' lên foreground.",
                 data={"matched_title": title},
             )
 
@@ -184,7 +203,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             action_name="focus_window",
             action_input=action_input,
             success=False,
-            message=f"Khong tim thay cua so phu hop voi '{action_input}'.",
+            message=f"Không tìm thấy cửa sổ phù hợp với '{action_input}'.",
         )
 
     def _open_url(self, action_input: str) -> ActionExecutionResult:
@@ -194,7 +213,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="open_url",
                 action_input=action_input,
                 success=False,
-                message="URL khong hop le.",
+                message="URL không hợp lệ.",
             )
 
         opened = webbrowser.open(url)
@@ -202,10 +221,15 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             action_name="open_url",
             action_input=url,
             success=bool(opened),
-            message=f"Da yeu cau he thong mo {url}.",
+            message=f"Đã yêu cầu hệ thống mở {url}.",
             data={"url": url},
         )
-
+    '''
+    press volume down 50 lần
+    press volume up X lần
+    Thông qua:
+    keybd_event()
+    '''
     def _set_volume(self, action_input: str) -> ActionExecutionResult:
         lowered = (action_input or "").strip().lower()
         if lowered in {"mute", "silent", "tat am", "tat tieng"}:
@@ -214,7 +238,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="set_volume",
                 action_input=action_input,
                 success=True,
-                message="Da gui lenh mute/unmute am luong he thong.",
+                message="Đã gửi lệnh mute/unmute âm lượng hệ thống.",
             )
 
         match = re.search(r"-?\d+", lowered)
@@ -223,7 +247,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="set_volume",
                 action_input=action_input,
                 success=False,
-                message="Can truyen muc am luong tu 0 den 100.",
+                message="Cần truyền mức âm lượng từ 0 đến 100.",
             )
 
         level = max(0, min(100, int(match.group(0))))
@@ -236,10 +260,11 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             action_name="set_volume",
             action_input=str(level),
             success=True,
-            message=f"Da dua am luong he thong ve khoang {level} phan tram.",
+            message=f"Đã đưa âm lượng hệ thống về khoảng {level} phần trăm.",
             data={"level": str(level)},
         )
     
+    #Search web bằng Gemini grounding
     def _search_web(self, action_input: str) -> ActionExecutionResult:
         query = (action_input or "").strip()
         if not query:
@@ -247,7 +272,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="search_web",
                 action_input=action_input,
                 success=False,
-                message="Thieu tu khoa de search.",
+                message="Thiếu từ khóa để search.",
             )
 
         api_key = os.environ.get("GEMINI_API_KEY", "").strip() or self._GEMINI_API_KEY
@@ -256,7 +281,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="search_web",
                 action_input=action_input,
                 success=False,
-                message="Chua cau hinh GEMINI_API_KEY cho search_web.",
+                message="Chưa cấu hình GEMINI_API_KEY cho search_web.",
             )
 
         try:
@@ -289,7 +314,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="search_web",
                 action_input=action_input,
                 success=False,
-                message=f"Khong goi duoc Gemini grounding API: {exc}",
+                message=f"Không gọi được Gemini grounding API: {exc}",
             )
 
         candidates = payload.get("candidates") or []
@@ -298,7 +323,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="search_web",
                 action_input=action_input,
                 success=False,
-                message=f"Gemini khong tra ve ket qua cho '{query}'.",
+                message=f"Gemini không trả về kết quả cho '{query}'.",
             )
 
         candidate = candidates[0] or {}
@@ -335,7 +360,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="search_web",
                 action_input=action_input,
                 success=False,
-                message=f"Gemini grounding khong tra ve noi dung cho '{query}'.",
+                message=f"Gemini grounding không trả về nội dung cho '{query}'.",
             )
 
         message = answer_text
@@ -362,7 +387,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="get_weather",
                 action_input=action_input,
                 success=False,
-                message="Thieu thong tin de xem thoi tiet.",
+                message="Thiếu thông tin để xem thời tiết.",
             )
 
         api_key = os.environ.get("GEMINI_API_KEY", "").strip() or self._GEMINI_API_KEY
@@ -371,7 +396,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="get_weather",
                 action_input=action_input,
                 success=False,
-                message="Chua cau hinh GEMINI_API_KEY cho get_weather.",
+                message="Chưa cấu hình GEMINI_API_KEY cho get_weather.",
             )
 
         try:
@@ -407,7 +432,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="get_weather",
                 action_input=action_input,
                 success=False,
-                message=f"Khong goi duoc Gemini weather grounding API: {exc}",
+                message=f"Không gọi được Gemini weather grounding API: {exc}",
             )
 
         candidates = payload.get("candidates") or []
@@ -416,7 +441,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="get_weather",
                 action_input=action_input,
                 success=False,
-                message=f"Gemini khong tra ve ket qua thoi tiet cho '{query}'.",
+                message=f"Gemini không trả về kết quả thời tiết cho '{query}'.",
             )
 
         candidate = candidates[0] or {}
@@ -453,7 +478,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="get_weather",
                 action_input=action_input,
                 success=False,
-                message=f"Gemini weather grounding khong tra ve noi dung cho '{query}'.",
+                message=f"Gemini weather grounding không trả về nội dung cho '{query}'.",
             )
 
         message = answer_text
@@ -479,9 +504,10 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             action_name="play_pause_media",
             action_input=action_input,
             success=True,
-            message="Da gui phim play/pause media.",
+            message="Đã gửi phím play/pause media.",
         )
 
+    # Dùng Win32 clipboard API trực tiếp.
     def _copy_text(self, action_input: str) -> ActionExecutionResult:
         text = action_input or ""
         if not text:
@@ -489,7 +515,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="copy_text",
                 action_input=action_input,
                 success=False,
-                message="Khong co noi dung de copy.",
+                message="Không có nội dung để copy.",
             )
 
         self._set_clipboard_text(text)
@@ -497,7 +523,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             action_name="copy_text",
             action_input=action_input,
             success=True,
-            message="Da dua noi dung vao clipboard.",
+            message="Đã đưa nội dung vào clipboard.",
             data={"text_length": str(len(text))},
         )
 
@@ -508,7 +534,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_name="launch_app",
                 action_input=action_input,
                 success=False,
-                message="Thieu ten app hoac command can chay.",
+                message="Thiếu tên app hoặc command cần chạy.",
             )
 
         alias_map = {
@@ -529,7 +555,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             action_name="launch_app",
             action_input=normalized,
             success=True,
-            message=f"Da yeu cau he thong khoi chay '{normalized}'.",
+            message=f"Đã yêu cầu hệ thống khởi chạy '{normalized}'.",
             data={"command": normalized},
         )
 
@@ -574,7 +600,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
         kernel32.GlobalFree.restype = ctypes.c_void_p
 
         if not user32.OpenClipboard(None):
-            raise RuntimeError("Khong mo duoc clipboard.")
+            raise RuntimeError("Không mở được clipboard.")
 
         handle = None
         locked = None
@@ -582,15 +608,15 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             user32.EmptyClipboard()
             handle = kernel32.GlobalAlloc(ghnd, len(data))
             if not handle:
-                raise RuntimeError("Khong cap phat duoc bo nho cho clipboard.")
+                raise RuntimeError("Không cấp phát được bộ nhớ cho clipboard.")
             locked = kernel32.GlobalLock(handle)
             if not locked:
-                raise RuntimeError("Khong lock duoc bo nho clipboard.")
+                raise RuntimeError("Không lock được bộ nhớ clipboard.")
             ctypes.memmove(locked, data, len(data))
             kernel32.GlobalUnlock(handle)
             locked = None
             if not user32.SetClipboardData(cf_unicode_text, handle):
-                raise RuntimeError("Khong dua duoc du lieu vao clipboard.")
+                raise RuntimeError("Không đưa được dữ liệu vào clipboard.")
             handle = None
         finally:
             if locked:

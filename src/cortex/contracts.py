@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 
 from .internal_state import PersistentInternalState
 
+#nhìn thấy gì → chú ý gì → hiểu thế nào → cảm thấy áp lực gì → có nên nói không → nói theo phong cách nào → cập nhật trí nhớ.
+
 
 @dataclass(slots=True)
 class UserSignals:
@@ -17,6 +19,7 @@ class UserSignals:
         }
 
 
+#trạng thái môi trường/user tại một thời điểm
 @dataclass(slots=True)
 class TelemetrySnapshot:
     captured_at: str
@@ -136,7 +139,7 @@ class FeStyleMemory:
     attachment_pull: float = 0.20
     neutral_pull: float = 0.20
 
-
+#PerceptEvent: sự kiện nhận thức được.
 @dataclass(slots=True)
 class PerceptEvent:
     kind: str
@@ -253,7 +256,7 @@ class CognitiveDisturbance:
             "closes_loop": bool(self.closes_loop),
         }
 
-
+#ứng viên được chú ý
 @dataclass(slots=True)
 class AttentionCandidate:
     label: str
@@ -282,7 +285,7 @@ class AttentionCandidate:
             },
         }
 
-
+#thứ được chọn để broadcast trong cognition cycle
 @dataclass(slots=True)
 class CognitiveBroadcast:
     label: str = ""
@@ -305,6 +308,7 @@ class CognitiveBroadcast:
         }
 
 
+#diễn giải ý nghĩa của tín hiệu.
 @dataclass(slots=True)
 class MeaningLayerResult:
     """Turns observed facts into private pressure signals before speech."""
@@ -350,7 +354,7 @@ class MeaningLayerResult:
             "prompt_context": self.prompt_context,
         }
 
-
+#lớp lọc tính cách trước khi nói.
 @dataclass(slots=True)
 class PersonalityLensResult:
     """INFJ 5w4 inner restraint layer applied before wording."""
@@ -394,7 +398,7 @@ class PersonalityLensResult:
             "prompt_context": self.prompt_context,
         }
 
-
+#đánh giá cảm xúc/áp lực nội bộ.
 @dataclass(slots=True)
 class CognitiveAppraisal:
     state_type: str = "expressive_appraisal_state"
@@ -435,6 +439,7 @@ class CognitiveAppraisal:
         }
 
 
+#quyết định có nói hay không, nói kiểu gì
 @dataclass(slots=True)
 class CognitiveActionPlan:
     should_speak: bool = False
@@ -449,6 +454,7 @@ class CognitiveActionPlan:
     style_anchor: str = ""
     style_attitude: str = ""
     style_limit: str = ""
+    style_voice: str = ""
 
     def to_dict(self) -> dict[str, object]:
         reason = self.reason_to_speak or self.reason
@@ -466,6 +472,7 @@ class CognitiveActionPlan:
                 "anchor": self.style_anchor,
                 "attitude": self.style_attitude,
                 "limit": self.style_limit,
+                "voice": self.style_voice,
             },
         }
 
@@ -1007,6 +1014,7 @@ class CognitiveMemoryUpdate:
         }
 
 
+#object tổng hợp toàn bộ một vòng cognition
 @dataclass(slots=True)
 class CognitiveFrame:
     cycle_id: str
