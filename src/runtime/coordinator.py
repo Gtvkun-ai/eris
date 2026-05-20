@@ -44,6 +44,7 @@ from cortex.inner_thought import InnerThoughtEngine
 from cortex.internal_state import InternalStateEngine, PersistentInternalState
 from cortex.meaning import MeaningLayer
 from cortex.micro_policy import MicroLinePolicy, RelationalContext, SemanticRepeatGuard
+from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from cortex.personality import PersonalityLens
 from cortex.self_model import SelfModelEngine
@@ -5987,14 +5988,7 @@ class RuntimeCoordinator:
         repeated_topic_tag: str = "",
         repeated_topic_streak: int = 0,
     ) -> bool:
-        quiet_modes = {
-            "resource_guard",
-            "steady_observe",
-            "focus_guard",
-            "system_watch",
-            "pattern_watch",
-            "reengage",
-        }
+        quiet_modes = QUIET_MODES
         drift_score = float(getattr(ni_report, "drift_score", 1.0) or 0.0) if ni_report is not None else 1.0
         if ti_report.mode == "focus_guard" and ni_state_label == "ON_GOAL" and drift_score <= 0.35:
             return True
@@ -6156,15 +6150,7 @@ class RuntimeCoordinator:
                 ),
             )
 
-        quiet_modes = {
-            "pattern_muse",
-            "steady_observe",
-            "focus_guard",
-            "system_watch",
-            "pattern_watch",
-            "social_watch",
-            "reengage",
-        }
+        quiet_modes = QUIET_MODES | {"pattern_muse"}
         if mode in quiet_modes:
             return SpeechIntentDecision(
                 intent="no_speech",

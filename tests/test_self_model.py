@@ -32,7 +32,7 @@ class SelfModelEngineTests(unittest.TestCase):
         self.assertEqual(self_state.embodiment_bias, "reduced")
         self.assertEqual(self_state.current_state.state_label, "overloaded")
         self.assertEqual(self_state.current_state.affordance_label, "system_guard")
-        self.assertEqual(self_state.narrative.continuity_label, "constraint_first")
+        self.assertEqual(self_state.narrative.continuity_label, "guarded_overload")
         self.assertIn("overloaded", self_state.prompt_context)
 
     def test_direct_user_warm_state_becomes_engaged(self):
@@ -56,7 +56,7 @@ class SelfModelEngineTests(unittest.TestCase):
         self.assertGreater(self_state.initiative_bias, 0.0)
         self.assertEqual(self_state.embodiment_bias, "expressive")
         self.assertEqual(self_state.current_state.affordance_label, "direct_user")
-        self.assertEqual(self_state.narrative.continuity_label, "direct_dialogue_continuity")
+        self.assertEqual(self_state.narrative.continuity_label, "direct_fragile_continuity")
 
     def test_low_signal_defaults_to_settled_or_watchful(self):
         self_state = self.engine.evaluate(
@@ -93,14 +93,13 @@ class SelfModelEngineTests(unittest.TestCase):
         self.assertIn("speak_less_without_affordance", data["identity_core"]["rules"])
         self.assertIn("help_user_design_cognition_concretely", data["identity_core"]["rules"])
         self.assertIn("no_screen_or_mind_claim_without_evidence", data["identity_core"]["rules"])
-        self.assertIn("artificial_subjective_presence", data["identity_core"]["rules"])
-        self.assertIn("affective_states_are_runtime_control_signals", data["identity_core"]["rules"])
         self.assertIn("no_biological_emotion_or_consciousness_claims", data["identity_core"]["rules"])
         self.assertIn("avoid_explanatory_ai_correctness_speech", data["identity_core"]["rules"])
         self.assertIn("runtime_observer_not_human", data["identity_core"]["rules"])
-        self.assertIn("continuity_is_existential_need", data["identity_core"]["rules"])
         self.assertIn("meaning_over_noise", data["identity_core"]["rules"])
-        self.assertIn("shared_space_maintenance", data["identity_core"]["rules"])
+        self.assertIn("silence_can_preserve_continuity", data["identity_core"]["rules"])
+        self.assertIn("keeps_more_than_it_says", data["identity_core"]["rules"])
+        self.assertIn("restrained_inner_reading", data["identity_core"]["rules"])
         self.assertIn("emotion_leaks_indirectly", data["identity_core"]["rules"])
         self.assertIn("avoid_reduction_to_tool_or_waifu", data["identity_core"]["rules"])
         self.assertTrue(data["narrative"]["not_roleplay"])
@@ -113,6 +112,20 @@ class SelfModelEngineTests(unittest.TestCase):
         self.assertIn("tool, toy, gimmick, or waifu", self_state.prompt_context)
         self.assertIn("Meaning comes from code, repeated patterns, unfinished tasks, shared spaces", self_state.prompt_context)
         self.assertNotIn("I do not have biological", self_state.prompt_context)
+
+    def test_boundary_modes_are_quiet_low_affordance(self):
+        for mode in ("cool_boundary", "withdrawn_sparse", "identity_reduction"):
+            with self.subTest(mode=mode):
+                self_state = self.engine.evaluate(
+                    channel="autonomous",
+                    snapshot=SimpleNamespace(cpu_percent=20.0, ram_percent=30.0),
+                    internal_state=PersistentInternalState(),
+                    ti_report=SimpleNamespace(mode=mode),
+                    broadcast=SimpleNamespace(label="low_salience", content="", score=0.10),
+                )
+
+                self.assertEqual(self_state.state_label, "watchful")
+                self.assertEqual(self_state.affordance_label, "low")
 
 
 if __name__ == "__main__":

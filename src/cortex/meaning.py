@@ -2,67 +2,77 @@ import re
 import unicodedata
 
 from .contracts import MeaningLayerResult
-
+'''
+snapshot / broadcast / internal_state / thought_stream / user_text
+        ↓
+_infer_fact()
+        ↓
+FACT_MAP
+        ↓
+MeaningLayerResult
+        ↓
+prompt_context cho tầng sau
+'''
 
 class MeaningLayer:
     """Maps Se/telemetry facts into private pressure signals before speech."""
 
-    FACT_MAP: dict[str, tuple[str, tuple[str, ...], str, str, str]] = {
+    FACT_MAP = {
         "code_idle_long": (
             "cognitive_stall",
-            ("overthinking",),
-            "quiet_tease",
+            ("overthinking", "unfinished_intention"),
+            "quiet_observe",
             "dry concern",
-            "poke gently",
+            "notice the stall without coaching",
         ),
         "tiktok_opened_after_code": (
             "decompression",
-            ("avoidance",),
+            ("avoidance", "fatigue_release"),
             "soft_tease",
             "amused restraint",
             "notice the dodge lightly",
         ),
         "alt_tab_many": (
             "scattered_attention",
-            (),
+            ("restless_search",),
             "dry_marker",
             "cool concern",
             "name the scatter without scolding",
         ),
         "youtube_after_error": (
             "escape_from_friction",
-            (),
+            ("frustration_avoidance",),
             "quiet_tease",
             "dry concern",
-            "poke the escape from friction",
+            "poke the escape, then stop",
         ),
         "error_visible": (
             "friction_point",
-            (),
+            ("blocked_progress",),
             "focused_concern",
             "practical restraint",
-            "notice the friction, not the screen",
+            "notice the friction and stay useful",
         ),
         "meeting_open_idle": (
             "social_waiting",
-            (),
-            "quiet_tease",
+            ("held_presence",),
+            "quiet_observe",
             "cool watchful",
-            "notice the waiting room without narrating it",
+            "notice the waiting room without filling it",
         ),
         "ambient_idle": (
             "ambient_stillness",
-            ("vibe_signal",),
-            "quiet_tease",
-            "low-key presence",
-            "leave a small subjective impression",
+            ("continuity",),
+            "quiet_presence",
+            "low-key restraint",
+            "let the silence exist",
         ),
         "user_requested_presence": (
             "requested_presence",
-            ("relationship_pull",),
+            ("relationship_pull", "continuity"),
             "relationship_ack",
-            "present and lightly teasing",
-            "answer the pull, not a random interruption",
+            "present but restrained",
+            "answer the pull without overperforming",
         ),
     }
 
@@ -82,6 +92,7 @@ class MeaningLayer:
         recent = tuple(str(item or "").strip() for item in tuple(recent_families or ())[-3:] if str(item or "").strip())
 
         if channel_name == "force_speak" or force_speak:
+            #Nó hiểu đây là “user gọi mình lên tiếng”
             return self._build_result(
                 "user_requested_presence",
                 recent_families=recent,
@@ -91,6 +102,7 @@ class MeaningLayer:
                 evidence=("ui_request", *self._safe_evidence(snapshot, broadcast)[:3]),
             )
 
+        #Nó gom dữ kiện từ snapshot, broadcast, thought stream, text user rồi suy ra fact.
         fact, evidence = self._infer_fact(
             snapshot=snapshot,
             broadcast=broadcast,
@@ -98,10 +110,10 @@ class MeaningLayer:
             thought_stream_report=thought_stream_report,
             user_text=user_text,
         )
-        if not fact:
+        if not fact: #Nếu không có fact mạnh
             ambient_fact, ambient_evidence = self._infer_ambient_fact(snapshot=snapshot, internal_state=internal_state)
-            if ambient_fact:
-                return self._build_result(
+            if ambient_fact: #Nếu idle lâu, silence pressure cao, boredom cao thì tạo
+                return self._build_result( #Đây là meaning mềm. Không phải bằng chứng cứng.
                     ambient_fact,
                     recent_families=recent,
                     meaning_shift=False,
@@ -109,7 +121,7 @@ class MeaningLayer:
                     shift_reason="ambient_long_silence_without_hard_shift",
                     evidence=ambient_evidence,
                 )
-            result = MeaningLayerResult(
+            result = MeaningLayerResult( #: im đi, đừng bịa
                 meaning_shift=False,
                 meaning_signal="none",
                 shift_reason="no_meaningful_fact",
@@ -119,9 +131,10 @@ class MeaningLayer:
             return result
 
         meaning = self.FACT_MAP[fact][0]
+        #Nếu semantic family này vừa xuất hiện gần đây, nó không coi là ý nghĩa mới nữa.
         meaning_shift = meaning not in recent
         shift_reason = "new_semantic_family" if meaning_shift else f"recent_semantic_family={meaning}"
-        return self._build_result(
+        return self._build_result( # ERIS không lặp đi lặp lại cùng một kiểu nhận xét.
             fact,
             recent_families=recent,
             meaning_shift=meaning_shift,
@@ -130,6 +143,7 @@ class MeaningLayer:
             evidence=evidence,
         )
 
+    #Hàm này đóng gói mọi thứ thành MeaningLayerResult.
     def _build_result(
         self,
         source_fact: str,
@@ -172,6 +186,8 @@ class MeaningLayer:
         result.prompt_context = self.render_prompt_context(result)
         return result
 
+    #Đây là lớp chuyển meaning thành áp lực nội bộ:
+    #thấy lỗi thì nên nghiêng về hỗ trợ thực tế, không phải trêu nhảm
     def _private_signals(
         self,
         *,
@@ -221,6 +237,7 @@ class MeaningLayer:
             impulse_by_reaction.get(reaction, "brief_indirect_reaction"),
         )
 
+    #Hàm này tạo context cho LLM/tầng sau.
     def render_prompt_context(self, result: MeaningLayerResult) -> str:
         if not result.meaning:
             return self._render_empty_context(result.recent_families)
@@ -285,6 +302,7 @@ class MeaningLayer:
             )
         return "", ()
 
+    #Đây là bộ detector chính.
     def _infer_fact(
         self,
         *,

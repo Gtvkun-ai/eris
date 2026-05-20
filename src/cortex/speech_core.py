@@ -1,19 +1,13 @@
 from .contracts import AgentSpeechCore, MotivationalPressureReport, MotivationalUrge, SelfState, SilenceState, SpeechImpulse
 from .internal_state import PersistentInternalState
 from .inner_thought import InnerThoughtEngine
+from .modes import QUIET_MODES as SHARED_QUIET_MODES
 
 
 class SpeechCoreEngine:
     """Shared chooser for when to speak, what grounds the line, and its utterance type."""
 
-    QUIET_MODES = {
-        "resource_guard",
-        "steady_observe",
-        "focus_guard",
-        "system_watch",
-        "pattern_watch",
-        "reengage",
-    }
+    QUIET_MODES = SHARED_QUIET_MODES
 
     EMOTIONAL_TERMS = (
         "buon",
@@ -84,9 +78,7 @@ class SpeechCoreEngine:
             thought_surface=surface,
         )
 
-        # Non-shift meaning is usually quiet, but not sterile. A repeated semantic family can still
-        # leak as a low-energy residual fragment when continuity, resonance, or atmosphere pulls.
-        if (
+        if ( #ERIS autonomous KHÔNG được nói chỉ vì telemetry thay đổi. Chỉ nói khi MeaningLayer báo có sự thay đổi về meaning, và nếu có meaning shift thì sẽ phải nói dù có signal nào đi nữa, còn nếu không có meaning shift thì sẽ chỉ nói khi có signal mạnh về meaning như weak_meaning, ambient_meaning hoặc vibe_signal, còn nếu không có signal mạnh về meaning thì sẽ không nói mà chỉ tạo một soft impression với lý do là MeaningLayer chỉ có tín hiệu yếu/ambient/vibe, nên nói như một ấn tượng mềm thay vì một quan sát cứng nhắc.
             channel_name == "autonomous"
             and meaning_layer is not None
             and not bool(getattr(meaning_layer, "meaning_shift", False))
@@ -136,13 +128,7 @@ class SpeechCoreEngine:
                     safety_flags=safety_flags,
                 ),
             )
-        # nếu là autonomous channel và _should_stay_silent trả về True thì sẽ bị giữ im lặng với lý do
-        #  là quiet_guard và sẽ xây dựng một pressure_report với reason là quiet_guard và threshold dựa trên channel_name
-        #  và self_state, và concrete_signals sẽ được truyền vào để làm bằng chứng cho pressure_report, sau đó sẽ trả về một 
-        # AgentSpeechCore với impulse là silent, utterance_type là no_speech, grounding là none, speech_source là none, reason 
-        # giải thích lý do giữ im lặng, should_speak là False, safety_flags có repeat_guard nếu repeat_count >= 2 hoặc
-        #  repeated_topic_streak >= 2, delivery là silence, inner_thought được đánh giá ở trên, speech_impulse được xây dựng dựa trên
-        #  channel_name, meaning_layer, winner của pressure_report và should_speak là False, và motivation_pressure là pressure_report
+        #Nếu user đang tập trung thật sự, ERIS phải câm.
         if channel_name == "autonomous" and self._should_stay_silent(
             ti_mode=str(getattr(ti_report, "mode", "") or ""),
             repeat_count=repeat_count,
@@ -191,6 +177,7 @@ class SpeechCoreEngine:
             )
 
         # đánh giá áp lực động lực bằng cách gọi _evaluate_motivational_pressure với các tham số phù hợp, sau đó xác định winner, speech_source, utterance_type, should_speak dựa trên winner, và nếu channel_name là force_speak thì sẽ ép should_speak là True và điều chỉnh speech_source và utterance_type nếu cần thiết
+        #Đây gần như là “động lực tiền-ngôn-ngữ”.
         pressure_report = self._evaluate_motivational_pressure( 
             channel=channel_name,
             snapshot=snapshot,
@@ -467,6 +454,7 @@ class SpeechCoreEngine:
         )
         candidates.append(
             MotivationalUrge(
+                #    #Nó cho phép:weak meaning, ambient meaning,vibe signal được leak thành micro presence nhẹ.
                 label="soft_meaning_presence",
                 score=soft_meaning_score,
                 utterance_type="micro_presence",
@@ -492,7 +480,7 @@ class SpeechCoreEngine:
         )
         candidates.append(
             MotivationalUrge(
-                label="residual_continuity_pull",
+                label="residual_continuity_pull", #Đây là “dư âm chưa tan”.
                 score=residual_score,
                 utterance_type="micro_presence",
                 speech_source="freeform",
@@ -886,7 +874,7 @@ class SpeechCoreEngine:
         speech_impulse: SpeechImpulse,
         personality_lens,
         safety_flags: tuple[str, ...] = (),
-    ) -> SilenceState:
+    ) -> SilenceState: #Im lặng cũng là hành vi
         candidates = tuple(getattr(pressure_report, "candidates", ()) or ())
         spoken_candidate = next(
             (
@@ -1143,7 +1131,7 @@ class SpeechCoreEngine:
             surface_intent=str(getattr(winner, "reason", "") or "speak briefly"),
             evidence=tuple(str(item) for item in (getattr(winner, "evidence", ()) or ()))[:4],
         )
-
+    #Autonomous cần vượt threshold mới được nói. ERIS overloaded sẽ tự ít nói hơn. 
     def _threshold_for_channel(self, channel: str, *, self_state: SelfState | None = None) -> float:
         if channel == "autonomous":
             overload = self._clamp01(getattr(self_state, "overload", 0.0) if self_state is not None else 0.0)

@@ -14,7 +14,9 @@ from .contracts import (
     UnresolvedTensionLoop,
 )
 from .internal_state import PersistentInternalState
-
+'''
+giữ các ý nghĩ chưa hoàn tất, cho chúng decay, tái kích hoạt, gom thành loop, 
+tính momentum, rồi thỉnh thoảng cho một mẩu nổi lên thành ThoughtSurface.'''
 
 def _clamp01(value) -> float:
     try:
@@ -64,6 +66,7 @@ class FragmentStore:
         self.limit = max(4, int(limit))
         self._items: dict[str, ThoughtObject] = {}
 
+    #ý nghĩ cũ yếu dần theo thời gian
     def decay(self, *, now: float, decay_rate: float = 0.94) -> None:
         kept: dict[str, ThoughtObject] = {}
         for key, thought in self._items.items():
@@ -99,6 +102,7 @@ class FragmentStore:
             )
         self._items = dict(sorted(kept.items(), key=lambda item: item[1].updated_at, reverse=True)[: self.limit])
 
+    #thêm mới hoặc cập nhật thought cũ cùng prediction_key
     def upsert(self, thought: ThoughtObject, *, now: float) -> ThoughtObject:
         key = thought.prediction_key or thought.topic_seed or thought.thought_id
         previous = self._items.get(key)
@@ -149,6 +153,11 @@ class FragmentStore:
         self._items[key] = stored
         return stored
 
+    #khi thought đã lộ ra ngoài thì giảm tension/novelty/persistence để phản ánh rằng 
+    # nó đã được bộc lộ và có thể không còn mạnh mẽ như khi nó mới xuất hiện, 
+    # đồng thời tăng surfaced_count để theo dõi số lần nó đã lộ ra, điều này có thể
+    #  ảnh hưởng đến cách nó được xử lý trong tương lai (ví dụ: nếu một thought đã 
+    # lộ ra nhiều lần nhưng vẫn chưa được giải quyết, có thể cần phải chú ý hơn đến nó)
     def mark_surfaced(self, thought_id: str) -> None: #giảm lực của thought sau khi nó đã lộ ra.
         for key, thought in list(self._items.items()):
             if thought.thought_id != thought_id:
@@ -187,6 +196,7 @@ class FragmentStore:
                 return thought
         return None
 
+    #đóng thought khi có tín hiệu “xong"
     def mark_resolved(self, thought_id: str, *, now: float, evidence: str = "closure_signal") -> bool:
         for key, thought in list(self._items.items()):
             if thought.thought_id != thought_id:
@@ -215,6 +225,7 @@ class FragmentStore:
             return True
         return False
 
+    #tự đóng thought nếu closure signal khớp token
     def close_matching(self, closure_signals: tuple[str, ...], *, now: float) -> tuple[str, ...]:
         closed: list[str] = []
         signals = tuple(str(item or "") for item in closure_signals if str(item or "").strip())
@@ -228,6 +239,7 @@ class FragmentStore:
                     closed.append(thought.thought_id)
         return tuple(closed)
 
+    #lấy các thought chưa giải quyết, sort theo độ căng + persistence
     def unresolved(self) -> tuple[ThoughtObject, ...]:
         return tuple(
             sorted(
@@ -282,6 +294,9 @@ class FragmentStore:
         return bool(signal_tokens and thought_tokens and signal_tokens & thought_tokens)
 
 
+#Lưu liên kết giữa thought hiện tại và các anchor từ ngữ cảnh.
+#Ví dụ thought liên quan guard_raw_final, anchor có code, runtime, user_text, thì nó tạo cạnh liên tưởng.
+#  Sau này các thought cùng vùng nghĩa dễ quay lại cùng nhau.
 class AssociationGraph:
     """Tracks which unresolved thoughts tend to re-enter together."""
 
@@ -300,6 +315,8 @@ class AssociationGraph:
         return tuple(sorted(bucket))[:6]
 
 
+#Đây là bộ sinh thought ứng viên mới.
+#Đây là tầng “có chuyện gì đang cố thành ý nghĩ”. Chưa nói ra, chỉ tạo mầm.
 class PredictionTracker:
     """Turns current telemetry/internal state into unfinished predictions."""
 
@@ -531,6 +548,18 @@ class PredictionTracker:
         return _clamp01(getattr(state, name, 0.0))
 
 
+#Nhận một thought rồi tính lại độ căng.
+'''
+Công thức lấy từ:
+
+pressure theo mode
+persistence
+unresolved reason
+số lần quay lại
+tuổi của thought
+restraint pressure làm giảm một chút
+Nói ngắn: thought càng lặp, càng chưa xong, càng liên quan state hiện tại thì tension càng cao.
+'''
 class CognitiveTensionEngine:
     """Computes why a thought persists: unresolved prediction, not randomness."""
 
@@ -598,6 +627,20 @@ class CognitiveTensionEngine:
         return _clamp01(getattr(state, name, 0.0))
 
 
+#Gom nhiều thought chưa xong thành UnresolvedTensionLoop.
+'''
+Nó tính:
+
+số thought chưa giải
+recurrence
+tension trung bình/cao nhất
+persistence
+relevance với project/code/user
+state pressure
+
+Nếu score đủ cao, loop thành attractor.
+'''
+#attractor nghĩa là: một cụm ý nghĩ có lực hút, dễ kéo attention quay lại
 class UnresolvedTensionEngine:
     """Groups unfinished thoughts into loops and promotes strong loops to attractors."""
 
@@ -766,6 +809,20 @@ class UnresolvedTensionEngine:
         return _clamp01(getattr(state, name, 0.0))
 
 
+#Tính xem thought nào có đủ quán tính để ảnh hưởng attention.
+'''
+Điều kiện có momentum khá chặt:
+
+chưa resolved
+recurrence >= 1
+tension >= 0.54
+relevance >= 0.42
+còn fresh
+score >= 0.58
+
+Nếu đạt, affordance là "attention".
+'''
+#Tức là thought chưa chắc được nói ra, nhưng nó đủ mạnh để đẩy hệ thống chú ý về phía nó.
 class CognitiveMomentumEngine:
     """Turns repeated unresolved fragments into attention inertia."""
 
@@ -1094,6 +1151,32 @@ class SubconsciousLoopReheater:
         return False
 
 
+#Đây là cổng quyết định thought có được nổi lên thành ThoughtSurface không.
+''' 
+Nó chặn nếu:
+
+thought đã closed
+seed vừa xuất hiện gần đây
+novelty quá thấp
+restraint quá cao
+silent pressure chưa đủ mạnh
+tension thấp
+đã surfaced rồi mà chưa đủ căng để lộ lại
+
+Nếu qua cổng, nó tạo ThoughtSurface với:
+
+mode
+topic_seed
+association
+pressure
+novelty
+evidence
+risk_flags
+unresolved_reason
+momentum_score
+affordance "speech"
+'''
+#Tức là 95% dòng suy nghĩ nằm dưới mặt nước. Chỉ một mẩu đủ mạnh mới nổi lên
 class SurfaceSelector:
     """Selects the rare visible tip; most thought stream activity stays internal."""
 
@@ -1162,7 +1245,26 @@ class SurfaceSelector:
             return f"{thought.mode} connected through {', '.join(thought.associations[:3])}"
         return f"{thought.mode} linked to {thought.topic_seed}"
 
+'''
+Thứ tự trong evaluate():
 
+Lấy internal_state, snapshot, memory, recent seeds, disturbances.
+Decay thought cũ.
+PredictionTracker tạo candidate thought.
+SubconsciousLoopReheater có thể thay candidate bằng loop cũ được hâm lại.
+Tạo anchors từ snapshot, last_text, memory, disturbance.
+AssociationGraph gắn association.
+RecursiveReactivation upsert thought vào store.
+CognitiveTensionEngine cập nhật tension.
+MomentumClosure đóng loop nếu có closure signal.
+Lấy unresolved thoughts. 
+UnresolvedTensionEngine tìm loop/attractor.
+CognitiveMomentumEngine tính momentum.
+SurfaceSelector quyết định có surface không.
+Trả ThoughtStreamReport.
+
+Nếu có surface thì mark_surfaced() để giảm lực thought đó sau khi lộ.
+'''
 class ThoughtStreamEngine:
     """Maintains unresolved thought continuity and occasionally exposes a surface."""
 

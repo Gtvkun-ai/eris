@@ -182,12 +182,14 @@ class SessionRitualEngine:
             )
         )
 
+    #lấy goal persistence, goal còn active không, summary goal
     def _active_goal(self, internal_state) -> str:
         goal = getattr(internal_state, "goal_persistence", None)
         if goal is None or not bool(getattr(goal, "active", False)):
             return ""
         return _clean(getattr(goal, "summary", ""), limit=160)
 
+    #Attractor = thứ cognition bị hút vào gần đây.
     def _current_attractor(self, thought_stream_report) -> str:
         attractor = getattr(thought_stream_report, "active_attractor", None)
         if attractor is None or not bool(getattr(attractor, "attractor", False)):
@@ -201,6 +203,7 @@ class SessionRitualEngine:
             return f"{loop_id}: {topic}"
         return topic or loop_id
 
+    #“cái gì còn dang dở”.
     def _unresolved_loops(self, thought_stream_report) -> tuple[str, ...]:
         loops: list[str] = []
         for loop in tuple(getattr(thought_stream_report, "unresolved_loops", ()) or ())[:4]:
@@ -214,6 +217,7 @@ class SessionRitualEngine:
                 loops.append(f"{loop_id}: {topic}" if loop_id else topic)
         return tuple(dict.fromkeys(loops))[:4]
 
+    #nếu restart xảy ra, runtime vẫn “ngả” về hướng suy nghĩ cũ.
     def _recent_cognition_direction(self, internal_state, thought_stream_report) -> str:
         momentum = getattr(thought_stream_report, "momentum", None)
         if momentum is not None and bool(getattr(momentum, "unresolved", False)):
@@ -231,6 +235,7 @@ class SessionRitualEngine:
                 return text
         return ""
 
+    # nhớ bản thân ở trạng thái nào khi rời đi, có đang tập trung không, đang ở kênh nào, để nếu có thể thì chào hỏi theo hướng đó.
     def _self_continuity(self, internal_state) -> str:
         label = _clean(getattr(internal_state, "last_self_state_label", ""), limit=60)
         focus = _clean(getattr(internal_state, "last_focus_kind", ""), limit=60)
@@ -240,6 +245,7 @@ class SessionRitualEngine:
             return ""
         return "/".join(parts[:3])
 
+    #đánh giá xem có đủ tín hiệu để tin rằng người dùng đã trở lại và sẵn sàng tương tác, hay còn đang vắng mặt hoặc không chắc chắn. Nếu không chắc chắn, ưu tiên bảo thủ và coi như chưa phục hồi sự hiện diện.
     def _presence_is_clear(self, *, snapshot, social_presence_event) -> bool:
         confidence = _clamp01(getattr(social_presence_event, "confidence", 0.0))
         if bool(getattr(social_presence_event, "present", False)) and confidence >= 0.55:

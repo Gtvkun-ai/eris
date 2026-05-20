@@ -19,11 +19,11 @@ class InnerThoughtEngine:
     def evaluate(
         self,
         *,
-        channel: str,
-        snapshot=None,
-        internal_state=None,
-        appraisal=None,
-        broadcast=None,
+        channel: str, #kiểu kênh hoạt động, ví dụ "force_speak" hoặc "autonomous"
+        snapshot=None, #trạng thái môi trường, như idle bao lâu
+        internal_state=None, #: trạng thái nội bộ, như mệt, boredom, attachment
+        appraisal=None, #đánh giá cảm xúc/ngữ cảnh
+        broadcast=None, #tín hiệu nổi bật từ hệ thống
         style_memory=None,
         concrete_signals: tuple[str, ...] = (),
         last_text: str = "",
@@ -35,7 +35,7 @@ class InnerThoughtEngine:
         subconscious_seed=None,
         thought_surface=None,
     ) -> InnerThought:
-        if concrete_signals:
+        if concrete_signals: #Nếu có tín hiệu cụ thể trên màn hình hoặc môi trường, nó ưu tiên quan sát thật thay vì tự bịa
             return InnerThought(
                 motive="screen_signal_available",
                 evidence_anchor=", ".join(concrete_signals[:2]),
@@ -51,6 +51,7 @@ class InnerThoughtEngine:
                 recent_inner_seeds=recent_inner_seeds,
             )
 
+        #Nếu bị ép nói, nó tạo một inner thought kiểu “micro presence”, tức phản ứng rất nhỏ
         if channel == "autonomous":
             return self._autonomous_thought(
                 snapshot=snapshot,
@@ -82,12 +83,12 @@ class InnerThoughtEngine:
         attachment = self._float(getattr(internal_state, "attachment", 0.0) if internal_state is not None else 0.0)
         fatigue = self._float(getattr(internal_state, "fatigue", 0.0) if internal_state is not None else 0.0)
         if fatigue >= 0.44:
-            candidates = (
+            candidates = ( #thì ưu tiên phản ứng cơ thể/bodily residue.
                 ("micro_presence", "bodily_reaction", "bodily_residue"),
                 ("micro_presence", "social_residue", "social_residue"),
                 ("micro_presence", "grounded_observation", "screen_residue"),
             )
-        elif attachment >= 0.52:
+        elif attachment >= 0.52: #thì ưu tiên social residue.
             candidates = (
                 ("micro_presence", "social_residue", "social_residue"),
                 ("micro_presence", "grounded_observation", "screen_residue"),
@@ -135,7 +136,7 @@ class InnerThoughtEngine:
         fatigue = self._float(getattr(appraisal, "fatigue", 0.0) if appraisal is not None else 0.0)
         certainty = self._float(getattr(appraisal, "certainty", 0.0) if appraisal is not None else 0.0)
         broadcast_score = self._float(getattr(broadcast, "score", 0.0) if broadcast is not None else 0.0)
-
+        #. Một cơ chế chống spam
         if repeat_count >= 2 or repeated_topic_streak >= 2 or repeated_topic_tag:
             return InnerThought(
                 motive="repeat_guard",
@@ -143,13 +144,15 @@ class InnerThoughtEngine:
                 risk_flags=("repeat_guard", "no_screen_claim"),
             )
 
+        #Nếu subconscious/thought stream đủ mạnh thì dùng nó trước.
         stream_thought = self._thought_from_thought_surface(
             thought_surface,
             recent_inner_seeds=recent_inner_seeds,
         )
         if stream_thought.should_surface:
             return stream_thought
-
+        
+        #Nếu không, nó xét điều kiện tự nói:
         long_quiet = idle_seconds >= 240 or silence_pressure >= 0.45
         socially_warm = tenderness >= 0.36 and (idle_seconds >= 150 or social_energy >= 0.46)
         tired_room = fatigue >= 0.26 and (idle_seconds >= 210 or boredom >= 0.34)
@@ -181,6 +184,7 @@ class InnerThoughtEngine:
             cooldown_seconds=150,
         )
 
+    #Hàm này xử lý thought từ tầng sâu hơn
     def _thought_from_thought_surface(
         self,
         thought_surface,
@@ -207,13 +211,14 @@ class InnerThoughtEngine:
                 evidence_anchor=mode,
                 risk_flags=("no_screen_claim",),
             )
-        if pressure < 0.52 or novelty < 0.35:
-            return InnerThought(
+        if pressure < 0.52 or novelty < 0.35:#Kiểm tra đủ áp lực và độ mới:
+            return InnerThought( #Không đủ thì không surface.
                 motive="thought_stream_below_surface",
                 topic_seed=topic_seed,
                 evidence_anchor=mode,
                 risk_flags=("no_screen_claim",),
             )
+        #Nếu đủ, nó map mode sang intent:
         if mode == "memory_replay":
             intent = "curious_question"
         elif mode in {"quiet_self_muse", "associative_drift"}:
@@ -237,7 +242,8 @@ class InnerThoughtEngine:
             risk_flags=risk_flags,
             cooldown_seconds=180,
         )
-
+    
+    #Hàm này chọn candidate ít bị lặp nhất.
     def _choose_candidate(
         self,
         candidates,
@@ -257,6 +263,7 @@ class InnerThoughtEngine:
                 return intent, motive, seed
         return candidates[0]
 
+    #Nó lấy nhãn broadcast làm bằng chứng/ngữ cảnh, nhưng bỏ qua nhãn quá yếu như:
     def _broadcast_anchor(self, broadcast) -> str:
         label = str(getattr(broadcast, "label", "") or "")
         if label and label not in {"low_salience", "cycle_channel"}:

@@ -4,8 +4,10 @@ import time
 from dataclasses import dataclass, field, replace
 
 from .goal_persistence import GoalPersistenceEngine, GoalPersistenceState
+from .modes import QUIET_MODES
 
-
+#File này đang cố xây một “nội tâm giả lập có động lực liên tục theo thời gian”, 
+# chứ không phải kiểu chatbot stateless trả lời từng câu riêng lẻ
 def _clamp(value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
     try:
         numeric = float(value)
@@ -19,7 +21,7 @@ def _clamp(value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float
 def _clamp_signed(value: float) -> float:
     return _clamp(value, minimum=-1.0, maximum=1.0)
 
-
+#y=previous⋅inertia+signal⋅(1−inertia)
 def _smooth(previous: float, signal: float, *, inertia: float = 0.84) -> float:
     inertia = _clamp(inertia, minimum=0.0, maximum=1.0)
     return previous * inertia + signal * (1.0 - inertia)
@@ -42,14 +44,15 @@ class MentalProcess:
     """A low-gain dynamic process, not a stored emotion label."""
 
     name: str
-    level: float = 0.0
-    pressure: float = 0.0
-    activation: float = 0.0
-    volatility: float = 0.20
-    decay_rate: float = 0.08
+    level: float = 0.0 #mức trạng thái hiện tại
+    pressure: float = 0.0 #áp lực tích tụ
+    activation: float = 0.0 #kích hoạt tức thời
+    volatility: float = 0.20 #dễ dao động không
+    decay_rate: float = 0.08 #tự decay nhanh hay chậm
     last_signal: float = 0.0
     last_interaction: float = 0.0
 
+    #tâm trạng không đổi ngay lập tức, nhưng đẩy dần dần
     def evolve(self, *, signal: float = 0.0, interaction: float = 0.0, dt: float = 1.0) -> "MentalProcess":
         dt = max(0.0, min(8.0, float(dt or 1.0)))
         signal = _clamp(signal)
@@ -172,37 +175,37 @@ def _default_process(cls, name: str, *, level: float, pressure: float = 0.0, vol
         decay_rate=_clamp(decay_rate),
     )
 
-
+#Đây là “não giả”.
 @dataclass(slots=True)
 class MentalProcessSystem:
     """Dynamic mental layer whose processes evolve and influence each other."""
 
     curiosity: MentalProcess = field(
-        default_factory=lambda: _default_process(CuriosityProcess, "curiosity", level=0.34, volatility=0.34, decay_rate=0.07)
+        default_factory=lambda: _default_process(CuriosityProcess, "curiosity", level=0.38, volatility=0.30, decay_rate=0.055)
     )
     restraint: MentalProcess = field(
-        default_factory=lambda: _default_process(RestraintProcess, "restraint", level=0.14, volatility=0.22, decay_rate=0.05)
+        default_factory=lambda: _default_process(RestraintProcess, "restraint", level=0.30, pressure=0.08, volatility=0.18, decay_rate=0.038)
     )
     tension: MentalProcess = field(
-        default_factory=lambda: _default_process(TensionProcess, "tension", level=0.08, volatility=0.30, decay_rate=0.09)
+        default_factory=lambda: _default_process(TensionProcess, "tension", level=0.14, pressure=0.04, volatility=0.26, decay_rate=0.072)
     )
     continuity: MentalProcess = field(
-        default_factory=lambda: _default_process(ContinuityProcess, "continuity", level=0.40, volatility=0.16, decay_rate=0.035)
+        default_factory=lambda: _default_process(ContinuityProcess, "continuity", level=0.46, pressure=0.06, volatility=0.13, decay_rate=0.026)
     )
     attachment: MentalProcess = field(
-        default_factory=lambda: _default_process(AttachmentProcess, "attachment", level=0.34, volatility=0.18, decay_rate=0.03)
+        default_factory=lambda: _default_process(AttachmentProcess, "attachment", level=0.30, pressure=0.05, volatility=0.16, decay_rate=0.026)
     )
     reflection: MentalProcess = field(
-        default_factory=lambda: _default_process(ReflectionProcess, "reflection", level=0.18, volatility=0.24, decay_rate=0.06)
+        default_factory=lambda: _default_process(ReflectionProcess, "reflection", level=0.34, pressure=0.07, volatility=0.20, decay_rate=0.040)
     )
     social_presence: MentalProcess = field(
-        default_factory=lambda: _default_process(SocialPresenceProcess, "social_presence", level=0.42, volatility=0.26, decay_rate=0.06)
+        default_factory=lambda: _default_process(SocialPresenceProcess, "social_presence", level=0.30, pressure=0.03, volatility=0.20, decay_rate=0.050)
     )
     cognitive_load: MentalProcess = field(
-        default_factory=lambda: _default_process(CognitiveLoadProcess, "cognitive_load", level=0.10, volatility=0.28, decay_rate=0.08)
+        default_factory=lambda: _default_process(CognitiveLoadProcess, "cognitive_load", level=0.14, pressure=0.03, volatility=0.24, decay_rate=0.070)
     )
     background_thought: MentalProcess = field(
-        default_factory=lambda: _default_process(BackgroundThoughtProcess, "background_thought", level=0.18, volatility=0.32, decay_rate=0.07)
+        default_factory=lambda: _default_process(BackgroundThoughtProcess, "background_thought", level=0.34, pressure=0.08, volatility=0.28, decay_rate=0.045)
     )
 
     def evolve( # cập nhật trạng thái nhận thức dựa trên các tín hiệu và tương tác mới, cũng như thời gian trôi qua
@@ -236,7 +239,7 @@ class MentalProcessSystem:
         switching = _clean_label(getattr(user_signals, "window_switching", ""))
         cpu = _clamp(float(getattr(snapshot, "cpu_percent", 0.0) or 0.0) / 100.0) if snapshot is not None else 0.0
         ram = _clamp(float(getattr(snapshot, "ram_percent", 0.0) or 0.0) / 100.0) if snapshot is not None else 0.0
-        quiet_mode = ti_mode in {"steady_observe", "focus_guard", "system_watch", "pattern_watch", "social_watch", "reengage"}
+        quiet_mode = ti_mode in QUIET_MODES
         protective_mode = ti_mode in {"resource_guard", "goal_drift_alert", "goal_realign", "focus_guard", "system_warning"}
         idle_pull = _clamp(idle_seconds / 900.0)
         fatigue_pull = _clamp(
@@ -247,40 +250,41 @@ class MentalProcessSystem:
         )
         signals = {
             "curiosity": _clamp(
-                0.20
-                + drift * 0.18
+                0.24
+                + drift * 0.22
                 + broadcast_score * 0.24
                 + (0.16 if focus_kind in {"coding", "documentation"} else 0.0)
-                + (0.10 if ti_mode == "pattern_muse" else 0.0)
+                + (0.14 if ti_mode == "pattern_muse" else 0.0)
             ),
             "restraint": _clamp(
-                0.12
-                + (0.24 if quiet_mode else 0.0)
+                0.26
+                + (0.24 if quiet_mode else 0.0) #mệt → restraint tăng
                 + (0.18 if protective_mode else 0.0)
-                + presence_signal * 0.10
-                + fatigue_pull * 0.34
-                + (0.10 if focus_pattern in {"deep_work", "steady", "attentive_listening"} else 0.0)
-                - (0.22 if force_speak else 0.0)
-                - (0.10 if direct_user else 0.0)
+                + presence_signal * 0.06
+                + fatigue_pull * 0.40
+                + (0.14 if focus_pattern in {"deep_work", "steady", "attentive_listening"} else 0.0)
+                - (0.18 if force_speak else 0.0)
+                - (0.07 if direct_user else 0.0)
             ),
             "tension": _clamp(
-                drift * 0.26
-                + broadcast_score * 0.16
+                0.04
+                + drift * 0.30
+                + broadcast_score * 0.14
                 + (0.18 if ni_guard else 0.0)
                 + (0.12 if switching == "high" else 0.0)
                 + (0.12 if sarcasm >= 0.45 else 0.0)
             ),
-            "continuity": _clamp(0.26 + (0.16 if direct_user else 0.0) + presence_signal * 0.12 + idle_pull * 0.08 + warmth * 0.10),
-            "attachment": _clamp(0.24 + (0.24 if direct_user else 0.0) + presence_signal * 0.04 + warmth * 0.28 + (0.10 if force_speak else 0.0)),
-            "reflection": _clamp(0.12 + idle_pull * 0.18 + drift * 0.10 + (0.14 if quiet_mode else 0.0)),
-            "social_presence": _clamp(0.28 + (0.32 if direct_user else 0.0) + presence_signal * 0.30 + warmth * 0.20 + idle_pull * 0.08),
-            "cognitive_load": _clamp(0.08 + fatigue_pull + drift * 0.08 + (0.08 if switching == "high" else 0.0)),
+            "continuity": _clamp(0.34 + (0.18 if direct_user else 0.0) + presence_signal * 0.10 + idle_pull * 0.12 + warmth * 0.08),
+            "attachment": _clamp(0.20 + (0.26 if direct_user else 0.0) + presence_signal * 0.03 + warmth * 0.22 + (0.12 if force_speak else 0.0)),
+            "reflection": _clamp(0.24 + idle_pull * 0.24 + drift * 0.14 + (0.18 if quiet_mode else 0.0)),
+            "social_presence": _clamp(0.20 + (0.30 if direct_user else 0.0) + presence_signal * 0.22 + warmth * 0.16 + idle_pull * 0.06),
+            "cognitive_load": _clamp(0.10 + fatigue_pull + drift * 0.10 + (0.08 if switching == "high" else 0.0)),
             "background_thought": _clamp(
-                0.12
-                + idle_pull * 0.22
-                + (0.12 if channel_name == "autonomous" else 0.0)
-                + (0.10 if focus_pattern in {"absent", "drifting", "passive_consumption"} else 0.0)
-                - (0.16 if direct_user and not force_speak else 0.0)
+                0.24
+                + idle_pull * 0.28
+                + (0.16 if channel_name == "autonomous" else 0.0)
+                + (0.14 if focus_pattern in {"absent", "drifting", "passive_consumption"} else 0.0)
+                - (0.12 if direct_user and not force_speak else 0.0)
             ),
         }
         interactions = self._interactions()
@@ -310,7 +314,7 @@ class MentalProcessSystem:
         channel_name = _clean_label(channel, fallback="autonomous")
         label = _clean_label(winner_label or speech_act)
         surface_topic = _clean_label(getattr(thought_surface, "topic_seed", ""))
-        if was_spoken:
+        if was_spoken: #nói ra rồi thì bớt ám ảnh.
             system = system._dampen_for_speech(label)
             system = MentalProcessSystem(
                 curiosity=system.curiosity,
@@ -359,6 +363,7 @@ class MentalProcessSystem:
             "boredom": _clamp(self.background_thought.pressure * 0.36 + self.social_presence.pressure * 0.16),
         }
 
+    #Nó convert toàn bộ state thành text prompt:
     def to_prompt_context(self) -> str:
         axes = self.legacy_axes()
         dominant = sorted(
@@ -420,34 +425,34 @@ class MentalProcessSystem:
             data = {}
         return cls(
             curiosity=CuriosityProcess.from_dict(
-                data.get("curiosity"), name="curiosity", level=_clamp(legacy.get("curiosity", 0.34)), pressure=_clamp(legacy.get("curiosity_pressure", 0.0))
+                data.get("curiosity"), name="curiosity", level=_clamp(legacy.get("curiosity", 0.38)), pressure=_clamp(legacy.get("curiosity_pressure", 0.04))
             ),
             restraint=RestraintProcess.from_dict(
-                data.get("restraint"), name="restraint", level=_clamp(legacy.get("restraint_pressure", 0.14)), pressure=_clamp(legacy.get("restraint_pressure", 0.0))
+                data.get("restraint"), name="restraint", level=_clamp(legacy.get("restraint_pressure", 0.30)), pressure=_clamp(legacy.get("restraint_pressure", 0.08))
             ),
             tension=TensionProcess.from_dict(
-                data.get("tension"), name="tension", level=_clamp(legacy.get("cognitive_tension", 0.08)), pressure=_clamp(legacy.get("cognitive_tension", 0.0))
+                data.get("tension"), name="tension", level=_clamp(legacy.get("cognitive_tension", 0.14)), pressure=_clamp(legacy.get("cognitive_tension", 0.04))
             ),
             continuity=ContinuityProcess.from_dict(
-                data.get("continuity"), name="continuity", level=0.40, pressure=_clamp(legacy.get("recursive_reactivation_pressure", 0.0))
+                data.get("continuity"), name="continuity", level=0.46, pressure=_clamp(legacy.get("recursive_reactivation_pressure", 0.06))
             ),
             attachment=AttachmentProcess.from_dict(
-                data.get("attachment"), name="attachment", level=_clamp(legacy.get("attachment", 0.34)), pressure=_clamp(legacy.get("tender_pressure", 0.0))
+                data.get("attachment"), name="attachment", level=_clamp(legacy.get("attachment", 0.30)), pressure=_clamp(legacy.get("tender_pressure", 0.05))
             ),
             reflection=ReflectionProcess.from_dict(
-                data.get("reflection"), name="reflection", level=0.18, pressure=_clamp(legacy.get("memory_replay_pressure", 0.0))
+                data.get("reflection"), name="reflection", level=0.34, pressure=_clamp(legacy.get("memory_replay_pressure", 0.07))
             ),
             social_presence=SocialPresenceProcess.from_dict(
-                data.get("social_presence"), name="social_presence", level=_clamp(legacy.get("social_energy", 0.42)), pressure=_clamp(legacy.get("social_pressure", 0.0))
+                data.get("social_presence"), name="social_presence", level=_clamp(legacy.get("social_energy", 0.30)), pressure=_clamp(legacy.get("social_pressure", 0.03))
             ),
             cognitive_load=CognitiveLoadProcess.from_dict(
-                data.get("cognitive_load"), name="cognitive_load", level=_clamp(legacy.get("fatigue", 0.10)), pressure=_clamp(legacy.get("fatigue", 0.0))
+                data.get("cognitive_load"), name="cognitive_load", level=_clamp(legacy.get("fatigue", 0.14)), pressure=_clamp(legacy.get("fatigue", 0.03))
             ),
             background_thought=BackgroundThoughtProcess.from_dict(
                 data.get("background_thought"),
                 name="background_thought",
-                level=_clamp(legacy.get("subconscious_pressure", 0.18)),
-                pressure=_clamp(legacy.get("thought_stream_pressure", legacy.get("subconscious_pressure", 0.0))),
+                level=_clamp(legacy.get("subconscious_pressure", 0.34)),
+                pressure=_clamp(legacy.get("thought_stream_pressure", legacy.get("subconscious_pressure", 0.08))),
             ),
         )
 
@@ -461,16 +466,18 @@ class MentalProcessSystem:
         social = max(self.social_presence.level, self.social_presence.pressure)
         load = max(self.cognitive_load.level, self.cognitive_load.pressure)
         background = max(self.background_thought.level, self.background_thought.pressure)
-        return {
+        return { #Processes ảnh hưởng lẫn nhau: 
+            #background thoughts kích curiosity
+            #restraint suppress curiosity
             "curiosity": background * 0.12 + tension * 0.06 + reflection * 0.05 - restraint * 0.20 - load * 0.12,
-            "restraint": tension * 0.18 + load * 0.24 + reflection * 0.06 - social * 0.08,
+            "restraint": tension * 0.20 + load * 0.24 + reflection * 0.10 - social * 0.06,
             "tension": curiosity * 0.08 + background * 0.16 + load * 0.12 - restraint * 0.09 - reflection * 0.06,
-            "continuity": attachment * 0.12 + reflection * 0.08 + social * 0.05 - tension * 0.04,
-            "attachment": social * 0.12 + continuity * 0.10 - load * 0.05 - tension * 0.03,
-            "reflection": tension * 0.16 + continuity * 0.08 + background * 0.06 - load * 0.04,
-            "social_presence": attachment * 0.14 + continuity * 0.08 - restraint * 0.12 - load * 0.10,
+            "continuity": attachment * 0.10 + reflection * 0.12 + social * 0.04 - tension * 0.03,
+            "attachment": social * 0.10 + continuity * 0.12 - load * 0.05 - tension * 0.04,
+            "reflection": tension * 0.18 + continuity * 0.12 + background * 0.08 - load * 0.04,
+            "social_presence": attachment * 0.12 + continuity * 0.06 - restraint * 0.14 - load * 0.10,
             "cognitive_load": tension * 0.14 + restraint * 0.06 - reflection * 0.05,
-            "background_thought": curiosity * 0.16 + reflection * 0.12 + tension * 0.10 + continuity * 0.04 - restraint * 0.18,
+            "background_thought": curiosity * 0.16 + reflection * 0.16 + tension * 0.10 + continuity * 0.06 - restraint * 0.14,
         }
 
     def _dampen_for_speech(self, label: str) -> "MentalProcessSystem":
@@ -519,21 +526,21 @@ class MentalProcessSystem:
         }
         return mapping.get(_clean_label(label), "social_presence")
 
-
+#predictive emotional modeling.
 @dataclass(slots=True)
 class DesireDynamics:
     """Low-gain wanting layer: preference, avoidance, attachment drift, and residue."""
 
-    want: float = 0.18
-    prefer: float = 0.24
-    cling: float = 0.06
-    avoid: float = 0.05
-    anticipation: float = 0.10
+    want: float = 0.16
+    prefer: float = 0.28
+    cling: float = 0.10
+    avoid: float = 0.12
+    anticipation: float = 0.14
     attraction_charge: float = 0.0
     aversion_charge: float = 0.0
-    unresolved_residue: float = 0.0
-    attachment_heat: float = 0.34
-    attachment_cool: float = 0.10
+    unresolved_residue: float = 0.06
+    attachment_heat: float = 0.30
+    attachment_cool: float = 0.18
     attachment_drift: str = "guarded"
     recurring_attraction: str = ""
     recurring_aversion: str = ""
@@ -758,16 +765,16 @@ class DesireDynamics:
         if not isinstance(data, dict):
             return cls()
         return cls(
-            want=_clamp(data.get("want", 0.18)),
-            prefer=_clamp(data.get("prefer", 0.24)),
-            cling=_clamp(data.get("cling", 0.06)),
-            avoid=_clamp(data.get("avoid", 0.05)),
-            anticipation=_clamp(data.get("anticipation", 0.10)),
+            want=_clamp(data.get("want", 0.16)),
+            prefer=_clamp(data.get("prefer", 0.28)),
+            cling=_clamp(data.get("cling", 0.10)),
+            avoid=_clamp(data.get("avoid", 0.12)),
+            anticipation=_clamp(data.get("anticipation", 0.14)),
             attraction_charge=_clamp(data.get("attraction_charge", 0.0)),
             aversion_charge=_clamp(data.get("aversion_charge", 0.0)),
-            unresolved_residue=_clamp(data.get("unresolved_residue", 0.0)),
-            attachment_heat=_clamp(data.get("attachment_heat", 0.34)),
-            attachment_cool=_clamp(data.get("attachment_cool", 0.10)),
+            unresolved_residue=_clamp(data.get("unresolved_residue", 0.06)),
+            attachment_heat=_clamp(data.get("attachment_heat", 0.30)),
+            attachment_cool=_clamp(data.get("attachment_cool", 0.18)),
             attachment_drift=_clean_label(data.get("attachment_drift"), fallback="guarded"),
             recurring_attraction=_clean_label(data.get("recurring_attraction")),
             recurring_aversion=_clean_label(data.get("recurring_aversion")),
@@ -907,37 +914,53 @@ class DesireDynamics:
             return -1
         return hour if 0 <= hour <= 23 else -1
 
+#Đây là save-state runtime.
+'''
+Nó lưu:
 
+trạng thái liên tục
+recent acts
+recent thought seeds
+pressures
+session rituals
+memory resonance
+
+Mục tiêu:
+
+AI nhớ “flow tâm trí”.
+
+Không chỉ nhớ facts.
+'''
 @dataclass(slots=True)
 class PersistentInternalState:
     """Runtime continuity state, not a claim about real emotion."""
 
-    valence: float = 0.05
-    arousal: float = 0.18
-    curiosity: float = 0.34
-    boredom: float = 0.0
-    social_energy: float = 0.56
-    attachment: float = 0.34
-    irritation: float = 0.08
-    protectiveness: float = 0.10
-    confidence: float = 0.50
-    fatigue: float = 0.10
-    tenderness: float = 0.18
-    silence_pressure: float = 0.0
-    social_pressure: float = 0.0
-    curiosity_pressure: float = 0.0
-    protective_pressure: float = 0.0
-    tender_pressure: float = 0.0
+    valence: float = 0.02
+    arousal: float = 0.16
+    curiosity: float = 0.38
+    boredom: float = 0.04
+    social_energy: float = 0.38
+    attachment: float = 0.30
+    irritation: float = 0.10
+    protectiveness: float = 0.16
+    confidence: float = 0.44
+    fatigue: float = 0.12
+    tenderness: float = 0.16
+    silence_pressure: float = 0.06
+    social_pressure: float = 0.03
+    curiosity_pressure: float = 0.04
+    protective_pressure: float = 0.04
+    tender_pressure: float = 0.03
     playful_pressure: float = 0.0
-    watchful_pressure: float = 0.0
-    restraint_pressure: float = 0.0
-    subconscious_pressure: float = 0.0
-    memory_replay_pressure: float = 0.0
-    association_pressure: float = 0.0
-    thought_stream_pressure: float = 0.0
-    cognitive_tension: float = 0.0
-    unresolved_prediction_pressure: float = 0.0
-    recursive_reactivation_pressure: float = 0.0
+    watchful_pressure: float = 0.05
+    restraint_pressure: float = 0.08
+    subconscious_pressure: float = 0.08
+    memory_replay_pressure: float = 0.05
+    association_pressure: float = 0.05
+    thought_stream_pressure: float = 0.08
+    cognitive_tension: float = 0.06
+    unresolved_prediction_pressure: float = 0.05
+    recursive_reactivation_pressure: float = 0.04
     last_cognition_at: float = 0.0
     last_elapsed_seconds: float = 0.0
     last_memory_resonance: float = 0.0
@@ -1063,32 +1086,32 @@ class PersistentInternalState:
         if not isinstance(data, dict):
             return cls()
         return cls(
-            valence=_clamp_signed(data.get("valence", 0.05)),
-            arousal=_clamp(data.get("arousal", 0.18)),
-            curiosity=_clamp(data.get("curiosity", 0.34)),
-            boredom=_clamp(data.get("boredom", 0.0)),
-            social_energy=_clamp(data.get("social_energy", 0.56)),
-            attachment=_clamp(data.get("attachment", 0.34)),
-            irritation=_clamp(data.get("irritation", 0.08)),
-            protectiveness=_clamp(data.get("protectiveness", 0.10)),
-            confidence=_clamp(data.get("confidence", 0.50)),
-            fatigue=_clamp(data.get("fatigue", 0.10)),
-            tenderness=_clamp(data.get("tenderness", 0.18)),
-            silence_pressure=_clamp(data.get("silence_pressure", 0.0)),
-            social_pressure=_clamp(data.get("social_pressure", 0.0)),
-            curiosity_pressure=_clamp(data.get("curiosity_pressure", 0.0)),
-            protective_pressure=_clamp(data.get("protective_pressure", 0.0)),
-            tender_pressure=_clamp(data.get("tender_pressure", 0.0)),
+            valence=_clamp_signed(data.get("valence", 0.02)),
+            arousal=_clamp(data.get("arousal", 0.16)),
+            curiosity=_clamp(data.get("curiosity", 0.38)),
+            boredom=_clamp(data.get("boredom", 0.04)),
+            social_energy=_clamp(data.get("social_energy", 0.38)),
+            attachment=_clamp(data.get("attachment", 0.30)),
+            irritation=_clamp(data.get("irritation", 0.10)),
+            protectiveness=_clamp(data.get("protectiveness", 0.16)),
+            confidence=_clamp(data.get("confidence", 0.44)),
+            fatigue=_clamp(data.get("fatigue", 0.12)),
+            tenderness=_clamp(data.get("tenderness", 0.16)),
+            silence_pressure=_clamp(data.get("silence_pressure", 0.06)),
+            social_pressure=_clamp(data.get("social_pressure", 0.03)),
+            curiosity_pressure=_clamp(data.get("curiosity_pressure", 0.04)),
+            protective_pressure=_clamp(data.get("protective_pressure", 0.04)),
+            tender_pressure=_clamp(data.get("tender_pressure", 0.03)),
             playful_pressure=_clamp(data.get("playful_pressure", 0.0)),
-            watchful_pressure=_clamp(data.get("watchful_pressure", 0.0)),
-            restraint_pressure=_clamp(data.get("restraint_pressure", 0.0)),
-            subconscious_pressure=_clamp(data.get("subconscious_pressure", 0.0)),
-            memory_replay_pressure=_clamp(data.get("memory_replay_pressure", 0.0)),
-            association_pressure=_clamp(data.get("association_pressure", 0.0)),
-            thought_stream_pressure=_clamp(data.get("thought_stream_pressure", data.get("subconscious_pressure", 0.0))),
-            cognitive_tension=_clamp(data.get("cognitive_tension", data.get("subconscious_pressure", 0.0))),
-            unresolved_prediction_pressure=_clamp(data.get("unresolved_prediction_pressure", 0.0)),
-            recursive_reactivation_pressure=_clamp(data.get("recursive_reactivation_pressure", 0.0)),
+            watchful_pressure=_clamp(data.get("watchful_pressure", 0.05)),
+            restraint_pressure=_clamp(data.get("restraint_pressure", 0.08)),
+            subconscious_pressure=_clamp(data.get("subconscious_pressure", 0.08)),
+            memory_replay_pressure=_clamp(data.get("memory_replay_pressure", 0.05)),
+            association_pressure=_clamp(data.get("association_pressure", 0.05)),
+            thought_stream_pressure=_clamp(data.get("thought_stream_pressure", data.get("subconscious_pressure", 0.08))),
+            cognitive_tension=_clamp(data.get("cognitive_tension", data.get("subconscious_pressure", 0.06))),
+            unresolved_prediction_pressure=_clamp(data.get("unresolved_prediction_pressure", 0.05)),
+            recursive_reactivation_pressure=_clamp(data.get("recursive_reactivation_pressure", 0.04)),
             last_cognition_at=max(0.0, float(data.get("last_cognition_at", 0.0) or 0.0)),
             last_elapsed_seconds=max(0.0, float(data.get("last_elapsed_seconds", 0.0) or 0.0)),
             last_memory_resonance=_clamp(data.get("last_memory_resonance", 0.0)),
@@ -1202,7 +1225,7 @@ class CognitionDelta:
     event_impulse: float = 0.0
     closure_impulse: float = 0.0
 
-
+#Đây là “time drift”.
 class TemporalCognitionEngine:
     """Turns time, memory, unresolved loops, and event impulses into state drift."""
 
@@ -1430,29 +1453,30 @@ class InternalStateEngine:
         boredom_signal = _clamp(boredom_signal)
 
         curiosity_signal = _clamp(
-            0.18
-            + drift * 0.20
+            0.22
+            + drift * 0.24
             + broadcast_score * 0.18
             + (0.14 if focus_kind in {"coding", "documentation"} else 0.0)
-            + (0.08 if ti_mode == "pattern_muse" else 0.0)
+            + (0.12 if ti_mode == "pattern_muse" else 0.0)
             - boredom_signal * 0.12
         )
         curiosity_signal = _clamp(curiosity_signal * 0.76 + mental_axes["curiosity"] * 0.24)
         social_energy_signal = _clamp(
-            0.40
-            + (0.22 if direct_user else 0.0)
-            + presence_intensity * 0.14
-            + warmth * 0.20
-            - boredom_signal * 0.10
-            - (0.10 if focus_pattern in {"stuck", "absent"} else 0.0)
+            0.30
+            + (0.20 if direct_user else 0.0)
+            + presence_intensity * 0.12
+            + warmth * 0.16
+            - boredom_signal * 0.12
+            - (0.12 if focus_pattern in {"stuck", "absent"} else 0.0)
         )
         social_energy_signal = _clamp(social_energy_signal * 0.78 + mental_axes["social_energy"] * 0.22)
         attachment_signal = _clamp(
             state.attachment
-            + (0.10 if direct_user else -0.01)
-            + presence_intensity * 0.04
-            + warmth * 0.12
-            + (0.05 if force_speak else 0.0)
+            + (0.12 if direct_user else -0.015)
+            + presence_intensity * 0.03
+            + warmth * 0.10
+            + (0.06 if force_speak else 0.0)
+            - state.restraint_pressure * 0.03
         )
         attachment_signal = _clamp(attachment_signal * 0.78 + mental_axes["attachment"] * 0.22)
         irritation_signal = _clamp(
@@ -1478,11 +1502,12 @@ class InternalStateEngine:
         )
         fatigue_signal = _clamp(fatigue_signal * 0.80 + mental_axes["fatigue"] * 0.20)
         tenderness_signal = _clamp(
-            0.08
-            + warmth * 0.50
-            + attachment_signal * 0.26
+            0.06
+            + warmth * 0.42
+            + attachment_signal * 0.24
             + (0.08 if channel_name in {"chat", "force_speak"} else 0.0)
             - irritation_signal * 0.12
+            - state.restraint_pressure * 0.04
         )
         tenderness_signal = _clamp(tenderness_signal * 0.82 + mental_axes["tenderness"] * 0.18)
         silence_signal = _clamp(
@@ -1494,31 +1519,32 @@ class InternalStateEngine:
         )
         silence_signal = _clamp(silence_signal * 0.78 + mental_axes["silence_pressure"] * 0.22)
         valence_signal = _clamp_signed(
-            0.10
-            + warmth * 0.18
+            0.04
+            + warmth * 0.16
             + tenderness_signal * 0.18
             + curiosity_signal * 0.08
             - irritation_signal * 0.24
             - fatigue_signal * 0.18
+            - state.cognitive_tension * 0.04
         )
         arousal_signal = _clamp(
-            0.16
-            + drift * 0.20
+            0.14
+            + drift * 0.22
             + broadcast_score * 0.24
-            + (0.16 if direct_user else 0.0)
+            + (0.14 if direct_user else 0.0)
             + (0.10 if switching == "high" else 0.0)
         )
-        quiet_mode = ti_mode in {"steady_observe", "focus_guard", "system_watch", "pattern_watch", "social_watch", "reengage"}
+        quiet_mode = ti_mode in QUIET_MODES
         protective_mode = ti_mode in {"resource_guard", "goal_drift_alert", "goal_realign", "focus_guard", "system_warning"}
         social_pressure_signal = _clamp(
             state.social_pressure
-            + silence_signal * 0.18
+            + silence_signal * 0.16
             + attachment_signal * 0.10
-            + social_energy_signal * 0.08
+            + social_energy_signal * 0.05
             + (0.18 if force_speak else 0.0)
-            + (0.07 if direct_user else 0.0)
+            + (0.05 if direct_user else 0.0)
             - presence_intensity * 0.14
-            - fatigue_signal * 0.08
+            - fatigue_signal * 0.10
         )
         curiosity_pressure_signal = _clamp(
             state.curiosity_pressure
@@ -1559,21 +1585,22 @@ class InternalStateEngine:
         )
         restraint_pressure_signal = _clamp(
             state.restraint_pressure
-            + (0.18 if quiet_mode else 0.0)
-            + presence_intensity * 0.12
-            + fatigue_signal * 0.16
-            + (0.10 if focus_pattern in {"deep_work", "steady", "attentive_listening"} else 0.0)
-            - (0.14 if force_speak else 0.0)
-            - (0.08 if direct_user else 0.0)
+            + 0.03
+            + (0.20 if quiet_mode else 0.0)
+            + presence_intensity * 0.08
+            + fatigue_signal * 0.18
+            + (0.12 if focus_pattern in {"deep_work", "steady", "attentive_listening"} else 0.0)
+            - (0.12 if force_speak else 0.0)
+            - (0.05 if direct_user else 0.0)
         )
         restraint_pressure_signal = _clamp(restraint_pressure_signal * 0.70 + mental_axes["restraint_pressure"] * 0.30)
         subconscious_signal = _clamp(
             state.subconscious_pressure
-            + (0.16 if channel_name == "autonomous" and idle_seconds >= 90 else 0.0)
-            + boredom_signal * 0.22
-            + curiosity_signal * 0.10
-            - (0.18 if direct_user else 0.0)
-            - restraint_pressure_signal * 0.08
+            + (0.18 if channel_name == "autonomous" and idle_seconds >= 90 else 0.0)
+            + boredom_signal * 0.24
+            + curiosity_signal * 0.12
+            - (0.14 if direct_user else 0.0)
+            - restraint_pressure_signal * 0.06
         )
         subconscious_signal = _clamp(subconscious_signal * 0.68 + mental_axes["subconscious_pressure"] * 0.32)
         memory_replay_signal = _clamp(

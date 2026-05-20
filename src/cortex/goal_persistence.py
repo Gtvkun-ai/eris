@@ -4,7 +4,7 @@ import unicodedata
 
 from dataclasses import dataclass
 
-
+#Ép mọi giá trị số về khoảng 0.0 -> 1.0
 def _clamp01(value) -> float:
     try:
         numeric = float(value)
@@ -59,6 +59,7 @@ def _tokens(value: object) -> set[str]:
     }
 
 
+#Thêm summary mới vào danh sách gần đây, chỉ giữ tối đa 8 cái.
 def _append_recent(items: tuple[str, ...], value: str, *, limit: int = 8) -> tuple[str, ...]:
     text = _clean_text(value, limit=140)
     if not text:
@@ -70,24 +71,25 @@ def _append_recent(items: tuple[str, ...], value: str, *, limit: int = 8) -> tup
 class GoalPersistenceState:
     """A long-lived problem ERIS is tracking across events."""
 
-    goal_id: str = ""
-    summary: str = ""
+    goal_id: str = "" 
+    summary: str = "" #Nội dung goal
     source: str = ""
-    status: str = "empty"
-    strength: float = 0.0
-    urgency: float = 0.0
-    drift: float = 0.0
-    progress: float = 0.0
-    recurrence_count: int = 0
+    status: str = "empty" #empty, active, stale, closed
+    strength: float = 0.0 #Goal mạnh tới đâu
+    urgency: float = 0.0 #Độ khẩn
+    drift: float = 0.0 #Mức lệch khỏi mục tiêu
+    progress: float = 0.0 #Mức độ đã hoàn thành goal, 0.0 -> 1.0
+    recurrence_count: int = 0 #Goal này lặp lại bao nhiêu lần
     created_at: float = 0.0
     updated_at: float = 0.0
     last_reactivated_at: float = 0.0
-    next_hint: str = ""
-    evidence: tuple[str, ...] = ()
+    next_hint: str = "" #Gợi ý dùng goal này về sau
+    evidence: tuple[str, ...] = () #Bằng chứng vì sao goal được giữ
     recent_summaries: tuple[str, ...] = ()
 
     @property
     def active(self) -> bool:
+        #Tức goal yếu quá thì không được tính là active. Đỡ kiểu “nhớ dai như thù vặt”
         return self.status == "active" and bool(self.summary) and self.strength >= 0.18
 
     def to_dict(self) -> dict[str, object]:
@@ -131,6 +133,7 @@ class GoalPersistenceState:
             recent_summaries=tuple(str(item) for item in (data.get("recent_summaries") or ()) if str(item or "").strip())[-8:],
         )
 
+    #Hàm này tạo text nhét vào prompt.
     def render_prompt_context(self) -> str:
         if not self.active:
             return "goal_persistence: none active."
@@ -162,11 +165,11 @@ class GoalPersistenceEngine:
         "muc tieu",
         "van de",
         "cognition",
-        "he thong",
-        "tiep tuc",
-        "sua",
-        "them",
-        "lam",
+        "hệ thống",
+        "tiếp tục",
+        "sửa",
+        "thêm",
+        "làm",
     )
     CLOSURE_MARKERS = (
         "done",
@@ -177,9 +180,9 @@ class GoalPersistenceEngine:
         "completed",
         "close_goal",
         "xong",
-        "da xong",
-        "giai quyet",
-        "dong lai",
+        "đã xong",
+        "giải quyết",
+        "đóng goal",
     )
 
     def update(
@@ -210,7 +213,7 @@ class GoalPersistenceEngine:
         )
         if self._has_closure(user_text, thought_stream_report=thought_stream_report) and base.active:
             user_tokens = _tokens(user_text)
-            if len(user_tokens) <= 3 or self._matches(base.summary, user_text):
+            if len(user_tokens) <= 3 or self._matches(base.summary, user_text): #Nếu câu đóng goal ngắn hoặc có nhiều token chung với summary của goal thì mới đóng, tránh trường hợp người dùng nói "xong" nhưng không phải là xong cái goal đang theo dõi.
                 return self._close(base, now=current_time, evidence="closure_signal")
         if candidate is None:
             return self._decay(base, now=current_time)
@@ -229,6 +232,7 @@ class GoalPersistenceEngine:
         force_speak: bool,
     ) -> dict[str, object] | None:
         direct_user = channel in {"chat", "force_speak"} or force_speak or bool((user_text or "").strip())
+        #Tức user nói càng giống việc cần làm thì goal càng mạnh.
         if direct_user and self._looks_goal_worthy(user_text):
             drift = _clamp01(getattr(ni_report, "drift_score", 0.0))
             return {
@@ -243,6 +247,7 @@ class GoalPersistenceEngine:
 
         momentum = getattr(thought_stream_report, "momentum", None)
         if (
+            #nếu hệ thống thấy não/agent cứ bị kéo về một chủ đề, nó lưu chủ đề đó
             momentum is not None
             and str(getattr(momentum, "affordance", "") or "") == "attention"
             and _clamp01(getattr(momentum, "score", 0.0)) >= 0.58
@@ -260,6 +265,7 @@ class GoalPersistenceEngine:
 
         attractor = getattr(thought_stream_report, "active_attractor", None)
         if (
+            #attractor giống “vòng lặp chưa giải quyết” hơn
             attractor is not None
             and bool(getattr(attractor, "attractor", False))
             and _clamp01(getattr(attractor, "score", 0.0)) >= 0.64
@@ -274,7 +280,7 @@ class GoalPersistenceEngine:
                 "next_hint": "pull cognition back to this unresolved loop when affordance is available",
                 "evidence": tuple(getattr(attractor, "evidence", ()) or ())[:6],
             }
-
+        #Nó lấy nội dung từ broadcast.content hoặc snapshot.focus_summary, rồi tạo goal để giữ vấn đề gốc không bị trôi.
         if str(getattr(ti_report, "mode", "") or "") in {"goal_drift_alert", "goal_realign"}:
             content = _clean_text(getattr(broadcast, "content", "") or getattr(snapshot, "focus_summary", ""), limit=140)
             if content:
@@ -295,7 +301,7 @@ class GoalPersistenceEngine:
         summary = _clean_text(candidate.get("summary"), limit=180) #Lấy summary goal mới.
         if not summary:
             return self._decay(state, now=now)
-        matched = state.active and self._matches(state.summary, summary) #goal mới có giống goal cũ không?
+        matched = state.active and self._matches(state.summary, summary) #Nó hợp nhất goal mới với goal đang tồn tại.
         previous_strength = state.strength if matched else min(state.strength * 0.42, 0.30)
         strength = _clamp01(max(previous_strength, float(candidate.get("strength", 0.0) or 0.0)) + (0.08 if matched else 0.0))
         urgency = _clamp01(max(state.urgency * (0.86 if matched else 0.52), float(candidate.get("urgency", 0.0) or 0.0)))
@@ -327,6 +333,7 @@ class GoalPersistenceEngine:
             recent_summaries=_append_recent(state.recent_summaries, summary),
         )
 
+    #Nếu không có candidate mới, goal cũ suy giảm theo thời gian:
     def _decay(self, state: GoalPersistenceState, *, now: float) -> GoalPersistenceState:
         if not state.summary:
             return state
@@ -335,7 +342,7 @@ class GoalPersistenceEngine:
         strength = _clamp01(state.strength * keep)
         status = state.status
         if strength < 0.12 and state.status == "active":
-            status = "stale"
+            status = "stale" #Nghĩa là goal không biến mất ngay, nhưng yếu dần. Đây là memory decay
         return GoalPersistenceState(
             goal_id=state.goal_id,
             summary=state.summary,
@@ -354,6 +361,7 @@ class GoalPersistenceEngine:
             recent_summaries=state.recent_summaries,
         )
 
+    #Đóng goal khi có tín hiệu hoàn tất.
     def _close(self, state: GoalPersistenceState, *, now: float, evidence: str) -> GoalPersistenceState:
         return GoalPersistenceState(
             goal_id=state.goal_id,

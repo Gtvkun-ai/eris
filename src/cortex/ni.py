@@ -6,7 +6,19 @@ import unicodedata
 
 from .contracts import GoalDriftReport, TelemetrySnapshot
 
+'''
+ERIS liên tục nhìn:
 
+đang mở app gì,
+tab browser gì,
+idle bao lâu,
+focus hiện tại là coding/game/chat,
+text user đang nói,
+memory gần đây.
+Rồi hỏi:
+“Người dùng hiện tại còn nằm trên quỹ đạo meaningful focus không?”
+“Runtime hiện đang tập trung hay đang trôi?”
+'''
 DEFAULT_FOCUS_BIAS = {
     "coding": {"bias": 0.10, "scale": 1.0},
     "documentation": {"bias": 0.08, "scale": 1.0},
@@ -161,6 +173,7 @@ class NiEngine:
             vector_method="attention_signal_local",
         )
 
+    #Đây là lõi Ni.
     def _estimate_attention_signal(
         self,
         *,
@@ -181,10 +194,12 @@ class NiEngine:
         normalized = _normalize_for_tokens(combined)
         kind = snapshot.active_window_kind or "general"
 
+        #baseline theo loại activity
         signal = self._focus_kind_baseline(kind)
         signal_channels: dict[str, float] = {"baseline": signal}
         evidence = [f"focus_kind={kind}", f"baseline={signal:.2f}"]
 
+        #Nó scan keyword.
         text_adjust = self._focus_text_adjustment(normalized, focus_kind=kind)
         if text_adjust:
             signal += text_adjust
@@ -243,6 +258,7 @@ class NiEngine:
             adjust += 0.04 if focus_kind == "communication" else 0.02
         return adjust
 
+    #Nếu idle lâu: coding idle → phạt mạnh, communication idle → phạt nhẹ hơn
     def _idle_adjustment(self, idle_seconds: float, *, focus_kind: str) -> float:
         idle = float(idle_seconds or 0.0)
         if focus_kind == "communication":
@@ -259,6 +275,7 @@ class NiEngine:
             return -0.06
         return 0.0
 
+    #Tức file này đang làm thứ khá giống “cognitive entropy estimator”. Nếu mở nhiều cửa sổ → phạt nhẹ vì có thể đang đa nhiệm, nhưng nếu đang tập trung vào communication thì không phạt vì có thể đang chat với đồng đội.
     def _window_sprawl_adjustment(self, open_window_count: int, *, focus_kind: str) -> float:
         if focus_kind == "communication":
             return 0.0
@@ -290,6 +307,12 @@ class NiEngine:
             return "vừa"
         return "thấp"
 
+    #Ta có chắc về đánh giá drift này không?” 
+    # Nếu có focus summary và active window → tăng tự tin. 
+    # Nếu có signal rõ ràng từ current text và browsing → tăng tự tin. 
+    # Nếu có nhiều evidence → tăng tự tin. 
+    # Nếu drift_score cao → giảm tự tin. 
+    # Nếu không có focus hay window nào rõ ràng → giảm tự tin.
     def _estimate_confidence(
         self,
         *,
@@ -365,6 +388,7 @@ class NiEngine:
             lines.append(f"Bám vào: {' | '.join(evidence[:3])}.")
         return "\n".join(lines)
 
+    #self-observing cognition telemetry loop. Ta log lại các sample này để sau này có thể phân tích xem cái gì đang trigger drift, có pattern gì không, và có thể cải thiện model sau này.
     def _log_drift_sample(
         self,
         *,
@@ -415,6 +439,7 @@ class NiStateMachine:
         report: GoalDriftReport,
     ) -> dict[str, object]:
         now = time.time()
+        #lưu lịch sử drift.
         self._recent_scores.append((now, report.drift_score))
         cutoff = now - self.window_seconds
         self._recent_scores = [(t, s) for (t, s) in self._recent_scores if t >= cutoff][-self.max_recent :]

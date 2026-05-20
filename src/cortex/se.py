@@ -88,12 +88,14 @@ class SeLens:
     def __init__(self):
         self._context_overrides = self._load_context_overrides()
 
+    #raw dict vào, snapshot có nghĩa đi ra.
     def build_snapshot(self, raw: dict) -> TelemetrySnapshot:
         active_window = str(raw.get("active_window", "") or raw.get("active_app", "") or "Desktop")
         active_app = str(raw.get("active_app", "") or active_window)
         browser_url = str(raw.get("browser_url", "") or "")
         browser_tabs = self._normalize_string_tuple(raw.get("browser_tabs", ()))
         open_windows = self._normalize_string_tuple(raw.get("open_windows", ()))
+        #Phân loại bối cảnh
         active_window_kind = self._classify_window_kind(active_window, browser_url, browser_tabs)
         idle_seconds = float(raw.get("idle_seconds", 0.0) or 0.0)
         cpu_percent = float(raw.get("cpu_percent", 0.0) or 0.0)
@@ -219,6 +221,7 @@ class SeLens:
         ]
         return "\n".join(lines)
 
+    #tạo context nhẹ cho LLM:
     def format_directive_snapshot(self, snapshot: TelemetrySnapshot) -> str:
         lines = [
             "Ambient cues from runtime. Keep them mostly invisible in the reply.",
@@ -411,6 +414,7 @@ class SeLens:
             return "fragmented"
         return "steady"
 
+    #tạo bằng chứng dạng text:
     def _build_evidence(
         self,
         *,
@@ -474,6 +478,7 @@ class SeLens:
             return canonical
         return self._CLAIM_STYLE_ALIASES.get(normalized.lower(), "OBSERVED_PATTERN")
 
+    #Phân loại cửa sổ
     def _classify_window_kind(self, active_window: str, browser_url: str, browser_tabs: tuple[str, ...]) -> str:
         active_haystack = " | ".join((active_window, browser_url)).lower()
         tabs_haystack = " | ".join(browser_tabs).lower()

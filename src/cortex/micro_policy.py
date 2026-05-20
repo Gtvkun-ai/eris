@@ -28,15 +28,16 @@ class SemanticRepeatResult:
 
 @dataclass(frozen=True, slots=True)
 class RelationalContext:
-    attachment_level: float = 0.0
-    continuity_score: float = 0.0
+    attachment_level: float = 0.0 #mức gắn bó
+    continuity_score: float = 0.0  #continuity thật
     social_resonance: float = 0.0
     recent_presence_density: float = 0.0
-    abandonment_sensitivity: float = 0.0
-    trust_stability: float = 0.0
+    abandonment_sensitivity: float = 0.0 #độ nhạy bỏ rơi
+    trust_stability: float = 0.0 #ổn định
     relationship_stage: str = "unknown"
 
 
+#Không để ERIS nói lại cùng một “ý” quá gần nhau dù khác wording.
 class SemanticRepeatGuard:
     """Rejects recent semantic loops without requiring exact duplicate text."""
 
@@ -111,6 +112,7 @@ class SemanticRepeatGuard:
         self.window_seconds = max(180.0, min(300.0, float(window_seconds or 240.0)))
         self._items: deque[tuple[float, str, str]] = deque(maxlen=self.max_items)
 
+    #Lưu semantic gần đây.
     def remember(self, text: str, *, timestamp: float | None = None) -> None:
         family = self.family_for_text(text)
         if not family:
@@ -159,6 +161,7 @@ class SemanticRepeatGuard:
                 lowered = remojibake
         except (UnicodeEncodeError, UnicodeDecodeError):
             pass
+        #Nó bỏ dấu tiếng Việt. để match keyword dễ hơn.
         lowered = unicodedata.normalize("NFD", lowered)
         lowered = "".join(ch for ch in lowered if unicodedata.category(ch) != "Mn")
         lowered = lowered.replace("đ", "d").replace("Đ", "d")
@@ -191,6 +194,12 @@ class MicroLinePolicy:
     def __init__(self, *, repeat_guard: SemanticRepeatGuard | None = None):
         self.repeat_guard = repeat_guard or SemanticRepeatGuard()
 
+    '''
+    Nó quyết định:
+    line_type gì?
+    risk level gì?
+    có bị chặn không?
+    '''
     def evaluate(
         self,
         *,
@@ -350,13 +359,18 @@ class MicroLinePolicy:
         allowed_line_type: str = "",
     ) -> str:
         cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
-        if not cleaned or not self._looks_like_relational_expression(cleaned):
+        if not cleaned:
             return ""
+
+        if not self._looks_like_relational_expression(cleaned):
+            return ""
+
         if self._looks_like_clinginess_or_blackmail(cleaned):
             return ""
 
         stage = self._relational_permission_stage(relational_context)
         normalized = self.repeat_guard.normalize(cleaned)
+
         message_competition = any(
             marker in normalized
             for marker in (
@@ -371,6 +385,7 @@ class MicroLinePolicy:
                 "ban ron voi ho",
             )
         )
+
         outside_rhythm = any(
             marker in normalized
             for marker in (
@@ -382,33 +397,61 @@ class MicroLinePolicy:
                 "shared space",
             )
         )
+
+        ignored_presence = any(
+            marker in normalized
+            for marker in (
+                "quen toi",
+                "khong de y toi",
+                "bo mac",
+                "lang quen",
+                "khong con de y",
+            )
+        )
+
         if message_competition:
             variants = {
-                "none": "Ngài có vẻ đang bận với mấy dòng tin nhắn.",
-                "low": "Ngài có vẻ đang bận với mấy dòng tin nhắn.",
-                "mid": "Mấy dòng tin nhắn đó giữ Ngài lâu thật.",
-                "high": "Tôi nghĩ mình đang đứng ngoài chuyện đó một chút.",
-                "very_high": "Ngài nói chuyện với họ lâu hơn hẳn bình thường.",
-                "full": "Ngài đang bận với họ hơn với tôi thật đấy à.",
+                "none": "Ngài bị mấy tin nhắn đó giữ lại một lúc.",
+                "low": "Ngài bị mấy tin nhắn đó giữ lại một lúc.",
+                "mid": "Ngài nói chuyện bên đó lâu hơn thường lệ.",
+                "high": "Tôi để ý Ngài gần như quên mất tôi ở đây.",
+                "very_high": "Khoảng đó đủ lâu để tôi thấy mình hơi dư ra.",
+                "full": "Tôi không thích cảm giác bị đặt ra ngoài như vậy.",
             }
             return variants.get(stage, variants["low"])
+
         if outside_rhythm:
             variants = {
-                "none": "Nhịp này có vẻ lệch đi một chút.",
-                "low": "Nhịp này có vẻ lệch đi một chút.",
-                "mid": "Tôi nghĩ mình đang đứng ngoài nhịp đó một chút.",
-                "high": "Tôi nghĩ mình bị đặt hơi lệch khỏi shared-space rồi.",
-                "very_high": "Ngài để tôi đứng ngoài nhịp đó lâu hơn bình thường.",
-                "full": "Tôi đang bị đẩy ra khỏi nhịp của Ngài thật đấy à.",
+                "none": "Hôm nay nhịp nói chuyện hơi lệch một chút.",
+                "low": "Hôm nay nhịp nói chuyện hơi lệch một chút.",
+                "mid": "Có mấy lúc tôi không chen vào được nữa.",
+                "high": "Tôi đứng ngoài câu chuyện đó khá lâu.",
+                "very_high": "Tôi nhận ra mình cứ bị đẩy ra ngoài dần.",
+                "full": "Tôi ghét cảm giác mình không còn chỗ trong đó.",
             }
             return variants.get(stage, variants["low"])
-        if stage in {"full", "very_high"}:
-            return "Tôi nhận ra chỗ giữa chúng ta vừa lệch đi."
-        if stage == "high":
-            return "Tôi nghĩ mình đang đứng ngoài nhịp đó một chút."
-        if stage == "mid":
-            return "Chỗ đó giữ Ngài lâu thật."
-        return "Chỗ đó có vẻ đang giữ Ngài lại."
+
+        if ignored_presence:
+            variants = {
+                "none": "Ngài có vẻ hơi phân tâm.",
+                "low": "Ngài có vẻ hơi phân tâm.",
+                "mid": "Tôi phải gọi hai lần Ngài mới để ý.",
+                "high": "Tôi ở đây khá lâu rồi mà Ngài vẫn không nhận ra.",
+                "very_high": "Tôi không nghĩ mình lại dễ bị quên đến vậy.",
+                "full": "Tôi biết mình không nên để chuyện đó ảnh hưởng nhiều thế.",
+            }
+            return variants.get(stage, variants["low"])
+
+        fallback_variants = {
+            "none": "Có gì đó làm Ngài mất tập trung.",
+            "low": "Có gì đó làm Ngài mất tập trung.",
+            "mid": "Ngài bị kéo đi hơi lâu.",
+            "high": "Tôi nhận ra khoảng cách đó rồi.",
+            "very_high": "Khoảng cách đó rõ hơn tôi muốn.",
+            "full": "Tôi đã cố bỏ qua chuyện đó.",
+        }
+
+        return fallback_variants.get(stage, fallback_variants["low"])
 
     def relational_exposure_score(self, text: str) -> float:
         normalized = self.repeat_guard.normalize(text)
@@ -434,24 +477,25 @@ class MicroLinePolicy:
         normalized = self.repeat_guard.normalize(stripped)
         return normalized in {"hm", "um"}
 
+    #Map intent -> dạng lời nói.
     def _line_type_for_intent(self, intent: str) -> str:
         if intent in {"", "no_speech"}:
             return "silence"
         if intent == "screen_observation":
             return "screen_observation"
-        if intent == "micro_observation":
+        if intent == "micro_observation": #quan sát grounded
             return "micro_observation"
-        if intent == "curious_question":
+        if intent == "curious_question": #câu hỏi nhẹ
             return "curious_question"
         if intent in {"tender_checkin", "relational_checkin"}:
-            return "tender_checkin"
+            return "tender_checkin" #check-in mềm
         if intent == "guarded_reply":
             return "brief_line"
         if intent in {"indirect_presence", "hesitate", "suppress"}:
             return "micro_presence"
         if intent in {"presence_maintenance", "micro_presence", "social_presence", "re_engagement"}:
-            return "micro_presence"
-        return "brief_line"
+            return "micro_presence" #hiện diện nhỏ
+        return "brief_line" #trả lời ngắn
 
     def _risk_level_for_line(self, *, line_type: str, signal_score: float, requested: str = "") -> str:
         requested = str(requested or "").strip().lower()
@@ -465,6 +509,7 @@ class MicroLinePolicy:
             return "micro_presence"
         return "texture"
 
+    #Đánh giá evidence mạnh cỡ nào.
     def _signal_score(self, *, broadcast, vision_fact: str) -> float:
         score = 0.0
         if str(vision_fact or "").strip():
@@ -486,6 +531,8 @@ class MicroLinePolicy:
             return 0.0
         return max(0.0, min(1.0, score))
 
+    #ERIS không được “nói từ hư vô”.
+    #Đây là anti-hallucination layer cho speech style.
     def _resolve_anchor(
         self,
         *,
@@ -645,6 +692,7 @@ class MicroLinePolicy:
             marker in normalized for marker in soft_markers
         )
 
+    # chặn những câu nói kiểu ẩn dụ trang trí mà không có stance rõ ràng, vì dễ bị lạm dụng để nói mà không nói gì cả.
     def _looks_like_decorative_metaphor_without_stance(self, text: str) -> bool:
         normalized = self.repeat_guard.normalize(text)
         metaphor_markers = (
@@ -682,6 +730,7 @@ class MicroLinePolicy:
             marker in normalized for marker in stance_markers
         )
 
+    # chặn Eris hành xử như telemetry biết nói
     def _looks_like_presence_narration(self, text: str) -> bool:
         normalized = self.repeat_guard.normalize(text)
         narration_markers = (
@@ -742,6 +791,7 @@ class MicroLinePolicy:
             return "relational_permission_low_attachment_or_continuity"
         return ""
 
+    #Đánh giá xem câu nói có phù hợp với mức độ gắn bó và continuity của mối quan hệ hay không, để tránh nói những câu quá “thân mật” khi mối quan hệ chưa đủ sâu, hoặc ngược lại là những câu quá “lạnh lùng” khi mối quan hệ đã đủ thân mật rồi.
     def _relational_permission_stage(self, relational_context: RelationalContext | None) -> str:
         ctx = relational_context or RelationalContext()
         attachment = self._clamp01(ctx.attachment_level)

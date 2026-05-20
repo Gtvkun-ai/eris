@@ -59,6 +59,7 @@ class SocialPresenceDetector:
         timestamp: str = "",
     ) -> SocialPresenceEvent:
         channel_name = _clean(channel) or "autonomous"
+        #Nếu user đang thật sự nói chuyện thì khỏi cần đo presence nền
         if channel_name not in self.NON_CHAT_CHANNELS or force_speak or _clean(user_text):
             return SocialPresenceEvent(timestamp=timestamp)
 
@@ -75,10 +76,10 @@ class SocialPresenceDetector:
         evidence: list[str] = []
         if idle_seconds <= 12:
             score += 0.30
-            evidence.append("recent_activity")
+            evidence.append("recent_activity") #user gần như chắc chắn còn đó
         elif idle_seconds <= 90:
             score += 0.18
-            evidence.append(f"short_idle={int(idle_seconds)}s")
+            evidence.append(f"short_idle={int(idle_seconds)}s") #vẫn còn hiện diện nhẹ
 
         if typing_speed in self.ACTIVE_TYPING:
             score += 0.28
@@ -111,10 +112,10 @@ class SocialPresenceDetector:
 
         if idle_seconds >= 300 and not matched_event:
             score -= 0.22
-            evidence.append(f"long_idle={int(idle_seconds)}s")
+            evidence.append(f"long_idle={int(idle_seconds)}s") #bắt đầu xem như rời khỏi shared space
         if idle_seconds >= 900:
             score -= 0.18
-            evidence.append(f"very_long_idle={int(idle_seconds)}s")
+            evidence.append(f"very_long_idle={int(idle_seconds)}s") #gần như biến mất khỏi cognitive room.
 
         confidence = _clamp(score)
         present = confidence >= 0.38
@@ -137,7 +138,7 @@ class SocialPresenceDetector:
             reason="Non-chat activity suggests the user remains in the same cognitive space.",
             evidence=tuple(dict.fromkeys(evidence))[:6],
             timestamp=timestamp,
-            speech_allowed=False,
+            speech_allowed=False, #“Có mặt không đồng nghĩa được phép lên tiếng.”
         )
 
     def _looks_like_presence_event(self, event: str) -> bool:
