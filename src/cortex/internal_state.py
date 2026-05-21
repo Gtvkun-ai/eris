@@ -966,6 +966,7 @@ class PersistentInternalState:
     last_memory_resonance: float = 0.0
     last_unresolved_tension: float = 0.0
     last_event_impulse: float = 0.0
+    last_social_presence_present: bool = False
     last_social_presence_confidence: float = 0.0
     last_social_presence_intensity: float = 0.0
     last_session_ritual_at: float = 0.0
@@ -1041,6 +1042,7 @@ class PersistentInternalState:
             "last_memory_resonance": round(float(self.last_memory_resonance), 3),
             "last_unresolved_tension": round(float(self.last_unresolved_tension), 3),
             "last_event_impulse": round(float(self.last_event_impulse), 3),
+            "last_social_presence_present": bool(self.last_social_presence_present),
             "last_social_presence_confidence": round(float(self.last_social_presence_confidence), 3),
             "last_social_presence_intensity": round(float(self.last_social_presence_intensity), 3),
             "last_session_ritual_at": round(float(self.last_session_ritual_at), 3),
@@ -1117,6 +1119,7 @@ class PersistentInternalState:
             last_memory_resonance=_clamp(data.get("last_memory_resonance", 0.0)),
             last_unresolved_tension=_clamp(data.get("last_unresolved_tension", 0.0)),
             last_event_impulse=_clamp(data.get("last_event_impulse", 0.0)),
+            last_social_presence_present=bool(data.get("last_social_presence_present", False)),
             last_social_presence_confidence=_clamp(data.get("last_social_presence_confidence", 0.0)),
             last_social_presence_intensity=_clamp(data.get("last_social_presence_intensity", 0.0)),
             last_session_ritual_at=max(0.0, float(data.get("last_session_ritual_at", 0.0) or 0.0)),
@@ -1446,7 +1449,7 @@ class InternalStateEngine:
         boredom_signal = 0.0
         if channel_name == "autonomous":
             boredom_signal += min(0.44, idle_seconds / 1800.0)
-        if focus_kind in {"general", "entertainment"} and idle_seconds >= 240:
+        if focus_kind in {"general", "entertainment", "focus_aid_media"} and idle_seconds >= 240:
             boredom_signal += 0.12
         if focus_pattern in {"passive_consumption", "absent"}:
             boredom_signal += 0.10
@@ -1696,6 +1699,7 @@ class InternalStateEngine:
             last_memory_resonance=state.last_memory_resonance,
             last_unresolved_tension=state.last_unresolved_tension,
             last_event_impulse=state.last_event_impulse,
+            last_social_presence_present=presence_present,
             last_social_presence_confidence=presence_confidence,
             last_social_presence_intensity=presence_intensity,
             last_channel=channel_name,
@@ -1889,6 +1893,7 @@ class InternalStateEngine:
             last_memory_resonance=state.last_memory_resonance,
             last_unresolved_tension=state.last_unresolved_tension,
             last_event_impulse=state.last_event_impulse,
+            last_social_presence_present=state.last_social_presence_present,
             last_social_presence_confidence=state.last_social_presence_confidence,
             last_social_presence_intensity=state.last_social_presence_intensity,
             last_channel=channel_name,

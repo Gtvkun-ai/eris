@@ -831,7 +831,7 @@ public partial class UdpListener : Node2D
 		if (payload.ShouldSpeak && (payload.HasTextField || !payload.ParsedJson) && !string.IsNullOrWhiteSpace(payload.Text))
 			ApplyTypewriterEffect(payload.Text);
 
-		if (EnableLegacyRemoteMotionCommands && payload.HasRemoteMotion)
+		if (payload.HasExplicitMotion || (EnableLegacyRemoteMotionCommands && payload.HasRemoteMotion))
 			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
 	}
 

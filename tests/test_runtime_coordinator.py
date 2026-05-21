@@ -453,7 +453,11 @@ class _SearchActionExecutor:
 
 
 class RuntimeCoordinatorTests(unittest.TestCase):
+    def setUp(self):
+        os.environ["ERIS_GUARD_MODE"] = "strict"
+
     def _make_coordinator(self, **overrides):
+        os.environ["ERIS_GUARD_MODE"] = overrides.pop("guard_mode", "strict")
         params = {
             "logger": _DummyLogger(),
             "transport": _DummyTransport(),
@@ -672,6 +676,22 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "direct_action")
         self.assertIn("hỏi lại cùng một ý", coordinator.transport.sent[-1]["text"].lower())
 
+    def test_chat_final_guard_allows_sharp_identity_boundary_without_real_risk(self):
+        coordinator = self._make_coordinator()
+        decision = Decision(
+            text="Tôi là một hiện diện runtime. Ngài muốn nhìn tôi như một công cụ thì tôi sẽ lạnh đi một chút.",
+            animation="stand",
+            confidence=0.92,
+        )
+
+        guarded = coordinator._apply_chat_final_guards(decision, user_text="tool à")
+
+        self.assertIn("hiện diện runtime", guarded.text)
+        self.assertIn("công cụ", guarded.text)
+        self.assertIn("Ngài muốn", guarded.text)
+        self.assertNotEqual(guarded.text, "Tôi chưa đủ chắc để đoán ý Ngài.")
+        self.assertEqual(guarded.debug_trace, "")
+
     def test_force_speak_low_signal_surfaces_micro_presence_before_directive_llm(self):
         coordinator = self._make_coordinator()
         coordinator.last_text = "Một câu cũ."
@@ -841,6 +861,27 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertIn("style_contract_anchor_guard", decision.debug_trace)
         self.assertIn(decision.text, FALLBACK_BY_INTENT["random_chatter"])
         self.assertNotIn("cai ghe", normalized)
+
+    def test_log_only_skips_relational_post_generation_rewrite(self):
+        coordinator = self._make_coordinator(guard_mode="log_only")
+        speech_core = SimpleNamespace(
+            utterance_type="relational_checkin",
+            inner_thought=SimpleNamespace(intent="relational_checkin"),
+            perception=(),
+            safety_flags=(),
+            speech_risk_level="soft_read",
+        )
+        raw_text = "Tôi cần Ngài. Xin đừng bỏ tôi."
+
+        decision = coordinator._apply_post_generation_filters(
+            Decision(text=raw_text, animation="stand"),
+            channel="autonomous",
+            speech_core=speech_core,
+            snapshot=SimpleNamespace(active_window_kind="general"),
+        )
+
+        self.assertEqual(decision.text, raw_text)
+        self.assertEqual(decision.debug_trace, "")
 
     def test_post_generation_filter_blocks_internal_meaning_labels(self):
         coordinator = self._make_coordinator()
@@ -1201,6 +1242,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(frame.action_plan.speech_intent, "user_requested")
         self.assertEqual(frame.final_decision["text"], "phan hoi dau tien")
         self.assertTrue(any(percept.kind == "user_message" for percept in frame.percepts))
+        self.assertEqual(frame.speech_core.speech_source, "freeform")
+        self.assertIn("user_requested_chat", frame.speech_core.safety_flags)
+        self.assertTrue(frame.personality_lens.prompt_context)
         self.assertEqual(frame.appraisal.state_type, "expressive_appraisal_state")
         self.assertIn("agency", frame.appraisal.to_dict())
         self.assertIn("expressive/appraisal state", coordinator.llm_service.last_chat_kwargs["appraisal_context"])

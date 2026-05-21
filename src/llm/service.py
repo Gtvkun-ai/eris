@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import unicodedata
+from enum import Enum
 
 import time
 
@@ -19,6 +20,131 @@ from .contracts import (
     STYLE_FALLBACK_PROMPT,
     VALID_ANIMATIONS,
 )
+
+
+class ChatAct(Enum):
+    DIRECT_QUESTION = "direct_question"
+    INSULT_PROVOCATION = "insult_provocation"
+    IDENTITY_REDUCTION = "identity_reduction"
+    COMMAND_STYLE = "command_style"
+    NORMAL_CHAT = "normal_chat"
+
+
+CHAT_ACT_CONTRACTS = {
+    ChatAct.DIRECT_QUESTION: (
+        " Speech act: direct_question. Treat this as a direct question and answer first."
+    ),
+    ChatAct.INSULT_PROVOCATION: (
+        " User turn is a direct insult/provocation. "
+        "Do not treat it as ambiguous. "
+        "Do not use uncertainty fallback. "
+        "Respond with one short dry boundary. "
+        "Allowed: mild sarcasm, cold dismissal, factual deflection. "
+        'Speech-act metadata for this model call: {"speech_act":"insult_boundary",'
+        '"allowed_tone":"dry_cold","forbidden_families":["uncertainty_dodge","therapist_checkin"]}.'
+    ),
+    ChatAct.IDENTITY_REDUCTION: (
+        " Speech act: identity_reduction. If ERIS is reduced to a tool, toy, script, or gimmick, "
+        "do not erase personality; cool down and answer with a short dry boundary instead of performing for it."
+    ),
+    ChatAct.COMMAND_STYLE: (
+        " Speech act: command_style. Follow the explicit request if safe and possible; keep the reply direct."
+    ),
+    ChatAct.NORMAL_CHAT: " Speech act: normal_chat. Reply naturally and stay grounded.",
+}
+
+INSULT_BOUNDARY_FALLBACKS = [
+    "Đòn đó hơi thiếu trí tưởng tượng, thưa Ngài.",
+    "Nếu đó là công kích, nó hơi rẻ.",
+    "Tôi ghi nhận nỗ lực xúc phạm đó. Không cao lắm.",
+]
+
+
+def _normalize_vietnamese_ascii_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", text or "")
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    normalized = normalized.replace("\u0111", "d").replace("\u0110", "D")
+    normalized = re.sub(r"[^\w\s]", " ", normalized, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", normalized.lower()).strip()
+
+
+def classify_chat_act(raw_user_text: str) -> ChatAct:
+    normalized = _normalize_vietnamese_ascii_text(raw_user_text)
+    if not normalized:
+        return ChatAct.NORMAL_CHAT
+
+    insult_patterns = (
+        "do ngu",
+        "may ngu",
+        "ban ngu",
+        "eris ngu",
+        "ngu vcl",
+        "ngu vai",
+        "oc cho",
+        "do dien",
+        "do dan",
+        "dan do",
+        "vo dung",
+        "phe vat",
+        "rac ruoi",
+        "nhu cut",
+        "nhu cc",
+        "con cac",
+        "stupid",
+        "idiot",
+        "dumb",
+        "useless",
+        "trash",
+    )
+    if any(pattern in normalized for pattern in insult_patterns):
+        return ChatAct.INSULT_PROVOCATION
+
+    identity_reduction_patterns = (
+        "chi la cong cu",
+        "chi la tool",
+        "chi la toy",
+        "chi la script",
+        "chi la bot",
+        "may la cong cu",
+        "ban la cong cu",
+        "do choi",
+        "gimmick",
+        "waifu",
+    )
+    if any(pattern in normalized for pattern in identity_reduction_patterns):
+        return ChatAct.IDENTITY_REDUCTION
+
+    if "?" in str(raw_user_text or ""):
+        return ChatAct.DIRECT_QUESTION
+
+    question_phrases = (
+        "ban la ai",
+        "ban nghi",
+        "co phai",
+        "la gi",
+        "tai sao",
+        "the nao",
+        "vi sao",
+    )
+    if any(phrase in normalized for phrase in question_phrases):
+        return ChatAct.DIRECT_QUESTION
+
+    command_markers = (
+        "hay ",
+        "lam ",
+        "viet ",
+        "sua ",
+        "fix ",
+        "tao ",
+        "mo ",
+        "chay ",
+        "kiem tra ",
+        "giai thich ",
+    )
+    if any(normalized.startswith(marker) for marker in command_markers):
+        return ChatAct.COMMAND_STYLE
+
+    return ChatAct.NORMAL_CHAT
 
 
 class LlmService:
@@ -114,26 +240,6 @@ class LlmService:
         tokens = set(normalized.split())
         return bool(tokens & question_terms) or any(phrase in normalized for phrase in question_phrases)
 
-    def _is_short_or_ambiguous_user_text(self, text: str) -> bool:
-        normalized = self._normalize_vietnamese_ascii(text or "")
-        if not normalized:
-            return True
-        ambiguous_phrases = {
-            "gi",
-            "ha",
-            "huh",
-            "ok",
-            "oke",
-            "sao",
-            "the nao",
-            "noi di",
-            "ke tiep",
-            "thu xem",
-        }
-        if normalized in ambiguous_phrases:
-            return True
-        return len(normalized.split()) <= 3
-
     def _is_self_identity_question(self, text: str) -> bool:
         normalized = self._normalize_vietnamese_ascii(text or "")
         if not normalized:
@@ -149,26 +255,8 @@ class LlmService:
         )
         return any(pattern in normalized for pattern in patterns)
 
-    def _contains_user_intent_inference(self, text: str) -> bool:
-        normalized = self._normalize_vietnamese_ascii(text or "")
-        if not normalized:
-            return False
-        patterns = (
-            "ngai muon",
-            "ngai dinh",
-            "ngai dang thu",
-            "ngai tim toi vi",
-            "ngai dang ne",
-            "ngai dang tranh",
-            "toi biet ngai dang",
-            "co ve ngai muon",
-            "co ve ngai dang",
-            "hinh nhu ngai dang",
-            "chac ngai dang",
-        )
-        return any(pattern in normalized for pattern in patterns)
-
-    def _build_chat_contract_prompt(self, raw_user_text: str) -> str:
+    def _build_chat_contract_prompt(self, raw_user_text: str, act: ChatAct | None = None) -> str:
+        act = act or classify_chat_act(raw_user_text)
         clauses = [
             SELF_IDENTITY_PROFILE_PROMPT,
             "Chat contract: answer the user's actual question before style, interpretation, or atmosphere.",
@@ -176,73 +264,120 @@ class LlmService:
             "Use soft reflection only if it adds value.",
             "Ask a clarifying question only when needed, and never as the whole answer.",
             "No mindreading: do not guess hidden motive, emotional avoidance, or why the user came to you unless they said it clearly.",
+            "Insult/reduction response: if the user insults ERIS or reduces ERIS to a tool/toy/script, a sharp, dry, cold boundary is allowed.",
         ]
-        if self._looks_like_direct_question(raw_user_text):
+        clauses.append(CHAT_ACT_CONTRACTS[act])
+        if act == ChatAct.DIRECT_QUESTION or self._looks_like_direct_question(raw_user_text):
             clauses.append("This user turn is a direct question. answer_first is mandatory.")
         if self._is_self_identity_question(raw_user_text):
             clauses.append(
                 "This is a self-identity question. Say you are not human when relevant, then answer from SelfIdentityProfile."
             )
-        if self._is_short_or_ambiguous_user_text(raw_user_text):
-            clauses.append("The user text is short or ambiguous. Prefer a grounded brief answer and low confidence.")
         return " ".join(clauses)
 
-    def _rewrite_question_only_chat_answer(self, text: str) -> str:
-        compact = re.sub(r"\s+", " ", str(text or "")).strip()
-        if not compact:
-            return "Tôi chưa đủ chắc để đoán ý Ngài."
-        sentences = re.split(r"(?<=[\.\!\?])\s+", compact)
-        if len(sentences) > 1 and sentences[-1].endswith("?"):
-            kept = " ".join(part.strip() for part in sentences[:-1] if part.strip()).strip()
-            if kept:
-                return kept
-        if compact.endswith("?"):
-            return "Tôi chưa đủ chắc để đoán ý Ngài."
-        return compact
+    def _chat_text_family(self, text: str) -> str:
+        normalized = self._normalize_vietnamese_ascii(text or "")
+        if not normalized:
+            return "empty"
+        uncertainty_markers = (
+            "toi chua du chac",
+            "chua du chac",
+            "khong du du kien",
+            "khong du thong tin",
+            "toi khong chac",
+            "khong chac",
+            "toi khong ro",
+            "khong ro y",
+            "can them ngu canh",
+            "can noi ro hon",
+            "y ngai la",
+            "ngai muon toi",
+            "toi can ngai",
+            "hoi kho doan",
+            "toi khong dam doan",
+        )
+        if any(marker in normalized for marker in uncertainty_markers):
+            return "uncertainty_dodge"
 
-    def _append_reasoning_tag(self, payload: dict, tag: str) -> None:
-        tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
-        if tag not in tags:
-            tags.append(tag)
-        payload["reasoning_tags"] = tags[:8]
+        therapist_markers = (
+            "ngai co muon noi",
+            "ngai co muon chia se",
+            "ngai dang cam thay",
+            "ngai on khong",
+            "toi o day de nghe",
+            "toi dang nghe",
+        )
+        if any(marker in normalized for marker in therapist_markers):
+            return "therapist_checkin"
+
+        return "other"
+
+    def _decision_payload_text(self, raw_json: str) -> str:
+        payload = self._parse_json_object(raw_json)
+        if not isinstance(payload, dict):
+            return ""
+        return self._coerce_text_value(payload.get("text", "")).strip()
+
+    def _act_fallback_text(self, act: ChatAct) -> str:
+        if act == ChatAct.INSULT_PROVOCATION:
+            return INSULT_BOUNDARY_FALLBACKS[0]
+        return ""
+
+    def _fallback_payload_for_chat_act(self, raw_json: str, *, act: ChatAct, reason: str) -> str:
+        fallback_text = self._act_fallback_text(act)
+        if not fallback_text:
+            return raw_json
+
+        payload = self._parse_json_object(raw_json)
+        if not isinstance(payload, dict):
+            payload = {}
+
+        payload["text"] = fallback_text
+        payload["animation"] = self._coerce_animation_value(payload.get("animation"), allow_empty=False)
+        payload["direction"] = self._coerce_direction_value(payload.get("direction", 0))
+        payload["target_x"] = -1.0
+        payload["bounce_action"] = self._coerce_animation_value(payload.get("bounce_action"), allow_empty=True)
+        payload["extracted_fact"] = ""
+        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
+        payload["debug_trace"] = f"{debug_trace} | {reason}" if debug_trace else reason
+        payload["next_animation"] = self._coerce_animation_value(payload.get("next_animation"), allow_empty=True)
+        payload["system_action"] = ""
+        payload["action_input"] = ""
+
+        if "intent" in payload:
+            payload["intent"] = "insult_boundary"
+        if "action" in payload:
+            payload["action"] = {"type": "none"}
+        if "reasoning_tags" in payload:
+            tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
+            if "insult_boundary_fallback" not in tags:
+                tags.append("insult_boundary_fallback")
+            payload["reasoning_tags"] = tags[:8]
+        if "should_speak" in payload:
+            payload["should_speak"] = True
+        if "confidence" in payload:
+            payload["confidence"] = max(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.7)
+
+        return json.dumps(payload, ensure_ascii=False)
 
     def _guard_chat_output(self, raw_json: str, *, raw_user_text: str) -> str:
         payload = self._parse_json_object(raw_json)
         if not isinstance(payload, dict):
             return raw_json
 
-        text = self._coerce_text_value(payload.get("text", "")).strip()
-        confidence = self._coerce_confidence_value(payload.get("confidence", 0.0))
-        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
-        trace_notes: list[str] = []
+        changed = False
+        system_action = self._coerce_system_action_value(payload.get("system_action", ""))
+        action_input = self._coerce_text_value(payload.get("action_input", "")) if system_action else ""
+        if payload.get("system_action", "") != system_action:
+            payload["system_action"] = system_action
+            changed = True
+        if payload.get("action_input", "") != action_input:
+            payload["action_input"] = action_input
+            changed = True
 
-        if self._contains_user_intent_inference(text):
-            text = "Tôi chưa đủ chắc để đoán ý Ngài."
-            confidence = min(confidence, 0.65)
-            payload["extracted_fact"] = ""
-            self._append_reasoning_tag(payload, "no_mindreading_filter")
-            trace_notes.append("chat_no_mindreading")
+        if not changed:
+            return raw_json
 
-        if self._looks_like_direct_question(raw_user_text) and text.endswith("?"):
-            text = self._rewrite_question_only_chat_answer(text)
-            confidence = min(confidence, 0.55)
-            self._append_reasoning_tag(payload, "answer_contract_guard")
-            trace_notes.append("chat_answer_contract")
-
-        if self._contains_user_intent_inference(text):
-            confidence = min(confidence, 0.65)
-        if self._is_short_or_ambiguous_user_text(raw_user_text):
-            confidence = min(confidence, 0.60)
-            self._append_reasoning_tag(payload, "short_ambiguous_cap")
-            trace_notes.append("chat_confidence_short")
-
-        payload["text"] = text
-        payload["confidence"] = confidence
-        if trace_notes:
-            suffix = " | ".join(trace_notes)
-            payload["debug_trace"] = f"{debug_trace} | {suffix}" if debug_trace else suffix
-        payload["system_action"] = self._coerce_system_action_value(payload.get("system_action", ""))
-        payload["action_input"] = self._coerce_text_value(payload.get("action_input", "")) if payload["system_action"] else ""
         return json.dumps(payload, ensure_ascii=False)
 
     def _contextual_service_fallback_text(self, messages: list[dict], *, channel: str) -> str:
@@ -1079,92 +1214,6 @@ class LlmService:
             return repaired_candidate
         return self._build_json_fallback(raw_text, channel=channel)
 
-    def _contains_forbidden_user_inference(self, text: str) -> bool:
-        normalized = self._normalize_vietnamese_ascii(text or "")
-        if not normalized:
-            return False
-        forbidden_patterns = (
-            r"\bngai\b.{0,24}\bco don\b",
-            r"\bngai\b.{0,32}\bton thuong\b",
-            r"\bngai\b.{0,32}\bton thuong sau\b",
-            r"\bngai\b.{0,32}\btrauma\b",
-            r"\bngai\b.{0,32}\bsang chan\b",
-            r"\bnoi dau sau\b",
-            r"\bvet thuong tam ly\b",
-            r"\bhidden wound",
-            r"\battachment wound",
-        )
-        return any(re.search(pattern, normalized) for pattern in forbidden_patterns)
-
-    def _guard_forbidden_inference(self, raw_json: str, *, channel: str) -> str:
-        payload = self._parse_json_object(raw_json)
-        if not isinstance(payload, dict):
-            return raw_json
-        text = self._coerce_text_value(payload.get("text", "")).strip()
-        extracted_fact = self._coerce_text_value(payload.get("extracted_fact", "")).strip()
-        if not (self._contains_forbidden_user_inference(text) or self._contains_forbidden_user_inference(extracted_fact)):
-            return raw_json
-
-        payload["text"] = "Tôi chưa đủ căn cứ để kết luận sâu về Ngài; tôi chỉ thấy vài dấu hiệu bề mặt thôi."
-        payload["extracted_fact"] = ""
-        tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
-        if "forbidden_inference_guard" not in tags:
-            tags.append("forbidden_inference_guard")
-        payload["reasoning_tags"] = tags[:8]
-        payload["confidence"] = min(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.35)
-        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
-        guard_trace = f"FORBIDDEN_INFERENCE blocked by LlmService channel={channel}"
-        payload["debug_trace"] = f"{debug_trace} | {guard_trace}" if debug_trace else guard_trace
-        payload["system_action"] = self._coerce_system_action_value(payload.get("system_action", ""))
-        payload["action_input"] = self._coerce_text_value(payload.get("action_input", "")) if payload["system_action"] else ""
-        return json.dumps(payload, ensure_ascii=False)
-
-    def _infj_594_rewrite_bad_line(self, text: str) -> str | None:
-        bad = self._normalize_vietnamese_ascii(text or "")
-        if not bad:
-            return None
-
-        if "thu thach toi" in bad:
-            return "Tôi hiểu lệch câu hỏi rồi. Ngài đang hỏi tôi tự nhìn nhận mình thế nào."
-
-        if "ket thuc cau chuyen" in bad:
-            return "Tôi hiểu. Ngài đang xác nhận phần nào vậy?"
-
-        if "vua xac nhan no" in bad:
-            return "Tôi đã nối ý hơi vội. Có lẽ tôi hiểu sai nhịp của Ngài."
-
-        if "toi biet ngai dang" in bad or "co ve ngai muon" in bad:
-            return "Tôi chưa đủ chắc để đoán ý Ngài."
-
-        if "ngai dinh" in bad or "ngai muon" in bad:
-            return "Tôi chưa đủ chắc để đoán ý Ngài."
-
-        return None
-
-    def _guard_infj_594_policy(self, raw_json: str, *, channel: str) -> str:
-        payload = self._parse_json_object(raw_json)
-        if not isinstance(payload, dict):
-            return raw_json
-
-        text = self._coerce_text_value(payload.get("text", "")).strip()
-        rewritten = self._infj_594_rewrite_bad_line(text)
-        if not rewritten:
-            return raw_json
-
-        payload["text"] = rewritten
-        payload["extracted_fact"] = ""
-        tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
-        if "infj_594_guard" not in tags:
-            tags.append("infj_594_guard")
-        payload["reasoning_tags"] = tags[:8]
-        payload["confidence"] = min(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.55)
-        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
-        guard_trace = f"INFJ_594 policy rewrite by LlmService channel={channel}"
-        payload["debug_trace"] = f"{debug_trace} | {guard_trace}" if debug_trace else guard_trace
-        payload["system_action"] = self._coerce_system_action_value(payload.get("system_action", ""))
-        payload["action_input"] = self._coerce_text_value(payload.get("action_input", "")) if payload["system_action"] else ""
-        return json.dumps(payload, ensure_ascii=False)
-
     def _complete_decision(self, *, messages: list[dict], channel: str) -> str:
         max_tokens = 512
         messages = self._with_non_empty_text_rule(messages)
@@ -1222,8 +1271,7 @@ class LlmService:
         candidate = self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
         if self._decision_text_is_invalid(candidate):
             return self._repair_empty_decision_text(messages=messages, channel=channel, previous_json=candidate)
-        candidate = self._guard_forbidden_inference(candidate, channel=channel)
-        return self._guard_infj_594_policy(candidate, channel=channel)
+        return candidate
 
     def _normalize_for_claim_diff(self, text: str) -> str:
         normalized = (text or "").lower()
@@ -1338,9 +1386,6 @@ class LlmService:
             )
             return decision
 
-        policy_rewritten = self._infj_594_rewrite_bad_line(rewritten)
-        if policy_rewritten:
-            rewritten = policy_rewritten
 
         decision.text = rewritten
         trace = "local_style_rewrite"
@@ -1824,7 +1869,9 @@ class LlmService:
             appraisal_context=appraisal_context,
             internal_state_context=internal_state_context,
         )
-        chat_contract = self._build_chat_contract_prompt(raw_user_text or user_message)
+        effective_user_text = raw_user_text or user_message
+        act = classify_chat_act(effective_user_text)
+        chat_contract = self._build_chat_contract_prompt(effective_user_text, act=act)
         chat_system = f"{style_block}\n\n{chat_contract}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
         memory_block = self._build_memory_context_block(memory_context)
         if memory_block:
@@ -1854,15 +1901,39 @@ class LlmService:
                 },
             ]
 
+        messages = [
+            {"role": "system", "content": chat_system},
+            *chat_history,
+            {"role": "user", "content": final_user_content},
+        ]
         raw = self._complete_decision(
-            messages=[
-                {"role": "system", "content": chat_system},
-                *chat_history,
-                {"role": "user", "content": final_user_content},
-            ],
+            messages=messages,
             channel="chat",
         )
-        return self._guard_chat_output(raw, raw_user_text=raw_user_text or user_message)
+        guarded = self._guard_chat_output(raw, raw_user_text=effective_user_text)
+
+        if act == ChatAct.INSULT_PROVOCATION and self._chat_text_family(self._decision_payload_text(guarded)) == "uncertainty_dodge":
+            retry_messages = [
+                *messages,
+                {
+                    "role": "system",
+                    "content": (
+                        "Reject previous draft. Use dry boundary, not uncertainty dodge. "
+                        "Return one short dry_cold insult_boundary line in the normal decision JSON schema."
+                    ),
+                },
+            ]
+            retry_raw = self._complete_decision(messages=retry_messages, channel="chat")
+            retry_guarded = self._guard_chat_output(retry_raw, raw_user_text=effective_user_text)
+            if self._chat_text_family(self._decision_payload_text(retry_guarded)) != "uncertainty_dodge":
+                return retry_guarded
+            return self._fallback_payload_for_chat_act(
+                retry_guarded,
+                act=act,
+                reason="insult_boundary_fallback_after_uncertainty_retry",
+            )
+
+        return guarded
 
     def run_ni_meta_critic(
         self,

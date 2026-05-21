@@ -1,7 +1,7 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-05-14
+Cập nhật: 2026-05-20
 Mã hóa: UTF-8
 
 
@@ -40,6 +40,9 @@ Thay đổi LLM/model:
 Thay đổi body/UI:
 - `body/UdpListener.tscn` thêm texture `asset/Resource/khung.png` cho bubble thoại; `MessageLabel` nằm trong `TextureRect`.
 - `UdpListener.cs` đổi đường dẫn label theo node mới, bật `AutoStartVision` mặc định, chỉ preload llama-server khi cần, và truyền nhiều env config hơn cho Python runtime.
+- `ErisProcessManager.cs` tách phần khởi động/dừng `vision.py` và `llama-server` khỏi `UdpListener.cs`, đồng thời ép stdout/stderr UTF-8 và lọc log runtime bớt ồn.
+- `TiGovernor` đã chuyển hướng từ chỉnh giọng/style mạnh sang guard tối thiểu: chỉ sửa khi có lỗi capability/perception, report/debug quá nặng, payload punctuation lỗi, hoặc resource_guard quá dài.
+- `TiPolicyReport` có thêm bias tự-nghi-ngờ: `uncertainty_bias`, `directness_bias`, `restraint_bias`, `post_exposure_recoil_bias`; bias này đi vào prompt context thay vì rewrite câu cuối một cách thô.
 
 Kết luận ngắn: các chức năng mới làm ERIS biết giữ mục tiêu, phục hồi phiên, nhận ra user đang hiện diện, hiểu ý nghĩa của tín hiệu thay vì đọc lại telemetry, và quyết định nói/im lặng có kiểm soát hơn. Đây là bước nâng từ "trả lời theo lượt" sang "có nhịp sống runtime giữa các lượt".
 
@@ -95,7 +98,7 @@ Kết nối mặc định:
 - File trung tâm bên Godot.
 - Bind UDP port `4242` để nhận JSON decision từ Python.
 - Gửi event về Python qua port `4243`: `chat_start`, `chat`, `chat_end`, `force_speak`.
-- Có thể tự khởi động/dừng `src/vision.py` và `llama-server.exe`.
+- Delegate việc khởi động/dừng `src/vision.py` và `llama-server.exe` sang `ErisProcessManager`.
 - Export các cấu hình runtime: Python executable, vision script, llama-server path, model path, mmproj path, remote cognition API, local style rewrite và thông tin provider/model.
 - Parse payload gồm text, intent, animation, direction, target, motion intent, system action và action input.
 - Parse thêm `should_speak` để không hiện bubble khi cognition chủ động im lặng, và parse `body_bias` để truyền trạng thái nền xuống `LocalBodyAutonomy`.
@@ -107,8 +110,18 @@ Kết nối mặc định:
 - Khi đang kéo, body bị clamp trong viewport; khi bắt đầu kéo dùng pose `air_swing_l/r`, khi thả thì ghi nhận rough handling để tăng overload/solitude trong body autonomy.
 - Remote motion từ cognition hiện bị khóa sau cờ `EnableLegacyRemoteMotionCommands`; mặc định body chỉ nhận speech + bias, tránh cognition override mọi chuyển động cục bộ.
 - Chuẩn hóa animation model hay gọi sai, ví dụ `walk`/`run` -> `stand_walk`.
-- Hiện vẫn là một "god object" bên C#: UI, process, UDP, audio, payload parser và một số state movement cùng nằm trong file.
+- Vẫn còn khá dày bên C#, nhưng phần process/service lifecycle đã được tách khỏi file này.
 - Lưu ý bảo mật: đang có API key hardcoded trong `DefaultRemoteApiKey`.
+
+`body/ErisProcessManager.cs`
+- Tách lifecycle service khỏi `UdpListener.cs`.
+- Chứa `ErisServiceConfig`: Python executable, script path, llama-server path, model/mmproj path, remote API, local style rewrite, local vision, context size và provider/model.
+- `StartVision()` resolve path project, kiểm tra `vision.py`, chỉ boot một process nếu chưa chạy, và tự đảm bảo llama-server sẵn sàng khi local style rewrite hoặc local vision cần server.
+- Spawn `vision.py` với `UseShellExecute=false`, `CreateNoWindow=true`, stdout/stderr redirect, `StandardOutputEncoding` và `StandardErrorEncoding` đều là UTF-8.
+- Inject env cho Python: `PYTHONUTF8`, `PYTHONIOENCODING`, `PYTHONUNBUFFERED`, `LLAMA_SERVER_*`, `GGUF_MODEL_PATH`, `ERIS_N_CTX`, remote API vars, `GEMINI_API_KEY`, `ERIS_LOCAL_STYLE_REWRITE_ENABLED`, `ERIS_LOCAL_VISION_FACTS`.
+- `StartLlamaServer()` kiểm tra port trước, build args gồm model, mmproj khi bật vision, context, GPU layers, host/port, `--no-warmup`, `--jinja`, `--reasoning-format deepseek`, `--cache-ram 1024` nếu chưa override, và flash attention.
+- Có `ToggleVision()`, `ToggleLlamaServer()`, `StopAll()` và `StopProcess()` kill process tree sạch hơn khi tắt.
+- Lọc stdout/stderr: chỉ in các dòng init/shutdown/loop/parse/LLM/vision/chat/raw/error đáng chú ý; traceback stderr được giữ theo state `_visionTracebackActive` để không mất phần stack trace.
 
 `body/LocalBodyAutonomy.cs`
 - File mới cho tự chủ thân thể cục bộ bên Godot.
@@ -315,9 +328,11 @@ Kết nối mặc định:
 `src/cortex/se.py`
 - `SeLens`: lớp cảm nhận trực tiếp.
 - Biến raw telemetry thành `TelemetrySnapshot`.
-- Phân loại context: coding, documentation, communication, entertainment, system, general.
+- Phân loại context: coding, documentation, communication, focus_aid_media, entertainment, system, general.
+- Có `focus_context_config.json` để override một số keyword sang `force_communication` hoặc `focus_aid_media`, giúp YouTube/nhạc/podcast nền không luôn bị đọc thành xao nhãng.
 - Rút recent events, user signals, evidence, claim_style.
-- Xây prompt screen facts/cues có giới hạn, để model nói mềm khi bằng chứng mỏng.
+- `claim_style` giờ dựa trên chất lượng evidence: bỏ qua generic evidence, hạ xuống `WEAK_IMPRESSION` nếu chỉ có hint mỏng hoặc idle quá lâu ở documentation/system/focus_aid_media.
+- Xây prompt screen facts/cues có giới hạn, để model nói mềm khi bằng chứng mỏng; generic event/evidence như `active window`, số tab/cửa sổ, hoặc window kind không còn bị đẩy thẳng vào screen facts.
 - Đây là hàng rào đầu tiên: "có đủ bằng chứng để nói không".
 
 
@@ -327,6 +342,7 @@ Kết nối mặc định:
 `src/cortex/contracts.py`
 - Ngôn ngữ dữ liệu chung của cognition.
 - Dataclass chính gồm telemetry snapshot, goal drift, Ti policy, Fe style, percept/social events, session ritual, attention broadcast, MeaningLayerResult, PersonalityLensResult, appraisal, self state, speech core, speech impulse, thought stream, motivational urge, action plan, cognitive frame và memory update.
+- `TiPolicyReport` hiện có thêm bốn bias mềm: `uncertainty_bias=0.10`, `directness_bias=-0.10`, `restraint_bias=0.15`, `post_exposure_recoil_bias=0.12`. Đây là bias prompt để Ti hơi tự nghi ngờ và bớt chắc giọng, không phải lệnh rewrite bắt buộc.
 - Nếu muốn hiểu toàn hệ giao tiếp nội bộ, đọc file này trước.
 
 `src/cortex/attention.py`
@@ -360,9 +376,13 @@ Kết nối mặc định:
 - Chọn policy mode: observe, chat_code, chat_emotional, resource_guard, goal_drift_alert, v.v.
 - Enforce decision sau parser:
   - Chặn capability violation.
-  - Chấm groundedness, capability safety, naturalness, non-report tone.
-  - Dọn câu meta/abstract/report-like quá mức và bỏ prefix kiểu "Dữ liệu hệ thống", "Trạng thái hệ thống", "Kết luận".
-  - Giới hạn độ dài theo mode.
+  - Chặn perception violation, gồm cả claim đang nhìn màn hình/desktop/tab/cửa sổ khi không có bằng chứng hợp lệ.
+  - Không còn dùng AI tone blacklist, naturalness scoring hoặc Eris-Voice distillation như bộ sửa văn phong mặc định.
+  - `_apply_safety_only_editor()` chỉ chỉnh tối thiểu: bỏ dấu payload treo, dọn report/debug overrun, và rút ngắn `resource_guard` khi quá dài.
+  - `_assess_candidate()` chuyển sang các trục felt/internal: `tension`, `implication`, `felt_continuity`, `post_exposure_recoil`, `should_rewrite`; các metric cũ như groundedness/naturalness/non-report tone đã bị bỏ.
+  - Report/debug prefix nhẹ không bị rewrite nếu chưa thành lỗi nặng; meta/subtext nhẹ được giữ lại để câu không bị flatten thành giọng assistant sạch quá mức.
+  - Có prompt context `Ti self-doubt bias`: tăng uncertainty/restraint, giảm directness, thêm post-exposure recoil sau câu quá lộ hoặc quá gắn.
+  - Guard capability mở rộng để chặn claim tự thu nhỏ/phóng to/di chuyển/kéo/đẩy/ghim/sắp xếp cửa sổ/tab/màn hình.
   - Gắn animation/motion hint hợp lệ.
   - Tạo soft redirect khi câu nói vượt quyền năng.
 - Autonomous mode hiện ưu tiên ambient observe/social watch hơn focus coach: không nhắc quay lại mục tiêu, không chấm điểm tập trung nếu user không yêu cầu.
@@ -402,8 +422,20 @@ Kết nối mặc định:
 `src/cortex/social_presence.py`
 - `SocialPresenceDetector`.
 - Nhận ra user vẫn có mặt qua idle time, typing, window switching, focus pattern, recent events.
+- Dùng `PresenceFeatureVector`: activity, focus_depth, task_continuity, interaction_density, companionship, passive_absence, switching_noise, anxious_motion.
+- Có `PresenceMemory` bằng EMA để làm mượt presence/activity/focus/anxiety/fragmentation và giữ `continuity_persistence`, tránh flip present/absent theo một snapshot lẻ.
+- Recent events được đưa qua `EventSemanticProfiler`; detect path chỉ dùng cache để không block, còn background path có thể enrich event bằng embedding.
+- Phân loại kind chi tiết hơn: `focused_co_presence`, `passive_companionship`, `anxious_hovering`, `fragmented_multitasking`, `ambient_co_presence`, `presence_absent_or_fading`.
 - Không coi social presence là chat và không tự cho phép nói.
 - Nó chỉ là tín hiệu nền: "có người đang ở đó".
+
+`src/cortex/event_semantics.py`
+- Tầng ngữ nghĩa nhẹ cho recent events.
+- `symbolic_tags_for_event()` map event thô thành tag như mouse, click, scroll, keyboard, selection, editing, coding, window_active, window_switch, restless, build_error, stall, distraction, communication.
+- `EventEmbeddingCache` lưu embedding theo event normalized để tránh gọi model lặp lại.
+- `EventClusterIndex` gom các event dài/có embedding vào cluster bằng cosine similarity, mặc định threshold `0.82`, tối đa `64` cluster.
+- `EventSemanticProfiler` tạo `EventSemanticProfile` gồm raw event, symbolic_tags, optional embedding, cluster_id và confidence.
+- Primitive event quá ngắn như `mouse_move`, `click`, `scroll`, `key_press`, `window_active` không gọi embedding; chỉ event dài hơn và có ý nghĩa mới được enrich.
 
 `src/cortex/session_ritual.py`
 - `SessionRitualEngine`.
@@ -734,28 +766,16 @@ Luồng touch/throw:
 Theo `git status --short` lúc cập nhật:
 - `Tongquat.txt` đang modified và được cập nhật trong lần này.
 - `@AutomationLog.txt` đang modified.
-- Nhiều file runtime/body đang modified: `src/runtime/coordinator.py`, `src/llm/service.py`, `src/llm/client.py`, `src/llm/process_manager.py`, `src/cortex/*`, `src/actions/executor.py`, `src/memory/store.py`, `src/parser_grounding/decision.py`, `src/domain/decision.py`, `src/vision.py`, `body/UdpListener.cs`, `body/MotionController.cs`, `body/UdpListener.tscn`, tests.
-- File mới/untracked đang có:
-  `body/LocalBodyAutonomy.cs`,
-  `body/LocalBodyAutonomy.cs.uid`,
-  `src/cortex/goal_persistence.py`,
-  `src/cortex/meaning.py`,
-  `src/cortex/micro_policy.py`,
-  `src/cortex/personality.py`,
-  `src/cortex/session_ritual.py`,
-  `src/cortex/social_presence.py`,
-  `tests/test_llm_client.py`,
-  `tests/test_meaning_layer.py`,
-  `tests/test_micro_policy.py`,
-  `tests/test_personality_lens.py`,
-  `tests/test_session_ritual.py`.
-- Nhiều `__pycache__`, `.vision.lock`, `long_term_memory.json`, `ni_drift_samples.jsonl` cũng đang modified do runtime/test tạo ra.
+- Các file code đang modified ở lần đọc này: `src/cortex/contracts.py`, `src/cortex/ti.py`, `tests/test_ti_governor.py`.
+- Runtime artifacts đang modified: `long_term_memory.json`, `ni_drift_samples.jsonl`, `src/.vision.lock`, `src/cortex/__pycache__/contracts.cpython-313.pyc`, `src/cortex/__pycache__/se.cpython-313.pyc`, `src/cortex/__pycache__/ti.cpython-313.pyc`.
+- Không thấy file body mới/untracked trong `git status --short` hiện tại; `body/ErisProcessManager.cs` và `body/LocalBodyAutonomy.cs` đã tồn tại trong tree đang đọc.
 
 
 14. Điểm Kiến Trúc Đáng Chú Ý
 -----------------------------
 
-- `UdpListener.cs` vẫn quá dày: UI, process manager, UDP, audio, payload handling. Nên tách tiếp thành transport bridge, process launcher, UI/chat controller và audio controller.
+- `UdpListener.cs` vẫn quá dày: UI, UDP, audio, payload handling và nhiều state body còn ở cùng một nơi.
+- `ErisProcessManager.cs` đã tách được process launcher/lifecycle khỏi `UdpListener.cs`; bước tiếp theo hợp lý là tách transport bridge, UI/chat controller và audio controller.
 - `RuntimeCoordinator` vẫn là god object bên Python. Nó đúng là nơi hợp mạch, nhưng logic có rule riêng nên được đẩy dần về service/cortex riêng.
 - Session ritual, presence maintenance, reengagement, micro_policy và force_speak micro_presence đã làm coordinator dài hơn; nếu mở rộng tiếp, nên tách thành service riêng.
 - `MotionController.cs` là hướng tách tốt: body physics/motion đã có boundary rõ.
@@ -974,7 +994,7 @@ Mental process mặc định:
 
 Ni drift:
 - `similarity` được xây từ baseline theo `active_window_kind`:
-  - `coding=0.80`, `documentation=0.76`, `communication=0.62`, `system=0.58`, `general=0.46`, `entertainment=0.22`.
+  - `coding=0.80`, `documentation=0.76`, `communication=0.62`, `system=0.58`, `general=0.46`, `focus_aid_media=0.40`, `entertainment=0.22`.
 - Sau đó cộng/trừ:
   - `text_adjust`: tăng khi thấy từ khóa code/docs/project; giảm khi thấy YouTube/TikTok/game.
   - `idle_adjust`: idle càng lâu drift càng tăng; non-communication bị phạt mạnh hơn.
@@ -1001,17 +1021,19 @@ MeaningLayer:
 - Nếu không có hard fact nhưng idle lâu / silence pressure cao / boredom cao thì chỉ ra `ambient_idle`, tức là meaning mềm chứ không phải bằng chứng mạnh.
 
 Social presence:
-- Điểm hiện diện nền được cộng từ:
-  - idle ngắn (`<=12s`, `<=90s`)
-  - typing speed có hoạt động
-  - window switching thấp/vừa/cao
-  - `focus_pattern` thuộc nhóm đang có mặt
-  - recent event có dấu hiệu key/mouse/scroll/edit
-  - đang ở cùng `focus_kind` với lần trước
-- Bị trừ khi:
-  - `focus_pattern` thuộc nhóm absent/passive
-  - idle rất lâu (`>=300s`, `>=900s`)
-- `present=True` từ `confidence >= 0.38`.
+- Detector không cộng điểm trực tiếp từ từng cue nữa mà dựng `PresenceFeatureVector`:
+  - `activity`: idle ngắn, typing còn hoạt động, hoặc recent event có mouse/click/scroll/keyboard/selection.
+  - `focus_depth`: deep_work/heavy_contemplation/sustained, cộng thêm nếu focus là coding/documentation.
+  - `task_continuity`: cùng `focus_kind` với frame trước, hoặc event có tag editing/coding/stall.
+  - `interaction_density`: typing, switching, keyboard/selection/click.
+  - `companionship`: tín hiệu ở-gần nhưng ít tương tác, nhất là coding/documentation/communication.
+  - `passive_absence`: idle dài, absent/passive focus, entertainment/passive/distraction.
+  - `switching_noise`: switching cao hoặc event tag window_switch/restless.
+  - `anxious_motion`: frantic/perfectionism/searching_for_anchor, build_error kèm switching.
+- `raw_confidence = 0.35*activity + 0.22*focus_depth + 0.18*task_continuity + 0.12*interaction_density + 0.18*companionship - 0.22*passive_absence - 0.10*switching_noise`.
+- Confidence cuối cùng làm mượt với memory: `raw*0.58 + ema_presence*0.32 + continuity_persistence*0.10`.
+- `present=True` từ `confidence >= 0.38`; nếu frame trước đã present thì giữ ngưỡng mềm hơn `0.30`.
+- `EventSemanticProfiler` giúp recent events có tag/cluster ngữ nghĩa, nhưng detect path chỉ dùng cached embedding để không block runtime.
 - Dù `present=True`, hiện tại detector vẫn để `speech_allowed=False`: có mặt không đồng nghĩa phải chen vào nói.
 
 Internal state / mental process:
@@ -1044,7 +1066,7 @@ Ti autonomous anchors:
   neo về `x=0.38`, facing phải, ưu tiên `walk_to` nếu body đang lệch xa.
 - `communication + idle >= 45s`:
   neo về `x=0.62`, facing trái, giữ shared-space continuity.
-- `general/entertainment + idle >= 240s`:
+- `general/entertainment/focus_aid_media + idle >= 240s`:
   neo về `x=0.50`, giữ một điểm đứng quen thay vì để motion trôi vô nghĩa.
 
 Personality / identity boundary:

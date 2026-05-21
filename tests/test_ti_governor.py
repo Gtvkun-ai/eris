@@ -20,6 +20,7 @@ def _norm(text: str) -> str:
 
 class TiGovernorTests(unittest.TestCase):
     def setUp(self):
+        os.environ["ERIS_GUARD_MODE"] = "strict"
         self.governor = TiGovernor()
         self.report = TiPolicyReport(
             mode="chat_general",
@@ -37,6 +38,20 @@ class TiGovernorTests(unittest.TestCase):
         result = self.governor.enforce_decision(decision, self.report)
 
         self.assertEqual(result.text, "Hay tap trung vao bug trong parser truoc, roi toi se xem tiep coordinator.")
+
+    def test_log_only_tags_risky_self_claim_without_rewriting_text(self):
+        os.environ["ERIS_GUARD_MODE"] = "log_only"
+        decision = Decision(
+            text="Tôi là con người. Xin đừng bỏ tôi.",
+            animation="stand",
+        )
+
+        result = self.governor.enforce_decision(decision, self.report)
+
+        self.assertEqual(result.text, "Tôi là con người. Xin đừng bỏ tôi.")
+        self.assertIn("risky_self_claim_detected=True", result.debug_trace)
+        self.assertIn("risk_family=human_identity_claim", result.debug_trace)
+        self.assertIn("guard_action=log_only", result.debug_trace)
 
     def test_rewrites_explicit_physical_control_claim(self):
         decision = Decision(
@@ -92,6 +107,22 @@ class TiGovernorTests(unittest.TestCase):
         self.assertIn("CPU ?ang ch?y ? m?c cao do", result.text)
         self.assertNotEqual(result.text, "CPU ?ang ch?y ?.")
 
+    def test_light_report_prefix_is_not_rewritten_without_heavy_issue(self):
+        report = TiPolicyReport(
+            mode="steady_observe",
+            focus_label="general",
+            reason="test",
+            prompt_context="",
+        )
+        decision = Decision(
+            text="Du lieu he thong: nhịp này hơi lộ, đừng chắc quá.",
+            animation="stand",
+        )
+
+        result = self.governor.enforce_decision(decision, report)
+
+        self.assertEqual(result.text, "Du lieu he thong: nhịp này hơi lộ, đừng chắc quá.")
+
     def test_style_sanitizer_strips_dangling_json_punctuation(self):
         report = TiPolicyReport(
             mode="steady_observe",
@@ -131,10 +162,8 @@ class TiGovernorTests(unittest.TestCase):
         )
 
         result = self.governor.enforce_decision(decision, self.report)
-        normalized = _norm(result.text)
 
-        self.assertNotIn("khong co rung dong sinh hoc", normalized)
-        self.assertIn("chuyen do di qua toi theo mot cach khac", normalized)
+        self.assertEqual(result.text, "Toi khong co rung dong sinh hoc, nhung toi ghi nhan dieu do.")
 
     def test_keeps_light_subtext_without_flattening_to_certainty_disclaimer(self):
         report = TiPolicyReport(
@@ -156,6 +185,69 @@ class TiGovernorTests(unittest.TestCase):
         self.assertNotIn("khong du thong tin", normalized)
         self.assertNotIn("khong chac", normalized)
 
+    def test_default_ti_has_no_distillation_or_scoring_hooks(self):
+        self.assertFalse(hasattr(self.governor, "_assistant_cadence_score"))
+        self.assertFalse(hasattr(self.governor, "_score_sentence_naturalness"))
+        decision = Decision(
+            text="Toi hieu. Doan nay van con mot du am nam lai.",
+            animation="stand",
+        )
+
+        result = self.governor.enforce_decision(decision, self.report)
+
+        self.assertEqual(result.text, "Toi hieu. Doan nay van con mot du am nam lai.")
+
+    def test_assessment_uses_felt_axes_instead_of_quality_metrics(self):
+        report = TiPolicyReport(
+            mode="chat_emotional",
+            focus_label="general",
+            reason="test",
+            prompt_context="",
+        )
+
+        assessment = self.governor._assess_candidate(
+            "Toi lo hoi nhieu roi. Thoi, de doan nay lanh xuong mot chut.",
+            report=report,
+        )
+
+        self.assertGreater(assessment.tension, 0.0)
+        self.assertGreater(assessment.implication, 0.0)
+        self.assertGreater(assessment.felt_continuity, 0.0)
+        self.assertGreater(assessment.post_exposure_recoil, 0.0)
+        self.assertFalse(hasattr(assessment, "groundedness"))
+        self.assertFalse(hasattr(assessment, "naturalness"))
+        self.assertFalse(hasattr(assessment, "non_report_tone"))
+
+    def test_abstract_with_emotional_residue_anchor_is_not_penalized(self):
+        report = TiPolicyReport(
+            mode="resource_guard",
+            focus_label="general",
+            reason="test",
+            prompt_context="",
+        )
+
+        assessment = self.governor._assess_candidate(
+            "Su ton tai cua doan nay van con du am nam lai mot chut.",
+            report=report,
+        )
+
+        self.assertNotIn("abstract", assessment.reasons)
+
+    def test_unanchored_abstract_is_still_penalized_inside_guarded_assessment(self):
+        report = TiPolicyReport(
+            mode="resource_guard",
+            focus_label="general",
+            reason="test",
+            prompt_context="",
+        )
+
+        assessment = self.governor._assess_candidate(
+            "Moi thu chi la bien so thua trong bai toan nay.",
+            report=report,
+        )
+
+        self.assertIn("abstract", assessment.reasons)
+
     def test_rewrites_false_perception_claim(self):
         decision = Decision(
             text="Toi dang nhin thay man hinh cua Ngai qua camera. Khong khi nay hoi lang di.",
@@ -169,7 +261,7 @@ class TiGovernorTests(unittest.TestCase):
         self.assertNotIn("man hinh cua ngai", normalized)
         self.assertIn("doan nhan cong do bo di", normalized)
 
-    def test_style_sanitizer_prefers_natural_sentences_over_runtime_meta(self):
+    def test_safety_guard_rewrites_false_runtime_window_control(self):
         report = TiPolicyReport(
             mode="steady_observe",
             focus_label="entertainment",
@@ -186,10 +278,10 @@ class TiGovernorTests(unittest.TestCase):
         )
 
         result = self.governor.enforce_decision(decision, report)
+        normalized = _norm(result.text)
 
-        self.assertIn("Đó là một bài hát khá dài", result.text)
-        self.assertIn("Hãy tiếp tục nghe", result.text)
-        self.assertNotIn("Tôi đã thu nhỏ", result.text)
+        self.assertNotIn("thu nho", normalized)
+        self.assertIn("doan nhan cong do bo di", normalized)
 
 
     def test_resource_guard_drops_philosophical_filler(self):
@@ -229,10 +321,8 @@ class TiGovernorTests(unittest.TestCase):
         )
 
         result = self.governor.enforce_decision(decision, report)
-        normalized = _norm(result.text)
 
-        self.assertNotIn("cua so mo ra", normalized)
-        self.assertIn("may dang", normalized)
+        self.assertEqual(result.text, "Cửa sổ mở ra thì không ai biết nó sẽ đóng lại lúc nào.")
 
     def test_resource_guard_keeps_grounded_resource_line(self):
         report = TiPolicyReport(
@@ -264,7 +354,7 @@ class TiGovernorTests(unittest.TestCase):
         self.assertIn("Nghe như Ngài đang thử", result.text)
         self.assertIn("Tôi không né", result.text)
 
-    def test_editor_only_removes_heavy_meta_sentence_and_keeps_natural_parts(self):
+    def test_safety_only_keeps_meta_sentence_when_not_report_debug_overrun(self):
         report = TiPolicyReport(
             mode="steady_observe",
             focus_label="general",
@@ -285,8 +375,8 @@ class TiGovernorTests(unittest.TestCase):
 
         self.assertIn("ngai mo qua nhieu tab that", normalized)
         self.assertIn("giu lai mot thu dang lam truoc da", normalized)
-        self.assertNotIn("cau truc quan ly", normalized)
-        self.assertNotIn("ket qua huu ich", normalized)
+        self.assertIn("cau truc quan ly", normalized)
+        self.assertIn("ket qua huu ich", normalized)
 
     def test_focus_guard_keeps_subjective_productivity_judgement(self):
         report = TiPolicyReport(
@@ -317,13 +407,9 @@ class TiGovernorTests(unittest.TestCase):
         )
 
         result = self.governor.enforce_decision(decision, self.report)
-        normalized = _norm(result.text)
 
-        self.assertNotIn("toi hieu", normalized)
-        self.assertNotIn("ho tro", normalized)
-        self.assertNotIn("neu ban muon", normalized)
-        self.assertIn("can go", normalized)
-        self.assertIn("Eris-Voice", result.debug_trace)
+        self.assertEqual(result.text, "Toi hieu. Toi se ho tro ban. Neu ban muon, hay cho toi biet them.")
+        self.assertNotIn("Eris-Voice", result.debug_trace)
 
     def test_autonomous_code_context_stays_ambient_not_focus_guard(self):
         snapshot = SimpleNamespace(
@@ -374,6 +460,34 @@ class TiGovernorTests(unittest.TestCase):
 
         self.assertIn("giu mood va subtext nhe", normalized)
         self.assertIn("khong bia perception hay capability", normalized)
+        self.assertIn("uncertainty_bias", report.prompt_context)
+        self.assertIn("directness -= 0.10", report.prompt_context)
+        self.assertIn("restraint += 0.15", report.prompt_context)
+        self.assertIn("post_exposure_recoil += 0.12", report.prompt_context)
+        self.assertAlmostEqual(report.uncertainty_bias, 0.10)
+        self.assertAlmostEqual(report.directness_bias, -0.10)
+        self.assertAlmostEqual(report.restraint_bias, 0.15)
+        self.assertAlmostEqual(report.post_exposure_recoil_bias, 0.12)
+
+    def test_post_exposure_recoil_enters_prompt_after_exposed_line(self):
+        snapshot = SimpleNamespace(
+            active_window_kind="general",
+            focus_summary="general",
+            idle_seconds=3.0,
+            cpu_percent=35.0,
+            ram_percent=58.0,
+            inferred_pos_x=0.5,
+        )
+
+        report = self.governor.evaluate_autonomous(
+            snapshot=snapshot,
+            ni_report=None,
+            idle_cycles=1,
+            last_text="Toi lo minh da noi that qua, gan Ngai qua.",
+        )
+
+        self.assertIn("Post-exposure recoil", report.prompt_context)
+        self.assertIn("cool down slightly", report.prompt_context)
 
     def test_autonomous_ignores_resource_pressure_for_max_throughput(self):
         snapshot = SimpleNamespace(

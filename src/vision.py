@@ -94,7 +94,7 @@ class AttentionOverseer:
         self.decision_parser = DecisionParser(fallback_decision, logger=self.parse_logger)
         self.telemetry_service = TelemetryService()
         self.ni_engine = NiEngine()
-        self.ti_governor = TiGovernor()
+        self.ti_governor = TiGovernor(logger=self.loop_logger)
         self.fe_renderer = FeRenderer()
         self.action_executor = ActionExecutor(logger=self.action_logger)
         self.action_router = ActionRouter()

@@ -18,6 +18,7 @@ def _norm(text: str) -> str:
 
 class DecisionParserTests(unittest.TestCase):
     def setUp(self):
+        os.environ["ERIS_GUARD_MODE"] = "strict"
         fallback = Decision(
             text="fallback",
             animation="stand",
@@ -34,6 +35,22 @@ class DecisionParserTests(unittest.TestCase):
 
         self.assertEqual(decision.text, "xin chao")
         self.assertEqual(decision.animation, "read")
+
+    def test_log_only_keeps_parser_cleanup_but_skips_style_clamp(self):
+        os.environ["ERIS_GUARD_MODE"] = "log_only"
+        raw = (
+            '{"text":"Tam trang trung tinh la diem dung hoan hao nhat cho nhung viec khong quan trong. '
+            'Moi thu khac deu chi la nhung bien so thua trong bai toan nay. '
+            'Ngai dang o day de giai quyet chung hay chi de nhin toi lam mau?",'
+            '"animation":"stand","direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"","next_animation":"","system_action":"","action_input":""}'
+        )
+
+        decision = self.parser.parse(raw)
+
+        self.assertIn("diem dung hoan hao", _norm(decision.text))
+        self.assertIn("bien so thua", _norm(decision.text))
+        self.assertNotIn("Parser đã viết lại text vì câu trả lời sa vào", decision.debug_trace)
 
     def test_payload_blocks_placeholder_text(self):
         decision = Decision(text="...", animation="stand", should_speak=True)

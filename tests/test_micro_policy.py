@@ -43,16 +43,21 @@ class MicroLinePolicyTests(unittest.TestCase):
             policy.validate_text(allowed_line_type="micro_presence", text="..."),
         )
         self.assertIn(
-            "decorative_metaphor_without_stance",
+            "micro_presence_empty_atmosphere",
             policy.validate_text(allowed_line_type="micro_presence", text="Im lang nhu mot bien suong."),
         )
         self.assertIn(
             "micro_presence_must_be_residue",
             policy.validate_text(allowed_line_type="micro_presence", text="Mot khung thoai mau hong dang hien thi."),
         )
+        long_reasons = policy.validate_text(
+            allowed_line_type="micro_presence",
+            text="Nhịp này vẫn hơi nghẹn và kéo dài thêm một chút.",
+        )
+        self.assertEqual(long_reasons, ())
         self.assertIn(
-            "micro_presence_too_long",
-            policy.validate_text(allowed_line_type="micro_presence", text="Nhip nay van hoi nghen va keo dai them mot chut."),
+            "micro_presence_low_density",
+            policy.validate_text(allowed_line_type="micro_presence", text="Có gì đó này kia thôi ấy mà."),
         )
         self.assertEqual(
             policy.validate_text(allowed_line_type="micro_presence", text="Nhip nay hoi nghen."),

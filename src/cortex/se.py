@@ -12,6 +12,7 @@ class SeLens:
         "reference_window_active",
         "communication_window_active",
         "entertainment_window_active",
+        "focus_aid_media_window_active",
         "general_window_active",
         "browser_url_visible",
         "many_browser_tabs_visible",
@@ -31,7 +32,6 @@ class SeLens:
         "terminal",
         "powershell",
         "cmd.exe",
-        "github",
         "git bash",
     )
     _DOC_KEYWORDS = (
@@ -49,25 +49,36 @@ class SeLens:
         "telegram",
         "slack",
         "messenger",
-        "mail",
-        "gmail",
         "outlook",
         "zalo",
-        "facebook",
         "zoom",
         "teams",
         "meet",
     )
     _ENTERTAINMENT_KEYWORDS = (
-        "youtube",
         "netflix",
-        "spotify",
         "steam",
         "game",
         "twitch",
-        "instagram",
-        "tiktok",
-        "reddit",
+    )
+    _BROWSER_SURFACE_KEYWORDS = (
+        "chrome",
+        "firefox",
+        "edge",
+        "brave",
+        "opera",
+        "browser",
+    )
+    _WEAK_CONTEXT_HINT_RULES = (
+        (("youtube", "youtu.be"), "youtube visible"),
+        (("tiktok",), "tiktok visible"),
+        (("reddit",), "reddit visible"),
+        (("gmail", "mail.google"), "gmail visible"),
+        (("github",), "github visible"),
+        (
+            ("stackoverflow", "stack overflow", "developer.mozilla", "learn.microsoft", "python.org"),
+            "reference docs visible",
+        ),
     )
 
     _CLAIM_STYLE_ALIASES = {
@@ -136,20 +147,21 @@ class SeLens:
             idle_seconds=idle_seconds,
             evidence=evidence,
         )
+        ambient_seed = int(raw.get("ambient_tone_score", raw.get("mood_score", 50)) or 50)
 
         return TelemetrySnapshot(
             captured_at=str(raw.get("captured_at", "") or raw.get("time", "") or ""),
             active_window=active_window,
             active_window_kind=active_window_kind,
-            focus_summary=self._build_focus_summary(active_window_kind, active_app, browser_url),
+            focus_summary=self._focus_summary_for_kind(active_window_kind, active_app, browser_url),
             active_app=active_app,
             browser_url=browser_url,
             browser_tabs=browser_tabs,
             open_windows=open_windows,
             cpu_percent=cpu_percent,
             ram_percent=ram_percent,
-            mood_score=int(raw.get("mood_score", 50) or 50),
-            mood_label=self._label_mood(int(raw.get("mood_score", 50) or 50)),
+            ambient_tone=self._label_ambient_tone(ambient_seed),
+            tease_bias=self._label_tease_bias(ambient_seed),
             inferred_pos_x=float(raw.get("inferred_pos_x", 0.5) or 0.5),
             position_label=self._label_position(float(raw.get("inferred_pos_x", 0.5) or 0.5)),
             idle_seconds=idle_seconds,
@@ -215,7 +227,8 @@ class SeLens:
             f"- open_windows: {json.dumps(machine_context['open_windows'], ensure_ascii=False)}",
             f"- cpu_percent: {machine_context['cpu_percent']}",
             f"- ram_percent: {machine_context['ram_percent']}",
-            f"- mood: {machine_context['mood_score']} ({machine_context['mood_label']})",
+            f"- ambient_tone: {machine_context['ambient_tone']}",
+            f"- tease_bias: {machine_context['tease_bias']}",
             f"- position: {machine_context['position_label']} ({machine_context['inferred_pos_x']})",
             f"- idle_label: {machine_context['idle_label']}",
         ]
@@ -228,6 +241,7 @@ class SeLens:
             f"- room_feel: {self._describe_prompt_scene(snapshot)}; {self._describe_prompt_pace(snapshot)}",
             f"- human_rhythm: {self._describe_prompt_focus(snapshot)}",
             f"- claim_style: {snapshot.claim_style}", #kiểu phát ngôn an toàn hiện tại từ snapshot
+            f"- ambient_tone: {snapshot.ambient_tone}; tease_bias={snapshot.tease_bias}",
             f"- visible_context: {self._format_visible_context(snapshot)}",
         ]
         screen_facts = self._build_prompt_screen_facts(snapshot)
@@ -321,6 +335,8 @@ class SeLens:
             events.append("reference_window_active")
         elif active_window_kind == "communication":
             events.append("communication_window_active")
+        elif active_window_kind == "focus_aid_media":
+            events.append("focus_aid_media_window_active")
         elif active_window_kind == "entertainment":
             events.append("entertainment_window_active")
         else:
@@ -404,6 +420,12 @@ class SeLens:
             return "deep_work"
         if active_window_kind == "communication":
             return "conversation"
+        if active_window_kind == "focus_aid_media":
+            if idle_seconds >= 180:
+                return "ambient_media"
+            if max(open_window_count, browser_tab_count) >= 8:
+                return "split_attention"
+            return "background_media"
         if active_window_kind == "entertainment":
             if idle_seconds >= 180:
                 return "passive_consumption"
@@ -442,13 +464,20 @@ class SeLens:
             parsed = urlparse(browser_url)
             browser_target = parsed.netloc or browser_url
             evidence.append(f"browser target is visible: {browser_target}")
+        evidence.extend(
+            self._build_weak_context_hints(
+                active_window=active_app,
+                browser_url=browser_url,
+                browser_tabs=browser_tabs,
+            )
+        )
         if browser_tabs:
             evidence.append(f"{len(browser_tabs)} browser tabs are visible")
         if open_windows:
             evidence.append(f"{len(open_windows)} windows are open")
         if recent_events:
             evidence.append(f"recent events include {', '.join(recent_events[:2])}")
-        return tuple(evidence[:6])
+        return tuple(dict.fromkeys(evidence))[:8]
 
     def _build_claim_style(
         self,
@@ -461,11 +490,15 @@ class SeLens:
         explicit = str(raw.get("claim_style", "") or "").strip()
         if explicit:
             return self._normalize_claim_style(explicit)
-        if len(evidence) <= 1:
+        concrete_evidence = self._concrete_evidence(evidence)
+        quality_score = self._evidence_quality_score(concrete_evidence)
+        if active_window_kind in {"communication", "documentation", "system", "focus_aid_media"} and idle_seconds >= 600:
             return "WEAK_IMPRESSION"
-        if active_window_kind in {"communication", "documentation", "system"} and idle_seconds >= 600:
+        if not concrete_evidence or quality_score < 1.0:
             return "WEAK_IMPRESSION"
-        if len(evidence) >= 2:
+        if len(concrete_evidence) >= 2 and quality_score < 1.6:
+            return "WEAK_IMPRESSION"
+        if len(concrete_evidence) >= 2 and quality_score >= 2.0:
             return "OBSERVED_PATTERN"
         return "DIRECT_FACT"
 
@@ -476,13 +509,13 @@ class SeLens:
         canonical = normalized.upper()
         if canonical in {"DIRECT_FACT", "OBSERVED_PATTERN", "WEAK_IMPRESSION", "FORBIDDEN_INFERENCE"}:
             return canonical
-        return self._CLAIM_STYLE_ALIASES.get(normalized.lower(), "OBSERVED_PATTERN")
+        return self._CLAIM_STYLE_ALIASES.get(normalized.lower(), "WEAK_IMPRESSION")
 
     #Phân loại cửa sổ
     def _classify_window_kind(self, active_window: str, browser_url: str, browser_tabs: tuple[str, ...]) -> str:
-        active_haystack = " | ".join((active_window, browser_url)).lower()
-        tabs_haystack = " | ".join(browser_tabs).lower()
-        combined_haystack = f"{active_haystack} | {tabs_haystack}"
+        active_haystack = str(active_window or "").lower()
+        browser_haystack = " | ".join((browser_url, *browser_tabs)).lower()
+        combined_haystack = " | ".join(part for part in (active_haystack, browser_haystack) if part)
 
         if any(keyword in active_haystack for keyword in self._CODING_KEYWORDS):
             return "coding"
@@ -491,22 +524,14 @@ class SeLens:
         if self._contains_override(combined_haystack, "force_communication"):
             return "communication"
         if self._contains_override(combined_haystack, "focus_aid_media"):
+            return "focus_aid_media"
+        if any(keyword in browser_haystack for keyword in self._DOC_KEYWORDS):
+            return "documentation"
+        if self._looks_like_browser_surface(active_window, browser_url, browser_tabs):
             return "general"
         if any(keyword in active_haystack for keyword in self._COMMUNICATION_KEYWORDS):
             return "communication"
         if any(keyword in active_haystack for keyword in self._ENTERTAINMENT_KEYWORDS):
-            return "entertainment"
-        if any(keyword in tabs_haystack for keyword in self._CODING_KEYWORDS):
-            return "coding"
-        if any(keyword in tabs_haystack for keyword in self._DOC_KEYWORDS):
-            return "documentation"
-        if self._contains_override(combined_haystack, "force_communication"):
-            return "communication"
-        if self._contains_override(combined_haystack, "focus_aid_media"):
-            return "general"
-        if any(keyword in tabs_haystack for keyword in self._COMMUNICATION_KEYWORDS):
-            return "communication"
-        if any(keyword in tabs_haystack for keyword in self._ENTERTAINMENT_KEYWORDS):
             return "entertainment"
         if any(keyword in combined_haystack for keyword in ("settings", "task manager", "file explorer")):
             return "system"
@@ -524,13 +549,6 @@ class SeLens:
         if active_window_kind == "system":
             return f"Ngài đang thao tác hệ thống: {active_app}"
         return f"Ngài đang ở bối cảnh tổng quát: {active_app}"
-
-    def _label_mood(self, mood_score: int) -> str:
-        if mood_score >= 80:
-            return "hài lòng ngầm"
-        if mood_score <= 30:
-            return "bực dọc"
-        return "trung tính"
 
     def _label_position(self, inferred_pos_x: float) -> str:
         if inferred_pos_x <= 0.15:
@@ -558,6 +576,8 @@ class SeLens:
             return "reference material nearby"
         if kind == "communication":
             return "conversation nearby"
+        if kind == "focus_aid_media":
+            return "ambient media nearby"
         if kind == "entertainment":
             return "leisure nearby"
         if kind == "system":
@@ -580,12 +600,15 @@ class SeLens:
             return "settled"
         if focus_pattern in {"stuck", "absent"}:
             return "quiet pause"
-        if focus_pattern in {"fragmented", "passive_consumption", "active_consumption"}:
+        if focus_pattern in {"fragmented", "passive_consumption", "active_consumption", "background_media", "ambient_media", "split_attention"}:
             return "attention lightly spread"
         return "unclear, keep claims soft"
 
     def _build_prompt_cues(self, snapshot: TelemetrySnapshot) -> list[str]:
-        cues: list[str] = []
+        cues: list[str] = [
+            "Telemetry is weak ambient evidence, not proof of mood, intent, productivity, or laziness.",
+            "Use it for pacing and light presence only.",
+        ]
         kind = snapshot.active_window_kind
         focus_pattern = snapshot.user_signals.focus_pattern or ""
         switching = snapshot.user_signals.window_switching or ""
@@ -594,19 +617,129 @@ class SeLens:
             cues.append("keep close to the work context instead of narrating the desktop")
         elif kind == "communication":
             cues.append("treat this as light conversation, not a productivity lecture")
+        elif kind == "focus_aid_media":
+            cues.append("treat visible media as possible background aid, not automatic leisure or avoidance")
         elif kind == "entertainment":
             cues.append("do not overcorrect a leisure moment unless drift is obvious")
 
         if focus_pattern == "stuck":
             cues.append("there may be a quiet stall, so a small concrete observation is enough")
-        elif focus_pattern == "fragmented" or switching == "high":
+        elif focus_pattern in {"fragmented", "split_attention"} or switching == "high":
             cues.append("attention may be spread out, but avoid quoting counts or inventories")
         elif focus_pattern == "deep_work":
             cues.append("respect concentration and keep the line brief")
 
         if snapshot.claim_style == "OBSERVED_PATTERN":
-            cues.append("observed patterns are allowed when grounded by at least two cues; do not claim deep psychology")
+            cues.append("observed patterns are allowed only when grounded by concrete, non-generic evidence")
         elif snapshot.claim_style == "WEAK_IMPRESSION":
             cues.append("use explicit hedge words such as co le, toi nghi, or toi co cam giac")
 
-        return cues[:4]
+        return cues[:6]
+
+    def _looks_like_browser_surface(self, active_window: str, browser_url: str, browser_tabs: tuple[str, ...]) -> bool:
+        title = str(active_window or "").lower()
+        return any(keyword in title for keyword in self._BROWSER_SURFACE_KEYWORDS)
+
+    def _build_weak_context_hints(
+        self,
+        *,
+        active_window: str,
+        browser_url: str,
+        browser_tabs: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        haystack = " | ".join((active_window, browser_url, *browser_tabs)).lower()
+        hints: list[str] = []
+        for needles, label in self._WEAK_CONTEXT_HINT_RULES:
+            if any(needle in haystack for needle in needles):
+                hints.append(f"weak context hint: {label}")
+        return tuple(dict.fromkeys(hints))[:3]
+
+    def _is_weak_context_hint_evidence(self, evidence: str) -> bool:
+        lowered = str(evidence or "").strip().lower()
+        return lowered.startswith("weak context hint:")
+
+    def _concrete_evidence(self, evidence: tuple[str, ...]) -> tuple[str, ...]:
+        items = [
+            item
+            for item in evidence
+            if item
+            and not self._is_generic_prompt_evidence(item)
+            and not self._is_weak_context_hint_evidence(item)
+        ]
+        return tuple(items)
+
+    def _evidence_quality_score(self, evidence: tuple[str, ...]) -> float:
+        return sum(self._evidence_item_quality(item) for item in evidence)
+
+    def _evidence_item_quality(self, evidence: str) -> float:
+        lowered = str(evidence or "").strip().lower()
+        if not lowered:
+            return 0.0
+        if any(
+            marker in lowered
+            for marker in (
+                "browser target is visible",
+                "browser tabs are visible",
+                "windows are open",
+                "browser_url_visible",
+            )
+        ):
+            return 0.2
+        if any(
+            marker in lowered
+            for marker in (
+                "error",
+                "traceback",
+                "exception",
+                "failed build",
+                "compile failed",
+                "task manager",
+                "file explorer",
+                "settings",
+                "zoom",
+                "teams",
+                "meet",
+                "meeting",
+                "edited",
+                "saved",
+                "selection",
+            )
+        ):
+            return 1.3
+        if any(
+            marker in lowered
+            for marker in (
+                "debug",
+                "build",
+                "terminal",
+                "documentation",
+                "reference",
+                "readme",
+                "github",
+                "youtube",
+                "tiktok",
+                "reddit",
+                "gmail",
+            )
+        ):
+            return 0.6
+        return 0.9
+
+    def _label_ambient_tone(self, ambient_seed: int) -> str:
+        if ambient_seed >= 80:
+            return "bright"
+        if ambient_seed <= 30:
+            return "dry"
+        return "neutral"
+
+    def _label_tease_bias(self, ambient_seed: int) -> str:
+        if ambient_seed >= 80:
+            return "playful"
+        if ambient_seed <= 30:
+            return "wry"
+        return "neutral"
+
+    def _focus_summary_for_kind(self, active_window_kind: str, active_app: str, browser_url: str) -> str:
+        if active_window_kind == "focus_aid_media":
+            return f"Background media may be present alongside the main task: {active_app}"
+        return self._build_focus_summary(active_window_kind, active_app, browser_url)

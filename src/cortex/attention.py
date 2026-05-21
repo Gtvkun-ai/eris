@@ -551,7 +551,8 @@ class AttentionWorkspace:
             text_parts.extend(
                 (
                     str(getattr(snapshot, "focus_summary", "") or ""),
-                    str(getattr(snapshot, "mood_label", "") or ""),
+                    str(getattr(snapshot, "ambient_tone", "") or ""),
+                    str(getattr(snapshot, "tease_bias", "") or ""),
                     " ".join(str(item) for item in (getattr(snapshot, "recent_events", ()) or ())),
                     str(getattr(user_signals, "typing_speed", "") if user_signals is not None else ""),
                     str(getattr(user_signals, "window_switching", "") if user_signals is not None else ""),

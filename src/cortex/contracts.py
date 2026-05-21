@@ -32,8 +32,8 @@ class TelemetrySnapshot:
     open_windows: tuple[str, ...] = ()
     cpu_percent: float = 0.0
     ram_percent: float = 0.0
-    mood_score: int = 50
-    mood_label: str = "neutral"
+    ambient_tone: str = "neutral"
+    tease_bias: str = "neutral"
     inferred_pos_x: float = 0.5
     position_label: str = "center"
     idle_seconds: float = 0.0
@@ -41,7 +41,7 @@ class TelemetrySnapshot:
     recent_events: tuple[str, ...] = ()
     user_signals: UserSignals = field(default_factory=UserSignals)
     evidence: tuple[str, ...] = ()
-    claim_style: str = "OBSERVED_PATTERN"
+    claim_style: str = "WEAK_IMPRESSION"
     vision_facts: tuple[str, ...] = ()
 
     def to_machine_context(self) -> dict[str, object]:
@@ -61,8 +61,8 @@ class TelemetrySnapshot:
             "open_windows": list(self.open_windows),
             "cpu_percent": round(self.cpu_percent, 1),
             "ram_percent": round(self.ram_percent, 1),
-            "mood_score": self.mood_score,
-            "mood_label": self.mood_label,
+            "ambient_tone": self.ambient_tone,
+            "tease_bias": self.tease_bias,
             "inferred_pos_x": round(self.inferred_pos_x, 3),
             "position_label": self.position_label,
             "idle_label": self.idle_label,
@@ -99,6 +99,10 @@ class TiPolicyReport:
     motion_target_x_hint: float = -1.0
     force_animation: bool = False
     allow_idle_variation: bool = True
+    uncertainty_bias: float = 0.10
+    directness_bias: float = -0.10
+    restraint_bias: float = 0.15
+    post_exposure_recoil_bias: float = 0.12
 
 
 @dataclass(slots=True)
@@ -180,6 +184,11 @@ class SocialPresenceEvent:
     timestamp: str = ""
     source: str = "social_presence_detector"
     speech_allowed: bool = False
+    presence_vector: tuple[float, ...] = ()
+    stability: float = 0.0
+    continuity_persistence: float = 0.0
+    fragmentation: float = 0.0
+    anxiety: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -192,6 +201,11 @@ class SocialPresenceEvent:
             "timestamp": self.timestamp,
             "source": self.source,
             "speech_allowed": bool(self.speech_allowed),
+            "presence_vector": [round(float(value), 3) for value in self.presence_vector],
+            "stability": round(float(self.stability), 3),
+            "continuity_persistence": round(float(self.continuity_persistence), 3),
+            "fragmentation": round(float(self.fragmentation), 3),
+            "anxiety": round(float(self.anxiety), 3),
         }
 
 

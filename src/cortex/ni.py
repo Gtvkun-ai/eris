@@ -24,6 +24,7 @@ DEFAULT_FOCUS_BIAS = {
     "documentation": {"bias": 0.08, "scale": 1.0},
     "communication": {"bias": 0.04, "scale": 1.0},
     "system": {"bias": 0.02, "scale": 1.0},
+    "focus_aid_media": {"bias": -0.01, "scale": 1.0},
     "general": {"bias": 0.0, "scale": 1.0},
     "entertainment": {"bias": -0.06, "scale": 1.0},
 }
@@ -228,6 +229,7 @@ class NiEngine:
             "documentation": 0.76,
             "communication": 0.62,
             "system": 0.58,
+            "focus_aid_media": 0.40,
             "general": 0.46,
             "entertainment": 0.22,
         }
@@ -253,7 +255,7 @@ class NiEngine:
         if any(term in normalized for term in positive_terms):
             adjust += 0.08
         if any(term in normalized for term in negative_terms):
-            adjust -= 0.14
+            adjust -= 0.04 if focus_kind == "focus_aid_media" else 0.14
         if any(term in normalized for term in communication_terms):
             adjust += 0.04 if focus_kind == "communication" else 0.02
         return adjust

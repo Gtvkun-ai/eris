@@ -509,6 +509,21 @@ class SpeechCoreEngine:
             )
         )
 
+        candidates.append(
+            MotivationalUrge(
+                label="chat_reply",
+                score=1.30 if channel == "chat" else 0.0,
+                utterance_type="mirror",
+                speech_source="freeform",
+                risk_level="texture",
+                grounding="conversation_turn",
+                reason="The user opened an explicit chat turn; reply through the full speech pipeline.",
+                evidence=("chat message",),
+                safety_flags=("user_requested_chat", "conversation_grounded"),
+                blocked=channel != "chat",
+            )
+        )
+
         user_requested_score = (
             0.92
             + self._pressure(state, "social_pressure") * 0.20
@@ -1363,8 +1378,9 @@ class SpeechCoreEngine:
     def _resolve_mood(self, *, snapshot, appraisal, fe_plan) -> str:
         tone = str(getattr(fe_plan, "tone_label", "") or "")
         stance = str(getattr(appraisal, "stance", "") or "")
-        mood = str(getattr(snapshot, "mood_label", "") or "")
-        return tone or stance or mood or "neutral"
+        ambient_tone = str(getattr(snapshot, "ambient_tone", "") or "")
+        tease_bias = str(getattr(snapshot, "tease_bias", "") or "")
+        return tone or stance or ambient_tone or tease_bias or "neutral"
 
     def _float(self, value) -> float:
         try:

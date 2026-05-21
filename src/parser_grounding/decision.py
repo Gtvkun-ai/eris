@@ -3,6 +3,7 @@ import re
 import unicodedata
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
+from guard_config import OFF_GUARD_MODE, STRICT_GUARD_MODE, get_guard_mode
 from llm.contracts import VALID_ANIMATIONS
 # ParserGroundingMixin là một lớp mixin cung cấp các phương thức để xử lý và
 #  "ground" (định hình) các quyết định được tạo ra bởi một mô hình ngôn ngữ lớn (LLM)
@@ -1150,7 +1151,11 @@ class ParserGroundingMixin:
         should_speak = self._coerce_bool(decision.get("should_speak", bool(text)), fallback=bool(text))
         confidence = self._coerce_confidence(decision.get("confidence", 0.0))
         parse_mode = str(decision.get("parse_mode", "json")).strip() or "json"
+        guard_mode = get_guard_mode()
         grounded_text, changed = self._ground_text_to_runtime_capabilities(text, user_hint=user_hint)
+        if guard_mode == OFF_GUARD_MODE:
+            changed = False
+            grounded_text = text
         if changed:
             self._log("warning", "Phát hiện mệnh đề vượt quá capability runtime, đã cưỡng bức viết lại.")
             text = grounded_text or self._build_grounded_text(user_hint=user_hint)
@@ -1159,7 +1164,7 @@ class ParserGroundingMixin:
                 debug_trace = "Parser đã viết lại text vì model tuyên bố các hành động vượt quá năng lực runtime."
 
         contradiction_changed = False
-        if self._has_contradictory_encouragement(text):
+        if guard_mode == STRICT_GUARD_MODE and self._has_contradictory_encouragement(text):
             text = self._rewrite_contradictory_encouragement(text)
             extracted_fact = ""
             contradiction_changed = True
@@ -1167,7 +1172,7 @@ class ParserGroundingMixin:
                 debug_trace = "Parser đã viết lại text vì câu trả lời tự mâu thuẫn giữa chê lệch focus và khuyến khích tiếp tục."
 
         filler_changed = False
-        if self._has_philosophical_filler(text):
+        if guard_mode == STRICT_GUARD_MODE and self._has_philosophical_filler(text):
             text = self._rewrite_philosophical_filler(text)
             extracted_fact = ""
             filler_changed = True
@@ -1175,7 +1180,7 @@ class ParserGroundingMixin:
                 debug_trace = "Parser đã viết lại text vì câu trả lời sa vào sáo ngữ triết lý hoặc diễn ngôn lạc đề."
 
         managed_changed = False
-        if self._has_overmanaged_style(text):
+        if guard_mode == STRICT_GUARD_MODE and self._has_overmanaged_style(text):
             text = self._rewrite_overmanaged_style(text)
             extracted_fact = ""
             managed_changed = True

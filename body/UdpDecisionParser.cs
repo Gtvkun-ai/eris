@@ -10,6 +10,7 @@ public sealed class UdpDecisionPayload
 	public bool HasTextField { get; init; }
 	public bool ShouldSpeak { get; init; } = true;
 	public bool HasRemoteMotion { get; init; }
+	public bool HasExplicitMotion { get; init; }
 	public MotionCommand MotionCommand { get; init; }
 	public BodyBias BodyBias { get; init; }
 	public bool HasBodyBias { get; init; }
@@ -55,6 +56,7 @@ public sealed class UdpDecisionParser
 		string motionIntent = "";
 		int motionFacing = 0;
 		float motionTargetX = -1f;
+		bool explicitMotion = false;
 		BodyBias bodyBias = null;
 		bool hasBodyBias = false;
 
@@ -91,11 +93,23 @@ public sealed class UdpDecisionParser
 			if (root.TryGetProperty("target_x", out var tx) && tx.ValueKind == JsonValueKind.Number)
 				motionTargetX = tx.GetSingle();
 			if (root.TryGetProperty("motion_intent", out var mi))
+			{
 				motionIntent = mi.GetString() ?? "";
+				if (!string.IsNullOrWhiteSpace(motionIntent))
+					explicitMotion = true;
+			}
 			if (root.TryGetProperty("motion_facing", out var mf) && mf.ValueKind == JsonValueKind.Number)
+			{
 				motionFacing = mf.GetInt32();
+				if (motionFacing != 0)
+					explicitMotion = true;
+			}
 			if (root.TryGetProperty("motion_target_x", out var mtx) && mtx.ValueKind == JsonValueKind.Number)
+			{
 				motionTargetX = mtx.GetSingle();
+				if (motionTargetX >= 0f)
+					explicitMotion = true;
+			}
 		}
 		catch (Exception ex)
 		{
@@ -124,6 +138,7 @@ public sealed class UdpDecisionParser
 			HasTextField = hasTextField,
 			ShouldSpeak = shouldSpeak,
 			HasRemoteMotion = hasRemoteMotion,
+			HasExplicitMotion = explicitMotion,
 			MotionCommand = new MotionCommand(motionIntent, animation, nextAnimation, bounceAction, motionFacing, motionTargetX),
 			BodyBias = bodyBias,
 			HasBodyBias = hasBodyBias,

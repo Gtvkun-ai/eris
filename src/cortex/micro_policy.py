@@ -285,32 +285,38 @@ class MicroLinePolicy:
         cleaned = str(text or "").strip()
         if not cleaned:
             return ()
+        #Chuẩn hóa line_type, risk_level về lowercase.
         line_type = str(allowed_line_type or "").strip().lower()
         risk_level = str(speech_risk_level or "").strip().lower()
         reasons: list[str] = []
+        #Đếm số từ bằng cách tách theo khoảng trắng, bỏ dấu .?! ở đầu/cuối.
         word_count = len([item for item in re.split(r"\s+", cleaned.strip(" .?!")) if item])
+        #Chặn placeholder
         if self._looks_like_placeholder(cleaned):
             reasons.append("placeholder_text_blocked")
+        #Nhóm này là các câu kiểu hiện diện nhẹ, quan sát nhẹ, cảm nhận nhẹ, hỏi nhẹ.
         if line_type in {"micro_presence", "soft_impression", "micro_observation", "curious_question", "tender_checkin"}:
-            if self._looks_like_unaccented_vietnamese(cleaned):
+            if self._looks_like_unaccented_vietnamese(cleaned): #Bắt tiếng Việt có dấu
                 reasons.append("vietnamese_requires_diacritics")
-            if word_count < 6 and not self._has_clear_short_meaning(
+            if word_count < 6 and not self._has_clear_short_meaning( #Chặn câu quá ngắn nhưng vô nghĩa
                 cleaned,
                 anchor_source=anchor_source,
-                anchor_text=anchor_text,
+                anchor_text=anchor_text, 
                 user_action=user_action,
                 session_context=session_context,
                 screen_evidence=screen_evidence,
                 line_type=line_type,
             ):
                 reasons.append("micro_line_too_short_without_clear_meaning")
-        if line_type == "silence":
+        if line_type == "silence": #Nếu line type là silence thì không cho ra final text.
             reasons.append("no_speech_blocks_final")
+        #Nếu loại câu là câu hỏi tò mò thì text phải là câu hỏi.
         if line_type == "curious_question" and not self._looks_like_question(cleaned):
             reasons.append("curious_question_requires_question")
+        #micro_observation
         if line_type == "micro_observation" and self._looks_like_question(cleaned):
             reasons.append("micro_observation_must_not_ask")
-        if line_type == "micro_observation":
+        if line_type == "micro_observation": #Nó tìm bằng chứng/neo ngữ cảnh từ: screen_evidence, user_action, session_context, broadcast.
             grounding_source, grounding_anchor = self._resolve_anchor(
                 line_type=line_type,
                 broadcast=None,
@@ -320,35 +326,39 @@ class MicroLinePolicy:
             )
             effective_source = anchor_source or grounding_source
             effective_anchor = anchor_text or grounding_anchor
-            if not effective_source:
+            if not effective_source: #Nếu không có anchor thì reject.
                 reasons.append("micro_observation_requires_anchor")
-            elif not self._text_matches_anchor(cleaned, effective_anchor):
+            elif not self._text_matches_anchor(cleaned, effective_anchor): #Nếu có anchor nhưng câu không khớp anchor thì reject.
                 reasons.append(f"micro_observation_not_grounded:{effective_source}")
-        if line_type == "soft_impression" and self._looks_like_hard_fact_claim(cleaned):
+        if line_type == "soft_impression" and self._looks_like_hard_fact_claim(cleaned): #soft_impression là cảm nhận mềm, nên không được khẳng định chắc nịch.
             reasons.append("soft_impression_no_hard_fact_claim")
-        if line_type in {"micro_presence", "soft_impression", "micro_observation"} and self._looks_like_decorative_metaphor_without_stance(cleaned):
+        #Nếu câu chỉ có hình ảnh thơ thẩn nhưng không có lập trường/nghĩa rõ thì reject.
+        if line_type in {"soft_impression", "micro_observation"} and self._looks_like_decorative_metaphor_without_stance(cleaned):
             reasons.append("decorative_metaphor_without_stance")
+        #Rule riêng cho micro_presence Nó gọi riêng lỗi là micro_presence_empty_atmosphere.
+        if line_type == "micro_presence" and self._looks_like_decorative_metaphor_without_stance(cleaned):
+            reasons.append("micro_presence_empty_atmosphere")
+        #Nếu câu quá loãng nghĩa thì reject.
+        if line_type == "micro_presence" and self._semantic_density(cleaned) < 0.28:
+            reasons.append("micro_presence_low_density")
+        #Nó không muốn câu kiểu tự thuật sự hiện diện.
         if line_type == "micro_presence" and self._looks_like_presence_narration(cleaned):
             reasons.append("micro_presence_must_be_residue")
+        #Chặn tuyên bố cảm xúc quá thẳng
         if line_type in {"micro_presence", "soft_impression"} and self._looks_like_blunt_emotion_declaration(cleaned):
             reasons.append("blunt_emotion_declaration")
+        #Đây là tầng kiểm tra câu có vượt quá mức quan hệ cho phép không.
         relational_issue = self._relational_expression_issue(cleaned, relational_context=relational_context)
         if relational_issue:
             reasons.append(relational_issue)
-        if line_type == "micro_presence":
-            if word_count > 10:
-                reasons.append("micro_presence_too_long")
-        if risk_level in {"micro_presence", "texture"}:
-            if word_count > 14:
-                reasons.append("micro_line_too_long")
-        if (
+        if (# Nếu không phải là câu hỏi tò mò và không phải là quan sát màn hình
             line_type not in {"curious_question", "screen_observation"}
             and risk_level in {"soft_read", "micro_presence", "texture"}
             and self._looks_like_hard_fact_claim(cleaned)
         ):
-            reasons.append("weak_evidence_no_hard_claim")
+            reasons.append("weak_evidence_no_hard_claim") #Nếu câu có vẻ như đang cố gắng khẳng định một sự thật nhưng evidence yếu thì reject.
         if line_type == "tender_checkin" and self._looks_therapeutic(cleaned):
-            reasons.append("tender_checkin_not_therapist")
+            reasons.append("tender_checkin_not_therapist") #Nếu câu hỏi thăm nhẹ mà biến thành trị liệu tâm lý thì bị reject.
         return tuple(dict.fromkeys(reasons))
 
     def rewrite_relational_line(
@@ -729,6 +739,58 @@ class MicroLinePolicy:
         return any(marker in normalized for marker in metaphor_markers) and not any(
             marker in normalized for marker in stance_markers
         )
+
+    def _semantic_density(self, text: str) -> float:
+        normalized = self.repeat_guard.normalize(text)
+        tokens = [token for token in normalized.split() if token]
+        if not tokens:
+            return 0.0
+        filler_tokens = {
+            "a",
+            "ai",
+            "ay",
+            "cai",
+            "cho",
+            "co",
+            "cua",
+            "cung",
+            "da",
+            "dang",
+            "day",
+            "de",
+            "den",
+            "di",
+            "do",
+            "doan",
+            "gi",
+            "hoi",
+            "kia",
+            "la",
+            "lai",
+            "mot",
+            "nay",
+            "ngai",
+            "nhu",
+            "noi",
+            "o",
+            "ra",
+            "roi",
+            "the",
+            "thi",
+            "thoi",
+            "toi",
+            "trong",
+            "tu",
+            "van",
+            "ve",
+            "vua",
+        }
+        meaningful = [token for token in tokens if len(token) >= 3 and token not in filler_tokens]
+        if not meaningful:
+            return 0.0
+        unique_meaningful = set(meaningful)
+        repetition_penalty = len(unique_meaningful) / max(1, len(meaningful))
+        return (len(meaningful) / len(tokens)) * (0.72 + repetition_penalty * 0.28)
 
     # chặn Eris hành xử như telemetry biết nói
     def _looks_like_presence_narration(self, text: str) -> bool:
