@@ -8,6 +8,7 @@ import webbrowser
 import os # Thêm import os để sử dụng os.startfile trên Windows
 import requests # Thêm import requests để thực hiện các yêu cầu HTTP khi cần thiết
 
+from eris_secrets import get_secret
 from .contracts import ActionExecutionResult, VALID_SYSTEM_ACTIONS
 # ActionExecutor là một lớp để thực thi các hành động hệ thống được định nghĩa 
 # trong VALID_SYSTEM_ACTIONS.
@@ -21,7 +22,6 @@ class ActionExecutor:
     _VK_VOLUME_MUTE = 0xAD
     _VK_VOLUME_DOWN = 0xAE
     _VK_VOLUME_UP = 0xAF
-    _GEMINI_API_KEY = "AIzaSyDzKTsvNUyYGWpT62Ggnd8m7MuzV9ITCkc"
     _GEMINI_SEARCH_MODEL = "gemini-2.5-flash-lite"
 
     def __init__(self, logger=None):
@@ -275,7 +275,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 message="Thiếu từ khóa để search.",
             )
 
-        api_key = os.environ.get("GEMINI_API_KEY", "").strip() or self._GEMINI_API_KEY
+        api_key = get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
         if not api_key:
             return ActionExecutionResult(
                 action_name="search_web",
@@ -390,7 +390,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 message="Thiếu thông tin để xem thời tiết.",
             )
 
-        api_key = os.environ.get("GEMINI_API_KEY", "").strip() or self._GEMINI_API_KEY
+        api_key = get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
         if not api_key:
             return ActionExecutionResult(
                 action_name="get_weather",

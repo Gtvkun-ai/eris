@@ -190,7 +190,7 @@ if __name__ == "__main__":
         )
 
     remote_enabled = os.environ.get("ERIS_REMOTE_API_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
-    style_enabled = os.environ.get("ERIS_LOCAL_STYLE_REWRITE_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+    style_enabled = os.environ.get("ERIS_LOCAL_STYLE_REWRITE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
     if not os.path.isfile(model_path) and (not remote_enabled or style_enabled):
         logger.error("Không tìm thấy file mô hình: %s", model_path)
         logger.error("Dùng: python vision.py <đường_dẫn_model.gguf>")

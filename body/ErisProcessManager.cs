@@ -1,9 +1,11 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 
 public sealed class ErisServiceConfig
 {
@@ -20,7 +22,7 @@ public sealed class ErisServiceConfig
 	public bool LlamaServerFlashAttn { get; init; } = true;
 	public string LlamaServerExtraArgs { get; init; } = "";
 	public bool EnableRemoteCognitionApi { get; init; }
-	public bool EnableLocalStyleRewrite { get; init; }
+	public bool EnableLocalStyleRewrite { get; init; } = false;
 	public string DefaultRemoteApiKey { get; init; } = "";
 	public string RemoteApiProvider { get; init; } = "gemini";
 	public string RemoteApiBaseUrl { get; init; } = "";
@@ -234,6 +236,12 @@ public sealed class ErisProcessManager
 
 	private void PopulateVisionEnvironment(ProcessStartInfo startInfo, ErisServiceConfig config)
 	{
+		foreach (var secret in LoadProjectSecretsEnvironment())
+		{
+			if (!string.IsNullOrWhiteSpace(secret.Key) && !string.IsNullOrWhiteSpace(secret.Value))
+				startInfo.Environment[secret.Key] = secret.Value;
+		}
+
 		startInfo.Environment["PYTHONUTF8"] = "1";
 		startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
 		startInfo.Environment["PYTHONUNBUFFERED"] = "1";
@@ -251,10 +259,57 @@ public sealed class ErisProcessManager
 		startInfo.Environment["ERIS_REMOTE_PROVIDER"] = config.RemoteApiProvider;
 		startInfo.Environment["ERIS_REMOTE_BASE_URL"] = config.RemoteApiBaseUrl;
 		startInfo.Environment["ERIS_REMOTE_MODEL"] = config.RemoteApiModelName;
-		startInfo.Environment["ERIS_REMOTE_API_KEY"] = config.DefaultRemoteApiKey;
-		startInfo.Environment["GEMINI_API_KEY"] = config.DefaultRemoteApiKey;
+		if (!string.IsNullOrWhiteSpace(config.DefaultRemoteApiKey))
+		{
+			startInfo.Environment["ERIS_REMOTE_API_KEY"] = config.DefaultRemoteApiKey;
+			startInfo.Environment["GEMINI_API_KEY"] = config.DefaultRemoteApiKey;
+		}
 		startInfo.Environment["ERIS_LOCAL_STYLE_REWRITE_ENABLED"] = config.EnableLocalStyleRewrite ? "1" : "0";
 		startInfo.Environment["ERIS_LOCAL_VISION_FACTS"] = config.EnableLocalVisionInput ? "1" : "0";
+	}
+
+	private Dictionary<string, string> LoadProjectSecretsEnvironment()
+	{
+		var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		string secretsPath = Path.Combine(GetProjectRoot(), "config", "secrets.json");
+		if (!File.Exists(secretsPath))
+			return values;
+
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(File.ReadAllText(secretsPath));
+			JsonElement root = document.RootElement;
+			if (root.ValueKind != JsonValueKind.Object)
+				return values;
+
+			AddSecretsFromObject(root, values);
+			foreach (string sectionName in new[] { "api_keys", "env", "secrets" })
+			{
+				if (root.TryGetProperty(sectionName, out JsonElement section))
+					AddSecretsFromObject(section, values);
+			}
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[Secrets] Khong doc duoc config/secrets.json: {ex.Message}");
+		}
+
+		return values;
+	}
+
+	private void AddSecretsFromObject(JsonElement source, Dictionary<string, string> values)
+	{
+		if (source.ValueKind != JsonValueKind.Object)
+			return;
+
+		foreach (JsonProperty property in source.EnumerateObject())
+		{
+			if (property.Value.ValueKind != JsonValueKind.String)
+				continue;
+			string value = property.Value.GetString() ?? "";
+			if (!string.IsNullOrWhiteSpace(property.Name) && !string.IsNullOrWhiteSpace(value))
+				values[property.Name] = value.Trim();
+		}
 	}
 
 	private string BuildLlamaArguments(ErisServiceConfig config, string modelPath)

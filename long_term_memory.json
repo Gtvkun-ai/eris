@@ -2,30 +2,6 @@
     "version": 4,
     "working": [
         {
-            "timestamp": "08:12",
-            "cycle_id": "chat-4",
-            "channel": "chat",
-            "summary": "chat -> loop=loop_232350; topic=memory_replay:norm_active_window_kind_usually_general_77 | ngoan như chatbot bình thường đi -> Tôi sẽ lưu ý điều đó, thưa Ngài. -> json",
-            "outcome": "json",
-            "salience": 0.66
-        },
-        {
-            "timestamp": "08:29",
-            "cycle_id": "autonomous-1",
-            "channel": "autonomous",
-            "summary": "autonomous -> focus_summary=Background media may be present alongside the main task: Nagi Showed them his... differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)... -> no_speech",
-            "outcome": "no_speech",
-            "salience": 0.524
-        },
-        {
-            "timestamp": "08:31",
-            "cycle_id": "chat-2",
-            "channel": "chat",
-            "summary": "chat -> mẹ mày béo | loop=loop_275435; topic=memory_replay:norm_active_window_kind_usually_general_77 -> Tôi chưa đủ chắc để đoán ý Ngài. -> json",
-            "outcome": "json",
-            "salience": 0.64
-        },
-        {
             "timestamp": "08:32",
             "cycle_id": "chat-3",
             "channel": "chat",
@@ -48,64 +24,33 @@
             "summary": "chat -> mẹ mày béo | loop=loop_490300; topic=memory_replay:norm_active_window_kind_usually_general_77 -> Tôi không có mẹ, thưa Ngài. Tôi không chắc mình nên hiểu câu này như thế nào. -> json",
             "outcome": "json",
             "salience": 0.653
+        },
+        {
+            "timestamp": "17:22",
+            "cycle_id": "chat-1",
+            "channel": "chat",
+            "summary": "chat -> vậy à | chat/user_message: vậy à -> Vâng, thưa Ngài. -> json",
+            "outcome": "json",
+            "salience": 0.602
+        },
+        {
+            "timestamp": "17:23",
+            "cycle_id": "chat-2",
+            "channel": "chat",
+            "summary": "chat -> mẹ mày béo | chat/user_message: mẹ mày béo -> Tôi không có mẹ, thưa Ngài. Tôi không chắc mình nên hiểu câu này như thế nào. -> json",
+            "outcome": "json",
+            "salience": 0.653
+        },
+        {
+            "timestamp": "17:24",
+            "cycle_id": "chat-3",
+            "channel": "chat",
+            "summary": "chat -> ôi không, thế thì bạn ngu rồi | loop=loop_378940; topic=input_disturbance:chat_user_message_vậy -> Đó là nhận định của Ngài. -> json",
+            "outcome": "json",
+            "salience": 0.661
         }
     ],
     "episodic": [
-        {
-            "timestamp": "17:45",
-            "cycle_id": "autonomous-28",
-            "channel": "autonomous",
-            "seen": [
-                "loop=loop_392609; topic=memory_replay:norm_active_window_kind_usually_general_83",
-                "focus_summary=Ngài đang ở bối cảnh giao tiếp: Messenger | Facebook - Brave differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (27/454 vs 273/454)"
-            ],
-            "said": "Ngài có vẻ đang bận với mấy dòng tin nhắn.",
-            "outcome": "json",
-            "tags": [
-                "autonomous",
-                "presence_maintenance",
-                "micro_presence",
-                "cognitive_attractor"
-            ],
-            "salience": 0.668
-        },
-        {
-            "timestamp": "17:46",
-            "cycle_id": "autonomous-29",
-            "channel": "autonomous",
-            "seen": [
-                "loop=loop_750633; topic=memory_replay:norm_active_window_kind_usually_general_83",
-                "Bên cạnh video là một link YouTube và một đoạn văn bản ghi chú 'wtf 3 tick'.",
-                "focus_summary=Ngài đang ở bối cảnh giao tiếp: Messenger | Facebook - Brave differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (28/455 vs 273/455)"
-            ],
-            "said": "",
-            "outcome": "ambient_silence",
-            "tags": [
-                "autonomous",
-                "no_speech",
-                "cognitive_attractor"
-            ],
-            "salience": 0.66
-        },
-        {
-            "timestamp": "17:48",
-            "cycle_id": "autonomous-30",
-            "channel": "autonomous",
-            "seen": [
-                "loop=loop_750633; topic=memory_replay:norm_active_window_kind_usually_general_83",
-                "Trong khung chat, người dùng đã gửi một đường link YouTube kèm theo một hình ảnh nhỏ của một phòng ngủ.",
-                "focus_summary=Ngài đang ở bối cảnh giao tiếp: Messenger | Facebook - Brave differs from norm Ngài đang ở bối cảnh tổng quát: Eris (DEBUG) (29/456 vs 273/456)"
-            ],
-            "said": "Messenger | Facebook - Brave vẫn còn mở đó à.",
-            "outcome": "json",
-            "tags": [
-                "autonomous",
-                "presence_maintenance",
-                "micro_presence",
-                "cognitive_attractor"
-            ],
-            "salience": 0.663
-        },
         {
             "timestamp": "17:49",
             "cycle_id": "autonomous-31",
@@ -1491,6 +1436,61 @@
                 "user_message"
             ],
             "salience": 0.653
+        },
+        {
+            "timestamp": "17:22",
+            "cycle_id": "chat-1",
+            "channel": "chat",
+            "seen": [
+                "vậy à",
+                "chat/user_message: vậy à"
+            ],
+            "said": "Vâng, thưa Ngài.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "mirror",
+                "user_message"
+            ],
+            "salience": 0.602
+        },
+        {
+            "timestamp": "17:23",
+            "cycle_id": "chat-2",
+            "channel": "chat",
+            "seen": [
+                "mẹ mày béo",
+                "chat/user_message: mẹ mày béo"
+            ],
+            "said": "Tôi không có mẹ, thưa Ngài. Tôi không chắc mình nên hiểu câu này như thế nào.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "mirror",
+                "user_message"
+            ],
+            "salience": 0.653
+        },
+        {
+            "timestamp": "17:24",
+            "cycle_id": "chat-3",
+            "channel": "chat",
+            "seen": [
+                "ôi không, thế thì bạn ngu rồi",
+                "loop=loop_378940; topic=input_disturbance:chat_user_message_vậy",
+                "chat/user_message: ôi không, thế thì bạn ngu rồi"
+            ],
+            "said": "Đó là nhận định của Ngài.",
+            "outcome": "json",
+            "tags": [
+                "chat",
+                "user_requested",
+                "mirror",
+                "user_message"
+            ],
+            "salience": 0.661
         }
     ],
     "semantic": [
@@ -3568,17 +3568,17 @@
         }
     ],
     "norm": {
-        "observations": 534,
+        "observations": 537,
         "feature_counts": {
             "active_window_kind": {
-                "general": 412,
+                "general": 415,
                 "communication": 67,
                 "coding": 46,
                 "entertainment": 7,
                 "focus_aid_media": 2
             },
             "active_app": {
-                "eris (debug)": 302,
+                "eris (debug)": 305,
                 "brave": 174,
                 "godot": 24,
                 "visual studio code": 22,
@@ -3588,7 +3588,7 @@
                 "thongtindaotao.sgu.edu.vn/#/home?curruser=eyjjrfvzzxiioi04njk...": 1
             },
             "focus_summary": {
-                "Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": 302,
+                "Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": 305,
                 "Ngài đang ở bối cảnh giao tiếp: Messenger | Facebook - Brave": 38,
                 "Ngài đang ở bối cảnh code hoặc project: UdpListener.tscn - Eris - Godot Engine": 13,
                 "Ngài đang ở bối cảnh code hoặc project: Codex Diff - eris - Visual Studio Code": 12,
@@ -3602,20 +3602,20 @@
                 "Ngài đang ở bối cảnh tổng quát: Vấn đề về flow model - Brave": 1
             },
             "idle_bucket": {
-                "active": 329,
+                "active": 332,
                 "very_long_idle": 123,
                 "medium_idle": 30,
                 "long_idle": 26,
                 "short_idle": 26
             },
             "window_spread": {
-                "medium": 341,
+                "medium": 344,
                 "high": 102,
                 "very_high": 49,
                 "low": 42
             },
             "focus_pattern": {
-                "steady": 209,
+                "steady": 212,
                 "absent": 113,
                 "fragmented": 103,
                 "conversation": 67,
@@ -3626,14 +3626,14 @@
             }
         },
         "last_seen_at": {
-            "active_window_kind:general": "17:02",
+            "active_window_kind:general": "17:24",
             "active_app:brave": "17:01",
             "focus_summary:Ngài đang ở bối cảnh tổng quát: INTP 5w4 538 as perfect robot - Grok - Brave": "17:27",
-            "idle_bucket:active": "17:02",
-            "window_spread:medium": "17:02",
-            "focus_pattern:steady": "17:02",
-            "active_app:eris (debug)": "17:02",
-            "focus_summary:Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": "17:02",
+            "idle_bucket:active": "17:24",
+            "window_spread:medium": "17:24",
+            "focus_pattern:steady": "17:24",
+            "active_app:eris (debug)": "17:24",
+            "focus_summary:Ngài đang ở bối cảnh tổng quát: Eris (DEBUG)": "17:24",
             "idle_bucket:short_idle": "23:15",
             "focus_summary:Ngài đang ở bối cảnh tổng quát: AI đã chào chưa - Brave": "18:31",
             "idle_bucket:medium_idle": "17:23",
@@ -3716,34 +3716,34 @@
         }
     },
     "internal_state": {
-        "valence": 0.126,
-        "arousal": 0.224,
-        "curiosity": 0.192,
-        "boredom": 0.049,
-        "social_energy": 0.346,
-        "attachment": 0.672,
+        "valence": 0.13,
+        "arousal": 0.245,
+        "curiosity": 0.184,
+        "boredom": 0.03,
+        "social_energy": 0.353,
+        "attachment": 0.706,
         "irritation": 0.231,
-        "protectiveness": 0.121,
-        "confidence": 0.906,
-        "fatigue": 0.092,
-        "tenderness": 0.384,
+        "protectiveness": 0.116,
+        "confidence": 0.916,
+        "fatigue": 0.105,
+        "tenderness": 0.398,
         "silence_pressure": 0.022,
-        "social_pressure": 0.041,
-        "curiosity_pressure": 0.264,
-        "protective_pressure": 0.136,
-        "tender_pressure": 0.723,
-        "playful_pressure": 0.151,
-        "watchful_pressure": 0.071,
-        "restraint_pressure": 0.953,
-        "subconscious_pressure": 0.216,
-        "memory_replay_pressure": 0.297,
-        "association_pressure": 0.12,
-        "thought_stream_pressure": 0.264,
-        "cognitive_tension": 0.178,
-        "unresolved_prediction_pressure": 0.143,
-        "recursive_reactivation_pressure": 0.379,
-        "last_cognition_at": 1779357721.79,
-        "last_elapsed_seconds": 27.241,
+        "social_pressure": 0.031,
+        "curiosity_pressure": 0.216,
+        "protective_pressure": 0.115,
+        "tender_pressure": 0.694,
+        "playful_pressure": 0.136,
+        "watchful_pressure": 0.073,
+        "restraint_pressure": 1.0,
+        "subconscious_pressure": 0.125,
+        "memory_replay_pressure": 0.275,
+        "association_pressure": 0.107,
+        "thought_stream_pressure": 0.159,
+        "cognitive_tension": 0.105,
+        "unresolved_prediction_pressure": 0.075,
+        "recursive_reactivation_pressure": 0.343,
+        "last_cognition_at": 1779359060.069,
+        "last_elapsed_seconds": 64.176,
         "last_memory_resonance": 0.0,
         "last_unresolved_tension": 0.0,
         "last_event_impulse": 0.0,
@@ -3769,48 +3769,48 @@
         "last_self_state_label": "engaged",
         "last_social_presence_kind": "focused_co_presence",
         "silence_ticks": 0,
-        "spoken_ticks": 1,
-        "chat_ticks": 13,
+        "spoken_ticks": 4,
+        "chat_ticks": 16,
         "force_speak_ticks": 0,
-        "cycle_count": 519,
+        "cycle_count": 522,
         "recent_channels": [
-            "chat",
-            "chat",
-            "chat",
             "autonomous",
             "chat",
             "chat",
             "autonomous",
+            "chat",
+            "chat",
+            "chat",
             "chat"
         ],
         "recent_focus_kinds": [
-            "general",
-            "general",
-            "general",
             "focus_aid_media",
+            "general",
+            "general",
+            "general",
             "general",
             "general",
             "general",
             "general"
         ],
         "recent_stances": [
-            "tender_under_cold",
             "grounded",
             "tender_under_cold",
             "grounded",
+            "grounded",
             "tender_under_cold",
-            "grounded",
-            "grounded",
+            "tender_under_cold",
+            "tender_under_cold",
             "tender_under_cold"
         ],
         "recent_speech_acts": [
-            "mirror",
-            "mirror",
-            "mirror",
             "no_speech",
             "mirror",
             "mirror",
             "no_speech",
+            "mirror",
+            "mirror",
+            "mirror",
             "mirror"
         ],
         "recent_inner_intents": [
@@ -3844,13 +3844,13 @@
             "input_disturbance:chat_user_message_bạn_chỉ_là"
         ],
         "recent_self_state_labels": [
-            "engaged",
-            "engaged",
-            "engaged",
             "watchful",
             "engaged",
             "engaged",
             "watchful",
+            "engaged",
+            "engaged",
+            "engaged",
             "engaged"
         ],
         "recent_social_presence": [
@@ -3870,16 +3870,16 @@
             "stance_continuity=tender_under_cold"
         ],
         "desire_dynamics": {
-            "want": 0.265,
-            "prefer": 0.188,
+            "want": 0.291,
+            "prefer": 0.185,
             "cling": 1.0,
-            "avoid": 0.145,
+            "avoid": 0.101,
             "anticipation": 0.1,
-            "attraction_charge": 0.01,
+            "attraction_charge": 0.006,
             "aversion_charge": 0.0,
-            "unresolved_residue": 0.08,
+            "unresolved_residue": 0.026,
             "attachment_heat": 1.0,
-            "attachment_cool": 0.653,
+            "attachment_cool": 0.584,
             "attachment_drift": "dependent",
             "recurring_attraction": "code_presence",
             "recurring_aversion": "focus_stuck",
@@ -3902,8 +3902,8 @@
             "summary": "ngoan như chatbot bình thường đi",
             "source": "user_message",
             "status": "stale",
-            "strength": 0.014,
-            "urgency": 0.01,
+            "strength": 0.005,
+            "urgency": 0.004,
             "drift": 0.4,
             "progress": 0.0,
             "recurrence_count": 1,
@@ -3929,93 +3929,93 @@
         "mental_processes": {
             "curiosity": {
                 "name": "curiosity",
-                "level": 0.181,
-                "pressure": 0.234,
-                "activation": 0.157,
+                "level": 0.151,
+                "pressure": 0.202,
+                "activation": 0.16,
                 "volatility": 0.34,
                 "decay_rate": 0.07,
-                "last_signal": 0.328,
-                "last_interaction": -0.135
+                "last_signal": 0.4,
+                "last_interaction": -0.175
             },
             "restraint": {
                 "name": "restraint",
-                "level": 0.707,
+                "level": 0.691,
                 "pressure": 1.0,
-                "activation": 0.609,
+                "activation": 0.497,
                 "volatility": 0.22,
                 "decay_rate": 0.05,
-                "last_signal": 0.349,
-                "last_interaction": 0.123
+                "last_signal": 0.409,
+                "last_interaction": 0.121
             },
             "tension": {
                 "name": "tension",
-                "level": 0.111,
-                "pressure": 0.114,
-                "activation": 0.088,
+                "level": 0.066,
+                "pressure": 0.07,
+                "activation": 0.057,
                 "volatility": 0.3,
                 "decay_rate": 0.09,
-                "last_signal": 0.16,
-                "last_interaction": -0.025
+                "last_signal": 0.04,
+                "last_interaction": -0.05
             },
             "continuity": {
                 "name": "continuity",
-                "level": 0.608,
+                "level": 0.629,
                 "pressure": 1.0,
-                "activation": 0.58,
+                "activation": 0.596,
                 "volatility": 0.16,
                 "decay_rate": 0.035,
-                "last_signal": 0.554,
-                "last_interaction": 0.176
+                "last_signal": 0.34,
+                "last_interaction": 0.166
             },
             "attachment": {
                 "name": "attachment",
-                "level": 0.455,
-                "pressure": 0.97,
-                "activation": 0.442,
+                "level": 0.485,
+                "pressure": 1.0,
+                "activation": 0.496,
                 "volatility": 0.18,
                 "decay_rate": 0.03,
-                "last_signal": 0.554,
-                "last_interaction": 0.125
+                "last_signal": 0.2,
+                "last_interaction": 0.113
             },
             "reflection": {
                 "name": "reflection",
-                "level": 0.511,
-                "pressure": 0.61,
-                "activation": 0.502,
+                "level": 0.422,
+                "pressure": 0.563,
+                "activation": 0.4,
                 "volatility": 0.24,
                 "decay_rate": 0.06,
-                "last_signal": 0.296,
-                "last_interaction": 0.162
+                "last_signal": 0.24,
+                "last_interaction": 0.138
             },
             "social_presence": {
                 "name": "social_presence",
-                "level": 0.117,
-                "pressure": 0.115,
-                "activation": 0.181,
+                "level": 0.069,
+                "pressure": 0.084,
+                "activation": 0.18,
                 "volatility": 0.26,
                 "decay_rate": 0.06,
-                "last_signal": 0.568,
-                "last_interaction": 0.022
+                "last_signal": 0.2,
+                "last_interaction": 0.015
             },
             "cognitive_load": {
                 "name": "cognitive_load",
-                "level": 0.193,
-                "pressure": 0.178,
-                "activation": 0.2,
+                "level": 0.237,
+                "pressure": 0.23,
+                "activation": 0.25,
                 "volatility": 0.28,
                 "decay_rate": 0.08,
-                "last_signal": 0.189,
-                "last_interaction": 0.044
+                "last_signal": 0.122,
+                "last_interaction": 0.042
             },
             "background_thought": {
                 "name": "background_thought",
-                "level": 0.29,
-                "pressure": 0.288,
-                "activation": 0.287,
+                "level": 0.156,
+                "pressure": 0.191,
+                "activation": 0.18,
                 "volatility": 0.32,
                 "decay_rate": 0.07,
-                "last_signal": 0.12,
-                "last_interaction": 0.076
+                "last_signal": 0.24,
+                "last_interaction": 0.047
             }
         }
     }

@@ -2153,6 +2153,15 @@ class RuntimeCoordinator(
 
     def _handle_incoming(self, msg: dict):
         msg_type = msg.get("type", "")
+        if msg_type == "chat_start":
+            if not self.chat_mode:
+                self.chat_mode = True
+                self.chat_ni_state = NiStateMachine()
+                self.repeated_user_count = 0
+                self.last_user_signature = ""
+                self.logger.info("Đã vào chat mode, tạm dừng autonomous để ưu tiên tin nhắn.")
+            return
+
         if msg_type == "force_speak":
             self._handle_force_speak_request()
             return
@@ -3421,6 +3430,13 @@ class RuntimeCoordinator(
             return random.choice(self.autonomous_suppressed_sleep_seconds)
         return random.choice(self.autonomous_sleep_seconds)
 
+    def _process_pending_user_input(self) -> bool:
+        msg = self.transport.poll_json()
+        if not msg:
+            return False
+        self._handle_incoming(msg)
+        return self.chat_mode or not self.running
+
     def _run_loop_iteration(self) -> bool:
         """Run a single coordinator loop iteration.
 
@@ -3447,8 +3463,14 @@ class RuntimeCoordinator(
             mood_score=self.mood_score,
             inferred_pos_x=self.inferred_pos_x,
         )
+        if self._process_pending_user_input():
+            return self.running
+
         vision_marker = ""
         vision_facts = self._maybe_update_screen_facts()
+        if self._process_pending_user_input():
+            return self.running
+
         if vision_facts:
             vision_marker = self._attach_screen_facts(snapshot, vision_facts)
         telemetry_data = self._build_speech_evidence_context(snapshot)
@@ -3818,6 +3840,9 @@ class RuntimeCoordinator(
             return True
 
         if self._is_inner_thought_speech_act(frame.action_plan.speech_act):
+            if self._process_pending_user_input():
+                return self.running
+
             inner_ti_context = self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought, speech_core)
             raw = self.llm_service.generate_directive(
                 telemetry_data=telemetry_data,
@@ -3891,6 +3916,9 @@ class RuntimeCoordinator(
         planned_ti_context = (
             self._build_llm_ti_context(ti_report, frame.action_plan)
         )
+        if self._process_pending_user_input():
+            return self.running
+
         raw = self.llm_service.generate_directive(
             telemetry_data=telemetry_data,
             ni_context="",

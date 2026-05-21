@@ -33,8 +33,8 @@ public partial class UdpListener : Node2D
 	[Export] public bool LlamaServerFlashAttn = true;
 	[Export(PropertyHint.MultilineText)] public string LlamaServerExtraArgs = "";
 	[Export] public bool EnableRemoteCognitionApi = true;
-	[Export] public bool EnableLocalStyleRewrite = true;
-	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "AIzaSyDzKTsvNUyYGWpT62Ggnd8m7MuzV9ITCkc";
+	[Export] public bool EnableLocalStyleRewrite = false;
+	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "";
 	[Export] public string RemoteApiProvider = "gemini";
 	[Export] public string RemoteApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
 	[Export] public string RemoteApiModelName = "gemma-4-26b-a4b-it";

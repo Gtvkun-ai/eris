@@ -1294,8 +1294,21 @@ class LlmService:
         return raw_json
 
     def _complete_decision(self, *, messages: list[dict], channel: str) -> str:
-        max_tokens = 512
+        max_tokens = 260 if channel == "chat" else 320
         messages = self._with_non_empty_text_rule(messages)
+        no_cot_contract = (
+            "CRITICAL OUTPUT CONTRACT: Start your response with '{' as the first character. "
+            "End with '}' as the last character. Return exactly one compact JSON object. "
+            "Do not write reasoning, analysis, options, bullets, markdown, code fences, "
+            "self-checks, translations, or explanations before or after the JSON."
+        )
+        messages = [dict(message) for message in messages]
+        for message in messages:
+            if str(message.get("role")) == "system":
+                message["content"] = f"{message.get('content', '')}\n\n{no_cot_contract}"
+                break
+        else:
+            messages.insert(0, {"role": "system", "content": no_cot_contract})
         def _call(messages_value: list[dict], *, stage: str):
             self._log_final_prompt(messages_value, channel=channel, stage=stage)
             return self.client.create_chat_completion(

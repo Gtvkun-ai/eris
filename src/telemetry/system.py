@@ -1,13 +1,29 @@
 import ctypes
 import datetime
+import threading
 
 import psutil
 import uiautomation as auto
+
+_com_state = threading.local()
+
+
+def _ensure_com_initialized() -> None:
+    if getattr(_com_state, "initialized", False):
+        return
+    try:
+        # UIAutomation is COM-backed. Background telemetry threads must initialize
+        # COM for themselves before touching uiautomation.
+        ctypes.windll.ole32.CoInitializeEx(None, 0)
+    except Exception:
+        pass
+    _com_state.initialized = True
 
 
 class TelemetryMixin:
     def _get_browser_telemetry_uia(self) -> dict:
         try:
+            _ensure_com_initialized()
             window = auto.GetForegroundControl()
             if window.ClassName != "Chrome_WidgetWin_1":
                 return {"url": "", "tabs": (), "available": False}

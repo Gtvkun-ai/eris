@@ -6,10 +6,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from eris_secrets import apply_secrets_to_environ, get_secret
 from .client import GeminiClient, LlamaServerClient, OpenAICompatibleClient
-
-
-DEFAULT_GEMINI_API_KEY = "AIzaSyDzKTsvNUyYGWpT62Ggnd8m7MuzV9ITCkc"
 
 
 class LlamaServerProcessManager:
@@ -310,12 +308,9 @@ class LlamaServerProcessManager:
         return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
     def _build_remote_client(self):
+        apply_secrets_to_environ()
         provider = os.environ.get("ERIS_REMOTE_PROVIDER", "gemini").strip().lower()
-        api_key = (
-            os.environ.get("ERIS_REMOTE_API_KEY", "").strip()
-            or os.environ.get("GEMINI_API_KEY", "").strip()
-            or DEFAULT_GEMINI_API_KEY
-        )
+        api_key = get_secret("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
 
         if provider == "gemini":
             base_url = os.environ.get(
@@ -460,7 +455,7 @@ class LlamaServerProcessManager:
         return LlamaServerClient(f"http://{host}:{port}/v1")
 
     def build_style_client(self, *, model_path: str, n_ctx: int, n_gpu_layers: int):
-        if not self._env_flag("ERIS_LOCAL_STYLE_REWRITE_ENABLED", "1"):
+        if not self._env_flag("ERIS_LOCAL_STYLE_REWRITE_ENABLED", "0"):
             return None
         if not os.path.isfile(model_path):
             self.logger.warning("Khong tim thay GGUF style model tai %s; tat local style rewrite.", model_path)
