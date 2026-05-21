@@ -145,7 +145,7 @@ class InternalStateEngineTests(unittest.TestCase):
         self.assertEqual(state.recent_subconscious_seeds, ("memory_replay:quiet",))
         self.assertEqual(state.last_self_state_label, "engaged")
         self.assertEqual(state.recent_self_state_labels, ("settled", "engaged"))
-        self.assertEqual(empty.subconscious_pressure, 0.0)
+        self.assertEqual(empty.subconscious_pressure, PersistentInternalState().subconscious_pressure)
         self.assertEqual(empty.last_self_state_label, "")
         self.assertIn("subconscious_pressure", state.to_dict())
         self.assertIn("last_self_state=engaged", state.to_prompt_context())

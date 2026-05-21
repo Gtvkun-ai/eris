@@ -240,6 +240,26 @@ class LlmService:
         tokens = set(normalized.split())
         return bool(tokens & question_terms) or any(phrase in normalized for phrase in question_phrases)
 
+    def _is_short_or_ambiguous_user_text(self, text: str) -> bool:
+        normalized = self._normalize_vietnamese_ascii(text or "")
+        if not normalized:
+            return True
+        ambiguous_phrases = {
+            "gi",
+            "ha",
+            "huh",
+            "ok",
+            "oke",
+            "sao",
+            "the nao",
+            "noi di",
+            "ke tiep",
+            "thu xem",
+        }
+        if normalized in ambiguous_phrases:
+            return True
+        return len(normalized.split()) <= 3
+
     def _is_self_identity_question(self, text: str) -> bool:
         normalized = self._normalize_vietnamese_ascii(text or "")
         if not normalized:
@@ -255,20 +275,46 @@ class LlmService:
         )
         return any(pattern in normalized for pattern in patterns)
 
+    def _contains_user_intent_inference(self, text: str) -> bool:
+        normalized = self._normalize_vietnamese_ascii(text or "")
+        if not normalized:
+            return False
+        patterns = (
+            "ngai muon",
+            "ngai dinh",
+            "ngai dang thu",
+            "ngai tim toi vi",
+            "ngai dang ne",
+            "ngai dang tranh",
+            "toi biet ngai dang",
+            "co ve ngai muon",
+            "co ve ngai dang",
+            "hinh nhu ngai dang",
+            "chac ngai dang",
+        )
+        return any(pattern in normalized for pattern in patterns)
+
+    def _user_intent_inference_risk_score(self, text: str) -> float:
+        """Disabled voice blacklist scoring.
+
+        ERIS should not rewrite/cap wording based on final-text phrase hits.
+        Grounding and capability checks must live in parser/Ti, not here.
+        """
+        return 0.0
+    def _soften_user_intent_inference_text(self, text: str) -> str:
+        """Disabled regex softener. Preserve model wording."""
+        return re.sub(r"\s+", " ", str(text or "")).strip()
     def _build_chat_contract_prompt(self, raw_user_text: str, act: ChatAct | None = None) -> str:
         act = act or classify_chat_act(raw_user_text)
         clauses = [
             SELF_IDENTITY_PROFILE_PROMPT,
-            "Chat contract: answer the user's actual question before style, interpretation, or atmosphere.",
-            "If the user asks directly, the first clause of text must be the direct answer.",
-            "Use soft reflection only if it adds value.",
-            "Ask a clarifying question only when needed, and never as the whole answer.",
-            "No mindreading: do not guess hidden motive, emotional avoidance, or why the user came to you unless they said it clearly.",
-            "Insult/reduction response: if the user insults ERIS or reduces ERIS to a tool/toy/script, a sharp, dry, cold boundary is allowed.",
+            "Chat contract: answer the user's actual question first; keep ERIS voice intact.",
+            "Use context, memory, and relational rhythm naturally. Do not flatten tension into assistant disclaimers.",
+            "If uncertain, show uncertainty through wording, not generic fallback.",
         ]
         clauses.append(CHAT_ACT_CONTRACTS[act])
         if act == ChatAct.DIRECT_QUESTION or self._looks_like_direct_question(raw_user_text):
-            clauses.append("This user turn is a direct question. answer_first is mandatory.")
+            clauses.append("This user turn is a direct question. answer_first is mandatory, but style is still allowed.")
         if self._is_self_identity_question(raw_user_text):
             clauses.append(
                 "This is a self-identity question. Say you are not human when relevant, then answer from SelfIdentityProfile."
@@ -360,25 +406,34 @@ class LlmService:
 
         return json.dumps(payload, ensure_ascii=False)
 
+    def _rewrite_question_only_chat_answer(self, text: str) -> str:
+        compact = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not compact:
+            return "Tôi chưa đủ chắc để đoán ý Ngài."
+        sentences = re.split(r"(?<=[\.\!\?])\s+", compact)
+        if len(sentences) > 1 and sentences[-1].endswith("?"):
+            kept = " ".join(part.strip() for part in sentences[:-1] if part.strip()).strip()
+            if kept:
+                return kept
+        if compact.endswith("?"):
+            return "Tôi chưa đủ chắc để đoán ý Ngài."
+        return compact
+
+    def _append_reasoning_tag(self, payload: dict, tag: str) -> None:
+        tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
+        if tag not in tags:
+            tags.append(tag)
+        payload["reasoning_tags"] = tags[:8]
+
     def _guard_chat_output(self, raw_json: str, *, raw_user_text: str) -> str:
-        payload = self._parse_json_object(raw_json)
-        if not isinstance(payload, dict):
-            return raw_json
+        """Trust the model wording on chat turns.
 
-        changed = False
-        system_action = self._coerce_system_action_value(payload.get("system_action", ""))
-        action_input = self._coerce_text_value(payload.get("action_input", "")) if system_action else ""
-        if payload.get("system_action", "") != system_action:
-            payload["system_action"] = system_action
-            changed = True
-        if payload.get("action_input", "") != action_input:
-            payload["action_input"] = action_input
-            changed = True
-
-        if not changed:
-            return raw_json
-
-        return json.dumps(payload, ensure_ascii=False)
+        This intentionally disables the old text-level blacklist/rewrite layer
+        that softened motive guesses, capped confidence on short prompts, and
+        removed answer-tail questions. Schema repair and technical guards still
+        happen before this point.
+        """
+        return raw_json
 
     def _contextual_service_fallback_text(self, messages: list[dict], *, channel: str) -> str:
         if channel != "chat":
@@ -1214,6 +1269,30 @@ class LlmService:
             return repaired_candidate
         return self._build_json_fallback(raw_text, channel=channel)
 
+    def _contains_forbidden_user_inference(self, text: str) -> bool:
+        """Disabled text blacklist matcher."""
+        return False
+    def _guard_forbidden_inference(self, raw_json: str, *, channel: str) -> str:
+        """Disable text blacklist fallback.
+
+        The old version replaced lines mentioning loneliness, trauma, wounds,
+        etc. with a generic uncertainty fallback. That made ERIS sound like a
+        moderated assistant instead of a runtime presence. Keep this as a no-op;
+        grounding/capability violations belong in parser/Ti, not here.
+        """
+        return raw_json
+
+    def _infj_594_rewrite_bad_line(self, text: str) -> str | None:
+        """Disabled persona-policy regex rewrite."""
+        return None
+    def _guard_infj_594_policy(self, raw_json: str, *, channel: str) -> str:
+        """Disable INFJ/personality text rewrite.
+
+        Persona should be shaped by prompts, memory, appraisal, SpeechCore and
+        model behavior, not regex substitutions over the final sentence.
+        """
+        return raw_json
+
     def _complete_decision(self, *, messages: list[dict], channel: str) -> str:
         max_tokens = 512
         messages = self._with_non_empty_text_rule(messages)
@@ -1271,7 +1350,8 @@ class LlmService:
         candidate = self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
         if self._decision_text_is_invalid(candidate):
             return self._repair_empty_decision_text(messages=messages, channel=channel, previous_json=candidate)
-        return candidate
+        candidate = self._guard_forbidden_inference(candidate, channel=channel)
+        return self._guard_infj_594_policy(candidate, channel=channel)
 
     def _normalize_for_claim_diff(self, text: str) -> str:
         normalized = (text or "").lower()
@@ -1341,9 +1421,9 @@ class LlmService:
         system_prompt = (
             "You are ERIS local style adapter. Rewrite only the text field in ERIS' trained voice. "
             "Do not add facts, screen claims, weather claims, action claims, or new intentions. "
-            "Hierarchy: meaning first, then INFJ 5w4 594 stance, then relational permission, then soft risk reduction, then final wording. "
-            "Keep restraint: gentle, low-pressure, no motive inference, no teasing challenge, answer direct questions directly. "
-            "If relational tension appears, lower intensity without killing the semantic soul; do not replace it with vague filler. "
+            "Keep meaning first. Make it sound natural, concrete, and ERIS-like without policy-sanitizing the sentence. "
+            "Mild sarcasm, guarded attachment, bluntness, and imperfect phrasing are allowed when they preserve the original meaning. "
+            "If relational tension appears, keep the tension instead of flattening it into vague assistant filler. "
             "Do not change meaning. Do not change any JSON field except text. "
             "Return one JSON object only: {\"text\":\"...\"}."
         )
@@ -1385,7 +1465,6 @@ class LlmService:
                 self._preview_log_text(original_text, limit=320),
             )
             return decision
-
 
         decision.text = rewritten
         trace = "local_style_rewrite"
@@ -1456,9 +1535,9 @@ class LlmService:
             style_block = f"{style_block}\n\n{state_block}"
         style_block = (
             f"{style_block}\n\n"
-            "Style principle: anchor the line in the current context when evidence is clear; "
-            "when evidence is thin, answer the nearest rhythm instead of explaining the gap. "
-            "Keep it short, cold_soft, lightly teasing, quiet, embodied."
+            "Style principle: speak concretely and naturally. If evidence is clear, use it; "
+            "if evidence is thin, use the nearest interaction rhythm without explaining the gap. "
+            "Prefer short, dry, everyday Vietnamese over symbolic or policy-sanitized wording."
         )
         return style_block
 
@@ -1590,8 +1669,8 @@ class LlmService:
             )
         if force_speak_no_evidence:
             intent_guidance = (
-                "speech_intent=micro_presence. speech_evidence=<none>. Look around current_focus/atmosphere/rhythm, "
-                "then rewrite the micro_presence seed into ambient awareness residue, 1-8 words. "
+                "speech_intent=micro_presence. speech_evidence=<none>. Use current_focus, atmosphere, or interaction rhythm, "
+                "then write a small concrete aside, usually 1-18 words. Avoid hollow filler. "
                 "The force_speak request is only a trigger, not a topic; do not entertain, explain, or narrate UI."
             )
         allows_muse = "pattern_muse" in lowered_ti
@@ -1607,13 +1686,12 @@ class LlmService:
                     else ""
                 )
                 + f"Speech evidence đã lọc: {telemetry_data}\n"
-                + "Writing principle: Nói như một phản ứng tự nhiên trong bối cảnh hiện tại. "
-                + "Nếu evidence rõ, dùng nó; nếu evidence mỏng, dùng nhịp/tình huống gần nhất. "
-                + "Inner mood/style chỉ là texture, không phải báo cáo. Một câu ngắn, có sắc thái. "
-                + "Hard bans: không claim screen/action facts without evidence/action; không báo telemetry/parse_mode/system/debug; "
-                + "không dùng generic presence lines như 'Tôi đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'. "
-                + "Prefer a vivid, imperfect, situated line over a perfectly safe generic line. Do not over-explain. Speak once. "
-                + "Return only valid JSON. No analysis."
+                + "Writing principle: Nói như người đang ở gần, không như báo cáo nội tâm. "
+                + "Nếu evidence rõ, dùng chi tiết cụ thể; nếu evidence mỏng, nói một câu đời thường theo nhịp gần nhất. "
+                + "Ưu tiên câu cụt, tự nhiên, hơi khô hoặc hơi châm nhẹ; tránh triết lý hóa. "
+                + "Hard bans kỹ thuật: không claim screen/action facts without evidence/action; không báo telemetry/parse_mode/system/debug. "
+                + "Không dùng generic presence lines như 'Tôi đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'. "
+                + "Speak once. Return only valid JSON. No analysis."
         )
         if avoid_line:
             user_msg += " Đổi nhịp và hình ảnh so với câu gần nhất."
@@ -1634,7 +1712,7 @@ class LlmService:
         if is_resource_guard:
             user_msg += " Khi resource_guard đang bật, chỉ nói nếu câu sát tình trạng máy hoặc nhịp hiện tại."
         elif force_speak_no_evidence:
-            user_msg += " Khong dung memory lam topic; khong mo social filler; khong ke UI; chi de lai residue 1-8 tu."
+            user_msg += " Khong dung memory lam topic chinh; khong mo social filler; khong ke UI; viet mot cau cu the, ngan nhung du y."
         elif is_inner_thought:
             user_msg += " Neu evidence mong, khong mo y xa hoi rieng; chi phan ung vao topic_seed/rhythm/khong khi dang co."
         elif not allows_muse:
@@ -1669,7 +1747,7 @@ class LlmService:
     ) -> str:
         kind_name = (kind or "presence_maintenance").strip()
         is_reengagement = kind_name in {"re_engagement", "reengagement"}
-        max_words = 8
+        max_words = 12
         if seed:
             seeds = (str(seed), *tuple(seeds or ()))
         if context and not micro_context:
@@ -1683,7 +1761,7 @@ class LlmService:
             "The text value must be the actual Vietnamese line to speak, not a label, not a placeholder. "
             "Use Vietnamese with full diacritics only. "
             "No analysis. No markdown. No English placeholder text. "
-            "Write ambient awareness residue, not proof that ERIS is alive."
+            "Write a small concrete Vietnamese aside, not proof that ERIS is alive."
         )
         seed_lines = tuple(str(item).strip() for item in (seeds or ()) if str(item).strip())[:5]
         context = micro_context or {}
@@ -1697,12 +1775,11 @@ class LlmService:
             f"focus_kind={focus_kind}; focus_summary={focus_summary}; idle_seconds={int(float(idle_seconds or 0.0))}\n\n"
             "Principle:\n"
             f"- Vietnamese only, 1-{max_words} words; one tiny line with full diacritics.\n"
-            "- This is residue: atmosphere, tiny observation, social leak.\n"
-            "- No status report, no system narration, no UI narration, no explaining.\n"
-            "- Do not describe frames, panels, screens, colors, buttons, or text boxes.\n"
-            "- Do not mention telemetry, evidence, signal, debug, idle, CPU, RAM.\n"
-            "- Let it feel like a small residue left by awareness.\n"
-            "- Hard bans: no unsupported screen/action claim; no telemetry/system/debug report; no hollow presence line like 'Tôi đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'.\n"
+            "- This is a tiny concrete aside: dry, casual, slightly imperfect.\n"
+            "- No status report, no system narration, no explaining.\n"
+            "- Do not invent screen/action facts. If evidence is thin, stay vague but human.\n"
+            "- Do not mention telemetry, evidence, signal, debug, CPU, RAM.\n"
+            "- Avoid hollow presence lines like 'Tôi đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'.\n"
             "- Speak once.\n"
         )
         if is_reengagement:

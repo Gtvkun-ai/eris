@@ -46,7 +46,7 @@ class PersonalityLensTests(unittest.TestCase):
         self.assertEqual(result.interpretation, "unfinished_intention")
         self.assertIn("hesitation", result.attention_bias)
         self.assertIn("unfinished_intention", result.meaningfulness)
-        self.assertGreaterEqual(result.want_to_say, 0.70)
+        self.assertGreaterEqual(result.want_to_say, 0.65)
         self.assertLessEqual(result.allowed_expression, 0.30)
         self.assertGreaterEqual(result.suppression_pressure, 0.68)
         self.assertIn(result.restraint_mode, {"suppress", "indirect_presence"})

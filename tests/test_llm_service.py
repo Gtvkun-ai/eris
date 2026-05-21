@@ -75,10 +75,10 @@ class LlmServiceTests(unittest.TestCase):
         self.assertEqual(call["max_tokens"], 80)
         self.assertEqual(call["response_format"], {"type": "json_object"})
         self.assertIn("micro-presence", call["messages"][0]["content"])
-        self.assertIn("ambient awareness residue", call["messages"][0]["content"])
-        self.assertIn("1-8 words", call["messages"][1]["content"])
+        self.assertIn("small concrete Vietnamese aside", call["messages"][0]["content"])
+        self.assertIn("1-12 words", call["messages"][1]["content"])
         self.assertIn("No status report", call["messages"][1]["content"])
-        self.assertIn("no UI narration", call["messages"][1]["content"])
+        self.assertIn("Do not invent screen/action facts", call["messages"][1]["content"])
 
     def test_generate_micro_presence_line_accepts_signal_score_api(self):
         client = _FakeClient(['{"text":"Mạch này vẫn hơi nghẽn."}'])
@@ -132,7 +132,7 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("screen_observation", user_prompt)
         self.assertIn("writing principle", _norm(user_prompt))
         self.assertIn("hard bans", _norm(user_prompt))
-        self.assertIn(_compact_norm("prefer a vivid imperfect situated line"), _compact_norm(user_prompt))
+        self.assertIn(_compact_norm("uu tien cau cut tu nhien hoi kho hoac hoi cham nhe"), _compact_norm(user_prompt))
 
     def test_directive_does_not_rewrite_voice_with_forbidden_inference_regex(self):
         client = _FakeClient(
@@ -215,7 +215,7 @@ class LlmServiceTests(unittest.TestCase):
 
         system_prompt = client.calls[0]["messages"][0]["content"]
         self.assertIn("do not erase personality", system_prompt)
-        self.assertIn("sharp, dry, cold boundary is allowed", system_prompt)
+        self.assertIn("short dry boundary", system_prompt)
 
     def test_classifies_direct_insult_before_ambiguity(self):
         self.assertEqual(classify_chat_act("mày ngu thật"), ChatAct.INSULT_PROVOCATION)
@@ -354,8 +354,8 @@ class LlmServiceTests(unittest.TestCase):
         self.assertNotIn("semantic_user_memory", system_prompt)
         self.assertNotIn("game and music", system_prompt)
         self.assertIn("speech_intent=micro_presence", user_prompt)
-        self.assertIn("ambient awareness residue", user_prompt)
-        self.assertIn("1-8 words", user_prompt)
+        self.assertIn("small concrete aside", user_prompt)
+        self.assertIn("1-18 words", user_prompt)
         self.assertIn("Memory context was intentionally omitted", user_prompt)
         self.assertIn("current_focus_kind=general", user_prompt)
         self.assertIn("do not entertain, explain, or narrate UI", user_prompt)
@@ -707,7 +707,7 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn(_compact_norm("mode hint steady_observe"), _compact_norm(user_prompt))
         normalized_user = _norm(user_prompt)
         self.assertIn("speech intent", normalized_user)
-        self.assertIn(_compact_norm("mot cau ngan co sac thai"), _compact_norm(user_prompt))
+        self.assertIn(_compact_norm("mot cau quan sat nhe hoi ho hung"), _compact_norm(user_prompt))
 
     def test_directive_prompt_does_not_seed_background_motion_claim(self):
         client = _FakeClient(

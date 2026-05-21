@@ -171,8 +171,9 @@ class MemoryStoreTests(unittest.TestCase):
 
             self.assertEqual(state.version, 4)
             self.assertEqual(state.internal_state.cycle_count, 0)
-            self.assertEqual(state.internal_state.social_pressure, 0.0)
-            self.assertEqual(state.internal_state.restraint_pressure, 0.0)
+            default_state = PersistentInternalState()
+            self.assertEqual(state.internal_state.social_pressure, default_state.social_pressure)
+            self.assertEqual(state.internal_state.restraint_pressure, default_state.restraint_pressure)
 
     def test_active_memory_resonance_separates_silent_bias_from_surface(self):
         with tempfile.TemporaryDirectory() as tmpdir:

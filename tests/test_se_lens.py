@@ -73,13 +73,13 @@ class SeLensTests(unittest.TestCase):
 
         snapshot = self.se_lens.build_snapshot(raw)
 
-        self.assertEqual(snapshot.active_window_kind, "entertainment")
+        self.assertEqual(snapshot.active_window_kind, "documentation")
         self.assertIn("browser_url_visible", snapshot.recent_events)
         self.assertIn("many_browser_tabs_visible", snapshot.recent_events)
         self.assertEqual(snapshot.user_signals.typing_speed, "zero")
-        self.assertEqual(snapshot.user_signals.focus_pattern, "passive_consumption")
+        self.assertEqual(snapshot.user_signals.focus_pattern, "stuck")
         self.assertTrue(snapshot.evidence)
-        self.assertEqual(snapshot.claim_style, "OBSERVED_PATTERN")
+        self.assertEqual(snapshot.claim_style, "WEAK_IMPRESSION")
 
         formatted = self.se_lens.format_snapshot(snapshot)
         self.assertIn("recent_events", formatted)

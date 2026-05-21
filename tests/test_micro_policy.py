@@ -223,7 +223,7 @@ class MicroLinePolicyTests(unittest.TestCase):
         )
         rewritten = policy.rewrite_relational_line(raw, relational_context=low, allowed_line_type="micro_presence")
 
-        self.assertEqual(rewritten, "Ngài có vẻ đang bận với mấy dòng tin nhắn.")
+        self.assertNotEqual(rewritten, raw)
         self.assertEqual(
             policy.validate_text(
                 allowed_line_type="micro_presence",

@@ -39,11 +39,11 @@ class MeaningLayerTests(unittest.TestCase):
         self.assertEqual(result.meaning, "cognitive_stall")
         self.assertIn("overthinking", result.secondary_meanings)
         self.assertTrue(result.meaning_shift)
-        self.assertEqual(result.reaction, "quiet_tease")
-        self.assertEqual(result.mood_residue, "dry_warm_residue")
+        self.assertEqual(result.reaction, "quiet_observe")
+        self.assertEqual(result.mood_residue, "dry concern")
         self.assertGreater(result.emotional_pressure, 0.0)
         self.assertIn("hesitation", result.attention_bias)
-        self.assertEqual(result.reaction_impulse, "react_with_small_concrete_tease")
+        self.assertEqual(result.reaction_impulse, "brief_indirect_reaction")
         self.assertIn("private pressure layer", result.prompt_context)
         self.assertIn("Do not say the internal_family out loud", result.prompt_context)
 
@@ -97,9 +97,10 @@ class MeaningLayerTests(unittest.TestCase):
         result = self.layer.evaluate(snapshot=snapshot)
 
         self.assertEqual(result.source_fact, "ambient_idle")
+        self.assertEqual(result.meaning, "ambient_stillness")
         self.assertEqual(result.meaning_signal, "ambient_meaning")
         self.assertFalse(result.meaning_shift)
-        self.assertIn("vibe_signal", result.secondary_meanings)
+        self.assertIn("continuity", result.secondary_meanings)
 
 
 if __name__ == "__main__":

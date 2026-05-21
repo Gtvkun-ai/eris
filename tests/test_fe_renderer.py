@@ -83,9 +83,9 @@ class FeRendererTests(unittest.TestCase):
 
         self.assertIn("style_tags:", normalized)
         self.assertIn("tone=cold_soft", normalized)
-        self.assertIn("stance=grounded", normalized)
+        self.assertIn("stance=observant_guarded", normalized)
         self.assertIn("attachment=guarded", normalized)
-        self.assertIn("avoid: power_language, system_log_voice, policy_dump", normalized)
+        self.assertIn("avoid: power_language, system_log_voice, fake maturity", normalized)
         self.assertNotIn("sarcasm_level", normalized)
 
     def test_style_context_carries_recent_response_as_do_not_repeat(self):
@@ -112,8 +112,8 @@ class FeRendererTests(unittest.TestCase):
 
         normalized = _norm(plan.style_context)
         self.assertIn("do_not_repeat_recent_response", normalized)
-        self.assertIn("change the subject", normalized)
-        self.assertIn("do not mention that motif again", normalized)
+        self.assertIn("alter structure", normalized)
+        self.assertIn("avoid_recursive_motif", normalized)
 
     def test_emotional_chat_stays_grounded_with_guarded_warmth(self):
         ti_report = TiPolicyReport(
@@ -135,7 +135,7 @@ class FeRendererTests(unittest.TestCase):
         normalized = _norm(plan.style_context)
         self.assertEqual(plan.mode, "grounded")
         self.assertIn("warmth=mid", normalized)
-        self.assertIn("stance=grounded", normalized)
+        self.assertIn("stance=observant_guarded", normalized)
         self.assertEqual(plan.session_arc, "quiet_observation")
 
     def test_topic_memory_normalizes_vietnamese_attention_drift(self):
@@ -237,9 +237,8 @@ class FeRendererTests(unittest.TestCase):
         )
 
         normalized = _norm(plan.style_context)
-        self.assertIn("voice_distillation_pass", normalized)
         self.assertIn("assistant_cadence_reject", normalized)
-        self.assertIn("allow_strangeness", normalized)
+        self.assertIn("strangeness_rule", normalized)
         self.assertIn("desire:", normalized)
         self.assertIn("late_night_coding", normalized)
 

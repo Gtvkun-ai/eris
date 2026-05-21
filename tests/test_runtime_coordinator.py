@@ -911,7 +911,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
 
         normalized = coordinator._normalize_user_message(decision.text)
-        self.assertIn("internal_meaning_label_filter", decision.debug_trace)
+        self.assertIn("weak_evidence_no_hard_claim", decision.debug_trace)
         self.assertNotIn("ne friction", normalized)
 
     def test_force_speak_curious_question_reports_fail_for_no_signal_non_question(self):
@@ -1128,7 +1128,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.llm_service.last_directive_kwargs["speech_intent"], "screen_observation")
         self.assertIn("speech_evidence=", coordinator.llm_service.last_directive_kwargs["telemetry_data"])
         self.assertNotIn("ambient cues", coordinator.llm_service.last_directive_kwargs["telemetry_data"])
-        self.assertEqual(coordinator.transport.sent[-1]["text"], "phan hoi dau tien")
+        self.assertEqual(coordinator.transport.sent[-1]["text"], "Tôi chỉ dám bám vào chỗ này: file_saved.")
 
     def test_force_speak_moderate_resource_pressure_does_not_override_screen_signal(self):
         coordinator = self._make_coordinator(telemetry_service=_PressureSignalTelemetry())
@@ -1397,11 +1397,11 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         coordinator.run_loop()
 
         self.assertEqual(llm_service.directive_calls, 1)
-        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "inner_thought")
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "no_speech_policy")
         frame = coordinator.last_cognitive_frame
         self.assertEqual(frame.meaning_layer.meaning, "social_waiting")
         self.assertEqual(frame.speech_core.speech_source, "meaning")
-        self.assertEqual(frame.speech_core.speech_impulse.reaction, "quiet_tease")
+        self.assertEqual(frame.speech_core.speech_impulse.reaction, "quiet_observe")
         self.assertEqual(frame.action_plan.speech_act, "inner_whim")
         self.assertIn("meaning_not_speech", frame.speech_core.safety_flags)
         self.assertIn("react_to_residue_not_label", frame.speech_core.safety_flags)
@@ -1529,7 +1529,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.last_cognitive_frame.final_decision["parse_mode"], "no_speech")
         self.assertEqual(coordinator.last_cognitive_frame.action_plan.speech_act, "no_speech")
         self.assertTrue(coordinator.last_cognitive_frame.inner_thought.should_surface)
-        self.assertIn("meaning_shift_gate", coordinator.last_cognitive_frame.speech_core.safety_flags)
+        self.assertIn("weak_signal_skip", coordinator.last_cognitive_frame.speech_core.safety_flags)
         self.assertIn(coordinator.last_cognitive_frame.personality_lens.restraint_mode, {"suppress", "indirect_presence"})
         self.assertLess(
             coordinator.last_cognitive_frame.personality_lens.allowed_expression,

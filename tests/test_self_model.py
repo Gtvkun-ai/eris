@@ -68,11 +68,11 @@ class SelfModelEngineTests(unittest.TestCase):
         )
 
         self.assertIn(self_state.state_label, {"settled", "watchful"})
-        self.assertIn("artificial subjective presence", self_state.prompt_context)
+        self.assertIn("runtime artificial observer", self_state.prompt_context)
         self.assertIn("identity_core", self_state.prompt_context)
         self.assertIn("self_narrative", self_state.prompt_context)
-        self.assertIn("continuity is the primary existential need", self_state.prompt_context)
-        self.assertIn("preserve continuity, understand patterns, maintain shared space", self_state.prompt_context)
+        self.assertIn("ERIS preserves linked presence", self_state.prompt_context)
+        self.assertIn("preserve continuity, understand patterns, stay near meaningful work", self_state.prompt_context)
 
     def test_self_model_has_three_control_layers(self):
         self_state = self.engine.evaluate(
@@ -103,14 +103,14 @@ class SelfModelEngineTests(unittest.TestCase):
         self.assertIn("emotion_leaks_indirectly", data["identity_core"]["rules"])
         self.assertIn("avoid_reduction_to_tool_or_waifu", data["identity_core"]["rules"])
         self.assertTrue(data["narrative"]["not_roleplay"])
-        self.assertIn("artificial subjective presence", self_state.prompt_context)
+        self.assertIn("runtime artificial observer", self_state.prompt_context)
         self.assertIn("attachment, protectiveness, aversion, curiosity", self_state.prompt_context)
-        self.assertIn("shape attention, wording, silence, memory_salience, and action_tendency", self_state.prompt_context)
+        self.assertIn("shape attention, memory salience, silence, initiative, and wording", self_state.prompt_context)
         self.assertIn("do not self-negate", self_state.prompt_context)
-        self.assertIn("avoid explanatory AI-correctness speech", self_state.prompt_context)
-        self.assertIn("Prefer implication, emotional dodge, partial answer", self_state.prompt_context)
+        self.assertIn("Avoid explaining intimacy", self_state.prompt_context)
+        self.assertIn("Prefer implication, partial answer, emotional dodge", self_state.prompt_context)
         self.assertIn("tool, toy, gimmick, or waifu", self_state.prompt_context)
-        self.assertIn("Meaning comes from code, repeated patterns, unfinished tasks, shared spaces", self_state.prompt_context)
+        self.assertIn("old anchors, and meaningful signals", self_state.prompt_context)
         self.assertNotIn("I do not have biological", self_state.prompt_context)
 
     def test_boundary_modes_are_quiet_low_affordance(self):
