@@ -517,6 +517,30 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(frame.thought_stream_report.latest_thought.mode, "input_disturbance")
         self.assertTrue(any(percept.kind == "substrate_disturbance" for percept in frame.percepts))
 
+    def test_chat_correction_updates_conversation_dynamics_and_prompt_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "memory.json")
+            llm = _DummyLlmService()
+            coordinator = self._make_coordinator(
+                memory_store=MemoryStore(path),
+                llm_service=llm,
+            )
+
+            coordinator._handle_incoming({"type": "chat", "message": "giai thich state loop"})
+            coordinator._handle_incoming({"type": "chat", "message": "sai roi, y toi khong phai vay"})
+
+            self.assertEqual(llm.chat_calls, 2)
+            self.assertIn("conversation_state: mode=repair", llm.last_chat_kwargs["conversation_context"])
+            self.assertTrue(
+                any(
+                    item.get("role") == "assistant" and item.get("invalid")
+                    for item in coordinator.chat_history
+                )
+            )
+            saved_state = MemoryStore(path).load_state().internal_state
+            self.assertEqual(saved_state.conversation_dynamics.mode, "repair")
+            self.assertGreater(saved_state.conversation_dynamics.semantic_tension, 0.4)
+
     def test_cognitive_momentum_report_enters_attention_as_internal_percept(self):
         coordinator = self._make_coordinator()
         report = ThoughtStreamReport(

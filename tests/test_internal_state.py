@@ -7,6 +7,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from cortex import CognitionDelta, TemporalCognitionEngine
+from cortex.conversation_dynamics import ConversationDynamicsState, ConversationFailure
 from cortex.goal_persistence import GoalPersistenceState
 from cortex.internal_state import DesireDynamics, InternalStateEngine, MentalProcessSystem, PersistentInternalState
 from cortex.contracts import MotivationalPressureReport, MotivationalUrge, SocialPresenceEvent
@@ -505,6 +506,30 @@ class InternalStateEngineTests(unittest.TestCase):
         self.assertGreater(committed.desire.unresolved_residue, after.desire.unresolved_residue)
         self.assertIn("desire_dynamics", committed.to_dict())
         self.assertIn("desire_system", committed.to_prompt_context())
+
+    def test_internal_state_persists_conversation_dynamics(self):
+        state = PersistentInternalState(
+            conversation_dynamics=ConversationDynamicsState(
+                mode="repair",
+                semantic_tension=0.68,
+                conversation_pressure=0.52,
+                last_failure=ConversationFailure(
+                    type="underacted",
+                    trigger="old answer",
+                    correction_needed="state transition",
+                ),
+                adaptation_flags=("repair_first", "avoid_failed_frame"),
+                correction_streak=2,
+            )
+        )
+
+        loaded = PersistentInternalState.from_dict(state.to_dict())
+
+        self.assertEqual(loaded.conversation_dynamics.mode, "repair")
+        self.assertEqual(loaded.conversation_dynamics.last_failure.type, "underacted")
+        self.assertIn("conversation_dynamics", loaded.to_dict())
+        self.assertIn("conversation_state: mode=repair", loaded.to_prompt_context())
+        self.assertIn("repair_first", loaded.to_prompt_context())
 
 
 if __name__ == "__main__":

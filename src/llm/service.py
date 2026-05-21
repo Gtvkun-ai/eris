@@ -1951,6 +1951,7 @@ class LlmService:
         fe_context: str = "",
         appraisal_context: str = "",
         internal_state_context: str = "",
+        conversation_context: str = "",
         memory_context: str = "",
         screen_image_data_uri: str = "",
     ):
@@ -1962,11 +1963,14 @@ class LlmService:
         effective_user_text = raw_user_text or user_message
         act = classify_chat_act(effective_user_text)
         chat_contract = self._build_chat_contract_prompt(effective_user_text, act=act)
-        chat_system = f"{style_block}\n\n{chat_contract}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
+        conversation_section = f"{conversation_context}\n\n" if conversation_context else ""
+        chat_system = f"{style_block}\n\n{chat_contract}\n\n{conversation_section}{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
         memory_block = self._build_memory_context_block(memory_context)
         if memory_block:
             chat_system = (
-                f"{style_block}\n\n{chat_contract}\n\n{memory_block}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
+                f"{style_block}\n\n{chat_contract}\n\n"
+                f"{conversation_section}"
+                f"{memory_block}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
             )
         if ni_context:
             chat_system = f"{chat_system}\n\nNi context:\n{ni_context}"

@@ -460,6 +460,29 @@ class LlmServiceTests(unittest.TestCase):
         self.assertEqual(content[0]["image_url"]["url"], "data:image/jpeg;base64,abc")
         self.assertIn("screenshot", content[1]["text"].lower())
 
+    def test_chat_reply_includes_conversation_context_when_present(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"Toi sua lai nhip nay.","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_chat_reply(
+            chat_history=[],
+            user_message="sai roi",
+            conversation_context="conversation_dynamics: guidance only\nconversation_state: mode=repair",
+        )
+
+        system_prompt = client.calls[0]["messages"][0]["content"]
+        self.assertIn("conversation_dynamics: guidance only", system_prompt)
+        self.assertIn("conversation_state: mode=repair", system_prompt)
+        self.assertIn("Chat contract", system_prompt)
+
     def test_directive_wraps_plain_text_into_safe_json_if_repair_fails(self):
         client = _FakeClient(
             [

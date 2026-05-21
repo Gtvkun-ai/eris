@@ -3,8 +3,10 @@ import time
 
 from dataclasses import dataclass, field, replace
 
+from .conversation_dynamics import ConversationDynamicsState
 from .goal_persistence import GoalPersistenceEngine, GoalPersistenceState
 from .modes import QUIET_MODES
+from .relationship_dynamics import RelationshipDynamicsState
 
 #File này đang cố xây một “nội tâm giả lập có động lực liên tục theo thời gian”, 
 # chứ không phải kiểu chatbot stateless trả lời từng câu riêng lẻ
@@ -1008,6 +1010,8 @@ class PersistentInternalState:
     desire: DesireDynamics = field(default_factory=DesireDynamics)
     goal_persistence: GoalPersistenceState = field(default_factory=GoalPersistenceState)
     mental_processes: MentalProcessSystem = field(default_factory=MentalProcessSystem)
+    conversation_dynamics: ConversationDynamicsState = field(default_factory=ConversationDynamicsState)
+    relationship_dynamics: RelationshipDynamicsState = field(default_factory=RelationshipDynamicsState)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -1081,6 +1085,8 @@ class PersistentInternalState:
             "desire_dynamics": self.desire.to_dict(),
             "goal_persistence": self.goal_persistence.to_dict(),
             "mental_processes": self.mental_processes.to_dict(),
+            "conversation_dynamics": self.conversation_dynamics.to_dict(),
+            "relationship_dynamics": self.relationship_dynamics.to_dict(),
         }
 
     @classmethod
@@ -1161,6 +1167,8 @@ class PersistentInternalState:
                 data.get("mental_processes") or data.get("mental_process_system") or {},
                 legacy=data,
             ),
+            conversation_dynamics=ConversationDynamicsState.from_dict(data.get("conversation_dynamics") or {}),
+            relationship_dynamics=RelationshipDynamicsState.from_dict(data.get("relationship_dynamics") or {}),
         )
 
     def to_prompt_context(self) -> str:
@@ -1211,6 +1219,8 @@ class PersistentInternalState:
                 self.desire.to_prompt_context(),
                 self.goal_persistence.render_prompt_context(),
                 self.mental_processes.to_prompt_context(),
+                self.conversation_dynamics.to_prompt_context(),
+                self.relationship_dynamics.to_prompt_context(),
                 "use_state_rule: preserve rhythm and continuity only; never treat this as proof of the user's current screen or hidden feelings.",
             )
         )
@@ -1734,6 +1744,8 @@ class InternalStateEngine:
             desire=desire,
             goal_persistence=goal_persistence,
             mental_processes=mental_processes,
+            conversation_dynamics=state.conversation_dynamics,
+            relationship_dynamics=state.relationship_dynamics,
         )
         return sensed
 
@@ -1928,6 +1940,8 @@ class InternalStateEngine:
             desire=desire,
             goal_persistence=state.goal_persistence,
             mental_processes=mental_processes,
+            conversation_dynamics=state.conversation_dynamics,
+            relationship_dynamics=state.relationship_dynamics,
         )
 
     def render_prompt_context(self, state: PersistentInternalState) -> str:

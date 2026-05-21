@@ -20,8 +20,10 @@ dataclass: tạo class dữ liệu gọn hơn.
 replace: copy dataclass và đổi vài field.
 '''
 from cortex.action_planner import ACTION_SPACE, ActionPlanner
+from cortex.affect_semantics import AffectSemanticClassifier
 from cortex.attention import AttentionWorkspace
 from cortex.appraisal import AppraisalEngine
+from cortex.conversation_dynamics import ConversationDynamicsEngine
 from cortex.contracts import (
     AgentSpeechCore,
     AttentionCandidate,
@@ -48,6 +50,7 @@ from cortex.micro_policy import MicroLinePolicy, RelationalContext, SemanticRepe
 from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from cortex.personality import PersonalityLens
+from cortex.relationship_dynamics import RelationshipDynamicsEngine, RelationshipTurnEvent
 from cortex.self_model import SelfModelEngine
 from cortex.session_ritual import SessionRitualEngine
 from cortex.speech_core import SpeechCoreEngine
@@ -113,6 +116,9 @@ class RuntimeCoordinator(
         self.meaning_layer = MeaningLayer()
         self.personality_lens = PersonalityLens()
         self.appraisal_engine = AppraisalEngine()
+        self.affect_semantics = AffectSemanticClassifier()
+        self.conversation_dynamics_engine = ConversationDynamicsEngine()
+        self.relationship_dynamics_engine = RelationshipDynamicsEngine()
         self.internal_state_engine = InternalStateEngine()
         self.inner_thought_engine = InnerThoughtEngine()
         self.self_model_engine = SelfModelEngine()
@@ -2210,6 +2216,12 @@ class RuntimeCoordinator(
                 ni_report=ni_report,
                 user_text=user_text,
             )
+            affect_signal = self.affect_semantics.analyze(
+                user_text,
+                ti_mode=str(getattr(ti_report, "mode", "") or ""),
+                active_window_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
+                previous_assistant_text=self.last_chat_answer,
+            )
             internal_state_before = self._get_internal_state()
             fe_plan = self.fe_renderer.evaluate_chat(
                 snapshot=snapshot,
@@ -2218,6 +2230,7 @@ class RuntimeCoordinator(
                 style_memory=self.fe_style_memory,
                 internal_state=internal_state_before,
                 user_text=user_text,
+                affect_signal=affect_signal,
             )
             sensed_internal_state = self.internal_state_engine.sense_update(
                 internal_state_before,
@@ -2271,6 +2284,48 @@ class RuntimeCoordinator(
                 ti_report=ti_report,
             )
             repeat_count = self._track_repeated_user_message(user_text)
+            correction_detected = self._user_denies_last_assistant_assumption(user_text)
+            conversation_report = self.conversation_dynamics_engine.evaluate_chat(
+                getattr(sensed_internal_state, "conversation_dynamics", None),
+                user_text=user_text,
+                last_assistant_text=self.last_chat_answer,
+                last_user_intent=self.last_user_intent,
+                active_topic=self.active_conversational_topic,
+                repeat_count=repeat_count,
+                correction_detected=correction_detected,
+            )
+            relationship_event = RelationshipTurnEvent.from_affect(
+                user_text=user_text,
+                affect=affect_signal,
+                turn_index=max(1, int(getattr(sensed_internal_state, "chat_ticks", 0) or 0) + 1),
+                assistant_overread=bool(conversation_report.correction_detected),
+                repeated_project_context=self.active_conversational_topic in {"technical_support", "goal_guard"},
+            )
+            relationship_report = self.relationship_dynamics_engine.update(
+                getattr(sensed_internal_state, "relationship_dynamics", None),
+                relationship_event,
+            )
+            sensed_internal_state = replace(
+                sensed_internal_state,
+                conversation_dynamics=conversation_report.state,
+                relationship_dynamics=relationship_report.state,
+            )
+            frame.internal_state_after = sensed_internal_state
+            self.logger.info(
+                "[conversation dynamics] mode=%s | tension=%.2f | pressure=%.2f | flags=%s",
+                conversation_report.state.mode,
+                conversation_report.state.semantic_tension,
+                conversation_report.state.conversation_pressure,
+                ",".join(conversation_report.state.adaptation_flags) or "none",
+            )
+            self.logger.info(
+                "[relationship dynamics] event=%s | trust=%.2f | rupture=%.2f | distance=%.2f | notes=%s",
+                relationship_report.state.last_event,
+                relationship_report.state.trust,
+                relationship_report.state.rupture,
+                relationship_report.state.preferred_distance,
+                ",".join(relationship_report.notes) or "none",
+            )
             self._maybe_invalidate_last_assistant_history(user_text)
             self._append_chat_history("user", user_text)
             self.logger.info("[CHAT HISTORY] %s", self._chat_history_for_llm(limit=8))
@@ -2362,6 +2417,7 @@ class RuntimeCoordinator(
                 fe_context=fe_plan.style_context,
                 appraisal_context=self._build_appraisal_context(frame.appraisal),
                 internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
+                conversation_context=conversation_report.prompt_context,
                 memory_context=memory_context,
                 screen_image_data_uri=screen_image_data_uri,
             )

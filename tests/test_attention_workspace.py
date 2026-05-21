@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from cortex.attention import AttentionWorkspace
+from cortex.attention import AttentionScoringProfile, AttentionWorkspace
 from cortex.contracts import PerceptEvent
 
 
@@ -118,6 +118,77 @@ class AttentionWorkspaceTests(unittest.TestCase):
         self.assertEqual(without_memory.score_parts["memory_resonance"], 0.0)
         self.assertGreater(with_memory.score_parts["memory_resonance"], 0.0)
         self.assertGreater(with_memory.score, without_memory.score)
+
+    def test_memory_resonance_can_use_embedding_similarity(self):
+        event = PerceptEvent(
+            kind="vision_fact",
+            content="the terminal shows a startup failure",
+            confidence=0.86,
+            source="vision",
+            novelty_hint="new_screen_fact",
+        )
+
+        def embed(text: str):
+            normalized = text.lower()
+            return (
+                1.0 if "startup" in normalized or "boot" in normalized else 0.0,
+                1.0 if "failure" in normalized or "crash" in normalized else 0.0,
+            )
+
+        workspace = AttentionWorkspace(memory_embedding_fn=embed)
+        candidate = workspace.score_event(
+            event,
+            long_term_memory=("procedural: app boot crash usually needs logs first",),
+        )
+
+        self.assertGreater(candidate.score_parts["memory_resonance"], 0.0)
+
+    def test_personality_bias_ignores_negated_mood_terms(self):
+        negated = PerceptEvent(
+            kind="user_message",
+            content="toi khong buon",
+            confidence=1.0,
+            source="chat",
+            novelty_hint="direct_user_input",
+        )
+        affirmed = PerceptEvent(
+            kind="user_message",
+            content="toi buon",
+            confidence=1.0,
+            source="chat",
+            novelty_hint="direct_user_input",
+        )
+
+        negated_candidate = self.workspace.score_event(negated)
+        affirmed_candidate = self.workspace.score_event(affirmed)
+
+        self.assertEqual(negated_candidate.score_parts["personality_bias"], 0.0)
+        self.assertGreater(affirmed_candidate.score_parts["personality_bias"], 0.0)
+
+    def test_scoring_profile_can_learn_soft_priors_from_observations(self):
+        profile = AttentionScoringProfile.from_observations(
+            (
+                {
+                    "kind": "vision_fact",
+                    "novelty_hint": "new_screen_fact",
+                    "score_parts": {"risk": 0.9, "specificity": 0.8},
+                },
+            )
+        )
+        workspace = AttentionWorkspace(scoring_profile=profile, learned_profile_strength=0.5)
+        event = PerceptEvent(
+            kind="vision_fact",
+            content="plain screen text",
+            confidence=0.86,
+            source="vision",
+            novelty_hint="new_screen_fact",
+        )
+
+        profiled = workspace.score_event(event)
+        baseline = AttentionWorkspace().score_event(event)
+
+        self.assertGreater(profiled.score_parts["risk"], baseline.score_parts["risk"])
+        self.assertGreater(profiled.score_parts["specificity"], baseline.score_parts["specificity"])
 
     def test_norm_deviation_is_scored_as_baseline_comparison(self):
         event = PerceptEvent(

@@ -1,7 +1,7 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-05-20
+Cập nhật: 2026-05-21
 Mã hóa: UTF-8
 
 
@@ -9,7 +9,7 @@ Mã hóa: UTF-8
 TÓM TẮT CÁC CHỨC NĂNG MỚI
 -------------------------
 
-Đợt cập nhật này đẩy ERIS từ một chatbot có body sang một runtime nhân vật có nhịp nhận thức nền rõ hơn. Phần mới quan trọng nhất nằm ở cortex: `MeaningLayer`, `PersonalityLens`, `SpeechCore`, `MicroLinePolicy`, `SocialPresenceDetector`, `SessionRitualEngine` và `GoalPersistenceEngine` được nối vào `RuntimeCoordinator`.
+Đợt cập nhật này đẩy ERIS từ một chatbot có body sang một runtime nhân vật có nhịp nhận thức nền rõ hơn. Phần mới quan trọng nhất nằm ở cortex: `MeaningLayer`, `PersonalityLens`, `SpeechCore`, `MicroLinePolicy`, `SocialPresenceDetector`, `SessionRitualEngine`, `GoalPersistenceEngine`, `AffectSemanticClassifier`, `ConversationDynamicsEngine` và `RelationshipDynamicsEngine` được nối vào `RuntimeCoordinator`.
 
 Các chức năng mới chính:
 - `MeaningLayer` biến fact thô từ Se/telemetry/thought stream thành ý nghĩa có thể phản ứng, ví dụ kẹt code, né friction, phân tán chú ý, đang chờ trong meeting, hoặc user vừa gọi ERIS lên tiếng. Nó có `meaning_shift` để ERIS không nói lại cùng một semantic family quá gần nhau.
@@ -19,14 +19,18 @@ Các chức năng mới chính:
 - `SocialPresenceDetector` nhận biết user vẫn đang có mặt qua idle time, typing, window switching, focus pattern và recent events, nhưng không coi đó là lệnh phải nói. Nó giúp ERIS biết ngồi cạnh và giữ nhịp thay vì chen vào liên tục.
 - `SessionRitualEngine` thêm nghi thức startup: khi runtime mở lại, ERIS cố phục hồi goal, attractor, unresolved loops, hướng nhận thức gần đây và self continuity, rồi gửi một lời chào startup có `parse_mode=session_ritual`.
 - `GoalPersistenceEngine` thêm khả năng giữ mục tiêu dài hơi: goal có strength, urgency, drift, progress, recurrence, next hint và evidence, để một việc đang làm không biến mất ngay khi user im hoặc đổi cửa sổ.
+- `AffectSemanticClassifier` thêm lớp đọc semantic-affect cho chat trực tiếp: technicality, distress, intimacy, attachment, conflict, correction, objectification, playfulness, directive pressure, ambiguity và answer need. Đây là score mềm, không phải intent cứng, để Fe/relationship/conversation biết nên trực tiếp, sửa sai, giữ khoảng cách hay trả lời gọn.
+- `ConversationDynamicsEngine` giữ nhịp hội thoại qua nhiều turn: mode `repair/execute/compress/clarify/explore/settled`, semantic tension, conversation pressure, correction streak, last failure và adaptation flags. Khi user nói "không phải", "sai rồi", "thiếu là...", ERIS biết hấp thụ correction trước, bỏ frame sai và trả lời đúng intent hiện tại.
+- `RelationshipDynamicsEngine` thêm state phát triển quan hệ dài hơi: familiarity, trust, rupture, repair, ritual strength, attachment visibility, preferred distance, exposure recoil, dignity defense, overread correction và technical respect. Nó giúp ERIS gần/lạnh/chính xác dần theo lịch sử thật, thay vì mỗi turn diễn persona từ đầu.
 
 Thay đổi runtime/coordinator:
-- `RuntimeCoordinator` giờ gom thêm meaning, personality, appraisal, self state, social presence, session ritual, thought stream, goal persistence, speech impulse và micro policy vào mỗi cognitive frame.
+- `RuntimeCoordinator` giờ gom thêm meaning, personality, appraisal, self state, social presence, session ritual, thought stream, goal persistence, affect semantics, conversation dynamics, relationship dynamics, speech impulse và micro policy vào mỗi cognitive frame.
 - Force speak không còn chỉ gọi model để nói đại. Nếu tín hiệu mỏng, nó chuyển sang micro-presence nhỏ, có guard chống mindreading, chống claim màn hình thiếu bằng chứng và chống câu "không có tín hiệu" rỗng.
 - Autonomous speech được khóa chặt hơn: cần ý nghĩa mới hoặc áp lực đủ rõ; nếu không có `meaning_shift` phù hợp thì im lặng là hành vi mặc định.
 - Presence maintenance và reengagement có cooldown/silent counters riêng, dùng câu rất ngắn và bị policy lọc trước khi gửi về body.
 - Luồng chat được tách cứng khỏi mode autonomous hơn: chat không đi qua `MeaningLayer`/`PersonalityLens`, và cuối turn còn có guard chặn motive inference, chặn reply kết bằng câu hỏi, và hạ confidence với prompt quá ngắn hoặc mơ hồ.
 - Nếu user phủ định một suy diễn trước đó (`không phải`, `sai rồi`...), coordinator đánh dấu turn assistant gần nhất là invalid để history sau không build tiếp trên hiểu lầm cũ.
+- Chat path hiện chạy thêm affect semantics trước Fe, rồi update conversation dynamics và relationship dynamics sau khi đã có topic/repeat/correction signal. Hai state này được lưu vào `PersistentInternalState` và render vào prompt context như guidance nội bộ, không phải bằng chứng màn hình hay nhãn phải nói ra.
 - `run_loop()` được siết phần phòng lỗi: traceback giờ được flatten thành một dòng gọn cho logger, rồi vẫn `print_exc()` đầy đủ trước khi sleep ngắn và tiếp tục loop. Mẫu hình này giúp runtime không chết âm thầm khi có lỗi lẻ.
 
 Thay đổi LLM/model:
@@ -349,6 +353,15 @@ Kết nối mặc định:
 - `AttentionWorkspace`.
 - Chấm điểm percept/candidate theo novelty, specificity, user relevance, risk, social charge, recency và memory resonance.
 - Tạo `CognitiveBroadcast`: điểm sáng nổi bật trong frame cognition.
+- Attention scoring hiện có personality bias mềm cho các tín hiệu như unfinished intention/self-doubt nhưng biết bỏ qua mood term bị phủ định, ví dụ `toi khong buon` không bị đẩy thành affect signal.
+- Có `AttentionScoringProfile` học soft prior từ observation cũ và `memory_embedding_fn` để memory resonance không chỉ dựa trùng chữ; cognitive momentum từ thought stream có thể quay lại attention khi không có signal hiện tại mạnh hơn, nhưng không override vision/error fact rõ.
+
+`src/cortex/affect_semantics.py`
+- `AffectSemanticClassifier` và `AffectSemanticSignal`.
+- Phân tích chat user thành score đa trục: technicality, distress, intimacy, attachment, conflict, correction, objectification, playfulness, directive_pressure, ambiguity, answer_need, confidence và evidence.
+- Chuẩn hóa tiếng Việt không dấu để match mềm, có phrase groups, regex groups và context bias từ `ti_mode`/`active_window_kind`.
+- Không route intent bằng keyword cứng. Output chỉ là áp lực nghĩa để Fe, conversation dynamics và relationship dynamics biết nên answer-first, sửa sai, giữ khoảng cách, lạnh xuống hay cho phép gần hơn.
+- Có helper `is_correction_like()`, `is_objectification_like()` và `is_technical_request()` cho coordinator hoặc guard dùng nhanh.
 
 `src/cortex/meaning.py`
 - `MeaningLayer`.
@@ -392,6 +405,24 @@ Kết nối mặc định:
 - `FeRenderer`.
 - Chọn style nói: ấm, ngắn, tiếp nối phiên, kỷ luật, support code, châm biếm nhẹ khi phù hợp.
 - Giữ `FeStyleMemory`: recent modes, tones, intents, topic tags, session arc, sarcasm/warmth/brevity bias.
+- Nhận thêm `AffectSemanticSignal`/`FeAffectSignal` để style không chỉ dựa Ni/Ti. Technicality cao kéo về precision/answer-first; correction/conflict kéo về sửa sai và giảm overread; intimacy/attachment/distress chỉ là áp lực mềm, không cho phép diễn cảm xúc thay user.
+- Có `FeDevelopmentSnapshot` và `FeStylePressure` để derive khoảng cách, warmth, restraint, attachment visibility, symbolic bias, exposure recoil, precision, dry edge và quyền dùng "strangeness" từ memory/internal state.
+
+`src/cortex/conversation_dynamics.py`
+- `ConversationDynamicsEngine` và `ConversationDynamicsState`.
+- Theo dõi trạng thái hội thoại riêng cho chat: mode (`explore`, `clarify`, `repair`, `execute`, `compress`, `defer`, `settled`), semantic_tension, conversation_pressure, correction_severity, semantic_divergence, frustration_estimate, conversational_relief, correction_streak, recent modes và failure history.
+- Nhận diện correction mạnh/nhẹ qua các cụm như `khong phai`, `sai roi`, `thieu la`, `chua them`, nhưng phân biệt typo/sửa nhỏ để tránh overrepair.
+- Suy ra failure gần nhất: `misread`, `underacted`, `overexplained`, `tone_mismatch`, `wrong_abstraction` hoặc `none`.
+- Tạo `adaptation_flags` như `repair_first`, `avoid_failed_frame`, `lower_inference_confidence`, `answer_with_action_shape`, `compress_response`, `avoid_overrepair`.
+- Có `ContinuityCurve` để xem hội thoại đang converging/diverging/adjusting sau repair, thay vì chỉ decay tension cơ học.
+
+`src/cortex/relationship_dynamics.py`
+- `RelationshipDynamicsEngine`, `RelationshipDynamicsState` và `RelationshipStylePressure`.
+- Giữ state phát triển quan hệ có quán tính: familiarity, trust, rupture, repair, ritual_strength, attachment_visibility, preferred_distance, user_tolerates_strangeness, exposure_recoil, dignity_defense, overread_correction, irritation_memory, technical_respect.
+- Update theo `RelationshipTurnEvent` dựng từ affect signal: user sửa hiểu lầm, objectify ERIS, accepted style, repeated project context, assistant overread, emotional exposure, technical success hoặc session gap.
+- Objectification/tool/waifu/prompt cosplay làm tăng dignity defense và social distance, giảm attachment visibility; correction làm tăng overread_correction để các turn sau bớt suy diễn symbolic.
+- Technical thread tốt tăng technical_respect để ERIS bớt làm màu khi user cần code; intimacy/attachment tăng rất chậm để tránh biến thành prompt clingy.
+- Render prompt context ngắn và style pressure cho Personality/Fe đọc như áp lực, không phải nhãn công khai.
 
 `src/cortex/personality.py`
 - `PersonalityLens`.
@@ -408,6 +439,7 @@ Kết nối mặc định:
 - Có `MentalProcessSystem`: curiosity, restraint, tension, continuity, attachment, reflection, social_presence, cognitive_load, background_thought.
 - Các process có level/pressure, tương tác và decay theo thời gian.
 - Render prompt context với rule rõ: đây là continuity/rhythm nội bộ, không phải bằng chứng màn hình hay cảm xúc ẩn của user.
+- Persist thêm `conversation_dynamics` và `relationship_dynamics`, serialize/deserialize vào JSON state và đưa prompt context vào cuối internal context. Hai state này dùng để giữ nhịp đối thoại và quan hệ qua nhiều turn, không thay thế factual grounding từ Se.
 
 `src/cortex/self_model.py`
 - `SelfModelEngine`.
@@ -595,6 +627,7 @@ Kết nối mặc định:
 
 `tests/test_runtime_coordinator.py`
 - Test orchestration lớn: chat, autonomous, force_speak, micro_presence, presence maintenance/reengagement, session ritual, action route, vision facts, repeat guard, intent alignment.
+- Có case chat correction update `conversation_dynamics`, chuyển mode `repair`, tăng semantic tension và đưa prompt context mới vào LLM path.
 
 `tests/test_llm_service.py`
 - Test LLM service sửa JSON, fallback, service error/context-size behavior, contract/context behavior.
@@ -616,6 +649,7 @@ Kết nối mặc định:
 
 `tests/test_attention_workspace.py`
 - Test attention scoring và broadcast.
+- Có case mới cho personality bias không ăn mood bị phủ định, scoring profile học soft prior, memory resonance bằng embedding và cognitive momentum quay lại attention đúng lúc.
 
 `tests/test_appraisal_engine.py`
 - Test appraisal axes.
@@ -633,6 +667,7 @@ Kết nối mặc định:
 
 `tests/test_fe_renderer.py`
 - Test Fe style plan và style memory.
+- Bao phủ affect signal/semantic pressure để technical/correction/conflict không bị render thành giọng cảm xúc sai tầng.
 
 `tests/test_self_model.py`
 - Test self-state overloaded/engaged/watchful/settled.
@@ -657,6 +692,10 @@ Kết nối mặc định:
 
 `tests/test_internal_state.py`
 - Test mental process, pressure axes, decay, commit turn, thought/self/social history.
+- Có case persist `conversation_dynamics` và `relationship_dynamics` trong internal state JSON/prompt context.
+
+`tests/test_conversation_dynamics.py`
+- Test engine hội thoại mới: neutral chat giữ low tension, denial chuyển repair mode, thiếu phần cần làm map thành `underacted`, repeated correction tăng pressure, follow-up sạch làm tension giảm, typo nhỏ không ép repair, continuity curve track recovery, và `ok nhung sai` không bị tính là relief.
 
 `tests/test_action_router.py`
 - Test mapping chat thành system action.
@@ -1110,6 +1149,14 @@ Chat final guards:
 - Nếu user đang hỏi trực tiếp mà output lại kết bằng dấu hỏi, phần tail hỏi ngược sẽ bị cắt hoặc thay bằng câu thừa nhận chưa đủ chắc.
 - Input cực ngắn hoặc mơ hồ sẽ bị hạ confidence xuống khoảng `0.60` để tránh chat nói quá chắc.
 
+Affect semantics / conversation dynamics / relationship dynamics:
+- `AffectSemanticSignal` là lớp đọc áp lực nghĩa mềm trên câu user, không phải nhãn cảm xúc thật. Nó giúp phân biệt câu kỹ thuật, câu sửa hiểu lầm, câu objectify ERIS, câu cần execute, câu mơ hồ và câu có distress/intimacy.
+- `ConversationDynamicsState.mode=repair` là tín hiệu quan trọng khi user phủ định hoặc nói thiếu/sai. Prompt phải acknowledge rất ngắn, bỏ frame cũ, trả lời intent hiện tại, giảm tự tin suy diễn và không mở rộng lạc hướng.
+- `conversation_pressure` tăng khi correction lặp, repeat_count cao hoặc user nhắc failure cũ; giảm khi user có relief rõ như `đúng rồi`, `hợp lý`, `tiếp tục` mà không kèm reversal như `nhưng sai`.
+- `RelationshipDynamicsState.dignity_defense` tăng khi user kéo ERIS thành tool/waifu/prompt cosplay; khi đó style nên lạnh, xa và bớt attachment visibility, không diễn thân mật để bù.
+- `overread_correction` tăng sau correction/misread, làm các turn sau giảm symbolic overread. `technical_respect` tăng qua technical thread tốt, kéo chat code về precision/directness.
+- `relationship_style_pressure` derive distance/restraint/attachment_visibility/symbolic_permission/boundary_coolness/technical_directness cho Fe/Personality đọc, nhưng không được nói các label đó ra với user.
+
 
 22. Cách Đọc “Xu Hướng Hiện Tại” Của ERIS Khi Debug
 ---------------------------------------------------
@@ -1123,10 +1170,14 @@ Trong `PersistentInternalState`:
 - `silence_ticks` vs `spoken_ticks`: xu hướng im nhiều hay nói nhiều.
 - `last_social_presence_confidence`, `last_social_presence_intensity`: có cảm giác user còn hiện diện không.
 - `goal_persistence`: goal nền đang sống hay đã decay.
+- `conversation_dynamics.mode`, `conversation_pressure`, `semantic_tension`, `last_failure`: chat đang ổn, cần repair, cần execute hay đang bị kéo lệch.
+- `relationship_dynamics.trust`, `rupture`, `preferred_distance`, `dignity_defense`, `overread_correction`, `technical_respect`: quan hệ đang gần/lạnh/cẩn trọng/kỹ thuật đến mức nào.
 - `mental_processes.*.level` và `mental_processes.*.pressure`: curiosity/restraint/tension/continuity cái nào đang kéo hệ thống mạnh nhất.
 
 Trong coordinator / frame:
 - `recent_meaning_families`: semantic family nào vừa chạy liên tục; nếu lặp ở đây thì autonomous speech dễ bị gate.
+- `affect_signal`: câu user đang nghiêng technical/correction/objectification/directive/ambiguity hay attachment/distress.
+- `conversation_report` và `relationship_report`: vì sao chat prompt vừa được steer sang repair/execute/compress hoặc lạnh/xa/chính xác hơn.
 - `vision_facts`, `vision_facts_signature`, `vision_facts_novelty_hint`: màn hình có thực sự đổi đủ để tạo cue mới không.
 - `presence_maintenance_silent_cycles`, `reengagement_quiet_cycles`: hệ thống đang tiến gần micro-line hay chưa.
 - `force_speak_repeat_guard_count`, `force_speak_intent_guard_count`: force_speak đang bị guard vì lặp hay vì intent yếu.
@@ -1150,8 +1201,13 @@ Trong thought stream:
   autonomous sẽ im, dù telemetry vẫn đang chảy.
 - `goal_persistence.active=true` + `momentum/unresolved_loops` cao:
   Eris đang có “mạch nền” rõ, thường sẽ bám continuity tốt hơn giữa các turn.
+- `conversation_dynamics.mode=repair` + `last_failure=underacted`:
+  Turn trước đã làm thiếu hoặc chưa execute đúng; câu sau nên sửa trực tiếp, ít giải thích.
+- `relationship_dynamics.dignity_defense cao`:
+  ERIS nên giữ phẩm giá, giảm thân mật bề mặt, không cố chứng minh mình "thật" bằng melodrama.
 
 Kết luận debug ngắn:
 - Muốn biết vì sao Eris im: xem `meaning_shift`, `SpeechCore.reason`, `silence_state`, `repeat_guard`, `ti_mode`.
 - Muốn biết vì sao Eris nói câu đó: xem `meaning_layer`, `appraisal.stance`, `action_plan.speech_act`, `speech_intent`, `risk_flags`.
-- Muốn biết Eris “đang nghiêng về đâu”: xem bộ ba `drift + stance + goal_persistence`, rồi đối chiếu với `mental_processes`.
+- Muốn biết vì sao chat đổi giọng: xem `affect_signal`, `conversation_dynamics`, `relationship_dynamics`, rồi mới đối chiếu Fe/Ti.
+- Muốn biết Eris “đang nghiêng về đâu”: xem bộ ba `drift + stance + goal_persistence`, rồi đối chiếu với `mental_processes`, `conversation_dynamics` và `relationship_dynamics`.
