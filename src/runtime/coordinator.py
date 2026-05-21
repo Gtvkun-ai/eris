@@ -1320,6 +1320,7 @@ class RuntimeCoordinator(
         notes = self._merge_personality_lens_notes(notes, getattr(frame, "personality_lens", None))
         notes = self._merge_subconscious_notes(notes, getattr(frame, "subconscious_report", None))
         notes = self._merge_memory_resonance_notes(notes, getattr(frame, "memory_resonance", None))
+        internal_state = frame.internal_state_after or frame.internal_state_before or self._get_internal_state()
         frame.action_plan = self.action_planner.plan(
             channel=frame.channel,
             snapshot=snapshot,
@@ -1336,6 +1337,12 @@ class RuntimeCoordinator(
             notes=tuple(notes),
             concrete_signals=tuple(concrete_signals or ()),
             self_state=frame.self_state,
+            speech_core=frame.speech_core,
+            conversation_dynamics=getattr(internal_state, "conversation_dynamics", None),
+            relationship_dynamics=getattr(internal_state, "relationship_dynamics", None),
+            goal_state=getattr(internal_state, "goal_persistence", None),
+            action_memory=getattr(internal_state, "action_memory", None),
+            auto_record_local_memory=False,
         )
         self._apply_micro_line_policy_to_action_plan(
             frame,
@@ -1712,6 +1719,7 @@ class RuntimeCoordinator(
                 snapshot=snapshot,
                 long_term_memory=self.long_term_memory,
                 last_text=self.last_text,
+                goal_state=getattr(internal_state, "goal_persistence", None),
             )
             ti_view = self.autonomous_ni_state.update(snapshot=snapshot, report=ni_report)
             ti_report = self.ti_governor.evaluate_autonomous(
@@ -2195,10 +2203,12 @@ class RuntimeCoordinator(
                 ),
             )
             memory_context = self._build_memory_context(snapshot, memory_resonance=memory_resonance)
+            internal_state_before = self._get_internal_state()
             ni_report = self.ni_engine.evaluate_chat(
                 snapshot=snapshot,
                 long_term_memory=self.long_term_memory,
                 user_text=user_text,
+                goal_state=getattr(internal_state_before, "goal_persistence", None),
             )
             # Tầng 2: suy luận nhẹ có bằng chứng để tinh chỉnh drift_score / drift_level.
             ni_report = self._maybe_apply_ni_meta_critic(
@@ -2222,7 +2232,6 @@ class RuntimeCoordinator(
                 active_window_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
                 previous_assistant_text=self.last_chat_answer,
             )
-            internal_state_before = self._get_internal_state()
             fe_plan = self.fe_renderer.evaluate_chat(
                 snapshot=snapshot,
                 ni_report=ni_report,
@@ -2293,6 +2302,7 @@ class RuntimeCoordinator(
                 active_topic=self.active_conversational_topic,
                 repeat_count=repeat_count,
                 correction_detected=correction_detected,
+                affect_signal=affect_signal,
             )
             relationship_event = RelationshipTurnEvent.from_affect(
                 user_text=user_text,
@@ -2468,10 +2478,12 @@ class RuntimeCoordinator(
             ),
         )
         memory_context = self._build_memory_context(snapshot, memory_resonance=memory_resonance)
+        internal_state_before = self._get_internal_state()
         ni_report = self.ni_engine.evaluate_autonomous(
             snapshot=snapshot,
             long_term_memory=self.long_term_memory,
             last_text=self.last_text,
+            goal_state=getattr(internal_state_before, "goal_persistence", None),
         )
         ni_view = self.autonomous_ni_state.update(snapshot=snapshot, report=ni_report)
         ni_state_label = ni_view["discrete_state"]
@@ -2484,7 +2496,6 @@ class RuntimeCoordinator(
             idle_cycles=self.idle_cycles,
             last_text=self.last_text,
         )
-        internal_state_before = self._get_internal_state()
         fe_plan = self.fe_renderer.evaluate_autonomous(
             snapshot=snapshot,
             ni_report=ni_report,
@@ -3540,10 +3551,12 @@ class RuntimeCoordinator(
             ),
         )
         memory_context = self._build_memory_context(snapshot, memory_resonance=memory_resonance)
+        internal_state_before = self._get_internal_state()
         ni_report = self.ni_engine.evaluate_autonomous(
             snapshot=snapshot,
             long_term_memory=self.long_term_memory,
             last_text=self.last_text,
+            goal_state=getattr(internal_state_before, "goal_persistence", None),
         )
         # Tầng 2: suy luận nhẹ có bằng chứng để tinh chỉnh drift_score / drift_level.
         ni_report = self._maybe_apply_ni_meta_critic(
@@ -3564,7 +3577,6 @@ class RuntimeCoordinator(
             idle_cycles=self.idle_cycles,
             last_text=self.last_text,
         )
-        internal_state_before = self._get_internal_state()
         fe_plan = self.fe_renderer.evaluate_autonomous(
             snapshot=snapshot,
             ni_report=ni_report,

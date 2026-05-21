@@ -1,96 +1,156 @@
-import re
-import time
-import unicodedata
+from __future__ import annotations
 
+"""
+goal_persistence.py - durable background thread memory for ERIS
+===============================================================
+
+This file replaces the old "long text / keyword => active goal" behavior.
+
+Old disease:
+    - any long-ish user text became goal-worthy.
+    - direct user message got strength=0.72 too easily.
+    - Ni drift inflated urgency, so bad Ni became persistent nagging.
+    - token overlap >= 2 merged unrelated ERIS technical threads.
+    - closure detection could misread "chưa xong" as "xong".
+
+New model:
+    User text / thought stream / Ti signal -> GoalCandidate -> merge/decay
+
+The key distinction:
+    active background thread != permission to interrupt.
+
+ERIS may keep continuity without bringing it up. Yes, memory without nagging.
+A miracle apparently unavailable to most productivity apps.
+"""
+
+import hashlib
+import time
 from dataclasses import dataclass
 
-#Ép mọi giá trị số về khoảng 0.0 -> 1.0
-def _clamp01(value) -> float:
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if numeric != numeric:
-        return 0.0
-    return max(0.0, min(1.0, numeric))
+try:
+    from .orientation_context import (
+        GoalTextKind,
+        GoalTextSignal,
+        clean_text,
+        clamp01,
+        extract_anchors,
+        goal_match_score,
+        infer_closure_signal,
+        infer_goal_text_signal,
+        normalize,
+        tokens,
+        unique_recent,
+    )
+except ImportError:  # Useful for flat scratch testing.
+    from orientation_context import (  # type: ignore
+        GoalTextKind,
+        GoalTextSignal,
+        clean_text,
+        clamp01,
+        extract_anchors,
+        goal_match_score,
+        infer_closure_signal,
+        infer_goal_text_signal,
+        normalize,
+        tokens,
+        unique_recent,
+    )
 
 
-def _clean_text(value: object, *, limit: int = 180) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
-    if len(text) > limit:
-        return text[: limit - 3].rstrip() + "..."
-    return text
+def _stable_goal_id(summary: str) -> str:
+    digest = hashlib.sha1(normalize(summary).encode("utf-8")).hexdigest()[:12]
+    return f"goal_{digest}"
 
 
-def _normalize(value: object) -> str:
-    text = str(value or "").strip().lower().replace("đ", "d")
-    text = unicodedata.normalize("NFD", text)
-    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
-    return re.sub(r"\s+", " ", text)
-
-
-def _tokens(value: object) -> set[str]:
-    stop_words = {
-        "and",
-        "the",
-        "for",
-        "from",
-        "this",
-        "that",
-        "with",
-        "dang",
-        "trong",
-        "cua",
-        "voi",
-        "khi",
-        "thi",
-        "neu",
-        "ngai",
-        "toi",
-        "mot",
-        "nhung",
-        "khong",
-        "duoc",
-    }
-    return {
-        token
-        for token in re.findall(r"[a-z0-9_]+", _normalize(value).replace("_", " "))
-        if len(token) >= 3 and token not in stop_words
-    }
-
-
-#Thêm summary mới vào danh sách gần đây, chỉ giữ tối đa 8 cái.
-def _append_recent(items: tuple[str, ...], value: str, *, limit: int = 8) -> tuple[str, ...]:
-    text = _clean_text(value, limit=140)
-    if not text:
-        return tuple(items[-limit:])
-    return (*items, text)[-limit:]
+def _as_tuple(value: object, *, limit: int = 8) -> tuple[str, ...]:
+    return tuple(str(item) for item in (value or ()) if str(item or "").strip())[-limit:]
 
 
 @dataclass(slots=True)
 class GoalPersistenceState:
-    """A long-lived problem ERIS is tracking across events."""
+    """One durable background thread.
 
-    goal_id: str = "" 
-    summary: str = "" #Nội dung goal
+    Important fields:
+        strength:
+            How strongly this thread should remain available in memory.
+
+        urgency:
+            How soon it may matter again. Urgency is not a command to speak.
+
+        intervention_permission:
+            Whether ERIS may proactively bring it up later.
+            This is intentionally separate from strength.
+
+        coherence:
+            How stable/relevant the thread still seems after recent updates.
+    """
+
+    goal_id: str = ""
+    summary: str = ""
     source: str = ""
-    status: str = "empty" #empty, active, stale, closed
-    strength: float = 0.0 #Goal mạnh tới đâu
-    urgency: float = 0.0 #Độ khẩn
-    drift: float = 0.0 #Mức lệch khỏi mục tiêu
-    progress: float = 0.0 #Mức độ đã hoàn thành goal, 0.0 -> 1.0
-    recurrence_count: int = 0 #Goal này lặp lại bao nhiêu lần
+    status: str = "empty"  # empty | active | stale | closed
+
+    # Legacy-compatible numeric fields.
+    strength: float = 0.0
+    urgency: float = 0.0
+    drift: float = 0.0
+    progress: float = 0.0
+    recurrence_count: int = 0
     created_at: float = 0.0
     updated_at: float = 0.0
     last_reactivated_at: float = 0.0
-    next_hint: str = "" #Gợi ý dùng goal này về sau
-    evidence: tuple[str, ...] = () #Bằng chứng vì sao goal được giữ
+    next_hint: str = ""
+    evidence: tuple[str, ...] = ()
     recent_summaries: tuple[str, ...] = ()
+
+    # New semantic fields.
+    goal_type: str = ""
+    intent: str = ""
+    confidence: float = 0.0
+    actionability: float = 0.0
+    intervention_permission: float = 0.0
+    coherence: float = 0.0
+    anchors: tuple[str, ...] = ()
+    stale_reason: str = ""
 
     @property
     def active(self) -> bool:
-        #Tức goal yếu quá thì không được tính là active. Đỡ kiểu “nhớ dai như thù vặt”
-        return self.status == "active" and bool(self.summary) and self.strength >= 0.18
+        effective_confidence = self.confidence
+        if effective_confidence <= 0.0 and self.status == "active" and self.summary and self.strength >= 0.18:
+            effective_confidence = 0.50
+        return (
+            self.status == "active"
+            and bool(self.summary)
+            and self.strength >= 0.18
+            and effective_confidence >= 0.22
+        )
+
+    @property
+    def can_intervene(self) -> bool:
+        """Whether ERIS may proactively mention this goal.
+
+        A remembered thread can be active while this returns False. That is the
+        whole point. Continuity is not a leash. Terrifyingly subtle, yes.
+        """
+
+        effective_confidence = self.confidence
+        if effective_confidence <= 0.0 and self.status == "active" and self.summary and self.strength >= 0.18:
+            effective_confidence = 0.50
+        effective_actionability = self.actionability
+        if effective_actionability <= 0.0 and self.status == "active" and self.summary:
+            effective_actionability = 0.35
+        return (
+            self.active
+            and self.intervention_permission >= 0.55
+            and effective_actionability >= 0.45
+            and effective_confidence >= 0.42
+            and self.goal_type
+            in {
+                GoalTextKind.CONCRETE_TASK.value,
+                GoalTextKind.DEBUG_THREAD.value,
+                GoalTextKind.CORRECTION_THREAD.value,
+            }
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -109,81 +169,116 @@ class GoalPersistenceState:
             "next_hint": self.next_hint,
             "evidence": list(self.evidence),
             "recent_summaries": list(self.recent_summaries),
+            # New fields.
+            "goal_type": self.goal_type,
+            "intent": self.intent,
+            "confidence": round(float(self.confidence), 3),
+            "actionability": round(float(self.actionability), 3),
+            "intervention_permission": round(float(self.intervention_permission), 3),
+            "coherence": round(float(self.coherence), 3),
+            "anchors": list(self.anchors),
+            "stale_reason": self.stale_reason,
         }
 
     @classmethod
     def from_dict(cls, data: object) -> "GoalPersistenceState":
         if not isinstance(data, dict):
             return cls()
+        summary = clean_text(data.get("summary"), limit=180)
+        status = clean_text(data.get("status"), limit=40) or "empty"
+        strength = clamp01(data.get("strength", 0.0))
+        # Backward compatibility: old states do not have confidence/actionability.
+        default_conf = 0.50 if summary and status == "active" and strength >= 0.18 else 0.0
+        default_actionability = 0.35 if summary and status == "active" else 0.0
         return cls(
-            goal_id=_clean_text(data.get("goal_id"), limit=80),
-            summary=_clean_text(data.get("summary"), limit=180),
-            source=_clean_text(data.get("source"), limit=80),
-            status=_clean_text(data.get("status"), limit=40) or "empty",
-            strength=_clamp01(data.get("strength", 0.0)),
-            urgency=_clamp01(data.get("urgency", 0.0)),
-            drift=_clamp01(data.get("drift", 0.0)),
-            progress=_clamp01(data.get("progress", 0.0)),
+            goal_id=clean_text(data.get("goal_id"), limit=80) or (_stable_goal_id(summary) if summary else ""),
+            summary=summary,
+            source=clean_text(data.get("source"), limit=80),
+            status=status,
+            strength=strength,
+            urgency=clamp01(data.get("urgency", 0.0)),
+            drift=clamp01(data.get("drift", 0.0)),
+            progress=clamp01(data.get("progress", 0.0)),
             recurrence_count=max(0, int(data.get("recurrence_count", 0) or 0)),
             created_at=max(0.0, float(data.get("created_at", 0.0) or 0.0)),
             updated_at=max(0.0, float(data.get("updated_at", 0.0) or 0.0)),
             last_reactivated_at=max(0.0, float(data.get("last_reactivated_at", 0.0) or 0.0)),
-            next_hint=_clean_text(data.get("next_hint"), limit=180),
-            evidence=tuple(str(item) for item in (data.get("evidence") or ()) if str(item or "").strip())[-8:],
-            recent_summaries=tuple(str(item) for item in (data.get("recent_summaries") or ()) if str(item or "").strip())[-8:],
+            next_hint=clean_text(data.get("next_hint"), limit=180),
+            evidence=_as_tuple(data.get("evidence"), limit=10),
+            recent_summaries=_as_tuple(data.get("recent_summaries"), limit=10),
+            goal_type=clean_text(data.get("goal_type"), limit=80),
+            intent=clean_text(data.get("intent"), limit=80),
+            confidence=clamp01(data.get("confidence", default_conf)),
+            actionability=clamp01(data.get("actionability", default_actionability)),
+            intervention_permission=clamp01(data.get("intervention_permission", 0.18)),
+            coherence=clamp01(data.get("coherence", default_conf)),
+            anchors=_as_tuple(data.get("anchors"), limit=12),
+            stale_reason=clean_text(data.get("stale_reason"), limit=160),
         )
 
-    #Hàm này tạo text nhét vào prompt.
     def render_prompt_context(self) -> str:
+        """Text for LLM prompt.
+
+        This must not sound like a command. It is continuity context, not a
+        screen proof, not a duty alarm, and definitely not a permission slip for
+        ERIS to become a hall monitor with JSON.
+        """
+
         if not self.active:
             return "goal_persistence: none active."
-        evidence = " | ".join(self.evidence[-4:]) or "none"
+        evidence = " | ".join(self.evidence[-5:]) or "none"
+        can_intervene = 1 if self.can_intervene else 0
         return (
-            "goal_persistence: long-lived background goal; use as continuity, not current screen proof.\n"
-            f"- active_goal={self.summary}; strength={self.strength:.2f}; urgency={self.urgency:.2f}; "
-            f"drift={self.drift:.2f}; recurrence={self.recurrence_count}; source={self.source or 'unknown'}.\n"
-            f"- next_hint={self.next_hint or 'continue the same problem if context still fits'}.\n"
+            "goal_persistence: durable background thread; use as continuity, not current screen proof.\n"
+            f"- thread={self.summary}; type={self.goal_type or 'unknown'}; source={self.source or 'unknown'}; "
+            f"strength={self.strength:.2f}; urgency={self.urgency:.2f}; confidence={self.confidence:.2f}; "
+            f"coherence={self.coherence:.2f}; recurrence={self.recurrence_count}.\n"
+            f"- intervention_permission={self.intervention_permission:.2f}; can_intervene={can_intervene}; "
+            "if can_intervene=0, keep it as quiet background only.\n"
+            f"- next_hint={self.next_hint or 'preserve continuity only if current context still fits'}.\n"
             f"- evidence={evidence}."
         )
 
+    def render_ni_context(self) -> str:
+        """Compact machine-readable goal context for Ni.
+
+        Pass this to NiEngine.evaluate_*(goal_context=state.render_ni_context())
+        if Ngài does not want to pass the whole state object.
+        """
+
+        if not self.active:
+            return "goal_signal: active=0;"
+        return (
+            "goal_signal: "
+            f"active=1; type={self.goal_type or 'unknown'}; "
+            f"strength={self.strength:.3f}; urgency={self.urgency:.3f}; "
+            f"confidence={self.confidence:.3f}; actionability={self.actionability:.3f}; "
+            f"intervention_permission={self.intervention_permission:.3f}; "
+            f"summary={self.summary};"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GoalCandidate:
+    summary: str
+    source: str
+    goal_type: str
+    intent: str
+    strength: float
+    urgency: float
+    confidence: float
+    actionability: float
+    intervention_permission: float
+    coherence: float
+    drift: float
+    next_hint: str
+    evidence: tuple[str, ...]
+    anchors: tuple[str, ...]
+    replace_priority: float = 0.0
+
 
 class GoalPersistenceEngine:
-    """Promotes recurrent cognitive pull into a durable background goal."""
-
-    TASK_MARKERS = (
-        "fix",
-        "implement",
-        "add",
-        "build",
-        "wire",
-        "debug",
-        "review",
-        "refactor",
-        "test",
-        "goal",
-        "persistence",
-        "muc tieu",
-        "van de",
-        "cognition",
-        "hệ thống",
-        "tiếp tục",
-        "sửa",
-        "thêm",
-        "làm",
-    )
-    CLOSURE_MARKERS = (
-        "done",
-        "fixed",
-        "resolved",
-        "solved",
-        "complete",
-        "completed",
-        "close_goal",
-        "xong",
-        "đã xong",
-        "giải quyết",
-        "đóng goal",
-    )
+    """Promotes true recurring cognitive pull into a durable background thread."""
 
     def update(
         self,
@@ -201,6 +296,14 @@ class GoalPersistenceEngine:
     ) -> GoalPersistenceState:
         current_time = time.time() if now is None else max(0.0, float(now or 0.0))
         base = state if isinstance(state, GoalPersistenceState) else GoalPersistenceState()
+
+        closure = infer_closure_signal(user_text, thought_stream_report=thought_stream_report)
+        if closure.closed and base.active:
+            user_tokens = tokens(user_text)
+            match_score = goal_match_score(base.summary, user_text, left_anchors=base.anchors, right_anchors=extract_anchors(user_text))
+            if len(user_tokens) <= 3 or match_score >= 0.42:
+                return self._close(base, now=current_time, evidence="closure_signal:" + ",".join(closure.evidence))
+
         candidate = self._candidate(
             channel=channel,
             snapshot=snapshot,
@@ -211,13 +314,13 @@ class GoalPersistenceEngine:
             user_text=user_text,
             force_speak=force_speak,
         )
-        if self._has_closure(user_text, thought_stream_report=thought_stream_report) and base.active:
-            user_tokens = _tokens(user_text)
-            if len(user_tokens) <= 3 or self._matches(base.summary, user_text): #Nếu câu đóng goal ngắn hoặc có nhiều token chung với summary của goal thì mới đóng, tránh trường hợp người dùng nói "xong" nhưng không phải là xong cái goal đang theo dõi.
-                return self._close(base, now=current_time, evidence="closure_signal")
         if candidate is None:
             return self._decay(base, now=current_time)
         return self._merge(base, candidate, now=current_time)
+
+    # ------------------------------------------------------------------
+    # Candidate generation
+    # ------------------------------------------------------------------
 
     def _candidate(
         self,
@@ -230,126 +333,266 @@ class GoalPersistenceEngine:
         broadcast,
         user_text: str,
         force_speak: bool,
-    ) -> dict[str, object] | None:
-        direct_user = channel in {"chat", "force_speak"} or force_speak or bool((user_text or "").strip())
-        #Tức user nói càng giống việc cần làm thì goal càng mạnh.
-        if direct_user and self._looks_goal_worthy(user_text):
-            drift = _clamp01(getattr(ni_report, "drift_score", 0.0))
-            return {
-                "summary": _clean_text(user_text, limit=160),
-                "source": "user_message",
-                "strength": 0.72,
-                "urgency": _clamp01(0.42 + drift * 0.28),
-                "drift": drift,
-                "next_hint": "continue solving the user's stated problem across later events",
-                "evidence": ("direct_user_goal", f"channel={channel}"),
-            }
+    ) -> GoalCandidate | None:
+        direct = channel in {"chat", "force_speak"} or bool(force_speak)
+        if direct and (user_text or "").strip():
+            signal = infer_goal_text_signal(user_text, channel=channel, force_speak=force_speak)
+            if signal.should_persist:
+                return self._from_user_signal(signal, channel=channel, ni_report=ni_report)
 
-        momentum = getattr(thought_stream_report, "momentum", None)
-        if (
-            #nếu hệ thống thấy não/agent cứ bị kéo về một chủ đề, nó lưu chủ đề đó
-            momentum is not None
-            and str(getattr(momentum, "affordance", "") or "") == "attention"
-            and _clamp01(getattr(momentum, "score", 0.0)) >= 0.58
-        ):
-            topic = _clean_text(getattr(momentum, "topic_seed", ""), limit=140)
-            return {
-                "summary": topic,
-                "source": "cognitive_momentum",
-                "strength": _clamp01(getattr(momentum, "score", 0.0)),
-                "urgency": _clamp01(getattr(momentum, "tension", 0.0)),
-                "drift": _clamp01(getattr(ni_report, "drift_score", 0.0)),
-                "next_hint": "let this unresolved thread bias attention until it is closed or superseded",
-                "evidence": tuple(getattr(momentum, "evidence", ()) or ())[:6],
-            }
+        momentum_candidate = self._from_thought_momentum(thought_stream_report, ni_report=ni_report)
+        if momentum_candidate is not None:
+            return momentum_candidate
 
-        attractor = getattr(thought_stream_report, "active_attractor", None)
-        if (
-            #attractor giống “vòng lặp chưa giải quyết” hơn
-            attractor is not None
-            and bool(getattr(attractor, "attractor", False))
-            and _clamp01(getattr(attractor, "score", 0.0)) >= 0.64
-        ):
-            topic = _clean_text(getattr(attractor, "topic_seed", ""), limit=140)
-            return {
-                "summary": topic,
-                "source": "cognitive_attractor",
-                "strength": _clamp01(getattr(attractor, "score", 0.0)),
-                "urgency": _clamp01(getattr(attractor, "tension", 0.0)),
-                "drift": _clamp01(getattr(ni_report, "drift_score", 0.0)),
-                "next_hint": "pull cognition back to this unresolved loop when affordance is available",
-                "evidence": tuple(getattr(attractor, "evidence", ()) or ())[:6],
-            }
-        #Nó lấy nội dung từ broadcast.content hoặc snapshot.focus_summary, rồi tạo goal để giữ vấn đề gốc không bị trôi.
-        if str(getattr(ti_report, "mode", "") or "") in {"goal_drift_alert", "goal_realign"}:
-            content = _clean_text(getattr(broadcast, "content", "") or getattr(snapshot, "focus_summary", ""), limit=140)
-            if content:
-                drift = _clamp01(getattr(ni_report, "drift_score", 0.0))
-                return {
-                    "summary": content,
-                    "source": "ni_goal_drift",
-                    "strength": _clamp01(0.46 + drift * 0.28),
-                    "urgency": _clamp01(0.38 + drift * 0.32),
-                    "drift": drift,
-                    "next_hint": "keep the original problem available while handling drift gently",
-                    "evidence": (f"ti_mode={getattr(ti_report, 'mode', '')}", f"drift={drift:.2f}"),
-                }
+        attractor_candidate = self._from_thought_attractor(thought_stream_report, ni_report=ni_report)
+        if attractor_candidate is not None:
+            return attractor_candidate
+
+        ti_candidate = self._from_ti_realign(ti_report, broadcast=broadcast, snapshot=snapshot, ni_report=ni_report)
+        if ti_candidate is not None:
+            return ti_candidate
+
         return None
 
-    #hợp nhất goal mới với goal đang tồn tại
-    def _merge(self, state: GoalPersistenceState, candidate: dict[str, object], *, now: float) -> GoalPersistenceState:
-        summary = _clean_text(candidate.get("summary"), limit=180) #Lấy summary goal mới.
+    def _from_user_signal(self, signal: GoalTextSignal, *, channel: str, ni_report) -> GoalCandidate:
+        # Ni may add only a tiny urgency bump if it already has intervention pressure.
+        ni_bump = 0.0
+        if bool(getattr(ni_report, "should_raise_guard", False)):
+            ni_bump = min(0.06, clamp01(getattr(ni_report, "drift_score", 0.0)) * 0.06)
+        urgency = clamp01(signal.urgency + ni_bump)
+        strength = clamp01(signal.strength)
+        confidence = clamp01(signal.confidence)
+        return GoalCandidate(
+            summary=clean_text(signal.summary, limit=180),
+            source="user_message",
+            goal_type=signal.kind,
+            intent=signal.kind,
+            strength=strength,
+            urgency=urgency,
+            confidence=confidence,
+            actionability=signal.actionability,
+            intervention_permission=signal.intervention_permission,
+            coherence=max(0.42, confidence * 0.82 + signal.actionability * 0.18),
+            drift=min(0.35, clamp01(getattr(ni_report, "drift_score", 0.0)) * 0.40),
+            next_hint=self._hint_for_kind(signal.kind),
+            evidence=("direct_user_goal", f"channel={channel}", *signal.evidence),
+            anchors=signal.anchors,
+            replace_priority=0.82 if signal.kind == GoalTextKind.CONCRETE_TASK.value else 0.68,
+        )
+
+    def _from_thought_momentum(self, thought_stream_report, *, ni_report) -> GoalCandidate | None:
+        momentum = getattr(thought_stream_report, "momentum", None)
+        if momentum is None:
+            return None
+        if str(getattr(momentum, "affordance", "") or "") != "attention":
+            return None
+        score = clamp01(getattr(momentum, "score", 0.0))
+        if score < 0.66:
+            return None
+        topic = clean_text(getattr(momentum, "topic_seed", ""), limit=160)
+        if not topic:
+            return None
+        anchors = extract_anchors(topic)
+        if not anchors and len(tokens(topic)) < 5:
+            return None
+
+        signal = infer_goal_text_signal(topic, channel="internal")
+        if signal.kind in {GoalTextKind.CASUAL.value, GoalTextKind.RECOVERY.value, GoalTextKind.NONE.value}:
+            return None
+
+        return GoalCandidate(
+            summary=topic,
+            source="cognitive_momentum",
+            goal_type=signal.kind if signal.kind != GoalTextKind.COMMENTARY.value else "runtime_thread",
+            intent="runtime_thread",
+            strength=clamp01(score * 0.72),
+            urgency=clamp01(getattr(momentum, "tension", 0.0) * 0.55),
+            confidence=clamp01(max(0.42, signal.confidence, score * 0.66)),
+            actionability=clamp01(max(signal.actionability, 0.26 if anchors else 0.18)),
+            intervention_permission=clamp01(min(0.34, getattr(momentum, "tension", 0.0) * 0.34)),
+            coherence=clamp01(score * 0.70),
+            drift=min(0.30, clamp01(getattr(ni_report, "drift_score", 0.0)) * 0.35),
+            next_hint="keep this unresolved thread available, but do not surface it unless current context invites it",
+            evidence=("thought_momentum", *tuple(getattr(momentum, "evidence", ()) or ())[:6]),
+            anchors=anchors,
+            replace_priority=0.34,
+        )
+
+    def _from_thought_attractor(self, thought_stream_report, *, ni_report) -> GoalCandidate | None:
+        attractor = getattr(thought_stream_report, "active_attractor", None)
+        if attractor is None:
+            return None
+        if not bool(getattr(attractor, "attractor", False)):
+            return None
+        score = clamp01(getattr(attractor, "score", 0.0))
+        if score < 0.70:
+            return None
+        topic = clean_text(getattr(attractor, "topic_seed", ""), limit=160)
+        if not topic:
+            return None
+        anchors = extract_anchors(topic)
+        if not anchors and len(tokens(topic)) < 6:
+            return None
+
+        signal = infer_goal_text_signal(topic, channel="internal")
+        if signal.kind in {GoalTextKind.CASUAL.value, GoalTextKind.RECOVERY.value, GoalTextKind.NONE.value}:
+            return None
+
+        tension = clamp01(getattr(attractor, "tension", 0.0))
+        return GoalCandidate(
+            summary=topic,
+            source="cognitive_attractor",
+            goal_type=signal.kind if signal.kind != GoalTextKind.COMMENTARY.value else "unresolved_thread",
+            intent="unresolved_thread",
+            strength=clamp01(score * 0.76),
+            urgency=clamp01(tension * 0.58),
+            confidence=clamp01(max(0.45, signal.confidence, score * 0.68)),
+            actionability=clamp01(max(signal.actionability, 0.30 if anchors else 0.18)),
+            intervention_permission=clamp01(min(0.38, tension * 0.38)),
+            coherence=clamp01(score * 0.72),
+            drift=min(0.30, clamp01(getattr(ni_report, "drift_score", 0.0)) * 0.35),
+            next_hint="bias attention toward this unresolved loop only when evidence reconnects to it",
+            evidence=("thought_attractor", *tuple(getattr(attractor, "evidence", ()) or ())[:6]),
+            anchors=anchors,
+            replace_priority=0.38,
+        )
+
+    def _from_ti_realign(self, ti_report, *, broadcast, snapshot, ni_report) -> GoalCandidate | None:
+        mode = str(getattr(ti_report, "mode", "") or "")
+        if mode not in {"goal_drift_alert", "goal_realign"}:
+            return None
+        content = clean_text(getattr(broadcast, "content", "") or getattr(snapshot, "focus_summary", ""), limit=160)
+        if not content:
+            return None
+
+        # Ti/Ni can preserve a thread, not invent a strong goal from telemetry.
+        signal = infer_goal_text_signal(content, channel="autonomous")
+        anchors = signal.anchors or extract_anchors(content)
+        if not anchors and len(tokens(content)) < 6:
+            return None
+
+        ni_conflict = clamp01(getattr(ni_report, "drift_score", 0.0))
+        ni_guard = bool(getattr(ni_report, "should_raise_guard", False))
+        strength = 0.34 + (0.10 if ni_guard else 0.0) + min(0.08, ni_conflict * 0.08)
+        return GoalCandidate(
+            summary=content,
+            source="ti_realign_soft",
+            goal_type=signal.kind if signal.kind not in {GoalTextKind.NONE.value, GoalTextKind.CASUAL.value} else "observed_thread",
+            intent="soft_realign",
+            strength=clamp01(strength),
+            urgency=clamp01(0.18 + (0.10 if ni_guard else 0.0)),
+            confidence=clamp01(max(0.36, signal.confidence * 0.72)),
+            actionability=clamp01(max(0.20, signal.actionability * 0.70)),
+            intervention_permission=0.18 if not ni_guard else 0.30,
+            coherence=0.40,
+            drift=min(0.32, ni_conflict * 0.40),
+            next_hint="keep as soft background only; do not nag from telemetry alone",
+            evidence=(f"ti_mode={mode}", f"ni_guard={int(ni_guard)}", f"ni_conflict={ni_conflict:.2f}"),
+            anchors=anchors,
+            replace_priority=0.22,
+        )
+
+    # ------------------------------------------------------------------
+    # Merge / decay / close
+    # ------------------------------------------------------------------
+
+    def _merge(self, state: GoalPersistenceState, candidate: GoalCandidate, *, now: float) -> GoalPersistenceState:
+        summary = clean_text(candidate.summary, limit=180)
         if not summary:
             return self._decay(state, now=now)
-        matched = state.active and self._matches(state.summary, summary) #Nó hợp nhất goal mới với goal đang tồn tại.
-        previous_strength = state.strength if matched else min(state.strength * 0.42, 0.30)
-        strength = _clamp01(max(previous_strength, float(candidate.get("strength", 0.0) or 0.0)) + (0.08 if matched else 0.0))
-        urgency = _clamp01(max(state.urgency * (0.86 if matched else 0.52), float(candidate.get("urgency", 0.0) or 0.0)))
-        created_at = state.created_at if matched and state.created_at > 0.0 else now
+
+        match = self._match_score(state, candidate) if state.active else 0.0
+        matched = state.active and match >= 0.58
+
+        # If a new strong direct task arrives, let it replace the old active thread.
+        # If a weak internal candidate arrives while a strong goal exists, keep the old one.
+        if state.active and not matched:
+            old_hold = state.strength * 0.78 + state.confidence * 0.16
+            new_push = candidate.strength * 0.78 + candidate.replace_priority * 0.22
+            if new_push < old_hold and candidate.source != "user_message":
+                return self._decay(state, now=now, soft_reactivation=candidate.summary)
+
+        old_strength = state.strength if matched else min(state.strength * 0.36, 0.24)
+        old_urgency = state.urgency if matched else state.urgency * 0.42
+        old_conf = state.confidence if matched else state.confidence * 0.50
+        old_intervention = state.intervention_permission if matched else state.intervention_permission * 0.42
+
+        strength = clamp01(max(old_strength, candidate.strength) + (0.06 if matched else 0.0))
+        urgency = clamp01(max(old_urgency * (0.86 if matched else 0.55), candidate.urgency))
+        confidence = clamp01(max(old_conf * (0.90 if matched else 0.60), candidate.confidence))
+        actionability = clamp01(max(state.actionability * (0.88 if matched else 0.52), candidate.actionability))
+        intervention = clamp01(max(old_intervention * (0.82 if matched else 0.48), candidate.intervention_permission))
+        coherence = clamp01(max(state.coherence * (0.90 if matched else 0.52), candidate.coherence))
+
         recurrence = state.recurrence_count + 1 if matched else 1
-        evidence = tuple(
-            dict.fromkeys(
-                (
-                    *(state.evidence if matched else ()),
-                    *tuple(str(item) for item in (candidate.get("evidence") or ()) if str(item or "").strip()),
-                )
-            )
-        )[-8:]
+        created_at = state.created_at if matched and state.created_at > 0.0 else now
+        goal_id = state.goal_id if matched and state.goal_id else _stable_goal_id(summary)
+        kept_summary = state.summary if matched else summary
+        anchors = unique_recent((*(state.anchors if matched else ()), *candidate.anchors), limit=12)
+        evidence = unique_recent(
+            (
+                *(state.evidence if matched else ()),
+                *candidate.evidence,
+                f"match={match:.2f}" if state.active else "new_goal",
+            ),
+            limit=10,
+        )
+
         return GoalPersistenceState(
-            goal_id=state.goal_id if matched and state.goal_id else f"goal_{abs(hash(summary)) % 1000000}",
-            summary=state.summary if matched else summary,
-            source=_clean_text(candidate.get("source"), limit=80),
+            goal_id=goal_id,
+            summary=kept_summary,
+            source=candidate.source,
             status="active",
             strength=strength,
             urgency=urgency,
-            drift=_clamp01(candidate.get("drift", 0.0)),
+            drift=candidate.drift,
             progress=state.progress if matched else 0.0,
             recurrence_count=recurrence,
             created_at=created_at,
             updated_at=now,
             last_reactivated_at=now,
-            next_hint=_clean_text(candidate.get("next_hint"), limit=180),
+            next_hint=clean_text(candidate.next_hint, limit=180),
             evidence=evidence,
-            recent_summaries=_append_recent(state.recent_summaries, summary),
+            recent_summaries=unique_recent((*state.recent_summaries, summary), limit=10),
+            goal_type=state.goal_type if matched and state.goal_type else candidate.goal_type,
+            intent=candidate.intent,
+            confidence=confidence,
+            actionability=actionability,
+            intervention_permission=intervention,
+            coherence=coherence,
+            anchors=anchors,
+            stale_reason="",
         )
 
-    #Nếu không có candidate mới, goal cũ suy giảm theo thời gian:
-    def _decay(self, state: GoalPersistenceState, *, now: float) -> GoalPersistenceState:
+    def _decay(self, state: GoalPersistenceState, *, now: float, soft_reactivation: str = "") -> GoalPersistenceState:
         if not state.summary:
             return state
+
         age_minutes = max(0.0, (now - (state.updated_at or state.created_at or now)) / 60.0)
-        keep = 0.985 ** min(240.0, age_minutes)
-        strength = _clamp01(state.strength * keep)
+        keep = 0.987 ** min(360.0, age_minutes)
+        strength = clamp01(state.strength * keep)
+        urgency = clamp01(state.urgency * (keep ** 1.22))
+        confidence = clamp01(state.confidence * (keep ** 0.82))
+        intervention = clamp01(state.intervention_permission * (keep ** 1.35))
+        coherence = clamp01(state.coherence * keep)
+
         status = state.status
-        if strength < 0.12 and state.status == "active":
-            status = "stale" #Nghĩa là goal không biến mất ngay, nhưng yếu dần. Đây là memory decay
+        stale_reason = state.stale_reason
+        if state.status == "active" and (strength < 0.12 or confidence < 0.20):
+            status = "stale"
+            stale_reason = "low_strength_or_confidence"
+
+        recent = state.recent_summaries
+        if soft_reactivation:
+            recent = unique_recent((*recent, soft_reactivation), limit=10)
+
         return GoalPersistenceState(
             goal_id=state.goal_id,
             summary=state.summary,
             source=state.source,
             status=status,
             strength=strength,
-            urgency=_clamp01(state.urgency * keep),
+            urgency=urgency,
             drift=state.drift,
             progress=state.progress,
             recurrence_count=state.recurrence_count,
@@ -358,18 +601,25 @@ class GoalPersistenceEngine:
             last_reactivated_at=state.last_reactivated_at,
             next_hint=state.next_hint,
             evidence=state.evidence,
-            recent_summaries=state.recent_summaries,
+            recent_summaries=recent,
+            goal_type=state.goal_type,
+            intent=state.intent,
+            confidence=confidence,
+            actionability=clamp01(state.actionability * (keep ** 0.90)),
+            intervention_permission=intervention,
+            coherence=coherence,
+            anchors=state.anchors,
+            stale_reason=stale_reason,
         )
 
-    #Đóng goal khi có tín hiệu hoàn tất.
     def _close(self, state: GoalPersistenceState, *, now: float, evidence: str) -> GoalPersistenceState:
         return GoalPersistenceState(
             goal_id=state.goal_id,
             summary=state.summary,
             source=state.source,
             status="closed",
-            strength=_clamp01(state.strength * 0.18),
-            urgency=_clamp01(state.urgency * 0.12),
+            strength=clamp01(state.strength * 0.16),
+            urgency=clamp01(state.urgency * 0.10),
             drift=state.drift,
             progress=1.0,
             recurrence_count=state.recurrence_count,
@@ -377,29 +627,49 @@ class GoalPersistenceEngine:
             updated_at=now,
             last_reactivated_at=state.last_reactivated_at,
             next_hint="goal closed by explicit closure signal",
-            evidence=tuple(dict.fromkeys((*state.evidence, evidence)))[-8:],
+            evidence=unique_recent((*state.evidence, evidence), limit=10),
             recent_summaries=state.recent_summaries,
+            goal_type=state.goal_type,
+            intent=state.intent,
+            confidence=clamp01(state.confidence * 0.40),
+            actionability=clamp01(state.actionability * 0.24),
+            intervention_permission=0.0,
+            coherence=clamp01(state.coherence * 0.28),
+            anchors=state.anchors,
+            stale_reason="closed",
         )
 
+    def _match_score(self, state: GoalPersistenceState, candidate: GoalCandidate) -> float:
+        if not state.summary or not candidate.summary:
+            return 0.0
+        return goal_match_score(
+            state.summary,
+            candidate.summary,
+            left_anchors=state.anchors,
+            right_anchors=candidate.anchors,
+        )
+
+    def _hint_for_kind(self, kind: str) -> str:
+        if kind == GoalTextKind.CONCRETE_TASK.value:
+            return "continue the concrete task only while current context still fits"
+        if kind == GoalTextKind.DEBUG_THREAD.value:
+            return "preserve the debugging thread; prefer direct fixes over motivational nudges"
+        if kind == GoalTextKind.CORRECTION_THREAD.value:
+            return "honor the correction; avoid repeating the failed frame"
+        if kind == GoalTextKind.DESIGN_DIRECTION.value:
+            return "keep the architectural direction as background, not an interruption trigger"
+        if kind == GoalTextKind.RESEARCH_THREAD.value:
+            return "keep the research thread quietly available"
+        if kind == GoalTextKind.REVIEW_REQUEST.value:
+            return "continue the review thread if similar context returns"
+        return "preserve continuity quietly if context reconnects"
+
+    # Legacy-looking helpers retained so old tests/private calls do not explode.
     def _looks_goal_worthy(self, text: str) -> bool:
-        normalized = _normalize(text)
-        if len(_tokens(normalized)) >= 5:
-            return True
-        return any(marker in normalized for marker in self.TASK_MARKERS)
+        return infer_goal_text_signal(text, channel="chat").should_persist
 
     def _has_closure(self, user_text: str, *, thought_stream_report) -> bool:
-        normalized = _normalize(user_text)
-        if any(marker in normalized for marker in self.CLOSURE_MARKERS):
-            return True
-        for disturbance in tuple(getattr(thought_stream_report, "disturbances", ()) or ()):
-            if bool(getattr(disturbance, "closes_loop", False)):
-                return True
-        return False
+        return infer_closure_signal(user_text, thought_stream_report=thought_stream_report).closed
 
     def _matches(self, left: str, right: str) -> bool:
-        left_tokens = _tokens(left)
-        right_tokens = _tokens(right)
-        if not left_tokens or not right_tokens:
-            return False
-        overlap = len(left_tokens & right_tokens)
-        return overlap >= 2 or overlap / max(1, min(len(left_tokens), len(right_tokens))) >= 0.34
+        return goal_match_score(left, right, left_anchors=extract_anchors(left), right_anchors=extract_anchors(right)) >= 0.58

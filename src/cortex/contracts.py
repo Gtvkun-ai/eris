@@ -469,6 +469,12 @@ class CognitiveActionPlan:
     style_attitude: str = ""
     style_limit: str = ""
     style_voice: str = ""
+    utility_scores: dict[str, float] = field(default_factory=dict)
+    selected_utility: float = 0.0
+    rhythm_phase: str = ""
+    transition_reason: str = ""
+    memory_pressure: tuple[str, ...] = ()
+    suppressed_actions: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         reason = self.reason_to_speak or self.reason
@@ -488,6 +494,12 @@ class CognitiveActionPlan:
                 "limit": self.style_limit,
                 "voice": self.style_voice,
             },
+            "utility_scores": dict(self.utility_scores),
+            "selected_utility": round(float(self.selected_utility), 4),
+            "rhythm_phase": self.rhythm_phase,
+            "transition_reason": self.transition_reason,
+            "memory_pressure": list(self.memory_pressure),
+            "suppressed_actions": list(self.suppressed_actions),
         }
 
 

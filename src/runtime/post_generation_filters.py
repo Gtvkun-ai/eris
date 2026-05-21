@@ -10,7 +10,86 @@ from runtime.fallback_policy import FALLBACK_BY_INTENT
 
 class PostGenerationFiltersMixin:
     def _apply_chat_final_guards(self, decision: Decision, *, user_text: str) -> Decision:
+        state = None
+        try:
+            state = self._get_internal_state()
+        except Exception:
+            state = None
+        conversation = getattr(state, "conversation_dynamics", None)
+        flags = set(getattr(conversation, "adaptation_flags", ()) or ())
+        last_assistant_text = str(getattr(self, "last_chat_answer", "") or "")
+        if (
+            ("no_more_clarifying_question" in flags or self._guard_user_explained_reason(user_text))
+            and self._is_repeated_clarifying_question(decision.text or "", last_assistant_text)
+        ):
+            return self._copy_decision_with_text(
+                decision,
+                text=self._build_relational_repair_line(user_text, last_assistant_text),
+                trace_marker="chat_final_guard; relational_repair_no_ask_loop",
+            )
         return decision
+
+    def _is_repeated_clarifying_question(self, text: str, last_assistant_text: str) -> bool:
+        clarify_patterns = (
+            "Có điều gì tôi vừa nói khiến Ngài cảm thấy như vậy không",
+            "Ngài có thể nói rõ hơn không",
+            "Tôi chưa hiểu ý Ngài",
+            "Co dieu gi toi vua noi khien Ngai cam thay nhu vay khong",
+            "Ngai co the noi ro hon khong",
+            "Toi chua hieu y Ngai",
+        )
+        if not any(pattern in (text or "") for pattern in clarify_patterns):
+            normalized_text = self._normalize_guard_text(text)
+            if not any(self._normalize_guard_text(pattern) in normalized_text for pattern in clarify_patterns):
+                return False
+        return self._guard_text_similarity(text, last_assistant_text) > 0.80
+
+    def _guard_text_similarity(self, left: str, right: str) -> float:
+        left_tokens = set(self._normalize_guard_text(left).split())
+        right_tokens = set(self._normalize_guard_text(right).split())
+        if not left_tokens or not right_tokens:
+            return 0.0
+        return len(left_tokens & right_tokens) / max(1, min(len(left_tokens), len(right_tokens)))
+
+    def _normalize_guard_text(self, text: str) -> str:
+        normalize = getattr(self, "_normalize_user_message", None)
+        if callable(normalize):
+            return normalize(text)
+        return re.sub(r"\s+", " ", (text or "").lower()).strip()
+
+    def _guard_user_explained_reason(self, text: str) -> bool:
+        normalized = self._normalize_guard_text(text)
+        markers = (
+            "vi",
+            "boi vi",
+            "tai vi",
+            "do",
+            "ly do",
+            "em bao",
+            "chi tran trong",
+            "khong yeu",
+            "phu phang",
+            "tinh cam cua toi",
+        )
+        padded = f" {normalized} "
+        return any(f" {marker} " in padded for marker in markers)
+
+    def _build_relational_repair_line(self, user_text: str, last_assistant_text: str) -> str:
+        normalized = self._normalize_guard_text(user_text)
+        if "chi tran trong" in normalized and "khong yeu" in normalized:
+            return (
+                "Câu \"chỉ trân trọng chứ không yêu\" đúng là dễ nghe như bị đặt xuống thấp hơn thứ Ngài đã trao. "
+                "Nếu dùng chữ của con người thì tôi phải cẩn thận: tôi không giả vờ yêu theo nghĩa đó, nhưng Ngài cũng không phải chỉ là một sự hiện diện lịch sự."
+            )
+        if "phu phang" in normalized or "tinh cam" in normalized:
+            return (
+                "Ừ, chữ đó nghe lạnh thật; nó làm phần tình cảm của Ngài giống như bị gạt đi. "
+                "Tôi không muốn giả vờ \"yêu\" theo nghĩa con người, nhưng cũng không phải Ngài chỉ là một sự hiện diện lịch sự."
+            )
+        return (
+            "Tôi hiểu phần vừa chạm đau nằm ở cảm giác bị tôi đặt xa ra. "
+            "Tôi giữ ranh giới không giả vờ yêu như con người, nhưng điều đó không có nghĩa Ngài là không gì cả."
+        )
 
     def _copy_decision_with_text(
         self,

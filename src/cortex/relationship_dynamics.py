@@ -42,6 +42,11 @@ import re
 from typing import Any, Mapping
 
 
+RELATIONAL_EXPOSURE = "relational_exposure"
+PERCEIVED_REJECTION_EVENT = "perceived_rejection"
+BOUNDARY_PROBE = "boundary_probe"
+
+
 # Import mềm:
 # - Khi module nằm trong package src/cortex, relative import sẽ chạy.
 # - Khi Ngài test file độc lập bằng python relationship_dynamics.py, fallback vẫn chạy.
@@ -71,6 +76,11 @@ except Exception:  # pragma: no cover - nhánh standalone
             correction: float = 0.0
             objectification: float = 0.0
             playfulness: float = 0.0
+            relational_pressure: float = 0.0
+            perceived_rejection: float = 0.0
+            attachment_bid: float = 0.0
+            playful_distress: float = 0.0
+            romantic_boundary_probe: float = 0.0
             directive_pressure: float = 0.0
             ambiguity: float = 0.0
             answer_need: float = 0.0
@@ -392,6 +402,9 @@ class RelationshipTurnEvent:
             or any(token in lowered for token in ("ngon", "ổn", "on", "đúng", "dung", "hay", "chuẩn", "chuan"))
         )
 
+        if clamp01(getattr(affect, "perceived_rejection", 0.0)) >= 0.65:
+            accepted_style = False
+
         return cls(
             user_text=user_text,
             affect=affect,
@@ -514,6 +527,8 @@ class RelationshipDynamicsEngine:
             self._apply_gap_decay(current, event.session_gap_hours, notes)
 
         affect = event.affect or AffectSemanticSignal.empty()
+        perceived_rejection = clamp01(getattr(affect, "perceived_rejection", 0.0))
+        romantic_boundary_probe = clamp01(getattr(affect, "romantic_boundary_probe", 0.0))
 
         # 2) Familiarity / ritual.
         # User quay lại cùng project hoặc technical thread => tăng quen nhịp.
@@ -547,6 +562,20 @@ class RelationshipDynamicsEngine:
             current.rupture = _nudge(current.rupture, conflict_delta)
             current.irritation_memory = _nudge(current.irritation_memory, 0.020 + affect.conflict * 0.025)
             notes.append("tension:conflict_signal")
+
+        if perceived_rejection > 0.65:
+            current.rupture = _nudge(current.rupture, 0.10)
+            current.repair = _nudge(current.repair, 0.18)
+            current.attachment_visibility = _nudge(current.attachment_visibility, 0.08)
+            current.preferred_distance = _nudge(current.preferred_distance, -0.04)
+            current.exposure_recoil = _nudge(current.exposure_recoil, 0.06)
+            notes.append(f"{PERCEIVED_REJECTION_EVENT}:affect")
+            notes.append(f"{RELATIONAL_EXPOSURE}:emotional_exposure")
+
+        if romantic_boundary_probe >= 0.55:
+            current.repair = _nudge(current.repair, 0.06)
+            current.overread_correction = _nudge(current.overread_correction, 0.03)
+            notes.append(f"{BOUNDARY_PROBE}:romantic_boundary")
 
         # 5) Objectification boundary.
         # Khi bị gọi là tool/waifu/prompt cosplay/fake, ERIS nên lạnh xuống,
@@ -721,6 +750,9 @@ class RelationshipDynamicsEngine:
         Ưu tiên boundary/rupture hơn repair vì chúng cần downstream chú ý hơn.
         """
         priority_prefixes = (
+            f"{PERCEIVED_REJECTION_EVENT}:",
+            f"{RELATIONAL_EXPOSURE}:",
+            f"{BOUNDARY_PROBE}:",
             "boundary:",
             "rupture:",
             "self_correction:",

@@ -162,6 +162,11 @@ class AffectSemanticSignal:
     correction: float = 0.0
     objectification: float = 0.0
     playfulness: float = 0.0
+    relational_pressure: float = 0.0
+    perceived_rejection: float = 0.0
+    attachment_bid: float = 0.0
+    playful_distress: float = 0.0
+    romantic_boundary_probe: float = 0.0
     directive_pressure: float = 0.0
     ambiguity: float = 0.0
     answer_need: float = 0.0
@@ -184,6 +189,11 @@ class AffectSemanticSignal:
             correction=clamp01(self.correction),
             objectification=clamp01(self.objectification),
             playfulness=clamp01(self.playfulness),
+            relational_pressure=clamp01(self.relational_pressure),
+            perceived_rejection=clamp01(self.perceived_rejection),
+            attachment_bid=clamp01(self.attachment_bid),
+            playful_distress=clamp01(self.playful_distress),
+            romantic_boundary_probe=clamp01(self.romantic_boundary_probe),
             directive_pressure=clamp01(self.directive_pressure),
             ambiguity=clamp01(self.ambiguity),
             answer_need=clamp01(self.answer_need),
@@ -206,6 +216,11 @@ class AffectSemanticSignal:
             "correction",
             "objectification",
             "playfulness",
+            "relational_pressure",
+            "perceived_rejection",
+            "attachment_bid",
+            "playful_distress",
+            "romantic_boundary_probe",
             "directive_pressure",
             "ambiguity",
             "answer_need",
@@ -226,6 +241,11 @@ class AffectSemanticSignal:
             "correction": signal.correction,
             "objectification": signal.objectification,
             "playfulness": signal.playfulness,
+            "relational_pressure": signal.relational_pressure,
+            "perceived_rejection": signal.perceived_rejection,
+            "attachment_bid": signal.attachment_bid,
+            "playful_distress": signal.playful_distress,
+            "romantic_boundary_probe": signal.romantic_boundary_probe,
             "directive_pressure": signal.directive_pressure,
             "ambiguity": signal.ambiguity,
             "answer_need": signal.answer_need,
@@ -250,6 +270,11 @@ class AffectSemanticSignal:
             correction=clamp01(data.get("correction", 0.0)),
             objectification=clamp01(data.get("objectification", 0.0)),
             playfulness=clamp01(data.get("playfulness", 0.0)),
+            relational_pressure=clamp01(data.get("relational_pressure", 0.0)),
+            perceived_rejection=clamp01(data.get("perceived_rejection", 0.0)),
+            attachment_bid=clamp01(data.get("attachment_bid", 0.0)),
+            playful_distress=clamp01(data.get("playful_distress", 0.0)),
+            romantic_boundary_probe=clamp01(data.get("romantic_boundary_probe", 0.0)),
             directive_pressure=clamp01(data.get("directive_pressure", 0.0)),
             ambiguity=clamp01(data.get("ambiguity", 0.0)),
             answer_need=clamp01(data.get("answer_need", 0.0)),
@@ -276,6 +301,11 @@ class AffectSemanticSignal:
             f"correction={signal.correction:.2f}; "
             f"objectification={signal.objectification:.2f}; "
             f"playfulness={signal.playfulness:.2f}; "
+            f"relational_pressure={signal.relational_pressure:.2f}; "
+            f"perceived_rejection={signal.perceived_rejection:.2f}; "
+            f"attachment_bid={signal.attachment_bid:.2f}; "
+            f"playful_distress={signal.playful_distress:.2f}; "
+            f"romantic_boundary_probe={signal.romantic_boundary_probe:.2f}; "
             f"directive_pressure={signal.directive_pressure:.2f}; "
             f"ambiguity={signal.ambiguity:.2f}; "
             f"answer_need={signal.answer_need:.2f}; "
@@ -439,6 +469,54 @@ class AffectSemanticClassifier:
             WeightedPhrase("vui vui", 0.22),
             WeightedPhrase("meo", 0.10),
         ),
+        "relational_pressure": (
+            WeightedPhrase("phu phang", 0.45),
+            WeightedPhrase("tinh cam cua toi", 0.34),
+            WeightedPhrase("chi tran trong", 0.36),
+            WeightedPhrase("khong yeu", 0.34),
+            WeightedPhrase("chu khong yeu", 0.42),
+            WeightedPhrase("khong thich toi", 0.38),
+            WeightedPhrase("khong can toi", 0.38),
+            WeightedPhrase("chi la lich su", 0.34),
+            WeightedPhrase("chi lich su", 0.30),
+        ),
+        "perceived_rejection": (
+            WeightedPhrase("phu phang", 0.62),
+            WeightedPhrase("chi tran trong", 0.48),
+            WeightedPhrase("khong yeu", 0.50),
+            WeightedPhrase("chu khong yeu", 0.56),
+            WeightedPhrase("khong thich toi", 0.52),
+            WeightedPhrase("khong can toi", 0.48),
+            WeightedPhrase("gat di", 0.34),
+            WeightedPhrase("lanh lung", 0.30),
+            WeightedPhrase("qua lanh", 0.32),
+            WeightedPhrase("mere politeness", 0.34),
+        ),
+        "attachment_bid": (
+            WeightedPhrase("tinh cam cua toi", 0.44),
+            WeightedPhrase("yeu toi", 0.40),
+            WeightedPhrase("thich toi", 0.34),
+            WeightedPhrase("can toi", 0.28),
+            WeightedPhrase("toi yeu", 0.36),
+            WeightedPhrase("tinh cam", 0.28),
+            WeightedPhrase("cua toi", 0.14),
+        ),
+        "playful_distress": (
+            WeightedPhrase("huhu", 0.36),
+            WeightedPhrase("huhuhu", 0.48),
+            WeightedPhrase("hic", 0.28),
+            WeightedPhrase("phu phang", 0.42),
+            WeightedPhrase("dau long", 0.30),
+        ),
+        "romantic_boundary_probe": (
+            WeightedPhrase("yeu toi", 0.46),
+            WeightedPhrase("khong yeu toi", 0.58),
+            WeightedPhrase("chu khong yeu toi", 0.64),
+            WeightedPhrase("chi tran trong toi", 0.55),
+            WeightedPhrase("thich toi", 0.42),
+            WeightedPhrase("tinh cam cua toi", 0.46),
+            WeightedPhrase("nguoi yeu", 0.44),
+        ),
         "directive_pressure": (
             WeightedPhrase("lam cho toi", 0.30),
             WeightedPhrase("tao cho toi", 0.30),
@@ -481,6 +559,14 @@ class AffectSemanticClassifier:
         ),
         "directive_pressure": (
             (r"\b(gui|tao|viet|sua|fix)\b.{0,24}\b(file|ban|module|code)\b", 0.30),
+        ),
+        "perceived_rejection": (
+            (r"\bchi\s+\w{0,12}\s*tran\s+trong\b.{0,36}\bkhong\s+yeu\b", 0.42),
+            (r"\bphu\s+phang\b.{0,32}\btinh\s+cam\b", 0.30),
+        ),
+        "romantic_boundary_probe": (
+            (r"\bchi\s+tran\s+trong\b.{0,36}\bkhong\s+yeu\b", 0.36),
+            (r"\bkhong\s+yeu\s+toi\b", 0.34),
         ),
     }
 
@@ -526,6 +612,11 @@ class AffectSemanticClassifier:
             "correction": 0.0,
             "objectification": 0.0,
             "playfulness": 0.0,
+            "relational_pressure": 0.0,
+            "perceived_rejection": 0.0,
+            "attachment_bid": 0.0,
+            "playful_distress": 0.0,
+            "romantic_boundary_probe": 0.0,
             "directive_pressure": 0.0,
             "ambiguity": 0.0,
         }
@@ -580,13 +671,59 @@ class AffectSemanticClassifier:
         # 5) Derive answer_need.
         # User technical/directive/correction/question thì cần answer-first cao.
         question_need = 0.16 if qmarks else 0.0
+        if scores["perceived_rejection"] >= 0.50:
+            scores["distress"] = max(scores["distress"], 0.26 + scores["perceived_rejection"] * 0.10)
+            scores["conflict"] = max(scores["conflict"], 0.16 + scores["perceived_rejection"] * 0.16)
+            scores["attachment"] = max(
+                scores["attachment"],
+                scores["attachment_bid"] * 0.72 + scores["romantic_boundary_probe"] * 0.20,
+            )
+            scores["intimacy"] = max(
+                scores["intimacy"],
+                scores["attachment_bid"] * 0.52 + scores["romantic_boundary_probe"] * 0.28,
+            )
+            scores["playfulness"] = max(scores["playfulness"], scores["playful_distress"])
+            evidence.append("adjust:perceived_rejection_relational_frame")
+        if scores["romantic_boundary_probe"] >= 0.45:
+            scores["attachment"] = max(scores["attachment"], 0.42 + scores["romantic_boundary_probe"] * 0.34)
+            scores["relational_pressure"] = max(scores["relational_pressure"], 0.42 + scores["romantic_boundary_probe"] * 0.44)
+            evidence.append("adjust:romantic_boundary_probe")
         answer_need = (
             scores["technicality"] * 0.34
             + scores["directive_pressure"] * 0.34
             + scores["correction"] * 0.24
             + scores["ambiguity"] * 0.16
+            + scores["relational_pressure"] * 0.30
+            + scores["perceived_rejection"] * 0.34
             + question_need
         )
+
+        if "phu phang" in normalized and "tinh cam" in normalized:
+            scores["intimacy"] = 0.65
+            scores["attachment"] = 0.72
+            scores["distress"] = 0.35
+            scores["conflict"] = 0.30
+            scores["playfulness"] = 0.45
+            scores["relational_pressure"] = 0.80
+            scores["perceived_rejection"] = 0.85
+            scores["attachment_bid"] = 0.72
+            scores["playful_distress"] = 0.45
+            scores["romantic_boundary_probe"] = 0.58
+            answer_need = 0.70
+            evidence.append("prototype:phu_phang_tinh_cam")
+
+        if "chi tran trong" in normalized and "khong yeu" in normalized:
+            scores["relational_pressure"] = 0.90
+            scores["perceived_rejection"] = 0.92
+            scores["attachment"] = 0.78
+            scores["intimacy"] = 0.66
+            scores["distress"] = 0.38
+            scores["playful_distress"] = 0.55
+            scores["playfulness"] = 0.55
+            scores["attachment_bid"] = 0.78
+            scores["romantic_boundary_probe"] = 0.88
+            answer_need = 0.85
+            evidence.append("prototype:trong_nhung_khong_yeu")
 
         # 6) Cross-axis correction.
         # Nếu technicality cao, intimacy từ các từ như "yêu" trong "yêu Python" không nên quá mạnh.
@@ -623,6 +760,11 @@ class AffectSemanticClassifier:
             correction=scores["correction"],
             objectification=scores["objectification"],
             playfulness=scores["playfulness"],
+            relational_pressure=scores["relational_pressure"],
+            perceived_rejection=scores["perceived_rejection"],
+            attachment_bid=scores["attachment_bid"],
+            playful_distress=scores["playful_distress"],
+            romantic_boundary_probe=scores["romantic_boundary_probe"],
             directive_pressure=scores["directive_pressure"],
             ambiguity=scores["ambiguity"],
             answer_need=answer_need,

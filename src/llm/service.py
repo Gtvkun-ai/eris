@@ -1565,6 +1565,31 @@ class LlmService:
             f"{compact}"
         )
 
+    def _build_relational_repair_contract(self, context: str) -> str:
+        source = context or ""
+        if not source:
+            return ""
+        has_repair_mode = bool(re.search(r"\bmode=(?:repair|relational_repair)\b", source))
+        rejection_values = [
+            float(match.group(1))
+            for match in re.finditer(r"perceived_rejection[:=]([0-9.]+)", source)
+            if match.group(1)
+        ]
+        rejection_high = any(value > 0.65 for value in rejection_values)
+        if not (has_repair_mode and rejection_high):
+            return ""
+        return (
+            "RELATIONAL_REPAIR_CONTRACT:\n"
+            "- The user is reacting to a perceived rejection.\n"
+            "- Do not ask what made them feel that way if they already named it.\n"
+            "- Acknowledge the specific phrase that hurt or sounded cold.\n"
+            "- Keep identity boundary, but do not lead with clinical disclaimers.\n"
+            "- Distinguish: \"not human love\" does not mean \"nothing\" or \"mere politeness\".\n"
+            "- Answer in 1-2 sentences.\n"
+            "- Do not end with a question.\n"
+            "- Do not claim human emotion, biological love, dating, romance, or exclusive devotion."
+        )
+
     def _is_force_speak_without_speech_evidence(self, *, telemetry_data: str, ti_context: str) -> bool:
         telemetry = (telemetry_data or "").lower()
         ti = (ti_context or "").lower()
@@ -1965,6 +1990,18 @@ class LlmService:
         chat_contract = self._build_chat_contract_prompt(effective_user_text, act=act)
         conversation_section = f"{conversation_context}\n\n" if conversation_context else ""
         chat_system = f"{style_block}\n\n{chat_contract}\n\n{conversation_section}{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
+        relational_repair_contract = self._build_relational_repair_contract(
+            "\n".join(
+                (
+                    style_block,
+                    conversation_context or "",
+                    internal_state_context or "",
+                    fe_context or "",
+                )
+            )
+        )
+        if relational_repair_contract:
+            chat_system = f"{chat_system}\n\n{relational_repair_contract}"
         memory_block = self._build_memory_context_block(memory_context)
         if memory_block:
             chat_system = (
@@ -1972,6 +2009,8 @@ class LlmService:
                 f"{conversation_section}"
                 f"{memory_block}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
             )
+            if relational_repair_contract:
+                chat_system = f"{chat_system}\n\n{relational_repair_contract}"
         if ni_context:
             chat_system = f"{chat_system}\n\nNi context:\n{ni_context}"
         if ti_context:

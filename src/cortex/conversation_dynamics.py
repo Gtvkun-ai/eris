@@ -26,6 +26,7 @@ VALID_CONVERSATION_MODES = {
     "explore", #đào sâu
     "clarify", #hỏi ngắn
     "repair", #acknowledge nhanh + sửa
+    "relational_repair",
     "execute", #action-first
     "compress", #ngắn và dense
     "defer", #tạm dừng hoặc tránh nhảy vào
@@ -188,6 +189,40 @@ def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
 
 def _contains_phrase(text: str, phrase: str) -> bool:
     return bool(re.search(rf"\b{re.escape(phrase)}\b", text))
+
+
+def _previous_assistant_asked_clarification(text: str) -> bool:
+    normalized = normalize_vietnamese_ascii(text)
+    if not normalized:
+        return False
+    markers = (
+        "co dieu gi toi vua noi",
+        "ngai co the noi ro hon",
+        "toi chua hieu y ngai",
+        "co dieu gi khien ngai",
+        "noi ro hon duoc khong",
+    )
+    return "?" in (text or "") and any(marker in normalized for marker in markers)
+
+
+def _user_now_explains_reason(text: str) -> bool:
+    normalized = normalize_vietnamese_ascii(text)
+    if not normalized:
+        return False
+    reason_markers = (
+        "vi",
+        "boi vi",
+        "tai vi",
+        "do",
+        "ly do",
+        "nguyen nhan",
+        "em bao",
+        "chi tran trong",
+        "khong yeu",
+        "phu phang",
+        "tinh cam cua toi",
+    )
+    return any(_contains_phrase(normalized, marker) for marker in reason_markers)
 
 
 def _marker_has_acceptance_after(text: str, marker: str) -> bool:
@@ -390,6 +425,7 @@ class ConversationDynamicsState:
                 f"adaptation_flags: {flags}.",
                 f"recent_conversation_modes: {recent_modes}.",
                 "conversation_rule: if mode=repair, briefly absorb the correction, avoid the failed frame, answer the current intent directly, lower overconfident inference, and keep the same living voice.",
+                "relational_repair_rule: if mode=relational_repair, acknowledge the perceived rejection, do not ask what caused it when the user named it, keep the non-human boundary soft, and do not end with a question.",
             )
         )
 
@@ -423,6 +459,7 @@ class ConversationDynamicsEngine:
         active_topic: str = "",
         repeat_count: int = 1,
         correction_detected: bool = False,
+        affect_signal: object | None = None,
     ) -> ConversationDynamicsReport:
         previous = state or ConversationDynamicsState() #nếu không có state trước đó, bắt đầu với state mặc định
         normalized = normalize_vietnamese_ascii(user_text) #bình thường hóa văn bản người dùng để dễ dàng phân tích
@@ -436,6 +473,13 @@ class ConversationDynamicsEngine:
         direct_execute = self.looks_like_execute_request(user_text) #phát hiện xem người dùng có đang yêu cầu thực thi trực tiếp không, dựa trên các dấu hiệu trong văn bản
         compression = self.looks_like_compression_request(user_text) #phát hiện xem người dùng có đang yêu cầu nén thông tin không, dựa trên các dấu hiệu trong văn bản
         clarification = self.looks_like_clarification_request(user_text) #phát hiện xem người dùng có đang yêu cầu làm rõ ý định không, dựa trên các dấu hiệu trong văn bản
+        perceived_rejection = _clamp(getattr(affect_signal, "perceived_rejection", 0.0))
+        attachment_signal = _clamp(getattr(affect_signal, "attachment", 0.0))
+        relational_repair_needed = perceived_rejection >= 0.65 and attachment_signal >= 0.45
+        explanation_after_clarification = (
+            _previous_assistant_asked_clarification(last_assistant_text)
+            and _user_now_explains_reason(user_text)
+        )
         relief = self.estimate_conversational_relief(
             user_text,
             previous=previous,
@@ -507,6 +551,26 @@ class ConversationDynamicsEngine:
             evidence.append("clarification_request")
             flags.append("clarify_intent_before_expanding")
 
+        if relational_repair_needed:
+            failure = ConversationFailure(
+                type="tone_mismatch",
+                trigger=_clean_text(last_assistant_text or user_text, limit=160),
+                correction_needed="acknowledge perceived rejection without over-human love claim",
+            )
+            tension = _clamp(max(tension, 0.46) + perceived_rejection * 0.10)
+            pressure = _clamp(max(pressure, 0.42) + perceived_rejection * 0.12)
+            evidence.append(f"perceived_rejection={perceived_rejection:.2f}")
+            flags.extend((
+                "relational_repair",
+                "acknowledge_perceived_rejection",
+                "avoid_over_human_love_claim",
+                "do_not_lead_with_identity_disclaimer",
+            ))
+
+        if explanation_after_clarification:
+            evidence.append("user_explained_after_clarification")
+            flags.extend(("no_more_clarifying_question", "answer_the_explanation"))
+
         mode = self.choose_mode(
             tension=tension,
             pressure=pressure,
@@ -516,6 +580,7 @@ class ConversationDynamicsEngine:
             compression=compression,
             clarification=clarification,
             normalized=normalized,
+            relational_repair=relational_repair_needed,
         )
         continuity_curve = self.update_continuity_curve(
             previous.continuity_curve,
@@ -764,7 +829,7 @@ class ConversationDynamicsEngine:
             arc = "recovering"
         elif semantic_convergence >= 0.58 and trust_recovery >= 0.55:
             arc = "aligned"
-        elif mode == "repair":
+        elif mode in {"repair", "relational_repair"}:
             arc = "repairing"
         else:
             arc = "neutral"
@@ -859,7 +924,10 @@ class ConversationDynamicsEngine:
         compression: bool,
         clarification: bool,
         normalized: str,
+        relational_repair: bool = False,
     ) -> str:
+        if relational_repair:
+            return "relational_repair"
         if has_correction and correction_severity >= 0.48:
             return "repair"
         if tension >= 0.62 or pressure >= 0.72:
@@ -881,6 +949,11 @@ class ConversationDynamicsEngine:
     def mode_flags(self, mode: str) -> tuple[str, ...]:
         mapping = {
             "repair": ("brief_acknowledge_correction", "answer_current_intent_directly"),
+            "relational_repair": (
+                "acknowledge_specific_relational_bruise",
+                "answer_without_clarifying_question",
+                "preserve_identity_boundary_softly",
+            ),
             "execute": ("prefer_action_over_exposition",),
             "compress": ("shorten_without_losing_semantics",),
             "clarify": ("ask_narrow_clarifying_question",),

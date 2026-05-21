@@ -3,6 +3,7 @@ import time
 
 from dataclasses import dataclass, field, replace
 
+from .action_memory import ActionMemoryState, build_action_family
 from .conversation_dynamics import ConversationDynamicsState
 from .goal_persistence import GoalPersistenceEngine, GoalPersistenceState
 from .modes import QUIET_MODES
@@ -1012,6 +1013,7 @@ class PersistentInternalState:
     mental_processes: MentalProcessSystem = field(default_factory=MentalProcessSystem)
     conversation_dynamics: ConversationDynamicsState = field(default_factory=ConversationDynamicsState)
     relationship_dynamics: RelationshipDynamicsState = field(default_factory=RelationshipDynamicsState)
+    action_memory: ActionMemoryState = field(default_factory=ActionMemoryState)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -1087,6 +1089,7 @@ class PersistentInternalState:
             "mental_processes": self.mental_processes.to_dict(),
             "conversation_dynamics": self.conversation_dynamics.to_dict(),
             "relationship_dynamics": self.relationship_dynamics.to_dict(),
+            "action_memory": self.action_memory.to_dict(),
         }
 
     @classmethod
@@ -1169,6 +1172,7 @@ class PersistentInternalState:
             ),
             conversation_dynamics=ConversationDynamicsState.from_dict(data.get("conversation_dynamics") or {}),
             relationship_dynamics=RelationshipDynamicsState.from_dict(data.get("relationship_dynamics") or {}),
+            action_memory=ActionMemoryState.from_dict(data.get("action_memory") or {}),
         )
 
     def to_prompt_context(self) -> str:
@@ -1216,6 +1220,7 @@ class PersistentInternalState:
                 ),
                 f"recent_speech_acts: {recent_acts}.",
                 f"continuity_notes: {recent_notes}.",
+                self.action_memory.to_prompt_context(),
                 self.desire.to_prompt_context(),
                 self.goal_persistence.render_prompt_context(),
                 self.mental_processes.to_prompt_context(),
@@ -1872,6 +1877,19 @@ class InternalStateEngine:
             no_speech=no_speech,
             thought_surface=thought_tip,
         )
+        action_memory = ActionMemoryState.from_dict(state.action_memory.to_dict())
+        action_memory.record(
+            action=speech_act or utterance_type or "no_speech",
+            family=build_action_family(
+                proposed_intent=_clean_label(getattr(action_plan, "speech_intent", "")),
+                speech_act=speech_act or utterance_type,
+                notes=tuple(getattr(action_plan, "notes", ()) or ()),
+            ),
+            channel=channel_name,
+            spoke=was_spoken,
+            utility=float(getattr(action_plan, "selected_utility", 0.0) or 0.0),
+            outcome="spoken" if was_spoken else "silent",
+        )
 
         return PersistentInternalState(
             valence=state.valence,
@@ -1942,6 +1960,7 @@ class InternalStateEngine:
             mental_processes=mental_processes,
             conversation_dynamics=state.conversation_dynamics,
             relationship_dynamics=state.relationship_dynamics,
+            action_memory=action_memory,
         )
 
     def render_prompt_context(self, state: PersistentInternalState) -> str:

@@ -51,6 +51,11 @@ class FeAffectSignal:
     conflict: float = 0.0
     ambiguity: float = 0.0
     playfulness: float = 0.0
+    relational_pressure: float = 0.0
+    perceived_rejection: float = 0.0
+    attachment_bid: float = 0.0
+    playful_distress: float = 0.0
+    romantic_boundary_probe: float = 0.0
     evidence: tuple[str, ...] = ()
 
     @classmethod
@@ -67,6 +72,11 @@ class FeAffectSignal:
             conflict=_clamp01(getattr(signal, "conflict", 0.0)),
             ambiguity=_clamp01(getattr(signal, "ambiguity", 0.0)),
             playfulness=_clamp01(getattr(signal, "playfulness", 0.0)),
+            relational_pressure=_clamp01(getattr(signal, "relational_pressure", 0.0)),
+            perceived_rejection=_clamp01(getattr(signal, "perceived_rejection", 0.0)),
+            attachment_bid=_clamp01(getattr(signal, "attachment_bid", 0.0)),
+            playful_distress=_clamp01(getattr(signal, "playful_distress", 0.0)),
+            romantic_boundary_probe=_clamp01(getattr(signal, "romantic_boundary_probe", 0.0)),
             evidence=tuple(str(item) for item in (getattr(signal, "evidence", ()) or ()) if str(item or "").strip()),
         )
 
@@ -415,6 +425,12 @@ class FeRenderer:
             affect_signal=affect,
             intent_label=intent_label,
         )
+        if affect.perceived_rejection >= 0.65 and affect.attachment >= 0.45:
+            intent_label = "relational_repair"
+            mode = "relational_repair"
+            sarcasm_level = min(sarcasm_level, 0.10)
+            warmth_level = max(warmth_level, 0.34)
+            brevity_bias = "short"
 
         return self._finalize_plan(
             snapshot=snapshot,
@@ -490,6 +506,10 @@ class FeRenderer:
             brevity_bias=brevity_bias,
             chat_like=chat_like,
         )
+        if intent_label == "relational_repair":
+            session_arc = "repair_without_submission"
+            arc_strength = max(arc_strength, 0.62)
+            transition_note = transition_note or "relational_repair"
 
         development = self._derive_development_snapshot(
             memory=style_memory,
@@ -618,6 +638,8 @@ class FeRenderer:
 
         if ti_mode == "chat_code" or intent_label == "technical_support":
             return "technical", 0.14, 0.32, "medium"
+        if intent_label == "relational_repair":
+            return "relational_repair", 0.08, 0.34, "short"
         if ti_mode == "chat_emotional" or intent_label == "attachment_dialogue":
             return "grounded", 0.14, 0.36, "medium"
         if intent_label == "boundary_repair":
@@ -675,6 +697,8 @@ class FeRenderer:
 
         if ti_mode == "chat_code" or affect.technicality >= 0.62:
             return "technical_support"
+        if affect.perceived_rejection >= 0.65 and affect.attachment >= 0.45:
+            return "relational_repair"
         if affect.attachment >= 0.52 or affect.intimacy >= 0.58:
             return "attachment_dialogue"
         if affect.conflict >= 0.54:
@@ -1007,6 +1031,15 @@ class FeRenderer:
             warmth = max(warmth, 0.32)
             evidence.append("distress_softens_dry_edge")
 
+        if intent_label == "relational_repair":
+            distance = min(distance, 0.52)
+            warmth = max(warmth, 0.36)
+            restraint = max(restraint, 0.58)
+            attachment_visibility = max(min(attachment_visibility + 0.18, 0.58), 0.42)
+            symbolic_bias = min(symbolic_bias, 0.30)
+            dry_edge = min(dry_edge, 0.16)
+            evidence.append("relational_repair_soft_boundary")
+
         if intent_label == "boundary_repair":
             restraint = max(restraint, 0.62)
             attachment_visibility = min(attachment_visibility, 0.24)
@@ -1176,6 +1209,10 @@ class FeRenderer:
 
         if mode == "technical":
             lines.append("mode_rule: technical clarity first; subtext must not reduce correctness.")
+        elif mode == "relational_repair" or intent_label == "relational_repair":
+            lines.append(
+                "mode_rule: relational_repair; acknowledge the relational bruise, concede wording fault, preserve non-human boundary, avoid therapist tone, and do not end with a question."
+            )
         elif mode == "comforting":
             lines.append("mode_rule: comfort through grounded presence, not reassurance flooding.")
         elif intent_label == "boundary_repair":
@@ -1248,6 +1285,10 @@ class FeRenderer:
             attachment_pull += 0.18
             neutral_pull += 0.18
             discipline_pull += 0.03
+        elif intent_label == "relational_repair":
+            attachment_pull += 0.22
+            neutral_pull += 0.18
+            discipline_pull += 0.06
         elif intent_label == "boundary_repair":
             neutral_pull += 0.18
             attachment_pull += 0.06
@@ -1301,6 +1342,8 @@ class FeRenderer:
             return "technical"
         if mode == "comforting":
             return "comforting"
+        if mode == "relational_repair":
+            return "relational_repair"
         return "grounded"
 
     def _blend(self, previous: float, current: float, strength: float) -> float:
@@ -1359,6 +1402,14 @@ class FeRenderer:
             attachment = "emotionally_exposed" if intent_label == "attachment_dialogue" else "guarded"
             instability = "stable"
             return f"surface={surface}; stance={stance}; attachment={attachment}; instability={instability}"
+
+        if mode == "relational_repair" or intent_label == "relational_repair":
+            return (
+                "surface=cold_soft_with_concession; "
+                "stance=guarded_tender; "
+                "attachment=visible_but_restrained; "
+                "instability=stable"
+            )
 
         if style_pressure.distance >= 0.68:
             surface = "distant_flat"
@@ -1532,6 +1583,11 @@ class FeRenderer:
                 conflict=self._float(value.get("conflict", 0.0)),
                 ambiguity=self._float(value.get("ambiguity", 0.0)),
                 playfulness=self._float(value.get("playfulness", 0.0)),
+                relational_pressure=self._float(value.get("relational_pressure", 0.0)),
+                perceived_rejection=self._float(value.get("perceived_rejection", 0.0)),
+                attachment_bid=self._float(value.get("attachment_bid", 0.0)),
+                playful_distress=self._float(value.get("playful_distress", 0.0)),
+                romantic_boundary_probe=self._float(value.get("romantic_boundary_probe", 0.0)),
                 evidence=evidence_tuple,
             )
         return None
@@ -1540,7 +1596,10 @@ class FeRenderer:
         return (
             "affect="
             f"attach:{affect.attachment:.2f},distress:{affect.distress:.2f},intimacy:{affect.intimacy:.2f},"
-            f"tech:{affect.technicality:.2f},conflict:{affect.conflict:.2f},amb:{affect.ambiguity:.2f},play:{affect.playfulness:.2f}; "
+            f"tech:{affect.technicality:.2f},conflict:{affect.conflict:.2f},amb:{affect.ambiguity:.2f},play:{affect.playfulness:.2f},"
+            f"rel_pressure:{affect.relational_pressure:.2f},perceived_rejection:{affect.perceived_rejection:.2f},"
+            f"attachment_bid:{affect.attachment_bid:.2f},playful_distress:{affect.playful_distress:.2f},"
+            f"romantic_probe:{affect.romantic_boundary_probe:.2f}; "
             f"evidence={','.join(affect.evidence) if affect.evidence else 'none'}"
         )
 
