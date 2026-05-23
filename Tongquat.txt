@@ -9,7 +9,7 @@ Mã hóa: UTF-8
 TÓM TẮT CÁC CHỨC NĂNG MỚI
 -------------------------
 
-Đợt cập nhật này đẩy ERIS từ một chatbot có body sang một runtime nhân vật có nhịp nhận thức nền rõ hơn. Phần mới quan trọng nhất nằm ở cortex: `MeaningLayer`, `PersonalityLens`, `SpeechCore`, `MicroLinePolicy`, `SocialPresenceDetector`, `SessionRitualEngine`, `GoalPersistenceEngine`, `AffectSemanticClassifier`, `ConversationDynamicsEngine` và `RelationshipDynamicsEngine` được nối vào `RuntimeCoordinator`.
+Đợt cập nhật này đẩy ERIS từ một chatbot có body sang một runtime nhân vật có nhịp nhận thức nền rõ hơn. Phần mới quan trọng nhất nằm ở cortex: `MeaningLayer`, `PersonalityLens`, `SpeechCore`, `MicroLinePolicy`, `SocialPresenceDetector`, `SessionRitualEngine`, `GoalPersistenceEngine`, `OrientationInterpreter`, `AffectSemanticClassifier`, `ConversationDynamicsEngine`, `RelationshipDynamicsEngine` và `ActionMemoryState` được nối vào `RuntimeCoordinator`/`InternalStateEngine`.
 
 Các chức năng mới chính:
 - `MeaningLayer` biến fact thô từ Se/telemetry/thought stream thành ý nghĩa có thể phản ứng, ví dụ kẹt code, né friction, phân tán chú ý, đang chờ trong meeting, hoặc user vừa gọi ERIS lên tiếng. Nó có `meaning_shift` để ERIS không nói lại cùng một semantic family quá gần nhau.
@@ -18,10 +18,12 @@ Các chức năng mới chính:
 - `MicroLinePolicy` và `SemanticRepeatGuard` lọc các câu rất ngắn như micro-presence/presence maintenance/reengagement: chặn câu generic, câu bịa screen/action, câu kéo chú ý quá mức, câu lặp semantic dù không trùng chữ, và cả các câu lộ cảm xúc quá thẳng kiểu "tôi cô đơn/xin đừng bỏ tôi".
 - `SocialPresenceDetector` nhận biết user vẫn đang có mặt qua idle time, typing, window switching, focus pattern và recent events, nhưng không coi đó là lệnh phải nói. Nó giúp ERIS biết ngồi cạnh và giữ nhịp thay vì chen vào liên tục.
 - `SessionRitualEngine` thêm nghi thức startup: khi runtime mở lại, ERIS cố phục hồi goal, attractor, unresolved loops, hướng nhận thức gần đây và self continuity, rồi gửi một lời chào startup có `parse_mode=session_ritual`.
-- `GoalPersistenceEngine` thêm khả năng giữ mục tiêu dài hơi: goal có strength, urgency, drift, progress, recurrence, next hint và evidence, để một việc đang làm không biến mất ngay khi user im hoặc đổi cửa sổ.
+- `OrientationContext` là nền semantic chung cho Ni và GoalPersistence: phân biệt technical focus/research/recovery/play/avoidance/system wait, tính relation với active goal, coherence, conflict và intervention pressure. Nhờ vậy ERIS không còn suy drift/goal từ một đống keyword rời rạc.
+- `GoalPersistenceEngine` thêm khả năng giữ mục tiêu dài hơi nhưng tách rõ "nhớ goal" khỏi "được phép nhắc goal". Goal có strength, urgency, confidence, actionability, intervention_permission, coherence, anchors, next hint và evidence; `can_intervene` chỉ bật khi goal đủ cụ thể, đủ actionable và được phép can thiệp.
 - `AffectSemanticClassifier` thêm lớp đọc semantic-affect cho chat trực tiếp: technicality, distress, intimacy, attachment, conflict, correction, objectification, playfulness, directive pressure, ambiguity và answer need. Đây là score mềm, không phải intent cứng, để Fe/relationship/conversation biết nên trực tiếp, sửa sai, giữ khoảng cách hay trả lời gọn.
-- `ConversationDynamicsEngine` giữ nhịp hội thoại qua nhiều turn: mode `repair/execute/compress/clarify/explore/settled`, semantic tension, conversation pressure, correction streak, last failure và adaptation flags. Khi user nói "không phải", "sai rồi", "thiếu là...", ERIS biết hấp thụ correction trước, bỏ frame sai và trả lời đúng intent hiện tại.
+- `ConversationDynamicsEngine` giữ nhịp hội thoại qua nhiều turn: mode `repair/relational_repair/execute/compress/clarify/explore/defer/settled`, semantic tension, conversation pressure, correction streak, last failure, continuity curve và adaptation flags. Khi user nói "không phải", "sai rồi", "thiếu là...", ERIS biết hấp thụ correction trước, bỏ frame sai và trả lời đúng intent hiện tại; khi có perceived rejection/attachment bruise, nó chuyển sang relational repair thay vì hỏi ngược vô duyên.
 - `RelationshipDynamicsEngine` thêm state phát triển quan hệ dài hơi: familiarity, trust, rupture, repair, ritual strength, attachment visibility, preferred distance, exposure recoil, dignity defense, overread correction và technical respect. Nó giúp ERIS gần/lạnh/chính xác dần theo lịch sử thật, thay vì mỗi turn diễn persona từ đầu.
+- `ActionMemoryState` giữ rhythm hành vi public: recent actions/families, social fatigue, boredom pressure, exposure recoil, continuity pressure, habituation và rhythm phase. Planner dùng nó để bớt lặp micro-presence/check-in/tease, biết khi nào đang ở phase repair/execute/recoil/watching/dormant.
 
 Thay đổi runtime/coordinator:
 - `RuntimeCoordinator` giờ gom thêm meaning, personality, appraisal, self state, social presence, session ritual, thought stream, goal persistence, affect semantics, conversation dynamics, relationship dynamics, speech impulse và micro policy vào mỗi cognitive frame.
@@ -30,7 +32,7 @@ Thay đổi runtime/coordinator:
 - Presence maintenance và reengagement có cooldown/silent counters riêng, dùng câu rất ngắn và bị policy lọc trước khi gửi về body.
 - Luồng chat được tách cứng khỏi mode autonomous hơn: chat không đi qua `MeaningLayer`/`PersonalityLens`, và cuối turn còn có guard chặn motive inference, chặn reply kết bằng câu hỏi, và hạ confidence với prompt quá ngắn hoặc mơ hồ.
 - Nếu user phủ định một suy diễn trước đó (`không phải`, `sai rồi`...), coordinator đánh dấu turn assistant gần nhất là invalid để history sau không build tiếp trên hiểu lầm cũ.
-- Chat path hiện chạy thêm affect semantics trước Fe, rồi update conversation dynamics và relationship dynamics sau khi đã có topic/repeat/correction signal. Hai state này được lưu vào `PersistentInternalState` và render vào prompt context như guidance nội bộ, không phải bằng chứng màn hình hay nhãn phải nói ra.
+- Chat path hiện chạy thêm affect semantics trước Fe, rồi update conversation dynamics và relationship dynamics sau khi đã có topic/repeat/correction signal. Các state này, cùng `action_memory`, được lưu vào `PersistentInternalState` và render vào prompt context như guidance nội bộ, không phải bằng chứng màn hình hay nhãn phải nói ra.
 - `run_loop()` được siết phần phòng lỗi: traceback giờ được flatten thành một dòng gọn cho logger, rồi vẫn `print_exc()` đầy đủ trước khi sleep ngắn và tiếp tục loop. Mẫu hình này giúp runtime không chết âm thầm khi có lỗi lẻ.
 
 Thay đổi LLM/model:
@@ -379,10 +381,20 @@ Kết nối mặc định:
 
 `src/cortex/ni.py`
 - `NiEngine` và `NiStateMachine`.
-- Đánh giá goal drift từ focus/window/browser/memory/text.
-- Trả `drift_score`, `drift_level`, `confidence`, `should_raise_guard`.
+- Đánh giá orientation/drift từ focus/window/browser/memory/text và active goal, nhưng tầng semantic chính nằm trong `orientation_context.py`.
+- Trả `drift_score`, `drift_level`, `orientation_coherence`, `intervention_pressure`, `confidence`, `should_raise_guard`, `reason_span`, `channels` và evidence.
+- Đọc `GoalPersistenceState` mới qua `strength`, `goal_type`, `confidence`, `actionability`, `intervention_permission` để tránh biến mọi active goal thành cớ nhắc nhở.
 - State machine làm mượt drift qua thời gian để ERIS không giật cục vì một snapshot lẻ.
 - `src/cortex/tune_ni_focus.py` tune bias/scale offline từ `ni_drift_samples.jsonl`.
+
+`src/cortex/orientation_context.py`
+- Nền semantic dùng chung cho Ni và GoalPersistence.
+- Chuẩn hóa text, token, anchor và matcher để hai tầng không tự suy hai kiểu khác nhau.
+- Phân loại activity intent: research, technical_focus, supportive_background, recovery, play_or_recovery, possible_avoidance, fragmented_switching, social_coordination, system_waiting, unknown.
+- Phân loại goal text: concrete_task, debug_thread, design_direction, research_thread, review_request, correction_thread, casual, recovery, commentary, none.
+- Có closure detection biết negation, nên "chưa xong", "not fixed", "vẫn lỗi" không bị hiểu thành đã close goal.
+- Tính goal relation, orientation coherence, goal conflict và intervention pressure như giả thuyết mềm, không phải phán xét người dùng đang "lệch".
+- `goal_match_score()` dùng anchor/file/module/token overlap có trọng số, thay cho rule cũ kiểu trùng vài token là merge goal.
 
 `src/cortex/ti.py`
 - `TiGovernor`.
@@ -410,11 +422,12 @@ Kết nối mặc định:
 
 `src/cortex/conversation_dynamics.py`
 - `ConversationDynamicsEngine` và `ConversationDynamicsState`.
-- Theo dõi trạng thái hội thoại riêng cho chat: mode (`explore`, `clarify`, `repair`, `execute`, `compress`, `defer`, `settled`), semantic_tension, conversation_pressure, correction_severity, semantic_divergence, frustration_estimate, conversational_relief, correction_streak, recent modes và failure history.
+- Theo dõi trạng thái hội thoại riêng cho chat: mode (`explore`, `clarify`, `repair`, `relational_repair`, `execute`, `compress`, `defer`, `settled`), semantic_tension, conversation_pressure, correction_severity, semantic_divergence, frustration_estimate, conversational_relief, correction_streak, recent modes và failure history.
 - Nhận diện correction mạnh/nhẹ qua các cụm như `khong phai`, `sai roi`, `thieu la`, `chua them`, nhưng phân biệt typo/sửa nhỏ để tránh overrepair.
 - Suy ra failure gần nhất: `misread`, `underacted`, `overexplained`, `tone_mismatch`, `wrong_abstraction` hoặc `none`.
 - Tạo `adaptation_flags` như `repair_first`, `avoid_failed_frame`, `lower_inference_confidence`, `answer_with_action_shape`, `compress_response`, `avoid_overrepair`.
-- Có `ContinuityCurve` để xem hội thoại đang converging/diverging/adjusting sau repair, thay vì chỉ decay tension cơ học.
+- Có `ContinuityCurve` với `semantic_convergence`, `trust_recovery`, `abstraction_stability`, `alignment_trend` và `rolling_arc` để xem hội thoại đang converging/diverging/adjusting/recovering sau repair, thay vì chỉ decay tension cơ học.
+- Có mode `relational_repair` khi affect signal báo perceived rejection + attachment pressure: prompt phải acknowledge vết xước quan hệ đã được user nói ra, không hỏi lại nguyên nhân nếu user đã nêu, không kết bằng câu hỏi và không lạm dụng identity disclaimer.
 
 `src/cortex/relationship_dynamics.py`
 - `RelationshipDynamicsEngine`, `RelationshipDynamicsState` và `RelationshipStylePressure`.
@@ -439,7 +452,7 @@ Kết nối mặc định:
 - Có `MentalProcessSystem`: curiosity, restraint, tension, continuity, attachment, reflection, social_presence, cognitive_load, background_thought.
 - Các process có level/pressure, tương tác và decay theo thời gian.
 - Render prompt context với rule rõ: đây là continuity/rhythm nội bộ, không phải bằng chứng màn hình hay cảm xúc ẩn của user.
-- Persist thêm `conversation_dynamics` và `relationship_dynamics`, serialize/deserialize vào JSON state và đưa prompt context vào cuối internal context. Hai state này dùng để giữ nhịp đối thoại và quan hệ qua nhiều turn, không thay thế factual grounding từ Se.
+- Persist thêm `goal_persistence`, `conversation_dynamics`, `relationship_dynamics` và `action_memory`, serialize/deserialize vào JSON state và đưa prompt context vào cuối internal context. Các state này dùng để giữ nhịp goal/hội thoại/quan hệ/hành vi qua nhiều turn, không thay thế factual grounding từ Se.
 
 `src/cortex/self_model.py`
 - `SelfModelEngine`.
@@ -492,10 +505,19 @@ Kết nối mặc định:
 
 `src/cortex/goal_persistence.py`
 - `GoalPersistenceEngine` và `GoalPersistenceState`.
-- Biến một vấn đề lặp lại thành goal nền bền hơn.
-- Nhận goal từ user_text, thought momentum, active attractor, Ni drift.
-- Goal có summary, strength, urgency, drift, progress, recurrence, next_hint.
-- Có decay theo thời gian và close khi user có tín hiệu đã xong.
+- Biến một vấn đề lặp lại thành goal nền bền hơn, nhưng active background thread không đồng nghĩa được phép interrupt.
+- Nhận candidate từ user_text, thought momentum, active attractor và Ti realign mềm. Ni chỉ được cộng urgency rất nhỏ nếu đang có guard, không còn tự inflate goal.
+- Goal có summary, source, status, strength, urgency, drift, progress, recurrence, confidence, actionability, intervention_permission, coherence, anchors, next_hint, evidence và recent_summaries.
+- `active` yêu cầu summary/strength/confidence đủ sàn; `can_intervene` yêu cầu thêm intervention_permission/actionability/confidence và chỉ cho concrete/debug/correction thread.
+- Merge dùng `goal_match_score()` từ `orientation_context.py`, không còn token overlap thô. Goal cũ mạnh sẽ không bị candidate nội bộ yếu ghi đè.
+- Closure dùng `infer_closure_signal()` có negation handling, nên "chưa xong" không đóng goal. Decay làm goal thành `stale` khi strength/confidence xuống thấp.
+
+`src/cortex/action_memory.py`
+- `ActionMemoryState` và `ActionTrace`.
+- Ghi lại action/family/channel/utility/outcome gần đây, giữ tối đa 48 trace mặc định.
+- Tích `social_fatigue`, `boredom_pressure`, `exposure_recoil`, `continuity_pressure`, `habituation` và `rhythm_phase`.
+- `absorb_context()` đọc snapshot/self_state/social_presence/conversation/relationship/goal để bias planner: repair/execute giảm boredom, dignity defense tăng recoil, goal active tăng continuity pressure nhưng chỉ tăng boredom khi `can_intervene`.
+- `record()` được gọi sau decision trong `InternalStateEngine.commit_turn()`, giúp planner nhớ nó vừa nói/không nói gì và tránh lặp hành vi public.
 
 `src/cortex/thought_stream.py`
 - Lớp suy nghĩ nền mới, đóng vai trò cognitive substrate/subconscious loop.
@@ -527,9 +549,20 @@ Kết nối mặc định:
 
 `src/cortex/action_planner.py`
 - `ActionPlanner`.
-- Chọn speech act trước khi gọi LLM: observe, protect, mirror, reassure, system_action, withdraw, no_speech, v.v.
-- Đưa animation hint và note dựa trên speech_core, appraisal, self_state, Ti mode.
-- Biến "nên nói" thành "nên nói theo dạng hành động nào".
+- Orchestrator cho action selection trước khi gọi LLM.
+- Bản hiện tại không còn rule trực tiếp kiểu intent X -> action Y. Nó dựng `ActionContext`, gọi `ActionUtilityScorer`, rồi trả `CognitiveActionPlan`.
+- Truyền thêm speech_core, conversation_dynamics, relationship_dynamics, goal_state và action_memory vào scorer.
+- Đưa animation hint, style anchor, style attitude, style limit, risk flags và utility debug notes vào plan.
+- Nếu coordinator chưa truyền action memory, planner có fallback RAM memory; khi có persistent state thì `InternalStateEngine.commit_turn()` ghi action thật vào `PersistentInternalState.action_memory`.
+
+`src/cortex/action_utility.py`
+- `ActionUtilityScorer`, `ActionContext`, `ActionScore`, `ActionUtilityReport`.
+- Chấm điểm cạnh tranh trong `ACTION_SPACE`: no_speech, observe, protect, withdraw, mirror, micro_presence, reengagement, inner_whim, soft_boundary, system_action, v.v.
+- Điểm gồm base, intent/channel/appraisal/conversation/relationship/goal/memory/rhythm pressure, rồi trừ risk, repetition và fatigue.
+- Hard override chỉ dùng cho system action, safety refuse, hoặc no_speech contract rõ; còn lại proposed intent/speech act chỉ là bias.
+- Autonomous bị giữ rất chặt: thiếu meaning shift thì social/freeform/screen claim bị phạt, no_speech được cộng.
+- Goal active chỉ làm tăng continuity nền; proactive reengagement/guarded_reply chỉ được cộng khi `goal.can_intervene=True`.
+- Action memory tạo soft cooldown, habituation, phase `watching/touch/exposure/recoil/withdrawn/dormant/execute` để tránh lặp hành vi public.
 
 
 8. Actions / Tool Runtime
@@ -692,10 +725,13 @@ Kết nối mặc định:
 
 `tests/test_internal_state.py`
 - Test mental process, pressure axes, decay, commit turn, thought/self/social history.
-- Có case persist `conversation_dynamics` và `relationship_dynamics` trong internal state JSON/prompt context.
+- Có case persist `goal_persistence`, `conversation_dynamics`, `relationship_dynamics` và prompt context trong internal state JSON.
 
 `tests/test_conversation_dynamics.py`
-- Test engine hội thoại mới: neutral chat giữ low tension, denial chuyển repair mode, thiếu phần cần làm map thành `underacted`, repeated correction tăng pressure, follow-up sạch làm tension giảm, typo nhỏ không ép repair, continuity curve track recovery, và `ok nhung sai` không bị tính là relief.
+- Test engine hội thoại mới: neutral chat giữ low tension, denial chuyển repair mode, thiếu phần cần làm map thành `underacted`, repeated correction tăng pressure, follow-up sạch làm tension giảm, typo nhỏ không ép repair, continuity curve track recovery, relational repair không hỏi lại nguyên nhân khi user đã nêu, và `ok nhung sai` không bị tính là relief.
+
+Lưu ý test gap hiện tại:
+- Chưa có file test riêng cho `orientation_context.py`, `goal_persistence.py`, `action_memory.py`, `action_utility.py` và `action_planner.py`. Một phần hành vi đang được bao phủ gián tiếp qua `test_internal_state.py`, `test_runtime_coordinator.py`, `test_conversation_dynamics.py` và các test speech/micro policy, nhưng nên tách test riêng nếu tiếp tục sửa các tầng này.
 
 `tests/test_action_router.py`
 - Test mapping chat thành system action.
@@ -804,10 +840,8 @@ Luồng touch/throw:
 
 Theo `git status --short` lúc cập nhật:
 - `Tongquat.txt` đang modified và được cập nhật trong lần này.
-- `@AutomationLog.txt` đang modified.
-- Các file code đang modified ở lần đọc này: `src/cortex/contracts.py`, `src/cortex/ti.py`, `tests/test_ti_governor.py`.
-- Runtime artifacts đang modified: `long_term_memory.json`, `ni_drift_samples.jsonl`, `src/.vision.lock`, `src/cortex/__pycache__/contracts.cpython-313.pyc`, `src/cortex/__pycache__/se.cpython-313.pyc`, `src/cortex/__pycache__/ti.cpython-313.pyc`.
-- Không thấy file body mới/untracked trong `git status --short` hiện tại; `body/ErisProcessManager.cs` và `body/LocalBodyAutonomy.cs` đã tồn tại trong tree đang đọc.
+- Runtime artifacts đang modified: `long_term_memory.json`, `ni_drift_samples.jsonl`, `src/.vision.lock`.
+- Không thấy file code `.py`/`.cs` đang modified trong `git status --short` hiện tại ngoài tài liệu này; các thay đổi code đã nằm trong tree đang đọc.
 
 
 14. Điểm Kiến Trúc Đáng Chú Ý
@@ -1001,29 +1035,30 @@ Ni / drift:
 - `should_raise_guard` bật từ `drift_score >= 0.55`.
 
 Internal state mặc định lúc khởi tạo:
-- `valence=0.05`
-- `arousal=0.18`
-- `curiosity=0.34`
-- `boredom=0.0`
-- `social_energy=0.56`
-- `attachment=0.34`
-- `irritation=0.08`
-- `protectiveness=0.10`
-- `confidence=0.50`
-- `fatigue=0.10`
-- `tenderness=0.18`
-- `silence_pressure=0.0`
+- `valence=0.02`
+- `arousal=0.16`
+- `curiosity=0.38`
+- `boredom=0.04`
+- `social_energy=0.38`
+- `attachment=0.30`
+- `irritation=0.10`
+- `protectiveness=0.16`
+- `confidence=0.44`
+- `fatigue=0.12`
+- `tenderness=0.16`
+- `silence_pressure=0.06`
+- Các pressure nền: `social=0.03`, `curiosity=0.04`, `protective=0.04`, `tender=0.03`, `watchful=0.05`, `restraint=0.08`, `thought_stream=0.08`, `cognitive_tension=0.06`.
 
 Mental process mặc định:
-- `curiosity`: level `0.34`, volatility `0.34`, decay `0.07`
-- `restraint`: level `0.14`, volatility `0.22`, decay `0.05`
-- `tension`: level `0.08`, volatility `0.30`, decay `0.09`
-- `continuity`: level `0.40`, volatility `0.16`, decay `0.035`
-- `attachment`: level `0.34`, volatility `0.18`, decay `0.03`
-- `reflection`: level `0.18`, volatility `0.24`, decay `0.06`
-- `social_presence`: level `0.42`, volatility `0.26`, decay `0.06`
-- `cognitive_load`: level `0.10`, volatility `0.28`, decay `0.08`
-- `background_thought`: level `0.18`, volatility `0.32`, decay `0.07`
+- `curiosity`: level `0.38`, volatility `0.30`, decay `0.055`
+- `restraint`: level `0.30`, pressure `0.08`, volatility `0.18`, decay `0.038`
+- `tension`: level `0.14`, pressure `0.04`, volatility `0.26`, decay `0.072`
+- `continuity`: level `0.46`, pressure `0.06`, volatility `0.13`, decay `0.026`
+- `attachment`: level `0.30`, pressure `0.05`, volatility `0.16`, decay `0.026`
+- `reflection`: level `0.34`, pressure `0.07`, volatility `0.20`, decay `0.040`
+- `social_presence`: level `0.30`, pressure `0.03`, volatility `0.20`, decay `0.050`
+- `cognitive_load`: level `0.14`, pressure `0.03`, volatility `0.24`, decay `0.070`
+- `background_thought`: level `0.34`, pressure `0.08`, volatility `0.28`, decay `0.045`
 
 
 21. Các Tính Toán Chính Của Tầng Nhận Thức
@@ -1032,14 +1067,14 @@ Mental process mặc định:
 Đây là phần “Eris đang tính gì” để khi nhìn log/state biết nó lệch ở đâu.
 
 Ni drift:
-- `similarity` được xây từ baseline theo `active_window_kind`:
-  - `coding=0.80`, `documentation=0.76`, `communication=0.62`, `system=0.58`, `general=0.46`, `focus_aid_media=0.40`, `entertainment=0.22`.
-- Sau đó cộng/trừ:
-  - `text_adjust`: tăng khi thấy từ khóa code/docs/project; giảm khi thấy YouTube/TikTok/game.
-  - `idle_adjust`: idle càng lâu drift càng tăng; non-communication bị phạt mạnh hơn.
-  - `window_sprawl_adjust`: nhiều cửa sổ (`>=7`, `>=10`) làm lệch focus.
-- `drift_score = 1.0 - similarity`.
-- Nhãn drift:
+- Ni hiện dựa vào `OrientationInterpreter` thay vì bảng similarity thô theo app category.
+- Input semantic gồm focus/window/browser/current text/memory text, idle, open window count, active goal summary/strength/type/intervention_permission.
+- `ActivityIntent` đọc ngữ cảnh là technical_focus/research/supportive_background/recovery/play_or_recovery/possible_avoidance/social_coordination/system_waiting/unknown.
+- `GoalRelation` đọc quan hệ với active goal là aligned/adjacent/neutral/conflicting/unknown.
+- `orientation_coherence` tăng khi context technical/research/system wait hoặc aligned với goal; giảm bởi conflict, fragmentation và idle ambiguity.
+- `goal_conflict_score` chỉ tăng mạnh khi relation thật sự conflicting và active goal có permission; YouTube/media không tự động bị coi là lệch nếu là research/focus aid/recovery hợp lý.
+- `intervention_pressure` tách khỏi drift: active goal mạnh nhưng `intervention_permission` thấp thì ERIS nên giữ continuity nền, không nhảy vào nhắc.
+- `drift_score` được derive từ coherence/conflict/intervention pressure và confidence, rồi mới đi qua nhãn:
   - `>=0.75`: nghiêm trọng
   - `>=0.55`: cao
   - `>=0.35`: vừa
@@ -1126,12 +1161,15 @@ SpeechCore:
 - Đây là lý do Eris hiện tại có xu hướng im mặc định, chỉ mở lời khi có shift, pressure, hoặc explicit pull đủ mạnh.
 
 Goal persistence:
-- Goal sống nếu `status=active`, có `summary`, và `strength >= 0.18`.
+- Goal sống nếu `status=active`, có `summary`, `strength >= 0.18` và confidence hiệu dụng đủ sàn.
+- `can_intervene` là cổng riêng: cần active + `intervention_permission >= 0.55` + `actionability >= 0.45` + confidence đủ, và goal_type phải thuộc concrete/debug/correction thread.
 - Goal mới mạnh nhất thường đến từ:
-  - user nói trực tiếp một việc đáng theo (`strength=0.72`, urgency dựa một phần vào drift)
-  - `thought_stream` có momentum kiểu `attention` với `score >= 0.58`
-  - Ti mode kiểu `goal_drift_alert` / `goal_realign`
-- Goal decay dần nếu không còn candidate mới; có thể close khi user nói kiểu `done`, `xong`, `resolved`, `close_goal`.
+  - user nói trực tiếp một concrete task/debug/correction có anchor (`strength` thường quanh `0.54-0.72`, intervention_permission tùy loại)
+  - `thought_stream` có momentum/attractor đủ cao nhưng intervention_permission bị giữ thấp, chỉ làm continuity nền
+  - Ti `goal_drift_alert` / `goal_realign` chỉ tạo soft observed thread, không được biến thành nagging
+- Ni chỉ góp urgency rất nhỏ khi có guard; không còn tự biến drift thành goal mạnh.
+- Goal merge dùng anchor/token matcher chung với Ni. Goal decay dần nếu không còn candidate mới; có thể thành stale khi strength/confidence thấp.
+- Goal close dùng closure signal có negation handling: "xong/done/resolved" đóng goal, nhưng "chưa xong/vẫn lỗi/not fixed" thì không.
 
 Thought stream:
 - Chạy nền mỗi `45s` nếu không override env.
@@ -1152,10 +1190,18 @@ Chat final guards:
 Affect semantics / conversation dynamics / relationship dynamics:
 - `AffectSemanticSignal` là lớp đọc áp lực nghĩa mềm trên câu user, không phải nhãn cảm xúc thật. Nó giúp phân biệt câu kỹ thuật, câu sửa hiểu lầm, câu objectify ERIS, câu cần execute, câu mơ hồ và câu có distress/intimacy.
 - `ConversationDynamicsState.mode=repair` là tín hiệu quan trọng khi user phủ định hoặc nói thiếu/sai. Prompt phải acknowledge rất ngắn, bỏ frame cũ, trả lời intent hiện tại, giảm tự tin suy diễn và không mở rộng lạc hướng.
+- `ConversationDynamicsState.mode=relational_repair` xử lý perceived rejection/attachment bruise: acknowledge đúng điểm đau quan hệ, không hỏi lại khi user đã nêu lý do, không kết thúc bằng câu hỏi, và giữ non-human boundary mềm.
+- `ContinuityCurve` theo dõi `semantic_convergence`, `trust_recovery`, `abstraction_stability`, `alignment_trend` và `rolling_arc`; nó cho biết đang recovering/aligned/rupture/minor_adjustment thay vì chỉ nhìn tension đang decay.
 - `conversation_pressure` tăng khi correction lặp, repeat_count cao hoặc user nhắc failure cũ; giảm khi user có relief rõ như `đúng rồi`, `hợp lý`, `tiếp tục` mà không kèm reversal như `nhưng sai`.
 - `RelationshipDynamicsState.dignity_defense` tăng khi user kéo ERIS thành tool/waifu/prompt cosplay; khi đó style nên lạnh, xa và bớt attachment visibility, không diễn thân mật để bù.
 - `overread_correction` tăng sau correction/misread, làm các turn sau giảm symbolic overread. `technical_respect` tăng qua technical thread tốt, kéo chat code về precision/directness.
 - `relationship_style_pressure` derive distance/restraint/attachment_visibility/symbolic_permission/boundary_coolness/technical_directness cho Fe/Personality đọc, nhưng không được nói các label đó ra với user.
+
+Action dynamics:
+- `ActionUtilityScorer` chọn action bằng cạnh tranh điểm, không còn mapping cứng từ intent.
+- `ActionMemoryState` làm mềm nhịp hành vi: nếu vừa exposure thì phase `recoil` kéo ERIS về withdraw/suppress/no_speech; nếu im lâu nhưng vẫn có shared space thì phase `watching/dormant` chỉ cho phép đổi nhịp nhỏ.
+- Repetition penalty gồm action count, family count, habituation và soft cooldown. Đây là lớp chống lặp hành vi bên cạnh semantic repeat guard của micro policy.
+- Goal active chỉ tăng continuity pressure. Muốn proactive thì cần `goal.can_intervene=True`; nếu không, scorer còn cộng điểm cho no_speech/withdraw/suppress để giữ goal như background.
 
 
 22. Cách Đọc “Xu Hướng Hiện Tại” Của ERIS Khi Debug
@@ -1170,8 +1216,10 @@ Trong `PersistentInternalState`:
 - `silence_ticks` vs `spoken_ticks`: xu hướng im nhiều hay nói nhiều.
 - `last_social_presence_confidence`, `last_social_presence_intensity`: có cảm giác user còn hiện diện không.
 - `goal_persistence`: goal nền đang sống hay đã decay.
-- `conversation_dynamics.mode`, `conversation_pressure`, `semantic_tension`, `last_failure`: chat đang ổn, cần repair, cần execute hay đang bị kéo lệch.
+- `goal_persistence.intervention_permission`, `actionability`, `confidence`, `coherence`, `can_intervene`: goal chỉ đang được nhớ hay ERIS thật sự được phép nhắc lại.
+- `conversation_dynamics.mode`, `conversation_pressure`, `semantic_tension`, `last_failure`, `continuity_curve`: chat đang ổn, cần repair/relational_repair/execute hay đang bị kéo lệch.
 - `relationship_dynamics.trust`, `rupture`, `preferred_distance`, `dignity_defense`, `overread_correction`, `technical_respect`: quan hệ đang gần/lạnh/cẩn trọng/kỹ thuật đến mức nào.
+- `action_memory.rhythm_phase`, `social_fatigue`, `boredom_pressure`, `exposure_recoil`, `continuity_pressure`, `habituation`: planner đang nghiêng về hiện diện, rút lại, đổi nhịp hay tiếp tục im.
 - `mental_processes.*.level` và `mental_processes.*.pressure`: curiosity/restraint/tension/continuity cái nào đang kéo hệ thống mạnh nhất.
 
 Trong coordinator / frame:
@@ -1183,7 +1231,7 @@ Trong coordinator / frame:
 - `force_speak_repeat_guard_count`, `force_speak_intent_guard_count`: force_speak đang bị guard vì lặp hay vì intent yếu.
 
 Trong Ni:
-- `drift_score`, `drift_level`, `should_raise_guard`.
+- `drift_score`, `drift_level`, `orientation_coherence`, `intervention_pressure`, `reason_span`, `channels`, `should_raise_guard`.
 - `NiStateMachine.current_state` và `streak_length`: lệch nhẹ thoáng qua hay đang off-goal kéo dài.
 
 Trong thought stream:
@@ -1199,15 +1247,22 @@ Trong thought stream:
   Eris biết user còn đó nhưng chủ động ngồi cạnh, chưa coi đó là cớ để xen vào.
 - `meaning_shift=false` lặp nhiều frame:
   autonomous sẽ im, dù telemetry vẫn đang chảy.
-- `goal_persistence.active=true` + `momentum/unresolved_loops` cao:
-  Eris đang có “mạch nền” rõ, thường sẽ bám continuity tốt hơn giữa các turn.
+- `goal_persistence.active=true` nhưng `can_intervene=false`:
+  Eris có mạch nền để giữ continuity, nhưng không nên chủ động nhắc goal.
+- `goal_persistence.active=true` + `can_intervene=true` + `intervention_pressure` cao:
+  Eris có thể nhắc rất nhẹ hoặc reengage nếu context đang mời gọi, vẫn cần qua ActionUtility/SpeechCore.
 - `conversation_dynamics.mode=repair` + `last_failure=underacted`:
   Turn trước đã làm thiếu hoặc chưa execute đúng; câu sau nên sửa trực tiếp, ít giải thích.
+- `conversation_dynamics.mode=relational_repair`:
+  Turn trước/hiện tại chạm vào vết xước quan hệ; cần acknowledge đúng điểm, không hỏi ngược, không over-humanize.
 - `relationship_dynamics.dignity_defense cao`:
   ERIS nên giữ phẩm giá, giảm thân mật bề mặt, không cố chứng minh mình "thật" bằng melodrama.
+- `action_memory.rhythm_phase=recoil`:
+  Planner nên giảm exposure sau một câu quá gần/symbolic, ưu tiên im/rút nhẹ/giữ câu thấp giọng.
 
 Kết luận debug ngắn:
 - Muốn biết vì sao Eris im: xem `meaning_shift`, `SpeechCore.reason`, `silence_state`, `repeat_guard`, `ti_mode`.
 - Muốn biết vì sao Eris nói câu đó: xem `meaning_layer`, `appraisal.stance`, `action_plan.speech_act`, `speech_intent`, `risk_flags`.
 - Muốn biết vì sao chat đổi giọng: xem `affect_signal`, `conversation_dynamics`, `relationship_dynamics`, rồi mới đối chiếu Fe/Ti.
-- Muốn biết Eris “đang nghiêng về đâu”: xem bộ ba `drift + stance + goal_persistence`, rồi đối chiếu với `mental_processes`, `conversation_dynamics` và `relationship_dynamics`.
+- Muốn biết vì sao action planner chọn hành vi đó: xem `action_scores`, `rhythm_phase`, `transition_reason`, `memory_pressure`, `suppressed_actions`.
+- Muốn biết Eris “đang nghiêng về đâu”: xem bộ ba `drift + stance + goal_persistence`, rồi đối chiếu với `mental_processes`, `conversation_dynamics`, `relationship_dynamics` và `action_memory`.

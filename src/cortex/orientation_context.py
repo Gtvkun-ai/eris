@@ -4,27 +4,26 @@ from __future__ import annotations
 orientation_context.py
 ======================
 
-Shared semantic substrate for ERIS' Ni and GoalPersistence layers.
+Nền ngữ nghĩa dùng chung cho các lớp Ni và GoalPersistence của ERIS.
 
-Why this file exists
---------------------
-Ni and GoalPersistence must not each keep their own little pile of keyword
-superstition. That creates two independent judges:
-    - Ni decides the user is drifting.
-    - GoalPersistence decides the user has a task.
-Then both amplify each other and ERIS becomes a productivity supervisor with
-better hair.
+Lý do file này tồn tại
+----------------------
+Ni và GoalPersistence không được mỗi bên giữ một đống mê tín keyword riêng.
+Làm vậy sẽ tạo ra hai quan tòa độc lập:
+    - Ni quyết định người dùng đang drift.
+    - GoalPersistence quyết định người dùng có task.
+Rồi cả hai khuếch đại lẫn nhau và ERIS biến thành giám thị năng suất với tóc đẹp hơn.
 
-This module centralizes lightweight semantic interpretation:
+Module này tập trung hóa diễn giải ngữ nghĩa nhẹ:
     - activity intent: research / recovery / play / avoidance / technical focus
     - user goal intent: concrete task / debug thread / design direction / casual
-    - closure detection with negation handling
-    - goal relation and intervention pressure
-    - token/anchor matching for safe goal merge
+    - phát hiện closure có xử lý phủ định
+    - quan hệ với goal và áp lực can thiệp
+    - token/anchor matching để merge goal an toàn
 
-It is still heuristic, because no local embedding model is assumed here.
-The important design choice: heuristics produce *hypotheses* and *permission*,
-not moral verdicts.
+Nó vẫn là heuristic, vì ở đây không giả định có local embedding model.
+Lựa chọn thiết kế quan trọng: heuristic tạo ra *giả thuyết* và *quyền cho phép*,
+không phải phán quyết đạo đức.
 """
 
 import re
@@ -35,19 +34,19 @@ from typing import Iterable, Mapping, Sequence
 
 
 # ---------------------------------------------------------------------------
-# Basic utilities
+# Tiện ích cơ bản
 # ---------------------------------------------------------------------------
 
 _REMOVABLE_URL_BITS = re.compile(r"https?://|www\.|[?&=#%]")
 _WORD_RE = re.compile(r"[a-z0-9#+.]+")
 
 STOP_WORDS: set[str] = {
-    # English function words
+    # Từ chức năng tiếng Anh
     "and", "the", "for", "from", "this", "that", "with", "then", "than",
     "into", "onto", "about", "what", "when", "where", "which", "while",
     "because", "should", "could", "would", "there", "their", "have", "has",
     "had", "was", "were", "are", "is", "be", "been", "being",
-    # Vietnamese function words normalized without accents
+    # Từ chức năng tiếng Việt đã chuẩn hóa không dấu
     "dang", "trong", "cua", "voi", "khi", "thi", "neu", "ngai", "toi",
     "mot", "nhung", "khong", "duoc", "cho", "cai", "nay", "kia", "roi",
     "nhe", "nhi", "vay", "day", "nua", "qua", "hoi", "lam", "nha", "the",
@@ -59,7 +58,7 @@ def clamp01(value: object) -> float:
         number = float(value)
     except (TypeError, ValueError):
         return 0.0
-    if number != number:  # NaN
+    if number != number:  # không phải số (NaN)
         return 0.0
     return max(0.0, min(1.0, number))
 
@@ -76,10 +75,10 @@ def clean_text(value: object, *, limit: int = 180) -> str:
 
 
 def normalize(value: object) -> str:
-    """Normalize for semantic matching, not for display.
+    """Chuẩn hóa để khớp ngữ nghĩa, không dùng để hiển thị.
 
-    Vietnamese 'đ' is replaced manually because Unicode decomposition does not
-    fold it into 'd'. The result is intentionally plain ASCII-ish text.
+    Chữ 'đ' tiếng Việt được thay thủ công vì Unicode decomposition không
+    gộp nó thành 'd'. Kết quả cố ý là text gần ASCII thuần.
     """
 
     raw = str(value or "").strip().lower().replace("đ", "d")
@@ -131,7 +130,7 @@ def unique_recent(items: Iterable[str], *, limit: int = 8) -> tuple[str, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Phrase groups
+# Nhóm cụm từ
 # ---------------------------------------------------------------------------
 
 TECHNICAL_TERMS: tuple[str, ...] = (
@@ -223,7 +222,7 @@ REJECTION_AFTER_CLOSURE: tuple[str, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Shared semantic dataclasses
+# Dataclass ngữ nghĩa dùng chung
 # ---------------------------------------------------------------------------
 
 class ActivityIntentLabel(str, Enum):
@@ -289,15 +288,15 @@ class OrientationSignal:
 
 @dataclass(frozen=True, slots=True)
 class GoalTextSignal:
-    """Semantic signal extracted from direct user text.
+    """Tín hiệu ngữ nghĩa trích từ text trực tiếp của user.
 
     persist_permission:
-        Whether the text deserves durable background tracking.
+        Text này có xứng đáng được theo dõi nền lâu dài hay không.
 
     intervention_permission:
-        Whether ERIS may bring the goal up proactively later.
-        A goal can be persistent but not interruptive. This single distinction
-        prevents the delightful abomination called "helpful nagging".
+        ERIS có được phép chủ động nhắc lại goal này về sau hay không.
+        Một goal có thể persistent nhưng không interruptive. Chỉ một phân biệt này
+        đã chặn được thứ dị dạng đáng yêu gọi là "nhắc dai hữu ích".
     """
 
     kind: str = GoalTextKind.NONE.value
@@ -328,7 +327,7 @@ class ClosureSignal:
 
 
 # ---------------------------------------------------------------------------
-# Extraction helpers
+# Hàm hỗ trợ trích xuất
 # ---------------------------------------------------------------------------
 
 @dataclass(slots=True)
@@ -375,7 +374,7 @@ def extract_anchors(text: str, *, max_items: int = 10) -> tuple[str, ...]:
             if p and p in norm:
                 result.append(phrase)
 
-    # Include high-information tokens as fallback.
+    # Thêm token nhiều thông tin làm dự phòng.
     for token in sorted(tokens(text)):
         if len(token) >= 5:
             result.append(token)
@@ -384,11 +383,11 @@ def extract_anchors(text: str, *, max_items: int = 10) -> tuple[str, ...]:
 
 
 def goal_match_score(left: str, right: str, *, left_anchors: Sequence[str] = (), right_anchors: Sequence[str] = ()) -> float:
-    """Weighted match for merging durable goals.
+    """Khớp có trọng số để gộp các goal bền.
 
-    The old "overlap >= 2" rule makes every ERIS technical sentence look like
-    the same goal. This matcher asks for either anchor overlap or stronger token
-    overlap. Shocking: two random mentions of "system" and "fix" are not destiny.
+    Rule cũ "overlap >= 2" khiến mọi câu kỹ thuật của ERIS nhìn như cùng một goal.
+    Bộ khớp này đòi hỏi hoặc trùng anchor, hoặc trùng token mạnh hơn. Kinh ngạc thay:
+    hai lần ngẫu nhiên nhắc tới "system" và "fix" không phải là định mệnh.
     """
 
     left_tokens = tokens(left)
@@ -440,7 +439,7 @@ def infer_closure_signal(text: str, *, thought_stream_report: object = None) -> 
         evidence.append("closure_phrase")
         confidence = 0.74
 
-    for disturbance in tuple(getattr(thought_stream_report, "disturbances", ()) or ()):  # compatible with existing stream
+    for disturbance in tuple(getattr(thought_stream_report, "disturbances", ()) or ()):  # tương thích với luồng hiện có
         if bool(getattr(disturbance, "closes_loop", False)):
             evidence.append("thought_stream_closes_loop")
             confidence = max(confidence, 0.64)
@@ -449,11 +448,11 @@ def infer_closure_signal(text: str, *, thought_stream_report: object = None) -> 
 
 
 def infer_goal_text_signal(text: str, *, channel: str = "chat", force_speak: bool = False) -> GoalTextSignal:
-    """Classify direct user text as a durable goal candidate or not.
+    """Phân loại text trực tiếp của user có phải ứng viên goal bền hay không.
 
-    This function deliberately rejects "long sentence = goal". Human speech can
-    be exploratory, casual, frustrated, playful, or just noise with grammar.
-    Tragic, yes, but code has to cope.
+    Hàm này cố ý bác bỏ kiểu "câu dài = goal". Lời người có thể là thăm dò,
+    casual, bực bội, đùa nghịch, hoặc chỉ là nhiễu có ngữ pháp.
+    Bi kịch, đúng, nhưng code phải chịu được.
     """
 
     raw = clean_text(text, limit=220)
@@ -552,7 +551,7 @@ def infer_goal_text_signal(text: str, *, channel: str = "chat", force_speak: boo
         actionability = 0.32
 
     elif token_count >= 10 and (has_tech or has_design) and (strong_task or soft_task):
-        # Fallback for long technical directive-like messages. Still weaker than explicit task.
+        # Dự phòng cho thông điệp kỹ thuật dài có dạng chỉ thị. Vẫn yếu hơn task rõ ràng.
         kind = GoalTextKind.COMMENTARY.value
         evidence.append("long_technical_commentary")
         confidence = 0.44
@@ -586,15 +585,15 @@ def infer_goal_text_signal(text: str, *, channel: str = "chat", force_speak: boo
 
 
 # ---------------------------------------------------------------------------
-# Activity/orientation inference used by Ni
+# Suy luận activity/orientation dùng bởi Ni
 # ---------------------------------------------------------------------------
 
 class OrientationInterpreter:
-    """Shared interpreter for Ni.
+    """Bộ diễn giải dùng chung cho Ni.
 
-    It reads context as a field of possible meanings, not as an app-category
-    morality table. Yes, that sentence sounds like a philosophy undergraduate,
-    but here it merely means "do not punish YouTube when the tab says Godot".
+    Nó đọc context như một trường các ý nghĩa khả dĩ, không phải bảng đạo đức
+    theo category ứng dụng. Đúng, câu này nghe như sinh viên triết năm nhất,
+    nhưng ở đây nó chỉ có nghĩa là "đừng phạt YouTube khi tab đang nói về Godot".
     """
 
     def infer_activity_intent(self, probe: SemanticContextProbe) -> ActivityIntent:

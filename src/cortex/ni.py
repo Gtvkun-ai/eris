@@ -1,30 +1,27 @@
 from __future__ import annotations
 
 """
-ni.py - semantic Ni for ERIS
-===========================
+ni.py - Ni ngữ nghĩa cho ERIS
+=============================
 
-This version intentionally removes the old productivity-scoring behavior.
+Phiên bản này cố ý loại bỏ hành vi chấm điểm năng suất cũ.
 
-Old disease:
-    focus_kind + keyword + idle -> similarity -> drift -> guard
+Hành vi mới:
+    semantic probe + ngữ cảnh goal đang hoạt động -> orientation signal
+    orientation signal -> bộ chuyển tương thích GoalDriftReport
 
-New behavior:
-    semantic probe + active goal context -> orientation signal
-    orientation signal -> GoalDriftReport compatibility adapter
+Quy tắc thiết kế chính:
+    - YouTube không tự động là né việc.
+    - Giải trí không tự động là lệch goal.
+    - Idle là tư thế/độ mơ hồ, không phải tội lỗi.
+    - Ni có thể gợi ý áp lực can thiệp, nhưng không biến thành cảnh sát.
+    - Ngữ cảnh goal đang hoạt động, nếu có, được đọc như continuity nền,
+      không phải giấy phép để nhắc dai.
 
-Key design rules:
-    - YouTube is not automatically avoidance.
-    - Entertainment is not automatically off-goal.
-    - Idle is posture/ambiguity, not guilt.
-    - Ni may suggest intervention pressure, but it does not become the police.
-    - Active goal context, if available, is read as background continuity,
-      not as permission to nag.
-
-Drop this file in src/cortex/ni.py and add orientation_context.py next to it.
-If coordinator can pass goal_state/goal_context later, use the optional args.
-If not, the file still works with the old public API. Backward compatibility:
-the thing we endure so future humans can suffer slightly less.
+Đặt file này vào src/cortex/ni.py và đặt orientation_context.py cạnh nó.
+Nếu coordinator sau này truyền được goal_state/goal_context, hãy dùng các tham số tùy chọn.
+Nếu chưa, file vẫn chạy với public API cũ. Tương thích ngược:
+thứ ta chịu đựng để loài người tương lai đau khổ ít hơn một chút.
 """
 
 import json
@@ -34,7 +31,7 @@ from typing import Mapping
 
 try:
     from .contracts import GoalDriftReport, TelemetrySnapshot
-except ImportError:  # Useful for isolated tests outside the package.
+except ImportError:  # Hữu ích khi test riêng bên ngoài package.
     from contracts import GoalDriftReport, TelemetrySnapshot  # type: ignore
 
 try:
@@ -48,7 +45,7 @@ try:
         clean_text,
         normalize,
     )
-except ImportError:  # Useful when Ngài runs this file in a flat scratch dir.
+except ImportError:  # Hữu ích khi Ngài chạy file này trong thư mục nháp phẳng.
     from orientation_context import (  # type: ignore
         GoalRelationLabel,
         OrientationInterpreter,
@@ -62,7 +59,7 @@ except ImportError:  # Useful when Ngài runs this file in a flat scratch dir.
 
 
 DEFAULT_FOCUS_BIAS: dict[str, dict[str, float]] = {
-    # Neutral by default. Focus kind is evidence, not a morality table.
+    # Mặc định trung lập. Loại focus là bằng chứng, không phải bảng đạo đức.
     "coding": {"bias": 0.0, "scale": 1.0},
     "documentation": {"bias": 0.0, "scale": 1.0},
     "communication": {"bias": 0.0, "scale": 1.0},
@@ -74,12 +71,12 @@ DEFAULT_FOCUS_BIAS: dict[str, dict[str, float]] = {
 
 
 def _load_focus_bias_table() -> dict[str, dict[str, float]]:
-    """Load legacy calibration but disarm moral bias.
+    """Tải hiệu chỉnh legacy nhưng vô hiệu hóa bias đạo đức.
 
-    Existing ni_focus_config.json may still contain old productivity bias.
-    Keep only tiny calibration ranges:
-        bias  in [-0.03, 0.03]
-        scale in [0.90, 1.10]
+    ni_focus_config.json hiện có vẫn có thể chứa bias năng suất cũ.
+    Chỉ giữ khoảng hiệu chỉnh rất nhỏ:
+        bias  trong [-0.03, 0.03]
+        scale trong [0.90, 1.10]
     """
 
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -117,16 +114,15 @@ FOCUS_BIAS_TABLE = _load_focus_bias_table()
 
 
 class NiEngine:
-    """Reads direction-of-meaning and converts it to GoalDriftReport.
+    """Đọc hướng-nghĩa và chuyển nó thành GoalDriftReport.
 
-    Public methods keep the old signature and add optional goal context:
+    Các public method giữ signature cũ và thêm ngữ cảnh goal tùy chọn:
         evaluate_autonomous(..., goal_state=None, goal_context=None)
         evaluate_chat(..., goal_state=None, goal_context=None)
 
-    goal_state can be the new GoalPersistenceState. goal_context can be a dict or
-    a render_ni_context string. This makes the integration path cheap instead of
-    requiring a ceremony, because apparently software architecture must survive
-    actual usage.
+    goal_state có thể là GoalPersistenceState mới. goal_context có thể là dict hoặc
+    chuỗi render_ni_context. Cách này làm đường tích hợp rẻ hơn thay vì đòi một nghi lễ,
+    vì hiển nhiên kiến trúc phần mềm phải sống sót qua việc dùng thật.
     """
 
     def __init__(self) -> None:
@@ -203,11 +199,11 @@ class NiEngine:
         )
 
     def _extract_goal_context(self, *, goal_state: object = None, goal_context: object = None) -> dict[str, object]:
-        """Read active goal data from either object, dict, or compact text.
+        """Đọc dữ liệu goal đang hoạt động từ object, dict hoặc text nén.
 
-        The new GoalPersistenceState exposes render_ni_context() and fields such
-        as intervention_permission. If the old state is passed, this still reads
-        strength/urgency/summary and treats intervention permission cautiously.
+        GoalPersistenceState mới cung cấp render_ni_context() và các field như
+        intervention_permission. Nếu state cũ được truyền vào, hàm này vẫn đọc
+        strength/urgency/summary và xử lý quyền can thiệp một cách thận trọng.
         """
 
         data: dict[str, object] = {
@@ -223,8 +219,8 @@ class NiEngine:
                 data["summary"] = clean_text(getattr(goal_state, "summary", ""), limit=180)
                 data["goal_type"] = clean_text(getattr(goal_state, "goal_type", ""), limit=80)
                 data["strength"] = clamp01(getattr(goal_state, "strength", 0.0))
-                # Old state has no intervention_permission. Default to low, not zero, so active
-                # technical goals are visible but not naggy.
+                # Trạng thái cũ không có intervention_permission. Mặc định thấp, không phải 0, để goal kỹ thuật
+                # đang hoạt động vẫn thấy được nhưng không thành nhắc dai.
                 data["intervention_permission"] = clamp01(getattr(goal_state, "intervention_permission", 0.22))
 
         if isinstance(goal_context, Mapping):
@@ -243,9 +239,9 @@ class NiEngine:
         return data
 
     def _parse_goal_context_text(self, text: str) -> dict[str, object]:
-        """Parse render_ni_context() text from GoalPersistenceState.
+        """Phân tích chuỗi render_ni_context() từ GoalPersistenceState.
 
-        Expected style:
+        Dạng mong đợi:
             goal_signal: active=1; type=concrete_task; strength=0.72; ...
         """
 
@@ -328,7 +324,7 @@ class NiEngine:
         return clamp(float(coherence) * scale + bias, 0.0, 1.0)
 
     def _label_drift(self, drift_score: float) -> str:
-        # Compatibility labels. Semantics changed: drift_score means goal_conflict, not productivity loss.
+        # Nhãn tương thích. Ngữ nghĩa đã đổi: drift_score nghĩa là goal_conflict, không phải mất năng suất.
         if drift_score >= 0.75:
             return "nghiêm trọng"
         if drift_score >= 0.55:
@@ -384,7 +380,7 @@ class NiEngine:
         return "giữ quan sát mềm; Ni cung cấp hướng, không ép can thiệp."
 
     # ------------------------------------------------------------------
-    # Legacy private adapters so old tests/private callers fail less loudly.
+    # Bộ chuyển riêng kiểu kế thừa để test/caller cũ đỡ nổ ầm ĩ.
     # ------------------------------------------------------------------
 
     def _estimate_attention_signal(self, *, snapshot: TelemetrySnapshot, channels: dict[str, str]) -> tuple[float, dict[str, float], list[str]]:
@@ -417,7 +413,7 @@ class NiEngine:
         return self._adjust_coherence(raw_similarity, focus_kind=focus_kind)
 
     def _estimate_confidence(self, *, snapshot: TelemetrySnapshot, channels: dict[str, str], signal_channels: dict[str, float], drift_score: float) -> float:
-        # This is only for legacy callers. Real confidence comes from OrientationInterpreter.
+        # Chỉ dành cho caller kế thừa. Độ tin cậy thật đến từ OrientationInterpreter.
         probe = SemanticContextProbe(
             focus_kind=getattr(snapshot, "active_window_kind", "") or "general",
             focus_text=channels.get("focus", ""),
@@ -482,10 +478,10 @@ class NiEngine:
 
 
 class NiStateMachine:
-    """Temporal smoothing over semantic goal conflict.
+    """Làm mượt theo thời gian trên xung đột goal ngữ nghĩa.
 
-    Entertainment/play/recovery does not get downgraded by category. The state
-    follows repeated semantic conflict and guard flags only.
+    Giải trí/chơi/nghỉ không bị hạ điểm chỉ vì category. State chỉ đi theo
+    xung đột ngữ nghĩa lặp lại và các guard flag.
     """
 
     def __init__(

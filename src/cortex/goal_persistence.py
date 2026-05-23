@@ -1,26 +1,26 @@
 from __future__ import annotations
 
 """
-goal_persistence.py - durable background thread memory for ERIS
-===============================================================
+goal_persistence.py - bộ nhớ luồng nền bền cho ERIS
+====================================================
 
-This file replaces the old "long text / keyword => active goal" behavior.
+File này thay thế hành vi cũ "text dài / keyword => goal đang hoạt động".
 
-Old disease:
-    - any long-ish user text became goal-worthy.
-    - direct user message got strength=0.72 too easily.
-    - Ni drift inflated urgency, so bad Ni became persistent nagging.
-    - token overlap >= 2 merged unrelated ERIS technical threads.
-    - closure detection could misread "chưa xong" as "xong".
+Căn bệnh cũ:
+    - bất kỳ text user hơi dài nào cũng bị xem là đáng thành goal.
+    - message trực tiếp của user quá dễ nhận strength=0.72.
+    - Ni drift thổi phồng urgency, nên Ni tệ biến thành nhắc dai bền vững.
+    - token overlap >= 2 merge các thread kỹ thuật ERIS không liên quan.
+    - closure detection có thể đọc nhầm "chưa xong" thành "xong".
 
-New model:
+Model mới:
     User text / thought stream / Ti signal -> GoalCandidate -> merge/decay
 
-The key distinction:
-    active background thread != permission to interrupt.
+Phân biệt then chốt:
+    luồng nền đang hoạt động != quyền được chen ngang.
 
-ERIS may keep continuity without bringing it up. Yes, memory without nagging.
-A miracle apparently unavailable to most productivity apps.
+ERIS có thể giữ continuity mà không lôi nó ra nói. Đúng, trí nhớ không nhắc dai.
+Một phép màu có vẻ vẫn ngoài tầm với của đa số app năng suất.
 """
 
 import hashlib
@@ -41,7 +41,7 @@ try:
         tokens,
         unique_recent,
     )
-except ImportError:  # Useful for flat scratch testing.
+except ImportError:  # Hữu ích khi test trong thư mục nháp phẳng.
     from orientation_context import (  # type: ignore
         GoalTextKind,
         GoalTextSignal,
@@ -68,29 +68,29 @@ def _as_tuple(value: object, *, limit: int = 8) -> tuple[str, ...]:
 
 @dataclass(slots=True)
 class GoalPersistenceState:
-    """One durable background thread.
+    """Một luồng nền bền.
 
-    Important fields:
+    Các field quan trọng:
         strength:
-            How strongly this thread should remain available in memory.
+            Luồng này nên còn sẵn trong memory mạnh đến mức nào.
 
         urgency:
-            How soon it may matter again. Urgency is not a command to speak.
+            Nó có thể sớm quan trọng lại đến mức nào. Urgency không phải lệnh phải nói.
 
         intervention_permission:
-            Whether ERIS may proactively bring it up later.
-            This is intentionally separate from strength.
+            ERIS có được phép chủ động nhắc nó về sau hay không.
+            Field này cố ý tách khỏi strength.
 
         coherence:
-            How stable/relevant the thread still seems after recent updates.
+            Luồng này sau các update gần đây còn ổn định/liên quan đến mức nào.
     """
 
     goal_id: str = ""
     summary: str = ""
     source: str = ""
-    status: str = "empty"  # empty | active | stale | closed
+    status: str = "empty"  # giá trị: empty | active | stale | closed
 
-    # Legacy-compatible numeric fields.
+    # Các trường số tương thích legacy.
     strength: float = 0.0
     urgency: float = 0.0
     drift: float = 0.0
@@ -103,7 +103,7 @@ class GoalPersistenceState:
     evidence: tuple[str, ...] = ()
     recent_summaries: tuple[str, ...] = ()
 
-    # New semantic fields.
+    # Các trường ngữ nghĩa mới.
     goal_type: str = ""
     intent: str = ""
     confidence: float = 0.0
@@ -127,10 +127,10 @@ class GoalPersistenceState:
 
     @property
     def can_intervene(self) -> bool:
-        """Whether ERIS may proactively mention this goal.
+        """ERIS có được phép chủ động nhắc goal này hay không.
 
-        A remembered thread can be active while this returns False. That is the
-        whole point. Continuity is not a leash. Terrifyingly subtle, yes.
+        Một luồng được nhớ có thể active trong khi hàm này trả False. Đó mới là
+        toàn bộ ý chính. Continuity không phải dây xích. Tinh tế đến đáng sợ, đúng.
         """
 
         effective_confidence = self.confidence
@@ -169,7 +169,7 @@ class GoalPersistenceState:
             "next_hint": self.next_hint,
             "evidence": list(self.evidence),
             "recent_summaries": list(self.recent_summaries),
-            # New fields.
+            # Các trường mới.
             "goal_type": self.goal_type,
             "intent": self.intent,
             "confidence": round(float(self.confidence), 3),
@@ -187,7 +187,7 @@ class GoalPersistenceState:
         summary = clean_text(data.get("summary"), limit=180)
         status = clean_text(data.get("status"), limit=40) or "empty"
         strength = clamp01(data.get("strength", 0.0))
-        # Backward compatibility: old states do not have confidence/actionability.
+        # Tương thích ngược: trạng thái cũ không có confidence/actionability.
         default_conf = 0.50 if summary and status == "active" and strength >= 0.18 else 0.0
         default_actionability = 0.35 if summary and status == "active" else 0.0
         return cls(
@@ -217,11 +217,11 @@ class GoalPersistenceState:
         )
 
     def render_prompt_context(self) -> str:
-        """Text for LLM prompt.
+        """Văn bản dành cho prompt LLM.
 
-        This must not sound like a command. It is continuity context, not a
-        screen proof, not a duty alarm, and definitely not a permission slip for
-        ERIS to become a hall monitor with JSON.
+        Đoạn này không được nghe như mệnh lệnh. Nó là context continuity, không phải
+        bằng chứng màn hình, không phải chuông báo nhiệm vụ, và chắc chắn không phải
+        giấy phép để ERIS biến thành giám thị hành lang cầm JSON.
         """
 
         if not self.active:
@@ -240,10 +240,7 @@ class GoalPersistenceState:
         )
 
     def render_ni_context(self) -> str:
-        """Compact machine-readable goal context for Ni.
-
-        Pass this to NiEngine.evaluate_*(goal_context=state.render_ni_context())
-        if Ngài does not want to pass the whole state object.
+        """Ngữ cảnh goal nén, máy đọc được, dành cho Ni.
         """
 
         if not self.active:
@@ -278,7 +275,7 @@ class GoalCandidate:
 
 
 class GoalPersistenceEngine:
-    """Promotes true recurring cognitive pull into a durable background thread."""
+    """Nâng lực kéo nhận thức lặp lại thật thành một luồng nền bền."""
 
     def update(
         self,
@@ -319,7 +316,7 @@ class GoalPersistenceEngine:
         return self._merge(base, candidate, now=current_time)
 
     # ------------------------------------------------------------------
-    # Candidate generation
+    # Sinh ứng viên
     # ------------------------------------------------------------------
 
     def _candidate(
@@ -355,7 +352,7 @@ class GoalPersistenceEngine:
         return None
 
     def _from_user_signal(self, signal: GoalTextSignal, *, channel: str, ni_report) -> GoalCandidate:
-        # Ni may add only a tiny urgency bump if it already has intervention pressure.
+        # Ni chỉ được cộng urgency rất nhỏ nếu nó đã có áp lực can thiệp.
         ni_bump = 0.0
         if bool(getattr(ni_report, "should_raise_guard", False)):
             ni_bump = min(0.06, clamp01(getattr(ni_report, "drift_score", 0.0)) * 0.06)
@@ -465,7 +462,7 @@ class GoalPersistenceEngine:
         if not content:
             return None
 
-        # Ti/Ni can preserve a thread, not invent a strong goal from telemetry.
+        # Ti/Ni có thể giữ một thread, không được bịa goal mạnh từ telemetry.
         signal = infer_goal_text_signal(content, channel="autonomous")
         anchors = signal.anchors or extract_anchors(content)
         if not anchors and len(tokens(content)) < 6:
@@ -493,7 +490,7 @@ class GoalPersistenceEngine:
         )
 
     # ------------------------------------------------------------------
-    # Merge / decay / close
+    # Gộp / suy giảm / đóng
     # ------------------------------------------------------------------
 
     def _merge(self, state: GoalPersistenceState, candidate: GoalCandidate, *, now: float) -> GoalPersistenceState:
@@ -504,8 +501,8 @@ class GoalPersistenceEngine:
         match = self._match_score(state, candidate) if state.active else 0.0
         matched = state.active and match >= 0.58
 
-        # If a new strong direct task arrives, let it replace the old active thread.
-        # If a weak internal candidate arrives while a strong goal exists, keep the old one.
+        # Nếu một task trực tiếp mới và mạnh xuất hiện, cho nó thay thread active cũ.
+        # Nếu ứng viên nội bộ yếu xuất hiện khi goal mạnh đang tồn tại, giữ cái cũ.
         if state.active and not matched:
             old_hold = state.strength * 0.78 + state.confidence * 0.16
             new_push = candidate.strength * 0.78 + candidate.replace_priority * 0.22
@@ -664,7 +661,7 @@ class GoalPersistenceEngine:
             return "continue the review thread if similar context returns"
         return "preserve continuity quietly if context reconnects"
 
-    # Legacy-looking helpers retained so old tests/private calls do not explode.
+    # Hàm hỗ trợ trông như kế thừa được giữ lại để test/lời gọi private cũ không phát nổ.
     def _looks_goal_worthy(self, text: str) -> bool:
         return infer_goal_text_signal(text, channel="chat").should_persist
 
