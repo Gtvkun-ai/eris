@@ -91,11 +91,11 @@ class PromptContextBuilderMixin:
         return self._build_thought_stream_context()
 
     def _build_memory_context(self, snapshot=None, memory_resonance=None) -> str:
-        renderer = getattr(self.memory_store, "render_context", None)
+        renderer = getattr(getattr(self, "memory_core", None), "render_context", None)
         context = ""
-        if self.memory_state is not None and callable(renderer):
+        if callable(renderer):
             try:
-                context = renderer(self.memory_state, snapshot=snapshot)
+                context = renderer(self._memory_query_from_snapshot(snapshot), snapshot=snapshot)
             except Exception as exc:
                 self.logger.warning("Memory context render error: %s", exc)
         report = memory_resonance if memory_resonance is not None else getattr(self, "active_memory_resonance", None)
@@ -246,7 +246,7 @@ class PromptContextBuilderMixin:
 
         if report.should_greet:
             self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
-            memory_resonance = self._activate_memory_resonance(
+            memory_resonance = self._recall_memory_resonance(
                 snapshot=snapshot,
                 channel="session_ritual",
                 fragments=tuple(
@@ -335,10 +335,7 @@ class PromptContextBuilderMixin:
         )
         self._set_internal_state(updated_state)
         if self.memory_state is not None:
-            try:
-                self.memory_store.save_state(self.memory_state)
-            except Exception:
-                pass
+            self._save_memory_state()
 
         return report
 

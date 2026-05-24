@@ -662,7 +662,9 @@ class MicroLinePolicy:
         if line_type in self.MICRO_TYPES:
             if self._looks_like_unaccented_vietnamese(text):
                 issues.append(ValidationIssue("vietnamese_requires_diacritics", "rewriteable"))
-            if word_count < 6 and not self._has_clear_short_meaning(
+            if word_count < 6 and (
+                self._looks_like_unaccented_vietnamese(text)
+                or not self._has_clear_short_meaning(
                 text,
                 anchor_source=anchor_source,
                 anchor_text=anchor_text,
@@ -670,6 +672,7 @@ class MicroLinePolicy:
                 session_context=session_context,
                 screen_evidence=screen_evidence,
                 line_type=line_type,
+                )
             ):
                 issues.append(ValidationIssue("micro_line_too_short_without_clear_meaning", "rewriteable"))
 

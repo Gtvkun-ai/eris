@@ -11,7 +11,7 @@ from cortex import FeRenderer, NiEngine, TiGovernor
 from domain import Decision
 from llm import LlmService
 from llm.process_manager import LlamaServerProcessManager
-from memory import MemoryStore
+from memory import MemoryCognitionCore
 from parser_grounding import DecisionParser
 from runtime.coordinator import RuntimeCoordinator
 from telemetry import TelemetryService
@@ -75,10 +75,13 @@ class AttentionOverseer:
         self.logger.info("Mô hình đã sẵn sàng.")
 
         self.transport = UdpTransport("127.0.0.1", 4242, "127.0.0.1", 4243)
-        self.memory_store = MemoryStore("long_term_memory.json")
+        self.memory_core = MemoryCognitionCore(os.path.join(project_root, "memory_core"))
         try:
-            memory_state = self.memory_store.load_state()
-            long_term_memory = self.memory_store.recall_texts(memory_state)
+            memory_state = self.memory_core.load()
+            packet = self.memory_core.recall("")
+            long_term_memory = []
+            for name in ("repair", "procedural", "semantic", "relational", "affective_residue", "episodic"):
+                long_term_memory.extend(str(item) for item in getattr(packet, name, ()) or ())
             if long_term_memory:
                 self.memory_logger.info("Đã nạp %s mảnh ký ức cốt lõi.", len(long_term_memory))
         except Exception as exc:
@@ -107,7 +110,7 @@ class AttentionOverseer:
             ni_engine=self.ni_engine,
             ti_governor=self.ti_governor,
             fe_renderer=self.fe_renderer,
-            memory_store=self.memory_store,
+            memory_core=self.memory_core,
             body_running_fn=self._is_body_running,
             action_executor=self.action_executor,
             action_router=self.action_router,
