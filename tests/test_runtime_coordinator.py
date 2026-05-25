@@ -14,6 +14,7 @@ from cortex.contracts import CognitiveBroadcast, CognitiveMomentum, ThoughtStrea
 from cortex.internal_state import PersistentInternalState
 from memory import MemoryCognitionCore
 from runtime.coordinator import FALLBACK_BY_INTENT, RuntimeCoordinator
+from runtime.source_grounding import SourceGroundingEngine
 
 
 class _DummyLogger:
@@ -749,6 +750,54 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "direct_action")
         self.assertIn("hỏi lại cùng một ý", coordinator.transport.sent[-1]["text"].lower())
+
+    def test_chat_source_grounding_preempts_filename_only_without_file_evidence(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._handle_incoming({"type": "chat", "message": "xem file main.py dang loi gi"})
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 0)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "source_grounding_preempt")
+        self.assertIn("file", coordinator.transport.sent[-1]["text"].lower())
+        self.assertEqual(coordinator.last_cognitive_frame.final_decision["grounding_preempt_mode"], "filename_only")
+
+    def test_chat_source_grounding_preempts_deictic_without_vision(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._handle_incoming({"type": "chat", "message": "loi nay la gi"})
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 0)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "source_grounding_preempt")
+        self.assertIn("màn hình", coordinator.transport.sent[-1]["text"].lower())
+        self.assertEqual(coordinator.last_cognitive_frame.final_decision["grounding_preempt_mode"], "deictic_without_vision")
+
+    def test_live_observation_query_bypasses_repeat_guard_when_screenshot_available(self):
+        coordinator = self._make_coordinator(telemetry_service=_ScreenTelemetry())
+
+        coordinator._handle_incoming({"type": "chat", "message": "man hinh nay la gi"})
+        coordinator._handle_incoming({"type": "chat", "message": "man hinh nay la gi"})
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 2)
+        self.assertNotEqual(coordinator.transport.sent[-1]["parse_mode"], "repeat_guard")
+        self.assertIn("[SOURCE_GROUNDING]", coordinator.llm_service.last_chat_kwargs["grounding_context"])
+
+    def test_chat_grounding_guard_rewrites_screen_claim_without_evidence(self):
+        coordinator = self._make_coordinator()
+        report = SourceGroundingEngine().analyze(
+            "Lỗi này là gì",
+            attach_to_frame=False,
+        )
+        frame = SimpleNamespace(source_grounding=report)
+        decision = Decision(
+            text="Tôi thấy một nút Save đang mở ở bên phải.",
+            animation="stand",
+        )
+
+        guarded = coordinator._apply_chat_final_guards(decision, user_text="loi nay la gi", frame=frame)
+
+        self.assertEqual(guarded.parse_mode, "source_grounding_guard")
+        self.assertIn("màn hình", guarded.text.lower())
+        self.assertIn("chat_grounding_guard", guarded.debug_trace)
 
     def test_chat_final_guard_allows_sharp_identity_boundary_without_real_risk(self):
         coordinator = self._make_coordinator()

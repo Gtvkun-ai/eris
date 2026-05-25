@@ -483,6 +483,29 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("conversation_state: mode=repair", system_prompt)
         self.assertIn("Chat contract", system_prompt)
 
+    def test_chat_reply_includes_grounding_context_block(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"Toi can them evidence.","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_chat_reply(
+            chat_history=[],
+            user_message="Xem file main.py giúp tôi",
+            grounding_context="[SOURCE_GROUNDING]\nprimary_source: uploaded_file\nmissing_evidence: file_evidence\n[/SOURCE_GROUNDING]",
+        )
+
+        system_prompt = client.calls[0]["messages"][0]["content"]
+        self.assertIn("GROUNDING CONTEXT", system_prompt)
+        self.assertIn("primary_source: uploaded_file", system_prompt)
+        self.assertIn("missing_evidence: file_evidence", system_prompt)
+
     def test_directive_wraps_plain_text_into_safe_json_if_repair_fails(self):
         client = _FakeClient(
             [

@@ -200,6 +200,34 @@ class MicroLinePolicyTests(unittest.TestCase):
             (),
         )
 
+    def test_screen_observation_requires_anchor_and_overlap(self):
+        policy = MicroLinePolicy()
+
+        self.assertIn(
+            "screen_observation_requires_anchor",
+            policy.validate_text(allowed_line_type="screen_observation", text="Tôi thấy traceback đang mở."),
+        )
+        self.assertIn(
+            "screen_observation_not_grounded:screen_evidence",
+            policy.validate_text(
+                allowed_line_type="screen_observation",
+                text="Tôi thấy nút Save ở bên phải.",
+                anchor_source="screen_evidence",
+                anchor_text="Terminal traceback đang mở",
+                screen_evidence="Terminal traceback đang mở",
+            ),
+        )
+        self.assertEqual(
+            policy.validate_text(
+                allowed_line_type="screen_observation",
+                text="Tôi thấy terminal traceback vẫn đang mở.",
+                anchor_source="screen_evidence",
+                anchor_text="Terminal traceback đang mở",
+                screen_evidence="Terminal traceback đang mở",
+            ),
+            (),
+        )
+
     def test_relational_permission_rewrites_direct_attachment_without_erasing_meaning(self):
         policy = MicroLinePolicy()
         raw = "Ngài đang bận rộn với những dòng tin nhắn hơn là với tôi sao?"

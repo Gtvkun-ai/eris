@@ -75,8 +75,8 @@ class FrameBuilderMixin:
                 "complete",
                 "completed",
                 "xong",
-                "Ä‘Ã£ xong",
-                "giáº£i quyáº¿t",
+                "đã xong",
+                "giải quyết",
             )
         )
     def _build_event_disturbances(
@@ -276,7 +276,7 @@ class FrameBuilderMixin:
     def _make_percept_event(
         self,
         *,
-        #Nháº­n cÃ¡c field
+        #Nhận các field
         kind: str,
         content: str,
         timestamp: str,
@@ -301,21 +301,21 @@ class FrameBuilderMixin:
         )
     def _telemetry_event_privacy_level(self, kind: str) -> str:
         if kind == "resource_pressure":
-            return "system_metric" #chá»‰ sá»‘ há»‡ thá»‘ng kiá»ƒu CPU/RAM
-        if kind == "idle_state": #tráº¡ng thÃ¡i hoáº¡t Ä‘á»™ng/nhÃ n rá»—i
+            return "system_metric" #chỉ số hệ thống kiểu CPU/RAM
+        if kind == "idle_state": #trạng thái hoạt động/nhàn rỗi
             return "activity_state"
-        return "local_context" #ngá»¯ cáº£nh cá»¥c bá»™ nhÆ° cá»­a sá»• Ä‘ang active, focus summary, recent events, evidence
+        return "local_context" #ngữ cảnh cục bộ như cửa sổ đang active, focus summary, recent events, evidence
     def _telemetry_event_novelty_hint(self, kind: str, content: str) -> str:
-        if kind == "resource_pressure": #threshold_crossed vÆ°á»£t ngÆ°á»¡ng
+        if kind == "resource_pressure": #threshold_crossed vượt ngưỡng
             return "threshold_crossed"
         if kind == "idle_state":
             return "duration_threshold"
         if kind in {"recent_event", "evidence"}:
             if kind == "recent_event" and self._is_generic_screen_event(content):
-                return "routine_telemetry" #telemetry láº·p/nháº¡t, nhÆ° "Ä‘Ã£ má»Ÿ Chrome" hay "Ä‘ang á»Ÿ desktop"
+                return "routine_telemetry" #telemetry lặp/nhạt, như "đã mở Chrome" hay "đang ở desktop"
             if kind == "evidence" and self._is_generic_screen_evidence(content):
-                return "routine_telemetry" # telemetry láº·p/nháº¡t
-            return "concrete_telemetry" #telemetry cá»¥ thá»ƒ, Ä‘Ã¡ng chÃº Ã½ hÆ¡n
+                return "routine_telemetry" # telemetry lặp/nhạt
+            return "concrete_telemetry" #telemetry cụ thể, đáng chú ý hơn
         if kind in {"active_window", "focus_context"}:
             return "ambient_context"
         return "routine"
@@ -578,7 +578,7 @@ class FrameBuilderMixin:
         if len(percept.content) >= 28:
             score += 0.04
             reason_parts.append("specific")
-        if any(token in lowered for token in ("error", "failed", "lá»—i", "cpu", "ram", "Ä‘Ã£ Ä‘á»c", "message", "tin nháº¯n")):
+        if any(token in lowered for token in ("error", "failed", "lỗi", "cpu", "ram", "đã đọc", "message", "tin nhắn")):
             score += 0.08
             reason_parts.append("charged")
         if percept.kind == "recent_event" and self._is_generic_screen_event(percept.content):
@@ -1573,6 +1573,7 @@ class FrameBuilderMixin:
 
         self._ensure_internal_state()
         internal_state = self._get_internal_state()
+        self.logger.info("[session_ritual] collecting startup context")
 
         snapshot = self.telemetry_service.capture_snapshot(
             mood_score=self.mood_score,
@@ -1595,8 +1596,17 @@ class FrameBuilderMixin:
             thought_stream_report=thought_stream_report,
             social_presence_event=social_presence_event,
         )
+        self.logger.info(
+            "[session_ritual] report restored=%s | presence=%s | continuity=%s | greet=%s | tone=%s",
+            int(bool(report.restored)),
+            int(bool(report.presence_restored)),
+            int(bool(report.continuity_restored)),
+            int(bool(report.should_greet)),
+            report.tone,
+        )
 
         if report.should_greet:
+            self.logger.info("[session_ritual] generating startup greeting")
             self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
             memory_resonance = self._recall_memory_resonance(
                 snapshot=snapshot,
@@ -1657,14 +1667,14 @@ class FrameBuilderMixin:
                 self.logger.warning("[session_ritual] LLM greeting failed: %s", exc)
                 greeting_source = "fallback_after_llm_error"
                 decision = Decision(
-                    text="NgÃ i quay láº¡i rá»“i.",
+                    text="Ngài quay lại rồi.",
                     animation="stand",
                     debug_trace="session_ritual_layer",
                 )
             if not decision.text.strip():
                 greeting_source = "fallback_after_empty_llm"
                 decision = Decision(
-                    text="NgÃ i quay láº¡i rá»“i.",
+                    text="Ngài quay lại rồi.",
                     animation="stand",
                     debug_trace="session_ritual_layer",
                 )

@@ -666,6 +666,16 @@ class StateCommitter:
                     )
                 )
 
+        semantic_issue = self._semantic_grounding_issue(
+            final_target=final_target,
+            content=content,
+            metadata=metadata,
+            frame=frame,
+        )
+        if semantic_issue is not None:
+            issues.append(semantic_issue)
+            return decision
+
         # 6. Private raw evidence cần quyền raw_evidence_storable.
         if self.config.enforce_private_raw_permission:
             if self._contains_private_raw_evidence(request, evidence_ids, evidence_index):
@@ -942,7 +952,7 @@ class StateCommitter:
             _get(request, "raw_or_inferred", metadata.get("raw_or_inferred", metadata.get("claim_kind", ""))) or ""
         ).lower()
         if req_privacy in {"private", "sensitive"} and req_raw in {"raw", "raw_fact", "raw_evidence"}:
-            return True
+                return True
 
         # Sau đó đối chiếu evidence trong frame.
         for evidence_id in evidence_ids:
@@ -952,8 +962,58 @@ class StateCommitter:
             privacy = str(_get(item, "privacy_level", "normal") or "normal").lower()
             raw_kind = str(_get(item, "raw_or_inferred", "") or "").lower()
             if privacy in {"private", "sensitive"} and raw_kind == "raw":
-                return True
+                    return True
         return False
+
+    def _semantic_grounding_issue(
+        self,
+        *,
+        final_target: str,
+        content: Any,
+        metadata: Mapping[str, Any],
+        frame: Any,
+    ) -> CommitValidationIssue | None:
+        if final_target != "semantic_memory":
+            return None
+
+        semantic_source = ""
+        if isinstance(content, Mapping):
+            semantic_source = str(content.get("source", "") or metadata.get("semantic_source", "") or "")
+        else:
+            semantic_source = str(metadata.get("semantic_source", "") or metadata.get("source", "") or "")
+        semantic_source = semantic_source.strip().lower()
+
+        if semantic_source in {"", "explicit_user_statement", "user_text", "user_statement"}:
+            if metadata.get("source_grounded") is False or metadata.get("ungrounded") is True:
+                return CommitValidationIssue(
+                    code="semantic_fact_ungrounded",
+                    message="Semantic fact bị metadata đánh dấu ungrounded; không lưu vào semantic_memory.",
+                    severity="warning",
+                )
+            return None
+
+        if metadata.get("source_grounded") is False or metadata.get("ungrounded") is True:
+            return CommitValidationIssue(
+                code="semantic_fact_ungrounded",
+                message="Semantic fact suy diễn không có grounding đủ chắc; reject để tránh memory bịa.",
+                severity="warning",
+            )
+
+        grounding = None
+        if frame is not None:
+            grounding = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
+        missing = set(getattr(grounding, "missing_evidence", ()) or ())
+        preempt_mode = str(getattr(grounding, "preempt_mode", "") or "")
+        if preempt_mode or (missing & {"file_evidence", "screen_evidence", "web_access_or_search_result"}):
+            return CommitValidationIssue(
+                code="semantic_fact_ungrounded",
+                message=(
+                    "Semantic fact được trích từ turn đang thiếu grounding hiện tại "
+                    f"(preempt_mode={preempt_mode or 'none'}; missing={','.join(sorted(missing)) or 'none'})."
+                ),
+                severity="warning",
+            )
+        return None
 
     def _frame_permission_flag(self, frame: Any, field_name: str, *, default: bool) -> bool:
         permission = _get(frame, "permission", None)

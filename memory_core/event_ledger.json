@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "id": "evt_1209370e24104c36",
+      "timestamp": 1779624253.8345878,
+      "iso_timestamp": "2026-05-24T19:04:13+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-1', 'channel': 'chat', 'timestamp': '19:03', 'seen': ['state_committer.py đang làm gì?'], 'said': 'state_committer.py đang thực hiện việc ghi nhận và lưu trữ các trạng thái hiện tại của tôi vào bộ nhớ để duy trì tính liên tục.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3905023364485981, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:19:03:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_4437e8cd5b224c91",
+      "timestamp": 1779624331.188449,
+      "iso_timestamp": "2026-05-24T19:05:31+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-2', 'channel': 'chat', 'timestamp': '19:05', 'seen': ['đoạn đang mở làm gì'], 'said': 'Tôi không rõ Ngài đang muốn đề cập đến một đoạn mã cụ thể nào hay một tiến trình nào khác trong bối cảnh này không?', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3799104361370716, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:19:05:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_34b197ab5543475e",
+      "timestamp": 1779624396.536423,
+      "iso_timestamp": "2026-05-24T19:06:36+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-3', 'channel': 'chat', 'timestamp': '19:06', 'seen': ['@dataclass(slots=True)class CommitBatchReport: \"\"\"Audit report cho một lần StateCommitter.commit(...).\"\"\" frame_id: Optional[str] requested: int = 0 accepted: int = 0 committed: int = 0 tentative: int = 0 rejected: int = 0 errors: int = 0 decisions: list[CommitDecision] = field(default_factory=list) started_at: float = field(default_factory=time.time) finished_at: Optional[float] = None @property def duration_ms(self) -> float: end = self.finished_at if self.finished_at is not None else time.time() return max(0.0, (end - self.started_at) * 1000.0) def finish(self) -> \"CommitBatchReport\": self.finished_at = time.time() self.requested = len(self.decisions) self.accepted = sum(1 for d in self.decisions if d.accepted) self.committed = sum(1 for d in self.decisions if d.committed) self.tentative = sum(1 for d in self...",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:19:06:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_85c72c243e954b59",
+      "timestamp": 1779624455.345713,
+      "iso_timestamp": "2026-05-24T19:07:35+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-4', 'channel': 'chat', 'timestamp': '19:07', 'seen': ['tôi đang code gì vậy?'], 'said': 'Ngài đang xây dựng cấu trúc báo cáo kiểm toán cho quá trình lưu trữ trạng thái của tôi.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3765303738317757, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:19:07:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_9eea7136dfac47ab",
+      "timestamp": 1779624481.069557,
+      "iso_timestamp": "2026-05-24T19:08:01+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-5', 'channel': 'chat', 'timestamp': '19:08', 'seen': ['tôi đang code gì vậy?'], 'said': 'Ngài đang lặp lại đúng cùng một câu. Tôi đã nhận câu đó rồi. Nếu muốn tôi nói khác đi, hãy chỉ rõ phần nào Ngài chưa hiểu.', 'outcome': 'repeat_guard', 'tags': ['chat', 'user_requested', 'refuse', 'user_message'], 'system_action': '', 'salience': 0.2879789719626168, 'parse_mode': 'repeat_guard'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:19:08:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_716fb33fca844b21",
+      "timestamp": 1779624515.5256586,
+      "iso_timestamp": "2026-05-24T19:08:35+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-6', 'channel': 'chat', 'timestamp': '19:08', 'seen': ['tôi đang code gì á, bạn xem đi'], 'said': 'Ngài đang xây dựng cấu trúc báo cáo kiểm toán cho quá trình lưu trữ trạng thái của tôi.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3765303738317757, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:19:08:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_1e4c5e6d2c554111",
+      "timestamp": 1779629206.1637986,
+      "iso_timestamp": "2026-05-24T20:26:46+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-6', 'channel': 'chat', 'timestamp': '20:26', 'seen': ['state_committer.py đang làm gì?'], 'said': 'state_committer.py đang thực hiện việc ghi nhận và lưu trữ các trạng thái hiện tại của tôi vào bộ nhớ để duy trì tính liên tục.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3905023364485981, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:20:26:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_107a816bd0cf4637",
+      "timestamp": 1779629244.4963768,
+      "iso_timestamp": "2026-05-24T20:27:24+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-7', 'channel': 'chat', 'timestamp': '20:27', 'seen': ['đoạn đang mở làm gì'], 'said': 'Tôi không rõ Ngài đang muốn đề cập đến một đoạn mã cụ thể nào hay một tiến trình nào khác trong bối cảnh này không?', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3799104361370716, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:20:27:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_62e1ba76eaf14c5e",
+      "timestamp": 1779629289.351129,
+      "iso_timestamp": "2026-05-24T20:28:09+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-8', 'channel': 'chat', 'timestamp': '20:27', 'seen': ['tôi đang code gì á, bạn xem đi'], 'said': 'Ngài đang xây dựng cấu trúc báo cáo kiểm toán cho quá trình lưu trữ trạng thái của tôi.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3765303738317757, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:20:27:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    }
+  ]
+}

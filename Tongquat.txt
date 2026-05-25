@@ -9,6 +9,14 @@ Mã hóa: UTF-8
 TÓM TẮT CÁC CHỨC NĂNG MỚI
 -------------------------
 
+Cập nhật grounding chat path và anti-hallucination:
+- `source_grounding` đã được nối vào chat path để tạo `grounding_source`, `preempt_mode`, `missing_evidence`, `confidence_cap` và log trước khi reply. Giai đoạn này ưu tiên quan sát log trước, chỉ preempt ở 2 trường hợp hẹp: `filename_only` và `deictic_without_vision`.
+- Prompt chat có thêm block `GROUNDING CONTEXT` để model thấy rõ turn hiện tại đang dựa trên file, màn hình, web hay đang thiếu anchor/evidence.
+- Sau sinh có thêm post-generation guard để kéo reply về fallback nếu LLM vẫn khẳng định nội dung file/màn hình/web khi report grounding nói rằng chưa đủ bằng chứng.
+- Repeat guard được mở bypass cho live observation query nếu turn thực sự có screen evidence/vision anchor, tránh chặn nhầm các câu hỏi đang nhìn màn hình thật.
+- `MicroLinePolicy` siết `screen_observation`: nếu thiếu anchor hoặc claim màn hình không grounded thì không cho đi qua.
+- Semantic commit đã bị thắt chặt hơn: recorder gắn grounding metadata vào semantic fact, và `StateCommitter` reject semantic commit nếu fact extracted nhưng ungrounded hoặc turn hiện tại đang bị đánh dấu thiếu grounding.
+
 Đợt cập nhật này đẩy ERIS từ một chatbot có body sang một runtime nhân vật có nhịp nhận thức nền rõ hơn. Phần mới quan trọng nhất nằm ở core/cortex/memory: `RawSignal`, `EvidenceItem`, `CognitiveFrame`, `AttentionSalienceEngine`, `WorkingMemoryEngine`, `MeaningLayer`, `PersonalityLens`, `SpeechCore`, `MicroLinePolicy`, `SocialPresenceDetector`, `SessionRitualEngine`, `GoalPersistenceEngine`, `OrientationInterpreter`, `AffectSemanticClassifier`, `ConversationDynamicsEngine`, `RelationshipDynamicsEngine`, `ActionMemoryState` và `MemoryCognitionCore` được nối vào `RuntimeCoordinator`/`InternalStateEngine`.
 
 Các chức năng mới chính:

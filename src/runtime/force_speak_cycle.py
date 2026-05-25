@@ -298,7 +298,7 @@ class ForceSpeakCycleMixin:
                     inner_ti_context
                     + "\nSpeechCore repair: the previous draft was generic or repeated. "
                     "Reject meta_ack/no_signal wording and choose a different social topic seed. "
-                    "Also reject small_story_listener/log_meta wording such as cÃ¢u chuyá»‡n nhá», má»™t ngÆ°á»i nghe, khÃ´ng cáº§n mÃ n hÃ¬nh, dÃ²ng log khÃ´ khan, or ngá»“i nhÃ¬n log. "
+                    "Also reject small_story_listener/log_meta wording such as câu chuyện nhỏ, một người nghe, không cần màn hình, dòng log khô khan, or ngồi nhìn log. "
                     "Prefer small_curiosity, quiet_whim, or light_presence; write a new line."
                 )
                 raw = self.llm_service.generate_directive(
@@ -359,12 +359,12 @@ class ForceSpeakCycleMixin:
 
         forced_ti_context = (
             f"{self._build_llm_ti_context(ti_report, frame.action_plan)}\n"
-            "Context menu force_speak: NgÃ i vá»«a yÃªu cáº§u ERIS nÃ³i ngay. "
-            "Bá» qua cooldown im láº·ng cho Ä‘Ãºng má»™t lÆ°á»£t nÃ y. "
-            "NÃ³i má»™t cÃ¢u má»›i, tá»± nhiÃªn; Ä‘á»«ng nháº¯c telemetry hay chuyá»‡n menu trá»« khi tháº­t sá»± duyÃªn. "
-            "Náº¿u khÃ´ng cÃ³ tÃ­n hiá»‡u cá»¥ thá»ƒ, khÃ´ng Ä‘oÃ¡n NgÃ i Ä‘ang thoáº£i mÃ¡i, báº­n rá»™n, má»‡t, cÄƒng, "
-            "hay Ä‘ang lÃ m viá»‡c quÃ¡ sá»©c. TrÃ¡nh má»Ÿ báº±ng 'CÃ³ váº»'/'HÃ¬nh nhÆ°' vÃ  trÃ¡nh cÃ¢u tá»± lÃ¹i kiá»ƒu "
-            "'tÃ´i khÃ´ng muá»‘n lÃ m phiá»n'."
+            "Context menu force_speak: Ngài vừa yêu cầu ERIS nói ngay. "
+            "Bỏ qua cooldown im lặng cho đúng một lượt này. "
+            "Nói một câu mới, tự nhiên; đừng nhắc telemetry hay chuyện menu trừ khi thật sự duyên. "
+            "Nếu không có tín hiệu cụ thể, không đoán Ngài đang thoải mái, bận rộn, mệt, căng, "
+            "hay đang làm việc quá sức. Tránh mở bằng 'Có vẻ'/'Hình như' và tránh câu tự lùi kiểu "
+            "'tôi không muốn làm phiền'."
         )
         forced_ti_context += (
             "\nForceSpeak logic: user_requested_presence -> inspect current context -> "
@@ -372,7 +372,7 @@ class ForceSpeakCycleMixin:
             "Force speak may carry more attitude than autonomous; do not treat it as random chatter."
         )
         if not vision_marker:
-            forced_ti_context += " KhÃ´ng cÃ³ screen_facts má»›i; nÃ³i tháº­t gá»n, khÃ´ng dá»±ng cáº£nh ngoÃ i dá»¯ kiá»‡n."
+            forced_ti_context += " Không có screen_facts mới; nói thật gọn, không dựng cảnh ngoài dữ kiện."
             self.logger.info("[force_speak] context menu requested immediate speech.")
         raw = self.llm_service.generate_directive(
             telemetry_data=telemetry_data,

@@ -145,14 +145,17 @@ class CognitiveCycleMixin:
 
 
     def run_loop(self):
-        self.logger.info("--- Overseer telemetry mode; chat vision báº­t theo yÃªu cáº§u mÃ n hÃ¬nh ---")
+        self.logger.info("--- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---")
         self._start_mental_process_loop()
         self.cognitive_substrate.start()
         if self.memory_state is not None:
+            self.logger.info("[session_ritual] startup restore begin")
             try:
                 report = self._restore_session_ritual_once()
                 if report.should_greet:
                     self.logger.info("[session_ritual] sent greeting")
+                else:
+                    self.logger.info("[session_ritual] startup restore finished without greeting")
             except Exception:
                 log_exception = getattr(self.logger, "exception", None)
                 if callable(log_exception):
@@ -168,6 +171,9 @@ class CognitiveCycleMixin:
                         log_exception("[session_ritual] fallback greeting failed")
                     else:
                         self.logger.warning("[session_ritual] fallback greeting failed. %s", traceback.format_exc().strip())
+        else:
+            self.logger.info("[session_ritual] skipped: memory_state unavailable")
+        self.logger.info("[autonomous] entering main loop")
         while self.running:
             try:
                 should_continue = self._run_loop_iteration()

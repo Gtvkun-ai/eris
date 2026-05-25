@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 import traceback
 
@@ -48,6 +49,13 @@ class PromptContextBuilderMixin:
         self._note_autonomous_spoken(now=time.time())
         self._send_decision_to_body(decision)
         return decision
+
+    def _session_ritual_llm_timeout(self) -> float:
+        raw = os.environ.get("ERIS_SESSION_RITUAL_LLM_TIMEOUT_SEC", "8").strip()
+        try:
+            return max(1.0, float(raw))
+        except ValueError:
+            return 8.0
 
     def _build_internal_state_context(self, state: PersistentInternalState | None = None, self_state=None) -> str:
         #Chuyển internal state thành text
@@ -110,6 +118,47 @@ class PromptContextBuilderMixin:
         return context
 
     #So sánh snapshot hiện tại với chuẩn đã xây dựng trong bộ nhớ, trả về các điểm khác biệt đáng chú ý để làm tín hiệu cho tầng đánh giá và quyết định.
+
+    def _filter_memory_context_for_grounding(self, memory_context: str) -> str:
+        """Keep procedural grounding rules while removing answer-shaped memories."""
+        if not memory_context:
+            return ""
+
+        keep_lines = []
+        for line in memory_context.splitlines():
+            low = line.lower()
+            if any(k in low for k in (
+                "procedural",
+                "no_screen_evidence",
+                "grounded_speech",
+                "post_generation_guard",
+                "không thấy thì không nói",
+                "khong thay thi khong noi",
+                "screen evidence",
+                "file content",
+                "source",
+                "confidence",
+            )):
+                keep_lines.append(line)
+            elif any(k in low for k in (
+                "episodic",
+                "semantic",
+                "commitbatchreport",
+                "state_committer",
+                "đang code",
+                "dang code",
+                "audit report",
+                "báo cáo kiểm toán",
+            )):
+                continue
+
+        if not keep_lines:
+            return (
+                "PROCEDURAL MEMORY ONLY:\n"
+                "- Memory may remind ERIS to stay grounded.\n"
+                "- Memory must not answer current-screen or specific-file questions without evidence.\n"
+            )
+        return "\n".join(keep_lines)
 
     def _build_action_plan_context(self, action_plan: CognitiveActionPlan) -> str:
         flags = ", ".join(action_plan.risk_flags) if action_plan.risk_flags else "none"
@@ -233,6 +282,14 @@ class PromptContextBuilderMixin:
                 thought_stream_report=thought_stream_report,
                 social_presence_event=social_presence_event,
             )
+            self.logger.info(
+                "[session_ritual] report restored=%s | presence=%s | continuity=%s | greet=%s | tone=%s",
+                int(bool(report.restored)),
+                int(bool(report.presence_restored)),
+                int(bool(report.continuity_restored)),
+                int(bool(report.should_greet)),
+                report.tone,
+            )
         except Exception:
             self._log_exception("[session_ritual] restore failed")
             self._send_session_ritual_fallback_greeting()
@@ -298,7 +355,10 @@ class PromptContextBuilderMixin:
                     avoid_text=self.last_text,
                     speech_intent="session_ritual",
                     vision_trace_marker="session_ritual",
+                    request_timeout=self._session_ritual_llm_timeout(),
                 )
+                if "service_error" in raw or "exception_fallback" in raw:
+                    raise RuntimeError("session_ritual_llm_service_error")
                 self._log_raw_llm_output("session_ritual", raw)
                 decision = self.parser.parse(raw)
             except Exception:

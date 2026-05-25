@@ -73,7 +73,7 @@ class AutonomousCycleMixin:
             return True
 
         cycle_start = time.time()
-        self.logger.info("Báº¯t Ä‘áº§u táº¡o chá»‰ thá»‹ AI...")
+        self.logger.info("[autonomous] bắt đầu chu kỳ nhận thức")
         self.idle_cycles += 1
 
         snapshot = self.telemetry_service.capture_snapshot(
@@ -108,7 +108,7 @@ class AutonomousCycleMixin:
             last_text=self.last_text,
             goal_state=getattr(internal_state_before, "goal_persistence", None),
         )
-        # Táº§ng 2: suy luáº­n nháº¹ cÃ³ báº±ng chá»©ng Ä‘á»ƒ tinh chá»‰nh drift_score / drift_level.
+        # Tầng 2: suy luận nhẹ có bằng chứng để tinh chỉnh drift_score / drift_level.
         ni_report = self._maybe_apply_ni_meta_critic(
             mode="autonomous",
             snapshot=snapshot,
@@ -322,7 +322,7 @@ class AutonomousCycleMixin:
                     suppressed=True,
                     ti_mode=ti_report.mode,
                 )
-                self.logger.info("HoÃƒÂ n tÃ¡ÂºÂ¥t chu kÃ¡Â»Â³ motion-only trong %.2fs. NghÃ¡Â»â€° %ss.", elapsed, sleep_duration)
+                self.logger.info("Hoàn tất chu kỳ motion-only trong %.2fs. Nghỉ %ss.", elapsed, sleep_duration)
                 self._sleep_interruptible(sleep_duration)
                 return True
             if not meaning_blocks_autonomous:
@@ -376,7 +376,7 @@ class AutonomousCycleMixin:
                 self._preview_text(signature, limit=180),
             )
             self.logger.info(
-                "HoÃ n táº¥t chu ká»³ trong %.2fs. Nghá»‰ %ss Ä‘á»ƒ trÃ¡nh láº·p ná»™i dung.",
+                "Hoàn tất chu kỳ trong %.2fs. Nghỉ %ss để tránh lặp nội dung.",
                 elapsed,
                 sleep_duration,
             )
@@ -451,7 +451,7 @@ class AutonomousCycleMixin:
                 self._preview_text(self.last_text, limit=160),
             )
             self.logger.info(
-                "HoÃ n táº¥t chu ká»³ trong %.2fs. Nghá»‰ %ss Ä‘á»ƒ giá»¯ nhá»‹p hiá»‡n diá»‡n tá»± nhiÃªn.",
+                "Hoàn tất chu kỳ trong %.2fs. Nghỉ %ss để giữ nhịp hiện diện tự nhiên.",
                 elapsed,
                 sleep_duration,
             )
@@ -528,7 +528,7 @@ class AutonomousCycleMixin:
                 suppressed=False,
                 ti_mode=ti_report.mode,
             )
-            self.logger.info("HoÃ n táº¥t chu ká»³ trong %.2fs. Ngá»§ %ss.", elapsed, sleep_duration)
+            self.logger.info("Hoàn tất chu kỳ trong %.2fs. Ngủ %ss.", elapsed, sleep_duration)
             self._sleep_interruptible(sleep_duration)
             return True
 
@@ -581,7 +581,7 @@ class AutonomousCycleMixin:
         self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
         self._finalize_cognitive_frame(frame)
 
-        self.logger.info("TÃ¢m tráº¡ng giá»¯ nguyÃªn: %s", self.mood_score)
+        self.logger.info("Tâm trạng giữ nguyên: %s", self.mood_score)
         self.logger.info('Decision text="%s" | animation="%s"', decision.text, decision.animation)
         self.logger.info("[directive debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[directive parser] %s", decision.parser_trace or "<empty>")
@@ -592,7 +592,7 @@ class AutonomousCycleMixin:
             suppressed=False,
             ti_mode=ti_report.mode,
         )
-        self.logger.info("HoÃ n táº¥t chu ká»³ trong %.2fs. Ngá»§ %ss.", elapsed, sleep_duration)
+        self.logger.info("Hoàn tất chu kỳ trong %.2fs. Ngủ %ss.", elapsed, sleep_duration)
         self._sleep_interruptible(sleep_duration)
 
         return True

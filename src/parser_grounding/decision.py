@@ -422,7 +422,8 @@ class ParserGroundingMixin:
             return ""
         return cleaned
 
-    # _try_extract_nested_decision_from_text lÃ  má»™t phÆ°Æ¡ng thá»©c Ä‘á»ƒ cá»‘ gáº¯ng trÃ­ch xuáº¥t má»™t Ä‘á»‘i tÆ°á»£ng JSON lá»“ng nhau tá»« trÆ°á»ng text cá»§a quyáº¿t Ä‘á»‹nh.
+    # _try_extract_nested_decision_from_text là một phương thức để cố gắng trích xuất một đối tượng JSON
+    # lồng nhau từ trường text của quyết định.
     def _try_extract_inline_decision_fields_from_text(self, text: str):
         candidate = (text or "").strip()
         if not candidate:
@@ -752,12 +753,12 @@ class ParserGroundingMixin:
         )
         return not any(re.search(pattern, lowered) for pattern in action_claim_patterns)
 
-    # _clause_exceeds_runtime_capability lÃ  má»™t phÆ°Æ¡ng thá»©c Ä‘á»ƒ kiá»ƒm tra xem má»™t má»‡nh Ä‘á» cÃ³ vÆ°á»£t quÃ¡ kháº£ nÄƒng runtime cá»§a há»‡ thá»‘ng hay khÃ´ng.
-    # NÃ³ kiá»ƒm tra xem má»‡nh Ä‘á» cÃ³ chá»©a cÃ¡c Ä‘á»™ng tá»« hÃ nh Ä‘á»™ng khÃ´ng Ä‘Æ°á»£c 
-    # há»— trá»£ vÃ  cÃ¡c má»¥c tiÃªu hÃ nh Ä‘á»™ng khÃ´ng Ä‘Æ°á»£c há»— trá»£, Ä‘á»“ng thá»i khÃ´ng pháº£i 
-    # lÃ  má»™t tuyÃªn bá»‘ tá»± cho phÃ©p. Náº¿u má»‡nh Ä‘á» cÃ³ chá»©a cáº£ Ä‘á»™ng tá»« vÃ  má»¥c tiÃªu 
-    # khÃ´ng Ä‘Æ°á»£c há»— trá»£ vÃ  khÃ´ng pháº£i lÃ  má»™t tuyÃªn bá»‘ tá»± cho phÃ©p, nÃ³ sáº½ Ä‘Æ°á»£c coi 
-    # lÃ  vÆ°á»£t quÃ¡ kháº£ nÄƒng runtime.
+    # _clause_exceeds_runtime_capability là một phương thức để kiểm tra xem một mệnh đề có vượt quá
+    # khả năng runtime của hệ thống hay không.
+    # Nó kiểm tra xem mệnh đề có chứa các động từ hành động không được hỗ trợ và các mục tiêu hành động
+    # không được hỗ trợ, đồng thời không phải là một tuyên bố tự cho phép.
+    # Nếu mệnh đề chứa cả động từ và mục tiêu không được hỗ trợ, và không phải là một tuyên bố tự cho phép,
+    # nó sẽ được coi là vượt quá khả năng runtime.
     def _clause_mentions_unsupported_target(self, clause: str) -> bool:
         lowered = (clause or "").lower()
         extra_targets = (
@@ -1588,9 +1589,8 @@ class ParserGroundingMixin:
                 return salvaged
             return self.fallback
 
-    # _is_follow_up_question lÃ  má»™t phÆ°Æ¡ng thá»©c Ä‘á»ƒ xÃ¡c Ä‘á»‹nh xem má»™t 
-    # tin nháº¯n cá»§a ngÆ°á»i dÃ¹ng cÃ³ pháº£i lÃ  má»™t cÃ¢u há»i tiáº¿p theo liÃªn quan
-    #  Ä‘áº¿n cÃ¢u tráº£ lá»i trÆ°á»›c Ä‘Ã³ hay khÃ´ng.
+    # _is_follow_up_question là một phương thức để xác định xem một tin nhắn của người dùng
+    # có phải là một câu hỏi tiếp theo liên quan đến câu trả lời trước đó hay không.
     def _is_follow_up_question(self, user_message: str):
         lowered = user_message.strip().lower()
         follow_up_phrases = [
@@ -1610,10 +1610,9 @@ class ParserGroundingMixin:
         ]
         return any(phrase in lowered for phrase in follow_up_phrases)
 
-    # _build_chat_user_message xÃ¢y dá»±ng má»™t tin nháº¯n cá»§a ngÆ°á»i dÃ¹ng,
-    #  náº¿u tin nháº¯n Ä‘Ã³ cÃ³ váº» lÃ  má»™t cÃ¢u há»i tiáº¿p theo liÃªn quan Ä‘áº¿n
-    #  cÃ¢u tráº£ lá»i trÆ°á»›c Ä‘Ã³, nÃ³ sáº½ bao gá»“m cáº£ cÃ¢u tráº£ lá»i trÆ°á»›c Ä‘Ã³ Ä‘á»ƒ cung 
-    # cáº¥p ngá»¯ cáº£nh cho mÃ´ hÃ¬nh.
+    # _build_chat_user_message xây dựng một tin nhắn của người dùng.
+    # Nếu tin nhắn đó có vẻ là một câu hỏi tiếp theo liên quan đến câu trả lời trước đó,
+    # nó sẽ bao gồm cả câu trả lời trước đó để cung cấp ngữ cảnh cho mô hình.
     def _build_chat_user_message(self, user_message: str):
         if self._is_follow_up_question(user_message) and self._last_chat_answer:
             return (

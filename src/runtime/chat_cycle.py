@@ -8,6 +8,7 @@ from dataclasses import replace
 from cortex.ni import NiStateMachine
 from cortex.relationship_dynamics import RelationshipTurnEvent
 from domain import Decision
+from runtime.source_grounding import SourceGroundingEngine
 
 
 class ChatCycleMixin:
@@ -205,6 +206,18 @@ class ChatCycleMixin:
             repeat_count=repeat_count,
             thought_surface=getattr(thought_stream_report, "latest_seed", None),
         )
+        screen_image_data_uri = self._capture_screen_frame_for_chat(user_text)
+        grounding_report = self._build_chat_source_grounding_report(
+            user_text=user_text,
+            frame=frame,
+            snapshot=snapshot,
+            memory_resonance=memory_resonance,
+            screen_image_data_uri=screen_image_data_uri,
+        )
+        self.last_grounding_context = grounding_report
+        if grounding_report is not None and not bool(getattr(grounding_report, "memory_answer_allowed", True)):
+            memory_context = self._filter_memory_context_for_grounding(memory_context)
+        self._log_chat_source_grounding(grounding_report)
 
         direct_decision = self._build_direct_action_decision(user_text, ti_report, snapshot, repeat_count=repeat_count)
         if direct_decision is not None:
@@ -225,7 +238,34 @@ class ChatCycleMixin:
             self._commit_chat_decision(direct_decision, fe_plan, frame=frame)
             return
 
-        repeat_decision = self._build_repeat_guard_decision(user_text, ti_report, repeat_count)
+        grounding_preempt = self._build_grounding_preempt_decision(
+            grounding_report,
+            ti_report,
+            user_text=user_text,
+        )
+        if grounding_preempt is not None:
+            self._set_cognitive_action_plan(
+                frame,
+                should_speak=True,
+                speech_intent="user_requested",
+                speech_act="guarded_reply",
+                reason=f"Source grounding preempted chat turn ({grounding_report.preempt_mode}).",
+                snapshot=snapshot,
+                user_text=user_text,
+                concrete_signals=self._concrete_screen_signals(snapshot),
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                notes=("source_grounding_preempt", grounding_report.preempt_mode or "unknown"),
+            )
+            self._commit_chat_decision(grounding_preempt, fe_plan, frame=frame)
+            return
+
+        repeat_decision = self._build_repeat_guard_decision(
+            user_text,
+            ti_report,
+            repeat_count,
+            grounding_report=grounding_report,
+        )
         if repeat_decision is not None:
             self._set_cognitive_action_plan(
                 frame,
@@ -261,7 +301,6 @@ class ChatCycleMixin:
             user_message=user_text,
             last_chat_answer=self.last_chat_answer,
         )
-        screen_image_data_uri = self._capture_screen_frame_for_chat(user_text)
         planned_ti_context = (
             f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}"
         )
@@ -281,6 +320,7 @@ class ChatCycleMixin:
             internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
             conversation_context=conversation_report.prompt_context,
             memory_context=memory_context,
+            grounding_context=grounding_report.prompt_context,
             screen_image_data_uri=screen_image_data_uri,
         )
         self._log_raw_llm_output("chat", raw)
@@ -291,7 +331,7 @@ class ChatCycleMixin:
         decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
         self._log_decision_stage("chat", "after_ti", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot)
-        decision = self._apply_chat_final_guards(decision, user_text=user_text)
+        decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         return
 
@@ -370,12 +410,20 @@ class ChatCycleMixin:
                 "url",
                 "web",
                 "website",
+                "xem đi",
+                "xem di",
+                "bạn xem đi",
+                "ban xem di",
+                "tôi đang code gì",
+                "toi dang code gi",
+                "đoạn đang mở",
+                "doan dang mo",
             )
         )
         if any(term in normalized for term in direct_terms):
             return True
 
-        visual_verbs = {"nhin", "thay"}
+        visual_verbs = {"nhin", "thay", "xem"}
         visual_objects = {"gi tren do", "noi dung", "trang nao"}
         return any(term in normalized for term in visual_verbs) and any(
             term in normalized for term in visual_objects
@@ -397,6 +445,89 @@ class ChatCycleMixin:
 
         self.logger.info("[vision chat] Đã đính kèm screenshot toàn màn hình cho lượt chat này.")
         return data_uri
+    def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
+        facts: list[object] = []
+        last_capture = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0)
+        if last_capture and time.time() - last_capture <= 10.0:
+            facts.extend(tuple(getattr(snapshot, "vision_facts", ()) or ()) or tuple(getattr(self, "vision_facts", ()) or ()))
+        if screen_image_data_uri:
+            facts.append(
+                {
+                    "id": "chat_screen_frame",
+                    "source": "screen_capture",
+                    "claim": "live screenshot attached for current chat turn",
+                    "confidence": 0.93,
+                    "tags": ["vision", "screen", "chat"],
+                }
+            )
+        return tuple(facts)
+
+    def _build_chat_source_grounding_report(
+        self,
+        *,
+        user_text: str,
+        frame,
+        snapshot,
+        memory_resonance=None,
+        screen_image_data_uri: str = "",
+    ):
+        engine = getattr(self, "source_grounding_engine", None)
+        if not isinstance(engine, SourceGroundingEngine):
+            engine = SourceGroundingEngine()
+            self.source_grounding_engine = engine
+        return engine.analyze(
+            user_text,
+            frame=frame,
+            screen_facts=self._chat_source_grounding_screen_facts(
+                snapshot,
+                screen_image_data_uri=screen_image_data_uri,
+            ),
+            memory_packet=memory_resonance,
+            runtime_state=snapshot,
+            allow_web=False,
+            attach_to_frame=True,
+        )
+
+    def _log_chat_source_grounding(self, report) -> None:
+        if report is None:
+            return
+        self.logger.info(
+            "[source grounding] grounding_source=%s | preempt_mode=%s | missing=%s | allowed=%s | cap=%.2f | memory_answer=%s | warnings=%s",
+            getattr(report, "grounding_source", "unknown"),
+            getattr(report, "preempt_mode", "") or "none",
+            ",".join(getattr(report, "missing_evidence", ()) or ()) or "none",
+            ",".join(getattr(report, "allowed_sources", ()) or ()) or "none",
+            float(getattr(report, "confidence_cap", 0.0) or 0.0),
+            int(bool(getattr(report, "memory_answer_allowed", True))),
+            ",".join(getattr(report, "warnings", ()) or ()) or "none",
+        )
+
+    def _build_grounding_preempt_decision(self, report, ti_report, *, user_text: str) -> Decision | None:
+        engine = getattr(self, "source_grounding_engine", None)
+        if not isinstance(engine, SourceGroundingEngine):
+            return None
+        if not engine.should_preempt(report):
+            return None
+        text = engine.build_preemptive_reply(report)
+        if not text:
+            return None
+        warnings = ",".join(getattr(report, "warnings", ()) or ())
+        debug_trace = (
+            "source_grounding_preempt;"
+            f"source={getattr(report, 'primary_source', 'unknown')};"
+            f"warnings={warnings}"
+        )
+        decision = Decision(
+            text=text,
+            intent="grounding_clarification",
+            action="none",
+            animation="stand",
+            should_speak=True,
+            confidence=float(getattr(report, "max_confidence", 0.30) or 0.30),
+            parse_mode="source_grounding",
+            debug_trace=debug_trace,
+        )
+        return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
     def _build_user_message_signature(self, user_text: str) -> str:
         normalized = self._normalize_user_message(user_text)
         if not normalized:
@@ -425,8 +556,10 @@ class ChatCycleMixin:
             self.last_user_signature = signature
             self.repeated_user_count = 1
         return self.repeated_user_count
-    def _build_repeat_guard_decision(self, user_text: str, ti_report, repeat_count: int) -> Decision | None:
+    def _build_repeat_guard_decision(self, user_text: str, ti_report, repeat_count: int, *, grounding_report=None) -> Decision | None:
         if repeat_count < 2:
+            return None
+        if self._should_bypass_repeat_guard_for_live_observation(user_text, grounding_report=grounding_report):
             return None
 
         if repeat_count == 2:
@@ -447,3 +580,12 @@ class ChatCycleMixin:
             debug_trace=f"repeat_guard=count={repeat_count}",
         )
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
+
+    def _should_bypass_repeat_guard_for_live_observation(self, user_text: str, *, grounding_report=None) -> bool:
+        if grounding_report is not None:
+            if str(getattr(grounding_report, "preempt_mode", "") or "") == "deictic_without_vision":
+                return False
+            missing = set(getattr(grounding_report, "missing_evidence", ()) or ())
+            if bool(getattr(grounding_report, "refers_to_current_screen", False)) and "screen_evidence" not in missing:
+                return True
+        return self._looks_like_screen_vision_request(user_text)

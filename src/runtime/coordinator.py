@@ -71,6 +71,7 @@ from runtime.outcome_observer import OutcomeObserver
 from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
 from runtime.prompt_context_builder import PromptContextBuilderMixin
+from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
 from runtime.state_commit_service import StateCommitServiceMixin
 
@@ -147,6 +148,7 @@ class RuntimeCoordinator(
         self.session_ritual_engine = SessionRitualEngine()
         self.speech_core_engine = SpeechCoreEngine(inner_thought_engine=self.inner_thought_engine)
         self.action_planner = ActionPlanner()
+        self.source_grounding_engine = SourceGroundingEngine()
         self.semantic_repeat_guard = SemanticRepeatGuard()
         self.micro_line_policy = MicroLinePolicy(repeat_guard=self.semantic_repeat_guard)
         self.body_bias_projector = BodyBiasProjector(self._get_internal_state)
@@ -226,6 +228,7 @@ class RuntimeCoordinator(
         self.memory_state = self._load_memory_state()
         self.long_term_memory = self._memory_recall_texts()
         self.active_memory_resonance = None
+        self.last_grounding_context = None
         self.fe_style_memory = self.fe_renderer.create_memory()
         self.vision_facts_enabled, self.vision_interval_sec, self.vision_fact_max_items, self.vision_fact_max_len = (
             self._load_vision_fact_settings()

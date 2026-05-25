@@ -163,6 +163,40 @@ class StateCommitterTests(unittest.TestCase):
         self.assertEqual(core.requests, [])
         self.assertEqual(report.decisions[0].issues[0].code, "private_raw_evidence_not_allowed")
 
+    def test_semantic_extracted_fact_rejects_when_source_grounding_is_ungrounded(self):
+        core = FakeMemoryCore()
+        report = StateCommitter(core).commit_requests(
+            [
+                request(
+                    content={
+                        "fact": "The file confirms the parser is broken.",
+                        "source": "decision_extracted_fact",
+                    },
+                    metadata={
+                        "semantic_source": "decision_extracted_fact",
+                        "source_grounded": False,
+                        "grounding_source": "uploaded_file",
+                        "grounding_missing_evidence": ["file_evidence"],
+                    },
+                )
+            ],
+            frame=SimpleNamespace(
+                frame_id="frame-1",
+                permission=SimpleNamespace(memory_storable=True, raw_evidence_storable=True),
+                evidence=[],
+                debug_notes=[],
+                audit_mutations=[],
+                source_grounding=SimpleNamespace(
+                    preempt_mode="filename_only",
+                    missing_evidence=("file_evidence",),
+                ),
+            ),
+        )
+
+        self.assertEqual(report.rejected, 1)
+        self.assertEqual(core.requests, [])
+        self.assertEqual(report.decisions[0].issues[0].code, "semantic_fact_ungrounded")
+
     def test_recorder_commits_through_state_committer_not_memory_core_directly(self):
         class FakeCommitter:
             def __init__(self):

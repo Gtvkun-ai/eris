@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "sem_4564c1e1d8ad",
+      "claim": "User is coding a CommitBatchReport dataclass for StateCommitter.",
+      "domain": "user",
+      "confidence": 0.69,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:19:07:0",
+        "percept:user_message:19:08:0",
+        "percept:user_message:20:27:0"
+      ],
+      "observations": 3,
+      "status": "tentative",
+      "first_seen_at": "2026-05-24T19:07:35+0700",
+      "updated_at": "2026-05-24T20:28:09+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_216198daf83c",
+      "claim": "@dataclass(slots=True)class CommitBatchReport: định nghĩa cấu trúc báo cáo kiểm toán cho StateCommitter.commit(...).",
+      "domain": "unknown",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:19:06:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-24T19:06:36+0700",
+      "updated_at": "2026-05-24T19:06:36+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_d92d871f35ce",
+      "claim": "state_committer.py đang thực hiện việc ghi nhận và lưu trữ các trạng thái hiện tại của ERIS.",
+      "domain": "self",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:19:03:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-24T19:04:13+0700",
+      "updated_at": "2026-05-24T19:04:13+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    }
+  ]
+}

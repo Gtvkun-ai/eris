@@ -115,12 +115,17 @@ class CognitiveFrameRecorderMixin:
         # Không biến mọi câu nói thành chân lý dài hạn. Đó là cách nhanh nhất
         # để ERIS nhớ sai với vẻ mặt bình thản đáng ghét.
         for fact_index, fact in enumerate(observation["semantic_facts"]):
+            semantic_source = "explicit_user_statement" if fact in observation["explicit_user_facts"] else "decision_extracted_fact"
+            semantic_grounding_meta = self._semantic_fact_grounding_metadata(
+                frame,
+                semantic_source=semantic_source,
+            )
             requests.append(
                 self._make_commit_request(
                     target="semantic_memory",
                     content={
                         "fact": fact,
-                        "source": "explicit_user_statement" if fact in observation["explicit_user_facts"] else "decision_extracted_fact",
+                        "source": semantic_source,
                         "timestamp": timestamp,
                         "cycle_id": frame.cycle_id,
                     },
@@ -130,8 +135,18 @@ class CognitiveFrameRecorderMixin:
                     storage_permission=storage_permission,
                     decay_policy="slow",
                     reason="store explicit stable semantic fact",
-                    tags=("semantic", "explicit_user_fact" if fact in observation["explicit_user_facts"] else "extracted_fact"),
-                    metadata={"source": "CognitiveFrameRecorder", "fact_index": fact_index, "timestamp": timestamp},
+                    tags=(
+                        "semantic",
+                        "explicit_user_fact" if fact in observation["explicit_user_facts"] else "extracted_fact",
+                        "grounded" if semantic_grounding_meta["source_grounded"] else "ungrounded",
+                    ),
+                    metadata={
+                        "source": "CognitiveFrameRecorder",
+                        "fact_index": fact_index,
+                        "timestamp": timestamp,
+                        "semantic_source": semantic_source,
+                        **semantic_grounding_meta,
+                    },
                 )
             )
 
@@ -655,6 +670,24 @@ class CognitiveFrameRecorderMixin:
     # ------------------------------------------------------------------
     # Fact extraction / ids / permissions
     # ------------------------------------------------------------------
+
+    def _semantic_fact_grounding_metadata(self, frame: CognitiveFrame, *, semantic_source: str) -> dict[str, Any]:
+        report = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
+        missing = tuple(getattr(report, "missing_evidence", ()) or ())
+        preempt_mode = str(getattr(report, "preempt_mode", "") or "")
+        grounding_source = str(getattr(report, "grounding_source", getattr(report, "primary_source", "unknown")) or "unknown")
+        source_grounded = semantic_source == "explicit_user_statement"
+        if semantic_source != "explicit_user_statement":
+            source_grounded = not (
+                preempt_mode
+                or any(item in {"file_evidence", "screen_evidence", "web_access_or_search_result"} for item in missing)
+            )
+        return {
+            "source_grounded": bool(source_grounded),
+            "grounding_source": grounding_source,
+            "grounding_missing_evidence": list(missing),
+            "grounding_preempt_mode": preempt_mode,
+        }
 
     def _extract_explicit_user_memory_fact(self, user_text: str) -> str:
         normalized = self._normalize_user_message(user_text)

@@ -60,7 +60,7 @@ class StateCommitServiceMixin:
         if isinstance(self.memory_state, dict):
             self.memory_state.setdefault("internal_state", self._load_internal_state_payload())
             return
-        #Náº¿u cÃ³ memory nhÆ°ng chÆ°a cÃ³ internal state:
+        # Nếu có memory nhưng chưa có internal state:
         if getattr(self.memory_state, "internal_state", None) is None:
             self.memory_state.internal_state = PersistentInternalState()
     def _get_internal_state(self) -> PersistentInternalState:
@@ -73,13 +73,13 @@ class StateCommitServiceMixin:
                     return PersistentInternalState()
         if self.memory_state is not None and getattr(self.memory_state, "internal_state", None) is not None:
             return self.memory_state.internal_state
-        #Náº¿u khÃ´ng cÃ³ thÃ¬ táº¡o state táº¡m:
+        # Nếu không có thì tạo state tạm:
         return PersistentInternalState()
     def _set_internal_state(self, state: PersistentInternalState) -> None:
-        #KhÃ´ng cÃ³ memory thÃ¬ khÃ´ng set.
+        # Không có memory thì không set.
         if self.memory_state is None:
             return
-        #DÃ¹ng lock Ä‘á»ƒ trÃ¡nh nhiá»u thread sá»­a state cÃ¹ng lÃºc.
+        # Dùng lock để tránh nhiều thread sửa state cùng lúc.
         with self._state_lock:
             if isinstance(self.memory_state, dict):
                 self.memory_state["internal_state"] = state.to_dict() if callable(getattr(state, "to_dict", None)) else dict(getattr(state, "__dict__", {}) or {})
@@ -195,6 +195,11 @@ class StateCommitServiceMixin:
         self._apply_position_update(decision)
         if frame is not None:
             frame.final_decision = self._decision_to_frame_dict(decision)
+            grounding = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
+            if grounding is not None:
+                frame.final_decision["grounding_source"] = str(getattr(grounding, "grounding_source", "unknown") or "unknown")
+                frame.final_decision["grounding_preempt_mode"] = str(getattr(grounding, "preempt_mode", "") or "")
+                frame.final_decision["grounding_missing_evidence"] = list(getattr(grounding, "missing_evidence", ()) or ())
             self._set_cognitive_memory_update(frame, decision=decision, notes=("chat_commit",))
             self._commit_internal_state_for_frame(frame)
             self._finalize_cognitive_frame(frame)
