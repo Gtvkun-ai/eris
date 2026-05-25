@@ -309,10 +309,156 @@ class RuntimeCoordinator(
     def _send_decision_to_body(self, decision: Decision) -> None:
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
+        payload["emotion_debug"] = self._build_emotion_debug_payload()
         self.transport.send_json(payload)
 
     def _build_body_bias_payload(self) -> dict[str, object]:
         return self.body_bias_projector.build_payload()
+
+    def _build_emotion_debug_payload(self) -> dict[str, object]:
+        """Compact affect/state payload for the Godot emotion panel."""
+        frame = getattr(self, "last_cognitive_frame", None)
+        state = self._get_internal_state()
+        appraisal = getattr(frame, "appraisal", None) if frame is not None else None
+        self_state = getattr(frame, "self_state", None) if frame is not None else None
+        speech_core = getattr(frame, "speech_core", None) if frame is not None else None
+        meaning = getattr(frame, "meaning_layer", None) if frame is not None else None
+        impulse = getattr(speech_core, "speech_impulse", None) if speech_core is not None else None
+        relationship = getattr(state, "relationship_dynamics", None)
+        desire = getattr(state, "desire", None)
+        style = getattr(self, "fe_style_memory", None)
+
+        def clamp01(value: object) -> float:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                numeric = 0.0
+            if numeric != numeric:
+                numeric = 0.0
+            return max(0.0, min(1.0, numeric))
+
+        def clamp_signed(value: object) -> float:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                numeric = 0.0
+            if numeric != numeric:
+                numeric = 0.0
+            return max(-1.0, min(1.0, numeric))
+
+        def value(source: object, name: str, default: object = 0.0) -> object:
+            return getattr(source, name, default) if source is not None else default
+
+        def metric(label: str, raw: object, *, group: str = "", signed: bool = False, note: str = "") -> dict[str, object]:
+            numeric = clamp_signed(raw) if signed else clamp01(raw)
+            return {
+                "label": label,
+                "value": round(numeric, 3),
+                "group": group,
+                "note": note,
+            }
+
+        valence = clamp_signed(value(appraisal, "valence", value(state, "valence", 0.0)))
+        if valence >= 0.18:
+            mood_label = "vui"
+        elif valence <= -0.18 or clamp01(value(state, "irritation", 0.0)) >= 0.45:
+            mood_label = "kho_chiu"
+        else:
+            mood_label = "trung_tinh"
+
+        overload = clamp01(max(
+            clamp01(value(self_state, "overload", 0.0)),
+            clamp01(value(state, "fatigue", 0.0)),
+            clamp01(value(state, "cognitive_tension", 0.0)),
+            clamp01(value(state, "restraint_pressure", 0.0)) * 0.55,
+        ))
+        stability = clamp01(1.0 - max(
+            abs(valence) * 0.50,
+            clamp01(value(appraisal, "arousal", value(state, "arousal", 0.0))),
+            clamp01(value(state, "cognitive_tension", 0.0)),
+            clamp01(value(state, "irritation", 0.0)),
+        ))
+        mood_inertia = clamp01(
+            clamp01(value(state, "recursive_reactivation_pressure", 0.0)) * 0.34
+            + clamp01(value(state, "memory_replay_pressure", 0.0)) * 0.28
+            + clamp01(value(state, "thought_stream_pressure", 0.0)) * 0.22
+            + min(1.0, float(getattr(state, "cycle_count", 0) or 0) / 80.0) * 0.16
+        )
+        forced_reply = clamp01(min(1.0, float(getattr(state, "force_speak_ticks", 0) or 0) / 6.0))
+
+        surface_intent = str(value(impulse, "surface_intent", "") or value(meaning, "surface_intent", "") or "")
+        return {
+            "summary": {
+                "label": "vui / kho_chiu / trung_tinh",
+                "value": mood_label,
+                "valence": round(valence, 3),
+                "state": str(value(self_state, "state_label", "") or value(state, "last_self_state_label", "") or ""),
+            },
+            "items": {
+                "calm_aroused": metric("binh tinh <-> kich thich", value(appraisal, "arousal", value(state, "arousal", 0.0)), group="core"),
+                "emotional_stability": metric("on dinh cam xuc", stability, group="core"),
+                "mood_inertia": metric("quan tinh mood", mood_inertia, group="core"),
+                "attachment": metric("muc quan tam/gan bo", value(state, "attachment", 0.0), group="bond"),
+                "tenderness": metric("diu dang", value(appraisal, "tenderness", value(state, "tenderness", 0.0)), group="bond"),
+                "protectiveness": metric("muon bao ve", value(appraisal, "protectiveness", value(state, "protectiveness", 0.0)), group="bond"),
+                "emotional_exposure": metric("lo cam xuc nhieu hay it", value(relationship, "attachment_visibility", 0.0), group="bond"),
+                "irritation": metric("kho chiu", value(state, "irritation", 0.0), group="friction"),
+                "perceived_rejection": metric("cam giac bi tu choi", value(relationship, "rupture", 0.0), group="friction"),
+                "confrontation": metric("xu huong doi dau", max(value(appraisal, "threat", 0.0), value(state, "irritation", 0.0)), group="friction"),
+                "post_exposure_recoil": metric("rut lai sau khi lo cam xuc", value(relationship, "exposure_recoil", 0.0), group="friction"),
+                "curiosity": metric("to mo", max(value(state, "curiosity", 0.0), value(state, "curiosity_pressure", 0.0)), group="attention"),
+                "attention_bias": {
+                    "label": "thien huong chu y",
+                    "value": str(value(meaning, "attention_bias", ()) or value(state, "last_focus_kind", "") or ""),
+                    "group": "attention",
+                    "note": "",
+                },
+                "association_pressure": metric("lien tuong lan rong", value(state, "association_pressure", 0.0), group="attention"),
+                "thought_stream_pressure": metric("dong suy nghi tang", value(state, "thought_stream_pressure", 0.0), group="attention"),
+                "speech_pressure": metric("ap luc phai noi", value(state, "silence_pressure", 0.0), group="speech"),
+                "social_pressure": metric("ap luc xa hoi", value(state, "social_pressure", 0.0), group="speech"),
+                "forced_reply": metric("bi ep phan hoi", forced_reply, group="speech"),
+                "brevity": metric("xu huong noi ngan", value(state, "restraint_pressure", 0.0), group="speech"),
+                "playfulness": metric("muc dua", value(state, "playful_pressure", 0.0), group="tone"),
+                "tease": metric("thich treu", value(style, "sarcasm_level", 0.0), group="tone"),
+                "sarcasm": metric("mia mai", value(style, "sarcasm_level", 0.0), group="tone"),
+                "warmth": metric("do am ap", value(style, "warmth_level", value(appraisal, "tenderness", 0.0)), group="tone"),
+                "distance": metric("giu khoang cach", value(relationship, "preferred_distance", 0.58), group="tone"),
+                "intimacy": metric("muc than mat", value(appraisal, "intimacy", 0.0), group="tone"),
+                "romantic_boundary_probe": metric("do ranh gioi tinh cam", value(desire, "unresolved_residue", 0.0), group="tone"),
+                "restraint": metric("tu kiem che", value(state, "restraint_pressure", 0.0), group="control"),
+                "cognitive_tension": metric("cang thang nhan thuc", value(state, "cognitive_tension", 0.0), group="control"),
+                "repeating_thought": metric("suy nghi lap lai", value(state, "recursive_reactivation_pressure", 0.0), group="control"),
+                "unresolved_prediction": metric("du doan chua giai quyet", value(state, "unresolved_prediction_pressure", 0.0), group="control"),
+                "subconscious_pressure": metric("ap luc tiem thuc", value(state, "subconscious_pressure", 0.0), group="control"),
+                "fatigue": metric("met", value(appraisal, "fatigue", value(state, "fatigue", 0.0)), group="load"),
+                "overload": metric("qua tai", overload, group="load"),
+                "speech_emotional_color": {
+                    "label": "mau cam xuc khi noi",
+                    "value": str(value(appraisal, "stance", "") or value(style, "last_tone_label", "") or ""),
+                    "group": "surface",
+                    "note": "",
+                },
+                "emotional_reflex": {
+                    "label": "phan xa cam xuc",
+                    "value": str(value(impulse, "reaction", "") or value(meaning, "reaction", "") or ""),
+                    "group": "surface",
+                    "note": "",
+                },
+                "emotional_residue": {
+                    "label": "du am cam xuc",
+                    "value": str(value(impulse, "mood_residue", "") or value(meaning, "mood_residue", "") or ""),
+                    "group": "surface",
+                    "note": "",
+                },
+                "surface_intent": {
+                    "label": "y dinh bieu hien ra ngoai",
+                    "value": surface_intent,
+                    "group": "surface",
+                    "note": "",
+                },
+            },
+        }
 
     @staticmethod
     def _body_bias_clamp(value: object) -> float:
@@ -4452,4 +4598,3 @@ class RuntimeCoordinator(
                 return cleaned
 
         return ""
-

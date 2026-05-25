@@ -665,7 +665,7 @@ class MemoryStore:
     def load_state(self) -> MemoryState:
         if not os.path.isfile(self.path) or os.path.getsize(self.path) <= 0:
             return MemoryState()
-        with open(self.path, "r", encoding="utf-8") as handle:
+        with open(self.path, "r", encoding="utf-8-sig") as handle:
             data = json.load(handle)
         return self._state_from_json(data)
 

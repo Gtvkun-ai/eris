@@ -134,6 +134,17 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertEqual([item.text for item in state.semantic], ["User likes concise replies."])
             self.assertEqual(store.load(), ["User likes concise replies."])
 
+    def test_memory_state_loads_utf8_bom_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "memory.json")
+            with open(path, "w", encoding="utf-8-sig") as handle:
+                handle.write('{"version":4,"semantic":[{"text":"User prefers stable memory."}]}')
+
+            store = MemoryStore(path)
+            state = store.load_state()
+
+            self.assertEqual([item.text for item in state.semantic], ["User prefers stable memory."])
+
     def test_internal_state_round_trips_through_memory_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "memory.json")

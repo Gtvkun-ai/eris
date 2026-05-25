@@ -17,6 +17,118 @@ public sealed class UdpDecisionPayload
 	public string ParseMode { get; init; } = "";
 	public string DebugTrace { get; init; } = "";
 	public string ParserTrace { get; init; } = "";
+	public EmotionDebug EmotionDebug { get; init; }
+	public bool HasEmotionDebug { get; init; }
+}
+
+public sealed class EmotionDebugItem
+{
+	public string Key { get; init; } = "";
+	public string Label { get; init; } = "";
+	public string Group { get; init; } = "";
+	public string ValueText { get; init; } = "";
+	public float NumericValue { get; init; }
+	public bool HasNumericValue { get; init; }
+	public string Note { get; init; } = "";
+}
+
+public sealed class EmotionDebug
+{
+	public string SummaryLabel { get; init; } = "";
+	public string SummaryValue { get; init; } = "";
+	public string SummaryState { get; init; } = "";
+	public float SummaryValence { get; init; }
+	public bool HasSummaryValence { get; init; }
+	public List<EmotionDebugItem> Items { get; init; } = new();
+
+	public static bool TryFromJson(JsonElement root, out EmotionDebug debug)
+	{
+		debug = null;
+		if (!root.TryGetProperty("emotion_debug", out var emotionRoot) || emotionRoot.ValueKind != JsonValueKind.Object)
+			return false;
+
+		string summaryLabel = "";
+		string summaryValue = "";
+		string summaryState = "";
+		float summaryValence = 0f;
+		bool hasSummaryValence = false;
+		if (emotionRoot.TryGetProperty("summary", out var summary) && summary.ValueKind == JsonValueKind.Object)
+		{
+			summaryLabel = ReadString(summary, "label");
+			summaryValue = ReadString(summary, "value");
+			summaryState = ReadString(summary, "state");
+			if (summary.TryGetProperty("valence", out var valence) && valence.ValueKind == JsonValueKind.Number)
+			{
+				summaryValence = valence.GetSingle();
+				hasSummaryValence = true;
+			}
+		}
+
+		var items = new List<EmotionDebugItem>();
+		if (emotionRoot.TryGetProperty("items", out var itemsRoot) && itemsRoot.ValueKind == JsonValueKind.Object)
+		{
+			foreach (var property in itemsRoot.EnumerateObject())
+			{
+				var itemRoot = property.Value;
+				if (itemRoot.ValueKind != JsonValueKind.Object)
+					continue;
+
+				string valueText = "";
+				float numericValue = 0f;
+				bool hasNumericValue = false;
+				if (itemRoot.TryGetProperty("value", out var valueElement))
+				{
+					if (valueElement.ValueKind == JsonValueKind.Number)
+					{
+						numericValue = valueElement.GetSingle();
+						valueText = numericValue.ToString("0.00");
+						hasNumericValue = true;
+					}
+					else if (valueElement.ValueKind == JsonValueKind.String)
+					{
+						valueText = valueElement.GetString() ?? "";
+					}
+					else if (valueElement.ValueKind == JsonValueKind.True || valueElement.ValueKind == JsonValueKind.False)
+					{
+						valueText = valueElement.GetBoolean() ? "true" : "false";
+					}
+					else
+					{
+						valueText = valueElement.GetRawText();
+					}
+				}
+
+				items.Add(new EmotionDebugItem
+				{
+					Key = property.Name,
+					Label = ReadString(itemRoot, "label"),
+					Group = ReadString(itemRoot, "group"),
+					ValueText = valueText,
+					NumericValue = numericValue,
+					HasNumericValue = hasNumericValue,
+					Note = ReadString(itemRoot, "note"),
+				});
+			}
+		}
+
+		debug = new EmotionDebug
+		{
+			SummaryLabel = summaryLabel,
+			SummaryValue = summaryValue,
+			SummaryState = summaryState,
+			SummaryValence = summaryValence,
+			HasSummaryValence = hasSummaryValence,
+			Items = items,
+		};
+		return true;
+	}
+
+	private static string ReadString(JsonElement root, string propertyName)
+	{
+		return root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+			? value.GetString() ?? ""
+			: "";
+	}
 }
 
 public sealed class UdpDecisionParser
@@ -59,6 +171,8 @@ public sealed class UdpDecisionParser
 		bool explicitMotion = false;
 		BodyBias bodyBias = null;
 		bool hasBodyBias = false;
+		EmotionDebug emotionDebug = null;
+		bool hasEmotionDebug = false;
 
 		try
 		{
@@ -69,6 +183,8 @@ public sealed class UdpDecisionParser
 
 			if (BodyBias.TryFromJson(root, out bodyBias))
 				hasBodyBias = true;
+			if (EmotionDebug.TryFromJson(root, out emotionDebug))
+				hasEmotionDebug = true;
 			if (root.TryGetProperty("text", out var t))
 			{
 				text = t.GetString() ?? "";
@@ -145,6 +261,8 @@ public sealed class UdpDecisionParser
 			ParseMode = parseMode,
 			DebugTrace = debugTrace,
 			ParserTrace = parserTrace,
+			EmotionDebug = emotionDebug,
+			HasEmotionDebug = hasEmotionDebug,
 		};
 	}
 

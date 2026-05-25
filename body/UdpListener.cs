@@ -67,12 +67,17 @@ public partial class UdpListener : Node2D
 	private Button _contextChatButton;
 	private Button _contextTouchButton;
 	private Button _contextForceSpeakButton;
+	private Button _contextEmotionButton;
 	private Button _contextCloseButton;
+	private Panel _emotionPanel;
+	private RichTextLabel _emotionText;
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	private Tween _textTween;
-	private static readonly Vector2 CharacterContextMenuMinSize = new(170f, 152f);
+	private static readonly Vector2 CharacterContextMenuMinSize = new(170f, 188f);
+	private static readonly Vector2 EmotionPanelMinSize = new(360f, 460f);
 	private readonly Random _rng = new Random();
+	private EmotionDebug _latestEmotionDebug;
 	private Control _bubble;
 	private bool _grabModeArmed = false;
 	private bool _isDraggingCharacter = false;
@@ -165,17 +170,25 @@ public partial class UdpListener : Node2D
 	_contextChatButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ChatButton");
 	_contextTouchButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/TouchButton");
 	_contextForceSpeakButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ForceSpeakButton");
+	_contextEmotionButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/EmotionButton");
 	_contextCloseButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/CloseButton");
 		_characterContextMenu.CustomMinimumSize = CharacterContextMenuMinSize;
 		_characterContextMenu.Size = CharacterContextMenuMinSize;
 		_characterContextMenu.ZIndex = 100;
+		_emotionPanel = GetNode<Panel>("CanvasLayer/Control/EmotionPanel");
+		_emotionPanel.CustomMinimumSize = EmotionPanelMinSize;
+		_emotionPanel.Size = EmotionPanelMinSize;
+		_emotionPanel.ZIndex = 99;
+		_emotionText = GetNode<RichTextLabel>("CanvasLayer/Control/EmotionPanel/VBoxContainer/ScrollContainer/EmotionText");
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
 	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton").Pressed += OnSendPressed;
 	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton").Pressed += CloseChatPanel;
 	_contextChatButton.Pressed += OnContextChatPressed;
 	_contextTouchButton.Pressed += OnContextTouchPressed;
 	_contextForceSpeakButton.Pressed += OnContextForceSpeakPressed;
+	_contextEmotionButton.Pressed += OnContextEmotionPressed;
 	_contextCloseButton.Pressed += CloseCharacterContextMenu;
+	GetNode<Button>("CanvasLayer/Control/EmotionPanel/VBoxContainer/Header/CloseButton").Pressed += CloseEmotionPanel;
 		_chatInput.TextSubmitted += _ => OnSendPressed();
 		_chatSend.ConnectToHost("127.0.0.1", 4243);
 
@@ -322,6 +335,11 @@ public partial class UdpListener : Node2D
 				GetViewport().SetInputAsHandled();
 				return;
 			}
+			if (_emotionPanel.Visible && IsMouseOverControl(_emotionPanel, mouseEvent.Position))
+			{
+				GetViewport().SetInputAsHandled();
+				return;
+			}
 
 			if (IsMouseOverCharacter(mouseEvent.Position))
 			{
@@ -336,6 +354,11 @@ public partial class UdpListener : Node2D
 				CloseCharacterContextMenu();
 				GetViewport().SetInputAsHandled();
 			}
+			if (_emotionPanel.Visible)
+			{
+				CloseEmotionPanel();
+				GetViewport().SetInputAsHandled();
+			}
 
 			return;
 		}
@@ -347,6 +370,15 @@ public partial class UdpListener : Node2D
 		)
 		{
 			CloseCharacterContextMenu();
+		}
+
+		if (
+			mouseEvent.ButtonIndex == MouseButton.Left
+			&& _emotionPanel.Visible
+			&& !IsMouseOverControl(_emotionPanel, mouseEvent.Position)
+		)
+		{
+			CloseEmotionPanel();
 		}
 	}
 
@@ -410,6 +442,38 @@ public partial class UdpListener : Node2D
 		CloseCharacterContextMenu();
 		_bodyAutonomy?.RecordUserInteraction();
 		SendChatSignal("force_speak");
+	}
+
+	private void OnContextEmotionPressed()
+	{
+		_bodyAutonomy?.RecordUserInteraction();
+		ToggleEmotionPanel();
+	}
+
+	private void ToggleEmotionPanel()
+	{
+		if (_emotionPanel.Visible)
+			CloseEmotionPanel();
+		else
+			ShowEmotionPanel();
+	}
+
+	private void ShowEmotionPanel()
+	{
+		CloseCharacterContextMenu();
+		_emotionPanel.Visible = true;
+		_emotionPanel.Size = EmotionPanelMinSize;
+		Vector2 screenSize = GetViewportRect().Size;
+		Vector2 preferred = _body.GlobalPosition + new Vector2(24f, -EmotionPanelMinSize.Y * 0.55f);
+		_emotionPanel.Position = new Vector2(
+			Mathf.Clamp(preferred.X, 0f, Mathf.Max(0f, screenSize.X - EmotionPanelMinSize.X)),
+			Mathf.Clamp(preferred.Y, 0f, Mathf.Max(0f, screenSize.Y - EmotionPanelMinSize.Y)));
+		RefreshEmotionPanel();
+	}
+
+	private void CloseEmotionPanel()
+	{
+		_emotionPanel.Visible = false;
 	}
 
 	private void BeginDrag(Vector2 mousePosition)
@@ -813,6 +877,12 @@ public partial class UdpListener : Node2D
 	private void ParseAndApply(string raw)
 	{
 		var payload = _decisionParser.Parse(raw);
+		if (payload.HasEmotionDebug)
+		{
+			_latestEmotionDebug = payload.EmotionDebug;
+			if (_emotionPanel != null && _emotionPanel.Visible)
+				RefreshEmotionPanel();
+		}
 		if (payload.HasBodyBias)
 			_bodyAutonomy?.ApplyCognitionBias(payload.BodyBias);
 
@@ -833,6 +903,95 @@ public partial class UdpListener : Node2D
 
 		if (payload.HasExplicitMotion || (EnableLegacyRemoteMotionCommands && payload.HasRemoteMotion))
 			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
+	}
+
+	private void RefreshEmotionPanel()
+	{
+		if (_emotionText == null)
+			return;
+
+		if (_latestEmotionDebug == null || _latestEmotionDebug.Items == null || _latestEmotionDebug.Items.Count == 0)
+		{
+			_emotionText.Text = "[i]Chua co frame cam xuc.[/i]";
+			return;
+		}
+
+		var sb = new StringBuilder();
+		sb.Append("[b]Trang thai[/b]\n");
+		string summary = string.IsNullOrWhiteSpace(_latestEmotionDebug.SummaryValue) ? "unknown" : _latestEmotionDebug.SummaryValue;
+		sb.Append(EscapeBbcode(_latestEmotionDebug.SummaryLabel));
+		sb.Append(": [b]");
+		sb.Append(EscapeBbcode(summary));
+		sb.Append("[/b]");
+		if (_latestEmotionDebug.HasSummaryValence)
+			sb.Append($"  valence={_latestEmotionDebug.SummaryValence:0.00}");
+		if (!string.IsNullOrWhiteSpace(_latestEmotionDebug.SummaryState))
+			sb.Append($"  state={EscapeBbcode(_latestEmotionDebug.SummaryState)}");
+		sb.Append("\n\n");
+
+		string currentGroup = "";
+		foreach (var item in _latestEmotionDebug.Items)
+		{
+			string group = string.IsNullOrWhiteSpace(item.Group) ? "other" : item.Group;
+			if (!string.Equals(group, currentGroup, StringComparison.Ordinal))
+			{
+				currentGroup = group;
+				sb.Append("[color=#8fb7ff][b]");
+				sb.Append(EscapeBbcode(GroupTitle(group)));
+				sb.Append("[/b][/color]\n");
+			}
+
+			sb.Append("  ");
+			sb.Append(EscapeBbcode(item.Label));
+			sb.Append(": ");
+			if (item.HasNumericValue)
+			{
+				sb.Append(BuildMeter(item.NumericValue));
+				sb.Append($" {item.NumericValue:0.00}");
+			}
+			else
+			{
+				sb.Append(EscapeBbcode(string.IsNullOrWhiteSpace(item.ValueText) ? "-" : item.ValueText));
+			}
+			if (!string.IsNullOrWhiteSpace(item.Note))
+			{
+				sb.Append("  ");
+				sb.Append(EscapeBbcode(item.Note));
+			}
+			sb.Append("\n");
+		}
+
+		_emotionText.Text = sb.ToString();
+	}
+
+	private static string BuildMeter(float value)
+	{
+		float clamped = Mathf.Clamp(value, 0f, 1f);
+		int filled = Mathf.RoundToInt(clamped * 10f);
+		filled = Mathf.Clamp(filled, 0, 10);
+		return "[" + new string('#', filled) + new string('-', 10 - filled) + "]";
+	}
+
+	private static string GroupTitle(string group)
+	{
+		return group switch
+		{
+			"core" => "loi cam xuc",
+			"bond" => "gan bo",
+			"friction" => "ma sat",
+			"attention" => "chu y / suy nghi",
+			"speech" => "ap luc noi",
+			"tone" => "tone xa hoi",
+			"control" => "kiem che / tiem thuc",
+			"load" => "tai nhan thuc",
+			"surface" => "be mat loi noi",
+			_ => group,
+		};
+	}
+
+	private static string EscapeBbcode(string text)
+	{
+		return (text ?? "").Replace("[", "\\[").Replace("]", "\\]");
 	}
 
 	private void ApplyAnimationCommand(string animation, int direction, string nextAnimation)
