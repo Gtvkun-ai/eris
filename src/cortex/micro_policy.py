@@ -662,7 +662,9 @@ class MicroLinePolicy:
         if line_type in self.MICRO_TYPES:
             if self._looks_like_unaccented_vietnamese(text):
                 issues.append(ValidationIssue("vietnamese_requires_diacritics", "rewriteable"))
-            if word_count < 6 and not self._has_clear_short_meaning(
+            if word_count < 6 and (
+                self._looks_like_unaccented_vietnamese(text)
+                or not self._has_clear_short_meaning(
                 text,
                 anchor_source=anchor_source,
                 anchor_text=anchor_text,
@@ -670,6 +672,7 @@ class MicroLinePolicy:
                 session_context=session_context,
                 screen_evidence=screen_evidence,
                 line_type=line_type,
+                )
             ):
                 issues.append(ValidationIssue("micro_line_too_short_without_clear_meaning", "rewriteable"))
 
@@ -699,7 +702,7 @@ class MicroLinePolicy:
 
         # Chỉ observation mới bắt buộc bám evidence cụ thể. ambient_residue không
         # phải observation; nó là dư âm nhịp, nên không bắt buộc screen anchor.
-        if line_type == "micro_observation":
+        if line_type in {"micro_observation", "screen_observation"}:
             grounding_source, grounding_anchor = self._resolve_anchor(
                 line_type=line_type,
                 broadcast=None,
@@ -710,9 +713,9 @@ class MicroLinePolicy:
             effective_source = anchor_source or grounding_source
             effective_anchor = anchor_text or grounding_anchor
             if not effective_source:
-                issues.append(ValidationIssue("micro_observation_requires_anchor", "fatal"))
+                issues.append(ValidationIssue(f"{line_type}_requires_anchor", "fatal"))
             elif not self._text_matches_anchor(text, effective_anchor):
-                issues.append(ValidationIssue(f"micro_observation_not_grounded:{effective_source}", "fatal"))
+                issues.append(ValidationIssue(f"{line_type}_not_grounded:{effective_source}", "fatal"))
 
         return issues
 
@@ -859,11 +862,11 @@ class MicroLinePolicy:
         """
 
         evidence = str(vision_fact or "").strip()
-        if line_type == "micro_observation" and evidence:
+        if line_type in self.OBSERVATION_TYPES and evidence:
             return "screen_evidence", evidence
 
         action = str(user_action or "").strip()
-        if line_type == "micro_observation" and action:
+        if line_type in self.OBSERVATION_TYPES and action:
             return "user_action", action
 
         if broadcast is not None:
@@ -880,7 +883,7 @@ class MicroLinePolicy:
                     return "session_context", content
 
         context = str(session_context or "").strip()
-        if line_type == "micro_observation" and context:
+        if line_type in self.OBSERVATION_TYPES and context:
             return "session_context", context
         return "", ""
 

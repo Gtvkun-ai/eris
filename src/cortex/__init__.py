@@ -30,7 +30,7 @@ from .contracts import (
     UnresolvedTensionLoop,
     UserSignals,
 )
-from .attention import AttentionWorkspace
+from .attention_salience import AttentionSalienceEngine, SalienceFrame
 from .action_planner import ACTION_SPACE, ActionPlanner
 from .appraisal import AppraisalEngine
 from .fe import FeRenderer
@@ -83,7 +83,7 @@ __all__ = [
     "AssociationGraph",
     "AttentionCandidate",
     "AppraisalEngine",
-    "AttentionWorkspace",
+    "AttentionSalienceEngine",
     "ACTION_SPACE",
     "ActionPlanner",
     "CognitiveActionPlan",
@@ -133,6 +133,7 @@ __all__ = [
     "SelfState",
     "SessionRitualEngine",
     "SessionRitualReport",
+    "SalienceFrame",
     "SpeechCoreEngine",
     "SocialPresenceDetector",
     "SocialPresenceEvent",

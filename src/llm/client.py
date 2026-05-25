@@ -66,6 +66,7 @@ class LlamaServerClient:
         max_tokens,
         response_format=None,
         grammar=None,
+        timeout=None,
     ):
         payload = {
             "model": self.model_name,
@@ -93,7 +94,7 @@ class LlamaServerClient:
             response = requests.post(
                 f"{self.base_url}/chat/completions",
                 json=candidate,
-                timeout=self.timeout,
+                timeout=self.timeout if timeout is None else timeout,
             )
             try:
                 response.raise_for_status()
@@ -151,6 +152,7 @@ class OpenAICompatibleClient:
         max_tokens,
         response_format=None,
         grammar=None,
+        timeout=None,
     ):
         payload = {
             "model": self.model_name,
@@ -184,7 +186,7 @@ class OpenAICompatibleClient:
                     url,
                     headers=headers,
                     json=candidate,
-                    timeout=self.timeout,
+                    timeout=self.timeout if timeout is None else timeout,
                 )
                 response.raise_for_status()
                 return response.json()
@@ -299,6 +301,7 @@ class GeminiClient:
         max_tokens,
         response_format=None,
         grammar=None,
+        timeout=None,
     ):
         system_instruction, contents = self._convert_messages(messages)
         generation_config = {
@@ -324,7 +327,7 @@ class GeminiClient:
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=self.timeout,
+            timeout=self.timeout if timeout is None else timeout,
         )
         try:
             response.raise_for_status()

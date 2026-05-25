@@ -1293,7 +1293,13 @@ class LlmService:
         """
         return raw_json
 
-    def _complete_decision(self, *, messages: list[dict], channel: str) -> str:
+    def _complete_decision(
+        self,
+        *,
+        messages: list[dict],
+        channel: str,
+        request_timeout: float | None = None,
+    ) -> str:
         max_tokens = 260 if channel == "chat" else 320
         messages = self._with_non_empty_text_rule(messages)
         no_cot_contract = (
@@ -1319,6 +1325,7 @@ class LlmService:
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"},
                 grammar=DECISION_GBNF,
+                timeout=request_timeout,
             )
 
         try:
@@ -1565,6 +1572,17 @@ class LlmService:
             f"{compact}"
         )
 
+    def _build_grounding_context_block(self, grounding_context: str = "") -> str:
+        compact = re.sub(r"\n{3,}", "\n\n", (grounding_context or "").strip())
+        if not compact:
+            return ""
+        return (
+            "GROUNDING CONTEXT:\n"
+            f"{compact}\n\n"
+            "Treat this block as a hard boundary for current evidence. "
+            "Do not claim file, screen, memory, or web access beyond what it allows."
+        )
+
     def _build_relational_repair_contract(self, context: str) -> str:
         source = context or ""
         if not source:
@@ -1677,6 +1695,7 @@ class LlmService:
         avoid_text: str = "",
         speech_intent: str = "screen_observation",
         vision_trace_marker: str = "",
+        request_timeout: float | None = None,
     ):
         ti_hint = self._compress_internal_context(ti_context, kind="ti")
         action_plan_hint = self._extract_action_plan_context(ti_context)
@@ -1765,6 +1784,7 @@ class LlmService:
                 {"role": "user", "content": user_msg},
             ],
             channel="directive",
+            request_timeout=request_timeout,
         )
 
     def generate_micro_presence_line(
@@ -1978,6 +1998,7 @@ class LlmService:
         internal_state_context: str = "",
         conversation_context: str = "",
         memory_context: str = "",
+        grounding_context: str = "",
         screen_image_data_uri: str = "",
     ):
         style_block = self._build_style_block(
@@ -1989,7 +2010,9 @@ class LlmService:
         act = classify_chat_act(effective_user_text)
         chat_contract = self._build_chat_contract_prompt(effective_user_text, act=act)
         conversation_section = f"{conversation_context}\n\n" if conversation_context else ""
-        chat_system = f"{style_block}\n\n{chat_contract}\n\n{conversation_section}{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
+        grounding_block = self._build_grounding_context_block(grounding_context)
+        grounding_section = f"{grounding_block}\n\n" if grounding_block else ""
+        chat_system = f"{style_block}\n\n{chat_contract}\n\n{conversation_section}{grounding_section}{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
         relational_repair_contract = self._build_relational_repair_contract(
             "\n".join(
                 (
@@ -2007,7 +2030,8 @@ class LlmService:
             chat_system = (
                 f"{style_block}\n\n{chat_contract}\n\n"
                 f"{conversation_section}"
-                f"{memory_block}\n\n{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
+                f"{memory_block}\n\n"
+                f"{grounding_section}{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
             )
             if relational_repair_contract:
                 chat_system = f"{chat_system}\n\n{relational_repair_contract}"

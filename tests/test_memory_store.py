@@ -6,111 +6,85 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from cortex.internal_state import PersistentInternalState
-from memory import MemoryStore
+from memory import MemoryCognitionCore
 
 
-def _snapshot(
-    *,
-    kind="coding",
-    app="Visual Studio Code",
-    focus="coding workspace",
-    idle=2.0,
-    windows=("Visual Studio Code",),
-    tabs=(),
-    pattern="deep",
-):
-    return SimpleNamespace(
-        active_window_kind=kind,
-        active_app=app,
-        active_window=app,
-        focus_summary=focus,
-        idle_seconds=idle,
-        open_windows=windows,
-        browser_tabs=tabs,
-        user_signals=SimpleNamespace(focus_pattern=pattern),
-    )
+def request(**overrides):
+    payload = {
+        "target": "semantic_memory",
+        "content": "User prefers explicit memory architecture.",
+        "confidence": 0.82,
+        "evidence_ids": ["ev1"],
+        "permission_required": True,
+        "storage_permission": True,
+        "decay_policy": "normal",
+        "reason": "unit test",
+        "metadata": {},
+    }
+    payload.update(overrides)
+    return SimpleNamespace(**payload)
 
 
-class MemoryStoreTests(unittest.TestCase):
-    def test_memory_state_keeps_memory_types_separate(self):
+class MemoryCognitionCoreFacadeTests(unittest.TestCase):
+    def test_commit_routes_only_through_state_commit_request(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "memory.json")
-            store = MemoryStore(path, max_items=30)
-            state = store.load_state()
+            core = MemoryCognitionCore(tmpdir)
 
-            state = store.remember_cycle(
-                state,
-                cycle_id="chat-1",
-                channel="chat",
-                timestamp="2026-05-01T10:00:00+0700",
-                seen=("VS Code is active",),
-                said="Tach memory thanh bon loai.",
-                outcome="json",
-                salience=0.72,
-                tags=("user_requested",),
-                semantic_fact="User prefers explicit memory architecture.",
-            )
-            state = store.remember_relationship_reflection(
-                state,
-                "Ngài thích giọng lạnh nhẹ, nhưng không thích báo cáo telemetry.",
-                pattern="style_preference",
-                timestamp="2026-05-01T10:00:00+0700",
-            )
-            state = store.update_norms(state, _snapshot())
-            store.save_state(state)
+            decisions = [
+                core.commit(request(target="event_ledger", content="turn happened", confidence=0.95)),
+                core.commit(request(target="episodic_memory", content={"scene": ["chat"], "eris_action": "answered", "outcome": "ok"})),
+                core.commit(request(target="semantic_memory", content={"fact": "User prefers explicit memory architecture."})),
+                core.commit(request(target="relational_memory", content={"pattern": "style_preference", "text": "User prefers grounded directness."})),
+                core.commit(request(target="affective_residue_memory", content={"stance": "repair_residue", "residue_strength": 0.64})),
+                core.commit(request(target="procedural_memory", content={"trigger": "technical_task", "rule": "Answer first, then explain."})),
+                core.commit(request(target="repair_memory", content={"failure_type": "misread", "wrong_assumption": "overread user mood", "repair_strategy": "ask less, ground more"})),
+                core.commit(request(target="active_state", content={"active_task": "memory facade migration"}, decay_policy="session_only")),
+            ]
 
-            loaded = store.load_state()
-            context = store.render_context(loaded, snapshot=_snapshot())
+            self.assertTrue(all(item.outcome in {"accepted", "tentative"} for item in decisions))
+            loaded = core.load()
+            self.assertTrue(loaded["event_ledger"])
+            self.assertTrue(loaded["episodic_memory"])
+            self.assertTrue(loaded["semantic_memory"])
+            self.assertTrue(loaded["relational_memory"])
+            self.assertTrue(loaded["affective_residue_memory"])
+            self.assertTrue(loaded["procedural_memory"])
+            self.assertTrue(loaded["repair_memory"])
+            self.assertEqual(loaded["active_state"]["active_task"], "memory facade migration")
 
-            self.assertEqual(len(loaded.working), 1)
-            self.assertEqual(len(loaded.episodic), 1)
-            self.assertEqual(loaded.semantic[0].text, "User prefers explicit memory architecture.")
-            self.assertEqual(loaded.relationship[0].pattern, "style_preference")
-            self.assertEqual(loaded.norm.observations, 1)
-            self.assertIn("working_memory", context)
-            self.assertIn("episodic_memory", context)
-            self.assertIn("semantic_user_memory", context)
-            self.assertIn("relationship_memory", context)
+    def test_permission_gate_rejects_unapproved_storage(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            core = MemoryCognitionCore(tmpdir)
+            decision = core.commit(request(storage_permission=False))
+
+            self.assertEqual(decision.outcome, "rejected")
+            self.assertEqual(decision.reason, "storage_permission_false")
+            self.assertFalse(core.load()["semantic_memory"])
+
+    def test_recall_and_render_context_are_facade_reads(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            core = MemoryCognitionCore(tmpdir)
+            core.commit(request(target="procedural_memory", content={"trigger": "technical_task", "rule": "Answer first, then explain."}))
+            core.commit(request(target="relational_memory", content={"pattern": "grounded_style", "text": "User dislikes fake output."}))
+
+            packet = core.recall("technical fake output", max_items=8)
+            context = core.render_context("technical fake output")
+
+            self.assertTrue(packet.procedural)
+            self.assertTrue(packet.relational)
+            self.assertGreater(packet.score, 0.0)
             self.assertIn("procedural_memory", context)
-            self.assertIn("norm_memory", context)
-            self.assertIn("not current screen evidence", context)
+            self.assertIn("active_memory_resonance", context)
+            self.assertTrue(packet.to_attention_lines())
 
-    def test_relationship_memory_dedupes_and_appears_in_recall(self):
+    def test_save_load_preserves_active_internal_state_snapshot(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = MemoryStore(os.path.join(tmpdir, "memory.json"), max_items=30)
-            state = store.load_state()
-
-            for _ in range(2):
-                state = store.remember_relationship_reflection(
-                    state,
-                    "Khi thiếu screen signal, ERIS nên hỏi lại hoặc mở một câu tò mò, không giả vờ thấy gì.",
-                    pattern="no_screen_signal_social_fallback",
-                    evidence=("force_speak",),
-                )
-
-            recalled = store.recall_texts(state)
-
-            self.assertEqual(len(state.relationship), 1)
-            self.assertEqual(state.relationship[0].observations, 2)
-            self.assertTrue(any(item.startswith("relationship/no_screen_signal") for item in recalled))
-
-    def test_norm_memory_compares_new_scene_to_prior_baseline(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = MemoryStore(os.path.join(tmpdir, "memory.json"), max_items=30)
-            state = store.load_state()
-
-            for _ in range(6):
-                state = store.update_norms(state, _snapshot())
-
-            unusual = _snapshot(
-                kind="entertainment",
-                app="YouTube - Brave",
-                focus="watching video",
-                idle=820.0,
-                windows=("Brave",),
-                tabs=("YouTube", "Music"),
-                pattern="drifting",
+            core = MemoryCognitionCore(tmpdir)
+            core.save(
+                {
+                    "active_state": {"metadata": {}},
+                    "internal_state": {"cycle_count": 7, "last_channel": "chat"},
+                }
             )
 
             deviations = store.compare_to_norms(state, unusual)
@@ -290,6 +264,9 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertTrue(any(item.startswith("emotional_residue/") for item in recalled))
             self.assertIn("emotional_residue_memory", context)
             self.assertTrue(any(item.layer == "emotional_residue" for item in report.activations))
+            loaded = core.load()
+            self.assertEqual(loaded["active_state"]["metadata"]["internal_state"]["cycle_count"], 7)
+            self.assertEqual(loaded["active_state"]["metadata"]["internal_state"]["last_channel"], "chat")
 
 
 if __name__ == "__main__":

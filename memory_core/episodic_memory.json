@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "epi_cefca21245d0",
+      "timestamp": "2026-05-24T20:28:09+0700",
+      "frame_id": "",
+      "summary": "tôi đang code gì á, bạn xem đi -> Ngài đang xây dựng cấu trúc báo cáo kiểm toán cho quá trình lưu trữ trạng thái của tôi. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:20:27:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_34eae8251045",
+      "timestamp": "2026-05-24T20:27:24+0700",
+      "frame_id": "",
+      "summary": "đoạn đang mở làm gì -> Tôi không rõ Ngài đang muốn đề cập đến một đoạn mã cụ thể nào hay một tiến trình nào khác trong bối cảnh này không? -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:20:27:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_a27c397deb4c",
+      "timestamp": "2026-05-24T20:26:46+0700",
+      "frame_id": "",
+      "summary": "state_committer.py đang làm gì? -> state_committer.py đang thực hiện việc ghi nhận và lưu trữ các trạng thái hiện tại của tôi vào bộ nhớ để duy trì tính liên tục. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:20:26:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_7e564fadf8ec",
+      "timestamp": "2026-05-24T19:08:35+0700",
+      "frame_id": "",
+      "summary": "tôi đang code gì á, bạn xem đi -> Ngài đang xây dựng cấu trúc báo cáo kiểm toán cho quá trình lưu trữ trạng thái của tôi. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:19:08:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_ec5b8b6677f1",
+      "timestamp": "2026-05-24T19:08:01+0700",
+      "frame_id": "",
+      "summary": "tôi đang code gì vậy? -> Ngài đang lặp lại đúng cùng một câu. Tôi đã nhận câu đó rồi. Nếu muốn tôi nói khác đi, hãy chỉ rõ phần nào Ngài chưa hiểu. -> repeat_guard",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:19:08:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_f8e1c6d3d3a8",
+      "timestamp": "2026-05-24T19:07:35+0700",
+      "frame_id": "",
+      "summary": "tôi đang code gì vậy? -> Ngài đang xây dựng cấu trúc báo cáo kiểm toán cho quá trình lưu trữ trạng thái của tôi. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:19:07:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_8efa6913de6d",
+      "timestamp": "2026-05-24T19:06:36+0700",
+      "frame_id": "",
+      "summary": "@dataclass(slots=True)class CommitBatchReport: \"\"\"Audit report cho một lần StateCommitter.commit(...).\"\"\" frame_id: Optional[str] requested: int = 0 accepted: int = 0 committed:... -> Đoạn mã này định nghĩa một cấu trúc dữ liệu dùng để lập báo cáo kiểm toán (audit report) cho một lần thực hiện commit của StateCommitter. Nó ghi lại các thông số như số lượn...",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:19:06:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_79d76f75e72f",
+      "timestamp": "2026-05-24T19:05:31+0700",
+      "frame_id": "",
+      "summary": "đoạn đang mở làm gì -> Tôi không rõ Ngài đang muốn đề cập đến một đoạn mã cụ thể nào hay một tiến trình nào khác trong bối cảnh này không? -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:19:05:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_3b97a35c5eb2",
+      "timestamp": "2026-05-24T19:04:13+0700",
+      "frame_id": "",
+      "summary": "state_committer.py đang làm gì? -> state_committer.py đang thực hiện việc ghi nhận và lưu trữ các trạng thái hiện tại của tôi vào bộ nhớ để duy trì tính liên tục. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:19:03:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    }
+  ]
+}

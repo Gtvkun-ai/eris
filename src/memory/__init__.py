@@ -1,31 +1,33 @@
-from .store import (
-    EpisodicMemoryItem,
-    ExperientialAssociationItem,
-    ExperientialAssociationNetwork,
+"""Memory package for ERIS."""
+
+from .memory_cognition import (
+    CommitPolicy,
     MemoryActivation,
-    MemoryResonanceReport,
-    MemoryState,
-    MemoryStore,
-    NormDeviation,
-    NormMemory,
-    ProceduralMemoryItem,
-    RelationshipMemoryItem,
-    SemanticMemoryItem,
-    WorkingMemoryItem,
+    MemoryCognitionCore,
+    MemoryCommitDecision,
+    MemoryPacket,
+    MemoryQuery,
 )
+from .active_state_snapshot import ActiveStateSnapshot
+from .affective_residue_memory import AffectiveResidueItem
+from .episodic_memory import EpisodicMemoryItem
+from .procedural_memory import ProceduralMemoryItem
+from .relational_memory import RelationalMemoryItem
+from .repair_memory import RepairMemoryItem
+from .semantic_memory import SemanticMemoryItem
 
 __all__ = [
+    "ActiveStateSnapshot",
+    "AffectiveResidueItem",
+    "CommitPolicy",
     "EpisodicMemoryItem",
-    "ExperientialAssociationItem",
-    "ExperientialAssociationNetwork",
+    "RelationalMemoryItem",
     "MemoryActivation",
-    "MemoryResonanceReport",
-    "MemoryState",
-    "MemoryStore",
-    "NormDeviation",
-    "NormMemory",
+    "MemoryCognitionCore",
+    "MemoryCommitDecision",
+    "MemoryPacket",
+    "MemoryQuery",
     "ProceduralMemoryItem",
-    "RelationshipMemoryItem",
+    "RepairMemoryItem",
     "SemanticMemoryItem",
-    "WorkingMemoryItem",
 ]

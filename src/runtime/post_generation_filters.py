@@ -9,7 +9,7 @@ from runtime.fallback_policy import FALLBACK_BY_INTENT
 
 
 class PostGenerationFiltersMixin:
-    def _apply_chat_final_guards(self, decision: Decision, *, user_text: str) -> Decision:
+    def _apply_chat_final_guards(self, decision: Decision, *, user_text: str, frame=None) -> Decision:
         state = None
         try:
             state = self._get_internal_state()
@@ -22,10 +22,129 @@ class PostGenerationFiltersMixin:
             ("no_more_clarifying_question" in flags or self._guard_user_explained_reason(user_text))
             and self._is_repeated_clarifying_question(decision.text or "", last_assistant_text)
         ):
-            return self._copy_decision_with_text(
+            decision = self._copy_decision_with_text(
                 decision,
                 text=self._build_relational_repair_line(user_text, last_assistant_text),
                 trace_marker="chat_final_guard; relational_repair_no_ask_loop",
+            )
+        decision = self._apply_memory_haunting_guard(
+            decision,
+            grounding=(getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)) if frame is not None else None,
+        )
+        return self._apply_chat_grounding_guard(decision, user_text=user_text, frame=frame)
+
+    def _append_trace(self, trace: str, marker: str) -> str:
+        trace = str(trace or "").strip()
+        marker = str(marker or "").strip()
+        if not marker:
+            return trace
+        return f"{trace} | {marker}" if trace else marker
+
+    def _apply_memory_haunting_guard(self, decision: Decision, *, grounding=None) -> Decision:
+        if grounding is None:
+            grounding = getattr(self, "last_grounding_context", None)
+        if grounding is None:
+            return decision
+
+        trace = str(getattr(decision, "debug_trace", "") or "").lower()
+        tags = " ".join(getattr(decision, "reasoning_tags", []) or []).lower()
+        memory_used = any(k in f"{trace} {tags}" for k in (
+            "semantic_memory",
+            "semantic_memory_match",
+            "episodic_memory",
+            "memory_resonance",
+            "memory shows",
+        ))
+        if not memory_used or bool(getattr(grounding, "memory_answer_allowed", True)):
+            return decision
+
+        fallback = ""
+        engine = getattr(self, "source_grounding_engine", None)
+        builder = getattr(engine, "build_preemptive_reply", None)
+        if callable(builder):
+            try:
+                fallback = builder(grounding)
+            except Exception:
+                fallback = ""
+
+        decision.text = fallback or (
+            "Tôi chỉ có ký ức/ngữ cảnh trước đó, không có bằng chứng hiện tại đủ rõ. "
+            "Nếu muốn tôi xem màn hình thật, cần lấy vision snapshot mới."
+        )
+        decision.intent = "grounding_clarification"
+        decision.action = "none"
+        try:
+            decision.confidence = min(float(getattr(decision, "confidence", 0.5) or 0.5), float(getattr(grounding, "max_confidence", 0.35) or 0.35))
+        except Exception:
+            decision.confidence = 0.35
+        decision.debug_trace = self._append_trace(
+            getattr(decision, "debug_trace", ""),
+            "memory_haunting_guard=rewrite_memory_as_current_evidence",
+        )
+        decision.parse_mode = "source_grounding_guard"
+        return decision
+
+    def _guard_recent_context_as_screen_observation(self, decision: Decision) -> Decision:
+        extracted = str(getattr(decision, "extracted_fact", "") or "").lower()
+        intent = str(getattr(decision, "intent", "") or "").lower()
+        trace = str(getattr(decision, "debug_trace", "") or "").lower()
+
+        if intent == "screen_observation" and (
+            "recent context" in extracted
+            or "likely" in extracted
+            or "memory" in trace
+            or "cognitive_momentum" in trace
+        ):
+            decision.intent = "micro_presence"
+            try:
+                decision.confidence = min(float(getattr(decision, "confidence", 0.5) or 0.5), 0.45)
+            except Exception:
+                decision.confidence = 0.45
+            if "code" in str(decision.text or "").lower() or "dòng code" in str(decision.text or "").lower():
+                decision.text = "Ít tín hiệu mới quá. Tôi giữ im một chút."
+                decision.should_speak = True
+            decision.debug_trace = self._append_trace(
+                getattr(decision, "debug_trace", ""),
+                "guard=recent_context_not_screen_evidence",
+            )
+        return decision
+
+    def _apply_chat_grounding_guard(self, decision: Decision, *, user_text: str, frame=None) -> Decision:
+        report = None
+        if frame is not None:
+            report = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
+        if report is None:
+            return decision
+        missing = set(getattr(report, "missing_evidence", ()) or ())
+        if not missing:
+            return decision
+
+        fallback = getattr(report, "fallback_decision", None)
+        fallback_text = str(getattr(fallback, "text", "") or "").strip()
+        if not fallback_text:
+            return decision
+
+        text = decision.text or ""
+        if "file_evidence" in missing and self._looks_like_file_grounded_claim(text):
+            return self._copy_decision_with_text(
+                decision,
+                text=fallback_text,
+                trace_marker="chat_grounding_guard; missing_file_evidence",
+                parse_mode="source_grounding_guard",
+            )
+        if "screen_evidence" in missing and self._looks_like_screen_grounded_claim(text):
+            return self._copy_decision_with_text(
+                decision,
+                text=fallback_text,
+                trace_marker="chat_grounding_guard; missing_screen_evidence",
+                parse_mode="source_grounding_guard",
+            )
+        if "web_access_or_search_result" in missing and self._looks_like_live_web_claim(text):
+            return self._copy_decision_with_text(
+                decision,
+                text=fallback_text,
+                trace_marker="chat_grounding_guard; missing_web_evidence",
+                parse_mode="source_grounding_guard",
             )
         return decision
 
@@ -56,6 +175,59 @@ class PostGenerationFiltersMixin:
         if callable(normalize):
             return normalize(text)
         return re.sub(r"\s+", " ", (text or "").lower()).strip()
+
+    def _looks_like_file_grounded_claim(self, text: str) -> bool:
+        normalized = self._normalize_guard_text(text)
+        if not normalized:
+            return False
+        markers = (
+            "trong file",
+            "file nay",
+            "tep nay",
+            "doan code",
+            "ham ",
+            "class ",
+            "module ",
+            "dong ",
+            "toi doc",
+            "toi thay trong file",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _looks_like_screen_grounded_claim(self, text: str) -> bool:
+        normalized = self._normalize_guard_text(text)
+        if not normalized:
+            return False
+        markers = (
+            "toi thay",
+            "tren man hinh",
+            "man hinh dang",
+            "cua so",
+            "tab ",
+            "nut ",
+            "o ben trai",
+            "o ben phai",
+            "dang mo",
+            "dang hien",
+            "traceback",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _looks_like_live_web_claim(self, text: str) -> bool:
+        normalized = self._normalize_guard_text(text)
+        if not normalized:
+            return False
+        markers = (
+            "hien tai",
+            "moi nhat",
+            "hom nay",
+            "vua",
+            "gia hien tai",
+            "tin moi",
+            "lich hien tai",
+            "ban phat hanh moi",
+        )
+        return any(marker in normalized for marker in markers)
 
     def _guard_user_explained_reason(self, text: str) -> bool:
         normalized = self._normalize_guard_text(text)
@@ -633,6 +805,7 @@ class PostGenerationFiltersMixin:
             "vietnamese_requires_diacritics",
             "micro_line_too_short_without_clear_meaning",
             "micro_observation_requires_anchor",
+            "screen_observation_requires_anchor",
             "placeholder_text_blocked",
         )
         if channel == "force_speak" and any(reason in silence_reasons for reason in reasons):
@@ -658,7 +831,13 @@ class PostGenerationFiltersMixin:
                     text=fallback,
                     trace_marker=f"{marker}; fallback_after_micro_policy",
                 )
-        if any(reason == "no_speech_blocks_final" or reason.startswith("micro_observation_not_grounded:") or reason in silence_reasons for reason in reasons):
+        if any(
+            reason == "no_speech_blocks_final"
+            or reason.startswith("micro_observation_not_grounded:")
+            or reason.startswith("screen_observation_not_grounded:")
+            or reason in silence_reasons
+            for reason in reasons
+        ):
             return self._copy_decision_with_text(
                 decision,
                 text="",
@@ -704,6 +883,8 @@ class PostGenerationFiltersMixin:
         if guard_mode == OFF_GUARD_MODE:
             return decision
         if guard_mode == LOG_ONLY_GUARD_MODE:
+            decision = self._guard_recent_context_as_screen_observation(decision)
+            decision = self._apply_memory_haunting_guard(decision)
             return self._apply_force_speak_no_evidence_topic_filter(
                 decision,
                 channel=channel,
@@ -712,6 +893,8 @@ class PostGenerationFiltersMixin:
                 momentum_topic=momentum_topic,
             )
 
+        decision = self._guard_recent_context_as_screen_observation(decision)
+        decision = self._apply_memory_haunting_guard(decision)
         decision = self._apply_anti_mindreading_filter(
             decision,
             speech_core=speech_core,

@@ -12,8 +12,9 @@ import runtime.coordinator as coordinator_module
 from domain import Decision
 from cortex.contracts import CognitiveBroadcast, CognitiveMomentum, ThoughtStreamReport, UnresolvedTensionLoop
 from cortex.internal_state import PersistentInternalState
-from memory import MemoryStore
+from memory import MemoryCognitionCore
 from runtime.coordinator import FALLBACK_BY_INTENT, RuntimeCoordinator
+from runtime.source_grounding import SourceGroundingEngine
 
 
 class _DummyLogger:
@@ -415,8 +416,38 @@ class _DummyFe:
 
 
 class _DummyMemory:
-    def append_fact(self, memory, fact):
-        return memory
+    def __init__(self):
+        self._packet = SimpleNamespace(
+            repair=[],
+            procedural=[],
+            semantic=[],
+            relational=[],
+            affective_residue=[],
+            episodic=[],
+            score=0.0,
+            dominant_layer="",
+            attention_bias=0.0,
+            appraisal_bias=0.0,
+            wording_bias=0.0,
+            silence_bias=0.0,
+            render_prompt_context=lambda **kwargs: "",
+            to_attention_lines=lambda **kwargs: (),
+        )
+
+    def load(self):
+        return None
+
+    def save(self, snapshot=None):
+        return None
+
+    def recall(self, query=""):
+        return self._packet
+
+    def render_context(self, query="", **kwargs):
+        return ""
+
+    def commit(self, request, *, frame=None):
+        return SimpleNamespace(outcome="accepted", target=getattr(request, "target", None))
 
 
 class _DummyActionRouter:
@@ -467,7 +498,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             "ni_engine": _DummyNi(),
             "ti_governor": _DummyTi(),
             "fe_renderer": _DummyFe(),
-            "memory_store": _DummyMemory(),
+            "memory_core": _DummyMemory(),
             "body_running_fn": lambda: True,
         }
         params.update(overrides)
@@ -517,12 +548,31 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(frame.thought_stream_report.latest_thought.mode, "input_disturbance")
         self.assertTrue(any(percept.kind == "substrate_disturbance" for percept in frame.percepts))
 
+    def test_chat_uses_light_semantic_pressure_without_autonomous_symbolic_reading(self):
+        llm = _DummyLlmService()
+        coordinator = self._make_coordinator(llm_service=llm)
+
+        coordinator._handle_incoming({"type": "chat", "message": "fix bug trong chat_cycle.py, dung overread nua"})
+
+        frame = coordinator.last_cognitive_frame
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame.channel, "chat")
+        self.assertEqual(frame.meaning_layer.source_fact, "chat_user_text")
+        self.assertIn(frame.meaning_layer.meaning, {"technical_directive", "technical_question"})
+        self.assertEqual(frame.meaning_layer.meaning_signal, "chat_light_semantic_intent")
+        self.assertIn("overread_brake", frame.personality_lens.attention_bias)
+        self.assertEqual(frame.personality_lens.profile, "CHAT_LIGHT")
+        self.assertIn("ChatPersonalityPressureLight", llm.last_chat_kwargs["fe_context"])
+        self.assertIn("do not infer hidden motives", frame.meaning_layer.prompt_context)
+        self.assertNotIn("escape_from_friction", frame.meaning_layer.prompt_context)
+        self.assertNotIn("existential", frame.meaning_layer.prompt_context.lower())
+
     def test_chat_correction_updates_conversation_dynamics_and_prompt_context(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "memory.json")
             llm = _DummyLlmService()
             coordinator = self._make_coordinator(
-                memory_store=MemoryStore(path),
+                memory_core=MemoryCognitionCore(path),
                 llm_service=llm,
             )
 
@@ -537,7 +587,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     for item in coordinator.chat_history
                 )
             )
-            saved_state = MemoryStore(path).load_state().internal_state
+            saved_payload = MemoryCognitionCore(path).load().get("active_state", {}).get("metadata", {}).get("internal_state", {})
+            saved_state = PersistentInternalState.from_dict(saved_payload)
             self.assertEqual(saved_state.conversation_dynamics.mode, "repair")
             self.assertGreater(saved_state.conversation_dynamics.semantic_tension, 0.4)
 
@@ -699,6 +750,54 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "direct_action")
         self.assertIn("hỏi lại cùng một ý", coordinator.transport.sent[-1]["text"].lower())
+
+    def test_chat_source_grounding_preempts_filename_only_without_file_evidence(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._handle_incoming({"type": "chat", "message": "xem file main.py dang loi gi"})
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 0)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "source_grounding_preempt")
+        self.assertIn("file", coordinator.transport.sent[-1]["text"].lower())
+        self.assertEqual(coordinator.last_cognitive_frame.final_decision["grounding_preempt_mode"], "filename_only")
+
+    def test_chat_source_grounding_preempts_deictic_without_vision(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._handle_incoming({"type": "chat", "message": "loi nay la gi"})
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 0)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "source_grounding_preempt")
+        self.assertIn("màn hình", coordinator.transport.sent[-1]["text"].lower())
+        self.assertEqual(coordinator.last_cognitive_frame.final_decision["grounding_preempt_mode"], "deictic_without_vision")
+
+    def test_live_observation_query_bypasses_repeat_guard_when_screenshot_available(self):
+        coordinator = self._make_coordinator(telemetry_service=_ScreenTelemetry())
+
+        coordinator._handle_incoming({"type": "chat", "message": "man hinh nay la gi"})
+        coordinator._handle_incoming({"type": "chat", "message": "man hinh nay la gi"})
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 2)
+        self.assertNotEqual(coordinator.transport.sent[-1]["parse_mode"], "repeat_guard")
+        self.assertIn("[SOURCE_GROUNDING]", coordinator.llm_service.last_chat_kwargs["grounding_context"])
+
+    def test_chat_grounding_guard_rewrites_screen_claim_without_evidence(self):
+        coordinator = self._make_coordinator()
+        report = SourceGroundingEngine().analyze(
+            "Lỗi này là gì",
+            attach_to_frame=False,
+        )
+        frame = SimpleNamespace(source_grounding=report)
+        decision = Decision(
+            text="Tôi thấy một nút Save đang mở ở bên phải.",
+            animation="stand",
+        )
+
+        guarded = coordinator._apply_chat_final_guards(decision, user_text="loi nay la gi", frame=frame)
+
+        self.assertEqual(guarded.parse_mode, "source_grounding_guard")
+        self.assertIn("màn hình", guarded.text.lower())
+        self.assertIn("chat_grounding_guard", guarded.debug_trace)
 
     def test_chat_final_guard_allows_sharp_identity_boundary_without_real_risk(self):
         coordinator = self._make_coordinator()
@@ -1244,14 +1343,17 @@ class RuntimeCoordinatorTests(unittest.TestCase):
     def test_force_speak_inner_thought_records_relationship_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             coordinator = self._make_coordinator(
-                memory_store=MemoryStore(os.path.join(tmpdir, "memory.json")),
+                memory_core=MemoryCognitionCore(os.path.join(tmpdir, "memory")),
             )
 
             coordinator._handle_incoming({"type": "force_speak"})
 
-            reflections = [item.text for item in coordinator.memory_state.relationship]
+            reflections = [
+                item.get("claim", "")
+                for item in coordinator.memory_core.load().get("relational_memory", [])
+            ]
             self.assertTrue(any("force_speak" in item for item in reflections))
-            self.assertTrue(any("thiếu screen signal" in item for item in reflections))
+            self.assertTrue(any("hiện diện" in item for item in reflections))
             self.assertIn("relationship_reflection", coordinator.last_cognitive_frame.memory_update.to_dict())
 
     def test_chat_records_cognitive_frame(self):
@@ -1275,20 +1377,34 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
     def test_chat_activates_layered_memory_resonance_without_treating_it_as_evidence(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = MemoryStore(os.path.join(tmpdir, "memory.json"))
-            state = store.load_state()
-            state = store.remember_relationship_reflection(
-                state,
-                "User dislikes fake output and prefers direct grounded analysis.",
-                pattern="grounded_style",
+            core = MemoryCognitionCore(os.path.join(tmpdir, "memory"))
+            core.commit(
+                SimpleNamespace(
+                    target="relational_memory",
+                    content={"pattern": "grounded_style", "text": "User dislikes fake output and prefers direct grounded analysis."},
+                    confidence=0.72,
+                    evidence_ids=["ev_rel"],
+                    storage_permission=True,
+                    permission_required=True,
+                    decay_policy="slow",
+                    reason="test relationship seed",
+                    metadata={},
+                )
             )
-            state = store.remember_procedural_rule(
-                state,
-                "When output is being squeezed by a guard, inspect post-generation filters first.",
-                trigger="post_generation_guard",
+            core.commit(
+                SimpleNamespace(
+                    target="procedural_memory",
+                    content={"trigger": "post_generation_guard", "rule": "When output is being squeezed by a guard, inspect post-generation filters first."},
+                    confidence=0.82,
+                    evidence_ids=["ev_proc"],
+                    storage_permission=True,
+                    permission_required=True,
+                    decay_policy="slow",
+                    reason="test procedure seed",
+                    metadata={},
+                )
             )
-            store.save_state(state)
-            coordinator = self._make_coordinator(memory_store=store)
+            coordinator = self._make_coordinator(memory_core=core)
 
             coordinator._handle_incoming({"type": "chat", "message": "output bi guard bop roi"})
 
@@ -1302,7 +1418,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
     def test_chat_style_preference_records_relationship_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             coordinator = self._make_coordinator(
-                memory_store=MemoryStore(os.path.join(tmpdir, "memory.json")),
+                memory_core=MemoryCognitionCore(os.path.join(tmpdir, "memory")),
             )
 
             coordinator._handle_incoming(
@@ -1312,11 +1428,11 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 }
             )
 
-            reflections = [item.text for item in coordinator.memory_state.relationship]
-            self.assertIn(
-                "Ngài thích giọng lạnh nhẹ, nhưng không thích báo cáo telemetry.",
-                reflections,
-            )
+            reflections = [
+                item.get("claim", "")
+                for item in coordinator.memory_core.load().get("relational_memory", [])
+            ]
+            self.assertTrue(any("Ngài thích giọng lạnh nhẹ" in item for item in reflections))
 
     def test_percept_events_use_normalized_schema_for_telemetry_and_vision(self):
         coordinator = self._make_coordinator()
@@ -1685,7 +1801,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(decision.intent, "screen_observation")
         self.assertIn("file_saved", decision.reason)
 
-    def test_attention_workspace_gates_screen_observation_when_not_broadcast(self):
+    def test_attention_salience_gates_screen_observation_when_not_broadcast(self):
         coordinator = self._make_coordinator()
         snapshot = SimpleNamespace(
             active_window_kind="coding",
@@ -1706,7 +1822,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
 
         self.assertEqual(decision.intent, "no_speech")
-        self.assertIn("AttentionWorkspace", decision.reason)
+        self.assertIn("AttentionSalience", decision.reason)
 
     def test_pattern_muse_without_speakable_evidence_stays_silent(self):
         coordinator = self._make_coordinator()
@@ -2026,31 +2142,33 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
         )
 
-    def test_internal_state_persists_across_restart_with_memory_store(self):
+    def test_internal_state_persists_across_restart_with_memory_core(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "memory.json")
+            path = os.path.join(tmpdir, "memory")
             coordinator = self._make_coordinator(
-                memory_store=MemoryStore(path),
+                memory_core=MemoryCognitionCore(path),
             )
 
             coordinator._handle_incoming({"type": "force_speak"})
-            first_state = coordinator.memory_state.internal_state
+            first_state = coordinator._get_internal_state()
 
             restarted = self._make_coordinator(
-                memory_store=MemoryStore(path),
+                memory_core=MemoryCognitionCore(path),
             )
 
             self.assertGreater(first_state.cycle_count, 0)
-            self.assertEqual(restarted.memory_state.internal_state.cycle_count, first_state.cycle_count)
-            self.assertEqual(restarted.memory_state.internal_state.last_channel, first_state.last_channel)
+            restarted_state = restarted._get_internal_state()
+            self.assertEqual(restarted_state.cycle_count, first_state.cycle_count)
+            self.assertEqual(restarted_state.last_channel, first_state.last_channel)
 
     def test_session_ritual_restores_continuity_and_sends_optional_greeting(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "memory.json")
-            store = MemoryStore(path)
-            state = store.load_state()
-            state.internal_state = PersistentInternalState.from_dict(
+            path = os.path.join(tmpdir, "memory")
+            core = MemoryCognitionCore(path)
+            core.save(
                 {
+                    "active_state": {"metadata": {}},
+                    "internal_state": {
                     "cycle_count": 4,
                     "last_focus_kind": "coding",
                     "last_channel": "chat",
@@ -2061,11 +2179,11 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                         "status": "active",
                         "strength": 0.78,
                     },
-                }
+                    },
+                },
             )
-            store.save_state(state)
             coordinator = self._make_coordinator(
-                memory_store=MemoryStore(path),
+                memory_core=core,
                 telemetry_service=_PresenceTelemetry(),
                 parser=_JsonParser(),
                 llm_service=_StaticDirectiveLlmService("Ngài quay lại rồi. Ta nhớ phần việc còn dang dở."),
@@ -2080,7 +2198,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertEqual(coordinator.llm_service.directive_calls, 1)
             self.assertEqual(coordinator.llm_service.last_directive_kwargs["speech_intent"], "session_ritual")
             self.assertIn("resume_goal:implement session ritual layer", coordinator.llm_service.last_directive_kwargs["ti_context"])
-            self.assertEqual(coordinator.memory_state.internal_state.session_resume_count, 1)
+            self.assertEqual(coordinator._get_internal_state().session_resume_count, 1)
 
     def test_session_ritual_empty_llm_still_sends_fallback_greeting(self):
         coordinator = self._make_coordinator(

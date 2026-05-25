@@ -1,6 +1,23 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 
 from .internal_state import PersistentInternalState
+
+
+def _to_plain_contract(value):
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _to_plain_contract(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_plain_contract(item) for item in value]
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    if is_dataclass(value):
+        return _to_plain_contract(asdict(value))
+    return repr(value)
 
 #nhìn thấy gì → chú ý gì → hiểu thế nào → cảm thấy áp lực gì → có nên nói không → nói theo phong cách nào → cập nhật trí nhớ.
 
@@ -1046,9 +1063,12 @@ class CognitiveFrame:
     cycle_id: str
     channel: str
     started_at: float
+    evidence: tuple[object, ...] = ()
     percepts: tuple[PerceptEvent, ...] = ()
     attention_candidates: tuple[AttentionCandidate, ...] = ()
     broadcast: CognitiveBroadcast = field(default_factory=CognitiveBroadcast)
+    salience: object | None = None
+    working_memory: object | None = None
     meaning_layer: MeaningLayerResult = field(default_factory=MeaningLayerResult)
     personality_lens: PersonalityLensResult = field(default_factory=PersonalityLensResult)
     appraisal: CognitiveAppraisal = field(default_factory=CognitiveAppraisal)
@@ -1062,6 +1082,13 @@ class CognitiveFrame:
     inner_thought: InnerThought = field(default_factory=InnerThought)
     action_plan: CognitiveActionPlan = field(default_factory=CognitiveActionPlan)
     final_decision: dict[str, object] = field(default_factory=dict)
+    execution: object | None = None
+    grounding: object | None = None
+    modality: object | None = None
+    outcome: object | None = None
+    self_observation: object | None = None
+    commit_requests: list[object] = field(default_factory=list)
+    debug_notes: list[str] = field(default_factory=list)
     memory_update: CognitiveMemoryUpdate = field(default_factory=CognitiveMemoryUpdate)
     internal_state_before: PersistentInternalState | None = None
     internal_state_after: PersistentInternalState | None = None
@@ -1071,9 +1098,12 @@ class CognitiveFrame:
             "cycle_id": self.cycle_id,
             "channel": self.channel,
             "started_at": round(float(self.started_at), 3),
+            "evidence": _to_plain_contract(self.evidence),
             "percepts": [item.to_dict() for item in self.percepts],
             "attention_candidates": [item.to_dict() for item in self.attention_candidates],
             "broadcast": self.broadcast.to_dict(),
+            "salience": _to_plain_contract(self.salience),
+            "working_memory": _to_plain_contract(self.working_memory),
             "meaning_layer": self.meaning_layer.to_dict(),
             "personality_lens": self.personality_lens.to_dict(),
             "appraisal": self.appraisal.to_dict(),
@@ -1091,6 +1121,13 @@ class CognitiveFrame:
             "inner_thought": self.inner_thought.to_dict(),
             "action_plan": self.action_plan.to_dict(),
             "final_decision": dict(self.final_decision),
+            "execution": _to_plain_contract(self.execution),
+            "grounding": _to_plain_contract(self.grounding),
+            "modality": _to_plain_contract(self.modality),
+            "outcome": _to_plain_contract(self.outcome),
+            "self_observation": _to_plain_contract(self.self_observation),
+            "commit_requests": _to_plain_contract(self.commit_requests),
+            "debug_notes": list(self.debug_notes),
             "memory_update": self.memory_update.to_dict(),
             "internal_state_before": self.internal_state_before.to_dict() if self.internal_state_before is not None else None,
             "internal_state_after": self.internal_state_after.to_dict() if self.internal_state_after is not None else None,
