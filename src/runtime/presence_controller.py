@@ -251,33 +251,35 @@ class PresenceControllerMixin:
         if "banner" in haystack and any(term in haystack for term in ("trinh bay", "present", "presentation", "share")):
             lines.extend(
                 (
-                    "cai banner trinh bay kia van nam do.",
-                    "banner trinh bay van mac o mot goc.",
+                    "Cái banner trình bày kia vẫn nằm đó.",
+                    "Banner trình bày vẫn mắc ở một góc.",
                 )
             )
         if "meet" in haystack or "meeting" in haystack or "cuoc goi" in haystack:
             lines.extend(
                 (
-                    "phong Meet kia van chua gap lai.",
-                    "van la nhip Meet do a.",
-                    "cuoc goi do im hoi lau roi.",
-                    "nhip chia se do mo hoi lau roi.",
+                    "Phòng Meet kia vẫn chưa gấp lại.",
+                    "Vẫn là nhịp Meet đó à.",
+                    "Cuộc gọi đó im hơi lâu rồi.",
+                    "Nhịp chia sẻ đó mở hơi lâu rồi.",
                 )
             )
         elif "youtube" in haystack or "music youtube" in haystack:
-            lines.extend(("tab YouTube van mo o do.", "nhac van chay nen khe khe."))
+            lines.extend(("Tab YouTube vẫn mở ở đó.", "Nhạc vẫn chạy nền khe khẽ."))
         elif focus_kind in {"coding", "documentation"} or any(term in haystack for term in ("code", "visual studio", "vscode", "python", "debug")):
-            lines.extend(("mach code nay van giu cho.", "doan nay dung hoi lau roi."))
+            # Chỉ tới được nhánh này khi cue/focus có dấu hiệu code rõ.
+            # Vẫn phải có dấu tiếng Việt để MicroLinePolicy không reject.
+            lines.extend(("Mạch code này vẫn giữ chỗ.", "Đoạn này đứng hơi lâu rồi."))
         elif focus_kind == "communication" or any(term in haystack for term in ("chat", "message", "zalo", "discord", "slack")):
-            lines.extend(("nhip trao doi nay van yen mot chut.", "doan doi dap do van de nguyen."))
+            lines.extend(("Nhịp trao đổi này vẫn yên một chút.", "Đoạn đối đáp đó vẫn để nguyên."))
 
         subject = self._micro_line_subject(compact_cue or summary or window or focus_kind)
         if subject:
-            lines.append(f"{subject} van chua khep.")
+            lines.append(f"{subject} vẫn chưa khép.")
             if presence:
-                lines.append(f"{subject} im hoi lau roi.")
+                lines.append(f"{subject} im hơi lâu rồi.")
         if not lines:
-            lines.append("nhip nay im hoi lau roi.")
+            lines.append("Nhịp này im hơi lâu rồi.")
 
         return tuple(dict.fromkeys(self._clean_micro_line(line) for line in lines if self._clean_micro_line(line)))[:5]
 
@@ -749,6 +751,35 @@ class PresenceControllerMixin:
             return fallback_text, "llm_rejected_fallback"
         return safe, "llm_signal" if force_llm else "llm"
 
+    def _filter_public_micro_decision(
+        self,
+        decision: Decision,
+        *,
+        channel: str,
+        frame: CognitiveFrame,
+        snapshot,
+        speech_core=None,
+        momentum_topic: str = "",
+    ) -> Decision:
+        """Đưa mọi micro/presence/reengagement line qua cùng post-generation guard.
+
+        Trước đây presence maintenance có thể bypass MicroLinePolicy, nên câu không dấu hoặc
+        claim màn hình mỏng vẫn lọt. Một đường tắt nhỏ, hậu quả thì to như log debug.
+        """
+        filter_fn = getattr(self, "_apply_post_generation_filters", None)
+        if callable(filter_fn):
+            try:
+                return filter_fn(
+                    decision,
+                    channel=channel,
+                    speech_core=speech_core or getattr(frame, "speech_core", None),
+                    snapshot=snapshot,
+                    momentum_topic=momentum_topic,
+                )
+            except Exception as exc:
+                self.logger.warning("%s post-generation filter failed: %s", channel, exc)
+        return decision
+
     def _build_presence_maintenance_decision(
         self,
         *,
@@ -836,6 +867,15 @@ class PresenceControllerMixin:
         )
         decision = self.ti_governor.enforce_decision(decision, ti_report)
         decision.parse_mode = "presence_maintenance"
+        decision = self._filter_public_micro_decision(
+            decision,
+            channel="autonomous",
+            frame=frame,
+            snapshot=snapshot,
+            speech_core=getattr(frame, "speech_core", None),
+        )
+        if not bool(getattr(decision, "should_speak", True)) or not str(getattr(decision, "text", "") or "").strip():
+            return False
         self.fe_style_memory = self.fe_renderer.remember_style(
             self.fe_style_memory,
             plan=fe_plan,
@@ -1047,6 +1087,15 @@ class PresenceControllerMixin:
         )
         decision = self.ti_governor.enforce_decision(decision, ti_report)
         decision.parse_mode = "re_engagement"
+        decision = self._filter_public_micro_decision(
+            decision,
+            channel="autonomous",
+            frame=frame,
+            snapshot=snapshot,
+            speech_core=getattr(frame, "speech_core", None),
+        )
+        if not bool(getattr(decision, "should_speak", True)) or not str(getattr(decision, "text", "") or "").strip():
+            return False
         self.fe_style_memory = self.fe_renderer.remember_style(
             self.fe_style_memory,
             plan=fe_plan,

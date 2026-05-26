@@ -666,16 +666,6 @@ class StateCommitter:
                     )
                 )
 
-        semantic_issue = self._semantic_grounding_issue(
-            final_target=final_target,
-            content=content,
-            metadata=metadata,
-            frame=frame,
-        )
-        if semantic_issue is not None:
-            issues.append(semantic_issue)
-            return decision
-
         # 6. Private raw evidence cần quyền raw_evidence_storable.
         if self.config.enforce_private_raw_permission:
             if self._contains_private_raw_evidence(request, evidence_ids, evidence_index):
@@ -692,6 +682,8 @@ class StateCommitter:
                     return decision
 
         # 7. User correction ưu tiên RepairMemory.
+        # Phải reroute TRƯỚC semantic grounding check. Nếu không, một correction bị upstream
+        # gắn nhầm target=semantic_memory + ungrounded sẽ bị reject mất, thay vì thành repair rule.
         correction_detected = self._looks_like_user_correction(request, content, reason, tags, metadata)
         if (
             correction_detected
@@ -712,7 +704,18 @@ class StateCommitter:
             final_target = "repair_memory"
             decision.final_target = final_target
 
-        # 8. Confidence gate.
+        # 8. Semantic grounding check sau reroute correction.
+        semantic_issue = self._semantic_grounding_issue(
+            final_target=final_target,
+            content=content,
+            metadata=metadata,
+            frame=frame,
+        )
+        if semantic_issue is not None:
+            issues.append(semantic_issue)
+            return decision
+
+        # 9. Confidence gate.
         min_commit, min_tentative = self._confidence_thresholds(final_target)
 
         if confidence < min_tentative:
@@ -983,7 +986,14 @@ class StateCommitter:
             semantic_source = str(metadata.get("semantic_source", "") or metadata.get("source", "") or "")
         semantic_source = semantic_source.strip().lower()
 
-        if semantic_source in {"", "explicit_user_statement", "user_text", "user_statement"}:
+        if not semantic_source:
+            return CommitValidationIssue(
+                code="semantic_fact_missing_source",
+                message="Semantic fact thiếu semantic_source/source; reject để tránh fact không nguồn.",
+                severity="warning",
+            )
+
+        if semantic_source in {"explicit_user_statement", "user_text", "user_statement"}:
             if metadata.get("source_grounded") is False or metadata.get("ungrounded") is True:
                 return CommitValidationIssue(
                     code="semantic_fact_ungrounded",

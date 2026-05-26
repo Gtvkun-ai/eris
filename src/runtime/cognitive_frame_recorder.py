@@ -243,6 +243,10 @@ class CognitiveFrameRecorderMixin:
             if fact
         )
         remembered_fact = str(getattr(frame.memory_update, "remembered_fact", "") or "")
+        # Không biến output đã bị policy reject/no_speech thành semantic candidate.
+        # Event ledger vẫn có thể audit, nhưng semantic memory không cần ăn rác có nhãn "final".
+        if parse_mode in {"no_speech_policy", "semantic_repair_failed", "source_grounding_guard"}:
+            remembered_fact = ""
         semantic_facts = tuple(dict.fromkeys(fact for fact in (remembered_fact, *explicit_user_facts) if fact))
 
         return {
@@ -1178,6 +1182,15 @@ class CognitiveFrameRecorderMixin:
         notes: tuple[str, ...] = (),
     ) -> None:
         remembered_fact = (decision.extracted_fact if decision else "") or ""
+        if decision is not None:
+            parse_mode = str(getattr(decision, "parse_mode", "") or "")
+            grounding = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
+            if parse_mode in {"no_speech_policy", "semantic_repair_failed", "source_grounding_guard"}:
+                remembered_fact = ""
+            elif grounding is not None and not bool(getattr(grounding, "memory_answer_allowed", True)):
+                # Nếu turn này đang cần evidence hiện tại, extracted_fact từ model rất dễ là memory giả làm mắt.
+                # Cho StateCommitter reject là tốt, nhưng đừng đẩy thêm mồi semantic vào frame nếu đã biết nguy cơ.
+                remembered_fact = ""
         norm_deviation = " | ".join(
             percept.content
             for percept in tuple(frame.percepts or ())

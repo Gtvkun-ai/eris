@@ -48,6 +48,26 @@
       "metadata": {
         "built_in": true
       }
+    },
+    {
+      "id": "proc_8ff5ae71da42",
+      "trigger": "weak_evidence",
+      "rule": "no_screen_signal_social_fallback: Khi thiếu screen signal, ERIS nên hỏi lại hoặc mở một câu tò mò, không giả vờ thấy gì.",
+      "confidence": 0.7,
+      "evidence_ids": [
+        "channel=force_speak",
+        "motive=grounded_observation",
+        "seed=screen_residue"
+      ],
+      "observations": 1,
+      "success_count": 0,
+      "failure_count": 0,
+      "first_seen_at": "2026-05-25T14:07:00+0700",
+      "updated_at": "2026-05-25T14:07:00+0700",
+      "decay_policy": "slow",
+      "metadata": {
+        "reason": "derive procedural_memory from cognitive frame reflection"
+      }
     }
   ]
 }

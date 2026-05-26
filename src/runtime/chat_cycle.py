@@ -7,6 +7,7 @@ from dataclasses import replace
 
 from cortex.ni import NiStateMachine
 from cortex.relationship_dynamics import RelationshipTurnEvent
+from cortex.turn_semantics import TurnSemanticsEngine, TurnSemanticsReport
 from domain import Decision
 from runtime.source_grounding import SourceGroundingEngine
 
@@ -18,6 +19,7 @@ class ChatCycleMixin:
             self.chat_ni_state = NiStateMachine()
             self.repeated_user_count = 0
             self.last_user_signature = ""
+            self.last_user_text_for_semantics = ""
             self.logger.info("Entered chat mode; autonomous is paused for user messages.")
 
     def _end_chat_cycle(self) -> None:
@@ -26,6 +28,7 @@ class ChatCycleMixin:
         self.last_chat_answer = ""
         self.last_system_action = ""
         self.last_user_signature = ""
+        self.last_user_text_for_semantics = ""
         self.last_user_intent = ""
         self.active_conversational_topic = ""
         self.repeated_user_count = 0
@@ -44,17 +47,49 @@ class ChatCycleMixin:
             mood_score=self.mood_score,
             inferred_pos_x=self.inferred_pos_x,
         )
-        self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
-        memory_resonance = self._recall_memory_resonance(
-            snapshot=snapshot,
+
+        # Outcome của lượt trước chỉ thật sự biết khi user phản hồi ở lượt này.
+        # Nếu chờ finalize ngay trong turn trước thì OutcomeObserver chỉ đang đoán trong chân không,
+        # mà đoán trong chân không là thú vui nguy hiểm của chatbot.
+        self._observe_previous_turn_feedback(user_text)
+
+        # PRE-GROUNDING phải chạy TRƯỚC memory recall/resonance.
+        # Lý do: với câu "xem đi", "đoạn đang mở", hoặc hỏi file cụ thể, memory chỉ được phép
+        # làm procedural guard, không được trở thành evidence hiện tại. Nếu recall memory trước,
+        # speech_core/attention/action_plan đã bị ký ức ám rồi mới dựng report, quá muộn.
+        pre_grounding = self._build_chat_source_grounding_report(
             user_text=user_text,
-            channel="chat",
-            fragments=(
-                *(tuple(self._chat_history_for_llm(limit=2)) if self.chat_history else ()),
-                *self._thought_stream_resonance_fragments(),
-            ),
+            frame=None,
+            snapshot=snapshot,
+            memory_resonance=None,
+            screen_image_data_uri="",
         )
-        memory_context = self._build_memory_context(snapshot, memory_resonance=memory_resonance)
+        self.last_grounding_context = pre_grounding
+
+        if pre_grounding is not None and not bool(getattr(pre_grounding, "memory_answer_allowed", True)):
+            self.long_term_memory = []
+            memory_resonance = None
+            memory_context = self._filter_memory_context_for_grounding("")
+            self.active_memory_resonance = None
+            self.logger.info(
+                "[source grounding] memory quarantine before recall | source=%s | preempt=%s | missing=%s",
+                getattr(pre_grounding, "grounding_source", "unknown"),
+                getattr(pre_grounding, "preempt_mode", "") or "none",
+                ",".join(getattr(pre_grounding, "missing_evidence", ()) or ()) or "none",
+            )
+        else:
+            self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
+            memory_resonance = self._recall_memory_resonance(
+                snapshot=snapshot,
+                user_text=user_text,
+                channel="chat",
+                fragments=(
+                    *(tuple(self._chat_history_for_llm(limit=2)) if self.chat_history else ()),
+                    *self._thought_stream_resonance_fragments(),
+                ),
+            )
+            memory_context = self._build_memory_context(snapshot, memory_resonance=memory_resonance)
+
         internal_state_before = self._get_internal_state()
         ni_report = self.ni_engine.evaluate_chat(
             snapshot=snapshot,
@@ -146,6 +181,7 @@ class ChatCycleMixin:
             ti_report=ti_report,
         )
         repeat_count = self._track_repeated_user_message(user_text)
+        previous_user_text_for_semantics = getattr(self, "last_user_text_for_semantics", "")
         correction_detected = self._user_denies_last_assistant_assumption(user_text)
         conversation_report = self.conversation_dynamics_engine.evaluate_chat(
             getattr(sensed_internal_state, "conversation_dynamics", None),
@@ -189,6 +225,30 @@ class ChatCycleMixin:
             relationship_report.state.preferred_distance,
             ",".join(relationship_report.notes) or "none",
         )
+        # Repeat không được quyết bằng exact string một mình. Tầng này phân biệt:
+        # spam rỗng, hỏi lại vì câu trước chưa đủ, correction/repair, live-evidence refresh,
+        # và identity/relational probe. Nói cách khác: một câu giống nhau có thể có nghĩa khác
+        # nếu nó xuất hiện sau một câu trả lời sai. Thật phiền, nhưng ngôn ngữ con người là vậy.
+        turn_semantics_report = self._build_turn_semantics_report(
+            user_text=user_text,
+            repeat_count=repeat_count,
+            previous_user_text=previous_user_text_for_semantics,
+            affect_signal=affect_signal,
+            conversation_report=conversation_report,
+            relationship_report=relationship_report,
+            grounding_report=None,
+        )
+        self.last_turn_semantics_report = turn_semantics_report
+        self.logger.info(
+            "[turn semantics/pre-grounding] repeated=%s | count=%d | intent=%s | action=%s | spam=%.2f | identity=%.2f | correction=%.2f",
+            turn_semantics_report.repeated,
+            turn_semantics_report.repeat_count,
+            turn_semantics_report.intent,
+            turn_semantics_report.action,
+            turn_semantics_report.spam_pressure,
+            turn_semantics_report.identity_pressure,
+            turn_semantics_report.correction_pressure,
+        )
         self._maybe_invalidate_last_assistant_history(user_text)
         self._append_chat_history("user", user_text)
         self.logger.info("[CHAT HISTORY] %s", self._chat_history_for_llm(limit=8))
@@ -219,6 +279,30 @@ class ChatCycleMixin:
             memory_context = self._filter_memory_context_for_grounding(memory_context)
         self._log_chat_source_grounding(grounding_report)
 
+        # Sau khi có grounding thật, chạy lại turn semantics để live screen/file/code evidence
+        # có quyền thắng exact-repeat. Nếu không, câu "xem lại đi" lặp lần 2 vẫn bị chặn
+        # dù turn này vừa có screenshot mới. Một kiểu tự bắn vào mắt runtime khá cổ điển.
+        turn_semantics_report = self._build_turn_semantics_report(
+            user_text=user_text,
+            repeat_count=repeat_count,
+            previous_user_text=previous_user_text_for_semantics,
+            affect_signal=affect_signal,
+            conversation_report=conversation_report,
+            relationship_report=relationship_report,
+            grounding_report=grounding_report,
+        )
+        self.last_turn_semantics_report = turn_semantics_report
+        self.logger.info(
+            "[turn semantics] repeated=%s | count=%d | intent=%s | action=%s | spam=%.2f | live=%.2f | prior_failure=%.2f",
+            turn_semantics_report.repeated,
+            turn_semantics_report.repeat_count,
+            turn_semantics_report.intent,
+            turn_semantics_report.action,
+            turn_semantics_report.spam_pressure,
+            turn_semantics_report.live_evidence_pressure,
+            turn_semantics_report.prior_failure_pressure,
+        )
+
         direct_decision = self._build_direct_action_decision(user_text, ti_report, snapshot, repeat_count=repeat_count)
         if direct_decision is not None:
             self._set_cognitive_action_plan(
@@ -236,6 +320,7 @@ class ChatCycleMixin:
                 notes=("direct_action",),
             )
             self._commit_chat_decision(direct_decision, fe_plan, frame=frame)
+            self.last_user_text_for_semantics = user_text
             return
 
         grounding_preempt = self._build_grounding_preempt_decision(
@@ -258,6 +343,7 @@ class ChatCycleMixin:
                 notes=("source_grounding_preempt", grounding_report.preempt_mode or "unknown"),
             )
             self._commit_chat_decision(grounding_preempt, fe_plan, frame=frame)
+            self.last_user_text_for_semantics = user_text
             return
 
         repeat_decision = self._build_repeat_guard_decision(
@@ -265,6 +351,7 @@ class ChatCycleMixin:
             ti_report,
             repeat_count,
             grounding_report=grounding_report,
+            turn_semantics_report=turn_semantics_report,
         )
         if repeat_decision is not None:
             self._set_cognitive_action_plan(
@@ -281,6 +368,7 @@ class ChatCycleMixin:
                 notes=("repeat_guard",),
             )
             self._commit_chat_decision(repeat_decision, fe_plan, frame=frame)
+            self.last_user_text_for_semantics = user_text
             return
 
         self._set_cognitive_action_plan(
@@ -301,8 +389,9 @@ class ChatCycleMixin:
             user_message=user_text,
             last_chat_answer=self.last_chat_answer,
         )
+        turn_semantics_context = str(getattr(turn_semantics_report, "prompt_context", "") or "")
         planned_ti_context = (
-            f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}"
+            f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n{turn_semantics_context}"
         )
         # The current user message is sent as the final user message below.
         # Passing it inside chat_history as well wastes one short-term slot
@@ -333,7 +422,27 @@ class ChatCycleMixin:
         decision = self._execute_system_action(decision, snapshot=snapshot)
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
         self._commit_chat_decision(decision, fe_plan, frame=frame)
+        self.last_user_text_for_semantics = user_text
         return
+
+    def _observe_previous_turn_feedback(self, user_text: str) -> None:
+        """Gắn feedback của user hiện tại vào frame trước nếu có.
+
+        OutcomeObserver trong PDF nằm sau Execution, nhưng các tín hiệu như "sai rồi",
+        "đúng", "khó hiểu" thường xuất hiện ở turn kế tiếp. Hàm này cập nhật nhẹ
+        `last_cognitive_frame.outcome` để SelfObservation/RepairMemory có dữ kiện thật hơn.
+        Nó không commit trực tiếp; commit vẫn đi qua StateCommitter ở các frame sau.
+        """
+        previous = getattr(self, "last_cognitive_frame", None)
+        if previous is None:
+            return
+        observer = getattr(self, "outcome_observer", None)
+        if observer is None or not callable(getattr(observer, "observe", None)):
+            return
+        try:
+            observer.observe(previous, user_feedback_text=user_text, attach_to_frame=True)
+        except Exception as exc:
+            self.logger.warning("Outcome feedback observation failed: %s", exc)
 
     def _normalize_user_message(self, user_text: str) -> str:
         lowered = (user_text or "").strip().lower()
@@ -365,66 +474,64 @@ class ChatCycleMixin:
             "giup",
             "dum",
         }
-        if False:
-            filler_suffixes = set(
-            self._normalize_user_message(item)
-            for item in (
-                "nhỉ",
-                "à",
-                "ah",
-                "ha",
-                "huh",
-                "vậy",
-                "có",
-                "không",
-                "nào",
-                "đi",
-                "với",
-                "giúp",
-                "đùm",
-                "đi",
-            )
-        )
         tokens = lowered.split()
         while tokens and tokens[-1] in filler_suffixes:
             tokens.pop()
         return " ".join(tokens)
+
+    def _normalize_marker_text(self, user_text: str) -> str:
+        """Normalize để detect lệnh nhìn màn hình, KHÔNG strip hậu tố "đi".
+
+        `_normalize_user_message()` dùng cho repeat signature nên nó bỏ các từ cuối như "đi".
+        Nếu dùng nó cho screen command, "xem đi" thành "xem" và mọi câu "xem lại logic"
+        cũng có thể bị hiểu là cần screenshot. Một bug nhỏ mà rất thích đốt token.
+        """
+        lowered = (user_text or "").strip().lower()
+        try:
+            remojibake = lowered.encode("latin1").decode("utf-8")
+            if remojibake:
+                lowered = remojibake
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+        lowered = unicodedata.normalize("NFD", lowered)
+        lowered = "".join(ch for ch in lowered if unicodedata.category(ch) != "Mn")
+        lowered = lowered.replace("đ", "d")
+        lowered = re.sub(r"[^\w\s]", " ", lowered)
+        return " ".join(lowered.split())
     def _looks_like_screen_vision_request(self, user_text: str) -> bool:
-        normalized = self._normalize_user_message(user_text)
+        normalized = self._normalize_marker_text(user_text)
         if not normalized:
             return False
 
-        direct_terms = set(
-            self._normalize_user_message(item)
+        # Chỉ các marker thật sự trỏ màn hình mới được capture screenshot.
+        # Không dùng marker rộng như "web/chrome/browser" ở đây, vì "xem lại web logic"
+        # không đồng nghĩa "hãy nhìn màn hình". Mắt runtime không nên bật vì keyword rẻ tiền.
+        direct_terms = {
+            self._normalize_marker_text(item)
             for item in (
-                "brave",
-                "browser",
-                "chrome",
-                "cửa sổ",
-                "hình ảnh",
                 "màn hình",
+                "trên màn hình",
                 "screenshot",
                 "screen",
-                "tab",
-                "trình duyệt",
-                "url",
-                "web",
-                "website",
+                "nhìn màn hình",
+                "xem màn hình",
+                "look at this",
+                "this screen",
                 "xem đi",
-                "xem di",
                 "bạn xem đi",
-                "ban xem di",
                 "tôi đang code gì",
-                "toi dang code gi",
+                "đang code gì",
                 "đoạn đang mở",
-                "doan dang mo",
+                "file đang mở",
+                "đang hiện gì",
+                "lỗi này trên màn hình",
             )
-        )
-        if any(term in normalized for term in direct_terms):
+        }
+        if any(term and term in normalized for term in direct_terms):
             return True
 
         visual_verbs = {"nhin", "thay", "xem"}
-        visual_objects = {"gi tren do", "noi dung", "trang nao"}
+        visual_objects = {"tren man hinh", "gi tren do", "dang hien", "doan dang mo", "file dang mo"}
         return any(term in normalized for term in visual_verbs) and any(
             term in normalized for term in visual_objects
         )
@@ -556,28 +663,76 @@ class ChatCycleMixin:
             self.last_user_signature = signature
             self.repeated_user_count = 1
         return self.repeated_user_count
-    def _build_repeat_guard_decision(self, user_text: str, ti_report, repeat_count: int, *, grounding_report=None) -> Decision | None:
+    def _get_turn_semantics_engine(self) -> TurnSemanticsEngine:
+        engine = getattr(self, "turn_semantics_engine", None)
+        if engine is None:
+            engine = TurnSemanticsEngine()
+            self.turn_semantics_engine = engine
+        return engine
+
+    def _build_turn_semantics_report(
+        self,
+        *,
+        user_text: str,
+        repeat_count: int,
+        previous_user_text: str = "",
+        affect_signal=None,
+        conversation_report=None,
+        relationship_report=None,
+        grounding_report=None,
+    ) -> TurnSemanticsReport:
+        engine = self._get_turn_semantics_engine()
+        return engine.analyze_repeat(
+            user_text=user_text,
+            repeat_count=repeat_count,
+            last_user_text=previous_user_text,
+            last_assistant_text=getattr(self, "last_chat_answer", ""),
+            affect_signal=affect_signal,
+            conversation_report=conversation_report,
+            relationship_report=relationship_report,
+            grounding_report=grounding_report,
+        )
+
+    def _build_repeat_guard_decision(
+        self,
+        user_text: str,
+        ti_report,
+        repeat_count: int,
+        *,
+        grounding_report=None,
+        turn_semantics_report: TurnSemanticsReport | None = None,
+    ) -> Decision | None:
         if repeat_count < 2:
             return None
+
+        report = turn_semantics_report or self._build_turn_semantics_report(
+            user_text=user_text,
+            repeat_count=repeat_count,
+            previous_user_text=getattr(self, "last_user_text_for_semantics", ""),
+            grounding_report=grounding_report,
+        )
+
+        # Legacy bypass chỉ còn là dây an toàn cho live observation; quyền quyết định chính
+        # thuộc về TurnSemanticsEngine. Exact repeat không được đứng trên meaning.
         if self._should_bypass_repeat_guard_for_live_observation(user_text, grounding_report=grounding_report):
             return None
+        if not report.should_guard_repeat:
+            return None
 
-        if repeat_count == 2:
-            text = (
-                "Ngài đang lặp lại đúng cùng một câu. "
-                "Tôi đã nhận câu đó rồi. Nếu muốn tôi nói khác đi, hãy chỉ rõ phần nào Ngài chưa hiểu."
-            )
-        else:
-            text = (
-                "Tôi hiểu đây là spam lặp lại. "
-                "Cùng một câu sẽ không tạo thêm dữ kiện mới. Hãy đổi câu hỏi hoặc nói rõ mục tiêu tiếp theo."
-            )
-
+        text = self._get_turn_semantics_engine().build_repeat_guard_text(report)
         decision = Decision(
             text=text,
+            intent="low_value_repeat",
+            action="none",
             animation="read" if repeat_count == 2 else "sad",
+            should_speak=True,
+            confidence=min(0.78, max(0.42, report.confidence)),
             parse_mode="repeat_guard",
-            debug_trace=f"repeat_guard=count={repeat_count}",
+            debug_trace=(
+                f"repeat_guard=count={repeat_count};"
+                f"intent={report.intent};spam={report.spam_pressure:.2f};"
+                f"reasons={','.join(report.reasons) or 'none'}"
+            ),
         )
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
 

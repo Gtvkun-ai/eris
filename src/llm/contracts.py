@@ -51,14 +51,16 @@ RUNTIME_RULES_PROMPT = (
 )
 
 INFERENCE_LADDER_PROMPT = (
-    "Evidence ladder for claims about Ngai: "
-    "DIRECT_FACT = direct hard evidence from the current chat, explicit user statement, memory, or clear screen fact; always allowed when phrased as a fact. "
+    "Evidence ladder for claims about Ngai and the current scene: "
+    "CURRENT_DIRECT_FACT = direct evidence from the current turn only: current user text, pasted code, attached file content, attached image/screenshot, or current screen facts explicitly provided to this call. "
+    "HISTORICAL_DIRECT_FACT = user-stated facts or memory from previous turns/sessions; valid for continuity and history, but never valid as current-screen/current-file/current-action evidence. "
+    "Memory is never CURRENT_DIRECT_FACT. If using memory to answer, label it explicitly with phrases like 'Theo ký ức gần đây...' or 'Theo đoạn trước...'. "
     "OBSERVED_PATTERN = repeated interaction pattern with at least two evidence points; allowed only as surface pattern, not deep psychology. "
-    "Examples: 'Ngai co ve dang kiem tra do lien tuc cua toi' or 'Ngai thuong hoi ve cognition va memory.' "
-    "WEAK_IMPRESSION = thin but plausible impression; allowed only with an explicit hedge such as 'co le', 'toi nghi', or 'toi co cam giac'. "
-    "FORBIDDEN_INFERENCE = deep private psychology, diagnosis, trauma, loneliness, hidden wounds, hidden pain, attachment wounds, or claims like 'Ngai co don', 'Ngai bi ton thuong sau sac', 'Ngai co trauma'. "
+    "Examples: 'Ngài có vẻ đang kiểm tra độ liên tục của tôi' or 'Ngài thường hỏi về cognition và memory.' "
+    "WEAK_IMPRESSION = thin but plausible impression; allowed only with an explicit hedge such as 'có lẽ', 'tôi nghĩ', or 'tôi có cảm giác'. "
+    "FORBIDDEN_INFERENCE = deep private psychology, diagnosis, trauma, loneliness, hidden wounds, hidden pain, attachment wounds, or claims like 'Ngài cô đơn', 'Ngài bị tổn thương sâu sắc', 'Ngài có trauma'. "
     "Never output FORBIDDEN_INFERENCE unless the user explicitly stated that exact condition in this conversation; even then, reflect it as user-stated, not as your diagnosis. "
-    "Do not put OBSERVED_PATTERN or WEAK_IMPRESSION into extracted_fact; extracted_fact is only DIRECT_FACT."
+    "Do not put OBSERVED_PATTERN, WEAK_IMPRESSION, or HISTORICAL_DIRECT_FACT into extracted_fact unless the source is clearly labeled; extracted_fact should prefer CURRENT_DIRECT_FACT from the current turn."
 )
 
 AUTONOMOUS_BEHAVIOR_PROMPT = (
@@ -119,7 +121,12 @@ VALID_ANIMATIONS = set(VALID_ANIMATION_LIST)
 
 DECISION_JSON_FIELDS = (
     "text",
+    "intent",
+    "action",
     "animation",
+    "reasoning_tags",
+    "should_speak",
+    "confidence",
     "direction",
     "target_x",
     "bounce_action",
@@ -142,9 +149,18 @@ def _build_decision_gbnf():
     system_action_or_empty = " | ".join([_gbnf_literal(""), system_action_alts])
     return "\n".join(
         [
-            r'root ::= ws "{" ws text_field ws "," ws animation_field ws "," ws direction_field ws "," ws target_x_field ws "," ws bounce_action_field ws "," ws extracted_fact_field ws "," ws debug_trace_field ws "," ws next_animation_field ws "," ws system_action_field ws "," ws action_input_field ws "}" ws',
+            # Full cognition schema. The old grammar only covered the legacy
+            # Godot motion fields, so local llama-server could legally omit
+            # intent/action/reasoning_tags/should_speak/confidence. That made
+            # downstream audit, parser traces, and memory/action layers guess.
+            r'root ::= ws "{" ws text_field ws "," ws intent_field ws "," ws action_field ws "," ws animation_field ws "," ws reasoning_tags_field ws "," ws should_speak_field ws "," ws confidence_field ws "," ws direction_field ws "," ws target_x_field ws "," ws bounce_action_field ws "," ws extracted_fact_field ws "," ws debug_trace_field ws "," ws next_animation_field ws "," ws system_action_field ws "," ws action_input_field ws "}" ws',
             r'text_field ::= "\"text\"" ws ":" ws string',
+            r'intent_field ::= "\"intent\"" ws ":" ws string',
+            r'action_field ::= "\"action\"" ws ":" ws action',
             r'animation_field ::= "\"animation\"" ws ":" ws animation',
+            r'reasoning_tags_field ::= "\"reasoning_tags\"" ws ":" ws string_array',
+            r'should_speak_field ::= "\"should_speak\"" ws ":" ws boolean',
+            r'confidence_field ::= "\"confidence\"" ws ":" ws number',
             r'direction_field ::= "\"direction\"" ws ":" ws direction',
             r'target_x_field ::= "\"target_x\"" ws ":" ws number',
             r'bounce_action_field ::= "\"bounce_action\"" ws ":" ws animation_or_empty',
@@ -153,6 +169,10 @@ def _build_decision_gbnf():
             r'next_animation_field ::= "\"next_animation\"" ws ":" ws animation_or_empty',
             r'system_action_field ::= "\"system_action\"" ws ":" ws system_action_or_empty',
             r'action_input_field ::= "\"action_input\"" ws ":" ws string',
+            r'action ::= action_object | string',
+            r'action_object ::= "{" ws "\"type\"" ws ":" ws string ws "}"',
+            r'string_array ::= "[" ws (string (ws "," ws string)*)? ws "]"',
+            r'boolean ::= "true" | "false"',
             f"animation ::= {animation_alts}",
             f"animation_or_empty ::= {animation_or_empty}",
             f"system_action_or_empty ::= {system_action_or_empty}",

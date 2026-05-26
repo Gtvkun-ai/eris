@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -119,18 +119,30 @@ class StateCommitServiceMixin:
             saver(self.memory_state)
         except Exception as exc:
             self.logger.warning("Memory state save error: %s", exc)
-    def _memory_recall_texts(self, *, snapshot=None) -> list[str]:
+    def _memory_recall_packet(self, *, snapshot=None, query: str = ""):
+        """Recall structured packet, không flatten quá sớm.
+
+        PDF/Tongquat tách episodic/semantic/procedural vì mỗi layer có quyền surface khác nhau.
+        Flatten tất cả thành list[str] là cách rất nhanh để memory đóng giả evidence hiện tại.
+        """
         recall = getattr(getattr(self, "memory_core", None), "recall", None)
-        if callable(recall):
-            try:
-                packet = recall(self._memory_query_from_snapshot(snapshot))
-                texts: list[str] = []
-                for name in ("repair", "procedural", "semantic", "relational", "affective_residue", "episodic"):
-                    texts.extend(str(item) for item in getattr(packet, name, ()) or ())
-                return texts
-            except Exception as exc:
-                self.logger.warning("Memory recall error: %s", exc)
-        return list(getattr(self, "long_term_memory", []) or []) 
+        if not callable(recall):
+            return None
+        try:
+            return recall(query or self._memory_query_from_snapshot(snapshot))
+        except Exception as exc:
+            self.logger.warning("Memory recall error: %s", exc)
+            return None
+
+    def _memory_recall_texts(self, *, snapshot=None, layers: tuple[str, ...] | None = None) -> list[str]:
+        packet = self._memory_recall_packet(snapshot=snapshot)
+        if packet is not None:
+            texts: list[str] = []
+            selected_layers = layers or ("repair", "procedural", "semantic", "relational", "affective_residue", "episodic")
+            for name in selected_layers:
+                texts.extend(str(item) for item in getattr(packet, name, ()) or ())
+            return texts
+        return list(getattr(self, "long_term_memory", []) or [])
     def _recall_memory_resonance(
         self,
         *,

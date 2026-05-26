@@ -1,4 +1,28 @@
 {
   "version": 1,
-  "items": []
+  "items": [
+    {
+      "id": "rel_0a82971cf7cf",
+      "pattern": "relationship_reflection",
+      "claim": "force_speak_micro_presence: Ngài hay bấm force_speak khi muốn ERIS hiện diện hơn là cần thông tin.",
+      "confidence": 0.64,
+      "trust_delta": 0.0,
+      "distance_delta": 0.0,
+      "rupture_weight": 0.0,
+      "repair_weight": 0.0,
+      "evidence_ids": [
+        "speech_act=micro_presence",
+        "inner_intent=micro_presence",
+        "said=khoảng yên này vẫn giữ chỗ."
+      ],
+      "observations": 1,
+      "first_seen_at": "2026-05-25T14:07:00+0700",
+      "updated_at": "2026-05-25T14:07:00+0700",
+      "decay_policy": "slow",
+      "surface_policy": "internal_bias",
+      "metadata": {
+        "reason": "derive relational_memory from cognitive frame reflection"
+      }
+    }
+  ]
 }

@@ -1,13 +1,30 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-05-24
+Cập nhật: 2026-05-25
 Mã hóa: UTF-8
 
 
 
 TÓM TẮT CÁC CHỨC NĂNG MỚI
 -------------------------
+
+Cập nhật bản mới 2026-05-25 - grounding/memory guard v2:
+- Chat path giờ chạy `OutcomeObserver` cho lượt trước ngay khi user phản hồi ở lượt hiện tại. Các tín hiệu kiểu "sai rồi", "đúng", "khó hiểu" được gắn lại vào `last_cognitive_frame.outcome`, giúp SelfObservation/RepairMemory có dữ kiện thật hơn thay vì đoán outcome ngay sau khi assistant vừa nói.
+- Pre-grounding được đưa lên trước memory recall/resonance trong `ChatCycleMixin`. Nếu user hỏi "xem đi", "đoạn đang mở", hoặc nhắc một file cụ thể mà runtime chưa có evidence hiện tại, memory sẽ bị quarantine trước khi recall để semantic/episodic memory không đóng giả thành mắt hoặc nội dung file hiện tại.
+- `PromptContextBuilder._filter_memory_context_for_grounding()` giờ chỉ giữ procedural grounding rules khi turn thiếu evidence hiện tại. Các dòng semantic/episodic/relational/repair có dạng câu trả lời bị loại bỏ, kể cả khi chúng có chữ `source` hoặc `confidence`.
+- `SourceGroundingEngine` phân biệt rõ hơn giữa deictic trỏ màn hình và deictic trỏ đoạn code user đã paste. Nếu user paste code rồi nói "đoạn này/file này", pasted code được tính là evidence và không bị fallback sai sang `missing_file_evidence` hoặc `deictic_without_vision`.
+- Fallback thiếu file evidence giờ gọi rõ tên file được nhắc và nói thẳng runtime chưa đọc được nội dung file đó; nó yêu cầu mở/paste đoạn cần xem thay vì để ERIS trả lời từ tên file hoặc ký ức cũ.
+- Screen-vision request detector dùng `_normalize_marker_text()` riêng, không strip hậu tố "đi" như repeat signature. Các marker được siết lại quanh màn hình/screenshot/đoạn đang mở để tránh bật screenshot chỉ vì câu có chữ web/chrome/browser chung chung.
+- Post-generation guard giữ metadata sống khi thay text bằng `dataclasses.replace`: không làm rơi `intent`, `action`, `confidence`, `should_speak`, `reasoning_tags` và motion fields. Nhờ vậy fallback nhìn đúng bên ngoài nhưng audit/memory/action phía sau không còn bị lệch.
+- Chế độ post-generation `LOG_ONLY` giờ đúng nghĩa log-only: chạy probe để ghi "would_change" nhưng không mutate decision thật. Khi guard thật sự can thiệp vào recent-context-as-screen, decision được hạ confidence, gắn `action=observe`, thêm tag `downgraded_recent_context/not_screen_evidence` và dùng parse mode guard rõ hơn.
+- Presence maintenance và re-engagement không còn bypass guard: các micro-line public đều đi qua `_filter_public_micro_decision()` rồi mới gửi về body. Các câu presence/reengagement cũng được sửa thành tiếng Việt có dấu để không bị MicroLinePolicy reject vì placeholder/không dấu.
+- `SpeechPipelineMixin` bắt đầu gom đường finalize chung cho speech decision: Ti enforce, system action, chat final guard và post-generation filter được đặt vào một API nhỏ để chat/autonomous/force_speak/presence dần dùng cùng một đường kiểm soát.
+- Memory commit được siết thêm: `CognitiveFrameRecorderMixin` không đưa `extracted_fact` từ các parse mode `no_speech_policy`, `semantic_repair_failed`, `source_grounding_guard` vào semantic candidate; nếu grounding nói memory không được phép trả lời thì remembered fact cũng bị bỏ trước khi vào frame.
+- `StateCommitter` reroute user correction sang `repair_memory` trước khi chạy semantic grounding check. Correction bị upstream gắn nhầm semantic/ungrounded vì thế không còn bị reject mất, mà được lưu đúng như một repair rule.
+- Semantic memory giờ bắt buộc có `semantic_source/source`; thiếu nguồn thì reject bằng `semantic_fact_missing_source`. Điều này chặn các fact "final" không rõ đến từ user, model hay memory cũ.
+- `StateCommitService` thêm `_memory_recall_packet()` để giữ recall dạng structured packet lâu hơn, chỉ flatten theo layer khi cần. Đây là nền để tách quyền surface của procedural/semantic/episodic thay vì trộn tất cả vào một list text.
+- Background cognitive cycle chỉ evolve mental processes từ snapshot state đã đọc và ghi chú rõ việc ghi lại vẫn đi qua lock `_set_internal_state`, giảm nguy cơ overwrite state do chat commit song song.
 
 Cập nhật grounding chat path và anti-hallucination:
 - `source_grounding` đã được nối vào chat path để tạo `grounding_source`, `preempt_mode`, `missing_evidence`, `confidence_cap` và log trước khi reply. Giai đoạn này ưu tiên quan sát log trước, chỉ preempt ở 2 trường hợp hẹp: `filename_only` và `deictic_without_vision`.

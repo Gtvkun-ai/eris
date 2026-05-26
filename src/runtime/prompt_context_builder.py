@@ -120,45 +120,70 @@ class PromptContextBuilderMixin:
     #So sánh snapshot hiện tại với chuẩn đã xây dựng trong bộ nhớ, trả về các điểm khác biệt đáng chú ý để làm tín hiệu cho tầng đánh giá và quyết định.
 
     def _filter_memory_context_for_grounding(self, memory_context: str) -> str:
-        """Keep procedural grounding rules while removing answer-shaped memories."""
-        if not memory_context:
-            return ""
+        """Giữ procedural guard, bỏ memory có hình dạng câu trả lời.
 
-        keep_lines = []
+        Bản cũ giữ mọi dòng có chữ "source" hoặc "confidence". Memory render thường có
+        `semantic ... source=... confidence=...`, thế là semantic/episodic lọt qua cổng cách ly.
+        Một cái lưới bắt cá nhưng lỗ to bằng con cá, rất nhân loại.
+        """
+        fallback = (
+            "PROCEDURAL MEMORY ONLY:\n"
+            "- Memory may remind ERIS to stay grounded.\n"
+            "- Memory must not answer current-screen or specific-file questions without evidence.\n"
+            "- Do not surface semantic/episodic/relational memory as present evidence.\n"
+        )
+        if not memory_context:
+            return fallback
+
+        allowed: list[str] = []
+        current_block: list[str] = []
+        current_layer = "unknown"
+
+        def flush() -> None:
+            nonlocal current_block, current_layer
+            if current_layer == "procedural" and current_block:
+                allowed.extend(current_block)
+            current_block = []
+            current_layer = "unknown"
+
         for line in memory_context.splitlines():
-            low = line.lower()
-            if any(k in low for k in (
-                "procedural",
+            raw = line.rstrip()
+            low = raw.strip().lower()
+            if not low:
+                current_block.append(raw)
+                continue
+
+            starts_procedural = low.startswith(("procedural", "[procedural", "- procedural", "procedural memory"))
+            starts_blocked = low.startswith((
+                "semantic", "[semantic", "- semantic",
+                "episodic", "[episodic", "- episodic",
+                "relational", "[relational", "- relational",
+                "affective", "[affective", "- affective",
+                "repair", "[repair", "- repair",
+            ))
+            if starts_procedural or starts_blocked:
+                flush()
+                current_layer = "procedural" if starts_procedural else "blocked"
+                current_block = [raw]
+                continue
+
+            # Chỉ giữ các dòng rule grounding độc lập, không giữ dòng semantic chỉ vì có source/confidence.
+            if current_layer == "unknown" and any(k in low for k in (
                 "no_screen_evidence",
                 "grounded_speech",
                 "post_generation_guard",
                 "không thấy thì không nói",
                 "khong thay thi khong noi",
-                "screen evidence",
+                "memory must not answer",
                 "file content",
-                "source",
-                "confidence",
+                "screen evidence",
             )):
-                keep_lines.append(line)
-            elif any(k in low for k in (
-                "episodic",
-                "semantic",
-                "commitbatchreport",
-                "state_committer",
-                "đang code",
-                "dang code",
-                "audit report",
-                "báo cáo kiểm toán",
-            )):
-                continue
+                current_layer = "procedural"
+            current_block.append(raw)
 
-        if not keep_lines:
-            return (
-                "PROCEDURAL MEMORY ONLY:\n"
-                "- Memory may remind ERIS to stay grounded.\n"
-                "- Memory must not answer current-screen or specific-file questions without evidence.\n"
-            )
-        return "\n".join(keep_lines)
+        flush()
+        cleaned = "\n".join(line for line in allowed if str(line).strip())
+        return cleaned if cleaned.strip() else fallback
 
     def _build_action_plan_context(self, action_plan: CognitiveActionPlan) -> str:
         flags = ", ".join(action_plan.risk_flags) if action_plan.risk_flags else "none"

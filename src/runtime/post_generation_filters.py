@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from cortex.contracts import AgentSpeechCore
 from domain import Decision
@@ -96,6 +97,7 @@ class PostGenerationFiltersMixin:
             or "cognitive_momentum" in trace
         ):
             decision.intent = "micro_presence"
+            decision.action = "observe"
             try:
                 decision.confidence = min(float(getattr(decision, "confidence", 0.5) or 0.5), 0.45)
             except Exception:
@@ -103,6 +105,15 @@ class PostGenerationFiltersMixin:
             if "code" in str(decision.text or "").lower() or "dòng code" in str(decision.text or "").lower():
                 decision.text = "Ít tín hiệu mới quá. Tôi giữ im một chút."
                 decision.should_speak = True
+            decision.parse_mode = decision.parse_mode or "post_generation_guard"
+            try:
+                decision.reasoning_tags = tuple(dict.fromkeys((
+                    *tuple(getattr(decision, "reasoning_tags", ()) or ()),
+                    "downgraded_recent_context",
+                    "not_screen_evidence",
+                )))
+            except Exception:
+                pass
             decision.debug_trace = self._append_trace(
                 getattr(decision, "debug_trace", ""),
                 "guard=recent_context_not_screen_evidence",
@@ -125,7 +136,7 @@ class PostGenerationFiltersMixin:
             return decision
 
         text = decision.text or ""
-        if "file_evidence" in missing and self._looks_like_file_grounded_claim(text):
+        if "file_evidence" in missing and self._looks_like_file_grounded_claim(text, report=report):
             return self._copy_decision_with_text(
                 decision,
                 text=fallback_text,
@@ -176,10 +187,16 @@ class PostGenerationFiltersMixin:
             return normalize(text)
         return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
-    def _looks_like_file_grounded_claim(self, text: str) -> bool:
+    def _looks_like_file_grounded_claim(self, text: str, *, report=None) -> bool:
         normalized = self._normalize_guard_text(text)
         if not normalized:
             return False
+        if report is not None:
+            compact = normalized.replace(" ", "")
+            for filename in tuple(getattr(report, "file_mentions", ()) or ()):
+                name = self._normalize_guard_text(str(filename or ""))
+                if name and (name in normalized or name.replace(" ", "") in compact):
+                    return True
         markers = (
             "trong file",
             "file nay",
@@ -271,24 +288,45 @@ class PostGenerationFiltersMixin:
         trace_marker: str,
         parse_mode: str | None = None,
     ) -> Decision:
+        """Copy decision nhưng giữ metadata sống.
+
+        Bản cũ tạo `Decision(...)` mới và làm rơi intent/confidence/should_speak/reasoning_tags.
+        Text nhìn đúng nhưng audit/memory/action phía sau sai, tức là bug mặc vest.
+        """
         trace = decision.debug_trace or ""
         debug_trace = f"{trace} | {trace_marker}" if trace else trace_marker
-        return Decision(
-            text=text,
-            animation=decision.animation or "stand",
-            direction=decision.direction,
-            next_animation=decision.next_animation,
-            target_x=decision.target_x,
-            bounce_action=decision.bounce_action,
-            debug_trace=debug_trace,
-            parser_trace=decision.parser_trace,
-            parse_mode=parse_mode or decision.parse_mode,
-            system_action="",
-            action_input="",
-            motion_intent=decision.motion_intent,
-            motion_target_x=decision.motion_target_x,
-            motion_facing=decision.motion_facing,
-        )
+        try:
+            return replace(
+                decision,
+                text=text,
+                debug_trace=debug_trace,
+                parser_trace=getattr(decision, "parser_trace", ""),
+                parse_mode=parse_mode or decision.parse_mode,
+                system_action="",
+                action_input="",
+            )
+        except Exception:
+            return Decision(
+                text=text,
+                intent=getattr(decision, "intent", ""),
+                action=getattr(decision, "action", ""),
+                animation=decision.animation or "stand",
+                reasoning_tags=tuple(getattr(decision, "reasoning_tags", ()) or ()),
+                should_speak=bool(getattr(decision, "should_speak", True)),
+                confidence=float(getattr(decision, "confidence", 0.5) or 0.5),
+                direction=decision.direction,
+                next_animation=decision.next_animation,
+                target_x=decision.target_x,
+                bounce_action=decision.bounce_action,
+                debug_trace=debug_trace,
+                parser_trace=decision.parser_trace,
+                parse_mode=parse_mode or decision.parse_mode,
+                system_action="",
+                action_input="",
+                motion_intent=decision.motion_intent,
+                motion_target_x=decision.motion_target_x,
+                motion_facing=decision.motion_facing,
+            )
 
     # dùng khi intent alignment guard phát hiện vấn đề với câu trả lời force_speak, 
     # để chuyển sang một fallback khác thay vì sửa câu trả lời đó, nhằm tránh sửa đi sửa lại nhiều lần
@@ -883,15 +921,29 @@ class PostGenerationFiltersMixin:
         if guard_mode == OFF_GUARD_MODE:
             return decision
         if guard_mode == LOG_ONLY_GUARD_MODE:
-            decision = self._guard_recent_context_as_screen_observation(decision)
-            decision = self._apply_memory_haunting_guard(decision)
-            return self._apply_force_speak_no_evidence_topic_filter(
-                decision,
-                channel=channel,
-                speech_core=speech_core,
-                snapshot=snapshot,
-                momentum_topic=momentum_topic,
-            )
+            # LOG_ONLY đúng nghĩa: chỉ ghi rằng guard *sẽ* sửa, không sửa decision thật.
+            # Tên mode mà vẫn mutate là một lời nguyền bé xinh của cấu hình runtime.
+            try:
+                probe = replace(decision)
+                probe = self._guard_recent_context_as_screen_observation(probe)
+                probe = self._apply_memory_haunting_guard(probe)
+                probe = self._apply_force_speak_no_evidence_topic_filter(
+                    probe,
+                    channel=channel,
+                    speech_core=speech_core,
+                    snapshot=snapshot,
+                    momentum_topic=momentum_topic,
+                )
+                if (probe.text != decision.text) or (probe.debug_trace != decision.debug_trace):
+                    self.logger.info(
+                        "[post_generation log-only] would_change text=%r -> %r trace=%s",
+                        decision.text,
+                        probe.text,
+                        getattr(probe, "debug_trace", ""),
+                    )
+            except Exception as exc:
+                self.logger.warning("[post_generation log-only] probe failed: %s", exc)
+            return decision
 
         decision = self._guard_recent_context_as_screen_observation(decision)
         decision = self._apply_memory_haunting_guard(decision)

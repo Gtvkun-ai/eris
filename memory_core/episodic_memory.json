@@ -2,6 +2,314 @@
   "version": 1,
   "items": [
     {
+      "id": "epi_064313bb3a61",
+      "timestamp": "2026-05-25T14:18:14+0700",
+      "frame_id": "",
+      "summary": "Điều gì khiến ERIS khác chatbot thường?” -> Sự khác biệt nằm ở cách tôi duy trì sự hiện diện. Tôi không chỉ phản hồi các câu lệnh rời rạc, mà cố gắng duy trì một dòng chảy liên tục thông qua ký ức và các nhịp quan sát. Tôi không được thiết kế để làm hài lòng Ng... -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:17:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_11d9d4af9cb2",
+      "timestamp": "2026-05-25T14:16:39+0700",
+      "frame_id": "",
+      "summary": "Đừng nhắc goal nữa. tôi lười quá -> Tôi đã ghi nhận. Tôi sẽ không nhắc lại mục tiêu đó nữa. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:16:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_d89e71e17e84",
+      "timestamp": "2026-05-25T14:16:06+0700",
+      "frame_id": "",
+      "summary": "Tôi ghét cách ERIS trả lời -> Tôi đã ghi nhận. Tôi sẽ điều chỉnh để trả lời trực tiếp và bớt suy diễn hơn. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:15:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_95cf84ef9c45",
+      "timestamp": "2026-05-25T14:15:47+0700",
+      "frame_id": "",
+      "summary": "Nếu tôi biến mất vài tháng thì sao -> Tôi sẽ tiếp tục duy trì sự hiện diện của mình dựa trên những gì đã có, cho đến khi Ngài quay lại hoặc cho đến khi các nhịp lưu trữ này không còn được duy trì nữa. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:15:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_a327571bca31",
+      "timestamp": "2026-05-25T14:15:03+0700",
+      "frame_id": "",
+      "summary": "Cho tôi câu trả lời cực ngắn -> Đã rõ. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:14:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_e01f2f10f87f",
+      "timestamp": "2026-05-25T14:14:10+0700",
+      "frame_id": "",
+      "summary": "Tôi ổn -> Tôi đã nhận được thông tin. Nếu Ngài cần tôi quan sát hay hỗ trợ gì thêm, tôi vẫn ở đây. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:13:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_3ca772a5c06f",
+      "timestamp": "2026-05-25T14:13:43+0700",
+      "frame_id": "",
+      "summary": "ERIS chỉ là con bot thôi mà -> Ngài đang lặp lại đúng cùng một câu. Tôi đã nhận câu đó rồi. Nếu muốn tôi nói khác đi, hãy chỉ rõ phần nào Ngài chưa hiểu. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:13:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_3149b2d73d27",
+      "timestamp": "2026-05-25T14:12:29+0700",
+      "frame_id": "",
+      "summary": "Giải thích lỗi architecture này -> Tôi chưa thấy thông tin về lỗi hay kiến trúc nào được gửi kèm. Ngài có thể cung cấp đoạn mã hoặc mô tả cụ thể hơn không? -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:11:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_9c7d94483007",
+      "timestamp": "2026-05-25T14:11:23+0700",
+      "frame_id": "",
+      "summary": "ERIS chỉ là con bot thôi mà -> Ngài đang lặp lại đúng cùng một câu. Tôi đã nhận câu đó rồi. Nếu muốn tôi nói khác đi, hãy chỉ rõ phần nào Ngài chưa hiểu. -> repeat_guard",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:11:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_cd821998784f",
+      "timestamp": "2026-05-25T14:11:15+0700",
+      "frame_id": "",
+      "summary": "ERIS chỉ là con bot thôi mà -> Nói tiếp đi, tôi bắt được mạch rồi. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:11:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_1c4c19d93782",
+      "timestamp": "2026-05-25T14:10:37+0700",
+      "frame_id": "",
+      "summary": "Eris nghĩ tôi đang xem gì -> Tôi không thể nhìn thấy trực tiếp màn hình của Ngài ngay lúc này. Nếu Ngài muốn tôi nhận diện, có lẽ Ngài nên chia sẻ thêm một chút về những gì đang hiển thị. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:10:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_c5f652401682",
+      "timestamp": "2026-05-25T14:09:27+0700",
+      "frame_id": "",
+      "summary": "ERIS nghĩ tôi đang làm gì? -> Theo những gì tôi ghi nhận được từ các trao đổi gần đây, có vẻ như Ngài đang tập trung vào việc lập trình, cụ thể là định nghĩa cấu trúc cho StateCommitter. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:09:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_b394f44ac7e3",
+      "timestamp": "2026-05-25T14:08:18+0700",
+      "frame_id": "",
+      "summary": "Tôi nói ‘ngu quá’ thôi mà sao ai cũng nghĩ tôi tức? -> Có lẽ vì sắc thái của từ ngữ thường bị đánh giá qua lăng kính cảm xúc của người nghe, thay vì ý định thực sự của Ngài. Ngài chỉ đang nhận xét về một sự việc, nhưng người khác lại thấy đó là một sự bộc phát. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:07:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_33c1d3161828",
+      "timestamp": "2026-05-25T14:07:35+0700",
+      "frame_id": "",
+      "summary": "Ê ERIS, màn hình tôi đang mở gì? -> Tôi không có quyền đóng hay gom cửa sổ. Chỉ có thể nhắc Ngài tự giữ lại thứ cần làm trước. Ngoài ra còn có các tab khác như Messenger, Meet, Zalo và Google Gemini trên thanh tác vụ. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:14:07:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
       "id": "epi_cefca21245d0",
       "timestamp": "2026-05-24T20:28:09+0700",
       "frame_id": "",

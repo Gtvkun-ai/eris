@@ -111,7 +111,15 @@ def classify_chat_act(raw_user_text: str) -> ChatAct:
         "gimmick",
         "waifu",
     )
-    if any(pattern in normalized for pattern in identity_reduction_patterns):
+    identity_reduction_regexes = (
+        # Match variants like "ERIS chỉ là con bot thôi mà". The old
+        # substring matcher missed this because of the inserted word "con".
+        r"\b(?:eris|ban|may)?\s*(?:chi\s+la\s+(?:con\s+)?(?:bot|tool|toy|script|cong\s+cu|do\s+choi|gimmick))\b",
+        r"\b(?:eris|ban|may)\s+la\s+(?:cong\s+cu|tool|toy|script|bot|do\s+choi|gimmick)\b",
+    )
+    if any(pattern in normalized for pattern in identity_reduction_patterns) or any(
+        re.search(pattern, normalized) for pattern in identity_reduction_regexes
+    ):
         return ChatAct.IDENTITY_REDUCTION
 
     if "?" in str(raw_user_text or ""):
@@ -120,6 +128,12 @@ def classify_chat_act(raw_user_text: str) -> ChatAct:
     question_phrases = (
         "ban la ai",
         "ban nghi",
+        "eris nghi",
+        "nghi toi dang",
+        "toi dang xem gi",
+        "toi dang lam gi",
+        "dang xem gi",
+        "dang lam gi",
         "co phai",
         "la gi",
         "tai sao",
@@ -752,6 +766,11 @@ class LlmService:
             if self._is_valid_cognition_payload(payload):
                 return True
             return False
+        # DECISION_JSON_FIELDS now describes the full cognition schema, not
+        # only the old Godot motion fields. Validate the cognitive metadata
+        # before accepting the payload as already clean.
+        if not self._is_valid_cognition_payload(payload):
+            return False
         if not self._is_valid_text_field(payload.get("text")):
             return False
         if not self._is_valid_animation_field(payload.get("animation"), allow_empty=False):
@@ -1098,14 +1117,18 @@ class LlmService:
         text = (raw_text or "").strip()
         if not text or self._looks_like_provider_metadata(text) or self._looks_like_markdown_json_stub(text):
             if channel == "chat":
-                return "Nói tiếp đi, tôi bắt được mạch rồi."
-            return "Một câu nhỏ thôi, khỏi dựng sân khấu."
+                # Service-error fallback must not pretend ERIS understood the
+                # user's current intent. A transport/model failure is evidence
+                # that the turn was not processed, not an invitation to fake
+                # continuity. Keep it plain and retryable.
+                return "Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại."
+            return "Mạch vừa hụt một nhịp."
         return text
 
     def _build_empty_text_fallback(self, *, channel: str) -> str:
-        fallback_text = "Một câu nhỏ thôi, khỏi dựng sân khấu."
+        fallback_text = "Mạch vừa hụt một nhịp."
         if channel == "chat":
-            fallback_text = "Nói tiếp đi, tôi bắt được mạch rồi."
+            fallback_text = "Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại."
         payload = {
             "text": fallback_text,
             "animation": "stand",
@@ -1299,9 +1322,11 @@ class LlmService:
         messages: list[dict],
         channel: str,
         request_timeout: float | None = None,
+        require_text: bool = True,
     ) -> str:
         max_tokens = 260 if channel == "chat" else 320
-        messages = self._with_non_empty_text_rule(messages)
+        if require_text:
+            messages = self._with_non_empty_text_rule(messages)
         no_cot_contract = (
             "CRITICAL OUTPUT CONTRACT: Start your response with '{' as the first character. "
             "End with '}' as the last character. Return exactly one compact JSON object. "
@@ -1368,7 +1393,7 @@ class LlmService:
         raw = self._extract_content(response)
         self._log_raw_api_text(channel, raw)
         candidate = self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
-        if self._decision_text_is_invalid(candidate):
+        if require_text and self._decision_text_is_invalid(candidate):
             return self._repair_empty_decision_text(messages=messages, channel=channel, previous_json=candidate)
         candidate = self._guard_forbidden_inference(candidate, channel=channel)
         return self._guard_infj_594_policy(candidate, channel=channel)
@@ -1696,6 +1721,7 @@ class LlmService:
         speech_intent: str = "screen_observation",
         vision_trace_marker: str = "",
         request_timeout: float | None = None,
+        require_text: bool = True,
     ):
         ti_hint = self._compress_internal_context(ti_context, kind="ti")
         action_plan_hint = self._extract_action_plan_context(ti_context)
@@ -1785,6 +1811,7 @@ class LlmService:
             ],
             channel="directive",
             request_timeout=request_timeout,
+            require_text=require_text,
         )
 
     def generate_micro_presence_line(
@@ -1898,7 +1925,7 @@ class LlmService:
         payload = self._normalize_payload_keys(payload) if isinstance(payload, dict) else {}
         return self._coerce_text_value(payload.get("text", "")).strip()
 
-    def generate_screen_facts(self, *, screen_image_data_uri: str) -> tuple[list[str], str]:
+    def generate_screen_facts(self, *, screen_image_data_uri: str, mode: str = "ambient") -> tuple[list[str], str]:
         if not screen_image_data_uri:
             return [], "no_image"
         vision_client = self.vision_client or self.client
@@ -1906,6 +1933,15 @@ class LlmService:
         system_prompt = (
             "You are a vision captioning module for ERIS. "
             "Return one JSON object only."
+        )
+        mode_name = (mode or "ambient").strip().lower()
+        debug_window_policy = (
+            "Neu user dang hoi truc tiep ve man hinh/debug/current window, KHONG bo qua cua so debug/Godot; "
+            "hay trich nhung chu hoac loi nhin thay ro trong cua so do. "
+            if mode_name in {"chat_requested", "screen_requested", "debug_requested", "current_screen"}
+            else
+            "Bo qua avatar/nhan vat ERIS, cua so debug/Godot, pixel art nho, cay/canh trang tri, "
+            "va cac vat nam o goc man hinh neu do chi la nen/decor. "
         )
         user_content = [
             {"type": "image_url", "image_url": {"url": screen_image_data_uri}},
@@ -1917,8 +1953,7 @@ class LlmService:
                     "Khong suy doan. Khong nhac ve ti le, so dem neu khong chac. "
                     "Bo qua UI chrome tinh nhu panel trai/phai, inspector, class/resource label "
                     "kieu RefCounted, hoac 'co vai cua so' neu chung khong bao loi hay viec dang lam ro. "
-                    "Bo qua avatar/nhan vat ERIS, cua so debug/Godot, pixel art nho, cay/canh trang tri, "
-                    "va cac vat nam o goc man hinh neu do chi la nen/decor.\n\n"
+                    f"{debug_window_policy}\n\n"
                     "Schema:\n"
                     "{\n"
                     '  \"facts\": [\"fact 1\", \"fact 2\"],\n'
@@ -2000,6 +2035,7 @@ class LlmService:
         memory_context: str = "",
         grounding_context: str = "",
         screen_image_data_uri: str = "",
+        require_text: bool = True,
     ):
         style_block = self._build_style_block(
             fe_context=fe_context,
@@ -2052,7 +2088,8 @@ class LlmService:
                         "Ảnh đính kèm là screenshot toàn màn hình hiện tại. "
                         "Chỉ mô tả những gì nhìn thấy rõ trong ảnh; nếu tab, URL, "
                         "hay chữ quá nhỏ hoặc bị che thì nói là không đọc rõ. "
-                        "Không suy diễn từ lịch sử hay bộ nhớ."
+                        "Không suy diễn từ lịch sử hay bộ nhớ. "
+                        "Nếu Ngài đang hỏi trực tiếp về màn hình hoặc debug, không bỏ qua cửa sổ debug/Godot khi nó đang chứa nội dung rõ."
                         f"\nTrong trường debug_trace của JSON, hãy thêm marker: {vision_trace}."
                     ),
                 },
@@ -2066,6 +2103,7 @@ class LlmService:
         raw = self._complete_decision(
             messages=messages,
             channel="chat",
+            require_text=require_text,
         )
         guarded = self._guard_chat_output(raw, raw_user_text=effective_user_text)
 

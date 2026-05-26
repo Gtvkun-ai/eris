@@ -1,4 +1,73 @@
 {
   "version": 1,
-  "items": []
+  "items": [
+    {
+      "id": "rep_68d766d1e682",
+      "failure_type": "misread",
+      "trigger_context": "audit raw cognitive frame outcome",
+      "wrong_assumption": "audit raw cognitive frame outcome",
+      "user_correction": "",
+      "repair_strategy": "Acknowledge correction ngắn, bỏ frame sai, trả lời intent hiện tại.",
+      "future_suppression_rule": "Không build tiếp trên assistant turn bị user phủ định.",
+      "confidence": 1.0,
+      "evidence_ids": [
+        "percept:user_message:14:10:0",
+        "percept:user_message:14:12:0",
+        "percept:user_message:14:16:0"
+      ],
+      "created_at": "2026-05-25T14:10:59+0700",
+      "updated_at": "2026-05-25T14:16:58+0700",
+      "recurrence_count": 3,
+      "decay_policy": "none",
+      "metadata": {
+        "raw_content": "{'cycle_id': 'chat-7', 'channel': 'chat', 'timestamp': '14:10', 'seen': ['Không phải. Ý tôi khác cơ'], 'said': 'Nói tiếp đi, tôi bắt được mạch rồi.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.40036214953271027, 'parse_mode': 'json'}",
+        "reason": "audit raw cognitive frame outcome"
+      }
+    },
+    {
+      "id": "rep_937ab642926d",
+      "failure_type": "misread",
+      "trigger_context": "user correction or conversation repair detected; prioritize repair memory",
+      "wrong_assumption": "user correction or conversation repair detected; prioritize repair memory",
+      "user_correction": "",
+      "repair_strategy": "Acknowledge correction ngắn, bỏ frame sai, trả lời intent hiện tại.",
+      "future_suppression_rule": "Không build tiếp trên assistant turn bị user phủ định.",
+      "confidence": 0.785,
+      "evidence_ids": [
+        "percept:user_message:14:10:0",
+        "percept:user_message:14:12:0"
+      ],
+      "created_at": "2026-05-25T14:10:59+0700",
+      "updated_at": "2026-05-25T14:12:55+0700",
+      "recurrence_count": 2,
+      "decay_policy": "slow",
+      "metadata": {
+        "raw_content": "failure_type: misread trigger_context: json wrong_assumption: <empty> user_correction: Không phải. Ý tôi khác cơ repair_strategy: discard the wrong frame and restate the corrected intent briefly future_suppression_rule: suppress reuse of invalidated assistant frame after user denial",
+        "reason": "user correction or conversation repair detected; prioritize repair memory"
+      }
+    },
+    {
+      "id": "rep_05860e435eb7",
+      "failure_type": "misread",
+      "trigger_context": "store concrete cognitive turn as episodic memory",
+      "wrong_assumption": "store concrete cognitive turn as episodic memory",
+      "user_correction": "",
+      "repair_strategy": "Acknowledge correction ngắn, bỏ frame sai, trả lời intent hiện tại.",
+      "future_suppression_rule": "Không build tiếp trên assistant turn bị user phủ định.",
+      "confidence": 0.6,
+      "evidence_ids": [
+        "percept:user_message:14:10:0",
+        "percept:user_message:14:12:0",
+        "percept:user_message:14:16:0"
+      ],
+      "created_at": "2026-05-25T14:10:59+0700",
+      "updated_at": "2026-05-25T14:16:58+0700",
+      "recurrence_count": 3,
+      "decay_policy": "normal",
+      "metadata": {
+        "raw_content": "{'cycle_id': 'chat-7', 'channel': 'chat', 'timestamp': '14:10', 'scene': ['Không phải. Ý tôi khác cơ'], 'eris_action': 'Nói tiếp đi, tôi bắt được mạch rồi.', 'outcome': 'json', 'salience': 0.40036214953271027, 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': ''}",
+        "reason": "store concrete cognitive turn as episodic memory"
+      }
+    }
+  ]
 }

@@ -5,17 +5,128 @@
       "id": "sem_4564c1e1d8ad",
       "claim": "User is coding a CommitBatchReport dataclass for StateCommitter.",
       "domain": "user",
-      "confidence": 0.69,
+      "confidence": 0.73,
       "source": "state_commit",
       "evidence_ids": [
         "percept:user_message:19:07:0",
         "percept:user_message:19:08:0",
-        "percept:user_message:20:27:0"
+        "percept:user_message:20:27:0",
+        "percept:user_message:14:09:0"
       ],
-      "observations": 3,
-      "status": "tentative",
+      "observations": 4,
+      "status": "active",
       "first_seen_at": "2026-05-24T19:07:35+0700",
-      "updated_at": "2026-05-24T20:28:09+0700",
+      "updated_at": "2026-05-25T14:09:27+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_9f455c8c06d7",
+      "claim": "User asked if ERIS is real.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:14:16:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-25T14:16:58+0700",
+      "updated_at": "2026-05-25T14:16:58+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_fcdb4c0608f4",
+      "claim": "User dislikes ERIS's way of answering.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:14:15:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-25T14:16:06+0700",
+      "updated_at": "2026-05-25T14:16:06+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_a9b0d3d1b64e",
+      "claim": "User stated 'Tôi ổn' (I am fine).",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:14:13:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-25T14:14:10+0700",
+      "updated_at": "2026-05-25T14:14:10+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_8ec87c639b4c",
+      "claim": "User repeated the phrase 'ERIS chỉ là con bot thôi mà'.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:14:13:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-25T14:13:44+0700",
+      "updated_at": "2026-05-25T14:13:44+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_4a1b3fc14a17",
+      "claim": "User expressed frustration that people misinterpret their use of the phrase 'ngu quá' as anger.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:14:07:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-25T14:08:18+0700",
+      "updated_at": "2026-05-25T14:08:18+0700",
       "decay_policy": "slow",
       "contradiction_ids": [],
       "tags": [

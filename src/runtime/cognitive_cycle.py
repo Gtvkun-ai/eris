@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -83,6 +83,8 @@ class CognitiveCycleMixin:
             inferred_pos_x=inferred_pos_x,
         )
         dt = max(1.0, min(8.0, self.mental_process_interval_sec / 30.0))
+        # Chỉ evolve từ snapshot state đã đọc. Ghi lại vẫn qua _set_internal_state dưới lock.
+        # Nếu sau này state có version field, nên compare-and-swap để tránh overwrite chat commit.
         processes = current.mental_processes.evolve(
             channel="background",
             snapshot=snapshot,

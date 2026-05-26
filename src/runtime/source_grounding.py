@@ -487,6 +487,15 @@ class SourceGroundingEngine:
 
         primary = self._choose_primary_source(candidates)
         missing_evidence = self._derive_missing_evidence(primary, candidates)
+
+        # QUAN TRỌNG:
+        # Nếu user đã paste code trực tiếp, nội dung code trong chat chính là evidence.
+        # Không được để marker kiểu "file này" kéo hệ thống về missing=file_evidence nữa.
+        # Lỗi cũ: user paste code + hỏi "file này lỗi gì" vẫn bị fallback như chưa có file.
+        if code_info["detected"] and "file_evidence" in missing_evidence:
+            missing_evidence = [item for item in missing_evidence if item != "file_evidence"]
+            notes.append("pasted_code_satisfies_file_content_request")
+
         deictic = refers_to_screen and self._is_deictic_screen_reference(normalized)
         has_fresh_vision = bool(screen_evidence["present"])
         has_retrieved_file = bool(file_evidence["present"])
@@ -502,7 +511,9 @@ class SourceGroundingEngine:
         confidence_cap_override: float | None = None
         should_preempt = False
 
-        if deictic:
+        # Nếu user paste code rồi nói "đoạn này/cái này", đó là deictic trỏ vào code vừa paste,
+        # không phải bắt buộc trỏ màn hình. Pasted code phải thắng screen-deictic.
+        if deictic and not user_code:
             if has_fresh_vision:
                 primary_source = "live_vision"
                 grounding_source = "live_vision"
@@ -711,7 +722,12 @@ class SourceGroundingEngine:
         reason = "missing_evidence"
 
         if "file_evidence" in missing:
-            text = "Tôi chưa có nội dung file đủ chắc để đọc thẳng. Gửi lại file hoặc paste đoạn cần xem, rồi tôi xử lý tiếp."
+            file_name = (report.file_mentions[0] if getattr(report, "file_mentions", None) else "file đó")
+            text = (
+                f"Tôi chưa đọc được nội dung `{file_name}` trong runtime này. "
+                "Nếu chỉ dựa vào tên file hoặc ký ức cũ thì tôi chỉ đang đoán. "
+                "Mở file lên rõ hơn hoặc paste đoạn cần xem, rồi tôi phân tích chắc."
+            )
             reason = "missing_file_evidence"
         elif "screen_evidence" in missing:
             text = "Tôi chưa có bằng chứng màn hình ở turn này, nên không được giả vờ là đang thấy nó. Gửi ảnh, OCR hoặc mô tả lỗi hiện trên màn hình."
@@ -803,7 +819,7 @@ class SourceGroundingEngine:
     ) -> list[str]:
         forbidden: list[str] = []
 
-        if asks_about_file and not file_evidence_present:
+        if asks_about_file and not file_evidence_present and not code_detected:
             forbidden.extend(
                 [
                     "Không được nói đã đọc file.",
