@@ -1,0 +1,17 @@
+{
+    "api_keys": {
+        "ERIS_REMOTE_API_KEY": "",
+        "GEMINI_API_KEY": "",
+        "OPENAI_API_KEY": "",
+        "ANTHROPIC_API_KEY": "",
+        "OPENROUTER_API_KEY": "",
+        "MINIMAX_API_KEY": "",
+        "VOYAGE_API_KEY": "",
+        "COHERE_API_KEY": ""
+    },
+    "env": {
+        "ERIS_REMOTE_PROVIDER": "gemini",
+        "ERIS_REMOTE_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",
+        "ERIS_REMOTE_MODEL": "gemma-4-26b-a4b-it"
+    }
+}

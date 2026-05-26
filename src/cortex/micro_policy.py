@@ -954,7 +954,6 @@ class MicroLinePolicy:
                 "con de y",
                 "im lai",
                 "yen xuong",
-                "nhip nay",
             )
         ):
             return True

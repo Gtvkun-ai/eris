@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
-from datasets import Dataset
-
 MACHINE_CONTEXT_INTRO = (
     "Machine context observed from the users device. "
     "Use it as soft situational awareness, not as an order."
@@ -19,6 +17,25 @@ ACTION_CONTEXT_INTRO = (
     "Only claim what this result confirms."
 )
 DATASET_DECODE_ENCODINGS = ("utf-8", "utf-8-sig", "cp1258", "cp1252", "latin-1")
+
+
+class TextDataset:
+    def __init__(self, texts: list[str]):
+        self._texts = list(texts)
+
+    def __len__(self) -> int:
+        return len(self._texts)
+
+    def __getitem__(self, index: int) -> dict[str, str]:
+        return {"text": self._texts[index]}
+
+
+def _dataset_from_texts(texts: list[str]) -> Any:
+    try:
+        from datasets import Dataset
+    except ModuleNotFoundError:
+        return TextDataset(texts)
+    return Dataset.from_dict({"text": texts})
 
 
 def find_dataset_path(candidates: Iterable[Path | str] | None = None) -> Path:
@@ -161,7 +178,7 @@ def build_text_dataset(
     tokenizer: Any,
     *,
     max_error_examples: int = 5,
-) -> tuple[Dataset, dict[str, Any]]:
+) -> tuple[Any, dict[str, Any]]:
     dataset_path = Path(dataset_path)
     texts: list[str] = []
     error_examples: list[dict[str, Any]] = []
@@ -222,4 +239,4 @@ def build_text_dataset(
         "encoding_counts": encoding_counts,
         "examples": error_examples,
     }
-    return Dataset.from_dict({"text": texts}), report
+    return _dataset_from_texts(texts), report
