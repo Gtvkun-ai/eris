@@ -1162,7 +1162,7 @@ class CognitiveFrameRecorderMixin:
     def _decision_to_frame_dict(self, decision: Decision | None) -> dict[str, object]:
         if decision is None:
             return {}
-        return {
+        payload = {
             "text": decision.text,
             "animation": decision.animation,
             "parse_mode": decision.parse_mode,
@@ -1173,6 +1173,19 @@ class CognitiveFrameRecorderMixin:
             "motion_facing": decision.resolve_motion_facing(),
             "debug_trace": decision.debug_trace,
         }
+        if decision.parse_mode == "source_grounding_preempt":
+            trace = str(decision.debug_trace or "")
+            for part in trace.split(";"):
+                if part.startswith("preempt="):
+                    payload["grounding_preempt_mode"] = part.removeprefix("preempt=") or ""
+                    break
+            for part in trace.split(";"):
+                if payload.get("grounding_preempt_mode"):
+                    break
+                if part.startswith("source="):
+                    payload["grounding_preempt_mode"] = part.removeprefix("source=") or ""
+                    break
+        return payload
 
     def _set_cognitive_memory_update(
         self,

@@ -762,6 +762,8 @@ class LlmService:
     def _is_valid_decision_payload(self, payload: dict | None) -> bool:
         if not isinstance(payload, dict):
             return False
+        if self._is_valid_legacy_decision_payload(payload):
+            return True
         if not all(field in payload for field in DECISION_JSON_FIELDS):
             if self._is_valid_cognition_payload(payload):
                 return True
@@ -770,6 +772,47 @@ class LlmService:
         # only the old Godot motion fields. Validate the cognitive metadata
         # before accepting the payload as already clean.
         if not self._is_valid_cognition_payload(payload):
+            return False
+        if not self._is_valid_text_field(payload.get("text")):
+            return False
+        if not self._is_valid_animation_field(payload.get("animation"), allow_empty=False):
+            return False
+        if not self._is_valid_choice_number(payload.get("direction"), {-1, 0, 1}):
+            return False
+        if not self._is_valid_target_x(payload.get("target_x")):
+            return False
+        if not self._allows_motion_target(payload) and float(payload.get("target_x", -1.0)) != -1.0:
+            return False
+        if not self._is_valid_animation_field(payload.get("bounce_action"), allow_empty=True):
+            return False
+        if not self._is_valid_text_field(payload.get("extracted_fact")):
+            return False
+        if not self._is_valid_text_field(payload.get("debug_trace")):
+            return False
+        if not self._is_valid_animation_field(payload.get("next_animation"), allow_empty=True):
+            return False
+        if not self._is_valid_system_action_field(payload.get("system_action")):
+            return False
+        if not self._is_valid_text_field(payload.get("action_input")):
+            return False
+        return True
+
+    def _is_valid_legacy_decision_payload(self, payload: dict | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        required = {
+            "text",
+            "animation",
+            "direction",
+            "target_x",
+            "bounce_action",
+            "extracted_fact",
+            "debug_trace",
+            "next_animation",
+            "system_action",
+            "action_input",
+        }
+        if not required.issubset(payload.keys()):
             return False
         if not self._is_valid_text_field(payload.get("text")):
             return False
@@ -1122,11 +1165,11 @@ class LlmService:
                 # that the turn was not processed, not an invitation to fake
                 # continuity. Keep it plain and retryable.
                 return "Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại."
-            return "Mạch vừa hụt một nhịp."
+            return "Một câu nhỏ thôi, khỏi dựng sân khấu."
         return text
 
     def _build_empty_text_fallback(self, *, channel: str) -> str:
-        fallback_text = "Mạch vừa hụt một nhịp."
+        fallback_text = "Một câu nhỏ thôi, khỏi dựng sân khấu."
         if channel == "chat":
             fallback_text = "Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại."
         payload = {

@@ -707,6 +707,7 @@ class ChatCycleMixin:
         debug_trace = (
             "source_grounding_preempt;"
             f"source={getattr(report, 'primary_source', 'unknown')};"
+            f"preempt={getattr(report, 'preempt_mode', '') or 'unknown'};"
             f"warnings={warnings}"
         )
         decision = Decision(
@@ -716,7 +717,7 @@ class ChatCycleMixin:
             animation="stand",
             should_speak=True,
             confidence=float(getattr(report, "max_confidence", 0.30) or 0.30),
-            parse_mode="source_grounding",
+            parse_mode="source_grounding_preempt",
             debug_trace=debug_trace,
         )
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
@@ -805,6 +806,8 @@ class ChatCycleMixin:
             return None
 
         text = self._get_turn_semantics_engine().build_repeat_guard_text(report)
+        if "lặp lại" not in text.lower():
+            text = f"{text} Tôi đang giữ nhịp lặp lại này lại."
         decision = Decision(
             text=text,
             intent="low_value_repeat",

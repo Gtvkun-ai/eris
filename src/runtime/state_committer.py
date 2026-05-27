@@ -704,18 +704,8 @@ class StateCommitter:
             final_target = "repair_memory"
             decision.final_target = final_target
 
-        # 8. Semantic grounding check sau reroute correction.
-        semantic_issue = self._semantic_grounding_issue(
-            final_target=final_target,
-            content=content,
-            metadata=metadata,
-            frame=frame,
-        )
-        if semantic_issue is not None:
-            issues.append(semantic_issue)
-            return decision
-
-        # 9. Confidence gate.
+        # 8. Confidence gate. Keep this before semantic-source validation so
+        # very weak requests report confidence_too_low as the primary issue.
         min_commit, min_tentative = self._confidence_thresholds(final_target)
 
         if confidence < min_tentative:
@@ -748,6 +738,18 @@ class StateCommitter:
                 decay_policy = self.config.tentative_decay_policy
 
         # 9. Metadata audit chuẩn hóa.
+        semantic_issue = self._semantic_grounding_issue(
+            final_target=final_target,
+            content=content,
+            metadata=metadata,
+            frame=frame,
+            status=status,
+            decay_policy=decay_policy,
+        )
+        if semantic_issue is not None:
+            issues.append(semantic_issue)
+            return decision
+
         metadata = dict(metadata)
         metadata.setdefault("commit_status", status)
         metadata.setdefault("validated_by", "StateCommitter")
@@ -975,6 +977,8 @@ class StateCommitter:
         content: Any,
         metadata: Mapping[str, Any],
         frame: Any,
+        status: CommitStatus = "committed",
+        decay_policy: str = "normal",
     ) -> CommitValidationIssue | None:
         if final_target != "semantic_memory":
             return None
@@ -987,6 +991,8 @@ class StateCommitter:
         semantic_source = semantic_source.strip().lower()
 
         if not semantic_source:
+            if status == "tentative" or decay_policy == "session_only":
+                return None
             return CommitValidationIssue(
                 code="semantic_fact_missing_source",
                 message="Semantic fact thiếu semantic_source/source; reject để tránh fact không nguồn.",
