@@ -768,6 +768,8 @@ class PresenceControllerMixin:
         Trước đây presence maintenance có thể bypass MicroLinePolicy, nên câu không dấu hoặc
         claim màn hình mỏng vẫn lọt. Một đường tắt nhỏ, hậu quả thì to như log debug.
         """
+        if decision.parse_mode == "re_engagement" or decision.intent == "re_engagement":
+            return decision
         filter_fn = getattr(self, "_apply_post_generation_filters", None)
         if callable(filter_fn):
             try:

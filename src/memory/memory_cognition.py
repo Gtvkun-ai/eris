@@ -732,7 +732,12 @@ class MemoryCognitionCore:
         top = packet.activations[0]
         packet.score = clamp01(sum(item.score for item in packet.activations[:3]) / min(3, len(packet.activations)) + top.score * 0.18)
         packet.dominant_layer = top.layer
-        packet.attention_bias = clamp01(max(item.score for item in packet.activations if item.layer in {"relational", "semantic", "procedural", "affective_residue", "repair"}))
+        packet.attention_bias = clamp01(
+            max(
+                (item.score for item in packet.activations if item.layer in {"relational", "semantic", "procedural", "affective_residue", "repair"}),
+                default=0.0,
+            )
+        )
         packet.appraisal_bias = clamp01(max((item.score for item in packet.activations if item.layer in {"relational", "affective_residue", "repair"}), default=0.0))
         packet.wording_bias = clamp01(max((item.score for item in packet.activations if item.layer in {"procedural", "repair", "semantic"}), default=0.0))
         packet.silence_bias = clamp01(max((item.score for item in packet.activations if item.layer in {"affective_residue", "relational"}), default=0.0) * 0.7)

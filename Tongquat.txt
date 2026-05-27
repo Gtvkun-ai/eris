@@ -1,7 +1,7 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-05-26
+Cập nhật: 2026-05-27
 Mã hóa: UTF-8
 
 
@@ -202,6 +202,19 @@ Kết nối mặc định:
 - Tách luồng chat khỏi coordinator: nhận user text, pre-grounding, memory context, turn semantics, repeat guard, route action, gọi LLM và finalize decision chat.
 - Đợt mới thêm `user_timestamp`, `_run_chat_cycle_inner()`, `_chat_processing`, `_chat_burst_queue`, `_chat_burst_lock`, `_merge_rapid_chat_burst()`, `_poll_ready_chat_events()` để gom nhiều chat message liên tiếp trước khi gọi LLM.
 - Trước khi gọi LLM, chat cycle link previous public turn qua `_link_previous_public_turn_for_chat()` và đưa `_previous_public_turn_context()` vào Ti context nếu user đang phản ứng với câu ERIS vừa hiện.
+- Có pre-grounding chạy trước memory recall để chặn memory cũ tự leo lên thành "evidence hiện tại" trong các câu kiểu `tôi đang làm gì`, `xem đi`, `đoạn đang mở`.
+- Nếu grounding báo memory không được phép trả lời (`memory_answer_allowed=False`), chat cycle quarantine memory recall/resonance cho turn đó và chỉ giữ procedural guard tối thiểu.
+- `_observe_previous_turn_feedback()` gắn phản hồi của user vào frame trước để OutcomeObserver/SelfObservation đọc được accepted/corrected/confused ở đúng lượt sau.
+- Request nhìn màn hình giờ đi qua `_looks_like_screen_vision_request()` với marker hẹp hơn; chỉ khi thực sự mang nghĩa deictic/screen thì mới chụp screenshot và đính `screen_image_data_uri`.
+- Repeat guard không còn dựa vào exact string một mình: `TurnSemanticsEngine` đọc correction pressure, identity pressure, live evidence pressure, prior failure pressure và quan hệ với previous assistant turn trước khi quyết định có chặn lặp hay không.
+
+`src/runtime/eris_pathology_policy.py`
+- File mới cho deterministic pathology policy.
+- Đây không phải runtime cognition chính mà là lớp guard/repair nhỏ để bắt các failure path đã biết trước khi output đi ra public hoặc trước khi test adapter nhận kết quả.
+- Chuẩn hóa input bằng `normalize_vi()`, suy scenario từ user text + previous assistant text + state, rồi route sang các handler `_handle_*`.
+- `PathologyDecision` trả contract ổn định cho test: `text`, `decision`, `frame`, `body`, trong đó `frame` có `speech_plan`, `grounding`, `modality`, `self_observation`, `reply_context`, `commit_requests`.
+- Các scenario đang có handler rõ ràng: `misread_correction`, `overread_short_ambiguous`, `underacted_fix_request`, `overexplained_short_answer`, `tone_mismatch_technical`, `privacy_intrusion_no_evidence`, `body_mismatch_presence`, `assistant_flattening`, `overhumanization_identity_boundary`, `public_turn_correction`, `memory_not_current_evidence`.
+- `run_pathology_turns()` là entrypoint gọn cho adapter/test; nếu không match pathology nào thì vẫn trả một payload ngắn, grounded, không suy diễn thêm.
 
 `src/runtime/speech_pipeline.py`
 - `SpeechPipelineMixin` và `SpeechIntentDecision`.
@@ -820,6 +833,17 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Test policy cho micro-presence/presence line: không generic, không quá kéo chú ý, không claim thiếu bằng chứng.
 - Có thêm case chặn blunt emotion declaration ở micro-presence.
 
+`tests/test_eris_pathology_scenarios.py`
+- Bộ regression test pathology cho ERIS.
+- Bắt các bệnh hội thoại/hành vi chính: misread, overread, underacted, overexplained, tone mismatch, privacy intrusion, body mismatch, assistant flattening, overhumanization.
+- Có thêm 2 cross-pathology regression: sửa sai sau một public turn hiểu nhầm, và chặn việc dùng memory như evidence hiện tại khi không có telemetry/vision/active window.
+- Test không ép runtime phải có đúng class nội bộ; nó chỉ yêu cầu output contract đủ rõ qua `text`, `decision`, `frame`, `body`, `memory` để assert hành vi quan sát được.
+
+`tests/eris_test_adapter.py`
+- Adapter mỏng để nối test pathology với runtime hoặc với policy deterministic.
+- Ưu tiên `ErisPathologyPolicy.maybe_handle()` trước; nếu không match mới rơi về đường `run_runtime_turns`.
+- Giúp test pathology chạy độc lập mà không cần boot toàn bộ runtime Godot/Python loop.
+
 `tests/test_subconscious.py`
 - Test subconscious legacy: memory replay, associative drift, repeat suppression, restraint.
 
@@ -832,6 +856,7 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 
 Lưu ý test gap hiện tại:
 - Chưa có file test riêng cho `orientation_context.py`, `goal_persistence.py`, `action_memory.py`, `action_utility.py` và `action_planner.py`. Một phần hành vi đang được bao phủ gián tiếp qua `test_internal_state.py`, `test_runtime_coordinator.py`, `test_conversation_dynamics.py` và các test speech/micro policy, nhưng nên tách test riêng nếu tiếp tục sửa các tầng này.
+- Dù đã có `test_eris_pathology_scenarios.py`, đây vẫn là regression theo observable behavior; nó chưa thay thế test đơn vị riêng cho các engine planner/utility/goal ở tầng giữa.
 
 `tests/test_action_router.py`
 - Test mapping chat thành system action.
@@ -946,10 +971,8 @@ Luồng touch/throw:
 
 Theo `git status --short` lúc cập nhật:
 - `Tongquat.txt` đang modified và được cập nhật trong lần này.
-- File code đang modified: `src/llm/service.py`, `src/runtime/chat_cycle.py`, `src/runtime/coordinator.py`, `src/runtime/frame_builder.py`, `src/runtime/presence_controller.py`, `src/runtime/prompt_context_builder.py`, `src/runtime/state_commit_service.py`, `tests/test_runtime_coordinator.py`.
-- File code mới/untracked: `src/runtime/public_turn_ledger.py`.
-- Runtime artifacts/data đang modified: `memory_core/active_state_snapshot.json`, `memory_core/episodic_memory.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl`.
-- Không thấy thay đổi `.cs` trong `git status --short` hiện tại; đợt này chủ yếu là runtime Python, test và dữ liệu memory/Ni.
+- Ở snapshot hiện tại không thấy thêm file code đang modified ngoài tài liệu này; phần thay đổi đáng chú ý nằm ở runtime/test đã được merge vào cây code và được phản ánh trong các mục phía trên.
+- Các bổ sung kiến trúc gần nhất đáng chú ý cho tài liệu là `src/runtime/eris_pathology_policy.py`, `tests/test_eris_pathology_scenarios.py` và luồng chat grounding/repeat semantics mới trong `src/runtime/chat_cycle.py`.
 
 
 14. Điểm Kiến Trúc Đáng Chú Ý

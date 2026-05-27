@@ -2921,6 +2921,9 @@ class RuntimeCoordinator(
         self._apply_position_update(decision)
         if frame is not None:
             frame.final_decision = self._decision_to_frame_dict(decision)
+            grounding_preempt_mode = str(getattr(frame, "source_grounding_preempt_mode", "") or "")
+            if grounding_preempt_mode:
+                frame.final_decision["grounding_preempt_mode"] = grounding_preempt_mode
             self._set_cognitive_memory_update(frame, decision=decision, notes=("chat_commit",))
             self._commit_internal_state_for_frame(frame)
             self._finalize_cognitive_frame(frame)

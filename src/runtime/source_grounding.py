@@ -530,7 +530,13 @@ class SourceGroundingEngine:
                 memory_answer_allowed = False
                 memory_allowed_layers = ("procedural",)
                 warnings.append("deictic_screen_query_without_fresh_vision")
-        elif asks_about_file and not has_retrieved_file and not visible_code and not user_code:
+        elif (
+            asks_about_file
+            and self._looks_like_file_content_request(normalized)
+            and not has_retrieved_file
+            and not visible_code
+            and not user_code
+        ):
             primary_source = "filename_only"
             grounding_source = "filename_only"
             confidence_cap_override = 0.28
@@ -557,11 +563,13 @@ class SourceGroundingEngine:
         if primary_source == "live_vision":
             allowed_sources = self._dedupe([*allowed_sources, "live_vision"])
         confidence_cap = confidence_cap_override if confidence_cap_override is not None else self._cap_for(primary, missing_evidence=missing_evidence)
-        preempt_mode = self._derive_preempt_mode(
-            normalized=normalized,
-            file_mentions=file_mentions,
-            missing_evidence=missing_evidence,
-        )
+        preempt_mode = ""
+        if should_preempt:
+            preempt_mode = self._derive_preempt_mode(
+                normalized=normalized,
+                file_mentions=file_mentions,
+                missing_evidence=missing_evidence,
+            )
         if should_preempt and not preempt_mode:
             preempt_mode = "deictic_without_vision" if deictic else "filename_only"
 
@@ -965,6 +973,9 @@ class SourceGroundingEngine:
         return any(self._normalize(marker) in normalized for marker in self.DEICTIC_SCREEN_MARKERS)
 
     def _looks_like_file_content_request(self, normalized: str) -> bool:
+        if any(marker in normalized for marker in ("fix bug", "sua ", "sua loi", "implement ", "refactor ")):
+            if not any(marker in normalized for marker in ("xem file", "doc file", "loi gi", "la gi", "review file")):
+                return False
         return any(self._normalize(marker) in normalized for marker in self.FILE_CONTENT_REQUEST_MARKERS)
 
     def _detect_pasted_code(self, text: str) -> dict[str, Any]:
