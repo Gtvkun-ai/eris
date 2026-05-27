@@ -397,18 +397,45 @@ class ChatCycleMixin:
             self.last_user_text_for_semantics = user_text
             return
 
+        memory_answer_profile = getattr(grounding_report, "memory_answer_profile", None)
+        if getattr(memory_answer_profile, "active", False):
+            planned_speech_intent = (
+                str(getattr(memory_answer_profile, "speech_intent", "") or "")
+                or self._speech_intent_from_core(speech_core, channel="chat")
+            )
+            planned_speech_act = (
+                str(getattr(memory_answer_profile, "speech_act", "") or "")
+                or (speech_core.utterance_type if speech_core.should_speak else "")
+            )
+            plan_notes = (
+                "chat_reply",
+                "semantic_answer_profile",
+                f"memory_answer={getattr(memory_answer_profile, 'mode', 'unknown')}",
+                f"memory_stance={getattr(memory_answer_profile, 'epistemic_stance', 'none')}",
+            )
+            plan_reason = (
+                str(getattr(memory_answer_profile, "reason", "") or "")
+                or speech_core.reason
+                or ti_report.reason
+            )
+        else:
+            planned_speech_intent = self._speech_intent_from_core(speech_core, channel="chat")
+            planned_speech_act = speech_core.utterance_type if speech_core.should_speak else ""
+            plan_notes = ("chat_reply",)
+            plan_reason = speech_core.reason or ti_report.reason
+
         self._set_cognitive_action_plan(
             frame,
             should_speak=True,
-            speech_intent=self._speech_intent_from_core(speech_core, channel="chat"),
-            speech_act=speech_core.utterance_type if speech_core.should_speak else "",
-            reason=speech_core.reason or ti_report.reason,
+            speech_intent=planned_speech_intent,
+            speech_act=planned_speech_act,
+            reason=plan_reason,
             snapshot=snapshot,
             user_text=user_text,
             concrete_signals=self._concrete_screen_signals(snapshot),
             ti_report=ti_report,
             fe_plan=fe_plan,
-            notes=("chat_reply",),
+            notes=plan_notes,
             inner_thought=speech_core.inner_thought,
         )
         chat_user_message = self.parser.build_chat_user_message(

@@ -216,6 +216,17 @@ Kết nối mặc định:
 - Các scenario đang có handler rõ ràng: `misread_correction`, `overread_short_ambiguous`, `underacted_fix_request`, `overexplained_short_answer`, `tone_mismatch_technical`, `privacy_intrusion_no_evidence`, `body_mismatch_presence`, `assistant_flattening`, `overhumanization_identity_boundary`, `public_turn_correction`, `memory_not_current_evidence`.
 - `run_pathology_turns()` là entrypoint gọn cho adapter/test; nếu không match pathology nào thì vẫn trả một payload ngắn, grounded, không suy diễn thêm.
 
+`src/runtime/source_grounding.py`
+- `SourceGroundingEngine`, cổng phân loại nguồn trước khi chat gọi LLM hoặc dựng câu trả lời.
+- Mục tiêu của tầng này không phải đọc file/web/OCR thật, mà là quyết định ERIS đang được phép dựa vào nguồn nào: `pasted_code`, `uploaded_file`, `filename_only`, `current_screen`, `live_vision`, `user_text`, `memory`, `web`, `runtime_state`, `unknown`.
+- `SourceGroundingReport` giữ metadata quan trọng cho cả prompt lẫn guard: `primary_source`, `confidence_cap`, `allowed_sources`, `grounding_source`, `missing_evidence`, `preempt_mode`, `memory_answer_allowed`, `memory_answer_profile`, `forbidden_assumptions`, `answer_style_rules`, `fallback_decision`.
+- Có logic bắt deictic/screen reference riêng: nếu user nói kiểu `lỗi này`, `xem đi`, `đoạn đang mở` mà không có screen evidence tươi, report sẽ đẩy sang `preempt_mode=deictic_without_vision`.
+- Có logic bắt `filename_only`: nếu user hỏi nội dung/lỗi của một file chỉ bằng tên file mà runtime chưa có file evidence thật, grounding sẽ không cho memory hay LLM đoán tiếp.
+- Pasted code được ưu tiên cao hơn screen-deictic: nếu user vừa dán code rồi nói `đoạn này`, engine hiểu đó là trỏ vào code chat chứ không ép phải có screenshot.
+- Memory được chia thành nhiều mức quyền: có thể cho continuity/procedural grounding, nhưng bị cấm trả lời như bằng chứng hiện tại nếu câu hỏi thực chất đòi file/screen/live evidence.
+- `MemoryAnswerProfile` là policy riêng cho các câu hỏi dạng nhớ-lịch-sử: continuity check, specific recall, session history, memory lookup; nó giới hạn confidence và ép stance kiểu `anchored_recall` hoặc `admit_uncertainty`.
+- Khi thiếu evidence đúng loại, engine tạo `SourceFallbackDecision` hoặc recommend preempt sớm; mục đích là chặn câu kiểu `tôi thấy`, `đang mở`, `file này lỗi ở...` khi runtime thực ra chưa có nguồn để nói vậy.
+
 `src/runtime/speech_pipeline.py`
 - `SpeechPipelineMixin` và `SpeechIntentDecision`.
 - Tách một phần logic speech/autonomous intent, quyết định nói/im, sleep duration, speech intent mapping và đường đi force_speak/chat ra khỏi lõi coordinator.
@@ -843,6 +854,13 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Adapter mỏng để nối test pathology với runtime hoặc với policy deterministic.
 - Ưu tiên `ErisPathologyPolicy.maybe_handle()` trước; nếu không match mới rơi về đường `run_runtime_turns`.
 - Giúp test pathology chạy độc lập mà không cần boot toàn bộ runtime Godot/Python loop.
+
+`tests/test_runtime_coordinator.py`
+- Ngoài các test coordinator cũ, đợt này đã có thêm nhánh source grounding cho chat.
+- Có case chặn sớm `filename_only` khi user hỏi kiểu `xem file main.py đang lỗi gì` nhưng runtime chưa có file evidence; chat không được gọi LLM và `parse_mode` đi ra là `source_grounding_preempt`.
+- Có case chặn sớm `deictic_without_vision` khi user hỏi kiểu `lỗi này là gì` mà không có screenshot/vision current-turn.
+- Có case xác nhận live observation query được bypass repeat guard nếu turn sau đã có screenshot thật; nghĩa là exact repeat không còn tự động thắng live evidence.
+- Có case post-generation guard rewrite các screen claim thiếu evidence sang `source_grounding_guard` thay vì để output tiếp tục tự nhận thấy màn hình.
 
 `tests/test_subconscious.py`
 - Test subconscious legacy: memory replay, associative drift, repeat suppression, restraint.
