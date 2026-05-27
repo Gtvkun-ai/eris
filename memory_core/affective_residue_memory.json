@@ -1,4 +1,71 @@
 {
   "version": 1,
-  "items": []
+  "items": [
+    {
+      "id": "res_3918bda86dd6",
+      "residue_type": "affective_echo",
+      "description": "tender_under_cold: residue_strength=0.80184335050083; threat=0.1656733644859813; intimacy=0.80184335050083; tenderness=0.5469750484069953; fatigue=0.21929416388810655; outcome=json",
+      "intensity": 0.72,
+      "valence": 0.0,
+      "confidence": 0.72,
+      "evidence_ids": [
+        "percept:user_message:12:02:0"
+      ],
+      "first_seen_at": "2026-05-27T12:02:57+0700",
+      "updated_at": "2026-05-27T12:02:57+0700",
+      "observations": 1,
+      "decay_policy": "normal",
+      "surface_policy": "never_direct_claim",
+      "pressure_effects": {
+        "background_tension": 0.288
+      },
+      "metadata": {
+        "reason": "store affective residue as internal bias, not public fact"
+      }
+    },
+    {
+      "id": "res_76ae3ffb412b",
+      "residue_type": "affective_echo",
+      "description": "tender_under_cold: residue_strength=0.806355485659938; threat=0.17182102803738317; intimacy=0.806355485659938; tenderness=0.5495384452332203; fatigue=0.21527864667129223; outcome=json",
+      "intensity": 0.72,
+      "valence": 0.0,
+      "confidence": 0.72,
+      "evidence_ids": [
+        "percept:user_message:12:00:0"
+      ],
+      "first_seen_at": "2026-05-27T12:00:42+0700",
+      "updated_at": "2026-05-27T12:00:42+0700",
+      "observations": 1,
+      "decay_policy": "normal",
+      "surface_policy": "never_direct_claim",
+      "pressure_effects": {
+        "background_tension": 0.288
+      },
+      "metadata": {
+        "reason": "store affective residue as internal bias, not public fact"
+      }
+    },
+    {
+      "id": "res_91d8fd1b028d",
+      "residue_type": "affective_echo",
+      "description": "tender_under_cold: residue_strength=0.8288217418817565; threat=0.1656733644859813; intimacy=0.8288217418817565; tenderness=0.5618467674716238; fatigue=0.16173242981653357; outcome=json",
+      "intensity": 0.72,
+      "valence": 0.0,
+      "confidence": 0.72,
+      "evidence_ids": [
+        "percept:user_message:10:43:0"
+      ],
+      "first_seen_at": "2026-05-27T10:43:12+0700",
+      "updated_at": "2026-05-27T10:43:12+0700",
+      "observations": 1,
+      "decay_policy": "normal",
+      "surface_policy": "never_direct_claim",
+      "pressure_effects": {
+        "background_tension": 0.288
+      },
+      "metadata": {
+        "reason": "store affective residue as internal bias, not public fact"
+      }
+    }
+  ]
 }

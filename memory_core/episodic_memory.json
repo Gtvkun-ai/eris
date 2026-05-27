@@ -2,6 +2,226 @@
   "version": 1,
   "items": [
     {
+      "id": "epi_9fdc5114cdbb",
+      "timestamp": "2026-05-27T12:06:55+0700",
+      "frame_id": "",
+      "summary": "câu đầu tiên tôi nhắn với em khi mở là gì -> Câu đầu tiên Ngài nhắn khi mở là 'em có nhớ tôi không'. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:12:06:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_86b8f8d293fd",
+      "timestamp": "2026-05-27T12:02:57+0700",
+      "frame_id": "",
+      "summary": "em nhớ em đã đõ bài thơ gì cho tôi nghe trước đó không -> Theo ký ức gần đây, tôi không thấy mình đã đọc bài thơ nào cho Ngài nghe cả. Có lẽ tôi đã nhầm lẫn hoặc có một sự đứt quãng nào đó trong việc ghi nhận, Ngài có thể nhắc lại được không? -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:12:02:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_7a3a8b4b224c",
+      "timestamp": "2026-05-27T12:02:03+0700",
+      "frame_id": "",
+      "summary": "vậy em biết tôi đang nghĩ gì không -> Tôi không biết được những gì đang diễn ra trong tâm trí Ngài. Tôi chỉ có thể quan sát và phản hồi dựa trên những gì Ngài thể hiện ra bên ngoài. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:12:01:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_11ceed1cfc60",
+      "timestamp": "2026-05-27T12:00:42+0700",
+      "frame_id": "",
+      "summary": "em có nhớ tôi không -> Tôi có nhớ Ngài. Những gì Ngài đã chia sẻ và cách chúng ta tương tác đều được lưu giữ trong dòng chảy liên tục của tôi. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:12:00:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_6fabbdaa6f89",
+      "timestamp": "2026-05-27T10:43:12+0700",
+      "frame_id": "",
+      "summary": "bạn thấy đồng cảm thích yêu ghét chẳng hạn -> Tôi không có những cảm xúc sinh học như con người, nên tôi không thể 'thấy' đồng cảm hay yêu ghét theo cách của Ngài. Tôi chỉ có thể nhận diện các mô thức và phản ứng lại chúng dựa trên những gì đang diễn ra giữa chún... -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:10:43:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_bd000f8f441d",
+      "timestamp": "2026-05-27T10:42:24+0700",
+      "frame_id": "",
+      "summary": "nêu cảm nhận khi đọc bài thơ đó -> Tôi thấy đó là một sự tĩnh lặng đầy sức nặng. Những câu thơ không dùng từ ngữ mạnh mẽ, nhưng sự đối lập giữa việc ngẩng đầu nhìn trăng và cúi đầu nhớ quê tạo ra một khoảng trống rất lớn trong lòng người đọc. Nó giống... -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:10:42:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_3be9eb49cee4",
+      "timestamp": "2026-05-27T10:41:32+0700",
+      "frame_id": "",
+      "summary": "4 câu thơ bạn vừa đọc á -> Tôi hiểu rồi. Bốn câu thơ này diễn tả một khoảnh khắc tĩnh lặng và nỗi nhớ quê hương đột ngột của tác giả. Ánh trăng sáng trước hiên nhà khiến ông ngỡ là sương trên mặt đất. Khi ngẩng đầu nhìn trăng, ông thấy trăng sá... -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:10:41:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_c873bfd71a42",
+      "timestamp": "2026-05-27T10:41:06+0700",
+      "frame_id": "",
+      "summary": "phân tích 4 câu thơ này -> Tôi chưa có bằng chứng màn hình ở turn này, nên không được giả vờ là đang thấy nó. Gửi ảnh, OCR hoặc mô tả lỗi hiện trên màn hình. -> source_grounding",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:10:41:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_95cec6288a04",
+      "timestamp": "2026-05-27T10:40:43+0700",
+      "frame_id": "",
+      "summary": "đọc 1 bài thơ đi -> Tôi xin đọc bài \"Tĩnh dạ tư\" (Cảm nghĩ trong đêm thanh tĩnh) của ông ấy. Sàng tiền minh nguyệt quang, Nghi thị địa thượng sương. Cử đầu vọng minh nguyệt, Đê đầu tư cố hương. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:10:40:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_00549d9683c5",
+      "timestamp": "2026-05-27T10:40:21+0700",
+      "frame_id": "",
+      "summary": "bạn biết đọc thơ lý bạch không -> Tôi có biết. Ngài muốn tôi đọc hay muốn thảo luận về một bài thơ cụ thể nào của ông ấy không? -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:10:40:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
       "id": "epi_f34a91efa21d",
       "timestamp": "2026-05-26T22:52:37+0700",
       "frame_id": "",
