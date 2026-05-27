@@ -110,6 +110,44 @@ class SourceFallbackDecision:
 
 
 @dataclass(slots=True)
+class MemoryAnswerProfile:
+    """Semantic policy for memory/history questions.
+
+    This is deliberately a profile, not a fallback sentence.  The LLM still
+    words the answer, while downstream layers get stable metadata for
+    confidence caps and action labels.
+    """
+
+    mode: Literal[
+        "none",
+        "continuity_check",
+        "specific_recall",
+        "session_history",
+        "memory_lookup",
+    ] = "none"
+    speech_intent: str = ""
+    speech_act: str = ""
+    confidence_cap: float = 1.0
+    requires_specific_anchor: bool = False
+    has_specific_anchor: bool = False
+    anchor_evidence_ids: list[str] = field(default_factory=list)
+    evidence_preview: list[str] = field(default_factory=list)
+    epistemic_stance: Literal["none", "partial_continuity", "anchored_recall", "admit_uncertainty"] = "none"
+    reason: str = ""
+    prompt_rules: list[str] = field(default_factory=list)
+
+    @property
+    def active(self) -> bool:
+        return self.mode != "none"
+
+    def apply_cap(self, raw_confidence: float) -> float:
+        try:
+            return max(0.0, min(float(raw_confidence), float(self.confidence_cap)))
+        except Exception:
+            return float(self.confidence_cap)
+
+
+@dataclass(slots=True)
 class SourceGroundingReport:
     """
     Báo cáo grounding nguồn cho một turn.
@@ -151,6 +189,7 @@ class SourceGroundingReport:
     memory_surface_allowed: bool = True
     memory_answer_allowed: bool = True
     memory_allowed_layers: tuple[str, ...] = ("procedural", "semantic", "episodic")
+    memory_answer_profile: MemoryAnswerProfile = field(default_factory=MemoryAnswerProfile)
     warnings: list[str] = field(default_factory=list)
     forbidden_assumptions: list[str] = field(default_factory=list)
     answer_style_rules: list[str] = field(default_factory=list)
@@ -369,6 +408,12 @@ class SourceGroundingEngine:
         screen_evidence = self._collect_screen_evidence(frame=frame, screen_facts=screen_facts, runtime_state=runtime_state)
         memory_evidence = self._collect_memory_evidence(frame=frame, memory_packet=memory_packet)
         user_evidence = self._collect_user_text_evidence(frame=frame, user_text=text)
+        memory_profile = self._derive_memory_answer_profile(
+            normalized=normalized,
+            user_text=text,
+            memory_ref=memory_ref,
+            memory_evidence=memory_evidence,
+        )
 
         if code_info["detected"]:
             candidates.append(
@@ -546,6 +591,13 @@ class SourceGroundingEngine:
             memory_allowed_layers = ("procedural",)
             warnings.append("specific_file_reference_without_content")
 
+        if memory_profile.active and confidence_cap_override is None:
+            # MemoryAnswerProfile already encodes the epistemic shape of the
+            # request.  Let it own the cap instead of letting the generic
+            # primary source cap flatten session-history and recall queries.
+            confidence_cap_override = float(memory_profile.confidence_cap)
+            notes.append(f"memory_answer_profile={memory_profile.mode}")
+
         forbidden = self._derive_forbidden_assumptions(
             primary_source=primary_source,
             asks_about_file=asks_about_file,
@@ -595,6 +647,7 @@ class SourceGroundingEngine:
             memory_surface_allowed=memory_surface_allowed,
             memory_answer_allowed=memory_answer_allowed,
             memory_allowed_layers=memory_allowed_layers,
+            memory_answer_profile=memory_profile,
             warnings=warnings,
             forbidden_assumptions=forbidden,
             answer_style_rules=answer_rules,
@@ -613,6 +666,7 @@ class SourceGroundingEngine:
             self._safe_setattr(frame, "source_grounding_source", report.grounding_source)
             self._safe_setattr(frame, "source_grounding_preempt_mode", report.preempt_mode)
             self._safe_setattr(frame, "source_grounding_memory_answer_allowed", report.memory_answer_allowed)
+            self._safe_setattr(frame, "source_memory_answer_profile", report.memory_answer_profile)
 
         return report
 
@@ -694,6 +748,24 @@ class SourceGroundingEngine:
             f"answer_allowed={int(report.memory_answer_allowed)}; "
             f"layers={', '.join(report.memory_allowed_layers)}"
         )
+        memory_profile = getattr(report, "memory_answer_profile", None)
+        if getattr(memory_profile, "active", False):
+            lines.append(
+                "memory_answer_profile: "
+                f"mode={memory_profile.mode}; "
+                f"speech_intent={memory_profile.speech_intent}; "
+                f"speech_act={memory_profile.speech_act}; "
+                f"confidence_cap={memory_profile.confidence_cap:.2f}; "
+                f"requires_specific_anchor={int(memory_profile.requires_specific_anchor)}; "
+                f"has_specific_anchor={int(memory_profile.has_specific_anchor)}; "
+                f"stance={memory_profile.epistemic_stance}"
+            )
+            if memory_profile.evidence_preview:
+                lines.append("memory_anchor_preview: " + " | ".join(memory_profile.evidence_preview[:3]))
+            if memory_profile.prompt_rules:
+                lines.append("memory_answer_rules:")
+                for rule in memory_profile.prompt_rules[:8]:
+                    lines.append(f"- {rule}")
         if report.forbidden_assumptions:
             lines.append("forbidden_assumptions:")
             for item in report.forbidden_assumptions[:8]:
@@ -762,6 +834,144 @@ class SourceGroundingEngine:
     def build_preemptive_reply(self, report: SourceGroundingReport) -> str:
         fallback = self.build_fallback_decision(report)
         return str(getattr(fallback, "text", "") or "").strip()
+
+    def _derive_memory_answer_profile(
+        self,
+        *,
+        normalized: str,
+        user_text: str,
+        memory_ref: bool,
+        memory_evidence: Mapping[str, Any],
+    ) -> MemoryAnswerProfile:
+        """Infer the memory/history answer shape for this turn.
+
+        This does not produce a fallback sentence. It produces an epistemic
+        policy: what kind of answer is being asked for, whether a concrete
+        memory anchor is required, how confident the answer is allowed to be,
+        and how the action plan should be labeled.
+        """
+
+        tokens = set((normalized or "").split())
+        has_memory_verb = bool({"nho", "remember", "recall"} & tokens)
+        has_question_shape = bool({"khong", "gi", "nao", "la", "what", "which", "when"} & tokens) or "?" in str(user_text or "")
+        temporal_reference = any(
+            phrase in normalized
+            for phrase in (
+                "truoc do",
+                "lan truoc",
+                "hom truoc",
+                "vua nay",
+                "luc nay",
+                "last time",
+                "previously",
+                "before",
+            )
+        )
+        asks_session_order = (
+            (("cau" in tokens or "tin" in tokens or "message" in tokens) and ("dau" in tokens or "first" in tokens))
+            or "cau dau tien" in normalized
+            or "tin dau tien" in normalized
+            or "first message" in normalized
+        )
+        asks_prior_content = any(
+            phrase in normalized
+            for phrase in (
+                "da noi gi",
+                "da bao gi",
+                "da doc gi",
+                "doc bai",
+                "bai tho",
+                "poem",
+                "noi truoc do",
+                "nghe truoc do",
+            )
+        )
+        asks_continuity_check = has_memory_verb and has_question_shape and not (
+            temporal_reference or asks_session_order or asks_prior_content
+        )
+        asks_memory_lookup = bool(memory_ref or temporal_reference or asks_prior_content or asks_session_order or asks_continuity_check)
+        if not asks_memory_lookup:
+            return MemoryAnswerProfile()
+
+        anchor_ids = list(memory_evidence.get("ids", []) or [])
+        previews = [str(item) for item in list(memory_evidence.get("preview", []) or []) if str(item).strip()]
+        has_anchor = bool(previews or anchor_ids)
+
+        if asks_session_order:
+            return MemoryAnswerProfile(
+                mode="session_history",
+                speech_intent="history_lookup",
+                speech_act="answer_direct",
+                confidence_cap=0.92,
+                requires_specific_anchor=True,
+                has_specific_anchor=True,
+                anchor_evidence_ids=anchor_ids,
+                evidence_preview=previews[:3],
+                epistemic_stance="anchored_recall",
+                reason="user asks for an auditable fact from the current session order",
+                prompt_rules=[
+                    "Answer from the current chat/session transcript, not from long-term memory if the transcript is available.",
+                    "Quote or paraphrase the concrete turn if known; otherwise explicitly say the session record is insufficient.",
+                    "Do not label this as emotional mirroring; it is a history lookup.",
+                ],
+            )
+
+        if asks_continuity_check:
+            return MemoryAnswerProfile(
+                mode="continuity_check",
+                speech_intent="memory_lookup",
+                speech_act="memory_lookup",
+                confidence_cap=0.75,
+                requires_specific_anchor=False,
+                has_specific_anchor=has_anchor,
+                anchor_evidence_ids=anchor_ids,
+                evidence_preview=previews[:3],
+                epistemic_stance="partial_continuity",
+                reason="user asks whether ERIS remembers, but not a concrete retrievable episode",
+                prompt_rules=[
+                    "Answer as partial runtime continuity, not perfect human memory.",
+                    "Avoid absolute scope claims such as remembering everything or storing everything.",
+                    "Use a restrained clause like 'the parts still recorded' or 'what remains in continuity' naturally, not as a disclaimer dump.",
+                ],
+            )
+
+        if asks_prior_content:
+            cap = 0.78 if has_anchor else 0.55
+            return MemoryAnswerProfile(
+                mode="specific_recall",
+                speech_intent="memory_lookup",
+                speech_act="memory_lookup",
+                confidence_cap=cap,
+                requires_specific_anchor=True,
+                has_specific_anchor=has_anchor,
+                anchor_evidence_ids=anchor_ids,
+                evidence_preview=previews[:3],
+                epistemic_stance="anchored_recall" if has_anchor else "admit_uncertainty",
+                reason="user asks for specific previous content",
+                prompt_rules=[
+                    "A concrete prior content answer requires a retrieved anchor, quote, transcript item, or memory evidence.",
+                    "If no anchor is available, answer that the current memory packet is insufficient; do not invent the prior content.",
+                    "Do not perform warmth as evidence. Warmth is style; memory is evidence.",
+                ],
+            )
+
+        cap = 0.82 if has_anchor else 0.68
+        return MemoryAnswerProfile(
+            mode="memory_lookup",
+            speech_intent="memory_lookup",
+            speech_act="memory_lookup",
+            confidence_cap=cap,
+            requires_specific_anchor=False,
+            has_specific_anchor=has_anchor,
+            anchor_evidence_ids=anchor_ids,
+            evidence_preview=previews[:3],
+            epistemic_stance="anchored_recall" if has_anchor else "partial_continuity",
+            reason="user references memory/history without demanding exact current evidence",
+            prompt_rules=[
+                "Use retrieved memory as bounded evidence, not as proof of perfect recall.",
+                "State uncertainty through phrasing if the memory anchor is weak or absent.",
+            ],
+        )
 
     def _choose_primary_source(self, candidates: Sequence[SourceCandidate]) -> SourceCandidate:
         """
@@ -1301,6 +1511,7 @@ class SourceGroundingEngine:
             pass
         text = unicodedata.normalize("NFD", text)
         text = "".join(char for char in text if unicodedata.category(char) != "Mn")
+        text = text.replace("đ", "d").replace("Đ", "D")
         text = re.sub(r"\s+", " ", text)
         return text
 
