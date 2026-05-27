@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from typing import Any, Callable, Optional
 import unicodedata
 
 try:
     from ..domain import Decision
+    from ..llm.client import LlamaServerClient
     from ..memory.memory_models import MemoryKind
     from ..memory.memory_query_compiler import MemoryQueryCompiler
     from ..memory.memory_query_executor import MemoryQueryExecutor
@@ -18,6 +20,7 @@ try:
     from .session_turn_ledger import SessionTurnLedger
 except ImportError:
     from domain import Decision
+    from llm.client import LlamaServerClient
     from memory.memory_models import MemoryKind
     from memory.memory_query_compiler import MemoryQueryCompiler
     from memory.memory_query_executor import MemoryQueryExecutor
@@ -37,6 +40,26 @@ _FACT_KEY_TO_MEMORY_KIND: dict[str, MemoryKind] = {
     "user.birth_month": MemoryKind.USER_BIRTH_MONTH,
     "user.response_style": MemoryKind.USER_RESPONSE_STYLE,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _MemoryQueryLLMConfig:
+    enabled: bool = False
+    timeout_seconds: float = 2.0
+    max_tokens: int = 320
+    min_confidence: float = 0.45
+
+    @classmethod
+    def from_env(cls) -> "_MemoryQueryLLMConfig":
+        enabled = _env_flag("ERIS_MEMORY_QUERY_LLM_ENABLED", default=False)
+        timeout_seconds = _env_float("ERIS_MEMORY_QUERY_LLM_TIMEOUT_MS", default=2000.0) / 1000.0
+        max_tokens = _env_int("ERIS_MEMORY_QUERY_LLM_MAX_TOKENS", default=320)
+        return cls(
+            enabled=enabled,
+            timeout_seconds=max(0.1, timeout_seconds),
+            max_tokens=max(64, max_tokens),
+            min_confidence=0.45,
+        )
 
 
 @dataclass(slots=True)
@@ -299,13 +322,26 @@ class _MemoryCoreProxy:
 @dataclass(slots=True)
 class _RuntimeMemoryQueryLLMClient(MemoryQueryLLMClient):
     service: Any
+    timeout_seconds: float = 2.0
+    max_tokens: int = 320
+    min_confidence: float = 0.45
 
     @classmethod
     def from_service(cls, service: Any) -> Optional["_RuntimeMemoryQueryLLMClient"]:
-        client = getattr(service, "client", None)
-        if service is None or not callable(getattr(client, "create_chat_completion", None)):
+        config = _MemoryQueryLLMConfig.from_env()
+        if not config.enabled or service is None:
             return None
-        return cls(service=service)
+        client = getattr(service, "client", None)
+        if not isinstance(client, LlamaServerClient):
+            return None
+        if not callable(getattr(client, "create_chat_completion", None)):
+            return None
+        return cls(
+            service=service,
+            timeout_seconds=config.timeout_seconds,
+            max_tokens=config.max_tokens,
+            min_confidence=config.min_confidence,
+        )
 
     def complete_json(self, *, system: str, user: str, schema: dict[str, Any]) -> str:
         client = getattr(self.service, "client", None)
@@ -325,9 +361,10 @@ class _RuntimeMemoryQueryLLMClient(MemoryQueryLLMClient):
                 temperature=0.0,
                 frequency_penalty=0.0,
                 presence_penalty=0.0,
-                max_tokens=320,
+                max_tokens=self.max_tokens,
                 response_format={"type": "json_object"},
                 grammar=None,
+                timeout=self.timeout_seconds,
             )
         except Exception:
             return ""
@@ -335,10 +372,30 @@ class _RuntimeMemoryQueryLLMClient(MemoryQueryLLMClient):
         extractor = getattr(self.service, "_extract_content", None)
         if callable(extractor):
             try:
-                return str(extractor(response) or "")
+                raw = str(extractor(response) or "")
             except Exception:
                 return ""
-        return _extract_response_text(response)
+        else:
+            raw = _extract_response_text(response)
+
+        if not self._passes_confidence_floor(raw):
+            return ""
+        return raw
+
+    def _passes_confidence_floor(self, raw: str) -> bool:
+        if self.min_confidence <= 0.0:
+            return True
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return True
+        if not isinstance(data, dict):
+            return True
+        try:
+            confidence = float(data.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return True
+        return confidence >= self.min_confidence
 
 
 def _extract_response_text(response: Any) -> str:
@@ -390,3 +447,30 @@ def _normalize_recall_text(text: str) -> str:
         else:
             out_chars.append(" ")
     return " ".join("".join(out_chars).split())
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, *, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, *, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default

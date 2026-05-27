@@ -492,11 +492,11 @@ class StateCommitServiceMixin:
                 frame.final_decision["grounding_missing_evidence"] = list(getattr(grounding, "missing_evidence", ()) or ())
             self._set_cognitive_memory_update(frame, decision=decision, notes=("chat_commit",))
             self._commit_internal_state_for_frame(frame)
+            self._send_decision_to_body(decision, channel="chat")
             self._finalize_cognitive_frame(frame)
         self.logger.info("ERIS: %s", decision.text)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[chat parser] %s", decision.parser_trace or "<empty>")
-        self._send_decision_to_body(decision)
 
     def _apply_position_update(self, decision: Decision) -> None:
         intent = decision.resolve_motion_intent()

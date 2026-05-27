@@ -2665,13 +2665,13 @@ class RuntimeCoordinator(
             frame.final_decision = self._decision_to_frame_dict(decision)
             self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_withdraw",))
             self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+            self._send_decision_to_body(decision, channel="force_speak")
             self._finalize_cognitive_frame(frame)
             self.logger.info(
                 '[force_speak] ActionPlanner withdrew with text="%s" | elapsed=%.2fs',
                 decision.text,
                 time.time() - cycle_start,
             )
-            self._send_decision_to_body(decision)
             return
 
         if frame.action_plan.speech_act == "micro_presence":
@@ -2735,6 +2735,7 @@ class RuntimeCoordinator(
             frame.final_decision = self._decision_to_frame_dict(decision)
             self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_micro_presence", synthesis.kind))
             self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+            self._send_decision_to_body(decision, channel="force_speak")
             self._finalize_cognitive_frame(frame)
             self.logger.info(
                 '[force_speak] MicroPresence text="%s" | kind=%s | elapsed=%.2fs',
@@ -2742,7 +2743,6 @@ class RuntimeCoordinator(
                 synthesis.kind,
                 time.time() - cycle_start,
             )
-            self._send_decision_to_body(decision)
             return
 
         if self._is_inner_thought_speech_act(frame.action_plan.speech_act):
@@ -2827,6 +2827,7 @@ class RuntimeCoordinator(
             frame.final_decision = self._decision_to_frame_dict(decision)
             self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_inner_thought",))
             self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+            self._send_decision_to_body(decision, channel="force_speak")
             self._finalize_cognitive_frame(frame)
             self.logger.info(
                 '[force_speak] InnerThought generated text="%s" | act=%s | elapsed=%.2fs',
@@ -2834,7 +2835,6 @@ class RuntimeCoordinator(
                 frame.action_plan.speech_act,
                 time.time() - cycle_start,
             )
-            self._send_decision_to_body(decision)
             return
 
         forced_ti_context = (
@@ -2894,6 +2894,7 @@ class RuntimeCoordinator(
         frame.final_decision = self._decision_to_frame_dict(decision)
         self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_commit",))
         self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+        self._send_decision_to_body(decision, channel="force_speak")
         self._finalize_cognitive_frame(frame)
 
         self.logger.info(
@@ -2904,7 +2905,6 @@ class RuntimeCoordinator(
         )
         self.logger.info("[force_speak debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[force_speak parser] %s", decision.parser_trace or "<empty>")
-        self._send_decision_to_body(decision)
 
     def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
         self.fe_style_memory = self.fe_renderer.remember_style(
@@ -2938,11 +2938,11 @@ class RuntimeCoordinator(
                 frame.final_decision["grounding_preempt_mode"] = grounding_preempt_mode
             self._set_cognitive_memory_update(frame, decision=decision, notes=("chat_commit",))
             self._commit_internal_state_for_frame(frame)
+            self._send_decision_to_body(decision, channel="chat")
             self._finalize_cognitive_frame(frame)
         self.logger.info("ERIS: %s", decision.text)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[chat parser] %s", decision.parser_trace or "<empty>")
-        self._send_decision_to_body(decision)
 
     def _sleep_interruptible(self, seconds: float):
         end_at = time.time() + seconds
@@ -4041,6 +4041,7 @@ class RuntimeCoordinator(
             frame.final_decision = self._decision_to_frame_dict(decision)
             self._set_cognitive_memory_update(frame, decision=decision, notes=("autonomous_inner_thought",))
             self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+            self._send_decision_to_body(decision, channel="autonomous")
             self._finalize_cognitive_frame(frame)
 
             self.logger.info(
@@ -4048,8 +4049,6 @@ class RuntimeCoordinator(
                 decision.text,
                 frame.action_plan.speech_act,
             )
-            self._send_decision_to_body(decision)
-
             elapsed = time.time() - cycle_start
             sleep_duration = self._choose_autonomous_sleep_duration(
                 suppressed=False,
@@ -4106,13 +4105,13 @@ class RuntimeCoordinator(
         frame.final_decision = self._decision_to_frame_dict(decision)
         self._set_cognitive_memory_update(frame, decision=decision, notes=("autonomous_commit",))
         self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+        self._send_decision_to_body(decision, channel="autonomous")
         self._finalize_cognitive_frame(frame)
 
         self.logger.info("Tâm trạng giữ nguyên: %s", self.mood_score)
         self.logger.info('Decision text="%s" | animation="%s"', decision.text, decision.animation)
         self.logger.info("[directive debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[directive parser] %s", decision.parser_trace or "<empty>")
-        self._send_decision_to_body(decision)
 
         elapsed = time.time() - cycle_start
         sleep_duration = self._choose_autonomous_sleep_duration(

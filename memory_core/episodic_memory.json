@@ -2,6 +2,72 @@
   "version": 1,
   "items": [
     {
+      "id": "epi_c84ab2c4a787",
+      "timestamp": "2026-05-27T20:44:05+0700",
+      "frame_id": "",
+      "summary": "gì vậy trời -> Tôi vẫn ở đây. Ngài có chuyện gì không? -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:20:43:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_d6fd155a7ec7",
+      "timestamp": "2026-05-27T20:42:41+0700",
+      "frame_id": "",
+      "summary": "đúng dị ersi cưng cưng -> Tôi sẽ trả lời đúng việc, không suy diễn quá xa. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:20:42:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_7798fbdceaab",
+      "timestamp": "2026-05-27T20:37:55+0700",
+      "frame_id": "",
+      "summary": "hello eris cưng -> Chào Ngài. Ngài lại gọi tôi bằng cái tên đó rồi. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:20:37:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
       "id": "epi_1011f217a87d",
       "timestamp": "2026-05-27T18:21:57+0700",
       "frame_id": "",

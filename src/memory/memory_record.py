@@ -144,12 +144,14 @@ def phrase_score(query_norm: str, text_norm: str) -> float:
     """Phrase match đủ dài, không tính token đơn như chân lý."""
     if not query_norm or not text_norm:
         return 0.0
-    if len(query_norm) >= 12 and query_norm in text_norm:
+    relaxed_query = re.sub(r"(?<=\w)-(?=\w)", " ", query_norm)
+    relaxed_text = re.sub(r"(?<=\w)-(?=\w)", " ", text_norm)
+    if len(query_norm) >= 12 and (query_norm in text_norm or relaxed_query in relaxed_text):
         return 1.0
     chunks = [item.strip() for item in re.split(r"[,.!?;:\n]+", query_norm) if len(item.strip()) >= 12]
     if not chunks:
         return 0.0
-    return sum(1 for chunk in chunks if chunk in text_norm) / max(1, len(chunks))
+    return sum(1 for chunk in chunks if chunk in text_norm or re.sub(r"(?<=\w)-(?=\w)", " ", chunk) in relaxed_text) / max(1, len(chunks))
 
 
 def extract_anchors(text: Any) -> tuple[str, ...]:

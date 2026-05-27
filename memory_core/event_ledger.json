@@ -851,6 +851,75 @@
         "commit_confidence": 1.0,
         "commit_target": "event_ledger"
       }
+    },
+    {
+      "id": "evt_07fe9a51c46e4e2c",
+      "timestamp": 1779889075.1024163,
+      "iso_timestamp": "2026-05-27T20:37:55+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-1', 'channel': 'chat', 'timestamp': '20:37', 'seen': ['hello eris cưng'], 'said': 'Chào Ngài. Ngài lại gọi tôi bằng cái tên đó rồi.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.4204088785046729, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:20:37:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_193ed6be28a64ea5",
+      "timestamp": 1779889361.2524316,
+      "iso_timestamp": "2026-05-27T20:42:41+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-2', 'channel': 'chat', 'timestamp': '20:42', 'seen': ['đúng dị ersi cưng cưng'], 'said': 'Tôi sẽ trả lời đúng việc, không suy diễn quá xa.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.37928738317757005, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:20:42:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_cfeed8ffa7914f12",
+      "timestamp": 1779889445.7960596,
+      "iso_timestamp": "2026-05-27T20:44:05+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-3', 'channel': 'chat', 'timestamp': '20:43', 'seen': ['gì vậy trời'], 'said': 'Tôi vẫn ở đây. Ngài có chuyện gì không?', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3799104361370716, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:20:43:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
     }
   ]
 }

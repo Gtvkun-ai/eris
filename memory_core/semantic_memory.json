@@ -1,21 +1,22 @@
 {
   "version": 2,
   "kind": "semantic_memory",
-  "updated_at": "2026-05-27T18:21:57+0700",
+  "updated_at": "2026-05-27T20:44:22+0700",
   "items": [
     {
       "id": "sem_67edb42ed3bc",
-      "claim": "User greeted ERIS with 'chào eris cưng'.",
+      "claim": "User greeted ERIS with 'hello eris cưng'.",
       "domain": "user",
-      "confidence": 0.64,
+      "confidence": 0.652,
       "source": "state_commit",
       "evidence_ids": [
-        "percept:user_message:18:21:0"
+        "percept:user_message:18:21:0",
+        "percept:user_message:20:37:0"
       ],
-      "observations": 1,
+      "observations": 2,
       "status": "tentative",
       "first_seen_at": "2026-05-27T18:21:57+0700",
-      "updated_at": "2026-05-27T18:21:57+0700",
+      "updated_at": "2026-05-27T20:37:55+0700",
       "decay_policy": "slow",
       "contradiction_ids": [],
       "tags": [
@@ -24,7 +25,8 @@
         "eris",
         "semantic",
         "extracted_fact",
-        "grounded"
+        "grounded",
+        "merged"
       ],
       "metadata": {
         "source": "CognitiveFrameRecorder",
@@ -59,10 +61,14 @@
         "fact_profile_evidence": [
           "claim:project.eris"
         ],
-        "embedding_text_hash": "f645cc5ca6573f95",
+        "embedding_text_hash": "15628b018376c318",
         "embedding_version": 1,
         "access_count": 0,
-        "last_accessed_at": ""
+        "last_accessed_at": "",
+        "previous_claims": [
+          "User greeted ERIS with 'chào eris cưng'."
+        ],
+        "last_merge_reason": "store explicit stable semantic fact"
       }
     },
     {
@@ -88,6 +94,108 @@
       ],
       "metadata": {
         "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_81089897467f",
+      "claim": "User expressed confusion/surprise with 'gì vậy trời'.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:20:43:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T20:44:05+0700",
+      "updated_at": "2026-05-27T20:44:05+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "semantic",
+        "extracted_fact",
+        "grounded"
+      ],
+      "metadata": {
+        "source": "CognitiveFrameRecorder",
+        "fact_index": 0,
+        "timestamp": "20:43",
+        "semantic_source": "decision_extracted_fact",
+        "source_grounded": true,
+        "grounding_source": "user_text",
+        "grounding_missing_evidence": [],
+        "grounding_preempt_mode": "",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1779889445.8391495,
+        "frame_id": null,
+        "raw_content": {
+          "fact": "User expressed confusion/surprise with 'gì vậy trời'.",
+          "source": "decision_extracted_fact",
+          "timestamp": "20:43",
+          "cycle_id": "chat-3"
+        },
+        "reason": "store explicit stable semantic fact",
+        "fact_key": "",
+        "aliases": [],
+        "importance": 0.5,
+        "fact_profile_evidence": [],
+        "embedding_text_hash": "8d1158d136b29ddb",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
+      }
+    },
+    {
+      "id": "sem_e49988b88bc4",
+      "claim": "Ngài xác nhận cách gọi và yêu cầu tôi trả lời đúng trọng tâm, không suy diễn.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:20:42:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T20:42:41+0700",
+      "updated_at": "2026-05-27T20:42:41+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "semantic",
+        "extracted_fact",
+        "grounded"
+      ],
+      "metadata": {
+        "source": "CognitiveFrameRecorder",
+        "fact_index": 0,
+        "timestamp": "20:42",
+        "semantic_source": "decision_extracted_fact",
+        "source_grounded": true,
+        "grounding_source": "user_text",
+        "grounding_missing_evidence": [],
+        "grounding_preempt_mode": "",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1779889361.2832525,
+        "frame_id": null,
+        "raw_content": {
+          "fact": "Ngài xác nhận cách gọi và yêu cầu tôi trả lời đúng trọng tâm, không suy diễn.",
+          "source": "decision_extracted_fact",
+          "timestamp": "20:42",
+          "cycle_id": "chat-2"
+        },
+        "reason": "store explicit stable semantic fact",
+        "fact_key": "",
+        "aliases": [],
+        "importance": 0.5,
+        "fact_profile_evidence": [],
+        "embedding_text_hash": "a028f2aad7b4be72",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
       }
     },
     {
