@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
+from memory.memory_commit_policy import MemoryCommitPolicy
 from memory.memory_cognition import MemoryCognitionCore
+from runtime.state_committer import StateCommitter
 
 
 def commit_request(**overrides):
@@ -133,6 +135,33 @@ class MemoryCommitProtocolTests(unittest.TestCase):
             decision = core.commit(commit_request(content="Protocol stores through MemoryCognitionCore.", evidence_ids=["ev3"]))
 
             self.assertEqual(decision.outcome, "accepted")
+
+    def test_user_name_memory_commit_policy_persists_to_semantic_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            core = MemoryCognitionCore(tmpdir)
+            policy = MemoryCommitPolicy()
+            decisions = policy.decide_from_user_turn("toi ten la Tin", turn_id="session_turn:3")
+
+            self.assertEqual(len(decisions), 1)
+
+            request = decisions[0].to_state_commit_request(
+                storage_permission=True,
+                permission_required=False,
+            )
+            frame = SimpleNamespace(
+                frame_id="frame-1",
+                permission=SimpleNamespace(memory_storable=True, raw_evidence_storable=True),
+                evidence=[],
+                debug_notes=[],
+                audit_mutations=[],
+            )
+
+            report = StateCommitter(core).commit([request], frame=frame)
+            snapshot = core.load()
+
+            self.assertEqual(report.committed, 1)
+            self.assertEqual(snapshot["semantic_memory"][0]["metadata"].get("fact_key"), "user.name")
+            self.assertEqual(snapshot["semantic_memory"][0]["claim"], "User's name is Tin")
 
 
 if __name__ == "__main__":

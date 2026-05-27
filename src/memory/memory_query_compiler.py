@@ -77,6 +77,19 @@ class MemoryQueryCompiler:
     def compile(self, text: str) -> MemoryQueryCompileResult:
         slot_result = self.slot_parser.parse(text)
         semantic_hint = self.semantic_engine.analyze(text)
+        notes: list[str] = []
+
+        if slot_result.has_self_disclosure:
+            debug = CompileDebug(
+                slot_hypotheses=len(slot_result.hypotheses),
+                semantic_confidence=semantic_hint.confidence,
+                semantic_ambiguity=semantic_hint.ambiguity,
+                llm_called=False,
+                llm_reason="fact_disclosure_not_recall",
+                repair_applied=(),
+                notes=("fact_disclosure_not_recall",),
+            )
+            return MemoryQueryCompileResult(best=None, hypotheses=(), debug=debug)
 
         hypotheses = list(slot_result.hypotheses)
         hypotheses = self._inject_semantic_hypotheses(text, hypotheses, semantic_hint)
@@ -127,6 +140,10 @@ class MemoryQueryCompiler:
                 warnings=best.warnings,
                 raw_text=best.raw_text,
             )
+            suppression_note = self._suppression_note(hypotheses, semantic_hint, best.ambiguity)
+            if suppression_note:
+                notes.append(suppression_note)
+                best = None
 
         debug = CompileDebug(
             slot_hypotheses=len(slot_result.hypotheses),
@@ -135,7 +152,7 @@ class MemoryQueryCompiler:
             llm_called=llm_called,
             llm_reason=llm_decision.reason,
             repair_applied=repair_result.applied_items,
-            notes=tuple(repair_result.notes),
+            notes=tuple((*repair_result.notes, *notes)),
         )
 
         return MemoryQueryCompileResult(
@@ -285,7 +302,38 @@ class MemoryQueryCompiler:
         best = hypotheses[0].score
         structural = 1.0 - best
         margin_ambiguity = 1.0 - min(1.0, margin * 2.5)
-        return clamp01(structural * 0.55 + margin_ambiguity * 0.30 + hint.ambiguity * 0.15)
+        ambiguity = clamp01(structural * 0.55 + margin_ambiguity * 0.30 + hint.ambiguity * 0.15)
+        top = hypotheses[0]
+        if top.source == "semantic_hint":
+            ambiguity = max(ambiguity, hint.ambiguity)
+        if "generic_slot_query" in set(top.ir.warnings):
+            ambiguity = max(ambiguity, clamp01(hint.ambiguity * 0.85 + 0.12))
+        return clamp01(ambiguity)
+
+    def _suppression_note(
+        self,
+        hypotheses: list[QueryHypothesis],
+        hint: SemanticQueryHint,
+        ambiguity: float,
+    ) -> str | None:
+        if not hypotheses:
+            return None
+        top = hypotheses[0]
+        if top.ir.intent not in {
+            QueryIntent.RECALL_TURN,
+            QueryIntent.RECALL_FACT,
+            QueryIntent.RECALL_COUNT,
+            QueryIntent.RECALL_SUMMARY,
+        }:
+            return None
+        warnings = set(top.ir.warnings)
+        if top.source == "semantic_hint" and hint.ambiguity >= 0.78:
+            return "semantic_recall_ambiguity_too_high"
+        if "generic_slot_query" in warnings and ambiguity >= 0.70:
+            return "generic_recall_ambiguity_too_high"
+        if ambiguity >= 0.78:
+            return "recall_ambiguity_too_high"
+        return None
 
 
 def _best_or(scores: dict, default):

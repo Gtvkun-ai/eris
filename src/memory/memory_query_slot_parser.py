@@ -58,6 +58,10 @@ class SlotParseResult:
     signals: tuple[SlotSignal, ...]
     normalized_text: str
 
+    @property
+    def has_self_disclosure(self) -> bool:
+        return any(signal.name == "self_disclosure_fact" for signal in self.signals)
+
 
 class MemoryQuerySlotParser:
     """
@@ -88,6 +92,17 @@ class MemoryQuerySlotParser:
 
     def _extract_signals(self, raw: str, norm: str) -> list[SlotSignal]:
         signals: list[SlotSignal] = []
+
+        self_disclosure = infer_self_disclosure_fact(norm)
+        if self_disclosure:
+            signals.append(
+                SlotSignal(
+                    "self_disclosure_fact",
+                    self_disclosure,
+                    self_disclosure[1],
+                    "self_disclosure_phrase",
+                )
+            )
 
         ordinal = extract_ordinal(norm)
         if ordinal is not None:
@@ -143,6 +158,9 @@ class MemoryQuerySlotParser:
     ) -> list[QueryHypothesis]:
         by_name = {s.name: s for s in signals}
         hypos: list[QueryHypothesis] = []
+
+        if by_name.get("self_disclosure_fact"):
+            return hypos
 
         fact_signal = by_name.get("fact_key")
         if fact_signal:
@@ -272,7 +290,7 @@ class MemoryQuerySlotParser:
             hypos.append(QueryHypothesis(ir=ir, score=conf, source="slot_parser", reasons=("assistant_ordinal",)))
 
         # Generic recall turn fallback hypothesis, dùng khi có signal recall nhưng chưa đủ.
-        if not hypos and any(token in norm for token in ("hoi", "tra loi", "dap", "noi", "nho", "luc nay", "hoi nay")):
+        if not hypos and looks_like_generic_recall_request(norm):
             target = self._target_from_signals(signals)
             conf = self._confidence(signals, base=0.48)
             ir = MemoryQueryIR(
@@ -382,6 +400,18 @@ def infer_fact_key(norm: str) -> Optional[tuple[str, float]]:
     return None
 
 
+def infer_self_disclosure_fact(norm: str) -> Optional[tuple[str, float]]:
+    if _looks_like_name_disclosure(norm):
+        return ("user.name", 0.96)
+    if _looks_like_birth_month_disclosure(norm):
+        return ("user.birth_month", 0.94)
+    if _looks_like_current_location_disclosure(norm):
+        return ("user.current_location", 0.82)
+    if _looks_like_past_location_disclosure(norm):
+        return ("user.past_location", 0.80)
+    return None
+
+
 def asks_count(norm: str) -> bool:
     return any(m in norm for m in ("bao nhieu cau hoi", "hoi bao nhieu", "may cau hoi", "dem cau hoi"))
 
@@ -396,6 +426,37 @@ def asks_exact(norm: str) -> bool:
 
 def looks_recent(norm: str) -> bool:
     return any(m in norm for m in ("truoc do", "hoi nay", "luc nay", "gan day", "vua roi", "truoc"))
+
+
+def looks_like_generic_recall_request(norm: str) -> bool:
+    recall_markers = (
+        "nho",
+        "nho lai",
+        "cau hoi",
+        "cau tra loi",
+        "tra loi",
+        "em dap",
+        "em noi",
+        "toi hoi",
+        "toi da noi",
+        "toi noi gi",
+        "gan day",
+        "truoc do",
+        "luc do",
+        "luc nay",
+    )
+    question_markers = (
+        "gi",
+        "nao",
+        "bao nhieu",
+        "thu ",
+        "tom tat",
+        "noi chung",
+        "gan day",
+        "truoc do",
+        "luc do",
+    )
+    return any(marker in norm for marker in recall_markers) and any(marker in norm for marker in question_markers)
 
 
 def extract_quantity(norm: str) -> Optional[int]:
@@ -465,3 +526,40 @@ def parse_vi_number(value: str) -> Optional[int]:
     if value.isdigit():
         return int(value)
     return _VI_NUMBERS.get(value)
+
+
+def _looks_like_name_disclosure(norm: str) -> bool:
+    if any(marker in norm for marker in ("toi ten gi", "ten toi", "toi ten la gi", "nho ten toi")):
+        return False
+    if re.search(r"\btoi\s+ten\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
+        return True
+    if re.search(r"\bten\s+(?:cua\s+)?toi\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
+        return True
+    if re.search(r"\bgoi\s+toi\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
+        return True
+    return False
+
+
+def _looks_like_birth_month_disclosure(norm: str) -> bool:
+    if any(marker in norm for marker in ("toi sinh thang may", "thang sinh", "sinh thang may", "birthday month")):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:toi\s+)?sinh\s+(?:vao\s+)?thang\s+([0-9]{1,2}|mot|hai|ba|bon|tu|nam|sau|bay|tam|chin|muoi|muoi mot|muoi hai)\b",
+            norm,
+        )
+    )
+
+
+def _looks_like_current_location_disclosure(norm: str) -> bool:
+    if any(marker in norm for marker in ("toi dang o dau", "toi hien o dau", "toi o dau")):
+        return False
+    return bool(re.search(r"\btoi\s+(?:hien\s+)?(?:dang\s+)?o\s+.{2,60}", norm))
+
+
+def _looks_like_past_location_disclosure(norm: str) -> bool:
+    if any(marker in norm for marker in ("truoc day toi o dau", "qua khu toi o dau", "toi tung o dau")):
+        return False
+    if "o dau" in norm:
+        return False
+    return bool(re.search(r"\b(?:qua\s+khu\s+)?toi\s+(?:tung\s+)?(?:da\s+)?o\s+.{2,60}", norm))

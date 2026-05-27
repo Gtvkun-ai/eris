@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from src.memory.memory_query_compiler import MemoryQueryCompiler
 from src.memory.memory_query_executor import MemoryQueryExecutor
+from src.memory.memory_query_ir import MemoryQueryIR, MemorySelector, MemorySourceKind, QueryIntent, RawRecallResult
 from src.memory.memory_recall_policy import MemoryRecallSurfacePolicy
 from src.memory.memory_turn_annotator import TurnAnnotator
 from src.memory.memory_turn_graph import TurnGraph, TurnNode, TurnRole
@@ -97,6 +98,27 @@ def test_birth_month_from_session_fact_when_semantic_missing():
     assert "tháng 8" in answer.text
 
 
+def test_fact_disclosure_statement_is_not_compiled_as_recall_query():
+    compiler = MemoryQueryCompiler()
+
+    name_result = compiler.compile("toi ten la Tin")
+    birth_result = compiler.compile("toi sinh thang 8")
+
+    assert name_result.best is None
+    assert "fact_disclosure_not_recall" in name_result.debug.notes
+    assert birth_result.best is None
+    assert "fact_disclosure_not_recall" in birth_result.debug.notes
+
+
+def test_compiler_suppresses_high_ambiguity_semantic_recall():
+    compiler = MemoryQueryCompiler()
+
+    result = compiler.compile("ten")
+
+    assert result.best is None
+    assert "semantic_recall_ambiguity_too_high" in result.debug.notes
+
+
 def test_runtime_adapter_can_surface_semantic_fact_lookup():
     ledger = SessionTurnLedger()
     ledger.record_user("xin chao", timestamp=1.0)
@@ -112,3 +134,36 @@ def test_runtime_adapter_can_surface_semantic_fact_lookup():
     assert decision.intent == "memory_recall"
     assert decision.parse_mode == "memory_recall"
     assert "Tin" in decision.text
+
+
+def test_runtime_adapter_ignores_user_fact_disclosure_and_ambiguous_semantic_probe():
+    ledger = SessionTurnLedger()
+    ledger.record_user("xin chao", timestamp=1.0)
+
+    adapter = MemoryRecallAdapter(
+        ledger=ledger,
+        semantic_lookup=lambda kind: "Tin" if kind.value == "user_identity.name" else None,
+    )
+
+    assert adapter.try_answer("toi ten la Tin") is None
+    assert adapter.try_answer("ten") is None
+
+
+def test_surface_policy_blocks_raw_object_repr():
+    ir = MemoryQueryIR(
+        intent=QueryIntent.RECALL_FACT,
+        target=MemorySelector(fact_key="user.name"),
+    )
+    policy = MemoryRecallSurfacePolicy()
+    raw = RawRecallResult(
+        found=True,
+        source=MemorySourceKind.SEMANTIC_MEMORY,
+        ir=ir,
+        exact_text="UserProfile(name='Tin')",
+        confidence=0.92,
+    )
+
+    answer = policy.surface(raw)
+
+    assert answer.surface.value == "admit_uncertain"
+    assert answer.debug_trace == "raw_object_surface_blocked"

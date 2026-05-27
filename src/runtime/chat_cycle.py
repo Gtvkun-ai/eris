@@ -78,7 +78,7 @@ class ChatCycleMixin:
         # Nếu chờ finalize ngay trong turn trước thì OutcomeObserver chỉ đang đoán trong chân không,
         # mà đoán trong chân không là thú vui nguy hiểm của chatbot.
         self._observe_previous_turn_feedback(user_text)
-        self._ensure_session_turn_ledger().record_user(
+        user_turn = self._ensure_session_turn_ledger().record_user(
             user_text,
             timestamp=cycle_start,
             meta={"channel": "chat"},
@@ -187,7 +187,11 @@ class ChatCycleMixin:
             memory_resonance=memory_resonance,
             affect_signal=affect_signal,
         )
-        self._add_user_turn_memory_commit_requests(frame, user_text)
+        self._add_user_turn_memory_commit_requests(
+            frame,
+            user_text,
+            turn_id=f"session_turn:{user_turn.index}",
+        )
 
         self.chat_mode = True
         self.logger.info("Người dùng: %s", user_text)

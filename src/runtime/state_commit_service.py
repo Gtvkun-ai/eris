@@ -229,17 +229,45 @@ class StateCommitServiceMixin:
     def _build_memory_recall_decision(self, user_text: str) -> Decision | None:
         return self._ensure_memory_recall_adapter().try_answer(user_text)
 
-    def _add_user_turn_memory_commit_requests(self, frame, user_text: str) -> None:
+    def _frame_memory_storage_permission(self, frame) -> bool:
+        permission = getattr(frame, "permission", None) or getattr(frame, "permission_report", None)
+        if permission is None:
+            return True
+        if isinstance(permission, Mapping):
+            value = permission.get("memory_storable")
+        else:
+            value = getattr(permission, "memory_storable", None)
+        if value is None:
+            return True
+        return bool(value)
+
+    def _user_turn_memory_evidence_id(self, *, frame=None, turn_id: str | None = None) -> str | None:
+        if turn_id:
+            return str(turn_id)
+        turns = self._ensure_session_turn_ledger().user_turns()
+        if turns:
+            return f"session_turn:{turns[-1].index}"
+        frame_id = str(getattr(frame, "frame_id", "") or getattr(frame, "id", "") or "").strip()
+        if frame_id:
+            return f"frame:{frame_id}"
+        return None
+
+    def _add_user_turn_memory_commit_requests(self, frame, user_text: str, *, turn_id: str | None = None) -> None:
         if frame is None:
             return
-        decisions = self._ensure_memory_commit_policy().decide_from_user_turn(user_text)
+        evidence_id = self._user_turn_memory_evidence_id(frame=frame, turn_id=turn_id)
+        decisions = self._ensure_memory_commit_policy().decide_from_user_turn(user_text, turn_id=evidence_id)
         if not decisions:
             return
+        storage_permission = self._frame_memory_storage_permission(frame)
 
         add_commit_request = getattr(frame, "add_commit_request", None)
         if callable(add_commit_request):
             for decision in decisions:
-                request = decision.to_state_commit_request()
+                request = decision.to_state_commit_request(
+                    storage_permission=storage_permission,
+                    permission_required=False,
+                )
                 try:
                     add_commit_request(request, actor="memory_commit_policy")
                 except TypeError:
@@ -248,7 +276,12 @@ class StateCommitServiceMixin:
 
         existing = list(getattr(frame, "commit_requests", []) or [])
         for decision in decisions:
-            existing.append(decision.to_state_commit_request())
+            existing.append(
+                decision.to_state_commit_request(
+                    storage_permission=storage_permission,
+                    permission_required=False,
+                )
+            )
         try:
             frame.commit_requests = existing
         except Exception:

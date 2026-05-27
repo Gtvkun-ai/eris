@@ -209,6 +209,10 @@ class MemoryCommitPolicy:
             evidence=[turn_id] if turn_id else [],
             metadata={
                 "value": fact.value,
+                "fact_key": "user.name",
+                "aliases": ["ten", "name", "preferred name"],
+                "semantic_source": "explicit_user_statement",
+                "source_grounded": True,
                 "evidence_reason": fact.evidence_reason,
                 "overwrite_policy": "replace_same_kind_if_user_self_declares",
             },
@@ -227,6 +231,10 @@ class MemoryCommitPolicy:
             evidence=[turn_id] if turn_id else [],
             metadata={
                 "value": fact.value,
+                "fact_key": "user.birth_month",
+                "aliases": ["thang sinh", "birth month", "birthday"],
+                "semantic_source": "explicit_user_statement",
+                "source_grounded": True,
                 "evidence_reason": fact.evidence_reason,
                 "overwrite_policy": "replace_same_kind_if_user_self_declares",
             },
@@ -245,6 +253,8 @@ class MemoryCommitPolicy:
             evidence=[turn_id] if turn_id else [],
             metadata={
                 "value": fact.value,
+                "fact_key": "user.preference.reply_style",
+                "aliases": ["response style", "reply style", "kieu tra loi"],
                 "scope": "until_changed",
                 "evidence_reason": fact.evidence_reason,
                 "overwrite_policy": "replace_same_kind_if_user_updates_style",

@@ -156,7 +156,7 @@ Kết nối mặc định:
 - Kết nối Se/telemetry, Evidence bridge, AttentionSalience, WorkingMemory, MeaningLayer, PersonalityLens, appraisal, internal_state, self_model, session_ritual, social_presence, thought_stream, speech_core, action_planner, micro_policy, Ni, Ti, Fe, LLM, parser, memory và action router/executor.
 - File này không còn ôm toàn bộ runtime một mình. `RuntimeCoordinator` hiện kế thừa các mixin trong `src/runtime/*` để tách bớt trách nhiệm: prompt/context building, speech path, presence/micro-presence, post-generation filters, fallback policy và cognitive-frame recording.
 - Giữ state runtime: chat history, last response, active conversational topic, repeated guard, vision facts, cognitive frames, mental process loop, session ritual flag, public turn ledger, reply context, rapid chat burst queue và presence/reengagement cooldown.
-- Khởi tạo thêm ba đầu mối memory-chat mới: `session_turn_ledger` cho transcript public trong phiên hiện tại, `memory_commit_policy` để biến user self-disclosure thành `StateCommitRequest`, và `memory_recall_adapter` để chặn một số câu hỏi nhớ-lại trước khi gọi LLM.
+- Khởi tạo thêm ba đầu mối memory-chat mới: `session_turn_ledger` cho transcript public trong phiên hiện tại, `memory_commit_policy` để biến user self-disclosure thành `StateCommitRequest`, và `memory_recall_adapter` để chạy structured memory query pipeline trước khi gọi LLM.
 - Cần phân biệt hai ledger: `public_turn_ledger` là sổ những câu thật sự đã hiện ra cho user để nối reply-context/public history; `session_turn_ledger` là sổ deterministic theo role user/assistant trong phiên để đếm câu, lấy câu thứ N, câu dài nhất và các gist topic gần đây.
 - Với `channel="chat"`, coordinator không dùng full autonomous `MeaningLayer`/`PersonalityLens`; thay vào đó chạy `chat_meaning_layer_light` và `chat_personality_pressure_light` để giữ câu trả lời trực tiếp nhưng vẫn đọc được affect/Ti/Fe, previous assistant text và áp lực hội thoại.
 - Chat history mới có cơ chế invalidate turn assistant gần nhất khi user phủ định suy diễn trước đó, để prompt sau không tiếp tục build trên một assumption sai.
@@ -217,13 +217,17 @@ Kết nối mặc định:
 - Sau khi dựng `frame`, chat cycle gọi `_add_user_turn_memory_commit_requests(frame, user_text)`. Tức là mọi self-disclosure như tên, tháng sinh, response style hay memory-test hint sẽ được policy hóa thành `commit_requests` ngay ở lượt chat đó, rồi vẫn đi qua `StateCommitter/MemoryCognitionCore` như các request khác.
 - Request nhìn màn hình giờ đi qua `_looks_like_screen_vision_request()` với marker hẹp hơn; chỉ khi thực sự mang nghĩa deictic/screen thì mới chụp screenshot và đính `screen_image_data_uri`.
 - Repeat guard không còn dựa vào exact string một mình: `TurnSemanticsEngine` đọc correction pressure, identity pressure, live evidence pressure, prior failure pressure và quan hệ với previous assistant turn trước khi quyết định có chặn lặp hay không.
-- Trước `generate_chat_reply(...)`, chat cycle gọi `_build_memory_recall_decision(user_text)`. Nếu adapter trả được câu deterministic thì turn dừng ở đó, action plan được đánh dấu `notes=("memory_recall",)`, `parse_mode="memory_recall"` và LLM không bị gọi.
+- Trước `generate_chat_reply(...)`, chat cycle gọi `_build_memory_recall_decision(user_text)`. Nếu adapter compile được một query đủ chắc và surface được câu deterministic thì turn dừng ở đó, action plan được đánh dấu `notes=("memory_recall",)`, `parse_mode="memory_recall"` và LLM không bị gọi.
 - Luồng này hiện ưu tiên các dạng recall có thể audit được: semantic fact rõ như tên/tháng sinh, exact ordinal trong session ledger, count câu hỏi, câu dài nhất, hoặc gist an toàn. Những câu này không nên giao cho model “tự nhớ”, vì model rất giỏi tự tin sai.
 
 `src/runtime/memory_recall_adapter.py`
-- Adapter mỏng giữa `chat_cycle` và `MemoryRecallPolicy`.
-- Nhận `ledger`, `semantic_lookup`, `episodic_lookup`, rồi trả `RecallAnswer` hoặc payload decision tương thích runtime.
-- Vai trò của adapter là giữ cho `chat_cycle` chỉ biết “có câu deterministic để trả trước LLM hay không”, còn logic classify/answer nằm ở policy.
+- Adapter nối `chat_cycle` với structured memory query stack mới.
+- Nhận `ledger`, `memory_core`, `llm_service`, `semantic_lookup`, `episodic_lookup`, rồi chạy pipeline:
+  `MemoryQueryCompiler -> TurnGraph.from_session_ledger(...) -> MemoryQueryExecutor -> MemoryRecallSurfacePolicy`.
+- Adapter hiện trả `Decision` trực tiếp cho runtime, không còn trả `RecallAnswer` ra ngoài chat path.
+- Có proxy mềm cho `memory_core` để exact ordinal luôn đi trên `TurnGraph`, còn semantic fact như `user.name` / `user.birth_month` vẫn lookup được từ memory core hiện tại.
+- Có thể bọc `llm_service.client` thành structured JSON client cho `MemoryQueryLLMParser`, nhưng chỉ dùng khi ambiguity cao; LLM không được trả lời memory thay runtime.
+- Vai trò của adapter là giữ cho `chat_cycle` chỉ biết “có câu deterministic đủ chắc để trả trước LLM hay không”, còn parse/query/execute/surface nằm ở các lớp memory riêng.
 
 `src/runtime/eris_pathology_policy.py`
 - File mới cho deterministic pathology policy.
@@ -275,7 +279,8 @@ Kết nối mặc định:
 - Giữ các helper commit state/body bias ở các đường runtime cũ.
 - `_send_decision_to_body()` trong mixin này được đồng bộ với coordinator: trước khi gửi payload sẽ `_record_public_turn()` nếu decision thật sự public, rồi mới gửi JSON qua transport.
 - Bản mới còn là nơi neo ba helper memory-chat: `_ensure_session_turn_ledger()`, `_ensure_memory_commit_policy()` và `_ensure_memory_recall_adapter()`. Mục tiêu là để chat path dùng chung policy/adapter thay vì cắm thẳng logic nhớ-lại vào `chat_cycle`.
-- Có thêm lookup mềm `_semantic_memory_lookup()` và `_episodic_memory_lookup()` đọc từ `memory_core.load()`/`memory_state`/`memory_core.recall()` để `MemoryRecallPolicy` có thể trả lời fact hoặc gist mà không buộc downstream phải biết shape store cụ thể.
+- Có thêm lookup mềm `_semantic_memory_lookup()` và `_episodic_memory_lookup()` đọc từ `memory_core.load()`/`memory_state`/`memory_core.recall()` để structured memory query path có thể trả lời fact hoặc gist mà không buộc downstream phải biết shape store cụ thể.
+- `_build_memory_recall_decision()` giờ chỉ gọi adapter mới và nhận về `Decision`; phần đổi `RecallAnswer -> Decision` không còn nằm ở mixin nữa.
 - `_add_user_turn_memory_commit_requests()` hiện append request ngay cả khi frame không có method `add_commit_request()`: nó fallback sang `frame.commit_requests = existing + new_requests`. Đây là chi tiết nhỏ nhưng quan trọng vì runtime hiện vẫn song song hai contract frame cũ/mới.
 
 `src/runtime/outcome_observer.py`
@@ -734,9 +739,9 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Norm memory cũ (`compare_to_norms`, `update_norms`) không còn là đường chính trong coordinator; `_norm_deviation_texts()` và `_note_norm_observation()` hiện là no-op để tránh hai hệ memory cùng sửa nền.
 - Từ nhánh mới, memory path chat được tách rõ ba tầng:
   - `session_turn_ledger`: transcript deterministic theo phiên hiện tại, không phải long-term memory.
-  - `memory_recall_policy` + `memory_recall_adapter`: lớp trả lời các câu hỏi "Ngài đã nói gì / tôi đã nói gì / Ngài tên gì" trước LLM.
+  - `memory_query_*` + `memory_recall_adapter`: structured query pipeline để trả lời các câu hỏi "Ngài đã nói gì / tôi đã nói gì / Ngài tên gì" trước LLM.
   - `memory_commit_policy`: lớp quyết định khi nào một user turn nên tạo semantic/procedural/episodic commit request.
-- Ý tưởng trung tâm: exact recall trong phiên và semantic fact user tự khai báo không nên bắt LLM “đoán lại”. Phần deterministic đi bằng ledger/policy trước; còn long-term storage vẫn phải đi qua `StateCommitRequest` và `MemoryCognitionCore`.
+- Ý tưởng trung tâm: exact recall trong phiên và semantic fact user tự khai báo không nên bắt LLM “đoán lại”. Phần deterministic đi bằng `TurnGraph` + executor + surface policy trước; còn long-term storage vẫn phải đi qua `StateCommitRequest` và `MemoryCognitionCore`.
 
 `src/memory/memory_cognition.py`
 - `MemoryCognitionCore` là facade chính cho memory commit/recall.
@@ -782,14 +787,50 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Dùng cho recall theo sự kiện, không trộn với semantic fact ổn định.
 
 `src/memory/memory_models.py`
-- Contract nhỏ cho memory policy path mới: `MemoryTarget`, `MemoryKind`, `SurfaceMode`, `DecayPolicy`, `MemoryCommitDecision`, `RecallRequest`, `RecallAnswer`.
+- Contract nhỏ cho memory commit/policy path: `MemoryTarget`, `MemoryKind`, `SurfaceMode`, `DecayPolicy`, `MemoryCommitDecision`, `RecallRequest`, `RecallAnswer`.
 - `MemoryCommitDecision.to_state_commit_request()` là adapter duy nhất từ policy sang commit protocol hiện tại; nhờ vậy nếu shape `StateCommitRequest` đổi, chỉ cần sửa một chỗ thay vì để policy dính trực tiếp vào store.
 
 `src/memory/memory_recall_policy.py`
-- Policy phân loại và trả lời các câu hỏi memory recall trước LLM.
-- `RecallCueExtractor` gom nhiều tín hiệu nhỏ thành pressure: memory/semantic/exact/gist/count/longest, rồi `RecallIntentResolver` chọn mode `SEMANTIC_FACT`, `COUNT`, `LONGEST`, `EXACT_ORDINAL` hoặc `GIST`.
-- `MemoryRecallPolicy.answer(...)` ưu tiên nguồn deterministic theo thứ tự semantic lookup -> count -> longest -> ordinal -> gist; mỗi câu trả lời đều trả `confidence`, `source`, `surface_mode` và `debug_trace`.
-- Mục tiêu của file này không phải “làm memory store”, mà là áp policy bề mặt: khi nào được quote exact, khi nào chỉ nên gist, khi nào phải nhận là chưa đủ chắc.
+- File này giờ là `MemoryRecallSurfacePolicy`, không còn parse user text và không còn execute ledger trực tiếp.
+- Input của nó là `RawRecallResult` từ executor; output là `RecallAnswer` đã qua policy surface: exact quote, gist, count, explain, hay admit uncertain.
+- Mục tiêu của file này không phải “làm memory store”, mà là áp policy bề mặt: khi nào được quote exact, khi nào chỉ nên gist, khi nào phải nhận là chưa đủ chắc, và khi nào phải nói rõ đây là memory theo phiên chứ không phải evidence hiện tại.
+
+`src/memory/memory_query_ir.py`
+- Định nghĩa IR/AST cho structured memory query: `MemoryQueryIR`, `MemorySelector`, `MemoryRelation`, `QueryIntent`, `SurfaceMode`, `RawRecallResult`, `RecallAnswer`.
+- Đây là contract trung gian giữa compiler, executor và surface policy; nó tách rời hẳn parse câu hỏi khỏi execute memory.
+
+`src/memory/memory_turn_graph.py`
+- Dựng graph nhớ-lại cho đúng phiên hiện tại từ `session_turn_ledger`.
+- Mỗi `TurnNode` giữ role, speech act, fact mention, confidence, cùng edge kiểu `ANSWERS`, `CORRECTS`, `REPEATS`, `STORES_FACT`.
+- Exact ordinal, answer-to-question, before/after anchor và count trong phiên đều chạy trên graph này, không chạy bằng vector.
+
+`src/memory/memory_turn_annotator.py`
+- Annotator nhẹ để gắn `speech_act`, `semantic_tags`, `fact_mentions` và dựng edge cơ bản cho `TurnGraph`.
+- Đây là lớp linguistic annotation cho từng turn, không phải lớp parse memory query.
+
+`src/memory/memory_query_slot_parser.py`
+- Parser slot tiếng Việt cho các query nhớ-lại có cấu trúc như ordinal, quantity, relation, fact key, count hay exact quote cue.
+- Nó chỉ sinh hypothesis IR, không execute memory và không tự trả lời user.
+
+`src/memory/memory_query_semantics.py`
+- Semantic hint engine cho memory query.
+- Embedding/semantic match ở đây chỉ dùng để sinh hint mềm về intent/role/act/relation/fact key khi slot parser chưa đủ chắc; nó không được phép tự execute exact recall.
+
+`src/memory/memory_query_llm_parser.py`
+- Structured parser dùng LLM khi ambiguity cao.
+- LLM ở đây chỉ được phép trả JSON theo schema `MemoryQueryIR`, không được phép trả lời memory hay bịa transcript.
+
+`src/memory/memory_query_compiler.py`
+- Orchestrator compile query mới: `SlotParser -> SemanticHintEngine -> RepairPrior -> optional LLM structured parser`.
+- Output là `MemoryQueryCompileResult` với `best`, `hypotheses` và debug info để adapter/runtime trace được query được hiểu ra sao.
+
+`src/memory/memory_query_executor.py`
+- Executor chạy `MemoryQueryIR` trên `TurnGraph` và `memory_core`.
+- Exact turn recall, count, answer-to-question và relative turn lookup đi qua `TurnGraph`; semantic fact recall ưu tiên memory core rồi mới fallback có kiểm soát sang fact mention trong phiên.
+
+`src/memory/memory_query_repair.py`
+- Store prior cho các lỗi bind memory query đã từng bị user sửa.
+- Khi user correction đủ giống một lỗi cũ, compiler có thể phạt hypothesis sai và boost hypothesis đúng thay vì lặp lại cùng một kiểu hiểu nhầm.
 
 `src/memory/memory_commit_policy.py`
 - Policy rút fact trực tiếp từ user turn rồi biến nó thành `MemoryCommitDecision`.

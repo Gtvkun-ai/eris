@@ -17,6 +17,7 @@ Bản mới chỉ quyết định:
 """
 
 from dataclasses import dataclass
+import re
 
 from .memory_query_ir import (
     MemorySourceKind,
@@ -79,8 +80,15 @@ class MemoryRecallSurfacePolicy:
             if result.confidence < self.config.exact_min_confidence:
                 # Hạ xuống gist nếu có gist và đủ điều kiện.
                 if result.gist and result.confidence >= self.config.gist_min_confidence:
+                    gist_text = self._safe_public_text(result.gist)
+                    if gist_text is None:
+                        return RecallAnswer.uncertain(
+                            "TÃ´i cÃ³ dáº¥u váº¿t, nhÆ°ng pháº§n láº¥y ra Ä‘ang á»Ÿ dáº¡ng ná»™i bá»™ nÃªn khÃ´ng nÃªn surface thá»§ cÃ´ng.",
+                            ir=ir,
+                            debug_trace="raw_object_surface_blocked",
+                        )
                     return RecallAnswer(
-                        text=result.gist,
+                        text=gist_text,
                         confidence=result.confidence,
                         source=result.source,
                         surface=SurfaceMode.GIST,
@@ -93,7 +101,14 @@ class MemoryRecallSurfacePolicy:
                     debug_trace="exact_confidence_low",
                 )
 
-            text = result.exact_text.strip()
+            text = self._safe_public_text(result.exact_text)
+            if text is None:
+                return RecallAnswer.uncertain(
+                    "TÃ´i cÃ³ dáº¥u váº¿t, nhÆ°ng pháº§n láº¥y ra Ä‘ang á»Ÿ dáº¡ng ná»™i bá»™ nÃªn khÃ´ng nÃªn surface thá»§ cÃ´ng.",
+                    ir=ir,
+                    debug_trace="raw_object_surface_blocked",
+                )
+            text = text.strip()
             if len(text) > self.config.max_exact_chars:
                 text = text[: self.config.max_exact_chars - 3].rstrip() + "..."
 
@@ -114,8 +129,15 @@ class MemoryRecallSurfacePolicy:
                     ir=ir,
                     debug_trace="gist_confidence_low",
                 )
+            gist_text = self._safe_public_text(result.gist)
+            if gist_text is None:
+                return RecallAnswer.uncertain(
+                    "TÃ´i cÃ³ dáº¥u váº¿t, nhÆ°ng pháº§n láº¥y ra Ä‘ang á»Ÿ dáº¡ng ná»™i bá»™ nÃªn khÃ´ng nÃªn surface thá»§ cÃ´ng.",
+                    ir=ir,
+                    debug_trace="raw_object_surface_blocked",
+                )
             return RecallAnswer(
-                text=result.gist,
+                text=gist_text,
                 confidence=result.confidence,
                 source=result.source,
                 surface=SurfaceMode.GIST,
@@ -188,3 +210,25 @@ class MemoryRecallSurfacePolicy:
             f"surface={ir.surface.value}|conf={result.confidence:.2f}|"
             f"ir={ir.signature()}"
         )
+
+    def _safe_public_text(self, text: str | None) -> str | None:
+        clean = str(text or "").strip()
+        if not clean:
+            return None
+        if self._looks_like_raw_object_surface(clean):
+            return None
+        return clean
+
+    def _looks_like_raw_object_surface(self, text: str) -> bool:
+        one_line = " ".join(text.split())
+        if re.match(r"^<[^>]+object at 0x[0-9a-f]+>$", one_line, flags=re.IGNORECASE):
+            return True
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_.]*\(.+=.+\)$", one_line):
+            return True
+        if re.match(r"^(SimpleNamespace|Namespace|dataclass)\(.+\)$", one_line):
+            return True
+        if one_line.startswith("{") and one_line.endswith("}") and (":" in one_line or "=" in one_line):
+            return True
+        if one_line.startswith("[") and one_line.endswith("]") and (":" in one_line or "=" in one_line):
+            return True
+        return False

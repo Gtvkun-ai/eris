@@ -67,48 +67,66 @@ class MemoryCommitDecision:
     evidence: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_state_commit_request(self) -> Any:
+    def to_state_commit_request(
+        self,
+        *,
+        storage_permission: bool = True,
+        permission_required: bool = False,
+    ) -> Any:
         """
         Chuyển sang StateCommitRequest của project nếu import được.
 
         Nếu shape trong project khác, sửa đúng một hàm này, đừng để policy bị dính
         trực tiếp vào memory store. Đó là cách người văn minh tránh tạo thêm bãi rác.
         """
-        payload = {
+        metadata = dict(self.metadata)
+        metadata.setdefault("memory_kind", self.kind.value)
+        metadata.setdefault("surface_mode", self.surface_mode.value)
+        metadata.setdefault("importance", self.importance)
+        metadata.setdefault("source", "MemoryCommitPolicy")
+        metadata.setdefault("permission", self.permission)
+        if self.target == MemoryTarget.SEMANTIC:
+            metadata.setdefault("semantic_source", "explicit_user_statement")
+            metadata.setdefault("source_grounded", True)
+
+        return {
             "target": self.target.value,
-            "kind": self.kind.value,
-            "claim": self.claim,
-            "surface": self.surface,
+            "content": _commit_content_from_decision(self, metadata),
             "confidence": self.confidence,
-            "importance": self.importance,
-            "source": self.source,
-            "permission": self.permission,
-            "surface_mode": self.surface_mode.value,
-            "decay": self.decay.value,
-            "evidence": list(self.evidence),
-            "metadata": dict(self.metadata),
+            "evidence_ids": list(self.evidence),
+            "permission_required": bool(permission_required),
+            "storage_permission": bool(storage_permission),
+            "decay_policy": _state_decay_from_memory_decay(self.decay),
+            "reason": f"memory_commit_policy:{self.kind.value}",
+            "source_module": "MemoryCommitPolicy",
+            "tags": [self.kind.value, self.target.value],
+            "metadata": metadata,
         }
 
-        try:
-            from src.core.evidence import StateCommitRequest  # type: ignore
 
-            try:
-                return StateCommitRequest(
-                    target=self.target.value,
-                    payload=payload,
-                    confidence=self.confidence,
-                    reason=f"memory_commit_policy:{self.kind.value}",
-                    evidence_ids=list(self.evidence),
-                )
-            except TypeError:
-                return StateCommitRequest(
-                    target=self.target.value,
-                    data=payload,
-                    confidence=self.confidence,
-                    reason=f"memory_commit_policy:{self.kind.value}",
-                )
-        except Exception:
-            return payload
+def _state_decay_from_memory_decay(decay: DecayPolicy) -> str:
+    if decay == DecayPolicy.STABLE:
+        return "slow"
+    if decay == DecayPolicy.SHORT:
+        return "fast"
+    if decay == DecayPolicy.SESSION:
+        return "session_only"
+    return "normal"
+
+
+def _commit_content_from_decision(
+    decision: MemoryCommitDecision,
+    metadata: dict[str, Any],
+) -> Any:
+    if decision.target == MemoryTarget.SEMANTIC:
+        return {
+            "fact": decision.claim,
+            "source": str(metadata.get("semantic_source") or "explicit_user_statement"),
+            "kind": decision.kind.value,
+            "surface": decision.surface,
+            "value": metadata.get("value"),
+        }
+    return decision.claim
 
 
 @dataclass(frozen=True)

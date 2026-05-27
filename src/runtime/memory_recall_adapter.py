@@ -3,13 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from typing import Any, Callable, Optional
+import unicodedata
 
 try:
     from ..domain import Decision
     from ..memory.memory_models import MemoryKind
     from ..memory.memory_query_compiler import MemoryQueryCompiler
     from ..memory.memory_query_executor import MemoryQueryExecutor
-    from ..memory.memory_query_ir import RecallAnswer
+    from ..memory.memory_query_ir import QueryIntent, RecallAnswer, RelationRef
     from ..memory.memory_query_llm_parser import MemoryQueryLLMClient, MemoryQueryLLMParser
     from ..memory.memory_recall_policy import MemoryRecallSurfacePolicy
     from ..memory.memory_turn_annotator import TurnAnnotator
@@ -20,7 +21,7 @@ except ImportError:
     from memory.memory_models import MemoryKind
     from memory.memory_query_compiler import MemoryQueryCompiler
     from memory.memory_query_executor import MemoryQueryExecutor
-    from memory.memory_query_ir import RecallAnswer
+    from memory.memory_query_ir import QueryIntent, RecallAnswer, RelationRef
     from memory.memory_query_llm_parser import MemoryQueryLLMClient, MemoryQueryLLMParser
     from memory.memory_recall_policy import MemoryRecallSurfacePolicy
     from memory.memory_turn_annotator import TurnAnnotator
@@ -82,6 +83,8 @@ class MemoryRecallAdapter:
         compile_result = compiler.compile(user_text)
         if not compile_result.has_query or compile_result.best is None:
             return None
+        if not self._is_recall_request(user_text, compile_result):
+            return None
         if not self._should_intercept(compile_result.best):
             return None
 
@@ -106,6 +109,68 @@ class MemoryRecallAdapter:
         if ambiguity > 0.78:
             return False
         return True
+
+    def _is_recall_request(self, user_text: str, compile_result: Any) -> bool:
+        best = getattr(compile_result, "best", None)
+        hypotheses = tuple(getattr(compile_result, "hypotheses", ()) or ())
+        if best is None or not hypotheses:
+            return False
+        top = hypotheses[0]
+        if top.source == "semantic_hint":
+            return False
+
+        debug = getattr(compile_result, "debug", None)
+        debug_notes = set(getattr(debug, "notes", ()) or ())
+        if "fact_disclosure_not_recall" in debug_notes:
+            return False
+
+        norm = _normalize_recall_text(user_text)
+        if best.intent == QueryIntent.RECALL_FACT:
+            return any(
+                marker in norm
+                for marker in (
+                    "toi ten gi",
+                    "ten toi",
+                    "toi ten la gi",
+                    "nho ten toi",
+                    "toi sinh thang may",
+                    "thang sinh cua toi",
+                    "sinh thang may",
+                    "birthday month",
+                    "toi dang o dau",
+                    "toi hien o dau",
+                    "toi o dau",
+                    "truoc day toi o dau",
+                    "toi tung o dau",
+                )
+            )
+        if best.intent == QueryIntent.RECALL_COUNT:
+            return any(marker in norm for marker in ("bao nhieu", "dem", "may cau"))
+        if best.intent == QueryIntent.RECALL_SUMMARY:
+            return any(marker in norm for marker in ("tom tat", "noi chung", "gan day"))
+        if best.intent == QueryIntent.RECALL_TURN:
+            if best.target.ordinal is not None or best.target.quantity is not None:
+                return True
+            if best.relation.relation != RelationRef.SELF:
+                return True
+            return any(
+                marker in norm
+                for marker in (
+                    "nho",
+                    "nho lai",
+                    "cau hoi",
+                    "cau tra loi",
+                    "toi hoi gi",
+                    "toi da noi gi",
+                    "toi noi gi",
+                    "em noi gi",
+                    "em tra loi gi",
+                    "truoc do",
+                    "luc do",
+                    "gan day",
+                )
+            )
+        return False
 
     def _ensure_compiler(self) -> MemoryQueryCompiler:
         if self.compiler is not None:
@@ -308,3 +373,20 @@ def _extract_response_text(response: Any) -> str:
                 return content
 
     return ""
+
+
+def _normalize_recall_text(text: str) -> str:
+    lowered = unicodedata.normalize("NFD", str(text or "").strip().lower())
+    out_chars: list[str] = []
+    for char in lowered:
+        code = ord(char)
+        if 0x0300 <= code <= 0x036F:
+            continue
+        if char == "đ":
+            out_chars.append("d")
+            continue
+        if char.isalnum() or char in {" ", "_", "."}:
+            out_chars.append(char)
+        else:
+            out_chars.append(" ")
+    return " ".join("".join(out_chars).split())
