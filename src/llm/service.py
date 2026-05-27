@@ -2035,6 +2035,7 @@ class LlmService:
         memory_context: str = "",
         grounding_context: str = "",
         screen_image_data_uri: str = "",
+        reply_context=None,
         require_text: bool = True,
     ):
         style_block = self._build_style_block(
@@ -2075,6 +2076,15 @@ class LlmService:
             chat_system = f"{chat_system}\n\nNi context:\n{ni_context}"
         if ti_context:
             chat_system = f"{chat_system}\n\nTi context:\n{ti_context}"
+        previous_public_turn = getattr(reply_context, "previous_public_turn", None)
+        if previous_public_turn is not None:
+            chat_system = (
+                f"{chat_system}\n\nReply context:\n"
+                "The current user message may be reacting to the latest visible assistant turn.\n"
+                f"previous_public_turn.channel={getattr(previous_public_turn, 'channel', '')}\n"
+                f"previous_public_turn.parse_mode={getattr(previous_public_turn, 'parse_mode', '')}\n"
+                f"previous_public_turn.text={getattr(previous_public_turn, 'text', '')}"
+            )
 
         final_user_content = user_message
         if screen_image_data_uri:

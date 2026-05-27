@@ -190,12 +190,14 @@ class PresenceControllerMixin:
         social_presence_event: SocialPresenceEvent | None,
         now: float | None = None,
     ) -> bool:
+        current_time = time.time() if now is None else now
         if not getattr(self, "presence_maintenance_enabled", True):
+            return False
+        if current_time < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
             return False
         if self.presence_maintenance_silent_cycles < self.presence_maintenance_silent_loop_threshold:
             return False
 
-        current_time = time.time() if now is None else now
         cooldown = float(getattr(self, "presence_maintenance_cooldown_sec", 0.0) or 0.0)
         if self.last_presence_maintenance_at > 0.0 and current_time - self.last_presence_maintenance_at < cooldown:
             return False
@@ -964,6 +966,8 @@ class PresenceControllerMixin:
 
         # Kiểm tra cooldown để tránh re-engagement quá thường xuyên, giúp ERIS không làm phiền người dùng nếu họ đang bận hoặc không muốn tương tác ngay lập tức sau khi đã có một re-engagement gần đây.
         current_time = time.time() if now is None else now
+        if current_time < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
+            return False
         cooldown = float(getattr(self, "reengagement_cooldown_sec", 0.0) or 0.0)
         if self.last_reengagement_at > 0.0 and current_time - self.last_reengagement_at < cooldown:
             return False
@@ -1179,5 +1183,3 @@ class PresenceControllerMixin:
             return max(0.0, float(raw))
         except ValueError:
             return 45.0
-
-

@@ -37,6 +37,7 @@ from cortex.ni import NiStateMachine
 from domain import Decision
 from runtime.body_bias import BodyBiasProjector
 from runtime.presence_controller import SocialPresenceEvent
+from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.speech_pipeline import SpeechIntentDecision
 
 
@@ -99,10 +100,33 @@ class StateCommitServiceMixin:
             except Exception:
                 return {}
         return {}
-    def _send_decision_to_body(self, decision: Decision) -> None:
+    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
+        self._record_public_turn(decision, payload=payload, channel=channel)
         self.transport.send_json(payload)
+    def _record_public_turn(self, decision: Decision, *, payload: dict | None = None, channel: str | None = None):
+        ledger = getattr(self, "public_turn_ledger", None)
+        if ledger is None:
+            ledger = PublicTurnLedger()
+            self.public_turn_ledger = ledger
+
+        text = str((payload or {}).get("text", getattr(decision, "text", "")) or "")
+        should_speak = bool((payload or {}).get("should_speak", getattr(decision, "should_speak", True)))
+        if not should_speak or not text.strip():
+            return None
+
+        frame = getattr(self, "last_cognitive_frame", None)
+        frame_channel = str(getattr(frame, "channel", "") or "")
+        fallback = channel or (normalize_public_turn_channel(frame_channel) if frame_channel else "chat" if getattr(self, "chat_mode", False) else "autonomous")
+        public_channel = infer_public_turn_channel(decision, fallback=fallback)
+        return ledger.append(
+            channel=public_channel,
+            text=text,
+            parse_mode=str((payload or {}).get("parse_mode", getattr(decision, "parse_mode", "")) or ""),
+            visible_to_user=True,
+            can_be_replied_to=True,
+        )
     def _build_body_bias_payload(self) -> dict[str, object]:
         return self.body_bias_projector.build_payload()
     def _body_bias_clamp(value: object) -> float:

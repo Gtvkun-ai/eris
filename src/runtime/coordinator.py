@@ -6,6 +6,7 @@ import threading
 import time
 import traceback
 import unicodedata
+from types import SimpleNamespace
 #json: xử lý dữ liệu JSON.
 #os: đọc biến môi trường, config hệ thống.
 #random: chọn ngẫu nhiên fallback text, thời gian sleep.
@@ -71,6 +72,7 @@ from runtime.outcome_observer import OutcomeObserver
 from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
 from runtime.prompt_context_builder import PromptContextBuilderMixin
+from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
 from runtime.state_commit_service import StateCommitServiceMixin
@@ -124,6 +126,8 @@ class RuntimeCoordinator(
         self.ni_engine = ni_engine
         self.ti_governor = ti_governor
         self.fe_renderer = fe_renderer
+        self.public_turn_ledger = PublicTurnLedger()
+        self.reply_context = SimpleNamespace(previous_public_turn=None)
         self.memory_core = memory_core
         self.body_running_fn = body_running_fn
         self.action_executor = action_executor
@@ -181,6 +185,7 @@ class RuntimeCoordinator(
         self.last_autonomous_signature = ""
         self.repeated_autonomous_count = 0
         self.last_autonomous_spoken_at = 0.0
+        self.autonomous_presence_blocked_until = 0.0
         self.presence_maintenance_silent_cycles = 0
         self.last_presence_maintenance_at = 0.0
         #Các hàm _load... đọc config/env.
@@ -212,6 +217,10 @@ class RuntimeCoordinator(
         self.force_speak_repeat_guard_count = 0
         self.force_speak_intent_guard_count = 0
         self._session_ritual_ran = False
+        self.rapid_burst_window = self._load_rapid_burst_window()
+        self._chat_processing = False
+        self._chat_burst_queue: list[tuple[float, str]] = []
+        self._chat_burst_lock = threading.RLock()
         self.recent_inner_thought_intents: tuple[str, ...] = ()
         self.recent_inner_thought_seeds: tuple[str, ...] = ()
         self.recent_meaning_families: tuple[str, ...] = ()
@@ -287,9 +296,9 @@ class RuntimeCoordinator(
         mode = str(getattr(ti_report, "mode", "") or "").strip()
         return mode[:80] if mode else ""
 
-    #Hàm này load trạng thái bộ nhớ từ memory_store.
+    #Hàm này load trạng thái bộ nhớ từ memory_core.
     def _load_memory_state(self):
-        loader = getattr(self.memory_store, "load_state", None)
+        loader = getattr(self.memory_core, "load", None)
         if not callable(loader):
             return None
         try:
@@ -298,13 +307,16 @@ class RuntimeCoordinator(
             self.logger.warning("Memory state load error: %s", exc)
             return None
         
-    #Kiểm tra memory store có phải dạng structured memory không.
+    #Kiểm tra memory core có phải dạng structured memory không.
     def _has_structured_memory_store(self) -> bool:
-        return self.memory_state is not None and callable(getattr(self.memory_store, "remember_cycle", None))
+        return callable(getattr(self.memory_core, "commit", None))
 
     #Đảm bảo memory_state có internal_state.
     def _ensure_internal_state(self) -> None:
         if self.memory_state is None:
+            return
+        if isinstance(self.memory_state, dict):
+            self.memory_state.setdefault("internal_state", self._load_internal_state_payload())
             return
         #Nếu có memory nhưng chưa có internal state:
         if getattr(self.memory_state, "internal_state", None) is None:
@@ -312,6 +324,13 @@ class RuntimeCoordinator(
 
     #Lấy internal state hiện tại.
     def _get_internal_state(self) -> PersistentInternalState:
+        if isinstance(self.memory_state, dict):
+            payload = self.memory_state.get("internal_state") or self._load_internal_state_payload()
+            if isinstance(payload, dict):
+                try:
+                    return PersistentInternalState.from_dict(payload)
+                except Exception:
+                    return PersistentInternalState()
         if self.memory_state is not None and getattr(self.memory_state, "internal_state", None) is not None:
             return self.memory_state.internal_state
         #Nếu không có thì tạo state tạm:
@@ -324,15 +343,98 @@ class RuntimeCoordinator(
             return
         #Dùng lock để tránh nhiều thread sửa state cùng lúc.
         with self._state_lock:
+            if isinstance(self.memory_state, dict):
+                self.memory_state["internal_state"] = state.to_dict() if callable(getattr(state, "to_dict", None)) else dict(getattr(state, "__dict__", {}) or {})
+                self._save_memory_state()
+                return
             self.memory_state.internal_state = state
             self._save_memory_state()
 
     #Hàm này dựng text context để đưa vào prompt LLM.
-    def _send_decision_to_body(self, decision: Decision) -> None:
+    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
         payload["emotion_debug"] = self._build_emotion_debug_payload()
+        self._record_public_turn(decision, payload=payload, channel=channel)
         self.transport.send_json(payload)
+
+    def _record_public_turn(self, decision: Decision, *, payload: dict | None = None, channel: str | None = None):
+        ledger = getattr(self, "public_turn_ledger", None)
+        if ledger is None:
+            ledger = PublicTurnLedger()
+            self.public_turn_ledger = ledger
+
+        text = str((payload or {}).get("text", getattr(decision, "text", "")) or "")
+        should_speak = bool((payload or {}).get("should_speak", getattr(decision, "should_speak", True)))
+        if not should_speak or not text.strip():
+            return None
+
+        fallback = channel or self._infer_public_turn_channel_from_runtime(decision)
+        public_channel = infer_public_turn_channel(decision, fallback=fallback)
+        return ledger.append(
+            channel=public_channel,
+            text=text,
+            parse_mode=str((payload or {}).get("parse_mode", getattr(decision, "parse_mode", "")) or ""),
+            visible_to_user=True,
+            can_be_replied_to=True,
+        )
+
+    def _infer_public_turn_channel_from_runtime(self, decision: Decision) -> str:
+        frame = getattr(self, "last_cognitive_frame", None)
+        frame_channel = str(getattr(frame, "channel", "") or "")
+        if frame_channel:
+            return normalize_public_turn_channel(frame_channel)
+        if getattr(self, "chat_mode", False):
+            return "chat"
+        return normalize_public_turn_channel(str(getattr(decision, "intent", "") or "autonomous"))
+
+    def _load_rapid_burst_window(self) -> float:
+        raw = os.environ.get("ERIS_RAPID_BURST_WINDOW", "1.2").strip()
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            return 1.2
+
+    def _block_autonomous_presence_after_public_turn(self, now: float | None = None) -> None:
+        current_time = time.time() if now is None else float(now)
+        window = max(
+            8.0,
+            float(getattr(self, "presence_maintenance_cooldown_sec", 0.0) or 0.0),
+            float(getattr(self, "reengagement_cooldown_sec", 0.0) or 0.0),
+        )
+        self.autonomous_presence_blocked_until = max(
+            float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0),
+            current_time + window,
+        )
+
+    def _link_previous_public_turn_for_chat(self, user_timestamp: float):
+        ledger = getattr(self, "public_turn_ledger", None)
+        recent_public = ledger.latest_visible_before(user_timestamp) if ledger is not None else None
+        linked = (
+            recent_public
+            if recent_public is not None and user_timestamp - float(recent_public.timestamp) < 30.0
+            else None
+        )
+        context = getattr(self, "reply_context", None)
+        if context is None:
+            context = SimpleNamespace(previous_public_turn=None)
+            self.reply_context = context
+        context.previous_public_turn = linked
+        return linked
+
+    def _previous_public_turn_context(self, public_turn) -> str:
+        if public_turn is None:
+            return ""
+        age = max(0.0, time.time() - float(public_turn.timestamp))
+        return (
+            "previous_public_turn within reply window:\n"
+            f"- turn_id={public_turn.turn_id}\n"
+            f"- channel={public_turn.channel}\n"
+            f"- age_seconds={age:.1f}\n"
+            f"- parse_mode={public_turn.parse_mode}\n"
+            f"- text={public_turn.text}\n"
+            "Treat the current user message as a reply to that public turn when it reads like a reaction."
+        )
 
     def _build_body_bias_payload(self) -> dict[str, object]:
         return self.body_bias_projector.build_payload()
@@ -675,7 +777,7 @@ class RuntimeCoordinator(
     def _save_memory_state(self) -> None:
         if self.memory_state is None:
             return
-        saver = getattr(self.memory_store, "save_state", None)
+        saver = getattr(self.memory_core, "save", None)
         if not callable(saver):
             return
         try:
@@ -685,10 +787,15 @@ class RuntimeCoordinator(
 
     #Truy vấn bộ nhớ dài hạn để lấy các thông tin đã ghi nhớ trước đó, nếu bộ nhớ có hỗ trợ.
     def _memory_recall_texts(self, *, snapshot=None) -> list[str]:
-        recall = getattr(self.memory_store, "recall_texts", None) #hàm này trả về một iterable các đoạn text đã ghi nhớ, có thể dựa trên snapshot hiện tại để lọc/định hướng
-        if self.memory_state is not None and callable(recall): #nếu bộ nhớ có trạng thái cấu trúc và hỗ trợ truy vấn, thì gọi hàm recall để lấy các đoạn text đã ghi nhớ, có thể dựa trên snapshot hiện tại để lọc/định hướng
+        recall = getattr(self.memory_core, "recall", None)
+        if callable(recall):
             try:
-                return list(recall(self.memory_state, snapshot=snapshot))
+                query = self._memory_query_from_snapshot(snapshot)
+                packet = recall(query)
+                texts: list[str] = []
+                for name in ("repair", "procedural", "semantic", "relational", "affective_residue", "episodic"):
+                    texts.extend(str(item) for item in getattr(packet, name, ()) or ())
+                return texts
             except Exception as exc:
                 self.logger.warning("Memory recall error: %s", exc)
         return list(getattr(self, "long_term_memory", []) or []) #nếu không có bộ nhớ cấu trúc hoặc truy vấn lỗi, thì fallback về long_term_memory đã lưu ở coordinator, vốn được cập nhật sau mỗi chu kỳ
@@ -701,18 +808,17 @@ class RuntimeCoordinator(
         channel: str = "",
         fragments: tuple[str, ...] = (),
     ):
-        activator = getattr(self.memory_store, "activate_memory_resonance", None)
-        if self.memory_state is None or not callable(activator):
+        recall = getattr(self.memory_core, "recall", None)
+        if not callable(recall):
             self.active_memory_resonance = None
             return None
         try:
-            report = activator(
-                self.memory_state,
-                snapshot=snapshot,
-                user_text=user_text,
-                channel=channel,
-                fragments=fragments,
+            query = " ".join(
+                str(item)
+                for item in (channel, user_text, *tuple(fragments or ()), self._memory_query_from_snapshot(snapshot))
+                if str(item or "").strip()
             )
+            report = recall(query)
         except Exception as exc:
             self.logger.warning("Memory resonance activation error: %s", exc)
             self.active_memory_resonance = None
@@ -775,34 +881,11 @@ class RuntimeCoordinator(
             return ()
 
     def _norm_deviation_texts(self, snapshot) -> tuple[str, ...]:
-        comparator = getattr(self.memory_store, "compare_to_norms", None)
-        if self.memory_state is None or not callable(comparator):
-            return ()
-        try:
-            deviations = comparator(self.memory_state, snapshot)
-        except Exception as exc:
-            self.logger.warning("Norm memory compare error: %s", exc)
-            return ()
-        rendered: list[str] = []
-        for deviation in deviations or ():
-            to_event_text = getattr(deviation, "to_event_text", None)
-            if callable(to_event_text):
-                rendered.append(str(to_event_text()))
-            else:
-                rendered.append(str(deviation))
-        return tuple(item for item in rendered if item.strip())
+        return ()
 
     #Ghi nhận snapshot hiện tại vào bộ nhớ để cập nhật chuẩn, nếu bộ nhớ có hỗ trợ. Điều này nên được gọi sau khi đã quyết định xong broadcast và action plan, để tránh việc chuẩn bị bị ảnh hưởng bởi những thay đổi trong chu kỳ hiện tại.
     def _note_norm_observation(self, snapshot) -> None:
-        updater = getattr(self.memory_store, "update_norms", None)
-        if self.memory_state is None or not callable(updater):
-            return
-        try:
-            self.memory_state = updater(self.memory_state, snapshot, timestamp=self._event_timestamp(snapshot))
-            self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
-            self._save_memory_state()
-        except Exception as exc:
-            self.logger.warning("Norm memory update error: %s", exc)
+        return
 
     #Ghi nhận một chu kỳ hoàn chỉnh vào bộ nhớ, bao gồm những gì đã thấy (seen), đã nói (said), kết quả (outcome), và các tag liên quan. Điều này giúp xây dựng bộ nhớ dài hạn dựa trên trải nghiệm thực tế của ERIS, và có thể được sử dụng để cải thiện các quyết định trong tương lai.
     def _event_timestamp(self, snapshot, *, started_at: float | None = None) -> str:
@@ -1113,12 +1196,6 @@ class RuntimeCoordinator(
         return self._collect_percept_events(**kwargs)
 
     def _score_attention_candidate(self, percept: PerceptEvent) -> tuple[float, str]:
-        candidate = self.attention_workspace.score_event(
-            percept,
-            long_term_memory=tuple((*tuple(self.long_term_memory), *self._memory_attention_lines())),
-        )
-        return candidate.score, candidate.reason
-
         base_by_kind = {
             "user_message": 0.96,
             "user_force_speak": 0.91,
@@ -1161,16 +1238,181 @@ class RuntimeCoordinator(
         snapshot=None,
         user_text: str = "",
     ) -> tuple[AttentionCandidate, ...]:
-        return self.attention_workspace.rank(
+        evidence = self._evidence_from_percepts(
             percepts,
             channel=channel,
             snapshot=snapshot,
             user_text=user_text,
-            long_term_memory=tuple((*tuple(self.long_term_memory), *self._memory_attention_lines())),
         )
+        if not evidence:
+            return ()
+        try:
+            salience = self.attention_salience_engine.evaluate(
+                evidence=evidence,
+                channel=channel,
+                active_goal=getattr(self._get_internal_state(), "goal_persistence", None),
+                now=time.time(),
+                write_to_frame=False,
+            )
+        except Exception as exc:
+            self.logger.warning("AttentionSalience candidate ranking error: %s", exc)
+            return ()
+        converted = [self._salience_candidate_to_runtime(candidate) for candidate in salience.candidates]
+        converted.sort(key=lambda item: item.score, reverse=True)
+        return tuple(converted)
 
     def _build_broadcast(self, candidates: tuple[AttentionCandidate, ...]) -> CognitiveBroadcast:
-        return self.attention_workspace.build_broadcast(candidates)
+        if not candidates:
+            return CognitiveBroadcast(reason="attention_salience:no_candidates")
+        broadcastable = tuple(
+            candidate
+            for candidate in candidates
+            if candidate.label not in {"social_presence_event"}
+        )
+        if not broadcastable:
+            return CognitiveBroadcast(reason="attention_salience:background_only")
+        winners = tuple(
+            candidate
+            for candidate in broadcastable
+            if candidate.score >= self.attention_broadcast_threshold
+            and candidate.privacy_level not in {"private", "sensitive"}
+        )
+        if not winners:
+            top = broadcastable[0]
+            return CognitiveBroadcast(
+                label=top.label,
+                content=top.content,
+                score=top.score,
+                source=top.source,
+                reason=f"attention_salience:top_below_threshold; {top.reason}",
+                evidence=top.evidence,
+                items=(top,),
+            )
+        top = winners[0]
+        return CognitiveBroadcast(
+            label=top.label,
+            content=top.content,
+            score=top.score,
+            source=top.source,
+            reason=(
+                "attention_salience:winners="
+                + ",".join(f"{item.label}:{item.score:.2f}" for item in winners[:4])
+            ),
+            evidence=top.evidence,
+            items=winners,
+        )
+
+    def _evidence_from_percepts(
+        self,
+        percepts: tuple[PerceptEvent, ...],
+        *,
+        channel: str = "",
+        snapshot=None,
+        user_text: str = "",
+    ) -> tuple[dict[str, object], ...]:
+        evidence: list[dict[str, object]] = []
+
+        def add(
+            source: str,
+            claim: str,
+            *,
+            confidence: float = 0.62,
+            reliability: float = 0.72,
+            privacy_level: str = "normal",
+            tags: tuple[str, ...] = (),
+        ) -> None:
+            clean = str(claim or "").strip()
+            if not clean:
+                return
+            index = len(evidence)
+            evidence.append(
+                {
+                    "id": f"att.ev.{index:03d}",
+                    "source_signal_id": f"{source}.{index:03d}",
+                    "source": source,
+                    "claim": clean,
+                    "timestamp": time.time(),
+                    "confidence": max(0.0, min(1.0, float(confidence))),
+                    "reliability": max(0.0, min(1.0, float(reliability))),
+                    "privacy_level": privacy_level,
+                    "raw_or_inferred": "raw",
+                    "tags": tags,
+                }
+            )
+
+        if user_text:
+            add("user_chat", user_text, confidence=0.96, reliability=0.98, tags=("user_message", "user", "request"))
+        for percept in tuple(percepts or ()):
+            kind = str(getattr(percept, "kind", "") or "percept")
+            source = str(getattr(percept, "source", "") or "runtime")
+            if source in {"runtime", "internal_state", "thought_stream", "social_presence_detector"}:
+                source = "system_log"
+            add(
+                source,
+                str(getattr(percept, "content", "") or ""),
+                confidence=float(getattr(percept, "confidence", 0.62) or 0.62),
+                reliability=0.70,
+                privacy_level=str(getattr(percept, "privacy_level", "normal") or "normal"),
+                tags=(kind, *tuple(str(x) for x in getattr(percept, "evidence", ()) or ()), channel),
+            )
+        return tuple(evidence)
+
+    def _salience_candidate_to_runtime(self, candidate) -> AttentionCandidate:
+        tags = tuple(str(item) for item in getattr(candidate, "tags", ()) or ())
+        label = self._runtime_attention_label(candidate, tags)
+        breakdown = getattr(candidate, "score_breakdown", None)
+        score_parts: dict[str, float] = {}
+        if breakdown is not None and callable(getattr(breakdown, "to_dict", None)):
+            score_parts = {str(key): float(value) for key, value in breakdown.to_dict().items()}
+        return AttentionCandidate(
+            label=label,
+            content=str(getattr(candidate, "claim", "") or ""),
+            score=float(getattr(candidate, "score", 0.0) or 0.0),
+            source=str(getattr(candidate, "source", "") or "runtime"),
+            reason=(
+                f"attention_salience:{getattr(candidate, 'family', 'unknown')}:"
+                f"{getattr(candidate, 'focus_kind', 'unknown')}"
+            ),
+            evidence=tuple(str(item) for item in (getattr(candidate, "evidence_id", "") or "",) if item),
+            privacy_level=str(getattr(candidate, "privacy_level", "internal") or "internal"),
+            novelty_hint=str((tags or ("routine",))[0] or "routine"),
+            score_parts=score_parts,
+        )
+
+    def _runtime_attention_label(self, candidate, tags: tuple[str, ...]) -> str:
+        known_labels = {
+            "user_message",
+            "user_force_speak",
+            "resource_pressure",
+            "vision_fact",
+            "recent_event",
+            "evidence",
+            "idle_state",
+            "active_window",
+            "focus_context",
+            "cycle_channel",
+            "cognitive_momentum",
+            "cognitive_attractor",
+            "persistent_goal",
+            "social_presence_event",
+            "substrate_disturbance",
+        }
+        for tag in tags:
+            if tag in known_labels:
+                return tag
+        source = str(getattr(candidate, "source", "") or "")
+        family = str(getattr(candidate, "family", "") or "")
+        if source == "vision":
+            return "vision_fact"
+        if source == "active_window":
+            return "active_window"
+        if family == "user_request":
+            return "user_message"
+        if family == "runtime_risk":
+            return "resource_pressure"
+        if family == "goal_signal":
+            return "persistent_goal"
+        return str(getattr(candidate, "focus_kind", "") or "attention_signal")
 
     def _build_meaning_layer(
         self,
@@ -1182,7 +1424,18 @@ class RuntimeCoordinator(
         channel: str = "",
         user_text: str = "",
         force_speak: bool = False,
+        affect_signal=None,
+        ti_report=None,
+        fe_plan=None,
     ) -> MeaningLayerResult:
+        if str(channel or "").strip().lower() == "chat":
+            return self.chat_meaning_layer_light.evaluate(
+                user_text=user_text,
+                affect_signal=affect_signal,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                previous_assistant_text=getattr(self, "last_chat_answer", ""),
+            )
         return self.meaning_layer.evaluate(
             snapshot=snapshot,
             broadcast=broadcast,
@@ -1203,7 +1456,19 @@ class RuntimeCoordinator(
         meaning_layer: MeaningLayerResult | None = None,
         channel: str = "",
         user_text: str = "",
+        affect_signal=None,
+        ti_report=None,
+        fe_plan=None,
     ) -> PersonalityLensResult:
+        if str(channel or "").strip().lower() == "chat":
+            return self.chat_personality_pressure_light.evaluate(
+                meaning_layer=meaning_layer,
+                affect_signal=affect_signal,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                user_text=user_text,
+                previous_assistant_text=getattr(self, "last_chat_answer", ""),
+            )
         return self.personality_lens.evaluate(
             scene=snapshot,
             attention=broadcast,
@@ -1369,6 +1634,7 @@ class RuntimeCoordinator(
         social_presence_event: SocialPresenceEvent | None = None,
         force_speak: bool = False,
         memory_resonance=None,
+        affect_signal=None,
     ) -> CognitiveFrame:
         if memory_resonance is not None:
             self.active_memory_resonance = memory_resonance
@@ -1397,6 +1663,9 @@ class RuntimeCoordinator(
             channel=channel,
             user_text=user_text,
             force_speak=force_speak,
+            affect_signal=affect_signal,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
         )
         personality_lens = self._build_personality_lens(
             snapshot=snapshot,
@@ -1405,6 +1674,9 @@ class RuntimeCoordinator(
             meaning_layer=meaning_layer,
             channel=channel,
             user_text=user_text,
+            affect_signal=affect_signal,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
         )
         fe_plan = self._apply_personality_lens_to_fe_plan(fe_plan, personality_lens)
         appraisal = self._build_cognitive_appraisal(
@@ -1445,6 +1717,13 @@ class RuntimeCoordinator(
         if thought_stream_report is not None:
             frame.thought_stream_report = thought_stream_report
             frame.subconscious_report = thought_stream_report
+        self._run_context_bottleneck(
+            frame,
+            snapshot=snapshot,
+            user_text=user_text,
+            vision_facts=vision_facts,
+            started_at=started_at,
+        )
         self._note_norm_observation(snapshot)
         return frame
 
@@ -1954,7 +2233,9 @@ class RuntimeCoordinator(
                     rendered_text=decision.text,
                 )
                 self.last_text = decision.text
-                self._note_autonomous_spoken(now=time.time())
+                spoken_at = time.time()
+                self._note_autonomous_spoken(now=spoken_at)
+                self._block_autonomous_presence_after_public_turn(now=spoken_at)
                 self.logger.info('[session_ritual] sent LLM greeting text="%s"', decision.text)
                 self._send_decision_to_body(decision)
 
@@ -1963,11 +2244,7 @@ class RuntimeCoordinator(
             session_ritual=report,
         )
         self._set_internal_state(updated_state)
-        if self.memory_state is not None:
-            try:
-                self.memory_store.save_state(self.memory_state)
-            except Exception:
-                pass
+        self._save_memory_state()
 
         return report
 
@@ -2310,7 +2587,7 @@ class RuntimeCoordinator(
             self.repeated_user_count = 1
         return self.repeated_user_count
 
-    def _build_repeat_guard_decision(self, user_text: str, ti_report, repeat_count: int) -> Decision | None:
+    def _build_repeat_guard_decision_legacy(self, user_text: str, ti_report, repeat_count: int) -> Decision | None:
         if repeat_count < 2:
             return None
 
@@ -2333,6 +2610,24 @@ class RuntimeCoordinator(
         )
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
 
+    def _build_repeat_guard_decision(
+        self,
+        user_text: str,
+        ti_report,
+        repeat_count: int,
+        *,
+        grounding_report=None,
+        turn_semantics_report=None,
+    ) -> Decision | None:
+        return ChatCycleMixin._build_repeat_guard_decision(
+            self,
+            user_text,
+            ti_report,
+            repeat_count,
+            grounding_report=grounding_report,
+            turn_semantics_report=turn_semantics_report,
+        )
+
     def _handle_incoming(self, msg: dict):
         msg_type = msg.get("type", "")
         if msg_type == "chat_start":
@@ -2340,7 +2635,10 @@ class RuntimeCoordinator(
             return
 
         if msg_type == "chat":
-            self._run_chat_cycle(str(msg.get("message", "") or "").strip())
+            self._run_chat_cycle(
+                str(msg.get("message", "") or "").strip(),
+                user_timestamp=float(msg.get("timestamp") or time.time()),
+            )
             return
 
         if msg_type == "force_speak":
@@ -2611,8 +2909,8 @@ class RuntimeCoordinator(
             plan=fe_plan,
             rendered_text=decision.text,
         )
-        if not self._has_structured_memory_store():
-            self.long_term_memory = self.memory_store.append_fact(self.long_term_memory, decision.extracted_fact)
+        if decision.extracted_fact and not self._has_structured_memory_store():
+            self.long_term_memory.append(decision.extracted_fact)
 
         self.last_chat_answer = decision.text
         self.last_system_action = decision.system_action
@@ -3091,7 +3389,7 @@ class RuntimeCoordinator(
         return tuple(
             item
             for item in tuple(getattr(broadcast, "items", ()) or ())
-            if item.label in concrete_labels and item.score >= self.attention_workspace.broadcast_threshold
+            if item.label in concrete_labels and item.score >= self.attention_broadcast_threshold
             and self._is_speakable_evidence(item.content, kind=item.label)
         )
 
@@ -3130,12 +3428,12 @@ class RuntimeCoordinator(
                 if not screen_winners:
                     return SpeechIntentDecision(
                         intent="no_speech",
-                        reason="AttentionWorkspace did not broadcast a screen winner.",
+                        reason="AttentionSalience did not broadcast a screen winner.",
                     )
                 return SpeechIntentDecision(
                     intent="screen_observation",
                     reason=(
-                        "AttentionWorkspace broadcast screen winner: "
+                        "AttentionSalience broadcast screen winner: "
                         + ", ".join(f"{item.label}:{item.score:.2f}" for item in screen_winners[:2])
                     ),
                 )
@@ -4217,4 +4515,3 @@ class RuntimeCoordinator(
                 return cleaned
 
         return ""
-

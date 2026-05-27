@@ -27,6 +27,72 @@
       }
     },
     {
+      "id": "sem_a29ea2cdb681",
+      "claim": "User said 'ủa alo'",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:22:52:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-26T22:52:37+0700",
+      "updated_at": "2026-05-26T22:52:37+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_eabeac779b02",
+      "claim": "User expressed surprise/confusion with 'gì vậy trời'.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:22:52:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-26T22:52:27+0700",
+      "updated_at": "2026-05-26T22:52:27+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_b243be1d67bf",
+      "claim": "User confirmed the previous statement.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:22:52:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-26T22:52:19+0700",
+      "updated_at": "2026-05-26T22:52:19+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
       "id": "sem_9f455c8c06d7",
       "claim": "User asked if ERIS is real.",
       "domain": "user",

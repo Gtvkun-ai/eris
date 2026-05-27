@@ -39,6 +39,17 @@ class _DummyTransport:
         return None
 
 
+class _QueuedTransport(_DummyTransport):
+    def __init__(self, incoming):
+        super().__init__()
+        self.incoming = list(incoming)
+
+    def poll_json(self):
+        if not self.incoming:
+            return None
+        return self.incoming.pop(0)
+
+
 class _DummyLlmService:
     def __init__(self):
         self.chat_calls = 0
@@ -513,6 +524,110 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         coordinator.stop()
 
         self.assertFalse(coordinator.subconscious_loop.is_running)
+
+    def test_send_decision_to_body_records_public_turn(self):
+        coordinator = self._make_coordinator()
+        decision = Decision(text="Tôi đang ở đây.", animation="stand", parse_mode="json")
+
+        coordinator._send_decision_to_body(decision, channel="chat")
+
+        turns = coordinator.public_turn_ledger.all()
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0].channel, "chat")
+        self.assertEqual(turns[0].text, "Tôi đang ở đây.")
+        self.assertEqual(turns[0].parse_mode, "json")
+        self.assertTrue(turns[0].visible_to_user)
+        self.assertTrue(turns[0].can_be_replied_to)
+        self.assertEqual(coordinator.transport.sent[0]["text"], "Tôi đang ở đây.")
+
+    def test_public_turn_ledger_skips_suppressed_or_empty_body_text(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._send_decision_to_body(Decision(text="...", animation="stand", should_speak=True))
+        coordinator._send_decision_to_body(Decision(text="Không gửi câu này.", animation="stand", should_speak=False))
+
+        self.assertEqual(coordinator.public_turn_ledger.all(), ())
+        self.assertEqual(len(coordinator.transport.sent), 2)
+
+    def test_public_turn_ledger_infers_special_channels(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._send_decision_to_body(Decision(text="Chào lại Ngài.", animation="stand", parse_mode="session_ritual"))
+        coordinator._send_decision_to_body(Decision(text="Tôi vẫn ở đây.", animation="stand", parse_mode="presence_maintenance"))
+        coordinator._send_decision_to_body(Decision(text="Ngài còn đó chứ.", animation="stand", parse_mode="re_engagement"))
+
+        self.assertEqual(
+            [turn.channel for turn in coordinator.public_turn_ledger.all()],
+            ["session_ritual", "presence", "reengagement"],
+        )
+
+    def test_chat_links_recent_public_turn_as_reply_context(self):
+        coordinator = self._make_coordinator()
+        coordinator.public_turn_ledger.append(
+            channel="session_ritual",
+            text="Ngài quay lại rồi.",
+            timestamp=100.0,
+            parse_mode="session_ritual",
+        )
+
+        coordinator._run_chat_cycle("ừ", user_timestamp=110.0)
+
+        previous = coordinator.reply_context.previous_public_turn
+        self.assertIsNotNone(previous)
+        self.assertEqual(previous.text, "Ngài quay lại rồi.")
+        self.assertIs(coordinator.llm_service.last_chat_kwargs["reply_context"], coordinator.reply_context)
+        self.assertIn("previous_public_turn", coordinator.llm_service.last_chat_kwargs["ti_context"])
+
+    def test_chat_does_not_link_stale_public_turn(self):
+        coordinator = self._make_coordinator()
+        coordinator.public_turn_ledger.append(
+            channel="presence",
+            text="Tôi vẫn ở đây.",
+            timestamp=10.0,
+            parse_mode="presence_maintenance",
+        )
+
+        coordinator._run_chat_cycle("alo", user_timestamp=100.0)
+
+        self.assertIsNone(coordinator.reply_context.previous_public_turn)
+
+    def test_rapid_chat_burst_merges_before_llm(self):
+        transport = _QueuedTransport(
+            [
+                {"type": "chat", "message": "gì vậy trời", "timestamp": 101.0},
+                {"type": "chat", "message": "ủa alo", "timestamp": 101.1},
+            ]
+        )
+        coordinator = self._make_coordinator(transport=transport)
+        coordinator.rapid_burst_window = 0.0
+
+        coordinator._run_chat_cycle("đúng rồi", user_timestamp=100.0)
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 1)
+        self.assertEqual(
+            coordinator.llm_service.last_chat_kwargs["raw_user_text"],
+            "đúng rồi\ngì vậy trời\nủa alo",
+        )
+
+    def test_session_ritual_blocks_immediate_presence_maintenance(self):
+        coordinator = self._make_coordinator()
+        coordinator.presence_maintenance_enabled = True
+        coordinator.presence_maintenance_silent_cycles = 3
+        coordinator.presence_maintenance_silent_loop_threshold = 1
+        coordinator.presence_maintenance_cooldown_sec = 0.0
+        coordinator._block_autonomous_presence_after_public_turn(now=100.0)
+        snapshot = coordinator.telemetry_service.capture_snapshot()
+        ti_report = SimpleNamespace(mode="steady_observe")
+        social_presence_event = SimpleNamespace(present=True)
+
+        allowed = coordinator._should_allow_presence_maintenance(
+            snapshot=snapshot,
+            ti_report=ti_report,
+            social_presence_event=social_presence_event,
+            now=101.0,
+        )
+
+        self.assertFalse(allowed)
 
     def test_subconscious_report_appears_in_cognitive_frame_dict(self):
         coordinator = self._make_coordinator()

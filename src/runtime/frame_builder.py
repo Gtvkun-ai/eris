@@ -1695,7 +1695,11 @@ class FrameBuilderMixin:
                     rendered_text=decision.text,
                 )
                 self.last_text = decision.text
-                self._note_autonomous_spoken(now=time.time())
+                spoken_at = time.time()
+                self._note_autonomous_spoken(now=spoken_at)
+                block_fn = getattr(self, "_block_autonomous_presence_after_public_turn", None)
+                if callable(block_fn):
+                    block_fn(now=spoken_at)
                 self.logger.info('[session_ritual] sent LLM greeting text="%s"', decision.text)
                 self._send_decision_to_body(decision)
 

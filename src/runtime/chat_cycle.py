@@ -36,10 +36,36 @@ class ChatCycleMixin:
         self.fe_style_memory = self.fe_renderer.decay_memory(self.fe_style_memory)
         self.logger.info("Exited chat mode; autonomous can resume.")
 
-    def _run_chat_cycle(self, user_text: str) -> None:
-        cycle_start = time.time()
+    def _run_chat_cycle(self, user_text: str, *, user_timestamp: float | None = None) -> None:
+        cycle_start = time.time() if user_timestamp is None else float(user_timestamp)
         if not user_text:
             return
+        if getattr(self, "_chat_processing", False):
+            self._queue_chat_burst_event(user_text, cycle_start)
+            return
+
+        self._chat_processing = True
+        try:
+            user_text = self._merge_rapid_chat_burst(user_text, first_timestamp=cycle_start)
+            if not user_text:
+                return
+            previous_public_turn = self._link_previous_public_turn_for_chat(cycle_start)
+            previous_public_context = self._previous_public_turn_context(previous_public_turn)
+            return self._run_chat_cycle_inner(
+                user_text,
+                cycle_start=cycle_start,
+                previous_public_context=previous_public_context,
+            )
+        finally:
+            self._chat_processing = False
+
+    def _run_chat_cycle_inner(
+        self,
+        user_text: str,
+        *,
+        cycle_start: float,
+        previous_public_context: str = "",
+    ) -> None:
         if not self.chat_mode:
             self.chat_ni_state = NiStateMachine() # reset trạng thái Ni khi bắt đầu chat mới, để tránh mang theo drift state từ autonomous mode.
 
@@ -393,6 +419,8 @@ class ChatCycleMixin:
         planned_ti_context = (
             f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n{turn_semantics_context}"
         )
+        if previous_public_context:
+            planned_ti_context = f"{planned_ti_context}\n\n{previous_public_context}"
         # The current user message is sent as the final user message below.
         # Passing it inside chat_history as well wastes one short-term slot
         # and can push out the previous turn during context shrink.
@@ -411,6 +439,7 @@ class ChatCycleMixin:
             memory_context=memory_context,
             grounding_context=grounding_report.prompt_context,
             screen_image_data_uri=screen_image_data_uri,
+            reply_context=getattr(self, "reply_context", None),
         )
         self._log_raw_llm_output("chat", raw)
         self._log_pre_parser("chat", raw)
@@ -424,6 +453,62 @@ class ChatCycleMixin:
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return
+
+    def _queue_chat_burst_event(self, user_text: str, timestamp: float | None = None) -> None:
+        text = str(user_text or "").strip()
+        if not text:
+            return
+        lock = getattr(self, "_chat_burst_lock", None)
+        if lock is None:
+            self._chat_burst_queue = [(time.time() if timestamp is None else float(timestamp), text)]
+            return
+        with lock:
+            self._chat_burst_queue.append((time.time() if timestamp is None else float(timestamp), text))
+
+    def _merge_rapid_chat_burst(self, first_text: str, *, first_timestamp: float) -> str:
+        collected: list[tuple[float, str]] = [(first_timestamp, str(first_text or "").strip())]
+        collected.extend(self._pop_queued_chat_events())
+        collected.extend(self._poll_ready_chat_events())
+        if len(collected) <= 1:
+            return collected[0][1]
+
+        window = float(getattr(self, "rapid_burst_window", 1.2) or 0.0)
+        quiet_until = time.time() + window
+        while window > 0.0 and time.time() < quiet_until:
+            time.sleep(0.05)
+            new_events = self._pop_queued_chat_events()
+            new_events.extend(self._poll_ready_chat_events())
+            if new_events:
+                collected.extend(new_events)
+                quiet_until = time.time() + window
+
+        collected.sort(key=lambda item: item[0])
+        return "\n".join(text for _, text in collected if text)
+
+    def _pop_queued_chat_events(self) -> list[tuple[float, str]]:
+        lock = getattr(self, "_chat_burst_lock", None)
+        if lock is None:
+            return []
+        with lock:
+            queued = list(getattr(self, "_chat_burst_queue", []) or [])
+            self._chat_burst_queue = []
+        return [(float(ts), str(text or "").strip()) for ts, text in queued if str(text or "").strip()]
+
+    def _poll_ready_chat_events(self) -> list[tuple[float, str]]:
+        events: list[tuple[float, str]] = []
+        poll = getattr(getattr(self, "transport", None), "poll_json", None)
+        if not callable(poll):
+            return events
+        while True:
+            msg = poll()
+            if not msg:
+                return events
+            if msg.get("type") == "chat":
+                text = str(msg.get("message", "") or "").strip()
+                if text:
+                    events.append((float(msg.get("timestamp") or time.time()), text))
+                continue
+            self._handle_incoming(msg)
 
     def _observe_previous_turn_feedback(self, user_text: str) -> None:
         """Gắn feedback của user hiện tại vào frame trước nếu có.
