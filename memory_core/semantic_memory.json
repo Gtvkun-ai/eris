@@ -1,6 +1,70 @@
 {
-  "version": 1,
+  "version": 2,
+  "kind": "semantic_memory",
+  "updated_at": "2026-05-27T18:21:57+0700",
   "items": [
+    {
+      "id": "sem_67edb42ed3bc",
+      "claim": "User greeted ERIS with 'chào eris cưng'.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:18:21:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T18:21:57+0700",
+      "updated_at": "2026-05-27T18:21:57+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "project",
+        "eris",
+        "semantic",
+        "extracted_fact",
+        "grounded"
+      ],
+      "metadata": {
+        "source": "CognitiveFrameRecorder",
+        "fact_index": 0,
+        "timestamp": "18:21",
+        "semantic_source": "decision_extracted_fact",
+        "source_grounded": true,
+        "grounding_source": "user_text",
+        "grounding_missing_evidence": [],
+        "grounding_preempt_mode": "",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1779880917.5407145,
+        "frame_id": null,
+        "raw_content": {
+          "fact": "User greeted ERIS with 'chào eris cưng'.",
+          "source": "decision_extracted_fact",
+          "timestamp": "18:21",
+          "cycle_id": "chat-5"
+        },
+        "reason": "store explicit stable semantic fact",
+        "fact_key": "project.eris",
+        "aliases": [
+          "eris",
+          "project",
+          "runtime",
+          "pipeline",
+          "memory",
+          "architecture"
+        ],
+        "importance": 0.78,
+        "fact_profile_evidence": [
+          "claim:project.eris"
+        ],
+        "embedding_text_hash": "f645cc5ca6573f95",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
+      }
+    },
     {
       "id": "sem_4564c1e1d8ad",
       "claim": "User is coding a CommitBatchReport dataclass for StateCommitter.",

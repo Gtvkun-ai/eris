@@ -477,20 +477,41 @@ Kết nối mặc định:
 
 `src/cortex/ni.py`
 - `NiEngine` và `NiStateMachine`.
-- Đánh giá orientation/drift từ focus/window/browser/memory/text và active goal, nhưng tầng semantic chính nằm trong `orientation_context.py`.
+- Đánh giá orientation/drift từ focus/window/browser/memory/text và active goal, nhưng `NiEngine` giờ mặc định khởi tạo `HybridOrientationInterpreter` thay vì chỉ bám `OrientationInterpreter` lexical cũ.
+- Semantic orientation mới đi theo stack `orientation_semantics.py` -> `semantic_encoder.py` -> `semantic_hypothesis.py` -> `semantic_prototypes.py`, còn lexical fallback vẫn giữ để runtime không chết khi thiếu semantic layer.
+- Bootstrap hiện tại cho phép `Ni` đi vào semantic path thật ngay cả khi chưa có embedding provider production: nếu không inject provider, encoder dùng fallback an toàn và cap confidence thay vì giả vờ “hiểu sâu”.
 - Trả `drift_score`, `drift_level`, `orientation_coherence`, `intervention_pressure`, `confidence`, `should_raise_guard`, `reason_span`, `channels` và evidence.
 - Đọc `GoalPersistenceState` mới qua `strength`, `goal_type`, `confidence`, `actionability`, `intervention_permission` để tránh biến mọi active goal thành cớ nhắc nhở.
 - State machine làm mượt drift qua thời gian để ERIS không giật cục vì một snapshot lẻ.
+- Có thêm các env hook để chỉnh an toàn semantic path mà không phải sửa code tiếp: `ERIS_ORIENTATION_SEMANTIC_ENABLED`, `ERIS_ORIENTATION_HASH_FALLBACK`, `ERIS_ORIENTATION_SEMANTIC_CACHE_ITEMS`, `ERIS_ORIENTATION_SEMANTIC_TAKEOVER_CONFIDENCE`, `ERIS_ORIENTATION_SEMANTIC_AMBIGUITY_BLOCK`, `ERIS_ORIENTATION_SEMANTIC_FALLBACK_CAP`.
 - `src/cortex/tune_ni_focus.py` tune bias/scale offline từ `ni_drift_samples.jsonl`.
 
 `src/cortex/orientation_context.py`
-- Nền semantic dùng chung cho Ni và GoalPersistence.
-- Chuẩn hóa text, token, anchor và matcher để hai tầng không tự suy hai kiểu khác nhau.
+- Compatibility facade + lexical fallback cho Ni và GoalPersistence, không còn là “semantic brain” chính.
+- Giữ contract dùng chung: enum/dataclass, normalize/token/anchor, goal matcher, closure detection và `OrientationInterpreter` legacy để các đường cũ chưa phải đổi một lượt.
 - Phân loại activity intent: research, technical_focus, supportive_background, recovery, play_or_recovery, possible_avoidance, fragmented_switching, social_coordination, system_waiting, unknown.
 - Phân loại goal text: concrete_task, debug_thread, design_direction, research_thread, review_request, correction_thread, casual, recovery, commentary, none.
 - Có closure detection biết negation, nên "chưa xong", "not fixed", "vẫn lỗi" không bị hiểu thành đã close goal.
 - Tính goal relation, orientation coherence, goal conflict và intervention pressure như giả thuyết mềm, không phải phán xét người dùng đang "lệch".
 - `goal_match_score()` dùng anchor/file/module/token overlap có trọng số, thay cho rule cũ kiểu trùng vài token là merge goal.
+
+`src/cortex/orientation_semantics.py`
+- Tầng hybrid semantic cho orientation: blend lexical signal với semantic hypotheses, nhưng lexical vẫn giữ quyền veto ở các chỗ cần chính xác như filename, negation, hard work anchor và goal permission.
+- `HybridOrientationInterpreter` là engine mà `NiEngine` hiện dùng mặc định; nếu semantic engine không sẵn hoặc bị tắt, nó fallback sạch về `OrientationInterpreter`.
+- Conflict/intervention bị gate chặt theo active goal strength và intervention permission, để semantic layer không biến leisure/recovery thành “lệch goal” chỉ vì nhìn bề mặt.
+
+`src/cortex/semantic_encoder.py`
+- Định nghĩa contract encoder vector và router giữa provider thật với fallback.
+- Có `SemanticEncoderRouter`, `ProviderBackedSemanticEncoder`, `CachedSemanticEncoder`, `NullSemanticEncoder` và `LexicalHashingSemanticEncoder`.
+- Fallback hashing chỉ là đường giữ hệ sống và luôn bị đánh dấu `is_fallback=True`; downstream phải cap confidence thay vì coi đó là semantic thật.
+
+`src/cortex/semantic_hypothesis.py`
+- So context hiện tại với prototype bank để sinh top-k semantic hypotheses.
+- Tính dominant label, ambiguity, margin top1-top2, confidence cap khi fallback, và evidence để Ni/GoalPersistence debug được vì sao semantic nghiêng về nhãn nào.
+
+`src/cortex/semantic_prototypes.py`
+- Chứa prototype bank cho các domain semantic như activity intent và goal relation.
+- Tách phrase/prototype ra khỏi engine để thay prototype, tune label hoặc thêm domain mà không đụng trực tiếp logic scoring.
 
 `src/cortex/ti.py`
 - `TiGovernor`.
@@ -532,6 +553,11 @@ Kết nối mặc định:
 - Objectification/tool/waifu/prompt cosplay làm tăng dignity defense và social distance, giảm attachment visibility; correction làm tăng overread_correction để các turn sau bớt suy diễn symbolic.
 - Technical thread tốt tăng technical_respect để ERIS bớt làm màu khi user cần code; intimacy/attachment tăng rất chậm để tránh biến thành prompt clingy.
 - Render prompt context ngắn và style pressure cho Personality/Fe đọc như áp lực, không phải nhãn công khai.
+
+`src/cortex/relationship_event_builder.py`
+- Tách phần dựng `RelationshipTurnEvent` ra khỏi `relationship_dynamics.py` để event semantics không còn bị trộn cứng với state update.
+- Nhận affect/context/evidence rồi build event score theo pattern như correction, objectification, technical success, emotional exposure, continuity rupture hay repair.
+- Đây là cầu nối sạch hơn giữa `AffectSemanticSignal` và `RelationshipDynamicsEngine`: dynamics update state, còn event builder chịu trách nhiệm “đọc” turn hiện tại thành event quan hệ.
 
 `src/cortex/personality.py`
 - `PersonalityLens`.
@@ -598,6 +624,22 @@ Kết nối mặc định:
 - Câu micro quá ngắn bị reject nếu không có ý nghĩa rõ và không khớp với anchor, reason `micro_line_too_short_without_clear_meaning`.
 - `micro_observation` phải khớp từ khóa với anchor/evidence; nếu text nói lệch khỏi evidence thì reject bằng `micro_observation_not_grounded:<source>`.
 - Các rejection nặng như placeholder, tiếng Việt không dấu, micro observation thiếu anchor hoặc không grounded giờ có thể làm coordinator trả decision im lặng thay vì cố fallback ra một câu khác.
+
+`src/cortex/micro_contracts.py`
+- Chứa dataclass/helper dùng chung cho micro policy: policy result, validation issue, relational context, rewrite plan, anchor, repeat result và các normalize/dedupe helpers.
+- Tách contract ra để `micro_policy.py`, `micro_grounding_guard.py`, `micro_repeat_guard.py` và `micro_surface_lint.py` không tự giữ bốn phiên bản rule hơi giống nhau.
+
+`src/cortex/micro_grounding_guard.py`
+- Chịu trách nhiệm signal score, risk level, anchor resolution và grounding validation cho micro line.
+- Phân biệt line nào được phép neo vào screen evidence, line nào chỉ được bám user action/session context, và line nào phải im nếu anchor quá yếu.
+
+`src/cortex/micro_repeat_guard.py`
+- Semantic repeat guard cho micro line.
+- Không chỉ so trùng nguyên câu; nó còn fingerprint/family hóa line để chặn lặp về nghĩa và giữ nhịp presence tự nhiên hơn.
+
+`src/cortex/micro_surface_lint.py`
+- Lint bề mặt cho micro line: placeholder, shape quá ngắn, tiếng Việt không dấu, câu hỏi sai loại, biểu đạt trị liệu, metaphor trang trí không có stance, lộ quá mức relational exposure.
+- Đây là lớp sửa/đánh dấu issue bề mặt trước khi coordinator quyết định rewrite, fallback hay im lặng.
 
 `src/cortex/goal_persistence.py`
 - `GoalPersistenceEngine` và `GoalPersistenceState`.
@@ -701,6 +743,35 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Ghi nhớ đi qua `StateCommitRequest`; core kiểm tra `storage_permission`, `permission_required`, `confidence`, `evidence_ids`, `decay_policy` trước khi lưu.
 - Target được route sang `event_ledger`, `active_state`, `homeostatic_baseline`, `self_continuity`, `episodic_memory`, `semantic_memory`, `relational_memory`, `affective_residue_memory`, `procedural_memory`, `repair_memory`.
 - Recall trả `MemoryPacket` với quota theo budget mode `fast/normal/deep/reflection`, có confidence notes để nhắc downstream: residue là áp lực nội bộ, relational là nhịp quan hệ tích tụ, episodic là quá khứ.
+- Bản mới không còn tự đo resonance bằng token overlap ngay trong facade; nó đi theo pipeline `MemoryCueBuilder` -> `MemoryRetrievalEngine` -> `MemoryActivation` -> `MemoryPacketBuilder`.
+
+`src/memory/memory_record.py`
+- Helper nền cho memory retrieval stack: normalize text, tokenize, anchor, compact text, clamp, fingerprint và các tiện ích chuẩn hóa record.
+- Là điểm thống nhất lexical contract để các lớp cue/candidate/scoring không mỗi nơi hiểu text một kiểu.
+
+`src/memory/memory_cue.py`
+- Dựng `MemoryCue` từ query hiện tại: token, anchor, domain hint, recall mode, surface expectation và các clue semantic nhẹ.
+- Đây là bước biến “user đang hỏi gì” thành cue có cấu trúc trước khi đi dò các layer memory.
+
+`src/memory/memory_candidate.py`
+- Adapter ứng viên retrieval theo từng layer.
+- Biết bọc semantic/episodic/relational/procedural/repair item thành một candidate shape chung để scorer/activation xử lý thống nhất.
+
+`src/memory/memory_scoring.py`
+- Chứa `MemoryScore`, `LayerProfile`, `MemoryScorer` và rule weight theo layer.
+- Tách scoring ra khỏi store/facade để có thể tune relevance, recency, confidence, privacy risk hay layer-specific bias mà không đụng đường commit.
+
+`src/memory/memory_activation.py`
+- Chịu trách nhiệm biến candidate đã score thành activation thực sự: chọn top item, phân quota theo layer, build retrieval result có breakdown và suppression note.
+- Đây là chỗ quyết định “ký ức nào được trồi lên”, không phải store nào “có dữ liệu”.
+
+`src/memory/memory_retrieval_engine.py`
+- Orchestrator retrieval mới của memory.
+- Nhận `MemoryCue`, gọi candidate adapter + scorer + activation builder, rồi trả kết quả trung gian đủ sạch để packet builder surface ra prompt/runtime.
+
+`src/memory/memory_packet_builder.py`
+- Dựng `MemoryPacket` cuối cùng cho runtime từ retrieval result.
+- Chịu trách nhiệm quota/budget/render note để coordinator/prompt builder không phải biết chi tiết từng layer memory.
 
 `src/memory/active_state_snapshot.py`
 - Snapshot overwrite cho trạng thái đang là: current goal, session arc, active project/task, relation state, affect/homeostasis, working threads, open questions và self continuity.
@@ -1261,8 +1332,10 @@ Mental process mặc định:
 Đây là phần “Eris đang tính gì” để khi nhìn log/state biết nó lệch ở đâu.
 
 Ni drift:
-- Ni hiện dựa vào `OrientationInterpreter` thay vì bảng similarity thô theo app category.
+- Ni hiện đi qua `HybridOrientationInterpreter`; lexical `OrientationInterpreter` vẫn còn nhưng đóng vai trò fallback/legacy path thay vì engine chính.
 - Input semantic gồm focus/window/browser/current text/memory text, idle, open window count, active goal summary/strength/type/intervention_permission.
+- Semantic stack thật nằm ở `orientation_semantics.py` + `semantic_hypothesis.py` + `semantic_prototypes.py`; encoder được dựng qua `semantic_encoder.py`.
+- Nếu chưa có embedding provider thật, bootstrap mặc định vẫn vào hybrid path nhưng dùng fallback hashing có cap confidence, nên semantic layer “tham gia” mà không được phép nói quá chắc.
 - `ActivityIntent` đọc ngữ cảnh là technical_focus/research/supportive_background/recovery/play_or_recovery/possible_avoidance/social_coordination/system_waiting/unknown.
 - `GoalRelation` đọc quan hệ với active goal là aligned/adjacent/neutral/conflicting/unknown.
 - `orientation_coherence` tăng khi context technical/research/system wait hoặc aligned với goal; giảm bởi conflict, fragmentation và idle ambiguity.

@@ -828,6 +828,29 @@
         "commit_confidence": 1.0,
         "commit_target": "event_ledger"
       }
+    },
+    {
+      "id": "evt_16379be585924977",
+      "timestamp": 1779880917.4983351,
+      "iso_timestamp": "2026-05-27T18:21:57+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-5', 'channel': 'chat', 'timestamp': '18:21', 'seen': ['chào eris cưng'], 'said': 'Chào Ngài. Tôi vẫn ở đây.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.4204088785046729, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:18:21:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
     }
   ]
 }

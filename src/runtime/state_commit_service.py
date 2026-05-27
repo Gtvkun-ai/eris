@@ -33,7 +33,6 @@ from cortex.contracts import (
 from cortex.internal_state import PersistentInternalState
 from memory.memory_commit_policy import MemoryCommitPolicy
 from memory.memory_models import MemoryKind
-from memory.memory_recall_policy import MemoryRecallPolicy
 from cortex.relationship_dynamics import RelationshipTurnEvent
 from core.evidence import EvidenceItem, RawSignal
 from cortex.modes import QUIET_MODES
@@ -211,12 +210,16 @@ class StateCommitServiceMixin:
         adapter = getattr(self, "memory_recall_adapter", None)
         if isinstance(adapter, MemoryRecallAdapter):
             adapter.ledger = self._ensure_session_turn_ledger()
+            adapter.memory_core = getattr(self, "memory_core", None)
+            adapter.llm_service = getattr(self, "llm_service", None)
             adapter.semantic_lookup = self._semantic_memory_lookup
             adapter.episodic_lookup = self._episodic_memory_lookup
+            adapter.compiler = None
             return adapter
         adapter = MemoryRecallAdapter(
-            recall_policy=MemoryRecallPolicy(),
             ledger=self._ensure_session_turn_ledger(),
+            memory_core=getattr(self, "memory_core", None),
+            llm_service=getattr(self, "llm_service", None),
             semantic_lookup=self._semantic_memory_lookup,
             episodic_lookup=self._episodic_memory_lookup,
         )
@@ -224,19 +227,7 @@ class StateCommitServiceMixin:
         return adapter
 
     def _build_memory_recall_decision(self, user_text: str) -> Decision | None:
-        answer = self._ensure_memory_recall_adapter().try_answer(user_text)
-        if answer is None:
-            return None
-        return Decision(
-            text=answer.text,
-            intent="memory_recall",
-            action="answer",
-            animation="stand",
-            should_speak=True,
-            confidence=answer.confidence,
-            debug_trace=answer.debug_trace,
-            parse_mode="memory_recall",
-        )
+        return self._ensure_memory_recall_adapter().try_answer(user_text)
 
     def _add_user_turn_memory_commit_requests(self, frame, user_text: str) -> None:
         if frame is None:

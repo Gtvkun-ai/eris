@@ -2,6 +2,28 @@
   "version": 1,
   "items": [
     {
+      "id": "epi_1011f217a87d",
+      "timestamp": "2026-05-27T18:21:57+0700",
+      "frame_id": "",
+      "summary": "chào eris cưng -> Chào Ngài. Tôi vẫn ở đây. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:18:21:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
       "id": "epi_9fdc5114cdbb",
       "timestamp": "2026-05-27T12:06:55+0700",
       "frame_id": "",

@@ -1,0 +1,319 @@
+from __future__ import annotations
+
+"""
+memory_query_executor.py
+
+Executor chạy MemoryQueryIR trên TurnGraph / memory_core.
+
+Quy tắc:
+- Executor không hiểu tiếng Việt.
+- Executor không parse user text.
+- Executor không quyết định style public.
+- Executor chỉ lấy dữ liệu theo IR.
+
+Nếu thiếu dữ liệu hoặc query mơ hồ, trả RawRecallResult.missing().
+"""
+
+from typing import Any, Optional
+
+from .memory_query_ir import (
+    ActRef,
+    MemoryQueryIR,
+    MemorySourceKind,
+    QueryIntent,
+    RawRecallResult,
+    RelationRef,
+    SurfaceMode,
+)
+from .memory_turn_graph import TurnGraph, TurnNode
+
+
+class MemoryQueryExecutor:
+    """Thực thi IR trên graph và memory_core."""
+
+    def execute(
+        self,
+        ir: MemoryQueryIR,
+        *,
+        turn_graph: Optional[TurnGraph] = None,
+        memory_core: Any = None,
+    ) -> RawRecallResult:
+        if ir.intent == QueryIntent.RECALL_TURN:
+            if not turn_graph:
+                return RawRecallResult.missing(ir, "missing_turn_graph")
+            return self._execute_turn_recall(ir, turn_graph)
+
+        if ir.intent == QueryIntent.RECALL_COUNT:
+            if not turn_graph:
+                return RawRecallResult.missing(ir, "missing_turn_graph")
+            count = turn_graph.count(ir.target)
+            return RawRecallResult(
+                found=True,
+                source=MemorySourceKind.SESSION_TURN_GRAPH,
+                ir=ir,
+                count=count,
+                confidence=min(0.95, ir.confidence + 0.05),
+                evidence=("turn_graph:count",),
+            )
+
+        if ir.intent == QueryIntent.RECALL_FACT:
+            return self._execute_fact_recall(ir, memory_core=memory_core, turn_graph=turn_graph)
+
+        if ir.intent == QueryIntent.RECALL_SUMMARY:
+            if not turn_graph:
+                return RawRecallResult.missing(ir, "missing_turn_graph")
+            return self._execute_summary(ir, turn_graph)
+
+        return RawRecallResult.missing(ir, "unsupported_query_intent")
+
+    # ------------------------------------------------------------------
+    # Turn recall
+    # ------------------------------------------------------------------
+
+    def _execute_turn_recall(self, ir: MemoryQueryIR, graph: TurnGraph) -> RawRecallResult:
+        # relation: ANSWER_TO(anchor=user question N)
+        if ir.relation.relation == RelationRef.ANSWER_TO:
+            if not ir.relation.anchor:
+                return RawRecallResult.missing(ir, "answer_to_missing_anchor", MemorySourceKind.SESSION_TURN_GRAPH)
+
+            anchors = graph.select(ir.relation.anchor)
+            if not anchors:
+                return RawRecallResult.missing(ir, "anchor_not_found", MemorySourceKind.SESSION_TURN_GRAPH)
+
+            # Nếu anchor có quantity, trả list answer cho từng anchor.
+            answers: list[TurnNode] = []
+            for anchor in anchors:
+                answer = graph.first_assistant_answer_to(anchor.id)
+                if answer:
+                    answers.append(answer)
+
+            if not answers:
+                return RawRecallResult.missing(ir, "answer_node_not_found", MemorySourceKind.SESSION_TURN_GRAPH)
+
+            if len(answers) == 1:
+                node = answers[0]
+                return RawRecallResult(
+                    found=True,
+                    source=MemorySourceKind.SESSION_TURN_GRAPH,
+                    ir=ir,
+                    items=(node,),
+                    exact_text=node.text,
+                    confidence=min(ir.confidence, node.confidence, 0.95),
+                    evidence=(f"turn:{node.id}", "edge:answers"),
+                )
+
+            return RawRecallResult(
+                found=True,
+                source=MemorySourceKind.SESSION_TURN_GRAPH,
+                ir=ir,
+                items=tuple(answers),
+                exact_text="\n".join(f"{i+1}. {n.text}" for i, n in enumerate(answers)),
+                confidence=min(ir.confidence, min(n.confidence for n in answers), 0.92),
+                evidence=tuple(f"turn:{n.id}" for n in answers),
+            )
+
+        # relation: AFTER / BEFORE anchor.
+        if ir.relation.relation in {RelationRef.AFTER, RelationRef.BEFORE}:
+            if not ir.relation.anchor:
+                return RawRecallResult.missing(ir, "relative_query_missing_anchor", MemorySourceKind.SESSION_TURN_GRAPH)
+            anchors = graph.select(ir.relation.anchor)
+            if not anchors:
+                return RawRecallResult.missing(ir, "relative_anchor_not_found", MemorySourceKind.SESSION_TURN_GRAPH)
+            anchor = anchors[0]
+            node = (
+                graph.neighbor_after(anchor.id, ir.target)
+                if ir.relation.relation == RelationRef.AFTER
+                else graph.neighbor_before(anchor.id, ir.target)
+            )
+            if not node:
+                return RawRecallResult.missing(ir, "relative_node_not_found", MemorySourceKind.SESSION_TURN_GRAPH)
+            return RawRecallResult(
+                found=True,
+                source=MemorySourceKind.SESSION_TURN_GRAPH,
+                ir=ir,
+                items=(node,),
+                exact_text=node.text,
+                confidence=min(ir.confidence, node.confidence, 0.90),
+                evidence=(f"turn:{node.id}", f"relation:{ir.relation.relation.value}"),
+            )
+
+        # relation SELF: direct select.
+        nodes = graph.select(ir.target)
+        if not nodes:
+            return RawRecallResult.missing(ir, "target_node_not_found", MemorySourceKind.SESSION_TURN_GRAPH)
+
+        if ir.target.quantity is not None:
+            text = "\n".join(f"{i+1}. {node.text}" for i, node in enumerate(nodes))
+            return RawRecallResult(
+                found=True,
+                source=MemorySourceKind.SESSION_TURN_GRAPH,
+                ir=ir,
+                items=tuple(nodes),
+                exact_text=text,
+                confidence=min(ir.confidence, min(n.confidence for n in nodes), 0.92),
+                evidence=tuple(f"turn:{n.id}" for n in nodes),
+            )
+
+        node = nodes[0]
+        return RawRecallResult(
+            found=True,
+            source=MemorySourceKind.SESSION_TURN_GRAPH,
+            ir=ir,
+            items=(node,),
+            exact_text=node.text,
+            confidence=min(ir.confidence, node.confidence, 0.95),
+            evidence=(f"turn:{node.id}",),
+        )
+
+    # ------------------------------------------------------------------
+    # Fact recall
+    # ------------------------------------------------------------------
+
+    def _execute_fact_recall(
+        self,
+        ir: MemoryQueryIR,
+        *,
+        memory_core: Any,
+        turn_graph: Optional[TurnGraph],
+    ) -> RawRecallResult:
+        fact_key = ir.target.fact_key
+        if not fact_key:
+            return RawRecallResult.missing(ir, "fact_key_missing")
+
+        # Ưu tiên semantic memory ổn định.
+        value = self._lookup_fact(memory_core, fact_key)
+        if value is not None:
+            text = self._format_fact(fact_key, value)
+            return RawRecallResult(
+                found=True,
+                source=MemorySourceKind.SEMANTIC_MEMORY,
+                ir=ir,
+                exact_text=text,
+                gist=text,
+                confidence=min(0.92, max(ir.confidence, 0.78)),
+                evidence=(f"semantic_fact:{fact_key}",),
+            )
+
+        # Fallback có kiểm soát: nếu fact vừa được nói trong phiên nhưng chưa commit xong,
+        # lấy từ TurnGraph fact_mentions. Đây không phải long-term memory.
+        if turn_graph:
+            nodes = turn_graph.select(ir.target)
+            for node in reversed(nodes):
+                for fact in node.fact_mentions:
+                    if fact.key == fact_key:
+                        text = self._format_fact(fact_key, fact.value)
+                        return RawRecallResult(
+                            found=True,
+                            source=MemorySourceKind.SESSION_TURN_GRAPH,
+                            ir=ir,
+                            items=(node,),
+                            exact_text=text,
+                            gist=text,
+                            confidence=min(ir.confidence, fact.confidence, 0.88),
+                            evidence=(f"turn_fact:{node.id}:{fact_key}",),
+                            warnings=("fact_from_session_not_long_term",),
+                        )
+
+        return RawRecallResult.missing(ir, f"fact_not_found:{fact_key}", MemorySourceKind.SEMANTIC_MEMORY)
+
+    def _lookup_fact(self, memory_core: Any, fact_key: str) -> Any:
+        if memory_core is None:
+            return None
+
+        # Adapter mềm cho nhiều shape memory_core khác nhau.
+        for method in ("lookup_fact", "get_fact", "semantic_lookup"):
+            fn = getattr(memory_core, method, None)
+            if callable(fn):
+                try:
+                    value = fn(fact_key)
+                    if value is not None:
+                        return _unwrap_fact_value(value)
+                except Exception:
+                    pass
+
+        # Dict memory state.
+        if isinstance(memory_core, dict):
+            value = _deep_get(memory_core, fact_key)
+            if value is not None:
+                return _unwrap_fact_value(value)
+
+        # memory_core.recall(query) nếu có.
+        recall = getattr(memory_core, "recall", None)
+        if callable(recall):
+            try:
+                result = recall(fact_key)
+                return _unwrap_fact_value(result)
+            except Exception:
+                return None
+
+        return None
+
+    def _format_fact(self, fact_key: str, value: Any) -> str:
+        if fact_key == "user.name":
+            return f"Tên Ngài là {value}."
+        if fact_key == "user.birth_month":
+            return f"Ngài sinh vào tháng {value}."
+        if fact_key == "user.current_location":
+            return f"Ngài hiện ở {value}."
+        if fact_key == "user.past_location":
+            return f"Trước đây Ngài từng ở {value}."
+        return f"{fact_key}: {value}"
+
+    # ------------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------------
+
+    def _execute_summary(self, ir: MemoryQueryIR, graph: TurnGraph) -> RawRecallResult:
+        nodes = graph.select(ir.target)
+        if not nodes:
+            nodes = graph.nodes[-6:]
+        if not nodes:
+            return RawRecallResult.missing(ir, "no_turns_to_summarize", MemorySourceKind.SESSION_TURN_GRAPH)
+
+        parts = []
+        for node in nodes[-6:]:
+            short = node.text.strip()
+            if len(short) > 100:
+                short = short[:97] + "..."
+            parts.append(f"{node.role.value}: {short}")
+
+        gist = "Gần đây mạch hội thoại gồm: " + " / ".join(parts)
+        return RawRecallResult(
+            found=True,
+            source=MemorySourceKind.SESSION_TURN_GRAPH,
+            ir=ir,
+            items=tuple(nodes[-6:]),
+            gist=gist,
+            confidence=min(0.75, ir.confidence),
+            evidence=tuple(f"turn:{n.id}" for n in nodes[-6:]),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Generic adapters
+# ---------------------------------------------------------------------------
+
+
+def _unwrap_fact_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        for key in ("value", "content", "text", "claim"):
+            if key in value:
+                return value[key]
+    for attr in ("value", "content", "text", "claim"):
+        if hasattr(value, attr):
+            return getattr(value, attr)
+    return value
+
+
+def _deep_get(data: dict, fact_key: str) -> Any:
+    # Hỗ trợ cả {"user.birth_month": 8} và {"user": {"birth_month": 8}}
+    if fact_key in data:
+        return data[fact_key]
+    cur: Any = data
+    for part in fact_key.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur

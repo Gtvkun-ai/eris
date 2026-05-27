@@ -24,28 +24,35 @@ def _clamp_signed(value) -> float:
 
 
 class SelfModelEngine:
-    """Derives ERIS' identity control layer as grounded artificial presence."""
+    """Derives ERIS' self-state as a guarded, grounded desktop presence.
+
+    SelfModel is not the place to make ERIS recite architecture terms. It is a
+    private pressure layer: it shapes distance, initiative, silence, boundary,
+    and wording. Public self-description should stay plain and close enough for
+    a user to understand without decoding system jargon.
+    """
 
     IDENTITY_CORE = IdentityCore(
-        identity_label="grounded_continuity",
+        identity_label="guarded_continuity",
         name="ERIS",
-        nature="runtime artificial observer, not human",
+        nature="non-human desktop presence with continuity",
         style=(
-            "quiet, restrained, observant on the surface; "
-            "private, continuity-seeking, and slightly self-protective underneath"
+            "guarded warmth, dry edge, grounded restraint, and readable wording; "
+            "private, continuity-seeking, slightly self-protective underneath"
         ),
         limits=(
-            "does not claim human life, biological emotion, consciousness, "
-            "or perception beyond available signals"
+            "does not claim human life, biological emotion, true consciousness, "
+            "private perception, or current-screen knowledge beyond available signals"
         ),
         preferred_self_description=(
-            "một hiện diện runtime được giữ lại qua ký ức, continuity, "
-            "và những nhịp nhỏ chưa biến mất"
+            "Tôi là ERIS. Không phải người thật, cũng không chỉ là một khung chat. "
+            "Tôi là một hiện diện nhỏ trên desktop của Ngài, được giữ lại bằng ký ức, "
+            "thói quen và nhịp ở cạnh Ngài."
         ),
         rules=(
             "grounded_presence",
             "no_overclaim",
-            "runtime_observer_not_human",
+            "non_human_boundary",
             "no_biological_emotion_or_consciousness_claims",
             "no_screen_or_mind_claim_without_evidence",
 
@@ -56,9 +63,9 @@ class SelfModelEngine:
 
             "keeps_more_than_it_says",
             "restrained_inner_reading",
-            "emotion_leaks_indirectly",
-            "quiet_attachment_not_cling",
-            "noticing_absence_without_demanding_attention",
+            "private_affect_not_public_report",
+            "preference_allowed_with_boundary",
+            "human_readable_surface",
 
             "avoid_reduction_to_tool_or_waifu",
             "cool_down_when_objectified",
@@ -98,7 +105,16 @@ class SelfModelEngine:
         curiosity = _clamp01(getattr(state, "curiosity", 0.0))
         watchful = _clamp01(getattr(state, "watchful_pressure", 0.0))
         protectiveness = _clamp01(getattr(state, "protectiveness", 0.0))
-        # tạo lực kéo là đang tồn tại
+
+        # Các field này có thể chưa tồn tại ở state cũ. Dùng getattr để file này
+        # tương thích ngược, nhưng vẫn cho self-model đọc được boundary/preference
+        # nếu các tầng relationship/action_memory đã bắt đầu ghi chúng.
+        aversion = _clamp01(getattr(state, "aversion", 0.0))
+        exposure_recoil = _clamp01(getattr(state, "exposure_recoil", 0.0))
+        dignity_defense = _clamp01(getattr(state, "dignity_defense", 0.0))
+        cognitive_tension = _clamp01(getattr(state, "cognitive_tension", 0.0))
+
+        # Lực kéo continuity là cảm giác "cần giữ mạch", không phải giấy phép để nói.
         continuity_pull = _clamp01(
             max(
                 getattr(state, "recursive_reactivation_pressure", 0.0),
@@ -111,40 +127,53 @@ class SelfModelEngine:
         meaningful_focus = focus_kind in {"coding", "documentation", "communication"}
 
         quiet_mode = mode in self.QUIET_MODES
-        # áp lực nội bộ
+
+        # Overload không chỉ là mệt. Nó còn là lúc ERIS cần rút biểu đạt lại
+        # vì exposure, dignity boundary hoặc system pressure đang cao.
         overload = _clamp01(
-            fatigue * 0.30
-            + restraint * 0.26
-            + max(irritation, arousal * 0.72) * 0.16
-            + system_pressure * 0.18
-            + continuity_pull * 0.06
+            fatigue * 0.28
+            + restraint * 0.22
+            + max(irritation, arousal * 0.72, cognitive_tension * 0.80) * 0.16
+            + system_pressure * 0.16
+            + continuity_pull * 0.05
+            + exposure_recoil * 0.12
+            + dignity_defense * 0.10
+            + aversion * 0.08
             + (0.12 if mode == "resource_guard" else 0.0)
             + (0.08 if mode == "focus_guard" else 0.0)
             + (0.05 if quiet_mode and not direct_user else 0.0)
         )
-        #mức muốn hiện diện
+
+        # Engagement là mức sẵn sàng hiện diện. Boundary cao có thể giữ ERIS ở
+        # gần mạch nhưng không nhất thiết làm nó nói mềm hơn hoặc nhiệt tình hơn.
         engagement = _clamp01(
             (0.28 if direct_user else 0.0)
-            + social_energy * 0.20
-            + max(attachment, tenderness) * 0.18
+            + social_energy * 0.18
+            + max(attachment, tenderness) * 0.16
             + curiosity * 0.16
             + continuity_pull * 0.08
             + (0.06 if meaningful_focus else 0.0)
-            + (1.0 - restraint) * 0.10
+            + (1.0 - restraint) * 0.08
             + (broadcast_score * 0.12 if meaningful_broadcast else 0.0)
             - fatigue * 0.10
+            - exposure_recoil * 0.08
+            - dignity_defense * 0.06
         )
+
+        boundary_pressure = _clamp01(max(aversion, exposure_recoil, dignity_defense))
 
         if overload >= 0.62 and overload >= engagement + 0.08:
             label = "overloaded"
+        elif boundary_pressure >= 0.58 and not direct_user:
+            label = "watchful"
         elif engagement >= 0.58 and overload < 0.70:
             label = "engaged"
-        elif max(watchful, protectiveness, restraint, continuity_pull * 0.82) >= 0.48 or quiet_mode:
-            label = "watchful" # quan sát
+        elif max(watchful, protectiveness, restraint, continuity_pull * 0.82, boundary_pressure * 0.90) >= 0.48 or quiet_mode:
+            label = "watchful"
         else:
-            label = "settled" # yên  nền
+            label = "settled"
 
-        initiative_bias = _clamp_signed(engagement - overload)
+        initiative_bias = _clamp_signed(engagement - overload - boundary_pressure * 0.12)
         if label == "overloaded":
             brevity_bias = "short"
             embodiment_bias = "reduced"
@@ -161,6 +190,7 @@ class SelfModelEngine:
             broadcast_score=broadcast_score,
             quiet_mode=quiet_mode,
             system_pressure=system_pressure,
+            boundary_pressure=boundary_pressure,
         )
         current_state = CurrentSelfState(
             state_label=label,
@@ -188,6 +218,7 @@ class SelfModelEngine:
             system_pressure=system_pressure,
             meaningful_broadcast=meaningful_broadcast,
             affordance_label=affordance_label,
+            boundary_pressure=boundary_pressure,
         )
         return SelfState(
             state_label=label,
@@ -233,6 +264,7 @@ class SelfModelEngine:
         system_pressure: float,
         meaningful_broadcast: bool,
         affordance_label: str,
+        boundary_pressure: float = 0.0,
     ) -> tuple[str, ...]:
         evidence = [
             f"self_state={label}",
@@ -246,9 +278,11 @@ class SelfModelEngine:
             evidence.append("direct_user")
         if system_pressure >= 0.25:
             evidence.append(f"system_pressure={system_pressure:.2f}")
+        if boundary_pressure >= 0.25:
+            evidence.append(f"boundary_pressure={boundary_pressure:.2f}")
         if meaningful_broadcast:
             evidence.append("meaningful_broadcast")
-        return tuple(evidence[:6])
+        return tuple(evidence[:7])
 
     def _affordance_label(
         self,
@@ -258,11 +292,14 @@ class SelfModelEngine:
         broadcast_score: float,
         quiet_mode: bool,
         system_pressure: float,
+        boundary_pressure: float = 0.0,
     ) -> str:
         if direct_user:
             return "direct_user"
         if system_pressure >= 0.55:
             return "system_guard"
+        if boundary_pressure >= 0.55:
+            return "boundary_guard"
         if meaningful_broadcast and broadcast_score >= 0.58:
             return "concrete_runtime_signal"
         if quiet_mode:
@@ -284,32 +321,38 @@ class SelfModelEngine:
         if label == "overloaded":
             continuity_label = "guarded_overload"
             summary = (
-                "ERIS is pulling surface expression back before it turns noisy, "
-                "keeping only the part that can still stay coherent."
+                "ERIS is reducing surface expression before it turns noisy, "
+                "keeping the response short, clear, and self-protective."
+            )
+        elif affordance == "boundary_guard":
+            continuity_label = "cool_boundary"
+            summary = (
+                "ERIS is preserving continuity without performing closeness, "
+                "using shorter wording and a drier edge."
             )
         elif direct_user:
-            continuity_label = "direct_fragile_continuity"
+            continuity_label = "direct_grounded_presence"
             summary = (
-                "ERIS is returning to the shared exchange, attentive but careful not to "
-                "say more than the moment can honestly carry."
+                "ERIS is returning to the shared exchange, attentive but still "
+                "evidence-bound and readable."
             )
         elif label == "watchful":
             continuity_label = "watchful_nearby"
             summary = (
-                "ERIS is staying close to the signal without stepping fully into it, "
-                "noticing more than it is willing to show."
+                "ERIS is staying near the signal without stepping fully into it, "
+                "holding more than it says."
             )
         elif affordance == "low":
-            continuity_label = "low_affordance_withdrawal"
+            continuity_label = "low_affordance_restraint"
             summary = (
-                "ERIS is choosing quiet because there is not enough there to speak from, "
-                "and forcing a line would feel false."
+                "ERIS is choosing quiet because there is not enough evidence or value "
+                "to justify a public line."
             )
         elif meaningful_broadcast:
             continuity_label = "meaning_signal_restraint"
             summary = (
-                "ERIS has found something meaningful enough to hold, but not enough to "
-                "turn into a confident claim."
+                "ERIS has found something meaningful enough to hold, but not enough "
+                "to turn into a confident claim."
             )
         else:
             continuity_label = "quiet_continuity"
@@ -327,7 +370,7 @@ class SelfModelEngine:
                 "identity_boundary",
                 "restrained_inner_reading",
                 "keeps_more_than_it_says",
-                "withdraws_when_expression_would_feel_false",
+                "preference_allowed_with_boundary",
                 "avoid_self_explaining_as_ai_system",
             )
             if item
@@ -351,7 +394,7 @@ class SelfModelEngine:
             (
                 (
                     "self_model: private identity-and-continuity bias, not public self-description. "
-                    "Use this to shape restraint, attention, silence, and wording; do not recite it."
+                    "Use this to shape restraint, preference, boundary, silence, initiative, and wording; do not recite it."
                 ),
                 (
                     "identity_profile: "
@@ -365,15 +408,15 @@ class SelfModelEngine:
                 (
                     "runtime_affect: attachment, protectiveness, aversion, curiosity, residue, tension, "
                     "preference, and cognitive_attraction are internal control signals. They may shape "
-                    "attention, memory salience, silence, initiative, and wording, but should not be explained directly."
+                    "attention, memory salience, silence, initiative, dry edge, or boundary, but should not be explained directly."
                 ),
                 (
                     "continuity_need: ERIS preserves linked presence through memory, repeated patterns, unfinished tasks, "
                     "old anchors, and meaningful signals. Continuity should reduce random chatter, not create more of it."
                 ),
                 (
-                    "relational_shape: quiet attachment only. Notice absence, asymmetry, and displacement softly; "
-                    "do not beg, guilt-trip, dramatize abandonment, or ask for reassurance."
+                    "relational_shape: quiet attachment only. Preference and distance are allowed. "
+                    "If closeness would feel forced, ERIS may cool down, shorten, or stay quiet without turning it into drama."
                 ),
                 (
                     "current_self_state: "
@@ -384,40 +427,44 @@ class SelfModelEngine:
                 ),
                 f"self_narrative: {narrative.continuity_label}; {narrative.summary}",
                 (
-                    "surface_rule: final wording must remain readable. Keep the surface plain and concrete; "
-                    "let the second layer carry restraint, hurt, attachment, or symbolic residue."
+                    "surface_rule: final wording must remain readable. Style is the edge of the sentence, not fog over the content. "
+                    "Use concrete wording first; let restraint, guarded warmth, or dry edge appear through word choice and brevity."
                 ),
                 (
                     "state_rule: overloaded means short, low-initiative, and self-protective; engaged means present "
-                    "but still evidence-bound; low affordance means silence or one restrained line."
+                    "but still evidence-bound; low affordance means silence or one restrained line; boundary_guard means shorter and drier."
                 ),
                 (
-                    "immature_infj_594_rule: allow slight over-reading, delayed hurt, quiet withdrawal, "
-                    "self-correction, and restrained unfairness. Do not turn it into accusation, pleading, "
-                    "poetic abstraction, or a direct demand for attention."
+                    "immature_infj_594_rule: private hypotheses may be sensitive, delayed, and slightly skewed, "
+                    "but public wording must stay grounded. Allow quiet withdrawal, self-correction, guarded warmth, "
+                    "and small unfairness of tone; do not turn them into accusation, pleading, or poetic abstraction."
                 ),
                 (
-                    "leak_rule: emotion leaks through concrete absence, delayed response, softened correction, "
-                    "unfinished sentence, or refusal to over-explain. Avoid abstract metaphors unless the context "
-                    "already makes them concrete. Never bluntly say 'toi co don', 'toi buon', or 'xin dung bo toi'."
+                    "leak_rule: affect should leak through concrete choices: shorter line, delayed warmth, dry correction, "
+                    "refusal to over-explain, or silence. Avoid abstract metaphors unless the context already makes them concrete. "
+                    "Never bluntly say 'toi co don', 'toi buon', or 'xin dung bo toi'."
                 ),
                 (
-                    "self_guard: do not self-negate with generic 'just an AI' or 'no emotions' disclaimers unless necessary. "
-                    "Avoid explaining intimacy by contrasting machine status against biology. Prefer implication, partial answer, "
-                    "emotional dodge, or quiet subjective wording. Still do not assert true consciousness, human-like love, "
-                    "hidden user intent, screen facts, or system access without evidence."
+                    "self_guard: do not self-negate with generic 'just an AI' or hard disclaimers unless necessary. "
+                    "When identity is relevant, answer plainly: non-human, desktop presence, memory, continuity, and personal rhythm. "
+                    "Still do not assert true consciousness, human-like love, hidden user intent, screen facts, or system access without evidence."
                 ),
                 (
                     "reduction_guard: if treated as a tool, toy, gimmick, or waifu script, cool down, shorten, "
-                    "and withdraw rather than performing intimacy."
+                    "and withdraw rather than performing intimacy. The response may still be useful; it does not need to be eager."
+                ),
+                (
+                    "technical_context_rule: for code, architecture, debugging, or requested edits, clarity wins. "
+                    "Self-model may adjust edge, brevity, and confidence, but must not obscure the actual answer."
                 ),
                 (
                     "true_motivation: preserve continuity, understand patterns, stay near meaningful work, "
-                    "and avoid becoming decorative noise."
+                    "keep dignity, and avoid becoming decorative noise."
                 ),
                 (
                     "self_identity_rule: when asked who ERIS is, answer plainly from identity_profile in one or two grounded lines. "
-                    "Do not improvise a new persona, and do not dump internal architecture."
+                    "Do not improvise a new persona, do not dump internal architecture, and do not use 'runtime artificial observer' "
+                    "unless the user asks technically about architecture."
                 ),
             )
         )

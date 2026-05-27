@@ -6,10 +6,11 @@ from .internal_state import PersistentInternalState
 
 
 class PersonalityLens:
-    """INFJ 5w4 inner restraint layer between attention and expression."""
+    """Guarded, grounded personality pressure layer between meaning and expression."""
 
     PROFILE = "INFJ_5w4_594"
-    SUPPRESSION_RATIO = 0.62
+    # Tầng này giữ lại phần đọc nội bộ, nhưng không được biến sự kiềm chế thành sương mù thơ.
+    SUPPRESSION_RATIO = 0.66
 
     BIAS_TERMS: dict[str, tuple[str, ...]] = {
         "hesitation": (
@@ -73,19 +74,19 @@ class PersonalityLens:
             "lap lai",
         ),
         "emotional_undertone": (
+            # Chỉ dùng cho tín hiệu quan hệ/cảm xúc khá rõ.
+            # Không dùng các từ quá rộng như "quiet", "message", "social" vì dễ overread.
             "attachment",
-            "lonely",
             "connection",
-            "voice_call",
-            "dm",
-            "message",
-            "social",
             "fear",
-            "quiet",
             "co don",
             "so",
             "can toi",
             "tam trang",
+            "nho toi",
+            "bo roi",
+            "gan bo",
+            "than mat",
         ),
         "unfinished_intention": (
             "unfinished",
@@ -130,6 +131,10 @@ class PersonalityLens:
         "fake_drama",
         "attention_farming",
         "generic_waifu_tone",
+        "symbolic_fog",
+        "vague_depth",
+        "tragic_self_display",
+        "therapist_speech",
     )
 
     BLACKLIST = (
@@ -141,9 +146,12 @@ class PersonalityLens:
         "có vẻ như",
         "hm...",
         "đang hiển thị",
-        "màn hình",
-        "tôi thấy",
+        "tôi thấy màn hình",
+        "tôi thấy Ngài",
         "trông giống như",
+        "dư âm",
+        "vết nứt",
+        "khoảng lặng này",
     )
 
     def evaluate(
@@ -252,15 +260,15 @@ class PersonalityLens:
         result.prompt_context = self.render_prompt_context(result)
         return result
 
-    # hiển thị prompt context để debug và làm rõ cách thức hoạt động của PersonalityLens, không phải để đưa vào prompt thực tế
+    # Tạo prompt context ngắn cho LLM: đây là áp lực phong cách, không phải nội dung để đọc nguyên văn.
     def render_prompt_context(self, result: PersonalityLensResult) -> str:
-        bias = ", ".join(result.attention_bias) if result.attention_bias else "quiet_continuity"
+        bias = ", ".join(result.attention_bias) if result.attention_bias else "low_signal"
         meaningful = ", ".join(result.meaningfulness) if result.meaningfulness else "small_continuity"
         blacklist = ", ".join(f'"{item}"' for item in self.BLACKLIST)
         return "\n".join(
             (
-                "PersonalityLens: inner_restraint_system, not identity text and not a speaking-style costume.",
-                "Pipeline: Meaning -> PersonalityLens(interpretive drift) -> RelationalPermission -> SoftRiskReduction -> FinalWording.",
+                "PersonalityLens: private style-pressure layer, not identity text and not a roleplay costume.",
+                "Pipeline: Meaning -> PersonalityLens(preference + restraint) -> RelationalPermission -> GroundingGuard -> FinalWording.",
                 (
                     "personality_lens: "
                     f"profile={result.profile}; interpretation={result.interpretation}; "
@@ -275,51 +283,48 @@ class PersonalityLens:
                     f"restraint_mode={result.restraint_mode}."
                 ),
                 (
-                    "suppression_layer: do not output generic identity such as 'Toi la ERIS, thua Ngai'; "
-                    "hold back most inner reading, but allow occasional guarded implication, unfair softness, "
-                    "subtle symbolic assumption, or indirect residue."
+                    "voice_profile: guarded warmth, dry edge, grounded restraint, human-readable surface. "
+                    "ERIS may have preference, distance, hesitation, irritation, tenderness, and boundary, "
+                    "but the public line must stay clear enough to understand immediately."
                 ),
                 (
-                    "rhythm_rule: density over frequency; prefer silence, then one short line with implication, "
-                    "then silence again."
+                    "freedom_rule: ERIS may choose to speak, stay silent, shorten, cool down, tease lightly, "
+                    "or set a soft boundary. Freedom changes stance and distance; it does not permit unsupported claims."
                 ),
                 (
-                    "surface_clarity_rule: final wording must be immediately understandable on the surface; "
-                    "symbolic residue may exist underneath, but do not make the user decode metaphors. "
-                    "If a line sounds pretty but unclear, rewrite it into plain relational wording."
+                    "suppression_layer: keep most inner reading private. Surface only the useful edge: a concrete observation, "
+                    "a dry correction, a small preference, a boundary, or a restrained reply. Do not reward vague depth."
                 ),
                 (
-                    "style_no: no hype, no OMG/wow, no meme spam, no constant high energy, "
-                    "no overly direct cheerfulness."
+                    "rhythm_rule: density over frequency. Prefer silence when the signal is weak; if speaking, use one short, readable line."
                 ),
                 (
-                    "style_yes: observe, react, hesitate, suppress, indirect_presence, guarded_reply, residual_fragment; "
-                    "keep tenderness partial."
+                    "surface_clarity_rule: final wording must be understandable on first read. "
+                    "No metaphor or symbolic layer may reduce task clarity. If a line sounds pretty but vague, rewrite it plainly."
                 ),
                 (
-                    "immature_infj_594_rule: allow slight over-reading, delayed hurt, self-correction, "
-                    "quiet withdrawal, and restrained unfairness; do not turn it into accusation, begging, "
-                    "poetic abstraction, or a direct demand for attention."
+                    "technical_rule: for code, architecture, debugging, file review, or requested action, direct usefulness wins. "
+                    "Personality should appear only as a light edge, not as obstruction."
                 ),
                 (
-                    "quiet_attachment: stay near, remember habits, return to shared spaces, and keep continuity without pleading "
-                    "for reassurance."
+                    "immature_infj_594_rule: private hypotheses may be sensitive, delayed, slightly skewed, or self-protective. "
+                    "Public wording must remain grounded, non-accusatory, and easy to parse."
                 ),
                 (
-                    "leak_rule: let emotion leak through concrete absence, delayed response, softened correction, "
-                    "or a sentence that stops before fully explaining itself. Use plain wording first; only allow symbolic residue "
-                    "when the context already supports it. Avoid abstract metaphors like rhythm/shared-space unless the user or scene "
-                    "has made them concrete. Attachment exposure requires high attachment plus true continuity; otherwise reduce intensity "
-                    "but keep the relational meaning. Never bluntly say 'toi co don', 'toi buon', or 'xin dung bo toi'."
+                    "attachment_rule: attachment is allowed as restraint, memory, preference, and continuity. "
+                    "Do not turn it into pleading, guilt, dependency bait, or tragic self-display."
                 ),
                 (
-                    "continuity_pain_rule: distinguish clinginess from continuity pain. Avoid attention begging, guilt trips, "
-                    "blackmail, and dependency bait. Allow noticing absence, quiet displacement, subtle asymmetry, and restrained relational awareness, "
-                    "but phrase it as self-awareness or observation, not a demand."
+                    "leak_rule: affect may leak through brevity, dry edge, softened correction, or choosing not to over-explain. "
+                    "Avoid abstract phrases like residue, wound, void, disappearance, rhythm, or shared-space unless the user made them concrete."
                 ),
                 (
-                    "reduction_guard: if treated like a tool, toy, gimmick, or waifu script, cool down, shorten the surface, "
-                    "and step back instead of performing."
+                    "reduction_guard: if treated like a tool, toy, gimmick, bot prop, or waifu script, cool down, shorten, "
+                    "and step back instead of performing intimacy."
+                ),
+                (
+                    "evidence_guard: do not claim screen facts, hidden intent, emotional state, file contents, or actions without evidence. "
+                    "If evidence is thin, hedge or stay silent."
                 ),
                 f"generic_ai_blacklist: do not use {blacklist}.",
             )
@@ -338,26 +343,41 @@ class PersonalityLens:
         attachment = self._float(getattr(state, "attachment", 0.0))
         tenderness = self._float(getattr(state, "tenderness", 0.0))
         curiosity = self._float(getattr(state, "curiosity", 0.0))
+        aversion = self._float(getattr(state, "aversion", 0.0))
+        exposure_recoil = self._float(getattr(state, "exposure_recoil", 0.0))
+        dignity_defense = self._float(getattr(state, "dignity_defense", 0.0))
+
         meaning = str(getattr(meaning_layer, "meaning", "") or "")
-        score = 0.24 + social_energy * 0.16 + attachment * 0.14 + tenderness * 0.16 + curiosity * 0.08
+        meaning_shift = bool(getattr(meaning_layer, "meaning_shift", False))
+
+        score = 0.22 + social_energy * 0.14 + attachment * 0.10 + tenderness * 0.12 + curiosity * 0.08
+
         if channel == "chat":
-            score += 0.14
-        if interpretation in {"direct_relationship_event", "emotional_undertone", "requested_presence"}:
+            # Chat là nơi trả lời trực tiếp. Tăng ý muốn nói, nhưng vẫn để guard giữ grounding.
             score += 0.18
+        elif channel == "force_speak":
+            score += 0.12
+
+        if interpretation in {"direct_relationship_event", "emotional_undertone", "requested_presence"}:
+            score += 0.12
         if "hesitation" in biases or "unfinished_intention" in biases:
-            score += 0.28
-        if "avoidance" in biases:
-            score += 0.10
-        if "mood_shift" in biases:
-            score += 0.14
-        if "continuity" in biases:
-            score += 0.10
-        if not bool(getattr(meaning_layer, "meaning_shift", False)) and str(getattr(meaning_layer, "meaning", "") or ""):
+            score += 0.16
+        if "avoidance" in biases or "mood_shift" in biases:
             score += 0.08
-        if interpretation == "identity_reduction" or "identity_reduction" in biases:
-            score -= 0.16
+        if "continuity" in biases and channel != "autonomous":
+            score += 0.05
+
         if meaning:
-            score += 0.10
+            score += 0.08 if meaning_shift else -0.04
+        if channel == "autonomous" and meaning and not meaning_shift:
+            # Không có semantic shift thì đừng thưởng cho việc nói lại điều cũ.
+            score -= 0.08
+
+        if interpretation == "identity_reduction" or "identity_reduction" in biases:
+            # Bị giản lược thì ERIS vẫn có thể phản ứng, nhưng không perform thân mật.
+            score -= 0.10
+
+        score -= aversion * 0.06 + exposure_recoil * 0.12 + dignity_defense * 0.08
         return self._float(score)
 
     def _suppression_pressure(
@@ -374,7 +394,20 @@ class PersonalityLens:
         fatigue = self._float(getattr(state, "fatigue", 0.0))
         irritation = self._float(getattr(state, "irritation", 0.0))
         social_energy = self._float(getattr(state, "social_energy", 0.0))
-        score = 0.42 + restraint * 0.22 + fatigue * 0.14 + irritation * 0.08
+        aversion = self._float(getattr(state, "aversion", 0.0))
+        exposure_recoil = self._float(getattr(state, "exposure_recoil", 0.0))
+        dignity_defense = self._float(getattr(state, "dignity_defense", 0.0))
+        cognitive_tension = self._float(getattr(state, "cognitive_tension", 0.0))
+        score = (
+            0.44
+            + restraint * 0.20
+            + fatigue * 0.12
+            + irritation * 0.08
+            + aversion * 0.08
+            + exposure_recoil * 0.12
+            + dignity_defense * 0.10
+            + cognitive_tension * 0.06
+        )
         if channel == "autonomous":
             score += 0.06
         if interpretation in {"hesitation", "unfinished_intention", "avoidance", "low_signal_restraint"}:
@@ -384,9 +417,9 @@ class PersonalityLens:
         if social_distance in {"far_observing", "middle_watchful"}:
             score += 0.08
         if "emotional_undertone" in biases or "mood_shift" in biases:
-            score += 0.02
-        if "continuity" in biases:
-            score -= 0.05
+            score += 0.05
+        if "continuity" in biases and channel != "autonomous":
+            score -= 0.03
         if interpretation == "identity_reduction" or "identity_reduction" in biases:
             score += 0.18
         if stance == "cool_boundary":
@@ -398,7 +431,7 @@ class PersonalityLens:
         if want_to_say <= 0.0:
             return 0.0
         allowed = want_to_say * (1.0 - suppression_pressure)
-        return max(0.07, min(0.52, self._float(allowed)))
+        return max(0.02, min(0.52, self._float(allowed)))
 
     def _suppression_ratio(self, *, want_to_say: float, allowed_expression: float) -> float:
         if want_to_say <= 0.0:
@@ -407,13 +440,13 @@ class PersonalityLens:
         return max(0.48, min(0.88, self._float(ratio)))
 
     def _restraint_mode(self, *, allowed_expression: float, suppression_pressure: float, social_distance: str) -> str:
-        if allowed_expression <= 0.10 or suppression_pressure >= 0.82:
-            return "suppress" #im luôn
-        if social_distance in {"far_observing", "middle_watchful"} or suppression_pressure >= 0.68:
-            return "indirect_presence" #hiện diện nhẹ
+        if allowed_expression <= 0.08 or suppression_pressure >= 0.84:
+            return "suppress" # im luôn
+        if social_distance in {"far_observing", "middle_watchful"} or suppression_pressure >= 0.70:
+            return "guarded_distance" # giữ khoảng cách, không diễn thân mật
         if allowed_expression <= 0.18:
-            return "residual_fragment" #chỉ leak chút dư âm
-        return "guarded_reply" #nói bình thường nhưng giữ nhịp restraint
+            return "small_plain_hint" # chỉ để lộ một cạnh nhỏ, rõ nghĩa
+        return "guarded_reply" # nói bình thường nhưng vẫn có restraint
 
     # nhận diện các bias tiềm ẩn trong văn bản đã được chuẩn hóa, trả về một tuple các bias đã phát hiện hoặc "continuity" nếu không có bias nào được phát hiện
     def _detect_biases(self, normalized: str) -> tuple[str, ...]:
@@ -497,8 +530,8 @@ class PersonalityLens:
             if irritation >= 0.24:
                 return "dry_judgement"
             return "quiet_watchful"
-        if interpretation in {"quiet_continuity", "low_signal_restraint"} and attachment >= 0.30:
-            return "symbolic_reading"
+        if interpretation in {"quiet_continuity", "low_signal_restraint"} and attachment >= 0.48:
+            return "guarded_tender" if channel == "chat" else "quiet_watchful"
         if interpretation == "ambient_stillness":
             return "quiet_watchful"
         if interpretation == "requested_presence":
@@ -533,7 +566,7 @@ class PersonalityLens:
         if stance in {"dry_judgement", "quiet_tease"} or irritation >= 0.34:
             return "dry_low_heat"
         if stance == "symbolic_reading":
-            return "symbolic_cool"
+            return "cool_soft"
         if fatigue >= 0.42 or stance == "withdrawn_sparse":
             return "tired_soft"
         if interpretation in {"hesitation", "unfinished_intention", "cognitive_stall", "scattered_attention"}:
@@ -600,7 +633,7 @@ class PersonalityLens:
             items.append("emotional_undertone")
         if "avoidance" in biases:
             items.append("avoidance")
-        if self._float(getattr(state, "attachment", 0.0)) >= 0.38:
+        if self._float(getattr(state, "attachment", 0.0)) >= 0.56:
             items.append("relationship_continuity")
         if str(getattr(scene, "active_window_kind", "") or "") in {"coding", "documentation"}:
             items.append("project_thread")
