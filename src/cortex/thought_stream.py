@@ -1027,6 +1027,45 @@ class RecursiveReactivation:
 class SubconsciousLoopReheater:
     """Reactivates unresolved loops as silent pressure instead of fresh drift."""
 
+    # Các token này xuất hiện quá thường xuyên trong memory runtime.
+    # Nếu chỉ dựa vào chúng, hệ thống sẽ tưởng memory nào có "project/code/user"
+    # cũng liên quan, rồi hâm lại sai loop.
+    GENERIC_MEMORY_TOKENS = {
+        "active",
+        "agent",
+        "code",
+        "coding",
+        "current",
+        "evidence",
+        "eris",
+        "file",
+        "fix",
+        "implementation",
+        "loop",
+        "memory",
+        "mode",
+        "project",
+        "runtime",
+        "signal",
+        "state",
+        "system",
+        "test",
+        "thought",
+        "user",
+    }
+
+    # Memory layer có độ đáng tin/độ gần nghĩa khác nhau.
+    # Đây chỉ là bias rất nhẹ, không cho layer thắng nếu nội dung không khớp.
+    MEMORY_LAYER_WEIGHTS = (
+        ("semantic/user", 1.10),
+        ("semantic/project", 1.08),
+        ("relationship/", 1.06),
+        ("repair/", 1.05),
+        ("episodic", 0.98),
+        ("working", 0.94),
+        ("active", 0.92),
+    )
+
     def reheat(
         self,
         *,
@@ -1086,12 +1125,15 @@ class SubconsciousLoopReheater:
         )
 
     def _reheat_score(self, thought: ThoughtObject, *, memories: tuple[str, ...]) -> float:
+        # Trước đây chỉ cần có token giao nhau là cộng memory_link.
+        # Lỗi: memory dài/generic chứa vài token phổ biến cũng kích hoạt loop.
+        # Bây giờ dùng cùng scoring mềm với _matching_memory để memory chỉ tạo áp lực
+        # khi nó có resonance thật với core của thought.
         memory_link = 0.0
-        thought_tokens = self._thought_tokens(thought)
-        for memory in memories[-10:]:
-            if thought_tokens & _semantic_tokens(memory):
-                memory_link = 0.16
-                break
+        for reverse_index, memory in enumerate(reversed(tuple(memories or ())[-10:])):
+            score, _, _ = self._memory_match_score(thought, memory, reverse_index=reverse_index)
+            if score >= 0.20:
+                memory_link = max(memory_link, min(0.16, score * 0.24))
         return _clamp01(
             float(thought.tension or 0.0) * 0.48
             + float(thought.persistence or 0.0) * 0.28
@@ -1100,17 +1142,112 @@ class SubconsciousLoopReheater:
         )
 
     def _matching_memory(self, thought: ThoughtObject, memories: tuple[str, ...]) -> str:
-        thought_tokens = self._thought_tokens(thought)
-        if not thought_tokens:
+        # Không chọn memory bằng overlap thô.
+        # Overlap thô sẽ ưu tiên memory dài và generic, vì càng dài càng dễ chứa vài token
+        # như "user", "project", "code", "memory". Đây là false resonance.
+        #
+        # Thay vào đó, chọn theo resonance score:
+        # - core tokens của thought phải khớp với memory
+        # - overlap được chuẩn hóa theo containment/jaccard, không phải số lượng tuyệt đối
+        # - token generic bị phạt nếu không có token đặc hiệu đi kèm
+        # - memory gần đây chỉ là tie-break/bias nhẹ, không được thắng nội dung
+        if not memories:
             return ""
+
         best = ""
-        best_overlap = 0
-        for memory in memories[-12:]:
-            overlap = len(thought_tokens & _semantic_tokens(memory))
-            if overlap > best_overlap:
+        best_score = 0.0
+        best_tiebreak = (-1.0, -1, -999)
+
+        recent_memories = tuple(memories or ())[-18:]
+        for reverse_index, memory in enumerate(reversed(recent_memories)):
+            score, overlap_count, specificity = self._memory_match_score(
+                thought,
+                memory,
+                reverse_index=reverse_index,
+            )
+            if score <= 0.0:
+                continue
+
+            # Tie-break chỉ dùng khi score gần bằng nhau:
+            # ưu tiên memory có token đặc hiệu hơn, rồi overlap vừa đủ, rồi mới tới recency.
+            tiebreak = (specificity, overlap_count, -reverse_index)
+            if score > best_score + 1e-9 or (abs(score - best_score) <= 1e-9 and tiebreak > best_tiebreak):
                 best = _clean_text(memory, limit=160)
-                best_overlap = overlap
-        return best if best_overlap > 0 else ""
+                best_score = score
+                best_tiebreak = tiebreak
+
+        # Ngưỡng thấp vừa đủ để giữ subconscious linh hoạt, nhưng không nhận bất kỳ
+        # memory nào chỉ vì cùng vài từ rác.
+        return best if best_score >= 0.18 else ""
+
+    def _memory_match_score(self, thought: ThoughtObject, memory: object, *, reverse_index: int = 0) -> tuple[float, int, float]:
+        thought_tokens = self._thought_tokens(thought)
+        memory_text = _clean_text(memory, limit=240)
+        memory_tokens = _semantic_tokens(memory_text)
+        if not thought_tokens or not memory_tokens:
+            return 0.0, 0, 0.0
+
+        overlap_tokens = thought_tokens & memory_tokens
+        overlap_count = len(overlap_tokens)
+        if overlap_count <= 0:
+            return 0.0, 0, 0.0
+
+        core_tokens = self._core_thought_tokens(thought)
+        specific_thought_tokens = self._specific_tokens(thought_tokens)
+        specific_overlap = len(overlap_tokens & specific_thought_tokens)
+        generic_overlap = overlap_count - specific_overlap
+        core_overlap = len(core_tokens & memory_tokens)
+
+        # Nếu chỉ trùng token generic, đừng xem là resonance.
+        # Trường hợp overlap >= 4 vẫn cho score rất thấp để không mất hoàn toàn
+        # các memory ngắn/legacy, nhưng nó gần như không thắng được memory đặc hiệu.
+        if specific_overlap <= 0 and core_overlap <= 0 and overlap_count < 4:
+            return 0.0, overlap_count, 0.0
+
+        containment = overlap_count / max(1, min(len(thought_tokens), len(memory_tokens), 14))
+        jaccard = overlap_count / max(1, len(thought_tokens | memory_tokens))
+        core_score = core_overlap / max(1, min(len(core_tokens), 8))
+        specificity = specific_overlap / max(1, overlap_count)
+
+        # Memory quá dài thường thắng overlap thô dù nghĩa loãng. Phạt nhẹ theo độ dài
+        # để memory ngắn, chính xác không bị chôn dưới một đoạn tóm tắt dài như biên bản họp.
+        length_penalty = max(0.68, 1.0 - max(0, len(memory_tokens) - 26) * 0.010)
+        generic_penalty = 0.72 if generic_overlap and specific_overlap == 0 else 1.0
+        layer_weight = self._memory_layer_weight(memory_text)
+        recency_weight = max(0.74, 1.0 - reverse_index * 0.018)
+
+        score = (
+            containment * 0.30
+            + jaccard * 0.18
+            + core_score * 0.34
+            + specificity * 0.18
+        )
+        score *= length_penalty * generic_penalty * layer_weight * recency_weight
+        return _clamp01(score), overlap_count, specificity
+
+    def _core_thought_tokens(self, thought: ThoughtObject) -> set[str]:
+        # Core lấy từ seed/key trước, vì đây là phần định danh loop.
+        # partial_text/evidence thường dài và dễ kéo theo token nền không quan trọng.
+        core = _semantic_tokens(
+            " ".join(
+                (
+                    thought.topic_seed,
+                    thought.prediction_key,
+                    thought.source_memory,
+                )
+            )
+        )
+        return self._specific_tokens(core) or core
+
+    def _specific_tokens(self, tokens: set[str]) -> set[str]:
+        return {token for token in tokens if token not in self.GENERIC_MEMORY_TOKENS}
+
+    def _memory_layer_weight(self, memory: object) -> float:
+        normalized = _normalize_ascii(memory)
+        for prefix, weight in self.MEMORY_LAYER_WEIGHTS:
+            if normalized.startswith(prefix):
+                return weight
+        return 1.0
 
     def _thought_tokens(self, thought: ThoughtObject) -> set[str]:
         return _semantic_tokens(

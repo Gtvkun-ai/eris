@@ -299,29 +299,83 @@ def lower_text(value: Any, *, max_len: int = 1600) -> str:
     return text_of(value, max_len=max_len).lower()
 
 
+def _keyword_pattern(word: str) -> re.Pattern[str]:
+    """Tạo pattern match keyword ít ngu hơn substring thuần.
+
+    - Cụm có khoảng trắng vẫn match như phrase.
+    - Từ ASCII một mảnh dùng boundary để `class` không ăn vào chuỗi dài kỳ quặc.
+    - Từ tiếng Việt một mảnh vẫn dùng look-around chữ/số để giảm match nhầm.
+
+    Đây vẫn là heuristic. Khác biệt là nó không được phép tự phong làm semantic truth nữa.
+    """
+
+    escaped = re.escape(word.strip().lower())
+    if not escaped:
+        return re.compile(r"a^", re.IGNORECASE)
+    if re.fullmatch(r"[a-z0-9_#+.-]+", word.strip().lower()):
+        return re.compile(rf"(?<![a-z0-9_#+.-]){escaped}(?![a-z0-9_#+.-])", re.IGNORECASE)
+    return re.compile(rf"(?<![\wÀ-ỹ]){escaped}(?![\wÀ-ỹ])", re.IGNORECASE)
+
+
 def contains_any(text: str, words: Sequence[str]) -> bool:
-    return any(word in text for word in words)
+    return any(_keyword_pattern(word).search(text or "") for word in words)
 
 
 def count_any(text: str, words: Sequence[str]) -> int:
-    return sum(1 for word in words if word in text)
+    return sum(1 for word in words if _keyword_pattern(word).search(text or ""))
+
+
+def keyword_hits(text: str, words: Sequence[str]) -> list[str]:
+    if not text:
+        return []
+    hits: list[str] = []
+    for word in words:
+        if _keyword_pattern(word).search(text):
+            hits.append(word)
+    return hits
 
 
 def weighted_keyword_score(text: str, groups: Mapping[str, Sequence[str]], weights: Mapping[str, float]) -> float:
-    """Tính score keyword mềm.
+    """Tính score keyword fallback.
 
-    Không được hiểu nhầm: đây không phải classifier chân lý.
-    Nó chỉ là tín hiệu phụ để chọn budget. Ý nghĩa thật vẫn ở Meaning/ToM/Arbitration.
+    Bản cũ để keyword đi quá thẳng vào pressure rồi hard-floor lên deep.
+    Bản này vẫn trả score để budget có fallback rẻ khi semantic reports chưa nối đủ,
+    nhưng các estimator phía dưới sẽ cap score này nếu thiếu semantic support.
     """
 
     if not text:
         return 0.0
     score = 0.0
     for group, words in groups.items():
-        hit = count_any(text, words)
+        hit = len(keyword_hits(text, words))
         if hit:
-            score += min(1.0, 0.35 + hit * 0.18) * weights.get(group, 0.1)
+            score += min(1.0, 0.25 + hit * 0.12) * weights.get(group, 0.1)
     return clamp01(score)
+
+
+def blend_semantic_and_keyword(
+    *,
+    semantic: float,
+    keyword: float,
+    keyword_cap_without_semantic: float = 0.42,
+    semantic_floor_for_uncap: float = 0.35,
+    keyword_weight_when_supported: float = 0.35,
+) -> tuple[float, bool]:
+    """Ghép semantic pressure với keyword fallback.
+
+    Trả về `(pressure, keyword_only)`.
+    `keyword_only=True` nghĩa là pressure chủ yếu đến từ text match, chưa được evidence/semantic
+    report chống lưng. Các hard floor tuyệt đối không nên kích hoạt từ trạng thái này.
+    """
+
+    semantic = clamp01(semantic)
+    keyword = clamp01(keyword)
+    if semantic >= semantic_floor_for_uncap:
+        return clamp01(max(semantic, keyword * keyword_weight_when_supported + semantic)), False
+    if keyword <= 0.0:
+        return semantic, False
+    capped = min(keyword * 0.72, keyword_cap_without_semantic)
+    return clamp01(max(semantic, capped)), True
 
 
 def unique_preserve_order(items: Iterable[str]) -> list[str]:
@@ -417,6 +471,21 @@ class BudgetSignalSnapshot:
     correction_pressure: float = 0.0
     contradiction_pressure: float = 0.0
     relational_rupture: float = 0.0
+
+    # Debug/guard cho heuristic:
+    # keyword pressure vẫn tồn tại, nhưng hard floor không được kích hoạt nếu thiếu semantic support.
+    technical_semantic_support: float = 0.0
+    architecture_semantic_support: float = 0.0
+    correction_semantic_support: float = 0.0
+    risk_semantic_support: float = 0.0
+    technical_keyword_pressure: float = 0.0
+    architecture_keyword_pressure: float = 0.0
+    correction_keyword_pressure: float = 0.0
+    risk_keyword_pressure: float = 0.0
+    technical_keyword_only: bool = False
+    architecture_keyword_only: bool = False
+    correction_keyword_only: bool = False
+    risk_keyword_only: bool = False
     affective_residue: float = 0.0
     homeostasis_load: float = 0.0
     goal_pressure: float = 0.0
@@ -682,6 +751,14 @@ class CognitiveBudgetConfig:
     # Nếu mode thắng quá sít sao thì confidence thấp hơn.
     weak_margin: float = 0.10
 
+    # Keyword chỉ là fallback. Không cho text match một mình kéo budget lên deep.
+    keyword_only_pressure_cap: float = 0.42
+    keyword_semantic_support_floor: float = 0.35
+    keyword_supported_weight: float = 0.35
+
+    # Chỉ hard-floor lên deep khi có semantic/evidence support đủ tốt.
+    hard_floor_semantic_support_threshold: float = 0.38
+
     # Cho phép module ghi decision vào frame.
     attach_report_to_frame: bool = True
     attach_decision_to_frame: bool = True
@@ -789,6 +866,8 @@ class CognitiveBudgetConfig:
 # =============================================================================
 
 TECHNICAL_KEYWORDS = (
+    # Cố ý giữ các anchor kỹ thuật tương đối đặc hiệu.
+    # Các từ quá rộng như "làm", "tạo", "gửi", "file", "chạy" đã bị loại khỏi nhóm này.
     "code",
     "debug",
     "bug",
@@ -815,14 +894,7 @@ TECHNICAL_KEYWORDS = (
     "cognitive",
     "kiến trúc",
     "lỗi",
-    "sửa",
-    "file",
-    "tạo",
-    "làm",
-    "gửi",
-    "chạy",
-    "nối",
-    "repo",
+    "fix",
 )
 
 ARCHITECTURE_KEYWORDS = (
@@ -1126,6 +1198,17 @@ class CognitiveBudgetEngine:
         self_observation = safe_get(frame, "self_observation", None)
         temporal = safe_get(frame, "temporal", None)
 
+        # Semantic reports đã tồn tại trong kiến trúc mới. Budget phải đọc chúng trước,
+        # không tự đóng vai classifier nghèo bằng keyword groups nữa.
+        affect_signal = safe_get(frame, "affect_signal", None) or safe_get(frame, "affect_semantics", None)
+        conversation = safe_get(frame, "conversation_dynamics", None) or safe_get(frame, "conversation_report", None)
+        source_grounding = (
+            safe_get(frame, "source_grounding", None)
+            or safe_get(frame, "grounding_source", None)
+            or safe_get(frame, "pre_grounding", None)
+            or safe_get(frame, "grounding", None)
+        )
+
         text_blob = self._collect_text_blob(
             frame,
             user_text=user_text,
@@ -1138,16 +1221,25 @@ class CognitiveBudgetEngine:
             memory_packet=memory_packet,
         )
 
-        has_user_text = bool((user_text or self._extract_user_text_from_signals(raw_signals, evidence)).strip())
-        user_directness = self._estimate_user_directness(channel, user_text, evidence, raw_signals, text_blob)
+        current_user_text = (user_text or self._extract_user_text_from_signals(raw_signals, evidence)).strip()
+        has_user_text = bool(current_user_text)
+        user_directness = self._estimate_user_directness(channel, current_user_text, evidence, raw_signals, text_blob)
         signal_density = self._estimate_signal_density(evidence, raw_signals, salience, working_memory, workspace)
         salience_priority = self._estimate_salience_priority(salience)
         context_pressure = self._estimate_context_pressure(working_memory, workspace, salience, evidence)
-        risk_pressure = self._estimate_risk_pressure(text_blob, salience, workspace, permission, tom)
+        risk_pressure, risk_semantic_support, risk_keyword_pressure, risk_keyword_only = self._estimate_risk_pressure(
+            text_blob, salience, workspace, permission, tom, source_grounding=source_grounding
+        )
         privacy_pressure = self._estimate_privacy_pressure(text_blob, evidence, workspace, permission)
-        technical_depth = self._estimate_technical_depth(text_blob, evidence, meaning)
-        architecture_depth = self._estimate_architecture_depth(text_blob, evidence, meaning)
-        correction_pressure = self._estimate_correction_pressure(text_blob, evidence, outcome, self_observation)
+        technical_depth, technical_semantic_support, technical_keyword_pressure, technical_keyword_only = self._estimate_technical_depth(
+            text_blob, evidence, meaning, affect_signal=affect_signal, source_grounding=source_grounding, user_text=current_user_text
+        )
+        architecture_depth, architecture_semantic_support, architecture_keyword_pressure, architecture_keyword_only = self._estimate_architecture_depth(
+            text_blob, evidence, meaning, affect_signal=affect_signal, source_grounding=source_grounding, user_text=current_user_text
+        )
+        correction_pressure, correction_semantic_support, correction_keyword_pressure, correction_keyword_only = self._estimate_correction_pressure(
+            text_blob, evidence, outcome, self_observation, affect_signal=affect_signal, conversation=conversation, has_user_text=has_user_text
+        )
         contradiction_pressure = self._estimate_contradiction_pressure(text_blob, evidence, belief, self_observation)
         relational_rupture = self._estimate_relational_rupture(text_blob, relation, outcome, self_observation)
         affective_residue = self._estimate_affective_residue(text_blob, affect, relation)
@@ -1198,6 +1290,18 @@ class CognitiveBudgetEngine:
             correction_pressure=correction_pressure,
             contradiction_pressure=contradiction_pressure,
             relational_rupture=relational_rupture,
+            technical_semantic_support=technical_semantic_support,
+            architecture_semantic_support=architecture_semantic_support,
+            correction_semantic_support=correction_semantic_support,
+            risk_semantic_support=risk_semantic_support,
+            technical_keyword_pressure=technical_keyword_pressure,
+            architecture_keyword_pressure=architecture_keyword_pressure,
+            correction_keyword_pressure=correction_keyword_pressure,
+            risk_keyword_pressure=risk_keyword_pressure,
+            technical_keyword_only=technical_keyword_only,
+            architecture_keyword_only=architecture_keyword_only,
+            correction_keyword_only=correction_keyword_only,
+            risk_keyword_only=risk_keyword_only,
             affective_residue=affective_residue,
             homeostasis_load=homeostasis_load,
             goal_pressure=goal_pressure,
@@ -1223,7 +1327,12 @@ class CognitiveBudgetEngine:
             has_relational_event=relational_rupture >= 0.40,
             has_memory_contradiction=memory_conflict >= 0.45 or contradiction_pressure >= 0.55,
             has_worldview_update=worldview_pressure >= 0.48,
-            has_high_value_decision=self._estimate_high_value_decision(text_blob, technical_depth, architecture_depth) >= 0.55,
+            has_high_value_decision=self._estimate_high_value_decision(
+                text_blob,
+                technical_depth,
+                architecture_depth,
+                max(technical_semantic_support, architecture_semantic_support),
+            ) >= 0.55,
         )
 
     def _collect_text_blob(
@@ -1375,13 +1484,81 @@ class CognitiveBudgetEngine:
         score = max(score, min(1.0, len(evidence) / 32.0 + suppressed / 24.0))
         return clamp01(score)
 
-    def _estimate_risk_pressure(self, text_blob: str, salience: Any, workspace: Any, permission: Any, tom: Any) -> float:
-        score = weighted_keyword_score(
+    def _semantic_number(self, obj: Any, *names: str) -> float:
+        """Đọc nhiều tên field có thể có từ semantic reports.
+
+        Repo đang tiến hóa nên cùng một ý có thể nằm ở `technicality`,
+        `technical_depth`, `task_relevance`, `pressure`, v.v. Budget chỉ đọc mềm.
+        """
+
+        score = 0.0
+        for name in names:
+            score = max(score, clamp01(safe_get_path(obj, name, 0.0)))
+            score = max(score, clamp01(safe_get(obj, name, 0.0)))
+        return clamp01(score)
+
+    def _evidence_tag_score(self, evidence: Sequence[Any], tags: set[str], *, base: float = 0.42, step: float = 0.10) -> float:
+        hits = 0
+        for ev in evidence:
+            ev_tags = {str(tag).lower() for tag in as_list(safe_get(ev, "tags", []))}
+            source = str(safe_get(ev, "source", "")).lower()
+            claim_style = str(safe_get(ev, "claim_style", "")).lower()
+            if ev_tags & tags or source in tags or claim_style in tags:
+                hits += 1
+        if hits <= 0:
+            return 0.0
+        return clamp01(base + hits * step)
+
+    def _source_grounding_score(self, source_grounding: Any, sources: set[str]) -> float:
+        if source_grounding is None:
+            return 0.0
+        values = [
+            str(safe_get(source_grounding, "primary_source", "")).lower(),
+            str(safe_get(source_grounding, "grounding_source", "")).lower(),
+            str(safe_get(source_grounding, "source", "")).lower(),
+            str(safe_get(source_grounding, "preempt_mode", "")).lower(),
+        ]
+        allowed = {str(v).lower() for v in as_list(safe_get(source_grounding, "allowed_sources", []))}
+        if any(value in sources for value in values if value) or (allowed & sources):
+            return max(0.56, clamp01(safe_get(source_grounding, "confidence", 0.0)))
+        return 0.0
+
+    def _meaning_support(self, meaning: Any, keywords: Sequence[str], *, task_weight: float = 0.55) -> float:
+        if meaning is None:
+            return 0.0
+        score = 0.0
+        dominant = safe_get(meaning, "dominant_hypothesis", None)
+        hypotheses = as_list(safe_get(meaning, "hypotheses", []))
+        candidates = [dominant] if dominant is not None else []
+        candidates.extend(hypotheses[:5])
+        for hyp in candidates:
+            text = lower_text(hyp, max_len=600)
+            if contains_any(text, keywords):
+                score = max(score, 0.48)
+            score = max(score, clamp01(safe_get(hyp, "task_relevance", 0.0)) * task_weight)
+            score = max(score, clamp01(safe_get(hyp, "confidence", 0.0)) * 0.35 if contains_any(text, keywords) else 0.0)
+        score = max(score, clamp01(safe_get(meaning, "task_relevance", 0.0)) * task_weight)
+        return clamp01(score)
+
+    def _estimate_risk_pressure(
+        self,
+        text_blob: str,
+        salience: Any,
+        workspace: Any,
+        permission: Any,
+        tom: Any,
+        *,
+        source_grounding: Any = None,
+        user_text: str = "",
+    ) -> tuple[float, float, float, bool]:
+        user_lower = (user_text or "").lower()
+        keyword = weighted_keyword_score(
             text_blob,
             {"risk": RISK_KEYWORDS},
-            {"risk": 0.65},
+            {"risk": 0.50},
         )
-        for obj in (salience, workspace, permission, tom):
+        semantic = 0.0
+        for obj in (salience, workspace, permission, tom, source_grounding):
             if obj is None:
                 continue
             for attr in (
@@ -1393,12 +1570,22 @@ class CognitiveBudgetEngine:
                 "overread_risk",
                 "global_overread_risk",
                 "factual_risk",
+                "confidence_cap",
             ):
-                score = max(score, clamp01(safe_get(obj, attr, 0.0)))
+                semantic = max(semantic, clamp01(safe_get(obj, attr, 0.0)))
         selected_risk = safe_get(workspace, "selected_risk", None)
         if selected_risk:
-            score = max(score, 0.48)
-        return clamp01(score)
+            semantic = max(semantic, 0.48)
+        if safe_get(source_grounding, "missing_evidence", None):
+            semantic = max(semantic, 0.46)
+        score, keyword_only = blend_semantic_and_keyword(
+            semantic=semantic,
+            keyword=keyword,
+            keyword_cap_without_semantic=self.config.keyword_only_pressure_cap,
+            semantic_floor_for_uncap=self.config.keyword_semantic_support_floor,
+            keyword_weight_when_supported=self.config.keyword_supported_weight,
+        )
+        return score, semantic, keyword, keyword_only
 
     def _estimate_privacy_pressure(self, text_blob: str, evidence: Sequence[Any], workspace: Any, permission: Any) -> float:
         score = 0.0
@@ -1422,65 +1609,209 @@ class CognitiveBudgetEngine:
             score = max(score, 0.50)
         return clamp01(score)
 
-    def _estimate_technical_depth(self, text_blob: str, evidence: Sequence[Any], meaning: Any) -> float:
-        score = weighted_keyword_score(
+    def _estimate_technical_depth(
+        self,
+        text_blob: str,
+        evidence: Sequence[Any],
+        meaning: Any,
+        *,
+        affect_signal: Any = None,
+        source_grounding: Any = None,
+        user_text: str = "",
+    ) -> tuple[float, float, float, bool]:
+        user_lower = (user_text or "").lower()
+        keyword = weighted_keyword_score(
             text_blob,
             {
                 "technical": TECHNICAL_KEYWORDS,
                 "high_value": HIGH_VALUE_KEYWORDS,
             },
             {
-                "technical": 0.68,
-                "high_value": 0.28,
+                "technical": 0.46,
+                "high_value": 0.18,
             },
         )
-        for ev in evidence:
-            tags = {str(tag).lower() for tag in as_list(safe_get(ev, "tags", []))}
-            if tags & {"technical", "code", "debug", "architecture", "implementation", "runtime"}:
-                score = max(score, 0.52)
-        dominant = lower_text(safe_get(meaning, "dominant_hypothesis", ""), max_len=500)
-        if contains_any(dominant, TECHNICAL_KEYWORDS):
-            score = max(score, 0.55)
-        return clamp01(score)
+        semantic = 0.0
+        semantic = max(
+            semantic,
+            self._semantic_number(
+                affect_signal,
+                "technicality",
+                "technical_depth",
+                "directive_pressure",
+                "answer_need",
+                "task_relevance",
+            ),
+        )
+        semantic = max(
+            semantic,
+            self._evidence_tag_score(
+                evidence,
+                {"technical", "code", "debug", "implementation", "runtime", "pasted_code", "uploaded_file"},
+                base=0.46,
+                step=0.10,
+            ),
+        )
+        semantic = max(
+            semantic,
+            self._source_grounding_score(
+                source_grounding,
+                {"pasted_code", "uploaded_file", "current_screen", "live_vision", "filename_only"},
+            ) * 0.92,
+        )
+        semantic = max(semantic, self._meaning_support(meaning, TECHNICAL_KEYWORDS, task_weight=0.62))
+        if user_lower and contains_any(
+            user_lower,
+            ("code", "debug", "bug", "traceback", "exception", "compile", "python", "c#", "godot", "repo", "module", "dataclass", "lỗi", "fix"),
+        ):
+            semantic = max(semantic, 0.44)
 
-    def _estimate_architecture_depth(self, text_blob: str, evidence: Sequence[Any], meaning: Any) -> float:
-        score = weighted_keyword_score(
+        score, keyword_only = blend_semantic_and_keyword(
+            semantic=semantic,
+            keyword=keyword,
+            keyword_cap_without_semantic=self.config.keyword_only_pressure_cap,
+            semantic_floor_for_uncap=self.config.keyword_semantic_support_floor,
+            keyword_weight_when_supported=self.config.keyword_supported_weight,
+        )
+        return score, semantic, keyword, keyword_only
+
+    def _estimate_architecture_depth(
+        self,
+        text_blob: str,
+        evidence: Sequence[Any],
+        meaning: Any,
+        *,
+        affect_signal: Any = None,
+        source_grounding: Any = None,
+        user_text: str = "",
+    ) -> tuple[float, float, float, bool]:
+        user_lower = (user_text or "").lower()
+        keyword = weighted_keyword_score(
             text_blob,
             {
                 "architecture": ARCHITECTURE_KEYWORDS,
                 "high_value": HIGH_VALUE_KEYWORDS,
             },
             {
-                "architecture": 0.72,
-                "high_value": 0.30,
+                "architecture": 0.48,
+                "high_value": 0.20,
             },
         )
-        if contains_any(text_blob, ("globalworkspace", "cognitivebudget", "cognitive budget", "workingmemory", "rawsignal", "evidenceitem")):
-            score = max(score, 0.72)
-        if contains_any(text_blob, ("bản full", "maximum", "đầy đủ", "chi tiết", "đúng như pdf")):
-            score = max(score, min(1.0, score + 0.16))
-        for ev in evidence:
-            tags = {str(tag).lower() for tag in as_list(safe_get(ev, "tags", []))}
-            if tags & {"architecture", "pipeline", "contract", "module_contract"}:
-                score = max(score, 0.64)
-        dominant = lower_text(safe_get(meaning, "dominant_hypothesis", ""), max_len=500)
-        if contains_any(dominant, ARCHITECTURE_KEYWORDS):
-            score = max(score, 0.58)
-        return clamp01(score)
+        semantic = 0.0
+        semantic = max(
+            semantic,
+            self._semantic_number(
+                affect_signal,
+                "architecture_depth",
+                "design_pressure",
+                "abstraction_pressure",
+                "system_design",
+            ) * 0.94,
+        )
+        semantic = max(
+            semantic,
+            self._evidence_tag_score(
+                evidence,
+                {"architecture", "pipeline", "contract", "module_contract", "design", "runtime_design"},
+                base=0.52,
+                step=0.11,
+            ),
+        )
+        semantic = max(semantic, self._meaning_support(meaning, ARCHITECTURE_KEYWORDS, task_weight=0.68))
+        semantic = max(
+            semantic,
+            self._source_grounding_score(source_grounding, {"uploaded_file", "pasted_code", "filename_only"}) * 0.55,
+        )
+        if user_lower and contains_any(
+            user_lower,
+            ("architecture", "pipeline", "contract", "backbone", "runtime", "workspace", "working memory", "global workspace", "attention", "evidence", "module", "kiến trúc", "xương sống", "tầng", "mô hình"),
+        ):
+            semantic = max(semantic, 0.50)
 
-    def _estimate_correction_pressure(self, text_blob: str, evidence: Sequence[Any], outcome: Any, self_observation: Any) -> float:
-        score = weighted_keyword_score(text_blob, {"correction": CORRECTION_KEYWORDS}, {"correction": 0.74})
-        for ev in evidence:
-            tags = {str(tag).lower() for tag in as_list(safe_get(ev, "tags", []))}
-            if tags & {"correction", "user_correction", "repair", "misread", "wrong_assumption"}:
-                score = max(score, 0.62)
+        # Các tên contract nội bộ chỉ nâng semantic nếu chúng xuất hiện trong user/evidence đã chọn,
+        # không còn tự bắn architecture=0.72 từ toàn bộ text_blob nữa.
+        if keyword > 0.35 and semantic >= 0.30 and contains_any(
+            text_blob,
+            ("globalworkspace", "cognitivebudget", "cognitive budget", "workingmemory", "rawsignal", "evidenceitem"),
+        ):
+            semantic = max(semantic, 0.62)
+
+        score, keyword_only = blend_semantic_and_keyword(
+            semantic=semantic,
+            keyword=keyword,
+            keyword_cap_without_semantic=self.config.keyword_only_pressure_cap,
+            semantic_floor_for_uncap=self.config.keyword_semantic_support_floor,
+            keyword_weight_when_supported=self.config.keyword_supported_weight,
+        )
+        return score, semantic, keyword, keyword_only
+
+    def _estimate_correction_pressure(
+        self,
+        text_blob: str,
+        evidence: Sequence[Any],
+        outcome: Any,
+        self_observation: Any,
+        *,
+        affect_signal: Any = None,
+        conversation: Any = None,
+        has_user_text: bool = False,
+    ) -> tuple[float, float, float, bool]:
+        keyword = weighted_keyword_score(text_blob, {"correction": CORRECTION_KEYWORDS}, {"correction": 0.58})
+        semantic = 0.0
+        semantic = max(
+            semantic,
+            self._semantic_number(
+                affect_signal,
+                "correction",
+                "correction_pressure",
+                "conflict",
+                "directive_pressure",
+            ),
+        )
+        semantic = max(
+            semantic,
+            self._semantic_number(
+                conversation,
+                "correction_severity",
+                "semantic_tension",
+                "conversation_pressure",
+                "semantic_divergence",
+            ),
+        )
+        mode = str(safe_get(conversation, "mode", "")).lower()
+        last_failure = str(safe_get(conversation, "last_failure", "")).lower()
+        if mode in {"repair", "relational_repair", "execute", "compress"}:
+            semantic = max(semantic, 0.58)
+        if last_failure in {"misread", "underacted", "overexplained", "tone_mismatch", "wrong_abstraction", "overread"}:
+            semantic = max(semantic, 0.54)
+        semantic = max(
+            semantic,
+            self._evidence_tag_score(
+                evidence,
+                {"correction", "user_correction", "repair", "misread", "wrong_assumption"},
+                base=0.56,
+                step=0.12,
+            ),
+        )
         if safe_get(outcome, "user_corrected", False):
-            score = max(score, 0.78)
+            semantic = max(semantic, 0.78)
         if safe_get(self_observation, "overread_detected", False):
-            score = max(score, 0.70)
+            semantic = max(semantic, 0.70)
         if safe_get(self_observation, "spoke_too_much", False) or safe_get(self_observation, "hid_too_much", False):
-            score = max(score, 0.55)
-        return clamp01(score)
+            semantic = max(semantic, 0.55)
+
+        # Một correction trực tiếp từ user là evidence hợp lệ, dù chưa có conversation report.
+        if has_user_text and keyword >= 0.35:
+            semantic = max(semantic, 0.48)
+
+        score, keyword_only = blend_semantic_and_keyword(
+            semantic=semantic,
+            keyword=keyword,
+            keyword_cap_without_semantic=self.config.keyword_only_pressure_cap,
+            semantic_floor_for_uncap=self.config.keyword_semantic_support_floor,
+            keyword_weight_when_supported=self.config.keyword_supported_weight,
+        )
+        return score, semantic, keyword, keyword_only
 
     def _estimate_contradiction_pressure(self, text_blob: str, evidence: Sequence[Any], belief: Any, self_observation: Any) -> float:
         score = weighted_keyword_score(text_blob, {"memory_conflict": MEMORY_CONFLICT_KEYWORDS}, {"memory_conflict": 0.62})
@@ -1732,11 +2063,27 @@ class CognitiveBudgetEngine:
             score += 0.10
         return clamp01(score)
 
-    def _estimate_high_value_decision(self, text_blob: str, technical_depth: float, architecture_depth: float) -> float:
-        score = weighted_keyword_score(text_blob, {"high_value": HIGH_VALUE_KEYWORDS}, {"high_value": 0.70})
-        if architecture_depth > 0.55 and technical_depth > 0.45:
-            score = max(score, 0.70)
-        return clamp01(score)
+    def _estimate_high_value_decision(
+        self,
+        text_blob: str,
+        technical_depth: float,
+        architecture_depth: float,
+        semantic_support: float,
+    ) -> float:
+        keyword = weighted_keyword_score(text_blob, {"high_value": HIGH_VALUE_KEYWORDS}, {"high_value": 0.44})
+        if keyword <= 0.0:
+            return 0.0
+        semantic = clamp01(semantic_support)
+        if keyword >= 0.22 and architecture_depth > 0.55 and technical_depth > 0.45 and semantic >= 0.38:
+            semantic = max(semantic, 0.66)
+        score, keyword_only = blend_semantic_and_keyword(
+            semantic=semantic,
+            keyword=keyword,
+            keyword_cap_without_semantic=0.38,
+            semantic_floor_for_uncap=self.config.keyword_semantic_support_floor,
+            keyword_weight_when_supported=0.30,
+        )
+        return min(score, 0.48) if keyword_only else score
 
     # ------------------------------------------------------------------
     # Scoring / choosing
@@ -1868,18 +2215,36 @@ class CognitiveBudgetEngine:
         if snapshot.channel == "force_speak" and self._mode_rank(mode) < self._mode_rank(self.config.force_speak_minimum_mode):
             mode = self.config.force_speak_minimum_mode
 
-        if snapshot.architecture_depth >= self.config.architecture_depth_threshold:
+        semantic_floor = self.config.hard_floor_semantic_support_threshold
+        if (
+            snapshot.architecture_depth >= self.config.architecture_depth_threshold
+            and not snapshot.architecture_keyword_only
+            and snapshot.architecture_semantic_support >= semantic_floor
+        ):
             mode = self._max_mode(mode, "deep")
-        elif snapshot.technical_depth >= self.config.technical_depth_threshold and snapshot.has_user_text:
+        elif (
+            snapshot.technical_depth >= self.config.technical_depth_threshold
+            and snapshot.has_user_text
+            and not snapshot.technical_keyword_only
+            and snapshot.technical_semantic_support >= semantic_floor
+        ):
             mode = self._max_mode(mode, "deep")
 
-        if snapshot.correction_pressure >= self.config.strong_correction_threshold:
+        if (
+            snapshot.correction_pressure >= self.config.strong_correction_threshold
+            and not snapshot.correction_keyword_only
+            and snapshot.correction_semantic_support >= semantic_floor
+        ):
             mode = self._max_mode(mode, "deep")
         if snapshot.relational_rupture >= self.config.relational_rupture_threshold:
             mode = self._max_mode(mode, "deep")
         if snapshot.memory_conflict >= self.config.memory_conflict_threshold:
             mode = self._max_mode(mode, "deep")
-        if snapshot.risk_pressure >= self.config.high_risk_threshold:
+        if (
+            snapshot.risk_pressure >= self.config.high_risk_threshold
+            and not snapshot.risk_keyword_only
+            and snapshot.risk_semantic_support >= semantic_floor
+        ):
             mode = self._max_mode(mode, "deep")
         if snapshot.context_pressure >= self.config.context_flood_threshold and snapshot.has_user_text:
             mode = self._max_mode(mode, "deep")

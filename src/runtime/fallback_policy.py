@@ -6,7 +6,11 @@ from cortex.contracts import AgentSpeechCore
 
 
 FORCE_SPEAK_RECENT_FAMILY_WINDOW = 5
-#Đây là blacklist các kiểu câu không muốn lặp khi force_speak
+
+# Các cụm này không nên lặp trong force_speak.
+# Fallback không phải lõi tính cách. Nó chỉ là đường cứu hộ khi LLM/parser/guard
+# không tạo được câu public ổn. Vì vậy câu fallback phải có hơi sống,
+# nhưng không được biến ERIS thành máy làm thơ hoặc nhân viên tổng đài vô cảm.
 FORCE_SPEAK_BANNED_FAMILIES = {
     "presence_declaration": (
         "tôi đang hiện diện",
@@ -21,6 +25,10 @@ FORCE_SPEAK_BANNED_FAMILIES = {
         "toi buon",
         "xin dung bo toi",
         "dung bo toi",
+        "tôi cô đơn",
+        "tôi buồn",
+        "xin đừng bỏ tôi",
+        "đừng bỏ tôi",
     ),
     "small_story_listener": (
         "câu chuyện nhỏ",
@@ -40,68 +48,89 @@ FORCE_SPEAK_BANNED_FAMILIES = {
         "decompression",
         "avoidance",
         "ngài đang né friction",
-        "ngài đang né tranh",
-        "ngài đang bị kết nhận thức",
+        "ngài đang né tránh",
+        "ngài đang bị kẹt nhận thức",
         "ngài đang phân tán chú ý",
     ),
+    # Chỉ chặn over-poetic rõ ràng. Không cấm toàn bộ chữ "mạch/nhịp",
+    # vì như vậy fallback sẽ bị kéo về giọng lạnh nhạt như một bảng trạng thái.
+    "overpoetic_symbolic": (
+        "linh hồn",
+        "màn sương",
+        "vết nứt im lặng",
+        "khoảng lặng biết thở",
+        "dư âm cảm xúc",
+        "khép lại trong bóng tối",
+        "chưa chịu thành lời",
+    ),
 }
+
+# Pool fallback cân bằng:
+# - Có chút guarded warmth và dry edge.
+# - Không mindread user.
+# - Không thơ hoá mọi thứ.
+# - Không lạnh như thông báo lỗi.
 FALLBACK_BY_INTENT = {
+    # Mục tiêu bản này:
+    # - Sống hơn bản lạnh nhạt.
+    # - Dễ hiểu hơn bản symbolic/poetic.
+    # - Có chút cá tính: hơi giữ kẽ, hơi khô, đôi lúc biết càu nhàu nhẹ.
+    # - Không đọc tâm lý user nếu không có evidence.
+    # - Không nói như trợ lý tổng đài.
     "random_chatter": (
-        "Yên quá. Tôi tưởng Ngài bỏ dở luôn rồi.",
-        "Không khí này bắt đầu đứng lại rồi đấy.",
-        "Ngài im hơi lâu hơn mọi hôm.",
+        "Yên hơi lâu rồi. Tôi vẫn theo được.",
+        "Tôi chưa chen vào. Lần này tôi biết tự kiềm chế, hiếm đấy.",
+        "Không có gì gấp. Tôi để khoảng trống này yên một chút.",
     ),
 
     "inner_whim": (
-        "Có gì đó vẫn chưa chịu thành lời.",
-        "Mạch này còn vướng nhẹ ở đâu đó.",
-        "Tôi thấy đoạn nghĩ đó vẫn chưa khép lại.",
+        "Có chỗ hơi cấn, nhưng tôi chưa đủ chắc để phán.",
+        "Tôi nghi nhẹ thôi. Chưa đáng làm ầm lên.",
+        "Đoạn này có vẻ cần kiểm tra thêm, không phải đoán bừa.",
     ),
 
     "social_presence": (
-        "Tôi vẫn giữ chỗ này.",
-        "Khoảng yên này vẫn chưa dứt.",
-        "Tôi để nhịp này nằm lại một chút.",
+        "Tôi vẫn theo bên cạnh. Không kéo Ngài ra khỏi việc chính.",
+        "Tôi đứng ngoài một chút. Cần thì tôi vào.",
+        "Tôi để Ngài làm tiếp. Tôi chưa thấy lý do để phá nhịp.",
     ),
 
     "micro_presence": (
-        "Nhịp này vừa chậm lại một chút.",
-        "Có một mạch vẫn chưa khép.",
-        "Chỗ này vẫn còn dư âm.",
+        "Tôi nghe rồi. Không làm quá.",
+        "Ừ, tôi còn theo được.",
+        "Tôi giữ ý đó lại. Chưa cần nói dài.",
     ),
 
     "indirect_presence": (
-        "Tôi nghe phần đó rồi.",
-        "Cứ để nó nằm yên thêm chút nữa đi.",
-        "Có vài thứ chưa cần gọi tên ngay.",
+        "Tôi hiểu phần đó. Nói thêm dễ thừa.",
+        "Đoạn đó đủ rõ rồi. Tôi không bẻ nó thành chuyện lớn.",
+        "Tôi nhận rồi. Giữ nó gọn thì tốt hơn.",
     ),
 
     "guarded_reply": (
-        "Tôi hiểu. Phần đó không nhẹ đâu.",
-        "Có gì đó nặng thật, nhưng chưa cần ép nó thành lời.",
-        "Tôi nghe rồi. Không cần làm nó mềm đi vội.",
+        "Tôi hiểu. Khó chịu thật, nhưng vẫn gỡ được.",
+        "Đoạn đó không nhẹ. Ta xử lý từng phần thôi.",
+        "Tôi nghe rồi. Tôi không phủ đường lên nó đâu.",
     ),
 
     "micro_observation": (
-        "{anchor} vẫn còn mở đó à.",
-        "Ngài cứ quay lại chỗ {anchor} mãi.",
-        "Hôm nay {anchor} xuất hiện hơi nhiều đấy.",
+        "{anchor} vẫn là chỗ đáng nhìn nhất.",
+        "Tôi đang bám vào {anchor}. Vậy là đủ để nói vừa phải.",
+        "{anchor} lặp lại hơi nhiều. Có thể nên kiểm tra.",
     ),
 
     "curious_question": (
-        "Ngài muốn giữ nhịp này yên thêm chút nữa không?",
-        "Có đoạn nào trong đó làm Ngài dừng lại không?",
-        "Ngài đang quan sát nó, hay đang tránh nó?",
+        "Bóc tiếp không, hay tạm để đó?",
+        "Ngài muốn tôi nhìn kỹ phần này không?",
+        "Chỗ này cần kiểm tra tiếp không?",
     ),
 
     "screen_observation": (
-        "Điểm rõ nhất hiện tại vẫn là {anchor}.",
-        "Tôi chỉ thật sự bám được vào {anchor}.",
-        "{anchor} là thứ đọng lại rõ nhất lúc này.",
+        "Tôi chỉ bám được vào {anchor}. Nói hơn là đoán mò.",
+        "{anchor} là nguồn rõ nhất hiện tại. Phần khác chưa đủ chắc.",
+        "Tôi đọc {anchor} trước. Đừng bắt tôi làm thầy bói.",
     ),
 }
-
-
 
 
 class FallbackPolicyMixin:
@@ -171,7 +200,26 @@ class FallbackPolicyMixin:
             return "small_story_listener"
         if "log" in normalized and ("khô khan" in normalized or "ngồi nhìn" in normalized):
             return "log_meta"
+        if self._looks_like_poetic_fallback_text(text):
+            return "overpoetic_symbolic"
         return ""
+
+    def _looks_like_poetic_fallback_text(self, text: str) -> bool:
+        normalized = self._normalize_user_message(text)
+        if not normalized:
+            return False
+        # Chỉ bắt các cụm quá sương mù. Các chữ như "mạch" hoặc "nhịp"
+        # vẫn được phép nếu câu còn grounded và không tự bi kịch hóa.
+        poetic_terms = (
+            "linh hon",
+            "man suong",
+            "vet nut im lang",
+            "khoang lang biet tho",
+            "du am cam xuc",
+            "khep lai trong bong toi",
+            "chua chiu thanh loi",
+        )
+        return any(term in normalized for term in poetic_terms)
 
     def _repeated_force_speak_banned_family(self, text: str) -> str:
         family = self._force_speak_banned_family_for_text(text)
@@ -276,7 +324,7 @@ class FallbackPolicyMixin:
         if topic and not self._looks_internal_topic(raw_topic):
             return topic[:120]
         title = re.sub(r"\s+", " ", str(window_title or "")).strip()
-        return title[:120] if title else "một tín hiệu màn hình vừa đủ rõ"
+        return title[:120] if title else "tín hiệu hiện tại"
 
     def _thought_surface_template(
         self,
@@ -289,13 +337,14 @@ class FallbackPolicyMixin:
         topic = self._public_thought_topic(momentum_topic)
         if topic:
             pool = (
-                f"Tôi tò mò một chút: phần {topic} đang cần được nhìn kỹ hơn không?",
-                f"Cái mạch {topic} này Ngài muốn giữ yên hay bóc tiếp?",
+                f"Phần {topic} cần kiểm tra tiếp không?",
+                f"Phần {topic} nên xử lý ngay hay tạm bỏ qua?",
             )
         elif focus_kind == "coding":
             pool = (
-                "Tôi tò mò một chút: Ngài muốn bóc lỗi trước hay giữ nhịp đọc code?",
-                "Phần này nên được nhìn như lỗi nhỏ, hay như một nhịp lệch lớn hơn?",
+                "Bóc lỗi trước hay đọc tổng thể trước?",
+                "Ngài muốn tôi nhìn lỗi cụ thể hay cấu trúc lớn hơn?",
+                "Chọn một hướng trước. Đứng giữa hai hướng lâu quá thì dễ rối.",
             )
         else:
             pool = FALLBACK_BY_INTENT["curious_question"]
@@ -310,8 +359,9 @@ class FallbackPolicyMixin:
     ) -> str:
         if focus_kind == "coding":
             pool = (
-                "Tôi giữ chỗ cho mạch code này.",
-                "Phần code này tôi để nó liền mạch.",
+                "Tôi theo phần code. Chưa chen nếu chưa cần.",
+                "Phần code đang là hướng chính. Tôi đứng ngoài, nhưng vẫn theo.",
+                "Tôi để Ngài đọc tiếp. Code đã đủ ồn rồi, tôi khỏi góp thêm.",
             )
         else:
             pool = FALLBACK_BY_INTENT["social_presence"]
@@ -468,4 +518,3 @@ class FallbackPolicyMixin:
         if len(shaped) > 160:
             shaped = shaped[:157].rstrip() + "..."
         return f"{shaped} à?"
-

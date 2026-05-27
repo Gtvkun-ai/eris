@@ -4,26 +4,38 @@ from __future__ import annotations
 orientation_context.py
 ======================
 
-Nền ngữ nghĩa dùng chung cho các lớp Ni và GoalPersistence của ERIS.
+Compatibility façade + lexical fallback cho Orientation/Ni/GoalPersistence.
 
-Lý do file này tồn tại
-----------------------
-Ni và GoalPersistence không được mỗi bên giữ một đống mê tín keyword riêng.
-Làm vậy sẽ tạo ra hai quan tòa độc lập:
-    - Ni quyết định người dùng đang drift.
-    - GoalPersistence quyết định người dùng có task.
-Rồi cả hai khuếch đại lẫn nhau và ERIS biến thành giám thị năng suất với tóc đẹp hơn.
+Bản cũ của file này ôm quá nhiều việc:
+    - normalize text
+    - keyword bank
+    - goal inference
+    - closure detection
+    - goal matching
+    - activity inference
+    - orientation scoring
 
-Module này tập trung hóa diễn giải ngữ nghĩa nhẹ:
-    - activity intent: research / recovery / play / avoidance / technical focus
-    - user goal intent: concrete task / debug thread / design direction / casual
-    - phát hiện closure có xử lý phủ định
-    - quan hệ với goal và áp lực can thiệp
-    - token/anchor matching để merge goal an toàn
+Bản này cố ý hạ vai trò của file xuống còn ba nhóm việc:
+    1. Contract chung: enum/dataclass để module cũ và module semantic mới dùng chung.
+    2. Surface lexical helpers: normalize, token, anchor, closure, negation.
+    3. Lexical OrientationInterpreter fallback: đủ chạy khi chưa có semantic engine.
 
-Nó vẫn là heuristic, vì ở đây không giả định có local embedding model.
-Lựa chọn thiết kế quan trọng: heuristic tạo ra *giả thuyết* và *quyền cho phép*,
-không phải phán quyết đạo đức.
+Semantic thật hơn nằm ở các file mới:
+    - semantic_encoder.py
+    - semantic_hypothesis.py
+    - semantic_prototypes.py
+    - orientation_semantics.py
+
+Quy tắc thiết kế
+----------------
+- File này không còn là "semantic brain".
+- Lexical chỉ dùng để tạo anchor/veto và fallback khi semantic chưa sẵn sàng.
+- Những thứ cần chính xác như filename, negation, "chưa xong", "vẫn lỗi" vẫn nên
+  ở lexical. Embedding mà đoán closure thì rất dễ tự tin sai, một đặc sản máy móc
+  đáng được nhốt lại.
+- OrientationInterpreter trong file này là legacy fallback, không phải engine chính
+  dài hạn. Muốn semantic hybrid thì dùng HybridOrientationInterpreter trong
+  orientation_semantics.py.
 """
 
 import re
@@ -34,31 +46,95 @@ from typing import Iterable, Mapping, Sequence
 
 
 # ---------------------------------------------------------------------------
-# Tiện ích cơ bản
+# Public exports
+# ---------------------------------------------------------------------------
+
+__all__ = [
+    # Regex / constants
+    "STOP_WORDS",
+    "TECHNICAL_TERMS",
+    "LEARNING_TERMS",
+    "MEDIA_TERMS",
+    "SHORT_FORM_TERMS",
+    "PLAY_TERMS",
+    "COMMUNICATION_TERMS",
+    "RECOVERY_TERMS",
+    "AVOIDANCE_TERMS",
+    "SYSTEM_WAIT_TERMS",
+    "TASK_VERBS_STRONG",
+    "TASK_VERBS_SOFT",
+    "DESIGN_TERMS",
+    "CASUAL_MARKERS",
+    "NEGATION_TERMS",
+    "CLOSURE_TERMS",
+    "REJECTION_AFTER_CLOSURE",
+    "FILE_OR_MODULE_RE",
+    # Helpers
+    "clamp01",
+    "clamp",
+    "clean_text",
+    "normalize",
+    "tokens",
+    "phrase_in",
+    "has_any",
+    "count_hits",
+    "unique_recent",
+    "extract_anchors",
+    "goal_match_score",
+    "has_negated_closure",
+    "infer_closure_signal",
+    "infer_goal_text_signal",
+    # Types
+    "ActivityIntentLabel",
+    "GoalRelationLabel",
+    "GoalTextKind",
+    "ActivityIntent",
+    "GoalRelation",
+    "OrientationSignal",
+    "GoalTextSignal",
+    "ClosureSignal",
+    "SemanticContextProbe",
+    # Legacy fallback engine
+    "OrientationInterpreter",
+]
+
+
+# ---------------------------------------------------------------------------
+# Text normalization / lexical helpers
 # ---------------------------------------------------------------------------
 
 _REMOVABLE_URL_BITS = re.compile(r"https?://|www\.|[?&=#%]")
 _WORD_RE = re.compile(r"[a-z0-9#+.]+")
 
+# Giữ stopword ở đây vì đây là phần lexical nền dùng bởi anchor và goal matching.
+# Không nhét semantic label/prototype vào đây nữa. Prototype đã thuộc semantic_prototypes.py.
 STOP_WORDS: set[str] = {
-    # Từ chức năng tiếng Anh
+    # English function words
     "and", "the", "for", "from", "this", "that", "with", "then", "than",
     "into", "onto", "about", "what", "when", "where", "which", "while",
     "because", "should", "could", "would", "there", "their", "have", "has",
-    "had", "was", "were", "are", "is", "be", "been", "being",
-    # Từ chức năng tiếng Việt đã chuẩn hóa không dấu
+    "had", "was", "were", "are", "is", "be", "been", "being", "can", "will",
+    "just", "only", "also", "very", "more", "most", "less", "some", "any",
+    # Vietnamese function words after diacritic stripping
     "dang", "trong", "cua", "voi", "khi", "thi", "neu", "ngai", "toi",
     "mot", "nhung", "khong", "duoc", "cho", "cai", "nay", "kia", "roi",
     "nhe", "nhi", "vay", "day", "nua", "qua", "hoi", "lam", "nha", "the",
+    "la", "va", "hay", "de", "ve", "ra", "vao", "len", "xuong", "di",
 }
 
 
 def clamp01(value: object) -> float:
+    """Ép một giá trị về [0, 1].
+
+    Helper nhỏ nhưng dùng xuyên nhiều module. Để ở đây để tránh mỗi file tự viết
+    một bản rồi mỗi bản sai theo phong cách riêng, một truyền thống hơi thừa.
+    """
+
     try:
         number = float(value)
     except (TypeError, ValueError):
         return 0.0
-    if number != number:  # không phải số (NaN)
+    if number != number:  # NaN
         return 0.0
     return max(0.0, min(1.0, number))
 
@@ -68,17 +144,26 @@ def clamp(value: float, low: float, high: float) -> float:
 
 
 def clean_text(value: object, *, limit: int = 180) -> str:
+    """Dọn text để lưu summary/evidence ngắn.
+
+    Không dùng hàm này để match ngữ nghĩa sâu. Nó chỉ là vệ sinh đầu vào.
+    """
+
     text = re.sub(r"\s+", " ", str(value or "")).strip()
-    if len(text) > limit:
+    if limit > 3 and len(text) > limit:
         return text[: limit - 3].rstrip() + "..."
     return text
 
 
 def normalize(value: object) -> str:
-    """Chuẩn hóa để khớp ngữ nghĩa, không dùng để hiển thị.
+    """Chuẩn hóa text cho lexical matching.
 
-    Chữ 'đ' tiếng Việt được thay thủ công vì Unicode decomposition không
-    gộp nó thành 'd'. Kết quả cố ý là text gần ASCII thuần.
+    - Lowercase.
+    - Bỏ dấu tiếng Việt.
+    - Đổi "đ" thành "d" thủ công vì Unicode decomposition không xử lý nó.
+    - Dọn URL punctuation dễ gây nhiễu.
+
+    Đây không phải semantic normalization. Nó chỉ giúp lexical anchor ổn định hơn.
     """
 
     raw = str(value or "").strip().lower().replace("đ", "d")
@@ -91,6 +176,11 @@ def normalize(value: object) -> str:
 
 
 def tokens(value: object, *, keep_short_code_tokens: bool = True) -> set[str]:
+    """Token lexical cho anchor/goal matching.
+
+    Token ngắn bị bỏ, trừ vài token code như AI/UI/C#/C++.
+    """
+
     result: set[str] = set()
     for token in _WORD_RE.findall(normalize(value)):
         if token in STOP_WORDS:
@@ -117,6 +207,11 @@ def count_hits(normalized: str, phrases: Sequence[str]) -> int:
 
 
 def unique_recent(items: Iterable[str], *, limit: int = 8) -> tuple[str, ...]:
+    """Giữ item unique theo thứ tự gần nhất.
+
+    Dùng cho evidence/anchor. Không phải memory dedupe toàn cục.
+    """
+
     seen: set[str] = set()
     out: list[str] = []
     for item in items:
@@ -130,8 +225,11 @@ def unique_recent(items: Iterable[str], *, limit: int = 8) -> tuple[str, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Nhóm cụm từ
+# Lexical phrase banks
 # ---------------------------------------------------------------------------
+# Những nhóm này chỉ là surface anchors. Semantic prototypes nằm ở
+# semantic_prototypes.py. Đừng nhét thêm “ý nghĩa sâu” vào đây rồi gọi nó là
+# semantic. Cái đó là keyword wearing a tiny philosopher hat.
 
 TECHNICAL_TERMS: tuple[str, ...] = (
     "code", "coding", "source", "bug", "debug", "fix", "terminal", "commit",
@@ -140,6 +238,7 @@ TECHNICAL_TERMS: tuple[str, ...] = (
     "traceback", "exception", "error", "build", "compile", "runtime", "script",
     "class", "function", "method", "json", "xml", "udp", "http", "llm", "model",
     "coordinator", "engine", "module", "dataclass", "pipeline", "parser", "guard",
+    "test", "pytest", "import", "syntax", "refactor", "semantic", "heuristic",
 )
 
 LEARNING_TERMS: tuple[str, ...] = (
@@ -185,25 +284,26 @@ SYSTEM_WAIT_TERMS: tuple[str, ...] = (
 TASK_VERBS_STRONG: tuple[str, ...] = (
     "fix", "sua", "debug", "implement", "add", "them", "build", "tao", "viet",
     "refactor", "review", "danh gia", "test", "wire", "connect", "noi", "rewrite",
-    "nang cap", "toi uu", "patch", "replace", "split", "tach", "merge",
+    "nang cap", "toi uu", "patch", "replace", "split", "tach", "merge", "code lai",
 )
 
 TASK_VERBS_SOFT: tuple[str, ...] = (
     "nen lam", "can lam", "phai lam", "huong fix", "cach fix", "doc benh", "xem loi",
-    "giai thich", "phan tich", "kiem tra", "soi", "danh gia", "on chua",
+    "giai thich", "phan tich", "kiem tra", "soi", "danh gia", "on chua", "co nen",
 )
 
 DESIGN_TERMS: tuple[str, ...] = (
     "architecture", "kien truc", "design", "thiet ke", "pipeline", "cortex", "runtime",
     "semantic", "emergent", "memory", "state", "continuity", "relationship", "dynamics",
     "infj", "eris", "ni", "fe", "ti", "se", "goal", "planner", "speech", "meaning",
+    "orientation", "hypothesis", "encoder", "prototype", "arbitration",
 )
 
 FILE_OR_MODULE_RE = re.compile(r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.py|\.cs|\.gd|\.tscn|\.json|\.txt|\.xml)\b")
 
 CASUAL_MARKERS: tuple[str, ...] = (
     "dang chill", "noi chuyen", "tam su", "cho vui", "ke di", "hihi", "haha", "ban gai",
-    "di ia", "toi vui", "cuoc doi", "hom nay", "nghi xiu", "ke di", "thich qua",
+    "di ia", "toi vui", "cuoc doi", "hom nay", "nghi xiu", "thich qua", "kaka", "hehe",
 )
 
 NEGATION_TERMS: tuple[str, ...] = (
@@ -222,7 +322,7 @@ REJECTION_AFTER_CLOSURE: tuple[str, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Dataclass ngữ nghĩa dùng chung
+# Shared contracts
 # ---------------------------------------------------------------------------
 
 class ActivityIntentLabel(str, Enum):
@@ -288,15 +388,10 @@ class OrientationSignal:
 
 @dataclass(frozen=True, slots=True)
 class GoalTextSignal:
-    """Tín hiệu ngữ nghĩa trích từ text trực tiếp của user.
+    """Tín hiệu rút từ user text để GoalPersistence dùng.
 
-    persist_permission:
-        Text này có xứng đáng được theo dõi nền lâu dài hay không.
-
-    intervention_permission:
-        ERIS có được phép chủ động nhắc lại goal này về sau hay không.
-        Một goal có thể persistent nhưng không interruptive. Chỉ một phân biệt này
-        đã chặn được thứ dị dạng đáng yêu gọi là "nhắc dai hữu ích".
+    File này chỉ cung cấp classifier lexical mỏng. Semantic goal classification mới
+    nên nằm trong semantic_hypothesis/prototype hoặc engine cao hơn.
     """
 
     kind: str = GoalTextKind.NONE.value
@@ -326,12 +421,14 @@ class ClosureSignal:
     evidence: tuple[str, ...] = ()
 
 
-# ---------------------------------------------------------------------------
-# Hàm hỗ trợ trích xuất
-# ---------------------------------------------------------------------------
-
 @dataclass(slots=True)
 class SemanticContextProbe:
+    """Input nhẹ cho orientation.
+
+    Giữ contract này ở đây vì cả lexical fallback và semantic hybrid đều cần cùng
+    shape. Đây là dữ liệu, không phải engine.
+    """
+
     focus_kind: str = "general"
     focus_text: str = ""
     window_text: str = ""
@@ -361,7 +458,18 @@ class SemanticContextProbe:
         )
 
 
+# ---------------------------------------------------------------------------
+# Surface anchors / closure / goal helpers
+# ---------------------------------------------------------------------------
+
+
 def extract_anchors(text: str, *, max_items: int = 10) -> tuple[str, ...]:
+    """Rút anchor lexical có ích cho semantic và goal merge.
+
+    Anchor không phải kết luận. Nó chỉ nói: "có vật cụ thể ở đây" như file,
+    module, framework, hoặc token dài đáng chú ý.
+    """
+
     norm = normalize(text)
     result: list[str] = []
 
@@ -374,7 +482,6 @@ def extract_anchors(text: str, *, max_items: int = 10) -> tuple[str, ...]:
             if p and p in norm:
                 result.append(phrase)
 
-    # Thêm token nhiều thông tin làm dự phòng.
     for token in sorted(tokens(text)):
         if len(token) >= 5:
             result.append(token)
@@ -382,12 +489,18 @@ def extract_anchors(text: str, *, max_items: int = 10) -> tuple[str, ...]:
     return unique_recent(result, limit=max_items)
 
 
-def goal_match_score(left: str, right: str, *, left_anchors: Sequence[str] = (), right_anchors: Sequence[str] = ()) -> float:
-    """Khớp có trọng số để gộp các goal bền.
+def goal_match_score(
+    left: str,
+    right: str,
+    *,
+    left_anchors: Sequence[str] = (),
+    right_anchors: Sequence[str] = (),
+) -> float:
+    """Khớp goal bằng token + anchor, dùng như fallback rẻ.
 
-    Rule cũ "overlap >= 2" khiến mọi câu kỹ thuật của ERIS nhìn như cùng một goal.
-    Bộ khớp này đòi hỏi hoặc trùng anchor, hoặc trùng token mạnh hơn. Kinh ngạc thay:
-    hai lần ngẫu nhiên nhắc tới "system" và "fix" không phải là định mệnh.
+    Semantic thật có thể làm tốt hơn, nhưng goal merge vẫn cần anchor chính xác.
+    Hai câu cùng có chữ "fix" không tự nhiên thành cùng một goal. Đáng tiếc là
+    nhiều codebase đã sống như thể điều đó là chân lý.
     """
 
     left_tokens = tokens(left)
@@ -403,15 +516,26 @@ def goal_match_score(left: str, right: str, *, left_anchors: Sequence[str] = (),
     anchor_overlap = len(la & ra)
     anchor_ratio = anchor_overlap / max(1, min(len(la), len(ra))) if la and ra else 0.0
 
-    score = token_ratio * 0.55 + min(1.0, token_overlap / 5.0) * 0.15 + anchor_ratio * 0.30
+    score = token_ratio * 0.50 + min(1.0, token_overlap / 5.0) * 0.16 + anchor_ratio * 0.34
     if anchor_overlap >= 1:
         score += 0.18
     if token_overlap >= 5:
-        score += 0.08
+        score += 0.06
     return clamp01(score)
 
 
 def has_negated_closure(text: str) -> bool:
+    """True nếu text có closure bị phủ định.
+
+    Ví dụ:
+        - "chưa xong"
+        - "not fixed"
+        - "vẫn lỗi"
+
+    Đây là nơi lexical phải giữ quyền veto. Vector mà lẫn "xong" với "chưa
+    xong" thì hệ thống sẽ đóng goal sai, rồi ngồi tự hào trong log.
+    """
+
     norm = normalize(text)
     if has_any(norm, REJECTION_AFTER_CLOSURE):
         return True
@@ -428,6 +552,12 @@ def has_negated_closure(text: str) -> bool:
 
 
 def infer_closure_signal(text: str, *, thought_stream_report: object = None) -> ClosureSignal:
+    """Closure fallback cho GoalPersistence.
+
+    Có thể nhận thêm thought_stream_report cũ để giữ tương thích, nhưng file này
+    không biết chi tiết thought stream.
+    """
+
     norm = normalize(text)
     evidence: list[str] = []
     confidence = 0.0
@@ -439,20 +569,19 @@ def infer_closure_signal(text: str, *, thought_stream_report: object = None) -> 
         evidence.append("closure_phrase")
         confidence = 0.74
 
-    for disturbance in tuple(getattr(thought_stream_report, "disturbances", ()) or ()):  # tương thích với luồng hiện có
+    for disturbance in tuple(getattr(thought_stream_report, "disturbances", ()) or ()):  # legacy-compatible
         if bool(getattr(disturbance, "closes_loop", False)):
             evidence.append("thought_stream_closes_loop")
             confidence = max(confidence, 0.64)
 
-    return ClosureSignal(confidence >= 0.55, confidence, tuple(evidence))
+    return ClosureSignal(confidence >= 0.55, clamp01(confidence), tuple(evidence))
 
 
 def infer_goal_text_signal(text: str, *, channel: str = "chat", force_speak: bool = False) -> GoalTextSignal:
-    """Phân loại text trực tiếp của user có phải ứng viên goal bền hay không.
+    """Classifier lexical mỏng cho text user.
 
-    Hàm này cố ý bác bỏ kiểu "câu dài = goal". Lời người có thể là thăm dò,
-    casual, bực bội, đùa nghịch, hoặc chỉ là nhiễu có ngữ pháp.
-    Bi kịch, đúng, nhưng code phải chịu được.
+    Đây là bản fallback để GoalPersistence cũ không chết. Nó không cố hiểu sâu.
+    Semantic classification nên được thêm ở tầng mới bằng prototype/hypothesis.
     """
 
     raw = clean_text(text, limit=220)
@@ -460,12 +589,21 @@ def infer_goal_text_signal(text: str, *, channel: str = "chat", force_speak: boo
     if not raw:
         return GoalTextSignal()
 
-    evidence: list[str] = []
     anchors = extract_anchors(raw)
+    evidence: list[str] = []
     token_count = len(tokens(raw))
     is_direct_channel = channel in {"chat", "force_speak"} or bool(force_speak)
 
-    if has_any(norm, CASUAL_MARKERS) and not (has_any(norm, TASK_VERBS_STRONG) or anchors):
+    strong_task = has_any(norm, TASK_VERBS_STRONG)
+    soft_task = has_any(norm, TASK_VERBS_SOFT)
+    has_design = has_any(norm, DESIGN_TERMS)
+    has_tech = has_any(norm, TECHNICAL_TERMS)
+    has_learning = has_any(norm, LEARNING_TERMS)
+    has_file_anchor = bool(FILE_OR_MODULE_RE.search(raw))
+    has_question_shape = "?" in raw or has_any(norm, ("sao", "vi sao", "tai sao", "nen", "co nen", "what", "why", "how"))
+    correction_like = has_any(norm, ("sai roi", "khong phai", "thieu", "chua dung", "nham", "fix lai", "doc lai", "van loi"))
+
+    if has_any(norm, CASUAL_MARKERS) and not (strong_task or anchors):
         return GoalTextSignal(
             kind=GoalTextKind.CASUAL.value,
             summary=raw,
@@ -474,7 +612,7 @@ def infer_goal_text_signal(text: str, *, channel: str = "chat", force_speak: boo
             anchors=anchors,
         )
 
-    if has_any(norm, RECOVERY_TERMS) and not (has_any(norm, TASK_VERBS_STRONG) or anchors):
+    if has_any(norm, RECOVERY_TERMS) and not (strong_task or anchors):
         return GoalTextSignal(
             kind=GoalTextKind.RECOVERY.value,
             summary=raw,
@@ -483,117 +621,111 @@ def infer_goal_text_signal(text: str, *, channel: str = "chat", force_speak: boo
             anchors=anchors,
         )
 
-    strong_task = has_any(norm, TASK_VERBS_STRONG)
-    soft_task = has_any(norm, TASK_VERBS_SOFT)
-    has_design = has_any(norm, DESIGN_TERMS)
-    has_tech = has_any(norm, TECHNICAL_TERMS)
-    has_learning = has_any(norm, LEARNING_TERMS)
-    has_question_shape = "?" in raw or any(phrase_in(norm, p) for p in ("sao", "vi sao", "tai sao", "nen", "co nen", "what", "why", "how"))
-    has_file_anchor = bool(FILE_OR_MODULE_RE.search(raw))
-    correction_like = has_any(norm, ("sai roi", "khong phai", "thieu", "chua dung", "nham", "fix lai", "doc lai"))
-
-    kind = GoalTextKind.NONE.value
-    confidence = 0.0
-    strength = 0.0
-    urgency = 0.0
-    persist = 0.0
-    intervene = 0.0
-    actionability = 0.0
-
+    # Correction thread: user đang sửa hướng hiểu/làm của ERIS.
     if is_direct_channel and correction_like and (has_tech or has_design or anchors):
-        kind = GoalTextKind.CORRECTION_THREAD.value
-        evidence.append("technical_correction")
-        confidence = 0.66
-        strength = 0.54
-        urgency = 0.46
-        persist = 0.62
-        intervene = 0.42
-        actionability = 0.56
-
-    elif is_direct_channel and (strong_task or has_file_anchor) and (has_tech or has_design or anchors):
-        kind = GoalTextKind.CONCRETE_TASK.value
-        evidence.append("explicit_task_with_anchor")
-        confidence = 0.76
-        strength = 0.72
-        urgency = 0.52
-        persist = 0.82
-        intervene = 0.58
-        actionability = 0.78
-
-    elif is_direct_channel and (soft_task or has_question_shape) and (has_tech or has_design):
-        kind = GoalTextKind.DEBUG_THREAD.value if ("loi" in norm or "error" in norm or "bug" in norm or "debug" in norm) else GoalTextKind.REVIEW_REQUEST.value
-        evidence.append("technical_question_or_review")
-        confidence = 0.64
-        strength = 0.58
-        urgency = 0.42
-        persist = 0.64
-        intervene = 0.38
-        actionability = 0.54
-
-    elif is_direct_channel and has_design and token_count >= 5:
-        kind = GoalTextKind.DESIGN_DIRECTION.value
-        evidence.append("design_direction")
-        confidence = 0.58
-        strength = 0.50
-        urgency = 0.30
-        persist = 0.58
-        intervene = 0.26
-        actionability = 0.38
-
-    elif is_direct_channel and has_learning and (has_question_shape or has_tech):
-        kind = GoalTextKind.RESEARCH_THREAD.value
-        evidence.append("research_thread")
-        confidence = 0.55
-        strength = 0.42
-        urgency = 0.24
-        persist = 0.52
-        intervene = 0.18
-        actionability = 0.32
-
-    elif token_count >= 10 and (has_tech or has_design) and (strong_task or soft_task):
-        # Dự phòng cho thông điệp kỹ thuật dài có dạng chỉ thị. Vẫn yếu hơn task rõ ràng.
-        kind = GoalTextKind.COMMENTARY.value
-        evidence.append("long_technical_commentary")
-        confidence = 0.44
-        strength = 0.34
-        urgency = 0.18
-        persist = 0.42
-        intervene = 0.10
-        actionability = 0.22
-
-    else:
+        evidence.append("technical_or_design_correction")
         return GoalTextSignal(
-            kind=GoalTextKind.COMMENTARY.value if token_count >= 5 else GoalTextKind.NONE.value,
+            kind=GoalTextKind.CORRECTION_THREAD.value,
             summary=raw,
-            confidence=0.30,
-            evidence=("insufficient_goal_commitment",),
+            confidence=0.66,
+            strength=0.54,
+            urgency=0.46,
+            persist_permission=0.62,
+            intervention_permission=0.42,
+            actionability=0.56,
+            evidence=tuple(evidence),
+            anchors=anchors,
+        )
+
+    # Concrete task: lệnh rõ + anchor kỹ thuật/design/file.
+    if is_direct_channel and (strong_task or has_file_anchor) and (has_tech or has_design or anchors):
+        evidence.append("explicit_task_with_anchor")
+        return GoalTextSignal(
+            kind=GoalTextKind.CONCRETE_TASK.value,
+            summary=raw,
+            confidence=0.76,
+            strength=0.72,
+            urgency=0.52,
+            persist_permission=0.82,
+            intervention_permission=0.58,
+            actionability=0.78,
+            evidence=tuple(evidence),
+            anchors=anchors,
+        )
+
+    # Review/debug: câu hỏi hoặc yêu cầu đánh giá kỹ thuật.
+    if is_direct_channel and (soft_task or has_question_shape) and (has_tech or has_design):
+        kind = GoalTextKind.DEBUG_THREAD.value if has_any(norm, ("loi", "error", "bug", "debug", "fail")) else GoalTextKind.REVIEW_REQUEST.value
+        evidence.append("technical_question_or_review")
+        return GoalTextSignal(
+            kind=kind,
+            summary=raw,
+            confidence=0.64,
+            strength=0.58,
+            urgency=0.42,
+            persist_permission=0.64,
+            intervention_permission=0.38,
+            actionability=0.54,
+            evidence=tuple(evidence),
+            anchors=anchors,
+        )
+
+    # Design direction: có hướng kiến trúc nhưng chưa chắc là task cụ thể.
+    if is_direct_channel and has_design and token_count >= 5:
+        evidence.append("design_direction")
+        return GoalTextSignal(
+            kind=GoalTextKind.DESIGN_DIRECTION.value,
+            summary=raw,
+            confidence=0.58,
+            strength=0.50,
+            urgency=0.30,
+            persist_permission=0.58,
+            intervention_permission=0.26,
+            actionability=0.38,
+            evidence=tuple(evidence),
+            anchors=anchors,
+        )
+
+    if is_direct_channel and has_learning and (has_question_shape or has_tech):
+        evidence.append("research_thread")
+        return GoalTextSignal(
+            kind=GoalTextKind.RESEARCH_THREAD.value,
+            summary=raw,
+            confidence=0.55,
+            strength=0.42,
+            urgency=0.24,
+            persist_permission=0.52,
+            intervention_permission=0.18,
+            actionability=0.32,
+            evidence=tuple(evidence),
             anchors=anchors,
         )
 
     return GoalTextSignal(
-        kind=kind,
+        kind=GoalTextKind.COMMENTARY.value if token_count >= 5 else GoalTextKind.NONE.value,
         summary=raw,
-        confidence=clamp01(confidence),
-        strength=clamp01(strength),
-        urgency=clamp01(urgency),
-        persist_permission=clamp01(persist),
-        intervention_permission=clamp01(intervene),
-        actionability=clamp01(actionability),
-        evidence=tuple(evidence),
+        confidence=0.30,
+        evidence=("insufficient_goal_commitment",),
         anchors=anchors,
     )
 
 
 # ---------------------------------------------------------------------------
-# Suy luận activity/orientation dùng bởi Ni
+# Legacy lexical fallback interpreter
 # ---------------------------------------------------------------------------
 
 class OrientationInterpreter:
-    """Bộ diễn giải dùng chung cho Ni.
+    """Legacy lexical fallback cho Orientation.
 
-    Nó đọc context như một trường các ý nghĩa khả dĩ, không phải bảng đạo đức
-    theo category ứng dụng. Đúng, câu này nghe như sinh viên triết năm nhất,
-    nhưng ở đây nó chỉ có nghĩa là "đừng phạt YouTube khi tab đang nói về Godot".
+    Engine chính dài hạn nên là `HybridOrientationInterpreter` trong
+    orientation_semantics.py. Class này giữ lại API cũ:
+
+        OrientationInterpreter().estimate_orientation(probe)
+
+    để `ni.py`, `goal_persistence.py` hoặc test cũ chưa cần đổi ngay.
+    Nó chỉ dựa vào lexical anchors và vài tín hiệu thời gian nhẹ. Đừng mở rộng
+    class này thành semantic engine mới. Đó là cách chúng ta quay lại vũng bùn
+    vừa bò ra.
     """
 
     def infer_activity_intent(self, probe: SemanticContextProbe) -> ActivityIntent:
@@ -610,10 +742,12 @@ class OrientationInterpreter:
         has_avoidance = has_any(norm, AVOIDANCE_TERMS)
         has_system_wait = has_any(norm, SYSTEM_WAIT_TERMS)
 
+        # Explicit avoidance thắng trước, nhưng vẫn chỉ là possible_avoidance.
         if has_avoidance:
             evidence.append("explicit_avoidance_language")
             return ActivityIntent(ActivityIntentLabel.POSSIBLE_AVOIDANCE.value, 0.72, tuple(evidence))
 
+        # Media + learning/technical thường là research, không phải distraction.
         if has_media and (has_technical or has_learning):
             evidence.append("media_with_learning_or_technical_terms")
             return ActivityIntent(ActivityIntentLabel.RESEARCH.value, 0.76, tuple(evidence))
@@ -657,7 +791,7 @@ class OrientationInterpreter:
             evidence.append("long_idle_without_goal_pressure")
             return ActivityIntent(ActivityIntentLabel.RECOVERY.value, 0.40, tuple(evidence))
 
-        evidence.append("insufficient_semantic_signal")
+        evidence.append("insufficient_lexical_signal")
         return ActivityIntent(ActivityIntentLabel.UNKNOWN.value, 0.28, tuple(evidence))
 
     def infer_idle_posture(self, probe: SemanticContextProbe, intent_label: str) -> tuple[str, float, tuple[str, ...]]:
@@ -688,13 +822,23 @@ class OrientationInterpreter:
             fragmentation += 0.12
         elif count >= 7:
             fragmentation += 0.07
+
         if probe.focus_kind == "communication":
             fragmentation *= 0.45
+
         if has_any(normalize(probe.combined_text), ("alt tab", "switch", "window switch", "doi cua so", "nhay tab")):
             fragmentation += 0.12
+
         return clamp01(fragmentation)
 
-    def infer_goal_relation(self, *, intent: ActivityIntent, probe: SemanticContextProbe, fragmentation: float, idle_label: str) -> GoalRelation:
+    def infer_goal_relation(
+        self,
+        *,
+        intent: ActivityIntent,
+        probe: SemanticContextProbe,
+        fragmentation: float,
+        idle_label: str,
+    ) -> GoalRelation:
         evidence: list[str] = []
         active_goal_strength = clamp01(probe.active_goal_strength)
         intervention_perm = clamp01(probe.active_goal_intervention_permission)
@@ -772,7 +916,12 @@ class OrientationInterpreter:
         if fragmentation > 0.0:
             evidence.append(f"fragmentation={fragmentation:.2f}")
 
-        relation = self.infer_goal_relation(intent=intent, probe=probe, fragmentation=fragmentation, idle_label=idle_label)
+        relation = self.infer_goal_relation(
+            intent=intent,
+            probe=probe,
+            fragmentation=fragmentation,
+            idle_label=idle_label,
+        )
         evidence.extend(relation.evidence)
 
         coherence = self._estimate_coherence(
@@ -821,6 +970,7 @@ class OrientationInterpreter:
                 f"goal_conflict={conflict:.2f}",
                 f"intervention={intervention:.2f}",
                 f"confidence={confidence:.2f}",
+                "engine=lexical_fallback",
             )
         )
 
@@ -840,6 +990,7 @@ class OrientationInterpreter:
                 "goal_intervention_permission": clamp01(probe.active_goal_intervention_permission),
                 "fragmentation": fragmentation,
                 "idle_ambiguity": idle_ambiguity,
+                "lexical_fallback": 1.0,
             },
         )
 
@@ -937,34 +1088,34 @@ class OrientationInterpreter:
         idle_label: str,
     ) -> float:
         pressure = 0.04
+
         if relation.label == GoalRelationLabel.CONFLICTING.value:
-            pressure += conflict * 0.62
-            pressure += clamp01(active_goal_strength) * 0.12
-            pressure += clamp01(active_goal_intervention_permission) * 0.22
+            pressure += conflict * 0.42
         elif relation.label == GoalRelationLabel.UNKNOWN.value:
-            pressure += 0.05
-        elif relation.label == GoalRelationLabel.NEUTRAL.value:
-            pressure += 0.02
-        elif relation.label == GoalRelationLabel.ADJACENT.value:
-            pressure -= 0.02
-        elif relation.label == GoalRelationLabel.ALIGNED.value:
-            pressure -= 0.04
+            pressure += 0.04
+
+        pressure += clamp01(active_goal_strength) * 0.18
+        pressure += clamp01(active_goal_intervention_permission) * 0.34
+        pressure += fragmentation * 0.14
 
         if intent.label == ActivityIntentLabel.POSSIBLE_AVOIDANCE.value:
-            pressure += 0.14 * intent.confidence
-        if intent.label == ActivityIntentLabel.FRAGMENTED_SWITCHING.value:
-            pressure += 0.10
-        pressure += fragmentation * 0.28
-
-        if relation.label != GoalRelationLabel.CONFLICTING.value:
-            pressure -= idle_ambiguity * 0.12
-        elif idle_label in {"long_thinking_waiting_or_stall", "possible_reading_or_thinking"}:
+            pressure += 0.12 * intent.confidence
+        elif intent.label in {ActivityIntentLabel.RECOVERY.value, ActivityIntentLabel.SUPPORTIVE_BACKGROUND.value}:
+            pressure -= 0.05
+        elif intent.label in {ActivityIntentLabel.TECHNICAL_FOCUS.value, ActivityIntentLabel.RESEARCH.value}:
             pressure -= 0.08
 
-        if intent.label in {"research", "technical_focus", "supportive_background", "system_waiting"}:
-            pressure -= 0.10
-        elif intent.label in {"recovery", "play_or_recovery"} and relation.label != GoalRelationLabel.CONFLICTING.value:
-            pressure -= 0.12
+        # Idle dài làm tăng uncertainty, không tự động tăng quyền chen vào.
+        if idle_label in {"long_thinking_waiting_or_stall", "long_ambiguous"}:
+            pressure += idle_ambiguity * 0.05
+
+        # Nếu goal không cho intervene thì cap mạnh. Continuity nền được giữ, nhưng
+        # không biến thành cảnh sát năng suất.
+        if active_goal_intervention_permission < 0.35:
+            pressure = min(pressure, 0.34)
+        elif active_goal_intervention_permission < 0.55:
+            pressure = min(pressure, 0.50)
+
         return clamp01(pressure)
 
     def _estimate_confidence(
@@ -976,29 +1127,16 @@ class OrientationInterpreter:
         idle_ambiguity: float,
         fragmentation: float,
     ) -> float:
-        confidence = 0.34
-        if probe.focus_text:
-            confidence += 0.06
-        if probe.window_text:
-            confidence += 0.05
-        if probe.current_text:
-            confidence += 0.08
-        if probe.browsing_text:
-            confidence += 0.06
-        if probe.memory_text:
-            confidence += 0.04
-        if probe.active_goal_summary:
-            confidence += 0.08
+        confidence = intent.confidence * 0.46 + relation.confidence * 0.34 + 0.20
 
-        confidence += intent.confidence * 0.22
-        confidence += relation.confidence * 0.14
-        confidence += clamp01(probe.active_goal_strength) * 0.08
-        confidence += clamp01(probe.active_goal_intervention_permission) * 0.06
+        if probe.combined_text.strip():
+            confidence += 0.05
+        if probe.active_goal_strength >= 0.35:
+            confidence += 0.04
 
         confidence -= idle_ambiguity * 0.18
-        confidence -= min(0.08, fragmentation * 0.18)
+        confidence -= fragmentation * 0.10
+
         if intent.label == ActivityIntentLabel.UNKNOWN.value:
-            confidence -= 0.08
-        if relation.label == GoalRelationLabel.UNKNOWN.value:
-            confidence -= 0.05
-        return clamp(confidence, 0.12, 0.92)
+            confidence = min(confidence, 0.42)
+        return clamp01(confidence)

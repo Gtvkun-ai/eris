@@ -27,6 +27,8 @@ Mục tiêu của file này:
   symbolic bias, exposure recoil, precision.
 - Strangeness chỉ được bật khi có causal support: residue, recoil, repeated motif,
   symbolic pressure, hoặc personality lens đủ rõ.
+- Topic/repetition memory không soi lại câu ERIS vừa render bằng keyword thô.
+  Nó ưu tiên causal signal từ plan/intent/affect/Ti/context; lexical chỉ là fallback yếu.
 - Giữ public API cũ để RuntimeCoordinator không vỡ. Nếu coordinator chưa truyền
   affect_signal thì file tự derive bằng semantic-lite scorer nội bộ.
 
@@ -211,6 +213,27 @@ class FeStylePressure:
         )
 
 
+
+
+@dataclass(frozen=True)
+class FeTopicCandidate:
+    """Ứng viên topic dùng cho memory repetition của Fe.
+
+    Lưu ý quan trọng:
+    - Topic ở đây KHÔNG phải intent người dùng.
+    - Topic ở đây KHÔNG phải nhãn cảm xúc.
+    - Topic chỉ là nhãn thô để biết ERIS có đang lặp cùng một vùng nói hay không.
+
+    Vì vậy nó cần đủ chắc mới được ghi vào FeStyleMemory. Ghi thiếu thì chỉ mất
+    một chút continuity; ghi sai thì tạo repeated_topic ảo và làm ERIS tự né một
+    chủ đề chưa hề lặp. Con người đã đủ giỏi tự hiểu lầm bản thân rồi, runtime
+    không cần bắt chước phần đó quá sớm.
+    """
+
+    tag: str
+    score: float
+    evidence: tuple[str, ...] = ()
+
 class FeRenderer:
     def create_memory(self) -> FeStyleMemory:
         return FeStyleMemory()
@@ -300,7 +323,10 @@ class FeRenderer:
         recent_tones = (*memory.recent_tones, base_tone_label)[-6:]
         recent_intents = (*memory.recent_intents, plan.intent_label)[-8:]
 
-        topic_tag = self._infer_topic_tag(rendered_text)
+        # Topic repetition phải lấy từ nguyên nhân tạo câu nói trước, không phải
+        # soi lại câu ERIS vừa render rồi match keyword. Rendered text chỉ còn
+        # là fallback yếu khi plan không có đủ semantic evidence.
+        topic_tag = self._infer_topic_tag(rendered_text=rendered_text, plan=plan)
         recent_topic_tags = memory.recent_topic_tags[-6:]
         if topic_tag:
             recent_topic_tags = (*recent_topic_tags, topic_tag)[-6:]
@@ -1356,23 +1382,233 @@ class FeRenderer:
             return "short"
         return current
 
-    def _infer_topic_tag(self, rendered_text: str) -> str:
-        lowered = (rendered_text or "").lower()
+    def _infer_topic_tag(self, rendered_text: str = "", plan: FeStylePlan | None = None) -> str:
+        """Suy topic để đo repetition bằng causal signal, không bằng bề mặt câu.
+
+        Bản cũ đọc `rendered_text`, sau đó `keyword in haystack`. Cách đó rất dễ
+        false positive: một câu technical có chữ "màn hình" bị gắn window_sprawl,
+        một câu đùa có chữ "yêu" bị gắn relationship_texture, rồi memory tưởng
+        ERIS đang lặp chủ đề. Một vòng tự soi gương khá thơ, nhưng debug thì bẩn.
+
+        Luồng mới:
+            1. Lấy topic từ FeStylePlan: intent, mode, session_arc, evidence.
+            2. Parse các axis đã được tính trước như affect.tech/conflict/distress.
+            3. Chỉ khi semantic candidate yếu mới dùng lexical fallback.
+            4. Candidate dưới ngưỡng thì không ghi topic. Không nhớ còn đỡ hơn nhớ sai.
+        """
+
+        semantic_candidates = self._topic_candidates_from_plan(plan)
+        best_semantic = max((candidate.score for candidate in semantic_candidates), default=0.0)
+
+        # Lexical fallback chỉ chạy khi causal signal yếu. Nếu plan đã nói rõ đây là
+        # technical_support thì câu render có nhắc "tab" hay "màn hình" cũng không
+        # được tự bẻ topic sang desktop_space.
+        candidates = list(semantic_candidates)
+        if best_semantic < 0.42:
+            candidates.extend(self._topic_candidates_from_text(rendered_text))
+
+        merged = self._merge_topic_candidates(candidates)
+        if not merged:
+            return ""
+
+        best = max(merged, key=lambda candidate: candidate.score)
+
+        # Threshold cố ý hơi cao. Topic memory là nền chống lặp, không phải source
+        # truth. Ghi nhầm ở đây làm cả session đổi nhịp vô lý như một cái máy tự ám.
+        if best.score < 0.46:
+            return ""
+        return best.tag
+
+    def _topic_candidates_from_plan(self, plan: FeStylePlan | None) -> list[FeTopicCandidate]:
+        """Tạo topic candidate từ nguyên nhân tạo style plan.
+
+        Đây là nguồn chính. `plan.intent_label`, `plan.mode`, `plan.session_arc` và
+        `plan.evidence` đều là sản phẩm của các tầng trước: Ti, affect semantics,
+        memory continuity, conversation/relationship pressure. Vì vậy chúng đáng tin
+        hơn việc nhìn câu cuối cùng rồi đoán bằng chữ.
+        """
+
+        if plan is None:
+            return []
+
+        candidates: list[FeTopicCandidate] = []
+        evidence_items = tuple(str(item) for item in (getattr(plan, "evidence", ()) or ()) if str(item or "").strip())
+        evidence_blob = " ".join(evidence_items).lower()
+        mode = str(getattr(plan, "mode", "") or "")
+        intent = str(getattr(plan, "intent_label", "") or "")
+        session_arc = str(getattr(plan, "session_arc", "") or "")
+        tone_label = str(getattr(plan, "tone_label", "") or "")
+
+        def add(tag: str, score: float, *evidence: str) -> None:
+            candidates.append(
+                FeTopicCandidate(
+                    tag=tag,
+                    score=_clamp01(score),
+                    evidence=tuple(item for item in evidence if item),
+                )
+            )
+
+        # Intent là causal signal mạnh nhất. Nó đã qua `_infer_chat_intent` hoặc
+        # `_infer_autonomous_intent`, tức là không còn là keyword đơn.
+        if intent == "technical_support":
+            add("technical_work", 0.72, "intent=technical_support")
+        elif intent == "goal_guard":
+            add("goal_alignment", 0.66, "intent=goal_guard")
+        elif intent == "social_watch":
+            add("social_context", 0.58, "intent=social_watch")
+        elif intent in {"attachment_dialogue", "relational_repair", "boundary_repair"}:
+            add("relationship_texture", 0.70, f"intent={intent}")
+        elif intent == "ordinary_dialogue":
+            # ordinary_dialogue có score thấp hơn vì nó quá rộng. Nó chỉ giúp tránh
+            # fallback lexical quá hung hăng, không được áp đảo evidence cụ thể hơn.
+            add("ordinary_dialogue", 0.40, "intent=ordinary_dialogue")
+
+        # Mode và session arc là pressure bổ sung. Không overwrite intent, chỉ cộng
+        # evidence độc lập bằng noisy-or trong `_merge_topic_candidates`.
+        if mode == "technical":
+            add("technical_work", 0.62, "mode=technical")
+        elif mode == "relational_repair":
+            add("relationship_texture", 0.68, "mode=relational_repair")
+
+        if session_arc == "technical_guardianship":
+            add("technical_work", 0.56, "arc=technical_guardianship")
+        elif session_arc == "discipline_pressure":
+            add("goal_alignment", 0.50, "arc=discipline_pressure")
+        elif session_arc == "guarded_attachment":
+            add("relationship_texture", 0.52, "arc=guarded_attachment")
+
+        # Các affect axis nằm trong evidence dạng: tech:0.62, conflict:0.45,...
+        # Đây là semantic-lite score đã tính trước, không phải keyword match lại.
+        tech = self._extract_evidence_axis(evidence_blob, "tech")
+        conflict = self._extract_evidence_axis(evidence_blob, "conflict")
+        distress = self._extract_evidence_axis(evidence_blob, "distress")
+        attachment = self._extract_evidence_axis(evidence_blob, "attach")
+        intimacy = self._extract_evidence_axis(evidence_blob, "intimacy")
+        rejection = self._extract_evidence_axis(evidence_blob, "perceived_rejection")
+        attachment_bid = self._extract_evidence_axis(evidence_blob, "attachment_bid")
+        play = self._extract_evidence_axis(evidence_blob, "play")
+
+        if tech >= 0.50:
+            add("technical_work", 0.50 + tech * 0.22, f"affect.tech={tech:.2f}")
+        if conflict >= 0.45:
+            add("repair_or_boundary", 0.48 + conflict * 0.22, f"affect.conflict={conflict:.2f}")
+        if distress >= 0.45:
+            add("supportive_pressure", 0.48 + distress * 0.20, f"affect.distress={distress:.2f}")
+        if max(attachment, intimacy, rejection, attachment_bid) >= 0.45:
+            rel = max(attachment, intimacy, rejection, attachment_bid)
+            add("relationship_texture", 0.50 + rel * 0.22, f"affect.relationship={rel:.2f}")
+        if play >= 0.40 and conflict < 0.45 and distress < 0.45:
+            add("playful_exchange", 0.46 + play * 0.18, f"affect.play={play:.2f}")
+
+        # Evidence text ở đây là label nội bộ đã có nghĩa, không phải scan toàn bộ câu.
+        # Vì vậy dùng contains label là chấp nhận được. Đúng, vẫn là string check,
+        # nhưng check trên structured marker, không phải keyword ngoài đời.
+        if "ti_mode=chat_code" in evidence_blob or "ti_mode=focus_guard" in evidence_blob:
+            add("technical_work", 0.60, "ti_mode=technical")
+        if "autonomous_technical_context" in evidence_blob:
+            add("technical_work", 0.58, "autonomous_technical_context")
+        if "relational_repair" in evidence_blob or "repair_without_submission" in evidence_blob:
+            add("relationship_texture", 0.64, "relational_repair_evidence")
+        if "boundary_repair" in evidence_blob or "plain_repair" in tone_label:
+            add("repair_or_boundary", 0.60, "boundary_repair_evidence")
+        if "topic_note: repeated=" in evidence_blob:
+            # Nếu plan đã mang note lặp topic từ turn trước, chỉ dùng như bias nhẹ.
+            # Không tự khuếch đại lặp chỉ vì đã từng bị đánh dấu lặp.
+            add("prior_repeated_topic", 0.36, "prior_topic_note")
+
+        return self._merge_topic_candidates(candidates)
+
+    def _topic_candidates_from_text(self, rendered_text: str) -> list[FeTopicCandidate]:
+        """Lexical fallback yếu cho topic khi không có plan/evidence đủ rõ.
+
+        Fallback này cố ý conservative:
+        - cần ít nhất 2 phrase trong cùng nhóm mới tạo candidate;
+        - score bị cap thấp;
+        - phrase match có boundary, không dùng `keyword in haystack`;
+        - kết quả chỉ được dùng khi semantic candidate yếu.
+
+        Nếu chỉ có một chữ như "code" trong câu thì chưa đủ để ghi topic. Một chữ
+        đơn lẻ là hint, không phải ký ức. Tin tôi đi, đỡ tạo ma trong memory.
+        """
+
+        raw = rendered_text or ""
+        if not raw.strip():
+            return []
+
+        lowered = raw.lower()
         normalized = _normalize_text(lowered)
-        haystack = f" {lowered} {normalized} "
-        topic_keywords = (
-            ("focus_ide", ("ide", "code", "mã", "ma", "mã nguồn", "ma nguon", "dự án", "du an", "project", "terminal")),
-            ("attention_drift", ("phân tán", "phan tan", "chú ý", "chu y", "tập trung", "tap trung", "lệch focus", "lech focus", "focus")),
-            ("window_sprawl", ("cửa sổ", "cua so", "tab", "ứng dụng", "ung dung", "không gian", "khong gian", "màn hình", "man hinh")),
-            ("social_drift", ("mạng xã hội", "mang xa hoi", "giao tiếp", "giao tiep", "discord", "messenger", "facebook", "zalo")),
-            ("efficiency_mock", ("hiệu suất", "hieu suat", "cpu", "ram", "chu kỳ", "chu ky", "tài nguyên", "tai nguyen")),
-            ("idle_wait", ("nhàn rỗi", "nhan roi", "idle", "chờ đợi", "cho doi")),
-            ("relationship_texture", ("nhớ", "nho", "yêu", "yeu", "gắn bó", "gan bo", "bạn gái", "ban gai", "infj")),
+        groups: tuple[tuple[str, tuple[str, ...]], ...] = (
+            ("technical_work", ("code", "mã nguồn", "ma nguon", "terminal", "debug", "bug", "lỗi", "loi", "repo", "module")),
+            ("attention_focus", ("tập trung", "tap trung", "chú ý", "chu y", "focus", "phân tán", "phan tan")),
+            ("desktop_space", ("cửa sổ", "cua so", "tab", "màn hình", "man hinh", "ứng dụng", "ung dung")),
+            ("social_context", ("discord", "messenger", "facebook", "zalo", "giao tiếp", "giao tiep")),
+            ("resource_state", ("cpu", "ram", "tài nguyên", "tai nguyen", "hiệu suất", "hieu suat")),
+            ("idle_wait", ("idle", "nhàn rỗi", "nhan roi", "chờ", "cho")),
+            ("relationship_texture", ("gắn bó", "gan bo", "quan tâm", "quan tam", "hiểu", "hieu")),
         )
-        for topic, keywords in topic_keywords:
-            if any(f" {keyword} " in haystack or keyword in haystack for keyword in keywords):
-                return topic
-        return ""
+
+        candidates: list[FeTopicCandidate] = []
+        for tag, phrases in groups:
+            matched: list[str] = []
+            for phrase in phrases:
+                if _phrase_present(lowered, normalized, phrase):
+                    matched.append(phrase)
+
+            if len(matched) < 2:
+                continue
+
+            # Cap thấp để lexical fallback không thắng semantic plan. Nhiều hit chỉ
+            # làm nó đủ điều kiện khi thật sự thiếu causal evidence.
+            score = min(0.42, 0.22 + len(matched) * 0.08)
+            candidates.append(
+                FeTopicCandidate(
+                    tag=tag,
+                    score=score,
+                    evidence=tuple(f"lexical:{item}" for item in matched[:4]),
+                )
+            )
+        return candidates
+
+    def _extract_evidence_axis(self, text: str, axis: str) -> float:
+        """Đọc một axis dạng `axis:0.42` từ evidence đã render.
+
+        Đây là adapter tạm để không phải sửa FeStylePlan contract. Khi contracts cho
+        phép lưu TopicProfile/semantic axes riêng, nên bỏ parser text này. Hiện tại
+        nó vẫn ổn vì chỉ parse marker do chính Fe tạo ra, không parse câu user/raw.
+        """
+
+        if not text or not axis:
+            return 0.0
+        match = re.search(rf"(?<![a-zA-Z0-9_]){re.escape(axis)}\s*:\s*(0(?:\.\d+)?|1(?:\.0+)?)", text)
+        if not match:
+            return 0.0
+        return self._float(match.group(1))
+
+    def _merge_topic_candidates(self, candidates: list[FeTopicCandidate]) -> list[FeTopicCandidate]:
+        """Gộp candidate cùng tag bằng noisy-or nhẹ.
+
+        Cộng tuyến tính sẽ làm ba hint yếu thành một phán quyết quá chắc. Noisy-or
+        giữ ý nghĩa "nhiều nguồn độc lập cùng nói một điều" nhưng không để score
+        phình vô lý. Một phép lịch sự nhỏ dành cho tương lai debug.
+        """
+
+        merged: dict[str, FeTopicCandidate] = {}
+        for candidate in candidates:
+            if not candidate.tag or candidate.score <= 0.0:
+                continue
+            old = merged.get(candidate.tag)
+            if old is None:
+                merged[candidate.tag] = candidate
+                continue
+
+            score = 1.0 - (1.0 - old.score) * (1.0 - candidate.score * 0.72)
+            evidence = tuple(dict.fromkeys((*old.evidence, *candidate.evidence)))
+            merged[candidate.tag] = FeTopicCandidate(
+                tag=candidate.tag,
+                score=_clamp01(score),
+                evidence=evidence,
+            )
+        return list(merged.values())
 
     def _measure_topic_repetition(self, recent_topic_tags: tuple[str, ...]) -> tuple[str, int]:
         if not recent_topic_tags:
@@ -1644,17 +1880,61 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, numeric))
 
 
+def _contains_phrase_boundary(text: str, phrase: str) -> bool:
+    """Kiểm tra phrase với boundary unicode nhẹ.
+
+    Không dùng `phrase in text` vì nó match bậy trong từ dài hơn. Ví dụ `ai` có
+    thể nằm trong rất nhiều chữ không liên quan, và rồi bộ lọc lại tưởng mình vừa
+    thông minh. Một cảnh tượng buồn nhưng quen.
+    """
+
+    phrase = (phrase or "").strip()
+    if not text or not phrase:
+        return False
+    escaped = re.escape(phrase)
+    # `\w` không bao hết tiếng Việt có dấu theo cách ổn định giữa môi trường, nên
+    # thêm khoảng À-ỹ để tránh match giữa thân từ tiếng Việt.
+    pattern = rf"(?<![\wÀ-ỹ]){escaped}(?![\wÀ-ỹ])"
+    return re.search(pattern, text, flags=re.IGNORECASE | re.UNICODE) is not None
+
+
+def _phrase_present(lowered: str, normalized: str, phrase: str) -> bool:
+    """Match phrase trên cả bản có dấu và không dấu, có boundary.
+
+    Hàm này dùng cho fallback heuristic. Nó không biến heuristic thành semantic,
+    chỉ làm heuristic bớt cắm đầu vào false positive như trước.
+    """
+
+    phrase_lower = (phrase or "").lower().strip()
+    if not phrase_lower:
+        return False
+    phrase_normalized = _normalize_text(phrase_lower)
+    return (
+        _contains_phrase_boundary(lowered, phrase_lower)
+        or _contains_phrase_boundary(normalized, phrase_normalized)
+    )
+
+
 def _phrase_score(
     haystack: str,
     phrases: tuple[str, ...],
     evidence: list[str],
     label: str,
 ) -> float:
+    """Tính score phrase-family cho fallback affect signal.
+
+    Đây vẫn là semantic-lite heuristic, không phải chân lý. Điểm khác với bản cũ:
+    - không dùng substring trần;
+    - match có boundary;
+    - evidence giữ số hit, không route intent trực tiếp;
+    - score saturating để nhiều phrase tăng pressure nhưng không nổ tung.
+    """
+
+    lowered = haystack.lower()
+    normalized = _normalize_text(lowered)
     hits = 0
     for phrase in phrases:
-        needle = f" {phrase.lower()} "
-        normalized_needle = f" {_normalize_text(phrase)} "
-        if needle in haystack or normalized_needle in haystack or phrase.lower() in haystack:
+        if _phrase_present(lowered, normalized, phrase):
             hits += 1
     if hits <= 0:
         return 0.0

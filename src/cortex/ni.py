@@ -57,6 +57,21 @@ except ImportError:  # Hữu ích khi Ngài chạy file này trong thư mục nh
         normalize,
     )
 
+try:
+    from .orientation_semantics import HybridOrientationConfig, build_hybrid_orientation_interpreter
+    from .semantic_encoder import build_default_semantic_encoder
+    from .semantic_hypothesis import SemanticHypothesisEngine
+except ImportError:  # Giữ được khả năng chạy lẻ khi package chưa đầy đủ.
+    try:
+        from orientation_semantics import HybridOrientationConfig, build_hybrid_orientation_interpreter  # type: ignore
+        from semantic_encoder import build_default_semantic_encoder  # type: ignore
+        from semantic_hypothesis import SemanticHypothesisEngine  # type: ignore
+    except ImportError:  # pragma: no cover - fallback nhẹ cho môi trường copy file lẻ.
+        HybridOrientationConfig = None  # type: ignore[assignment]
+        build_hybrid_orientation_interpreter = None  # type: ignore[assignment]
+        build_default_semantic_encoder = None  # type: ignore[assignment]
+        SemanticHypothesisEngine = None  # type: ignore[assignment]
+
 
 DEFAULT_FOCUS_BIAS: dict[str, dict[str, float]] = {
     # Mặc định trung lập. Loại focus là bằng chứng, không phải bảng đạo đức.
@@ -125,8 +140,112 @@ class NiEngine:
     vì hiển nhiên kiến trúc phần mềm phải sống sót qua việc dùng thật.
     """
 
-    def __init__(self) -> None:
-        self._interpreter = OrientationInterpreter()
+    def __init__(
+        self,
+        *,
+        interpreter: object | None = None,
+        semantic_engine: SemanticHypothesisEngine | None = None,
+        semantic_enabled: bool | None = None,
+        allow_hashing_fallback: bool | None = None,
+    ) -> None:
+        self._interpreter = interpreter or self._build_orientation_interpreter(
+            semantic_engine=semantic_engine,
+            semantic_enabled=semantic_enabled,
+            allow_hashing_fallback=allow_hashing_fallback,
+        )
+
+    def _build_orientation_interpreter(
+        self,
+        *,
+        semantic_engine: SemanticHypothesisEngine | None = None,
+        semantic_enabled: bool | None = None,
+        allow_hashing_fallback: bool | None = None,
+    ) -> object:
+        lexical = OrientationInterpreter()
+        enabled = (
+            self._env_flag("ERIS_ORIENTATION_SEMANTIC_ENABLED", default=True)
+            if semantic_enabled is None
+            else bool(semantic_enabled)
+        )
+        if not enabled:
+            return lexical
+        if (
+            HybridOrientationConfig is None
+            or build_hybrid_orientation_interpreter is None
+            or build_default_semantic_encoder is None
+            or SemanticHypothesisEngine is None
+        ):
+            return lexical
+
+        allow_hash = (
+            self._env_flag("ERIS_ORIENTATION_HASH_FALLBACK", default=True)
+            if allow_hashing_fallback is None
+            else bool(allow_hashing_fallback)
+        )
+        engine = semantic_engine
+        if engine is None:
+            encoder = build_default_semantic_encoder(
+                allow_hashing_fallback=allow_hash,
+                cache_items=self._env_int(
+                    "ERIS_ORIENTATION_SEMANTIC_CACHE_ITEMS",
+                    default=4096,
+                    minimum=32,
+                ),
+            )
+            engine = SemanticHypothesisEngine(encoder)
+
+        config = HybridOrientationConfig(
+            semantic_takeover_confidence=self._env_float(
+                "ERIS_ORIENTATION_SEMANTIC_TAKEOVER_CONFIDENCE",
+                default=0.62,
+                minimum=0.45,
+                maximum=0.92,
+            ),
+            ambiguity_block=self._env_float(
+                "ERIS_ORIENTATION_SEMANTIC_AMBIGUITY_BLOCK",
+                default=0.56,
+                minimum=0.18,
+                maximum=0.92,
+            ),
+            fallback_semantic_cap=self._env_float(
+                "ERIS_ORIENTATION_SEMANTIC_FALLBACK_CAP",
+                default=0.55,
+                minimum=0.20,
+                maximum=0.82,
+            ),
+        )
+        return build_hybrid_orientation_interpreter(engine, config=config)
+
+    def _env_flag(self, name: str, *, default: bool) -> bool:
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+    def _env_int(self, name: str, *, default: int, minimum: int = 1) -> int:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return max(minimum, int(default))
+        try:
+            return max(minimum, int(raw))
+        except (TypeError, ValueError):
+            return max(minimum, int(default))
+
+    def _env_float(
+        self,
+        name: str,
+        *,
+        default: float,
+        minimum: float = 0.0,
+        maximum: float = 1.0,
+    ) -> float:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return clamp(default, minimum, maximum)
+        try:
+            return clamp(float(raw), minimum, maximum)
+        except (TypeError, ValueError):
+            return clamp(default, minimum, maximum)
 
     def evaluate_autonomous(
         self,

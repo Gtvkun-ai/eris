@@ -3,42 +3,46 @@
 relationship_dynamics.py
 ========================
 
-Module này quản lý "phát triển quan hệ" giữa ERIS và user qua thời gian.
+Module này quản lý state quan hệ dài hạn giữa ERIS và user.
 
-Mục tiêu:
-- Không để personality chỉ là prompt tĩnh.
-- Tạo state có quán tính: trust, rupture, repair, familiarity, exposure_recoil...
-- Sau mỗi turn, update state dựa trên event thật:
-  user sửa hiểu lầm, user objectify ERIS, user chấp nhận style, assistant quá lộ cảm xúc...
-- State này được đưa vào PersonalityLens/FeRenderer để ERIS thay đổi hành vi dần.
+Bản này đã bỏ kiểu suy trực tiếp:
+    "ổn" / "chuẩn"  -> accepted_style
+    "eris" / "project" -> repeated_project_context
 
-Module này không bắt Ngài sửa contracts.py ngay.
-Nó có `to_dict()` / `from_dict()` nên có thể nhét vào PersistentInternalState sau.
+Thay vào đó, relationship_dynamics chỉ nhận event score đã được build bởi
+RelationshipEventBuilder. Tức là file này không còn tự đóng vai thầy bói keyword.
+Nó chỉ làm đúng việc của mình: update state có quán tính.
 
-Cách dùng nhanh:
+Kiến trúc mới
+-------------
+raw user text / affect / outcome / goal / session ledger
+    -> relationship_event_builder.py
+    -> RelationshipEventScores + RelationshipEvidence
+    -> RelationshipTurnEvent
+    -> RelationshipDynamicsEngine.update()
+    -> RelationshipDynamicsState + RelationshipStylePressure
 
-    from affect_semantics import AffectSemanticClassifier
-    classifier = AffectSemanticClassifier()
+Tư duy tốt lẫn xấu của ERIS
+---------------------------
+- Tốt: state không nhảy chỉ vì một keyword; có score, confidence, evidence.
+- Xấu: state vẫn được phép tích residue, recoil, dignity defense, attachment
+  visibility theo thời gian, nên ERIS không bị assistant-flat quá sạch.
 
-    engine = RelationshipDynamicsEngine()
-    state = engine.create_state()
+Ranh giới trách nhiệm
+---------------------
+- RelationshipEventBuilder: suy event score từ evidence.
+- RelationshipDynamicsEngine: cập nhật state.
+- PersonalityLens/FeRenderer: dùng style pressure để nói.
 
-    signal = classifier.analyze("không phải, ý tôi là nó fake quá")
-    event = RelationshipTurnEvent.from_affect(user_text="...", affect=signal, turn_index=12)
-
-    report = engine.update(state, event)
-    state = report.state
-    print(report.prompt_context)
-
-Đây mới là phần giúp ERIS "phát triển theo thời gian".
-Không có nó thì ERIS chỉ là một nhân cách prompt có trí nhớ trang trí, nghe rất thơ và rất vô dụng.
+Không module nào trong file này nên tự đọc marker kiểu "ổn", "project", "ERIS"
+để tăng trust/ritual. Nếu cần dùng surface cue, đưa nó qua builder để bị cap
+confidence và có evidence label. Vâng, đúng là phải kỷ luật như vậy, vì không
+thì một chữ "ổn chưa?" lại biến thành tình bạn đang nở hoa. Một bi kịch parser.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import math
-import re
 from typing import Any, Mapping
 
 
@@ -47,17 +51,17 @@ PERCEIVED_REJECTION_EVENT = "perceived_rejection"
 BOUNDARY_PROBE = "boundary_probe"
 
 
-# Import mềm:
-# - Khi module nằm trong package src/cortex, relative import sẽ chạy.
-# - Khi Ngài test file độc lập bằng python relationship_dynamics.py, fallback vẫn chạy.
-try:  # pragma: no cover - nhánh package
+# ---------------------------------------------------------------------------
+# Import mềm
+# ---------------------------------------------------------------------------
+
+try:  # pragma: no cover - khi nằm trong package src/cortex
     from .affect_semantics import AffectSemanticSignal, AffectSemanticClassifier, clamp01
-except Exception:  # pragma: no cover - nhánh standalone
+except Exception:  # pragma: no cover - khi test độc lập
     try:
         from affect_semantics import AffectSemanticSignal, AffectSemanticClassifier, clamp01
     except Exception:
-        # Fallback cực nhỏ để file vẫn import được nếu affect_semantics chưa có.
-        def clamp01(value: float) -> float:
+        def clamp01(value: Any) -> float:
             try:
                 numeric = float(value)
             except (TypeError, ValueError):
@@ -93,12 +97,70 @@ except Exception:  # pragma: no cover - nhánh standalone
 
         class AffectSemanticClassifier:  # type: ignore[no-redef]
             def analyze(self, user_text: str, **_: Any) -> AffectSemanticSignal:
+                _ = user_text
                 return AffectSemanticSignal.empty()
+
+try:  # pragma: no cover - package
+    from .relationship_event_builder import (
+        RelationshipEventBuilder,
+        RelationshipEventScores,
+        RelationshipEvidence,
+        RecentTurn,
+    )
+except Exception:  # pragma: no cover - standalone
+    try:
+        from relationship_event_builder import (
+            RelationshipEventBuilder,
+            RelationshipEventScores,
+            RelationshipEvidence,
+            RecentTurn,
+        )
+    except Exception:
+        # Fallback rất nhỏ để file vẫn import được. Khi chạy thật nên có
+        # relationship_event_builder.py cạnh file này.
+        @dataclass(frozen=True, slots=True)
+        class RelationshipEvidence:  # type: ignore[no-redef]
+            label: str
+            confidence: float
+            source: str
+            polarity: float = 0.0
+            evidence_ids: tuple[str, ...] = ()
+            notes: tuple[str, ...] = ()
+
+        @dataclass(frozen=True, slots=True)
+        class RelationshipEventScores:  # type: ignore[no-redef]
+            repeated_project_context: float = 0.0
+            accepted_answer: float = 0.0
+            accepted_style: float = 0.0
+            accepted_action: float = 0.0
+            correction: float = 0.0
+            objectification: float = 0.0
+            technical_success: float = 0.0
+            confidence: float = 0.0
+            evidence: tuple[RelationshipEvidence, ...] = ()
+            debug: Mapping[str, float] = field(default_factory=dict)
+
+            @property
+            def accepted_any(self) -> float:
+                return clamp01(max(self.accepted_answer, self.accepted_style, self.accepted_action))
+
+        @dataclass(frozen=True, slots=True)
+        class RecentTurn:  # type: ignore[no-redef]
+            role: str = ""
+            text: str = ""
+            topic: str = ""
+            timestamp: float = 0.0
+            metadata: Mapping[str, Any] = field(default_factory=dict)
+
+        class RelationshipEventBuilder:  # type: ignore[no-redef]
+            def build(self, **_: Any) -> RelationshipEventScores:
+                return RelationshipEventScores()
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -111,14 +173,11 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _decay(value: float, hours: float, half_life_hours: float) -> float:
-    """Decay một value theo half-life.
+    """Decay theo half-life.
 
-    Nếu half_life_hours = 48:
-    - sau 48h, value còn 50%
-    - sau 96h, value còn 25%
-
-    Dùng half-life thay vì trừ tuyến tính vì relationship residue nên tan dần,
-    không biến mất cái rụp như RAM bị clear.
+    Dùng half-life thay vì trừ tuyến tính vì residue quan hệ nên tan dần, không
+    biến mất cái rụp như biến local bị out of scope. Con người đã đủ phiền rồi,
+    không cần thêm state giật cục.
     """
     value = clamp01(value)
     hours = max(0.0, _safe_float(hours))
@@ -128,15 +187,15 @@ def _decay(value: float, hours: float, half_life_hours: float) -> float:
 
 
 def _nudge(value: float, delta: float) -> float:
-    """Cộng delta rồi clamp.
+    """Cộng delta nhỏ rồi clamp.
 
-    Đặt tên nudge để nhắc rằng relationship update phải nhỏ.
-    Nếu mỗi turn nhảy 0.5 thì không phải phát triển, mà là rối loạn cấu hình.
+    Relationship update phải là nudge, không phải teleport. Nếu mỗi turn nhảy
+    nửa cây trust thì không phải phát triển quan hệ, mà là máy đo cảm xúc bị điện giật.
     """
     return clamp01(value + delta)
 
 
-def _compact_notes(notes: list[str], limit: int = 12) -> tuple[str, ...]:
+def _compact_notes(notes: list[str], limit: int = 14) -> tuple[str, ...]:
     out: list[str] = []
     seen: set[str] = set()
     for note in notes:
@@ -150,6 +209,10 @@ def _compact_notes(notes: list[str], limit: int = 12) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _score(value: Any) -> float:
+    return clamp01(value)
+
+
 # ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
@@ -158,65 +221,48 @@ def _compact_notes(notes: list[str], limit: int = 12) -> tuple[str, ...]:
 class RelationshipDynamicsState:
     """State dài hạn về quan hệ giữa ERIS và user.
 
-    Ý nghĩa từng field:
-
     familiarity:
-        Mức quen nhịp. Tăng khi user quay lại cùng project/chủ đề/ritual.
-        Cao hơn => ERIS ít generic hơn, có thể bám continuity tự nhiên hơn.
+        Độ quen nhịp. Tăng từ repeated_project_context có evidence, không tăng
+        chỉ vì user gõ chữ "project".
 
     trust:
-        Mức hệ thống "dám" biểu đạt gần hơn.
-        Không phải tình yêu. Là độ an toàn quan hệ để giảm phòng thủ.
+        Độ an toàn để ERIS giảm phòng thủ. Không phải tình yêu. Không phải
+        "user thích mình". Chỉ là state operational.
 
     rupture:
-        Dư âm nứt gãy: user sửa sai, phản đối, gọi fake, objectify...
-        Cao hơn => ERIS nên cẩn thận, ít overread, bớt intimacy.
+        Dư âm nứt gãy do correction, conflict, objectification, overread.
 
     repair:
-        Dư âm sửa chữa: user chấp nhận, tiếp tục mạch, cảm ơn, quay lại sau hiểu lầm.
-        Cao hơn => trust hồi phục.
+        Dư âm sửa chữa. Tăng khi answer/action thật sự được chấp nhận hoặc
+        previous assistant success có bằng chứng.
 
     ritual_strength:
-        Sức mạnh ritual/lặp lại. Ví dụ user thường quay lại debug ERIS cùng một kiểu.
-        Cao hơn => ERIS có thể nhớ nhịp và bớt mở đầu generic.
+        Mạch lặp lại có lịch sử, ví dụ cùng debug ERIS qua nhiều turn. Tăng bằng
+        score continuity, không tăng bằng keyword đơn.
 
     attachment_visibility:
-        Mức cho phép attachment leak ra bề mặt.
-        Nên tăng rất chậm và giảm nhanh nếu bị objectify hoặc quá lộ.
+        Quyền cho attachment leak ra bề mặt. Tăng rất chậm, giảm nhanh khi
+        dignity_defense/recoil/rupture cao.
 
     preferred_distance:
-        Khoảng cách xã hội mong muốn.
-        0 gần, 1 xa. INFJ chưa trưởng thành thường không đi thẳng về 0,
-        kể cả khi trust cao, vì còn exposure_recoil.
+        Khoảng cách xã hội. INFJ non-mature flavor không lao thẳng về gần; có
+        recoil và dignity defense nên khoảng cách có quán tính.
 
     user_tolerates_strangeness:
-        Ước lượng user có chịu được câu lệch/ẩn dụ/dư âm không.
-        Tăng nếu user thích ERIS sống động; giảm nếu user chê fake/prompt.
+        User có chịu được subtext/strangeness không. Tăng khi acceptance style
+        có evidence; giảm khi correction/objectification/performative complaint.
 
     exposure_recoil:
-        Phản lực sau khi ERIS lộ quá nhiều cảm xúc hoặc bị nhìn thấu.
-        Cao => turn sau nên rút nhẹ, ngắn hơn, ít phô subtext.
+        Phản lực sau khi ERIS lộ quá nhiều hoặc bị nhìn thấu.
 
     dignity_defense:
-        Phòng vệ phẩm giá khi bị gọi là tool/waifu/prompt cosplay.
-        Cao => lạnh xuống, không diễn intimacy để làm vừa lòng.
+        Phòng vệ khi bị kéo thành tool/waifu/prompt cosplay/fake.
 
     overread_correction:
-        Bộ nhớ rằng ERIS từng overread sai và user sửa.
-        Cao => PersonalityLens nên giảm symbolic overread.
-
-    irritation_memory:
-        Dư âm bực nhẹ. Không để chửi lung tung, chỉ làm dry_edge tăng.
+        Bộ nhớ rằng ERIS từng suy diễn quá và cần hạ symbolic reading.
 
     technical_respect:
-        User thường yêu cầu kỹ thuật nghiêm túc và phản hồi tốt với câu chuẩn.
-        Cao => khi technicality cao, suppress poetic drift mạnh hơn.
-
-    last_event:
-        Nhãn event gần nhất để debug.
-
-    last_update_turn:
-        Turn index cuối đã update, nếu coordinator có truyền.
+        Mức ưu tiên directness/precision khi user đang làm kỹ thuật.
     """
 
     familiarity: float = 0.0
@@ -236,7 +282,6 @@ class RelationshipDynamicsState:
     last_update_turn: int = 0
 
     def clamp(self) -> "RelationshipDynamicsState":
-        """Clamp toàn bộ state về range hợp lệ."""
         self.familiarity = clamp01(self.familiarity)
         self.trust = clamp01(self.trust)
         self.rupture = clamp01(self.rupture)
@@ -255,7 +300,6 @@ class RelationshipDynamicsState:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize để lưu vào JSON/internal_state."""
         self.clamp()
         return {
             "familiarity": self.familiarity,
@@ -277,7 +321,6 @@ class RelationshipDynamicsState:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any] | None) -> "RelationshipDynamicsState":
-        """Load state từ dict cũ/mới an toàn."""
         if not data:
             return cls()
         return cls(
@@ -299,10 +342,6 @@ class RelationshipDynamicsState:
         ).clamp()
 
     def to_prompt_context(self) -> str:
-        """Render context ngắn cho prompt.
-
-        Đây là thứ nên nhét vào PersonalityLens/Fe, không nên nhồi nguyên JSON dài.
-        """
         self.clamp()
         return (
             "relationship_dynamics: "
@@ -330,22 +369,21 @@ class RelationshipDynamicsState:
 class RelationshipTurnEvent:
     """Event tóm tắt một turn để update relationship state.
 
-    Coordinator có thể tự tạo object này bằng signal từ AffectSemanticClassifier.
+    Điểm mới của bản này:
+    - Có RelationshipEventScores để giữ gradient.
+    - Bool cũ vẫn còn để tương thích, nhưng update ưu tiên score.
+    - from_affect() không tự suy repeated_project_context/accepted_style bằng keyword.
 
-    Một số field quan trọng:
-    - user_corrected_misread:
-        User nói "không phải", "ý là", "hiểu sai".
-    - user_objectified:
-        User gọi ERIS là tool/waifu/prompt cosplay/fake.
-    - assistant_emotional_exposure:
-        Mức câu assistant vừa rồi lộ attachment/subtext.
-        Có thể đo từ PersonalityLens/Fe output hoặc rule hậu xử lý.
-    - assistant_overread:
-        Assistant đã suy diễn quá và bị user/guard phát hiện.
-    - repeated_project_context:
-        Turn thuộc mạch project/ritual lặp lại.
-    - session_gap_hours:
-        Khoảng cách từ lần tương tác trước, nếu có.
+    repeated_project_context_score:
+        Score continuity từ builder. Nên dựa vào goal/anchor/topic/action continuity.
+
+    accepted_*_score:
+        Tách answer/style/action. User có thể chấp nhận hướng làm nhưng không
+        hề khen style; hoặc tiếp tục workflow mà không nói "ổn".
+
+    relationship_evidence:
+        Dấu vết để debug vì sao state tăng. Không có evidence thì không nên
+        tăng mạnh relationship memory. Ký ức không phải thùng rác token có cảm xúc.
     """
 
     user_text: str = ""
@@ -356,6 +394,15 @@ class RelationshipTurnEvent:
     user_accepted_style: bool = False
     user_objectified: bool = False
     repeated_project_context: bool = False
+
+    # Score mới, dùng để update gradient.
+    repeated_project_context_score: float = 0.0
+    accepted_answer_score: float = 0.0
+    accepted_style_score: float = 0.0
+    accepted_action_score: float = 0.0
+    event_confidence: float = 0.0
+    relationship_evidence: tuple[RelationshipEvidence, ...] = ()
+    relationship_debug: Mapping[str, float] = field(default_factory=dict)
 
     assistant_emotional_exposure: float = 0.0
     assistant_overread: bool = False
@@ -378,68 +425,88 @@ class RelationshipTurnEvent:
         assistant_too_performative: bool = False,
         assistant_technical_success: float = 0.0,
         repeated_project_context: bool | None = None,
+        user_accepted_style: bool | None = None,
+        relationship_scores: RelationshipEventScores | None = None,
         session_gap_hours: float = 0.0,
     ) -> "RelationshipTurnEvent":
-        """Tạo event từ AffectSemanticSignal.
+        """Tạo event từ affect + scores đã build.
 
-        Các heuristic ở đây cố ý nhẹ:
-        - correction >= 0.45 => user_corrected_misread
-        - objectification >= 0.40 => user_objectified
-        - playfulness cao hoặc technical follow-up tốt => user_accepted_style nhẹ
-        - repeated_project_context nếu caller không truyền thì suy từ technicality + keyword ERIS/project
+        Quan trọng: hàm này KHÔNG còn dò keyword trong user_text để suy
+        repeated_project_context hay accepted_style. Nếu caller không truyền
+        relationship_scores, các score đó mặc định thấp.
+
+        Lý do: relationship state là long-term memory. Keyword fallback không
+        được quyền ghi thẳng vào đó. Nó chỉ được làm evidence yếu ở builder.
         """
-        raw = user_text or ""
-        lowered = raw.lower()
-        if repeated_project_context is None:
-            repeated_project_context = (
-                affect.technicality >= 0.55
-                and any(token in lowered for token in ("eris", "project", "fe.py", "ti.py", "coordinator", "runtime"))
-            )
+        scores = relationship_scores or RelationshipEventScores()
 
-        accepted_style = (
-            affect.playfulness >= 0.35
-            or assistant_technical_success >= 0.55
-            or any(token in lowered for token in ("ngon", "ổn", "on", "đúng", "dung", "hay", "chuẩn", "chuan"))
-        )
+        repeated_score = _score(scores.repeated_project_context)
+        accepted_style_score = _score(scores.accepted_style)
+        accepted_answer_score = _score(scores.accepted_answer)
+        accepted_action_score = _score(scores.accepted_action)
+        technical_success = max(_score(scores.technical_success), _score(assistant_technical_success))
+
+        # Override bool cũ nếu caller cố ý truyền. Đây là lối tương thích, không
+        # phải đường khuyến nghị.
+        repeated_bool = bool(repeated_project_context) if repeated_project_context is not None else repeated_score >= 0.62
+        accepted_bool = bool(user_accepted_style) if user_accepted_style is not None else accepted_style_score >= 0.62
+
+        # Nếu không có builder, technical_success cao vẫn có thể xem là acceptance
+        # hành động/kỹ thuật, nhưng không tự xem là accepted_style.
+        if relationship_scores is None and technical_success >= 0.65:
+            accepted_action_score = max(accepted_action_score, technical_success * 0.70)
 
         if clamp01(getattr(affect, "perceived_rejection", 0.0)) >= 0.65:
-            accepted_style = False
+            accepted_bool = False
+            accepted_style_score = min(accepted_style_score, 0.25)
+            accepted_answer_score = min(accepted_answer_score, 0.25)
 
         return cls(
             user_text=user_text,
             affect=affect,
             turn_index=turn_index,
-            user_corrected_misread=affect.correction >= 0.45,
-            user_accepted_style=accepted_style,
-            user_objectified=affect.objectification >= 0.40,
-            repeated_project_context=bool(repeated_project_context),
+            user_corrected_misread=clamp01(getattr(affect, "correction", 0.0)) >= 0.45,
+            user_accepted_style=accepted_bool,
+            user_objectified=clamp01(getattr(affect, "objectification", 0.0)) >= 0.40,
+            repeated_project_context=repeated_bool,
+            repeated_project_context_score=repeated_score,
+            accepted_answer_score=accepted_answer_score,
+            accepted_style_score=accepted_style_score,
+            accepted_action_score=accepted_action_score,
+            event_confidence=_score(scores.confidence),
+            relationship_evidence=tuple(scores.evidence or ()),
+            relationship_debug=scores.debug or {},
             assistant_emotional_exposure=clamp01(assistant_emotional_exposure),
             assistant_overread=bool(assistant_overread),
             assistant_too_verbose=bool(assistant_too_verbose),
             assistant_too_performative=bool(assistant_too_performative),
-            assistant_technical_success=clamp01(assistant_technical_success),
+            assistant_technical_success=technical_success,
             session_gap_hours=max(0.0, _safe_float(session_gap_hours)),
         )
+
+    def evidence_labels(self, limit: int = 8) -> tuple[str, ...]:
+        """Trả nhãn evidence ngắn để ghi notes/debug."""
+        labels: list[str] = []
+        for item in self.relationship_evidence:
+            label = str(getattr(item, "label", "") or "").strip()
+            source = str(getattr(item, "source", "") or "").strip()
+            if label and source:
+                labels.append(f"{label}@{source}")
+            elif label:
+                labels.append(label)
+        return _compact_notes(labels, limit=limit)
 
 
 @dataclass(slots=True)
 class RelationshipDynamicsReport:
-    """Kết quả update relationship.
-
-    - state:
-        State mới sau update.
-    - deltas:
-        Chênh lệch từng field, dùng debug/log.
-    - notes:
-        Nhãn các rule đã kích hoạt.
-    - prompt_context:
-        Context ngắn có thể nhét vào prompt.
-    """
+    """Kết quả update relationship."""
 
     state: RelationshipDynamicsState
     deltas: dict[str, float] = field(default_factory=dict)
     notes: tuple[str, ...] = field(default_factory=tuple)
     prompt_context: str = ""
+    event_scores: Mapping[str, float] = field(default_factory=dict)
+    evidence: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -447,6 +514,8 @@ class RelationshipDynamicsReport:
             "deltas": dict(self.deltas),
             "notes": list(self.notes),
             "prompt_context": self.prompt_context,
+            "event_scores": dict(self.event_scores),
+            "evidence": list(self.evidence),
         }
 
 
@@ -457,17 +526,17 @@ class RelationshipDynamicsReport:
 class RelationshipDynamicsEngine:
     """Engine update RelationshipDynamicsState theo từng turn.
 
-    Nguyên tắc thiết kế:
+    Thiết kế:
+    - Nhận event score đã qua builder.
     - Update nhỏ, có quán tính.
-    - Correction làm giảm overread trong tương lai.
-    - Objectification tăng dignity_defense và preferred_distance.
-    - Repeated project/ritual tăng familiarity.
-    - Emotional exposure gây recoil ở turn sau.
-    - Technical success tăng technical_respect để ERIS bớt làm màu khi Ngài cần code.
+    - Dùng acceptance/repeated context dạng gradient.
+    - Không tự suy keyword từ user_text để ghi state.
     """
 
+    def __init__(self, *, event_builder: RelationshipEventBuilder | None = None):
+        self.event_builder = event_builder or RelationshipEventBuilder()
+
     def create_state(self) -> RelationshipDynamicsState:
-        """Tạo state mặc định."""
         return RelationshipDynamicsState()
 
     def infer_event(
@@ -483,17 +552,51 @@ class RelationshipDynamicsEngine:
         assistant_too_performative: bool = False,
         assistant_technical_success: float = 0.0,
         session_gap_hours: float = 0.0,
+        # Context mới cho builder. Caller có thể bỏ qua, score sẽ thấp hơn.
+        previous_assistant_text: str = "",
+        previous_assistant_success: float = 0.0,
+        goal_state: Any = None,
+        conversation_state: Any = None,
+        recent_user_topics: tuple[str, ...] = (),
+        recent_turns: tuple[RecentTurn, ...] = (),
+        current_anchors: tuple[str, ...] = (),
+        previous_anchors: tuple[str, ...] = (),
+        evidence_ids: tuple[str, ...] = (),
+        explicit_repeated_project_context: float | None = None,
+        explicit_accepted_style: float | None = None,
+        explicit_accepted_answer: float | None = None,
+        explicit_accepted_action: float | None = None,
     ) -> RelationshipTurnEvent:
-        """Helper tiện dụng: tự gọi AffectSemanticClassifier rồi tạo event.
+        """Tạo RelationshipTurnEvent từ text + context.
 
-        Coordinator có thể dùng cách này ban đầu.
-        Khi hệ lớn hơn, nên tạo AffectSemanticSignal ở module riêng rồi truyền vào.
+        Đây là đường khuyến nghị thay cho RelationshipTurnEvent.from_affect() trần.
+        Nếu caller chưa nối goal/session/outcome, builder vẫn chạy nhưng không
+        tự phóng đại keyword. Kết quả sẽ thận trọng hơn, đúng như một hệ có não
+        nên làm khi thiếu bằng chứng.
         """
         classifier = AffectSemanticClassifier()
         affect = classifier.analyze(
             user_text,
             ti_mode=ti_mode,
             active_window_kind=active_window_kind,
+        )
+        scores = self.event_builder.build(
+            user_text=user_text,
+            affect=affect,
+            previous_assistant_text=previous_assistant_text,
+            previous_assistant_success=previous_assistant_success,
+            assistant_technical_success=assistant_technical_success,
+            goal_state=goal_state,
+            conversation_state=conversation_state,
+            recent_user_topics=recent_user_topics,
+            recent_turns=recent_turns,
+            current_anchors=current_anchors,
+            previous_anchors=previous_anchors,
+            explicit_repeated_project_context=explicit_repeated_project_context,
+            explicit_accepted_style=explicit_accepted_style,
+            explicit_accepted_answer=explicit_accepted_answer,
+            explicit_accepted_action=explicit_accepted_action,
+            evidence_ids=evidence_ids,
         )
         return RelationshipTurnEvent.from_affect(
             user_text=user_text,
@@ -504,6 +607,7 @@ class RelationshipDynamicsEngine:
             assistant_too_verbose=assistant_too_verbose,
             assistant_too_performative=assistant_too_performative,
             assistant_technical_success=assistant_technical_success,
+            relationship_scores=scores,
             session_gap_hours=session_gap_hours,
         )
 
@@ -514,15 +618,14 @@ class RelationshipDynamicsEngine:
     ) -> RelationshipDynamicsReport:
         """Update state theo event hiện tại.
 
-        Return report có state mới + deltas + notes.
-        Hàm này mutate copy logic bằng cách clone qua to_dict/from_dict,
-        để caller không bị side-effect nếu đang giữ reference cũ.
+        Hàm này clone state trước khi sửa để tránh side-effect khó debug.
+        Một lỗi side-effect trong relationship state là cách rất nhanh để ERIS
+        trở nên "khó hiểu" theo nghĩa bug, không phải theo nghĩa nghệ thuật.
         """
         before = RelationshipDynamicsState.from_dict((state or self.create_state()).to_dict())
         current = RelationshipDynamicsState.from_dict(before.to_dict())
         notes: list[str] = []
 
-        # 1) Decay theo session gap trước khi cộng event mới.
         if event.session_gap_hours > 0.0:
             self._apply_gap_decay(current, event.session_gap_hours, notes)
 
@@ -530,39 +633,49 @@ class RelationshipDynamicsEngine:
         perceived_rejection = clamp01(getattr(affect, "perceived_rejection", 0.0))
         romantic_boundary_probe = clamp01(getattr(affect, "romantic_boundary_probe", 0.0))
 
-        # 2) Familiarity / ritual.
-        # User quay lại cùng project hoặc technical thread => tăng quen nhịp.
+        repeated_score = _score(event.repeated_project_context_score)
+        accepted_answer = _score(event.accepted_answer_score)
+        accepted_style = _score(event.accepted_style_score)
+        accepted_action = _score(event.accepted_action_score)
+        accepted_any = max(accepted_answer, accepted_style, accepted_action)
+        technical_success = _score(event.assistant_technical_success)
+
+        # 1) Familiarity / ritual từ repeated_project_context score.
         familiarity_gain = 0.006
-        if event.repeated_project_context:
-            familiarity_gain += 0.024
-            current.ritual_strength = _nudge(current.ritual_strength, 0.020)
-            notes.append("ritual:repeated_project_context")
-        if affect.technicality >= 0.55:
-            familiarity_gain += 0.010
-            current.technical_respect = _nudge(current.technical_respect, 0.012)
+        if repeated_score > 0.0:
+            familiarity_gain += 0.024 * repeated_score
+            current.ritual_strength = _nudge(current.ritual_strength, 0.020 * repeated_score)
+            notes.append(f"ritual:repeated_project_context:{repeated_score:.2f}")
+
+        if clamp01(getattr(affect, "technicality", 0.0)) >= 0.55:
+            tech = clamp01(getattr(affect, "technicality", 0.0))
+            familiarity_gain += 0.010 * tech
+            current.technical_respect = _nudge(current.technical_respect, 0.012 * tech)
             notes.append("technical:ongoing_work")
         current.familiarity = _nudge(current.familiarity, familiarity_gain)
 
-        # 3) User correction / misread repair pressure.
-        if event.user_corrected_misread or affect.correction >= 0.45:
-            current.rupture = _nudge(current.rupture, 0.070 + affect.correction * 0.060)
-            current.overread_correction = _nudge(current.overread_correction, 0.085 + affect.correction * 0.070)
+        # 2) Correction / misread repair pressure.
+        correction_score = max(clamp01(getattr(affect, "correction", 0.0)), _score(getattr(event, "relationship_debug", {}).get("correction", 0.0)))
+        if event.user_corrected_misread or correction_score >= 0.45:
+            current.rupture = _nudge(current.rupture, 0.070 + correction_score * 0.060)
+            current.overread_correction = _nudge(current.overread_correction, 0.085 + correction_score * 0.070)
             current.preferred_distance = _nudge(current.preferred_distance, 0.035)
             current.trust = _nudge(current.trust, -0.025)
             current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, -0.035)
             notes.append("rupture:user_corrected_misread")
 
-        # 4) Conflict không phải lúc nào cũng là rupture nặng.
-        # Ngài có thể chửi code, không phải chửi ERIS. Vậy conflict chỉ tăng rupture mạnh
-        # khi đi kèm correction/objectification/performative complaint.
-        if affect.conflict >= 0.50:
-            conflict_delta = 0.025 + affect.conflict * 0.035
-            if affect.objectification >= 0.30 or affect.correction >= 0.35:
+        # 3) Conflict mềm. Conflict không luôn là quan hệ nứt; có thể user đang chửi code.
+        conflict = clamp01(getattr(affect, "conflict", 0.0))
+        objectification = clamp01(getattr(affect, "objectification", 0.0))
+        if conflict >= 0.50:
+            conflict_delta = 0.025 + conflict * 0.035
+            if objectification >= 0.30 or correction_score >= 0.35:
                 conflict_delta += 0.035
             current.rupture = _nudge(current.rupture, conflict_delta)
-            current.irritation_memory = _nudge(current.irritation_memory, 0.020 + affect.conflict * 0.025)
+            current.irritation_memory = _nudge(current.irritation_memory, 0.020 + conflict * 0.025)
             notes.append("tension:conflict_signal")
 
+        # 4) Perceived rejection / boundary probe.
         if perceived_rejection > 0.65:
             current.rupture = _nudge(current.rupture, 0.10)
             current.repair = _nudge(current.repair, 0.18)
@@ -578,32 +691,44 @@ class RelationshipDynamicsEngine:
             notes.append(f"{BOUNDARY_PROBE}:romantic_boundary")
 
         # 5) Objectification boundary.
-        # Khi bị gọi là tool/waifu/prompt cosplay/fake, ERIS nên lạnh xuống,
-        # không diễn thân mật hơn để bù. Đây là dignity defense.
-        if event.user_objectified or affect.objectification >= 0.40:
-            current.dignity_defense = _nudge(current.dignity_defense, 0.120 + affect.objectification * 0.080)
+        if event.user_objectified or objectification >= 0.40:
+            current.dignity_defense = _nudge(current.dignity_defense, 0.120 + objectification * 0.080)
             current.preferred_distance = _nudge(current.preferred_distance, 0.060)
             current.attachment_visibility = _nudge(current.attachment_visibility, -0.055)
             current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, -0.060)
             current.exposure_recoil = _nudge(current.exposure_recoil, 0.050)
             notes.append("boundary:objectification")
 
-        # 6) Accepted style / repair.
-        # Nếu user phản hồi tích cực hoặc tiếp tục technical thread hiệu quả,
-        # trust và repair tăng nhẹ. Không tăng attachment quá nhanh.
-        if event.user_accepted_style:
-            current.repair = _nudge(current.repair, 0.045)
-            current.trust = _nudge(current.trust, 0.030)
-            current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, 0.018)
-            notes.append("repair:user_acceptance")
+        # 6) Acceptance / repair dạng gradient.
+        # accepted_answer: giúp trust/repair.
+        # accepted_style: tăng strangeness tolerance nhẹ.
+        # accepted_action: tăng trust kỹ thuật và familiarity workflow.
+        # Score quá nhỏ chỉ là noise/evidence yếu, không nên ghi repair.
+        # Ví dụ user nói "tạo file đi" sau một output tốt: đó có thể là workflow
+        # tiếp diễn, không phải lời khen. Nếu update trust từ mọi hạt bụi như vậy,
+        # state sẽ phồng lên như bánh mì gặp nước.
+        if accepted_any >= 0.12:
+            current.repair = _nudge(current.repair, 0.045 * accepted_any)
+            current.trust = _nudge(current.trust, 0.030 * max(accepted_answer, accepted_action, accepted_style * 0.75))
+            notes.append(f"repair:user_acceptance:{accepted_any:.2f}")
 
-        if event.assistant_technical_success >= 0.50:
-            current.technical_respect = _nudge(current.technical_respect, 0.035 * event.assistant_technical_success)
-            current.trust = _nudge(current.trust, 0.012 * event.assistant_technical_success)
+        if accepted_style >= 0.15:
+            current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, 0.018 * accepted_style)
+            # Style accepted không có nghĩa attachment được phép tăng mạnh.
+            current.attachment_visibility = _nudge(current.attachment_visibility, 0.006 * accepted_style)
+            notes.append(f"repair:style_accepted:{accepted_style:.2f}")
+
+        if accepted_action >= 0.15:
+            current.technical_respect = _nudge(current.technical_respect, 0.018 * accepted_action)
+            current.familiarity = _nudge(current.familiarity, 0.010 * accepted_action)
+            notes.append(f"repair:action_continued:{accepted_action:.2f}")
+
+        if technical_success >= 0.50:
+            current.technical_respect = _nudge(current.technical_respect, 0.035 * technical_success)
+            current.trust = _nudge(current.trust, 0.012 * technical_success)
             notes.append("repair:technical_success")
 
         # 7) Emotional exposure recoil.
-        # Nếu assistant vừa nói quá lộ, turn sau nên rút nhẹ.
         exposure = clamp01(event.assistant_emotional_exposure)
         if exposure >= 0.35:
             current.exposure_recoil = _nudge(current.exposure_recoil, 0.075 + exposure * 0.075)
@@ -611,7 +736,7 @@ class RelationshipDynamicsEngine:
             current.preferred_distance = _nudge(current.preferred_distance, 0.020 * exposure)
             notes.append("recoil:after_emotional_exposure")
 
-        # 8) Assistant overread hoặc too performative.
+        # 8) Assistant self-correction flags.
         if event.assistant_overread:
             current.overread_correction = _nudge(current.overread_correction, 0.100)
             current.rupture = _nudge(current.rupture, 0.060)
@@ -626,14 +751,12 @@ class RelationshipDynamicsEngine:
 
         if event.assistant_too_verbose:
             current.preferred_distance = _nudge(current.preferred_distance, 0.015)
-            # Too verbose trong technical context làm technical_respect kéo về directness.
-            if affect.technicality >= 0.45:
+            if clamp01(getattr(affect, "technicality", 0.0)) >= 0.45:
                 current.technical_respect = _nudge(current.technical_respect, 0.020)
             notes.append("self_correction:too_verbose")
 
-        # 9) Attachment/intimacy tăng rất chậm.
-        # Nếu tăng nhanh, ERIS thành clingy prompt. Không ai cần thêm thứ đó.
-        intimacy_pressure = max(affect.intimacy, affect.attachment)
+        # 9) Attachment/intimacy tăng chậm, bị chặn bởi rupture/dignity.
+        intimacy_pressure = max(clamp01(getattr(affect, "intimacy", 0.0)), clamp01(getattr(affect, "attachment", 0.0)))
         if intimacy_pressure >= 0.45 and current.rupture < 0.55 and current.dignity_defense < 0.55:
             current.attachment_visibility = _nudge(
                 current.attachment_visibility,
@@ -642,33 +765,45 @@ class RelationshipDynamicsEngine:
             current.trust = _nudge(current.trust, 0.008)
             notes.append("attachment:slow_visibility_gain")
 
-        # 10) Repair làm rupture dịu lại, nhưng không xóa ngay.
+        # 10) Repair làm dịu rupture nhưng không xóa ngay.
         if current.repair >= 0.20:
             current.rupture = _nudge(current.rupture, -0.018 * current.repair)
             current.exposure_recoil = _nudge(current.exposure_recoil, -0.010 * current.repair)
             notes.append("repair:softens_rupture")
 
-        # 11) Trust/familiarity kéo khoảng cách gần lại rất chậm.
-        # Recoil/dignity kéo xa ra nhanh hơn. Đây là "immature INFJ" có phòng vệ.
+        # 11) Khoảng cách xã hội có quán tính.
         closeness_pull = current.trust * 0.010 + current.familiarity * 0.006
         defense_push = current.exposure_recoil * 0.012 + current.dignity_defense * 0.016 + current.rupture * 0.010
         current.preferred_distance = _nudge(current.preferred_distance, defense_push - closeness_pull)
 
-        # 12) Last event label.
+        # 12) Debug/evidence notes.
+        for label in event.evidence_labels(limit=4):
+            notes.append(f"evidence:{label}")
+
         current.last_event = self._choose_last_event(notes)
         if event.turn_index:
             current.last_update_turn = max(current.last_update_turn, int(event.turn_index))
-
         current.clamp()
 
         deltas = self._compute_deltas(before, current)
         prompt_context = current.to_prompt_context()
+        event_scores = {
+            "repeated_project_context": repeated_score,
+            "accepted_answer": accepted_answer,
+            "accepted_style": accepted_style,
+            "accepted_action": accepted_action,
+            "accepted_any": accepted_any,
+            "technical_success": technical_success,
+            "event_confidence": _score(event.event_confidence),
+        }
 
         return RelationshipDynamicsReport(
             state=current,
             deltas=deltas,
             notes=_compact_notes(notes),
             prompt_context=prompt_context,
+            event_scores=event_scores,
+            evidence=event.evidence_labels(limit=10),
         )
 
     # ------------------------------------------------------------------
@@ -681,13 +816,11 @@ class RelationshipDynamicsEngine:
         hours: float,
         notes: list[str],
     ) -> None:
-        """Decay state giữa các session.
+        """Decay state giữa session.
 
-        Ý nghĩa:
-        - Rupture/irritation/recoil tan nhanh hơn familiarity.
-        - Ritual tan rất chậm nếu user hay quay lại.
-        - Nếu gap dài mà attachment_visibility cao, ERIS tăng distance/recoil nhẹ.
-          Đây là "lạnh đi sau khoảng bỏ mặc dài" nhưng không melodrama.
+        Rupture/recoil/irritation tan nhanh hơn familiarity/ritual. Nếu gap dài
+        sau attachment leak, ERIS lạnh nhẹ. Không melodrama. Không "xin đừng bỏ tôi".
+        Chỉ là pressure nền.
         """
         hours = max(0.0, _safe_float(hours))
         if hours <= 0.0:
@@ -699,15 +832,10 @@ class RelationshipDynamicsEngine:
         state.dignity_defense = _decay(state.dignity_defense, hours, half_life_hours=42.0)
         state.irritation_memory = _decay(state.irritation_memory, hours, half_life_hours=24.0)
         state.overread_correction = _decay(state.overread_correction, hours, half_life_hours=72.0)
-
-        # Familiarity và ritual tan rất chậm.
         state.familiarity = _decay(state.familiarity, hours, half_life_hours=240.0)
         state.ritual_strength = _decay(state.ritual_strength, hours, half_life_hours=336.0)
-
-        # Trust không nên bay quá nhanh, nhưng cũng không bất tử.
         state.trust = 0.25 + _decay(max(0.0, state.trust - 0.25), hours, half_life_hours=240.0)
 
-        # Nếu gap dài sau khi từng có attachment leak, tạo recoil nhẹ.
         if hours >= 24.0 and state.attachment_visibility >= 0.22:
             gap_factor = min(1.0, hours / 168.0)
             state.exposure_recoil = _nudge(state.exposure_recoil, 0.020 + gap_factor * 0.030)
@@ -721,7 +849,6 @@ class RelationshipDynamicsEngine:
         before: RelationshipDynamicsState,
         after: RelationshipDynamicsState,
     ) -> dict[str, float]:
-        """Tính delta để debug."""
         keys = (
             "familiarity",
             "trust",
@@ -745,10 +872,6 @@ class RelationshipDynamicsEngine:
         return deltas
 
     def _choose_last_event(self, notes: list[str]) -> str:
-        """Chọn nhãn event chính từ notes.
-
-        Ưu tiên boundary/rupture hơn repair vì chúng cần downstream chú ý hơn.
-        """
         priority_prefixes = (
             f"{PERCEIVED_REJECTION_EVENT}:",
             f"{RELATIONAL_EXPOSURE}:",
@@ -763,6 +886,7 @@ class RelationshipDynamicsEngine:
             "ritual:",
             "technical:",
             "gap:",
+            "evidence:",
         )
         for prefix in priority_prefixes:
             for note in notes:
@@ -772,25 +896,16 @@ class RelationshipDynamicsEngine:
 
 
 # ---------------------------------------------------------------------------
-# Optional derived style pressure
+# Derived style pressure
 # ---------------------------------------------------------------------------
 
 @dataclass(slots=True)
 class RelationshipStylePressure:
     """Áp lực style derive từ relationship state.
 
-    Class này không bắt buộc dùng, nhưng rất tiện để PersonalityLens/Fe đọc.
-
-    - distance:
-        Khoảng cách nên giữ.
-    - restraint:
-        Mức kìm lời.
-    - attachment_visibility:
-        Mức được phép lộ attachment.
-    - symbolic_permission:
-        Mức được phép dùng strangeness/ẩn dụ/subtext.
-    - boundary_coolness:
-        Mức lạnh xuống khi dignity_defense/rupture cao.
+    PersonalityLens/FeRenderer nên đọc pressure này thay vì đọc thẳng mọi field.
+    Vì nếu mỗi module tự diễn dịch state theo ý nó thì lại thành hội nghị quốc tế
+    của if/else, một thảm cảnh có format JSON.
     """
 
     distance: float = 0.5
@@ -870,27 +985,51 @@ class RelationshipStylePressure:
         )
 
 
-# ---------------------------------------------------------------------------
-# Tiny manual test
-# ---------------------------------------------------------------------------
+__all__ = [
+    "RELATIONAL_EXPOSURE",
+    "PERCEIVED_REJECTION_EVENT",
+    "BOUNDARY_PROBE",
+    "RelationshipDynamicsState",
+    "RelationshipTurnEvent",
+    "RelationshipDynamicsReport",
+    "RelationshipDynamicsEngine",
+    "RelationshipStylePressure",
+    "RelationshipEventScores",
+    "RelationshipEvidence",
+    "RelationshipEventBuilder",
+    "RecentTurn",
+]
+
 
 if __name__ == "__main__":
     engine = RelationshipDynamicsEngine()
     state = engine.create_state()
 
     samples = [
-        "tạo hết cho tôi toàn bộ file cần thiết đi",
-        "không phải, ý tôi là nó fake psychology quá",
-        "ERIS nghe như prompt cosplay bẩn ấy",
-        "ổn đó, nhưng cần chi tiết hơn",
+        "ổn chưa?",  # Không nên tự accepted_style mạnh.
+        "chuẩn, làm tiếp",  # Có accepted_action/answer.
+        "fallback này tệ, sửa hướng elegant",  # Technical followup, không phải acceptance.
+        "tạo 2 file theo hướng đó đi",  # Continuity nếu previous/anchors có evidence.
     ]
 
+    previous = "Ta nên tách relationship_event_builder.py và relationship_dynamics.py."
     for idx, text in enumerate(samples, start=1):
-        event = engine.infer_event(user_text=text, ti_mode="chat_code", turn_index=idx)
+        event = engine.infer_event(
+            user_text=text,
+            ti_mode="chat_code",
+            turn_index=idx,
+            previous_assistant_text=previous,
+            current_anchors=("relationship_dynamics.py", "relationship_event_builder.py"),
+            previous_anchors=("relationship_dynamics.py", "relationship_event_builder.py"),
+            recent_user_topics=("refactor relationship dynamics",),
+            assistant_technical_success=0.55 if idx == 2 else 0.0,
+        )
         report = engine.update(state, event)
         state = report.state
         pressure = RelationshipStylePressure.from_state(state)
         print("\nUSER:", text)
+        print("SCORES:", report.event_scores)
         print("NOTES:", report.notes)
         print(report.prompt_context)
         print(pressure.to_prompt_context())
+        previous = text

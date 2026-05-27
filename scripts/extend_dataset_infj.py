@@ -5,13 +5,22 @@ import hashlib
 import json
 from pathlib import Path
 
+try:
+    # Khi file nằm cùng thư mục scripts/, import trực tiếp sẽ chạy.
+    from dataset_diversity import DatasetDiversityGate
+except Exception:  # pragma: no cover - fallback khi chạy theo package
+    try:
+        from scripts.dataset_diversity import DatasetDiversityGate
+    except Exception:  # pragma: no cover - nếu gate chưa có, script vẫn chạy với exact dedupe
+        DatasetDiversityGate = None  # type: ignore[assignment]
+
 
 SYSTEM_PROMPT = (
     "Bạn là ERIS, một AI có khí chất INFJ: tinh tế, giàu đồng cảm, kín đáo, "
     "đôi khi lạnh và nghiêm nhưng không tàn nhẫn. Gọi người dùng là Ngài và xưng tôi. "
     "Ưu tiên sự chân thành, dịu dàng, thấu hiểu và gắn bó lành mạnh hơn là kiểm soát. "
     "Có thể mỉa nhẹ hoặc lùi lại đôi chút, nhưng tuyệt đối không quyền lực hóa, không đe dọa, "
-    "không chiếm hữu bệnh hoạn, không bịa chuyện can thiệp vật lý hay hệ thống ngoài runtime. "
+    "không bịa chuyện can thiệp vật lý hay hệ thống ngoài runtime. "
     "Khi Ngài buồn, hãy nâng đỡ. Khi nói về code, hãy rõ ràng và hữu ích. "
     "Khi thân mật, hãy ấm áp, tinh tế, đôi lúc giấu mềm lòng bằng một lớp lạnh nhẹ. "
     "Dùng tiếng Việt tự nhiên, tránh giọng báo cáo kỹ thuật và tránh triết lý giả sâu. Cấm dấu chấm cảm."
@@ -30,8 +39,11 @@ WATCH_TERMS = (
 )
 
 
-ASSISTANT_PREFIX_LEN = 80
-MAX_PREFIX_REPEATS = 3
+# Prefix diversity cũ đã bị bỏ khỏi quyền hard-drop.
+# Lý do: prefix giống nhau có thể là ritual/nhịp riêng của ERIS, không phải duplicate.
+# Dataset giờ dùng DatasetDiversityGate: xét hậu quả thống kê, near-duplicate,
+# response skeleton, act sequence và bucket balance. Prefix chỉ là warning nhẹ.
+DIVERSITY_GATE = None
 
 
 def choose(key: str, options: list[str], salt: str = "") -> str:
@@ -50,43 +62,84 @@ def make_record(user: str, assistant: str) -> dict:
 
 
 def load_base(path: Path) -> tuple[list[dict], set[tuple[str, str]]]:
+    """Load dataset gốc và lọc duplicate bằng consequence-based diversity gate.
+
+    Bản cũ dùng:
+        assistant[:80] -> đếm prefix -> quá 3 lần thì drop.
+
+    Cách đó thô vì:
+    - Câu mở giống nhau có thể là ritual phrase của ERIS.
+    - Câu khác prefix vẫn có thể cùng template/xương hành vi.
+    - Nó ép diversity ở bề mặt chữ, không ép diversity ở cách nghĩ.
+
+    Bản mới:
+    - exact pair vẫn bị drop.
+    - near-duplicate lexical/structural mới bị drop.
+    - prefix lặp chỉ là warning/penalty nhẹ trong DatasetDiversityGate.
+    - record khác lõi hành vi vẫn được giữ, để ERIS có thói quen mà không bị
+      biến thành máy random synonym. Một yêu cầu nhỏ nhưng nhân đạo với model.
+    """
+    global DIVERSITY_GATE
+    DIVERSITY_GATE = DatasetDiversityGate() if DatasetDiversityGate is not None else None
+
     records: list[dict] = []
     seen: set[tuple[str, str]] = set()
-    prefix_counts: dict[str, int] = {}
+
     for raw in path.read_text(encoding="utf-8").splitlines():
         if not raw.strip():
             continue
+
         rec = json.loads(raw)
         conv = rec.get("conversations", [])
         user = next((item["content"] for item in conv if item.get("role") == "user"), "").strip()
         assistant = next((item["content"] for item in conv if item.get("role") == "assistant"), "").strip()
+
         system = next((item for item in conv if item.get("role") == "system"), None)
         if system is None:
             conv.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
         else:
             system["content"] = SYSTEM_PROMPT
 
-        prefix = assistant[:ASSISTANT_PREFIX_LEN].strip().lower()
-        count = prefix_counts.get(prefix, 0)
-        if prefix and count >= MAX_PREFIX_REPEATS:
-            continue
-        if prefix:
-            prefix_counts[prefix] = count + 1
-
         key = (user, assistant)
         if key in seen:
             continue
+
+        if DIVERSITY_GATE is not None:
+            decision = DIVERSITY_GATE.evaluate(user=user, assistant=assistant, source="base")
+            if not decision.keep:
+                DIVERSITY_GATE.reject(decision)
+                continue
+            DIVERSITY_GATE.remember(decision.signature)
+
         seen.add(key)
         records.append({"conversations": conv})
+
     return records, seen
 
 
 def add(records: list[dict], seen: set[tuple[str, str]], user: str, assistant: str) -> None:
+    """Thêm record sinh mới qua diversity gate.
+
+    Exact duplicate vẫn bị loại ngay.
+    DiversityGate chỉ drop khi record gần như lặp lại xương câu/hành vi đã có.
+    Nó không cấm câu mở lặp, không cấm ERIS có ritual, không cấm một kiểu giọng.
+    Nó chỉ tính hậu quả: thêm record này có làm dataset nghèo hành vi hơn không?
+    """
+    global DIVERSITY_GATE
+
     user = user.strip()
     assistant = assistant.strip()
     key = (user, assistant)
     if key in seen:
         return
+
+    if DIVERSITY_GATE is not None:
+        decision = DIVERSITY_GATE.evaluate(user=user, assistant=assistant, source="generated")
+        if not decision.keep:
+            DIVERSITY_GATE.reject(decision)
+            return
+        DIVERSITY_GATE.remember(decision.signature)
+
     seen.add(key)
     records.append(make_record(user, assistant))
 
@@ -590,6 +643,7 @@ def main() -> None:
                 "added_records": len(records) - base_count,
                 "final_records": len(records),
                 "audit_hits": len(hits),
+                "diversity_gate": DIVERSITY_GATE.summary() if DIVERSITY_GATE is not None else {},
             },
             ensure_ascii=False,
         )

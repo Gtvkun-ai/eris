@@ -1,11 +1,14 @@
 """Memory Cognition Core cho ERIS.
 
-Đây là cửa duy nhất để ghi nhớ. Module khác không được gọi thẳng SemanticMemoryStore,
-RelationalMemoryStore, RepairMemoryStore, v.v. Chúng chỉ tạo StateCommitRequest.
-MemoryCognitionCore kiểm tra confidence, evidence_ids, permission, storage_permission, decay_policy,
-rồi mới route commit sang layer tương ứng.
+Bản v2:
+- Commit protocol vẫn giữ nguyên: module khác chỉ tạo StateCommitRequest.
+- Recall không còn tự đo resonance bằng token overlap trong MemoryCognitionCore.
+- MemoryCognitionCore giờ là facade: route commit + gọi MemoryRetrievalEngine.
+- Retrieval mới dùng MemoryCue -> Candidate -> Score -> Activation -> Packet.
 
-Nói gọn: đây là hải quan của memory. Không có giấy tờ thì quay xe.
+Tức là ký ức không còn ra lệnh bằng vài token trùng nhau.
+Nó chỉ tạo áp lực có lý do, có score breakdown, có surface policy.
+Một sự tiến hóa nhỏ khỏi cái hố "token overlap là trí nhớ".
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from typing import Any, Literal, Mapping
 
 try:
     from core.evidence import StateCommitRequest  # type: ignore
-except Exception:  # pragma: no cover - fallback khi chưa nối core/evidence.py
+except Exception:  # pragma: no cover
     @dataclass(slots=True)
     class StateCommitRequest:  # type: ignore[no-redef]
         target: str
@@ -29,6 +32,7 @@ except Exception:  # pragma: no cover - fallback khi chưa nối core/evidence.p
         storage_permission: bool = False
         decay_policy: str = "normal"
         reason: str = ""
+        metadata: dict[str, Any] = field(default_factory=dict)
 
 from .active_state_snapshot import ActiveStateSnapshot, ActiveStateStore
 from .affective_residue_memory import AffectiveResidueItem, AffectiveResidueMemoryStore
@@ -39,19 +43,14 @@ from .relational_memory import RelationalMemoryItem, RelationalMemoryStore
 from .repair_memory import RepairMemoryItem, RepairMemoryStore
 from .semantic_memory import SemanticMemoryItem, SemanticMemoryStore
 
+from .memory_record import compact_text, clamp01
+from .memory_cue import MemoryCue, MemoryCueBuilder
+from .memory_retrieval_engine import MemoryStores, MemoryRetrievalEngine
+from .memory_packet_builder import MemoryPacket, MemoryPacketBuilder
+from .memory_activation import MemoryActivation
+
 BudgetMode = Literal["fast", "normal", "deep", "reflection"]
 CommitOutcome = Literal["accepted", "rejected", "tentative", "ignored"]
-
-
-def compact_text(value: Any, *, limit: int = 420) -> str:
-    text = " ".join(str(value or "").split())
-    if len(text) > limit:
-        return text[: limit - 3].rstrip() + "..."
-    return text
-
-
-def clamp01(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
 
 
 def _request_get(request: Any, name: str, default: Any = None) -> Any:
@@ -115,124 +114,6 @@ def _content_for_target(target: str, content: Any) -> str:
 
 
 @dataclass(slots=True)
-class MemoryPacket:
-    """Gói memory cho downstream đọc.
-
-    Downstream đọc packet này, không đọc toàn bộ store. Nếu không, prompt sẽ lại thành bãi rác
-    nhưng lần này có nhiều file hơn, một tiến bộ hoàn toàn giả tạo.
-    """
-
-    episodic: list[str] = field(default_factory=list)
-    semantic: list[str] = field(default_factory=list)
-    relational: list[str] = field(default_factory=list)
-    affective_residue: list[str] = field(default_factory=list)
-    procedural: list[str] = field(default_factory=list)
-    repair: list[str] = field(default_factory=list)
-    temporal: list[str] = field(default_factory=list)
-    spatial: list[str] = field(default_factory=list)
-    worldview: list[str] = field(default_factory=list)
-    confidence_notes: list[str] = field(default_factory=list)
-    token_budget: int = 900
-    source_counts: dict[str, int] = field(default_factory=dict)
-    score: float = 0.0
-    dominant_layer: str = ""
-    attention_bias: float = 0.0
-    appraisal_bias: float = 0.0
-    wording_bias: float = 0.0
-    silence_bias: float = 0.0
-    activations: tuple["MemoryActivation", ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "episodic": list(self.episodic),
-            "semantic": list(self.semantic),
-            "relational": list(self.relational),
-            "affective_residue": list(self.affective_residue),
-            "procedural": list(self.procedural),
-            "repair": list(self.repair),
-            "temporal": list(self.temporal),
-            "spatial": list(self.spatial),
-            "worldview": list(self.worldview),
-            "confidence_notes": list(self.confidence_notes),
-            "token_budget": int(self.token_budget),
-            "source_counts": dict(self.source_counts),
-            "score": round(float(self.score), 3),
-            "dominant_layer": self.dominant_layer,
-            "attention_bias": round(float(self.attention_bias), 3),
-            "appraisal_bias": round(float(self.appraisal_bias), 3),
-            "wording_bias": round(float(self.wording_bias), 3),
-            "silence_bias": round(float(self.silence_bias), 3),
-            "activations": [item.to_dict() for item in self.activations],
-        }
-
-    def to_attention_lines(self, *, max_items: int = 5) -> tuple[str, ...]:
-        return tuple(item.to_attention_line() for item in self.activations[:max_items])
-
-    def render_prompt_context(self, *, max_lines: int = 18) -> str:
-        """Render phụ cho prompt builder.
-
-        Đây chỉ là adapter. MemoryPacket vẫn là object trung gian, không phải prompt string.
-        """
-        sections: list[str] = []
-        mapping = (
-            ("semantic", self.semantic),
-            ("relational", self.relational),
-            ("repair", self.repair),
-            ("procedural", self.procedural),
-            ("affective_residue", self.affective_residue),
-            ("episodic", self.episodic),
-        )
-        used = 0
-        for name, values in mapping:
-            clean = [compact_text(value, limit=260) for value in values if compact_text(value, limit=260)]
-            if not clean:
-                continue
-            lines = []
-            for value in clean:
-                if used >= max_lines:
-                    break
-                lines.append(f"- {value}")
-                used += 1
-            if lines:
-                sections.append(f"{name}_memory:\n" + "\n".join(lines))
-        if self.confidence_notes and used < max_lines:
-            sections.append("memory_confidence_notes:\n" + "\n".join(f"- {note}" for note in self.confidence_notes[: max_lines - used]))
-        if self.activations:
-            lines = [
-                "active_memory_resonance: silent cognitive bias only; do not treat it as current screen evidence.",
-                f"- score={self.score:.2f}; dominant_layer={self.dominant_layer or 'none'}; attention_bias={self.attention_bias:.2f}; silence_bias={self.silence_bias:.2f}",
-            ]
-            for activation in self.activations[:4]:
-                lines.append(f"- {activation.layer}: {activation.text} (score={activation.score:.2f}, policy={activation.surface_policy})")
-            sections.append("\n".join(lines))
-        return "\n\n".join(sections)
-
-
-@dataclass(slots=True)
-class MemoryActivation:
-    layer: str
-    text: str
-    score: float
-    surface_policy: str = "silent_bias"
-    evidence_ids: tuple[str, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "layer": self.layer,
-            "text": self.text,
-            "score": round(float(self.score), 3),
-            "surface_policy": self.surface_policy,
-            "evidence_ids": list(self.evidence_ids),
-        }
-
-    def to_attention_line(self) -> str:
-        return compact_text(
-            f"active_memory_resonance/{self.layer} score={self.score:.2f} policy={self.surface_policy}: {self.text}",
-            limit=280,
-        )
-
-
-@dataclass(slots=True)
 class MemoryQuery:
     query: str = ""
     budget_mode: BudgetMode = "normal"
@@ -269,7 +150,8 @@ class MemoryCommitDecision:
 class CommitPolicy:
     """Rule chặn ghi nhớ bừa.
 
-    `sensitive_requires_explicit_permission` nghĩa là private/sensitive raw evidence phải có storage_permission rõ.
+    Đây là commit permission, không phải retrieval permission.
+    Ghi nhớ vẫn cần giấy tờ. Truy hồi thì dùng consequence scoring.
     """
 
     min_confidence: float = 0.45
@@ -284,15 +166,16 @@ class CommitPolicy:
 class MemoryCognitionCore:
     """Facade chính của memory.
 
-    Runtime chỉ nên giữ một instance class này. Muốn ghi nhớ: gọi commit(request).
-    Muốn recall: gọi retrieve(...). Đừng để module khác gọi layer store thẳng, trừ khi Ngài muốn
-    spaghetti telepathy có backup JSON.
+    Runtime chỉ nên giữ một instance class này.
+    - commit(): ghi nhớ qua StateCommitRequest.
+    - recall()/retrieve(): dựng MemoryCue rồi gọi MemoryRetrievalEngine.
     """
 
     def __init__(self, base_dir: str, *, policy: CommitPolicy | None = None):
         self.base_dir = base_dir
         os.makedirs(self.base_dir, exist_ok=True)
         self.policy = policy or CommitPolicy()
+
         self.event_ledger = EventLedger(os.path.join(base_dir, "event_ledger.json"))
         self.active_state = ActiveStateStore(os.path.join(base_dir, "active_state_snapshot.json"))
         self.episodic = EpisodicMemoryStore(os.path.join(base_dir, "episodic_memory.json"))
@@ -302,12 +185,24 @@ class MemoryCognitionCore:
         self.procedural = ProceduralMemoryStore(os.path.join(base_dir, "procedural_memory.json"))
         self.repair = RepairMemoryStore(os.path.join(base_dir, "repair_memory.json"))
 
-    def commit(self, request: StateCommitRequest, *, frame: Any = None) -> MemoryCommitDecision:
-        """Kiểm tra StateCommitRequest rồi route sang layer đúng.
+        self.cue_builder = MemoryCueBuilder()
+        self.packet_builder = MemoryPacketBuilder()
+        self.retrieval_engine = MemoryRetrievalEngine(
+            MemoryStores(
+                semantic=self.semantic,
+                relational=self.relational,
+                episodic=self.episodic,
+                procedural=self.procedural,
+                affective_residue=self.affective_residue,
+                repair=self.repair,
+            )
+        )
 
-        Đây là điểm duy nhất được ghi memory. Nếu module nào bypass, đó không phải tối ưu,
-        đó là phá luật kiến trúc.
-        """
+    # ------------------------------------------------------------------
+    # Commit path: giữ logic cũ, vì ghi nhớ cần ổn định hơn là hào nhoáng.
+    # ------------------------------------------------------------------
+
+    def commit(self, request: StateCommitRequest, *, frame: Any = None) -> MemoryCommitDecision:
         request = self._normalize_request(request)
         target = str(_request_get(request, "target", "") or "")
         confidence = clamp01(float(_request_get(request, "confidence", 0.0) or 0.0))
@@ -394,8 +289,18 @@ class MemoryCognitionCore:
     def commit_many(self, requests: list[StateCommitRequest], *, frame: Any = None) -> list[MemoryCommitDecision]:
         return [self.commit(request, frame=frame) for request in requests or []]
 
-    def recall(self, query: MemoryQuery | str = "", *, frame: Any = None, max_items: int | None = None, budget_mode: BudgetMode | None = None) -> MemoryPacket:
-        """Public recall facade. Downstream không cần biết layer store nào đang giữ gì."""
+    # ------------------------------------------------------------------
+    # Recall path v2
+    # ------------------------------------------------------------------
+
+    def recall(
+        self,
+        query: MemoryQuery | str = "",
+        *,
+        frame: Any = None,
+        max_items: int | None = None,
+        budget_mode: BudgetMode | None = None,
+    ) -> MemoryPacket:
         if isinstance(query, MemoryQuery):
             q = query
             if max_items is not None or budget_mode is not None:
@@ -413,53 +318,34 @@ class MemoryCognitionCore:
         return self.retrieve(q, frame=frame)
 
     def retrieve(self, query: MemoryQuery | str = "", *, frame: Any = None) -> MemoryPacket:
-        """Truy hồi memory đã được đóng gói.
+        """Truy hồi memory bằng retrieval engine mới.
 
-        Có thể truyền query string hoặc MemoryQuery. Nếu có frame, engine tự lấy dominant thread / user text
-        bằng best-effort, không ép import CognitiveFrame.
+        Không gọi _with_resonance_fields().
+        Không đo lại overlap trên recall_line string.
         """
         if isinstance(query, str):
             q = MemoryQuery(query=query)
         else:
             q = query
-        query_text = compact_text(q.query or self._query_from_frame(frame), limit=640)
+
+        query_text = compact_text(q.query or self._query_from_frame(frame), limit=700)
         mode = q.budget_mode or self._budget_from_frame(frame)
         quotas = self._quotas(mode=mode, max_items=q.max_items)
-        semantic_items = self.semantic.recall(query_text, limit=quotas["semantic"])
-        relational_items = self.relational.recall(query_text, limit=quotas["relational"])
-        episodic_items = self.episodic.recall(query_text, limit=quotas["episodic"])
-        procedural_items = self.procedural.recall(query_text, limit=quotas["procedural"]) if q.include_procedural else []
-        residue_items = self.affective_residue.recall(query_text, limit=quotas["affective_residue"]) if q.include_affective_residue else []
-        repair_items = self.repair.recall(query_text, limit=quotas["repair"]) if q.include_repair else []
-        notes = self._confidence_notes(
-            semantic_items=semantic_items,
-            relational_items=relational_items,
-            episodic_items=episodic_items,
-            residue_items=residue_items,
-            repair_items=repair_items,
-        )
-        packet = MemoryPacket(
-            episodic=[item.recall_line() for item in episodic_items],
-            semantic=[item.recall_line() for item in semantic_items],
-            relational=[item.recall_line() for item in relational_items],
-            affective_residue=[item.recall_line() for item in residue_items],
-            procedural=[item.recall_line() for item in procedural_items],
-            repair=[item.recall_line() for item in repair_items],
-            confidence_notes=notes,
-            token_budget=q.token_budget,
-            source_counts={
-                "episodic": len(episodic_items),
-                "semantic": len(semantic_items),
-                "relational": len(relational_items),
-                "affective_residue": len(residue_items),
-                "procedural": len(procedural_items),
-                "repair": len(repair_items),
-            },
-        )
-        return self._with_resonance_fields(self._fit_packet_budget(packet, token_budget=q.token_budget), query_text=query_text)
+
+        cue = self.cue_builder.from_query_or_frame(q, frame=frame, budget_mode=mode)
+
+        if not q.include_repair:
+            cue.forbidden_layers = tuple(dict.fromkeys((*cue.forbidden_layers, "repair")))
+        if not q.include_affective_residue:
+            cue.forbidden_layers = tuple(dict.fromkeys((*cue.forbidden_layers, "affective_residue")))
+        if not q.include_procedural:
+            cue.forbidden_layers = tuple(dict.fromkeys((*cue.forbidden_layers, "procedural")))
+
+        result = self.retrieval_engine.retrieve(cue, quotas=quotas, max_activations=max(6, min(14, q.max_items)))
+        packet = self.packet_builder.from_retrieval_result(result, token_budget=q.token_budget)
+        return packet
 
     def load(self) -> dict[str, Any]:
-        """Load a read-only facade snapshot of all memory layers."""
         return {
             "event_ledger": [item.to_dict() for item in self.event_ledger.recent(limit=200)],
             "active_state": self.active_state.load().to_dict(),
@@ -472,11 +358,6 @@ class MemoryCognitionCore:
         }
 
     def save(self, snapshot: Mapping[str, Any] | None = None) -> None:
-        """Persist a facade snapshot when the caller already holds one.
-
-        Runtime normally commits through StateCommitRequest, so this is intentionally
-        boring: it only re-saves known layer snapshots and never derives new memories.
-        """
         if snapshot is None:
             snapshot = self.load()
         if isinstance(snapshot, Mapping) and "internal_state" in snapshot:
@@ -487,8 +368,7 @@ class MemoryCognitionCore:
             snapshot = {**dict(snapshot), "active_state": active_state}
         if "active_state" in snapshot and isinstance(snapshot["active_state"], Mapping):
             self.active_state.save(ActiveStateSnapshot.from_dict(dict(snapshot["active_state"])))
-        # Layer stores own compaction/default merge, so reload-save is enough when no
-        # explicit layer data is supplied.
+
         self.semantic.save(self.semantic.load())
         self.relational.save(self.relational.load())
         self.episodic.save(self.episodic.load())
@@ -526,12 +406,14 @@ class MemoryCognitionCore:
         permission_required: bool = True,
         decay_policy: str = "normal",
     ) -> StateCommitRequest:
-        """Factory nhỏ để runtime tạo request nhất quán."""
         return StateCommitRequest(
             target=target,
             content=content,
             confidence=confidence,
             evidence_ids=evidence_ids,
+            permission_required=permission_required,
+            storage_permission=storage_permission,
+            decay_policy=decay_policy,
             reason=reason,
             metadata={
                 "permission_required": permission_required,
@@ -579,9 +461,6 @@ class MemoryCognitionCore:
             return False, "storage_permission_false"
         if confidence < self.policy.min_confidence:
             return False, f"confidence_below_floor:{confidence:.2f}"
-        if target == "semantic_memory" and confidence < self.policy.semantic_min_confidence:
-            # Semantic yếu vẫn có thể lưu tentative nếu có evidence đủ. Không reject ngay.
-            pass
         if target == "relational_memory" and confidence < self.policy.relational_min_confidence:
             return False, f"relational_confidence_below_floor:{confidence:.2f}"
         if target == "repair_memory" and confidence < self.policy.repair_min_confidence:
@@ -653,92 +532,12 @@ class MemoryCognitionCore:
         scale = max(1, int(max_items)) / max(1, sum(base.values()))
         return {key: max(1, int(value * scale)) for key, value in base.items()}
 
-    def _confidence_notes(
-        self,
-        *,
-        semantic_items: list[SemanticMemoryItem],
-        relational_items: list[RelationalMemoryItem],
-        episodic_items: list[EpisodicMemoryItem],
-        residue_items: list[AffectiveResidueItem],
-        repair_items: list[RepairMemoryItem],
-    ) -> list[str]:
-        notes: list[str] = []
-        low_semantic = [item for item in semantic_items if item.confidence < 0.72]
-        if low_semantic:
-            notes.append("Một số semantic memory còn tentative; không nói như chân lý tuyệt đối.")
-        if residue_items:
-            notes.append("Affective residue là pressure nội bộ, không được surface như claim cảm xúc trực tiếp.")
-        if repair_items:
-            notes.append("Repair memory có quyền giảm confidence/symbolic overread trong pattern tương tự.")
-        if relational_items:
-            notes.append("Relational memory là nhịp quan hệ tích tụ, không phải bằng chứng hiện tại.")
-        if episodic_items:
-            notes.append("Episodic memory là sự kiện quá khứ; chỉ dùng nếu liên quan context hiện tại.")
-        return notes[:6]
-
-    def _fit_packet_budget(self, packet: MemoryPacket, *, token_budget: int) -> MemoryPacket:
-        # Ước lượng token rẻ: 1 token ~ 4 ký tự. Không hoàn hảo, nhưng tốt hơn nhét hết rồi cầu nguyện.
-        budget_chars = max(400, int(token_budget) * 4)
-        groups = [
-            packet.repair,
-            packet.procedural,
-            packet.semantic,
-            packet.relational,
-            packet.affective_residue,
-            packet.episodic,
-        ]
-        used = 0
-        for group in groups:
-            kept: list[str] = []
-            for line in group:
-                cost = len(line) + 12
-                if used + cost > budget_chars:
-                    continue
-                kept.append(line)
-                used += cost
-            group[:] = kept
-        return packet
-
+    # Legacy hook giữ lại để downstream cũ không chết nếu còn gọi nhầm.
     def _with_resonance_fields(self, packet: MemoryPacket, *, query_text: str) -> MemoryPacket:
-        layer_lines = [
-            ("repair", packet.repair, 1.10, "surface_if_needed_for_fix"),
-            ("procedural", packet.procedural, 1.00, "silent_bias"),
-            ("relational", packet.relational, 0.94, "silent_bias"),
-            ("affective_residue", packet.affective_residue, 0.92, "silent_bias"),
-            ("semantic", packet.semantic, 0.84, "surface_if_contextual"),
-            ("episodic", packet.episodic, 0.72, "surface_if_user_asks"),
-        ]
-        tokens = set(compact_text(query_text, limit=320).lower().split())
-        activations: list[MemoryActivation] = []
-        for layer, lines, base, policy in layer_lines:
-            for line in lines[:4]:
-                line_tokens = set(compact_text(line, limit=320).lower().split())
-                overlap = len(tokens & line_tokens) if tokens else 1
-                score = clamp01((0.34 + overlap * 0.09) * base)
-                if score <= 0.0:
-                    continue
-                activations.append(
-                    MemoryActivation(
-                        layer=layer,
-                        text=compact_text(line, limit=260),
-                        score=score,
-                        surface_policy=policy,
-                    )
-                )
-        activations.sort(key=lambda item: item.score, reverse=True)
-        packet.activations = tuple(activations[:8])
-        if not packet.activations:
-            return packet
-        top = packet.activations[0]
-        packet.score = clamp01(sum(item.score for item in packet.activations[:3]) / min(3, len(packet.activations)) + top.score * 0.18)
-        packet.dominant_layer = top.layer
-        packet.attention_bias = clamp01(
-            max(
-                (item.score for item in packet.activations if item.layer in {"relational", "semantic", "procedural", "affective_residue", "repair"}),
-                default=0.0,
-            )
-        )
-        packet.appraisal_bias = clamp01(max((item.score for item in packet.activations if item.layer in {"relational", "affective_residue", "repair"}), default=0.0))
-        packet.wording_bias = clamp01(max((item.score for item in packet.activations if item.layer in {"procedural", "repair", "semantic"}), default=0.0))
-        packet.silence_bias = clamp01(max((item.score for item in packet.activations if item.layer in {"affective_residue", "relational"}), default=0.0) * 0.7)
+        """Deprecated.
+
+        Resonance v2 đã nằm trong MemoryRetrievalEngine.
+        Hàm này cố ý không làm gì nữa. Nếu thêm token overlap lại ở đây,
+        repo sẽ quay về đúng cái hố vừa bò ra.
+        """
         return packet
