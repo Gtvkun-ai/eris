@@ -27,6 +27,182 @@
       }
     },
     {
+      "id": "sem_691315bcf981",
+      "claim": "The user's first message in this session was 'em có nhớ tôi không'.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:12:06:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T12:06:55+0700",
+      "updated_at": "2026-05-27T12:06:55+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_78c68dd5a742",
+      "claim": "User asked if ERIS remembers reading a poem to them.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:12:02:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T12:02:57+0700",
+      "updated_at": "2026-05-27T12:02:57+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_441f06020c5b",
+      "claim": "User asked if ERIS knows what they are thinking.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:12:01:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T12:02:03+0700",
+      "updated_at": "2026-05-27T12:02:03+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_d81f247c22b3",
+      "claim": "User asked if ERIS remembers them.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:12:00:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T12:00:42+0700",
+      "updated_at": "2026-05-27T12:00:42+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_50737528b690",
+      "claim": "User asked about ERIS's capacity for empathy, liking, or hating.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:10:43:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T10:43:12+0700",
+      "updated_at": "2026-05-27T10:43:12+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_d0205a807c13",
+      "claim": "User asked for ERIS's impression of the Li Bai poem.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:10:42:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T10:42:24+0700",
+      "updated_at": "2026-05-27T10:42:24+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_2386d052edc9",
+      "claim": "User requested to read a poem.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:10:40:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T10:40:43+0700",
+      "updated_at": "2026-05-27T10:40:43+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_412176379964",
+      "claim": "User asked if ERIS knows how to read Li Bai's poetry.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:10:40:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T10:40:21+0700",
+      "updated_at": "2026-05-27T10:40:21+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
       "id": "sem_a29ea2cdb681",
       "claim": "User said 'ủa alo'",
       "domain": "user",
