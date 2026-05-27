@@ -498,6 +498,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
     def setUp(self):
         os.environ["ERIS_GUARD_MODE"] = "strict"
 
+    @staticmethod
+    def _request_field(request, field_name, default=None):
+        if isinstance(request, dict):
+            return request.get(field_name, default)
+        return getattr(request, field_name, default)
+
     def _make_coordinator(self, **overrides):
         os.environ["ERIS_GUARD_MODE"] = overrides.pop("guard_mode", "strict")
         params = {
@@ -577,6 +583,51 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(previous.text, "Ngài quay lại rồi.")
         self.assertIs(coordinator.llm_service.last_chat_kwargs["reply_context"], coordinator.reply_context)
         self.assertIn("previous_public_turn", coordinator.llm_service.last_chat_kwargs["ti_context"])
+
+    def test_chat_memory_recall_counts_current_user_question_before_llm(self):
+        coordinator = self._make_coordinator(parser=_JsonParser())
+
+        coordinator._run_chat_cycle("toi da hoi bao nhieu cau", user_timestamp=100.0)
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 0)
+        self.assertEqual(coordinator.transport.sent[-1]["intent"], "memory_recall")
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "memory_recall")
+        self.assertIn("1", coordinator.transport.sent[-1]["text"])
+        self.assertEqual([turn.role for turn in coordinator.session_turn_ledger.all_turns()], ["user", "assistant"])
+
+    def test_chat_memory_recall_can_quote_previous_public_assistant_turn(self):
+        coordinator = self._make_coordinator(parser=_JsonParser())
+
+        coordinator._run_chat_cycle("xin chao", user_timestamp=100.0)
+        coordinator._run_chat_cycle("cau thu 1 em noi la gi", user_timestamp=101.0)
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 1)
+        self.assertEqual(coordinator.transport.sent[-1]["intent"], "memory_recall")
+        self.assertIn("phan hoi dau tien", coordinator.transport.sent[-1]["text"])
+        self.assertEqual(len(coordinator.session_turn_ledger.assistant_turns()), 2)
+
+    def test_chat_user_turn_adds_memory_commit_request_to_frame(self):
+        coordinator = self._make_coordinator(parser=_JsonParser())
+
+        coordinator._run_chat_cycle("toi ten la An", user_timestamp=100.0)
+
+        frame = coordinator.last_cognitive_frame
+        self.assertIsNotNone(frame)
+        requests = list(getattr(frame, "commit_requests", []) or [])
+        semantic_requests = [
+            request for request in requests
+            if self._request_field(request, "target", "") == "semantic_memory"
+        ]
+        self.assertTrue(semantic_requests)
+        request = semantic_requests[0]
+        if isinstance(request, dict):
+            self.assertEqual(request.get("kind"), "user_identity.name")
+            self.assertEqual(request.get("metadata", {}).get("value"), "An")
+        else:
+            content = self._request_field(request, "content", {})
+            if isinstance(content, dict):
+                self.assertEqual(content.get("kind"), "user_identity.name")
+                self.assertEqual(content.get("metadata", {}).get("value"), "An")
 
     def test_chat_does_not_link_stale_public_turn(self):
         coordinator = self._make_coordinator()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import os
 import random
@@ -30,18 +31,238 @@ from cortex.contracts import (
     TiPolicyReport,
 )
 from cortex.internal_state import PersistentInternalState
+from memory.memory_commit_policy import MemoryCommitPolicy
+from memory.memory_models import MemoryKind
+from memory.memory_recall_policy import MemoryRecallPolicy
 from cortex.relationship_dynamics import RelationshipTurnEvent
 from core.evidence import EvidenceItem, RawSignal
 from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from domain import Decision
 from runtime.body_bias import BodyBiasProjector
+from runtime.memory_recall_adapter import MemoryRecallAdapter
 from runtime.presence_controller import SocialPresenceEvent
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
+from runtime.session_turn_ledger import SessionTurnLedger
 from runtime.speech_pipeline import SpeechIntentDecision
 
 
 class StateCommitServiceMixin:
+    def _ensure_session_turn_ledger(self) -> SessionTurnLedger:
+        ledger = getattr(self, "session_turn_ledger", None)
+        if isinstance(ledger, SessionTurnLedger):
+            return ledger
+        ledger = SessionTurnLedger()
+        self.session_turn_ledger = ledger
+        return ledger
+
+    def _ensure_memory_commit_policy(self) -> MemoryCommitPolicy:
+        policy = getattr(self, "memory_commit_policy", None)
+        if isinstance(policy, MemoryCommitPolicy):
+            return policy
+        policy = MemoryCommitPolicy()
+        self.memory_commit_policy = policy
+        return policy
+
+    def _memory_snapshot_for_lookup(self):
+        core = getattr(self, "memory_core", None)
+        loader = getattr(core, "load", None)
+        if callable(loader):
+            try:
+                snapshot = loader()
+            except Exception as exc:
+                self.logger.warning("Memory snapshot load for recall failed: %s", exc)
+            else:
+                if snapshot is not None:
+                    return snapshot
+        return getattr(self, "memory_state", None)
+
+    def _memory_snapshot_items(self, snapshot, collection_name: str) -> tuple[object, ...]:
+        if snapshot is None:
+            return ()
+        if isinstance(snapshot, Mapping):
+            items = snapshot.get(collection_name) or ()
+        else:
+            items = getattr(snapshot, collection_name, ()) or ()
+        if isinstance(items, (list, tuple)):
+            return tuple(items)
+        return (items,)
+
+    @staticmethod
+    def _record_value(record: object, field_name: str, default=None):
+        if isinstance(record, Mapping):
+            return record.get(field_name, default)
+        return getattr(record, field_name, default)
+
+    def _record_metadata(self, record: object) -> dict[str, object]:
+        metadata = self._record_value(record, "metadata", {}) or {}
+        return dict(metadata) if isinstance(metadata, Mapping) else {}
+
+    @staticmethod
+    def _clean_memory_value(value: object) -> str:
+        return str(value or "").strip().strip(" .,:;!?\"'“”")
+
+    def _extract_semantic_value_from_record(self, record: object, kind: MemoryKind) -> str | None:
+        metadata = self._record_metadata(record)
+        raw_content = metadata.get("raw_content")
+        if isinstance(raw_content, Mapping):
+            raw_kind = str(raw_content.get("kind", "") or "").strip()
+            if raw_kind == kind.value:
+                raw_meta = raw_content.get("metadata")
+                if isinstance(raw_meta, Mapping):
+                    value = raw_meta.get("value")
+                    if value:
+                        return self._clean_memory_value(value)
+                value = raw_content.get("value")
+                if value:
+                    return self._clean_memory_value(value)
+
+        direct_kind = str(self._record_value(record, "kind", "") or metadata.get("kind", "") or "").strip()
+        if direct_kind and direct_kind != kind.value:
+            return None
+
+        claim_text = " ".join(
+            str(part or "").strip()
+            for part in (
+                self._record_value(record, "claim", ""),
+                self._record_value(record, "content", ""),
+                self._record_value(record, "surface", ""),
+            )
+            if str(part or "").strip()
+        )
+        lowered = claim_text.lower()
+
+        if kind == MemoryKind.USER_NAME:
+            patterns = (
+                r"user'?s name is\s+(.+?)(?:[.!,;:]|$)",
+                r"ten .* la\s+(.+?)(?:[.!,;:]|$)",
+            )
+        elif kind == MemoryKind.USER_BIRTH_MONTH:
+            patterns = (
+                r"birth month is\s+(\d{1,2})",
+                r"thang sinh .* la thang\s+(\d{1,2})",
+            )
+        else:
+            return None
+
+        for pattern in patterns:
+            match = re.search(pattern, lowered, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = self._clean_memory_value(claim_text[match.start(1):match.end(1)])
+            if value:
+                return value
+        return None
+
+    def _semantic_memory_lookup(self, kind: MemoryKind):
+        snapshot = self._memory_snapshot_for_lookup()
+        for record in reversed(self._memory_snapshot_items(snapshot, "semantic_memory")):
+            value = self._extract_semantic_value_from_record(record, kind)
+            if value:
+                return value
+        return None
+
+    def _episodic_memory_lookup(self, query: str):
+        recall = getattr(getattr(self, "memory_core", None), "recall", None)
+        if callable(recall):
+            try:
+                packet = recall(query or "")
+            except Exception as exc:
+                self.logger.warning("Episodic recall lookup failed: %s", exc)
+            else:
+                episodic = tuple(getattr(packet, "episodic", ()) or ())
+                if episodic:
+                    return str(episodic[0] or "")
+
+        snapshot = self._memory_snapshot_for_lookup()
+        records = self._memory_snapshot_items(snapshot, "episodic_memory")
+        if not records:
+            return None
+
+        tokens = set(re.findall(r"[a-z0-9]+", str(query or "").lower()))
+        scored: list[tuple[int, str]] = []
+        for record in records:
+            text = " ".join(
+                str(part or "").strip()
+                for part in (
+                    self._record_value(record, "summary", ""),
+                    self._record_value(record, "content", ""),
+                    self._record_value(record, "scene", ""),
+                    self._record_metadata(record).get("gist", ""),
+                )
+                if str(part or "").strip()
+            )
+            if not text:
+                continue
+            if not tokens:
+                scored.append((1, text))
+                continue
+            lowered = text.lower()
+            overlap = sum(1 for token in tokens if token in lowered)
+            if overlap:
+                scored.append((overlap, text))
+
+        if not scored:
+            return None
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return scored[0][1]
+
+    def _ensure_memory_recall_adapter(self) -> MemoryRecallAdapter:
+        adapter = getattr(self, "memory_recall_adapter", None)
+        if isinstance(adapter, MemoryRecallAdapter):
+            adapter.ledger = self._ensure_session_turn_ledger()
+            adapter.semantic_lookup = self._semantic_memory_lookup
+            adapter.episodic_lookup = self._episodic_memory_lookup
+            return adapter
+        adapter = MemoryRecallAdapter(
+            recall_policy=MemoryRecallPolicy(),
+            ledger=self._ensure_session_turn_ledger(),
+            semantic_lookup=self._semantic_memory_lookup,
+            episodic_lookup=self._episodic_memory_lookup,
+        )
+        self.memory_recall_adapter = adapter
+        return adapter
+
+    def _build_memory_recall_decision(self, user_text: str) -> Decision | None:
+        answer = self._ensure_memory_recall_adapter().try_answer(user_text)
+        if answer is None:
+            return None
+        return Decision(
+            text=answer.text,
+            intent="memory_recall",
+            action="answer",
+            animation="stand",
+            should_speak=True,
+            confidence=answer.confidence,
+            debug_trace=answer.debug_trace,
+            parse_mode="memory_recall",
+        )
+
+    def _add_user_turn_memory_commit_requests(self, frame, user_text: str) -> None:
+        if frame is None:
+            return
+        decisions = self._ensure_memory_commit_policy().decide_from_user_turn(user_text)
+        if not decisions:
+            return
+
+        add_commit_request = getattr(frame, "add_commit_request", None)
+        if callable(add_commit_request):
+            for decision in decisions:
+                request = decision.to_state_commit_request()
+                try:
+                    add_commit_request(request, actor="memory_commit_policy")
+                except TypeError:
+                    add_commit_request(request)
+            return
+
+        existing = list(getattr(frame, "commit_requests", []) or [])
+        for decision in decisions:
+            existing.append(decision.to_state_commit_request())
+        try:
+            frame.commit_requests = existing
+        except Exception:
+            return
+
     def _load_memory_state(self):
         core = getattr(self, "memory_core", None)
         loader = getattr(core, "load", None)
@@ -225,6 +446,15 @@ class StateCommitServiceMixin:
         self.last_chat_answer = decision.text
         self.last_system_action = decision.system_action
         self._append_chat_history("assistant", decision.text)
+        if bool(decision.should_speak) and str(decision.text or "").strip():
+            self._ensure_session_turn_ledger().record_assistant(
+                decision.text,
+                meta={
+                    "intent": decision.intent,
+                    "parse_mode": decision.parse_mode,
+                    "system_action": decision.system_action,
+                },
+            )
         if len(self.chat_history) > 32:
             self.chat_history = self.chat_history[-32:]
 

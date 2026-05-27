@@ -238,6 +238,9 @@ class RuntimeCoordinator(
         self.long_term_memory = self._memory_recall_texts()
         self.active_memory_resonance = None
         self.last_grounding_context = None
+        self.session_turn_ledger = self._ensure_session_turn_ledger()
+        self.memory_commit_policy = self._ensure_memory_commit_policy()
+        self.memory_recall_adapter = self._ensure_memory_recall_adapter()
         self.fe_style_memory = self.fe_renderer.create_memory()
         self.vision_facts_enabled, self.vision_interval_sec, self.vision_fact_max_items, self.vision_fact_max_len = (
             self._load_vision_fact_settings()
@@ -2915,6 +2918,15 @@ class RuntimeCoordinator(
         self.last_chat_answer = decision.text
         self.last_system_action = decision.system_action
         self._append_chat_history("assistant", decision.text)
+        if bool(decision.should_speak) and str(decision.text or "").strip():
+            self._ensure_session_turn_ledger().record_assistant(
+                decision.text,
+                meta={
+                    "intent": decision.intent,
+                    "parse_mode": decision.parse_mode,
+                    "system_action": decision.system_action,
+                },
+            )
         if len(self.chat_history) > 32:
             self.chat_history = self.chat_history[-32:]
 

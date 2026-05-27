@@ -78,6 +78,11 @@ class ChatCycleMixin:
         # Nếu chờ finalize ngay trong turn trước thì OutcomeObserver chỉ đang đoán trong chân không,
         # mà đoán trong chân không là thú vui nguy hiểm của chatbot.
         self._observe_previous_turn_feedback(user_text)
+        self._ensure_session_turn_ledger().record_user(
+            user_text,
+            timestamp=cycle_start,
+            meta={"channel": "chat"},
+        )
 
         # PRE-GROUNDING phải chạy TRƯỚC memory recall/resonance.
         # Lý do: với câu "xem đi", "đoạn đang mở", hoặc hỏi file cụ thể, memory chỉ được phép
@@ -182,6 +187,7 @@ class ChatCycleMixin:
             memory_resonance=memory_resonance,
             affect_signal=affect_signal,
         )
+        self._add_user_turn_memory_commit_requests(frame, user_text)
 
         self.chat_mode = True
         self.logger.info("Người dùng: %s", user_text)
@@ -453,6 +459,24 @@ class ChatCycleMixin:
         # and can push out the previous turn during context shrink.
         llm_chat_history = self._chat_history_for_llm(limit=16)[:-1]
         self.logger.info("[LLM CHAT HISTORY] %s", llm_chat_history[-8:])
+        memory_recall_decision = self._build_memory_recall_decision(user_text)
+        if memory_recall_decision is not None:
+            self._set_cognitive_action_plan(
+                frame,
+                should_speak=True,
+                speech_intent="user_requested",
+                speech_act="answer",
+                reason="Memory recall adapter answered before LLM chat.",
+                snapshot=snapshot,
+                user_text=user_text,
+                concrete_signals=self._concrete_screen_signals(snapshot),
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                notes=("memory_recall",),
+            )
+            self._commit_chat_decision(memory_recall_decision, fe_plan, frame=frame)
+            self.last_user_text_for_semantics = user_text
+            return
         raw = self.llm_service.generate_chat_reply(
             chat_history=llm_chat_history,
             user_message=chat_user_message,
