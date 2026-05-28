@@ -339,6 +339,7 @@ class ActionUtilityScorer:
             "suppress",
             "protect",
             "inner_whim",
+            "random_chatter",
             "light_muse",
             "tease",
             "reengagement",
@@ -368,6 +369,12 @@ class ActionUtilityScorer:
             "presence_maintenance": "micro_presence",
             "re_engagement": "reengagement",
             "micro_observation": "micro_observation",
+            "inner_whim": "inner_whim",
+            "random_chatter": "random_chatter",
+            "light_muse": "light_muse",
+            "ambient_comment": "micro_presence",
+            "companionship_ping": "micro_presence",
+            "micro_story": "light_muse",
         }.get(intent, "")
 
     def _apply_base(self, score: ActionScore, ctx: ActionContext) -> None:
@@ -571,7 +578,7 @@ class ActionUtilityScorer:
         mem = self._memory(ctx)
         if score.action in {"micro_presence", "indirect_presence", "observe"}:
             score.add(0.20 * mem.continuity_pressure, "continuity_pressure", "pressure")
-        if score.action in {"inner_whim", "light_muse"}:
+        if score.action in {"inner_whim", "light_muse", "random_chatter"}:
             score.add(0.18 * mem.boredom_pressure, "boredom_seeks_small_shift", "pressure")
         if score.action in {"no_speech", "withdraw", "suppress"}:
             score.add(0.18 * mem.exposure_recoil, "exposure_recoil", "pressure")
@@ -616,7 +623,10 @@ class ActionUtilityScorer:
         if action in SCREEN_CLAIM_ACTIONS and not ctx.has_concrete_signal:
             score.add(-0.60, "screen_action_without_evidence", "risk")
         if action in FREEFORM_SOCIAL_ACTIONS and ctx.channel == "autonomous" and not self._meaning_shift(ctx):
-            score.add(-0.34, "freeform_without_shift", "risk")
+            if self._has_internal_impulse(ctx):
+                score.add(0.18, "endogenous_impulse_can_surface_without_external_shift", "pressure")
+            else:
+                score.add(-0.34, "freeform_without_shift", "risk")
         if action in {"reassure", "relational_checkin"} and ctx.channel != "chat":
             score.add(-0.18, "relational_checkin_needs_user_context", "risk")
         if action == "ask" and ctx.channel == "chat" and self._looks_like_question(ctx.user_text) and not self._is_vague_question(ctx.user_text):
@@ -717,6 +727,26 @@ class ActionUtilityScorer:
             return False
         return any(needle in str(note or "").lower() for note in ctx.notes or ())
 
+    def _has_internal_impulse(self, ctx: ActionContext) -> bool:
+        # SpeechCore exposes endogenous impulses through speech_impulse. Notes are
+        # kept as a fallback for older call-sites. This prevents autonomous inner
+        # life from being punished as an ungrounded screen claim merely because
+        # MeaningLayer did not report an external semantic shift.
+        for note in ctx.notes or ():
+            lowered = str(note or "").lower()
+            if "spontaneous_life" in lowered or "endogenous" in lowered:
+                return True
+        core = getattr(ctx, "speech_core", None)
+        impulse = getattr(core, "speech_impulse", None)
+        if impulse is None:
+            return False
+        source = str(getattr(impulse, "source", "") or "").lower()
+        layer = str(getattr(impulse, "source_layer", "") or "").lower()
+        act = str(getattr(impulse, "suggested_speech_act", "") or "").lower()
+        pressure = _num(getattr(impulse, "surface_pressure", 0.0))
+        needs_external = bool(getattr(impulse, "needs_external_evidence", False))
+        return (source == "endogenous" or layer == "spontaneous_life") and not needs_external and act not in {"", "no_speech"} and pressure >= 0.35
+
     def _looks_like_question(self, text: str) -> bool:
         text = _normalize_text(text)
         if not text:
@@ -760,6 +790,9 @@ class ActionUtilityScorer:
             "observe": 65,
             "micro_observation": 62,
             "micro_presence": 60,
+            "inner_whim": 59,
+            "light_muse": 58,
+            "random_chatter": 57,
             "indirect_presence": 58,
             "hesitate": 55,
             "withdraw": 52,

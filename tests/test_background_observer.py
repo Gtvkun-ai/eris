@@ -51,7 +51,7 @@ class BackgroundObserverConfigTests(unittest.TestCase):
                 "ERIS_BACKGROUND_OBSERVER_LLM": "1",
                 "ERIS_OBSERVER_MODEL": "qwen3:0.6b",
                 "ERIS_OBSERVER_KEEP_ALIVE": "30m",
-                "OLLAMA_BASE_URL": "http://localhost:11434/api",
+                "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
             },
             clear=False,
         ):
@@ -62,7 +62,7 @@ class BackgroundObserverConfigTests(unittest.TestCase):
         self.assertTrue(config.llm_enabled)
         self.assertEqual(config.ollama_model, "qwen3:0.6b")
         self.assertEqual(config.keep_alive, "30m")
-        self.assertEqual(client.base_url, "http://localhost:11434/api")
+        self.assertEqual(client.base_url, "http://127.0.0.1:11434/api")
 
 
 class BackgroundObserverRuntimeTests(unittest.TestCase):

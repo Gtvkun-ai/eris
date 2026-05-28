@@ -3,6 +3,11 @@ import time
 
 from .contracts import SessionRitualReport
 
+try:
+    from .greeting_cognition import GreetingCognitionEngine
+except Exception:
+    GreetingCognitionEngine = None
+
 
 def _clamp01(value) -> float:
     try:
@@ -121,6 +126,17 @@ class SessionRitualEngine:
             recent_direction=recent_direction,
             self_continuity=self_continuity,
         )
+        greeting_frame = self._greeting_frame(
+            presence_restored=presence_restored,
+            continuity_restored=continuity_restored,
+            active_goal=active_goal,
+            current_attractor=current_attractor,
+            unresolved_loops=unresolved_loops,
+            recent_direction=recent_direction,
+            self_continuity=self_continuity,
+            tone=tone,
+            greeted_recently=greeted_recently,
+        )
         should_greet = True
         greeting_text = greeting_candidate if should_greet else ""
         evidence = self._evidence(
@@ -148,6 +164,13 @@ class SessionRitualEngine:
             unresolved_loops=unresolved_loops,
             evidence=evidence,
         )
+        # Dynamic fields keep backward compatibility with the existing SessionRitualReport
+        # contract while letting newer wording layers read a proper greeting cognition frame.
+        try:
+            report.greeting_frame = greeting_frame
+            report.greeting_anchor = greeting_candidate
+        except Exception:
+            pass
         report.prompt_context = self.render_prompt_context(report)
         return report
 
@@ -295,6 +318,37 @@ class SessionRitualEngine:
         if presence_restored and max(social_energy, attachment) >= 0.42:
             return "socially_warm"
         return "quiet_background"
+
+
+    def _greeting_frame(
+        self,
+        *,
+        presence_restored: bool,
+        continuity_restored: bool,
+        active_goal: str,
+        current_attractor: str,
+        unresolved_loops: tuple[str, ...],
+        recent_direction: str,
+        self_continuity: str,
+        tone: str,
+        greeted_recently: bool,
+    ):
+        if GreetingCognitionEngine is None:
+            return None
+        try:
+            return GreetingCognitionEngine().build(
+                presence_restored=presence_restored,
+                continuity_restored=continuity_restored,
+                active_goal=active_goal,
+                current_attractor=current_attractor,
+                unresolved_loops=unresolved_loops,
+                recent_direction=recent_direction,
+                self_continuity=self_continuity,
+                tone=tone,
+                greeted_recently=greeted_recently,
+            )
+        except Exception:
+            return None
 
     def _greeting_text(
         self,

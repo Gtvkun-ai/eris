@@ -1,8 +1,19 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-05-27
+Cập nhật: 2026-05-28
 Mã hóa: UTF-8
+
+
+Bổ sung nhanh 2026-05-28:
+- Memory intake giờ có 3 tầng rõ hơn: extract thẳng semantic/procedural/episodic nếu parse được; nếu user explicit muốn ERIS nhớ nhưng câu còn mờ, request sẽ đi vào `memory_candidate` thay vì giả vờ “đã nhớ chắc”.
+- `StateCommitter`, `MemoryCognitionCore` và `memory_models` đã mở route/contract cho `memory_candidate` và alias `unresolved_memory`; candidate giữ `raw_text`, `candidate_fact_keys`, `extraction_status`, `needs_consolidation` và số lần thử chưng cất lại.
+- `MemoryCommitPolicy` nhận thêm nhánh `user_convention`: các câu kiểu `từ giờ nếu tôi hỏi X thì hiểu là Y` đi vào `procedural_memory`; còn các câu kiểu `nhớ vibe này`, `đừng quên logic này` nhưng chưa parse sạch sẽ vào candidate store để consolidator xử lý sau.
+- `MemoryScorer` được tăng trọng lexical/phrase/bigram/anchor, nên recall procedural/relational/episodic không còn dễ rơi về danh sách rỗng chỉ vì relevance bị tính quá gắt; background bias cho relational/affective cũng được giữ sống đủ để tạo silent bias yếu.
+- `LlmService` không còn dùng lớp rewrite text-level cũ cho toàn bộ chat output; guard bề mặt giờ hẹp hơn, chủ yếu chặn phản ứng phòng thủ khi user chê ERIS lạnh/robotic/xa cách và rewrite sang `tone_repair` concession nhỏ.
+- `OllamaClient` hiện là client HTTP mỏng riêng cho observer/vision local, hỗ trợ JSON mode, ảnh base64/data URI, `keep_alive`, `unload()` và `list_models()` để dùng chung một Ollama daemon thay vì dựng nhiều service inference rời.
+- `SignalBuffer -> BackgroundObserver -> VisionSemanticCompressor` giờ là một pipeline local rõ hơn: diff trước, text observer sau, vision compressor cuối cùng; mục tiêu là tiết kiệm budget và tránh wake main cognition vì những thay đổi vụn trên desktop.
+- Regression hiện đã pass cho `tests/test_memory_commit_protocol.py`, `tests/test_memory_store.py` và `tests/test_memory_query_system.py`.
 
 
 
@@ -433,7 +444,7 @@ Kết nối mặc định:
 - Force-speak không có evidence sẽ bỏ memory block khỏi prompt, chỉ neo vào current_focus/nhu cầu gọi ERIS lên tiếng để tránh lỗi cũ "lấy memory làm chủ đề".
 - `generate_chat_reply()` giờ nhận cả `raw_user_text` và `reply_context` để build chat contract theo đúng turn thật: câu hỏi trực tiếp phải answer-first, câu hỏi self-identity phải bám `SelfIdentityProfile`, prompt ngắn/mơ hồ thì tự cap confidence thấp hơn, còn câu ngắn sau một public turn có thể được hiểu như phản ứng với câu ERIS vừa nói.
 - Khi `reply_context.previous_public_turn` tồn tại, service render block `Reply context` vào system prompt với channel, parse_mode và text của lượt public gần nhất.
-- `_guard_chat_output()` rewrite các câu đoán motive user về dạng an toàn như "Tôi chưa đủ chắc để đoán ý Ngài.", cắt tail kiểu trả lời xong lại ném nguyên câu hỏi ngược, và gắn reasoning tag/debug trace cho các guard này.
+- `_guard_chat_output()` không còn là lớp rewrite diện rộng như bản cũ. Guard bề mặt hiện hẹp hơn: nếu user đang phản hồi kiểu `lạnh`, `robotic`, `xa cách` mà model trả câu phòng thủ/disclaimer, service sẽ rewrite sang một `tone_repair` ngắn với reasoning tag như `relational_repair_guard` và `small_concession`.
 - Có thêm `_guard_infj_594_policy()` để dập các line quá gắt, quá thử thách, quá performative hoặc quá "waifu script" trước khi decision đi tiếp.
 
 
@@ -805,6 +816,7 @@ Kết nối mặc định:
 Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Module/runtime chỉ tạo `StateCommitRequest`; `StateCommitter` validate batch cuối frame rồi `MemoryCognitionCore` mới route xuống layer đúng.
 - Các layer chính: `event_ledger`, `active_state`, `episodic_memory`, `semantic_memory`, `relational_memory`, `affective_residue_memory`, `procedural_memory`, `repair_memory`.
+- Ngoài các layer ổn định còn có `memory_candidate`: vùng đệm cho các mảnh user explicit muốn lưu nhưng policy chưa parse sạch thành fact/procedure ổn định.
 - `CognitiveFrameRecorderMixin` là nơi derive request từ frame sau outcome/self-observation; nó không gọi trực tiếp các store memory.
 - Memory là nền liên tục cho attention, prompt, thought stream, repair và guard chống overclaim, nhưng recall/memory resonance không tự biến thành bằng chứng hiện tại.
 - `RuntimeCoordinator` hiện load/save/recall qua `memory_core` thay vì gọi `memory_store` legacy. `_load_memory_state()` dùng `memory_core.load()`, `_save_memory_state()` dùng `memory_core.save()`, `_has_structured_memory_store()` dựa vào `memory_core.commit()`, còn recall/resonance gọi `memory_core.recall()` và flatten `MemoryPacket` theo layer cần dùng.
@@ -813,13 +825,13 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Từ nhánh mới, memory path chat được tách rõ ba tầng:
   - `session_turn_ledger`: transcript deterministic theo phiên hiện tại, không phải long-term memory.
   - `memory_query_*` + `memory_recall_adapter`: structured query pipeline để trả lời các câu hỏi "Ngài đã nói gì / tôi đã nói gì / Ngài tên gì" trước LLM.
-  - `memory_commit_policy`: lớp quyết định khi nào một user turn nên tạo semantic/procedural/episodic commit request.
+  - `memory_commit_policy`: lớp quyết định khi nào một user turn nên tạo semantic/procedural/episodic commit request, và khi nào phải hạ xuống `memory_candidate`.
 - Ý tưởng trung tâm: exact recall trong phiên và semantic fact user tự khai báo không nên bắt LLM “đoán lại”. Phần deterministic đi bằng `TurnGraph` + executor + surface policy trước; còn long-term storage vẫn phải đi qua `StateCommitRequest` và `MemoryCognitionCore`.
 
 `src/memory/memory_cognition.py`
 - `MemoryCognitionCore` là facade chính cho memory commit/recall.
 - Ghi nhớ đi qua `StateCommitRequest`; core kiểm tra `storage_permission`, `permission_required`, `confidence`, `evidence_ids`, `decay_policy` trước khi lưu.
-- Target được route sang `event_ledger`, `active_state`, `homeostatic_baseline`, `self_continuity`, `episodic_memory`, `semantic_memory`, `relational_memory`, `affective_residue_memory`, `procedural_memory`, `repair_memory`.
+- Target được route sang `event_ledger`, `active_state`, `homeostatic_baseline`, `self_continuity`, `episodic_memory`, `semantic_memory`, `relational_memory`, `affective_residue_memory`, `procedural_memory`, `repair_memory` và `memory_candidate`/`unresolved_memory`.
 - Recall trả `MemoryPacket` với quota theo budget mode `fast/normal/deep/reflection`, có confidence notes để nhắc downstream: residue là áp lực nội bộ, relational là nhịp quan hệ tích tụ, episodic là quá khứ.
 - Bản mới không còn tự đo resonance bằng token overlap ngay trong facade; nó đi theo pipeline `MemoryCueBuilder` -> `MemoryRetrievalEngine` -> `MemoryActivation` -> `MemoryPacketBuilder`.
 
@@ -835,9 +847,20 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Adapter ứng viên retrieval theo từng layer.
 - Biết bọc semantic/episodic/relational/procedural/repair item thành một candidate shape chung để scorer/activation xử lý thống nhất.
 
+`src/memory/unresolved_memory.py`
+- Store JSON cho `memory_candidate`.
+- Giữ `UnresolvedMemoryCandidate` với các field như `raw_text`, `importance`, `domain_guess`, `candidate_fact_keys`, `extraction_status`, `needs_consolidation`, `consolidation_attempts`, `promoted_target` và `promoted_fact_key`.
+- Vai trò của store này không phải “nhớ đại”, mà là giữ dấu vết có evidence cho những thứ user explicit muốn ERIS giữ, nhưng policy hiện tại chưa được phép surface như fact chắc.
+
+`src/memory/memory_consolidator.py`
+- Worker chưng cất candidate ở path reflection/rảnh.
+- Lấy các mục unresolved quan trọng, chạy lại `MemoryCommitPolicy` với `allow_candidate=False`, và chỉ khi extract ra semantic/procedural/episodic decision hợp lệ mới commit qua `MemoryCognitionCore`.
+- Nếu vẫn không parse được, consolidator chỉ tăng `consolidation_attempts` hoặc mark failed; nó không được bịa fact mới từ candidate mờ.
+
 `src/memory/memory_scoring.py`
 - Chứa `MemoryScore`, `LayerProfile`, `MemoryScorer` và rule weight theo layer.
 - Tách scoring ra khỏi store/facade để có thể tune relevance, recency, confidence, privacy risk hay layer-specific bias mà không đụng đường commit.
+- Bản mới đẩy trọng lexical/phrase/bigram/anchor cao hơn, cộng thưởng rõ ràng cho `matched_terms`/`matched_anchors`, và giữ background bias yếu cho layer relational/affective/procedural khi query rỗng để recall không thành một danh sách trống vô nghĩa.
 
 `src/memory/memory_activation.py`
 - Chịu trách nhiệm biến candidate đã score thành activation thực sự: chọn top item, phân quota theo layer, build retrieval result có breakdown và suppression note.
@@ -860,7 +883,8 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Dùng cho recall theo sự kiện, không trộn với semantic fact ổn định.
 
 `src/memory/memory_models.py`
-- Contract nhỏ cho memory commit/policy path: `MemoryTarget`, `MemoryKind`, `SurfaceMode`, `DecayPolicy`, `MemoryCommitDecision`, `RecallRequest`, `RecallAnswer`.
+- Contract nhỏ cho memory commit/policy path: `MemoryTarget`, `MemoryKind`, `SurfaceMode`, `DecayPolicy`, `MemoryCommitKind`, `MemoryCommitDecision`, `RecallRequest`, `RecallAnswer`.
+- Bản hiện tại có thêm `MemoryTarget.CANDIDATE`, `DecayPolicy.CANDIDATE`, `MemoryKind.USER_CONVENTION` và `MemoryKind.MEMORY_CANDIDATE`, để nhánh intake/consolidation có tên gọi ổn định thay vì phải nhét mọi thứ vào semantic/procedural cũ.
 - `MemoryCommitDecision.to_state_commit_request()` là adapter duy nhất từ policy sang commit protocol hiện tại; nhờ vậy nếu shape `StateCommitRequest` đổi, chỉ cần sửa một chỗ thay vì để policy dính trực tiếp vào store.
 
 `src/memory/memory_recall_policy.py`
@@ -919,6 +943,8 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
   - memory test hint
   - preference tổng quát
 - Semantic fact như tên/năm sinh/tháng sinh/nơi ở đi vào `semantic_memory`; style phản hồi đi vào `procedural_memory`; các lượt test trí nhớ đi vào nhánh episodic/protocol phù hợp thay vì lưu transcript dài nguyên xi.
+- Có thêm extractor `user_convention`: các câu kiểu `từ giờ nếu tôi hỏi 'trạng thái lõi' thì hiểu là status ERIS hiện tại` sẽ thành procedural rule với `trigger` và `handling_rule` rõ.
+- Nếu user explicit nhấn mạnh cần nhớ nhưng policy chưa parse ra structure sạch, nó sẽ tạo `MemoryTarget.CANDIDATE` với `extraction_status=unresolved` và `needs_consolidation=True` thay vì bịa semantic fact.
 - Vì policy này chạy trước commit, `chat_cycle` có thể tạo `commit_requests` deterministically ngay tại user turn thay vì đợi model hoặc resonance tự suy ra cái gì đáng nhớ.
 
 `src/memory/semantic_memory.py`
@@ -1180,7 +1206,7 @@ Lưu ý test gap hiện tại:
 11. Output qua `DecisionParser` nếu là raw decision của LLM; micro-presence direct decision có parse mode riêng.
 12. `TiGovernor` enforce lần cuối.
 13. Nếu có `system_action`, `ActionExecutor` thực thi và kết quả được đưa vào memory/reply context.
-14. `StateCommitter`/`MemoryCognitionCore` route commit sang active state, event ledger, episodic, semantic, relational, affective, procedural hoặc repair memory; coordinator chỉ fallback append `long_term_memory` cục bộ khi không có structured memory core.
+14. `StateCommitter`/`MemoryCognitionCore` route commit sang active state, event ledger, episodic, semantic, relational, affective, procedural, repair hoặc `memory_candidate`; coordinator chỉ fallback append `long_term_memory` cục bộ khi không có structured memory core.
 15. Coordinator tạo `Decision.to_payload()`, ghi public turn nếu decision có text visible, kèm thêm body bias vào payload bằng `_send_decision_to_body()`, rồi gửi sang Godot.
 16. Body bias đi cùng payload giúp Godot tự cập nhật nhịp thân thể mà không cần remote motion command trực tiếp.
 17. Godot parse payload, hiện bubble nếu `should_speak=true`, cập nhật `LocalBodyAutonomy` nếu có `body_bias`, rồi chỉ đưa motion command cho `MotionController` khi legacy remote motion được bật hoặc khi đó là lệnh cục bộ.

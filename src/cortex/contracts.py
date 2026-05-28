@@ -800,8 +800,16 @@ class MotivationalPressureReport:
 
 @dataclass(slots=True)
 class SpeechImpulse:
-    """Pre-wording speech impulse: pressure and residue, not wording."""
+    """Pre-wording speech impulse: pressure and residue, not wording.
 
+    The first block is the legacy MeaningLayer-compatible shape. The second
+    block is the explicit impulse contract used by spontaneous_life.py and
+    SpeechCore arbitration. Keeping both prevents old call-sites from breaking
+    while giving new modules a real contract instead of smuggling intent through
+    random strings like tiny gremlins in a log file.
+    """
+
+    # Legacy/meaning-layer shape.
     meaning: str = ""
     reaction: str = "no_reaction"
     attitude: str = ""
@@ -813,6 +821,24 @@ class SpeechImpulse:
     semantic_family: str = ""
     source_fact: str = ""
     evidence: tuple[str, ...] = ()
+
+    # Explicit impulse contract.
+    source: str = ""
+    source_layer: str = ""
+    impulse_type: str = ""
+    topic_seed: str = ""
+    family: str = ""
+    surface_pressure: float = 0.0
+    novelty: float = 0.0
+    risk: str = "texture"
+    needs_external_evidence: bool = False
+    suggested_speech_act: str = ""
+    cooldown_seconds: float = 0.0
+    reason: str = ""
+
+    @property
+    def active(self) -> bool:
+        return bool(self.source or self.impulse_type or self.suggested_speech_act)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -827,6 +853,18 @@ class SpeechImpulse:
             "semantic_family": self.semantic_family,
             "source_fact": self.source_fact,
             "evidence": list(self.evidence),
+            "source": self.source,
+            "source_layer": self.source_layer,
+            "impulse_type": self.impulse_type,
+            "topic_seed": self.topic_seed,
+            "family": self.family,
+            "surface_pressure": round(float(self.surface_pressure), 3),
+            "novelty": round(float(self.novelty), 3),
+            "risk": self.risk,
+            "needs_external_evidence": bool(self.needs_external_evidence),
+            "suggested_speech_act": self.suggested_speech_act,
+            "cooldown_seconds": round(float(self.cooldown_seconds), 3),
+            "reason": self.reason,
         }
 
 

@@ -55,6 +55,9 @@ class OllamaClient:
     )
     timeout: float = field(default_factory=lambda: float(os.getenv("OLLAMA_TIMEOUT_SEC", "60")))
 
+    def __post_init__(self) -> None:
+        self.base_url = self._normalize_base_url(self.base_url)
+
     def chat_json(
         self,
         model: str,
@@ -228,6 +231,15 @@ class OllamaClient:
         clean_images = [self.data_uri_to_base64(img) for img in images if img]
         cloned[-1]["images"] = clean_images
         return cloned
+
+    @staticmethod
+    def _normalize_base_url(base_url: str) -> str:
+        cleaned = str(base_url or "").strip().rstrip("/")
+        if not cleaned:
+            return "http://localhost:11434/api"
+        if cleaned.endswith("/api"):
+            return cleaned
+        return cleaned + "/api"
 
     def _post_json(self, path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         url = self.base_url.rstrip("/") + path

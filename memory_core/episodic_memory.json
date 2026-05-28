@@ -2,6 +2,50 @@
   "version": 1,
   "items": [
     {
+      "id": "epi_4ca0be64f80e",
+      "timestamp": "2026-05-28T09:10:16+0700",
+      "frame_id": "",
+      "summary": "??? bạn không thấy nó tệ à -> Tôi không có tiêu chuẩn về cái gì là 'tệ' hay 'không tệ' như Ngài, tôi chỉ phản hồi dựa trên những gì đang diễn ra.\", \"intent\": \"clarify_boundary\", \"action\": \"guarded_reply -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:09:09:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_2c27728c4095",
+      "timestamp": "2026-05-28T09:09:12+0700",
+      "frame_id": "",
+      "summary": "bạn vừa biết bạn nói cái gì không -> Tôi biết những gì tôi vừa phản hồi, thưa Ngài. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:09:09:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
       "id": "epi_f958e158716b",
       "timestamp": "2026-05-27T21:10:19+0700",
       "frame_id": "",

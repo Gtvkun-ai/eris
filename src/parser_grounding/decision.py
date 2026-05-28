@@ -279,6 +279,7 @@ class ParserGroundingMixin:
             text = text[1:-1].strip()
         text = re.sub(r"^(trả lời trước|tra loi truoc)\s*:\s*", "", text, flags=re.IGNORECASE)
         text = re.sub(r"^(eris|assistant|ai|response)\s*:\s*", "", text, flags=re.IGNORECASE)
+        text = self._cut_inline_metadata_from_public_text(text)
         text = self._repair_sentence_boundaries(text)
         return text
 
@@ -422,6 +423,48 @@ class ParserGroundingMixin:
             return ""
         return cleaned
 
+    def _cut_inline_metadata_from_public_text(self, text: str) -> str:
+        """Remove leaked decision-schema tail from a public text field."""
+        cleaned = str(text or "")
+        if not cleaned:
+            return ""
+        # Common failure: text='...', 'intent': 'x', 'action': ... after
+        # LlmService wrapped a truncated JSON blob into a JSON text field.
+        metadata_pattern = re.compile(
+            r"(?P<head>.*?)(?:[\"']?\s*,\s*)[\"'](?:intent|action|reasoning_tags|should_speak|confidence|animation|debug_trace|system_action)[\"']\s*:",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        match = metadata_pattern.match(cleaned)
+        if match:
+            cleaned = match.group("head")
+        # Also catch prose-shaped payload leaks: ` intent: ... action: ...`
+        cleaned = re.split(
+            r"\s+(?:intent|action|reasoning_tags|should_speak|confidence|debug_trace|system_action)\s*[:=]",
+            cleaned,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        return self._clean_inline_field_value(cleaned)
+
+    def _looks_like_prompt_or_contract_leak_text(self, text: str) -> bool:
+        raw = str(text or "")
+        lowered = raw.lower()
+        markers = (
+            "speech intent:",
+            "speech evidence",
+            "persona:",
+            "constraints:",
+            "return only",
+            "valid json object",
+            "ghi chú nền",
+            "gợi ý điều phối",
+            "critical output contract",
+            "runtime requirement for this call",
+            "llm final prompt",
+        )
+        hits = sum(1 for marker in markers if marker in lowered)
+        return hits >= 2 or (hits >= 1 and raw.count("*   ") >= 1)
+
     # _try_extract_nested_decision_from_text là một phương thức để cố gắng trích xuất một đối tượng JSON
     # lồng nhau từ trường text của quyết định.
     def _try_extract_inline_decision_fields_from_text(self, text: str):
@@ -431,6 +474,11 @@ class ParserGroundingMixin:
 
         fields = [
             "text",
+            "intent",
+            "action",
+            "reasoning_tags",
+            "should_speak",
+            "confidence",
             "animation",
             "direction",
             "target_x",
@@ -1078,11 +1126,19 @@ class ParserGroundingMixin:
             source_text = str(decision.get("text", self.fallback["text"]))
 
         raw_text = self._normalize_salvaged_text(source_text)
+        if self._looks_like_prompt_or_contract_leak_text(raw_text):
+            raw_text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
+            decision["intent"] = "protocol_repair"
+            decision["debug_trace"] = str(decision.get("debug_trace", "") or "") + "; parser_blocked_prompt_leak"
         nested = self._try_extract_nested_decision_from_text(raw_text)
         if nested is not None:
             self._log("info", "Phát hiện JSON lồng trong trường text, đã bóc lại payload bên trong.")
             decision = {**decision, **nested}
             raw_text = self._normalize_salvaged_text(str(decision.get("text", self.fallback["text"])))
+            if self._looks_like_prompt_or_contract_leak_text(raw_text):
+                raw_text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
+                decision["intent"] = "protocol_repair"
+                decision["debug_trace"] = str(decision.get("debug_trace", "") or "") + "; parser_blocked_nested_prompt_leak"
 
         text = raw_text
         original_text = text

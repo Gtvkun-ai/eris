@@ -1347,10 +1347,34 @@ class SourceGroundingEngine:
 
         for ev in self._as_list(getattr(frame, "evidence", None)):
             source = str(getattr(ev, "source", "") or self._mapping_get(ev, "source", "")).lower()
-            tags = " ".join(str(tag) for tag in self._as_list(getattr(ev, "tags", self._mapping_get(ev, "tags", [])))).lower()
-            if any(token in source for token in ("vision", "ocr", "screen")):
+            tags_list = [
+                str(tag or "").strip().lower()
+                for tag in self._as_list(getattr(ev, "tags", self._mapping_get(ev, "tags", [])))
+                if str(tag or "").strip()
+            ]
+            explicit_tag_tokens = {
+                "vision",
+                "vision_fact",
+                "live_vision",
+                "ocr",
+                "ocr_text",
+                "screen",
+                "screen_capture",
+                "screen_evidence",
+                "visible",
+                "visible_fact",
+            }
+            explicit_source = (
+                source in explicit_tag_tokens
+                or any(
+                    source.startswith(prefix)
+                    for prefix in ("vision_", "ocr_", "screen_", "visible_")
+                )
+            )
+            explicit_tags = bool(set(tags_list) & explicit_tag_tokens)
+            if explicit_source:
                 items.append(ev)
-            elif any(token in tags for token in ("vision", "ocr", "screen", "visible")):
+            elif explicit_tags:
                 items.append(ev)
 
         # Lọc bớt signal quá rỗng kiểu chỉ có "active window" không nội dung.

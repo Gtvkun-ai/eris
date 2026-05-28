@@ -296,17 +296,19 @@ class MicroLinePolicy:
             return "screen_observation"
         if intent == "micro_observation":
             return "micro_observation"
+        if intent in {"scene_curiosity", "ambient_comment"}:
+            return "micro_observation"
         if intent == "curious_question":
             return "curious_question"
         if intent in {"tender_checkin", "relational_checkin"}:
             return "tender_checkin"
         if intent == "guarded_reply":
             return "brief_line"
-        if intent in {"ambient_residue", "presence_residue", "quiet_residue"}:
+        if intent in {"ambient_residue", "presence_residue", "quiet_residue", "inner_whim", "random_chatter", "light_muse", "micro_story"}:
             return "ambient_residue"
         if intent in {"indirect_presence", "hesitate", "suppress"}:
             return "micro_presence"
-        if intent in {"presence_maintenance", "micro_presence", "social_presence", "re_engagement"}:
+        if intent in {"presence_maintenance", "micro_presence", "social_presence", "re_engagement", "companionship_ping"}:
             return "micro_presence"
         return "brief_line"
 

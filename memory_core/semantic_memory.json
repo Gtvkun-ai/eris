@@ -1,24 +1,25 @@
 {
   "version": 2,
   "kind": "semantic_memory",
-  "updated_at": "2026-05-27T21:11:40+0700",
+  "updated_at": "2026-05-28T18:42:17+0700",
   "items": [
     {
       "id": "sem_67edb42ed3bc",
       "claim": "User greeted ERIS with 'hello eris cưng'.",
       "domain": "user",
-      "confidence": 0.694,
+      "confidence": 0.724,
       "source": "state_commit",
       "evidence_ids": [
         "percept:user_message:18:21:0",
         "percept:user_message:20:37:0",
         "percept:user_message:21:08:0",
-        "percept:user_message:21:09:0"
+        "percept:user_message:21:09:0",
+        "percept:user_message:09:09:0"
       ],
-      "observations": 4,
-      "status": "tentative",
+      "observations": 5,
+      "status": "active",
       "first_seen_at": "2026-05-27T18:21:57+0700",
-      "updated_at": "2026-05-27T21:09:12+0700",
+      "updated_at": "2026-05-28T09:09:12+0700",
       "decay_policy": "slow",
       "contradiction_ids": [],
       "tags": [
@@ -70,7 +71,8 @@
         "previous_claims": [
           "User greeted ERIS with 'chào eris cưng'.",
           "User said 'xin chào eris'",
-          "User asked for ERIS's name."
+          "User asked for ERIS's name.",
+          "User asked if ERIS knows what it just said."
         ],
         "last_merge_reason": "store explicit stable semantic fact"
       }
@@ -98,6 +100,57 @@
       ],
       "metadata": {
         "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_9d4ae1d0405d",
+      "claim": "User expressed dissatisfaction with the previous response quality.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:09:09:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-28T09:10:16+0700",
+      "updated_at": "2026-05-28T09:10:16+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "semantic",
+        "extracted_fact",
+        "grounded"
+      ],
+      "metadata": {
+        "source": "CognitiveFrameRecorder",
+        "fact_index": 0,
+        "timestamp": "09:09",
+        "semantic_source": "decision_extracted_fact",
+        "source_grounded": true,
+        "grounding_source": "user_text",
+        "grounding_missing_evidence": [],
+        "grounding_preempt_mode": "",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1779934216.4931998,
+        "frame_id": null,
+        "raw_content": {
+          "fact": "User expressed dissatisfaction with the previous response quality.",
+          "source": "decision_extracted_fact",
+          "timestamp": "09:09",
+          "cycle_id": "chat-3"
+        },
+        "reason": "store explicit stable semantic fact",
+        "fact_key": "",
+        "aliases": [],
+        "importance": 0.5,
+        "fact_profile_evidence": [],
+        "embedding_text_hash": "e9d903f7e094c390",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
       }
     },
     {

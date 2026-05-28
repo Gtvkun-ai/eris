@@ -26,6 +26,20 @@ class _DummyLogger:
     def warning(self, *args, **kwargs):
         return None
 
+    def debug(self, *args, **kwargs):
+        return None
+
+
+class _RecordingLogger(_DummyLogger):
+    def __init__(self):
+        self.info_messages = []
+
+    def info(self, message, *args, **kwargs):
+        if args:
+            message = message % args
+        self.info_messages.append(str(message))
+        return None
+
 
 class _DummyTransport:
     def __init__(self):
@@ -927,6 +941,34 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertGreaterEqual(frame.salience, 0.42)
         self.assertIn(frame.recommended_action, {"update_body_bias", "call_vision_compressor"})
         self.assertFalse(frame.should_wake_main)
+
+    def test_background_observer_emits_trace_logs(self):
+        logger = _RecordingLogger()
+        with patch.dict(
+            os.environ,
+            {
+                "ERIS_BACKGROUND_OBSERVER": "1",
+                "ERIS_BACKGROUND_OBSERVER_LLM": "0",
+            },
+            clear=False,
+        ):
+            coordinator = self._make_coordinator(
+                telemetry_service=_PressureSignalTelemetry(),
+                logger=logger,
+            )
+
+        snapshot = coordinator.telemetry_service.capture_snapshot()
+        frame = coordinator._run_background_observer(
+            snapshot=snapshot,
+            channel="autonomous",
+            started_at=1.0,
+        )
+
+        self.assertIsNotNone(frame)
+        joined = "\n".join(logger.info_messages)
+        self.assertIn("[Observer] mode=rule model=disabled", joined)
+        self.assertIn("[Observer] action=", joined)
+        self.assertIn("[Observer] speech_pressure=", joined)
 
     def test_autonomous_screen_facts_use_vision_compressor_when_observer_requests_it(self):
         coordinator = self._make_coordinator(

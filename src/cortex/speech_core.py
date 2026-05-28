@@ -2,10 +2,11 @@ from .contracts import AgentSpeechCore, MotivationalPressureReport, Motivational
 from .internal_state import PersistentInternalState
 from .inner_thought import InnerThoughtEngine
 from .modes import QUIET_MODES as SHARED_QUIET_MODES
+from .spontaneous_life import SpontaneousLifeEngine
 
 
 class SpeechCoreEngine:
-    """Shared chooser for when to speak, what grounds the line, and its utterance type."""
+    """Bộ chọn chung về thời điểm nói, căn cứ của dòng và kiểu phát âm của nó."""
 
     QUIET_MODES = SHARED_QUIET_MODES
 
@@ -24,8 +25,14 @@ class SpeechCoreEngine:
         "worried",
     )
 
-    def __init__(self, *, inner_thought_engine: InnerThoughtEngine | None = None):
+    def __init__(
+        self,
+        *,
+        inner_thought_engine: InnerThoughtEngine | None = None,
+        spontaneous_life_engine: SpontaneousLifeEngine | None = None,
+    ):
         self.inner_thought_engine = inner_thought_engine or InnerThoughtEngine()
+        self.spontaneous_life_engine = spontaneous_life_engine or SpontaneousLifeEngine()
 
     def evaluate(
         self,
@@ -55,6 +62,7 @@ class SpeechCoreEngine:
         meaning_layer=None,
         personality_lens=None,
         safe_small_talk_allowed: bool = False,
+        spontaneous_impulse: SpeechImpulse | None = None,
     ) -> AgentSpeechCore:
         channel_name = str(channel or "autonomous")
         surface = thought_surface if thought_surface is not None else subconscious_seed
@@ -78,10 +86,24 @@ class SpeechCoreEngine:
             thought_surface=surface,
         )
 
+        if spontaneous_impulse is None:
+            spontaneous_impulse = self.spontaneous_life_engine.evaluate(
+                channel=channel_name,
+                snapshot=snapshot,
+                internal_state=internal_state,
+                thought_surface=surface,
+                personality_lens=personality_lens,
+                relationship_state=getattr(internal_state, "relationship_dynamics", None) if internal_state is not None else None,
+                concrete_signals=tuple(concrete_signals or ()),
+                recent_speech_acts=tuple(getattr(internal_state, "recent_speech_acts", ()) or ()) if internal_state is not None else (),
+            )
+        spontaneous_ready = self._spontaneous_ready(spontaneous_impulse, channel=channel_name)
+
         if ( #ERIS autonomous KHÔNG được nói chỉ vì telemetry thay đổi. Chỉ nói khi MeaningLayer báo có sự thay đổi về meaning, và nếu có meaning shift thì sẽ phải nói dù có signal nào đi nữa, còn nếu không có meaning shift thì sẽ chỉ nói khi có signal mạnh về meaning như weak_meaning, ambient_meaning hoặc vibe_signal, còn nếu không có signal mạnh về meaning thì sẽ không nói mà chỉ tạo một soft impression với lý do là MeaningLayer chỉ có tín hiệu yếu/ambient/vibe, nên nói như một ấn tượng mềm thay vì một quan sát cứng nhắc.
             channel_name == "autonomous"
             and meaning_layer is not None
             and not bool(getattr(meaning_layer, "meaning_shift", False))
+            and not spontaneous_ready
             and self._meaning_shift_required_for_layer(meaning_layer)
             and not self._allows_soft_non_shift_speech(
                 meaning_layer=meaning_layer,
@@ -99,6 +121,7 @@ class SpeechCoreEngine:
                 meaning_layer=meaning_layer,
                 winner=pressure_report.winner,
                 should_speak=False,
+                spontaneous_impulse=spontaneous_impulse,
             )
             safety_flags = ("meaning_shift_gate",)
             return AgentSpeechCore(
@@ -149,6 +172,7 @@ class SpeechCoreEngine:
                 meaning_layer=meaning_layer,
                 winner=pressure_report.winner,
                 should_speak=False,
+                spontaneous_impulse=spontaneous_impulse,
             )
             safety_flags = ("repeat_guard",) if repeat_count >= 2 or repeated_topic_streak >= 2 else ()
             return AgentSpeechCore(
@@ -195,6 +219,7 @@ class SpeechCoreEngine:
             meaning_layer=meaning_layer,
             personality_lens=personality_lens,
             safe_small_talk_allowed=safe_small_talk_allowed,
+            spontaneous_impulse=spontaneous_impulse,
         )
         winner = pressure_report.winner
         speech_source = winner.speech_source or "none"
@@ -243,6 +268,7 @@ class SpeechCoreEngine:
             meaning_layer=meaning_layer,
             winner=winner,
             should_speak=should_speak,
+            spontaneous_impulse=spontaneous_impulse,
         )
         return AgentSpeechCore(
             perception=perception,
@@ -298,6 +324,7 @@ class SpeechCoreEngine:
         meaning_layer,
         personality_lens,
         safe_small_talk_allowed: bool,
+        spontaneous_impulse: SpeechImpulse | None = None,
     ) -> MotivationalPressureReport:
         threshold = self._threshold_for_channel(channel, self_state=self_state)
         candidates = self._build_urge_candidates(
@@ -316,6 +343,7 @@ class SpeechCoreEngine:
             self_state=self_state,
             meaning_layer=meaning_layer,
             safe_small_talk_allowed=safe_small_talk_allowed,
+            spontaneous_impulse=spontaneous_impulse,
         )
         candidates = self._apply_self_state_to_candidates(candidates, channel=channel, self_state=self_state)
         candidates = self._apply_personality_restraint_to_candidates(
@@ -357,6 +385,7 @@ class SpeechCoreEngine:
         self_state: SelfState | None,
         meaning_layer,
         safe_small_talk_allowed: bool,
+        spontaneous_impulse: SpeechImpulse | None = None,
     ) -> tuple[MotivationalUrge, ...]:
         state = internal_state or PersistentInternalState()
         desire = getattr(state, "desire", None)
@@ -722,6 +751,44 @@ class SpeechCoreEngine:
                     "under_12_words",
                 ),
                 blocked=channel != "autonomous" or not safe_small_talk_allowed or bool(concrete_signals),
+            )
+        )
+
+        spontaneous = spontaneous_impulse or SpeechImpulse()
+        spontaneous_pressure = self._clamp01(getattr(spontaneous, "surface_pressure", 0.0))
+        spontaneous_act = str(getattr(spontaneous, "suggested_speech_act", "") or "").strip() or "inner_whim"
+        if spontaneous_act == "companionship_ping":
+            spontaneous_act = "micro_presence"
+        spontaneous_family = str(getattr(spontaneous, "family", "") or getattr(spontaneous, "semantic_family", "") or "spontaneous_life")
+        spontaneous_blocked = (
+            channel not in {"autonomous", "force_speak"}
+            or bool(concrete_signals)
+            or bool(getattr(spontaneous, "needs_external_evidence", False))
+            or spontaneous_act == "no_speech"
+            or spontaneous_pressure <= 0.0
+        )
+        candidates.append(
+            MotivationalUrge(
+                label="spontaneous_life",
+                score=spontaneous_pressure,
+                utterance_type=spontaneous_act,
+                speech_source="freeform",
+                risk_level=str(getattr(spontaneous, "risk", "texture") or "texture"),
+                grounding="endogenous_anchor",
+                reason=str(getattr(spontaneous, "reason", "") or "Internal life produced a low-claim speech impulse."),
+                evidence=tuple(str(item) for item in (getattr(spontaneous, "evidence", ()) or ()))[:6],
+                safety_flags=tuple(
+                    dict.fromkeys(
+                        (
+                            "spontaneous_life",
+                            "endogenous_anchor",
+                            "no_screen_claim",
+                            "anti_mindreading",
+                            f"family={spontaneous_family}",
+                        )
+                    )
+                ),
+                blocked=spontaneous_blocked,
             )
         )
 
@@ -1120,7 +1187,12 @@ class SpeechCoreEngine:
         meaning_layer,
         winner: MotivationalUrge,
         should_speak: bool,
+        spontaneous_impulse: SpeechImpulse | None = None,
     ) -> SpeechImpulse:
+        spontaneous = spontaneous_impulse or SpeechImpulse()
+        if str(getattr(winner, "label", "") or "") == "spontaneous_life" and getattr(spontaneous, "active", False):
+            return spontaneous
+
         meaning = str(getattr(meaning_layer, "meaning", "") or "")
         if meaning:
             reaction = str(getattr(meaning_layer, "reaction", "") or "")
@@ -1146,6 +1218,19 @@ class SpeechCoreEngine:
             surface_intent=str(getattr(winner, "reason", "") or "speak briefly"),
             evidence=tuple(str(item) for item in (getattr(winner, "evidence", ()) or ()))[:4],
         )
+    def _spontaneous_ready(self, impulse: SpeechImpulse | None, *, channel: str) -> bool:
+        if impulse is None:
+            return False
+        if channel not in {"autonomous", "force_speak"}:
+            return False
+        if bool(getattr(impulse, "needs_external_evidence", False)):
+            return False
+        act = str(getattr(impulse, "suggested_speech_act", "") or "")
+        if not act or act == "no_speech":
+            return False
+        threshold = 0.30 if channel == "force_speak" else 0.50
+        return self._clamp01(getattr(impulse, "surface_pressure", 0.0)) >= threshold
+
     #Autonomous cần vượt threshold mới được nói. ERIS overloaded sẽ tự ít nói hơn. 
     def _threshold_for_channel(self, channel: str, *, self_state: SelfState | None = None) -> float:
         if channel == "autonomous":

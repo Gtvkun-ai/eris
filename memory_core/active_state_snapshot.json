@@ -1,18 +1,18 @@
 {
   "version": 1,
-  "updated_at": "2026-05-27T21:11:40+0700",
+  "updated_at": "2026-05-28T18:42:17+0700",
   "current_goal": "",
   "current_goal_confidence": 0.0,
   "session_arc": "unknown",
   "active_project": "",
-  "active_task": "json",
+  "active_task": "no_speech",
   "relation_state": {},
   "affect_state": {
-    "attachment": 0.361,
-    "silence_pressure": 0.018,
-    "social_pressure": 0.025,
-    "curiosity_pressure": 0.077,
-    "restraint_pressure": 0.582
+    "attachment": 0.421,
+    "silence_pressure": 0.072,
+    "social_pressure": 0.037,
+    "curiosity_pressure": 0.104,
+    "restraint_pressure": 0.51
   },
   "homeostatic_state": {},
   "working_threads": [],
@@ -20,74 +20,80 @@
   "self_continuity": {},
   "metadata": {
     "internal_state": {
-      "valence": 0.058,
-      "arousal": 0.159,
-      "curiosity": 0.176,
-      "boredom": 0.036,
-      "social_energy": 0.189,
-      "attachment": 0.361,
-      "irritation": 0.093,
-      "protectiveness": 0.141,
-      "confidence": 0.607,
-      "fatigue": 0.235,
-      "tenderness": 0.218,
-      "silence_pressure": 0.112,
-      "social_pressure": 0.025,
-      "curiosity_pressure": 0.077,
-      "protective_pressure": 0.046,
-      "tender_pressure": 0.15,
-      "playful_pressure": 0.013,
-      "watchful_pressure": 0.048,
-      "restraint_pressure": 0.601,
-      "subconscious_pressure": 0.281,
-      "memory_replay_pressure": 0.349,
-      "association_pressure": 0.15,
-      "thought_stream_pressure": 0.328,
-      "cognitive_tension": 0.143,
-      "unresolved_prediction_pressure": 0.131,
-      "recursive_reactivation_pressure": 0.349,
-      "last_cognition_at": 1779880906.344,
-      "last_elapsed_seconds": 7200.0,
+      "valence": 0.075,
+      "arousal": 0.124,
+      "curiosity": 0.118,
+      "boredom": 0.048,
+      "social_energy": 0.121,
+      "attachment": 0.265,
+      "irritation": 0.089,
+      "protectiveness": 0.131,
+      "confidence": 0.598,
+      "fatigue": 0.787,
+      "tenderness": 0.238,
+      "silence_pressure": 0.416,
+      "social_pressure": 0.037,
+      "curiosity_pressure": 0.104,
+      "protective_pressure": 0.053,
+      "tender_pressure": 0.215,
+      "playful_pressure": 0.022,
+      "watchful_pressure": 0.069,
+      "restraint_pressure": 0.996,
+      "subconscious_pressure": 0.996,
+      "memory_replay_pressure": 0.671,
+      "association_pressure": 0.475,
+      "thought_stream_pressure": 0.996,
+      "cognitive_tension": 0.403,
+      "unresolved_prediction_pressure": 0.456,
+      "recursive_reactivation_pressure": 0.375,
+      "last_cognition_at": 1779935508.513,
+      "last_elapsed_seconds": 1339.205,
       "last_memory_resonance": 0.0,
       "last_unresolved_tension": 0.0,
       "last_event_impulse": 0.0,
-      "last_social_presence_present": false,
-      "last_social_presence_confidence": 0.0,
-      "last_social_presence_intensity": 0.0,
-      "last_session_ritual_at": 1779890897.518,
-      "last_session_greeting_at": 1779890897.518,
+      "last_social_presence_present": true,
+      "last_social_presence_confidence": 0.539,
+      "last_social_presence_intensity": 0.534,
+      "last_session_ritual_at": 1779963615.709,
+      "last_session_greeting_at": 1779963615.709,
       "session_resume_count": 3,
-      "last_session_tone": "quiet_background",
-      "last_channel": "chat",
-      "last_focus_kind": "general",
-      "last_ti_mode": "chat_general",
+      "last_session_tone": "quiet_reflective",
+      "last_channel": "autonomous",
+      "last_focus_kind": "communication",
+      "last_ti_mode": "steady_observe",
       "last_stance": "grounded",
-      "last_speech_act": "mirror",
-      "last_utterance_type": "mirror",
-      "last_inner_intent": "",
-      "last_subconscious_mode": "input_disturbance",
-      "last_subconscious_seed": "input_disturbance:chat_user_message_chào_eris_cưng",
-      "last_thought_id": "thought_211550",
-      "last_thought_mode": "input_disturbance",
-      "last_thought_seed": "input_disturbance:chat_user_message_chào_eris_cưng",
-      "last_self_state_label": "settled",
-      "last_social_presence_kind": "",
-      "silence_ticks": 0,
-      "spoken_ticks": 3,
+      "last_speech_act": "no_speech",
+      "last_utterance_type": "no_speech",
+      "last_inner_intent": "curious_question",
+      "last_subconscious_mode": "memory_replay",
+      "last_subconscious_seed": "memory_replay:affective_echo_tender_under_cold_residue_strength_82882174188175",
+      "last_thought_id": "thought_875973",
+      "last_thought_mode": "memory_replay",
+      "last_thought_seed": "memory_replay:affective_echo_tender_under_cold_residue_strength_82882174188175",
+      "last_self_state_label": "watchful",
+      "last_social_presence_kind": "ambient_co_presence",
+      "silence_ticks": 1,
+      "spoken_ticks": 0,
       "chat_ticks": 3,
       "force_speak_ticks": 0,
-      "cycle_count": 3,
+      "cycle_count": 5,
       "recent_channels": [
         "chat",
         "chat",
-        "chat"
+        "chat",
+        "chat",
+        "autonomous"
       ],
       "recent_focus_kinds": [
         "general",
         "general",
-        "general"
+        "general",
+        "general",
+        "communication"
       ],
       "recent_stances": [
+        "grounded",
+        "grounded",
         "grounded",
         "grounded",
         "grounded"
@@ -95,53 +101,66 @@
       "recent_speech_acts": [
         "mirror",
         "mirror",
-        "mirror"
+        "mirror",
+        "mirror",
+        "no_speech"
       ],
-      "recent_inner_intents": [],
+      "recent_inner_intents": [
+        "curious_question"
+      ],
       "recent_subconscious_seeds": [
         "input_disturbance:chat_user_message_tôi_đang_code",
         "input_disturbance:chat_user_message_ủa_alo",
-        "input_disturbance:chat_user_message_chào_eris_cưng"
+        "input_disturbance:chat_user_message_chào_eris_cưng",
+        "input_disturbance:chat_user_message_bạn_không_thấy",
+        "memory_replay:affective_echo_tender_under_cold_residue_strength_82882174188175"
       ],
       "recent_thought_seeds": [
         "input_disturbance:chat_user_message_tôi_đang_code",
         "input_disturbance:chat_user_message_ủa_alo",
-        "input_disturbance:chat_user_message_chào_eris_cưng"
+        "input_disturbance:chat_user_message_chào_eris_cưng",
+        "input_disturbance:chat_user_message_bạn_không_thấy",
+        "memory_replay:affective_echo_tender_under_cold_residue_strength_82882174188175"
       ],
       "recent_self_state_labels": [
         "settled",
         "watchful",
-        "settled"
+        "settled",
+        "settled",
+        "watchful"
       ],
-      "recent_social_presence": [],
+      "recent_social_presence": [
+        "ambient_co_presence"
+      ],
       "recent_notes": [
-        "spoken_this_turn: reset cold-restart feeling",
-        "last_act=mirror",
-        "focus_continuity=general",
+        "last_act=no_speech",
+        "inner_intent=curious_question",
+        "focus_continuity=communication",
         "stance_continuity=grounded",
-        "session_ritual=overloaded:continuity_restored",
+        "session_ritual=quiet_reflective:continuity_restored:presence_restored",
         "session_ritual=quiet_background:continuity_restored",
-        "session_ritual=quiet_background:continuity_restored"
+        "session_ritual=quiet_reflective:continuity_restored"
       ],
       "desire_dynamics": {
-        "want": 0.241,
-        "prefer": 0.231,
-        "cling": 0.268,
-        "avoid": 0.081,
-        "anticipation": 0.117,
+        "want": 0.229,
+        "prefer": 0.213,
+        "cling": 0.33,
+        "avoid": 0.098,
+        "anticipation": 0.11,
         "attraction_charge": 0.0,
         "aversion_charge": 0.0,
-        "unresolved_residue": 0.008,
-        "attachment_heat": 0.502,
-        "attachment_cool": 0.164,
-        "attachment_drift": "guarded",
+        "unresolved_residue": 0.073,
+        "attachment_heat": 0.499,
+        "attachment_cool": 0.163,
+        "attachment_drift": "dependent",
         "recurring_attraction": "",
         "recurring_aversion": "",
         "attention_hook": "",
-        "unfinished_thought": "",
-        "emotional_echo": "after_speaking:mirror",
+        "unfinished_thought": "memory_replay:affective_echo_tender_under_cold_residue_strength_82882174188175",
+        "emotional_echo": "quiet_aftertaste",
         "recent_patterns": [
-          "spoken_release"
+          "spoken_release",
+          "unspoken_residue"
         ]
       },
       "goal_persistence": {
@@ -172,93 +191,93 @@
       "mental_processes": {
         "curiosity": {
           "name": "curiosity",
-          "level": 0.18,
-          "pressure": 0.226,
-          "activation": 0.168,
+          "level": 0.113,
+          "pressure": 0.159,
+          "activation": 0.108,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.24,
-          "last_interaction": -0.083
+          "last_interaction": -0.13
         },
         "restraint": {
           "name": "restraint",
-          "level": 0.431,
-          "pressure": 0.576,
-          "activation": 0.405,
+          "level": 0.874,
+          "pressure": 1.0,
+          "activation": 0.848,
           "volatility": 0.2,
           "decay_rate": 0.08,
-          "last_signal": 0.274,
-          "last_interaction": 0.13
+          "last_signal": 0.296,
+          "last_interaction": 0.403
         },
         "tension": {
           "name": "tension",
-          "level": 0.083,
-          "pressure": 0.133,
-          "activation": 0.067,
+          "level": 0.304,
+          "pressure": 0.406,
+          "activation": 0.309,
           "volatility": 0.2,
           "decay_rate": 0.08,
-          "last_signal": 0.04,
-          "last_interaction": 0.028
+          "last_signal": 0.16,
+          "last_interaction": 0.148
         },
         "continuity": {
           "name": "continuity",
-          "level": 0.474,
-          "pressure": 0.605,
-          "activation": 0.441,
+          "level": 0.59,
+          "pressure": 0.792,
+          "activation": 0.576,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.34,
-          "last_interaction": 0.098
+          "last_interaction": 0.139
         },
         "attachment": {
           "name": "attachment",
-          "level": 0.327,
-          "pressure": 0.431,
-          "activation": 0.277,
+          "level": 0.253,
+          "pressure": 0.347,
+          "activation": 0.248,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.2,
-          "last_interaction": 0.071
+          "last_interaction": 0.045
         },
         "reflection": {
           "name": "reflection",
-          "level": 0.353,
-          "pressure": 0.432,
-          "activation": 0.348,
+          "level": 0.678,
+          "pressure": 0.913,
+          "activation": 0.646,
           "volatility": 0.2,
           "decay_rate": 0.08,
-          "last_signal": 0.24,
-          "last_interaction": 0.11
+          "last_signal": 0.241,
+          "last_interaction": 0.208
         },
         "social_presence": {
           "name": "social_presence",
-          "level": 0.171,
-          "pressure": 0.193,
-          "activation": 0.177,
+          "level": 0.115,
+          "pressure": 0.162,
+          "activation": 0.101,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.2,
-          "last_interaction": -0.023
+          "last_interaction": -0.151
         },
         "cognitive_load": {
           "name": "cognitive_load",
-          "level": 0.209,
-          "pressure": 0.299,
-          "activation": 0.173,
+          "level": 0.788,
+          "pressure": 1.0,
+          "activation": 0.716,
           "volatility": 0.2,
           "decay_rate": 0.08,
-          "last_signal": 0.134,
-          "last_interaction": 0.032
+          "last_signal": 0.27,
+          "last_interaction": 0.071
         },
         "background_thought": {
           "name": "background_thought",
-          "level": 0.267,
-          "pressure": 0.327,
-          "activation": 0.306,
+          "level": 0.767,
+          "pressure": 1.0,
+          "activation": 0.707,
           "volatility": 0.2,
           "decay_rate": 0.08,
-          "last_signal": 0.24,
-          "last_interaction": 0.074
+          "last_signal": 0.241,
+          "last_interaction": 0.12
         }
       },
       "conversation_dynamics": {
@@ -272,9 +291,10 @@
         "continuity_curve": {
           "semantic_convergence": 0.5,
           "trust_recovery": 0.5,
-          "abstraction_stability": 0.541,
+          "abstraction_stability": 0.547,
           "alignment_trend": "neutral",
           "rolling_arc": [
+            "neutral",
             "neutral",
             "neutral",
             "neutral"
@@ -289,8 +309,9 @@
           "maintain_rhythm"
         ],
         "correction_streak": 0,
-        "turn_count": 3,
+        "turn_count": 4,
         "recent_modes": [
+          "settled",
           "settled",
           "settled",
           "settled"
@@ -298,56 +319,57 @@
         "recent_failure_types": [
           "none",
           "none",
+          "none",
           "none"
         ]
       },
       "relationship_dynamics": {
-        "familiarity": 0.041999999999999996,
+        "familiarity": 0.047999999999999994,
         "trust": 0.25,
         "rupture": 0.0,
         "repair": 0.0,
         "ritual_strength": 0.02,
         "attachment_visibility": 0.12,
-        "preferred_distance": 0.5718519999999999,
+        "preferred_distance": 0.5690639999999999,
         "user_tolerates_strangeness": 0.25,
         "exposure_recoil": 0.0,
         "dignity_defense": 0.0,
         "overread_correction": 0.0,
         "irritation_memory": 0.0,
         "technical_respect": 0.25,
-        "last_event": "steady",
-        "last_update_turn": 3
+        "last_event": "evidence:acceptance_negative_gate@surface_or_affect",
+        "last_update_turn": 4
       },
       "action_memory": {
         "traces": [
           {
-            "action": "mirror",
-            "family": "user_requested",
-            "channel": "chat",
-            "timestamp": 374230.0444432,
-            "spoke": true,
-            "utility": 1.0,
-            "outcome": "spoken"
+            "action": "no_speech",
+            "family": "no_speech",
+            "channel": "autonomous",
+            "timestamp": 428824.8170473,
+            "spoke": false,
+            "utility": 0.47,
+            "outcome": "silent"
           }
         ],
         "max_traces": 48,
         "social_fatigue": 0.0,
         "boredom_pressure": 0.0,
         "exposure_recoil": 0.0,
-        "continuity_pressure": 0.0,
+        "continuity_pressure": 0.03,
         "habituation": {
-          "mirror": 0.16
+          "no_speech": 0.16
         },
-        "rhythm_phase": "execute",
-        "last_spoken_ts": 374230.0444432,
-        "last_action_ts": 374230.0444432,
-        "last_update_reason": "phase=execute; fatigue=0.00; boredom=0.00; recoil=0.00; continuity=0.00"
+        "rhythm_phase": "settled",
+        "last_spoken_ts": 0.0,
+        "last_action_ts": 428824.8170473,
+        "last_update_reason": "phase=settled; fatigue=0.00; boredom=0.00; recoil=0.00; continuity=0.00"
       }
     },
     "last_active_state_reason": "update active runtime state snapshot through commit protocol",
     "last_active_state_confidence": 0.82,
     "last_evidence_ids": [
-      "percept:user_message:18:21:0"
+      "percept:user_message:09:09:0"
     ]
   }
 }

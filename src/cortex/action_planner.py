@@ -251,6 +251,8 @@ class ActionPlanner:
             return "presence_maintenance"
         if speech_act == "reengagement":
             return "re_engagement"
+        if speech_act in {"inner_whim", "random_chatter", "light_muse"} and channel == "autonomous":
+            return speech_act
         if speech_act == "tease":
             return "playful_aside"
         if intent in {"curious_question", "social_presence"} and speech_act in {
@@ -316,6 +318,8 @@ class ActionPlanner:
             flags.append("cooldown_suppression")
         if any(str(note).startswith("inner_thought=") for note in notes):
             flags.append("inner_thought_surface")
+        if any("spontaneous_life" in str(note).lower() or "endogenous" in str(note).lower() for note in notes):
+            flags.append("spontaneous_life_surface")
         if speech_act in {
             "meta_reply",
             "random_chatter",
@@ -374,8 +378,8 @@ class ActionPlanner:
         if speech_act in {"relational_checkin", "reengagement"}:
             return utility_line + " Check state without mindreading or pulling attention too hard."
 
-        if speech_act in {"inner_whim", "light_muse"}:
-            return utility_line + " Offer a private reflective fragment; keep it low-intensity."
+        if speech_act in {"inner_whim", "light_muse", "random_chatter"}:
+            return utility_line + " Offer an endogenous fragment; keep it low-intensity and free of screen claims."
 
         if speech_act in {"curious_question", "observe", "micro_observation"}:
             if concrete_signals:
@@ -397,6 +401,8 @@ class ActionPlanner:
             "guarded_reply": "Voice: restrained, perceptive, slightly distant. Warmth must be implied.",
             "relational_checkin": "Voice: gentle check-in. Do not accuse, diagnose, or demand disclosure.",
             "inner_whim": "Voice: introspective, symbolic, low-intensity. Avoid melodrama.",
+            "random_chatter": "Voice: dry everyday aside. One compact sentence. No screen claim.",
+            "light_muse": "Voice: small internal image. Strange is allowed; fog is not.",
             "soft_boundary": "Voice: calm boundary. No guilt, no cold punishment.",
             "withdraw": "Voice: present but retreating. Acknowledge, then reduce pressure.",
             "mirror": "Voice: direct, answer-first, grounded. Do not over-symbolize.",
@@ -506,6 +512,9 @@ class ActionPlanner:
             said = soften_anchor(user_text, fallback="tin nhan hien tai", limit=90)
             return "Ngai vua noi: " + said + "; tra loi dung viec, khong suy dien qua xa"
 
+        if speech_act in {"inner_whim", "random_chatter", "light_muse"}:
+            return "Xung luc noi nay den tu noi sinh: chi noi nhu mot manh y nghi, khong duoc gan no thanh dieu ERIS thay tren man hinh"
+
         broadcast_text = self._broadcast_anchor_text(broadcast)
         if broadcast_text:
             broadcast_anchor = soften_anchor(broadcast_text, fallback="mot thay doi vua duoc phat hien", limit=90)
@@ -544,6 +553,8 @@ class ActionPlanner:
             return "giu lai, dap ung gian tiep"
         if speech_act in {"tease", "random_chatter", "light_muse"}:
             return "mia nhe"
+        if speech_act == "inner_whim":
+            return "noi tam giu lai"
         if speech_act in {"protect", "refuse", "soft_boundary", "withdraw", "system_action"}:
             return "lanh nhe"
         if channel == "force_speak" or force_speak:
@@ -560,6 +571,8 @@ class ActionPlanner:
             return "mot cau ngan; khong triet ly; khong mo rong cam xuc"
         if speech_act == "curious_question":
             return "dung mot cau hoi ngan; khong triet ly; khong giai thich dai"
+        if speech_act in {"inner_whim", "random_chatter", "light_muse"}:
+            return "mot cau ngan; khong nhac man hinh; khong bien thanh doc tho dai"
         if channel == "chat":
             return "tra loi gon theo viec Ngai hoi; khong triet ly neu khong can"
         return "toi da hai cau ngan; khong triet ly; khong dung anchor gia"

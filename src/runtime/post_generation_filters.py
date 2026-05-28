@@ -10,6 +10,32 @@ from runtime.fallback_policy import FALLBACK_BY_INTENT
 
 
 class PostGenerationFiltersMixin:
+    """Post-generation filters after the cognition/wording layers.
+
+    This mixin should not be the personality author. It keeps hard grounding
+    boundaries and records soft risks. Style, ego, warmth, coldness, and weirdness
+    must come from cognition/planning layers, not from final-text surgery.
+    """
+
+    def _guard_mode_value(self, name: str):
+        try:
+            return get_guard_mode(name)
+        except Exception:
+            return None
+
+    def _guard_is_off(self, name: str) -> bool:
+        return self._guard_mode_value(name) == OFF_GUARD_MODE
+
+    def _guard_is_log_only(self, name: str) -> bool:
+        return self._guard_mode_value(name) == LOG_ONLY_GUARD_MODE
+
+    def _trace_only_guard(self, decision: Decision, marker: str) -> Decision:
+        try:
+            decision.debug_trace = self._append_trace(getattr(decision, "debug_trace", ""), marker)
+        except Exception:
+            pass
+        return decision
+
     def _apply_chat_final_guards(self, decision: Decision, *, user_text: str, frame=None) -> Decision:
         state = None
         try:
@@ -23,10 +49,13 @@ class PostGenerationFiltersMixin:
             ("no_more_clarifying_question" in flags or self._guard_user_explained_reason(user_text))
             and self._is_repeated_clarifying_question(decision.text or "", last_assistant_text)
         ):
-            decision = self._copy_decision_with_text(
+            # This used to rewrite the answer into a canned relational-repair line.
+            # That made ERIS sound like a corrected assistant, not a situated agent.
+            # Keep the signal for audit, but let ConversationDynamics/RelationshipDynamics
+            # shape the next turn instead of doing final-text surgery here.
+            decision = self._trace_only_guard(
                 decision,
-                text=self._build_relational_repair_line(user_text, last_assistant_text),
-                trace_marker="chat_final_guard; relational_repair_no_ask_loop",
+                "chat_final_guard_log_only; repeated_clarifying_question",
             )
         decision = self._apply_memory_haunting_guard(
             decision,
@@ -42,6 +71,10 @@ class PostGenerationFiltersMixin:
         return f"{trace} | {marker}" if trace else marker
 
     def _apply_memory_haunting_guard(self, decision: Decision, *, grounding=None) -> Decision:
+        # Hard truth guard: memory must not masquerade as current evidence.
+        # It can be explicitly disabled for dev experiments, but default behavior stays honest.
+        if self._guard_is_off("memory_haunting_guard"):
+            return self._trace_only_guard(decision, "memory_haunting_guard_off")
         if grounding is None:
             grounding = getattr(self, "last_grounding_context", None)
         if grounding is None:
@@ -121,6 +154,9 @@ class PostGenerationFiltersMixin:
         return decision
 
     def _apply_chat_grounding_guard(self, decision: Decision, *, user_text: str, frame=None) -> Decision:
+        # Hard truth guard: file/screen/web claims still need evidence.
+        if self._guard_is_off("chat_grounding_guard"):
+            return self._trace_only_guard(decision, "chat_grounding_guard_off")
         report = None
         if frame is not None:
             report = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)

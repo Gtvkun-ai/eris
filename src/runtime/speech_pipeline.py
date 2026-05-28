@@ -16,6 +16,13 @@ SPEECH_INTENTS = (
     "re_engagement",#tái kết nối khi cảm thấy có cơ hội
     "curious_question", # hỏi lại tò mò
     "social_presence", # giữ lại cảm giác hiện diện
+    "scene_curiosity",
+    "ambient_comment",
+    "inner_whim",
+    "random_chatter",
+    "companionship_ping",
+    "micro_story",
+    "light_muse",
 )
 
 

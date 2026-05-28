@@ -327,6 +327,7 @@ class RuntimeCoordinator(
             self.last_signal_snapshot = signal_snapshot
             self.last_signal_diff = signal_diff
             self.last_observer_frame = observer_frame
+            self._log_observer_trace(observer_frame)
             if getattr(observer_frame, "should_wake_main", False):
                 self.logger.info(
                     "[background observer] wake_main hint suppressed | salience=%.2f | err=%.2f",
@@ -337,6 +338,34 @@ class RuntimeCoordinator(
         except Exception as exc:
             self.logger.warning("Background observer error: %s", exc)
             return None
+
+    def _log_observer_trace(self, observer_frame: ObserverFrame | None) -> None:
+        if observer_frame is None:
+            return
+
+        mode = "llm" if bool(getattr(observer_frame, "debug", {}).get("llm_used", False)) else "rule"
+        model = (
+            getattr(getattr(self, "background_observer", None), "config", None).ollama_model
+            if mode == "llm" and getattr(getattr(self, "background_observer", None), "config", None) is not None
+            else "disabled"
+        )
+        self.logger.info("[Observer] mode=%s model=%s", mode, model)
+        self.logger.info(
+            "[Observer] action=%s salience=%.2f error=%.2f focus=%s intent=%s",
+            str(getattr(observer_frame, "recommended_action", "observe_only") or "observe_only"),
+            float(getattr(observer_frame, "salience", 0.0) or 0.0),
+            float(getattr(observer_frame, "possible_error", 0.0) or 0.0),
+            str(getattr(observer_frame, "focus_kind", "unknown") or "unknown"),
+            str(getattr(observer_frame, "activity_intent", "unknown") or "unknown"),
+        )
+        state = self._get_internal_state()
+        self.logger.info(
+            "[Observer] speech_pressure=%.2f user_presence=%.2f novelty=%.2f repetition=%.2f",
+            float(getattr(state, "silence_pressure", 0.0) or 0.0),
+            float(getattr(observer_frame, "user_presence", 0.0) or 0.0),
+            float(getattr(observer_frame, "novelty", 0.0) or 0.0),
+            float(getattr(observer_frame, "repetition", 0.0) or 0.0),
+        )
 
     def _build_signal_snapshot_for_observer(
         self,
@@ -2306,6 +2335,15 @@ class RuntimeCoordinator(
             "soft_boundary",
         }
 
+    def _restore_session_ritual_once(self) -> SessionRitualReport:
+        """Run the startup continuity greeting once per runtime session.
+
+        This block used to sit after a return statement in
+        _is_inner_thought_speech_act(), so it was unreachable and made the
+        coordinator look like it had been assembled by a caffeinated gremlin.
+        Keeping it as an explicit method matches run_loop(), which calls
+        _restore_session_ritual_once() during startup.
+        """
         if getattr(self, "_session_ritual_ran", False):
             return SessionRitualReport(restored=False, session_resumed=False, should_greet=False)
         self._session_ritual_ran = True
@@ -2485,6 +2523,8 @@ class RuntimeCoordinator(
             ),
         )
 
+    def _log_decision_stage(self, channel: str, stage: str, decision: Decision) -> None:
+        """Log a compact Decision preview after parser / Ti / repair stages."""
         self.logger.info(
             "[%s %s] text=\"%s\" | animation=%s | parse_mode=%s | trace=%s | parser=%s",
             channel,
@@ -2851,260 +2891,8 @@ class RuntimeCoordinator(
         if msg_type == "chat_end":
             self._end_chat_cycle()
             return
-        if frame.action_plan.speech_act == "withdraw":
-            decision = self._build_planned_withdraw_decision(frame.action_plan)
-            self.fe_style_memory = self.fe_renderer.remember_style(
-                self.fe_style_memory,
-                plan=fe_plan,
-                rendered_text=decision.text,
-            )
-            self.last_text = decision.text
-            self.last_autonomous_spoken_at = time.time()
-            self._note_autonomous_spoken()
-            self._apply_position_update(decision)
-            frame.final_decision = self._decision_to_frame_dict(decision)
-            self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_withdraw",))
-            self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
-            self._send_decision_to_body(decision, channel="force_speak")
-            self._finalize_cognitive_frame(frame)
-            self.logger.info(
-                '[force_speak] ActionPlanner withdrew with text="%s" | elapsed=%.2fs',
-                decision.text,
-                time.time() - cycle_start,
-            )
-            return
-
-        if frame.action_plan.speech_act == "micro_presence":
-            synthesis = self._synthesize_micro_presence(
-                snapshot=snapshot,
-                thought_stream_report=thought_stream_report,
-                social_presence_event=social_presence_event,
-                inner_thought=speech_core.inner_thought,
-            )
-            policy = self._micro_line_policy_for_action_plan(
-                frame,
-                vision_fact=str((self._concrete_vision_signals(snapshot) or ("",))[0] or ""),
-            )
-            signal_score = policy.signal_score
-            local_fallback = self._local_grounded_micro_presence_text(synthesis)
-            if signal_score >= 0.55:
-                text, source = self._hybrid_micro_presence_text(
-                    kind=synthesis.kind,
-                    snapshot=snapshot,
-                    fallback_text=local_fallback,
-                    seeds=synthesis.seeds,
-                    micro_context=synthesis.context or {},
-                    force_llm=True,
-                    signal_score=signal_score,
-                )
-            else:
-                text, source = local_fallback, "local_low_signal"
-            decision = Decision(
-                text=text if synthesis.should_verbalize else "",
-                animation=frame.action_plan.animation_hint or "stand",
-                intent="micro_presence",
-                reasoning_tags=("force_speak", "micro_presence", synthesis.kind),
-                should_speak=bool(synthesis.should_verbalize),
-                confidence=0.58,
-                parse_mode="micro_presence",
-                debug_trace=(
-                    "micro_presence_synthesizer"
-                    f"; kind={synthesis.kind}"
-                    f"; source={source}"
-                    f"; signal_score={signal_score:.2f}"
-                    f"; seeds={' | '.join(synthesis.seeds[:3])}"
-                ),
-            )
-            decision = self._apply_post_generation_filters(
-                decision,
-                channel="force_speak",
-                speech_core=speech_core,
-                snapshot=snapshot,
-                momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
-            )
-            self._remember_inner_thought_rhythm(speech_core.inner_thought)
-            self.fe_style_memory = self.fe_renderer.remember_style(
-                self.fe_style_memory,
-                plan=fe_plan,
-                rendered_text=decision.text,
-            )
-            self.last_text = decision.text
-            self.last_autonomous_spoken_at = time.time()
-            self._note_autonomous_spoken()
-            self._apply_position_update(decision)
-            frame.final_decision = self._decision_to_frame_dict(decision)
-            self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_micro_presence", synthesis.kind))
-            self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
-            self._send_decision_to_body(decision, channel="force_speak")
-            self._finalize_cognitive_frame(frame)
-            self.logger.info(
-                '[force_speak] MicroPresence text="%s" | kind=%s | elapsed=%.2fs',
-                decision.text,
-                synthesis.kind,
-                time.time() - cycle_start,
-            )
-            return
-
-        if self._is_inner_thought_speech_act(frame.action_plan.speech_act):
-            inner_ti_context = self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought, speech_core)
-            raw = self.llm_service.generate_directive(
-                telemetry_data=telemetry_data,
-                ni_context="",
-                ti_context=inner_ti_context,
-                fe_context=fe_plan.style_context,
-                appraisal_context=self._build_appraisal_context(frame.appraisal),
-                internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
-                memory_context=memory_context,
-                avoid_text=self.last_text,
-                speech_intent=frame.action_plan.speech_intent,
-                vision_trace_marker=vision_marker,
-            )
-            self._log_raw_llm_output("force_speak_inner_thought", raw)
-            self._log_pre_parser("force_speak_inner_thought", raw)
-            decision = self.parser.parse(raw)
-            self._log_decision_stage("force_speak_inner_thought", "after_parser", decision)
-            decision.debug_trace = (
-                f"{decision.debug_trace} | inner_thought={speech_core.inner_thought.intent}"
-                if decision.debug_trace
-                else f"inner_thought={speech_core.inner_thought.intent}"
-            )
-            decision.parse_mode = "inner_thought"
-            self._log_decision_stage("force_speak_inner_thought", "pre_ti", decision)
-            decision = self.ti_governor.enforce_decision(decision, ti_report)
-            self._log_decision_stage("force_speak_inner_thought", "after_ti", decision)
-            decision = self._execute_system_action(decision, snapshot=snapshot)
-            if self._is_near_duplicate_text(decision.text or "", self.last_text) or self._is_generic_force_speak_ack(decision.text or ""):
-                repair_ti_context = (
-                    inner_ti_context
-                    + "\nSpeechCore repair: the previous draft was generic or repeated. "
-                    "Reject meta_ack/no_signal wording and choose a different social topic seed. "
-                    "Also reject small_story_listener/log_meta wording such as câu chuyện nhỏ, một người nghe, không cần màn hình, dòng log khô khan, or ngồi nhìn log. "
-                    "Prefer small_curiosity, quiet_whim, or light_presence; write a new line."
-                )
-                raw = self.llm_service.generate_directive(
-                    telemetry_data=telemetry_data,
-                    ni_context="",
-                    ti_context=repair_ti_context,
-                    fe_context=fe_plan.style_context,
-                    appraisal_context=self._build_appraisal_context(frame.appraisal),
-                    internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
-                    memory_context=memory_context,
-                    avoid_text=self.last_text,
-                    speech_intent=frame.action_plan.speech_intent,
-                    vision_trace_marker=vision_marker,
-                )
-                self._log_raw_llm_output("force_speak_inner_thought_repair", raw)
-                self._log_pre_parser("force_speak_inner_thought_repair", raw)
-                decision = self.parser.parse(raw)
-                self._log_decision_stage("force_speak_inner_thought_repair", "after_parser", decision)
-                decision.debug_trace = (
-                    f"{decision.debug_trace} | inner_thought_repair={speech_core.inner_thought.intent}"
-                    if decision.debug_trace
-                    else f"inner_thought_repair={speech_core.inner_thought.intent}"
-                )
-                decision.parse_mode = "inner_thought"
-                self._log_decision_stage("force_speak_inner_thought_repair", "pre_ti", decision)
-                decision = self.ti_governor.enforce_decision(decision, ti_report)
-                self._log_decision_stage("force_speak_inner_thought_repair", "after_ti", decision)
-                decision = self._execute_system_action(decision, snapshot=snapshot)
-            decision = self._apply_post_generation_filters(
-                decision,
-                channel="force_speak",
-                speech_core=speech_core,
-                snapshot=snapshot,
-                momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
-            )
-            self._remember_inner_thought_rhythm(speech_core.inner_thought)
-            self.fe_style_memory = self.fe_renderer.remember_style(
-                self.fe_style_memory,
-                plan=fe_plan,
-                rendered_text=decision.text,
-            )
-            self.last_text = decision.text
-            self.last_autonomous_spoken_at = time.time()
-            self._note_autonomous_spoken()
-            self._apply_position_update(decision)
-            frame.final_decision = self._decision_to_frame_dict(decision)
-            self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_inner_thought",))
-            self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
-            self._send_decision_to_body(decision, channel="force_speak")
-            self._finalize_cognitive_frame(frame)
-            self.logger.info(
-                '[force_speak] InnerThought generated text="%s" | act=%s | elapsed=%.2fs',
-                decision.text,
-                frame.action_plan.speech_act,
-                time.time() - cycle_start,
-            )
-            return
-
-        forced_ti_context = (
-            f"{self._build_llm_ti_context(ti_report, frame.action_plan)}\n"
-            "Context menu force_speak: Ngài vừa yêu cầu ERIS nói ngay. "
-            "Bỏ qua cooldown im lặng cho đúng một lượt này. "
-            "Nói một câu mới, tự nhiên; đừng nhắc telemetry hay chuyện menu trừ khi thật sự duyên. "
-            "Nếu không có tín hiệu cụ thể, không đoán Ngài đang thoải mái, bận rộn, mệt, căng, "
-            "hay đang làm việc quá sức. Tránh mở bằng 'Có vẻ'/'Hình như' và tránh câu tự lùi kiểu "
-            "'tôi không muốn làm phiền'."
-        )
-        forced_ti_context += (
-            "\nForceSpeak logic: user_requested_presence -> inspect current context -> "
-            "infer why this moment matters -> answer with a relationship stance. "
-            "Force speak may carry more attitude than autonomous; do not treat it as random chatter."
-        )
-        if not vision_marker:
-            forced_ti_context += " Không có screen_facts mới; nói thật gọn, không dựng cảnh ngoài dữ kiện."
-            self.logger.info("[force_speak] context menu requested immediate speech.")
-        raw = self.llm_service.generate_directive(
-            telemetry_data=telemetry_data,
-            ni_context="",
-            ti_context=forced_ti_context,
-            fe_context=fe_plan.style_context,
-            appraisal_context=self._build_appraisal_context(frame.appraisal),
-            internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
-            memory_context=memory_context,
-            avoid_text=self.last_text,
-            speech_intent=frame.action_plan.speech_intent,
-            vision_trace_marker=vision_marker,
-        )
-        self._log_raw_llm_output("force_speak", raw)
-        self._log_pre_parser("force_speak", raw)
-        decision = self.parser.parse(raw)
-        self._log_decision_stage("force_speak", "after_parser", decision)
-        self._log_decision_stage("force_speak", "pre_ti", decision)
-        decision = self.ti_governor.enforce_decision(decision, ti_report)
-        self._log_decision_stage("force_speak", "after_ti", decision)
-        decision = self._execute_system_action(decision, snapshot=snapshot)
-        decision = self._apply_post_generation_filters(
-            decision,
-            channel="force_speak",
-            speech_core=speech_core,
-            snapshot=snapshot,
-            momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
-        )
-
-        self.fe_style_memory = self.fe_renderer.remember_style(
-            self.fe_style_memory,
-            plan=fe_plan,
-            rendered_text=decision.text,
-        )
-        self.last_text = decision.text
-        self.last_autonomous_spoken_at = time.time()
-        self._note_autonomous_spoken()
-        self._apply_position_update(decision)
-        frame.final_decision = self._decision_to_frame_dict(decision)
-        self._set_cognitive_memory_update(frame, decision=decision, notes=("force_speak_commit",))
-        self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
-        self._send_decision_to_body(decision, channel="force_speak")
-        self._finalize_cognitive_frame(frame)
-
-        self.logger.info(
-            '[force_speak] Decision text="%s" | animation="%s" | elapsed=%.2fs',
-            decision.text,
-            decision.animation,
-            time.time() - cycle_start,
-        )
-        self.logger.info("[force_speak debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
-        self.logger.info("[force_speak parser] %s", decision.parser_trace or "<empty>")
+        if msg_type:
+            self.logger.debug("[incoming] ignored unknown msg_type=%s", msg_type)
 
     def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
         self.fe_style_memory = self.fe_renderer.remember_style(

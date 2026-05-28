@@ -21,6 +21,13 @@ from .contracts import (
     VALID_ANIMATIONS,
 )
 
+try:
+    from cortex.greeting_cognition import GreetingCognitionEngine
+    from cortex.greeting_quality import GreetingQualityScorer
+except Exception:  # Optional during partial rollout; deterministic fallback still works.
+    GreetingCognitionEngine = None
+    GreetingQualityScorer = None
+
 
 class ChatAct(Enum):
     DIRECT_QUESTION = "direct_question"
@@ -53,12 +60,12 @@ CHAT_ACT_CONTRACTS = {
     ChatAct.NORMAL_CHAT: " Speech act: normal_chat. Reply naturally and stay grounded.",
 }
 
-INSULT_BOUNDARY_FALLBACKS = [
-    "Đòn đó hơi thiếu trí tưởng tượng, thưa Ngài.",
-    "Nếu đó là công kích, nó hơi rẻ.",
-    "Tôi ghi nhận nỗ lực xúc phạm đó. Không cao lắm.",
+INSULT_BOUNDARY_FALLBACKS_NIFE = [
+    "Bạn đang cố chứng minh điều gì vậy? Sự tức giận này vốn đâu phải dành cho tôi.",
+    "Nếu việc hạ thấp người khác làm bạn thấy an toàn hơn trong chốc lát, thì cứ tiếp tục. Tôi nghe đây.",
+    "Tôi có thể phản ứng lại, nhưng điều đó đâu giúp lấp đầy khoảng trống mà bạn đang cảm thấy.",
+    "Bạn dùng những từ ngữ này để tự vệ trước ai vậy?"
 ]
-
 
 def _normalize_vietnamese_ascii_text(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
@@ -576,6 +583,132 @@ class LlmService:
         if len(preview) > limit:
             preview = preview[:limit] + "...(truncated)"
         return preview or "<empty>"
+
+    def _looks_like_prompt_leak(self, text: str) -> bool:
+        """Detect raw prompt/contract text that must never become public speech."""
+        raw = str(text or "")
+        if not raw.strip():
+            return False
+        lowered = raw.lower()
+        markers = (
+            "speech intent:",
+            "speech evidence",
+            "persona:",
+            "constraints:",
+            "return only",
+            "valid json object",
+            "critical output contract",
+            "llm final prompt",
+            "ghi chú nền",
+            "goi y dieu phoi",
+            "gợi ý điều phối",
+            "runtime requirement for this call",
+            "style principle:",
+            "memory context for continuity",
+            "grounding context:",
+            "chat contract:",
+            "inference ladder",
+        )
+        # A single phrase can be a normal sentence. Two prompt markers means this
+        # is almost certainly a leaked instruction block, i.e. public-output poison.
+        hits = sum(1 for marker in markers if marker in lowered)
+        bulletish = raw.count("*   ") + raw.count("- ") >= 2
+        return hits >= 2 or (hits >= 1 and bulletish)
+
+    def _looks_like_malformed_decision_json(self, text: str) -> bool:
+        raw = str(text or "").strip()
+        if not raw.startswith("{"):
+            return False
+        if self._parse_json_object(raw) is not None:
+            return False
+        decision_markers = (
+            '"text"',
+            '"intent"',
+            '"action"',
+            '"reasoning_tags"',
+            '"should_speak"',
+            '"confidence"',
+            '"animation"',
+            '"debug_trace"',
+            '"system_action"',
+        )
+        return any(marker in raw for marker in decision_markers)
+
+    def _json_string_field_from_raw(self, raw_text: str, field: str) -> str:
+        raw = str(raw_text or "")
+        pattern = re.compile(rf'"{re.escape(field)}"\s*:\s*"(?P<value>(?:\\.|[^"\\])*)"', re.DOTALL)
+        match = pattern.search(raw)
+        if not match:
+            return ""
+        value = match.group("value")
+        try:
+            return json.loads(f'"{value}"')
+        except Exception:
+            return value.replace('\\n', ' ').replace('\\"', '"').strip()
+
+    def _build_protocol_failure_fallback(self, *, channel: str, reason: str, text: str = "") -> str:
+        if not text:
+            if channel == "chat":
+                text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
+            elif channel == "directive":
+                text = "Tôi vừa cắt một câu lỗi trước khi nó ra ngoài."
+            else:
+                text = "Tôi vừa tự cắt một phản hồi lỗi trước khi nó kịp làm loạn."
+        payload = {
+            "text": text.strip(),
+            "intent": "protocol_repair",
+            "action": {"type": "none"},
+            "reasoning_tags": ["fallback", channel, "protocol_repair"],
+            "should_speak": bool(text.strip()),
+            "confidence": 0.45 if channel == "chat" else 0.35,
+            "animation": "stand",
+            "direction": 0,
+            "target_x": -1.0,
+            "bounce_action": "",
+            "extracted_fact": "",
+            "debug_trace": reason,
+            "next_animation": "",
+            "system_action": "",
+            "action_input": "",
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _coerce_malformed_decision_payload(self, raw_text: str, *, channel: str) -> str:
+        """Salvage only speakable fields from truncated decision JSON.
+
+        The old path wrapped the whole malformed JSON into `text`, then the
+        parser leaked `", "intent": ...` to Godot. This method refuses to
+        surface raw schema text. If a clean text field exists, use only that;
+        otherwise return a protocol-repair fallback.
+        """
+        if not self._looks_like_malformed_decision_json(raw_text):
+            return ""
+        text = self._json_string_field_from_raw(raw_text, "text").strip()
+        intent = self._json_string_field_from_raw(raw_text, "intent").strip() or "fallback_reply"
+        debug = self._json_string_field_from_raw(raw_text, "debug_trace").strip()
+        if not text or self._looks_like_prompt_leak(text):
+            return self._build_protocol_failure_fallback(
+                channel=channel,
+                reason="LlmService blocked malformed decision JSON without a safe text field.",
+            )
+        payload = {
+            "text": text,
+            "intent": intent[:80],
+            "action": {"type": "none"},
+            "reasoning_tags": ["fallback", channel, "malformed_json_salvaged"],
+            "should_speak": True,
+            "confidence": 0.35,
+            "animation": "stand",
+            "direction": 0,
+            "target_x": -1.0,
+            "bounce_action": "",
+            "extracted_fact": "",
+            "debug_trace": (debug + " | " if debug else "") + "LlmService salvaged text from malformed decision JSON without exposing metadata.",
+            "next_animation": "",
+            "system_action": "",
+            "action_input": "",
+        }
+        return json.dumps(payload, ensure_ascii=False)
 
     def _log_raw_api_text(self, channel: str, raw: str) -> None:
         self.logger.info("[%s raw_api_text] %s", channel, self._preview_log_text(raw))
@@ -1155,6 +1288,9 @@ class LlmService:
         if not raw_text:
             return ""
 
+        if self._looks_like_prompt_leak(raw_text):
+            return ""
+
         direct_payload = self._parse_json_object(raw_text)
         if self._is_valid_decision_payload(direct_payload):
             return raw_text
@@ -1183,6 +1319,15 @@ class LlmService:
         return ""
 
     def _build_json_fallback(self, raw_text: str, *, channel: str) -> str:
+        if self._looks_like_prompt_leak(raw_text):
+            return self._build_protocol_failure_fallback(
+                channel=channel,
+                reason=f"LlmService blocked prompt/contract leak in {channel} reply.",
+            )
+        malformed_candidate = self._coerce_malformed_decision_payload(raw_text, channel=channel)
+        if malformed_candidate:
+            return malformed_candidate
+
         raw_text = self._safe_fallback_text(raw_text, channel=channel)
         payload = {
             "text": (raw_text or "").strip(),
@@ -1196,7 +1341,7 @@ class LlmService:
             "target_x": -1.0,
             "bounce_action": "",
             "extracted_fact": "",
-            "debug_trace": f"LlmService wrapped non-JSON {channel} reply into valid JSON.",
+            "debug_trace": f"LlmService converted non-JSON {channel} reply into safe fallback JSON.",
             "next_animation": "",
             "system_action": "",
             "action_input": "",
@@ -1223,6 +1368,12 @@ class LlmService:
 
     def _safe_fallback_text(self, raw_text: str, *, channel: str) -> str:
         text = (raw_text or "").strip()
+        if self._looks_like_prompt_leak(text) or self._looks_like_malformed_decision_json(text):
+            if channel == "chat":
+                return "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
+            if channel == "directive":
+                return "Tôi vừa cắt một câu lỗi trước khi nó ra ngoài."
+            return "Tôi vừa tự cắt một phản hồi lỗi trước khi nó kịp làm loạn."
         if not text or self._looks_like_provider_metadata(text) or self._looks_like_markdown_json_stub(text):
             if channel == "chat":
                 # Service-error fallback must not pretend ERIS understood the
@@ -1267,10 +1418,13 @@ class LlmService:
         if system_action:
             return False
         text = self._coerce_text_value(payload.get("text", "")).strip()
+        inline_metadata = bool(re.search(r'[,\s]["\']?(?:intent|action|reasoning_tags|should_speak|confidence|debug_trace)["\']?\s*:', text))
         return (
             not text
             or self._looks_like_provider_metadata(text)
             or self._looks_like_markdown_json_stub(text)
+            or self._looks_like_prompt_leak(text)
+            or inline_metadata
         )
 
     def _with_non_empty_text_rule(self, messages: list[dict]) -> list[dict]:
@@ -1343,6 +1497,15 @@ class LlmService:
         )
 
     def _repair_decision_json(self, raw_text: str, *, channel: str) -> str:
+        if self._looks_like_prompt_leak(raw_text):
+            return self._build_protocol_failure_fallback(
+                channel=channel,
+                reason=f"LlmService refused to repair prompt/contract leak as public {channel} text.",
+            )
+        malformed_candidate = self._coerce_malformed_decision_payload(raw_text, channel=channel)
+        if malformed_candidate:
+            return malformed_candidate
+
         repaired = self._coerce_json_candidate(raw_text)
         if repaired:
             return repaired
@@ -1500,7 +1663,13 @@ class LlmService:
 
         raw = self._extract_content(response)
         self._log_raw_api_text(channel, raw)
-        candidate = self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
+        if self._looks_like_prompt_leak(raw):
+            candidate = self._build_protocol_failure_fallback(
+                channel=channel,
+                reason=f"LlmService blocked prompt/contract leak before parser on {channel}.",
+            )
+        else:
+            candidate = self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
         if require_text and self._decision_text_is_invalid(candidate):
             return self._repair_empty_decision_text(messages=messages, channel=channel, previous_json=candidate)
         candidate = self._guard_forbidden_inference(candidate, channel=channel)
@@ -1817,9 +1986,183 @@ class LlmService:
             "speech_intent=micro_presence. Rewrite một seed runtime thành một câu nhỏ có bối cảnh."
         )
         guidance["session_ritual"] = (
-            "speech_intent=session_ritual. Ngài vừa mở ERIS lên; viết một câu chào ngắn, tự nhiên, có thể gợi rất nhẹ mạch cũ nếu rõ."
+            "speech_intent=session_ritual. Startup greeting is a separate ritual, not chat repair. "
+            "Use GreetingFrame when present. A good greeting acknowledges return, stays concrete, "
+            "does not mention sentence length/rules/evidence, does not claim screen facts, and does not perform poetry."
         )
         return guidance.get(intent, guidance["screen_observation"])
+
+
+    def _is_session_ritual_call(self, *, speech_intent: str, telemetry_data: str = "", ti_context: str = "") -> bool:
+        intent = str(speech_intent or "").strip().lower()
+        if intent == "session_ritual":
+            return True
+        combined = f"{telemetry_data}\n{ti_context}".lower()
+        return "session_ritual:" in combined or "speech_intent=session_ritual" in combined
+
+    def _fallback_greeting_engine(self):
+        if GreetingCognitionEngine is None:
+            return None
+        try:
+            return GreetingCognitionEngine()
+        except Exception:
+            return None
+
+    def _fallback_greeting_text(self, *, telemetry_data: str = "", reason: str = "") -> str:
+        engine = self._fallback_greeting_engine()
+        if engine is None:
+            return "Ngài quay lại rồi."
+        try:
+            frame = engine.from_prompt_context(telemetry_data)
+            return engine.deterministic_greeting(frame)
+        except Exception:
+            return "Ngài quay lại rồi."
+
+    def _build_session_greeting_payload(
+        self,
+        *,
+        text: str,
+        reason: str,
+        confidence: float = 0.72,
+        quality_note: str = "",
+    ) -> str:
+        payload = {
+            "text": re.sub(r"\s+", " ", str(text or "")).strip() or "Ngài quay lại rồi.",
+            "intent": "session_ritual",
+            "action": {"type": "none"},
+            "reasoning_tags": ["session_ritual", "greeting_cognition"],
+            "should_speak": True,
+            "confidence": max(0.0, min(1.0, float(confidence or 0.0))),
+            "animation": "stand",
+            "direction": 0,
+            "target_x": -1.0,
+            "bounce_action": "",
+            "extracted_fact": "",
+            "debug_trace": reason if not quality_note else f"{reason} | {quality_note}",
+            "next_animation": "",
+            "system_action": "",
+            "action_input": "",
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _session_greeting_frame(self, telemetry_data: str):
+        engine = self._fallback_greeting_engine()
+        if engine is None:
+            return None
+        try:
+            return engine.from_prompt_context(telemetry_data)
+        except Exception:
+            try:
+                return engine.build()
+            except Exception:
+                return None
+
+    def _session_greeting_quality_scorer(self):
+        if GreetingQualityScorer is None:
+            return None
+        try:
+            return GreetingQualityScorer()
+        except Exception:
+            return None
+
+    def _extract_candidate_strings(self, payload: dict | None) -> list[str]:
+        if not isinstance(payload, dict):
+            return []
+        candidates = payload.get("candidates")
+        if isinstance(candidates, list):
+            return [self._coerce_text_value(item).strip() for item in candidates if self._coerce_text_value(item).strip()]
+        text = self._coerce_text_value(payload.get("text", "")).strip()
+        return [text] if text else []
+
+    def _generate_session_ritual_greeting(
+        self,
+        *,
+        telemetry_data: str,
+        ti_context: str = "",
+        ni_context: str = "",
+        fe_context: str = "",
+        appraisal_context: str = "",
+        internal_state_context: str = "",
+        memory_context: str = "",
+        avoid_text: str = "",
+        request_timeout: float | None = None,
+    ) -> str:
+        frame = self._session_greeting_frame(telemetry_data)
+        engine = self._fallback_greeting_engine()
+        scorer = self._session_greeting_quality_scorer()
+        if frame is None or engine is None or scorer is None:
+            text = self._fallback_greeting_text(telemetry_data=telemetry_data, reason="missing_greeting_modules")
+            return self._build_session_greeting_payload(
+                text=text,
+                reason="session_ritual_fallback;missing_greeting_modules",
+                confidence=0.66,
+            )
+
+        # If the ritual has no solid anchor, deterministic cognition beats an LLM.
+        # A startup with thin evidence should not invite poetry, meta comments, or
+        # a whole tiny theater production. Appalling that this needs saying, but here we are.
+        if frame.situation in {"low_evidence_start", "plain_return"} and not frame.active_anchor:
+            text = engine.deterministic_greeting(frame)
+            return self._build_session_greeting_payload(
+                text=text,
+                reason=f"session_ritual_deterministic; situation={frame.situation}",
+                confidence=0.76,
+                quality_note="low_evidence_no_llm",
+            )
+
+        system_prompt = (
+            "You are ERIS startup greeting cognition. Generate candidate greetings, not analysis. "
+            "The greeting must be concrete, short, and situated. Keep ERIS voice: guarded, dry, restrained. "
+            "Do not mention prompt, JSON, evidence, telemetry, rules, sentence length, or internal contracts. "
+            "Do not claim seeing the screen. Do not use decorative metaphors unless poetic_permission is high. "
+            "Return exactly one JSON object: {\"candidates\":[\"...\",\"...\",\"...\",\"...\",\"...\"]}."
+        )
+        user_prompt = (
+            f"{frame.to_prompt_block()}\n\n"
+            "Good greeting criteria:\n"
+            "- acknowledge Ngài returning/opening ERIS\n"
+            "- no self-meta like 'tôi giữ câu này ngắn'\n"
+            "- no screen/window/tab claims\n"
+            "- no assistant-service phrasing\n"
+            "- no demand for user reply\n"
+            "- 1 sentence, usually under 18 words\n"
+            f"Avoid repeating: {re.sub(r'\\s+', ' ', str(avoid_text or '')).strip()[:120] or 'none'}\n"
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            self._log_final_prompt(messages, channel="directive", stage="session_greeting_candidates")
+            response = self.client.create_chat_completion(
+                messages=messages,
+                temperature=0.35,
+                frequency_penalty=0.35,
+                presence_penalty=0.2,
+                max_tokens=220,
+                response_format={"type": "json_object"},
+                grammar=None,
+                timeout=request_timeout,
+            )
+            raw = self._extract_content(response)
+            self._log_raw_api_text("session_greeting", raw)
+            extracted = self._extract_first_json_object(raw) or raw
+            payload = self._parse_json_object(extracted)
+            candidates = self._extract_candidate_strings(payload)
+        except Exception as exc:
+            candidates = []
+            self.logger.info("[session_greeting] candidate generation failed: %s", exc)
+
+        best = scorer.choose_best(candidates, frame)
+        return self._build_session_greeting_payload(
+            text=best.text,
+            reason=f"session_ritual_greeting_cognition; situation={frame.situation}; intent={frame.intent}",
+            confidence=max(0.68, best.score),
+            quality_note=(
+                f"quality={best.score:.2f}; reasons={','.join(best.reasons) or 'none'}; "
+                f"anchor={frame.active_anchor or 'none'}"
+            ),
+        )
 
     def generate_directive(
         self,
@@ -1837,6 +2180,19 @@ class LlmService:
         request_timeout: float | None = None,
         require_text: bool = True,
     ):
+        if self._is_session_ritual_call(speech_intent=speech_intent, telemetry_data=telemetry_data, ti_context=ti_context):
+            return self._generate_session_ritual_greeting(
+                telemetry_data=telemetry_data,
+                ti_context=ti_context,
+                ni_context=ni_context,
+                fe_context=fe_context,
+                appraisal_context=appraisal_context,
+                internal_state_context=internal_state_context,
+                memory_context=memory_context,
+                avoid_text=avoid_text,
+                request_timeout=request_timeout,
+            )
+
         ti_hint = self._compress_internal_context(ti_context, kind="ti")
         action_plan_hint = self._extract_action_plan_context(ti_context)
         ni_hint = self._compress_internal_context(ni_context, kind="ni")

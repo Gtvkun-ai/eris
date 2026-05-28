@@ -109,6 +109,7 @@ class MemoryCommitDecision:
 
         return {
             "target": self.target.value,
+            "kind": self.kind.value,
             "content": _commit_content_from_decision(self, metadata),
             "confidence": self.confidence,
             "evidence_ids": list(self.evidence),

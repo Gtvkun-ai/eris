@@ -56,6 +56,7 @@ class ChatCycleMixin:
                 user_text,
                 cycle_start=cycle_start,
                 previous_public_context=previous_public_context,
+                previous_public_turn=previous_public_turn,
             )
         finally:
             self._chat_processing = False
@@ -66,6 +67,7 @@ class ChatCycleMixin:
         *,
         cycle_start: float,
         previous_public_context: str = "",
+        previous_public_turn=None,
     ) -> None:
         if not self.chat_mode:
             self.chat_ni_state = NiStateMachine() # reset trạng thái Ni khi bắt đầu chat mới, để tránh mang theo drift state từ autonomous mode.
@@ -359,6 +361,29 @@ class ChatCycleMixin:
             turn_semantics_report.live_evidence_pressure,
             turn_semantics_report.prior_failure_pressure,
         )
+
+        previous_public_repair = self._build_previous_public_turn_repair_decision(
+            user_text=user_text,
+            previous_public_turn=previous_public_turn,
+            ti_report=ti_report,
+        )
+        if previous_public_repair is not None:
+            self._set_cognitive_action_plan(
+                frame,
+                should_speak=True,
+                speech_intent="user_requested",
+                speech_act="repair",
+                reason="User reacted to a broken previous public turn; repair before LLM chat.",
+                snapshot=snapshot,
+                user_text=user_text,
+                concrete_signals=self._concrete_screen_signals(snapshot),
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                notes=("previous_public_turn_repair",),
+            )
+            self._commit_chat_decision(previous_public_repair, fe_plan, frame=frame)
+            self.last_user_text_for_semantics = user_text
+            return
 
         direct_decision = self._build_direct_action_decision(user_text, ti_report, snapshot, repeat_count=repeat_count)
         if direct_decision is not None:
@@ -782,6 +807,107 @@ class ChatCycleMixin:
             int(bool(getattr(report, "memory_answer_allowed", True))),
             ",".join(getattr(report, "warnings", ()) or ()) or "none",
         )
+
+    def _normalize_public_reaction_text(self, text: str) -> str:
+        lowered = (text or "").strip().lower()
+        try:
+            remojibake = lowered.encode("latin1").decode("utf-8")
+            if remojibake:
+                lowered = remojibake
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+        lowered = unicodedata.normalize("NFD", lowered)
+        lowered = "".join(ch for ch in lowered if unicodedata.category(ch) != "Mn")
+        lowered = lowered.replace("đ", "d")
+        lowered = re.sub(r"[^a-z0-9_\s]+", " ", lowered)
+        return " ".join(lowered.split())
+
+    def _previous_public_turn_has_protocol_leak(self, public_turn) -> str:
+        if public_turn is None:
+            return ""
+        text = str(getattr(public_turn, "text", "") or "")
+        normalized = self._normalize_public_reaction_text(text)
+        raw_lower = text.lower()
+        prompt_markers = (
+            "speech intent",
+            "speech evidence",
+            "persona",
+            "constraints",
+            "return only",
+            "valid json object",
+            "ghi chu nen",
+            "goi y dieu phoi",
+            "llm final prompt",
+            "critical output contract",
+        )
+        prompt_hits = sum(1 for marker in prompt_markers if marker in normalized or marker in raw_lower)
+        if prompt_hits >= 2 or (prompt_hits >= 1 and ("*" in text or "`" in text)):
+            return "prompt_leak"
+        metadata_markers = (
+            '\", \"intent\"',
+            '\", \"action\"',
+            "reasoning_tags",
+            "should_speak",
+            "debug_trace",
+            "system_action",
+        )
+        if any(marker in text for marker in metadata_markers) or any(marker in normalized for marker in ("intent action", "debug trace")):
+            return "metadata_leak"
+        return ""
+
+    def _user_is_challenging_previous_public_turn(self, user_text: str) -> bool:
+        normalized = self._normalize_public_reaction_text(user_text)
+        if not normalized:
+            return False
+        markers = (
+            "ban vua biet ban noi cai gi khong",
+            "vua biet ban noi cai gi khong",
+            "ban vua noi cai gi",
+            "vua noi cai gi",
+            "khong thay no te",
+            "khong thay te",
+            "no te a",
+            "te a",
+            "te qua",
+            "loi gi",
+            "bi loi",
+            "prompt",
+            "json",
+            "metadata",
+            "debug",
+            "raw",
+            "parser",
+            "format",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _build_previous_public_turn_repair_decision(self, *, user_text: str, previous_public_turn, ti_report) -> Decision | None:
+        leak_kind = self._previous_public_turn_has_protocol_leak(previous_public_turn)
+        if not leak_kind:
+            return None
+        if not self._user_is_challenging_previous_public_turn(user_text):
+            return None
+        if leak_kind == "prompt_leak":
+            text = (
+                "Có. Câu vừa rồi lỗi thật. Tôi đã để prompt nội bộ lọt ra ngoài "
+                "thay vì nói một câu chào bình thường; lỗi nằm ở nhánh JSON/parse fallback."
+            )
+        else:
+            text = (
+                "Có. Câu vừa rồi lỗi thật. Nó bị dính metadata JSON vào lời nói; "
+                "parser đáng lẽ phải chặn phần đó trước khi gửi ra ngoài."
+            )
+        decision = Decision(
+            text=text,
+            intent="repair_previous_public_turn",
+            action="none",
+            animation="stand",
+            should_speak=True,
+            confidence=0.86,
+            parse_mode="public_turn_repair",
+            debug_trace=f"previous_public_turn_repair;kind={leak_kind};turn_id={getattr(previous_public_turn, 'turn_id', '')}",
+        )
+        return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
 
     def _build_grounding_preempt_decision(self, report, ti_report, *, user_text: str) -> Decision | None:
         engine = getattr(self, "source_grounding_engine", None)
