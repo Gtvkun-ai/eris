@@ -7,6 +7,7 @@ from dataclasses import replace
 
 from cortex.ni import NiStateMachine
 from cortex.relationship_dynamics import RelationshipTurnEvent
+from cortex.relational_feedback import RelationalFeedbackAnalyzer, merge_affect_with_relational_feedback
 from cortex.turn_semantics import TurnSemanticsEngine, TurnSemanticsReport
 from domain import Decision
 from runtime.source_grounding import SourceGroundingEngine
@@ -150,6 +151,15 @@ class ChatCycleMixin:
             active_window_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
             previous_assistant_text=self.last_chat_answer,
         )
+        relational_analyzer = getattr(self, "relational_feedback_analyzer", None)
+        if relational_analyzer is None:
+            relational_analyzer = RelationalFeedbackAnalyzer()
+            self.relational_feedback_analyzer = relational_analyzer
+        relational_feedback = relational_analyzer.analyze(
+            user_text,
+            previous_assistant_text=self.last_chat_answer,
+        )
+        fe_affect_signal = merge_affect_with_relational_feedback(affect_signal, relational_feedback)
         fe_plan = self.fe_renderer.evaluate_chat(
             snapshot=snapshot,
             ni_report=ni_report,
@@ -157,7 +167,7 @@ class ChatCycleMixin:
             style_memory=self.fe_style_memory,
             internal_state=internal_state_before,
             user_text=user_text,
-            affect_signal=affect_signal,
+            affect_signal=fe_affect_signal,
         )
         sensed_internal_state = self.internal_state_engine.sense_update(
             internal_state_before,
@@ -228,13 +238,20 @@ class ChatCycleMixin:
             repeat_count=repeat_count,
             correction_detected=correction_detected,
             affect_signal=affect_signal,
+            relational_feedback=relational_feedback,
         )
-        relationship_event = RelationshipTurnEvent.from_affect(
+        relationship_event = self.relationship_dynamics_engine.infer_event(
             user_text=user_text,
-            affect=affect_signal,
+            ti_mode=str(getattr(ti_report, "mode", "") or ""),
+            active_window_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
             turn_index=max(1, int(getattr(sensed_internal_state, "chat_ticks", 0) or 0) + 1),
             assistant_overread=bool(conversation_report.correction_detected),
-            repeated_project_context=self.active_conversational_topic in {"technical_support", "goal_guard"},
+            previous_assistant_text=self.last_chat_answer,
+            goal_state=getattr(sensed_internal_state, "goal_persistence", None),
+            conversation_state=getattr(sensed_internal_state, "conversation_dynamics", None),
+            recent_user_topics=tuple(getattr(self._ensure_session_turn_ledger(), "gist_recent_user_topics", lambda: tuple())() or ()),
+            explicit_repeated_project_context=0.58 if self.active_conversational_topic in {"technical_support", "goal_guard"} else None,
+            relational_feedback=relational_feedback,
         )
         relationship_report = self.relationship_dynamics_engine.update(
             getattr(sensed_internal_state, "relationship_dynamics", None),
@@ -302,7 +319,11 @@ class ChatCycleMixin:
             repeat_count=repeat_count,
             thought_surface=getattr(thought_stream_report, "latest_seed", None),
         )
-        screen_image_data_uri = self._capture_screen_frame_for_chat(user_text)
+        self._chat_snapshot_for_vision = snapshot
+        try:
+            screen_image_data_uri = self._capture_screen_frame_for_chat(user_text)
+        finally:
+            self._chat_snapshot_for_vision = None
         grounding_report = self._build_chat_source_grounding_report(
             user_text=user_text,
             frame=frame,
@@ -490,7 +511,7 @@ class ChatCycleMixin:
             fe_context=fe_plan.style_context,
             appraisal_context=self._build_appraisal_context(frame.appraisal),
             internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
-            conversation_context=conversation_report.prompt_context,
+            conversation_context=f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
             memory_context=memory_context,
             grounding_context=grounding_report.prompt_context,
             screen_image_data_uri=screen_image_data_uri,
@@ -691,7 +712,20 @@ class ChatCycleMixin:
             return ""
 
         self.logger.info("[vision chat] Đã đính kèm screenshot toàn màn hình cho lượt chat này.")
+        snapshot = getattr(self, "_chat_snapshot_for_vision", None)
+        if snapshot is not None:
+            try:
+                self._refresh_screen_facts_from_data_uri(
+                    data_uri=data_uri,
+                    snapshot=snapshot,
+                    channel="chat",
+                    user_text=user_text,
+                    force_refresh=True,
+                )
+            except Exception as exc:
+                self.logger.warning("[vision chat] không nén được screenshot: %s", exc)
         return data_uri
+    
     def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
         facts: list[object] = []
         last_capture = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0)

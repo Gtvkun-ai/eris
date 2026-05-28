@@ -64,7 +64,7 @@ DEFAULT_LAYER_PROFILES: dict[str, LayerProfile] = {
         layer="relational",
         weight=0.92,
         min_relevance=0.12,
-        bias_routes=("appraisal", "silence"),
+        bias_routes=("attention", "appraisal", "silence"),
         default_surface_policy="silent_bias",
         can_surface=False,
         background_allowed=True,
@@ -73,7 +73,7 @@ DEFAULT_LAYER_PROFILES: dict[str, LayerProfile] = {
         layer="affective_residue",
         weight=0.86,
         min_relevance=0.16,
-        bias_routes=("appraisal", "silence"),
+        bias_routes=("attention", "appraisal", "silence"),
         default_surface_policy="never_direct_claim",
         can_surface=False,
         background_allowed=True,
@@ -189,14 +189,19 @@ class MemoryScorer:
 
         semantic = max(cue_family_match, repair_tag_match)
 
+        # Relevance must be query-match first, but lexical matches should not be
+        # starved. The old weights made two direct terms still fall below
+        # relational/procedural thresholds, which is how a memory system becomes
+        # an expensive empty list.
         relevance = clamp01(
-            lexical * 0.14
-            + phrase * 0.12
-            + anchor * 0.24
+            lexical * 0.42
+            + phrase * 0.18
+            + anchor * 0.22
             + semantic * 0.22
-            + bigram * 0.18
-            + temporal * 0.04
-            + (0.06 if candidate.matched_anchors else 0.0)
+            + bigram * 0.20
+            + temporal * 0.03
+            + (0.08 if candidate.matched_terms else 0.0)
+            + (0.08 if candidate.matched_anchors else 0.0)
         )
 
         confidence_prior = clamp01(record.confidence) * 0.08
@@ -215,7 +220,9 @@ class MemoryScorer:
         # Query rỗng: chỉ background layers có quyền tạo bias yếu.
         if not cue.token_set() and not cue.anchor_set():
             if profile.background_allowed:
-                background = clamp01((0.08 + confidence_prior + salience_prior) * profile.weight)
+                # Background bias is allowed only for non-surface layers, but it
+                # must survive adapter rough-score zero. Keep it weak, not dead.
+                background = clamp01((0.12 + confidence_prior + salience_prior + affective_prior + relational_prior) * profile.weight)
                 return MemoryScore(
                     total=background,
                     relevance=0.0,

@@ -83,7 +83,7 @@ class MemoryRecallSurfacePolicy:
                     gist_text = self._safe_public_text(result.gist)
                     if gist_text is None:
                         return RecallAnswer.uncertain(
-                            "TÃ´i cÃ³ dáº¥u váº¿t, nhÆ°ng pháº§n láº¥y ra Ä‘ang á»Ÿ dáº¡ng ná»™i bá»™ nÃªn khÃ´ng nÃªn surface thá»§ cÃ´ng.",
+                            "Tôi có dấu vết, nhưng phần lấy ra đang ở dạng nội bộ nên không nên surface thủ công.",
                             ir=ir,
                             debug_trace="raw_object_surface_blocked",
                         )
@@ -104,7 +104,7 @@ class MemoryRecallSurfacePolicy:
             text = self._safe_public_text(result.exact_text)
             if text is None:
                 return RecallAnswer.uncertain(
-                    "TÃ´i cÃ³ dáº¥u váº¿t, nhÆ°ng pháº§n láº¥y ra Ä‘ang á»Ÿ dáº¡ng ná»™i bá»™ nÃªn khÃ´ng nÃªn surface thá»§ cÃ´ng.",
+                    "Tôi có dấu vết, nhưng phần lấy ra đang ở dạng nội bộ nên không nên surface thủ công.",
                     ir=ir,
                     debug_trace="raw_object_surface_blocked",
                 )
@@ -132,7 +132,7 @@ class MemoryRecallSurfacePolicy:
             gist_text = self._safe_public_text(result.gist)
             if gist_text is None:
                 return RecallAnswer.uncertain(
-                    "TÃ´i cÃ³ dáº¥u váº¿t, nhÆ°ng pháº§n láº¥y ra Ä‘ang á»Ÿ dáº¡ng ná»™i bá»™ nÃªn khÃ´ng nÃªn surface thá»§ cÃ´ng.",
+                    "Tôi có dấu vết, nhưng phần lấy ra đang ở dạng nội bộ nên không nên surface thủ công.",
                     ir=ir,
                     debug_trace="raw_object_surface_blocked",
                 )
@@ -201,6 +201,8 @@ class MemoryRecallSurfacePolicy:
             return "Tôi tìm thấy câu hỏi mốc, nhưng không tìm thấy câu trả lời tương ứng đủ sạch."
         if "target_node_not_found" in warnings:
             return "Tôi không tìm thấy lượt đó trong phiên hiện tại."
+        if any(w.startswith("fact_not_found:") for w in warnings):
+            return "Tôi có thể có dấu vết liên quan, nhưng chưa có ký ức đủ chắc để coi nó là fact ổn định."
         return "Tôi chưa đủ chắc để lần lại ký ức đó."
 
     def _trace(self, result: RawRecallResult) -> str:

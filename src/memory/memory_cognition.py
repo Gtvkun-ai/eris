@@ -42,6 +42,7 @@ from .procedural_memory import ProceduralMemoryItem, ProceduralMemoryStore
 from .relational_memory import RelationalMemoryItem, RelationalMemoryStore
 from .repair_memory import RepairMemoryItem, RepairMemoryStore
 from .semantic_memory import SemanticMemoryItem, SemanticMemoryStore
+from .unresolved_memory import UnresolvedMemoryCandidate, UnresolvedMemoryStore
 
 from .memory_record import compact_text, clamp01
 from .memory_cue import MemoryCue, MemoryCueBuilder
@@ -110,6 +111,8 @@ def _content_for_target(target: str, content: Any) -> str:
         action = compact_text(data.get("eris_action") or data.get("said") or "", limit=220)
         outcome = compact_text(data.get("outcome") or "cycle", limit=120)
         return compact_text(" -> ".join(part for part in (scene, action, outcome) if part), limit=620)
+    if target in {"memory_candidate", "unresolved_memory"}:
+        return compact_text(data.get("raw_text") or data.get("reason") or data, limit=1200)
     return compact_text(data, limit=900)
 
 
@@ -184,6 +187,7 @@ class MemoryCognitionCore:
         self.affective_residue = AffectiveResidueMemoryStore(os.path.join(base_dir, "affective_residue_memory.json"))
         self.procedural = ProceduralMemoryStore(os.path.join(base_dir, "procedural_memory.json"))
         self.repair = RepairMemoryStore(os.path.join(base_dir, "repair_memory.json"))
+        self.memory_candidate = UnresolvedMemoryStore(os.path.join(base_dir, "memory_candidate.json"))
 
         self.cue_builder = MemoryCueBuilder()
         self.packet_builder = MemoryPacketBuilder()
@@ -257,6 +261,9 @@ class MemoryCognitionCore:
                 stored_id = item.id if item else ""
             elif target == "repair_memory":
                 item = self.repair.apply_commit(request)
+                stored_id = item.id if item else ""
+            elif target in {"memory_candidate", "unresolved_memory"}:
+                item = self.memory_candidate.apply_commit(request)
                 stored_id = item.id if item else ""
             else:
                 return MemoryCommitDecision(
@@ -355,6 +362,7 @@ class MemoryCognitionCore:
             "affective_residue_memory": [item.to_dict() for item in self.affective_residue.load()],
             "procedural_memory": [item.to_dict() for item in self.procedural.load()],
             "repair_memory": [item.to_dict() for item in self.repair.load()],
+            "memory_candidate": [item.to_dict() for item in self.memory_candidate.load()],
         }
 
     def save(self, snapshot: Mapping[str, Any] | None = None) -> None:
@@ -375,6 +383,7 @@ class MemoryCognitionCore:
         self.affective_residue.save(self.affective_residue.load())
         self.procedural.save(self.procedural.load())
         self.repair.save(self.repair.load())
+        self.memory_candidate.save(self.memory_candidate.load())
 
     def render_context(self, query: MemoryQuery | str = "", *, snapshot: Any = None, frame: Any = None, max_lines: int = 18) -> str:
         packet = self.recall(query or self._query_from_snapshot(snapshot), frame=frame)
@@ -398,7 +407,7 @@ class MemoryCognitionCore:
         self,
         *,
         target: str,
-        content: str,
+        content: Any,
         confidence: float,
         evidence_ids: list[str],
         reason: str,
@@ -442,6 +451,30 @@ class MemoryCognitionCore:
             tags=list(_request_get(request, "tags", metadata.get("tags", [])) or []),
             metadata=metadata,
         )
+
+    def lookup_fact(self, fact_key: str) -> Any:
+        """Lookup semantic fact value by fact_key for structured recall executor."""
+        target = str(fact_key or "").strip()
+        if not target:
+            return None
+        for item in self.semantic.load():
+            if getattr(item, "fact_key", "") != target:
+                continue
+            metadata = getattr(item, "metadata", {}) or {}
+            value = metadata.get("value")
+            if value not in (None, ""):
+                return value
+            return getattr(item, "claim", None)
+        return None
+
+    def search_memory_candidates(self, query: str = "", *, limit: int = 8) -> list[UnresolvedMemoryCandidate]:
+        return self.memory_candidate.search(query, limit=limit)
+
+    def candidate_trace_for_query(self, query: str = "") -> str:
+        candidates = self.search_memory_candidates(query, limit=1)
+        if not candidates:
+            return ""
+        return candidates[0].recall_line()
 
     def load_active_state(self) -> ActiveStateSnapshot:
         return self.active_state.load()

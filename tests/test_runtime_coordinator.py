@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
@@ -12,6 +13,7 @@ import runtime.coordinator as coordinator_module
 from domain import Decision
 from cortex.contracts import CognitiveBroadcast, CognitiveMomentum, ThoughtStreamReport, UnresolvedTensionLoop
 from cortex.internal_state import PersistentInternalState
+from cortex.observer_contracts import SemanticSceneNote
 from memory import MemoryCognitionCore
 from runtime.coordinator import FALLBACK_BY_INTENT, RuntimeCoordinator
 from runtime.source_grounding import SourceGroundingEngine
@@ -286,9 +288,33 @@ class _PressureSignalTelemetry(_SignalTelemetry):
         return snapshot
 
 
+class _PressureScreenTelemetry(_PressureSignalTelemetry):
+    def capture_screen_frame_data_uri(self):
+        return "data:image/jpeg;base64,AAAA"
+
+
 class _ScreenTelemetry(_DummyTelemetry):
     def capture_screen_frame_data_uri(self):
         return "data:image/jpeg;base64,AAAA"
+
+
+class _FakeVisionCompressor:
+    def __init__(self, note: SemanticSceneNote, *, should_compress: bool = True):
+        self.note = note
+        self.should_compress_value = should_compress
+        self.should_calls = 0
+        self.compress_calls = 0
+        self.last_kwargs = {}
+
+    def should_compress(self, **kwargs):
+        self.should_calls += 1
+        self.last_should_kwargs = kwargs
+        return self.should_compress_value
+
+    def compress(self, **kwargs):
+        self.compress_calls += 1
+        self.last_kwargs = kwargs
+        return self.note
 
 
 class _MeetScreenTelemetry(_ScreenTelemetry):
@@ -492,6 +518,11 @@ class _SearchActionExecutor:
                 "sources": "",
             },
         )
+
+
+class _ExplodingOllamaClient:
+    def chat_json(self, *args, **kwargs):
+        raise AssertionError("Ollama should not be called when ERIS_BACKGROUND_OBSERVER_LLM=0")
 
 
 class RuntimeCoordinatorTests(unittest.TestCase):
@@ -866,6 +897,105 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertFalse(presence.speech_allowed)
         self.assertIn("social_presence_event", {item.kind for item in percepts})
         self.assertNotEqual(broadcast.label, "social_presence_event")
+
+    def test_background_observer_phase1_runs_end_to_end_without_ollama(self):
+        with patch.dict(
+            os.environ,
+            {
+                "ERIS_BACKGROUND_OBSERVER": "1",
+                "ERIS_BACKGROUND_OBSERVER_LLM": "0",
+            },
+            clear=False,
+        ):
+            coordinator = self._make_coordinator(telemetry_service=_PressureSignalTelemetry())
+
+        coordinator.background_observer.ollama_client = _ExplodingOllamaClient()
+        snapshot = coordinator.telemetry_service.capture_snapshot()
+
+        frame = coordinator._run_background_observer(
+            snapshot=snapshot,
+            channel="autonomous",
+            started_at=1.0,
+        )
+
+        self.assertIsNotNone(frame)
+        self.assertIs(frame, coordinator.last_observer_frame)
+        self.assertEqual(frame.focus_kind, "code")
+        self.assertEqual(frame.activity_intent, "designing")
+        self.assertIn("rule_based_observer", frame.notes)
+        self.assertFalse(frame.debug.get("llm_used", False))
+        self.assertGreaterEqual(frame.salience, 0.42)
+        self.assertIn(frame.recommended_action, {"update_body_bias", "call_vision_compressor"})
+        self.assertFalse(frame.should_wake_main)
+
+    def test_autonomous_screen_facts_use_vision_compressor_when_observer_requests_it(self):
+        coordinator = self._make_coordinator(
+            telemetry_service=_PressureScreenTelemetry(),
+            llm_service=_VisionFactLlmService(("fallback fact",)),
+        )
+        compressor = _FakeVisionCompressor(
+            SemanticSceneNote(
+                visible_context="Terminal shows a Python traceback in VS Code.",
+                important_text=["AssertionError: test failed"],
+                activity_intent="debugging",
+                semantic_family="test_failure_loop",
+                salience=0.92,
+                possible_error=0.95,
+                confidence=0.86,
+                source="qwen4b_vision",
+            ),
+            should_compress=True,
+        )
+        coordinator.vision_semantic_compressor = compressor
+        snapshot = coordinator.telemetry_service.capture_snapshot()
+        observer_frame = coordinator._run_background_observer(
+            snapshot=snapshot,
+            channel="autonomous",
+            started_at=1.0,
+        )
+
+        facts = coordinator._maybe_update_screen_facts(
+            snapshot=snapshot,
+            channel="autonomous",
+            observer_frame=observer_frame,
+            started_at=1.0,
+        )
+
+        self.assertEqual(compressor.compress_calls, 1)
+        self.assertEqual(coordinator.llm_service.screen_fact_calls, 0)
+        self.assertIn("Terminal shows a Python traceback", facts[0])
+        self.assertEqual(coordinator.vision_last_trace, "qwen4b_vision:test_failure_loop")
+
+    def test_chat_screen_request_refreshes_screen_facts_via_vision_compressor(self):
+        coordinator = self._make_coordinator(
+            telemetry_service=_ScreenTelemetry(),
+            llm_service=_DummyLlmService(),
+        )
+        compressor = _FakeVisionCompressor(
+            SemanticSceneNote(
+                visible_context="main.py is open in Visual Studio Code.",
+                important_text=["Traceback is visible in the terminal panel."],
+                activity_intent="debugging",
+                semantic_family="code_workspace",
+                salience=0.82,
+                possible_error=0.74,
+                confidence=0.79,
+                source="qwen4b_vision",
+            ),
+            should_compress=False,
+        )
+        coordinator.vision_semantic_compressor = compressor
+        coordinator._chat_snapshot_for_vision = coordinator.telemetry_service.capture_snapshot()
+        try:
+            data_uri = coordinator._capture_screen_frame_for_chat("xem man hinh di")
+        finally:
+            coordinator._chat_snapshot_for_vision = None
+
+        self.assertTrue(data_uri.startswith("data:image/"))
+        self.assertEqual(compressor.compress_calls, 1)
+        self.assertTrue(coordinator.vision_facts)
+        self.assertIn("main.py", coordinator.vision_facts[0].lower())
+        self.assertEqual(coordinator.vision_last_trace, "qwen4b_vision:code_workspace")
 
     def test_queued_subconscious_seed_is_consumed_once(self):
         coordinator = self._make_coordinator()

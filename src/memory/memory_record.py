@@ -321,8 +321,15 @@ def record_from_layer_item(layer: str, item: Any) -> MemoryRecord:
         getattr(item, "fact", ""),
         getattr(item, "claim", ""),
         getattr(item, "pattern", ""),
+        getattr(item, "trigger", ""),
+        getattr(item, "rule", ""),
         getattr(item, "handling_rule", ""),
+        getattr(item, "description", ""),
+        getattr(item, "residue_type", ""),
+        getattr(item, "wrong_assumption", ""),
+        getattr(item, "user_correction", ""),
         getattr(item, "repair_strategy", ""),
+        getattr(item, "future_suppression_rule", ""),
     ]
     raw_text = compact_text(" ".join(str(part or "") for part in raw_parts if str(part or "").strip()), limit=1200)
     if not text:
@@ -332,7 +339,12 @@ def record_from_layer_item(layer: str, item: Any) -> MemoryRecord:
     evidence_ids = tuple(str(eid) for eid in getattr(item, "evidence_ids", ()) or () if str(eid).strip())
     metadata = dict(getattr(item, "metadata", {}) or {}) if isinstance(getattr(item, "metadata", {}), Mapping) else {}
 
+    metadata_anchors = ()
+    if isinstance(metadata.get("anchors"), (list, tuple, set)):
+        metadata_anchors = tuple(str(x) for x in metadata.get("anchors") or () if str(x).strip())
+
     anchors = tuple(dict.fromkeys((
+        *metadata_anchors,
         *extract_anchors(text),
         *extract_anchors(summary),
         *extract_anchors(raw_text),
@@ -351,10 +363,20 @@ def record_from_layer_item(layer: str, item: Any) -> MemoryRecord:
         last_accessed_at=parse_timestamp(getattr(item, "last_accessed_at", 0.0)),
         access_count=int(getattr(item, "access_count", 0) or 0),
         confidence=clamp01(getattr(item, "confidence", 0.5)),
-        salience=clamp01(getattr(item, "salience", 0.0)),
+        salience=clamp01(
+            getattr(item, "salience", 0.0)
+            or getattr(item, "importance", 0.0)
+            or getattr(item, "intensity", 0.0) * 0.55
+            or getattr(item, "observations", 0) * 0.04
+        ),
         emotional_weight=clamp01(getattr(item, "emotional_weight", 0.0) or getattr(item, "intensity", 0.0)),
-        relational_weight=clamp01(getattr(item, "relational_weight", 0.0)),
-        repair_weight=clamp01(getattr(item, "repair_weight", 0.0)),
+        relational_weight=clamp01(
+            getattr(item, "relational_weight", 0.0)
+            or abs(float(getattr(item, "trust_delta", 0.0) or 0.0))
+            or abs(float(getattr(item, "distance_delta", 0.0) or 0.0))
+            or getattr(item, "rupture_weight", 0.0)
+        ),
+        repair_weight=clamp01(getattr(item, "repair_weight", 0.0) or (0.70 if layer == "repair" else 0.0)),
         tags=tags,
         anchors=anchors,
         evidence_ids=evidence_ids,

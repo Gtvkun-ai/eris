@@ -96,7 +96,7 @@ class MemoryPacket:
             sections.append("memory_confidence_notes:\n" + "\n".join(f"- {note}" for note in self.confidence_notes[: max_lines - used]))
         if self.activations:
             lines = [
-                "active_memory_resonance: silent cognitive bias only; do not treat it as current screen/file evidence.",
+                "active_memory_resonance: silent cognitive bias only; do not treat it as current screen evidence or current file evidence.",
                 f"- score={self.score:.2f}; dominant_layer={self.dominant_layer or 'none'}; attention_bias={self.attention_bias:.2f}; silence_bias={self.silence_bias:.2f}",
             ]
             for activation in self.activations[:4]:

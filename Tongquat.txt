@@ -33,6 +33,14 @@ Khi cần model local:
 - Bắt buộc có `model.gguf` nếu `ERIS_REMOTE_API_ENABLED=0` hoặc `ERIS_LOCAL_STYLE_REWRITE_ENABLED=1`.
 - Có thể đặt đường dẫn bằng `GGUF_MODEL_PATH`.
 
+`config/ollama_vision_rollout.env.example`
+- File env mẫu cho rollout observer/vision local qua Ollama.
+- Gợi ý bật theo 3 pha:
+  - Phase 1: chỉ `ERIS_BACKGROUND_OBSERVER=1`.
+  - Phase 2: bật thêm `ERIS_BACKGROUND_OBSERVER_LLM=1` với model text nhỏ như `qwen3:0.6b`.
+  - Phase 3: bật `ERIS_VISION_COMPRESSOR=1` với model vision như `qwen2.5vl:3b`, thường giữ `ERIS_VISION_KEEP_ALIVE=0` để unload sau mỗi request.
+- Mục tiêu là rollout theo lớp để dễ debug: observer rule-based trước, rồi observer LLM, rồi mới tới vision compressor.
+
 Kết nối mặc định:
 - UDP: quyết định `4242`, event/chat `4243`.
 - llama-server (local): mặc định `http://127.0.0.1:8080/v1` nếu dùng local GGUF.
@@ -76,6 +84,13 @@ Kết nối mặc định:
 - Vẫn còn khá dày bên C#, nhưng phần process/service lifecycle đã được tách khỏi file này.
 - Lưu ý bảo mật: đang có API key hardcoded trong `DefaultRemoteApiKey`.
 
+`body/UdpDecisionParser.cs`
+- Parser payload UDP tách riêng khỏi `UdpListener.cs`.
+- Nhận cả JSON lẫn plain text; nếu parse JSON thành công thì bóc `text`, `should_speak`, `parse_mode`, `debug_trace`, `parser_trace`, `body_bias`, `motion_*` và `emotion_debug`.
+- Chuẩn hóa alias animation như `walk`/`running` -> `stand_walk`, `wave` -> `stand`, đồng thời kiểm tra animation có thuộc tập hợp body hiện hỗ trợ hay không.
+- Dựng `UdpDecisionPayload` để `UdpListener` chỉ còn lo render/thực thi thay vì vừa nhận mạng vừa tự parse chi tiết.
+- `emotion_debug` là nhánh debug mới: có `summary` và danh sách item để Godot có thể hiện/đọc trạng thái cảm xúc đã được runtime cô lại.
+
 `body/ErisProcessManager.cs`
 - Tách lifecycle service khỏi `UdpListener.cs`.
 - Chứa `ErisServiceConfig`: Python executable, script path, llama-server path, model/mmproj path, remote API, local style rewrite, local vision, context size và provider/model.
@@ -117,6 +132,12 @@ Kết nối mặc định:
 - Khi `throw`, body dùng pose `air_swing_l/r`, rơi theo impulse, giảm dần vận tốc ngang và có thể bám tường nếu va cạnh màn hình với xác suất `clingChance`.
 - Khi rơi bằng `air_swing_l/r`, animation giữ đúng pose treo thay vì luôn đổi về `air`.
 - Đây là hướng tách đúng: cognition không còn phải tự điều khiển pixel trực tiếp trong `UdpListener`.
+
+`body/BodyAudioController.cs`
+- Tách hẳn phần phát âm thanh khỏi `UdpListener.cs`.
+- Giữ `SoundMap` từ animation -> danh sách file `.wav`, random một sample khi animation đổi, và loop lại cho một số animation nền như `stand_walk`, `sleep`, `hop`, `climb`.
+- `Attach()` gắn `AudioStreamPlayer` vào scene; `PlayForAnimation()` chỉ lo nạp stream và phát; `OnFinished()` quyết định có loop tiếp theo action hiện tại hay không.
+- Mục đích là làm cho audio trở thành một controller riêng, không trộn với logic UDP, chat panel hay body autonomy.
 
 `asset/Resource/Monika.tscn`
 - Định nghĩa `AnimatedSprite2D` và SpriteFrames.
@@ -188,6 +209,38 @@ Kết nối mặc định:
   - `preferred_anchor`: chọn `chat_near`, `code_side` hoặc `bottom_right`.
 - Pipeline đại khái:
     RawSignal/Percepts → Evidence → AttentionSalience → WorkingMemory/Broadcast → Meaning → Personality → Appraisal → Inner Thought/Speech → Action Plan → Decision
+
+`src/cortex/background_observer.py`
+- Observer nền chạy song song với cognition chính, nhưng không được phép tự trả lời user, không commit memory và không tạo `Decision` public.
+- Có hai tầng: rule-based luôn chạy được, và optional Ollama text observer để phân loại mềm hơn khi env bật.
+- Đọc `SignalSnapshot` + `SignalDiff`, rồi dựng `ObserverFrame` với các trục như `focus_kind`, `activity_intent`, `possible_error`, `fragmented`, `user_presence`, `salience`, `recommended_action`, `recommended_budget`.
+- `recommended_action` hiện có các nấc chính: `observe_only`, `update_body_bias`, `call_vision_compressor`, `wake_main_cognition`; nhưng bản này vẫn khóa quyền interrupt cứng, observer chỉ được phát hint.
+- Vai trò thật sự của lớp này là lọc xem thay đổi nền có đáng chú ý không trước khi runtime chính tốn thêm budget.
+
+`src/cortex/observer_contracts.py`
+- Contract chung cho nhánh observer mới.
+- Định nghĩa `SignalSnapshot`, `SignalDiff`, `ObserverFrame` cùng các literal như `FocusKind`, `ActivityIntent`, `ObserverAction`, `BudgetHint`, `PrivacyLevel`.
+- `SignalSnapshot` là bản telemetry đã làm nhẹ: app/window, OCR, hash, CPU/RAM, idle, recent events, chat visibility.
+- `SignalDiff` là diff định lượng giữa snapshot cũ và mới: window/app/focus/ocr/screen/event/resource change, `diff_score`, `novelty`, `repetition`, `idle_transition`.
+- `ObserverFrame` là output observer để attention/working-memory/body-bias dùng tiếp; nó là hint có confidence, không phải chân lý tuyệt đối.
+
+`src/runtime/signal_buffer.py`
+- Bộ nhớ ngắn hạn cho signal nền trước observer.
+- Giữ cửa sổ `SignalSnapshot`, tính `SignalDiff`, và ước lượng novelty/repetition mà không cần gọi model.
+- Trọng số diff hiện tách theo nhiều trục: window, app, focus, OCR, screen, event, resource pressure và idle transition.
+- Có các helper vận hành quan trọng:
+  - `push()` thêm snapshot và trả diff.
+  - `stats()` cho biết tần suất lặp hash OCR/screen và phân bố focus gần đây.
+  - `recent_summary()` dựng summary ngắn cho observer LLM.
+  - `should_run_text_observer()` là cổng chống spam model, chỉ cho observer text chạy khi thay đổi đủ đáng kể.
+- Đây là hàng rào đầu tiên để ERIS không tốn budget vì mọi cú chớp của desktop.
+
+`src/cortex/vision_semantic_compressor.py`
+- Bộ "mắt đọc sâu" gọi vision model khi observer thấy có thay đổi đủ đáng kể.
+- Không tự chụp ảnh màn hình; nó chỉ nhận screenshot/ocr/context từ runtime rồi nén thành `SemanticSceneNote`.
+- Có gate cục bộ `should_compress(observer_frame, signal_diff)` theo salience và diff, để tránh gọi model vision cho mọi thay đổi nhỏ.
+- Nếu thiếu model, thiếu ảnh, hoặc module bị tắt, nó trả fallback OCR-only thay vì làm chết loop.
+- Đây là lớp bổ sung nghĩa cho scene đang mở, không phải một đường trả lời user thứ hai.
 
 `src/runtime/prompt_context_builder.py`
 - `PromptContextBuilderMixin`.
@@ -319,7 +372,7 @@ Kết nối mặc định:
 
 `src/domain/decision.py`
 - Dataclass `Decision`, hợp đồng cuối giữa cognition và Godot.
-- Field chính: `text`, `intent`, `action`, `animation`, `should_speak`, `confidence`, `direction`, `target_x`, `bounce_action`, `next_animation`, `system_action`, `action_input`, `motion_intent`, `motion_target_x`, `motion_facing`, `debug_trace`, `parser_trace`, `parse_mode`.
+- Field chính: `text`, `intent`, `action`, `animation`, `should_speak`, `confidence`, `direction`, `target_x`, `bounce_action`, `next_animation`, `system_action`, `action_input`, `motion_intent`, `motion_target_x`, `motion_facing`, `debug_trace`, `parser_trace`, `parse_mode`, `body_bias`, `emotion_debug`.
 - Có resolver để suy motion nếu model chỉ trả animation/target:
   - `climb` + `climb_top` -> `climb_to_top`.
   - `air_swing_l/r` -> `drop`.
@@ -327,6 +380,7 @@ Kết nối mặc định:
   - `stand_walk` -> `walk`.
   - `direction` -> `face`.
 - `to_payload()` là điểm cô lại thành JSON gửi qua UDP.
+- `body_bias` là cầu nối mềm từ cognition xuống `LocalBodyAutonomy`; `emotion_debug` là nhánh debug để body/UI có thể soi trạng thái cảm xúc đã được runtime cô đọng.
 
 
 4. LLM Layer
@@ -339,6 +393,13 @@ Kết nối mặc định:
   - `GeminiClient`: gọi Google Gemini/Gemma endpoint, convert message/content/image sang format Gemini.
 - `_chat_payload_variants()` thử nhiều payload khi server/API không hỗ trợ `grammar` hoặc `response_format`.
 - `_http_error_with_body()` đưa body lỗi vào exception để debug dễ hơn.
+
+`src/llm/ollama_client.py`
+- Client HTTP mỏng cho Ollama, tách riêng để observer và vision local không phải đi vòng qua đường client cognition chính.
+- Dùng `urllib` thay vì `requests`, để repo chạy được với dependency tối thiểu.
+- Hỗ trợ `chat_json()` và `generate_json()` với mục tiêu chính là ép output thành JSON object, nhưng vẫn có salvage path nếu model trả JSON hơi bẩn.
+- Hỗ trợ ảnh base64/data URI cho model vision, `keep_alive` để giữ hoặc unload model trong RAM, và các helper `unload()`/`list_models()` để debug daemon Ollama chung.
+- Thực tế đây là mảnh nối giữa runtime observer/vision mới với một Ollama daemon duy nhất, thay vì phải dựng thêm service inference riêng.
 
 `src/llm/process_manager.py`
 - Quản lý local llama-server và build client.
@@ -563,6 +624,18 @@ Kết nối mặc định:
 - Tách phần dựng `RelationshipTurnEvent` ra khỏi `relationship_dynamics.py` để event semantics không còn bị trộn cứng với state update.
 - Nhận affect/context/evidence rồi build event score theo pattern như correction, objectification, technical success, emotional exposure, continuity rupture hay repair.
 - Đây là cầu nối sạch hơn giữa `AffectSemanticSignal` và `RelationshipDynamicsEngine`: dynamics update state, còn event builder chịu trách nhiệm “đọc” turn hiện tại thành event quan hệ.
+
+`src/cortex/relational_feedback.py`
+- File mới để đọc feedback về cách ERIS hiện diện, không phải chỉ đọc “cảm xúc user” chung.
+- Nhắm vào các câu kiểu:
+  - lạnh / lạnh lùng
+  - xa cách
+  - robot / máy móc / assistant / corporate
+  - vô hồn
+  - quá formal / cứng / không tự nhiên
+- Trả `RelationalFeedbackSignal` với các trục `kind`, `intensity`, `repair_needed`, `warmth_request`, `defensive_risk`, `evidence`, `previous_assistant_defensive`.
+- Có `RelationalFeedbackAnalyzer` normalize tiếng Việt đủ mạnh để bắt các câu ngắn trực diện như `lạnh lùng vl luôn`, nhưng vẫn chặn false-positive kiểu `trời lạnh`, `máy lạnh`.
+- Vai trò của lớp này là tạo signal cho `ConversationDynamics`, `RelationshipEventBuilder` và `FeRenderer`; nó không tự mutate relationship state và không tự viết câu trả lời.
 
 `src/cortex/personality.py`
 - `PersonalityLens`.
@@ -834,8 +907,19 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 
 `src/memory/memory_commit_policy.py`
 - Policy rút fact trực tiếp từ user turn rồi biến nó thành `MemoryCommitDecision`.
-- Hiện có các fact/pattern chính: `USER_NAME`, `USER_BIRTH_MONTH`, `USER_RESPONSE_STYLE`, `SESSION_MEMORY_TEST`.
-- Semantic fact như tên/tháng sinh đi vào `semantic_memory`; style phản hồi đi vào `procedural_memory`; các lượt test trí nhớ chỉ đi vào `episodic_memory` dạng gist thay vì lưu nguyên văn transcript dài dòng.
+- Đây là policy extraction thuần rule, không ghi memory trực tiếp và không nhờ LLM “cảm thấy đã nhớ”.
+- Có guard để không commit nhầm các câu hỏi kiểu `tôi tên gì`, `tôi sinh năm nào`, `em có nhớ không` thành fact.
+- Nhóm extractor hiện rộng hơn mô tả cũ, gồm:
+  - tên người dùng
+  - năm sinh
+  - tháng sinh
+  - tuổi quan sát được
+  - nơi ở hiện tại / nơi ở theo thời điểm
+  - response style
+  - memory test hint
+  - preference tổng quát
+- Semantic fact như tên/năm sinh/tháng sinh/nơi ở đi vào `semantic_memory`; style phản hồi đi vào `procedural_memory`; các lượt test trí nhớ đi vào nhánh episodic/protocol phù hợp thay vì lưu transcript dài nguyên xi.
+- Vì policy này chạy trước commit, `chat_cycle` có thể tạo `commit_requests` deterministically ngay tại user turn thay vì đợi model hoặc resonance tự suy ra cái gì đáng nhớ.
 
 `src/memory/semantic_memory.py`
 - Store fact ổn định theo domain user/self/world/technical/project/relationship.
@@ -960,6 +1044,15 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Test `AttentionSalienceEngine`: ambient context thấp không tự broadcast, user request thắng ambient context, cognitive momentum có thể quay lại attention khi không có signal hiện tại mạnh hơn.
 - `tests/test_attention_workspace.py` đã bị bỏ cùng `src/cortex/attention.py`.
 
+`tests/test_background_observer.py`
+- Test nhánh observer mới theo cả config lẫn runtime behavior.
+- Bao phủ:
+  - rollout phase 1 giữ observer ở mode rule-based
+  - rollout phase 2 đọc đúng `ERIS_OBSERVER_MODEL`, `ERIS_OBSERVER_KEEP_ALIVE`, `OLLAMA_BASE_URL`
+  - observer không gọi Ollama khi LLM đang tắt
+  - observer gọi Ollama đúng lúc khi LLM bật và diff đủ điều kiện
+- Đây là regression quan trọng cho rollout local observer, vì path này dễ vỡ ở config hơn ở logic lõi.
+
 `tests/test_appraisal_engine.py`
 - Test appraisal axes.
 
@@ -1023,6 +1116,15 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 
 `tests/test_conversation_dynamics.py`
 - Test engine hội thoại mới: neutral chat giữ low tension, denial chuyển repair mode, thiếu phần cần làm map thành `underacted`, repeated correction tăng pressure, follow-up sạch làm tension giảm, typo nhỏ không ép repair, continuity curve track recovery, relational repair không hỏi lại nguyên nhân khi user đã nêu, và `ok nhung sai` không bị tính là relief.
+
+`tests/test_relational_feedback.py`
+- Regression test cho nhánh `relational_feedback`.
+- Bao phủ các path chính:
+  - detect `coldness_feedback` từ câu ngắn trực diện
+  - đẩy `ConversationDynamicsState.mode` sang `relational_repair`
+  - update `RelationshipDynamics` theo hướng giảm distance mà không tăng `dignity_defense` vô lý
+  - bridge sang Fe/LLM guard để sửa câu trả lời mang tính phòng thủ
+- Đây là lớp test mới bảo vệ việc ERIS sửa “cách hiện diện” khi user chê lạnh/xa, thay vì chỉ sửa semantic correctness.
 
 Lưu ý test gap hiện tại:
 - Chưa có file test riêng cho `orientation_context.py`, `goal_persistence.py`, `action_memory.py`, `action_utility.py` và `action_planner.py`. Một phần hành vi đang được bao phủ gián tiếp qua `test_internal_state.py`, `test_runtime_coordinator.py`, `test_conversation_dynamics.py` và các test speech/micro policy, nhưng nên tách test riêng nếu tiếp tục sửa các tầng này.

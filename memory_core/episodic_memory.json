@@ -2,6 +2,94 @@
   "version": 1,
   "items": [
     {
+      "id": "epi_f958e158716b",
+      "timestamp": "2026-05-27T21:10:19+0700",
+      "frame_id": "",
+      "summary": "lạnh lùng vl luôn -> Tôi sẽ điều chỉnh lại nếu Ngài thấy cần thiết. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:21:10:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_205a07db672e",
+      "timestamp": "2026-05-27T21:09:45+0700",
+      "frame_id": "",
+      "summary": "rất lạnh lùng -> Tôi chỉ đang trả lời đúng những gì Ngài hỏi. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:21:09:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_29feee87e7e7",
+      "timestamp": "2026-05-27T21:09:12+0700",
+      "frame_id": "",
+      "summary": "em tên gì -> Tôi là ERIS. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:21:09:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_b1c9b1b37cfe",
+      "timestamp": "2026-05-27T21:08:49+0700",
+      "frame_id": "",
+      "summary": "xin chào eris -> Chào Ngài. -> json",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:21:08:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
       "id": "epi_c84ab2c4a787",
       "timestamp": "2026-05-27T20:44:05+0700",
       "frame_id": "",

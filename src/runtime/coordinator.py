@@ -23,6 +23,8 @@ replace: copy dataclass và đổi vài field.
 from cortex.action_planner import ACTION_SPACE, ActionPlanner
 from cortex.affect_semantics import AffectSemanticClassifier
 from cortex.attention_salience import AttentionSalienceEngine
+from cortex.background_observer import BackgroundObserver, BackgroundObserverConfig
+from cortex.observer_contracts import ObserverFrame, SemanticSceneNote, SignalSnapshot, stable_hash
 from cortex.appraisal import AppraisalEngine
 from cortex.chat_light import ChatMeaningLayerLight, ChatPersonalityPressureLight
 from cortex.conversation_dynamics import ConversationDynamicsEngine
@@ -58,10 +60,12 @@ from cortex.self_model import SelfModelEngine
 from cortex.session_ritual import SessionRitualEngine
 from cortex.speech_core import SpeechCoreEngine
 from cortex.thought_stream import ThoughtStream
+from cortex.vision_semantic_compressor import VisionCompressorConfig, VisionSemanticCompressor
 from cortex.working_memory import WorkingMemoryEngine
 from domain import Decision
 from runtime.autonomous_cycle import AutonomousCycleMixin
 from runtime.body_bias import BodyBiasProjector
+from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.cognitive_cycle import CognitiveCycleMixin
 from runtime.cognitive_frame_recorder import CognitiveFrameRecorderMixin
@@ -156,6 +160,16 @@ class RuntimeCoordinator(
         self.semantic_repeat_guard = SemanticRepeatGuard()
         self.micro_line_policy = MicroLinePolicy(repeat_guard=self.semantic_repeat_guard)
         self.body_bias_projector = BodyBiasProjector(self._get_internal_state)
+        self.signal_buffer = SignalBuffer(SignalBufferConfig())
+        self.background_observer = BackgroundObserver(BackgroundObserverConfig())
+        self.vision_semantic_compressor = VisionSemanticCompressor(
+            VisionCompressorConfig(),
+            logger=self.logger,
+        )
+        self.last_signal_snapshot: SignalSnapshot | None = None
+        self.last_signal_diff = None
+        self.last_observer_frame: ObserverFrame | None = None
+        self.last_semantic_scene_note: SemanticSceneNote | None = None
         self._state_lock = threading.RLock()
 
         '''Các biến này lưu trạng thái hội thoại:
@@ -274,6 +288,151 @@ class RuntimeCoordinator(
         self.ni_meta_auto_enabled = env_enabled and auto_cfg
         #Đảm bảo trong memory_state có internal_state. Nếu thiếu thì tạo mới.
         self._ensure_internal_state()
+
+
+    def _run_background_observer(
+        self,
+        *,
+        snapshot,
+        channel: str = "",
+        user_text: str = "",
+        vision_facts: tuple[str, ...] = (),
+        started_at: float | None = None,
+    ) -> ObserverFrame | None:
+        """Chạy BackgroundObserver trên snapshot hiện tại.
+
+        Observer chỉ tạo hint/evidence. Nó không nói, không commit memory và
+        không tự đánh thức main cognition. Nếu nó muốn wake, runtime chỉ log hint.
+        """
+
+        observer = getattr(self, "background_observer", None)
+        signal_buffer = getattr(self, "signal_buffer", None)
+        if observer is None or signal_buffer is None:
+            return None
+
+        try:
+            signal_snapshot = self._build_signal_snapshot_for_observer(
+                snapshot=snapshot,
+                channel=channel,
+                user_text=user_text,
+                vision_facts=vision_facts,
+                started_at=started_at,
+            )
+            signal_diff = signal_buffer.push(signal_snapshot)
+            observer_frame = observer.observe(
+                signal_snapshot,
+                signal_diff,
+                recent_summary=signal_buffer.recent_summary(6),
+            )
+            self.last_signal_snapshot = signal_snapshot
+            self.last_signal_diff = signal_diff
+            self.last_observer_frame = observer_frame
+            if getattr(observer_frame, "should_wake_main", False):
+                self.logger.info(
+                    "[background observer] wake_main hint suppressed | salience=%.2f | err=%.2f",
+                    float(getattr(observer_frame, "salience", 0.0) or 0.0),
+                    float(getattr(observer_frame, "possible_error", 0.0) or 0.0),
+                )
+            return observer_frame
+        except Exception as exc:
+            self.logger.warning("Background observer error: %s", exc)
+            return None
+
+    def _build_signal_snapshot_for_observer(
+        self,
+        *,
+        snapshot,
+        channel: str = "",
+        user_text: str = "",
+        vision_facts: tuple[str, ...] = (),
+        started_at: float | None = None,
+    ) -> SignalSnapshot:
+        focus_kind = self._observer_focus_kind_from_snapshot(snapshot)
+        active_window = str(getattr(snapshot, "active_window", "") or "")
+        active_app = str(getattr(snapshot, "active_app", "") or active_window or "")
+        browser_url = str(getattr(snapshot, "browser_url", "") or "")
+        recent_events = [str(item) for item in tuple(getattr(snapshot, "recent_events", ()) or ())[:10]]
+        evidence = [str(item) for item in tuple(getattr(snapshot, "evidence", ()) or ())[:8]]
+        facts = [str(item) for item in tuple(vision_facts or getattr(snapshot, "vision_facts", ()) or ())[:6]]
+
+        # OCR text ở phase này dùng vision_facts/evidence ngắn. Khi có OCR thật thì thay bằng OCR diff.
+        visible_text = "\n".join(facts or evidence[:3])
+        if user_text and channel == "chat":
+            recent_events = [*recent_events, "direct_user_chat"]
+        if facts:
+            recent_events = [*recent_events, "vision_fact_available"]
+
+        return SignalSnapshot(
+            timestamp=float(started_at or time.time()),
+            active_window_title=active_window,
+            active_app=active_app,
+            focus_kind_hint=focus_kind,
+            url_or_path_hint=browser_url,
+            idle_seconds=float(getattr(snapshot, "idle_seconds", 0.0) or 0.0),
+            recent_events=recent_events,
+            ocr_text=visible_text,
+            ocr_hash=stable_hash(visible_text) if visible_text else "",
+            screen_hash=stable_hash("\n".join(facts)) if facts else "",
+            cpu_percent=float(getattr(snapshot, "cpu_percent", 0.0) or 0.0),
+            ram_percent=float(getattr(snapshot, "ram_percent", 0.0) or 0.0),
+            chat_visible=bool(channel == "chat"),
+            metadata={
+                "channel": channel,
+                "claim_style": str(getattr(snapshot, "claim_style", "") or ""),
+                "focus_summary": str(getattr(snapshot, "focus_summary", "") or ""),
+                "evidence": evidence,
+            },
+        )
+
+    def _observer_focus_kind_from_snapshot(self, snapshot) -> str:
+        raw = str(getattr(snapshot, "active_window_kind", "") or "unknown").strip().lower()
+        mapping = {
+            "coding": "code",
+            "code": "code",
+            "documentation": "docs",
+            "docs": "docs",
+            "communication": "chat",
+            "chat": "chat",
+            "focus_aid_media": "media",
+            "entertainment": "media",
+            "media": "media",
+            "system": "system",
+            "game": "game",
+            "browser": "browser",
+        }
+        return mapping.get(raw, raw if raw in {"code", "docs", "browser", "chat", "media", "game", "system"} else "unknown")
+
+    def _observer_percept_content(self, observer_frame: ObserverFrame | None) -> str:
+        if observer_frame is None:
+            return ""
+        renderer = getattr(observer_frame, "to_evidence_claim", None)
+        if callable(renderer):
+            return str(renderer())
+        return (
+            f"observer focus={getattr(observer_frame, 'focus_kind', 'unknown')}; "
+            f"intent={getattr(observer_frame, 'activity_intent', 'unknown')}; "
+            f"sal={float(getattr(observer_frame, 'salience', 0.0) or 0.0):.2f}; "
+            f"nov={float(getattr(observer_frame, 'novelty', 0.0) or 0.0):.2f}; "
+            f"rep={float(getattr(observer_frame, 'repetition', 0.0) or 0.0):.2f}; "
+            f"err={float(getattr(observer_frame, 'possible_error', 0.0) or 0.0):.2f}; "
+            f"presence={float(getattr(observer_frame, 'user_presence', 0.0) or 0.0):.2f}; "
+            f"action={getattr(observer_frame, 'recommended_action', 'observe_only')}"
+        )
+
+    def _observer_attention_tags(self, observer_frame: ObserverFrame | None, *, channel: str = "") -> tuple[str, ...]:
+        if observer_frame is None:
+            return ()
+        tagger = getattr(observer_frame, "attention_tags", None)
+        if callable(tagger):
+            base = tuple(str(item) for item in tagger())
+        else:
+            base = (
+                "background_observer",
+                f"observer_focus:{getattr(observer_frame, 'focus_kind', 'unknown')}",
+                f"observer_intent:{getattr(observer_frame, 'activity_intent', 'unknown')}",
+            )
+        return tuple(dict.fromkeys((*base, channel)))
+
 
     def _log_raw_llm_output(self, channel: str, raw: str) -> None:
         preview = (raw or "").replace("\n", "\\n")
@@ -440,7 +599,9 @@ class RuntimeCoordinator(
         )
 
     def _build_body_bias_payload(self) -> dict[str, object]:
-        return self.body_bias_projector.build_payload()
+        return self.body_bias_projector.build_payload(
+            observer_frame=getattr(self, "last_observer_frame", None),
+        )
 
     def _build_emotion_debug_payload(self) -> dict[str, object]:
         """Compact affect/state payload for the Godot emotion panel."""
@@ -977,6 +1138,7 @@ class RuntimeCoordinator(
         internal_state: PersistentInternalState | None = None,
         thought_stream_report=None,
         social_presence_event: SocialPresenceEvent | None = None,
+        observer_frame: ObserverFrame | None = None,
         started_at: float | None = None,
     ) -> tuple[PerceptEvent, ...]:
         percepts: list[PerceptEvent] = []
@@ -1023,6 +1185,19 @@ class RuntimeCoordinator(
                 privacy_level="internal",
                 novelty_hint="explicit_request",
             )
+
+        if observer_frame is not None:
+            observer_content = self._observer_percept_content(observer_frame)
+            if observer_content:
+                add(
+                    "background_observer",
+                    observer_content,
+                    source="observer",
+                    confidence=max(0.35, self._bounded_float(getattr(observer_frame, "confidence", 0.0))),
+                    evidence=self._observer_attention_tags(observer_frame, channel=channel),
+                    privacy_level=str(getattr(observer_frame, "privacy_level", "normal") or "normal"),
+                    novelty_hint=str(getattr(observer_frame, "recommended_action", "observe_only") or "observe_only"),
+                )
 
         if social_presence_event is not None and bool(getattr(social_presence_event, "present", False)):
             kind = str(getattr(social_presence_event, "kind", "") or "presence")
@@ -1350,11 +1525,12 @@ class RuntimeCoordinator(
             source = str(getattr(percept, "source", "") or "runtime")
             if source in {"runtime", "internal_state", "thought_stream", "social_presence_detector"}:
                 source = "system_log"
+            reliability = 0.62 if source == "observer" else 0.70
             add(
                 source,
                 str(getattr(percept, "content", "") or ""),
                 confidence=float(getattr(percept, "confidence", 0.62) or 0.62),
-                reliability=0.70,
+                reliability=reliability,
                 privacy_level=str(getattr(percept, "privacy_level", "normal") or "normal"),
                 tags=(kind, *tuple(str(x) for x in getattr(percept, "evidence", ()) or ()), channel),
             )
@@ -1399,12 +1575,15 @@ class RuntimeCoordinator(
             "persistent_goal",
             "social_presence_event",
             "substrate_disturbance",
+            "background_observer",
         }
         for tag in tags:
             if tag in known_labels:
                 return tag
         source = str(getattr(candidate, "source", "") or "")
         family = str(getattr(candidate, "family", "") or "")
+        if source == "observer":
+            return "background_observer"
         if source == "vision":
             return "vision_fact"
         if source == "active_window":
@@ -1641,6 +1820,13 @@ class RuntimeCoordinator(
     ) -> CognitiveFrame:
         if memory_resonance is not None:
             self.active_memory_resonance = memory_resonance
+        observer_frame = self._run_background_observer(
+            snapshot=snapshot,
+            channel=channel,
+            user_text=user_text,
+            vision_facts=vision_facts,
+            started_at=started_at,
+        )
         percepts = self._collect_percept_events(
             channel=channel,
             snapshot=snapshot,
@@ -1649,6 +1835,7 @@ class RuntimeCoordinator(
             force_speak=force_speak,
             thought_stream_report=thought_stream_report,
             social_presence_event=social_presence_event,
+            observer_frame=observer_frame,
             started_at=started_at,
         )
         candidates = self._build_attention_candidates(
@@ -1700,6 +1887,7 @@ class RuntimeCoordinator(
             percepts=percepts,
             attention_candidates=candidates,
             broadcast=broadcast,
+            observer_frame=observer_frame,
             meaning_layer=meaning_layer,
             personality_lens=personality_lens,
             appraisal=appraisal,
@@ -2557,6 +2745,18 @@ class RuntimeCoordinator(
             return ""
 
         self.logger.info("[vision chat] Đã đính kèm screenshot toàn màn hình cho lượt chat này.")
+        snapshot = getattr(self, "_chat_snapshot_for_vision", None)
+        if snapshot is not None:
+            try:
+                self._refresh_screen_facts_from_data_uri(
+                    data_uri=data_uri,
+                    snapshot=snapshot,
+                    channel="chat",
+                    user_text=user_text,
+                    force_refresh=True,
+                )
+            except Exception as exc:
+                self.logger.warning("[vision chat] không nén được screenshot: %s", exc)
         return data_uri
 
     def _build_user_message_signature(self, user_text: str) -> str:
@@ -3203,7 +3403,148 @@ class RuntimeCoordinator(
                 break
         return tuple(cleaned)
 
-    def _maybe_update_screen_facts(self) -> tuple[str, ...]:
+    def _semantic_scene_note_to_facts(self, note: SemanticSceneNote | None) -> tuple[str, ...]:
+        if note is None:
+            return ()
+        items: list[str] = []
+        visible = str(getattr(note, "visible_context", "") or "").strip()
+        if visible:
+            items.append(visible)
+        for item in list(getattr(note, "important_text", []) or []):
+            text = str(item or "").strip()
+            if text:
+                items.append(text)
+        return self._sanitize_screen_facts(items)
+
+    def _vision_trace_from_scene_note(self, note: SemanticSceneNote | None) -> str:
+        if note is None:
+            return ""
+        source = str(getattr(note, "source", "") or "vision")
+        family = str(getattr(note, "semantic_family", "") or "unknown")
+        return f"{source}:{family}"
+
+    def _should_use_vision_compressor(
+        self,
+        *,
+        observer_frame: ObserverFrame | None,
+        force_refresh: bool,
+    ) -> bool:
+        compressor = getattr(self, "vision_semantic_compressor", None)
+        if compressor is None:
+            return False
+        if force_refresh:
+            return True
+        should_compress = getattr(compressor, "should_compress", None)
+        if not callable(should_compress):
+            return False
+        try:
+            return bool(
+                should_compress(
+                    observer_frame=observer_frame,
+                    signal_diff=getattr(self, "last_signal_diff", None),
+                )
+            )
+        except Exception as exc:
+            self.logger.warning("[vision_facts] compressor policy failed: %s", exc)
+            return False
+
+    def _refresh_screen_facts_from_data_uri(
+        self,
+        *,
+        data_uri: str,
+        snapshot=None,
+        channel: str = "autonomous",
+        user_text: str = "",
+        observer_frame: ObserverFrame | None = None,
+        force_refresh: bool = False,
+        started_at: float | None = None,
+    ) -> tuple[str, ...]:
+        if not data_uri:
+            self.last_semantic_scene_note = None
+            self.vision_facts = ()
+            self.vision_last_trace = ""
+            self.vision_facts_signature = ""
+            self.vision_facts_novelty_hint = "none"
+            return self.vision_facts
+
+        if observer_frame is None and snapshot is not None:
+            observer_frame = self._run_background_observer(
+                snapshot=snapshot,
+                channel=channel,
+                user_text=user_text,
+                vision_facts=(),
+                started_at=started_at,
+            )
+
+        note: SemanticSceneNote | None = None
+        trace = ""
+        cleaned: tuple[str, ...] = ()
+
+        if self._should_use_vision_compressor(observer_frame=observer_frame, force_refresh=force_refresh):
+            compressor = getattr(self, "vision_semantic_compressor", None)
+            try:
+                signal_snapshot = (
+                    self._build_signal_snapshot_for_observer(
+                        snapshot=snapshot,
+                        channel=channel,
+                        user_text=user_text,
+                        vision_facts=tuple(getattr(snapshot, "vision_facts", ()) or ()) if snapshot is not None else (),
+                        started_at=started_at,
+                    )
+                    if snapshot is not None
+                    else None
+                )
+                note = compressor.compress(
+                    image_data_uri=data_uri,
+                    ocr_text=str(getattr(signal_snapshot, "ocr_text", "") or "") if signal_snapshot is not None else "",
+                    observer_frame=observer_frame,
+                    signal_snapshot=signal_snapshot,
+                    extra_context=user_text if channel == "chat" else "",
+                )
+                trace = self._vision_trace_from_scene_note(note)
+                cleaned = self._semantic_scene_note_to_facts(note)
+            except Exception as exc:
+                self._note_vision_failure("compressor", exc)
+                return self.vision_facts
+        else:
+            try:
+                mode = "chat_requested" if channel == "chat" else "ambient"
+                facts, trace = self.llm_service.generate_screen_facts(
+                    screen_image_data_uri=data_uri,
+                    mode=mode,
+                )
+                cleaned = self._sanitize_screen_facts(facts)
+            except Exception as exc:
+                self._note_vision_failure("vlm", exc)
+                return self.vision_facts
+
+        self.vision_failure_count = 0
+        self.vision_disabled_until = 0.0
+        self.vision_last_capture_at = time.time()
+        self.last_semantic_scene_note = note
+        signature = "\n".join(cleaned)
+        self.vision_facts_novelty_hint = (
+            "new_screen_fact"
+            if cleaned and signature != self.vision_facts_signature
+            else ("repeated_screen_fact" if cleaned else "none")
+        )
+        self.vision_facts_signature = signature
+        self.vision_facts = cleaned
+        self.vision_last_trace = trace or ""
+        if snapshot is not None:
+            snapshot.vision_facts = tuple(cleaned)
+        return self.vision_facts
+
+    def _maybe_update_screen_facts(
+        self,
+        *,
+        snapshot=None,
+        channel: str = "autonomous",
+        user_text: str = "",
+        observer_frame: ObserverFrame | None = None,
+        force_refresh: bool = False,
+        started_at: float | None = None,
+    ) -> tuple[str, ...]:
         if not self.vision_facts_enabled:
             self.vision_facts_novelty_hint = "none"
             return ()
@@ -3222,34 +3563,15 @@ class RuntimeCoordinator(
             self._note_vision_failure("capture", exc)
             return self.vision_facts
 
-        if not data_uri:
-            self.vision_last_capture_at = now
-            self.vision_facts = ()
-            self.vision_last_trace = ""
-            self.vision_facts_signature = ""
-            self.vision_facts_novelty_hint = "none"
-            return self.vision_facts
-
-        try:
-            facts, trace = self.llm_service.generate_screen_facts(screen_image_data_uri=data_uri)
-        except Exception as exc:
-            self._note_vision_failure("vlm", exc)
-            return self.vision_facts
-
-        self.vision_last_capture_at = now
-        self.vision_failure_count = 0
-        self.vision_disabled_until = 0.0
-        cleaned = self._sanitize_screen_facts(facts)
-        signature = "\n".join(cleaned)
-        self.vision_facts_novelty_hint = (
-            "new_screen_fact"
-            if cleaned and signature != self.vision_facts_signature
-            else ("repeated_screen_fact" if cleaned else "none")
+        return self._refresh_screen_facts_from_data_uri(
+            data_uri=data_uri,
+            snapshot=snapshot,
+            channel=channel,
+            user_text=user_text,
+            observer_frame=observer_frame,
+            force_refresh=force_refresh,
+            started_at=started_at or now,
         )
-        self.vision_facts_signature = signature
-        self.vision_facts = cleaned
-        self.vision_last_trace = trace or ""
-        return self.vision_facts
 
     def _attach_screen_facts(self, snapshot, facts: tuple[str, ...]) -> str:
         if not facts:
@@ -3612,7 +3934,17 @@ class RuntimeCoordinator(
             return self.running
 
         vision_marker = ""
-        vision_facts = self._maybe_update_screen_facts()
+        observer_frame = self._run_background_observer(
+            snapshot=snapshot,
+            channel="autonomous",
+            started_at=cycle_start,
+        )
+        vision_facts = self._maybe_update_screen_facts(
+            snapshot=snapshot,
+            channel="autonomous",
+            observer_frame=observer_frame,
+            started_at=cycle_start,
+        )
         if self._process_pending_user_input():
             return self.running
 

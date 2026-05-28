@@ -713,21 +713,43 @@ class ModuleReport:
 
 @dataclass(slots=True)
 class StateCommitRequest:
-    """Yêu cầu ghi state/memory sau khi frame đã được guard."""
+    """Yêu cầu ghi state/memory sau khi frame đã được guard.
+
+    Contract này phải đủ rộng cho commit protocol hiện tại: permission, decay,
+    source_module và tags đều cần đi cùng request. Nếu không, downstream lại phải
+    nhét chúng vào metadata như buôn lậu qua biên giới JSON.
+    """
 
     target: str
     content: Any
     evidence_ids: list[str] = field(default_factory=list)
     confidence: float = 0.60
+    permission_required: bool = True
+    storage_permission: bool = False
+    decay_policy: str = "normal"
     reason: str = ""
+    source_module: str = ""
+    tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.target = str(self.target or "unknown_target").strip()
         self.evidence_ids = list(dict.fromkeys(str(item) for item in self.evidence_ids if str(item or "").strip()))
         self.confidence = clamp_reliability(float(self.confidence))
+        self.permission_required = bool(self.permission_required)
+        self.storage_permission = bool(self.storage_permission)
+        self.decay_policy = str(self.decay_policy or "normal").strip()
         self.reason = str(self.reason or "").strip()
+        self.source_module = str(self.source_module or "").strip()
+        self.tags = list(dict.fromkeys(str(item) for item in self.tags if str(item or "").strip()))
         self.metadata = dict(self.metadata or {})
+        self.metadata.setdefault("permission_required", self.permission_required)
+        self.metadata.setdefault("storage_permission", self.storage_permission)
+        self.metadata.setdefault("decay_policy", self.decay_policy)
+        if self.source_module:
+            self.metadata.setdefault("source_module", self.source_module)
+        if self.tags:
+            self.metadata.setdefault("tags", list(self.tags))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -735,7 +757,12 @@ class StateCommitRequest:
             "content": self.content,
             "evidence_ids": list(self.evidence_ids),
             "confidence": self.confidence,
+            "permission_required": self.permission_required,
+            "storage_permission": self.storage_permission,
+            "decay_policy": self.decay_policy,
             "reason": self.reason,
+            "source_module": self.source_module,
+            "tags": list(self.tags),
             "metadata": dict(self.metadata),
         }
 

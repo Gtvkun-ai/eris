@@ -1,22 +1,24 @@
 {
   "version": 2,
   "kind": "semantic_memory",
-  "updated_at": "2026-05-27T20:44:22+0700",
+  "updated_at": "2026-05-27T21:11:40+0700",
   "items": [
     {
       "id": "sem_67edb42ed3bc",
       "claim": "User greeted ERIS with 'hello eris cưng'.",
       "domain": "user",
-      "confidence": 0.652,
+      "confidence": 0.694,
       "source": "state_commit",
       "evidence_ids": [
         "percept:user_message:18:21:0",
-        "percept:user_message:20:37:0"
+        "percept:user_message:20:37:0",
+        "percept:user_message:21:08:0",
+        "percept:user_message:21:09:0"
       ],
-      "observations": 2,
+      "observations": 4,
       "status": "tentative",
       "first_seen_at": "2026-05-27T18:21:57+0700",
-      "updated_at": "2026-05-27T20:37:55+0700",
+      "updated_at": "2026-05-27T21:09:12+0700",
       "decay_policy": "slow",
       "contradiction_ids": [],
       "tags": [
@@ -66,7 +68,9 @@
         "access_count": 0,
         "last_accessed_at": "",
         "previous_claims": [
-          "User greeted ERIS with 'chào eris cưng'."
+          "User greeted ERIS with 'chào eris cưng'.",
+          "User said 'xin chào eris'",
+          "User asked for ERIS's name."
         ],
         "last_merge_reason": "store explicit stable semantic fact"
       }
@@ -94,6 +98,108 @@
       ],
       "metadata": {
         "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_a0d49d380094",
+      "claim": "Ngài nhận xét tôi lạnh lùng.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:21:10:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T21:10:19+0700",
+      "updated_at": "2026-05-27T21:10:19+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "semantic",
+        "extracted_fact",
+        "grounded"
+      ],
+      "metadata": {
+        "source": "CognitiveFrameRecorder",
+        "fact_index": 0,
+        "timestamp": "21:10",
+        "semantic_source": "decision_extracted_fact",
+        "source_grounded": true,
+        "grounding_source": "user_text",
+        "grounding_missing_evidence": [],
+        "grounding_preempt_mode": "",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1779891019.5697482,
+        "frame_id": null,
+        "raw_content": {
+          "fact": "Ngài nhận xét tôi lạnh lùng.",
+          "source": "decision_extracted_fact",
+          "timestamp": "21:10",
+          "cycle_id": "chat-5"
+        },
+        "reason": "store explicit stable semantic fact",
+        "fact_key": "",
+        "aliases": [],
+        "importance": 0.5,
+        "fact_profile_evidence": [],
+        "embedding_text_hash": "5aec00385d264dea",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
+      }
+    },
+    {
+      "id": "sem_e2c34b780f6f",
+      "claim": "Ngài nhận xét tôi rất lạnh lùng.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:21:09:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-27T21:09:45+0700",
+      "updated_at": "2026-05-27T21:09:45+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "semantic",
+        "extracted_fact",
+        "grounded"
+      ],
+      "metadata": {
+        "source": "CognitiveFrameRecorder",
+        "fact_index": 0,
+        "timestamp": "21:09",
+        "semantic_source": "decision_extracted_fact",
+        "source_grounded": true,
+        "grounding_source": "user_text",
+        "grounding_missing_evidence": [],
+        "grounding_preempt_mode": "",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1779890985.0936124,
+        "frame_id": null,
+        "raw_content": {
+          "fact": "Ngài nhận xét tôi rất lạnh lùng.",
+          "source": "decision_extracted_fact",
+          "timestamp": "21:09",
+          "cycle_id": "chat-4"
+        },
+        "reason": "store explicit stable semantic fact",
+        "fact_key": "",
+        "aliases": [],
+        "importance": 0.5,
+        "fact_profile_evidence": [],
+        "embedding_text_hash": "45197b102d1e9903",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
       }
     },
     {

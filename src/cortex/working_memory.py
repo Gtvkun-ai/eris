@@ -745,6 +745,8 @@ class WorkingMemoryEngine:
     def _collect_candidates(self, frame: Any, *, timestamp: float) -> list[WorkingMemoryCandidate]:
         candidates: list[WorkingMemoryCandidate] = []
         candidates.extend(self._candidates_from_evidence(frame, timestamp=timestamp))
+        candidates.extend(self._candidates_from_attention_candidates(frame, timestamp=timestamp))
+        candidates.extend(self._candidates_from_percepts(frame, timestamp=timestamp))
         candidates.extend(self._candidates_from_salience(frame, timestamp=timestamp))
         candidates.extend(self._candidates_from_memory_packet(frame, timestamp=timestamp))
         candidates.extend(self._candidates_from_goal(frame, timestamp=timestamp))
@@ -806,6 +808,116 @@ class WorkingMemoryEngine:
                 )
             )
         return out
+
+    def _candidates_from_attention_candidates(self, frame: Any, *, timestamp: float) -> list[WorkingMemoryCandidate]:
+        """Đọc Runtime AttentionCandidate cũ từ frame.attention_candidates.
+
+        Coordinator hiện tại giữ attention ở `attention_candidates` + `broadcast`,
+        không nhất thiết gắn `frame.salience`. Nếu WorkingMemory chỉ đọc evidence
+        và salience mới, nó sẽ bỏ sót tín hiệu đã được attention chọn. Một cổ chai
+        mà không đọc đầu vào chính thì hơi giống cửa kiểm soát không có cửa.
+        """
+
+        out: list[WorkingMemoryCandidate] = []
+        for item in safe_iter(safe_get(frame, "attention_candidates", []))[:12]:
+            content = str(safe_get(item, "content", safe_get(item, "claim", "")) or "").strip()
+            if not content:
+                continue
+            label = str(safe_get(item, "label", "") or "").strip()
+            source = str(safe_get(item, "source", "") or "").strip()
+            score = clamp01(safe_get(item, "score", 0.45), 0.45)
+            privacy = str(safe_get(item, "privacy_level", "normal") or "normal")
+            evidence_ids = [str(x) for x in safe_iter(safe_get(item, "evidence", []))]
+            if not evidence_ids:
+                evidence_ids = [stable_id("att", content)]
+
+            kind = self._attention_kind(label=label, source=source, content=content)
+            out.append(
+                WorkingMemoryCandidate(
+                    kind=kind,
+                    content=content,
+                    source_ids=evidence_ids,
+                    confidence=max(0.42, min(0.86, score)),
+                    base_priority=max(0.42, score),
+                    relevance=max(0.40, score),
+                    recency=0.78,
+                    risk=self._risk_score(content, [label, source]),
+                    affective_weight=self._affective_score(content, [label, source]),
+                    relational_weight=0.18 if label in {"relational_signal", "social_presence_event"} else 0.0,
+                    goal_weight=self._goal_score(content, [label, source]),
+                    novelty=0.16,
+                    privacy_level=privacy,
+                    permission_to_surface=privacy not in {"private", "sensitive"},
+                    created_at=timestamp,
+                    decay_after_seconds=self.config.evidence_decay_seconds,
+                    tags=["attention_candidate", label, source],
+                    metadata={"reason": "runtime attention candidate", "label": label, "source": source},
+                )
+            )
+        return out
+
+    def _candidates_from_percepts(self, frame: Any, *, timestamp: float) -> list[WorkingMemoryCandidate]:
+        """Fallback đọc percepts khi frame.evidence rỗng.
+
+        `PerceptEvent` là contract runtime hiện tại. Ta chỉ lấy các percept đủ cụ thể
+        để WorkingMemory không bị mù trong bản coordinator cũ.
+        """
+
+        out: list[WorkingMemoryCandidate] = []
+        for item in safe_iter(safe_get(frame, "percepts", []))[:18]:
+            kind_label = str(safe_get(item, "kind", "") or "").strip()
+            content = str(safe_get(item, "content", "") or "").strip()
+            if not content or kind_label in {"cycle_channel"}:
+                continue
+            source = str(safe_get(item, "source", "") or "runtime")
+            confidence = clamp01(safe_get(item, "confidence", 0.55), 0.55)
+            privacy = str(safe_get(item, "privacy_level", "normal") or "normal")
+            evidence_ids = [f"percept:{kind_label}:{stable_id('p', content)[-12:]}"]
+            wm_kind = self._attention_kind(label=kind_label, source=source, content=content)
+            base = 0.44
+            if kind_label in {"user_message", "user_force_speak"}:
+                base = 0.88
+            elif kind_label in {"background_observer", "vision_fact"}:
+                base = 0.54
+            out.append(
+                WorkingMemoryCandidate(
+                    kind=wm_kind,
+                    content=content,
+                    source_ids=evidence_ids,
+                    confidence=confidence,
+                    base_priority=base,
+                    relevance=self._claim_relevance(content, [kind_label, source]),
+                    recency=0.72,
+                    risk=self._risk_score(content, [kind_label, source]),
+                    affective_weight=self._affective_score(content, [kind_label, source]),
+                    novelty=0.10,
+                    privacy_level=privacy,
+                    permission_to_surface=privacy not in {"private", "sensitive"},
+                    created_at=timestamp,
+                    decay_after_seconds=self._decay_for_kind(wm_kind),
+                    tags=["percept", kind_label, source],
+                    metadata={"reason": "runtime percept fallback", "kind": kind_label, "source": source},
+                )
+            )
+        return out
+
+    def _attention_kind(self, *, label: str, source: str, content: str) -> WorkingMemorySlotKind:
+        label_l = str(label or "").lower()
+        source_l = str(source or "").lower()
+        text = normalize_text(content)
+        if label_l in {"user_message", "user_force_speak"} or source_l in {"chat", "user_chat"}:
+            return "current_user_request"
+        if label_l in {"resource_pressure", "risk_or_repair"} or self._risk_score(text, [label_l, source_l]) >= 0.55:
+            return "risk_or_repair"
+        if label_l in {"persistent_goal"} or self._goal_score(text, [label_l, source_l]) >= 0.45:
+            return "active_technical_goal" if self._looks_technical(text) else "open_question"
+        if label_l in {"background_observer", "vision_fact", "active_window", "focus_context", "recent_event", "evidence"}:
+            return "immediate_evidence"
+        if label_l in {"social_presence_event"}:
+            return "relational_state"
+        if "body" in label_l or "body" in source_l:
+            return "body_state"
+        return "misc"
 
     def _candidates_from_salience(self, frame: Any, *, timestamp: float) -> list[WorkingMemoryCandidate]:
         out: list[WorkingMemoryCandidate] = []

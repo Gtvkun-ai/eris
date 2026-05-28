@@ -1067,6 +1067,7 @@ class CognitiveFrame:
     percepts: tuple[PerceptEvent, ...] = ()
     attention_candidates: tuple[AttentionCandidate, ...] = ()
     broadcast: CognitiveBroadcast = field(default_factory=CognitiveBroadcast)
+    observer_frame: object | None = None
     salience: object | None = None
     working_memory: object | None = None
     meaning_layer: MeaningLayerResult = field(default_factory=MeaningLayerResult)
@@ -1102,6 +1103,7 @@ class CognitiveFrame:
             "percepts": [item.to_dict() for item in self.percepts],
             "attention_candidates": [item.to_dict() for item in self.attention_candidates],
             "broadcast": self.broadcast.to_dict(),
+            "observer_frame": _to_plain_contract(self.observer_frame),
             "salience": _to_plain_contract(self.salience),
             "working_memory": _to_plain_contract(self.working_memory),
             "meaning_layer": self.meaning_layer.to_dict(),

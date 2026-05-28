@@ -136,6 +136,11 @@ except Exception:  # pragma: no cover - standalone
             correction: float = 0.0
             objectification: float = 0.0
             technical_success: float = 0.0
+            perceived_coldness: float = 0.0
+            tone_feedback: float = 0.0
+            relational_repair_requested: float = 0.0
+            user_requests_less_distance: float = 0.0
+            defensive_risk: float = 0.0
             confidence: float = 0.0
             evidence: tuple[RelationshipEvidence, ...] = ()
             debug: Mapping[str, float] = field(default_factory=dict)
@@ -400,6 +405,11 @@ class RelationshipTurnEvent:
     accepted_answer_score: float = 0.0
     accepted_style_score: float = 0.0
     accepted_action_score: float = 0.0
+    perceived_coldness: float = 0.0
+    tone_feedback: float = 0.0
+    relational_repair_requested: float = 0.0
+    user_requests_less_distance: float = 0.0
+    defensive_risk: float = 0.0
     event_confidence: float = 0.0
     relationship_evidence: tuple[RelationshipEvidence, ...] = ()
     relationship_debug: Mapping[str, float] = field(default_factory=dict)
@@ -445,6 +455,11 @@ class RelationshipTurnEvent:
         accepted_answer_score = _score(scores.accepted_answer)
         accepted_action_score = _score(scores.accepted_action)
         technical_success = max(_score(scores.technical_success), _score(assistant_technical_success))
+        perceived_coldness = _score(getattr(scores, "perceived_coldness", 0.0))
+        tone_feedback = _score(getattr(scores, "tone_feedback", 0.0))
+        relational_repair_requested = _score(getattr(scores, "relational_repair_requested", 0.0))
+        user_requests_less_distance = _score(getattr(scores, "user_requests_less_distance", 0.0))
+        defensive_risk = _score(getattr(scores, "defensive_risk", 0.0))
 
         # Override bool cũ nếu caller cố ý truyền. Đây là lối tương thích, không
         # phải đường khuyến nghị.
@@ -473,6 +488,11 @@ class RelationshipTurnEvent:
             accepted_answer_score=accepted_answer_score,
             accepted_style_score=accepted_style_score,
             accepted_action_score=accepted_action_score,
+            perceived_coldness=perceived_coldness,
+            tone_feedback=tone_feedback,
+            relational_repair_requested=relational_repair_requested,
+            user_requests_less_distance=user_requests_less_distance,
+            defensive_risk=defensive_risk,
             event_confidence=_score(scores.confidence),
             relationship_evidence=tuple(scores.evidence or ()),
             relationship_debug=scores.debug or {},
@@ -566,6 +586,7 @@ class RelationshipDynamicsEngine:
         explicit_accepted_style: float | None = None,
         explicit_accepted_answer: float | None = None,
         explicit_accepted_action: float | None = None,
+        relational_feedback: Any = None,
     ) -> RelationshipTurnEvent:
         """Tạo RelationshipTurnEvent từ text + context.
 
@@ -596,6 +617,7 @@ class RelationshipDynamicsEngine:
             explicit_accepted_style=explicit_accepted_style,
             explicit_accepted_answer=explicit_accepted_answer,
             explicit_accepted_action=explicit_accepted_action,
+            relational_feedback=relational_feedback,
             evidence_ids=evidence_ids,
         )
         return RelationshipTurnEvent.from_affect(
@@ -639,6 +661,11 @@ class RelationshipDynamicsEngine:
         accepted_action = _score(event.accepted_action_score)
         accepted_any = max(accepted_answer, accepted_style, accepted_action)
         technical_success = _score(event.assistant_technical_success)
+        perceived_coldness = _score(getattr(event, "perceived_coldness", 0.0))
+        tone_feedback = _score(getattr(event, "tone_feedback", 0.0))
+        relational_repair_requested = _score(getattr(event, "relational_repair_requested", 0.0))
+        user_requests_less_distance = _score(getattr(event, "user_requests_less_distance", 0.0))
+        defensive_risk = _score(getattr(event, "defensive_risk", 0.0))
 
         # 1) Familiarity / ritual từ repeated_project_context score.
         familiarity_gain = 0.006
@@ -684,6 +711,27 @@ class RelationshipDynamicsEngine:
             current.exposure_recoil = _nudge(current.exposure_recoil, 0.06)
             notes.append(f"{PERCEIVED_REJECTION_EVENT}:affect")
             notes.append(f"{RELATIONAL_EXPOSURE}:emotional_exposure")
+
+        # 4b) User says ERIS felt cold/distant/robotic. This is repair signal,
+        # not objectification and not a reason to raise dignity defense.
+        if relational_repair_requested >= 0.35 or perceived_coldness >= 0.35:
+            repair_signal = max(relational_repair_requested, perceived_coldness, tone_feedback)
+            current.repair = _nudge(current.repair, 0.090 + repair_signal * 0.120)
+            current.preferred_distance = _nudge(
+                current.preferred_distance,
+                -(0.035 + user_requests_less_distance * 0.060),
+            )
+            current.attachment_visibility = _nudge(
+                current.attachment_visibility,
+                0.018 + user_requests_less_distance * 0.030,
+            )
+            current.trust = _nudge(current.trust, 0.004)
+            current.exposure_recoil = _nudge(current.exposure_recoil, -0.016)
+            current.overread_correction = _nudge(current.overread_correction, 0.018 + defensive_risk * 0.020)
+            current.attachment_visibility = min(current.attachment_visibility, 0.28)
+            current.preferred_distance = max(current.preferred_distance, 0.42)
+            notes.append(f"repair:coldness_feedback_acknowledged:{repair_signal:.2f}")
+            notes.append("style:warmth_floor_required")
 
         if romantic_boundary_probe >= 0.55:
             current.repair = _nudge(current.repair, 0.06)
@@ -794,6 +842,11 @@ class RelationshipDynamicsEngine:
             "accepted_action": accepted_action,
             "accepted_any": accepted_any,
             "technical_success": technical_success,
+            "perceived_coldness": perceived_coldness,
+            "tone_feedback": tone_feedback,
+            "relational_repair_requested": relational_repair_requested,
+            "user_requests_less_distance": user_requests_less_distance,
+            "defensive_risk": defensive_risk,
             "event_confidence": _score(event.event_confidence),
         }
 
@@ -876,6 +929,8 @@ class RelationshipDynamicsEngine:
             f"{PERCEIVED_REJECTION_EVENT}:",
             f"{RELATIONAL_EXPOSURE}:",
             f"{BOUNDARY_PROBE}:",
+            "repair:coldness_feedback_acknowledged",
+            "style:warmth_floor_required",
             "boundary:",
             "rupture:",
             "self_correction:",

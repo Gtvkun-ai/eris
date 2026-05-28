@@ -107,10 +107,12 @@ class LegacyLayerAdapter:
         for item in raw_items:
             record = record_from_layer_item(self.layer, item)
             candidate = self._candidate_for_record(record, cue)
-            # Cho phép background bias rất yếu ở relational/procedural/affective
-            # nhưng candidate không có relevance sẽ bị scorer cắt.
-            if candidate.rough_score() > 0.0 or not cue.token_set():
-                candidates.append(candidate)
+            # Best architecture: retrieval should not let the adapter silently drop
+            # candidate objects. Scorer owns relevance/permission/background policy.
+            # Otherwise a layer can never create a useful background bias because
+            # rough lexical score was zero. A tiny gate pretending to be cognition,
+            # very on-brand for legacy code.
+            candidates.append(candidate)
 
         candidates.sort(key=lambda item: item.rough_score(), reverse=True)
         return candidates[:limit]
@@ -137,7 +139,9 @@ class LegacyLayerAdapter:
         cue_norm = normalize_text(cue_text)
         record_norm = record.normalized_text()
 
-        cue_tokens = tuple(cue.token_set())
+        # Preserve token order for bigram scoring. cue.token_set() is intentionally unordered;
+        # using it here made phrases like "fake output" randomly disappear.
+        cue_tokens = tokenize(cue.all_text())
         record_tokens = record.tokens()
 
         cue_counter = weighted_counter(cue_tokens)

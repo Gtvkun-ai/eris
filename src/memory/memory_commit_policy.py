@@ -1,292 +1,695 @@
 from __future__ import annotations
 
+"""
+memory_commit_policy.py
+=======================
+
+Memory intake policy cho user turn.
+
+File này đi theo 3 tầng:
+    1. Importance detection: câu này có đáng giữ không?
+    2. Extraction attempt: có parse được thành fact_key/value/procedure không?
+    3. Fallback capture: nếu quan trọng nhưng chưa parse được, lưu memory_candidate.
+
+Nó KHÔNG ghi thẳng memory.
+Nó KHÔNG gọi store.
+Nó KHÔNG dựa vào LLM để "cảm thấy đã nhớ".
+
+Nếu một câu đáng nhớ nhưng chưa parse được, policy tạo CANDIDATE_COMMIT.
+Public layer sau đó chỉ nên nói kiểu: đã giữ dấu vết, chưa chưng cất thành
+ký ức ổn định. Không nói "đã nhớ chắc". Văn minh tối thiểu, thật đáng ngạc nhiên.
+"""
+
 import re
+import unicodedata
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
-from .memory_models import (
-    DecayPolicy,
-    MemoryCommitDecision,
-    MemoryKind,
-    MemoryTarget,
-    SurfaceMode,
+try:  # package path: src/memory/memory_commit_policy.py
+    from .memory_models import (
+        DecayPolicy,
+        MemoryCommitDecision,
+        MemoryKind,
+        MemoryTarget,
+        SurfaceMode,
+    )
+except Exception:  # pragma: no cover - chạy file rời khi test
+    from memory_models import (  # type: ignore
+        DecayPolicy,
+        MemoryCommitDecision,
+        MemoryKind,
+        MemoryTarget,
+        SurfaceMode,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Normalize helpers
+# ---------------------------------------------------------------------------
+
+def _strip_accents(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", str(text or ""))
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+
+
+def normalize_vi(text: str) -> str:
+    """Normalize tiếng Việt để match rule ổn định hơn.
+
+    Bản normalize chỉ dùng để nhận diện. Không dùng nó làm surface public,
+    vì làm mất dấu tên riêng kiểu "Tín" thì hơi tội nghiệp dữ liệu.
+    """
+
+    lowered = _strip_accents(str(text or "").lower()).replace("đ", "d")
+    lowered = re.sub(r"[^\w\s:/@.+#-]", " ", lowered, flags=re.UNICODE)
+    return " ".join(lowered.split())
+
+
+def _clean_value(value: str) -> str:
+    text = " ".join(str(value or "").strip().split())
+    text = text.strip(" .,:;!?\"'“”‘’`")
+    # Cắt vài hạt đệm hay dính vào cuối self-disclosure ngắn.
+    text = re.sub(r"\s+(nha|nhé|nhe|đấy|day|thôi|thoi|ạ|a)$", "", text, flags=re.IGNORECASE)
+    return text.strip(" .,:;!?\"'“”‘’`")
+
+
+def _evidence(turn_id: str | None) -> list[str]:
+    return [str(turn_id)] if str(turn_id or "").strip() else []
+
+
+def _has_self_marker(norm: str) -> bool:
+    return bool(re.search(r"\b(toi|minh|t|tui|tao|em|i|me|my)\b", norm))
+
+
+def _looks_like_question(norm: str, raw: str) -> bool:
+    """Chặn recall query khỏi bị commit nhầm thành fact.
+
+    "tôi tên gì", "tôi bao nhiêu tuổi", "tôi đang ở đâu" là câu hỏi.
+    "nhớ rằng tôi tên là X" dù có dấu ? kỳ quặc vẫn được xử lý nếu có marker nhớ.
+    """
+
+    if any(marker in norm for marker in ("nho rang", "hay nho", "remember that")):
+        return False
+    if "?" in str(raw or ""):
+        return True
+    question_markers = (
+        "toi ten gi",
+        "ten toi la gi",
+        "toi la ai",
+        "toi bao nhieu tuoi",
+        "toi may tuoi",
+        "toi sinh nam nao",
+        "toi sinh thang may",
+        "toi dang o dau",
+        "toi hien o dau",
+        "hom qua toi o dau",
+        "truoc day toi o dau",
+        "em nho",
+        "co nho",
+    )
+    return any(re.search(r"(?:^|\s)" + re.escape(marker) + r"(?:\s|$)", norm) for marker in question_markers)
+
+
+def _extract_with_patterns(raw: str, patterns: Iterable[str]) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, raw, flags=re.IGNORECASE | re.UNICODE)
+        if not match:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return value
+    return ""
+
+
+def _year_from_2k(token: str) -> int | None:
+    match = re.fullmatch(r"2k(\d{1,2})", str(token or "").strip().lower())
+    if not match:
+        return None
+    suffix = int(match.group(1))
+    # 2k6 -> 2006, 2k06 -> 2006, 2k24 -> 2024.
+    return 2000 + suffix
+
+
+def _bounded_month(value: str) -> int | None:
+    raw = normalize_vi(value)
+    month_words = {
+        "mot": 1, "một": 1,
+        "hai": 2,
+        "ba": 3,
+        "bon": 4, "bốn": 4, "tu": 4, "tư": 4,
+        "nam": 5, "năm": 5,
+        "sau": 6, "sáu": 6,
+        "bay": 7, "bảy": 7,
+        "tam": 8, "tám": 8,
+        "chin": 9, "chín": 9,
+        "muoi": 10, "mười": 10,
+        "muoi mot": 11, "mười một": 11,
+        "muoi hai": 12, "mười hai": 12,
+    }
+    if raw in month_words:
+        return month_words[raw]
+    match = re.search(r"\d{1,2}", raw)
+    if not match:
+        return None
+    month = int(match.group(0))
+    return month if 1 <= month <= 12 else None
+
+
+EXPLICIT_MEMORY_MARKERS: tuple[str, ...] = (
+    "nho",
+    "nho rang",
+    "hay nho",
+    "ghi lai",
+    "luu",
+    "luu lai",
+    "quan trong",
+    "tu gio",
+    "sau nay",
+    "ve sau",
+    "dung quen",
+    "do not forget",
+    "remember that",
+    "from now on",
 )
-from .text_normalize_vi import compact_spaces, normalize_vi
 
 
-@dataclass(frozen=True)
-class ExtractedFact:
-    """Fact ứng viên được rút ra từ một user turn."""
+def _explicit_importance(norm: str) -> tuple[float, list[str]]:
+    reasons: list[str] = []
+    if any(marker in norm for marker in ("nho", "ghi lai", "luu", "remember", "dung quen")):
+        reasons.append("explicit_memory_marker")
+    if any(marker in norm for marker in ("quan trong", "important")):
+        reasons.append("importance_marker")
+    if any(marker in norm for marker in ("tu gio", "sau nay", "ve sau", "from now on")):
+        reasons.append("future_or_convention_marker")
+    if not reasons:
+        return 0.0, []
+    score = 0.85
+    if "importance_marker" in reasons:
+        score = max(score, 0.90)
+    if "future_or_convention_marker" in reasons:
+        score = max(score, 0.88)
+    return score, reasons
 
-    kind: MemoryKind
-    value: str
-    raw_span: str
-    confidence: float
-    evidence_reason: str
 
-
-class UserFactExtractor:
-    """
-    Rút fact từ câu user theo dạng cấu trúc.
-
-    Có pattern, nhưng không phải fallback keyword vá cháy. Pattern chỉ làm
-    nhiệm vụ evidence extraction cho các fact người dùng tự khai báo rõ ràng.
-    Suy diễn cao cấp hơn nên đặt ở tầng Meaning/ToM, không đặt ở đây.
-    """
-
-    _NAME_PATTERNS = (
-        re.compile(r"\b(?:tôi|toi|tao|mình|minh|tớ|to)\s+tên\s+là\s+(.+)$", re.IGNORECASE),
-        re.compile(r"\b(?:tên\s+(?:của\s+)?(?:tôi|toi|tao|mình|minh|tớ|to)\s+là)\s+(.+)$", re.IGNORECASE),
-        re.compile(r"\b(?:gọi\s+(?:tôi|toi|tao|mình|minh|tớ|to)\s+là)\s+(.+)$", re.IGNORECASE),
+def _looks_like_convention(norm: str) -> bool:
+    return bool(
+        any(marker in norm for marker in ("tu gio", "sau nay", "ve sau", "neu", "khi", "luc nao"))
+        and any(marker in norm for marker in ("hieu la", "tuc la", "coi la", "xem la", "nghia la", "thi hieu", "handling", "interpret"))
     )
 
-    _BIRTH_MONTH_PATTERNS = (
-        re.compile(r"\b(?:tháng\s+sinh|thang\s+sinh)\s+(?:là|la)?\s*(?:tháng|thang)?\s*(\d{1,2})\b", re.IGNORECASE),
-        re.compile(r"\b(?:tôi|toi|mình|minh)\s+sinh\s+(?:tháng|thang)\s*(\d{1,2})\b", re.IGNORECASE),
-    )
 
-    _ENDING_STYLE_PATTERNS = (
-        re.compile(r"\b(?:kết\s*thúc|ket\s*thuc)\s+câu\s+(?:bằng|bang)\s+(.+?)(?:\s+(?:bắt đầu|bat dau)\s+từ\s+giờ|\s*$)", re.IGNORECASE),
-        re.compile(r"\b(?:sau này|sau nay).{0,40}(?:kết\s*thúc|ket\s*thuc).{0,20}(?:bằng|bang)\s+(.+)$", re.IGNORECASE),
-    )
-
-    # ASCII/Unicode-safe overrides for environments where legacy literals were saved
-    # with mojibake but runtime inputs are still normalized correctly.
-    _NAME_PATTERNS = (
-        re.compile(r"\b(?:toi|tôi|tao|minh|mình|to|tớ)\s+(?:ten|tên)\s+(?:la|là)\s+(.+)$", re.IGNORECASE),
-        re.compile(r"\b(?:ten|tên)\s+(?:cua\s+|của\s+)?(?:toi|tôi|tao|minh|mình|to|tớ)\s+(?:la|là)\s+(.+)$", re.IGNORECASE),
-        re.compile(r"\b(?:goi|gọi)\s+(?:toi|tôi|tao|minh|mình|to|tớ)\s+(?:la|là)\s+(.+)$", re.IGNORECASE),
-    )
-
-    _BIRTH_MONTH_PATTERNS = (
-        re.compile(r"\b(?:thang\s+sinh|tháng\s+sinh)\s+(?:la|là)?\s*(?:thang|tháng)?\s*(\d{1,2})\b", re.IGNORECASE),
-        re.compile(r"\b(?:toi|tôi|minh|mình)\s+sinh\s+(?:thang|tháng)\s*(\d{1,2})\b", re.IGNORECASE),
-    )
-
-    _ENDING_STYLE_PATTERNS = (
-        re.compile(r"\b(?:ket\s*thuc|kết\s*thúc)\s+cau\s+(?:bang|bằng)\s+(.+?)(?:\s+(?:bat\s+dau|bắt đầu)\s+tu\s+gio|\s*$)", re.IGNORECASE),
-        re.compile(r"\b(?:sau\s+nay|sau này).{0,40}(?:ket\s*thuc|kết\s*thúc).{0,20}(?:bang|bằng)\s+(.+)$", re.IGNORECASE),
-    )
-
-    _MEMORY_TEST_HINTS = (
-        "cau thu",
-        "cau hoi thu",
-        "nho cau",
-        "toi da hoi bao nhieu",
-        "cau nao la nhieu ky tu",
-        "dai nhat",
-    )
-
-    def extract(self, user_text: str) -> list[ExtractedFact]:
-        facts: list[ExtractedFact] = []
-        raw = compact_spaces(user_text)
-        normalized = normalize_vi(raw)
-
-        facts.extend(self._extract_name(raw))
-        facts.extend(self._extract_birth_month(raw))
-        facts.extend(self._extract_response_style(raw, normalized))
-
-        if any(hint in normalized for hint in self._MEMORY_TEST_HINTS):
-            facts.append(
-                ExtractedFact(
-                    kind=MemoryKind.SESSION_MEMORY_TEST,
-                    value="user đang kiểm tra khả năng nhớ thứ tự, số lượng hoặc nguyên văn câu trong phiên",
-                    raw_span=raw,
-                    confidence=0.80,
-                    evidence_reason="user_memory_test_prompt",
-                )
-            )
-
-        return facts
-
-    def _extract_name(self, raw: str) -> Iterable[ExtractedFact]:
-        for pattern in self._NAME_PATTERNS:
-            match = pattern.search(raw)
-            if not match:
-                continue
-            name = self._clean_value(match.group(1))
-            if self._valid_person_name(name):
-                yield ExtractedFact(
-                    kind=MemoryKind.USER_NAME,
-                    value=name,
-                    raw_span=match.group(0),
-                    confidence=0.98,
-                    evidence_reason="explicit_user_name_statement",
-                )
-            return
-
-    def _extract_birth_month(self, raw: str) -> Iterable[ExtractedFact]:
-        normalized_raw = normalize_vi(raw)
-        for pattern in self._BIRTH_MONTH_PATTERNS:
-            match = pattern.search(normalized_raw)
-            if not match:
-                continue
-            month = int(match.group(1))
-            if 1 <= month <= 12:
-                yield ExtractedFact(
-                    kind=MemoryKind.USER_BIRTH_MONTH,
-                    value=str(month),
-                    raw_span=raw,
-                    confidence=0.92,
-                    evidence_reason="explicit_birth_month_statement",
-                )
-            return
-
-    def _extract_response_style(self, raw: str, normalized: str) -> Iterable[ExtractedFact]:
-        for pattern in self._ENDING_STYLE_PATTERNS:
-            match = pattern.search(normalized)
-            if not match:
-                continue
-
-            marker = self._clean_value(match.group(1))
-            marker = marker.strip(" .'\"")
-            if 1 <= len(marker) <= 12:
-                yield ExtractedFact(
-                    kind=MemoryKind.USER_RESPONSE_STYLE,
-                    value=f"kết thúc câu bằng {marker}",
-                    raw_span=raw,
-                    confidence=0.90,
-                    evidence_reason="explicit_response_style_preference",
-                )
-            return
-
-    @staticmethod
-    def _clean_value(value: str) -> str:
-        value = compact_spaces(value)
-        value = value.strip(" .,:;!?\"'“”")
-        return value
-
-    @staticmethod
-    def _valid_person_name(value: str) -> bool:
-        if not value:
-            return False
-        if len(value) > 80:
-            return False
-        bad_fragments = ("tháng", "thang", "câu", "cau", "không", "khong", "gì", "gi")
-        normalized = normalize_vi(value)
-        return not any(fragment in normalized for fragment in bad_fragments)
+def _guess_domain(norm: str) -> str:
+    if _looks_like_convention(norm):
+        return "user_convention"
+    if any(marker in norm for marker in ("vibe", "tone", "giong", "style", "khong khi")):
+        return "style_or_vibe"
+    if any(marker in norm for marker in ("logic", "kien truc", "architecture", "pipeline", "memory", "eris")):
+        return "project_logic"
+    if any(marker in norm for marker in ("cach xu ly", "xu ly", "rule", "quy tac", "policy")):
+        return "procedural_rule"
+    return "general_memory_candidate"
 
 
+def _candidate_fact_keys(norm: str, domain: str) -> list[str]:
+    keys: list[str] = []
+    if domain == "user_convention":
+        keys.extend(["user.convention", "project.vocabulary", "procedural_rule"])
+    if domain == "style_or_vibe":
+        keys.extend(["user.preference.vibe", "style.memory_candidate"])
+    if domain == "project_logic":
+        keys.extend(["project.logic", "project.architecture", "procedural_rule"])
+    if domain == "procedural_rule":
+        keys.extend(["procedural_rule", "user.handling_rule"])
+    if any(marker in norm for marker in ("eris", "trang thai loi", "core status", "status")):
+        keys.extend(["project.eris", "user.convention.core_status_phrase"])
+    if not keys:
+        keys.append("memory_candidate.unresolved")
+    # dedupe giữ thứ tự, vì một dòng dict mà lặp key thì đúng là nghệ thuật tệ.
+    return list(dict.fromkeys(keys))[:6]
+
+
+def _slug_key(value: str, *, limit: int = 48) -> str:
+    slug = normalize_vi(value)
+    slug = re.sub(r"[^a-z0-9_]+", "_", slug)
+    slug = re.sub(r"_+", "_", slug).strip("_")
+    return (slug or "rule")[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Main policy
+# ---------------------------------------------------------------------------
+
+@dataclass(slots=True)
 class MemoryCommitPolicy:
+    """Memory intake 3 tầng cho user turn.
+
+    Tầng 1: phát hiện importance.
+    Tầng 2: cố extract semantic/episodic/procedural fact rõ.
+    Tầng 3: nếu explicit important nhưng chưa parse được, tạo memory_candidate.
+
+    Output vẫn chỉ là request-level decision. Commit thật đi qua
+    StateCommitter/MemoryCognitionCore.
     """
-    Quyết định commit memory theo ý nghĩa, không theo raw transcript.
 
-    Mục tiêu:
-    - fact định danh rõ ràng phải vào semantic memory;
-    - preference phản hồi phải vào procedural memory;
-    - test trí nhớ/thứ tự câu chỉ là episodic gist hoặc event ledger phiên;
-    - không biến long-term memory thành máy quote nguyên văn.
-    """
+    min_confidence: float = 0.62
+    explicit_candidate_min_importance: float = 0.85
 
-    def __init__(self, extractor: UserFactExtractor | None = None) -> None:
-        self.extractor = extractor or UserFactExtractor()
+    def decide_from_user_turn(
+        self,
+        user_text: str,
+        *,
+        turn_id: str | None = None,
+        allow_candidate: bool = True,
+    ) -> list[MemoryCommitDecision]:
+        raw = str(user_text or "").strip()
+        if not raw:
+            return []
 
-    def decide_from_user_turn(self, user_text: str, *, turn_id: str | None = None) -> list[MemoryCommitDecision]:
+        norm = normalize_vi(raw)
+        if not norm:
+            return []
+        if _looks_like_question(norm, raw):
+            return []
+
+        importance, importance_reasons = _explicit_importance(norm)
         decisions: list[MemoryCommitDecision] = []
 
-        for fact in self.extractor.extract(user_text):
-            if fact.kind == MemoryKind.USER_NAME:
-                decisions.append(self._user_name_decision(fact, turn_id))
-            elif fact.kind == MemoryKind.USER_BIRTH_MONTH:
-                decisions.append(self._birth_month_decision(fact, turn_id))
-            elif fact.kind == MemoryKind.USER_RESPONSE_STYLE:
-                decisions.append(self._response_style_decision(fact, turn_id))
-            elif fact.kind == MemoryKind.SESSION_MEMORY_TEST:
-                decisions.append(self._memory_test_decision(fact, turn_id))
+        for builder in (
+            self._extract_user_name,
+            self._extract_birth_year,
+            self._extract_birth_month,
+            self._extract_age_observed,
+            self._extract_current_residence,
+            self._extract_temporal_residence,
+            self._extract_user_convention,
+            self._extract_response_style,
+            self._extract_memory_test_hint,
+            self._extract_general_preference,
+        ):
+            decision = builder(raw, norm, turn_id)
+            if decision is not None and decision.confidence >= self.min_confidence:
+                decisions.append(decision)
 
-        return self._dedupe(decisions)
+        if decisions:
+            return self._dedupe(decisions)
 
-    def _user_name_decision(self, fact: ExtractedFact, turn_id: str | None) -> MemoryCommitDecision:
+        if allow_candidate and importance >= self.explicit_candidate_min_importance:
+            candidate = self._build_unresolved_candidate(raw, norm, turn_id, importance, importance_reasons)
+            return [candidate] if candidate is not None else []
+
+        return []
+
+    # ------------------------------------------------------------------
+    # Specific extractors
+    # ------------------------------------------------------------------
+
+    def _extract_user_name(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        value = _extract_with_patterns(
+            raw,
+            (
+                r"(?:^|\b)(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+t[eê]n\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
+                r"(?:^|\b)t[eê]n\s+(?:của\s+)?(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
+                r"(?:^|\b)(?:gọi|goi|cứ gọi|cu goi)\s+(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
+                r"(?:^|\b)my\s+name\s+is\s+(.+?)(?=$|[.,;!?])",
+                r"(?:^|\b)call\s+me\s+(.+?)(?=$|[.,;!?])",
+            ),
+        )
+        if not value or len(value) > 60:
+            return None
+
         return MemoryCommitDecision(
             target=MemoryTarget.SEMANTIC,
             kind=MemoryKind.USER_NAME,
-            claim=f"User's name is {fact.value}",
-            surface=f"Ngài từng nói tên mình là {fact.value}.",
-            confidence=fact.confidence,
-            importance=0.98,
-            surface_mode=SurfaceMode.SEMANTIC,
+            claim=f"User's name is {value}",
+            surface=value,
+            confidence=0.94,
+            importance=0.96,
+            surface_mode=SurfaceMode.EXACT,
             decay=DecayPolicy.STABLE,
-            evidence=[turn_id] if turn_id else [],
+            evidence=_evidence(turn_id),
             metadata={
-                "value": fact.value,
                 "fact_key": "user.name",
-                "aliases": ["ten", "name", "preferred name"],
-                "semantic_source": "explicit_user_statement",
-                "source_grounded": True,
-                "evidence_reason": fact.evidence_reason,
-                "overwrite_policy": "replace_same_kind_if_user_self_declares",
+                "value": value,
+                "aliases": ["tên", "ten", "name", "preferred name", "gọi tên", "goi ten"],
+                "raw_user_text": raw,
+                "extraction": "user_name_rule",
             },
         )
 
-    def _birth_month_decision(self, fact: ExtractedFact, turn_id: str | None) -> MemoryCommitDecision:
+    def _extract_birth_year(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        year: int | None = None
+
+        match = re.search(r"\b(?:toi|minh|tui|em|i)\s+(?:sinh\s+nam|sinh)\s+((?:19|20)\d{2}|2k\d{1,2})\b", norm)
+        if not match:
+            match = re.search(r"\b(?:sinh\s+nam|sinh)\s+((?:19|20)\d{2}|2k\d{1,2})\b", norm)
+        if not match and _has_self_marker(norm):
+            match = re.search(r"\b(2k\d{1,2})\b", norm)
+
+        if match:
+            token = match.group(1)
+            year = _year_from_2k(token) if token.startswith("2k") else int(token)
+
+        if year is None or not (1900 <= year <= 2100):
+            return None
+
+        return MemoryCommitDecision(
+            target=MemoryTarget.SEMANTIC,
+            kind=MemoryKind.UNKNOWN,
+            claim=f"User was born in {year}.",
+            surface=str(year),
+            confidence=0.92,
+            importance=0.92,
+            surface_mode=SurfaceMode.EXACT,
+            decay=DecayPolicy.STABLE,
+            evidence=_evidence(turn_id),
+            metadata={
+                "fact_key": "user.birth_year",
+                "value": year,
+                "aliases": ["năm sinh", "nam sinh", "birth year", "2k", "tuổi", "tuoi"],
+                "raw_user_text": raw,
+                "extraction": "birth_year_rule",
+            },
+        )
+
+    def _extract_birth_month(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        value = ""
+        match = re.search(r"\b(?:toi|minh|tui|em|i)\s+sinh\s+thang\s+([a-z0-9 ]{1,16})\b", norm)
+        if not match:
+            match = re.search(r"\bthang\s+sinh\s+(?:cua\s+)?(?:toi|minh|tui|em)\s+(?:la\s+)?([a-z0-9 ]{1,16})\b", norm)
+        if match:
+            value = match.group(1)
+
+        month = _bounded_month(value)
+        if month is None:
+            return None
+
         return MemoryCommitDecision(
             target=MemoryTarget.SEMANTIC,
             kind=MemoryKind.USER_BIRTH_MONTH,
-            claim=f"User's birth month is {fact.value}",
-            surface=f"Ngài từng nói tháng sinh của mình là tháng {fact.value}.",
-            confidence=fact.confidence,
-            importance=0.72,
-            surface_mode=SurfaceMode.SEMANTIC,
+            claim=f"User's birth month is {month}",
+            surface=str(month),
+            confidence=0.88,
+            importance=0.86,
+            surface_mode=SurfaceMode.EXACT,
             decay=DecayPolicy.STABLE,
-            evidence=[turn_id] if turn_id else [],
+            evidence=_evidence(turn_id),
             metadata={
-                "value": fact.value,
                 "fact_key": "user.birth_month",
-                "aliases": ["thang sinh", "birth month", "birthday"],
-                "semantic_source": "explicit_user_statement",
-                "source_grounded": True,
-                "evidence_reason": fact.evidence_reason,
-                "overwrite_policy": "replace_same_kind_if_user_self_declares",
+                "value": month,
+                "aliases": ["tháng sinh", "thang sinh", "birth month", "birthday"],
+                "raw_user_text": raw,
+                "extraction": "birth_month_rule",
             },
         )
 
-    def _response_style_decision(self, fact: ExtractedFact, turn_id: str | None) -> MemoryCommitDecision:
+    def _extract_age_observed(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        match = re.search(r"\b(?:toi|minh|tui|em|i)\s+(?:nam\s+nay\s+)?(?:duoc\s+)?(\d{1,2})\s+tuoi\b", norm)
+        if not match:
+            match = re.search(r"\b(?:i\s+am|im|i'm)\s+(\d{1,2})\s*(?:years?\s+old)?\b", norm)
+        if not match:
+            return None
+
+        age = int(match.group(1))
+        if not (3 <= age <= 120):
+            return None
+
+        return MemoryCommitDecision(
+            target=MemoryTarget.SEMANTIC,
+            kind=MemoryKind.UNKNOWN,
+            claim=f"Người dùng khai báo đang {age} tuổi tại thời điểm nói.",
+            surface=str(age),
+            confidence=0.82,
+            importance=0.78,
+            surface_mode=SurfaceMode.UNCERTAIN,
+            decay=DecayPolicy.DECAYING,
+            evidence=_evidence(turn_id),
+            metadata={
+                "fact_key": "user.age_observed",
+                "value": age,
+                "aliases": ["tuổi", "tuoi", "age", "years old"],
+                "raw_user_text": raw,
+                "extraction": "age_observed_rule",
+                "time_bound": True,
+            },
+        )
+
+    def _extract_current_residence(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        # Chặn past/future để không overwrite current residence.
+        if re.search(r"\b(hom\s+qua|ngay\s+mai|hai\s+ngay|2\s+ngay|tuan\s+truoc|nam\s+truoc|truoc\s+day|sap|se)\b", norm):
+            return None
+
+        value = _extract_with_patterns(
+            raw,
+            (
+                r"(?:^|\b)(?:tôi|toi|mình|minh|tui|em)\s+(?:hiện\s+)?(?:đang\s+)?(?:sống|song|ở|o|cư\s+trú|cu\s+tru)\s+(?:tại|tai|ở|o)?\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
+                r"(?:^|\b)hiện\s+(?:tôi|toi|mình|minh|tui|em)\s+(?:đang\s+)?(?:sống|song|ở|o|cư\s+trú|cu\s+tru)\s+(?:tại|tai|ở|o)?\s+(.+?)(?=$|[.,;!?])",
+            ),
+        )
+        if not value or len(value) > 90:
+            return None
+
+        return MemoryCommitDecision(
+            target=MemoryTarget.SEMANTIC,
+            kind=MemoryKind.UNKNOWN,
+            claim=f"Người dùng hiện đang sống ở {value}.",
+            surface=value,
+            confidence=0.86,
+            importance=0.82,
+            surface_mode=SurfaceMode.SEMANTIC,
+            decay=DecayPolicy.DECAYING,
+            evidence=_evidence(turn_id),
+            metadata={
+                "fact_key": "user.current_residence",
+                "value": value,
+                "aliases": ["nơi ở hiện tại", "noi o hien tai", "current residence", "đang sống ở đâu", "dang song o dau"],
+                "raw_user_text": raw,
+                "extraction": "current_residence_rule",
+                "privacy_level": "private",
+                "time_bound": True,
+            },
+        )
+
+    def _extract_temporal_residence(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        if not any(marker in norm for marker in ("truoc", "hom qua", "ngay mai", "sap", " se ", "tuong lai", "2 ngay", "hai ngay")):
+            return None
+        if not any(marker in norm for marker in ("song", "cu tru", " o ", " tai ")):
+            return None
+        if not _has_self_marker(norm):
+            return None
+
+        # Lấy location sau cụm tại/ở cuối câu. Không hoàn hảo, nhưng đủ làm episodic trace.
+        value = _extract_with_patterns(
+            raw,
+            (
+                r"(?:ở|o|tại|tai)\s+(.+?)(?=$|[.,;!?])",
+            ),
+        )
+        value = _clean_value(value)
+        if not value or len(value) > 90:
+            return None
+
+        if any(marker in norm for marker in ("ngay mai", "sap", " se ", "2 ngay", "hai ngay", "tuong lai")):
+            time_label = "future"
+            claim = f"Người dùng nói sẽ sống/cư trú ở {value} trong một mốc tương lai."
+        else:
+            time_label = "past"
+            claim = f"Người dùng nói từng sống/cư trú ở {value} trong một mốc quá khứ."
+
+        return MemoryCommitDecision(
+            target=MemoryTarget.EPISODIC,
+            kind=MemoryKind.USER_GENERAL_TOPIC,
+            claim=claim,
+            surface=value,
+            confidence=0.76,
+            importance=0.70,
+            surface_mode=SurfaceMode.GIST,
+            decay=DecayPolicy.DECAYING,
+            evidence=_evidence(turn_id),
+            metadata={
+                "fact_key": f"user.{time_label}_residence_claim",
+                "value": value,
+                "time_label": time_label,
+                "raw_user_text": raw,
+                "extraction": "temporal_residence_rule",
+                "privacy_level": "private",
+            },
+        )
+
+    def _extract_user_convention(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        if not _looks_like_convention(norm):
+            return None
+
+        trigger = ""
+        handling_rule = ""
+
+        quoted = re.search(
+            r"(?:nếu|neu|từ giờ|tu gio|sau này|sau nay|về sau|ve sau).*?[\"'“”‘’`](.+?)[\"'“”‘’`].*?(?:hiểu|hieu|tức là|tuc la|nghĩa là|nghia la|coi là|coi la|xem là|xem la)\s+(.+?)(?=$|[.!?])",
+            raw,
+            flags=re.IGNORECASE | re.UNICODE,
+        )
+        if quoted:
+            trigger = _clean_value(quoted.group(1))
+            handling_rule = _clean_value(quoted.group(2))
+        else:
+            match = re.search(
+                r"(?:tu gio|sau nay|ve sau)?\s*(?:neu|khi)?\s*(?:toi|minh|tui|em)?\s*(?:noi|hoi|go|nhap)?\s+(.+?)\s+(?:thi\s+)?(?:hieu la|tuc la|nghia la|coi la|xem la|interpret as)\s+(.+)$",
+                norm,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                trigger = _clean_value(match.group(1))
+                handling_rule = _clean_value(match.group(2))
+
+        if not trigger or not handling_rule:
+            return None
+        if len(trigger) > 100 or len(handling_rule) > 240:
+            return None
+
+        fact_key = f"user.convention.{_slug_key(trigger)}"
         return MemoryCommitDecision(
             target=MemoryTarget.PROCEDURAL,
-            kind=MemoryKind.USER_RESPONSE_STYLE,
-            claim=f"User prefers ERIS to {fact.value}",
-            surface=f"Ngài muốn tôi {fact.value}.",
-            confidence=fact.confidence,
-            importance=0.86,
+            kind=MemoryKind.USER_CONVENTION,
+            claim=f"Khi người dùng dùng trigger '{trigger}', hiểu/xử lý là: {handling_rule}.",
+            surface=f"{trigger} -> {handling_rule}",
+            confidence=0.86,
+            importance=0.92,
             surface_mode=SurfaceMode.SEMANTIC,
             decay=DecayPolicy.STABLE,
-            evidence=[turn_id] if turn_id else [],
+            evidence=_evidence(turn_id),
             metadata={
-                "value": fact.value,
-                "fact_key": "user.preference.reply_style",
-                "aliases": ["response style", "reply style", "kieu tra loi"],
-                "scope": "until_changed",
-                "evidence_reason": fact.evidence_reason,
-                "overwrite_policy": "replace_same_kind_if_user_updates_style",
+                "fact_key": fact_key,
+                "trigger": trigger,
+                "handling_rule": handling_rule,
+                "value": {"trigger": trigger, "handling_rule": handling_rule},
+                "aliases": [trigger, "quy ước", "quy uoc", "convention", "handling rule"],
+                "raw_user_text": raw,
+                "extraction": "user_convention_rule",
             },
         )
 
-    def _memory_test_decision(self, fact: ExtractedFact, turn_id: str | None) -> MemoryCommitDecision:
+    def _extract_response_style(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        if not any(marker in norm for marker in ("tra loi", "giai thich", "noi ngan", "noi dai", "viet ngan", "viet dai", "chu thich", "comment")):
+            return None
+        if not any(marker in norm for marker in ("toi thich", "minh thich", "toi muon", "hay", "dung", "nen", "tu gio", "ve sau")):
+            return None
+
+        return MemoryCommitDecision(
+            target=MemoryTarget.SEMANTIC,
+            kind=MemoryKind.USER_RESPONSE_STYLE,
+            claim=f"Người dùng nêu preference về cách trả lời: {raw}",
+            surface=raw,
+            confidence=0.74,
+            importance=0.74,
+            surface_mode=SurfaceMode.GIST,
+            decay=DecayPolicy.STABLE,
+            evidence=_evidence(turn_id),
+            metadata={
+                "fact_key": "user.response_style",
+                "value": raw,
+                "aliases": ["response style", "reply style", "cách trả lời", "cach tra loi"],
+                "raw_user_text": raw,
+                "extraction": "response_style_rule",
+            },
+        )
+
+    def _extract_memory_test_hint(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        if not any(marker in norm for marker in ("test tri nho", "test memory", "nho lai", "hoi lai")):
+            return None
         return MemoryCommitDecision(
             target=MemoryTarget.EPISODIC,
             kind=MemoryKind.SESSION_MEMORY_TEST,
-            claim="User tested ERIS recall about previous turns in the current session.",
-            surface="Ngài từng kiểm tra trí nhớ của tôi bằng các câu hỏi về thứ tự, số lượng hoặc nội dung câu trong phiên.",
-            confidence=fact.confidence,
-            importance=0.38,
+            claim=f"Người dùng đang kiểm tra hành vi trí nhớ/recall: {raw}",
+            surface="memory_test",
+            confidence=0.70,
+            importance=0.62,
             surface_mode=SurfaceMode.GIST,
-            decay=DecayPolicy.SHORT,
-            evidence=[turn_id] if turn_id else [],
+            decay=DecayPolicy.SESSION,
+            evidence=_evidence(turn_id),
             metadata={
-                "gist": fact.value,
-                "do_not_store_exact_user_text": True,
-                "evidence_reason": fact.evidence_reason,
+                "raw_user_text": raw,
+                "extraction": "memory_test_hint_rule",
             },
         )
 
-    @staticmethod
-    def _dedupe(decisions: list[MemoryCommitDecision]) -> list[MemoryCommitDecision]:
-        seen: set[tuple[str, str, str]] = set()
+    def _extract_general_preference(self, raw: str, norm: str, turn_id: str | None) -> MemoryCommitDecision | None:
+        if not any(marker in norm for marker in ("toi thich", "toi khong thich", "minh thich", "minh khong thich", "i prefer", "i dont like", "i don't like")):
+            return None
+        # Nếu đã là preference về cách trả lời, để _extract_response_style xử lý.
+        # Không commit hai semantic item cho cùng một câu, vì bộ nhớ không cần tự nhân bản.
+        if any(marker in norm for marker in ("tra loi", "giai thich", "noi ngan", "noi dai", "viet ngan", "viet dai", "chu thich", "comment")):
+            return None
+
+        return MemoryCommitDecision(
+            target=MemoryTarget.SEMANTIC,
+            kind=MemoryKind.USER_GENERAL_TOPIC,
+            claim=f"Người dùng nêu preference: {raw}",
+            surface=raw,
+            confidence=0.68,
+            importance=0.66,
+            surface_mode=SurfaceMode.GIST,
+            decay=DecayPolicy.DECAYING,
+            evidence=_evidence(turn_id),
+            metadata={
+                "fact_key": "user.preference.general",
+                "value": raw,
+                "aliases": ["preference", "sở thích", "so thich", "không thích", "khong thich"],
+                "raw_user_text": raw,
+                "extraction": "general_preference_rule",
+            },
+        )
+
+    def _build_unresolved_candidate(
+        self,
+        raw: str,
+        norm: str,
+        turn_id: str | None,
+        importance: float,
+        importance_reasons: list[str],
+    ) -> MemoryCommitDecision | None:
+        raw_text = _clean_value(raw)
+        if not raw_text:
+            return None
+        domain = _guess_domain(norm)
+        candidate_keys = _candidate_fact_keys(norm, domain)
+        confidence = max(0.60, min(0.78, importance - 0.10))
+        return MemoryCommitDecision(
+            target=MemoryTarget.CANDIDATE,
+            kind=MemoryKind.MEMORY_CANDIDATE,
+            claim=f"Unresolved memory candidate: {raw_text}",
+            surface=raw_text,
+            confidence=confidence,
+            importance=importance,
+            surface_mode=SurfaceMode.UNCERTAIN,
+            decay=DecayPolicy.CANDIDATE,
+            evidence=_evidence(turn_id),
+            metadata={
+                "raw_user_text": raw_text,
+                "domain_guess": domain,
+                "candidate_fact_keys": candidate_keys,
+                "extraction_status": "unresolved",
+                "needs_consolidation": True,
+                "importance_reasons": list(importance_reasons),
+                "fallback_reason": "explicit_memory_marker_without_structured_extraction",
+                "public_ack": "held_trace_not_stable_memory",
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Dedupe
+    # ------------------------------------------------------------------
+
+    def _dedupe(self, decisions: list[MemoryCommitDecision]) -> list[MemoryCommitDecision]:
         out: list[MemoryCommitDecision] = []
+        seen: set[tuple[str, str, str]] = set()
         for decision in decisions:
-            key = (decision.target.value, decision.kind.value, decision.claim)
+            fact_key = str(decision.metadata.get("fact_key", ""))
+            value = normalize_vi(str(decision.metadata.get("value", decision.surface)))
+            key = (decision.target.value, fact_key or decision.kind.value, value)
             if key in seen:
                 continue
             seen.add(key)
             out.append(decision)
         return out
+
+
+# Tên mới đúng nghĩa hơn. Giữ MemoryCommitPolicy để code cũ không gãy.
+MemoryIntakePolicy = MemoryCommitPolicy

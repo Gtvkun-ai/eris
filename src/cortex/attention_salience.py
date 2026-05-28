@@ -92,6 +92,7 @@ SignalSource = Literal[
     "system_log",
     "memory",
     "time",
+    "observer",
     "unknown",
 ]
 
@@ -861,6 +862,12 @@ class SalienceClassifier:
         tagset = {str(t).lower() for t in tags}
         if source == "user_chat":
             return "user_request"
+        if source == "observer" or "background_observer" in tagset:
+            if "observer_error_signal" in tagset:
+                return "runtime_risk"
+            if "observer_focus:code" in tagset or "observer_intent:debugging" in tagset:
+                return "technical_issue"
+            return "ambient_context"
         if source in {"vision", "ocr"}:
             return "vision_observation"
         if source == "body":
@@ -889,6 +896,21 @@ class SalienceClassifier:
     def classify_focus_kind(cls, *, source: str, claim: str, tags: Sequence[str]) -> FocusKind:
         lower = claim.lower()
         tagset = {str(t).lower() for t in tags}
+        if source == "observer" or "background_observer" in tagset:
+            if "observer_error_signal" in tagset:
+                return "debug"
+            for tag in tagset:
+                if tag.startswith("observer_focus:"):
+                    focus = tag.split(":", 1)[1]
+                    if focus == "code":
+                        return "code"
+                    if focus in {"media", "game", "system"}:
+                        return "ambient"
+                    if focus in {"docs", "browser", "chat"}:
+                        return "ambient"
+            if "focus=code" in lower or "observer focus=code" in lower:
+                return "code"
+            return "ambient"
         if source == "user_chat":
             if any(token in lower for token in ("code", "file", "class", "dataclass", "python", "c#", "godot", "fix")):
                 return "code"
@@ -1117,6 +1139,8 @@ class AttentionSalienceEngine:
             "vision_fact": "vision",
             "long_term_memory": "memory",
             "clock": "time",
+            "background_observer": "observer",
+            "observer": "observer",
         }
         normalized = aliases.get(source, source)
         allowed = {
@@ -1130,6 +1154,7 @@ class AttentionSalienceEngine:
             "system_log",
             "memory",
             "time",
+            "observer",
         }
         if normalized not in allowed:
             return "unknown"
@@ -1332,7 +1357,10 @@ class AttentionSalienceEngine:
             score += 0.35
         if candidate.privacy_level == "sensitive":
             score += 0.30
-        if any(token in lower_claim for token in SalienceClassifier.RISK_TOKENS):
+        if candidate.source == "observer":
+            if "observer_error_signal" in tags:
+                score += 0.30
+        elif any(token in lower_claim for token in SalienceClassifier.RISK_TOKENS):
             score += 0.30
         return clamp01(score)
 
@@ -1414,6 +1442,9 @@ class AttentionSalienceEngine:
     def _generic_penalty_score(self, candidate: AttentionCandidate) -> float:
         if self.classifier.is_generic_telemetry(source=candidate.source, claim=candidate.claim, tags=candidate.tags):
             return 0.42
+        if candidate.source == "observer" and "observer_error_signal" not in {str(t).lower() for t in candidate.tags}:
+            # Observer nền là hint, không phải sự kiện trọng đại.
+            return 0.18
         if candidate.family == "ambient_context" and candidate.confidence < 0.50:
             return 0.22
         return 0.0
@@ -1431,6 +1462,12 @@ class AttentionSalienceEngine:
             capped = min(capped, 0.18)
         if self.classifier.is_generic_telemetry(source=candidate.source, claim=candidate.claim, tags=candidate.tags):
             capped = min(capped, self.config.generic_telemetry_score_cap)
+        if candidate.source == "observer":
+            tagset = {str(t).lower() for t in candidate.tags}
+            if "observer_error_signal" not in tagset and "observer_call_vision" not in tagset:
+                capped = min(capped, 0.44)
+            elif "observer_error_signal" in tagset:
+                capped = max(capped, min(0.68, 0.42 + candidate.confidence * 0.20))
         if candidate.source == "memory" and candidate.raw_or_inferred == "inferred" and candidate.confidence < 0.70:
             capped = min(capped, self.config.memory_echo_score_cap)
         if candidate.privacy_level == "sensitive" and self.config.privacy_filter_sensitive:

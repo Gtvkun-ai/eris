@@ -56,6 +56,26 @@ import re
 import unicodedata
 from typing import Any, Iterable, Mapping, Sequence
 
+try:  # pragma: no cover - package import
+    from .relational_feedback import RelationalFeedbackSignal
+except Exception:  # pragma: no cover - standalone import
+    try:
+        from relational_feedback import RelationalFeedbackSignal
+    except Exception:
+        @dataclass(frozen=True, slots=True)
+        class RelationalFeedbackSignal:  # type: ignore[no-redef]
+            detected: bool = False
+            kind: str = "unknown"
+            intensity: float = 0.0
+            repair_needed: float = 0.0
+            warmth_request: float = 0.0
+            defensive_risk: float = 0.0
+            evidence: tuple[str, ...] = ()
+
+            @classmethod
+            def empty(cls) -> "RelationalFeedbackSignal":
+                return cls()
+
 
 # ---------------------------------------------------------------------------
 # Helper chung
@@ -218,6 +238,11 @@ class RelationshipEventScores:
     correction: float = 0.0
     objectification: float = 0.0
     technical_success: float = 0.0
+    perceived_coldness: float = 0.0
+    tone_feedback: float = 0.0
+    relational_repair_requested: float = 0.0
+    user_requests_less_distance: float = 0.0
+    defensive_risk: float = 0.0
     confidence: float = 0.0
     evidence: tuple[RelationshipEvidence, ...] = ()
     debug: Mapping[str, float] = field(default_factory=dict)
@@ -236,6 +261,11 @@ class RelationshipEventScores:
             correction=clamp01(self.correction),
             objectification=clamp01(self.objectification),
             technical_success=clamp01(self.technical_success),
+            perceived_coldness=clamp01(self.perceived_coldness),
+            tone_feedback=clamp01(self.tone_feedback),
+            relational_repair_requested=clamp01(self.relational_repair_requested),
+            user_requests_less_distance=clamp01(self.user_requests_less_distance),
+            defensive_risk=clamp01(self.defensive_risk),
             confidence=clamp01(self.confidence),
             evidence=tuple(item.normalized() for item in self.evidence if item.label),
             debug={str(k): round(clamp01(v), 4) for k, v in dict(self.debug or {}).items()},
@@ -276,6 +306,7 @@ class RelationshipEventBuildContext:
     explicit_accepted_style: float | None = None
     explicit_accepted_answer: float | None = None
     explicit_accepted_action: float | None = None
+    relational_feedback: RelationalFeedbackSignal = field(default_factory=RelationalFeedbackSignal.empty)
     evidence_ids: tuple[str, ...] = ()
 
 
@@ -336,6 +367,26 @@ class RelationshipEventBuilder:
         correction = clamp01(get_attr_or_key(ctx.affect, "correction", 0.0))
         objectification = clamp01(get_attr_or_key(ctx.affect, "objectification", 0.0))
         technical_success = clamp01(max(ctx.assistant_technical_success, ctx.previous_assistant_success))
+        relational_feedback = ctx.relational_feedback or RelationalFeedbackSignal.empty()
+        perceived_coldness = 0.0
+        tone_feedback = 0.0
+        relational_repair_requested = 0.0
+        user_requests_less_distance = 0.0
+        defensive_risk = 0.0
+        if bool(getattr(relational_feedback, "detected", False)):
+            perceived_coldness = clamp01(getattr(relational_feedback, "intensity", 0.0))
+            tone_feedback = perceived_coldness
+            relational_repair_requested = clamp01(getattr(relational_feedback, "repair_needed", 0.0))
+            user_requests_less_distance = clamp01(getattr(relational_feedback, "warmth_request", 0.0))
+            defensive_risk = clamp01(getattr(relational_feedback, "defensive_risk", 0.0))
+            evidence.append(RelationshipEvidence(
+                label=f"relational_feedback:{getattr(relational_feedback, 'kind', 'unknown')}",
+                confidence=max(perceived_coldness, relational_repair_requested),
+                source="relational_feedback",
+                polarity=-0.35,
+                evidence_ids=ctx.evidence_ids,
+                notes=tuple(str(item) for item in (getattr(relational_feedback, "evidence", ()) or ()) if str(item or "").strip())[:6],
+            ))
 
         if correction > 0.0:
             evidence.append(RelationshipEvidence(
@@ -371,6 +422,8 @@ class RelationshipEventBuilder:
             correction,
             objectification,
             technical_success,
+            perceived_coldness,
+            relational_repair_requested,
         ]
         nonzero = [value for value in score_values if value > 0.001]
         confidence = clamp01(sum(nonzero) / len(nonzero)) if nonzero else 0.0
@@ -388,6 +441,11 @@ class RelationshipEventBuilder:
             correction=correction,
             objectification=objectification,
             technical_success=technical_success,
+            perceived_coldness=perceived_coldness,
+            tone_feedback=tone_feedback,
+            relational_repair_requested=relational_repair_requested,
+            user_requests_less_distance=user_requests_less_distance,
+            defensive_risk=defensive_risk,
             confidence=confidence,
             evidence=tuple(item.normalized() for item in evidence),
             debug=debug,
@@ -446,8 +504,32 @@ class RelationshipEventBuilder:
             explicit_accepted_style=self._optional_score(data.get("explicit_accepted_style")),
             explicit_accepted_answer=self._optional_score(data.get("explicit_accepted_answer")),
             explicit_accepted_action=self._optional_score(data.get("explicit_accepted_action")),
+            relational_feedback=self._coerce_relational_feedback(data.get("relational_feedback")),
             evidence_ids=tuple_str("evidence_ids"),
         )
+
+    def _coerce_relational_feedback(self, value: Any) -> RelationalFeedbackSignal:
+        if value is None:
+            return RelationalFeedbackSignal.empty()
+        if isinstance(value, RelationalFeedbackSignal):
+            return value
+        if isinstance(value, Mapping):
+            from_dict = getattr(RelationalFeedbackSignal, "from_dict", None)
+            if callable(from_dict):
+                try:
+                    return from_dict(value)
+                except Exception:
+                    pass
+            return RelationalFeedbackSignal(
+                detected=bool(value.get("detected", False)),
+                kind=str(value.get("kind", "unknown") or "unknown"),  # type: ignore[arg-type]
+                intensity=clamp01(value.get("intensity", 0.0)),
+                repair_needed=clamp01(value.get("repair_needed", 0.0)),
+                warmth_request=clamp01(value.get("warmth_request", 0.0)),
+                defensive_risk=clamp01(value.get("defensive_risk", 0.0)),
+                evidence=tuple(str(item) for item in (value.get("evidence", ()) or ()) if str(item or "").strip()),
+            )
+        return RelationalFeedbackSignal.empty()
 
     def _optional_score(self, value: Any) -> float | None:
         if value is None:

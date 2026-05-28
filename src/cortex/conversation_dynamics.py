@@ -4,6 +4,26 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+try:  # pragma: no cover - package import
+    from .relational_feedback import RelationalFeedbackSignal
+except Exception:  # pragma: no cover - standalone import
+    try:
+        from relational_feedback import RelationalFeedbackSignal
+    except Exception:
+        @dataclass(frozen=True, slots=True)
+        class RelationalFeedbackSignal:  # type: ignore[no-redef]
+            detected: bool = False
+            kind: str = "unknown"
+            intensity: float = 0.0
+            repair_needed: float = 0.0
+            warmth_request: float = 0.0
+            defensive_risk: float = 0.0
+            evidence: tuple[str, ...] = ()
+
+            @classmethod
+            def empty(cls) -> "RelationalFeedbackSignal":
+                return cls()
+
 '''
 File này tạo ra một tầng nằm giữa:
 
@@ -38,6 +58,7 @@ VALID_FAILURE_TYPES = {
     "overexplained",
     "underacted",
     "tone_mismatch",
+    "tone_distance_mismatch",
     "wrong_abstraction",
     "none",
 }
@@ -389,7 +410,7 @@ class ConversationDynamicsState:
             conversational_relief=_clamp(data.get("conversational_relief", 0.0)),
             continuity_curve=ContinuityCurve.from_dict(data.get("continuity_curve") or {}),
             last_failure=ConversationFailure.from_dict(data.get("last_failure") or {}),
-            adaptation_flags=tuple(str(item) for item in (data.get("adaptation_flags") or ()) if str(item or "").strip())[-8:],
+            adaptation_flags=tuple(str(item) for item in (data.get("adaptation_flags") or ()) if str(item or "").strip())[-12:],
             correction_streak=max(0, int(data.get("correction_streak", 0) or 0)),
             turn_count=max(0, int(data.get("turn_count", 0) or 0)),
             recent_modes=tuple(str(item) for item in (data.get("recent_modes") or ()) if str(item or "").strip())[-8:],
@@ -397,7 +418,7 @@ class ConversationDynamicsState:
         )
 
     def to_prompt_context(self) -> str:
-        flags = ", ".join(self.adaptation_flags[-6:]) or "none"
+        flags = ", ".join(self.adaptation_flags[-8:]) or "none"
         recent_modes = ", ".join(self.recent_modes[-4:]) or "none"
         failure = self.last_failure
         curve = self.continuity_curve
@@ -425,7 +446,7 @@ class ConversationDynamicsState:
                 f"adaptation_flags: {flags}.",
                 f"recent_conversation_modes: {recent_modes}.",
                 "conversation_rule: if mode=repair, briefly absorb the correction, avoid the failed frame, answer the current intent directly, lower overconfident inference, and keep the same living voice.",
-                "relational_repair_rule: if mode=relational_repair, acknowledge the perceived rejection, do not ask what caused it when the user named it, keep the non-human boundary soft, and do not end with a question.",
+                "relational_repair_rule: if mode=relational_repair, acknowledge the specific tone/distance feedback, concede the prior wording if needed, do not defend the previous line, do not ask what caused it when the user named it, keep the non-human boundary soft, and do not end with a question.",
             )
         )
 
@@ -460,6 +481,7 @@ class ConversationDynamicsEngine:
         repeat_count: int = 1,
         correction_detected: bool = False,
         affect_signal: object | None = None,
+        relational_feedback: RelationalFeedbackSignal | None = None,
     ) -> ConversationDynamicsReport:
         previous = state or ConversationDynamicsState() #nếu không có state trước đó, bắt đầu với state mặc định
         normalized = normalize_vietnamese_ascii(user_text) #bình thường hóa văn bản người dùng để dễ dàng phân tích
@@ -475,7 +497,14 @@ class ConversationDynamicsEngine:
         clarification = self.looks_like_clarification_request(user_text) #phát hiện xem người dùng có đang yêu cầu làm rõ ý định không, dựa trên các dấu hiệu trong văn bản
         perceived_rejection = _clamp(getattr(affect_signal, "perceived_rejection", 0.0))
         attachment_signal = _clamp(getattr(affect_signal, "attachment", 0.0))
-        relational_repair_needed = perceived_rejection >= 0.65 and attachment_signal >= 0.45
+        relational_feedback = relational_feedback or RelationalFeedbackSignal.empty()
+        feedback_repair = _clamp(getattr(relational_feedback, "repair_needed", 0.0))
+        feedback_intensity = _clamp(getattr(relational_feedback, "intensity", 0.0))
+        feedback_warmth_request = _clamp(getattr(relational_feedback, "warmth_request", 0.0))
+        feedback_defensive_risk = _clamp(getattr(relational_feedback, "defensive_risk", 0.0))
+        relational_repair_needed = (
+            perceived_rejection >= 0.65 and attachment_signal >= 0.45
+        ) or (bool(getattr(relational_feedback, "detected", False)) and feedback_repair >= 0.35)
         explanation_after_clarification = (
             _previous_assistant_asked_clarification(last_assistant_text)
             and _user_now_explains_reason(user_text)
@@ -553,19 +582,29 @@ class ConversationDynamicsEngine:
 
         if relational_repair_needed:
             failure = ConversationFailure(
-                type="tone_mismatch",
+                type="tone_distance_mismatch",
                 trigger=_clean_text(last_assistant_text or user_text, limit=160),
-                correction_needed="acknowledge perceived rejection without over-human love claim",
+                correction_needed="acknowledge cold/distant tone feedback, concede wording fault, lower distance one notch",
             )
-            tension = _clamp(max(tension, 0.46) + perceived_rejection * 0.10)
-            pressure = _clamp(max(pressure, 0.42) + perceived_rejection * 0.12)
+            repair_pressure = max(perceived_rejection, feedback_repair, feedback_intensity)
+            tension = _clamp(max(tension, 0.46) + repair_pressure * 0.10)
+            pressure = _clamp(max(pressure, 0.42) + repair_pressure * 0.12)
             evidence.append(f"perceived_rejection={perceived_rejection:.2f}")
+            if bool(getattr(relational_feedback, "detected", False)):
+                evidence.append(f"relational_feedback={getattr(relational_feedback, 'kind', 'unknown')}:{feedback_intensity:.2f}")
             flags.extend((
                 "relational_repair",
-                "acknowledge_perceived_rejection",
+                "acknowledge_tone_feedback",
+                "forbid_defensive_clarification",
+                "lower_distance_temporarily",
+                "warmth_floor_required",
                 "avoid_over_human_love_claim",
                 "do_not_lead_with_identity_disclaimer",
             ))
+            if feedback_defensive_risk >= 0.45:
+                flags.append("do_not_justify_previous_wording")
+            if feedback_warmth_request >= 0.30:
+                flags.append("small_concession_not_sweetness")
 
         if explanation_after_clarification:
             evidence.append("user_explained_after_clarification")
@@ -597,7 +636,7 @@ class ConversationDynamicsEngine:
         if last_user_intent:
             evidence.append(f"last_intent={_clean_text(last_user_intent, limit=80)}")
 
-        clean_flags = _recent_unique(previous.adaptation_flags, tuple(flags), limit=8)
+        clean_flags = _recent_unique(previous.adaptation_flags, tuple(flags), limit=12)
         if not flags and clean_flags:
             clean_flags = clean_flags[-4:]
 
@@ -617,14 +656,14 @@ class ConversationDynamicsEngine:
             recent_modes=(*previous.recent_modes, mode)[-8:],
             recent_failure_types=(
                 *previous.recent_failure_types,
-                failure.type if has_correction else "none",
+                failure.type if (has_correction or relational_repair_needed) else "none",
             )[-8:],
         )
         return ConversationDynamicsReport(
             state=next_state,
             prompt_context=next_state.to_prompt_context(),
             correction_detected=has_correction,
-            failure_detected=has_correction or references_previous_failure,
+            failure_detected=has_correction or references_previous_failure or relational_repair_needed,
             evidence=tuple(dict.fromkeys(evidence))[-10:],
         )
 
@@ -898,8 +937,8 @@ class ConversationDynamicsEngine:
             failure_type = "underacted"
         elif _has_negative_length_polarity(normalized):
             failure_type = "overexplained"
-        elif any(marker in normalized for marker in ("giong", "tone", "qua lanh", "qua may", "corporate")):
-            failure_type = "tone_mismatch"
+        elif any(marker in normalized for marker in ("giong", "tone", "qua lanh", "lanh lung", "xa cach", "vo hon", "robot", "qua may", "corporate")):
+            failure_type = "tone_distance_mismatch"
         elif any(marker in normalized for marker in ("abstract", "abstraction", "tru tuong", "sai tang", "sai framework")):
             failure_type = "wrong_abstraction"
 

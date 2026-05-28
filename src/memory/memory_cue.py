@@ -144,6 +144,19 @@ class MemoryCueBuilder:
         files = self._extract_files(combined)
         modules = self._extract_modules(combined)
         anchors = tuple(dict.fromkeys((*extract_anchors(combined), *files, *modules)))
+        # Add coarse semantic anchors. This is not old keyword routing; it is a
+        # weak retrieval cue so procedural rules like "technical_task" can be
+        # recalled from a natural query containing "technical".
+        norm = normalize_text(combined)
+        coarse_anchors = []
+        if any(tok in norm for tok in ("technical", "code", "debug", "module", "python", "guard", "prompt", "output")):
+            coarse_anchors.extend(["technical_task", "post_generation_guard"])
+        if any(tok in norm for tok in ("fake", "grounded", "bịa", "bia", "evidence", "nguon")):
+            coarse_anchors.extend(["grounded_style", "source_grounding"])
+        if any(tok in norm for tok in ("residue", "quiet", "night", "godot", "silent")):
+            coarse_anchors.extend(["affective_residue", "silent_residue"])
+        if coarse_anchors:
+            anchors = tuple(dict.fromkeys((*anchors, *coarse_anchors)))
 
         needs_current = self._looks_like_current_evidence_request(combined)
         exact = self._looks_like_exact_recall_request(combined)

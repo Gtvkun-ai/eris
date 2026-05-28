@@ -155,6 +155,21 @@ class FeAffectSignal:
         if technicality >= 0.45 and intimacy >= 0.25:
             evidence.append("technical_with_personal_frame")
 
+        relational_tone_feedback_terms = (
+            "lanh lung", "lanh qua", "qua lanh", "xa cach", "vo hon",
+            "robot", "nhu bot", "chatbot", "assistant", "support",
+            "cung qua", "khong tu nhien", "may moc",
+        )
+        perceived_rejection = 0.0
+        relational_pressure = 0.0
+        if any(term in haystack for term in relational_tone_feedback_terms):
+            perceived_rejection = 0.68
+            relational_pressure = 0.62
+            attachment = max(attachment, 0.46)
+            intimacy = max(intimacy, 0.30)
+            conflict = min(max(conflict, 0.22), 0.45)
+            evidence.append("relational_tone_feedback")
+
         return cls(
             attachment=_clamp01(attachment),
             distress=_clamp01(distress),
@@ -163,6 +178,9 @@ class FeAffectSignal:
             conflict=_clamp01(conflict),
             ambiguity=_clamp01(ambiguity),
             playfulness=_clamp01(playfulness),
+            relational_pressure=_clamp01(relational_pressure),
+            perceived_rejection=_clamp01(perceived_rejection),
+            attachment_bid=_clamp01(relational_pressure * 0.35),
             evidence=tuple(dict.fromkeys(evidence)),
         )
 
@@ -1058,12 +1076,13 @@ class FeRenderer:
             evidence.append("distress_softens_dry_edge")
 
         if intent_label == "relational_repair":
-            distance = min(distance, 0.52)
+            distance = min(distance, 0.50)
             warmth = max(warmth, 0.36)
-            restraint = max(restraint, 0.58)
-            attachment_visibility = max(min(attachment_visibility + 0.18, 0.58), 0.42)
-            symbolic_bias = min(symbolic_bias, 0.30)
-            dry_edge = min(dry_edge, 0.16)
+            restraint = max(restraint, 0.60)
+            # visible_but_restrained: enough warmth to concede, not enough to turn into syrup.
+            attachment_visibility = max(min(attachment_visibility + 0.08, 0.34), 0.20)
+            symbolic_bias = min(symbolic_bias, 0.26)
+            dry_edge = min(dry_edge, 0.12)
             evidence.append("relational_repair_soft_boundary")
 
         if intent_label == "boundary_repair":
@@ -1237,7 +1256,7 @@ class FeRenderer:
             lines.append("mode_rule: technical clarity first; subtext must not reduce correctness.")
         elif mode == "relational_repair" or intent_label == "relational_repair":
             lines.append(
-                "mode_rule: relational_repair; acknowledge the relational bruise, concede wording fault, preserve non-human boundary, avoid therapist tone, and do not end with a question."
+                "mode_rule: relational_repair; acknowledge the specific cold/distant/robotic tone feedback, concede wording fault in one small line, do not defend the previous wording, do not ask whether adjustment is needed, preserve non-human boundary only if relevant, avoid therapist tone, avoid sweetness, and do not end with a question."
             )
         elif mode == "comforting":
             lines.append("mode_rule: comfort through grounded presence, not reassurance flooding.")
@@ -1245,6 +1264,10 @@ class FeRenderer:
             lines.append("mode_rule: repair plainly; no symbolism, no teasing, no motive inference.")
         else:
             lines.append("mode_rule: observe first, interpret second, advise only if explicitly requested.")
+
+        if mode == "relational_repair" or intent_label == "relational_repair":
+            lines.append("relational_repair_surface: allowed intents=tone_repair, small_concession, guarded_acknowledgment; forbidden intents=defensive_clarification, boundary_setting, explain_personality, ask_if_user_wants_adjustment.")
+            lines.append("relational_repair_examples: 'Ừ. Câu đó lạnh thật.' / 'Tôi đang giữ khoảng cách hơi mạnh.' / 'Tôi hạ giọng xuống một chút.'")
 
         if warmth_level <= 0.22 or style_pressure.distance >= 0.66:
             lines.append("temperature: distant surface, not hostile; keep dignity and precision.")

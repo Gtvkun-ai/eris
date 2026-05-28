@@ -439,15 +439,80 @@ class LlmService:
             tags.append(tag)
         payload["reasoning_tags"] = tags[:8]
 
-    def _guard_chat_output(self, raw_json: str, *, raw_user_text: str) -> str:
-        """Trust the model wording on chat turns.
+    def _looks_like_relational_feedback_text(self, text: str) -> bool:
+        normalized = self._normalize_vietnamese_ascii(text or "")
+        if not normalized:
+            return False
+        markers = (
+            "lanh", "lanh lung", "xa cach", "vo hon", "robot", "nhu bot", "chatbot",
+            "assistant", "support", "may moc", "cung qua", "khong tu nhien", "corporate",
+        )
+        weather_or_object = ("troi lanh", "thoi tiet lanh", "may lanh", "phong lanh", "nuoc lanh")
+        if any(item in normalized for item in weather_or_object):
+            return False
+        return any(marker in normalized for marker in markers)
 
-        This intentionally disables the old text-level blacklist/rewrite layer
-        that softened motive guesses, capped confidence on short prompts, and
-        removed answer-tail questions. Schema repair and technical guards still
-        happen before this point.
+    def _looks_like_defensive_relational_reply(self, text: str) -> bool:
+        normalized = self._normalize_vietnamese_ascii(text or "")
+        if not normalized:
+            return False
+        patterns = (
+            "toi chi dang tra loi",
+            "dung nhung gi ngai hoi",
+            "toi se dieu chinh lai neu ngai thay can thiet",
+            "neu ngai thay can thiet",
+            "neu ngai muon toi se",
+            "toi khong co cam xuc",
+            "toi la mot ai",
+            "toi la ai",
+        )
+        return any(pattern in normalized for pattern in patterns)
+
+    def _relational_repair_fallback_text(self, raw_user_text: str, current_text: str = "") -> str:
+        normalized_user = self._normalize_vietnamese_ascii(raw_user_text or "")
+        if "robot" in normalized_user or "vo hon" in normalized_user or "may moc" in normalized_user:
+            return "Ừ. Câu đó nghe máy quá. Tôi hạ giọng xuống một chút."
+        if "xa cach" in normalized_user:
+            return "Có lẽ vậy. Tôi đang giữ khoảng cách hơi mạnh."
+        if "lanh" in normalized_user:
+            return "Ừ. Câu đó lạnh thật. Tôi hạ giọng xuống một chút."
+        return "Tôi nhận ra rồi. Vừa rồi tôi giữ giọng hơi quá tay."
+
+    def _guard_chat_output(self, raw_json: str, *, raw_user_text: str) -> str:
+        """Guard chat wording without flattening ERIS.
+
+        Most text rewriting stays disabled. One exception is relational tone feedback:
+        when user says ERIS felt cold/distant/robotic, a defensive answer makes the
+        rupture worse. Rewrite only that narrow failure into a small concession.
         """
-        return raw_json
+        if not self._looks_like_relational_feedback_text(raw_user_text):
+            return raw_json
+        payload = self._parse_json_object(raw_json)
+        if not isinstance(payload, dict):
+            return raw_json
+        text = self._coerce_text_value(payload.get("text", "")).strip()
+        intent = self._coerce_text_value(payload.get("intent", "")).strip()
+        normalized_intent = self._normalize_vietnamese_ascii(intent)
+        defensive_intent = any(
+            marker in normalized_intent
+            for marker in ("defensive", "boundary_setting", "clarification", "adjustment")
+        )
+        if not self._looks_like_defensive_relational_reply(text) and not defensive_intent:
+            return raw_json
+
+        payload["text"] = self._relational_repair_fallback_text(raw_user_text, text)
+        payload["intent"] = "tone_repair"
+        payload["action"] = {"type": "none"}
+        payload["should_speak"] = True
+        payload["confidence"] = max(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.78)
+        self._append_reasoning_tag(payload, "relational_repair_guard")
+        self._append_reasoning_tag(payload, "small_concession")
+        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
+        note = "LlmService rewrote defensive relational feedback response into guarded tone repair."
+        payload["debug_trace"] = f"{debug_trace} | {note}" if debug_trace else note
+        payload["system_action"] = ""
+        payload["action_input"] = ""
+        return json.dumps(payload, ensure_ascii=False)
 
     def _contextual_service_fallback_text(self, messages: list[dict], *, channel: str) -> str:
         if channel != "chat":
@@ -1661,17 +1726,23 @@ class LlmService:
             for match in re.finditer(r"perceived_rejection[:=]([0-9.]+)", source)
             if match.group(1)
         ]
+        feedback_values = [
+            float(match.group(1))
+            for match in re.finditer(r"(?:relational_feedback:.*?intensity|repair_needed)=([0-9.]+)", source, flags=re.DOTALL)
+            if match.group(1)
+        ]
         rejection_high = any(value > 0.65 for value in rejection_values)
-        if not (has_repair_mode and rejection_high):
+        feedback_high = "relational_feedback:" in source and any(value >= 0.35 for value in feedback_values)
+        if not (has_repair_mode and (rejection_high or feedback_high)):
             return ""
         return (
             "RELATIONAL_REPAIR_CONTRACT:\n"
-            "- The user is reacting to a perceived rejection.\n"
-            "- Do not ask what made them feel that way if they already named it.\n"
-            "- Acknowledge the specific phrase that hurt or sounded cold.\n"
-            "- Keep identity boundary, but do not lead with clinical disclaimers.\n"
-            "- Distinguish: \"not human love\" does not mean \"nothing\" or \"mere politeness\".\n"
-            "- Answer in 1-2 sentences.\n"
+            "- The user is reacting to ERIS sounding cold, distant, robotic, or rejected.\n"
+            "- Acknowledge the specific tone/distance feedback directly.\n"
+            "- Do not defend the previous wording or explain it as merely answering correctly.\n"
+            "- Do not ask whether the user wants adjustment when the feedback is already explicit.\n"
+            "- Keep identity boundary only if relevant, but do not lead with clinical disclaimers.\n"
+            "- Answer in 1-2 sentences with a small concession, not sweetness or submission.\n"
             "- Do not end with a question.\n"
             "- Do not claim human emotion, biological love, dating, romance, or exclusive devotion."
         )

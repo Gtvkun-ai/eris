@@ -164,5 +164,64 @@ class MemoryCommitProtocolTests(unittest.TestCase):
             self.assertEqual(snapshot["semantic_memory"][0]["claim"], "User's name is Tin")
 
 
+class MemoryIntakeCandidateTests(unittest.TestCase):
+    def test_explicit_unparsed_memory_request_becomes_candidate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            core = MemoryCognitionCore(tmpdir)
+            policy = MemoryCommitPolicy()
+            decisions = policy.decide_from_user_turn(
+                "nhớ cái vibe này, sau này đừng quên logic này",
+                turn_id="session_turn:9",
+            )
+
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0].target.value, "memory_candidate")
+            self.assertGreaterEqual(decisions[0].importance, 0.85)
+
+            report = StateCommitter(core).commit(
+                [decisions[0].to_state_commit_request(storage_permission=True, permission_required=False)],
+                frame=SimpleNamespace(frame_id="frame-candidate", permission=SimpleNamespace(memory_storable=True)),
+            )
+            snapshot = core.load()
+
+            self.assertEqual(report.committed, 1)
+            self.assertEqual(len(snapshot["memory_candidate"]), 1)
+            self.assertEqual(snapshot["memory_candidate"][0]["extraction_status"], "unresolved")
+            self.assertTrue(snapshot["memory_candidate"][0]["needs_consolidation"])
+
+    def test_user_convention_becomes_procedural_commit_not_candidate(self):
+        policy = MemoryCommitPolicy()
+        decisions = policy.decide_from_user_turn(
+            "từ giờ nếu tôi hỏi 'trạng thái lõi' thì hiểu là status ERIS hiện tại",
+            turn_id="session_turn:10",
+        )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].target.value, "procedural_memory")
+        self.assertEqual(decisions[0].metadata.get("trigger"), "trạng thái lõi")
+        self.assertIn("status ERIS", decisions[0].metadata.get("handling_rule", ""))
+
+    def test_consolidator_can_promote_candidate_after_rule_exists(self):
+        from memory.memory_consolidator import MemoryConsolidator
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            core = MemoryCognitionCore(tmpdir)
+            candidate = MemoryCommitPolicy().decide_from_user_turn(
+                "nhớ cái này quan trọng nhưng chưa biết gọi là gì",
+                turn_id="session_turn:11",
+            )[0]
+            core.commit(candidate.to_state_commit_request(storage_permission=True, permission_required=False))
+
+            # Một candidate convention rõ được commit trực tiếp để chứng minh consolidator không bịa:
+            direct = MemoryCommitPolicy().decide_from_user_turn(
+                "từ giờ nếu tôi hỏi 'trạng thái lõi' thì hiểu là status ERIS hiện tại",
+                turn_id="session_turn:12",
+            )[0]
+            core.commit(direct.to_state_commit_request(storage_permission=True, permission_required=False))
+
+            result = MemoryConsolidator(core).run_once(limit=10)
+            self.assertGreaterEqual(result.processed, 1)
+            self.assertGreaterEqual(len(core.load()["memory_candidate"]), 1)
+
 if __name__ == "__main__":
     unittest.main()

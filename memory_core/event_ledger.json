@@ -920,6 +920,98 @@
         "commit_confidence": 1.0,
         "commit_target": "event_ledger"
       }
+    },
+    {
+      "id": "evt_ec768202d0bd4928",
+      "timestamp": 1779890929.0479357,
+      "iso_timestamp": "2026-05-27T21:08:49+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-2', 'channel': 'chat', 'timestamp': '21:08', 'seen': ['xin chào eris'], 'said': 'Chào Ngài.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.4204088785046729, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:21:08:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_4a7e98c3bbb34a5f",
+      "timestamp": 1779890952.2981102,
+      "iso_timestamp": "2026-05-27T21:09:12+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-3', 'channel': 'chat', 'timestamp': '21:09', 'seen': ['em tên gì'], 'said': 'Tôi là ERIS.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3799104361370716, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:21:09:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_2578762942c54433",
+      "timestamp": 1779890985.0470674,
+      "iso_timestamp": "2026-05-27T21:09:45+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-4', 'channel': 'chat', 'timestamp': '21:09', 'seen': ['rất lạnh lùng'], 'said': 'Tôi chỉ đang trả lời đúng những gì Ngài hỏi.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3653154205607476, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:21:09:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_30c0083b406441c3",
+      "timestamp": 1779891019.5276413,
+      "iso_timestamp": "2026-05-27T21:10:19+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-5', 'channel': 'chat', 'timestamp': '21:10', 'seen': ['lạnh lùng vl luôn'], 'said': 'Tôi sẽ điều chỉnh lại nếu Ngài thấy cần thiết.', 'outcome': 'json', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.38120327102803736, 'parse_mode': 'json'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:21:10:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
     }
   ]
 }

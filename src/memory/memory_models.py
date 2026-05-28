@@ -6,11 +6,12 @@ from typing import Any, Optional
 
 
 class MemoryTarget(str, Enum):
-    """Loại kho nhớ mà một fact nên đi vào."""
+    """Loại kho nhớ mà một fact/candidate nên đi vào."""
 
     SEMANTIC = "semantic_memory"
     EPISODIC = "episodic_memory"
     PROCEDURAL = "procedural_memory"
+    CANDIDATE = "memory_candidate"
     EVENT_LEDGER = "event_ledger"
     REPAIR = "repair_memory"
 
@@ -32,6 +33,16 @@ class DecayPolicy(str, Enum):
     SESSION = "session"
     SHORT = "short"
     DECAYING = "decaying"
+    CANDIDATE = "candidate"
+
+
+class MemoryCommitKind(str, Enum):
+    """Loại commit request ở tầng intake."""
+
+    SEMANTIC_COMMIT = "semantic_commit"
+    EPISODIC_COMMIT = "episodic_commit"
+    PROCEDURAL_COMMIT = "procedural_commit"
+    CANDIDATE_COMMIT = "candidate_commit"
 
 
 class MemoryKind(str, Enum):
@@ -40,6 +51,9 @@ class MemoryKind(str, Enum):
     USER_NAME = "user_identity.name"
     USER_BIRTH_MONTH = "user_identity.birth_month"
     USER_RESPONSE_STYLE = "user_preference.response_style"
+    USER_CONVENTION = "user.convention"
+    PROCEDURAL_RULE = "procedural.rule"
+    MEMORY_CANDIDATE = "memory.candidate"
     SESSION_MEMORY_TEST = "session.memory_test"
     USER_GENERAL_TOPIC = "user.general_topic"
     UNKNOWN = "unknown"
@@ -85,9 +99,13 @@ class MemoryCommitDecision:
         metadata.setdefault("importance", self.importance)
         metadata.setdefault("source", "MemoryCommitPolicy")
         metadata.setdefault("permission", self.permission)
+        metadata.setdefault("commit_kind", _commit_kind_for_target(self.target).value)
         if self.target == MemoryTarget.SEMANTIC:
             metadata.setdefault("semantic_source", "explicit_user_statement")
             metadata.setdefault("source_grounded", True)
+        if self.target == MemoryTarget.CANDIDATE:
+            metadata.setdefault("extraction_status", "unresolved")
+            metadata.setdefault("needs_consolidation", True)
 
         return {
             "target": self.target.value,
@@ -111,7 +129,21 @@ def _state_decay_from_memory_decay(decay: DecayPolicy) -> str:
         return "fast"
     if decay == DecayPolicy.SESSION:
         return "session_only"
+    if decay == DecayPolicy.CANDIDATE:
+        return "slow"
     return "normal"
+
+
+def _commit_kind_for_target(target: MemoryTarget) -> MemoryCommitKind:
+    if target == MemoryTarget.SEMANTIC:
+        return MemoryCommitKind.SEMANTIC_COMMIT
+    if target == MemoryTarget.EPISODIC:
+        return MemoryCommitKind.EPISODIC_COMMIT
+    if target == MemoryTarget.PROCEDURAL:
+        return MemoryCommitKind.PROCEDURAL_COMMIT
+    if target == MemoryTarget.CANDIDATE:
+        return MemoryCommitKind.CANDIDATE_COMMIT
+    return MemoryCommitKind.EPISODIC_COMMIT
 
 
 def _commit_content_from_decision(
@@ -125,6 +157,28 @@ def _commit_content_from_decision(
             "kind": decision.kind.value,
             "surface": decision.surface,
             "value": metadata.get("value"),
+        }
+    if decision.target == MemoryTarget.PROCEDURAL:
+        trigger = str(metadata.get("trigger") or "").strip()
+        rule = str(metadata.get("handling_rule") or decision.claim).strip()
+        return {
+            "trigger": trigger,
+            "handling_rule": rule,
+            "rule": rule,
+            "kind": decision.kind.value,
+            "surface": decision.surface,
+        }
+    if decision.target == MemoryTarget.CANDIDATE:
+        return {
+            "target": "memory_candidate",
+            "raw_text": str(metadata.get("raw_user_text") or decision.claim),
+            "importance": decision.importance,
+            "confidence": decision.confidence,
+            "domain_guess": metadata.get("domain_guess", "unknown"),
+            "candidate_fact_keys": list(metadata.get("candidate_fact_keys") or []),
+            "extraction_status": metadata.get("extraction_status", "unresolved"),
+            "needs_consolidation": bool(metadata.get("needs_consolidation", True)),
+            "reason": decision.claim,
         }
     return decision.claim
 
