@@ -826,6 +826,9 @@ class ChatCycleMixin:
         if public_turn is None:
             return ""
         text = str(getattr(public_turn, "text", "") or "")
+        detector = getattr(self, "_detect_protocol_surface_leak", None)
+        if callable(detector) and detector(text):
+            return "prompt_leak"
         normalized = self._normalize_public_reaction_text(text)
         raw_lower = text.lower()
         prompt_markers = (

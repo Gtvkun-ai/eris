@@ -258,6 +258,171 @@ class ParserGroundingMixin:
 
         return None
 
+    def _extract_first_json_candidate(self, text: str) -> str:
+        start = text.find("{")
+        if start == -1:
+            return ""
+        return text[start:].strip()
+
+    def _repair_json_candidate(self, text: str) -> str:
+        candidate = str(text or "").strip()
+        if not candidate:
+            return ""
+        candidate = (
+            candidate.replace("\u201c", '"')
+            .replace("\u201d", '"')
+            .replace("\u2018", "'")
+            .replace("\u2019", "'")
+        )
+        candidate = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", candidate)
+        candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
+
+        depth = 0
+        in_string = False
+        escaped = False
+        for ch in candidate:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth = max(0, depth - 1)
+        if depth > 0:
+            candidate += "}" * depth
+        candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
+        return candidate.strip()
+
+    def _patch_missing_decision_fields(self, payload: dict, *, parse_mode: str, user_hint: str = "") -> tuple[dict, bool]:
+        patched = self._apply_cognition_action_defaults(dict(payload or {}), user_hint=user_hint)
+        fields_patched = False
+
+        text = self._normalize_salvaged_text(str(patched.get("text", "") or ""))
+        if not text:
+            text = self._normalize_salvaged_text(str(patched.get("extracted_fact", "") or ""))
+        if not text and self._coerce_bool(patched.get("should_speak", True), fallback=True):
+            text = self.fallback["text"]
+            fields_patched = True
+        patched["text"] = text
+
+        structured = self._infer_structured_action(text or user_hint, user_hint=user_hint)
+        default_fields = {
+            "intent": "",
+            "action": "",
+            "reasoning_tags": (),
+            "should_speak": bool(text),
+            "confidence": 0.0,
+            "animation": structured["animation"] or self.fallback["animation"],
+            "extracted_fact": patched.get("extracted_fact", ""),
+            "direction": structured["direction"],
+            "next_animation": structured["next_animation"],
+            "target_x": structured["target_x"],
+            "bounce_action": structured["bounce_action"],
+            "debug_trace": "",
+            "system_action": "",
+            "action_input": "",
+            "motion_intent": "",
+            "motion_target_x": structured["target_x"],
+            "motion_facing": structured["direction"],
+            "parse_mode": parse_mode,
+        }
+        for key, default in default_fields.items():
+            value = patched.get(key, None)
+            if value in (None, "") and key not in {"direction", "target_x", "motion_target_x", "motion_facing", "should_speak", "confidence"}:
+                patched[key] = default
+                fields_patched = True
+                continue
+            if key in {"direction", "target_x", "motion_target_x", "motion_facing"} and key not in patched:
+                patched[key] = default
+                fields_patched = True
+                continue
+            if key in {"should_speak", "confidence"} and key not in patched:
+                patched[key] = default
+                fields_patched = True
+        return patched, fields_patched
+
+    def _finalize_loaded_json_payload(self, payload, *, parse_mode: str, user_hint: str = ""):
+        data = self._normalize_decision_field_keys(payload)
+        if "response" in data and isinstance(data["response"], list) and len(data["response"]) > 0:
+            data = self._normalize_decision_field_keys(data["response"][0])
+        data, fields_patched = self._patch_missing_decision_fields(
+            data,
+            parse_mode=parse_mode,
+            user_hint=user_hint,
+        )
+
+        text = str(data.get("text", self.fallback["text"]))
+        animation = self._sanitize_animation(
+            data.get("animation", self.fallback["animation"]),
+            fallback_text=text,
+            user_hint=user_hint,
+        )
+        fact = str(data.get("extracted_fact", "")).strip()
+        direction = self._sanitize_direction(data.get("direction", 0))
+        next_anim = str(data.get("next_animation", "")).strip()
+        bounce_action = str(data.get("bounce_action", "")).strip()
+        target_x = self._sanitize_target_x(data.get("target_x", -1.0))
+
+        final_parse_mode = "hard_json_repair" if fields_patched and parse_mode == "json" else parse_mode
+        return self._finalize_decision({
+            "text": text,
+            "intent": data.get("intent", ""),
+            "action": data.get("action", ""),
+            "reasoning_tags": data.get("reasoning_tags", ()),
+            "should_speak": data.get("should_speak", bool(text)),
+            "confidence": data.get("confidence", 0.0),
+            "animation": animation,
+            "extracted_fact": fact,
+            "direction": direction,
+            "next_animation": next_anim,
+            "target_x": target_x,
+            "bounce_action": bounce_action,
+            "debug_trace": data.get("debug_trace", data.get("_thought", "")),
+            "parse_mode": final_parse_mode,
+            "system_action": data.get("system_action", ""),
+            "action_input": data.get("action_input", ""),
+            "motion_intent": data.get("motion_intent", ""),
+            "motion_target_x": data.get("motion_target_x", target_x),
+            "motion_facing": data.get("motion_facing", direction),
+        }, user_hint=user_hint)
+
+    def _try_parse_hard_json_repair(self, text: str, user_hint: str = ""):
+        candidate = self._extract_first_json_candidate(text)
+        if not candidate or ":" not in candidate:
+            return None
+
+        attempts: list[str] = []
+        exact_object = self._extract_first_json_object(candidate)
+        if exact_object:
+            attempts.append(exact_object)
+        attempts.append(self._repair_json_candidate(candidate))
+
+        seen: set[str] = set()
+        for attempt in attempts:
+            attempt = str(attempt or "").strip()
+            if not attempt or attempt in seen:
+                continue
+            seen.add(attempt)
+            try:
+                data = json.loads(attempt)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            return self._finalize_loaded_json_payload(
+                data,
+                parse_mode="hard_json_repair",
+                user_hint=user_hint,
+            )
+        return None
+
     def _normalize_salvaged_text(self, text: str):
         # Nếu model trả về block kiểu "text: ... animation: ...",
         # thì chỉ giữ phần từ sau "text:" tới trước field tiếp theo để tránh spam meta-field.
@@ -464,6 +629,67 @@ class ParserGroundingMixin:
         )
         hits = sum(1 for marker in markers if marker in lowered)
         return hits >= 2 or (hits >= 1 and raw.count("*   ") >= 1)
+
+    def _looks_like_non_json_analysis_or_debug_text(self, text: str) -> bool:
+        raw = str(text or "").strip()
+        if not raw:
+            return False
+        lowered = raw.lower()
+        normalized = self._normalize_keyword_text(raw)
+        markers = (
+            "user input:",
+            "context:",
+            "goal:",
+            "eris's current state",
+            "speech intent:",
+            "speech evidence",
+            "constraints:",
+            "return only",
+            "valid json object",
+            "critical output contract",
+            "runtime requirement for this call",
+            "llm final prompt",
+            "reasoning_tags",
+            "should_speak",
+            "debug_trace",
+            "parse_mode",
+            "system_action",
+            "action_input",
+            "correction_triggers_repair",
+            "relational_repair_rule",
+        )
+        hits = sum(1 for marker in markers if marker in lowered or self._normalize_keyword_text(marker) in normalized)
+        instruction_shape = sum(
+            1
+            for marker in (
+                "you are eris",
+                "do not",
+                "must not",
+                "only use",
+                "data bans",
+                "hard bans",
+                "internal state",
+            )
+            if marker in lowered or self._normalize_keyword_text(marker) in normalized
+        )
+        return hits >= 2 or (hits >= 1 and instruction_shape >= 1)
+
+    def _non_json_semantic_fallback_payload(self, *, parse_mode: str, raw_text: str, reason: str) -> dict:
+        return {
+            **self.fallback,
+            "text": "Cau vua roi bi loi format noi bo. Toi bo phan phan tich ky thuat va giu lai cau tra loi an toan.",
+            "debug_trace": self._build_parser_debug_trace(
+                parse_mode=parse_mode,
+                raw_text=raw_text,
+                reason=reason,
+                text="non_json_semantic_fallback",
+                animation=self.fallback["animation"],
+            ),
+            "parse_mode": parse_mode,
+            "intent": "protocol_repair",
+            "system_action": "",
+            "action_input": "",
+        }
 
     # _try_extract_nested_decision_from_text là một phương thức để cố gắng trích xuất một đối tượng JSON
     # lồng nhau từ trường text của quyết định.
@@ -1126,7 +1352,7 @@ class ParserGroundingMixin:
             source_text = str(decision.get("text", self.fallback["text"]))
 
         raw_text = self._normalize_salvaged_text(source_text)
-        if self._looks_like_prompt_or_contract_leak_text(raw_text):
+        if self._looks_like_prompt_or_contract_leak_text(raw_text) or self._looks_like_non_json_analysis_or_debug_text(raw_text):
             raw_text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
             decision["intent"] = "protocol_repair"
             decision["debug_trace"] = str(decision.get("debug_trace", "") or "") + "; parser_blocked_prompt_leak"
@@ -1135,7 +1361,7 @@ class ParserGroundingMixin:
             self._log("info", "Phát hiện JSON lồng trong trường text, đã bóc lại payload bên trong.")
             decision = {**decision, **nested}
             raw_text = self._normalize_salvaged_text(str(decision.get("text", self.fallback["text"])))
-            if self._looks_like_prompt_or_contract_leak_text(raw_text):
+            if self._looks_like_prompt_or_contract_leak_text(raw_text) or self._looks_like_non_json_analysis_or_debug_text(raw_text):
                 raw_text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
                 decision["intent"] = "protocol_repair"
                 decision["debug_trace"] = str(decision.get("debug_trace", "") or "") + "; parser_blocked_nested_prompt_leak"
@@ -1339,6 +1565,16 @@ class ParserGroundingMixin:
                 "action_input": "",
             }, user_hint=user_hint)
 
+        if self._looks_like_prompt_or_contract_leak_text(text) or self._looks_like_non_json_analysis_or_debug_text(text):
+            return self._finalize_decision(
+                self._non_json_semantic_fallback_payload(
+                    parse_mode="semantic_non_json_fallback",
+                    raw_text=text,
+                    reason="Parser chặn non-JSON raw dạng analysis/instruction/debug khỏi surface nguyên văn.",
+                ),
+                user_hint=user_hint,
+            )
+
         display_text = self._normalize_salvaged_text(text)
         if not display_text:
             return self._finalize_decision({
@@ -1348,6 +1584,16 @@ class ParserGroundingMixin:
                 "system_action": "",
                 "action_input": "",
             }, user_hint=user_hint)
+
+        if self._looks_like_prompt_or_contract_leak_text(display_text) or self._looks_like_non_json_analysis_or_debug_text(display_text):
+            return self._finalize_decision(
+                self._non_json_semantic_fallback_payload(
+                    parse_mode="semantic_non_json_fallback",
+                    raw_text=display_text,
+                    reason="Parser chặn salvaged text dạng analysis/instruction/debug khỏi surface nguyên văn.",
+                ),
+                user_hint=user_hint,
+            )
 
         structured = self._infer_structured_action(display_text, user_hint=user_hint)
         animation = structured["animation"]
@@ -1583,6 +1829,10 @@ class ParserGroundingMixin:
         if extracted_json:
             cleaned = extracted_json
         else:
+            repaired_json = self._try_parse_hard_json_repair(cleaned, user_hint=user_hint)
+            if repaired_json is not None:
+                self._log("warning", "Model trả JSON méo, đã hard-repair object đầu tiên trước khi salvage.")
+                return repaired_json
             lax_decision = self._try_parse_lax_json(cleaned, user_hint=user_hint)
             if lax_decision is not None:
                 self._log("warning", "Model trả gần-JSON, đã bóc trường bằng parser nối tay.")
@@ -1594,47 +1844,29 @@ class ParserGroundingMixin:
 
         try:
             data = json.loads(cleaned)
-            data = self._normalize_decision_field_keys(data)
-            if "response" in data and isinstance(data["response"], list) and len(data["response"]) > 0:
-                data = self._normalize_decision_field_keys(data["response"][0])
-            data = self._apply_cognition_action_defaults(data, user_hint=user_hint)
-
-            text = str(data.get("text", self.fallback["text"]))
-            animation = self._sanitize_animation(
-                data.get("animation", self.fallback["animation"]),
-                fallback_text=text,
+            if not isinstance(data, dict):
+                repaired_json = self._try_parse_hard_json_repair(cleaned, user_hint=user_hint)
+                if repaired_json is not None:
+                    self._log("warning", "Top-level JSON không phải object, đã rút về hard-repair object đầu tiên.")
+                    return repaired_json
+                salvaged = self._salvage_non_json_response(cleaned, user_hint=user_hint)
+                if salvaged is not self.fallback:
+                    self._log("warning", "Top-level JSON không phải object, đã chuyển sang semantic fallback/salvage.")
+                    return salvaged
+                return self.fallback
+            parse_mode = "lax_json" if self._requires_lax_json_mode(data) else "json"
+            return self._finalize_loaded_json_payload(
+                data,
+                parse_mode=parse_mode,
                 user_hint=user_hint,
             )
-            fact = str(data.get("extracted_fact", "")).strip()
-
-            direction = self._sanitize_direction(data.get("direction", 0))
-            next_anim = str(data.get("next_animation", "")).strip()
-            bounce_action = str(data.get("bounce_action", "")).strip()
-            target_x = self._sanitize_target_x(data.get("target_x", -1.0))
-
-            parse_mode = "lax_json" if self._requires_lax_json_mode(data) else "json"
-
-            return self._finalize_decision({
-                "text": text,
-                "intent": data.get("intent", ""),
-                "action": data.get("action", ""),
-                "reasoning_tags": data.get("reasoning_tags", ()),
-                "should_speak": data.get("should_speak", bool(text)),
-                "confidence": data.get("confidence", 0.0),
-                "animation": animation,
-                "extracted_fact": fact,
-                "direction": direction,
-                "next_animation": next_anim,
-                "target_x": target_x,
-                "bounce_action": bounce_action,
-                "debug_trace": data.get("debug_trace", data.get("_thought", "")),
-                "parse_mode": parse_mode,
-                "system_action": data.get("system_action", ""),
-                "action_input": data.get("action_input", ""),
-            }, user_hint=user_hint)
         except Exception as e:
             preview = raw_text.replace("\n", "\\n")[:240]
             self._log("warning", f"JSON không hợp lệ: {e} | raw={preview}")
+            repaired_json = self._try_parse_hard_json_repair(cleaned, user_hint=user_hint)
+            if repaired_json is not None:
+                self._log("warning", "JSON méo, đã hard-repair object đầu tiên.")
+                return repaired_json
             lax_decision = self._try_parse_lax_json(cleaned, user_hint=user_hint)
             if lax_decision is not None:
                 self._log("warning", "JSON méo, đã bóc trường bằng parser nối tay.")

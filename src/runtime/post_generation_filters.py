@@ -42,6 +42,7 @@ class PostGenerationFiltersMixin:
             state = self._get_internal_state()
         except Exception:
             state = None
+        decision = self._apply_protocol_surface_guard(decision)
         conversation = getattr(state, "conversation_dynamics", None)
         flags = set(getattr(conversation, "adaptation_flags", ()) or ())
         last_assistant_text = str(getattr(self, "last_chat_answer", "") or "")
@@ -69,6 +70,64 @@ class PostGenerationFiltersMixin:
         if not marker:
             return trace
         return f"{trace} | {marker}" if trace else marker
+
+    def _protocol_surface_leak_markers(self) -> tuple[str, ...]:
+        return (
+            "user input:",
+            "context:",
+            "goal:",
+            "eris's current state",
+            "correction_triggers_repair",
+            "relational_repair_rule",
+            "backtick policy",
+            "backtick_policy",
+            "backtick policy token",
+            "speech intent",
+            "speech evidence",
+            "valid json object",
+            "return only",
+            "reasoning_tags",
+            "should_speak",
+            "debug_trace",
+            "system_action",
+        )
+
+    def _detect_protocol_surface_leak(self, text: str) -> tuple[str, ...]:
+        raw = str(text or "")
+        if not raw.strip():
+            return ()
+        raw_lower = raw.lower()
+        normalized = self._normalize_guard_text(raw)
+        hits: list[str] = []
+        for marker in self._protocol_surface_leak_markers():
+            normalized_marker = self._normalize_guard_text(marker)
+            if marker in raw_lower or (normalized_marker and normalized_marker in normalized):
+                hits.append(marker)
+        return tuple(dict.fromkeys(hits))
+
+    def _protocol_surface_repair_text(self) -> str:
+        return "Xin loi, cau vua roi bi lo prompt noi bo. Toi bo phan do va giu cau tra loi o dang repair an toan."
+
+    def _apply_protocol_surface_guard(self, decision: Decision) -> Decision:
+        hits = self._detect_protocol_surface_leak(getattr(decision, "text", "") or "")
+        if not hits:
+            return decision
+        repaired = self._copy_decision_with_text(
+            decision,
+            text=self._protocol_surface_repair_text(),
+            trace_marker="protocol_surface_guard=" + ",".join(hits),
+            parse_mode="deterministic_repair",
+        )
+        repaired.intent = "repair_surface_leak"
+        repaired.action = "none"
+        repaired.system_action = ""
+        repaired.action_input = ""
+        repaired.should_speak = True
+        try:
+            repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.40)
+        except Exception:
+            repaired.confidence = 0.40
+        return repaired
 
     def _apply_memory_haunting_guard(self, decision: Decision, *, grounding=None) -> Decision:
         # Hard truth guard: memory must not masquerade as current evidence.
@@ -961,6 +1020,7 @@ class PostGenerationFiltersMixin:
             # Tên mode mà vẫn mutate là một lời nguyền bé xinh của cấu hình runtime.
             try:
                 probe = replace(decision)
+                probe = self._apply_protocol_surface_guard(probe)
                 probe = self._guard_recent_context_as_screen_observation(probe)
                 probe = self._apply_memory_haunting_guard(probe)
                 probe = self._apply_force_speak_no_evidence_topic_filter(
@@ -981,6 +1041,7 @@ class PostGenerationFiltersMixin:
                 self.logger.warning("[post_generation log-only] probe failed: %s", exc)
             return decision
 
+        decision = self._apply_protocol_surface_guard(decision)
         decision = self._guard_recent_context_as_screen_observation(decision)
         decision = self._apply_memory_haunting_guard(decision)
         decision = self._apply_anti_mindreading_filter(
@@ -1054,5 +1115,3 @@ class PostGenerationFiltersMixin:
             trace_marker="internal_meaning_label_filter",
             parse_mode=decision.parse_mode,
         )
-
-
