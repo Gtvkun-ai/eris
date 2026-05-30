@@ -99,7 +99,7 @@ class ActionPlanner:
         speech_act = utility_report.selected_action
         should_speak = speech_act != "no_speech"
 
-        speech_intent = self._legacy_speech_intent(
+        speech_intent = self._speech_intent_for_action(
             speech_act,
             channel=channel,
             proposed_intent=proposed_intent,
@@ -224,7 +224,7 @@ class ActionPlanner:
             now=now,
         )
 
-    def _legacy_speech_intent(
+    def _speech_intent_for_action(
         self,
         speech_act: str,
         *,

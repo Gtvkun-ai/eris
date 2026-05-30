@@ -39,13 +39,17 @@ def _dataset_from_texts(texts: list[str]) -> Any:
 
 
 def find_dataset_path(candidates: Iterable[Path | str] | None = None) -> Path:
-    candidates = candidates or (Path("dataset.jsonl"), Path("src/dataset.jsonl"))
+    candidates = candidates or (
+        Path("dataset.jsonl"),
+        Path("training/dataset.jsonl"),
+        Path("src/dataset.jsonl"),
+    )
     for candidate in candidates:
         path = Path(candidate)
         if path.exists():
             return path
     raise FileNotFoundError(
-        "Khong tim thay dataset.jsonl o cwd hien tai hoac trong thu muc src."
+        "Khong tim thay dataset.jsonl o cwd hien tai, trong thu muc training, hoac trong thu muc src."
     )
 
 

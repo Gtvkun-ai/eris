@@ -86,8 +86,8 @@ class CandidateBatch:
     candidates: list[MemoryCandidate] = field(default_factory=list)
 
 
-class LegacyLayerAdapter:
-    """Adapter đọc store cũ bằng load()/recall() nếu có.
+class MemoryLayerAdapter:
+    """Adapter đọc memory store bằng load()/recall() nếu có.
 
     Ưu tiên load() để scorer mới làm việc trên toàn item.
     Nếu store không có load(), fallback sang recall() rồi convert.
@@ -110,8 +110,7 @@ class LegacyLayerAdapter:
             # Best architecture: retrieval should not let the adapter silently drop
             # candidate objects. Scorer owns relevance/permission/background policy.
             # Otherwise a layer can never create a useful background bias because
-            # rough lexical score was zero. A tiny gate pretending to be cognition,
-            # very on-brand for legacy code.
+            # rough lexical score was zero. A tiny gate pretending to be cognition.
             candidates.append(candidate)
 
         candidates.sort(key=lambda item: item.rough_score(), reverse=True)
@@ -172,7 +171,7 @@ class LegacyLayerAdapter:
 
         return MemoryCandidate(
             record=record,
-            retrieval_source=f"{self.layer}:legacy_adapter",
+            retrieval_source=f"{self.layer}:layer_adapter",
             lexical_score=lexical,
             anchor_score=anchor,
             phrase_score=phrase,

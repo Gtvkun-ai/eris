@@ -14,7 +14,7 @@ from domain import Decision
 from cortex.contracts import CognitiveBroadcast, CognitiveMomentum, ThoughtStreamReport, UnresolvedTensionLoop
 from cortex.internal_state import PersistentInternalState
 from cortex.observer_contracts import SemanticSceneNote
-from memory import MemoryCognitionCore
+from memory.memory_cognition import MemoryCognitionCore
 from runtime.coordinator import FALLBACK_BY_INTENT, RuntimeCoordinator
 from runtime.source_grounding import SourceGroundingEngine
 
@@ -82,6 +82,11 @@ class _DummyLlmService:
         self.directive_calls += 1
         self.last_directive_kwargs = kwargs
         return '{"text":"toi len tieng ngay day","animation":"stand","direction":0,"target_x":-1.0,"bounce_action":"","next_animation":"","system_action":"","action_input":""}'
+
+
+class _DummyMemorySemanticParser:
+    def parse(self, text: str, *, structured=None):
+        return None
 
 
 class _VisionFactLlmService(_DummyLlmService):
@@ -575,6 +580,22 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         coordinator.stop()
 
         self.assertFalse(coordinator.subconscious_loop.is_running)
+
+    def test_memory_commit_policy_receives_semantic_parser_from_constructor(self):
+        parser = _DummyMemorySemanticParser()
+        coordinator = self._make_coordinator(memory_semantic_parser=parser)
+
+        self.assertIs(coordinator.memory_semantic_parser, parser)
+        self.assertIs(coordinator.memory_commit_policy.semantic_parser, parser)
+
+    def test_memory_commit_policy_syncs_semantic_parser_if_attached_late(self):
+        parser = _DummyMemorySemanticParser()
+        coordinator = self._make_coordinator()
+
+        coordinator.memory_semantic_parser = parser
+        policy = coordinator._ensure_memory_commit_policy()
+
+        self.assertIs(policy.semantic_parser, parser)
 
     def test_send_decision_to_body_records_public_turn(self):
         coordinator = self._make_coordinator()

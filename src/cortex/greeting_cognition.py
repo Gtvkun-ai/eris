@@ -4,8 +4,6 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from sympy import python
-
 
 GreetingSituation = Literal[
     "low_evidence_start",

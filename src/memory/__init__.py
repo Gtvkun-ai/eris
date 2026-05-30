@@ -1,33 +1,30 @@
-"""Memory package for ERIS."""
+"""Public memory API for ERIS.
 
-from .memory_cognition import (
-    CommitPolicy,
-    MemoryActivation,
-    MemoryCognitionCore,
-    MemoryCommitDecision,
-    MemoryPacket,
-    MemoryQuery,
+Use `MemoryKernel` from the package root for new integration.
+
+Legacy core/query/commit types are intentionally no longer re-exported here.
+Import them from `memory.memory_cognition` explicitly when compatibility is
+still needed.
+"""
+
+from .memory_kernel import MemoryCoreKernel, MemoryKernel, MemoryKernelDebugSnapshot
+from .memory_kernel_contracts import (
+    MaintenanceBudget,
+    MemoryAnswerResult,
+    MemoryIngestMode,
+    MemoryIngestResult,
+    MemoryKernelConfig,
+    MemoryMaintenanceReport,
 )
-from .active_state_snapshot import ActiveStateSnapshot
-from .affective_residue_memory import AffectiveResidueItem
-from .episodic_memory import EpisodicMemoryItem
-from .procedural_memory import ProceduralMemoryItem
-from .relational_memory import RelationalMemoryItem
-from .repair_memory import RepairMemoryItem
-from .semantic_memory import SemanticMemoryItem
 
 __all__ = [
-    "ActiveStateSnapshot",
-    "AffectiveResidueItem",
-    "CommitPolicy",
-    "EpisodicMemoryItem",
-    "RelationalMemoryItem",
-    "MemoryActivation",
-    "MemoryCognitionCore",
-    "MemoryCommitDecision",
-    "MemoryPacket",
-    "MemoryQuery",
-    "ProceduralMemoryItem",
-    "RepairMemoryItem",
-    "SemanticMemoryItem",
+    "MemoryKernel",
+    "MemoryCoreKernel",
+    "MemoryKernelDebugSnapshot",
+    "MemoryKernelConfig",
+    "MemoryIngestMode",
+    "MemoryIngestResult",
+    "MemoryAnswerResult",
+    "MemoryMaintenanceReport",
+    "MaintenanceBudget",
 ]

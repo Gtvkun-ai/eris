@@ -1,0 +1,440 @@
+from __future__ import annotations
+
+"""
+memory.understanding.semantic_parser
+====================================
+
+Semantic parser cho memory intake.
+
+Đường đẹp cần dùng model.gguf:
+    user_text -> model trả JSON frames -> StructuredFrameParser verify -> MeaningFrame
+
+Đường fallback trong file này chỉ là phanh an toàn khi chưa gắn model. Nó cố tình
+nghèo, tập trung, và trả confidence vừa phải. Fallback không được tự tin như thần
+linh hạng rẻ. Khi Ngài nối model.gguf, hãy dùng `ModelSemanticParser` với một
+callable trả dict JSON.
+"""
+
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable, Mapping, Protocol
+
+from .entity_linker import clean_surface, link_entity, normalize, strip_accents
+from .meaning_frame import EntityRef, MeaningFrame, MeaningParseResult
+from .polarity_temporal import analyse_surface, split_clauses
+
+
+class SemanticParser(Protocol):
+    """Protocol chung để runtime có thể thay fallback bằng model.gguf."""
+
+    def parse(self, text: str, *, structured: Mapping[str, Any] | None = None) -> MeaningParseResult:
+        ...
+
+
+@dataclass(slots=True)
+class ModelSemanticParser:
+    """Adapter cho model/LLM parser bên ngoài.
+
+    `parse_callable` là hàm của Ngài. Nó nhận text và trả dict/list đã parse.
+    File này không biết llama.cpp, Ollama hay GGUF. Nó chỉ biết verify output.
+
+    Expected JSON gợi ý:
+    {
+      "frames": [
+        {
+          "frame_type": "location",
+          "relation": "hometown",
+          "subject": "user",
+          "target": {"text": "Hà Tĩnh", "kind": "location"},
+          "polarity": "asserted",
+          "time_scope": "stable",
+          "certainty": 0.86,
+          "evidence_span": "quê tôi là Hà Tĩnh"
+        }
+      ]
+    }
+    """
+
+    parse_callable: Callable[[str], Mapping[str, Any] | list[Any] | None]
+    fallback: SemanticParser | None = None
+
+    def parse(self, text: str, *, structured: Mapping[str, Any] | None = None) -> MeaningParseResult:
+        payload: Mapping[str, Any] | list[Any] | None = structured
+        if payload is None:
+            try:
+                payload = self.parse_callable(text)
+            except Exception as exc:  # model lỗi thì không làm chết memory intake
+                if self.fallback is not None:
+                    result = self.fallback.parse(text)
+                    return MeaningParseResult(frames=result.frames, source="model_failed_fallback", confidence=result.confidence, diagnostics=(f"model_error:{type(exc).__name__}", *result.diagnostics))
+                return MeaningParseResult(source="model_failed", confidence=0.0, diagnostics=(f"model_error:{type(exc).__name__}",))
+        return structured_frames_to_result(text, payload, source="model_semantic_parser")
+
+
+@dataclass(slots=True)
+class StructuredFrameParser:
+    """Parser chỉ verify JSON structured đã có sẵn."""
+
+    def parse(self, text: str, *, structured: Mapping[str, Any] | None = None) -> MeaningParseResult:
+        if structured is None:
+            return MeaningParseResult(source="structured_missing", confidence=0.0, diagnostics=("missing_structured_payload",))
+        return structured_frames_to_result(text, structured, source="structured_payload")
+
+
+@dataclass(slots=True)
+class FallbackSurfaceSemanticParser:
+    """Fallback rất nhỏ khi chưa có model.gguf.
+
+    Nó không cố hiểu sâu. Nó chỉ nhận ra vài frame rất phổ thông bằng các detector
+    tập trung. Quan trọng: detector sinh MeaningFrame, không sinh SemanticClaim và
+    không quyết định lưu lâu.
+    """
+
+    def parse(self, text: str, *, structured: Mapping[str, Any] | None = None) -> MeaningParseResult:
+        if structured:
+            result = structured_frames_to_result(text, structured, source="structured_payload")
+            if result.frames:
+                return result
+
+        surface = analyse_surface(text)
+        if not surface.raw:
+            return MeaningParseResult(source="fallback_surface", confidence=0.0, diagnostics=("empty",))
+        if surface.is_greeting_like:
+            return MeaningParseResult(
+                frames=(MeaningFrame(frame_type="session_event", relation="greeting", certainty=0.85, time_scope="session", stability="session", evidence_span=surface.raw, warnings=("not_long_term",)),),
+                source="fallback_surface",
+                confidence=0.60,
+                diagnostics=surface.evidence,
+            )
+        if surface.is_question and not surface.has_explicit_memory_request:
+            return MeaningParseResult(source="fallback_surface", confidence=0.0, diagnostics=("question_not_commit", *surface.evidence))
+
+        frames: list[MeaningFrame] = []
+        for clause in split_clauses(surface.raw) or [surface.raw]:
+            frames.extend(_parse_clause_as_frames(clause, surface))
+
+        if not frames and surface.has_explicit_memory_request:
+            frames.append(MeaningFrame(
+                frame_type="memory_request",
+                relation="remember_unresolved",
+                target=link_entity(surface.raw, hinted_kind="topic"),
+                polarity="asserted",
+                modality="memory",
+                time_scope="stable",
+                scope="self",
+                certainty=0.66,
+                stability="medium",
+                evidence_span=surface.raw,
+                warnings=("unresolved_memory_request",),
+            ))
+
+        confidence = max((f.certainty for f in frames), default=0.0)
+        return MeaningParseResult(frames=tuple(frames), source="fallback_surface", confidence=confidence, diagnostics=surface.evidence)
+
+
+def structured_frames_to_result(text: str, payload: Mapping[str, Any] | list[Any] | None, *, source: str) -> MeaningParseResult:
+    """Verify structured JSON thành MeaningFrame.
+
+    Hỗ trợ cả {"frames": [...]} lẫn list trực tiếp. Những frame thiếu target vẫn
+    được giữ nếu loại frame là feedback/instruction/session_event, còn lại bị hạ
+    confidence và gắn warning.
+    """
+
+    if payload is None:
+        return MeaningParseResult(source=source, confidence=0.0, diagnostics=("empty_payload",))
+    raw_frames = payload.get("frames") if isinstance(payload, Mapping) else payload
+    if not isinstance(raw_frames, list):
+        # Tương thích bản cũ nếu model trả {claims:[...]}; coi mỗi claim như frame thô.
+        raw_claims = payload.get("claims") if isinstance(payload, Mapping) else None
+        if isinstance(raw_claims, list):
+            raw_frames = [_claim_like_to_frame(item) for item in raw_claims if isinstance(item, Mapping)]
+        else:
+            return MeaningParseResult(source=source, confidence=0.0, diagnostics=("frames_not_list",))
+
+    frames: list[MeaningFrame] = []
+    diagnostics: list[str] = []
+    for item in raw_frames:
+        if not isinstance(item, Mapping):
+            diagnostics.append("skip_non_mapping_frame")
+            continue
+        frame = _frame_from_mapping(item, fallback_evidence=text)
+        if frame is None:
+            diagnostics.append("skip_invalid_frame")
+            continue
+        frames.append(frame)
+
+    confidence = max((f.certainty for f in frames), default=0.0)
+    return MeaningParseResult(frames=tuple(frames), source=source, confidence=confidence, diagnostics=tuple(diagnostics))
+
+
+def _frame_from_mapping(item: Mapping[str, Any], *, fallback_evidence: str) -> MeaningFrame | None:
+    relation = str(item.get("relation") or item.get("predicate") or "").strip()
+    if not relation:
+        return None
+    target_raw = item.get("target")
+    target: EntityRef | None = None
+    if isinstance(target_raw, Mapping):
+        target = EntityRef.from_dict(target_raw)
+    else:
+        obj = item.get("object") or item.get("object_text") or item.get("value")
+        if obj not in (None, ""):
+            target = link_entity(obj, hinted_kind=str(item.get("object_type") or item.get("target_kind") or "unknown"))
+    certainty = _clamp01(item.get("certainty", item.get("confidence", 0.55)))
+    warnings: list[str] = [str(x) for x in item.get("warnings") or () if str(x).strip()]
+    if target is None and str(item.get("frame_type") or "") not in {"feedback", "instruction", "session_event", "memory_request"}:
+        warnings.append("missing_target")
+        certainty = min(certainty, 0.45)
+    return MeaningFrame(
+        frame_type=str(item.get("frame_type") or _infer_frame_type(relation)),  # type: ignore[arg-type]
+        relation=relation,
+        subject=str(item.get("subject") or "user"),
+        target=target,
+        polarity=str(item.get("polarity") or item.get("assertion") or "asserted"),  # type: ignore[arg-type]
+        modality=str(item.get("modality") or "fact"),
+        time_scope=str(item.get("time_scope") or item.get("temporal") or "unknown"),  # type: ignore[arg-type]
+        scope=str(item.get("scope") or "self"),
+        certainty=certainty,
+        stability=str(item.get("stability") or "unknown"),
+        evidence_span=str(item.get("evidence_span") or item.get("evidence_text") or fallback_evidence),
+        source=str(item.get("source") or "user_text"),
+        slots=dict(item.get("slots") or {}),
+        warnings=tuple(warnings),
+    )
+
+
+def _claim_like_to_frame(item: Mapping[str, Any]) -> dict[str, Any]:
+    predicate = str(item.get("predicate") or "")
+    return {
+        "frame_type": _infer_frame_type(predicate),
+        "relation": predicate,
+        "subject": item.get("subject", "user"),
+        "target": {"text": item.get("object") or item.get("object_text") or "", "kind": item.get("object_type") or "unknown"},
+        "polarity": item.get("assertion", "asserted"),
+        "modality": item.get("modality", "fact"),
+        "time_scope": item.get("temporal", "unknown"),
+        "certainty": item.get("confidence", 0.55),
+        "evidence_span": item.get("evidence_text", ""),
+    }
+
+
+def _parse_clause_as_frames(clause: str, surface: Any) -> list[MeaningFrame]:
+    """Fallback detector tập trung.
+
+    Đây là phần còn lexical, nhưng chỉ làm fallback và chỉ sinh MeaningFrame. Nếu
+    Ngài nối model.gguf, function này gần như không còn chạy trong hot path.
+    """
+
+    raw = clean_surface(clause)
+    norm = normalize(raw)
+    if not norm:
+        return []
+    frames: list[MeaningFrame] = []
+
+    # Các pattern ở đây là frame-level, không phải predicate final. Giữ rất ít.
+    identity = _extract_after(raw, (("toi ten la", "name"), ("ten toi la", "name"), ("my name is", "name")))
+    if identity:
+        frames.append(_mk_frame("identity", "name", identity, "person_name", raw, 0.88, "stable", "fact", surface))
+
+    birth_year = _extract_year(norm)
+    if birth_year is not None and _has_self(norm):
+        frames.append(_mk_frame("identity", "birth_year", str(birth_year), "year", raw, 0.84, "stable", "fact", surface))
+
+    hometown = _extract_after(raw, (("que toi la", "hometown"), ("toi que o", "hometown"), ("toi que", "hometown")))
+    if hometown:
+        frames.append(_mk_frame("location", "hometown", hometown, "location", raw, 0.78, "stable", "fact", surface))
+
+    living = _extract_after(raw, (("toi dang song o", "living_location"), ("toi song o", "living_location"), ("noi o cua toi la", "living_location")))
+    if living:
+        frames.append(_mk_frame("location", "living_location", living, "location", raw, 0.76, "current", "fact", surface, stability="medium"))
+
+    current = _extract_after(raw, (("toi dang o", "current_location"), ("toi hien o", "current_location"), ("hien tai toi o", "current_location")))
+    if current:
+        frames.append(_mk_frame("location", "current_location", current, "location", raw, 0.70, "current", "observation", surface, stability="transient"))
+
+    pref = _extract_preference(norm, raw)
+    if pref:
+        target, kind = pref
+        frames.append(_mk_frame("preference", "likes", target, kind, raw, 0.66 if kind == "unknown" else 0.72, "stable", "preference", surface, stability="medium"))
+
+    if _looks_like_style_instruction(norm):
+        frames.append(MeaningFrame(
+            frame_type="instruction",
+            relation="response_style",
+            target=link_entity(raw, hinted_kind="style_rule"),
+            polarity=surface.polarity,
+            modality="instruction",
+            time_scope="stable" if surface.time_scope == "unknown" else surface.time_scope,
+            scope="self",
+            certainty=0.70,
+            stability="medium",
+            evidence_span=raw,
+            warnings=("fallback_style_instruction",),
+        ))
+
+    if _looks_like_feedback(norm):
+        frames.append(MeaningFrame(
+            frame_type="feedback",
+            relation="tone_feedback",
+            target=link_entity(raw, hinted_kind="style_rule"),
+            polarity="asserted",
+            modality="feedback",
+            time_scope="stable",
+            scope="relationship",
+            certainty=0.68,
+            stability="medium",
+            evidence_span=raw,
+            warnings=("fallback_relational_feedback",),
+        ))
+
+    return frames
+
+
+def _mk_frame(frame_type: str, relation: str, value: str, kind: str, evidence: str, certainty: float, time_scope: str, modality: str, surface: Any, *, stability: str = "stable") -> MeaningFrame:
+    return MeaningFrame(
+        frame_type=frame_type,  # type: ignore[arg-type]
+        relation=relation,
+        target=link_entity(value, hinted_kind=kind),
+        polarity=surface.polarity,
+        modality=modality,
+        time_scope=time_scope if surface.time_scope == "unknown" else surface.time_scope,
+        scope="self",
+        certainty=certainty,
+        stability=stability,
+        evidence_span=evidence,
+        warnings=("fallback_surface_frame",),
+    )
+
+
+def _extract_after(norm: str, raw: str, cues: Iterable[tuple[str, str]]) -> str:
+    for cue, _relation in cues:
+        cue_norm = normalize(cue)
+        if cue_norm and cue_norm in norm:
+            tail_norm = norm.split(cue_norm, 1)[1].strip()
+            if not tail_norm:
+                continue
+            # Fallback không cố map span perfect. Lấy tail surface tương đối đủ dùng.
+            return clean_surface(tail_norm)
+    return ""
+
+
+def _extract_year(norm: str) -> int | None:
+    import re
+    m = re.search(r"\b((?:19|20)\d{2}|2k\d{1,2})\b", norm)
+    if not m:
+        return None
+    tok = m.group(1)
+    if tok.startswith("2k"):
+        return 2000 + int(tok[2:])
+    return int(tok)
+
+
+def _extract_preference(norm: str, raw: str) -> tuple[str, str] | None:
+    # Rất ít cue, chỉ dùng fallback. Model parser nên xử lý preference thật.
+    for cue in ("toi thich", "minh thich", "tui thich", "i like", "i prefer"):
+        if cue in norm:
+            value = clean_surface(norm.split(cue, 1)[1])
+            if value:
+                kind = "location" if link_entity(value, hinted_kind="unknown").kind == "location" else "unknown"
+                return value, kind
+    return None
+
+
+def _extract_after(raw: str, cues: Iterable[tuple[str, str]]) -> str:
+    norm, offsets = _normalized_with_offsets(raw)
+    for cue, _relation in cues:
+        cue_norm = normalize(cue)
+        if not cue_norm:
+            continue
+        start = norm.find(cue_norm)
+        if start < 0:
+            continue
+        start += len(cue_norm)
+        while start < len(norm) and norm[start].isspace():
+            start += 1
+        raw_start = offsets[start] if start < len(offsets) else len(raw)
+        tail = clean_surface(raw[raw_start:])
+        if tail:
+            return tail
+    return ""
+
+
+def _extract_preference(norm: str, raw: str) -> tuple[str, str] | None:
+    for cue in ("toi thich", "minh thich", "tui thich", "i like", "i prefer"):
+        if cue in norm:
+            value = _extract_after(raw, ((cue, "preference"),))
+            if value:
+                kind = "location" if link_entity(value, hinted_kind="unknown").kind == "location" else "unknown"
+                return value, kind
+    return None
+
+
+def _normalized_with_offsets(text: str) -> tuple[str, list[int]]:
+    chars: list[str] = []
+    offsets: list[int] = []
+    previous_was_space = True
+    for index, char in enumerate(str(text or "")):
+        normalized = strip_accents(char.lower()).replace("đ", "d")
+        emitted = False
+        for piece in normalized:
+            if piece.isalnum() or piece in "_-":
+                chars.append(piece)
+                offsets.append(index)
+                previous_was_space = False
+                emitted = True
+        if emitted:
+            continue
+        if chars and not previous_was_space:
+            chars.append(" ")
+            offsets.append(index)
+            previous_was_space = True
+    if chars and chars[-1] == " ":
+        chars.pop()
+        offsets.pop()
+    return "".join(chars), offsets
+
+
+def _has_self(norm: str) -> bool:
+    return any(f" {x} " in f" {norm} " for x in ("toi", "minh", "tui", "em", "i"))
+
+
+def _looks_like_style_instruction(norm: str) -> bool:
+    if not any(x in norm for x in ("tra loi", "giai thich", "viet", "chu thich", "comment", "noi ngan", "noi dai", "tone", "style")):
+        return False
+    return any(x in norm for x in ("toi muon", "toi thich", "tu gio", "ve sau", "hay", "nen", "dung"))
+
+
+def _looks_like_feedback(norm: str) -> bool:
+    return any(x in norm for x in ("lanh lung", "xa cach", "robot", "may moc", "vo hon", "qua formal", "cung qua", "tone te"))
+
+
+def _infer_frame_type(relation: str) -> str:
+    r = relation.lower()
+    if r in {"name", "name_is", "birth_year", "birth_year_is", "birth_month", "birth_month_is", "age", "age_observed_is"}:
+        return "identity"
+    if "location" in r or r in {"hometown", "living_location", "current_location", "hometown_is", "living_location_is", "current_location_is"}:
+        return "location"
+    if "pref" in r or r in {"likes", "dislikes", "general_preference", "preference_location"}:
+        return "preference"
+    if "style" in r or "instruction" in r:
+        return "instruction"
+    if "feedback" in r or "tone" in r:
+        return "feedback"
+    return "unknown"
+
+
+def _clamp01(value: Any) -> float:
+    try:
+        number = float(value)
+    except Exception:
+        number = 0.0
+    if number != number or number in (float("inf"), float("-inf")):
+        number = 0.0
+    return max(0.0, min(1.0, number))
+
+
+__all__ = [
+    "SemanticParser",
+    "ModelSemanticParser",
+    "StructuredFrameParser",
+    "FallbackSurfaceSemanticParser",
+    "structured_frames_to_result",
+]

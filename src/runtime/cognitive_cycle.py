@@ -90,7 +90,7 @@ class CognitiveCycleMixin:
             snapshot=snapshot,
             dt=dt,
         )
-        axes = processes.legacy_axes()
+        axes = processes.process_axes()
         updated = replace(
             current,
             mental_processes=processes,

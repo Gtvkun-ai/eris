@@ -23,12 +23,12 @@ from typing import Any, Mapping
 
 try:
     from .memory_cue import MemoryCue
-    from .memory_candidate import LegacyLayerAdapter, MemoryCandidate
+    from .memory_candidate import MemoryLayerAdapter, MemoryCandidate
     from .memory_scoring import MemoryScorer, DEFAULT_LAYER_PROFILES
     from .memory_activation import MemoryActivationBuilder, MemoryRetrievalResult, ScoredMemoryCandidate
 except Exception:  # pragma: no cover
     from memory_cue import MemoryCue
-    from memory_candidate import LegacyLayerAdapter, MemoryCandidate
+    from memory_candidate import MemoryLayerAdapter, MemoryCandidate
     from memory_scoring import MemoryScorer, DEFAULT_LAYER_PROFILES
     from memory_activation import MemoryActivationBuilder, MemoryRetrievalResult, ScoredMemoryCandidate
 
@@ -59,7 +59,7 @@ class MemoryRetrievalEngine:
         self.scorer = scorer or MemoryScorer()
         self.activation_builder = activation_builder or MemoryActivationBuilder()
         self.adapters = {
-            layer: LegacyLayerAdapter(layer=layer, store=store)
+            layer: MemoryLayerAdapter(layer=layer, store=store)
             for layer, store in stores.as_layer_map().items()
             if store is not None
         }

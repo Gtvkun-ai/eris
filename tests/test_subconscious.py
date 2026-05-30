@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from cortex.internal_state import PersistentInternalState
 from cortex.contracts import CognitiveDisturbance
-from cortex.subconscious import SubconsciousEngine
+from cortex.thought_stream import SubconsciousEngine
 
 
 class SubconsciousEngineTests(unittest.TestCase):

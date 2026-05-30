@@ -63,6 +63,8 @@ public partial class UdpListener : Node2D
 	private float _velocityY = 0f;
 	private bool _isFalling = false;
 	private Vector2 _spriteHalfSize; // Láº¥y tá»« CollisionShape2D trong _Ready()
+    private bool _isFalling = false;
+	private Vector2 _spriteHalfSize; 
 
 	// Climb
 	private enum ClimbPhase { None, GoingToWall, Up, Top, TopHold, Down }
@@ -120,7 +122,6 @@ public partial class UdpListener : Node2D
 	[Export(PropertyHint.Range, "0,1,0.01")] public float AutonomousIdleWalkChance = 0.72f;
 	[Export(PropertyHint.Range, "0,1,0.01")] public float AutonomousIdleFaceChance = 0.20f;
 	[Export] public float AutonomousIdleRemoteCooldownSeconds = 2.5f;
-	[Export] public bool EnableLegacyRemoteMotionCommands = false;
 	[Export] public bool EnableBodyAutonomyDebugLog = false;
 	[Export] public float ThrowVelocityScale = 7.5f;
 	[Export] public float ThrowVerticalBoostScale = 3.5f;
@@ -302,7 +303,6 @@ public partial class UdpListener : Node2D
 		_motion.ApplyVisualState(_monika, _bubble, _body.Position, screenSize);
 		ClampBubbleToScreen();
 
-		//Láº¯ng nghe UDP
 		if (_udp.GetAvailablePacketCount() > 0)
 		{
 			string raw = Encoding.UTF8.GetString(_udp.GetPacket());
@@ -1146,7 +1146,7 @@ public partial class UdpListener : Node2D
 		if (payload.ShouldSpeak && (payload.HasTextField || !payload.ParsedJson) && !string.IsNullOrWhiteSpace(payload.Text))
 			ApplyTypewriterEffect(payload.Text);
 
-		if (payload.HasExplicitMotion || (EnableLegacyRemoteMotionCommands && payload.HasRemoteMotion))
+		if (payload.HasExplicitMotion)
 			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
 	}
 

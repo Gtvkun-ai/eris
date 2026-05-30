@@ -255,6 +255,12 @@ class MemoryQueryExecutor:
             return f"Ngài sinh vào tháng {value}."
         if fact_key == "user.current_location":
             return f"Ngài hiện ở {value}."
+        if fact_key == "user.living_location":
+            return f"Theo những gì Ngài đã nói, Ngài đang sống ở {value}."
+        if fact_key == "user.hometown":
+            return f"Quê của Ngài là {value}."
+        if fact_key == "user.preference.location":
+            return f"Ngài từng nói thích {value}."
         if fact_key == "user.past_location":
             return f"Trước đây Ngài từng ở {value}."
         return f"{fact_key}: {value}"

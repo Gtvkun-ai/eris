@@ -285,6 +285,9 @@ FACT_KEY_PROTOTYPES: dict[str, tuple[str, ...]] = {
     "user.name": ("ten toi", "toi ten gi", "nho ten toi", "my name"),
     "user.birth_month": ("thang sinh", "toi sinh thang may", "birthday month"),
     "user.current_location": ("toi dang o dau", "hien tai toi o dau", "current location"),
+    "user.living_location": ("toi song o dau", "noi o cua toi", "living location", "current residence"),
+    "user.hometown": ("que toi o dau", "que cua toi", "hometown"),
+    "user.preference.location": ("toi thich noi nao", "toi thich o dau", "location preference"),
     "user.past_location": ("truoc day toi o dau", "qua khu toi tung o dau", "past location"),
     "user.response_style": ("toi thich em tra loi", "phong cach tra loi", "response style"),
 }

@@ -877,6 +877,11 @@ class SemanticMemoryStore:
             match = re.search(r"(?:thang sinh|sinh thang|birth month)\s*(?:la|:)?\s*(\d{1,2}|[a-zA-Z]+)", normalized)
             return match.group(1).strip() if match else ""
 
+        if fact_key in {"user.current_location", "user.living_location", "user.hometown", "user.preference.location"}:
+            # Ưu tiên metadata.value nếu có; regex claim tiếng Việt chỉ là fallback nghèo.
+            match = re.search(r"(?:o|tai|la|dia diem)\s+(.+)$", normalized)
+            return match.group(1).strip() if match else ""
+
         # Các fact phức tạp không nên tự detect conflict bằng regex.
         return ""
 
@@ -1202,22 +1207,59 @@ class SemanticMemoryStore:
             cue.evidence.append("cue:user.birth_month")
             return cue
 
+        # Location facts phải tách rõ. Không cho preference/mentioned trả lời hometown/living/current.
+        if _matches_any(normalized, (r"\bque toi o dau\b", r"\bque cua toi\b", r"\btoi que o dau\b", r"\bhometown\b")):
+            cue.domain = "user"
+            cue.fact_key = "user.hometown"
+            cue.aliases = ["que", "que quan", "hometown"]
+            cue.wants_profile_fact = True
+            cue.strict_domain = True
+            cue.evidence.append("cue:user.hometown")
+            return cue
+
+        if _matches_any(normalized, (r"\btoi dang o dau\b", r"\btoi hien o dau\b", r"\bhien tai toi o dau\b", r"\bcurrent location\b")):
+            cue.domain = "user"
+            cue.fact_key = "user.current_location"
+            cue.aliases = ["dang o", "hien o", "current location"]
+            cue.wants_profile_fact = True
+            cue.strict_domain = True
+            cue.evidence.append("cue:user.current_location")
+            return cue
+
+        if _matches_any(normalized, (r"\btoi song o dau\b", r"\bnoi o cua toi\b", r"\bliving location\b", r"\bcurrent residence\b")):
+            cue.domain = "user"
+            cue.fact_key = "user.living_location"
+            cue.aliases = ["song o", "noi o", "living location", "current residence"]
+            cue.wants_profile_fact = True
+            cue.strict_domain = True
+            cue.evidence.append("cue:user.living_location")
+            return cue
+
+        if _matches_any(normalized, (r"\btoi thich noi nao\b", r"\btoi thich o dau\b", r"\bdia diem toi thich\b", r"\blocation preference\b")):
+            cue.domain = "user"
+            cue.fact_key = "user.preference.location"
+            cue.aliases = ["thich noi", "thich o", "dia diem", "location preference"]
+            cue.wants_profile_fact = True
+            cue.strict_domain = True
+            cue.evidence.append("cue:user.preference.location")
+            return cue
+
         if _matches_any(normalized, (r"\btoi thich.*tra loi\b", r"\bkieu tra loi\b", r"\bstyle tra loi\b", r"\bresponse style\b")):
             cue.domain = "user"
-            cue.fact_key = "user.preference.reply_style"
+            cue.fact_key = "user.response_style"
             cue.aliases = ["kieu tra loi", "style", "response style", "chu thich", "ngan", "dai"]
             cue.wants_profile_fact = True
             cue.strict_domain = True
-            cue.evidence.append("cue:user.preference.reply_style")
+            cue.evidence.append("cue:user.response_style")
             return cue
 
         if _matches_any(normalized, (r"\btoi thich gi\b", r"\bso thich\b", r"\bpreference\b", r"\btoi hay thich\b")):
             cue.domain = "user"
-            cue.fact_key = "user.preference"
+            cue.fact_key = "user.preference.general"
             cue.aliases = ["thich", "preference", "so thich"]
             cue.wants_profile_fact = True
             cue.strict_domain = True
-            cue.evidence.append("cue:user.preference")
+            cue.evidence.append("cue:user.preference.general")
             return cue
 
         # Self / ERIS identity.
@@ -1306,11 +1348,11 @@ class SemanticMemoryStore:
 
         if any(key in reason_norm for key in ("response_style", "reply_style", "user_response_style")):
             profile.domain = "user"
-            profile.fact_key = "user.preference.reply_style"
+            profile.fact_key = "user.response_style"
             profile.aliases = ["kiểu trả lời", "kieu tra loi", "response style", "style", "chú thích", "chu thich"]
             profile.importance = 0.88
             profile.tags.extend(["user_preference", "reply_style"])
-            profile.evidence.append("reason:reply_style")
+            profile.evidence.append("reason:response_style")
             return profile
 
         # Claim parser nhẹ.
@@ -1327,11 +1369,11 @@ class SemanticMemoryStore:
             profile.tags.extend(["user_profile", "birth_month"])
             profile.evidence.append("claim:user.birth_month")
         elif profile.domain == "user" and _matches_any(normalized, USER_STYLE_PATTERNS):
-            profile.fact_key = "user.preference.reply_style"
+            profile.fact_key = "user.response_style"
             profile.aliases = ["kiểu trả lời", "kieu tra loi", "response style", "style"]
             profile.importance = 0.86
             profile.tags.extend(["user_preference", "reply_style"])
-            profile.evidence.append("claim:user.reply_style")
+            profile.evidence.append("claim:user.response_style")
         elif _matches_any(normalized, SELF_IDENTITY_PATTERNS):
             profile.domain = "self"
             profile.fact_key = "self.identity"

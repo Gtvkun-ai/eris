@@ -22,8 +22,8 @@ ký ức ổn định. Không nói "đã nhớ chắc". Văn minh tối thiểu,
 
 import re
 import unicodedata
-from dataclasses import dataclass
-from typing import Any, Iterable
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Mapping
 
 try:  # package path: src/memory/memory_commit_policy.py
     from .memory_models import (
@@ -33,6 +33,11 @@ try:  # package path: src/memory/memory_commit_policy.py
         MemoryTarget,
         SurfaceMode,
     )
+    from .claim_extractor import ClaimExtractor
+    from .memory_worthiness import MemoryWorthinessPolicy
+    from .memory_retention_policy import MemoryRetentionPolicy, retention_metadata
+    from .predicate_ontology import fact_key_for_predicate, get_predicate, predicate_aliases
+    from .semantic_claim import SemanticClaim
 except Exception:  # pragma: no cover - chạy file rời khi test
     from memory_models import (  # type: ignore
         DecayPolicy,
@@ -41,6 +46,11 @@ except Exception:  # pragma: no cover - chạy file rời khi test
         MemoryTarget,
         SurfaceMode,
     )
+    from claim_extractor import ClaimExtractor  # type: ignore
+    from memory_worthiness import MemoryWorthinessPolicy  # type: ignore
+    from memory_retention_policy import MemoryRetentionPolicy, retention_metadata  # type: ignore
+    from predicate_ontology import fact_key_for_predicate, get_predicate, predicate_aliases  # type: ignore
+    from semantic_claim import SemanticClaim  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +262,30 @@ class MemoryCommitPolicy:
 
     min_confidence: float = 0.62
     explicit_candidate_min_importance: float = 0.85
+    enable_semantic_claim_pipeline: bool = True
+    # Có thể inject parser model.gguf từ runtime. Nếu None, ClaimExtractor dùng fallback surface.
+    semantic_parser: Any | None = None
+    claim_extractor: Any = field(init=False, repr=False)
+    worthiness_policy: Any = field(init=False, repr=False)
+    retention_policy: Any = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Ba lớp mới dùng chung cho toàn bộ intake.
+        # Để trong instance thay vì global để test có thể override nếu cần.
+        self.claim_extractor = ClaimExtractor(parser=self.semantic_parser) if self.semantic_parser is not None else ClaimExtractor()
+        self.worthiness_policy = MemoryWorthinessPolicy()
+        self.retention_policy = MemoryRetentionPolicy()
+
+    def set_semantic_parser(self, parser: Any) -> None:
+        """Gắn parser model.gguf/hybrid sau khi khởi tạo runtime.
+
+        Parser chỉ đọc nghĩa và trả MeaningFrame. Nó không được commit memory.
+        Đây là điểm nối sạch cho model local của Ngài, thay vì nhét llama call
+        vào giữa policy rồi lại sinh thêm món spaghetti có GPU.
+        """
+
+        self.semantic_parser = parser
+        self.claim_extractor = ClaimExtractor(parser=parser)
 
     def decide_from_user_turn(
         self,
@@ -259,6 +293,7 @@ class MemoryCommitPolicy:
         *,
         turn_id: str | None = None,
         allow_candidate: bool = True,
+        llm_structured: Mapping[str, Any] | None = None,
     ) -> list[MemoryCommitDecision]:
         raw = str(user_text or "").strip()
         if not raw:
@@ -272,6 +307,14 @@ class MemoryCommitPolicy:
 
         importance, importance_reasons = _explicit_importance(norm)
         decisions: list[MemoryCommitDecision] = []
+
+        # Pipeline mới: user_text -> SemanticClaim -> Worthiness -> Retention -> CommitDecision.
+        # Nếu nó nhận ra claim rõ, dùng nó trước để tách predicate/location/modality chuẩn.
+        # Các extractor legacy phía dưới vẫn giữ làm fallback để không đập gãy runtime cũ.
+        if self.enable_semantic_claim_pipeline:
+            claim_decisions = self._decide_with_semantic_claims(raw, turn_id, llm_structured=llm_structured)
+            if claim_decisions:
+                return self._dedupe(claim_decisions)
 
         for builder in (
             self._extract_user_name,
@@ -297,6 +340,132 @@ class MemoryCommitPolicy:
             return [candidate] if candidate is not None else []
 
         return []
+
+
+    # ------------------------------------------------------------------
+    # SemanticClaim pipeline mới
+    # ------------------------------------------------------------------
+
+    def _decide_with_semantic_claims(self, raw: str, turn_id: str | None, *, llm_structured: Mapping[str, Any] | None = None) -> list[MemoryCommitDecision]:
+        """Chạy pipeline claim/ontology trước các rule legacy.
+
+        Nếu claim rõ và worthiness/retention đồng ý, ta trả MemoryCommitDecision luôn.
+        Nếu claim chỉ là mentioned_location/greeting/question thì không tạo semantic long-term.
+        """
+
+        extracted = self.claim_extractor.extract(raw, evidence_ids=_evidence(turn_id), llm_structured=llm_structured)
+        out: list[MemoryCommitDecision] = []
+        for item in extracted:
+            claim = item.claim
+            worthiness = self.worthiness_policy.decide(claim)
+            retention = self.retention_policy.decide(claim, worthiness)
+            if not retention.accept:
+                continue
+            decision = self._decision_from_semantic_claim(claim, retention)
+            if decision is not None and decision.confidence >= self.min_confidence:
+                out.append(decision)
+        return out
+
+    def _decision_from_semantic_claim(self, claim: SemanticClaim, retention: Any) -> MemoryCommitDecision | None:
+        target_map = {
+            "semantic_memory": MemoryTarget.SEMANTIC,
+            "procedural_memory": MemoryTarget.PROCEDURAL,
+            "episodic_memory": MemoryTarget.EPISODIC,
+            "repair_memory": MemoryTarget.REPAIR,
+            "memory_candidate": MemoryTarget.CANDIDATE,
+        }
+        target = target_map.get(str(retention.target_layer or ""))
+        if target is None:
+            return None
+
+        fact_key = fact_key_for_predicate(claim.predicate)
+        spec = get_predicate(claim.predicate)
+        aliases = list(predicate_aliases(claim.predicate))
+        value: Any = claim.object_value if claim.object_value is not None else claim.object_text
+        metadata = {
+            "fact_key": fact_key,
+            "value": value,
+            "aliases": aliases,
+            "raw_user_text": claim.evidence_text,
+            "semantic_claim": claim.to_dict(),
+            "predicate": claim.predicate,
+            "subject": claim.subject,
+            "object_type": claim.object_type,
+            "assertion": claim.assertion,
+            "modality": claim.modality,
+            "temporal": claim.temporal,
+            "scope": claim.scope,
+            "source_grounded": True,
+            "semantic_source": "semantic_claim_extractor",
+            "extraction": "semantic_claim_pipeline",
+            "importance": float(retention.importance),
+            **retention_metadata(retention),
+        }
+
+        claim_text = self._surface_claim_for_semantic_claim(claim)
+        kind = self._memory_kind_for_semantic_claim(claim)
+        surface_mode = SurfaceMode.EXACT if claim.predicate in {"name_is", "birth_month_is", "birth_year_is"} else SurfaceMode.SEMANTIC
+        decay = self._decay_for_retention(str(retention.decay_policy))
+
+        return MemoryCommitDecision(
+            target=target,
+            kind=kind,
+            claim=claim_text,
+            surface=str(claim.object_text),
+            confidence=float(claim.confidence),
+            importance=float(retention.importance),
+            source=claim.source,
+            permission="user_provided",
+            surface_mode=surface_mode,
+            decay=decay,
+            evidence=list(claim.evidence_ids),
+            metadata=metadata,
+        )
+
+    def _surface_claim_for_semantic_claim(self, claim: SemanticClaim) -> str:
+        obj = claim.object_text
+        if claim.predicate == "name_is":
+            return f"User's name is {obj}"
+        if claim.predicate == "birth_month_is":
+            return f"User's birth month is {obj}"
+        if claim.predicate == "birth_year_is":
+            return f"User was born in {obj}."
+        if claim.predicate == "age_observed_is":
+            return f"Người dùng khai báo đang {obj} tuổi tại thời điểm nói."
+        if claim.predicate == "current_location_is":
+            return f"Người dùng nói hiện đang ở {obj}."
+        if claim.predicate == "living_location_is":
+            return f"Người dùng nói đang sống ở {obj}."
+        if claim.predicate == "hometown_is":
+            return f"Quê của người dùng là {obj}."
+        if claim.predicate == "preference_location":
+            verb = "không thích" if claim.assertion == "denied" else "thích"
+            return f"Người dùng {verb} địa điểm {obj}."
+        if claim.predicate == "response_style_prefers":
+            return f"Người dùng nêu preference về cách trả lời: {obj}"
+        if claim.predicate == "general_preference":
+            return f"Người dùng nêu preference: {obj}"
+        return f"{claim.subject}.{claim.predicate}: {obj}"
+
+    def _memory_kind_for_semantic_claim(self, claim: SemanticClaim) -> MemoryKind:
+        if claim.predicate == "name_is":
+            return MemoryKind.USER_NAME
+        if claim.predicate == "birth_month_is":
+            return MemoryKind.USER_BIRTH_MONTH
+        if claim.predicate == "response_style_prefers":
+            return MemoryKind.USER_RESPONSE_STYLE
+        return MemoryKind.USER_GENERAL_TOPIC
+
+    def _decay_for_retention(self, decay_policy: str) -> DecayPolicy:
+        if decay_policy == "slow":
+            return DecayPolicy.STABLE
+        if decay_policy == "fast":
+            return DecayPolicy.SHORT
+        if decay_policy == "session_only":
+            return DecayPolicy.SESSION
+        if decay_policy == "candidate":
+            return DecayPolicy.CANDIDATE
+        return DecayPolicy.DECAYING
 
     # ------------------------------------------------------------------
     # Specific extractors
@@ -458,9 +627,10 @@ class MemoryCommitPolicy:
             decay=DecayPolicy.DECAYING,
             evidence=_evidence(turn_id),
             metadata={
-                "fact_key": "user.current_residence",
+                "fact_key": "user.living_location",
                 "value": value,
-                "aliases": ["nơi ở hiện tại", "noi o hien tai", "current residence", "đang sống ở đâu", "dang song o dau"],
+                "aliases": ["nơi ở hiện tại", "noi o hien tai", "current residence", "đang sống ở đâu", "dang song o dau", "living location"],
+                "predicate": "living_location_is",
                 "raw_user_text": raw,
                 "extraction": "current_residence_rule",
                 "privacy_level": "private",
