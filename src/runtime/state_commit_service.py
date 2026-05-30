@@ -304,8 +304,37 @@ class StateCommitServiceMixin:
             return f"frame:{frame_id}"
         return None
 
+    def _ingest_user_turn_via_memory_kernel(self, frame, user_text: str, *, turn_id: str | None = None) -> bool:
+        kernel = self._memory_kernel()
+        ingest = getattr(kernel, "ingest", None)
+        if not callable(ingest):
+            return False
+
+        evidence_id = self._user_turn_memory_evidence_id(frame=frame, turn_id=turn_id)
+        try:
+            ingest(
+                user_text,
+                evidence_ids=[evidence_id] if evidence_id else None,
+                turn_id=evidence_id,
+                source="chat_turn",
+                mode="fast",
+                allow_candidate=False,
+                storage_permission=self._frame_memory_storage_permission(frame),
+                permission_required=False,
+                context={
+                    "frame_id": str(getattr(frame, "frame_id", "") or getattr(frame, "id", "") or "").strip(),
+                    "channel": str(getattr(frame, "channel", "") or "").strip(),
+                },
+            )
+            return True
+        except Exception as exc:
+            self.logger.warning("MemoryKernel ingest failed on hot path, falling back to commit policy: %s", exc)
+            return False
+
     def _add_user_turn_memory_commit_requests(self, frame, user_text: str, *, turn_id: str | None = None) -> None:
         if frame is None:
+            return
+        if self._ingest_user_turn_via_memory_kernel(frame, user_text, turn_id=turn_id):
             return
         evidence_id = self._user_turn_memory_evidence_id(frame=frame, turn_id=turn_id)
         # Nếu worker nền đang bật, hot path dùng policy không model để tránh block trước

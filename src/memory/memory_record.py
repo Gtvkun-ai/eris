@@ -254,7 +254,7 @@ class MemoryRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def normalized_text(self) -> str:
-        return normalize_text(" ".join(part for part in (self.text, self.summary, " ".join(self.tags), " ".join(self.anchors)) if part))
+        return normalize_text(" ".join(part for part in (self.text, self.summary, self.raw_text, " ".join(self.tags), " ".join(self.anchors)) if part))
 
     def tokens(self) -> tuple[str, ...]:
         return tokenize(self.normalized_text())
@@ -312,6 +312,11 @@ def record_from_layer_item(layer: str, item: Any) -> MemoryRecord:
         text = ""
 
     summary = compact_text(getattr(item, "summary", "") or getattr(item, "fact", "") or getattr(item, "pattern", "") or text, limit=420)
+    metadata = dict(getattr(item, "metadata", {}) or {}) if isinstance(getattr(item, "metadata", {}), Mapping) else {}
+    raw_content = dict(metadata.get("raw_content") or {}) if isinstance(metadata.get("raw_content"), Mapping) else {}
+    raw_content_meta = dict(raw_content.get("metadata") or {}) if isinstance(raw_content.get("metadata"), Mapping) else {}
+    semantic_claim = dict(metadata.get("semantic_claim") or {}) if isinstance(metadata.get("semantic_claim"), Mapping) else {}
+
     raw_parts = [
         getattr(item, "summary", ""),
         getattr(item, "scene", ""),
@@ -330,6 +335,17 @@ def record_from_layer_item(layer: str, item: Any) -> MemoryRecord:
         getattr(item, "user_correction", ""),
         getattr(item, "repair_strategy", ""),
         getattr(item, "future_suppression_rule", ""),
+        metadata.get("raw_user_text", ""),
+        metadata.get("fact_key", ""),
+        " ".join(str(alias) for alias in metadata.get("aliases", ()) if str(alias).strip()) if isinstance(metadata.get("aliases"), (list, tuple, set)) else metadata.get("aliases", ""),
+        metadata.get("value", ""),
+        raw_content.get("fact", ""),
+        raw_content.get("surface", ""),
+        raw_content.get("value", ""),
+        raw_content_meta.get("value", ""),
+        semantic_claim.get("predicate", ""),
+        semantic_claim.get("object_value", ""),
+        semantic_claim.get("object_text", ""),
     ]
     raw_text = compact_text(" ".join(str(part or "") for part in raw_parts if str(part or "").strip()), limit=1200)
     if not text:
@@ -337,7 +353,6 @@ def record_from_layer_item(layer: str, item: Any) -> MemoryRecord:
 
     tags = tuple(str(tag) for tag in getattr(item, "tags", ()) or () if str(tag).strip())
     evidence_ids = tuple(str(eid) for eid in getattr(item, "evidence_ids", ()) or () if str(eid).strip())
-    metadata = dict(getattr(item, "metadata", {}) or {}) if isinstance(getattr(item, "metadata", {}), Mapping) else {}
 
     metadata_anchors = ()
     if isinstance(metadata.get("anchors"), (list, tuple, set)):

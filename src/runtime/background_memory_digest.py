@@ -26,6 +26,7 @@ def build_background_memory_digest_service(
     memory_core: Any | None = None,
     logger: Any | None = None,
     config: BackgroundMemoryDigestConfig | None = None,
+    idle_probe: Any | None = None,
 ) -> BackgroundMemoryDigestService | None:
     """Compat builder: ưu tiên MemoryKernel, bỏ qua hook commit cũ."""
 
@@ -42,6 +43,7 @@ def build_background_memory_digest_service(
         kernel,
         config=config,
         logger=logger,
+        idle_probe=idle_probe,
     )
     if not service.enabled:
         return None

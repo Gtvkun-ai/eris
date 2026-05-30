@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from llm.client import LlamaServerClient
-from llm.ollama_client import OllamaClient
 from memory.understanding.semantic_parser import (
     FallbackSurfaceSemanticParser,
     MeaningParseResult,
@@ -51,11 +50,123 @@ user_text:
 """
 
 
+@dataclass(slots=True)
+class _StandaloneOllamaResult:
+    ok: bool
+    parsed: Mapping[str, Any] | None = None
+    error: str = ""
+
+
+class _StandaloneOllamaClient:
+    """Client Ollama tối thiểu cho memory parser, tránh import package llm."""
+
+    def __init__(self, base_url: str | None = None, timeout: float = 4.0) -> None:
+        self.base_url = str(base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
+        self.timeout = float(timeout or 4.0)
+
+    def chat_json(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        *,
+        keep_alive: str | int = "10m",
+        temperature: float = 0.0,
+    ) -> _StandaloneOllamaResult:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "format": "json",
+            "stream": False,
+            "keep_alive": keep_alive,
+            "options": {"temperature": temperature},
+        }
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.base_url}/api/chat",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - local/runtime URL từ env
+                raw = resp.read().decode("utf-8", errors="replace")
+            outer = json.loads(raw or "{}")
+            message = outer.get("message") if isinstance(outer, Mapping) else None
+            content = message.get("content") if isinstance(message, Mapping) else outer.get("response") if isinstance(outer, Mapping) else ""
+            parsed = _parse_json_object(str(content or ""))
+            return _StandaloneOllamaResult(ok=parsed is not None, parsed=parsed, error="" if parsed is not None else "ollama_json_parse_failed")
+        except Exception as exc:
+            return _StandaloneOllamaResult(ok=False, error=f"{type(exc).__name__}:{exc}")
+
+
+class _StandaloneLlamaServerClient:
+    """Client tối thiểu cho memory semantic parser."""
+
+    def __init__(self, base_url: str, timeout: float = 4.0) -> None:
+        self.base_url = str(base_url or "http://127.0.0.1:8080/v1").rstrip("/")
+        self.timeout = float(timeout or 4.0)
+        self.model_name = self._detect_model_name()
+
+    def _json_request(self, method: str, url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - local/runtime URL từ env
+            raw = resp.read().decode("utf-8", errors="replace")
+        parsed = json.loads(raw or "{}")
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _detect_model_name(self) -> str:
+        try:
+            payload = self._json_request("GET", f"{self.base_url}/models")
+            models = payload.get("data")
+            if isinstance(models, list) and models:
+                first = models[0]
+                if isinstance(first, Mapping):
+                    return str(first.get("id") or "local-model")
+        except Exception:
+            pass
+        return "local-model"
+
+    def create_chat_completion(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        temperature: float,
+        frequency_penalty: float,
+        presence_penalty: float,
+        max_tokens: int,
+        response_format: Mapping[str, Any] | None = None,
+        grammar: Any = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "frequency_penalty": frequency_penalty,
+            "presence_penalty": presence_penalty,
+            "max_tokens": max_tokens,
+        }
+        if response_format is not None:
+            payload["response_format"] = dict(response_format)
+        if grammar is not None:
+            payload["grammar"] = grammar
+        old_timeout = self.timeout
+        if timeout is not None:
+            self.timeout = float(timeout)
+        try:
+            return self._json_request("POST", f"{self.base_url}/chat/completions", payload)
+        finally:
+            self.timeout = old_timeout
+
+
 @dataclass(frozen=True, slots=True)
 class MemorySemanticParserConfig:
     enabled: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_SEMANTIC_PARSER", False))
     provider: str = field(default_factory=lambda: os.getenv("ERIS_MEMORY_SEMANTIC_PROVIDER", "ollama").strip().lower() or "ollama")
     model: str = field(default_factory=lambda: os.getenv("ERIS_MEMORY_SEMANTIC_MODEL", "qwen3:0.6b").strip() or "qwen3:0.6b")
+    llama_server_url: str = field(default_factory=lambda: os.getenv("ERIS_MEMORY_SEMANTIC_LLAMA_SERVER_URL", os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080/v1")).strip() or "http://127.0.0.1:8080/v1")
     timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_SEMANTIC_TIMEOUT", 4.0))
     fallback_enabled: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_SEMANTIC_FALLBACK", True))
     keep_alive: str | int = field(default_factory=lambda: os.getenv("ERIS_MEMORY_SEMANTIC_KEEP_ALIVE", "10m"))
@@ -68,21 +179,19 @@ class MemorySemanticParserConfig:
 
 @dataclass(slots=True)
 class RuntimeSemanticParser:
-    """Adapter runtime -> MeaningFrame JSON -> verified MeaningParseResult.
-
-    Lớp này chỉ gọi model để parse ngữ nghĩa câu user thành frame.
-    Nó không commit memory, không quyết định retention, và không biết store nằm đâu.
-    """
+    """Adapter runtime -> MeaningFrame JSON -> verified MeaningParseResult."""
 
     llm_service: Any = None
     model: str = ""
     provider: str = "ollama"
+    llama_server_url: str = ""
     timeout_seconds: float = 4.0
     fallback_enabled: bool = True
     keep_alive: str | int = "10m"
     max_tokens: int = 384
     ollama_client: Any | None = None
     logger: Any | None = None
+    _llama_server_client: Any | None = field(default=None, init=False, repr=False)
     verifier: StructuredFrameParser = field(default_factory=StructuredFrameParser, repr=False)
     fallback_parser: Any | None = field(default=None, repr=False)
 
@@ -91,7 +200,10 @@ class RuntimeSemanticParser:
         self.model = str(self.model or "").strip()
         self.logger = self.logger or logging.getLogger(__name__)
         if self.ollama_client is None and self.provider == "ollama":
-            self.ollama_client = OllamaClient(timeout=self.timeout_seconds)
+            self.ollama_client = _StandaloneOllamaClient(timeout=self.timeout_seconds)
+        self._llama_server_client = None
+        if self.provider == "llama_server":
+            self._llama_server_client = _StandaloneLlamaServerClient(self.llama_server_url, timeout=self.timeout_seconds)
         if self.fallback_parser is None and self.fallback_enabled:
             self.fallback_parser = FallbackSurfaceSemanticParser()
 
@@ -104,6 +216,7 @@ class RuntimeSemanticParser:
             llm_service=llm_service,
             model=config.model,
             provider=config.provider,
+            llama_server_url=config.llama_server_url,
             timeout_seconds=config.timeout_seconds,
             fallback_enabled=config.fallback_enabled,
             keep_alive=config.keep_alive,
@@ -127,7 +240,6 @@ class RuntimeSemanticParser:
         try:
             payload = self._call_provider(raw, context=context)
             if payload:
-                # Verify JSON shape through the memory-owned parser contract.
                 return ModelSemanticParser(lambda _text: payload, fallback=self.fallback_parser).parse(raw)
         except Exception as exc:
             self._log_warning("Runtime semantic parser failed: %s", exc)
@@ -154,7 +266,9 @@ class RuntimeSemanticParser:
     def _call_provider(self, text: str, *, context: dict[str, Any] | None = None) -> Mapping[str, Any] | None:
         if self.provider == "ollama":
             return self._call_ollama(text, context=context)
-        if self.provider in {"llama_server", "llm_service"}:
+        if self.provider == "llama_server":
+            return self._call_llama_server(text, context=context)
+        if self.provider == "llm_service":
             return self._call_llm_service(text, context=context)
         raise RuntimeError(f"unsupported_memory_semantic_provider:{self.provider}")
 
@@ -173,11 +287,36 @@ class RuntimeSemanticParser:
         parsed = getattr(result, "parsed", None)
         return parsed if isinstance(parsed, Mapping) else None
 
+    def _call_llama_server(self, text: str, *, context: dict[str, Any] | None = None) -> Mapping[str, Any] | None:
+        client = getattr(self, "_llama_server_client", None)
+        if not isinstance(client, _StandaloneLlamaServerClient):
+            client = _StandaloneLlamaServerClient(self.llama_server_url, timeout=self.timeout_seconds)
+            self._llama_server_client = client
+        response = client.create_chat_completion(
+            messages=self._messages(text, context=context),
+            temperature=0.0,
+            frequency_penalty=0.0,
+            presence_penalty=0.0,
+            max_tokens=self.max_tokens,
+            response_format={"type": "json_object"},
+            grammar=None,
+            timeout=self.timeout_seconds,
+        )
+        content = _extract_response_text(response)
+        payload = _parse_json_object(content)
+        if not isinstance(payload, Mapping):
+            raise RuntimeError("llama_server_json_parse_failed")
+        return payload
+
     def _call_llm_service(self, text: str, *, context: dict[str, Any] | None = None) -> Mapping[str, Any] | None:
         service = self.llm_service
         client = getattr(service, "client", None)
-        if not isinstance(client, LlamaServerClient):
-            raise RuntimeError("llm_service_client_not_llama_server")
+        if not callable(getattr(client, "create_chat_completion", None)):
+            raise RuntimeError("llm_service_client_missing_chat_completion")
+        client_name = type(client).__name__.lower()
+        base_url = str(getattr(client, "base_url", "") or "").lower()
+        if "llama" not in client_name and "127.0.0.1" not in base_url and "localhost" not in base_url:
+            raise RuntimeError("llm_service_client_not_local_llama_server")
         response = client.create_chat_completion(
             messages=self._messages(text, context=context),
             temperature=0.0,
