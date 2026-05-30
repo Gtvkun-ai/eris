@@ -31,13 +31,13 @@ Quy tắc thiết kế
 Cách nối vào Ni
 ---------------
 Thay vì gọi trực tiếp:
-    OrientationInterpreter().estimate_orientation(probe)
+    LexicalOrientationInterpreter().estimate_orientation(probe)
 
 Có thể gọi:
     HybridOrientationInterpreter(semantic_engine=engine).estimate_orientation(probe)
 
 Nếu không có semantic_engine hoặc encoder không sẵn sàng, nó tự fallback về
-OrientationInterpreter hiện tại.
+lexical baseline hiện tại.
 """
 
 from dataclasses import dataclass, field
@@ -49,7 +49,7 @@ try:
         ActivityIntentLabel,
         GoalRelation,
         GoalRelationLabel,
-        OrientationInterpreter,
+        LexicalOrientationInterpreter,
         OrientationSignal,
         SemanticContextProbe,
         TECHNICAL_TERMS,
@@ -77,7 +77,7 @@ except ImportError:  # Cho phép chạy lẻ khi copy file ra ngoài package.
         ActivityIntentLabel,
         GoalRelation,
         GoalRelationLabel,
-        OrientationInterpreter,
+        LexicalOrientationInterpreter,
         OrientationSignal,
         SemanticContextProbe,
         TECHNICAL_TERMS,
@@ -174,18 +174,18 @@ class HybridOrientationInterpreter:
     """Orientation interpreter dùng lexical hiện tại + semantic hypothesis.
 
     Đây là adapter để nâng cấp dần. Nếu semantic chưa sẵn sàng, nó trả đúng
-    output của `OrientationInterpreter` cũ và chỉ thêm channel báo fallback.
+    output của lexical baseline và chỉ thêm channel báo fallback.
     """
 
     def __init__(
         self,
         *,
         semantic_engine: SemanticHypothesisEngine | None = None,
-        lexical_interpreter: OrientationInterpreter | None = None,
+        lexical_interpreter: LexicalOrientationInterpreter | None = None,
         config: HybridOrientationConfig | None = None,
     ) -> None:
         self.semantic_engine = semantic_engine
-        self.lexical = lexical_interpreter or OrientationInterpreter()
+        self.lexical = lexical_interpreter or LexicalOrientationInterpreter()
         self.config = config or HybridOrientationConfig()
 
     # ------------------------------------------------------------------

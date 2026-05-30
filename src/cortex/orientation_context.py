@@ -4,7 +4,7 @@ from __future__ import annotations
 orientation_context.py
 ======================
 
-Compatibility façade + lexical fallback cho Orientation/Ni/GoalPersistence.
+Compatibility façade + lexical analyzer cho Orientation/Ni/GoalPersistence.
 
 Bản cũ của file này ôm quá nhiều việc:
     - normalize text
@@ -18,7 +18,7 @@ Bản cũ của file này ôm quá nhiều việc:
 Bản này cố ý hạ vai trò của file xuống còn ba nhóm việc:
     1. Contract chung: enum/dataclass để module cũ và module semantic mới dùng chung.
     2. Surface lexical helpers: normalize, token, anchor, closure, negation.
-    3. Lexical OrientationInterpreter fallback: đủ chạy khi chưa có semantic engine.
+    3. Lexical orientation analyzer: đủ chạy khi chưa có semantic engine.
 
 Semantic thật hơn nằm ở các file mới:
     - semantic_encoder.py
@@ -33,7 +33,7 @@ Quy tắc thiết kế
 - Những thứ cần chính xác như filename, negation, "chưa xong", "vẫn lỗi" vẫn nên
   ở lexical. Embedding mà đoán closure thì rất dễ tự tin sai, một đặc sản máy móc
   đáng được nhốt lại.
-- OrientationInterpreter trong file này là legacy fallback, không phải engine chính
+- LexicalOrientationInterpreter trong file này chỉ là lexical baseline, không phải engine chính
   dài hạn. Muốn semantic hybrid thì dùng HybridOrientationInterpreter trong
   orientation_semantics.py.
 """
@@ -94,8 +94,8 @@ __all__ = [
     "GoalTextSignal",
     "ClosureSignal",
     "SemanticContextProbe",
-    # Legacy fallback engine
-    "OrientationInterpreter",
+    # Lexical baseline engine
+    "LexicalOrientationInterpreter",
 ]
 
 
@@ -569,7 +569,7 @@ def infer_closure_signal(text: str, *, thought_stream_report: object = None) -> 
         evidence.append("closure_phrase")
         confidence = 0.74
 
-    for disturbance in tuple(getattr(thought_stream_report, "disturbances", ()) or ()):  # legacy-compatible
+    for disturbance in tuple(getattr(thought_stream_report, "disturbances", ()) or ()):  # backward-safe
         if bool(getattr(disturbance, "closes_loop", False)):
             evidence.append("thought_stream_closes_loop")
             confidence = max(confidence, 0.64)
@@ -711,18 +711,18 @@ def infer_goal_text_signal(text: str, *, channel: str = "chat", force_speak: boo
 
 
 # ---------------------------------------------------------------------------
-# Legacy lexical fallback interpreter
+# Lexical baseline interpreter
 # ---------------------------------------------------------------------------
 
-class OrientationInterpreter:
-    """Legacy lexical fallback cho Orientation.
+class LexicalOrientationInterpreter:
+    """Lexical baseline cho Orientation.
 
     Engine chính dài hạn nên là `HybridOrientationInterpreter` trong
-    orientation_semantics.py. Class này giữ lại API cũ:
+    orientation_semantics.py. Class này giữ API đơn giản:
 
-        OrientationInterpreter().estimate_orientation(probe)
+        LexicalOrientationInterpreter().estimate_orientation(probe)
 
-    để `ni.py`, `goal_persistence.py` hoặc test cũ chưa cần đổi ngay.
+    để `ni.py` và semantic hybrid có một lexical baseline rõ ràng.
     Nó chỉ dựa vào lexical anchors và vài tín hiệu thời gian nhẹ. Đừng mở rộng
     class này thành semantic engine mới. Đó là cách chúng ta quay lại vũng bùn
     vừa bò ra.

@@ -90,7 +90,7 @@ class GoalPersistenceState:
     source: str = ""
     status: str = "empty"  # giá trị: empty | active | stale | closed
 
-    # Các trường số tương thích legacy.
+    # Các trường số giữ để đọc state cũ.
     strength: float = 0.0
     urgency: float = 0.0
     drift: float = 0.0

@@ -327,7 +327,7 @@ class MemoryCognitionCore:
     def retrieve(self, query: MemoryQuery | str = "", *, frame: Any = None) -> MemoryPacket:
         """Truy hồi memory bằng retrieval engine mới.
 
-        Không gọi _with_resonance_fields().
+        Không gọi packet resonance cũ.
         Không đo lại overlap trên recall_line string.
         """
         if isinstance(query, str):
@@ -566,8 +566,8 @@ class MemoryCognitionCore:
         return {key: max(1, int(value * scale)) for key, value in base.items()}
 
     # Legacy hook giữ lại để downstream cũ không chết nếu còn gọi nhầm.
-    def _with_resonance_fields(self, packet: MemoryPacket, *, query_text: str) -> MemoryPacket:
-        """Deprecated.
+    def _packet_with_retrieval_resonance(self, packet: MemoryPacket, *, query_text: str) -> MemoryPacket:
+        """No-op compatibility helper.
 
         Resonance v2 đã nằm trong MemoryRetrievalEngine.
         Hàm này cố ý không làm gì nữa. Nếu thêm token overlap lại ở đây,

@@ -1,8 +1,19 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-05-28
+Cập nhật: 2026-05-30
 Mã hóa: UTF-8
+
+
+Bổ sung nhanh 2026-05-30:
+- Đợt dọn legacy vừa rồi đã bỏ bớt các đường tương thích không còn cần: `src/cortex/subconscious.py` đã được gỡ, `StateCommitter` không còn route qua fallback request cũ, `ActionPlanner`/`InternalState`/`orientation_*` cũng đã đổi bớt các tên gọi mang dấu vết legacy để tài liệu và code đỡ lệch nhau.
+- `body/UdpListener.cs` không còn cờ `EnableLegacyRemoteMotionCommands`; body chỉ áp dụng `MotionCommand` khi payload có explicit motion, còn nhịp nền bình thường vẫn đi qua `body_bias` + `LocalBodyAutonomy`.
+- Memory semantic stack đã rõ hơn thành các lớp: `query_intent.py` biên dịch câu hỏi sang `SemanticQueryIntent`, `predicate_ontology.py` định nghĩa predicate/answer target/mâu thuẫn, còn `claim_entailment.py` quyết định claim nào thực sự được phép trả lời query nào thay vì dựa overlap text.
+- Cấu trúc `src/memory/claims/*` và `src/memory/judgement/*` hiện chủ yếu là facade đặt lại đúng chỗ kiến trúc; logic thực vẫn nằm ở các module gốc như `predicate_ontology.py`, `claim_entailment.py`, `memory_worthiness.py`, `memory_retention_policy.py`, và policy consolidation/promote candidate nằm ở `memory/judgement/consolidation.py`.
+- `src/runtime/memory_semantic_parser_adapter.py` là adapter riêng cho parse ngữ nghĩa user text thành `MeaningFrame`; nó cố tình không quyết định commit/retention. Phần lifecycle sau parse giờ tách rõ hơn: parse -> worthiness/retention/consolidation -> commit/recall/prune.
+- Cụm file memory mới thực ra đi theo 4 tầng rõ: `understanding/*` để parse câu người dùng thành frame nghĩa; `semantic_text.py`/`semantic_claim.py`/`claim_extractor.py`/`claims/*` để dựng claim có ontology; `memory_worthiness.py`/`memory_retention_policy.py`/`judgement/*`/`claim_consolidator.py`/`memory_pruner.py` để phán xét giữ-promote-prune; và `query_intent.py`/`predicate_ontology.py`/`claim_entailment.py`/`semantic_answer_policy.py` để trả lời query memory đúng loại.
+- Đã dọn các file cũ/dư thừa rõ ràng trong repo như `Eris.csproj.old`, `Eris.csproj.old.1`, `Eris.csproj.lscache`, `eris_memory_claim_patch.zip`, `src/dataset.jsonl.bak`.
+- Regression đã pass cho `tests/test_subconscious.py`, `tests/test_state_committer.py`, `tests/test_runtime_coordinator.py` và `tests/test_llm_service.py`.
 
 
 Bổ sung nhanh 2026-05-28:
@@ -14,6 +25,12 @@ Bổ sung nhanh 2026-05-28:
 - `OllamaClient` hiện là client HTTP mỏng riêng cho observer/vision local, hỗ trợ JSON mode, ảnh base64/data URI, `keep_alive`, `unload()` và `list_models()` để dùng chung một Ollama daemon thay vì dựng nhiều service inference rời.
 - `SignalBuffer -> BackgroundObserver -> VisionSemanticCompressor` giờ là một pipeline local rõ hơn: diff trước, text observer sau, vision compressor cuối cùng; mục tiêu là tiết kiệm budget và tránh wake main cognition vì những thay đổi vụn trên desktop.
 - Regression hiện đã pass cho `tests/test_memory_commit_protocol.py`, `tests/test_memory_store.py` và `tests/test_memory_query_system.py`.
+
+Bổ sung nhanh 2026-05-29:
+- `vision.py` hiện boot luôn `ActionExecutor` và `ActionRouter`, đồng thời nạp `memory_core` như structured persistent store rồi prebuild `long_term_memory` từ `MemoryPacket` để coordinator có fallback context khi recall có cấu trúc không khả dụng.
+- `SpeechCoreEngine` nhận thêm `SpontaneousLifeEngine`: ERIS có một nguồn xung phát ngôn nội sinh riêng, không dựa vào claim về màn hình, nhưng vẫn phải đi qua gate của `SpeechCore` và `ActionPlanner` trước khi được phép surface.
+- `spontaneous_life.py` hiện là tầng low-gain cho endogenous speech pressure: nó đọc boredom, silence, thought pressure, memory residue, attachment visibility, fatigue, restraint, cooldown family và work-focus penalty để đề xuất `SpeechImpulse` nội tại.
+- Tài liệu memory cần phân biệt rõ: `memory_core` là toàn bộ kho memory có cấu trúc của ERIS, còn “long-term memory” mà runtime hay flatten ra chỉ là tập recall text rút từ các layer như semantic/procedural/repair/relational/affective/episodic, không đồng nghĩa với toàn bộ file JSON trên disk.
 
 
 
@@ -68,7 +85,7 @@ Kết nối mặc định:
 `Eris.csproj`, `Eris.sln`
 - Project .NET cho script Godot.
 - Target hiện dùng là `net8.0`.
-- Các file `.old` là dấu vết cấu hình cũ.
+- Các file backup `.old`/`.lscache` cũ đã được dọn khỏi repo.
 
 `body/UdpListener.tscn`
 - Scene gốc của body.
@@ -90,7 +107,7 @@ Kết nối mặc định:
 - Nối `LocalBodyAutonomy` vào `_Process()`: khi body không bị kéo và motion không bận, autonomy có thể tự chọn đi, đứng, đọc, leo, lùi về anchor hoặc ngồi lại.
 - Có cơ chế kéo/thả nhân vật: touch mode được bật từ context menu, click giữ để kéo, thả ra sẽ tính vận tốc chuột thành impulse ném cho `MotionController`.
 - Khi đang kéo, body bị clamp trong viewport; khi bắt đầu kéo dùng pose `air_swing_l/r`, khi thả thì ghi nhận rough handling để tăng overload/solitude trong body autonomy.
-- Remote motion từ cognition hiện bị khóa sau cờ `EnableLegacyRemoteMotionCommands`; mặc định body chỉ nhận speech + bias, tránh cognition override mọi chuyển động cục bộ.
+- Remote motion từ cognition giờ chỉ chạy khi payload có `HasExplicitMotion`; mặc định body vẫn tự giữ nhịp qua speech + `body_bias`, tránh cognition override mọi chuyển động cục bộ.
 - Chuẩn hóa animation model hay gọi sai, ví dụ `walk`/`run` -> `stand_walk`.
 - Vẫn còn khá dày bên C#, nhưng phần process/service lifecycle đã được tách khỏi file này.
 - Lưu ý bảo mật: đang có API key hardcoded trong `DefaultRemoteApiKey`.
@@ -179,6 +196,8 @@ Kết nối mặc định:
 - Build logging, LLM clients, memory, parser, telemetry, Ni/Ti/Fe, action system và transport.
 - Remote cognition mặc định bật qua `ERIS_REMOTE_API_ENABLED=1`.
 - Nếu remote tắt hoặc cần local style rewrite, sẽ yêu cầu `model.gguf` tồn tại.
+- Khởi tạo `MemoryCognitionCore`, thử `load()` + `recall("")`, rồi flatten packet thành `long_term_memory` cốt lõi để log/debug và làm fallback context cho coordinator.
+- Boot luôn `ActionExecutor` và `ActionRouter` ngay ở entrypoint thay vì để coordinator tự dựng mơ hồ ở giữa vòng đời.
 - Tạo `RuntimeCoordinator` và gọi `run_loop()`.
 - Dọn process manager khi thoát.
 
@@ -565,7 +584,7 @@ Kết nối mặc định:
 
 `src/cortex/orientation_context.py`
 - Compatibility facade + lexical fallback cho Ni và GoalPersistence, không còn là “semantic brain” chính.
-- Giữ contract dùng chung: enum/dataclass, normalize/token/anchor, goal matcher, closure detection và `OrientationInterpreter` legacy để các đường cũ chưa phải đổi một lượt.
+- Giữ contract dùng chung: enum/dataclass, normalize/token/anchor, goal matcher, closure detection và `LexicalOrientationInterpreter` làm fallback từ đường lexical cũ.
 - Phân loại activity intent: research, technical_focus, supportive_background, recovery, play_or_recovery, possible_avoidance, fragmented_switching, social_coordination, system_waiting, unknown.
 - Phân loại goal text: concrete_task, debug_thread, design_direction, research_thread, review_request, correction_thread, casual, recovery, commentary, none.
 - Có closure detection biết negation, nên "chưa xong", "not fixed", "vẫn lỗi" không bị hiểu thành đã close goal.
@@ -753,10 +772,6 @@ Kết nối mặc định:
 - Giữ các loop chưa giải, tính tension/momentum/attractor.
 - Chọn `ThoughtSurface` khi áp lực và novelty đủ cao.
 
-`src/cortex/subconscious.py`
-- Lớp cũ/tương thích cho subconscious seed.
-- Ý tưởng lớn đã được đẩy sang `thought_stream.py`, nhưng file này vẫn hữu ích cho semantic cũ và test.
-
 `src/cortex/inner_thought.py`
 - `InnerThoughtEngine`.
 - Biến thought surface/subconscious/social pressure thành động cơ nói nhẹ.
@@ -764,15 +779,22 @@ Kết nối mặc định:
 - Cảnh risk flags: no_screen_claim, anti_mindreading, needs_generation.
 - Dùng nhiều trong force_speak khi không có signal màn hình rõ.
 
+`src/cortex/spontaneous_life.py`
+- `SpontaneousLifeEngine`.
+- Tầng áp lực phát ngôn nội sinh, không đọc “sự thật màn hình” và không tự viết public line.
+- Nó chỉ trả `SpeechImpulse` với family/topic/pressure/evidence nội tại; sau đó `SpeechCore` và `ActionUtility` mới quyết định có được nổi lên thành hành vi public hay không.
+- Penalty mạnh khi user đang focus code hoặc vừa mới có speech gần đây; vì thế endogenous speech không dễ chen vào lúc user đang làm việc thật sự.
+
 `src/cortex/speech_core.py`
 - `SpeechCoreEngine`.
 - Nơi quyết định "có nói không".
-- Tạo các `MotivationalUrge`: screen_vision, screen_telemetry, meaning_reaction, micro_presence, protective_guard, tender_checkin, social_presence, curiosity, playful_aside, thought_stream_surface, silence_restraint.
+- Tạo các `MotivationalUrge`: screen_vision, screen_telemetry, meaning_reaction, micro_presence, protective_guard, tender_checkin, social_presence, curiosity, playful_aside, thought_stream_surface, silence_restraint, và nhánh `spontaneous_life` khi endogenous impulse đủ điều kiện.
 - Mỗi urge có score, grounding, safety flags.
 - Winner phải vượt threshold; threshold tăng khi overloaded và giảm nhẹ khi engaged/force_speak.
 - Signal cụ thể từ màn hình vẫn ưu tiên hơn freeform/subconscious.
 - Với autonomous channel, nếu MeaningLayer không có `meaning_shift`, SpeechCore giữ im lặng bằng `meaning_shift_gate`.
 - Khi MeaningLayer có semantic shift, SpeechCore chọn phản ứng theo meaning/reaction seed thay vì chỉ nói lại fact từ màn hình.
+- `SpeechCore` giờ vừa gate theo `meaning_shift`, vừa nhận `spontaneous_impulse` từ `SpontaneousLifeEngine`; endogenous speech chỉ được phép surface nếu không bị external signal priority, fatigue, family cooldown hoặc quiet guard chặn.
 
 `src/cortex/action_planner.py`
 - `ActionPlanner`.
@@ -815,18 +837,33 @@ Kết nối mặc định:
 
 Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Module/runtime chỉ tạo `StateCommitRequest`; `StateCommitter` validate batch cuối frame rồi `MemoryCognitionCore` mới route xuống layer đúng.
+- `memory_core` nên được hiểu là structured persistent memory store tổng của ERIS, không chỉ riêng semantic memory và cũng không đồng nghĩa 1:1 với danh sách `long_term_memory` text mà coordinator giữ để fallback.
 - Các layer chính: `event_ledger`, `active_state`, `episodic_memory`, `semantic_memory`, `relational_memory`, `affective_residue_memory`, `procedural_memory`, `repair_memory`.
 - Ngoài các layer ổn định còn có `memory_candidate`: vùng đệm cho các mảnh user explicit muốn lưu nhưng policy chưa parse sạch thành fact/procedure ổn định.
 - `CognitiveFrameRecorderMixin` là nơi derive request từ frame sau outcome/self-observation; nó không gọi trực tiếp các store memory.
 - Memory là nền liên tục cho attention, prompt, thought stream, repair và guard chống overclaim, nhưng recall/memory resonance không tự biến thành bằng chứng hiện tại.
 - `RuntimeCoordinator` hiện load/save/recall qua `memory_core` thay vì gọi `memory_store` legacy. `_load_memory_state()` dùng `memory_core.load()`, `_save_memory_state()` dùng `memory_core.save()`, `_has_structured_memory_store()` dựa vào `memory_core.commit()`, còn recall/resonance gọi `memory_core.recall()` và flatten `MemoryPacket` theo layer cần dùng.
+- `long_term_memory` trong coordinator hiện là tập text recall/fallback được dựng lại từ packet structured, thường lấy từ `repair`, `procedural`, `semantic`, `relational`, `affective_residue`, `episodic`; nó không chứa nguyên xi toàn bộ snapshot như `active_state` hay toàn bộ raw JSON của từng layer.
 - Internal state chịu được cả memory state object cũ lẫn dict mới; nếu `memory_core.load()` trả dict thì coordinator đọc/ghi `internal_state` bằng `PersistentInternalState.from_dict()`/`to_dict()`.
 - Norm memory cũ (`compare_to_norms`, `update_norms`) không còn là đường chính trong coordinator; `_norm_deviation_texts()` và `_note_norm_observation()` hiện là no-op để tránh hai hệ memory cùng sửa nền.
 - Từ nhánh mới, memory path chat được tách rõ ba tầng:
   - `session_turn_ledger`: transcript deterministic theo phiên hiện tại, không phải long-term memory.
   - `memory_query_*` + `memory_recall_adapter`: structured query pipeline để trả lời các câu hỏi "Ngài đã nói gì / tôi đã nói gì / Ngài tên gì" trước LLM.
-  - `memory_commit_policy`: lớp quyết định khi nào một user turn nên tạo semantic/procedural/episodic commit request, và khi nào phải hạ xuống `memory_candidate`.
+- `memory_commit_policy`: lớp quyết định khi nào một user turn nên tạo semantic/procedural/episodic commit request, và khi nào phải hạ xuống `memory_candidate`.
 - Ý tưởng trung tâm: exact recall trong phiên và semantic fact user tự khai báo không nên bắt LLM “đoán lại”. Phần deterministic đi bằng `TurnGraph` + executor + surface policy trước; còn long-term storage vẫn phải đi qua `StateCommitRequest` và `MemoryCognitionCore`.
+
+Cụm semantic/understanding mới trong memory:
+- `src/runtime/memory_semantic_parser_adapter.py`: cầu nối runtime -> parser ngữ nghĩa. Nó nhận user text, gọi parser structured/model/fallback rồi trả `MeaningParseResult`; không tự commit, không tự quyết retention.
+- `src/memory/understanding/meaning_frame.py`, `entity_linker.py`, `polarity_temporal.py`, `semantic_parser.py`:
+  tầng đọc nghĩa trung gian cho memory intake. Đây là nơi chuẩn hóa subject/target/polarity/time_scope/certainty trước khi một câu được phép biến thành claim hay commit request.
+- `src/memory/semantic_text.py`, `semantic_claim.py`, `claim_extractor.py`, `claims/claim_builder.py`:
+  pipeline biến text hoặc meaning frame thành `SemanticClaim`/`ExtractedClaim` có predicate, subject, object, modality, temporal và evidence rõ hơn. Nó là cầu nối giữa parse ngôn ngữ và memory fact thật.
+- `src/memory/predicate_ontology.py`, `query_intent.py`, `claim_entailment.py`, `semantic_answer_policy.py`, `claims/ontology.py`, `claims/entailment.py`:
+  tầng ontology + query-answer contract. Query được compile thành intent có target predicate; claim phải được entail đúng loại mới được dùng để answer; facade trong `claims/*` chủ yếu đặt lại API theo cấu trúc package mới.
+- `src/memory/memory_worthiness.py`, `memory_retention_policy.py`, `judgement/worthiness.py`, `judgement/retention.py`, `judgement/consolidation.py`, `claim_consolidator.py`, `memory_pruner.py`:
+  tầng phán xét vòng đời memory. Worthiness quyết định có đáng giữ không, retention quyết định giữ kiểu nào và bao lâu, consolidation quyết định khi nào promote candidate, còn pruner dọn các mục hết hạn hoặc hạ tầng retention thấp.
+- `tests/test_semantic_claim_entailment.py`:
+  cụm test mới cho semantic claim/query entailment, giúp memory answer không rơi lại về kiểu match text hời hợt.
 
 `src/memory/memory_cognition.py`
 - `MemoryCognitionCore` là facade chính cho memory commit/recall.
@@ -1134,7 +1171,7 @@ Memory hiện dùng commit protocol thay vì store legacy ghi thẳng.
 - Có case post-generation guard rewrite các screen claim thiếu evidence sang `source_grounding_guard` thay vì để output tiếp tục tự nhận thấy màn hình.
 
 `tests/test_subconscious.py`
-- Test subconscious legacy: memory replay, associative drift, repeat suppression, restraint.
+- Test giữ tên lịch sử nhưng hiện chủ yếu verify đường `thought_stream`/inner-thought cũ vẫn còn hành vi mong đợi: memory replay, associative drift, repeat suppression, restraint.
 
 `tests/test_internal_state.py`
 - Test mental process, pressure axes, decay, commit turn, thought/self/social history.
@@ -1209,7 +1246,7 @@ Lưu ý test gap hiện tại:
 14. `StateCommitter`/`MemoryCognitionCore` route commit sang active state, event ledger, episodic, semantic, relational, affective, procedural, repair hoặc `memory_candidate`; coordinator chỉ fallback append `long_term_memory` cục bộ khi không có structured memory core.
 15. Coordinator tạo `Decision.to_payload()`, ghi public turn nếu decision có text visible, kèm thêm body bias vào payload bằng `_send_decision_to_body()`, rồi gửi sang Godot.
 16. Body bias đi cùng payload giúp Godot tự cập nhật nhịp thân thể mà không cần remote motion command trực tiếp.
-17. Godot parse payload, hiện bubble nếu `should_speak=true`, cập nhật `LocalBodyAutonomy` nếu có `body_bias`, rồi chỉ đưa motion command cho `MotionController` khi legacy remote motion được bật hoặc khi đó là lệnh cục bộ.
+17. Godot parse payload, hiện bubble nếu `should_speak=true`, cập nhật `LocalBodyAutonomy` nếu có `body_bias`, rồi chỉ đưa motion command cho `MotionController` khi payload có explicit motion hoặc khi đó là lệnh cục bộ.
 
 Luồng chat:
 - User mở chat panel -> Godot gửi `chat_start`.
@@ -1282,7 +1319,7 @@ Theo `git status --short` lúc cập nhật:
 - Session ritual, presence maintenance, reengagement, micro_policy và force_speak micro_presence đã làm coordinator dài hơn; nếu mở rộng tiếp, nên tách thành service riêng.
 - `MotionController.cs` là hướng tách tốt: body physics/motion đã có boundary rõ.
 - `LocalBodyAutonomy.cs` là boundary mới giữa cognition và body: Python gửi bias/nội trạng, Godot tự chọn động tác nhỏ. Đây là hướng đúng để ERIS có thân thể sống hơn mà không biến cognition thành bộ điều khiển pixel.
-- Remote motion đang được giảm quyền bằng `EnableLegacyRemoteMotionCommands=false`; nếu cần debug motion từ model, bật lại cờ này trong Inspector.
+- Remote motion đã bị rút về explicit command path; nếu model không gửi `MotionCommand` rõ ràng thì body chỉ nhận speech/bias chứ không bị điều khiển pixel-level.
 - `meaning.py` là lớp mới rất quan trọng: nó cắt lớp "nhìn thấy fact" khỏi lớp "nên hiểu fact đó là gì". Nhờ vậy ERIS bớt nói như camera/telemetry logger.
 - `thought_stream.py`, `internal_state.py`, `speech_core.py`, `goal_persistence.py`, `micro_policy.py` là phần làm ERIS có "nhịp nền" thay vì chỉ reply từng câu.
 - Memory đã chuyển trọng tâm sang `MemoryCognitionCore` và các file layer trong `src/memory/*`. `memory/store.py` vẫn là nền/legacy quan trọng, nhưng coordinator hiện không nên quay lại đường `memory_store` cũ để ghi/recall state.
@@ -1380,7 +1417,6 @@ Các tham số chính trong `UdpListener.cs` (gắn ở Inspector):
 - `AutonomousIdleMoveMinSeconds`, `AutonomousIdleMoveMaxSeconds`: khoảng tick tối thiểu/tối đa cho body autonomy.
 - `AutonomousIdleWalkChance`, `AutonomousIdleFaceChance`: cờ cũ cho idle movement legacy; hiện logic chính nằm trong `LocalBodyAutonomy`.
 - `AutonomousIdleRemoteCooldownSeconds`: thời gian chờ sau motion remote trước khi body autonomy được phép chen vào.
-- `EnableLegacyRemoteMotionCommands`: nếu bật, motion command từ cognition sẽ điều khiển trực tiếp `MotionController`; nếu tắt, remote chỉ còn speech/bias.
 - `EnableBodyAutonomyDebugLog`: in log score/action của body autonomy.
 - `ThrowVelocityScale`, `ThrowVerticalBoostScale`, `ThrowClingChance`: hệ số ném và xác suất bám tường khi thả nhân vật.
 
@@ -1434,7 +1470,6 @@ Body / Godot defaults:
 - `AutonomousIdleWalkChance=0.72`.
 - `AutonomousIdleFaceChance=0.20`.
 - `AutonomousIdleRemoteCooldownSeconds=2.5`.
-- `EnableLegacyRemoteMotionCommands=false`.
 - `EnableBodyAutonomyDebugLog=false`.
 - `ThrowVelocityScale=7.5`.
 - `ThrowVerticalBoostScale=3.5`.
@@ -1501,7 +1536,7 @@ Mental process mặc định:
 Đây là phần “Eris đang tính gì” để khi nhìn log/state biết nó lệch ở đâu.
 
 Ni drift:
-- Ni hiện đi qua `HybridOrientationInterpreter`; lexical `OrientationInterpreter` vẫn còn nhưng đóng vai trò fallback/legacy path thay vì engine chính.
+- Ni hiện đi qua `HybridOrientationInterpreter`; lexical `LexicalOrientationInterpreter` vẫn còn nhưng đóng vai trò fallback path thay vì engine chính.
 - Input semantic gồm focus/window/browser/current text/memory text, idle, open window count, active goal summary/strength/type/intervention_permission.
 - Semantic stack thật nằm ở `orientation_semantics.py` + `semantic_hypothesis.py` + `semantic_prototypes.py`; encoder được dựng qua `semantic_encoder.py`.
 - Nếu chưa có embedding provider thật, bootstrap mặc định vẫn vào hybrid path nhưng dùng fallback hashing có cap confidence, nên semantic layer “tham gia” mà không được phép nói quá chắc.

@@ -39,7 +39,7 @@ _INTERNAL_GREETING_MARKERS = (
 )
 
 
-_LEGACY_GREETING_TEMPLATES_DISABLED = (
+_DISABLED_GREETING_TEMPLATES = (
     "Ngài quay lại rồi. Ta vẫn ở đây.",
     "Lại gặp Ngài rồi. Ta vừa nối lại nhịp nền.",
     "Ngài về rồi. Ta im một lát, nhưng không rời mạch.",

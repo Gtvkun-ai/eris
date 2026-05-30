@@ -344,7 +344,7 @@ class MentalProcessSystem:
             )
         return system
 
-    def legacy_axes(self) -> dict[str, float]: #tính toán các trục cảm xúc hoặc nhận thức tổng hợp dựa trên mức độ và áp lực của các quá trình riêng lẻ, có thể được sử dụng để tạo ngữ cảnh cho các mô hình ngôn ngữ hoặc hệ thống ra quyết định
+    def process_axes(self) -> dict[str, float]: #tính toán các trục cảm xúc hoặc nhận thức tổng hợp dựa trên mức độ và áp lực của các quá trình riêng lẻ, có thể được sử dụng để tạo ngữ cảnh cho các mô hình ngôn ngữ hoặc hệ thống ra quyết định
         return {
             "curiosity": self.curiosity.level,
             "curiosity_pressure": max(self.curiosity.pressure, self.background_thought.pressure * 0.40),
@@ -368,7 +368,7 @@ class MentalProcessSystem:
 
     #Nó convert toàn bộ state thành text prompt:
     def to_prompt_context(self) -> str:
-        axes = self.legacy_axes()
+        axes = self.process_axes()
         dominant = sorted(
             (
                 ("curiosity", self.curiosity.pressure),
@@ -422,40 +422,40 @@ class MentalProcessSystem:
         }
 
     @classmethod
-    def from_dict(cls, data: object, *, legacy: dict[str, object] | None = None) -> "MentalProcessSystem":
-        legacy = legacy or {}
+    def from_dict(cls, data: object, *, raw_state: dict[str, object] | None = None) -> "MentalProcessSystem":
+        raw_state = raw_state or {}
         if not isinstance(data, dict):
             data = {}
         return cls(
             curiosity=CuriosityProcess.from_dict(
-                data.get("curiosity"), name="curiosity", level=_clamp(legacy.get("curiosity", 0.38)), pressure=_clamp(legacy.get("curiosity_pressure", 0.04))
+                data.get("curiosity"), name="curiosity", level=_clamp(raw_state.get("curiosity", 0.38)), pressure=_clamp(raw_state.get("curiosity_pressure", 0.04))
             ),
             restraint=RestraintProcess.from_dict(
-                data.get("restraint"), name="restraint", level=_clamp(legacy.get("restraint_pressure", 0.30)), pressure=_clamp(legacy.get("restraint_pressure", 0.08))
+                data.get("restraint"), name="restraint", level=_clamp(raw_state.get("restraint_pressure", 0.30)), pressure=_clamp(raw_state.get("restraint_pressure", 0.08))
             ),
             tension=TensionProcess.from_dict(
-                data.get("tension"), name="tension", level=_clamp(legacy.get("cognitive_tension", 0.14)), pressure=_clamp(legacy.get("cognitive_tension", 0.04))
+                data.get("tension"), name="tension", level=_clamp(raw_state.get("cognitive_tension", 0.14)), pressure=_clamp(raw_state.get("cognitive_tension", 0.04))
             ),
             continuity=ContinuityProcess.from_dict(
-                data.get("continuity"), name="continuity", level=0.46, pressure=_clamp(legacy.get("recursive_reactivation_pressure", 0.06))
+                data.get("continuity"), name="continuity", level=0.46, pressure=_clamp(raw_state.get("recursive_reactivation_pressure", 0.06))
             ),
             attachment=AttachmentProcess.from_dict(
-                data.get("attachment"), name="attachment", level=_clamp(legacy.get("attachment", 0.30)), pressure=_clamp(legacy.get("tender_pressure", 0.05))
+                data.get("attachment"), name="attachment", level=_clamp(raw_state.get("attachment", 0.30)), pressure=_clamp(raw_state.get("tender_pressure", 0.05))
             ),
             reflection=ReflectionProcess.from_dict(
-                data.get("reflection"), name="reflection", level=0.34, pressure=_clamp(legacy.get("memory_replay_pressure", 0.07))
+                data.get("reflection"), name="reflection", level=0.34, pressure=_clamp(raw_state.get("memory_replay_pressure", 0.07))
             ),
             social_presence=SocialPresenceProcess.from_dict(
-                data.get("social_presence"), name="social_presence", level=_clamp(legacy.get("social_energy", 0.30)), pressure=_clamp(legacy.get("social_pressure", 0.03))
+                data.get("social_presence"), name="social_presence", level=_clamp(raw_state.get("social_energy", 0.30)), pressure=_clamp(raw_state.get("social_pressure", 0.03))
             ),
             cognitive_load=CognitiveLoadProcess.from_dict(
-                data.get("cognitive_load"), name="cognitive_load", level=_clamp(legacy.get("fatigue", 0.14)), pressure=_clamp(legacy.get("fatigue", 0.03))
+                data.get("cognitive_load"), name="cognitive_load", level=_clamp(raw_state.get("fatigue", 0.14)), pressure=_clamp(raw_state.get("fatigue", 0.03))
             ),
             background_thought=BackgroundThoughtProcess.from_dict(
                 data.get("background_thought"),
                 name="background_thought",
-                level=_clamp(legacy.get("subconscious_pressure", 0.34)),
-                pressure=_clamp(legacy.get("thought_stream_pressure", legacy.get("subconscious_pressure", 0.08))),
+                level=_clamp(raw_state.get("subconscious_pressure", 0.34)),
+                pressure=_clamp(raw_state.get("thought_stream_pressure", raw_state.get("subconscious_pressure", 0.08))),
             ),
         )
 
@@ -1168,7 +1168,7 @@ class PersistentInternalState:
             goal_persistence=GoalPersistenceState.from_dict(data.get("goal_persistence") or data.get("active_goal") or {}),
             mental_processes=MentalProcessSystem.from_dict(
                 data.get("mental_processes") or data.get("mental_process_system") or {},
-                legacy=data,
+                raw_state=data,
             ),
             conversation_dynamics=ConversationDynamicsState.from_dict(data.get("conversation_dynamics") or {}),
             relationship_dynamics=RelationshipDynamicsState.from_dict(data.get("relationship_dynamics") or {}),
@@ -1447,7 +1447,7 @@ class InternalStateEngine:
             force_speak=force_speak,
             dt=delta.dt,
         )
-        mental_axes = mental_processes.legacy_axes()
+        mental_axes = mental_processes.process_axes()
         goal_persistence = self.goal_persistence_engine.update(
             state.goal_persistence,
             channel=channel_name,
@@ -1795,7 +1795,7 @@ class InternalStateEngine:
             was_spoken=was_spoken,
             no_speech=no_speech,
         )
-        mental_axes = mental_processes.legacy_axes()
+        mental_axes = mental_processes.process_axes()
         silence_ticks = state.silence_ticks + 1 if no_speech else 0
         spoken_ticks = state.spoken_ticks + 1 if was_spoken else 0
         chat_ticks = state.chat_ticks + 1 if channel_name == "chat" else max(0, state.chat_ticks - 1)

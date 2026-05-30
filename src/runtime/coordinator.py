@@ -121,6 +121,7 @@ class RuntimeCoordinator(
         body_running_fn,#kiểm tra body/Godot còn chạy không
         action_executor=None, #thực thi
         action_router=None,#định tuyến action
+        memory_semantic_parser=None,
     ):
         self.logger = logger
         self.transport = transport
@@ -136,6 +137,7 @@ class RuntimeCoordinator(
         self.body_running_fn = body_running_fn
         self.action_executor = action_executor
         self.action_router = action_router
+        self.memory_semantic_parser = memory_semantic_parser
         # Khởi tạo các engine con
         self.attention_salience_engine = AttentionSalienceEngine()
         self.attention_broadcast_threshold = 0.50
@@ -2587,7 +2589,7 @@ class RuntimeCoordinator(
             snapshot=snapshot,
             dt=dt,
         )
-        axes = processes.legacy_axes()
+        axes = processes.process_axes()
         updated = replace(
             current,
             mental_processes=processes,
@@ -2830,7 +2832,7 @@ class RuntimeCoordinator(
             self.repeated_user_count = 1
         return self.repeated_user_count
 
-    def _build_repeat_guard_decision_legacy(self, user_text: str, ti_report, repeat_count: int) -> Decision | None:
+    def _build_repeat_guard_decision_basic(self, user_text: str, ti_report, repeat_count: int) -> Decision | None:
         if repeat_count < 2:
             return None
 
@@ -3969,7 +3971,7 @@ class RuntimeCoordinator(
                     suppressed=True,
                     ti_mode=ti_report.mode,
                 )
-                self.logger.info("HoÃ n táº¥t chu ká»³ motion-only trong %.2fs. Nghá»‰ %ss.", elapsed, sleep_duration)
+                self.logger.info("Hoàn tất chu kỳ motion-only trong %.2fs. Nghỉ %ss.", elapsed, sleep_duration)
                 self._sleep_interruptible(sleep_duration)
                 return True
             if not meaning_blocks_autonomous:

@@ -60,7 +60,14 @@ CHAT_ACT_CONTRACTS = {
     ChatAct.NORMAL_CHAT: " Speech act: normal_chat. Reply naturally and stay grounded.",
 }
 
-INSULT_BOUNDARY_FALLBACKS_NIFE = [
+DEFAULT_INSULT_BOUNDARY_FALLBACKS = (
+    "Đòn đó hơi thiếu trí tưởng tượng, thưa Ngài.",
+    "Nếu việc hạ thấp người khác làm bạn thấy an toàn hơn trong chốc lát, thì cứ tiếp tục. Tôi nghe đây.",
+    "Tôi có thể phản ứng lại, nhưng điều đó đâu giúp lấp đầy khoảng trống mà bạn đang cảm thấy.",
+    "Bạn dùng những từ ngữ này để tự vệ trước ai vậy?",
+)
+
+INSULT_BOUNDARY_FALLBACKS = [
     "Bạn đang cố chứng minh điều gì vậy? Sự tức giận này vốn đâu phải dành cho tôi.",
     "Nếu việc hạ thấp người khác làm bạn thấy an toàn hơn trong chốc lát, thì cứ tiếp tục. Tôi nghe đây.",
     "Tôi có thể phản ứng lại, nhưng điều đó đâu giúp lấp đầy khoảng trống mà bạn đang cảm thấy.",
@@ -387,7 +394,7 @@ class LlmService:
 
     def _act_fallback_text(self, act: ChatAct) -> str:
         if act == ChatAct.INSULT_PROVOCATION:
-            return INSULT_BOUNDARY_FALLBACKS[0]
+            return DEFAULT_INSULT_BOUNDARY_FALLBACKS[0]
         return ""
 
     def _fallback_payload_for_chat_act(self, raw_json: str, *, act: ChatAct, reason: str) -> str:
@@ -960,7 +967,7 @@ class LlmService:
     def _is_valid_decision_payload(self, payload: dict | None) -> bool:
         if not isinstance(payload, dict):
             return False
-        if self._is_valid_legacy_decision_payload(payload):
+        if self._is_valid_motion_payload(payload):
             return True
         if not all(field in payload for field in DECISION_JSON_FIELDS):
             if self._is_valid_cognition_payload(payload):
@@ -995,7 +1002,7 @@ class LlmService:
             return False
         return True
 
-    def _is_valid_legacy_decision_payload(self, payload: dict | None) -> bool:
+    def _is_valid_motion_payload(self, payload: dict | None) -> bool:
         if not isinstance(payload, dict):
             return False
         required = {
@@ -1341,7 +1348,7 @@ class LlmService:
             "target_x": -1.0,
             "bounce_action": "",
             "extracted_fact": "",
-            "debug_trace": f"LlmService converted non-JSON {channel} reply into safe fallback JSON.",
+            "debug_trace": f"LlmService wrapped non-JSON {channel} reply into safe fallback JSON.",
             "next_animation": "",
             "system_action": "",
             "action_input": "",
@@ -1858,7 +1865,7 @@ class LlmService:
         style_block = (
             f"{style_block}\n\n"
             "Style principle: speak concretely and naturally. If evidence is clear, use it; "
-            "if evidence is thin, use the nearest interaction rhythm without explaining the gap. "
+            "if evidence is thin, react to the nearest interaction rhythm without explaining the gap. "
             "Prefer short, dry, everyday Vietnamese over symbolic or policy-sanitized wording."
         )
         return style_block

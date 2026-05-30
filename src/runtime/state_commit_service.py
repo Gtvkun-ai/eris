@@ -57,9 +57,14 @@ class StateCommitServiceMixin:
 
     def _ensure_memory_commit_policy(self) -> MemoryCommitPolicy:
         policy = getattr(self, "memory_commit_policy", None)
+        parser = getattr(self, "memory_semantic_parser", None)
         if isinstance(policy, MemoryCommitPolicy):
+            if parser is not None and getattr(policy, "semantic_parser", None) is not parser:
+                policy.set_semantic_parser(parser)
             return policy
         policy = MemoryCommitPolicy()
+        if parser is not None:
+            policy.set_semantic_parser(parser)
         self.memory_commit_policy = policy
         return policy
 

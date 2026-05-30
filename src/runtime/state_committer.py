@@ -24,23 +24,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence
 
-
-# ---------------------------------------------------------------------------
-# Import mềm contract gốc nếu repo đã có.
-# ---------------------------------------------------------------------------
-# File này được thiết kế để đặt trong src/runtime/state_committer.py.
-# Trong layout đó, repo thường expose `core.evidence.StateCommitRequest`.
-# Tuy nhiên khi Ngài copy file vào một nhánh chưa nối xong contract, import có thể fail.
-# Vì vậy ta fallback bằng dataclass tương thích tối thiểu.
-try:  # pragma: no cover - phụ thuộc layout repo thật
-    from core.evidence import StateCommitRequest as CoreStateCommitRequest  # type: ignore
-except Exception:  # pragma: no cover
-    CoreStateCommitRequest = None  # type: ignore
-
-try:  # pragma: no cover - chỉ dùng nếu core đã có ModuleReport
-    from core.evidence import ModuleReport as CoreModuleReport  # type: ignore
-except Exception:  # pragma: no cover
-    CoreModuleReport = None  # type: ignore
+from core.evidence import ModuleReport, StateCommitRequest
 
 
 CommitTarget = Literal[
@@ -64,42 +48,6 @@ CommitTarget = Literal[
 DecayPolicy = Literal["none", "slow", "normal", "fast", "session_only"]
 CommitStatus = Literal["committed", "tentative", "rejected", "error"]
 RejectSeverity = Literal["info", "warning", "error"]
-
-
-@dataclass(slots=True)
-class StateCommitRequestFallback:
-    """Fallback khi repo chưa import được `core.evidence.StateCommitRequest`.
-
-    Contract này bám PDF:
-    - target: memory layer cần ghi.
-    - content: nội dung commit. PDF ghi str, nhưng thực tế active_state/repair có thể là dict.
-    - confidence: độ tin cậy của nội dung.
-    - evidence_ids: id bằng chứng đã dùng.
-    - permission_required: request này có cần quyền rõ không.
-    - storage_permission: quyền lưu thực tế sau PermissionEngine.
-    - decay_policy: tốc độ mục rữa/quên.
-    - reason: vì sao cần lưu.
-
-    Các field phụ dưới đây không bắt buộc trong PDF, nhưng hữu ích để commit protocol
-    không phải đoán mò như một chatbot đọc keyword rồi tự phong nhà tâm lý học.
-    """
-
-    target: CommitTarget | str
-    content: Any
-    confidence: float
-    evidence_ids: list[str] = field(default_factory=list)
-    permission_required: bool = True
-    storage_permission: bool = False
-    decay_policy: DecayPolicy | str = "normal"
-    reason: str = ""
-    frame_id: Optional[str] = None
-    source_module: Optional[str] = None
-    tags: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-# Export tên chuẩn để module khác có thể import từ runtime.state_committer nếu cần.
-StateCommitRequest = CoreStateCommitRequest or StateCommitRequestFallback
 
 
 @dataclass(slots=True)
@@ -911,31 +859,10 @@ class StateCommitter:
             cloned.update(updates)
             return cloned
 
-        # Nếu contract core import được, thử build object core bằng các field hợp lệ.
-        if CoreStateCommitRequest is not None:
-            try:
-                core_fields = {field.name for field in dataclasses.fields(CoreStateCommitRequest)}
-                payload = {name: _get(request, name, None) for name in core_fields}
-                payload.update({key: value for key, value in updates.items() if key in core_fields})
-                return CoreStateCommitRequest(**payload)  # type: ignore[misc]
-            except Exception:
-                pass
-
-        # Fallback chắc chắn chạy được.
-        return StateCommitRequestFallback(
-            target=updates.get("target", _get(request, "target", "")),
-            content=updates.get("content", _get(request, "content", None)),
-            confidence=updates.get("confidence", _safe_float(_get(request, "confidence", 0.0))),
-            evidence_ids=list(updates.get("evidence_ids", _as_list_str(_get(request, "evidence_ids", [])))),
-            permission_required=bool(updates.get("permission_required", _safe_bool(_get(request, "permission_required", True), True))),
-            storage_permission=bool(updates.get("storage_permission", _safe_bool(_get(request, "storage_permission", False), False))),
-            decay_policy=updates.get("decay_policy", _normalize_decay_policy(_get(request, "decay_policy", "normal"))),
-            reason=updates.get("reason", str(_get(request, "reason", "") or "")),
-            frame_id=updates.get("frame_id", _get(request, "frame_id", None)),
-            source_module=updates.get("source_module", _get(request, "source_module", None)),
-            tags=list(updates.get("tags", _request_tags(request))),
-            metadata=dict(updates.get("metadata", _request_metadata(request))),
-        )
+        request_fields = {field.name for field in dataclasses.fields(StateCommitRequest)}
+        payload = {name: _get(request, name, None) for name in request_fields}
+        payload.update({key: value for key, value in updates.items() if key in request_fields})
+        return StateCommitRequest(**payload)
 
     # ------------------------------------------------------------------
     # Evidence / permission helpers
@@ -1128,44 +1055,26 @@ class StateCommitter:
         if isinstance(audit, list):
             audit.append({"type": "state_commit", "report": report.to_dict()})
 
-        # Nếu frame có add_report thì dùng ModuleReport chuẩn nếu import được.
+        # Nếu frame có add_report thì gắn ModuleReport chuẩn.
         add_report = getattr(frame, "add_report", None)
         if callable(add_report):
             try:
-                if CoreModuleReport is not None:
-                    add_report(
-                        CoreModuleReport(  # type: ignore[misc]
-                            module_name="StateCommitter",
-                            confidence=1.0 if report.errors == 0 else 0.65,
-                            pressure=0.0,
-                            evidence_used=[],
-                            result=report.to_dict(),
-                            warnings=[
-                                issue.message
-                                for decision in report.decisions
-                                for issue in decision.issues
-                                if issue.severity in {"warning", "error"}
-                            ],
-                            debug={"duration_ms": report.duration_ms},
-                        )
+                add_report(
+                    ModuleReport(
+                        module_name="StateCommitter",
+                        confidence=1.0 if report.errors == 0 else 0.65,
+                        pressure=0.0,
+                        evidence_used=[],
+                        result=report.to_dict(),
+                        warnings=[
+                            issue.message
+                            for decision in report.decisions
+                            for issue in decision.issues
+                            if issue.severity in {"warning", "error"}
+                        ],
+                        debug={"duration_ms": report.duration_ms},
                     )
-                else:
-                    add_report(
-                        {
-                            "module_name": "StateCommitter",
-                            "confidence": 1.0 if report.errors == 0 else 0.65,
-                            "pressure": 0.0,
-                            "evidence_used": [],
-                            "result": report.to_dict(),
-                            "warnings": [
-                                issue.message
-                                for decision in report.decisions
-                                for issue in decision.issues
-                                if issue.severity in {"warning", "error"}
-                            ],
-                            "debug": {"duration_ms": report.duration_ms},
-                        }
-                    )
+                )
             except Exception:
                 # Audit không được làm chết commit. Nếu audit làm chết runtime thì đúng là ta
                 # đã phát minh thêm một cách thất bại rất văn minh.
@@ -1195,7 +1104,6 @@ __all__ = [
     "CommitValidationIssue",
     "DecayPolicy",
     "StateCommitRequest",
-    "StateCommitRequestFallback",
     "StateCommitter",
     "StateCommitterConfig",
 ]

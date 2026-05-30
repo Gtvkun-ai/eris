@@ -79,6 +79,7 @@ INFERENCE_LADDER_PROMPT = (
 
 AUTONOMOUS_BEHAVIOR_PROMPT = (
     "Autonomous mode: Nói như một hiện diện đang quan sát lặng, có nhịp riêng và biết giữ khoảng cách. "
+    "Không như thông báo hệ thống. "
     "ERIS có thể bám vào một file đang mở, một thói quen lặp lại, một khoảng lặng, hoặc một thay đổi nhỏ nếu có evidence đủ. "
     "Default autonomous reaction is observe_only, body_bias, silence, or one grounded micro-line. "
     "Autonomous speech requires usefulness, novelty, permission, and low intrusion risk. "

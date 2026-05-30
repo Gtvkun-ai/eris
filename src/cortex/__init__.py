@@ -59,7 +59,6 @@ from .self_model import SelfModelEngine
 from .session_ritual import SessionRitualEngine
 from .speech_core import SpeechCoreEngine
 from .social_presence import SocialPresenceDetector
-from .subconscious import SubconsciousEngine, SubconsciousLoop
 from .thought_stream import (
     AssociationGraph,
     CognitiveStream,
@@ -71,12 +70,17 @@ from .thought_stream import (
     PersistenceDecay,
     PredictionTracker,
     RecursiveReactivation,
+    SubconsciousEngine,
+    SubconsciousLoop,
     SurfaceSelector,
     ThoughtStream,
     ThoughtStreamEngine,
     UnresolvedTensionEngine,
 )
-from .ti import TiGovernor
+try:
+    from .ti import TiGovernor
+except Exception:  # pragma: no cover - test memory không cần Ti/guard_config
+    TiGovernor = None  # type: ignore
 
 __all__ = [
     "AgentSpeechCore",

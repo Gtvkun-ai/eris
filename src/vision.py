@@ -14,6 +14,7 @@ from llm.process_manager import LlamaServerProcessManager
 from memory import MemoryCognitionCore
 from parser_grounding import DecisionParser
 from runtime.coordinator import RuntimeCoordinator
+from runtime.memory_semantic_parser_adapter import build_runtime_memory_semantic_parser
 from telemetry import TelemetryService
 from transport import UdpTransport
 
@@ -73,6 +74,16 @@ class AttentionOverseer:
             logger=self.logger,
         )
         self.logger.info("Mô hình đã sẵn sàng.")
+        self.memory_semantic_parser = build_runtime_memory_semantic_parser(
+            llm_service=self.llm_service,
+            logger=self.memory_logger,
+        )
+        if self.memory_semantic_parser is not None:
+            self.memory_logger.info(
+                "Memory semantic parser đã bật: provider=%s model=%s",
+                getattr(self.memory_semantic_parser, "provider", "unknown"),
+                getattr(self.memory_semantic_parser, "model", ""),
+            )
 
         self.transport = UdpTransport("127.0.0.1", 4242, "127.0.0.1", 4243)
         self.memory_core = MemoryCognitionCore(os.path.join(project_root, "memory_core"))
@@ -114,6 +125,7 @@ class AttentionOverseer:
             body_running_fn=self._is_body_running,
             action_executor=self.action_executor,
             action_router=self.action_router,
+            memory_semantic_parser=self.memory_semantic_parser,
         )
         if memory_state is not None:
             self.coordinator.memory_state = memory_state

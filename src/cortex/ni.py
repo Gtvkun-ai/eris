@@ -37,7 +37,7 @@ except ImportError:  # Hữu ích khi test riêng bên ngoài package.
 try:
     from .orientation_context import (
         GoalRelationLabel,
-        OrientationInterpreter,
+        LexicalOrientationInterpreter,
         OrientationSignal,
         SemanticContextProbe,
         clamp,
@@ -48,7 +48,7 @@ try:
 except ImportError:  # Hữu ích khi Ngài chạy file này trong thư mục nháp phẳng.
     from orientation_context import (  # type: ignore
         GoalRelationLabel,
-        OrientationInterpreter,
+        LexicalOrientationInterpreter,
         OrientationSignal,
         SemanticContextProbe,
         clamp,
@@ -86,7 +86,7 @@ DEFAULT_FOCUS_BIAS: dict[str, dict[str, float]] = {
 
 
 def _load_focus_bias_table() -> dict[str, dict[str, float]]:
-    """Tải hiệu chỉnh legacy nhưng vô hiệu hóa bias đạo đức.
+    """Tải focus config cũ nhưng vô hiệu hóa bias đạo đức.
 
     ni_focus_config.json hiện có vẫn có thể chứa bias năng suất cũ.
     Chỉ giữ khoảng hiệu chỉnh rất nhỏ:
@@ -161,7 +161,7 @@ class NiEngine:
         semantic_enabled: bool | None = None,
         allow_hashing_fallback: bool | None = None,
     ) -> object:
-        lexical = OrientationInterpreter()
+        lexical = LexicalOrientationInterpreter()
         enabled = (
             self._env_flag("ERIS_ORIENTATION_SEMANTIC_ENABLED", default=True)
             if semantic_enabled is None
@@ -532,7 +532,7 @@ class NiEngine:
         return self._adjust_coherence(raw_similarity, focus_kind=focus_kind)
 
     def _estimate_confidence(self, *, snapshot: TelemetrySnapshot, channels: dict[str, str], signal_channels: dict[str, float], drift_score: float) -> float:
-        # Chỉ dành cho caller kế thừa. Độ tin cậy thật đến từ OrientationInterpreter.
+        # Chỉ dành cho caller kế thừa. Độ tin cậy thật đến từ lexical/semantic interpreter.
         probe = SemanticContextProbe(
             focus_kind=getattr(snapshot, "active_window_kind", "") or "general",
             focus_text=channels.get("focus", ""),
@@ -587,7 +587,7 @@ class NiEngine:
                 "drift_score": float(drift_score),
                 "should_raise_guard": bool(should_raise_guard),
                 "channels": {str(name): float(score) for name, score in (channels or {}).items()},
-                "legacy_log": True,
+                "focus_log": True,
             }
             with open(log_path, "a", encoding="utf-8") as handle:
                 json.dump(payload, handle, ensure_ascii=False)

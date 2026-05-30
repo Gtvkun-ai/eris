@@ -802,14 +802,14 @@ class MotivationalPressureReport:
 class SpeechImpulse:
     """Pre-wording speech impulse: pressure and residue, not wording.
 
-    The first block is the legacy MeaningLayer-compatible shape. The second
+    The first block is the MeaningLayer-compatible shape. The second
     block is the explicit impulse contract used by spontaneous_life.py and
-    SpeechCore arbitration. Keeping both prevents old call-sites from breaking
+    SpeechCore arbitration. Keeping both prevents older call-sites from breaking
     while giving new modules a real contract instead of smuggling intent through
     random strings like tiny gremlins in a log file.
     """
 
-    # Legacy/meaning-layer shape.
+    # Meaning-layer-compatible shape.
     meaning: str = ""
     reaction: str = "no_reaction"
     attitude: str = ""

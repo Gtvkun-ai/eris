@@ -393,8 +393,14 @@ def infer_fact_key(norm: str) -> Optional[tuple[str, float]]:
         return ("user.name", 0.88)
     if any(m in norm for m in ("toi sinh thang may", "thang sinh", "sinh thang may", "birthday month")):
         return ("user.birth_month", 0.90)
-    if any(m in norm for m in ("toi dang o dau", "toi hien o dau", "toi o dau")):
-        return ("user.current_location", 0.78)
+    if any(m in norm for m in ("que toi o dau", "que cua toi", "toi que o dau", "hometown")):
+        return ("user.hometown", 0.88)
+    if any(m in norm for m in ("toi dang o dau", "toi hien o dau", "hien tai toi o dau")):
+        return ("user.current_location", 0.82)
+    if any(m in norm for m in ("toi song o dau", "noi o cua toi", "living location", "current residence")):
+        return ("user.living_location", 0.82)
+    if any(m in norm for m in ("toi thich noi nao", "toi thich o dau", "dia diem toi thich", "location preference")):
+        return ("user.preference.location", 0.78)
     if any(m in norm for m in ("truoc day toi o dau", "qua khu toi o dau", "toi tung o dau")):
         return ("user.past_location", 0.78)
     return None
@@ -405,8 +411,14 @@ def infer_self_disclosure_fact(norm: str) -> Optional[tuple[str, float]]:
         return ("user.name", 0.96)
     if _looks_like_birth_month_disclosure(norm):
         return ("user.birth_month", 0.94)
+    if _looks_like_hometown_disclosure(norm):
+        return ("user.hometown", 0.86)
+    if _looks_like_living_location_disclosure(norm):
+        return ("user.living_location", 0.84)
     if _looks_like_current_location_disclosure(norm):
         return ("user.current_location", 0.82)
+    if _looks_like_location_preference_disclosure(norm):
+        return ("user.preference.location", 0.76)
     if _looks_like_past_location_disclosure(norm):
         return ("user.past_location", 0.80)
     return None
@@ -549,6 +561,24 @@ def _looks_like_birth_month_disclosure(norm: str) -> bool:
             norm,
         )
     )
+
+
+def _looks_like_hometown_disclosure(norm: str) -> bool:
+    if any(marker in norm for marker in ("que toi o dau", "que cua toi", "hometown")):
+        return False
+    return bool(re.search(r"\b(?:toi\s+)?que\s+(?:o|tai|la)?\s+.{2,60}", norm))
+
+
+def _looks_like_living_location_disclosure(norm: str) -> bool:
+    if any(marker in norm for marker in ("toi song o dau", "noi o cua toi", "living location")):
+        return False
+    return bool(re.search(r"\btoi\s+(?:hien\s+)?(?:dang\s+)?(?:song|cu\s+tru)\s+(?:o|tai)?\s+.{2,60}", norm))
+
+
+def _looks_like_location_preference_disclosure(norm: str) -> bool:
+    if any(marker in norm for marker in ("toi thich noi nao", "toi thich o dau", "dia diem toi thich")):
+        return False
+    return bool(re.search(r"\btoi\s+(?:khong\s+)?thich\s+(?:o|toi|den|di\s+den)?\s+.{2,60}", norm))
 
 
 def _looks_like_current_location_disclosure(norm: str) -> bool:
