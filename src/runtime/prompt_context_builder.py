@@ -103,7 +103,9 @@ class PromptContextBuilderMixin:
         return self._build_thought_stream_context()
 
     def _build_memory_context(self, snapshot=None, memory_resonance=None) -> str:
-        renderer = getattr(getattr(self, "memory_core", None), "render_context", None)
+        renderer = getattr(getattr(self, "memory_kernel", None), "render_context", None)
+        if not callable(renderer):
+            renderer = getattr(getattr(self, "memory_core", None), "render_context", None)
         context = ""
         if callable(renderer):
             try:
@@ -111,10 +113,18 @@ class PromptContextBuilderMixin:
             except Exception as exc:
                 self.logger.warning("Memory context render error: %s", exc)
         report = memory_resonance if memory_resonance is not None else getattr(self, "active_memory_resonance", None)
-        render_resonance = getattr(report, "render_prompt_context", None)
-        if callable(render_resonance):
+        if report is not None and not callable(getattr(report, "render_prompt_context", None)):
+            render_packet = getattr(report, "render_prompt_context", None)
+            if callable(render_packet):
+                try:
+                    resonance_context = render_packet()
+                    if resonance_context:
+                        return f"{context}\n\n{resonance_context}".strip()
+                except Exception as exc:
+                    self.logger.warning("Memory resonance context render error: %s", exc)
+        if report is not None and hasattr(report, "render_prompt_context"):
             try:
-                resonance_context = render_resonance()
+                resonance_context = report.render_prompt_context()
                 if resonance_context:
                     return f"{context}\n\n{resonance_context}".strip()
             except Exception as exc:

@@ -11,7 +11,7 @@ from cortex import FeRenderer, NiEngine, TiGovernor
 from domain import Decision
 from llm import LlmService
 from llm.process_manager import LlamaServerProcessManager
-from memory import MemoryCognitionCore
+from memory.memory_cognition import MemoryCognitionCore
 from parser_grounding import DecisionParser
 from runtime.coordinator import RuntimeCoordinator
 from runtime.memory_semantic_parser_adapter import build_runtime_memory_semantic_parser

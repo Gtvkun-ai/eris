@@ -76,6 +76,7 @@ class MemoryRecallAdapter:
     llm_service: Any = None
     semantic_lookup: SemanticLookupFn | None = None
     episodic_lookup: EpisodicLookupFn | None = None
+    memory_kernel: Any = None
     compiler: MemoryQueryCompiler | None = None
     executor: MemoryQueryExecutor | None = None
     surface_policy: MemoryRecallSurfacePolicy | None = None
@@ -98,6 +99,17 @@ class MemoryRecallAdapter:
         return payload
 
     def _recall(self, user_text: str) -> Optional["_RecallOutcome"]:
+        kernel = getattr(self, "memory_kernel", None)
+        if kernel is not None and callable(getattr(kernel, "answer", None)):
+            try:
+                result = kernel.answer(user_text, session_ledger=self.ledger)
+            except Exception:
+                result = None
+            if result is not None and bool(getattr(result, "intercepted", False)) and getattr(result, "answer", None) is not None:
+                answer = result.answer
+                decision = self._build_decision(answer, compile_result=getattr(result, "compile_result", None))
+                return _RecallOutcome(decision=decision, answer=answer)
+
         compiler = self._ensure_compiler()
         executor = self.executor or MemoryQueryExecutor()
         surface_policy = self.surface_policy or MemoryRecallSurfacePolicy()
@@ -239,8 +251,11 @@ class MemoryRecallAdapter:
         )
 
     def _debug_trace(self, answer: RecallAnswer, *, compile_result: Any) -> str:
-        debug = getattr(compile_result, "debug", None)
         pieces = [answer.debug_trace]
+        if compile_result is None:
+            return "|".join(part for part in pieces if part)
+
+        debug = getattr(compile_result, "debug", None)
         if debug is not None:
             pieces.append(
                 "memory_compile"

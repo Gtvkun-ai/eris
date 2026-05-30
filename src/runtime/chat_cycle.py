@@ -199,10 +199,25 @@ class ChatCycleMixin:
             memory_resonance=memory_resonance,
             affect_signal=affect_signal,
         )
+        memory_turn_id = f"session_turn:{user_turn.index}"
+        # Ném bản phân rã sâu qua background worker. Hot path vẫn commit rule/fact rõ
+        # bằng policy rẻ, còn model semantic parser được dùng khi remote API đang pending.
+        self._enqueue_background_memory_digest(
+            user_text,
+            turn_id=memory_turn_id,
+            source="chat_turn",
+            priority="normal",
+            context={
+                "channel": "chat",
+                "active_topic": str(self.active_conversational_topic or ""),
+                "ti_mode": str(getattr(ti_report, "mode", "") or ""),
+                "fe_intent": str(getattr(fe_plan, "intent_label", "") or ""),
+            },
+        )
         self._add_user_turn_memory_commit_requests(
             frame,
             user_text,
-            turn_id=f"session_turn:{user_turn.index}",
+            turn_id=memory_turn_id,
         )
 
         self.chat_mode = True
@@ -527,21 +542,25 @@ class ChatCycleMixin:
             self._commit_chat_decision(memory_recall_decision, fe_plan, frame=frame)
             self.last_user_text_for_semantics = user_text
             return
-        raw = self.llm_service.generate_chat_reply(
-            chat_history=llm_chat_history,
-            user_message=chat_user_message,
-            raw_user_text=user_text,
-            ni_context=ni_report.prompt_context,
-            ti_context=planned_ti_context,
-            fe_context=fe_plan.style_context,
-            appraisal_context=self._build_appraisal_context(frame.appraisal),
-            internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
-            conversation_context=f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
-            memory_context=memory_context,
-            grounding_context=grounding_report.prompt_context,
-            screen_image_data_uri=screen_image_data_uri,
-            reply_context=getattr(self, "reply_context", None),
-        )
+        self._set_background_memory_digest_remote_inflight(True)
+        try:
+            raw = self.llm_service.generate_chat_reply(
+                chat_history=llm_chat_history,
+                user_message=chat_user_message,
+                raw_user_text=user_text,
+                ni_context=ni_report.prompt_context,
+                ti_context=planned_ti_context,
+                fe_context=fe_plan.style_context,
+                appraisal_context=self._build_appraisal_context(frame.appraisal),
+                internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
+                conversation_context=f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
+                memory_context=memory_context,
+                grounding_context=grounding_report.prompt_context,
+                screen_image_data_uri=screen_image_data_uri,
+                reply_context=getattr(self, "reply_context", None),
+            )
+        finally:
+            self._set_background_memory_digest_remote_inflight(False)
         self._log_raw_llm_output("chat", raw)
         self._log_pre_parser("chat", raw)
         decision = self.parser.parse(raw, user_hint=user_text)

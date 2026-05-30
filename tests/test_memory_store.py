@@ -7,7 +7,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from cortex.internal_state import PersistentInternalState
-from memory import MemoryCognitionCore
+from memory.memory_cognition import MemoryCognitionCore
 
 
 def request(**overrides):

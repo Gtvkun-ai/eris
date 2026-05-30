@@ -14,7 +14,7 @@ from domain import Decision
 from cortex.contracts import CognitiveBroadcast, CognitiveMomentum, ThoughtStreamReport, UnresolvedTensionLoop
 from cortex.internal_state import PersistentInternalState
 from cortex.observer_contracts import SemanticSceneNote
-from memory import MemoryCognitionCore
+from memory.memory_cognition import MemoryCognitionCore
 from runtime.coordinator import FALLBACK_BY_INTENT, RuntimeCoordinator
 from runtime.source_grounding import SourceGroundingEngine
 

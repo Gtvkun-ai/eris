@@ -1,8 +1,8 @@
 """Tầng phán xét memory: worthiness, retention, consolidation."""
 
 from .consolidation import ConsolidationDecision, merge_strength, should_promote_candidate
-from .retention import MemoryRetentionPolicy, RetentionDecision, retention_metadata
-from .worthiness import MemoryWorthinessPolicy, WorthinessDecision
+from ..memory_retention_policy import MemoryRetentionPolicy, RetentionDecision, retention_metadata
+from ..memory_worthiness import MemoryWorthinessPolicy, WorthinessDecision
 
 __all__ = [
     "ConsolidationDecision",

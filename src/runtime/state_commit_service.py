@@ -47,6 +47,9 @@ from runtime.speech_pipeline import SpeechIntentDecision
 
 
 class StateCommitServiceMixin:
+    def _memory_kernel(self):
+        return getattr(self, "memory_kernel", None)
+
     def _ensure_session_turn_ledger(self) -> SessionTurnLedger:
         ledger = getattr(self, "session_turn_ledger", None)
         if isinstance(ledger, SessionTurnLedger):
@@ -67,6 +70,48 @@ class StateCommitServiceMixin:
             policy.set_semantic_parser(parser)
         self.memory_commit_policy = policy
         return policy
+
+    def _ensure_memory_fast_commit_policy(self) -> MemoryCommitPolicy:
+        """Policy nóng không gọi model semantic parser.
+
+        Khi background memory digest đang bật, hot path chỉ nên giữ các fact/rule
+        rẻ và rõ. Phần phân rã sâu bằng model.gguf chạy ở worker nền. Nếu không
+        tách đường này, user phải ngồi chờ memory nhai xong rồi mới được nghe câu
+        trả lời, một nghi lễ UX không ai yêu cầu.
+        """
+
+        policy = getattr(self, "memory_fast_commit_policy", None)
+        if isinstance(policy, MemoryCommitPolicy):
+            return policy
+        policy = MemoryCommitPolicy()
+        self.memory_fast_commit_policy = policy
+        return policy
+
+    def _background_memory_digest_enabled(self) -> bool:
+        service = getattr(self, "background_memory_digest", None)
+        return bool(service is not None and getattr(service, "enabled", False))
+
+    def _enqueue_background_memory_digest(self, user_text: str, *, turn_id: str = "", source: str = "chat_turn", priority: str = "normal", context: dict | None = None) -> bool:
+        service = getattr(self, "background_memory_digest", None)
+        if service is None or not bool(getattr(service, "enabled", False)):
+            return False
+        enqueue = getattr(service, "enqueue_user_turn", None)
+        if not callable(enqueue):
+            return False
+        try:
+            return bool(enqueue(user_text, turn_id=turn_id, source=source, priority=priority, context=context))
+        except Exception as exc:
+            self.logger.warning("[memory digest] enqueue failed: %s", exc)
+            return False
+
+    def _set_background_memory_digest_remote_inflight(self, inflight: bool) -> None:
+        service = getattr(self, "background_memory_digest", None)
+        marker = getattr(service, "notify_remote_inflight", None)
+        if callable(marker):
+            try:
+                marker(bool(inflight))
+            except Exception:
+                return
 
     def _memory_snapshot_for_lookup(self):
         core = getattr(self, "memory_core", None)
@@ -216,6 +261,7 @@ class StateCommitServiceMixin:
         if isinstance(adapter, MemoryRecallAdapter):
             adapter.ledger = self._ensure_session_turn_ledger()
             adapter.memory_core = getattr(self, "memory_core", None)
+            adapter.memory_kernel = self._memory_kernel()
             adapter.llm_service = getattr(self, "llm_service", None)
             adapter.semantic_lookup = self._semantic_memory_lookup
             adapter.episodic_lookup = self._episodic_memory_lookup
@@ -224,6 +270,7 @@ class StateCommitServiceMixin:
         adapter = MemoryRecallAdapter(
             ledger=self._ensure_session_turn_ledger(),
             memory_core=getattr(self, "memory_core", None),
+            memory_kernel=self._memory_kernel(),
             llm_service=getattr(self, "llm_service", None),
             semantic_lookup=self._semantic_memory_lookup,
             episodic_lookup=self._episodic_memory_lookup,
@@ -261,7 +308,10 @@ class StateCommitServiceMixin:
         if frame is None:
             return
         evidence_id = self._user_turn_memory_evidence_id(frame=frame, turn_id=turn_id)
-        decisions = self._ensure_memory_commit_policy().decide_from_user_turn(user_text, turn_id=evidence_id)
+        # Nếu worker nền đang bật, hot path dùng policy không model để tránh block trước
+        # remote API. Semantic digestion sâu sẽ chạy song song qua background_memory_digest.
+        policy = self._ensure_memory_fast_commit_policy() if self._background_memory_digest_enabled() else self._ensure_memory_commit_policy()
+        decisions = policy.decide_from_user_turn(user_text, turn_id=evidence_id)
         if not decisions:
             return
         storage_permission = self._frame_memory_storage_permission(frame)
@@ -399,6 +449,13 @@ class StateCommitServiceMixin:
         PDF/Tongquat tách episodic/semantic/procedural vì mỗi layer có quyền surface khác nhau.
         Flatten tất cả thành list[str] là cách rất nhanh để memory đóng giả evidence hiện tại.
         """
+        kernel = self._memory_kernel()
+        if kernel is not None and callable(getattr(kernel, "build_packet", None)):
+            try:
+                return kernel.build_packet(query or self._memory_query_from_snapshot(snapshot))
+            except Exception as exc:
+                self.logger.warning("Memory kernel packet build error: %s", exc)
+                return None
         recall = getattr(getattr(self, "memory_core", None), "recall", None)
         if not callable(recall):
             return None
@@ -425,15 +482,9 @@ class StateCommitServiceMixin:
         channel: str = "",
         fragments: tuple[str, ...] = (),
     ):
-        recall = getattr(getattr(self, "memory_core", None), "recall", None)
-        if not callable(recall):
-            self.active_memory_resonance = None
-            return None
-        try:
-            query = " ".join(str(item) for item in (channel, user_text, *tuple(fragments or ()), self._memory_query_from_snapshot(snapshot)) if str(item or "").strip())
-            report = recall(query)
-        except Exception as exc:
-            self.logger.warning("Memory resonance activation error: %s", exc)
+        query = " ".join(str(item) for item in (channel, user_text, *tuple(fragments or ()), self._memory_query_from_snapshot(snapshot)) if str(item or "").strip())
+        report = self._memory_recall_packet(snapshot=snapshot, query=query)
+        if report is None:
             self.active_memory_resonance = None
             return None
         self.active_memory_resonance = report
