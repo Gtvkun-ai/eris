@@ -63,9 +63,6 @@ public partial class UdpListener : Node2D
 	private float _velocityY = 0f;
 	private bool _isFalling = false;
 	private Vector2 _spriteHalfSize; // Láº¥y tá»« CollisionShape2D trong _Ready()
-    private bool _isFalling = false;
-	private Vector2 _spriteHalfSize; 
-
 	// Climb
 	private enum ClimbPhase { None, GoingToWall, Up, Top, TopHold, Down }
 	private ClimbPhase _climbPhase = ClimbPhase.None;
