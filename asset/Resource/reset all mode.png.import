@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://7ngdfcqi1c5f"
-path="res://.godot/imported/button x.png-0058ed52cf50788eef0dde37a12121fe.ctex"
+uid="uid://bh80kchoqlswq"
+path="res://.godot/imported/reset all mode.png-f86fae9409eb9dc23e6f8dfa89a415bf.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://asset/Resource/button x.png"
-dest_files=["res://.godot/imported/button x.png-0058ed52cf50788eef0dde37a12121fe.ctex"]
+source_file="res://asset/Resource/reset all mode.png"
+dest_files=["res://.godot/imported/reset all mode.png-f86fae9409eb9dc23e6f8dfa89a415bf.ctex"]
 
 [params]
 

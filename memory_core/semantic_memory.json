@@ -1,25 +1,26 @@
 {
   "version": 2,
   "kind": "semantic_memory",
-  "updated_at": "2026-05-28T18:42:17+0700",
+  "updated_at": "2026-05-30T18:37:19+0700",
   "items": [
     {
       "id": "sem_67edb42ed3bc",
       "claim": "User greeted ERIS with 'hello eris cưng'.",
       "domain": "user",
-      "confidence": 0.724,
+      "confidence": 0.76,
       "source": "state_commit",
       "evidence_ids": [
         "percept:user_message:18:21:0",
         "percept:user_message:20:37:0",
         "percept:user_message:21:08:0",
         "percept:user_message:21:09:0",
-        "percept:user_message:09:09:0"
+        "percept:user_message:09:09:0",
+        "percept:user_message:13:34:0"
       ],
-      "observations": 5,
+      "observations": 6,
       "status": "active",
       "first_seen_at": "2026-05-27T18:21:57+0700",
-      "updated_at": "2026-05-28T09:09:12+0700",
+      "updated_at": "2026-05-30T13:34:22+0700",
       "decay_policy": "slow",
       "contradiction_ids": [],
       "tags": [
@@ -72,7 +73,8 @@
           "User greeted ERIS with 'chào eris cưng'.",
           "User said 'xin chào eris'",
           "User asked for ERIS's name.",
-          "User asked if ERIS knows what it just said."
+          "User asked if ERIS knows what it just said.",
+          "User is asking for ERIS's opinion/reaction to their previous greeting/interaction."
         ],
         "last_merge_reason": "store explicit stable semantic fact"
       }
@@ -100,6 +102,57 @@
       ],
       "metadata": {
         "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_a692cf013995",
+      "claim": "User used slang 'lô em'",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:13:33:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-30T13:33:49+0700",
+      "updated_at": "2026-05-30T13:33:49+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "semantic",
+        "extracted_fact",
+        "grounded"
+      ],
+      "metadata": {
+        "source": "CognitiveFrameRecorder",
+        "fact_index": 0,
+        "timestamp": "13:33",
+        "semantic_source": "decision_extracted_fact",
+        "source_grounded": true,
+        "grounding_source": "user_text",
+        "grounding_missing_evidence": [],
+        "grounding_preempt_mode": "",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780122829.4870276,
+        "frame_id": null,
+        "raw_content": {
+          "fact": "User used slang 'lô em'",
+          "source": "decision_extracted_fact",
+          "timestamp": "13:33",
+          "cycle_id": "chat-1"
+        },
+        "reason": "store explicit stable semantic fact",
+        "fact_key": "",
+        "aliases": [],
+        "importance": 0.5,
+        "fact_profile_evidence": [],
+        "embedding_text_hash": "02014fcdc8b6b690",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
       }
     },
     {

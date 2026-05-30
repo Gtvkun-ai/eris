@@ -2,6 +2,50 @@
   "version": 1,
   "items": [
     {
+      "id": "epi_f0a57db8aaea",
+      "timestamp": "2026-05-30T13:34:22+0700",
+      "frame_id": "",
+      "summary": "thì sao ý kiếnn gì -> Tôi không có ý kiến gì về cách Ngài chào hỏi. Tôi chỉ đang quan sát thôi. -> hard_json_repair",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:13:34:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_675dcd3273a9",
+      "timestamp": "2026-05-30T13:33:49+0700",
+      "frame_id": "",
+      "summary": "lô em -> Ngài đang đùa tôi đấy à? -> hard_json_repair",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:13:33:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
       "id": "epi_4ca0be64f80e",
       "timestamp": "2026-05-28T09:10:16+0700",
       "frame_id": "",

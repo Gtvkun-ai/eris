@@ -8,6 +8,16 @@ using System.Text.Json;
 
 public partial class UdpListener : Node2D
 {
+	private sealed class EmotionRowView
+	{
+		public HBoxContainer Row { get; init; }
+		public Label Title { get; init; }
+		public Label Note { get; init; }
+		public Control FillClip { get; init; }
+		public TextureRect Fill { get; init; }
+		public Label Percent { get; init; }
+	}
+
 	private PacketPeerUdp _udp = new PacketPeerUdp();
 	private int _port = 4242;
 	private AnimatedSprite2D _monika;
@@ -51,7 +61,7 @@ public partial class UdpListener : Node2D
 	private string _currentAction = "stand";
 	private float _gravity = 980f; // Gia tốc trọng trường tiêu chuẩn
 	private float _velocityY = 0f;
-    private bool _isFalling = false;
+	private bool _isFalling = false;
 	private Vector2 _spriteHalfSize; // Láº¥y tá»« CollisionShape2D trong _Ready()
 
 	// Climb
@@ -71,11 +81,22 @@ public partial class UdpListener : Node2D
 	private Button _contextCloseButton;
 	private Panel _emotionPanel;
 	private RichTextLabel _emotionText;
+	private Label _emotionSummaryLabel;
+	private Label _emotionHintLabel;
+	private readonly List<EmotionRowView> _emotionRows = new();
+	private Texture2D _emotionFillTexture;
+	private Texture2D _emotionTrackTexture;
+	private Texture2D _switchOnTexture;
+	private Texture2D _switchOffTexture;
+	private TextureRect _switchTexture;
+	private bool _emotionSwitchEnabled = true;
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	private Tween _textTween;
 	private static readonly Vector2 CharacterContextMenuMinSize = new(170f, 188f);
-	private static readonly Vector2 EmotionPanelMinSize = new(360f, 460f);
+	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
+	private const float EmotionBarWidth = 160f;
+	private const float EmotionBarHeight = 26f;
 	private readonly Random _rng = new Random();
 	private EmotionDebug _latestEmotionDebug;
 	private Control _bubble;
@@ -179,7 +200,7 @@ public partial class UdpListener : Node2D
 		_emotionPanel.CustomMinimumSize = EmotionPanelMinSize;
 		_emotionPanel.Size = EmotionPanelMinSize;
 		_emotionPanel.ZIndex = 99;
-		_emotionText = GetNode<RichTextLabel>("CanvasLayer/Control/EmotionPanel/VBoxContainer/ScrollContainer/EmotionText");
+		_emotionText = GetNodeOrNull<RichTextLabel>("CanvasLayer/Control/EmotionPanel/VBoxContainer/ScrollContainer/EmotionText");
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
 	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton").Pressed += OnSendPressed;
 	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton").Pressed += CloseChatPanel;
@@ -188,9 +209,9 @@ public partial class UdpListener : Node2D
 	_contextForceSpeakButton.Pressed += OnContextForceSpeakPressed;
 	_contextEmotionButton.Pressed += OnContextEmotionPressed;
 	_contextCloseButton.Pressed += CloseCharacterContextMenu;
-	GetNode<Button>("CanvasLayer/Control/EmotionPanel/VBoxContainer/Header/CloseButton").Pressed += CloseEmotionPanel;
 		_chatInput.TextSubmitted += _ => OnSendPressed();
 		_chatSend.ConnectToHost("127.0.0.1", 4243);
+		BuildEmotionPanelUi();
 
 		var cs  = GetNode<CollisionShape2D>("Monika2/CollisionShape2D");
 
@@ -464,16 +485,240 @@ public partial class UdpListener : Node2D
 		_emotionPanel.Visible = true;
 		_emotionPanel.Size = EmotionPanelMinSize;
 		Vector2 screenSize = GetViewportRect().Size;
-		Vector2 preferred = _body.GlobalPosition + new Vector2(24f, -EmotionPanelMinSize.Y * 0.55f);
 		_emotionPanel.Position = new Vector2(
-			Mathf.Clamp(preferred.X, 0f, Mathf.Max(0f, screenSize.X - EmotionPanelMinSize.X)),
-			Mathf.Clamp(preferred.Y, 0f, Mathf.Max(0f, screenSize.Y - EmotionPanelMinSize.Y)));
+			Mathf.Max(0f, (screenSize.X - EmotionPanelMinSize.X) * 0.5f),
+			Mathf.Max(0f, (screenSize.Y - EmotionPanelMinSize.Y) * 0.5f));
 		RefreshEmotionPanel();
 	}
 
 	private void CloseEmotionPanel()
 	{
 		_emotionPanel.Visible = false;
+	}
+
+	private void BuildEmotionPanelUi()
+	{
+		if (_emotionPanel == null)
+			return;
+
+		_emotionPanel.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
+		foreach (Node child in _emotionPanel.GetChildren())
+		{
+			_emotionPanel.RemoveChild(child);
+			child.QueueFree();
+		}
+
+		_emotionTrackTexture = GD.Load<Texture2D>("res://asset/Resource/feel 100.png");
+		_emotionFillTexture = GD.Load<Texture2D>("res://asset/Resource/feel.png");
+		_switchOnTexture = GD.Load<Texture2D>("res://asset/Resource/on.png");
+		_switchOffTexture = GD.Load<Texture2D>("res://asset/Resource/off.png");
+
+		var background = new TextureRect
+		{
+			Texture = GD.Load<Texture2D>("res://asset/Resource/ui clear.png"),
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.Scale,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		background.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		_emotionPanel.AddChild(background);
+
+		var left = new VBoxContainer
+		{
+			Position = new Vector2(50f, 148f),
+			Size = new Vector2(470f, 286f),
+			CustomMinimumSize = new Vector2(470f, 286f),
+		};
+		left.AddThemeConstantOverride("separation", 2);
+		_emotionPanel.AddChild(left);
+
+		_emotionRows.Clear();
+		AddEmotionRow(left, "Binh tinh", "Trang thai thu gian, on dinh.", 0.72f, "res://asset/Monika/affection1.png");
+		AddEmotionRow(left, "Kich thich", "Trang thai hung phan, phan khich.", 0.45f, "res://asset/Monika/affection2.png");
+		AddEmotionRow(left, "Mood", "Tam trang hien tai.", 0.68f, "res://asset/Monika/affection3.png");
+		AddEmotionRow(left, "Cam xuc tich cuc", "Nhung cam xuc tich cuc trong ban.", 0.85f, "res://asset/Monika/affection4.png");
+
+		_emotionSummaryLabel = CreateUiLabel("", 1, Colors.Transparent);
+		_emotionSummaryLabel.Visible = false;
+		_emotionPanel.AddChild(_emotionSummaryLabel);
+		_emotionHintLabel = CreateUiLabel("Nhung con so chi mang tinh tham khao.", 12, new Color(0.48f, 0.25f, 0.34f));
+		_emotionHintLabel.Position = new Vector2(62f, 445f);
+		_emotionHintLabel.Size = new Vector2(250f, 24f);
+		_emotionPanel.AddChild(_emotionHintLabel);
+
+		var closeButton = CreateTextureButton("res://asset/Resource/x.png", CloseEmotionPanel, new Vector2(44f, 44f));
+		closeButton.Position = new Vector2(684f, 24f);
+		_emotionPanel.AddChild(closeButton);
+		var minimizeButton = CreateTextureButton("res://asset/Resource/_.png", () => _emotionPanel.Visible = false, new Vector2(34f, 34f));
+		minimizeButton.Position = new Vector2(642f, 29f);
+		_emotionPanel.AddChild(minimizeButton);
+
+		var modeButton = CreateTextureButton("res://asset/Resource/dev mode.png", () => { }, new Vector2(176f, 48f));
+		modeButton.Position = new Vector2(536f, 124f);
+		_emotionPanel.AddChild(modeButton);
+		var moreButton = CreateTextureButton("res://asset/Resource/more.png", () => { }, new Vector2(36f, 36f));
+		moreButton.Position = new Vector2(668f, 130f);
+		_emotionPanel.AddChild(moreButton);
+
+		_switchTexture = new TextureRect
+		{
+			Texture = _switchOnTexture,
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.Scale,
+			Position = new Vector2(666f, 194f),
+			Size = new Vector2(58f, 34f),
+			CustomMinimumSize = new Vector2(58f, 34f),
+			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+		};
+		_switchTexture.GuiInput += OnEmotionSwitchGuiInput;
+		_emotionPanel.AddChild(_switchTexture);
+
+		var resetButton = CreateTextureButton("res://asset/Resource/reset all mode.png", () => SendChatSignal("reset_all_mood"), new Vector2(190f, 40f));
+		resetButton.Position = new Vector2(535f, 286f);
+		_emotionPanel.AddChild(resetButton);
+		var randomButton = CreateTextureButton("res://asset/Resource/randomize mode.png", () => SendChatSignal("randomize_mood"), new Vector2(190f, 40f));
+		randomButton.Position = new Vector2(535f, 330f);
+		_emotionPanel.AddChild(randomButton);
+		var console = new TextureRect
+		{
+			Texture = GD.Load<Texture2D>("res://asset/Resource/console output.png"),
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.Scale,
+			Position = new Vector2(535f, 374f),
+			Size = new Vector2(190f, 112f),
+			CustomMinimumSize = new Vector2(190f, 112f),
+		};
+		_emotionPanel.AddChild(console);
+	}
+
+	private Label CreateUiLabel(string text, int fontSize, Color color)
+	{
+		var label = new Label { Text = text };
+		label.AddThemeFontSizeOverride("font_size", fontSize);
+		label.AddThemeColorOverride("font_color", color);
+		return label;
+	}
+
+	private TextureButton CreateTextureButton(string path, Action onPressed, Vector2 size)
+	{
+		var button = new TextureButton
+		{
+			TextureNormal = GD.Load<Texture2D>(path),
+			StretchMode = TextureButton.StretchModeEnum.Scale,
+			CustomMinimumSize = size,
+			IgnoreTextureSize = true,
+			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+		};
+		button.Pressed += onPressed;
+		return button;
+	}
+
+	private void AddEmotionRow(VBoxContainer parent, string title, string note, float value, string portraitPath)
+	{
+		var row = new HBoxContainer
+		{
+			CustomMinimumSize = new Vector2(0f, 68f),
+		};
+		row.AddThemeConstantOverride("separation", 14);
+		parent.AddChild(row);
+
+		var portrait = new TextureRect
+		{
+			Texture = GD.Load<Texture2D>(portraitPath),
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+			CustomMinimumSize = new Vector2(58f, 58f),
+			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+		};
+		row.AddChild(portrait);
+
+		var textBox = new VBoxContainer
+		{
+			CustomMinimumSize = new Vector2(170f, 0f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+		};
+		row.AddChild(textBox);
+		var titleLabel = CreateUiLabel(title, 15, new Color(0.34f, 0.08f, 0.20f));
+		var noteLabel = CreateUiLabel(note, 11, new Color(0.45f, 0.20f, 0.30f));
+		textBox.AddChild(titleLabel);
+		textBox.AddChild(noteLabel);
+
+		var barStack = new Control
+		{
+			CustomMinimumSize = new Vector2(EmotionBarWidth, EmotionBarHeight),
+			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+		};
+		row.AddChild(barStack);
+		var track = new TextureRect
+		{
+			Texture = _emotionTrackTexture,
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.Scale,
+			Size = new Vector2(EmotionBarWidth, EmotionBarHeight),
+		};
+		barStack.AddChild(track);
+		var fillClip = new Control
+		{
+			ClipContents = true,
+			Position = new Vector2(0f, (EmotionBarHeight - GetEmotionFillHeight()) * 0.5f),
+			Size = new Vector2(EmotionBarWidth, GetEmotionFillHeight()),
+		};
+		barStack.AddChild(fillClip);
+		var fill = new TextureRect
+		{
+			Texture = _emotionFillTexture,
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.Scale,
+			Size = new Vector2(EmotionBarWidth, GetEmotionFillHeight()),
+		};
+		fillClip.AddChild(fill);
+
+		var percent = CreateUiLabel("0%", 13, new Color(0.34f, 0.08f, 0.20f));
+		percent.CustomMinimumSize = new Vector2(42f, 0f);
+		percent.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+		row.AddChild(percent);
+
+		var view = new EmotionRowView
+		{
+			Row = row,
+			Title = titleLabel,
+			Note = noteLabel,
+			FillClip = fillClip,
+			Fill = fill,
+			Percent = percent,
+		};
+		_emotionRows.Add(view);
+		UpdateEmotionRow(view, title, note, value);
+	}
+
+	private void UpdateEmotionRow(EmotionRowView row, string title, string note, float value)
+	{
+		float clamped = Mathf.Clamp(value, 0f, 1f);
+		float fillHeight = GetEmotionFillHeight();
+		row.Title.Text = title;
+		row.Note.Text = note;
+		row.FillClip.CustomMinimumSize = new Vector2(EmotionBarWidth * clamped, fillHeight);
+		row.FillClip.Position = new Vector2(0f, (EmotionBarHeight - fillHeight) * 0.5f);
+		row.FillClip.Size = new Vector2(EmotionBarWidth * clamped, fillHeight);
+		row.Fill.Size = new Vector2(EmotionBarWidth, fillHeight);
+		row.Percent.Text = $"{Mathf.RoundToInt(clamped * 100f)}%";
+	}
+
+	private static float GetEmotionFillHeight()
+	{
+		return EmotionBarHeight * 0.80f;
+	}
+
+	private void OnEmotionSwitchGuiInput(InputEvent inputEvent)
+	{
+		if (inputEvent is not InputEventMouseButton mouse || mouse.ButtonIndex != MouseButton.Left || !mouse.Pressed)
+			return;
+
+		_emotionSwitchEnabled = !_emotionSwitchEnabled;
+		if (_switchTexture != null)
+			_switchTexture.Texture = _emotionSwitchEnabled ? _switchOnTexture : _switchOffTexture;
+		SendChatSignal(_emotionSwitchEnabled ? "switch_case_on" : "switch_case_off");
 	}
 
 	private void BeginDrag(Vector2 mousePosition)
@@ -611,12 +856,12 @@ public partial class UdpListener : Node2D
 
 	private void ApplyTypewriterEffect(string text){
 		_label.Text = text;
-        _label.VisibleCharacters = 0;
+		_label.VisibleCharacters = 0;
 
 		if (_textTween != null && _textTween.IsValid())
-        {
-            _textTween.Kill();
-        }
+		{
+			_textTween.Kill();
+		}
 
 		_textTween = CreateTween();
 
@@ -907,6 +1152,12 @@ public partial class UdpListener : Node2D
 
 	private void RefreshEmotionPanel()
 	{
+		if (_emotionRows.Count > 0)
+		{
+			RefreshEmotionPanelRows();
+			return;
+		}
+
 		if (_emotionText == null)
 			return;
 
@@ -964,6 +1215,51 @@ public partial class UdpListener : Node2D
 		_emotionText.Text = sb.ToString();
 	}
 
+	private void RefreshEmotionPanelRows()
+	{
+		if (_emotionSummaryLabel == null)
+			return;
+
+		if (_latestEmotionDebug == null || _latestEmotionDebug.Items == null || _latestEmotionDebug.Items.Count == 0)
+		{
+			_emotionSummaryLabel.Text = "Cam xuc";
+			if (_emotionHintLabel != null)
+				_emotionHintLabel.Text = "Chua co frame cam xuc.";
+			return;
+		}
+
+		string summary = string.IsNullOrWhiteSpace(_latestEmotionDebug.SummaryValue) ? "unknown" : _latestEmotionDebug.SummaryValue;
+		_emotionSummaryLabel.Text = string.IsNullOrWhiteSpace(summary) || summary == "unknown"
+			? "Cam xuc"
+			: $"Cam xuc - {summary}";
+		if (_emotionHintLabel != null)
+			_emotionHintLabel.Text = _latestEmotionDebug.HasSummaryValence
+				? $"Valence tong: {_latestEmotionDebug.SummaryValence:0.00}"
+				: "Nhung con so chi mang tinh tham khao.";
+
+		var numericItems = new List<EmotionDebugItem>();
+		foreach (var item in _latestEmotionDebug.Items)
+		{
+			if (item.HasNumericValue)
+				numericItems.Add(item);
+		}
+
+		for (int i = 0; i < _emotionRows.Count; i++)
+		{
+			if (i >= numericItems.Count)
+			{
+				_emotionRows[i].Row.Visible = false;
+				continue;
+			}
+
+			var item = numericItems[i];
+			_emotionRows[i].Row.Visible = true;
+			string title = string.IsNullOrWhiteSpace(item.Label) ? item.Key : item.Label;
+			string note = string.IsNullOrWhiteSpace(item.Note) ? GroupTitle(item.Group) : item.Note;
+			UpdateEmotionRow(_emotionRows[i], title, note, item.NumericValue);
+		}
+	}
+
 	private static string BuildMeter(float value)
 	{
 		float clamped = Mathf.Clamp(value, 0f, 1f);
@@ -1013,11 +1309,11 @@ public partial class UdpListener : Node2D
 			animation = fallback;
 		}
 		if (direction == 1 || direction == -1)
-        {
-            _moveDir = direction;
+		{
+			_moveDir = direction;
 			_facingDir = direction;
-            GD.Print($"[Physics] Đổi hướng di chuyển thành: {direction}");
-        }
+			GD.Print($"[Physics] Đổi hướng di chuyển thành: {direction}");
+		}
 
 		// Ngắt climb đang chạy nếu có
 		if (_climbPhase != ClimbPhase.None)

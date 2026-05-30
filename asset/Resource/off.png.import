@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://1lf53hieyosn"
-path="res://.godot/imported/panel feel.png-86f566851731d2cad8842f403cd28017.ctex"
+uid="uid://d0p1thxspflwp"
+path="res://.godot/imported/off.png-654da85bccaeb5b2478a44ae461ea465.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://asset/Resource/panel feel.png"
-dest_files=["res://.godot/imported/panel feel.png-86f566851731d2cad8842f403cd28017.ctex"]
+source_file="res://asset/Resource/off.png"
+dest_files=["res://.godot/imported/off.png-654da85bccaeb5b2478a44ae461ea465.ctex"]
 
 [params]
 
