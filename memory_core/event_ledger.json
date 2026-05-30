@@ -1058,6 +1058,52 @@
         "commit_confidence": 1.0,
         "commit_target": "event_ledger"
       }
+    },
+    {
+      "id": "evt_10a0ce36adb14083",
+      "timestamp": 1780122829.4662752,
+      "iso_timestamp": "2026-05-30T13:33:49+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-1', 'channel': 'chat', 'timestamp': '13:33', 'seen': ['lô em'], 'said': 'Ngài đang đùa tôi đấy à?', 'outcome': 'hard_json_repair', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.37928738317757005, 'parse_mode': 'hard_json_repair'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:13:33:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_8df52e8f1a2342a2",
+      "timestamp": 1780122862.2593775,
+      "iso_timestamp": "2026-05-30T13:34:22+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-2', 'channel': 'chat', 'timestamp': '13:34', 'seen': ['thì sao ý kiếnn gì'], 'said': 'Tôi không có ý kiến gì về cách Ngài chào hỏi. Tôi chỉ đang quan sát thôi.', 'outcome': 'hard_json_repair', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3799104361370716, 'parse_mode': 'hard_json_repair'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:13:34:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
     }
   ]
 }

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c2k410pqtknli"
-path="res://.godot/imported/khung hp.png-8780d1d7aa8e45d60d43419e5be27744.ctex"
+uid="uid://dl55m80klw23y"
+path="res://.godot/imported/_.png-d3bb3ed5619a2b376154ea6fac199757.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://asset/Resource/khung hp.png"
-dest_files=["res://.godot/imported/khung hp.png-8780d1d7aa8e45d60d43419e5be27744.ctex"]
+source_file="res://asset/Resource/_.png"
+dest_files=["res://.godot/imported/_.png-d3bb3ed5619a2b376154ea6fac199757.ctex"]
 
 [params]
 
