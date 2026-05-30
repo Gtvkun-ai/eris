@@ -672,10 +672,10 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertIn("phan hoi dau tien", coordinator.transport.sent[-1]["text"])
         self.assertEqual(len(coordinator.session_turn_ledger.assistant_turns()), 2)
 
-    def test_chat_user_turn_adds_memory_commit_request_to_frame(self):
+    def test_chat_user_turn_fast_ingest_commits_through_memory_kernel(self):
         coordinator = self._make_coordinator(parser=_JsonParser())
-
-        coordinator._run_chat_cycle("toi ten la An", user_timestamp=100.0)
+        with patch.object(coordinator.memory_kernel, "ingest", wraps=coordinator.memory_kernel.ingest) as ingest:
+            coordinator._run_chat_cycle("toi ten la An", user_timestamp=100.0)
 
         frame = coordinator.last_cognitive_frame
         self.assertIsNotNone(frame)
@@ -684,16 +684,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             request for request in requests
             if self._request_field(request, "target", "") == "semantic_memory"
         ]
-        self.assertTrue(semantic_requests)
-        request = semantic_requests[0]
-        if isinstance(request, dict):
-            self.assertEqual(request.get("kind"), "user_identity.name")
-            self.assertEqual(request.get("metadata", {}).get("value"), "An")
-        else:
-            content = self._request_field(request, "content", {})
-            if isinstance(content, dict):
-                self.assertEqual(content.get("kind"), "user_identity.name")
-                self.assertEqual(content.get("metadata", {}).get("value"), "An")
+        self.assertEqual(semantic_requests, [])
+        ingest.assert_called()
+        _, kwargs = ingest.call_args
+        self.assertEqual(kwargs.get("mode"), "fast")
+        self.assertEqual(kwargs.get("turn_id"), "session_turn:1")
+        self.assertEqual(kwargs.get("evidence_ids"), ["session_turn:1"])
 
     def test_chat_does_not_link_stale_public_turn(self):
         coordinator = self._make_coordinator()

@@ -24,7 +24,7 @@ import queue
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Mapping, Optional
 
 try:
@@ -78,7 +78,12 @@ class BackgroundMemoryDigestKernelConfig:
     skip_if_older_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_DIGEST_SKIP_OLDER_SEC", 240.0))
     pause_on_user_input: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_DIGEST_PAUSE_ON_USER_INPUT", True))
     user_input_pause_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_DIGEST_USER_INPUT_PAUSE_SEC", 0.35))
+    idle_only: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_DIGEST_IDLE_ONLY", True))
+    idle_quiet_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_DIGEST_IDLE_QUIET_SEC", 1.50))
+    avoid_remote_inflight: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_DIGEST_AVOID_REMOTE_INFLIGHT", True))
     only_when_remote_inflight: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_DIGEST_ONLY_REMOTE_INFLIGHT", False))
+    requeue_delay_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_DIGEST_REQUEUE_DELAY_SEC", 0.35))
+    max_defer_count: int = field(default_factory=lambda: _env_int("ERIS_MEMORY_DIGEST_MAX_DEFER", 240))
     storage_permission: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_DIGEST_STORAGE_PERMISSION", True))
 
 
@@ -97,6 +102,8 @@ class MemoryDigestKernelJob:
     priority: DigestPriority = "normal"
     context: Mapping[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
+    not_before: float = 0.0
+    defer_count: int = 0
     job_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
@@ -135,11 +142,13 @@ class BackgroundMemoryDigestKernelService:
         *,
         config: BackgroundMemoryDigestKernelConfig | None = None,
         logger: Any = None,
+        idle_probe: Any = None,
     ) -> None:
         self.memory_kernel = memory_kernel
         self.config = config or BackgroundMemoryDigestKernelConfig()
         self.enabled = bool(self.config.enabled and self.memory_kernel is not None)
         self.logger = logger
+        self.idle_probe = idle_probe
         self.stats = MemoryDigestKernelStats()
         self._queue: queue.Queue[MemoryDigestKernelJob] = queue.Queue(maxsize=max(1, self.config.max_queue_size))
         self._stop = threading.Event()
@@ -200,6 +209,7 @@ class BackgroundMemoryDigestKernelService:
         if not raw:
             self.stats.skipped += 1
             return False
+        now = time.time()
         job = MemoryDigestKernelJob(
             text=raw,
             turn_id=str(turn_id or ""),
@@ -208,6 +218,7 @@ class BackgroundMemoryDigestKernelService:
             source=source,
             priority=priority,
             context=dict(context or {}),
+            not_before=now + (self.config.idle_quiet_seconds if self.config.idle_only else 0.0),
         )
         try:
             self._queue.put_nowait(job)
@@ -251,9 +262,13 @@ class BackgroundMemoryDigestKernelService:
             except queue.Empty:
                 return processed
             try:
-                if self._should_skip(job):
+                action = self._gate_job(job)
+                if action == "skip":
                     self.stats.skipped += 1
                     continue
+                if action == "defer":
+                    self._defer_job(job, reason="test_gate")
+                    return processed
                 self._process(job)
                 processed += 1
             finally:
@@ -261,6 +276,7 @@ class BackgroundMemoryDigestKernelService:
                     self._queue.task_done()
                 except Exception:
                     pass
+        return processed
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -269,8 +285,13 @@ class BackgroundMemoryDigestKernelService:
             except queue.Empty:
                 continue
             try:
-                if self._should_skip(job):
+                action = self._gate_job(job)
+                if action == "skip":
                     self.stats.skipped += 1
+                    continue
+                if action == "defer":
+                    self._defer_job(job, reason="idle_gate")
+                    time.sleep(min(max(float(self.config.worker_idle_sleep), 0.02), 0.50))
                     continue
                 self._process(job)
             except Exception as exc:  # pragma: no cover - worker không được giết runtime
@@ -283,23 +304,69 @@ class BackgroundMemoryDigestKernelService:
                 except Exception:
                     pass
 
-    def _should_skip(self, job: MemoryDigestKernelJob) -> bool:
-        age = time.time() - float(job.created_at)
+    def _gate_job(self, job: MemoryDigestKernelJob) -> str:
+        now = time.time()
+        age = now - float(job.created_at)
         if age > self.config.skip_if_older_seconds:
             self._log("debug", f"memory_digest_skip_stale:{job.job_id}")
-            return True
+            return "skip"
+        if int(job.defer_count) >= int(self.config.max_defer_count):
+            self._log("debug", f"memory_digest_skip_too_many_defers:{job.job_id}")
+            return "skip"
+        if float(job.not_before or 0.0) > now:
+            return "defer"
         if self.config.only_when_remote_inflight and not self._remote_inflight.is_set():
-            # Không drop hẳn job nếu chỉ vì remote chưa inflight? Ở bản này có drop theo config.
-            # Nếu muốn giữ lại, đặt ERIS_MEMORY_DIGEST_ONLY_REMOTE_INFLIGHT=0.
-            self._log("debug", f"memory_digest_skip_not_remote_inflight:{job.job_id}")
+            self._log("debug", f"memory_digest_defer_not_remote_inflight:{job.job_id}")
+            return "defer"
+        if self.config.avoid_remote_inflight and self._remote_inflight.is_set():
+            self._log("debug", f"memory_digest_defer_remote_inflight:{job.job_id}")
+            return "defer"
+        if self.config.pause_on_user_input and now - self._last_user_input_at < self.config.user_input_pause_seconds:
+            self._log("debug", f"memory_digest_defer_recent_user_input:{job.job_id}")
+            return "defer"
+        if self.config.idle_only and not self._runtime_idle_enough(now):
+            self._log("debug", f"memory_digest_defer_runtime_busy:{job.job_id}")
+            return "defer"
+        return "process"
+
+    def _runtime_idle_enough(self, now: float | None = None) -> bool:
+        now = time.time() if now is None else float(now)
+        quiet_for = now - float(self._last_user_input_at or 0.0)
+        if quiet_for < self.config.idle_quiet_seconds:
+            return False
+        probe = self.idle_probe
+        if callable(probe):
+            try:
+                return bool(probe(quiet_for=quiet_for, now=now))
+            except TypeError:
+                try:
+                    return bool(probe())
+                except Exception:
+                    return False
+            except Exception:
+                return False
+        return True
+
+    def _requeue(self, job: MemoryDigestKernelJob) -> None:
+        self._queue.put_nowait(job)
+
+    def _defer_job(self, job: MemoryDigestKernelJob, *, reason: str = "") -> bool:
+        delay = max(0.05, float(self.config.requeue_delay_seconds))
+        if self.config.idle_only:
+            delay = max(delay, float(self.config.idle_quiet_seconds) * 0.25)
+        try:
+            self._requeue(
+                replace(
+                    job,
+                    defer_count=int(job.defer_count) + 1,
+                    not_before=time.time() + delay,
+                )
+            )
             return True
-        if self.config.pause_on_user_input:
-            if time.time() - self._last_user_input_at < self.config.user_input_pause_seconds:
-                # Requeue nhẹ một lần bằng cách sleep ngắn rồi xử lý tiếp vòng sau quá phức tạp.
-                # Ở đây skip để không làm hot path giật. Text vẫn đã nằm trong session ledger.
-                self._log("debug", f"memory_digest_skip_recent_user_input:{job.job_id}")
-                return True
-        return False
+        except queue.Full:
+            self.stats.skipped += 1
+            self._log("warning", f"memory_digest_requeue_full:{job.job_id}:{reason}")
+            return False
 
     def _process(self, job: MemoryDigestKernelJob) -> None:
         self.stats.last_job_id = job.job_id

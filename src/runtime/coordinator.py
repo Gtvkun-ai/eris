@@ -107,6 +107,28 @@ class RuntimeCoordinator(
     PostGenerationFiltersMixin,
 ):
     #Đây là trung tâm điều phối.
+    def _background_memory_digest_idle_probe(self, *, quiet_for: float = 0.0, now: float | None = None) -> bool:
+        """Chỉ cho semantic digest chạy khi runtime thật sự rảnh."""
+
+        del now
+        if getattr(self, "_chat_processing", False):
+            return False
+        lock = getattr(self, "_chat_burst_lock", None)
+        queue_items = []
+        if lock is not None:
+            try:
+                with lock:
+                    queue_items = list(getattr(self, "_chat_burst_queue", []) or [])
+            except Exception:
+                return False
+        else:
+            queue_items = list(getattr(self, "_chat_burst_queue", []) or [])
+        if queue_items:
+            return False
+        if getattr(self, "chat_mode", False) and float(quiet_for or 0.0) < float(os.getenv("ERIS_MEMORY_DIGEST_CHAT_IDLE_SEC", "2.0")):
+            return False
+        return True
+
     def __init__(
         self,
         *,
@@ -135,6 +157,26 @@ class RuntimeCoordinator(
         self.public_turn_ledger = PublicTurnLedger()
         self.reply_context = SimpleNamespace(previous_public_turn=None)
         self.memory_core = memory_core
+        if memory_semantic_parser is None and str(os.getenv("ERIS_MEMORY_SEMANTIC_PARSER", "")).strip().lower() in {"1", "true", "yes", "on", "y"}:
+            try:
+                from runtime.memory_semantic_parser_adapter import build_runtime_memory_semantic_parser
+            except Exception:
+                try:
+                    from .memory_semantic_parser_adapter import build_runtime_memory_semantic_parser
+                except Exception as exc:
+                    self.logger.warning("Không import được memory semantic parser adapter: %s", exc)
+                    build_runtime_memory_semantic_parser = None
+            if build_runtime_memory_semantic_parser is not None:
+                try:
+                    memory_semantic_parser = build_runtime_memory_semantic_parser(
+                        llm_service=llm_service,
+                        logger=self.logger,
+                    )
+                    if memory_semantic_parser is not None:
+                        self.logger.info("Memory semantic parser đã bật cho background digest.")
+                except Exception as exc:
+                    self.logger.warning("Không khởi tạo được memory semantic parser: %s", exc)
+                    memory_semantic_parser = None
         self.memory_kernel = memory_core if isinstance(memory_core, MemoryKernel) else None
         if self.memory_kernel is None and memory_core is not None:
             try:
@@ -166,6 +208,7 @@ class RuntimeCoordinator(
                         semantic_parser=memory_semantic_parser,
                         memory_core=memory_core,
                         logger=self.logger,
+                        idle_probe=self._background_memory_digest_idle_probe,
                     )
                 except Exception as exc:
                     self.logger.warning("Không khởi tạo được background memory digest service: %s", exc)

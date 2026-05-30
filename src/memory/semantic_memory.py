@@ -503,6 +503,60 @@ class SemanticMemoryItem:
     def last_accessed_at(self) -> str:
         return str(self.metadata.get("last_accessed_at") or "")
 
+    @property
+    def raw_user_text(self) -> str:
+        return str(self.metadata.get("raw_user_text") or "")
+
+    @property
+    def semantic_value(self) -> str:
+        metadata = _mapping(self.metadata)
+        raw_content = _mapping(metadata.get("raw_content"))
+        raw_meta = _mapping(raw_content.get("metadata"))
+        semantic_claim = _mapping(metadata.get("semantic_claim"))
+        for value in (
+            metadata.get("value"),
+            raw_meta.get("value"),
+            raw_content.get("value"),
+            semantic_claim.get("object_value"),
+            semantic_claim.get("object_text"),
+        ):
+            clean = str(value or "").strip()
+            if clean:
+                return clean
+        return ""
+
+    def recall_text_parts(self) -> list[str]:
+        metadata = _mapping(self.metadata)
+        raw_content = _mapping(metadata.get("raw_content"))
+        raw_meta = _mapping(raw_content.get("metadata"))
+        semantic_claim = _mapping(metadata.get("semantic_claim"))
+        value = self.semantic_value
+
+        parts = [
+            self.claim,
+            self.domain,
+            " ".join(self.tags),
+            self.fact_key,
+            " ".join(self.aliases),
+            self.raw_user_text,
+            str(metadata.get("fact_key") or ""),
+            str(metadata.get("value") or ""),
+            str(raw_meta.get("value") or ""),
+            str(raw_content.get("value") or ""),
+            str(raw_content.get("fact") or ""),
+            str(raw_content.get("surface") or ""),
+            str(semantic_claim.get("predicate") or ""),
+            str(semantic_claim.get("object_value") or ""),
+            str(semantic_claim.get("object_text") or ""),
+        ]
+
+        if self.fact_key == "user.name" and value:
+            parts.extend((f"ten {value}", f"toi ten la {value}", f"goi toi la {value}"))
+        elif self.fact_key == "user.birth_month" and value:
+            parts.extend((f"thang sinh {value}", f"toi sinh thang {value}", f"birth month {value}"))
+
+        return [compact_text(part, limit=240) for part in parts if str(part or "").strip()]
+
     def recall_line(self) -> str:
         fact = f", key={self.fact_key}" if self.fact_key else ""
         return compact_text(
@@ -1129,22 +1183,24 @@ class SemanticMemoryStore:
             return 0.0
         claim_norm = normalize_text(item.claim)
         tag_norm = normalize_text(" ".join(item.tags))
+        raw_norm = normalize_text(item.raw_user_text)
         item_aliases = {normalize_text(alias) for alias in item.aliases}
         hits = 0
         for alias in cue.aliases:
             alias_norm = normalize_text(alias)
             if not alias_norm:
                 continue
-            if alias_norm in item_aliases or alias_norm in claim_norm or alias_norm in tag_norm:
+            if alias_norm in item_aliases or alias_norm in claim_norm or alias_norm in tag_norm or alias_norm in raw_norm:
                 hits += 1
         return clamp01(0.32 + hits * 0.22) if hits else 0.0
 
     def _lexical_similarity(self, item: SemanticMemoryItem, cue: SemanticRecallCue) -> float:
-        item_text = " ".join((item.claim, item.domain, " ".join(item.tags), item.fact_key, " ".join(item.aliases)))
+        parts = item.recall_text_parts()
+        item_text = " ".join(parts)
         token_sim = jaccard(cue.tokens, token_set(item_text))
         char_sim = jaccard(char_ngrams(cue.normalized), char_ngrams(item_text))
         word_sim = jaccard(word_ngrams(cue.normalized), word_ngrams(item_text))
-        seq_sim = sequence_ratio(cue.normalized, item.claim)
+        seq_sim = max((sequence_ratio(cue.normalized, part) for part in parts), default=0.0)
         return clamp01(token_sim * 0.42 + char_sim * 0.24 + word_sim * 0.22 + seq_sim * 0.12)
 
     def _recency_bonus(self, item: SemanticMemoryItem) -> float:
@@ -1205,6 +1261,22 @@ class SemanticMemoryStore:
             cue.wants_profile_fact = True
             cue.strict_domain = True
             cue.evidence.append("cue:user.birth_month")
+            return cue
+
+        if _matches_any(normalized, (r"\bten\b", r"\bgoi ten\b", r"\bname\b")):
+            cue.domain = "user"
+            cue.fact_key = "user.name"
+            cue.aliases = ["ten", "name", "goi ten", "preferred name"]
+            cue.wants_profile_fact = True
+            cue.evidence.append("cue:user.name.soft")
+            return cue
+
+        if _matches_any(normalized, (r"\bthang sinh\b", r"\bsinh thang\b", r"\bthang \d{1,2}\b", r"\bbirth month\b")):
+            cue.domain = "user"
+            cue.fact_key = "user.birth_month"
+            cue.aliases = ["thang sinh", "thang", "birth month", "birthday"]
+            cue.wants_profile_fact = True
+            cue.evidence.append("cue:user.birth_month.soft")
             return cue
 
         # Location facts phải tách rõ. Không cho preference/mentioned trả lời hometown/living/current.
@@ -1503,7 +1575,7 @@ class SemanticMemoryStore:
             domain=item.domain,
             fact_key=item.fact_key,
             tags=item.tags,
-            aliases=item.aliases,
+            aliases=[*item.aliases, item.raw_user_text, item.semantic_value],
         )
 
     def _embedding_text_from_parts(
