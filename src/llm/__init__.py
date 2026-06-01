@@ -10,7 +10,7 @@ from .contracts import (
     VALID_ANIMATION_LIST,
     VALID_ANIMATIONS,
 )
-from .service import LlmService
+from .service import FormatViolationException, LlmService
 #src/llm/init.py#L1 (line 1) import LlamaServerClient từ file client.py
 #L2 (line 2) import các hằng số từ contracts.py
 #L3 (line 3) import LlmService từ service.py
@@ -20,6 +20,7 @@ __all__ = [
     "GeminiClient",
     "LlamaServerClient",
     "LlmService",
+    "FormatViolationException",
     "CHAT_RULES_PROMPT",
     "INFERENCE_LADDER_PROMPT",
     "PERSONA_PROMPT",

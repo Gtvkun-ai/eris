@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import re
 from typing import Any, Callable, Optional
 import unicodedata
 
@@ -299,7 +300,9 @@ class _MemoryCoreProxy:
                     except Exception:
                         value = None
                     if value is not None:
-                        return value
+                        clean_value = _clean_public_fact_value(value)
+                        if clean_value is not None:
+                            return clean_value
 
         if self.semantic_lookup_fn is None:
             return None
@@ -309,7 +312,7 @@ class _MemoryCoreProxy:
             return None
 
         try:
-            return self.semantic_lookup_fn(kind)
+            return _clean_public_fact_value(self.semantic_lookup_fn(kind))
         except Exception:
             return None
 
@@ -445,6 +448,39 @@ def _extract_response_text(response: Any) -> str:
                 return content
 
     return ""
+
+
+def _clean_public_fact_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        for key in ("value", "content", "text", "claim"):
+            if key in value:
+                return _clean_public_fact_value(value[key])
+        return None
+    if isinstance(value, (list, tuple, set)):
+        if len(value) == 1:
+            return _clean_public_fact_value(next(iter(value)))
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        text = str(value).strip()
+        if _looks_like_internal_memory_surface(text):
+            return None
+        return value
+    for attr in ("value", "content", "text", "claim"):
+        if hasattr(value, attr):
+            return _clean_public_fact_value(getattr(value, attr))
+    return None
+
+
+def _looks_like_internal_memory_surface(text: str) -> bool:
+    compact = " ".join(str(text or "").split())
+    return (
+        "MemoryPacket(" in compact
+        or "RawRecallResult(" in compact
+        or "RecallAnswer(" in compact
+        or bool(re.match(r"^[A-Za-z_][A-Za-z0-9_.]*\(.+=.+\)$", compact))
+    )
 
 
 def _normalize_recall_text(text: str) -> str:

@@ -60,6 +60,7 @@ VALID_FAILURE_TYPES = {
     "tone_mismatch",
     "tone_distance_mismatch",
     "wrong_abstraction",
+    "format_error",
     "none",
 }
 

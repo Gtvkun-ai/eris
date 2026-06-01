@@ -24,6 +24,9 @@ from cortex.action_planner import ACTION_SPACE, ActionPlanner
 from cortex.affect_semantics import AffectSemanticClassifier
 from cortex.attention_salience import AttentionSalienceEngine
 from cortex.background_observer import BackgroundObserver, BackgroundObserverConfig
+from cortex.daydream_consolidation import DaydreamConsolidator, DaydreamPacket
+from cortex.endogenous_drive import EndogenousDriveEngine, RollingInternalState
+from cortex.internal_agenda import InternalAgendaStack
 from cortex.observer_contracts import ObserverFrame, SemanticSceneNote, SignalSnapshot, stable_hash
 from cortex.appraisal import AppraisalEngine
 from cortex.chat_light import ChatMeaningLayerLight, ChatPersonalityPressureLight
@@ -60,11 +63,17 @@ from cortex.self_model import SelfModelEngine
 from cortex.session_ritual import SessionRitualEngine
 from cortex.speech_core import SpeechCoreEngine
 from cortex.thought_stream import ThoughtStream
+from cortex.user_context_stream import RollingUserContext, UserContextStream
 from cortex.vision_semantic_compressor import VisionCompressorConfig, VisionSemanticCompressor
 from cortex.working_memory import WorkingMemoryEngine
 from domain import Decision
+from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
 from runtime.autonomous_cycle import AutonomousCycleMixin
 from runtime.body_bias import BodyBiasProjector
+from runtime.contextual_autonomy_loop import ContextualAutonomyLoop
+from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
+from runtime.model_budget_policy import ModelBudgetPolicy
+from runtime.sensory_model_adapter import RuntimeSensoryModelAdapter
 from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.cognitive_cycle import CognitiveCycleMixin
@@ -238,9 +247,38 @@ class RuntimeCoordinator(
         self.micro_line_policy = MicroLinePolicy(repeat_guard=self.semantic_repeat_guard)
         self.body_bias_projector = BodyBiasProjector(self._get_internal_state)
         self.signal_buffer = SignalBuffer(SignalBufferConfig())
-        self.background_observer = BackgroundObserver(BackgroundObserverConfig())
+        self.sensory_model_adapter = RuntimeSensoryModelAdapter.from_env(logger=self.logger)
+        self.background_observer = BackgroundObserver(
+            BackgroundObserverConfig(),
+            sensory_adapter=self.sensory_model_adapter,
+        )
         self.vision_semantic_compressor = VisionSemanticCompressor(
             VisionCompressorConfig(),
+            logger=self.logger,
+        )
+        self.internal_agenda = InternalAgendaStack(
+            backing_path=self._resolve_internal_agenda_path(),
+        )
+        self.user_context_stream = UserContextStream()
+        self.endogenous_drive_engine = EndogenousDriveEngine()
+        self.rolling_user_context = RollingUserContext()
+        self.rolling_internal_state = RollingInternalState()
+        self.model_budget_policy = ModelBudgetPolicy(logger=self.logger)
+        self.wake_governor = AutonomousWakeGovernor()
+        self.last_wake_decision: WakeDecision | None = None
+        self.last_daydream_result = None
+        self.daydream_model_adapter = RuntimeDaydreamModelAdapter.from_env(logger=self.logger)
+        self.daydream_consolidator = DaydreamConsolidator(
+            llm_client=self.daydream_model_adapter or getattr(llm_service, "style_client", None),
+            logger=self.logger,
+        )
+        self.contextual_autonomy_loop = ContextualAutonomyLoop(
+            user_context_stream=self.user_context_stream,
+            endogenous_drive=self.endogenous_drive_engine,
+            agenda_stack=self.internal_agenda,
+            daydream=self.daydream_consolidator,
+            budget_policy=self.model_budget_policy,
+            wake_governor=self.wake_governor,
             logger=self.logger,
         )
         self.last_signal_snapshot: SignalSnapshot | None = None
@@ -405,6 +443,13 @@ class RuntimeCoordinator(
             self.last_signal_diff = signal_diff
             self.last_observer_frame = observer_frame
             self._log_observer_trace(observer_frame)
+            self._update_3tier_autonomy_state(
+                signal_snapshot=signal_snapshot,
+                signal_diff=signal_diff,
+                observer_frame=observer_frame,
+                channel=channel,
+                user_text=user_text,
+            )
             if getattr(observer_frame, "should_wake_main", False):
                 self.logger.info(
                     "[background observer] wake_main hint suppressed | salience=%.2f | err=%.2f",
@@ -443,6 +488,205 @@ class RuntimeCoordinator(
             float(getattr(observer_frame, "novelty", 0.0) or 0.0),
             float(getattr(observer_frame, "repetition", 0.0) or 0.0),
         )
+
+    def _update_3tier_autonomy_state(
+        self,
+        *,
+        signal_snapshot: SignalSnapshot,
+        signal_diff,
+        observer_frame: ObserverFrame | None,
+        channel: str = "",
+        user_text: str = "",
+    ) -> None:
+        loop = getattr(self, "contextual_autonomy_loop", None)
+        if loop is None:
+            return
+        try:
+            packets = self._daydream_packets_from_runtime(limit=20)
+            result = loop.tick(
+                signal_snapshot=signal_snapshot,
+                signal_diff=signal_diff,
+                observer_frame=observer_frame,
+                base_internal_state=self._get_internal_state(),
+                memory_packets=packets,
+                user_text=user_text,
+                channel=channel or "autonomous",
+            )
+            self.rolling_user_context = result.user_context
+            self.rolling_internal_state = result.internal_state
+            self.last_wake_decision = result.wake_decision
+            if result.daydream_result is not None:
+                self.last_daydream_result = result.daydream_result
+            self.logger.info(
+                "[wake governor] level=%s ext=%.2f internal=%.2f interrupt=%.2f speech=%.2f budget=%s",
+                result.wake_decision.level,
+                result.wake_decision.external_pressure,
+                result.wake_decision.internal_drive,
+                result.wake_decision.interrupt_cost,
+                result.wake_decision.speech_value,
+                result.wake_decision.budget_reason,
+            )
+        except Exception as exc:
+            self.logger.warning("3-tier autonomy update error: %s", exc)
+
+    def _daydream_packets_from_runtime(self, *, limit: int = 20) -> tuple[DaydreamPacket, ...]:
+        packets: list[DaydreamPacket] = []
+        seen_ids: set[str] = set()
+        seen_text: set[str] = set()
+
+        def add(
+            *,
+            packet_id: str,
+            kind: str,
+            text: object,
+            evidence_ids: tuple[str, ...] = (),
+            importance: float = 0.5,
+            confidence: float = 0.55,
+            metadata: dict[str, object] | None = None,
+        ) -> None:
+            value = re.sub(r"\s+", " ", str(text or "")).strip()
+            packet_key = str(packet_id or "").strip()
+            if not packet_key or not value or packet_key in seen_ids or value in seen_text:
+                return
+            evidence = tuple(str(item) for item in evidence_ids if str(item).strip())[:12]
+            if not evidence:
+                return
+            seen_ids.add(packet_key)
+            seen_text.add(value)
+            packets.append(
+                DaydreamPacket(
+                    id=packet_key,
+                    kind=kind,  # type: ignore[arg-type]
+                    text=value[:1000],
+                    evidence_ids=evidence,
+                    confidence=max(0.05, min(1.0, float(confidence))),
+                    importance=max(0.05, min(1.0, float(importance))),
+                    metadata=dict(metadata or {}),
+                )
+            )
+
+        resonance = getattr(self, "active_memory_resonance", None)
+        if resonance is not None:
+            for idx, activation in enumerate(tuple(getattr(resonance, "activations", ()) or ())[:limit]):
+                layer = str(getattr(activation, "layer", "") or "")
+                kind = self._daydream_kind_from_memory_layer(layer)
+                add(
+                    packet_id=str(getattr(activation, "record_id", "") or f"memory_activation:{idx}"),
+                    kind=kind,
+                    text=getattr(activation, "text", ""),
+                    evidence_ids=tuple(getattr(activation, "evidence_ids", ()) or ()),
+                    importance=float(getattr(activation, "score", 0.55) or 0.55),
+                    confidence=float(getattr(activation, "relevance", 0.60) or 0.60),
+                    metadata={
+                        "source": "memory_activation",
+                        "layer": layer,
+                        "reason": str(getattr(activation, "reason", "") or ""),
+                    },
+                )
+
+        loader = getattr(self.memory_core, "load", None)
+        if callable(loader):
+            try:
+                snapshot = loader()
+            except Exception as exc:
+                self.logger.warning("Daydream packet load error: %s", exc)
+                snapshot = {}
+            if isinstance(snapshot, dict):
+                self._append_daydream_packets_from_memory_snapshot(snapshot, add, limit=limit)
+
+        agenda = getattr(self, "internal_agenda", None)
+        if agenda is not None:
+            for i, item in enumerate(agenda.top_items(limit=5)):
+                add(
+                    packet_id=f"internal_agenda:{getattr(item, 'id', i)}",
+                    kind="unresolved",
+                    text=getattr(item, "summary", ""),
+                    evidence_ids=tuple(getattr(item, "evidence_ids", ()) or ()),
+                    importance=float(getattr(item, "pressure", 0.5) or 0.5),
+                    confidence=float(getattr(item, "confidence", 0.5) or 0.5),
+                    metadata={"source": "internal_agenda"},
+                )
+
+        if not packets:
+            for i, text in enumerate(tuple(getattr(self, "long_term_memory", ()) or ())[:limit]):
+                fallback_id = f"runtime_memory_packet:semantic:{i}"
+                add(
+                    packet_id=fallback_id,
+                    kind="semantic",
+                    text=text,
+                    evidence_ids=(fallback_id,),
+                    importance=0.46,
+                    confidence=0.55,
+                    metadata={"source": "runtime_flattened_memory_fallback"},
+                )
+
+        return tuple(packets[: max(0, limit)])
+
+    def _append_daydream_packets_from_memory_snapshot(
+        self,
+        snapshot: dict[str, object],
+        add_packet,
+        *,
+        limit: int,
+    ) -> None:
+        layer_specs = (
+            ("semantic_memory", "semantic", 4),
+            ("repair_memory", "repair", 4),
+            ("relational_memory", "relational", 4),
+            ("episodic_memory", "episodic", 4),
+            ("affective_residue_memory", "affective", 3),
+            ("procedural_memory", "procedural", 3),
+            ("memory_candidate", "unresolved", 4),
+        )
+        for store_name, kind, per_layer_limit in layer_specs:
+            records = snapshot.get(store_name)
+            if not isinstance(records, list):
+                continue
+            for index, record in enumerate(reversed(records[-per_layer_limit:])):
+                if not isinstance(record, dict):
+                    continue
+                text = self._daydream_text_from_memory_record(record)
+                evidence_ids = tuple(str(item) for item in (record.get("evidence_ids") or ()) if str(item).strip())
+                confidence = float(record.get("confidence", 0.55) or 0.55)
+                record_id = str(record.get("id") or f"{store_name}:{index}")
+                add_packet(
+                    packet_id=f"{store_name}:{record_id}",
+                    kind=kind,
+                    text=text,
+                    evidence_ids=evidence_ids,
+                    importance=min(1.0, confidence + 0.08),
+                    confidence=confidence,
+                    metadata={"source": store_name},
+                )
+
+    def _daydream_kind_from_memory_layer(self, layer: str) -> str:
+        mapping = {
+            "semantic": "semantic",
+            "repair": "repair",
+            "relational": "relational",
+            "episodic": "episodic",
+            "affective_residue": "affective",
+            "procedural": "procedural",
+        }
+        return mapping.get(str(layer or "").strip().lower(), "unresolved")
+
+    def _daydream_text_from_memory_record(self, record: dict[str, object]) -> str:
+        for key in (
+            "summary",
+            "claim",
+            "text",
+            "content",
+            "reason",
+            "raw_text",
+            "pattern",
+            "question",
+        ):
+            value = re.sub(r"\s+", " ", str(record.get(key, "") or "")).strip()
+            if value:
+                return value[:1000]
+        payload = {key: value for key, value in record.items() if key not in {"metadata", "evidence_ids"}}
+        rendered = json.dumps(payload, ensure_ascii=False, default=str)
+        return rendered[:1000]
 
     def _build_signal_snapshot_for_observer(
         self,
@@ -574,6 +818,13 @@ class RuntimeCoordinator(
         except Exception as exc:
             self.logger.warning("Memory state load error: %s", exc)
             return None
+
+    def _resolve_internal_agenda_path(self) -> str:
+        base_dir = str(getattr(self.memory_core, "base_dir", "") or "").strip()
+        if base_dir:
+            return os.path.join(base_dir, "internal_agenda.json")
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        return os.path.join(project_root, "memory_core", "internal_agenda.json")
         
     #Kiểm tra memory core có phải dạng structured memory không.
     def _has_structured_memory_store(self) -> bool:
@@ -3762,6 +4013,71 @@ class RuntimeCoordinator(
             return random.choice(self.autonomous_suppressed_sleep_seconds)
         return random.choice(self.autonomous_sleep_seconds)
 
+    def _current_autonomous_wake_decision(self) -> WakeDecision:
+        decision = getattr(self, "last_wake_decision", None)
+        if decision is not None:
+            return decision
+        return WakeDecision(
+            level="sleep",
+            should_speak=False,
+            should_call_vision=False,
+            should_wake_main=False,
+            should_run_daydream=False,
+            reason="missing_wake_decision",
+            confidence=0.0,
+        )
+
+    def _wake_allows_main_cognition(self) -> bool:
+        decision = getattr(self, "last_wake_decision", None)
+        if decision is None:
+            return False
+        return bool(decision.level == "wake_main_cognition" and decision.should_wake_main)
+
+    def _autonomous_sleep_seconds_from_wake(self, decision: WakeDecision) -> int:
+        loop = getattr(self, "contextual_autonomy_loop", None)
+        if loop is not None and callable(getattr(loop, "next_sleep_seconds", None)):
+            try:
+                return max(2, int(round(float(loop.next_sleep_seconds(decision)))))
+            except Exception:
+                pass
+        return self._choose_autonomous_sleep_duration(
+            suppressed=decision.level != "wake_main_cognition",
+            ti_mode="observe_only",
+        )
+
+    def _finalize_autonomous_wake_gate(
+        self,
+        *,
+        decision: WakeDecision,
+        cycle_start: float,
+        send_body_update: bool,
+        reason: str = "",
+    ) -> bool:
+        self._note_autonomous_silence()
+        if send_body_update:
+            body_decision = Decision(
+                text="",
+                animation="stand",
+                intent=decision.level,
+                should_speak=False,
+                confidence=decision.confidence,
+                parse_mode=f"wake_gate:{decision.level}",
+                debug_trace=reason or decision.reason,
+            )
+            self._send_decision_to_body(body_decision, channel="autonomous")
+        sleep_duration = self._autonomous_sleep_seconds_from_wake(decision)
+        elapsed = time.time() - cycle_start
+        self.logger.info(
+            "[wake route] level=%s reason=%s body_update=%s sleep=%ss",
+            decision.level,
+            reason or decision.reason,
+            send_body_update,
+            sleep_duration,
+        )
+        self.logger.info("Hoàn tất chu kỳ wake-gated trong %.2fs. Nghỉ %ss.", elapsed, sleep_duration)
+        self._sleep_interruptible(sleep_duration)
+        return True
+
     def _process_pending_user_input(self) -> bool:
         msg = self.transport.poll_json()
         if not msg:
@@ -3804,14 +4120,47 @@ class RuntimeCoordinator(
             channel="autonomous",
             started_at=cycle_start,
         )
-        vision_facts = self._maybe_update_screen_facts(
-            snapshot=snapshot,
-            channel="autonomous",
-            observer_frame=observer_frame,
-            started_at=cycle_start,
-        )
+        wake_decision = self._current_autonomous_wake_decision()
+        vision_facts: tuple[str, ...] = ()
+        if wake_decision.should_call_vision or wake_decision.level == "call_vision_compressor":
+            vision_facts = self._maybe_update_screen_facts(
+                snapshot=snapshot,
+                channel="autonomous",
+                observer_frame=observer_frame,
+                force_refresh=True,
+                started_at=cycle_start,
+            )
         if self._process_pending_user_input():
             return self.running
+
+        if wake_decision.level == "sleep":
+            return self._finalize_autonomous_wake_gate(
+                decision=wake_decision,
+                cycle_start=cycle_start,
+                send_body_update=False,
+                reason="wake_governor_sleep",
+            )
+        if wake_decision.level == "observe_only":
+            return self._finalize_autonomous_wake_gate(
+                decision=wake_decision,
+                cycle_start=cycle_start,
+                send_body_update=True,
+                reason="wake_governor_observe_only",
+            )
+        if wake_decision.level == "think_only":
+            return self._finalize_autonomous_wake_gate(
+                decision=wake_decision,
+                cycle_start=cycle_start,
+                send_body_update=False,
+                reason="wake_governor_think_only",
+            )
+        if wake_decision.level == "call_vision_compressor":
+            return self._finalize_autonomous_wake_gate(
+                decision=wake_decision,
+                cycle_start=cycle_start,
+                send_body_update=True,
+                reason="wake_governor_vision_only",
+            )
 
         if vision_facts:
             vision_marker = self._attach_screen_facts(snapshot, vision_facts)
@@ -4179,6 +4528,49 @@ class RuntimeCoordinator(
                 elapsed,
                 sleep_duration,
             )
+            self._sleep_interruptible(sleep_duration)
+            return True
+
+        if not self._wake_allows_main_cognition():
+            if self._try_finalize_micro_observation_cycle(
+                frame=frame,
+                snapshot=snapshot,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                cycle_start=cycle_start,
+            ):
+                return True
+            if self._try_finalize_reengagement_cycle(
+                frame=frame,
+                snapshot=snapshot,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                internal_state=sensed_internal_state,
+                cycle_start=cycle_start,
+            ):
+                return True
+            if self._try_finalize_presence_maintenance_cycle(
+                frame=frame,
+                snapshot=snapshot,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                social_presence_event=social_presence_event,
+                cycle_start=cycle_start,
+            ):
+                return True
+            self._note_autonomous_silence()
+            sleep_duration = self._autonomous_sleep_seconds_from_wake(self._current_autonomous_wake_decision())
+            frame.final_decision = {
+                "text": "",
+                "animation": "",
+                "parse_mode": "wake_gate_no_main",
+                "system_action": "",
+                "reason": "wake_governor_held_main_cognition",
+            }
+            self._set_cognitive_memory_update(frame, notes=("wake_gate_no_main",))
+            self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+            self._finalize_cognitive_frame(frame)
+            self.logger.info("[wake route] held main cognition after local planning; level=%s", self._current_autonomous_wake_decision().level)
             self._sleep_interruptible(sleep_duration)
             return True
 

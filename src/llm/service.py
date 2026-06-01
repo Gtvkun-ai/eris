@@ -37,6 +37,16 @@ class ChatAct(Enum):
     NORMAL_CHAT = "normal_chat"
 
 
+class FormatViolationException(Exception):
+    """Raised when a model response violates the public JSON contract."""
+
+    def __init__(self, reason: str, *, channel: str = "", raw_text: str = ""):
+        super().__init__(reason)
+        self.reason = reason
+        self.channel = channel
+        self.raw_text = str(raw_text or "")
+
+
 CHAT_ACT_CONTRACTS = {
     ChatAct.DIRECT_QUESTION: (
         " Speech act: direct_question. Treat this as a direct question and answer first."
@@ -654,6 +664,7 @@ class LlmService:
             return value.replace('\\n', ' ').replace('\\"', '"').strip()
 
     def _build_protocol_failure_fallback(self, *, channel: str, reason: str, text: str = "") -> str:
+        raise FormatViolationException(reason, channel=channel, raw_text=text)
         if not text:
             if channel == "chat":
                 text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
@@ -688,6 +699,11 @@ class LlmService:
         surface raw schema text. If a clean text field exists, use only that;
         otherwise return a protocol-repair fallback.
         """
+        raise FormatViolationException(
+            f"LlmService blocked malformed decision JSON on {channel}.",
+            channel=channel,
+            raw_text=raw_text,
+        )
         if not self._looks_like_malformed_decision_json(raw_text):
             return ""
         text = self._json_string_field_from_raw(raw_text, "text").strip()
@@ -1326,34 +1342,11 @@ class LlmService:
         return ""
 
     def _build_json_fallback(self, raw_text: str, *, channel: str) -> str:
-        if self._looks_like_prompt_leak(raw_text):
-            return self._build_protocol_failure_fallback(
-                channel=channel,
-                reason=f"LlmService blocked prompt/contract leak in {channel} reply.",
-            )
-        malformed_candidate = self._coerce_malformed_decision_payload(raw_text, channel=channel)
-        if malformed_candidate:
-            return malformed_candidate
-
-        raw_text = self._safe_fallback_text(raw_text, channel=channel)
-        payload = {
-            "text": (raw_text or "").strip(),
-            "intent": "fallback_reply",
-            "action": {"type": "none"},
-            "reasoning_tags": ["fallback", channel],
-            "should_speak": bool((raw_text or "").strip()),
-            "confidence": 0.2,
-            "animation": "stand",
-            "direction": 0,
-            "target_x": -1.0,
-            "bounce_action": "",
-            "extracted_fact": "",
-            "debug_trace": f"LlmService wrapped non-JSON {channel} reply into safe fallback JSON.",
-            "next_animation": "",
-            "system_action": "",
-            "action_input": "",
-        }
-        return json.dumps(payload, ensure_ascii=False)
+        raise FormatViolationException(
+            f"LlmService blocked invalid {channel} JSON instead of wrapping it as fallback.",
+            channel=channel,
+            raw_text=raw_text,
+        )
 
     def _looks_like_provider_metadata(self, text: str) -> bool:
         candidate = (text or "").strip()
@@ -1455,6 +1448,11 @@ class LlmService:
         return updated
 
     def _repair_empty_decision_text(self, *, messages: list[dict], channel: str, previous_json: str) -> str:
+        raise FormatViolationException(
+            f"LlmService blocked empty-text {channel} JSON instead of repairing it.",
+            channel=channel,
+            raw_text=previous_json,
+        )
         retry_messages = self._with_non_empty_text_rule(messages)
         retry_messages.append(
             {
@@ -1504,14 +1502,23 @@ class LlmService:
         )
 
     def _repair_decision_json(self, raw_text: str, *, channel: str) -> str:
+        raise FormatViolationException(
+            f"LlmService blocked invalid {channel} JSON instead of repairing it.",
+            channel=channel,
+            raw_text=raw_text,
+        )
         if self._looks_like_prompt_leak(raw_text):
-            return self._build_protocol_failure_fallback(
+            raise FormatViolationException(
+                f"LlmService refused to repair prompt/contract leak as public {channel} text.",
                 channel=channel,
-                reason=f"LlmService refused to repair prompt/contract leak as public {channel} text.",
+                raw_text=raw_text,
             )
-        malformed_candidate = self._coerce_malformed_decision_payload(raw_text, channel=channel)
-        if malformed_candidate:
-            return malformed_candidate
+        if self._looks_like_malformed_decision_json(raw_text):
+            raise FormatViolationException(
+                f"LlmService blocked malformed decision JSON on {channel}.",
+                channel=channel,
+                raw_text=raw_text,
+            )
 
         repaired = self._coerce_json_candidate(raw_text)
         if repaired:
@@ -1594,6 +1601,48 @@ class LlmService:
         """
         return raw_json
 
+    def _strict_decision_candidate_or_raise(self, raw: str, *, channel: str) -> str:
+        raw_text = str(raw or "").strip()
+        if not raw_text:
+            raise FormatViolationException(
+                f"LlmService received empty {channel} response.",
+                channel=channel,
+                raw_text=raw,
+            )
+        if self._looks_like_prompt_leak(raw_text):
+            raise FormatViolationException(
+                f"LlmService blocked prompt/contract leak before parser on {channel}.",
+                channel=channel,
+                raw_text=raw_text,
+            )
+        if self._looks_like_malformed_decision_json(raw_text):
+            raise FormatViolationException(
+                f"LlmService blocked malformed decision JSON on {channel}.",
+                channel=channel,
+                raw_text=raw_text,
+            )
+        if not (raw_text.startswith("{") and raw_text.endswith("}")):
+            raise FormatViolationException(
+                f"LlmService blocked non-JSON or JSON-with-prose {channel} response.",
+                channel=channel,
+                raw_text=raw_text,
+            )
+
+        candidate = self._coerce_json_candidate(raw_text)
+        if not candidate:
+            raise FormatViolationException(
+                f"LlmService could not coerce {channel} response into a decision JSON object.",
+                channel=channel,
+                raw_text=raw_text,
+            )
+        if self._decision_text_is_invalid(candidate):
+            raise FormatViolationException(
+                f"LlmService blocked invalid {channel} decision text.",
+                channel=channel,
+                raw_text=raw_text,
+            )
+        return candidate
+
     def _complete_decision(
         self,
         *,
@@ -1601,6 +1650,8 @@ class LlmService:
         channel: str,
         request_timeout: float | None = None,
         require_text: bool = True,
+        allow_local_fallback: bool = False,
+        force_local_fallback: bool = False,
     ) -> str:
         max_tokens = 260 if channel == "chat" else 320
         if require_text:
@@ -1618,9 +1669,10 @@ class LlmService:
                 break
         else:
             messages.insert(0, {"role": "system", "content": no_cot_contract})
-        def _call(messages_value: list[dict], *, stage: str):
+        def _call(messages_value: list[dict], *, stage: str, override_client=None):
             self._log_final_prompt(messages_value, channel=channel, stage=stage)
-            return self.client.create_chat_completion(
+            target_client = override_client or self.client
+            return target_client.create_chat_completion(
                 messages=messages_value,
                 temperature=0.2,
                 frequency_penalty=0.5 if channel == "chat" else 0.8,
@@ -1631,10 +1683,27 @@ class LlmService:
                 timeout=request_timeout,
             )
 
+        initial_client = self.style_client if force_local_fallback and self.style_client is not None else self.client
+        initial_stage = "local_fallback" if force_local_fallback and self.style_client is not None else "initial"
+
         try:
-            response = _call(messages, stage="initial")
+            response = _call(messages, stage=initial_stage, override_client=initial_client)
         except requests.HTTPError as exc:
-            if self._is_context_size_error(exc):
+            def _looks_like_prompt_leak() -> bool:
+                r_json = getattr(exc, "response_json", {}) or {}
+                # Handle dictionary error responses (like Gemini)
+                err_msg = str(r_json.get("error", {}).get("message", "")).lower()
+                return "safety" in err_msg or "recitation" in err_msg
+                
+            if allow_local_fallback and hasattr(self, "style_client") and self.style_client and _looks_like_prompt_leak():
+                 response = _call(messages, stage="local_fallback", override_client=self.style_client)
+            elif _looks_like_prompt_leak():
+                raise FormatViolationException(
+                    f"LlmService provider blocked {channel} response for safety/recitation before valid JSON.",
+                    channel=channel,
+                    raw_text=str(exc),
+                )
+            elif self._is_context_size_error(exc):
                 n_ctx, _n_prompt = self._parse_context_error_stats(exc)
                 ctx_value = n_ctx or 4096
                 shrunk = self._shrink_messages_for_context(
@@ -1670,15 +1739,13 @@ class LlmService:
 
         raw = self._extract_content(response)
         self._log_raw_api_text(channel, raw)
-        if self._looks_like_prompt_leak(raw):
-            candidate = self._build_protocol_failure_fallback(
-                channel=channel,
-                reason=f"LlmService blocked prompt/contract leak before parser on {channel}.",
-            )
-        else:
-            candidate = self._coerce_json_candidate(raw) or self._repair_decision_json(raw, channel=channel)
+        candidate = self._strict_decision_candidate_or_raise(raw, channel=channel)
         if require_text and self._decision_text_is_invalid(candidate):
-            return self._repair_empty_decision_text(messages=messages, channel=channel, previous_json=candidate)
+            raise FormatViolationException(
+                f"LlmService blocked invalid {channel} decision text.",
+                channel=channel,
+                raw_text=raw,
+            )
         candidate = self._guard_forbidden_inference(candidate, channel=channel)
         return self._guard_infj_594_policy(candidate, channel=channel)
 
@@ -2514,6 +2581,11 @@ class LlmService:
         screen_image_data_uri: str = "",
         reply_context=None,
         require_text: bool = True,
+        defusing_context: str = "", # added defusing_context
+        allow_local_fallback: bool = False, # allow fallback to local LLM
+        format_retry_context: str = "",
+        last_failure: str = "",
+        force_local_fallback: bool = False,
     ):
         style_block = self._build_style_block(
             fe_context=fe_context,
@@ -2553,6 +2625,14 @@ class LlmService:
             chat_system = f"{chat_system}\n\nNi context:\n{ni_context}"
         if ti_context:
             chat_system = f"{chat_system}\n\nTi context:\n{ti_context}"
+        if format_retry_context or last_failure:
+            retry_context = str(format_retry_context or "").strip()
+            failure_flag = str(last_failure or "").strip()
+            chat_system = (
+                f"{chat_system}\n\n"
+                f"{retry_context}\n"
+                f"Runtime failure flag: last_failure={failure_flag or 'format_error'}"
+            )
         previous_public_turn = getattr(reply_context, "previous_public_turn", None)
         if previous_public_turn is not None:
             chat_system = (
@@ -2591,6 +2671,8 @@ class LlmService:
             messages=messages,
             channel="chat",
             require_text=require_text,
+            allow_local_fallback=allow_local_fallback,
+            force_local_fallback=force_local_fallback,
         )
         guarded = self._guard_chat_output(raw, raw_user_text=effective_user_text)
 

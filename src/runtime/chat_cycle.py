@@ -6,10 +6,12 @@ import unicodedata
 from dataclasses import replace
 
 from cortex.ni import NiStateMachine
+from cortex.conversation_dynamics import ConversationFailure
 from cortex.relationship_dynamics import RelationshipTurnEvent
 from cortex.relational_feedback import RelationalFeedbackAnalyzer, merge_affect_with_relational_feedback
 from cortex.turn_semantics import TurnSemanticsEngine, TurnSemanticsReport
 from domain import Decision
+from llm import FormatViolationException
 from runtime.source_grounding import SourceGroundingEngine
 
 
@@ -539,26 +541,83 @@ class ChatCycleMixin:
                 fe_plan=fe_plan,
                 notes=("memory_recall",),
             )
+            memory_recall_decision = self._apply_chat_final_guards(
+                memory_recall_decision,
+                user_text=user_text,
+                frame=frame,
+            )
             self._commit_chat_decision(memory_recall_decision, fe_plan, frame=frame)
             self.last_user_text_for_semantics = user_text
             return
+        chat_generation_kwargs = {
+            "chat_history": llm_chat_history,
+            "user_message": chat_user_message,
+            "raw_user_text": user_text,
+            "ni_context": ni_report.prompt_context,
+            "ti_context": planned_ti_context,
+            "fe_context": fe_plan.style_context,
+            "appraisal_context": self._build_appraisal_context(frame.appraisal),
+            "internal_state_context": self._build_internal_state_context(sensed_internal_state, frame.self_state),
+            "conversation_context": f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
+            "memory_context": memory_context,
+            "grounding_context": grounding_report.prompt_context,
+            "screen_image_data_uri": screen_image_data_uri,
+            "reply_context": getattr(self, "reply_context", None),
+            "defusing_context": getattr(frame.action_plan, "defusing_context", ""),
+        }
+        format_retry_context = ""
+        format_failure_flag = ""
+        format_errors = 0
+        max_format_retries = 2
+        raw = None
+
         self._set_background_memory_digest_remote_inflight(True)
         try:
-            raw = self.llm_service.generate_chat_reply(
-                chat_history=llm_chat_history,
-                user_message=chat_user_message,
-                raw_user_text=user_text,
-                ni_context=ni_report.prompt_context,
-                ti_context=planned_ti_context,
-                fe_context=fe_plan.style_context,
-                appraisal_context=self._build_appraisal_context(frame.appraisal),
-                internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
-                conversation_context=f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
-                memory_context=memory_context,
-                grounding_context=grounding_report.prompt_context,
-                screen_image_data_uri=screen_image_data_uri,
-                reply_context=getattr(self, "reply_context", None),
-            )
+            for attempt_index in range(max_format_retries + 1):
+                try:
+                    raw = self.llm_service.generate_chat_reply(
+                        **chat_generation_kwargs,
+                        format_retry_context=format_retry_context,
+                        last_failure=format_failure_flag,
+                        allow_local_fallback=False,
+                    )
+                    break
+                except FormatViolationException as exc:
+                    format_errors += 1
+                    format_failure_flag = "format_error"
+                    format_retry_context = (
+                        "System context: Your previous output was blocked due to invalid format/internal leak. "
+                        "Regenerate your response using strictly valid JSON and maintain your persona."
+                    )
+                    self.last_failure = "format_error"
+                    conversation_report.state.last_failure = ConversationFailure(
+                        type="format_error",
+                        trigger=str(getattr(exc, "reason", "") or exc),
+                        correction_needed="Regenerate with strictly valid JSON; do not leak analysis or internal instructions.",
+                    )
+                    frame.debug_notes.append(
+                        f"llm_format_error attempt={attempt_index + 1}; errors={format_errors}; reason={getattr(exc, 'reason', str(exc))}"
+                    )
+                    self.logger.warning(
+                        "[llm format retry] attempt=%d/%d | errors=%d | reason=%s",
+                        attempt_index + 1,
+                        max_format_retries + 1,
+                        format_errors,
+                        getattr(exc, "reason", str(exc)),
+                    )
+            if raw is None:
+                frame.debug_notes.append(f"llm_format_errors={format_errors}; route=local_fallback")
+                self.logger.warning(
+                    "[llm format retry] remote retries exhausted; routing chat turn to local fallback | errors=%d",
+                    format_errors,
+                )
+                raw = self.llm_service.generate_chat_reply(
+                    **chat_generation_kwargs,
+                    format_retry_context=format_retry_context,
+                    last_failure="format_error",
+                    allow_local_fallback=True,
+                    force_local_fallback=True,
+                )
         finally:
             self._set_background_memory_digest_remote_inflight(False)
         self._log_raw_llm_output("chat", raw)

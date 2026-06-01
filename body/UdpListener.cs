@@ -73,6 +73,8 @@ public partial class UdpListener : Node2D
 
 	private Panel _chatPanel;
 	private Panel _characterContextMenu;
+	private Button _chatSendButton;
+	private Button _chatCloseButton;
 	private Button _contextChatButton;
 	private Button _contextTouchButton;
 	private Button _contextForceSpeakButton;
@@ -87,12 +89,15 @@ public partial class UdpListener : Node2D
 	private Texture2D _emotionTrackTexture;
 	private Texture2D _switchOnTexture;
 	private Texture2D _switchOffTexture;
+	private Texture2D _chatFrameTexture;
+	private Texture2D _chatSubmitTexture;
+	private Texture2D _chatCloseTexture;
 	private TextureRect _switchTexture;
 	private bool _emotionSwitchEnabled = true;
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	private Tween _textTween;
-	private static readonly Vector2 CharacterContextMenuMinSize = new(170f, 188f);
+	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 220f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
 	private const float EmotionBarWidth = 160f;
 	private const float EmotionBarHeight = 26f;
@@ -185,23 +190,27 @@ public partial class UdpListener : Node2D
 		_label  = GetNode<RichTextLabel>("Monika2/Monika/BubbleContainer/TextureRect/MessageLabel");
 		_bubble   = GetNode<Control>("Monika2/Monika/BubbleContainer");
 	_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
+	_chatSendButton = GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton");
+	_chatCloseButton = GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton");
 	_characterContextMenu = GetNode<Panel>("CanvasLayer/Control/CharacterContextMenu");
 	_contextChatButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ChatButton");
 	_contextTouchButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/TouchButton");
-	_contextForceSpeakButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ForceSpeakButton");
-	_contextEmotionButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/EmotionButton");
-	_contextCloseButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/CloseButton");
+		_contextForceSpeakButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ForceSpeakButton");
+		_contextEmotionButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/EmotionButton");
+		_contextCloseButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/CloseButton");
 		_characterContextMenu.CustomMinimumSize = CharacterContextMenuMinSize;
 		_characterContextMenu.Size = CharacterContextMenuMinSize;
 		_characterContextMenu.ZIndex = 100;
+		BuildCharacterContextMenuUi();
 		_emotionPanel = GetNode<Panel>("CanvasLayer/Control/EmotionPanel");
 		_emotionPanel.CustomMinimumSize = EmotionPanelMinSize;
 		_emotionPanel.Size = EmotionPanelMinSize;
 		_emotionPanel.ZIndex = 99;
 		_emotionText = GetNodeOrNull<RichTextLabel>("CanvasLayer/Control/EmotionPanel/VBoxContainer/ScrollContainer/EmotionText");
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
-	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton").Pressed += OnSendPressed;
-	GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton").Pressed += CloseChatPanel;
+		BuildChatPanelUi();
+	_chatSendButton.Pressed += OnSendPressed;
+	_chatCloseButton.Pressed += CloseChatPanel;
 	_contextChatButton.Pressed += OnContextChatPressed;
 	_contextTouchButton.Pressed += OnContextTouchPressed;
 	_contextForceSpeakButton.Pressed += OnContextForceSpeakPressed;
@@ -425,6 +434,7 @@ public partial class UdpListener : Node2D
 		else
 		{
 			_bodyAutonomy?.RecordUserInteraction();
+			UpdateChatPanelLayout();
 			_chatPanel.Visible = true;
 			_chatInput.GrabFocus();
 			SendChatSignal("chat_start");
@@ -491,6 +501,264 @@ public partial class UdpListener : Node2D
 	private void CloseEmotionPanel()
 	{
 		_emotionPanel.Visible = false;
+	}
+
+	private void BuildChatPanelUi()
+	{
+		if (_chatPanel == null || _chatInput == null || _chatSendButton == null || _chatCloseButton == null)
+			return;
+
+		_chatFrameTexture = GD.Load<Texture2D>("res://asset/Resource/chatframe.png");
+		_chatSubmitTexture = GD.Load<Texture2D>("res://asset/Resource/submitchatframe.png");
+		_chatCloseTexture = GD.Load<Texture2D>("res://asset/Resource/exitschatframe.png");
+
+		_chatPanel.AddThemeStyleboxOverride("panel", new StyleBoxTexture
+		{
+			Texture = _chatFrameTexture,
+			TextureMarginLeft = 26f,
+			TextureMarginTop = 26f,
+			TextureMarginRight = 26f,
+			TextureMarginBottom = 26f,
+			AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
+			AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
+			ContentMarginLeft = 14f,
+			ContentMarginTop = 14f,
+			ContentMarginRight = 14f,
+			ContentMarginBottom = 14f,
+		});
+
+		if (GetNodeOrNull<HBoxContainer>("CanvasLayer/Control/ChatPanel/HBoxContainer") is { } row)
+		{
+			row.Alignment = BoxContainer.AlignmentMode.Center;
+			row.AddThemeConstantOverride("separation", 12);
+			row.OffsetLeft = 12f;
+			row.OffsetTop = 12f;
+			row.OffsetRight = -12f;
+			row.OffsetBottom = -12f;
+		}
+
+		_chatInput.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		_chatInput.Alignment = HorizontalAlignment.Left;
+		_chatInput.PlaceholderText = "Nhan tin voi ERIS...";
+		_chatInput.AddThemeColorOverride("font_color", new Color(0.43f, 0.39f, 0.42f));
+		_chatInput.AddThemeColorOverride("font_placeholder_color", new Color(0.64f, 0.60f, 0.63f));
+
+		ConfigureChatActionButton(_chatSendButton, "Gui", _chatSubmitTexture, 22);
+		ConfigureChatActionButton(_chatCloseButton, "X", _chatCloseTexture, 20);
+		UpdateChatPanelLayout();
+	}
+
+	private void UpdateChatPanelLayout()
+	{
+		if (_chatPanel == null || _chatInput == null || _chatSendButton == null || _chatCloseButton == null || _chatFrameTexture == null)
+			return;
+
+		Vector2 viewport = GetViewportRect().Size;
+		float targetWidth = Mathf.Clamp(viewport.X - 28f, 460f, 880f);
+		float scale = Mathf.Clamp(targetWidth / 880f, 0.7f, 1f);
+		// Keep height stable to avoid squishing the baked-in circular icon in chatframe.png.
+		float targetHeight = 68f;
+		float outerPadding = Mathf.Clamp(8f * scale, 6f, 8f);
+		// Leave room for the decorative "chat" button area baked into the frame texture.
+		float leftInset = Mathf.Clamp(72f * scale, 44f, 72f);
+		float gap = Mathf.Clamp(10f * scale, 8f, 10f);
+		float buttonHeight = Mathf.Clamp(44f * scale, 34f, 44f);
+		// Icon removed from ChatPanel; keep layout compact.
+		float submitWidth = Mathf.Clamp(96f * scale, 72f, 96f);
+		float closeWidth = Mathf.Clamp(46f * scale, 36f, 46f);
+		float fontSize = Mathf.Clamp(Mathf.RoundToInt(17f * scale), 13, 17);
+		float buttonFontSize = Mathf.Clamp(Mathf.RoundToInt(20f * scale), 13, 20);
+		float closeFontSize = Mathf.Clamp(Mathf.RoundToInt(18f * scale), 13, 18);
+		float radius = Mathf.Clamp(Mathf.RoundToInt(13f * scale), 10, 13);
+		float inputPadding = Mathf.Clamp(14f * scale, 10f, 14f);
+		float borderPadding = Mathf.Clamp(2f * scale, 1f, 2f);
+
+		_chatPanel.CustomMinimumSize = new Vector2(targetWidth, targetHeight);
+		_chatPanel.Size = new Vector2(targetWidth, targetHeight);
+		_chatPanel.Position = new Vector2(
+			Mathf.Max(0f, (viewport.X - targetWidth) * 0.5f),
+			Mathf.Max(0f, viewport.Y - targetHeight - 8f));
+
+		if (GetNodeOrNull<HBoxContainer>("CanvasLayer/Control/ChatPanel/HBoxContainer") is { } row)
+		{
+			row.AddThemeConstantOverride("separation", (int)gap);
+			row.OffsetLeft = outerPadding + leftInset;
+			row.OffsetTop = outerPadding;
+			row.OffsetRight = -outerPadding;
+			row.OffsetBottom = -outerPadding;
+		}
+
+		_chatInput.CustomMinimumSize = new Vector2(140f, buttonHeight);
+		_chatInput.AddThemeFontSizeOverride("font_size", (int)fontSize);
+		_chatInput.AddThemeStyleboxOverride("normal", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 1f, 1f, 0.98f),
+			CornerRadiusTopLeft = (int)radius,
+			CornerRadiusTopRight = (int)radius,
+			CornerRadiusBottomRight = (int)radius,
+			CornerRadiusBottomLeft = (int)radius,
+			ContentMarginLeft = inputPadding,
+			ContentMarginTop = Mathf.Clamp(9f * scale, 7f, 9f),
+			ContentMarginRight = inputPadding,
+			ContentMarginBottom = Mathf.Clamp(9f * scale, 7f, 9f),
+		});
+		_chatInput.AddThemeStyleboxOverride("focus", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 1f, 1f, 0.98f),
+			BorderColor = new Color(1f, 0.63f, 0.79f, 0.9f),
+			BorderWidthLeft = (int)borderPadding,
+			BorderWidthTop = (int)borderPadding,
+			BorderWidthRight = (int)borderPadding,
+			BorderWidthBottom = (int)borderPadding,
+			CornerRadiusTopLeft = (int)radius,
+			CornerRadiusTopRight = (int)radius,
+			CornerRadiusBottomRight = (int)radius,
+			CornerRadiusBottomLeft = (int)radius,
+			ContentMarginLeft = Mathf.Max(8f, inputPadding - borderPadding),
+			ContentMarginTop = Mathf.Max(6f, Mathf.Clamp(9f * scale, 7f, 9f) - borderPadding),
+			ContentMarginRight = Mathf.Max(8f, inputPadding - borderPadding),
+			ContentMarginBottom = Mathf.Max(6f, Mathf.Clamp(9f * scale, 7f, 9f) - borderPadding),
+		});
+
+		ApplyChatButtonLayout(_chatSendButton, "", _chatSubmitTexture, new Vector2(submitWidth, buttonHeight), buttonFontSize);
+		ApplyChatButtonLayout(_chatCloseButton, "X", _chatCloseTexture, new Vector2(closeWidth, buttonHeight), closeFontSize);
+	}
+
+	private void ConfigureChatActionButton(Button button, string text, Texture2D texture, int fontSize)
+	{
+		if (button == null || texture == null)
+			return;
+
+		var style = new StyleBoxTexture
+		{
+			Texture = texture,
+			TextureMarginLeft = 20f,
+			TextureMarginTop = 20f,
+			TextureMarginRight = 20f,
+			TextureMarginBottom = 20f,
+			AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
+			AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
+			ContentMarginLeft = 12f,
+			ContentMarginTop = 8f,
+			ContentMarginRight = 12f,
+			ContentMarginBottom = 8f,
+		};
+
+		button.Text = text;
+		button.AddThemeStyleboxOverride("normal", style);
+		button.AddThemeStyleboxOverride("hover", style);
+		button.AddThemeStyleboxOverride("pressed", style);
+		button.AddThemeStyleboxOverride("focus", style);
+		button.AddThemeColorOverride("font_color", Colors.White);
+		button.AddThemeColorOverride("font_hover_color", Colors.White);
+		button.AddThemeColorOverride("font_pressed_color", Colors.White);
+		button.AddThemeFontSizeOverride("font_size", fontSize);
+		button.MouseDefaultCursorShape = Control.CursorShape.PointingHand;
+	}
+
+	private void ApplyChatButtonLayout(Button button, string text, Texture2D texture, Vector2 size, float fontSize)
+	{
+		if (button == null)
+			return;
+
+		button.Text = text;
+		button.CustomMinimumSize = size;
+		button.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+		button.AddThemeFontSizeOverride("font_size", Mathf.RoundToInt(fontSize));
+	}
+
+	private static float GetScaledWidth(Texture2D texture, float targetHeight)
+	{
+		if (texture == null)
+			return targetHeight;
+
+		Vector2 sourceSize = texture.GetSize();
+		if (sourceSize.Y <= 0f)
+			return targetHeight;
+
+		return sourceSize.X / sourceSize.Y * targetHeight;
+	}
+
+	private void BuildCharacterContextMenuUi()
+	{
+		if (_characterContextMenu == null)
+			return;
+
+		var panelStyle = new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 1f, 1f, 0.9f),
+			BorderColor = new Color(1f, 0.76f, 0.86f, 0.95f),
+			BorderWidthLeft = 2,
+			BorderWidthTop = 2,
+			BorderWidthRight = 2,
+			BorderWidthBottom = 2,
+			CornerRadiusTopLeft = 14,
+			CornerRadiusTopRight = 14,
+			CornerRadiusBottomRight = 14,
+			CornerRadiusBottomLeft = 14,
+			ShadowColor = new Color(1f, 0.67f, 0.80f, 0.18f),
+			ShadowSize = 7,
+			ContentMarginLeft = 0,
+			ContentMarginTop = 0,
+			ContentMarginRight = 0,
+			ContentMarginBottom = 0,
+		};
+		_characterContextMenu.AddThemeStyleboxOverride("panel", panelStyle);
+
+		if (GetNodeOrNull<VBoxContainer>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer") is { } container)
+		{
+			container.AddThemeConstantOverride("separation", 6);
+			container.OffsetLeft = 6f;
+			container.OffsetTop = 8f;
+			container.OffsetRight = -6f;
+			container.OffsetBottom = -8f;
+		}
+
+		ConfigureContextMenuButton(_contextChatButton, "Chat", "res://asset/Resource/chat.png");
+		ConfigureContextMenuButton(_contextTouchButton, "Cham / Nem", "res://asset/Resource/tought.png");
+		ConfigureContextMenuButton(_contextForceSpeakButton, "Noi ngay", "res://asset/Resource/force.png");
+		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextCloseButton, "Dong", "res://asset/Resource/exit.png");
+	}
+
+	private void ConfigureContextMenuButton(Button button, string text, string iconPath)
+	{
+		if (button == null)
+			return;
+
+		var texture = GD.Load<Texture2D>("res://asset/Resource/button.png");
+		var style = new StyleBoxTexture
+		{
+			Texture = texture,
+			TextureMarginLeft = 16f,
+			TextureMarginTop = 16f,
+			TextureMarginRight = 16f,
+			TextureMarginBottom = 16f,
+			AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
+			AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
+			ContentMarginLeft = 40f,
+			ContentMarginTop = 6f,
+			ContentMarginRight = 10f,
+			ContentMarginBottom = 6f,
+		};
+
+		button.Text = text;
+		button.CustomMinimumSize = new Vector2(0f, 36f);
+		button.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		button.Alignment = HorizontalAlignment.Left;
+		button.Icon = GD.Load<Texture2D>(iconPath);
+		button.IconAlignment = HorizontalAlignment.Left;
+		button.ExpandIcon = false;
+		button.AddThemeStyleboxOverride("normal", style);
+		button.AddThemeStyleboxOverride("hover", style);
+		button.AddThemeStyleboxOverride("pressed", style);
+		button.AddThemeStyleboxOverride("focus", style);
+		button.AddThemeColorOverride("font_color", new Color(0.34f, 0.20f, 0.28f));
+		button.AddThemeColorOverride("font_hover_color", new Color(0.34f, 0.20f, 0.28f));
+		button.AddThemeColorOverride("font_pressed_color", new Color(0.34f, 0.20f, 0.28f));
+		button.AddThemeConstantOverride("h_separation", 8);
+		button.AddThemeFontSizeOverride("font_size", 15);
+		button.MouseDefaultCursorShape = Control.CursorShape.PointingHand;
 	}
 
 	private void BuildEmotionPanelUi()

@@ -486,6 +486,7 @@ class CognitiveActionPlan:
     style_attitude: str = ""
     style_limit: str = ""
     style_voice: str = ""
+    defusing_context: str = ""
     utility_scores: dict[str, float] = field(default_factory=dict)
     selected_utility: float = 0.0
     rhythm_phase: str = ""

@@ -1,5 +1,6 @@
 import os
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
@@ -136,6 +137,35 @@ def test_runtime_adapter_can_surface_semantic_fact_lookup():
     assert "Tin" in decision.text
 
 
+def test_runtime_adapter_does_not_surface_memory_packet_repr_from_base_core():
+    ledger = SessionTurnLedger()
+    ledger.record_user("xin chao", timestamp=1.0)
+    packet_like = SimpleNamespace(
+        episodic=(),
+        semantic=(),
+        relational=(),
+        affective_residue=(),
+        procedural=(),
+        repair=(),
+        token_budget=900,
+        source_counts={"semantic": 0},
+    )
+    memory_core = SimpleNamespace(lookup_fact=lambda fact_key: packet_like)
+
+    adapter = MemoryRecallAdapter(
+        ledger=ledger,
+        memory_core=memory_core,
+        semantic_lookup=lambda kind: None,
+    )
+
+    decision = adapter.try_answer("toi ten gi")
+
+    assert decision is not None
+    assert "MemoryPacket(" not in decision.text
+    assert "namespace(" not in decision.text.lower()
+    assert "chưa có" in decision.text or "chua co" in decision.text
+
+
 def test_runtime_adapter_ignores_user_fact_disclosure_and_ambiguous_semantic_probe():
     ledger = SessionTurnLedger()
     ledger.record_user("xin chao", timestamp=1.0)
@@ -160,6 +190,26 @@ def test_surface_policy_blocks_raw_object_repr():
         source=MemorySourceKind.SEMANTIC_MEMORY,
         ir=ir,
         exact_text="UserProfile(name='Tin')",
+        confidence=0.92,
+    )
+
+    answer = policy.surface(raw)
+
+    assert answer.surface.value == "admit_uncertain"
+    assert answer.debug_trace == "raw_object_surface_blocked"
+
+
+def test_surface_policy_blocks_embedded_memory_packet_repr():
+    ir = MemoryQueryIR(
+        intent=QueryIntent.RECALL_FACT,
+        target=MemorySelector(fact_key="user.name"),
+    )
+    policy = MemoryRecallSurfacePolicy()
+    raw = RawRecallResult(
+        found=True,
+        source=MemorySourceKind.SEMANTIC_MEMORY,
+        ir=ir,
+        exact_text="Tên Ngài là MemoryPacket(episodic=[], semantic=[], token_budget=900).",
         confidence=0.92,
     )
 

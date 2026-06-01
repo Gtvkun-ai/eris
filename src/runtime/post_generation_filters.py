@@ -43,6 +43,7 @@ class PostGenerationFiltersMixin:
         except Exception:
             state = None
         decision = self._apply_protocol_surface_guard(decision)
+        decision = self._apply_internal_object_surface_guard(decision)
         conversation = getattr(state, "conversation_dynamics", None)
         flags = set(getattr(conversation, "adaptation_flags", ()) or ())
         last_assistant_text = str(getattr(self, "last_chat_answer", "") or "")
@@ -127,6 +128,49 @@ class PostGenerationFiltersMixin:
             repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.40)
         except Exception:
             repaired.confidence = 0.40
+        return repaired
+
+    def _detect_internal_object_surface_leak(self, text: str) -> tuple[str, ...]:
+        raw = str(text or "")
+        if not raw.strip():
+            return ()
+        markers = (
+            "MemoryPacket(",
+            "RawRecallResult(",
+            "RecallAnswer(",
+            "QueryHypothesis(",
+            "MemoryQueryIR(",
+            "MemorySelector(",
+            "SemanticMemoryItem(",
+            "SemanticMemoryRecord(",
+        )
+        hits = [marker for marker in markers if marker in raw]
+        if re.search(r"\b[A-Za-z_][A-Za-z0-9_.]*\([^)]*(?:=|source_counts|token_budget)[^)]*\)", raw):
+            hits.append("object_repr")
+        return tuple(dict.fromkeys(hits))
+
+    def _internal_object_surface_repair_text(self) -> str:
+        return "Tôi vừa chặn một mảnh dữ liệu nội bộ bị surface nhầm. Phần đó không đủ sạch để nói ra ngoài."
+
+    def _apply_internal_object_surface_guard(self, decision: Decision) -> Decision:
+        hits = self._detect_internal_object_surface_leak(getattr(decision, "text", "") or "")
+        if not hits:
+            return decision
+        repaired = self._copy_decision_with_text(
+            decision,
+            text=self._internal_object_surface_repair_text(),
+            trace_marker="internal_object_surface_guard=" + ",".join(hits),
+            parse_mode="deterministic_repair",
+        )
+        repaired.intent = "repair_surface_leak"
+        repaired.action = "none"
+        repaired.system_action = ""
+        repaired.action_input = ""
+        repaired.should_speak = True
+        try:
+            repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.35)
+        except Exception:
+            repaired.confidence = 0.35
         return repaired
 
     def _apply_memory_haunting_guard(self, decision: Decision, *, grounding=None) -> Decision:
@@ -1021,6 +1065,7 @@ class PostGenerationFiltersMixin:
             try:
                 probe = replace(decision)
                 probe = self._apply_protocol_surface_guard(probe)
+                probe = self._apply_internal_object_surface_guard(probe)
                 probe = self._guard_recent_context_as_screen_observation(probe)
                 probe = self._apply_memory_haunting_guard(probe)
                 probe = self._apply_force_speak_no_evidence_topic_filter(
@@ -1042,6 +1087,7 @@ class PostGenerationFiltersMixin:
             return decision
 
         decision = self._apply_protocol_surface_guard(decision)
+        decision = self._apply_internal_object_surface_guard(decision)
         decision = self._guard_recent_context_as_screen_observation(decision)
         decision = self._apply_memory_haunting_guard(decision)
         decision = self._apply_anti_mindreading_filter(

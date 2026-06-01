@@ -227,7 +227,9 @@ class MemoryQueryExecutor:
                 try:
                     value = fn(fact_key)
                     if value is not None:
-                        return _unwrap_fact_value(value)
+                        unwrapped = _unwrap_fact_value(value)
+                        if unwrapped is not None:
+                            return unwrapped
                 except Exception:
                     pass
 
@@ -303,14 +305,53 @@ class MemoryQueryExecutor:
 def _unwrap_fact_value(value: Any) -> Any:
     if value is None:
         return None
+    if _looks_like_internal_memory_object(value):
+        return None
     if isinstance(value, dict):
         for key in ("value", "content", "text", "claim"):
             if key in value:
-                return value[key]
+                return _unwrap_fact_value(value[key])
+        return None
+    if isinstance(value, (list, tuple, set)):
+        if len(value) == 1:
+            return _unwrap_fact_value(next(iter(value)))
+        return None
+    if isinstance(value, str) and _looks_like_internal_memory_surface(value):
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
     for attr in ("value", "content", "text", "claim"):
         if hasattr(value, attr):
-            return getattr(value, attr)
-    return value
+            return _unwrap_fact_value(getattr(value, attr))
+    return None
+
+
+def _looks_like_internal_memory_object(value: Any) -> bool:
+    type_name = type(value).__name__
+    if type_name in {"MemoryPacket", "RawRecallResult", "RecallAnswer"}:
+        return True
+    packet_fields = {
+        "episodic",
+        "semantic",
+        "relational",
+        "affective_residue",
+        "procedural",
+        "repair",
+        "token_budget",
+        "source_counts",
+    }
+    return sum(1 for field in packet_fields if hasattr(value, field)) >= 3
+
+
+def _looks_like_internal_memory_surface(text: str) -> bool:
+    one_line = " ".join(str(text or "").split())
+    return (
+        "MemoryPacket(" in one_line
+        or "RawRecallResult(" in one_line
+        or "RecallAnswer(" in one_line
+        or "QueryHypothesis(" in one_line
+        or "MemoryQueryIR(" in one_line
+    )
 
 
 def _deep_get(data: dict, fact_key: str) -> Any:

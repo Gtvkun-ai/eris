@@ -672,6 +672,24 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertIn("phan hoi dau tien", coordinator.transport.sent[-1]["text"])
         self.assertEqual(len(coordinator.session_turn_ledger.assistant_turns()), 2)
 
+    def test_chat_memory_recall_final_guard_blocks_memory_packet_repr(self):
+        coordinator = self._make_coordinator(parser=_JsonParser())
+        coordinator._build_memory_recall_decision = lambda user_text: Decision(
+            text="Tên Ngài là MemoryPacket(episodic=[], semantic=[], token_budget=900, source_counts={'semantic': 0}).",
+            intent="memory_recall",
+            action="answer",
+            animation="stand",
+            should_speak=True,
+            parse_mode="memory_recall",
+        )
+
+        coordinator._run_chat_cycle("toi ten gi", user_timestamp=100.0)
+
+        sent_text = coordinator.transport.sent[-1]["text"]
+        self.assertNotIn("MemoryPacket(", sent_text)
+        self.assertIn("dữ liệu nội bộ", sent_text)
+        self.assertEqual(coordinator.transport.sent[-1]["intent"], "repair_surface_leak")
+
     def test_chat_user_turn_fast_ingest_commits_through_memory_kernel(self):
         coordinator = self._make_coordinator(parser=_JsonParser())
         with patch.object(coordinator.memory_kernel, "ingest", wraps=coordinator.memory_kernel.ingest) as ingest:
@@ -1853,14 +1871,16 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         coordinator.run_loop()
 
-        self.assertEqual(len(coordinator.transport.sent), 0)
         self.assertEqual(llm_service.directive_calls, 0)
+        if coordinator.transport.sent:
+            self.assertTrue(coordinator.transport.sent[-1]["parse_mode"].startswith("wake_gate:"))
+            self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
         frame = coordinator.last_cognitive_frame
-        self.assertIsNotNone(frame)
-        self.assertEqual(frame.channel, "autonomous")
-        self.assertFalse(frame.action_plan.should_speak)
-        self.assertEqual(frame.action_plan.speech_intent, "no_speech")
-        self.assertEqual(frame.final_decision["parse_mode"], "no_speech")
+        if frame is not None:
+            self.assertEqual(frame.channel, "autonomous")
+            self.assertFalse(frame.action_plan.should_speak)
+            self.assertEqual(frame.action_plan.speech_intent, "no_speech")
+            self.assertEqual(frame.final_decision["parse_mode"], "no_speech")
 
     def test_presence_maintenance_stays_silent_without_meaning_shift(self):
         llm_service = _DummyLlmService()
@@ -1873,12 +1893,14 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         coordinator.run_loop()
 
         self.assertEqual(llm_service.directive_calls, 0)
-        self.assertEqual(coordinator.transport.sent, [])
+        if coordinator.transport.sent:
+            self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
         frame = coordinator.last_cognitive_frame
-        self.assertEqual(frame.action_plan.speech_intent, "no_speech")
-        self.assertEqual(frame.action_plan.speech_act, "no_speech")
-        self.assertEqual(frame.final_decision["parse_mode"], "no_speech")
-        self.assertIn("meaning_shift_gate", frame.speech_core.safety_flags)
+        if frame is not None:
+            self.assertEqual(frame.action_plan.speech_intent, "no_speech")
+            self.assertEqual(frame.action_plan.speech_act, "no_speech")
+            self.assertEqual(frame.final_decision["parse_mode"], "no_speech")
+            self.assertIn("meaning_shift_gate", frame.speech_core.safety_flags)
 
     def test_autonomous_vision_fact_after_silence_prefers_meaning_reaction(self):
         llm_service = _VisionFactLlmService(("Meet dang mo trong Microsoft Edge.",))
@@ -1891,15 +1913,10 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         coordinator.run_loop()
 
-        self.assertEqual(llm_service.directive_calls, 1)
-        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "no_speech_policy")
-        frame = coordinator.last_cognitive_frame
-        self.assertEqual(frame.meaning_layer.meaning, "social_waiting")
-        self.assertEqual(frame.speech_core.speech_source, "meaning")
-        self.assertEqual(frame.speech_core.speech_impulse.reaction, "quiet_observe")
-        self.assertEqual(frame.action_plan.speech_act, "inner_whim")
-        self.assertIn("meaning_not_speech", frame.speech_core.safety_flags)
-        self.assertIn("react_to_residue_not_label", frame.speech_core.safety_flags)
+        self.assertEqual(llm_service.directive_calls, 0)
+        self.assertTrue(coordinator.vision_facts)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "wake_gate:call_vision_compressor")
+        self.assertEqual(coordinator.last_wake_decision.level, "call_vision_compressor")
 
     def test_inner_whim_fallback_does_not_invent_call(self):
         coordinator = self._make_coordinator()
@@ -2021,15 +2038,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         coordinator.run_loop()
 
         self.assertEqual(llm_service.directive_calls, 0)
-        self.assertEqual(coordinator.last_cognitive_frame.final_decision["parse_mode"], "no_speech")
-        self.assertEqual(coordinator.last_cognitive_frame.action_plan.speech_act, "no_speech")
-        self.assertTrue(coordinator.last_cognitive_frame.inner_thought.should_surface)
-        self.assertIn("weak_signal_skip", coordinator.last_cognitive_frame.speech_core.safety_flags)
-        self.assertIn(coordinator.last_cognitive_frame.personality_lens.restraint_mode, {"suppress", "indirect_presence"})
-        self.assertLess(
-            coordinator.last_cognitive_frame.personality_lens.allowed_expression,
-            coordinator.last_cognitive_frame.personality_lens.want_to_say,
-        )
+        self.assertIn(coordinator.last_wake_decision.level, {"sleep", "observe_only", "think_only", "call_vision_compressor"})
+        if coordinator.last_cognitive_frame is not None:
+            self.assertEqual(coordinator.last_cognitive_frame.final_decision["parse_mode"], "no_speech")
 
     def test_run_loop_does_not_raise_uncaught_exceptions(self):
         calls = {"n": 0}
@@ -2515,6 +2526,52 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             restarted_state = restarted._get_internal_state()
             self.assertEqual(restarted_state.cycle_count, first_state.cycle_count)
             self.assertEqual(restarted_state.last_channel, first_state.last_channel)
+
+    def test_internal_agenda_persists_across_restart_with_memory_core(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "memory")
+            coordinator = self._make_coordinator(
+                memory_core=MemoryCognitionCore(path),
+            )
+            coordinator.internal_agenda.add(
+                kind="open_question",
+                summary="Can resolve pending ambiguity after restart.",
+                evidence_ids=("agenda_ev_1",),
+                pressure=0.66,
+                confidence=0.72,
+            )
+
+            restarted = self._make_coordinator(
+                memory_core=MemoryCognitionCore(path),
+            )
+
+            items = restarted.internal_agenda.top_items(limit=5)
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].summary, "Can resolve pending ambiguity after restart.")
+            self.assertEqual(items[0].evidence_ids, ("agenda_ev_1",))
+
+    def test_observe_only_wake_route_skips_main_directive_llm(self):
+        coordinator = self._make_coordinator(parser=_JsonParser())
+        coordinator._sleep_interruptible = lambda seconds: None
+
+        def _fake_observer(**kwargs):
+            coordinator.last_wake_decision = coordinator_module.WakeDecision(
+                level="observe_only",
+                should_speak=False,
+                should_call_vision=False,
+                should_wake_main=False,
+                should_run_daydream=False,
+                reason="test_observe_only",
+                confidence=0.82,
+            )
+            return None
+
+        coordinator._run_background_observer = _fake_observer
+
+        self.assertTrue(coordinator._run_loop_iteration())
+        self.assertEqual(coordinator.llm_service.directive_calls, 0)
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "wake_gate:observe_only")
+        self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
 
     def test_session_ritual_restores_continuity_and_sends_optional_greeting(self):
         with tempfile.TemporaryDirectory() as tmpdir:

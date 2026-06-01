@@ -27,6 +27,24 @@ class _FakeOllamaClient:
 
 
 class BackgroundObserverConfigTests(unittest.TestCase):
+    def test_sensory_env_names_enable_small_model_path(self):
+        with patch.dict(
+            os.environ,
+            {
+                "ERIS_SENSORY_ENABLED": "1",
+                "ERIS_SENSORY_PROVIDER": "ollama",
+                "ERIS_SENSORY_MODEL": "qwen3:0.6b",
+                "ERIS_SENSORY_KEEP_ALIVE": "45m",
+            },
+            clear=False,
+        ):
+            config = BackgroundObserverConfig()
+
+        self.assertTrue(config.llm_enabled)
+        self.assertEqual(config.provider, "ollama")
+        self.assertEqual(config.ollama_model, "qwen3:0.6b")
+        self.assertEqual(config.keep_alive, "45m")
+
     def test_rule_based_rollout_env_keeps_llm_off(self):
         with patch.dict(
             os.environ,

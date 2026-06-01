@@ -57,6 +57,14 @@ except Exception:  # tests có thể chưa copy ollama_client vào PYTHONPATH
     OllamaClient = None  # type: ignore
     OllamaResult = Any  # type: ignore
 
+try:
+    from runtime.sensory_model_adapter import RuntimeSensoryModelAdapter
+except Exception:  # pragma: no cover
+    try:
+        from src.runtime.sensory_model_adapter import RuntimeSensoryModelAdapter  # type: ignore
+    except Exception:  # pragma: no cover
+        RuntimeSensoryModelAdapter = None  # type: ignore
+
 
 _ERROR_PATTERNS = [
     r"\berror\b",
@@ -153,9 +161,20 @@ _FRAGMENTED_EVENT_PATTERNS = [
 @dataclass
 class BackgroundObserverConfig:
     enabled: bool = field(default_factory=lambda: os.getenv("ERIS_BACKGROUND_OBSERVER", "1") == "1")
-    llm_enabled: bool = field(default_factory=lambda: os.getenv("ERIS_BACKGROUND_OBSERVER_LLM", "0") == "1")
-    ollama_model: str = field(default_factory=lambda: os.getenv("ERIS_OBSERVER_MODEL", "qwen3:0.6b"))
-    keep_alive: str | int = field(default_factory=lambda: os.getenv("ERIS_OBSERVER_KEEP_ALIVE", "30m"))
+    llm_enabled: bool = field(
+        default_factory=lambda: str(
+            os.getenv("ERIS_SENSORY_ENABLED", os.getenv("ERIS_BACKGROUND_OBSERVER_LLM", "0"))
+        ).strip().lower() in {"1", "true", "yes", "on"}
+    )
+    provider: str = field(default_factory=lambda: str(os.getenv("ERIS_SENSORY_PROVIDER", "ollama") or "ollama").strip().lower())
+    ollama_model: str = field(
+        default_factory=lambda: str(
+            os.getenv("ERIS_SENSORY_MODEL", os.getenv("ERIS_OBSERVER_MODEL", "qwen3:0.6b")) or "qwen3:0.6b"
+        ).strip()
+    )
+    keep_alive: str | int = field(
+        default_factory=lambda: os.getenv("ERIS_SENSORY_KEEP_ALIVE", os.getenv("ERIS_OBSERVER_KEEP_ALIVE", "30m"))
+    )
 
     min_diff_for_llm: float = field(default_factory=lambda: float(os.getenv("ERIS_OBSERVER_LLM_MIN_DIFF", "0.18")))
     llm_cooldown_seconds: float = field(default_factory=lambda: float(os.getenv("ERIS_OBSERVER_LLM_COOLDOWN", "8")))
@@ -174,11 +193,18 @@ class BackgroundObserver:
     def __init__(
         self,
         config: Optional[BackgroundObserverConfig] = None,
+        sensory_adapter: Any = None,
         ollama_client: Any = None,
     ):
         self.config = config or BackgroundObserverConfig()
+        self.sensory_adapter = sensory_adapter
         self.ollama_client = ollama_client
-        if self.ollama_client is None and self.config.llm_enabled and OllamaClient is not None:
+        if self.sensory_adapter is None and self.config.llm_enabled and RuntimeSensoryModelAdapter is not None:
+            try:
+                self.sensory_adapter = RuntimeSensoryModelAdapter.from_env()
+            except Exception:
+                self.sensory_adapter = None
+        if self.ollama_client is None and self.sensory_adapter is None and self.config.llm_enabled and OllamaClient is not None:
             self.ollama_client = OllamaClient()
         self._last_llm_time: float = 0.0
 
@@ -302,7 +328,9 @@ class BackgroundObserver:
         )
 
     def _should_use_llm(self, diff: SignalDiff) -> bool:
-        if not self.config.llm_enabled or not self.ollama_client:
+        if not self.config.llm_enabled:
+            return False
+        if self.sensory_adapter is None and not self.ollama_client:
             return False
         if diff.diff_score < self.config.min_diff_for_llm and not diff.ocr_changed and not diff.event_changed:
             return False
@@ -318,6 +346,16 @@ class BackgroundObserver:
         *,
         recent_summary: str = "",
     ) -> Optional[ObserverFrame]:
+        if self.sensory_adapter is not None and callable(getattr(self.sensory_adapter, "observe", None)):
+            data = self.sensory_adapter.observe(
+                snapshot=snapshot,
+                diff=diff,
+                recent_summary=recent_summary,
+            )
+            self._last_llm_time = time.time()
+            if isinstance(data, dict):
+                return self._frame_from_llm_data(data)
+            return None
         if not self.ollama_client:
             return None
 

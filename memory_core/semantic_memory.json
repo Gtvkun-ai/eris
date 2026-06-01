@@ -1,13 +1,13 @@
 {
   "version": 2,
   "kind": "semantic_memory",
-  "updated_at": "2026-05-30T18:58:32+0700",
+  "updated_at": "2026-06-01T09:59:33+0700",
   "items": [
     {
       "id": "sem_67edb42ed3bc",
       "claim": "User greeted ERIS with 'hello eris cưng'.",
       "domain": "user",
-      "confidence": 0.76,
+      "confidence": 0.802,
       "source": "state_commit",
       "evidence_ids": [
         "percept:user_message:18:21:0",
@@ -15,12 +15,13 @@
         "percept:user_message:21:08:0",
         "percept:user_message:21:09:0",
         "percept:user_message:09:09:0",
-        "percept:user_message:13:34:0"
+        "percept:user_message:13:34:0",
+        "percept:user_message:15:56:0"
       ],
-      "observations": 6,
+      "observations": 7,
       "status": "active",
       "first_seen_at": "2026-05-27T18:21:57+0700",
-      "updated_at": "2026-05-30T13:34:22+0700",
+      "updated_at": "2026-05-31T15:56:53+0700",
       "decay_policy": "slow",
       "contradiction_ids": [],
       "tags": [
@@ -74,7 +75,8 @@
           "User said 'xin chào eris'",
           "User asked for ERIS's name.",
           "User asked if ERIS knows what it just said.",
-          "User is asking for ERIS's opinion/reaction to their previous greeting/interaction."
+          "User is asking for ERIS's opinion/reaction to their previous greeting/interaction.",
+          "User greeted ERIS with 'xin chào eris cưng'."
         ],
         "last_merge_reason": "store explicit stable semantic fact"
       }
@@ -102,6 +104,57 @@
       ],
       "metadata": {
         "reason": "store explicit stable semantic fact"
+      }
+    },
+    {
+      "id": "sem_cc18fe5a3c62",
+      "claim": "User is questioning the use of the term 'semantic'.",
+      "domain": "user",
+      "confidence": 0.64,
+      "source": "state_commit",
+      "evidence_ids": [
+        "percept:user_message:16:59:0"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-05-31T17:00:07+0700",
+      "updated_at": "2026-05-31T17:00:07+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "semantic",
+        "extracted_fact",
+        "grounded"
+      ],
+      "metadata": {
+        "source": "CognitiveFrameRecorder",
+        "fact_index": 0,
+        "timestamp": "16:59",
+        "semantic_source": "decision_extracted_fact",
+        "source_grounded": true,
+        "grounding_source": "user_text",
+        "grounding_missing_evidence": [],
+        "grounding_preempt_mode": "",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780221607.9426904,
+        "frame_id": null,
+        "raw_content": {
+          "fact": "User is questioning the use of the term 'semantic'.",
+          "source": "decision_extracted_fact",
+          "timestamp": "16:59",
+          "cycle_id": "chat-3"
+        },
+        "reason": "store explicit stable semantic fact",
+        "fact_key": "",
+        "aliases": [],
+        "importance": 0.5,
+        "fact_profile_evidence": [],
+        "embedding_text_hash": "69fc2eb947a6b0f0",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
       }
     },
     {

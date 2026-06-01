@@ -9,7 +9,7 @@ import requests
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from llm.service import ChatAct, LlmService, classify_chat_act
+from llm.service import ChatAct, FormatViolationException, LlmService, classify_chat_act
 
 
 def _norm(text: str) -> str:
@@ -417,7 +417,7 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("speech_act=telemetry_comment", user_prompt)
         self.assertIn("reason_to_speak=Concrete signal is available before LLM", user_prompt)
 
-    def test_chat_reply_repairs_non_json_with_second_pass(self):
+    def test_chat_reply_raises_on_non_json_instead_of_service_repair(self):
         client = _FakeClient(
             [
                 "Xin chào. Tôi đang ở đây.",
@@ -430,11 +430,10 @@ class LlmServiceTests(unittest.TestCase):
         )
         service = LlmService(client)
 
-        raw = service.generate_chat_reply(chat_history=[], user_message="xin chào")
+        with self.assertRaises(FormatViolationException):
+            service.generate_chat_reply(chat_history=[], user_message="xin chào")
 
-        self.assertEqual(len(client.calls), 2)
-        self.assertIn('"animation":"stand"', raw)
-        self.assertIn('"debug_trace":"repair"', raw)
+        self.assertEqual(len(client.calls), 1)
 
     def test_chat_reply_can_attach_screen_image(self):
         client = _FakeClient(
@@ -506,7 +505,53 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("primary_source: uploaded_file", system_prompt)
         self.assertIn("missing_evidence: file_evidence", system_prompt)
 
-    def test_directive_wraps_plain_text_into_safe_json_if_repair_fails(self):
+    def test_chat_reply_includes_format_retry_context(self):
+        client = _FakeClient(
+            [
+                (
+                    '{"text":"Toi se viet dung JSON.","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(client)
+
+        service.generate_chat_reply(
+            chat_history=[],
+            user_message="xin chao",
+            format_retry_context="System context: previous output blocked.",
+            last_failure="format_error",
+        )
+
+        system_prompt = client.calls[0]["messages"][0]["content"]
+        self.assertIn("System context: previous output blocked.", system_prompt)
+        self.assertIn("last_failure=format_error", system_prompt)
+
+    def test_chat_reply_can_force_local_fallback_client(self):
+        main_client = _FakeClient([])
+        style_client = _FakeClient(
+            [
+                (
+                    '{"text":"Local da xu ly.","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"local","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(main_client, style_client=style_client)
+
+        raw = service.generate_chat_reply(
+            chat_history=[],
+            user_message="xin chao",
+            force_local_fallback=True,
+        )
+
+        self.assertEqual(len(main_client.calls), 0)
+        self.assertEqual(len(style_client.calls), 1)
+        self.assertIn('"debug_trace":"local"', raw)
+
+    def test_directive_raises_on_plain_text_instead_of_wrapping_json(self):
         client = _FakeClient(
             [
                 "Hãy trở lại với dự án.",
@@ -515,12 +560,10 @@ class LlmServiceTests(unittest.TestCase):
         )
         service = LlmService(client)
 
-        raw = service.generate_directive(telemetry_data="focus=general")
+        with self.assertRaises(FormatViolationException):
+            service.generate_directive(telemetry_data="focus=general")
 
-        self.assertEqual(len(client.calls), 2)
-        self.assertIn('"text": "Hãy trở lại với dự án."', raw)
-        self.assertIn('"animation": "stand"', raw)
-        self.assertIn("wrapped non-JSON directive reply", raw)
+        self.assertEqual(len(client.calls), 1)
 
     def test_directive_repairs_empty_text_json(self):
         client = _FakeClient(
@@ -539,11 +582,10 @@ class LlmServiceTests(unittest.TestCase):
         )
         service = LlmService(client)
 
-        raw = service.generate_directive(telemetry_data="speech_evidence=<none>", speech_intent="user_requested")
+        with self.assertRaises(FormatViolationException):
+            service.generate_directive(telemetry_data="speech_evidence=<none>", speech_intent="user_requested")
 
-        self.assertEqual(len(client.calls), 2)
-        self.assertIn('"text":"Tôi ở đây."', raw)
-        self.assertIn("empty_repaired", raw)
+        self.assertEqual(len(client.calls), 1)
 
     def test_directive_allows_empty_text_for_system_action(self):
         client = _FakeClient(
@@ -572,22 +614,21 @@ class LlmServiceTests(unittest.TestCase):
         client = _FakeClient([metadata, metadata])
         service = LlmService(client)
 
-        raw = service.generate_directive(telemetry_data="speech_evidence=<none>", speech_intent="user_requested")
+        with self.assertRaises(FormatViolationException):
+            service.generate_directive(telemetry_data="speech_evidence=<none>", speech_intent="user_requested")
 
-        self.assertIn('"text": "Một câu nhỏ thôi, khỏi dựng sân khấu."', raw)
-        self.assertNotIn("candidates", raw)
-        self.assertNotIn("usageMetadata", raw)
+        self.assertEqual(len(client.calls), 1)
 
     def test_directive_does_not_speak_markdown_json_stub(self):
         client = _FakeClient(["Here is the JSON requested:\n```json", "Here is the JSON requested:\n```json"])
         service = LlmService(client)
 
-        raw = service.generate_directive(telemetry_data="speech_evidence=<none>", speech_intent="user_requested")
+        with self.assertRaises(FormatViolationException):
+            service.generate_directive(telemetry_data="speech_evidence=<none>", speech_intent="user_requested")
 
-        self.assertIn('"text": "Một câu nhỏ thôi, khỏi dựng sân khấu."', raw)
-        self.assertNotIn("Here is the JSON", raw)
+        self.assertEqual(len(client.calls), 1)
 
-    def test_extracts_embedded_json_without_repair(self):
+    def test_embedded_json_with_leading_prose_raises_format_violation(self):
         client = _FakeClient(
             [
                 'Trước khi trả lời: {"text":"ok","animation":"stand",'
@@ -597,11 +638,10 @@ class LlmServiceTests(unittest.TestCase):
         )
         service = LlmService(client)
 
-        raw = service.generate_chat_reply(chat_history=[], user_message="xin chào")
+        with self.assertRaises(FormatViolationException):
+            service.generate_chat_reply(chat_history=[], user_message="xin chào")
 
         self.assertEqual(len(client.calls), 1)
-        self.assertTrue(raw.startswith("{"))
-        self.assertIn('"debug_trace":"embedded"', raw)
 
     def test_coerces_json_with_missing_required_fields_without_repair(self):
         client = _FakeClient(

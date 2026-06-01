@@ -2,6 +2,94 @@
   "version": 1,
   "items": [
     {
+      "id": "epi_21a39c1dc0a3",
+      "timestamp": "2026-05-31T17:00:07+0700",
+      "frame_id": "",
+      "summary": "semantic??? -> Ý tôi là tôi chưa lưu trữ thông tin cụ thể về tên của Ngài trong bộ nhớ ngữ nghĩa của mình. -> hard_json_repair",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:16:59:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_aaf4adeec836",
+      "timestamp": "2026-05-31T16:59:31+0700",
+      "frame_id": "",
+      "summary": "tôi tên gì nè -> Tôi chưa có ký ức semantic đủ chắc về tên của Ngài. -> memory_recall",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:16:59:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_9f85d9c2a99a",
+      "timestamp": "2026-05-31T15:57:27+0700",
+      "frame_id": "",
+      "summary": "bạn biết tôi tên gì không -> Tên Ngài là MemoryPacket(episodic=[], semantic=[], relational=[], affective_residue=[], procedural=[], repair=[], temporal=[], spatial=[], worldview=[], confidence_notes=[], token_budget=900, source_counts={'semantic'... -> memory_recall",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:15:57:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_2e087cb33e76",
+      "timestamp": "2026-05-31T15:56:53+0700",
+      "frame_id": "",
+      "summary": "xin chào eris cưng -> Chào Ngài. -> hard_json_repair",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:15:56:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
       "id": "epi_f0a57db8aaea",
       "timestamp": "2026-05-30T13:34:22+0700",
       "frame_id": "",

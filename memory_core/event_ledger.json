@@ -1104,6 +1104,98 @@
         "commit_confidence": 1.0,
         "commit_target": "event_ledger"
       }
+    },
+    {
+      "id": "evt_2b89ad95b72a4cbf",
+      "timestamp": 1780217813.664432,
+      "iso_timestamp": "2026-05-31T15:56:53+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-2', 'channel': 'chat', 'timestamp': '15:56', 'seen': ['xin chào eris cưng'], 'said': 'Chào Ngài.', 'outcome': 'hard_json_repair', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.4204088785046729, 'parse_mode': 'hard_json_repair'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:15:56:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_875c1f82c1b74a85",
+      "timestamp": 1780217847.3226852,
+      "iso_timestamp": "2026-05-31T15:57:27+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-3', 'channel': 'chat', 'timestamp': '15:57', 'seen': ['bạn biết tôi tên gì không'], 'said': \"Tên Ngài là MemoryPacket(episodic=[], semantic=[], relational=[], affective_residue=[], procedural=[], repair=[], temporal=[], spatial=[], worldview=[], confidence_notes=[], token_budget=900, source_counts={'semantic': 0, 'relational': 0, 'episodic': 0, 'procedural': 0, 'affective_residue': 0, 'repair': 0}, score=0.0, dominant_layer='', attention_bias=0.0, appraisal_bias=0.0, wording_bias=0.0, silence_bias=0.0, activations=()).\", 'outcome': 'memory_recall', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.39112538940809966, 'parse_mode': 'memory_recall'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:15:57:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_578719a83d1b4edf",
+      "timestamp": 1780221571.8967562,
+      "iso_timestamp": "2026-05-31T16:59:31+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-2', 'channel': 'chat', 'timestamp': '16:59', 'seen': ['tôi tên gì nè'], 'said': 'Tôi chưa có ký ức semantic đủ chắc về tên của Ngài.', 'outcome': 'memory_recall', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.3905023364485981, 'parse_mode': 'memory_recall'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:16:59:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
+    },
+    {
+      "id": "evt_367abf55db3f400e",
+      "timestamp": 1780221607.917047,
+      "iso_timestamp": "2026-05-31T17:00:07+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-3', 'channel': 'chat', 'timestamp': '16:59', 'seen': ['semantic???'], 'said': 'Ý tôi là tôi chưa lưu trữ thông tin cụ thể về tên của Ngài trong bộ nhớ ngữ nghĩa của mình.', 'outcome': 'hard_json_repair', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.4016394080996884, 'parse_mode': 'hard_json_repair'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:16:59:0"
+      ],
+      "tags": [
+        "commit"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger"
+      }
     }
   ]
 }

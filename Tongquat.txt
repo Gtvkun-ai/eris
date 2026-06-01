@@ -1,9 +1,8 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-05-30
+Cập nhật: 2026-05-31
 Mã hóa: UTF-8
-
 
 Bổ sung nhanh 2026-05-30:
 - Đợt dọn legacy vừa rồi đã bỏ bớt các đường tương thích không còn cần: `src/cortex/subconscious.py` đã được gỡ, `StateCommitter` không còn route qua fallback request cũ, `ActionPlanner`/`InternalState`/`orientation_*` cũng đã đổi bớt các tên gọi mang dấu vết legacy để tài liệu và code đỡ lệch nhau.
@@ -206,6 +205,7 @@ Kết nối mặc định:
 - Nhận event từ Godot: autonomous tick, `chat_start`, `chat`, `chat_end`, `force_speak`.
 - Kết nối Se/telemetry, Evidence bridge, AttentionSalience, WorkingMemory, MeaningLayer, PersonalityLens, appraisal, internal_state, self_model, session_ritual, social_presence, thought_stream, speech_core, action_planner, micro_policy, Ni, Ti, Fe, LLM, parser, memory và action router/executor.
 - File này không còn ôm toàn bộ runtime một mình. `RuntimeCoordinator` hiện kế thừa các mixin trong `src/runtime/*` để tách bớt trách nhiệm: prompt/context building, speech path, presence/micro-presence, post-generation filters, fallback policy và cognitive-frame recording.
+- Đợt 2026-05-31 đẩy coordinator sang vai trò “đầu mối nghe wake governor thật” thay vì chỉ ghi telemetry 3-tier cho đẹp. Khi boot, coordinator hiện khởi tạo thêm `RuntimeSensoryModelAdapter`, `InternalAgendaStack`, `UserContextStream`, `EndogenousDriveEngine`, `ModelBudgetPolicy`, `AutonomousWakeGovernor`, `RuntimeDaydreamModelAdapter` và `ContextualAutonomyLoop`, rồi giữ `last_wake_decision`, `rolling_user_context`, `rolling_internal_state`, `last_daydream_result` như state runtime hạng nhất chứ không phải debug phụ.
 - Giữ state runtime: chat history, last response, active conversational topic, repeated guard, vision facts, cognitive frames, mental process loop, session ritual flag, public turn ledger, reply context, rapid chat burst queue và presence/reengagement cooldown.
 - Khởi tạo thêm ba đầu mối memory-chat mới: `session_turn_ledger` cho transcript public trong phiên hiện tại, `memory_commit_policy` để biến user self-disclosure thành `StateCommitRequest`, và `memory_recall_adapter` để chạy structured memory query pipeline trước khi gọi LLM.
 - Cần phân biệt hai ledger: `public_turn_ledger` là sổ những câu thật sự đã hiện ra cho user để nối reply-context/public history; `session_turn_ledger` là sổ deterministic theo role user/assistant trong phiên để đếm câu, lấy câu thứ N, câu dài nhất và các gist topic gần đây.
@@ -230,6 +230,19 @@ Kết nối mặc định:
 - Wrapper exception mới sẽ ghi cả ba lớp: message gói gọn cho logger, traceback được nén thành một dòng để dò log, và traceback đầy đủ in ra stderr cho debug runtime dạng nền.
 - Sau mỗi turn: parse, Ti enforce, action nếu có, commit memory/internal_state, ghi public turn nếu decision thật sự nói, gửi decision về Godot qua `_send_decision_to_body()`.
 - `_send_decision_to_body()` không chỉ gửi `Decision.to_payload()` mà còn kèm body bias và gọi `_record_public_turn()` để ledger biết câu nào vừa hiện ra với user.
+- Autonomous path giờ có thêm một lớp route cứng theo `WakeDecision`. Sau khi `BackgroundObserver` đẩy `SignalSnapshot`/`SignalDiff` vào `ContextualAutonomyLoop`, coordinator lấy `last_wake_decision` để chặn hoặc mở từng nhánh:
+  - `sleep`: bỏ qua toàn bộ main cognition path, chỉ ngủ theo heartbeat do 3-tier loop tính.
+  - `observe_only`: không gọi main model; chỉ cho body nhận một payload im lặng để cập nhật bias/anchor nếu cần.
+  - `think_only`: cho phép các tầng nội sinh cập nhật pressure/agenda/daydream trigger, nhưng không được phép đi xuống directive LLM.
+  - `call_vision_compressor`: chỉ refresh vision facts bằng compressor rồi dừng ở wake gate; không tự động kéo luôn main cognition trong cùng nhịp.
+  - `wake_main_cognition`: mới là đường duy nhất được phép đi hết autonomous LLM directive path.
+- Không chỉ chặn ở đầu vòng lặp, coordinator còn có gate lần hai sau local planning: nếu đã build xong frame/speech core mà `WakeDecision` không cho phép main cognition, nó sẽ chỉ thử các nhánh local như micro-observation / reengagement / presence maintenance; nếu không branch nào hợp lệ thì finalize `wake_gate_no_main` và dừng. Điều này bịt lỗ cũ kiểu “wake governor bảo im nhưng vài nhánh cũ vẫn tự lẻn xuống LLM”.
+- Coordinator hiện không còn dựng daydream packet chủ yếu từ `long_term_memory` flatten. `_daydream_packets_from_runtime()` ưu tiên:
+  - `active_memory_resonance.activations` với `record_id`, `layer`, `evidence_ids`, `score`, `relevance`.
+  - snapshot structured memory store từ `memory_core.load()`: `semantic_memory`, `repair_memory`, `relational_memory`, `episodic_memory`, `affective_residue_memory`, `procedural_memory`, `memory_candidate`.
+  - `internal_agenda.top_items()` như nguồn unresolved pressure thực.
+  - Chỉ khi các nguồn trên rỗng mới fallback về `long_term_memory`.
+- `internal_agenda` giờ được coordinator gắn `backing_path` trỏ vào `memory_core/internal_agenda.json` (hoặc `base_dir` của memory core). Nhờ vậy agenda nội bộ sống sót qua restart thay vì bị reset về rỗng sau mỗi lần boot runtime.
 - Body bias được dựng từ internal state:
   - `continuity_anxiety`: lấy từ recursive reactivation, memory replay, silence pressure và số tick im lặng.
   - `curiosity`: lấy từ curiosity, curiosity pressure, association pressure và được cộng thêm nếu focus đang là code.
@@ -243,9 +256,22 @@ Kết nối mặc định:
 `src/cortex/background_observer.py`
 - Observer nền chạy song song với cognition chính, nhưng không được phép tự trả lời user, không commit memory và không tạo `Decision` public.
 - Có hai tầng: rule-based luôn chạy được, và optional Ollama text observer để phân loại mềm hơn khi env bật.
+- Từ đợt 2026-05-31, observer không còn gắn cứng với mỗi `ERIS_BACKGROUND_OBSERVER_LLM`. Nó có thể nhận một `RuntimeSensoryModelAdapter` riêng cho tầng 0.6B, nên path “sensory model” đã được tách owner rõ hơn khỏi path cognition/style cũ.
 - Đọc `SignalSnapshot` + `SignalDiff`, rồi dựng `ObserverFrame` với các trục như `focus_kind`, `activity_intent`, `possible_error`, `fragmented`, `user_presence`, `salience`, `recommended_action`, `recommended_budget`.
 - `recommended_action` hiện có các nấc chính: `observe_only`, `update_body_bias`, `call_vision_compressor`, `wake_main_cognition`; nhưng bản này vẫn khóa quyền interrupt cứng, observer chỉ được phát hint.
+- `BackgroundObserverConfig` hiện hiểu đồng thời hai họ env:
+  - rollout cũ: `ERIS_BACKGROUND_OBSERVER_LLM`, `ERIS_OBSERVER_MODEL`, `ERIS_OBSERVER_KEEP_ALIVE`
+  - rollout sensory mới: `ERIS_SENSORY_ENABLED`, `ERIS_SENSORY_PROVIDER`, `ERIS_SENSORY_MODEL`, `ERIS_SENSORY_KEEP_ALIVE`
+  Điều này cho phép chuyển dần observer sang owner 0.6B riêng mà không bẻ gãy config cũ đang dùng.
+- Nếu sensory adapter tồn tại, `_llm_observe()` sẽ đi qua adapter đó trước và nhận JSON observer-frame đã schema hóa; chỉ khi không có adapter mới fallback về Ollama text observer cũ. Nói cách khác, `BackgroundObserver` giờ là chỗ hợp lưu của rule observer + sensory adapter + LLM observer fallback, thay vì chỉ là wrapper quanh một client text nhỏ.
 - Vai trò thật sự của lớp này là lọc xem thay đổi nền có đáng chú ý không trước khi runtime chính tốn thêm budget.
+
+`src/runtime/sensory_model_adapter.py`
+- Adapter riêng cho tầng cảm giác / observer 0.6B.
+- Đọc env `ERIS_SENSORY_ENABLED`, `ERIS_SENSORY_PROVIDER`, `ERIS_SENSORY_MODEL`, `ERIS_SENSORY_KEEP_ALIVE`, `ERIS_SENSORY_TEMPERATURE`.
+- Hiện provider production là Ollama; adapter bọc `OllamaClient.chat_json()` bằng schema observer frame rõ ràng thay vì để `BackgroundObserver` tự lo toàn bộ prompt/schema/client glue.
+- JSON schema buộc model nhỏ trả các field nền tảng của `ObserverFrame`: `focus_kind`, `activity_intent`, `salience`, `novelty`, `repetition`, `ambiguity`, `possible_error`, `user_presence`, `recommended_action`, `recommended_budget`, `confidence`, `notes`.
+- Vai trò kiến trúc của file này là xác nhận 0.6B đã là một owner inference riêng cho sensory layer, không còn “ngầm dùng chung client local nào đó nếu tình cờ có”.
 
 `src/cortex/observer_contracts.py`
 - Contract chung cho nhánh observer mới.
@@ -271,6 +297,75 @@ Kết nối mặc định:
 - Có gate cục bộ `should_compress(observer_frame, signal_diff)` theo salience và diff, để tránh gọi model vision cho mọi thay đổi nhỏ.
 - Nếu thiếu model, thiếu ảnh, hoặc module bị tắt, nó trả fallback OCR-only thay vì làm chết loop.
 - Đây là lớp bổ sung nghĩa cho scene đang mở, không phải một đường trả lời user thứ hai.
+
+`src/runtime/contextual_autonomy_loop.py`
+- Backbone 3-tier autonomy mới, nằm giữa observer/sensory, endogenous drive, agenda, daydream và wake governor.
+- Mỗi `tick()` hiện làm bốn việc lớn:
+  - cập nhật `RollingUserContext` từ snapshot/diff/observer frame,
+  - cập nhật `RollingInternalState` từ endogenous drive + agenda,
+  - chụp `ResourceSnapshot` qua `ModelBudgetPolicy`,
+  - gọi `AutonomousWakeGovernor.decide(...)` để sinh `WakeDecision`.
+- Nếu daydream trigger đủ mạnh và budget 4B cho phép, loop sẽ gọi `DaydreamConsolidator.consolidate(...)`; nếu budget veto, loop đẩy một agenda item `resource_guard` thay vì giả vờ không có chuyện gì xảy ra.
+- `next_sleep_seconds()` giờ không còn là random sleep độc lập nữa; nó kéo heartbeat theo wake level và interrupt cost. `wake_main_cognition` / `call_vision_compressor` / `micro_presence` có heartbeat ngắn hơn, còn `observe_only` / `think_only` kéo giãn hơn, và `sleep` là chậm nhất.
+
+`src/runtime/autonomous_wake_governor.py`
+- Đây là lớp quyết định “mức thức” chứ không trực tiếp quyết định câu sẽ nói gì.
+- `WakeDecision` hiện mang đủ state để runtime route thật: `level`, `should_speak`, `should_call_vision`, `should_wake_main`, `should_run_daydream`, `reason`, `confidence`, `external_pressure`, `internal_drive`, `compute_budget`, `permission`, `speech_value`, `interrupt_cost`, `budget_reason`, `selected_agenda_ids`, `debug`.
+- Wake governor hòa năm trục lại với nhau:
+  - pressure ngoại sinh từ `RollingUserContext`,
+  - drive nội sinh từ `RollingInternalState`,
+  - agenda pressure/speech value từ `InternalAgendaStack`,
+  - interrupt cost / permission,
+  - budget cho `subconscious_4b`, `vision_compressor`, `main_cognition`.
+- Điều quan trọng của đợt mới không nằm ở công thức điểm số, mà ở việc output của wake governor đã trở thành contract điều khiển runtime thật. Trước đây nó là “trọng tài có còi”; giờ coordinator và autonomous loop thực sự phải nghe còi.
+
+`src/runtime/model_budget_policy.py`
+- Vai trò hiện tại của module này vẫn là gatekeeper/budget veto, chưa phải resource scheduler kiểu production.
+- Nó đã đủ để:
+  - chụp snapshot CPU/RAM,
+  - thử đọc thông tin GPU/VRAM theo best-effort,
+  - veto `main_cognition`, `vision_compressor`, `subconscious_4b` khi máy đang căng,
+  - đánh dấu `mark_started()` / `mark_finished()` cho các tier inference để giảm đụng chồng đơn giản.
+- Nhưng nó vẫn chưa làm các việc “sinh tử” hơn:
+  - kill request đang chạy thật,
+  - global lock chống hai model nặng chạy chồng,
+  - queue/cancel token cho request inference,
+  - phân biệt process GPU nào đang chiếm VRAM,
+  - fallback telemetry nhiệt độ/VRAM khi `nvidia-smi` lỗi,
+  - orchestration unload model cho Ollama/llama-server.
+- Vì vậy tài liệu nên hiểu đúng: đây là cảnh giới “good gatekeeper”, chưa phải “cảnh sát tài nguyên”.
+
+`src/runtime/daydream_model_adapter.py`
+- Adapter riêng cho tier 4B daydream consolidation.
+- Đọc env `ERIS_DAYDREAM_ENABLED`, `ERIS_DAYDREAM_PROVIDER`, `ERIS_DAYDREAM_MODEL`, `ERIS_DAYDREAM_KEEP_ALIVE`, `ERIS_DAYDREAM_TIMEOUT`, `ERIS_DAYDREAM_LLAMA_SERVER_URL`.
+- Hỗ trợ hai đường inference:
+  - Ollama: dùng `OllamaClient.chat_json()`
+  - llama-server: gọi `/chat/completions` với `response_format=json_object`
+- Mục tiêu của adapter này là cắt món nợ “ké style client”: daydream giờ có owner model riêng, timeout riêng, provider riêng và logic parse JSON riêng.
+
+`src/cortex/daydream_consolidation.py`
+- Daydream layer vẫn giữ vai trò “4B đọc packet đã lọc sẵn, trả insight có evidence”.
+- Điểm thay đổi quan trọng ở đợt mới không nằm ở validator evidence vốn đã có, mà ở chỗ consolidator giờ được coordinator tiêm `RuntimeDaydreamModelAdapter` riêng thay vì mặc định ké `style_client`.
+- Vì input packet đã chuyển sang structured memory layer + activation + agenda thật, daydream hiện bám sát kiến trúc memory core hơn:
+  - `semantic_memory` cho fact/pattern khái quát
+  - `repair_memory` cho failure/repair loop
+  - `relational_memory` cho nhịp quan hệ
+  - `episodic_memory` cho sự kiện cụ thể
+  - `affective_residue_memory` cho residue nội sinh
+  - `procedural_memory` cho handling rule
+  - `memory_candidate` như unresolved packet để chưng cất tiếp
+- Kết quả vẫn bị reject ngay nếu `evidence_ids` không khớp input, nên mô hình 4B có owner riêng nhưng không được phép thành nhà tiên tri.
+
+`src/cortex/internal_agenda.py`
+- Stack agenda nội bộ giờ không còn là cấu trúc thuần RAM.
+- `InternalAgendaStack` hiện có thêm:
+  - `backing_path`
+  - `autosave`
+  - `save(path)`
+  - `_load_from_disk()`
+  - `_persist()`
+- Các thao tác `add()`, `mark()`, `block()`, `decay()`, `prune()` đều có thể tự persist nếu stack được khởi tạo với `backing_path`. Nhờ vậy unresolved agenda, repair pressure hay continuity task nhỏ không còn mất sạch sau restart.
+- Đây là persistence nhẹ ở mức file JSON cục bộ, chưa phải một memory layer semantic đầy đủ; nhưng về mặt hành vi runtime, nó đã biến “tiềm thức ngắn hạn” từ trạng thái dễ quên thành trạng thái có continuity cơ bản qua vòng đời process.
 
 `src/runtime/prompt_context_builder.py`
 - `PromptContextBuilderMixin`.

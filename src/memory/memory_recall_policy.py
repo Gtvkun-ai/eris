@@ -223,6 +223,17 @@ class MemoryRecallSurfacePolicy:
 
     def _looks_like_raw_object_surface(self, text: str) -> bool:
         one_line = " ".join(text.split())
+        if any(
+            marker in one_line
+            for marker in (
+                "MemoryPacket(",
+                "RawRecallResult(",
+                "RecallAnswer(",
+                "QueryHypothesis(",
+                "MemoryQueryIR(",
+            )
+        ):
+            return True
         if re.match(r"^<[^>]+object at 0x[0-9a-f]+>$", one_line, flags=re.IGNORECASE):
             return True
         if re.match(r"^[A-Za-z_][A-Za-z0-9_.]*\(.+=.+\)$", one_line):

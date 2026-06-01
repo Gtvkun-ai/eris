@@ -1779,10 +1779,11 @@ class CognitiveBudgetEngine:
             ),
         )
         mode = str(safe_get(conversation, "mode", "")).lower()
-        last_failure = str(safe_get(conversation, "last_failure", "")).lower()
+        last_failure_obj = safe_get(conversation, "last_failure", "")
+        last_failure = str(safe_get(last_failure_obj, "type", last_failure_obj)).lower()
         if mode in {"repair", "relational_repair", "execute", "compress"}:
             semantic = max(semantic, 0.58)
-        if last_failure in {"misread", "underacted", "overexplained", "tone_mismatch", "wrong_abstraction", "overread"}:
+        if last_failure in {"misread", "underacted", "overexplained", "tone_mismatch", "wrong_abstraction", "overread", "format_error"}:
             semantic = max(semantic, 0.54)
         semantic = max(
             semantic,
