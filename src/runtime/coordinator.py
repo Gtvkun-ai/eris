@@ -264,6 +264,7 @@ class RuntimeCoordinator(
         self.rolling_user_context = RollingUserContext()
         self.rolling_internal_state = RollingInternalState()
         self.model_budget_policy = ModelBudgetPolicy(logger=self.logger)
+        self._install_model_inference_queue()
         self.wake_governor = AutonomousWakeGovernor()
         self.last_wake_decision: WakeDecision | None = None
         self.last_daydream_result = None
@@ -405,6 +406,50 @@ class RuntimeCoordinator(
         self._ensure_internal_state()
 
 
+    def _install_model_inference_queue(self) -> None:
+        """Bọc các đường gọi model nặng bằng ModelBudgetPolicy queue.
+
+        Các mixin gọi trực tiếp `self.llm_service.generate_*`. Nếu vá từng call-site thì
+        rất dễ sót session_ritual, force_speak hoặc autonomous branch cũ. Bọc ở service
+        khiến mọi đường public đang dùng chung `llm_service` đều phải xin lease.
+        """
+
+        service = getattr(self, "llm_service", None)
+        policy = getattr(self, "model_budget_policy", None)
+        if service is None or policy is None:
+            return
+        if getattr(service, "_eris_model_queue_wrapped", False):
+            return
+
+        def _wrap_method(method_name: str, tier: str, priority: int) -> None:
+            original = getattr(service, method_name, None)
+            if not callable(original):
+                return
+
+            def _wrapped(*args, **kwargs):
+                return policy.run_queued(
+                    tier,
+                    original,
+                    *args,
+                    reason=method_name,
+                    priority=priority,
+                    **kwargs,
+                )
+
+            setattr(_wrapped, "_eris_queue_wrapped", True)
+            setattr(_wrapped, "_eris_original", original)
+            setattr(service, method_name, _wrapped)
+
+        _wrap_method("generate_chat_reply", "main_cognition", 100)
+        _wrap_method("generate_directive", "main_cognition", 80)
+        _wrap_method("generate_screen_facts", "vision_compressor", 35)
+        setattr(service, "_eris_model_queue_wrapped", True)
+        try:
+            self.logger.info("Model inference queue đã bọc llm_service: chat/directive/main + screen_facts/vision.")
+        except Exception:
+            pass
+
+
     def _run_background_observer(
         self,
         *,
@@ -511,6 +556,7 @@ class RuntimeCoordinator(
                 memory_packets=packets,
                 user_text=user_text,
                 channel=channel or "autonomous",
+                autonomous_silent_cycles=int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0),
             )
             self.rolling_user_context = result.user_context
             self.rolling_internal_state = result.internal_state
@@ -518,13 +564,17 @@ class RuntimeCoordinator(
             if result.daydream_result is not None:
                 self.last_daydream_result = result.daydream_result
             self.logger.info(
-                "[wake governor] level=%s ext=%.2f internal=%.2f interrupt=%.2f speech=%.2f budget=%s",
+                "[wake governor] level=%s ext=%.2f internal=%.2f interrupt=%.2f speech=%.2f budget=%s silence_debt=%.2f cycles=%d micro_checked=%s reengagement_checked=%s",
                 result.wake_decision.level,
                 result.wake_decision.external_pressure,
                 result.wake_decision.internal_drive,
                 result.wake_decision.interrupt_cost,
                 result.wake_decision.speech_value,
                 result.wake_decision.budget_reason,
+                float((getattr(result.wake_decision, "debug", {}) or {}).get("silence_debt", 0.0) or 0.0),
+                int((getattr(result.wake_decision, "debug", {}) or {}).get("autonomous_silent_cycles", 0) or 0),
+                (getattr(result.wake_decision, "debug", {}) or {}).get("micro_presence_checked", False),
+                (getattr(result.wake_decision, "debug", {}) or {}).get("reengagement_checked", False),
             )
         except Exception as exc:
             self.logger.warning("3-tier autonomy update error: %s", exc)
@@ -3550,6 +3600,8 @@ class RuntimeCoordinator(
             return False
         if force_refresh:
             return True
+        if observer_frame is None:
+            return False
         should_compress = getattr(compressor, "should_compress", None)
         if not callable(should_compress):
             return False
@@ -3599,18 +3651,24 @@ class RuntimeCoordinator(
         if self._should_use_vision_compressor(observer_frame=observer_frame, force_refresh=force_refresh):
             compressor = getattr(self, "vision_semantic_compressor", None)
             try:
-                signal_snapshot = (
-                    self._build_signal_snapshot_for_observer(
-                        snapshot=snapshot,
-                        channel=channel,
-                        user_text=user_text,
-                        vision_facts=tuple(getattr(snapshot, "vision_facts", ()) or ()) if snapshot is not None else (),
-                        started_at=started_at,
-                    )
-                    if snapshot is not None
-                    else None
-                )
-                note = compressor.compress(
+                signal_snapshot = None
+                if snapshot is not None:
+                    try:
+                        signal_snapshot = self._build_signal_snapshot_for_observer(
+                            snapshot=snapshot,
+                            channel=channel,
+                            user_text=user_text,
+                            vision_facts=tuple(getattr(snapshot, "vision_facts", ()) or ()) if snapshot is not None else (),
+                            started_at=started_at,
+                        )
+                    except Exception as exc:
+                        self.logger.warning("[vision_facts] signal snapshot fallback: %s", exc)
+                note = self.model_budget_policy.run_queued(
+                    "vision_compressor",
+                    compressor.compress,
+                    reason=f"vision_compressor:{channel}",
+                    priority=45 if channel == "chat" else 25,
+                    timeout_seconds=30.0 if channel == "chat" else 1.0,
                     image_data_uri=data_uri,
                     ocr_text=str(getattr(signal_snapshot, "ocr_text", "") or "") if signal_snapshot is not None else "",
                     observer_frame=observer_frame,
@@ -4045,6 +4103,424 @@ class RuntimeCoordinator(
             ti_mode="observe_only",
         )
 
+    def _send_wake_gate_body_update(self, decision: WakeDecision, *, reason: str = "") -> None:
+        body_decision = Decision(
+            text="",
+            animation="stand",
+            intent=decision.level,
+            should_speak=False,
+            confidence=decision.confidence,
+            parse_mode=f"wake_gate:{decision.level}",
+            debug_trace=reason or decision.reason,
+        )
+        self._send_decision_to_body(body_decision, channel="autonomous")
+
+    def _wake_gate_ti_report(self, *, reason: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            mode="steady_observe",
+            reason=reason,
+            animation_hint="stand",
+        )
+
+    def _wake_gate_fe_plan(self, *, ti_report, snapshot, internal_state) -> SimpleNamespace:
+        focus_kind = str(getattr(snapshot, "active_window_kind", "") or getattr(internal_state, "last_focus_kind", "") or "general")
+        intent_label = "technical_support" if focus_kind in {"coding", "code", "documentation", "docs", "ide"} else "quiet_presence"
+        return SimpleNamespace(
+            mode=str(getattr(ti_report, "mode", "") or "steady_observe"),
+            tone_label="tone=cold_soft; warmth=low; stance=grounded; attachment=guarded",
+            intent_label=intent_label,
+            session_arc="wake_gate_presence",
+            sarcasm_level=0.0,
+            warmth_level="low",
+            brevity_bias="short",
+        )
+
+    def _wake_gate_presence_candidate(self, *, snapshot, social_presence_event: SocialPresenceEvent | None) -> bool:
+        if bool(getattr(social_presence_event, "present", False)):
+            return True
+        if self._has_concrete_screen_signal(snapshot):
+            return True
+        active_window = str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or "").strip()
+        focus_summary = str(getattr(snapshot, "focus_summary", "") or "").strip().lower()
+        if active_window:
+            return True
+        if focus_summary and focus_summary not in {"general", "unknown", "idle", "quiet", "quiet desktop"}:
+            return True
+        recent_events = tuple(str(item or "").strip() for item in (getattr(snapshot, "recent_events", ()) or ()) if str(item or "").strip())
+        return any(not self._is_generic_screen_event(item) for item in recent_events)
+
+    def _presence_probe_status(self, *, snapshot, ti_report, social_presence_event: SocialPresenceEvent | None, now: float) -> dict[str, object]:
+        status = {
+            "checked": True,
+            "candidate": self._wake_gate_presence_candidate(snapshot=snapshot, social_presence_event=social_presence_event),
+            "silent_cycles": int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0),
+            "cooldown_ok": True,
+            "allowed": False,
+            "rejected_by": "",
+        }
+        if not getattr(self, "presence_maintenance_enabled", True):
+            status["rejected_by"] = "presence_maintenance_disabled"
+            return status
+        if now < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
+            status["rejected_by"] = "presence_blocked_until"
+            return status
+        if self.presence_maintenance_silent_cycles < self.presence_maintenance_silent_loop_threshold:
+            status["rejected_by"] = "silent_cycles_below_threshold"
+            return status
+        cooldown = float(getattr(self, "presence_maintenance_cooldown_sec", 0.0) or 0.0)
+        if self.last_presence_maintenance_at > 0.0 and now - self.last_presence_maintenance_at < cooldown:
+            status["cooldown_ok"] = False
+            status["rejected_by"] = "presence_cooldown"
+            return status
+        spoken_floor = 8.0 if cooldown <= 0.0 else max(8.0, min(20.0, cooldown))
+        last_spoken = float(getattr(self, "last_autonomous_spoken_at", 0.0) or 0.0)
+        if last_spoken > 0.0 and now - last_spoken < spoken_floor:
+            status["cooldown_ok"] = False
+            status["rejected_by"] = "spoken_floor"
+            return status
+        mode = str(getattr(ti_report, "mode", "") or "")
+        if mode in {"resource_guard", "goal_drift_alert", "goal_realign", "system_warning"}:
+            status["rejected_by"] = f"ti_mode:{mode}"
+            return status
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        recent_events = tuple(getattr(snapshot, "recent_events", ()) or ())
+        present = bool(getattr(social_presence_event, "present", False))
+        if idle_seconds >= 1800.0 and not present:
+            status["rejected_by"] = "idle_too_long_without_presence"
+            return status
+        if not status["candidate"] and not (present or idle_seconds <= 300.0 or bool(recent_events)):
+            status["rejected_by"] = "no_presence_candidate"
+            return status
+        status["allowed"] = True
+        return status
+
+    def _reengagement_probe_status(self, *, snapshot, ti_report, internal_state, now: float) -> dict[str, object]:
+        status = {
+            "checked": True,
+            "candidate": True,
+            "quiet_cycles": int(getattr(self, "reengagement_quiet_cycles", 0) or 0),
+            "cooldown_ok": True,
+            "allowed": False,
+            "rejected_by": "",
+        }
+        if not getattr(self, "reengagement_enabled", True):
+            status["rejected_by"] = "reengagement_disabled"
+            return status
+        if self.reengagement_quiet_cycles < self.reengagement_quiet_loop_threshold:
+            status["rejected_by"] = "quiet_cycles_below_threshold"
+            return status
+        if now < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
+            status["rejected_by"] = "presence_blocked_until"
+            return status
+        cooldown = float(getattr(self, "reengagement_cooldown_sec", 0.0) or 0.0)
+        if self.last_reengagement_at > 0.0 and now - self.last_reengagement_at < cooldown:
+            status["cooldown_ok"] = False
+            status["rejected_by"] = "reengagement_cooldown"
+            return status
+        mode = str(getattr(ti_report, "mode", "") or "")
+        if mode in {"resource_guard", "goal_drift_alert", "goal_realign", "system_warning"}:
+            status["rejected_by"] = f"ti_mode:{mode}"
+            return status
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        if idle_seconds < self.reengagement_min_idle_sec:
+            status["rejected_by"] = "idle_below_reengagement_min"
+            return status
+        if self._has_meaningful_recent_activity(snapshot):
+            status["candidate"] = False
+            status["rejected_by"] = "meaningful_recent_activity"
+            return status
+        if self._social_energy_for_reengagement(internal_state) < 0.18:
+            status["rejected_by"] = "social_energy_low"
+            return status
+        status["allowed"] = True
+        return status
+
+    def _update_wake_gate_debug(self, decision: WakeDecision, **fields: object) -> None:
+        debug = dict(getattr(decision, "debug", {}) or {})
+        debug.update(fields)
+        decision.debug = debug
+
+    def _build_local_presence_maintenance_decision(self, *, snapshot) -> Decision | None:
+        lines = self._presence_maintenance_lines(snapshot)
+        fallback_text = self._choose_local_micro_line(
+            lines,
+            counter=self.presence_maintenance_silent_cycles,
+            threshold=self.presence_maintenance_silent_loop_threshold,
+        )
+        if not fallback_text:
+            return None
+        return Decision(
+            text=fallback_text,
+            animation="stand",
+            intent="presence_maintenance",
+            reasoning_tags=("presence_maintenance", "micro_presence", "local_template"),
+            should_speak=True,
+            confidence=0.44,
+            parse_mode="presence_maintenance",
+            debug_trace=(
+                "presence_maintenance_local"
+                f"; silent_cycles={self.presence_maintenance_silent_cycles}"
+                f"; threshold={self.presence_maintenance_silent_loop_threshold}"
+            ),
+        )
+
+    def _build_local_reengagement_decision(self, *, snapshot) -> Decision | None:
+        lines = self._reengagement_lines(snapshot)
+        fallback_text = self._choose_local_micro_line(
+            lines,
+            counter=self.reengagement_quiet_cycles,
+            threshold=self.reengagement_quiet_loop_threshold,
+        )
+        if not fallback_text:
+            return None
+        return Decision(
+            text=fallback_text,
+            animation="stand",
+            intent="re_engagement",
+            reasoning_tags=("re_engagement", "long_silence_outreach", "local_template"),
+            should_speak=True,
+            confidence=0.50,
+            parse_mode="re_engagement",
+            debug_trace=(
+                "reengagement_local"
+                f"; quiet_cycles={self.reengagement_quiet_cycles}"
+                f"; threshold={self.reengagement_quiet_loop_threshold}"
+            ),
+        )
+
+    def _build_wake_gate_frame(
+        self,
+        *,
+        cycle_start: float,
+        snapshot,
+        internal_state,
+        social_presence_event: SocialPresenceEvent | None = None,
+    ) -> CognitiveFrame:
+        return CognitiveFrame(
+            cycle_id=self._next_cognitive_cycle_id("autonomous"),
+            channel="autonomous",
+            started_at=cycle_start,
+            internal_state_before=internal_state,
+            internal_state_after=internal_state,
+            social_presence_event=social_presence_event or SocialPresenceEvent(present=False),
+        )
+
+    def _finalize_wake_gate_micro_decision(
+        self,
+        *,
+        frame: CognitiveFrame,
+        decision: Decision,
+        snapshot,
+        ti_report,
+        fe_plan,
+        cycle_start: float,
+        note: str,
+        spoken_kwargs: dict[str, object] | None = None,
+    ) -> bool:
+        decision = self.ti_governor.enforce_decision(decision, ti_report)
+        decision = self._filter_public_micro_decision(
+            decision,
+            channel="autonomous",
+            frame=frame,
+            snapshot=snapshot,
+            speech_core=getattr(frame, "speech_core", None),
+        )
+        if not bool(getattr(decision, "should_speak", True)) or not str(getattr(decision, "text", "") or "").strip():
+            return False
+        self._set_cognitive_action_plan(
+            frame,
+            should_speak=True,
+            speech_intent=str(getattr(decision, "intent", "") or note),
+            speech_act="reengagement" if str(getattr(decision, "intent", "") or "") == "re_engagement" else "micro_presence",
+            reason=f"Wake-gated reflex surfaced through {note}.",
+            snapshot=snapshot,
+            concrete_signals=(),
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            notes=(note, f"wake_gate={getattr(self, 'last_wake_decision', WakeDecision('sleep', False, False, False, False, '', 0.0)).level}"),
+        )
+        self.fe_style_memory = self.fe_renderer.remember_style(
+            self.fe_style_memory,
+            plan=fe_plan,
+            rendered_text=decision.text,
+        )
+        now = time.time()
+        self.last_text = decision.text
+        self.last_autonomous_spoken_at = now
+        self._note_autonomous_spoken(now=now, **(spoken_kwargs or {}))
+        self._apply_position_update(decision)
+        frame.final_decision = self._decision_to_frame_dict(decision)
+        self._set_cognitive_memory_update(frame, decision=decision, notes=(note,))
+        self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+        self._finalize_cognitive_frame(frame)
+        self._send_decision_to_body(decision)
+        elapsed = time.time() - cycle_start
+        sleep_duration = self._choose_autonomous_sleep_duration(
+            suppressed=False,
+            ti_mode=getattr(ti_report, "mode", ""),
+        )
+        self.logger.info("[wake gate reflex] parse_mode=%s text=%s", decision.parse_mode, self._preview_text(decision.text, limit=120))
+        self.logger.info("Hoàn tất chu kỳ wake-gated reflex trong %.2fs. Nghỉ %ss.", elapsed, sleep_duration)
+        self._sleep_interruptible(sleep_duration)
+        return True
+
+    def _maybe_presence_maintenance_before_sleep(
+        self,
+        *,
+        snapshot,
+        cycle_start: float,
+        wake_decision: WakeDecision,
+    ) -> bool:
+        internal_state = self._get_internal_state()
+        ti_report = self._wake_gate_ti_report(reason="wake_governor_sleep")
+        social_presence_event = self._detect_social_presence_event(
+            channel="autonomous",
+            snapshot=snapshot,
+            internal_state=internal_state,
+            started_at=cycle_start,
+        )
+        now = time.time()
+        reengagement_status = self._reengagement_probe_status(
+            snapshot=snapshot,
+            ti_report=ti_report,
+            internal_state=internal_state,
+            now=now,
+        )
+        presence_status = self._presence_probe_status(
+            snapshot=snapshot,
+            ti_report=ti_report,
+            social_presence_event=social_presence_event,
+            now=now,
+        )
+        self._update_wake_gate_debug(
+            wake_decision,
+            micro_presence_checked=True,
+            reengagement_checked=True,
+            presence_probe=presence_status,
+            reengagement_probe=reengagement_status,
+        )
+        self.logger.info(
+            "[presence] silent_cycles=%s cooldown_ok=%s candidate=%s reengagement_checked=%s micro_presence_checked=%s rejected_by=%s",
+            presence_status["silent_cycles"],
+            presence_status["cooldown_ok"],
+            presence_status["candidate"],
+            reengagement_status["checked"],
+            presence_status["checked"],
+            reengagement_status["rejected_by"] or presence_status["rejected_by"] or "",
+        )
+        fe_plan = self._wake_gate_fe_plan(ti_report=ti_report, snapshot=snapshot, internal_state=internal_state)
+
+        if reengagement_status["allowed"]:
+            decision = self._build_local_reengagement_decision(snapshot=snapshot)
+            if decision is not None:
+                frame = self._build_wake_gate_frame(
+                    cycle_start=cycle_start,
+                    snapshot=snapshot,
+                    internal_state=internal_state,
+                    social_presence_event=social_presence_event,
+                )
+                return self._finalize_wake_gate_micro_decision(
+                    frame=frame,
+                    decision=decision,
+                    snapshot=snapshot,
+                    ti_report=ti_report,
+                    fe_plan=fe_plan,
+                    cycle_start=cycle_start,
+                    note="re_engagement",
+                    spoken_kwargs={"reengagement": True},
+                )
+
+        if presence_status["allowed"]:
+            decision = self._build_local_presence_maintenance_decision(snapshot=snapshot)
+            if decision is not None:
+                frame = self._build_wake_gate_frame(
+                    cycle_start=cycle_start,
+                    snapshot=snapshot,
+                    internal_state=internal_state,
+                    social_presence_event=social_presence_event,
+                )
+                return self._finalize_wake_gate_micro_decision(
+                    frame=frame,
+                    decision=decision,
+                    snapshot=snapshot,
+                    ti_report=ti_report,
+                    fe_plan=fe_plan,
+                    cycle_start=cycle_start,
+                    note="presence_maintenance",
+                    spoken_kwargs={"presence_maintenance": True},
+                )
+
+        rejected_by = reengagement_status["rejected_by"] or presence_status["rejected_by"] or "wake_gate_return_early"
+        self.logger.info(
+            "[presence] silent_cycles=%s cooldown_ok=%s candidate=%s rejected_by=%s",
+            presence_status["silent_cycles"],
+            presence_status["cooldown_ok"],
+            presence_status["candidate"],
+            rejected_by,
+        )
+        return False
+
+    def _maybe_micro_presence_from_observe_only(
+        self,
+        *,
+        snapshot,
+        cycle_start: float,
+        wake_decision: WakeDecision,
+    ) -> bool:
+        internal_state = self._get_internal_state()
+        ti_report = self._wake_gate_ti_report(reason="wake_governor_observe_only")
+        social_presence_event = self._detect_social_presence_event(
+            channel="autonomous",
+            snapshot=snapshot,
+            internal_state=internal_state,
+            started_at=cycle_start,
+        )
+        now = time.time()
+        presence_status = self._presence_probe_status(
+            snapshot=snapshot,
+            ti_report=ti_report,
+            social_presence_event=social_presence_event,
+            now=now,
+        )
+        self._update_wake_gate_debug(
+            wake_decision,
+            micro_presence_checked=True,
+            reengagement_checked=False,
+            presence_probe=presence_status,
+        )
+        self.logger.info(
+            "[presence] silent_cycles=%s cooldown_ok=%s candidate=%s reengagement_checked=%s micro_presence_checked=%s rejected_by=%s",
+            presence_status["silent_cycles"],
+            presence_status["cooldown_ok"],
+            presence_status["candidate"],
+            False,
+            presence_status["checked"],
+            presence_status["rejected_by"] or "",
+        )
+        if not presence_status["allowed"]:
+            return False
+        decision = self._build_local_presence_maintenance_decision(snapshot=snapshot)
+        if decision is None:
+            self._update_wake_gate_debug(wake_decision, presence_probe={**presence_status, "rejected_by": "local_template_empty"})
+            return False
+        fe_plan = self._wake_gate_fe_plan(ti_report=ti_report, snapshot=snapshot, internal_state=internal_state)
+        frame = self._build_wake_gate_frame(
+            cycle_start=cycle_start,
+            snapshot=snapshot,
+            internal_state=internal_state,
+            social_presence_event=social_presence_event,
+        )
+        return self._finalize_wake_gate_micro_decision(
+            frame=frame,
+            decision=decision,
+            snapshot=snapshot,
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            cycle_start=cycle_start,
+            note="presence_maintenance",
+            spoken_kwargs={"presence_maintenance": True},
+        )
+
     def _finalize_autonomous_wake_gate(
         self,
         *,
@@ -4052,19 +4528,12 @@ class RuntimeCoordinator(
         cycle_start: float,
         send_body_update: bool,
         reason: str = "",
+        note_silence: bool = True,
     ) -> bool:
-        self._note_autonomous_silence()
+        if note_silence:
+            self._note_autonomous_silence()
         if send_body_update:
-            body_decision = Decision(
-                text="",
-                animation="stand",
-                intent=decision.level,
-                should_speak=False,
-                confidence=decision.confidence,
-                parse_mode=f"wake_gate:{decision.level}",
-                debug_trace=reason or decision.reason,
-            )
-            self._send_decision_to_body(body_decision, channel="autonomous")
+            self._send_wake_gate_body_update(decision, reason=reason)
         sleep_duration = self._autonomous_sleep_seconds_from_wake(decision)
         elapsed = time.time() - cycle_start
         self.logger.info(
@@ -4077,6 +4546,131 @@ class RuntimeCoordinator(
         self.logger.info("Hoàn tất chu kỳ wake-gated trong %.2fs. Nghỉ %ss.", elapsed, sleep_duration)
         self._sleep_interruptible(sleep_duration)
         return True
+
+    def _commit_think_only_active_frame(
+        self,
+        *,
+        snapshot,
+        observer_frame: ObserverFrame | None,
+        vision_facts: tuple[str, ...],
+        cycle_start: float,
+        wake_decision: WakeDecision,
+    ) -> None:
+        """Tạo dấu vết cognition nhẹ cho `think_only` mà không gọi main LLM.
+
+        `think_only` không được nói, nhưng nó vẫn là một tick nhận thức: attention,
+        internal pressure, thought stream và active_state nên có dấu vết. Không làm
+        bước này thì hệ chỉ nghĩ trong RAM rồi mất, nghe rất thơ nhưng debug thì như
+        mò chìa khóa dưới hồ.
+        """
+
+        try:
+            if vision_facts:
+                self._attach_screen_facts(snapshot, vision_facts)
+            telemetry_data = self._build_speech_evidence_context(snapshot)
+            self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
+            memory_resonance = self._activate_memory_resonance(
+                snapshot=snapshot,
+                channel="autonomous",
+                fragments=(
+                    *tuple(vision_facts or ()),
+                    *self._thought_stream_resonance_fragments(),
+                ),
+            )
+            internal_state_before = self._get_internal_state()
+            ni_report = self.ni_engine.evaluate_autonomous(
+                snapshot=snapshot,
+                long_term_memory=self.long_term_memory,
+                last_text=self.last_text,
+                goal_state=getattr(internal_state_before, "goal_persistence", None),
+            )
+            ni_report = self._maybe_apply_ni_meta_critic(
+                mode="autonomous",
+                snapshot=snapshot,
+                base_report=ni_report,
+                telemetry_text=telemetry_data,
+                last_text=self.last_text,
+            )
+            ni_view = self.autonomous_ni_state.update(snapshot=snapshot, report=ni_report)
+            ti_report = self.ti_governor.evaluate_autonomous(
+                snapshot=snapshot,
+                ni_report=ni_report,
+                ni_state_label=ni_view["discrete_state"],
+                ni_state_streak=ni_view["streak_length"],
+                idle_cycles=self.idle_cycles,
+                last_text=self.last_text,
+            )
+            fe_plan = self.fe_renderer.evaluate_autonomous(
+                snapshot=snapshot,
+                ni_report=ni_report,
+                ti_report=ti_report,
+                style_memory=self.fe_style_memory,
+                internal_state=internal_state_before,
+                last_text=self.last_text,
+            )
+            social_presence_event = self._detect_social_presence_event(
+                channel="autonomous",
+                snapshot=snapshot,
+                internal_state=internal_state_before,
+                started_at=cycle_start,
+            )
+            sensed_internal_state = self.internal_state_engine.sense_update(
+                internal_state_before,
+                channel="autonomous",
+                snapshot=snapshot,
+                ni_report=ni_report,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                social_presence_event=social_presence_event,
+            )
+            thought_stream_report = self._disturb_cognitive_substrate(
+                channel="autonomous",
+                snapshot=snapshot,
+                vision_facts=vision_facts,
+                consume_surface=False,
+            )
+            frame = self._start_cognitive_frame(
+                channel="autonomous",
+                started_at=cycle_start,
+                snapshot=snapshot,
+                internal_state_before=internal_state_before,
+                sensed_internal_state=sensed_internal_state,
+                ni_report=ni_report,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                vision_facts=vision_facts,
+                thought_stream_report=thought_stream_report,
+                social_presence_event=social_presence_event,
+                memory_resonance=memory_resonance,
+            )
+            self._set_cognitive_action_plan(
+                frame,
+                should_speak=False,
+                speech_intent="think_only",
+                speech_act="no_speech",
+                reason=wake_decision.reason or "wake_governor_think_only",
+                snapshot=snapshot,
+                concrete_signals=self._concrete_screen_signals(snapshot),
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                notes=("think_only", "wake_gate", f"wake_conf={wake_decision.confidence:.2f}"),
+            )
+            decision = Decision(
+                text="",
+                animation="stand",
+                intent="think_only",
+                should_speak=False,
+                confidence=wake_decision.confidence,
+                parse_mode="wake_gate:think_only",
+                debug_trace=wake_decision.reason or "wake_governor_think_only",
+            )
+            frame.final_decision = self._decision_to_frame_dict(decision)
+            self._set_cognitive_memory_update(frame, decision=decision, notes=("think_only", "active_state_commit"))
+            self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+            self._finalize_cognitive_frame(frame)
+        except Exception as exc:
+            self.logger.warning("[think_only] active frame commit failed: %s", exc, exc_info=True)
+
 
     def _process_pending_user_input(self) -> bool:
         msg = self.transport.poll_json()
@@ -4134,20 +4728,44 @@ class RuntimeCoordinator(
             return self.running
 
         if wake_decision.level == "sleep":
+            self._note_autonomous_silence()
+            if self._maybe_presence_maintenance_before_sleep(
+                snapshot=snapshot,
+                cycle_start=cycle_start,
+                wake_decision=wake_decision,
+            ):
+                return True
             return self._finalize_autonomous_wake_gate(
                 decision=wake_decision,
                 cycle_start=cycle_start,
                 send_body_update=False,
                 reason="wake_governor_sleep",
+                note_silence=False,
             )
         if wake_decision.level == "observe_only":
+            self._note_autonomous_silence()
+            self._send_wake_gate_body_update(wake_decision, reason="wake_governor_observe_only")
+            if self._maybe_micro_presence_from_observe_only(
+                snapshot=snapshot,
+                cycle_start=cycle_start,
+                wake_decision=wake_decision,
+            ):
+                return True
             return self._finalize_autonomous_wake_gate(
                 decision=wake_decision,
                 cycle_start=cycle_start,
-                send_body_update=True,
+                send_body_update=False,
                 reason="wake_governor_observe_only",
+                note_silence=False,
             )
         if wake_decision.level == "think_only":
+            self._commit_think_only_active_frame(
+                snapshot=snapshot,
+                observer_frame=observer_frame,
+                vision_facts=vision_facts,
+                cycle_start=cycle_start,
+                wake_decision=wake_decision,
+            )
             return self._finalize_autonomous_wake_gate(
                 decision=wake_decision,
                 cycle_start=cycle_start,

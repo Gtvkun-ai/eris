@@ -105,6 +105,28 @@ class FallbackSurfaceSemanticParser:
                 confidence=0.60,
                 diagnostics=surface.evidence,
             )
+        normalized_question = normalize(surface.raw)
+        if surface.is_question and "ten gi" in normalized_question and any(token in normalized_question for token in ("ban nho", "co nho", "nho toi")):
+            return MeaningParseResult(
+                frames=(
+                    MeaningFrame(
+                        frame_type="session_event",
+                        relation="asked_about",
+                        target=link_entity("user.name", hinted_kind="memory_query"),
+                        polarity="asserted",
+                        modality="observation",
+                        time_scope="session",
+                        scope="self",
+                        certainty=0.84,
+                        stability="session",
+                        evidence_span=surface.raw,
+                        warnings=("not_long_term",),
+                    ),
+                ),
+                source="fallback_surface",
+                confidence=0.62,
+                diagnostics=surface.evidence,
+            )
         if surface.is_question and not surface.has_explicit_memory_request:
             return MeaningParseResult(source="fallback_surface", confidence=0.0, diagnostics=("question_not_commit", *surface.evidence))
 
@@ -114,17 +136,17 @@ class FallbackSurfaceSemanticParser:
 
         if not frames and surface.has_explicit_memory_request:
             frames.append(MeaningFrame(
-                frame_type="memory_request",
-                relation="remember_unresolved",
-                target=link_entity(surface.raw, hinted_kind="topic"),
+                frame_type="session_event",
+                relation="asked_about" if surface.is_question else "remember_unresolved",
+                target=link_entity("user.name", hinted_kind="memory_query") if surface.is_question and "ten gi" in normalized_question else link_entity(surface.raw, hinted_kind="topic"),
                 polarity="asserted",
-                modality="memory",
-                time_scope="stable",
+                modality="observation" if surface.is_question else "memory",
+                time_scope="session" if surface.is_question else "stable",
                 scope="self",
                 certainty=0.66,
-                stability="medium",
+                stability="session" if surface.is_question else "medium",
                 evidence_span=surface.raw,
-                warnings=("unresolved_memory_request",),
+                warnings=("not_long_term",) if surface.is_question else ("unresolved_memory_request",),
             ))
 
         confidence = max((f.certainty for f in frames), default=0.0)

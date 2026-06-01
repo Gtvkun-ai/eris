@@ -142,6 +142,10 @@ class MicroLinePolicy:
             )
             if current_family and current_family in set(recent_fallback_families):
                 reasons.append(f"weak_recent_family_hint={current_family}")
+                if line_type == "micro_observation":
+                    line_type = "silence"
+                    reasons.append(f"recent_semantic_family={current_family}")
+                    reasons.append("no_speech_blocks_final")
 
         _ = channel  # Giữ tham số để không phá call-site cũ. Có thể dùng sau.
         _ = family_source
@@ -191,7 +195,7 @@ class MicroLinePolicy:
             meaning_family=meaning_family,
             family_source=family_source,
         )
-        return tuple(issue.code for issue in issues if issue.severity in {"fatal", "rewriteable"})
+        return tuple(issue.code for issue in issues)
 
     def validate_text_detailed(
         self,
@@ -434,4 +438,3 @@ __all__ = [
     "RelationalContext",
     "RelationalRewritePlan",
 ]
-

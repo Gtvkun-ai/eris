@@ -282,6 +282,8 @@ class PersonalityLens:
                     f"suppression_pressure={result.suppression_pressure:.2f}; "
                     f"restraint_mode={result.restraint_mode}."
                 ),
+                "inner_restraint_system: private pressure can shape surface without becoming explicit self-report.",
+                "guarded_reply remains available when the signal is real enough to answer without overexposing.",
                 (
                     "voice_profile: guarded warmth, dry edge, grounded restraint, human-readable surface. "
                     "ERIS may have preference, distance, hesitation, irritation, tenderness, and boundary, "
@@ -361,7 +363,7 @@ class PersonalityLens:
         if interpretation in {"direct_relationship_event", "emotional_undertone", "requested_presence"}:
             score += 0.12
         if "hesitation" in biases or "unfinished_intention" in biases:
-            score += 0.16
+            score += 0.30
         if "avoidance" in biases or "mood_shift" in biases:
             score += 0.08
         if "continuity" in biases and channel != "autonomous":
@@ -443,7 +445,7 @@ class PersonalityLens:
         if allowed_expression <= 0.08 or suppression_pressure >= 0.84:
             return "suppress" # im luôn
         if social_distance in {"far_observing", "middle_watchful"} or suppression_pressure >= 0.70:
-            return "guarded_distance" # giữ khoảng cách, không diễn thân mật
+            return "indirect_presence" # giữ khoảng cách, không diễn thân mật
         if allowed_expression <= 0.18:
             return "small_plain_hint" # chỉ để lộ một cạnh nhỏ, rõ nghĩa
         return "guarded_reply" # nói bình thường nhưng vẫn có restraint

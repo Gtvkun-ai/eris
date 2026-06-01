@@ -172,6 +172,16 @@ class SemanticRepeatGuard:
                         weak=False,
                         fingerprint=fingerprint,
                     )
+                if age <= self.window_seconds:
+                    return SemanticRepeatResult(
+                        rejected=True,
+                        family=family,
+                        reason=f"semantic_repeat_family={family}",
+                        family_source=source or recent_source or "fallback_keyword",
+                        confidence=min(max(score, recent_confidence), 0.42),
+                        weak=True,
+                        fingerprint=fingerprint,
+                    )
                 weak_family_seen = True
 
         if family:
@@ -243,4 +253,3 @@ class SemanticRepeatGuard:
         # Giữ wrapper cũ để code ngoài nếu lỡ gọi private vẫn ít vỡ hơn. Tuyệt vời,
         # giờ ta bảo vệ cả private API, vì con người rất thích dùng nhầm đồ riêng.
         return clean_family(family)
-

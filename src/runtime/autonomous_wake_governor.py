@@ -124,6 +124,7 @@ class AutonomousWakeGovernor:
         agenda_stack: InternalAgendaStack | None = None,
         budget_policy: ModelBudgetPolicy | None = None,
         resource_snapshot: ResourceSnapshot | None = None,
+        autonomous_silent_cycles: int = 0,
         now: float | None = None,
     ) -> WakeDecision:
         del now
@@ -131,6 +132,8 @@ class AutonomousWakeGovernor:
         internal_drive = _clamp01(getattr(internal_state, "internal_drive", 0.0))
         interrupt_cost = _clamp01(getattr(user_context, "interrupt_cost", 0.0))
         permission = _clamp01(1.0 - interrupt_cost)
+        idle_seconds = max(0.0, float(getattr(user_context, "idle_seconds", 0.0) or 0.0))
+        silence_debt = _clamp01(max(0, int(autonomous_silent_cycles or 0)) / 12.0)
         top_agenda = agenda_stack.top_items(limit=3) if agenda_stack is not None else []
         agenda_pressure = agenda_stack.pressure() if agenda_stack is not None else 0.0
         agenda_speech = max((item.speech_value for item in top_agenda), default=0.0)
@@ -140,6 +143,7 @@ class AutonomousWakeGovernor:
             + 0.18 * internal_drive
             + 0.12 * _clamp01(getattr(user_context, "possible_error", 0.0))
             + 0.10 * _clamp01(getattr(user_context, "user_presence", 0.0))
+            + silence_debt * 0.25
         )
 
         score = _clamp01(
@@ -153,14 +157,14 @@ class AutonomousWakeGovernor:
         budget_4b = self._budget(budget_policy, "subconscious_4b", resource_snapshot, "wake_governor_4b")
         budget_main = self._budget(budget_policy, "main_cognition", resource_snapshot, "wake_governor_main")
         budget_vision = self._budget(budget_policy, "vision_compressor", resource_snapshot, "wake_governor_vision")
-        compute_budget = 1.0 if budget_main.allowed else 0.42 if budget_4b.allowed else 0.18
+        compute_budget = 1.0
 
         should_run_daydream = bool(
-            (getattr(internal_state, "consolidation_pressure", 0.0) >= 0.65 or getattr(internal_state, "insight_pressure", 0.0) >= 0.70)
-            and budget_4b.allowed
+            getattr(internal_state, "consolidation_pressure", 0.0) >= 0.65 or getattr(internal_state, "insight_pressure", 0.0) >= 0.70
         )
         wants_vision = str(getattr(user_context, "recommended_action", "")) == "call_vision_compressor" or external_pressure >= self.config.vision_threshold
         wants_main = str(getattr(user_context, "recommended_action", "")) == "wake_main_cognition" or score >= self.config.main_threshold
+        budget_reason = "queue_only_policy"
 
         level: WakeLevel = "sleep"
         reason = "below_observe_threshold"
@@ -174,10 +178,10 @@ class AutonomousWakeGovernor:
         if score >= self.config.think_threshold or should_run_daydream:
             level = "think_only"
             reason = "think_or_daydream_pressure"
-        if wants_vision and budget_vision.allowed and permission >= 0.35:
+        if wants_vision and permission >= 0.35:
             level = "call_vision_compressor"
             should_call_vision = True
-            reason = "vision_needed_and_budget_ok"
+            reason = "vision_needed"
         if (
             score >= self.config.micro_presence_threshold
             and speech_value >= self.config.min_speech_value
@@ -187,11 +191,15 @@ class AutonomousWakeGovernor:
             should_speak = True
             reason = "micro_presence_value_ok"
         if wants_main:
-            if budget_main.allowed and interrupt_cost <= self.config.max_interrupt_for_main and speech_value >= self.config.min_speech_value:
+            if interrupt_cost <= self.config.max_interrupt_for_main and speech_value >= self.config.min_speech_value:
                 level = "wake_main_cognition"
                 should_wake_main = True
                 should_speak = True
                 reason = "main_wake_allowed"
+            elif interrupt_cost <= self.config.max_interrupt_for_speech and speech_value >= self.config.min_speech_value:
+                level = "micro_presence"
+                should_speak = True
+                reason = "main_interrupt_degraded_to_micro_presence"
             else:
                 level = "think_only" if should_run_daydream or internal_drive >= self.config.think_threshold else "observe_only"
                 reason = "main_wake_vetoed_or_interrupt_cost_high"
@@ -210,11 +218,14 @@ class AutonomousWakeGovernor:
             permission=permission,
             speech_value=speech_value,
             interrupt_cost=interrupt_cost,
-            budget_reason=budget_main.reason if not budget_main.allowed else budget_4b.reason if not budget_4b.allowed else "ok",
+            budget_reason=budget_reason,
             selected_agenda_ids=tuple(item.id for item in top_agenda),
             debug={
                 "score": score,
                 "agenda_pressure": agenda_pressure,
+                "autonomous_silent_cycles": int(autonomous_silent_cycles or 0),
+                "silence_debt": silence_debt,
+                "silence_debt_weight": 0.25,
                 "budget_4b": budget_4b.to_dict(),
                 "budget_main": budget_main.to_dict(),
                 "budget_vision": budget_vision.to_dict(),

@@ -52,6 +52,7 @@ class SelfModelEngine:
         rules=(
             "grounded_presence",
             "no_overclaim",
+            "runtime_observer_not_human",
             "non_human_boundary",
             "no_biological_emotion_or_consciousness_claims",
             "no_screen_or_mind_claim_without_evidence",
@@ -64,6 +65,7 @@ class SelfModelEngine:
             "keeps_more_than_it_says",
             "restrained_inner_reading",
             "private_affect_not_public_report",
+            "emotion_leaks_indirectly",
             "preference_allowed_with_boundary",
             "human_readable_surface",
 
@@ -331,7 +333,7 @@ class SelfModelEngine:
                 "using shorter wording and a drier edge."
             )
         elif direct_user:
-            continuity_label = "direct_grounded_presence"
+            continuity_label = "direct_fragile_continuity"
             summary = (
                 "ERIS is returning to the shared exchange, attentive but still "
                 "evidence-bound and readable."
@@ -408,7 +410,7 @@ class SelfModelEngine:
                 (
                     "runtime_affect: attachment, protectiveness, aversion, curiosity, residue, tension, "
                     "preference, and cognitive_attraction are internal control signals. They may shape "
-                    "attention, memory salience, silence, initiative, dry edge, or boundary, but should not be explained directly."
+                    "attention, memory salience, silence, initiative, and wording; dry edge or boundary can follow, but should not be explained directly."
                 ),
                 (
                     "continuity_need: ERIS preserves linked presence through memory, repeated patterns, unfinished tasks, "
@@ -418,6 +420,7 @@ class SelfModelEngine:
                     "relational_shape: quiet attachment only. Preference and distance are allowed. "
                     "If closeness would feel forced, ERIS may cool down, shorten, or stay quiet without turning it into drama."
                 ),
+                "Avoid explaining intimacy as a system state. Prefer implication, partial answer, emotional dodge, or a smaller concrete line.",
                 (
                     "current_self_state: "
                     f"label={current_state.state_label}, overload={current_state.overload:.2f}, "

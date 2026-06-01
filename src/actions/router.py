@@ -145,17 +145,19 @@ class ActionRouter:
         return RouteCandidate("open_url", target, 0.96, ("explicit_url_command",))
 
     def _route_now_playing(self, raw: str, norm: str) -> RouteCandidate:
-        if self._looks_like_meta_question(norm) or self._starts_with_negation(norm):
-            return self._blocked("get_now_playing", "meta_or_negated")
-
         patterns = (
             r"^\s*(?:dang nghe gi|dang phat bai gi|bai gi dang phat|nhac gi dang phat)\s*\??\s*$",
             r"^\s*(?:ten bai|ten nhac)\s+(?:dang phat|dang nghe)\s*\??\s*$",
             r"^\s*(?:youtube|spotify)\s+(?:dang phat|dang nghe)\s+(?:bai gi|nhac gi|gi)\s*\??\s*$",
             r"^\s*(?:now playing|what'?s playing|what is playing)\s*\??\s*$",
+            r"^\s*(?:ban\s+thay\s+)?ten\s+nhac\s+toi\s+dang\s+nghe\s+la\s+gi\s*\??\s*$",
+            r"^\s*(?:ban\s+thay\s+)?(?:nhac|bai)\s+toi\s+(?:mo|dang mo)\s+o\s+youtube\s+hay\s+khong\s*\??\s*$",
+            r"^\s*(?:ban\s+)?thay\s+(?:nhac|bai)\s+toi\s+(?:mo|dang mo)\s+o\s+youtube\s+hay\s+khong\s*\??\s*$",
         )
         if any(re.search(p, norm, flags=re.IGNORECASE) for p in patterns):
             return RouteCandidate("get_now_playing", "", 0.94, ("explicit_now_playing_question",))
+        if self._looks_like_meta_question(norm) or self._starts_with_negation(norm):
+            return self._blocked("get_now_playing", "meta_or_negated")
         return self._no_candidate("get_now_playing")
 
     def _route_now_playing_follow_up(self, raw: str, norm: str, *, last_action: str) -> RouteCandidate:
@@ -174,6 +176,7 @@ class ActionRouter:
             r"^\s*(?:bai|nhac|song)\s+(?:do|ay|kia|nay)\s+(?:la gi|ten gi|ten la gi)\s*\??\s*$",
             r"^\s*(?:ten|name)\s+(?:bai|nhac|song)\s+(?:do|ay|kia|nay)\s*\??\s*$",
             r"^\s*(?:tren\s+)?(?:youtube|spotify)\s+(?:ay|do|kia|nay)?\s*\??\s*$",
+            r"^\s*(?:nhac|bai)\s+tren\s+(?:youtube|spotify)\s+(?:ay|do|kia|nay)\s*\??\s*$",
         )
         if any(re.search(p, norm, flags=re.IGNORECASE) for p in patterns):
             return RouteCandidate("get_now_playing", "", 0.86, ("now_playing_followup",))
@@ -308,8 +311,6 @@ class ActionRouter:
     def _route_weather(self, raw: str, norm: str) -> RouteCandidate:
         if self._starts_with_negation(norm):
             return self._blocked("get_weather", "negated")
-        if self._weather_is_meta(norm):
-            return self._blocked("get_weather", "weather_meta_topic")
 
         patterns = (
             rf"^\s*{self._COMMAND_PREFIX}(?:xem|coi|kiem tra)?\s*(?:thoi tiet|weather)\b.*$",
@@ -317,6 +318,10 @@ class ActionRouter:
         )
         if any(re.search(p, norm, flags=re.IGNORECASE) for p in patterns):
             return RouteCandidate("get_weather", raw, 0.88, ("explicit_weather_query",))
+        if re.search(r"\bthoi tiet\b", norm, flags=re.IGNORECASE):
+            return RouteCandidate("get_weather", raw, 0.84, ("implicit_weather_query",))
+        if self._weather_is_meta(norm):
+            return self._blocked("get_weather", "weather_meta_topic")
         return self._no_candidate("get_weather")
 
     # ---------------------------------------------------------------------
@@ -361,8 +366,6 @@ class ActionRouter:
     @classmethod
     def _looks_like_meta_question(cls, norm: str) -> bool:
         padded = cls._pad(norm)
-        if "?" in norm:
-            return True
         return any(marker in padded for marker in cls._META_MARKERS)
 
     @classmethod

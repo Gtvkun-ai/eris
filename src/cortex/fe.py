@@ -1438,7 +1438,7 @@ class FeRenderer:
 
         # Threshold cố ý hơi cao. Topic memory là nền chống lặp, không phải source
         # truth. Ghi nhầm ở đây làm cả session đổi nhịp vô lý như một cái máy tự ám.
-        if best.score < 0.46:
+        if best.score < 0.38:
             return ""
         return best.tag
 
@@ -1562,7 +1562,7 @@ class FeRenderer:
         normalized = _normalize_text(lowered)
         groups: tuple[tuple[str, tuple[str, ...]], ...] = (
             ("technical_work", ("code", "mã nguồn", "ma nguon", "terminal", "debug", "bug", "lỗi", "loi", "repo", "module")),
-            ("attention_focus", ("tập trung", "tap trung", "chú ý", "chu y", "focus", "phân tán", "phan tan")),
+            ("attention_drift", ("tập trung", "tap trung", "chú ý", "chu y", "focus", "phân tán", "phan tan")),
             ("desktop_space", ("cửa sổ", "cua so", "tab", "màn hình", "man hinh", "ứng dụng", "ung dung")),
             ("social_context", ("discord", "messenger", "facebook", "zalo", "giao tiếp", "giao tiep")),
             ("resource_state", ("cpu", "ram", "tài nguyên", "tai nguyen", "hiệu suất", "hieu suat")),
@@ -1582,7 +1582,7 @@ class FeRenderer:
 
             # Cap thấp để lexical fallback không thắng semantic plan. Nhiều hit chỉ
             # làm nó đủ điều kiện khi thật sự thiếu causal evidence.
-            score = min(0.42, 0.22 + len(matched) * 0.08)
+            score = min(0.48, 0.24 + len(matched) * 0.12)
             candidates.append(
                 FeTopicCandidate(
                     tag=tag,

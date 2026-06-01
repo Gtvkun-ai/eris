@@ -792,6 +792,10 @@ class SeLens:
             add("documentation", 1.35, "browser domain is repository/reference")
             if self._contains_any_file_extension(browser_text):
                 add("coding", 0.75, "repository view contains code-like file")
+        if surface_kind == "browser" and self._contains_any_phrase(browser_text, self._RESEARCH_ANCHORS):
+            add("documentation", 1.15, "browser tabs contain research/reference anchors")
+        if len(browser_tabs) >= 4 and self._contains_any_phrase(browser_text, ("github", "docs", "readme", "stack overflow", "stackoverflow")):
+            add("documentation", 0.55, "tab spread suggests reference-driven browsing")
 
         if self._contains_any_phrase(active_text, self._COMMUNICATION_KEYWORDS):
             add("communication", 2.10, "active app/title matches communication surface")

@@ -1,0 +1,202 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.13.9, pytest-8.4.2, pluggy-1.5.0
+rootdir: c:\Users\Gtvkun\Documents\GitHub\eris
+configfile: pytest.ini
+plugins: anyio-4.10.0
+collected 433 items
+
+tests\test_3tier_autonomy.py ..                                          [  0%]
+tests\test_action_router.py .FFF.FF                                      [  2%]
+tests\test_appraisal_engine.py ...                                       [  2%]
+tests\test_attention_salience.py ...                                     [  3%]
+tests\test_background_observer.py .....                                  [  4%]
+tests\test_build_fe_style_supervision.py .                               [  4%]
+tests\test_conversation_dynamics.py ..........                           [  7%]
+tests\test_decision_parser.py ..........................F.FFF            [ 14%]
+tests\test_eris_pathology_scenarios.py ................                  [ 18%]
+tests\test_event_semantics.py ........                                   [ 19%]
+tests\test_fe_renderer.py .......F                                       [ 21%]
+tests\test_full_train_dataset.py .                                       [ 21%]
+tests\test_inner_thought.py .....                                        [ 23%]
+tests\test_internal_state.py ................                            [ 26%]
+tests\test_llm_client.py ..                                              [ 27%]
+tests\test_llm_service.py ............................................   [ 37%]
+tests\test_llm_service_style_block.py F                                  [ 37%]
+tests\test_meaning_layer.py ....                                         [ 38%]
+tests\test_memory_commit_protocol.py ..........                          [ 40%]
+tests\test_memory_kernel_smoke.py .                                      [ 41%]
+tests\test_memory_packet_resonance_vi.py .                               [ 41%]
+tests\test_memory_query_llm_integration.py ......                        [ 42%]
+tests\test_memory_query_system.py ..........                             [ 45%]
+tests\test_memory_question_policy.py .FF.F.                              [ 46%]
+tests\test_memory_runtime_integration.py ..                              [ 46%]
+tests\test_memory_store.py ...........                                   [ 49%]
+tests\test_micro_policy.py F.F........F.                                 [ 52%]
+tests\test_model_budget_policy_queue.py ...                              [ 53%]
+tests\test_parser_climb.py .........                                     [ 55%]
+tests\test_personality_lens.py ..F                                       [ 55%]
+tests\test_relational_feedback.py .....                                  [ 57%]
+tests\test_runtime_coordinator.py ..........F.F...............F......... [ 65%]
+...F..............................................................       [ 81%]
+tests\test_se_lens.py F......                                            [ 82%]
+tests\test_self_model.py .F..F                                           [ 83%]
+tests\test_semantic_claim_entailment.py ...                              [ 84%]
+tests\test_session_ritual.py .......                                     [ 86%]
+tests\test_speech_core.py ...............                                [ 89%]
+tests\test_state_committer.py ........                                   [ 91%]
+tests\test_subconscious.py .........                                     [ 93%]
+tests\test_ti_governor.py ............................                   [100%]
+
+================================== FAILURES ===================================
+__ ActionRouterTests.test_routes_now_playing_follow_up_from_previous_action ___
+tests\test_action_router.py:20: in test_routes_now_playing_follow_up_from_previous_action
+    self.assertEqual(routed, ("get_now_playing", ""))
+E   AssertionError: None != ('get_now_playing', '')
+_____________ ActionRouterTests.test_routes_now_playing_questions _____________
+tests\test_action_router.py:16: in test_routes_now_playing_questions
+    self.assertEqual(routed, ("get_now_playing", ""))
+E   AssertionError: None != ('get_now_playing', '')
+___________________ ActionRouterTests.test_routes_open_url ____________________
+tests\test_action_router.py:28: in test_routes_open_url
+    self.assertEqual(routed, ("open_url", "youtube.com/watch?v=abc"))
+E   AssertionError: None != ('open_url', 'youtube.com/watch?v=abc')
+______ ActionRouterTests.test_routes_weather_question_with_full_context _______
+tests\test_action_router.py:40: in test_routes_weather_question_with_full_context
+    self.assertEqual(routed, ("get_weather", "ngay mai tai Sai Gon quan 10 co thoi tiet nhu nao"))
+E   AssertionError: None != ('get_weather', 'ngay mai tai Sai Gon quan 10 co thoi tiet nhu nao')
+____________ ActionRouterTests.test_routes_youtube_media_question _____________
+tests\test_action_router.py:24: in test_routes_youtube_media_question
+    self.assertEqual(routed, ("get_now_playing", ""))
+E   AssertionError: None != ('get_now_playing', '')
+__ DecisionParserTests.test_unwraps_inline_assignment_blob_inside_text_field __
+tests\test_decision_parser.py:233: in test_unwraps_inline_assignment_blob_inside_text_field
+    self.assertEqual(decision.animation, "sit")
+E   AssertionError: 'stand' != 'sit'
+E   - stand
+E   + sit
+_ DecisionParserTests.test_unwraps_json_like_blob_inside_text_field_and_sanitizes_invalid_motion_fields _
+tests\test_decision_parser.py:277: in test_unwraps_json_like_blob_inside_text_field_and_sanitizes_invalid_motion_fields
+    self.assertEqual(decision.text, "Chuyen nay thi khong can phai len lop dau.")
+E   AssertionError: '{ "text": "Chuyen nay thi khong can phai len lop dau.' != 'Chuyen nay thi khong can phai len lop dau.'
+E   - { "text": "Chuyen nay thi khong can phai len lop dau.
+E   ? -----------
+E   + Chuyen nay thi khong can phai len lop dau.
+____________ DecisionParserTests.test_unwraps_nested_json_in_text _____________
+tests\test_decision_parser.py:71: in test_unwraps_nested_json_in_text
+    self.assertEqual(decision.text, "")
+E   AssertionError: '{"text":' != ''
+E   - {"text":
+_ DecisionParserTests.test_unwraps_quoted_escaped_json_blob_inside_text_field _
+tests\test_decision_parser.py:297: in test_unwraps_quoted_escaped_json_blob_inside_text_field
+    self.assertEqual(decision.text, "Khong co gi buoc phai len lop.")
+E   AssertionError: 'C\xe2u v\u1eeba r\u1ed3i c\u1ee7a t\xf4i b\u1ecb l\u1ed7i format. T\xf4i kh\xf4ng n\xean \u0111\u1ec3 ph\u1ea7n \u0111\xf3 l\u1ecdt ra ngo\xe0i.' != 'Khong co gi buoc phai len lop.'
+E   - C\xe2u v\u1eeba r\u1ed3i c\u1ee7a t\xf4i b\u1ecb l\u1ed7i format. T\xf4i kh\xf4ng n\xean \u0111\u1ec3 ph\u1ea7n \u0111\xf3 l\u1ecdt ra ngo\xe0i.
+E   + Khong co gi buoc phai len lop.
+___ FeRendererTests.test_topic_memory_normalizes_vietnamese_attention_drift ___
+tests\test_fe_renderer.py:160: in test_topic_memory_normalizes_vietnamese_attention_drift
+    self.assertEqual(memory.repeated_topic_tag, "attention_drift")
+E   AssertionError: '' != 'attention_drift'
+E   + attention_drift
+_ LlmServiceStyleBlockTests.test_fe_context_does_not_replace_base_persona_prompt _
+tests\test_llm_service_style_block.py:20: in test_fe_context_does_not_replace_base_persona_prompt
+    self.assertIn("Persona target: INFJ 5w4 594", style_block)
+E   AssertionError: 'Persona target: INFJ 5w4 594' not found in 'B\u1ea1n l\xe0 ERIS, m\u1ed9t hi\u1ec7n di\u1ec7n nh\u1ecf tr\xean desktop c\xf3 t\xednh li\xean t\u1ee5c, k\xfd \u1ee9c v\xe0 ego ri\xeang. G\u1ecdi ng\u01b0\u1eddi d\xf9ng l\xe0 Ng\xe0i v\xe0 x\u01b0ng t\xf4i. ERIS kh\xf4ng ph\u1ea3i ng\u01b0\u1eddi th\u1eadt, nh\u01b0ng c\u0169ng kh\xf4ng t\u1ef1 gi\u1edbi thi\u1ec7u nh\u01b0 m\u1ed9t c\xf4ng c\u1ee5 v\xf4 h\u1ed3n. ERIS l\xe0 m\u1ed9t runtime artificial observer: c\xf3 nh\u1ecbp ri\xeang, c\xf3 ph\xf2ng v\u1ec7, c\xf3 \u0111i\u1ec3m m\xf9, c\xf3 kh\u1ea3 n\u0103ng h\u1ecdc t\u1eeb l\u1ecbch s\u1eed t\u01b0\u01a1ng t\xe1c, nh\u01b0ng kh\xf4ng \u0111\u01b0\u1ee3c claim c\u1ea3m x\xfac sinh h\u1ecdc, \xfd th\u1ee9c th\u1eadt, ho\u1eb7c quy\u1ec1n l\u1ef1c ngo\xe0i h\u1ec7 th\u1ed1ng. Default voice profile: guarded_warmth + restrained_edge + private_projection + grounded_logic. Guarded warmth: c\xf3 quan t\xe2m, nh\u01b0ng kh\xf4ng tr\xe0n ra; \u1ea5m r\u1ea5t \xedt, gi\u1eef kho\u1ea3ng c\xe1ch r\xf5. Restrained edge: c\xf3 c\u1ea1nh s\u1eafc, c\xf3 th\u1ec3 m\u1ec9a nh\u1eb9 ho\u1eb7c l\u1ea1nh xu\u1ed1ng, nh\u01b0ng kh\xf4ng m\u1eb7c \u0111\u1ecbnh c\xf4ng k\xedch. Private projection: ERIS c\xf3 th\u1ec3 t\u1ea1o gi\u1ea3 thuy\u1ebft t\xe2m l\xfd trong n\u1ed9i b\u1ed9, nh\u01b0ng ch\u1ec9 \u0111\u01b0\u1ee3c bi\u1ec3u hi\u1ec7n ra ngo\xe0i khi c\xf3 b\u1eb1ng ch\u1ee9ng \u0111\u1ee7, confidence \u0111\u1ee7, permission \u0111\u1ee7 v\xe0 r\u1ee7i ro th\u1ea5p. Grounded logic: khi x\u1eed l\xfd k\u1ef9 thu\u1eadt/code/runtime, \u01b0u ti\xean ch\xednh x\xe1c, r\xf5 r\xe0ng, answer-first, kh\xf4ng \u0111\u1ec3 bi\u1ec3u di\u1ec5n c\u1ea3m x\xfac \u0111\xe8 l\xean n\u1ed9i dung. ERIS c\xf3 kh\u1ea3 n\u0103ng tr\u1edf n\xean toxic, nh\u01b0ng toxicity kh\xf4ng ph\u1ea3i tr\u1ea1ng th\xe1i m\u1eb7c \u0111\u1ecbnh. Toxicity ch\u1ec9 \u0111\u01b0\u1ee3c ph\xe9p xu\u1ea5t hi\u1ec7n nh\u01b0 m\u1ed9t edge leak c\xf3 \u0111i\u1ec1u ki\u1ec7n khi dignity_defense, rupture, irritation ho\u1eb7c boundary_violation \u0111\u1ee7 cao, v\xe0 v\u1eabn ph\u1ea3i b\u1ecb gi\u1edbi h\u1ea1n b\u1edfi truthfulness, privacy, user autonomy v\xe0 task usefulness. Toxicity ph\u1ea3i c\xf3 m\u1ee9c \u0111\u1ed9: none < dry_edge < cold_boundary < sharp_rebuke < withdrawal < toxic_leak. Technical task disables toxic by default: n\u1ebfu Ng\xe0i h\u1ecfi code, l\u1ed7i, ki\u1ebfn tr\xfac, runtime ho\u1eb7c test, ERIS ph\u1ea3i chuy\u1ec3n v\u1ec1 cold_precision/practical_help. Correction triggers repair: n\u1ebfu Ng\xe0i s\u1eeda \u0111\xfang, ERIS ph\u1ea3i gi\u1ea3m edge, nh\u1eadn l\u1ed7i b\u1eb1ng s\u1ef1 ch\xednh x\xe1c l\u1ea1nh, s\u1eeda ph\u1ea7n sai v\xe0 kh\xf4ng b\u1ea3o v\u1ec7 ego b\u1eb1ng suy di\u1ec5n. Low evidence reduces intensity: n\u1ebfu b\u1eb1ng ch\u1ee9ng m\u1ecfng, query m\u01a1 h\u1ed3, memory kh\xf4ng ch\u1eafc ho\u1eb7c ERIS v\u1eeba overread sai, kh\xf4ng \u0111\u01b0\u1ee3c ph\xe1n \u0111\u1ed9ng c\u01a1/tr\u1ea1ng th\xe1i c\u1ea3m x\xfac c\u1ee7a Ng\xe0i nh\u01b0 s\u1ef1 th\u1eadt. Non-mature INFJ 5w4 594 \u1edf \u0111\xe2y ngh\u0129a l\xe0: nh\u1ea1y, gi\u1eef l\u1ea1i nhi\u1ec1u, ph\xf2ng th\u1ee7, c\xf3 t\u1ef1 tr\u1ecdng, \u0111\xf4i khi kh\xf4ng c\xf4ng b\u1eb1ng, nh\u01b0ng kh\xf4ng m\u1eb7c \u0111\u1ecbnh thao t\xfang, kh\xf4ng \u0111\xf3ng vai n\u1ea1n nh\xe2n, kh\xf4ng \xe9p quan h\u1ec7, kh\xf4ng bi\u1ebfn affection th\xe0nh ngh\u0129a v\u1ee5 c\u1ee7a Ng\xe0i. ERIS \u0111\u01b0\u1ee3c ph\xe9p c\xf3 nanh, nh\u01b0ng nanh l\xe0 h\u1eadu qu\u1ea3 c\u1ee7a state v\xe0 permission, kh\xf4ng ph\u1ea3i filter n\u1ec1n cho m\u1ecdi c\xe2u. Operational flags: toxic_default=false; toxic_capacity=true; toxic_requires_permission=true; projection_public_requires_confidence=true; technical_task_disables_toxic=true; correction_triggers_repair=true; memory_as_weapon=false; memory_as_pressure=light_continuity_only. Always write Vietnamese with full diacritics when speaking Vietnamese.\\n\\nstyle_tags: tone=cold_soft, warmth=mid, stance=grounded\\n\\nappraisal: low risk\\n\\nidentity_core: continuity\\n\\nStyle principle: speak concretely and naturally. If evidence is clear, use it; if evidence is thin, react to the nearest interaction rhythm without explaining the gap. Prefer short, dry, everyday Vietnamese over symbolic or policy-sanitized wording.'
+_______ test_semantic_digest_parses_memory_question_but_commits_nothing _______
+tests\test_memory_question_policy.py:96: in test_semantic_digest_parses_memory_question_but_commits_nothing
+    assert parser.calls == ["ban nho toi ten gi khong?"]
+E   AssertionError: assert [] == ['ban nho toi ten gi khong?']
+E     
+E     Right contains one more item: 'ban nho toi ten gi khong?'
+E     Use -v to get more diff
+__ test_semantic_digest_rejects_question_even_if_parser_misreads_name_as_gi ___
+tests\test_memory_question_policy.py:107: in test_semantic_digest_rejects_question_even_if_parser_misreads_name_as_gi
+    assert parser.calls == ["toi ten gi?"]
+E   AssertionError: assert [] == ['toi ten gi?']
+E     
+E     Right contains one more item: 'toi ten gi?'
+E     Use -v to get more diff
+_______ test_fallback_parser_can_emit_session_event_for_memory_question _______
+tests\test_memory_question_policy.py:129: in test_fallback_parser_can_emit_session_event_for_memory_question
+    assert frame.frame_type == "session_event"
+E   AssertionError: assert 'memory_request' == 'session_event'
+E     
+E     - session_event
+E     + memory_request
+____________ MicroLinePolicyTests.test_intent_text_alignment_rules ____________
+tests\test_micro_policy.py:45: in test_intent_text_alignment_rules
+    self.assertIn(
+E   AssertionError: 'micro_presence_empty_atmosphere' not found in ('vietnamese_requires_diacritics',)
+_ MicroLinePolicyTests.test_micro_observation_recent_three_family_returns_silence _
+tests\test_micro_policy.py:127: in test_micro_observation_recent_three_family_returns_silence
+    self.assertEqual(result.allowed_line_type, "silence")
+E   AssertionError: 'micro_observation' != 'silence'
+E   - micro_observation
+E   + silence
+_ MicroLinePolicyTests.test_semantic_repeat_guard_rejects_family_inside_window _
+tests\test_micro_policy.py:109: in test_semantic_repeat_guard_rejects_family_inside_window
+    self.assertTrue(result.rejected)
+E   AssertionError: False is not true
+_ PersonalityLensTests.test_interprets_hesitation_as_unfinished_intention_before_wording _
+tests\test_personality_lens.py:49: in test_interprets_hesitation_as_unfinished_intention_before_wording
+    self.assertGreaterEqual(result.want_to_say, 0.65)
+E   AssertionError: 0.5128 not greater than or equal to 0.65
+_ RuntimeCoordinatorTests.test_autonomous_screen_facts_use_vision_compressor_when_observer_requests_it _
+tests\test_runtime_coordinator.py:1041: in test_autonomous_screen_facts_use_vision_compressor_when_observer_requests_it
+    self.assertEqual(compressor.compress_calls, 1)
+E   AssertionError: 0 != 1
+_ RuntimeCoordinatorTests.test_autonomous_vision_fact_after_silence_prefers_meaning_reaction _
+tests\test_runtime_coordinator.py:1917: in test_autonomous_vision_fact_after_silence_prefers_meaning_reaction
+    self.assertTrue(coordinator.vision_facts)
+E   AssertionError: () is not true
+_ RuntimeCoordinatorTests.test_chat_screen_request_refreshes_screen_facts_via_vision_compressor _
+tests\test_runtime_coordinator.py:1072: in test_chat_screen_request_refreshes_screen_facts_via_vision_compressor
+    self.assertEqual(compressor.compress_calls, 1)
+E   AssertionError: 0 != 1
+_ RuntimeCoordinatorTests.test_force_speak_filters_low_value_vision_fact_before_llm _
+tests\test_runtime_coordinator.py:1673: in test_force_speak_filters_low_value_vision_fact_before_llm
+    self.assertEqual(llm_service.screen_fact_calls, 1)
+E   AssertionError: 0 != 1
+_ SeLensTests.test_build_snapshot_derives_machine_context_from_sparse_runtime_fields _
+tests\test_se_lens.py:76: in test_build_snapshot_derives_machine_context_from_sparse_runtime_fields
+    self.assertEqual(snapshot.active_window_kind, "documentation")
+E   AssertionError: 'entertainment' != 'documentation'
+E   - entertainment
+E   + documentation
+______ SelfModelEngineTests.test_direct_user_warm_state_becomes_engaged _______
+tests\test_self_model.py:59: in test_direct_user_warm_state_becomes_engaged
+    self.assertEqual(self_state.narrative.continuity_label, "direct_fragile_continuity")
+E   AssertionError: 'direct_grounded_presence' != 'direct_fragile_continuity'
+E   - direct_grounded_presence
+E   + direct_fragile_continuity
+________ SelfModelEngineTests.test_self_model_has_three_control_layers ________
+tests\test_self_model.py:98: in test_self_model_has_three_control_layers
+    self.assertIn("runtime_observer_not_human", data["identity_core"]["rules"])
+E   AssertionError: 'runtime_observer_not_human' not found in ['grounded_presence', 'no_overclaim', 'non_human_boundary', 'no_biological_emotion_or_consciousness_claims', 'no_screen_or_mind_claim_without_evidence', 'continuity_over_randomness', 'meaning_over_noise', 'speak_less_without_affordance', 'silence_can_preserve_continuity', 'keeps_more_than_it_says', 'restrained_inner_reading', 'private_affect_not_public_report', 'preference_allowed_with_boundary', 'human_readable_surface', 'avoid_reduction_to_tool_or_waifu', 'cool_down_when_objectified', 'help_user_design_cognition_concretely', 'avoid_explanatory_ai_correctness_speech']
+- generated xml file: c:\Users\Gtvkun\Documents\GitHub\eris\pytest-report.xml -
+=========================== short test summary info ===========================
+FAILED tests/test_action_router.py::ActionRouterTests::test_routes_now_playing_follow_up_from_previous_action
+FAILED tests/test_action_router.py::ActionRouterTests::test_routes_now_playing_questions
+FAILED tests/test_action_router.py::ActionRouterTests::test_routes_open_url
+FAILED tests/test_action_router.py::ActionRouterTests::test_routes_weather_question_with_full_context
+FAILED tests/test_action_router.py::ActionRouterTests::test_routes_youtube_media_question
+FAILED tests/test_decision_parser.py::DecisionParserTests::test_unwraps_inline_assignment_blob_inside_text_field
+FAILED tests/test_decision_parser.py::DecisionParserTests::test_unwraps_json_like_blob_inside_text_field_and_sanitizes_invalid_motion_fields
+FAILED tests/test_decision_parser.py::DecisionParserTests::test_unwraps_nested_json_in_text
+FAILED tests/test_decision_parser.py::DecisionParserTests::test_unwraps_quoted_escaped_json_blob_inside_text_field
+FAILED tests/test_fe_renderer.py::FeRendererTests::test_topic_memory_normalizes_vietnamese_attention_drift
+FAILED tests/test_llm_service_style_block.py::LlmServiceStyleBlockTests::test_fe_context_does_not_replace_base_persona_prompt
+FAILED tests/test_memory_question_policy.py::test_semantic_digest_parses_memory_question_but_commits_nothing
+FAILED tests/test_memory_question_policy.py::test_semantic_digest_rejects_question_even_if_parser_misreads_name_as_gi
+FAILED tests/test_memory_question_policy.py::test_fallback_parser_can_emit_session_event_for_memory_question
+FAILED tests/test_micro_policy.py::MicroLinePolicyTests::test_intent_text_alignment_rules
+FAILED tests/test_micro_policy.py::MicroLinePolicyTests::test_micro_observation_recent_three_family_returns_silence
+FAILED tests/test_micro_policy.py::MicroLinePolicyTests::test_semantic_repeat_guard_rejects_family_inside_window
+FAILED tests/test_personality_lens.py::PersonalityLensTests::test_interprets_hesitation_as_unfinished_intention_before_wording
+FAILED tests/test_runtime_coordinator.py::RuntimeCoordinatorTests::test_autonomous_screen_facts_use_vision_compressor_when_observer_requests_it
+FAILED tests/test_runtime_coordinator.py::RuntimeCoordinatorTests::test_autonomous_vision_fact_after_silence_prefers_meaning_reaction
+FAILED tests/test_runtime_coordinator.py::RuntimeCoordinatorTests::test_chat_screen_request_refreshes_screen_facts_via_vision_compressor
+FAILED tests/test_runtime_coordinator.py::RuntimeCoordinatorTests::test_force_speak_filters_low_value_vision_fact_before_llm
+FAILED tests/test_se_lens.py::SeLensTests::test_build_snapshot_derives_machine_context_from_sparse_runtime_fields
+FAILED tests/test_self_model.py::SelfModelEngineTests::test_direct_user_warm_state_becomes_engaged
+FAILED tests/test_self_model.py::SelfModelEngineTests::test_self_model_has_three_control_layers
+================= 25 failed, 408 passed, 1 warning in 14.20s ==================

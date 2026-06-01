@@ -302,7 +302,8 @@ class MemoryCommitPolicy:
         norm = normalize_vi(raw)
         if not norm:
             return []
-        if _looks_like_question(norm, raw):
+        is_question = _looks_like_question(norm, raw)
+        if is_question and self.semantic_parser is None:
             return []
 
         importance, importance_reasons = _explicit_importance(norm)
@@ -313,8 +314,13 @@ class MemoryCommitPolicy:
         # Các extractor legacy phía dưới vẫn giữ làm fallback để không đập gãy runtime cũ.
         if self.enable_semantic_claim_pipeline:
             claim_decisions = self._decide_with_semantic_claims(raw, turn_id, llm_structured=llm_structured)
-            if claim_decisions:
+            if claim_decisions and not is_question:
                 return self._dedupe(claim_decisions)
+            if is_question:
+                return []
+
+        if is_question:
+            return []
 
         for builder in (
             self._extract_user_name,

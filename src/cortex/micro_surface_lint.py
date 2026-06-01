@@ -91,14 +91,15 @@ class MicroSurfaceLint:
             issues.append(ValidationIssue("no_speech_blocks_final", "fatal"))
 
         if line_type in self.MICRO_TYPES:
-            if self.looks_like_unaccented_vietnamese(text):
+            unaccented_vietnamese = self.looks_like_unaccented_vietnamese(text)
+            if unaccented_vietnamese and not self.looks_like_decorative_metaphor_without_stance(text):
                 issues.append(ValidationIssue(
                     "vietnamese_requires_diacritics",
                     "rewriteable",
                     "Giữ tiếng Việt có dấu để micro-line không giống placeholder/log.",
                 ))
             if count < 6 and (
-                self.looks_like_unaccented_vietnamese(text)
+                unaccented_vietnamese
                 or not self.has_clear_short_meaning(
                     text,
                     anchor_source=anchor_source,
@@ -509,4 +510,3 @@ class MicroSurfaceLint:
             "very_high": 0.78,
             "full": 0.92,
         }.get(stage, 0.30)
-

@@ -1920,6 +1920,8 @@ class LlmService:
         internal_state_context: str = "",
     ) -> str:
         style_block = STYLE_FALLBACK_PROMPT
+        if "Persona target: INFJ 5w4 594" not in style_block:
+            style_block = f"Persona target: INFJ 5w4 594\n\n{style_block}"
         fe_block = (fe_context or "").strip()
         if fe_block and fe_block not in style_block:
             style_block = f"{style_block}\n\n{fe_block}"

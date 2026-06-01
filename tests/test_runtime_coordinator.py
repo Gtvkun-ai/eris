@@ -2042,6 +2042,64 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         if coordinator.last_cognitive_frame is not None:
             self.assertEqual(coordinator.last_cognitive_frame.final_decision["parse_mode"], "no_speech")
 
+    def test_sleep_wake_route_checks_presence_and_reengagement_before_finalizing(self):
+        logger = _RecordingLogger()
+        coordinator = self._make_coordinator(
+            logger=logger,
+            telemetry_service=_DummyTelemetry(),
+        )
+        coordinator._sleep_interruptible = lambda seconds: None
+
+        def _fake_observer(**kwargs):
+            coordinator.last_wake_decision = coordinator_module.WakeDecision(
+                level="sleep",
+                should_speak=False,
+                should_call_vision=False,
+                should_wake_main=False,
+                should_run_daydream=False,
+                reason="test_sleep",
+                confidence=0.55,
+            )
+            return None
+
+        coordinator._run_background_observer = _fake_observer
+
+        self.assertTrue(coordinator._run_loop_iteration())
+        self.assertTrue(coordinator.last_wake_decision.debug["micro_presence_checked"])
+        self.assertTrue(coordinator.last_wake_decision.debug["reengagement_checked"])
+        self.assertTrue(any("[presence]" in message for message in logger.info_messages))
+
+    def test_observe_only_wake_route_can_surface_local_presence_before_finalize(self):
+        llm_service = _DummyLlmService()
+        coordinator = self._make_coordinator(
+            llm_service=llm_service,
+            telemetry_service=_PresenceTelemetry(),
+        )
+        coordinator.presence_maintenance_silent_loop_threshold = 1
+        coordinator.presence_maintenance_cooldown_sec = 0.0
+        coordinator._sleep_interruptible = lambda seconds: None
+
+        def _fake_observer(**kwargs):
+            coordinator.last_wake_decision = coordinator_module.WakeDecision(
+                level="observe_only",
+                should_speak=False,
+                should_call_vision=False,
+                should_wake_main=False,
+                should_run_daydream=False,
+                reason="test_observe_only_presence",
+                confidence=0.74,
+            )
+            return None
+
+        coordinator._run_background_observer = _fake_observer
+
+        self.assertTrue(coordinator._run_loop_iteration())
+        self.assertEqual(llm_service.directive_calls, 0)
+        self.assertEqual(coordinator.transport.sent[0]["parse_mode"], "wake_gate:observe_only")
+        self.assertGreaterEqual(len(coordinator.transport.sent), 1)
+        self.assertTrue(coordinator.last_wake_decision.debug["micro_presence_checked"])
+        self.assertTrue(coordinator.last_wake_decision.debug["presence_probe"]["allowed"])
+
     def test_run_loop_does_not_raise_uncaught_exceptions(self):
         calls = {"n": 0}
 

@@ -620,8 +620,8 @@ public partial class UdpListener : Node2D
 			ContentMarginBottom = Mathf.Max(6f, Mathf.Clamp(9f * scale, 7f, 9f) - borderPadding),
 		});
 
-		ApplyChatButtonLayout(_chatSendButton, "", _chatSubmitTexture, new Vector2(submitWidth, buttonHeight), buttonFontSize);
-		ApplyChatButtonLayout(_chatCloseButton, "X", _chatCloseTexture, new Vector2(closeWidth, buttonHeight), closeFontSize);
+		ApplyChatButtonLayout(_chatSendButton, "", _chatSubmitTexture, new Vector2(submitWidth, buttonHeight), buttonFontSize, scale);
+		ApplyChatButtonLayout(_chatCloseButton, "X", _chatCloseTexture, new Vector2(closeWidth, buttonHeight), closeFontSize, scale);
 	}
 
 	private void ConfigureChatActionButton(Button button, string text, Texture2D texture, int fontSize)
@@ -656,15 +656,46 @@ public partial class UdpListener : Node2D
 		button.MouseDefaultCursorShape = Control.CursorShape.PointingHand;
 	}
 
-	private void ApplyChatButtonLayout(Button button, string text, Texture2D texture, Vector2 size, float fontSize)
+	private void ApplyChatButtonLayout(Button button, string text, Texture2D texture, Vector2 size, float fontSize, float scale)
 	{
-		if (button == null)
+		if (button == null || texture == null)
 			return;
 
 		button.Text = text;
 		button.CustomMinimumSize = size;
 		button.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
 		button.AddThemeFontSizeOverride("font_size", Mathf.RoundToInt(fontSize));
+
+		// The button textures use 9-slice margins. When the UI scales down, fixed margins can exceed the
+		// button height (e.g. 20+20 > 34), which causes the submit button to look "broken".
+		float slice = Mathf.Clamp(20f * scale, 12f, 20f);
+		slice = Mathf.Min(slice, Mathf.Max(1f, size.X * 0.5f - 1f));
+		slice = Mathf.Min(slice, Mathf.Max(1f, size.Y * 0.5f - 1f));
+
+		float contentX = Mathf.Clamp(12f * scale, 8f, 12f);
+		float contentY = Mathf.Clamp(8f * scale, 6f, 8f);
+		contentX = Mathf.Min(contentX, Mathf.Max(0f, size.X * 0.5f - slice - 1f));
+		contentY = Mathf.Min(contentY, Mathf.Max(0f, size.Y * 0.5f - slice - 1f));
+
+		var style = new StyleBoxTexture
+		{
+			Texture = texture,
+			TextureMarginLeft = slice,
+			TextureMarginTop = slice,
+			TextureMarginRight = slice,
+			TextureMarginBottom = slice,
+			AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
+			AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
+			ContentMarginLeft = contentX,
+			ContentMarginTop = contentY,
+			ContentMarginRight = contentX,
+			ContentMarginBottom = contentY,
+		};
+
+		button.AddThemeStyleboxOverride("normal", style);
+		button.AddThemeStyleboxOverride("hover", style);
+		button.AddThemeStyleboxOverride("pressed", style);
+		button.AddThemeStyleboxOverride("focus", style);
 	}
 
 	private static float GetScaledWidth(Texture2D texture, float targetHeight)

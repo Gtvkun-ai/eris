@@ -352,6 +352,28 @@ class ParserGroundingMixin:
         data = self._normalize_decision_field_keys(payload)
         if "response" in data and isinstance(data["response"], list) and len(data["response"]) > 0:
             data = self._normalize_decision_field_keys(data["response"][0])
+        text_field = str(data.get("text", "") or "")
+        nested_fields = self._try_extract_nested_decision_from_text(text_field)
+        if nested_fields is not None:
+            merged = dict(data)
+            for key, value in nested_fields.items():
+                if key == "debug_trace" and str(merged.get("debug_trace", "")).strip():
+                    continue
+                merged[key] = value
+            if "should_speak" not in merged and "text" in nested_fields and not str(nested_fields.get("text", "") or "").strip():
+                merged["should_speak"] = False
+            data = merged
+        else:
+            inline_fields = self._try_extract_inline_decision_fields_from_text(text_field)
+            if inline_fields is not None:
+                merged = dict(data)
+                for key, value in inline_fields.items():
+                    if key == "debug_trace" and str(merged.get("debug_trace", "")).strip():
+                        continue
+                    merged[key] = value
+                if "should_speak" not in merged and "text" in inline_fields and not str(inline_fields.get("text", "") or "").strip():
+                    merged["should_speak"] = False
+                data = merged
         data, fields_patched = self._patch_missing_decision_fields(
             data,
             parse_mode=parse_mode,
@@ -824,6 +846,10 @@ class ParserGroundingMixin:
 
             if isinstance(decoded, str):
                 candidate = decoded.strip()
+                continue
+
+            if "{" in candidate and "}" in candidate and not candidate.startswith("{"):
+                candidate = candidate[candidate.find("{") : candidate.rfind("}") + 1].strip()
                 continue
 
             if candidate.startswith("{") and '\\"' in candidate:
@@ -1340,6 +1366,11 @@ class ParserGroundingMixin:
     def _finalize_decision(self, decision: dict, user_hint: str = ""):
         decision = self._apply_cognition_action_defaults(dict(decision or {}), user_hint=user_hint)
         source_text = str(decision.get("text", self.fallback["text"]))
+        nested = self._try_extract_nested_decision_from_text(source_text)
+        if nested is not None:
+            self._log("info", "Phát hiện JSON lồng trong trường text, đã bóc lại payload bên trong.")
+            decision = {**decision, **nested}
+            source_text = str(decision.get("text", self.fallback["text"]))
         inline_fields = self._try_extract_inline_decision_fields_from_text(source_text)
         if inline_fields is not None:
             self._log("info", "Phat hien field inline trong text, da boc lai payload ben trong.")

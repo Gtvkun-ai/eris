@@ -110,6 +110,7 @@ class ContextualAutonomyLoop:
         memory_packets: Iterable[DaydreamPacket] = (),
         user_text: str = "",
         channel: str = "autonomous",
+        autonomous_silent_cycles: int = 0,
     ) -> AutonomyLoopTickResult:
         snapshot = signal_snapshot if isinstance(signal_snapshot, SignalSnapshot) else SignalSnapshot.from_mapping(signal_snapshot or {})
         user_context = self.user_context_stream.update(
@@ -131,29 +132,32 @@ class ContextualAutonomyLoop:
             agenda_stack=self.agenda_stack,
             budget_policy=self.budget_policy,
             resource_snapshot=resource,
+            autonomous_silent_cycles=autonomous_silent_cycles,
         )
         daydream_result = None
         trigger, trigger_reason = self.daydream.should_trigger(user_context=user_context, internal_state=internal_state)
         if trigger and wake.should_run_daydream:
-            budget = self.budget_policy.can_run("subconscious_4b", resource_snapshot=resource, reason=trigger_reason)
-            if budget.allowed:
-                self.budget_policy.mark_started("subconscious_4b")
-                try:
-                    daydream_result = self.daydream.consolidate(
-                        memory_packets,
-                        agenda_stack=self.agenda_stack,
-                        context={
-                            "trigger": trigger_reason,
-                            "user_context": user_context.prompt_hint(),
-                            "wake_level": wake.level,
-                        },
-                    )
-                finally:
-                    self.budget_policy.mark_finished("subconscious_4b")
-            else:
+            try:
+                daydream_result = self.budget_policy.run_queued(
+                    "subconscious_4b",
+                    self.daydream.consolidate,
+                    memory_packets,
+                    reason=f"daydream:{trigger_reason}",
+                    priority=10,
+                    timeout_seconds=0.5,
+                    resource_snapshot=resource,
+                    agenda_stack=self.agenda_stack,
+                    context={
+                        "trigger": trigger_reason,
+                        "user_context": user_context.prompt_hint(),
+                        "wake_level": wake.level,
+                    },
+                )
+            except Exception as exc:
+                budget = self.budget_policy.can_run("subconscious_4b", resource_snapshot=resource, reason=trigger_reason)
                 self.agenda_stack.add(
                     kind="resource_guard",
-                    summary=f"Daydream consolidation bị chặn bởi tài nguyên: {budget.reason}",
+                    summary=f"Daydream consolidation bị hoãn bởi scheduler/budget: {getattr(exc, 'args', [''])[0] or budget.reason}",
                     evidence_ids=("model_budget_policy",),
                     pressure=0.42,
                     urgency=0.22,
@@ -161,7 +165,7 @@ class ContextualAutonomyLoop:
                     speech_value=0.0,
                     source="contextual_autonomy_loop",
                     ttl_seconds=900,
-                    payload={"budget": budget.to_dict()},
+                    payload={"budget": budget.to_dict(), "scheduler_error": str(exc)},
                 )
         next_heartbeat = self.next_sleep_seconds(wake)
         result = AutonomyLoopTickResult(
