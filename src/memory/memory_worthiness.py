@@ -49,6 +49,9 @@ class MemoryWorthinessPolicy:
             return WorthinessDecision(False, reason="non_assertive_claim", warnings=("hypothetical_or_quoted",))
 
         # Greeting/question/reaction lẻ không phải semantic long-term.
+        # Những thứ này thuộc SessionTurnLedger, không được đẩy vào SemanticMemory
+        # chỉ vì chúng có vẻ giống một "fact". Ký ức dài hạn không phải thùng rác
+        # của transcript, dù transcript rất thích giả vờ mình quan trọng.
         if claim.predicate in {"greeted", "asked_about"}:
             return WorthinessDecision(
                 False,
@@ -56,6 +59,21 @@ class MemoryWorthinessPolicy:
                 status="session_only",
                 importance=spec.importance,
                 reason="session_event_not_long_term_memory",
+            )
+
+        # User có ý định lưu nhưng parser chưa bóc được fact sạch. Đưa vào
+        # candidate để consolidator xử lý lúc rảnh, không ép thành semantic fact
+        # trong hot path. Đây là vùng đệm chính thống, không phải lời hứa "đã nhớ".
+        if claim.predicate == "remember_unresolved":
+            if claim.confidence < self.min_candidate_confidence:
+                return WorthinessDecision(False, reason="unresolved_memory_request_too_weak")
+            return WorthinessDecision(
+                True,
+                target_layer="memory_candidate",
+                status="candidate",
+                importance=max(0.60, spec.importance, claim.confidence * 0.80),
+                reason="explicit_memory_request_unresolved_candidate",
+                warnings=("needs_consolidation", "not_stable_memory_yet"),
             )
 
         # mentioned_location là dấu vết ngữ cảnh, không trả lời quê/nơi ở/sở thích.

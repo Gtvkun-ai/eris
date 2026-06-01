@@ -226,6 +226,19 @@ PREDICATES: dict[str, PredicateSpec] = {
         retention_class="transient",
         importance=0.10,
     ),
+    "remember_unresolved": PredicateSpec(
+        name="remember_unresolved",
+        object_type="text",
+        modality="memory",
+        default_temporal="stable",
+        answer_targets=("memory_candidate",),
+        fact_key="memory_candidate.unresolved",
+        storage_layer="memory_candidate",
+        default_decay="candidate",
+        retention_class="candidate",
+        importance=0.68,
+        aliases=("nhớ nhưng chưa rõ", "unresolved memory", "candidate"),
+    ),
 }
 
 FACT_KEY_TO_PREDICATE: dict[str, str] = {spec.fact_key: name for name, spec in PREDICATES.items() if spec.fact_key}

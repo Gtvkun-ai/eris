@@ -190,6 +190,8 @@ def _explicit_importance(norm: str) -> tuple[float, list[str]]:
         reasons.append("importance_marker")
     if any(marker in norm for marker in ("tu gio", "sau nay", "ve sau", "from now on")):
         reasons.append("future_or_convention_marker")
+    if any(marker in norm for marker in ("vibe nay", "logic nay", "y nay", "kieu nay", "doan nay", "pattern nay")):
+        reasons.append("loose_memory_candidate_marker")
     if not reasons:
         return 0.0, []
     score = 0.85
@@ -261,7 +263,10 @@ class MemoryCommitPolicy:
     """
 
     min_confidence: float = 0.62
-    explicit_candidate_min_importance: float = 0.85
+    # Candidate không cần chắc như semantic. User đã có ý định lưu, nhưng câu còn
+    # lủng củng thì phải giữ dấu vết để consolidator xử lý sau. Nếu đặt ngưỡng
+    # quá cao, candidate store lại thành cái bình hoa JSON, nhìn có vẻ sang.
+    explicit_candidate_min_importance: float = 0.72
     enable_semantic_claim_pipeline: bool = True
     # Có thể inject parser model.gguf từ runtime. Nếu None, ClaimExtractor dùng fallback surface.
     semantic_parser: Any | None = None
@@ -309,9 +314,10 @@ class MemoryCommitPolicy:
         importance, importance_reasons = _explicit_importance(norm)
         decisions: list[MemoryCommitDecision] = []
 
-        # Pipeline mới: user_text -> SemanticClaim -> Worthiness -> Retention -> CommitDecision.
-        # Nếu nó nhận ra claim rõ, dùng nó trước để tách predicate/location/modality chuẩn.
-        # Các extractor legacy phía dưới vẫn giữ làm fallback để không đập gãy runtime cũ.
+        # Pipeline chuẩn: user_text -> MeaningFrame -> SemanticClaim -> Worthiness -> Retention.
+        # Parser/model chỉ đọc nghĩa; judgement/retention mới quyết định layer lưu.
+        # Với câu hỏi recall/session, pipeline có thể nhận ra `asked_about`, nhưng
+        # không được tạo long-term memory. SessionTurnLedger xử lý phần đó.
         if self.enable_semantic_claim_pipeline:
             claim_decisions = self._decide_with_semantic_claims(raw, turn_id, llm_structured=llm_structured)
             if claim_decisions and not is_question:
@@ -408,6 +414,33 @@ class MemoryCommitPolicy:
             **retention_metadata(retention),
         }
 
+        if target == MemoryTarget.CANDIDATE:
+            qualifiers = dict(getattr(claim, "qualifiers", {}) or {})
+            frame = dict(qualifiers.get("meaning_frame") or {})
+            slots = dict(frame.get("slots") or {})
+            raw_keys = (
+                slots.get("candidate_fact_keys")
+                or slots.get("fact_keys")
+                or qualifiers.get("candidate_fact_keys")
+                or ([fact_key] if fact_key else [])
+            )
+            if isinstance(raw_keys, str):
+                candidate_keys = [raw_keys]
+            else:
+                try:
+                    candidate_keys = list(raw_keys or [])
+                except Exception:
+                    candidate_keys = []
+            metadata.update(
+                {
+                    "candidate_fact_keys": list(dict.fromkeys(str(x) for x in candidate_keys if str(x).strip()))[:8],
+                    "domain_guess": str(slots.get("domain_guess") or qualifiers.get("domain_guess") or claim.predicate or "unknown"),
+                    "extraction_status": "unresolved",
+                    "needs_consolidation": True,
+                    "public_ack": "held_trace_not_stable_memory",
+                }
+            )
+
         claim_text = self._surface_claim_for_semantic_claim(claim)
         kind = self._memory_kind_for_semantic_claim(claim)
         surface_mode = SurfaceMode.EXACT if claim.predicate in {"name_is", "birth_month_is", "birth_year_is"} else SurfaceMode.SEMANTIC
@@ -451,6 +484,8 @@ class MemoryCommitPolicy:
             return f"Người dùng nêu preference về cách trả lời: {obj}"
         if claim.predicate == "general_preference":
             return f"Người dùng nêu preference: {obj}"
+        if claim.predicate == "remember_unresolved":
+            return f"Unresolved memory candidate: {obj}"
         return f"{claim.subject}.{claim.predicate}: {obj}"
 
     def _memory_kind_for_semantic_claim(self, claim: SemanticClaim) -> MemoryKind:
@@ -460,6 +495,8 @@ class MemoryCommitPolicy:
             return MemoryKind.USER_BIRTH_MONTH
         if claim.predicate == "response_style_prefers":
             return MemoryKind.USER_RESPONSE_STYLE
+        if claim.predicate == "remember_unresolved":
+            return MemoryKind.MEMORY_CANDIDATE
         return MemoryKind.USER_GENERAL_TOPIC
 
     def _decay_for_retention(self, decay_policy: str) -> DecayPolicy:

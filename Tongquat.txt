@@ -1,8 +1,14 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-05-31
+Cập nhật: 2026-06-01
 Mã hóa: UTF-8
+
+Bổ sung nhanh 2026-06-01:
+- Wake-gate local plan đã được siết lại để giống shape của `ti_enforce` hơn: `_wake_gate_ti_report()` giờ luôn mang đủ các hint field như `force_animation`, `motion_intent_hint`, `motion_target_x_hint`, `motion_facing_hint`, `target_x_hint`, `direction_hint`, dù nhánh này không đi xuống main cognition. Mục tiêu là tránh các nhánh local/wake-gate phải đoán thiếu field rồi lệch contract với parser/body.
+- FE runtime cũng được dọn một lớp tương thích dữ liệu cũ: `FeRenderer` giờ không giả định `warmth_level`/`sarcasm_level` luôn là float. Nó có `_style_level()` để ép các nhãn legacy như `low`/`mid`/`high`, `cool`/`warm`, `guarded`/`steady` về trục số trước khi blend/anchor/clamp. Nhờ vậy style memory cũ không còn làm trượt kiểu dữ liệu ở autonomous path.
+- `_wake_gate_fe_plan()` cũng đã đổi `warmth_level` từ chuỗi `"low"` sang số `0.18` để cùng hệ với phần FE mới; wake-gate presence vì vậy không còn là ngoại lệ legacy giữa đường blend style.
+- Regression hiện có thêm test chốt hai điểm trên trong `tests/test_runtime_coordinator.py` và `tests/test_fe_renderer.py`.
 
 Bổ sung nhanh 2026-05-30:
 - Đợt dọn legacy vừa rồi đã bỏ bớt các đường tương thích không còn cần: `src/cortex/subconscious.py` đã được gỡ, `StateCommitter` không còn route qua fallback request cũ, `ActionPlanner`/`InternalState`/`orientation_*` cũng đã đổi bớt các tên gọi mang dấu vết legacy để tài liệu và code đỡ lệch nhau.
@@ -244,12 +250,12 @@ Kết nối mặc định:
   - Chỉ khi các nguồn trên rỗng mới fallback về `long_term_memory`.
 - `internal_agenda` giờ được coordinator gắn `backing_path` trỏ vào `memory_core/internal_agenda.json` (hoặc `base_dir` của memory core). Nhờ vậy agenda nội bộ sống sót qua restart thay vì bị reset về rỗng sau mỗi lần boot runtime.
 - Body bias được dựng từ internal state:
-  - `continuity_anxiety`: lấy từ recursive reactivation, memory replay, silence pressure và số tick im lặng.
-  - `curiosity`: lấy từ curiosity, curiosity pressure, association pressure và được cộng thêm nếu focus đang là code.
-  - `overload`: lấy từ fatigue, cognitive tension và restraint pressure.
-  - `solitude`: lấy từ restraint pressure, overload và subconscious pressure.
-  - `focus_kind`: chuẩn hóa `coding/documentation/ide` thành `code`.
-  - `preferred_anchor`: chọn `chat_near`, `code_side` hoặc `bottom_right`.
+  - `continuity_anxiety`: lấy max từ recursive reactivation, memory replay, silence pressure, số tick im lặng, và còn bị kéo lên nếu observer thấy khả năng error cao.
+  - `curiosity`: lấy từ curiosity, curiosity pressure, association pressure; thêm bias từ `observer_frame.salience`, và được boost nhẹ khi focus là code.
+  - `overload`: lấy từ fatigue, cognitive tension, restraint pressure và `observer_frame.possible_error`.
+  - `solitude`: lấy từ restraint pressure, overload và subconscious pressure; nó không chỉ là “muốn ở một mình” mà còn là bias giữ khoảng cách nền cho body.
+  - `focus_kind`: chuẩn hóa mềm hơn: `coding/ide -> code`, `documentation/doc/reference -> docs`, `focus_aid_media/entertainment -> media`, còn lại giữ nguyên hoặc rơi về `unknown`.
+  - `preferred_anchor`: mặc định là `chat_near`; chỉ chuyển sang `bottom_right` khi overload/solitude đủ cao, hoặc sang `code_side` khi focus là code và curiosity thắng continuity anxiety.
 - Pipeline đại khái:
     RawSignal/Percepts → Evidence → AttentionSalience → WorkingMemory/Broadcast → Meaning → Personality → Appraisal → Inner Thought/Speech → Action Plan → Decision
 

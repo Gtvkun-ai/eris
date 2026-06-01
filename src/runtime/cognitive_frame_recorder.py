@@ -111,44 +111,20 @@ class CognitiveFrameRecorderMixin:
                 )
             )
 
-        # 3. Semantic memory: chỉ lưu fact explicit hoặc fact model/parser đã trích.
-        # Không biến mọi câu nói thành chân lý dài hạn. Đó là cách nhanh nhất
-        # để ERIS nhớ sai với vẻ mặt bình thản đáng ghét.
-        for fact_index, fact in enumerate(observation["semantic_facts"]):
-            semantic_source = "explicit_user_statement" if fact in observation["explicit_user_facts"] else "decision_extracted_fact"
-            semantic_grounding_meta = self._semantic_fact_grounding_metadata(
-                frame,
-                semantic_source=semantic_source,
-            )
-            requests.append(
-                self._make_commit_request(
-                    target="semantic_memory",
-                    content={
-                        "fact": fact,
-                        "source": semantic_source,
-                        "timestamp": timestamp,
-                        "cycle_id": frame.cycle_id,
-                    },
-                    confidence=0.78 if fact in observation["explicit_user_facts"] else 0.64,
-                    evidence_ids=self._evidence_ids_for_fact(frame, fact, fallback=evidence_ids),
-                    permission_required=True,
-                    storage_permission=storage_permission,
-                    decay_policy="slow",
-                    reason="store explicit stable semantic fact",
-                    tags=(
-                        "semantic",
-                        "explicit_user_fact" if fact in observation["explicit_user_facts"] else "extracted_fact",
-                        "grounded" if semantic_grounding_meta["source_grounded"] else "ungrounded",
-                    ),
-                    metadata={
-                        "source": "CognitiveFrameRecorder",
-                        "fact_index": fact_index,
-                        "timestamp": timestamp,
-                        "semantic_source": semantic_source,
-                        **semantic_grounding_meta,
-                    },
-                )
-            )
+        # 3. Semantic memory: recorder KHÔNG tự mint semantic fact nữa.
+        #
+        # Chuẩn ERIS là: user_text -> MemoryCommitPolicy/MemoryKernel ->
+        # SemanticParser -> ClaimBuilder -> Worthiness -> Retention -> StateCommitRequest.
+        # Recorder chỉ quan sát outcome của frame, nên nếu nó tự lấy
+        # `remembered_fact` hoặc `decision_extracted_fact` rồi đẩy thẳng vào
+        # semantic_memory thì nó đã đi vòng qua judgement layer. Đó chính là
+        # nguồn sinh mấy ký ức vô dụng kiểu greeting/slang/MemoryPacket.
+        #
+        # Các user fact thật đã được StateCommitServiceMixin thêm vào
+        # frame.commit_requests bằng `_add_user_turn_memory_commit_requests(...)`
+        # trước khi frame finalize. Ở đây chỉ giữ event/episodic/repair/audit.
+        # Session query như "câu đầu tiên tôi nhắn là gì" thuộc
+        # SessionTurnLedger, không được biến thành semantic memory dài hạn.
 
         # 4. Relationship/procedural/repair từ reflection. Hàm derive vẫn giữ tên
         # cũ, nhưng kết quả giờ thành request chứ không gọi store trực tiếp.

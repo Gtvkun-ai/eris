@@ -43,6 +43,15 @@ class MemoryPruner:
         fact_key = str(metadata.get("fact_key") or "")
         importance = _float(metadata.get("importance", 0.5), 0.5)
         confidence = _float(getattr(item, "confidence", metadata.get("confidence", 0.5)), 0.5)
+        surface = _surface_text(item)
+        semantic_source = str(metadata.get("semantic_source") or metadata.get("source") or "").strip().lower()
+
+        # Dọn nhiễu semantic cũ: fact kiểu greeting/slang/asked/questioning không
+        # thuộc long-term semantic. Chúng nên ở session/episodic/repair. Nếu cứ giữ,
+        # ERIS sẽ nhớ rất kỹ chuyện Ngài chào thế nào, rồi quên thứ đáng nhớ hơn.
+        # Một thảm họa nhỏ nhưng có indent đẹp.
+        if not fact_key and _looks_like_trivial_semantic_noise(surface, semantic_source):
+            return PruneDecision("archive", "trivial_semantic_noise_without_fact_key", score=0.10)
 
         if retention_class in {"session", "transient"} and prune_after and age > float(prune_after):
             return PruneDecision("drop", "session_or_transient_expired", score=0.0)
@@ -82,6 +91,32 @@ def _epoch(value: Any) -> float:
         return time.mktime(time.strptime(text, "%Y-%m-%dT%H:%M:%S%z"))
     except Exception:
         return 0.0
+
+
+def _surface_text(item: Any) -> str:
+    if isinstance(item, dict):
+        return " ".join(str(item.get(key) or "") for key in ("claim", "summary", "raw_text", "description"))
+    return " ".join(str(getattr(item, key, "") or "") for key in ("claim", "summary", "raw_text", "description"))
+
+
+def _looks_like_trivial_semantic_noise(surface: str, semantic_source: str) -> bool:
+    text = str(surface or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "user greeted",
+        "user said 'xin chào",
+        "user asked",
+        "asked if eris",
+        "user used slang",
+        "questioning the use",
+        "previous response quality",
+        "nhận xét tôi lạnh",
+        "eris's name",
+    )
+    if any(marker in text for marker in markers):
+        return True
+    return semantic_source == "decision_extracted_fact" and any(marker in text for marker in ("greet", "asked", "slang", "question"))
 
 
 __all__ = ["PruneDecision", "MemoryPruner"]

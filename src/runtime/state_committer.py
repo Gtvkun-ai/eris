@@ -329,7 +329,7 @@ def _normalize_target(target: Any) -> str:
 
 def _normalize_decay_policy(value: Any) -> str:
     raw = str(value or "normal").strip().lower()
-    if raw in {"none", "slow", "normal", "fast", "session_only"}:
+    if raw in {"none", "slow", "normal", "fast", "session_only", "candidate"}:
         return raw
     if raw in {"session", "turn", "temporary", "temp"}:
         return "session_only"

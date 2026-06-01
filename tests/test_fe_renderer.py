@@ -242,6 +242,35 @@ class FeRendererTests(unittest.TestCase):
         self.assertIn("desire:", normalized)
         self.assertIn("late_night_coding", normalized)
 
+    def test_memory_continuity_coerces_legacy_textual_style_levels(self):
+        memory = FeStyleMemory(
+            last_mode="grounded",
+            continuity_strength=0.8,
+            sarcasm_level="mid",
+            warmth_level="low",
+            brevity_bias="medium",
+        )
+        ti_report = TiPolicyReport(
+            mode="steady_observe",
+            focus_label="general",
+            reason="observe",
+            prompt_context="",
+        )
+
+        plan = self.renderer.evaluate_autonomous(
+            snapshot=self.snapshot_general,
+            ni_report=self.ni_report,
+            ti_report=ti_report,
+            style_memory=memory,
+            internal_state=self.state,
+            last_text="",
+        )
+
+        self.assertIsInstance(plan.warmth_level, float)
+        self.assertIsInstance(plan.sarcasm_level, float)
+        self.assertGreaterEqual(plan.warmth_level, 0.0)
+        self.assertLessEqual(plan.warmth_level, 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

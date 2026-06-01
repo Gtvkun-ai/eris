@@ -1383,8 +1383,8 @@ class FeRenderer:
             return 0.0
         return self._clamp(max(technical_pull, discipline_pull, attachment_pull, neutral_pull) / total)
 
-    def _anchor_value(self, previous: float, target: float) -> float:
-        return previous * 0.25 + target * 0.75
+    def _anchor_value(self, previous: Any, target: Any) -> float:
+        return self._style_level(previous) * 0.25 + self._style_level(target) * 0.75
 
     def _style_family(self, mode: str) -> str:
         if mode == "technical":
@@ -1395,8 +1395,10 @@ class FeRenderer:
             return "relational_repair"
         return "grounded"
 
-    def _blend(self, previous: float, current: float, strength: float) -> float:
-        return self._clamp(previous * strength + current * (1.0 - strength))
+    def _blend(self, previous: Any, current: Any, strength: float) -> float:
+        previous_value = self._style_level(previous)
+        current_value = self._style_level(current)
+        return self._clamp(previous_value * strength + current_value * (1.0 - strength))
 
     def _blend_brevity(self, previous: str, current: str) -> str:
         if previous == current:
@@ -1874,6 +1876,20 @@ class FeRenderer:
     def _base_tone_label(self, tone_label: str) -> str:
         return (tone_label or "").strip()
 
+    def _style_level(self, value: Any, default: float = 0.0) -> float:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"low", "cool", "cold", "guarded"}:
+                return 0.18
+            if normalized in {"mid", "medium", "balanced", "steady"}:
+                return 0.34
+            if normalized in {"high", "warm", "soft", "open"}:
+                return 0.52
+        numeric = self._float(value)
+        if numeric == 0.0 and value not in {0, 0.0, "0", "0.0"}:
+            return self._float(default)
+        return numeric
+
     def _float(self, value: Any) -> float:
         try:
             numeric = float(value)
@@ -1884,7 +1900,7 @@ class FeRenderer:
         return max(0.0, min(1.0, numeric))
 
     def _clamp(self, value: Any) -> float:
-        return self._float(value)
+        return self._style_level(value)
 
 
 def _normalize_text(text: str) -> str:

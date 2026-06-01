@@ -4119,7 +4119,14 @@ class RuntimeCoordinator(
         return SimpleNamespace(
             mode="steady_observe",
             reason=reason,
+            prompt_context=f"Mode: steady_observe. Reason: {reason}",
             animation_hint="stand",
+            force_animation=False,
+            motion_intent_hint="",
+            motion_target_x_hint=-1.0,
+            motion_facing_hint=0,
+            target_x_hint=-1.0,
+            direction_hint=0,
         )
 
     def _wake_gate_fe_plan(self, *, ti_report, snapshot, internal_state) -> SimpleNamespace:
@@ -4131,7 +4138,7 @@ class RuntimeCoordinator(
             intent_label=intent_label,
             session_arc="wake_gate_presence",
             sarcasm_level=0.0,
-            warmth_level="low",
+            warmth_level=0.18,
             brevity_bias="short",
         )
 

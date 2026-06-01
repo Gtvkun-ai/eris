@@ -15,12 +15,13 @@ from memory.understanding.semantic_parser import (
 )
 
 
-_SYSTEM_PROMPT = """Bạn là semantic frame parser.
-Nhiệm vụ: chuyển user_text thành danh sách meaning frames.
-Không quyết định lưu memory.
-Không giải thích.
-Không suy diễn ngoài câu chữ.
-Nếu không chắc, dùng certainty thấp hoặc frame_type="unknown".
+_SYSTEM_PROMPT = """Bạn là semantic frame parser cho memory intake ERIS.
+Nhiệm vụ duy nhất: chuyển user_text tự nhiên thành danh sách MeaningFrame JSON.
+Không quyết định lưu memory. Không chọn semantic/episodic/candidate.
+Không giải thích. Không suy diễn ngoài câu chữ.
+Nếu user hỏi lại ký ức phiên như "tôi tên gì", "câu đầu tiên tôi nhắn là gì", hãy tạo frame session_event/asked_about hoặc không tạo frame dài hạn.
+Nếu user muốn ERIS nhớ nhưng câu mơ hồ, tạo frame_type="memory_request", relation="remember_unresolved", target.text là câu gốc hoặc nội dung cần giữ, và slots.candidate_fact_keys nếu đoán được.
+Với fact rõ, relation có thể là relation trừu tượng như "name" hoặc fact_key như "user.name".
 Chỉ trả JSON."""
 
 _USER_PROMPT_TEMPLATE = """Phân tích câu người dùng sau thành meaning frames JSON.
@@ -30,7 +31,7 @@ Schema:
   "frames": [
     {
       "frame_type": "identity|location|preference|instruction|feedback|correction|memory_request|project|unknown",
-      "relation": "name|hometown|living_location|current_location|likes|dislikes|style_preference|...",
+      "relation": "name|user.name|hometown|user.hometown|living_location|current_location|likes|dislikes|response_style|remember_unresolved|...",
       "subject": "user|eris|project:ERIS|other",
       "target": {
         "text": "...",
@@ -40,10 +41,22 @@ Schema:
       "modality": "fact|preference|desire|belief|instruction|feedback|observation",
       "time_scope": "current|session|stable|past|future|habitual|unknown",
       "certainty": 0.0,
-      "evidence_span": "đoạn chữ gốc"
+      "evidence_span": "đoạn chữ gốc",
+      "slots": {
+        "candidate_fact_keys": ["user.name"],
+        "domain_guess": "identity|project_logic|style_or_vibe|general_memory_candidate"
+      }
     }
   ]
 }
+
+
+Ví dụ bắt buộc:
+- user_text: "tôi tên Hòa" -> frames[0]: frame_type="identity", relation="user.name", target.text="Hòa", target.kind="person_name", modality="fact", time_scope="stable", certainty>=0.80.
+- user_text: "gọi tôi là Hòa" -> tương tự user.name, vì đây là preferred name.
+- user_text: "tôi tên gì" -> không tạo identity fact; nếu cần thì frame_type="session_event", relation="asked_about", target.text="user.name".
+- user_text: "nhớ vibe này" -> frame_type="memory_request", relation="remember_unresolved", target.text là câu gốc, slots.domain_guess="style_or_vibe".
+- user_text: "câu đầu tiên tôi nhắn là gì" -> session query, không tạo semantic fact.
 
 user_text:
 {text}

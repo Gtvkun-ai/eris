@@ -633,6 +633,32 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             ["session_ritual", "presence", "reengagement"],
         )
 
+    def test_wake_gate_ti_report_matches_ti_enforce_shape(self):
+        coordinator = self._make_coordinator()
+
+        report = coordinator._wake_gate_ti_report(reason="test")
+
+        self.assertEqual(report.mode, "steady_observe")
+        self.assertFalse(report.force_animation)
+        self.assertEqual(report.motion_intent_hint, "")
+        self.assertEqual(report.motion_target_x_hint, -1.0)
+        self.assertEqual(report.motion_facing_hint, 0)
+        self.assertEqual(report.target_x_hint, -1.0)
+        self.assertEqual(report.direction_hint, 0)
+
+    def test_wake_gate_fe_plan_uses_numeric_style_axes(self):
+        coordinator = self._make_coordinator()
+
+        plan = coordinator._wake_gate_fe_plan(
+            ti_report=SimpleNamespace(mode="steady_observe"),
+            snapshot=SimpleNamespace(active_window_kind="coding"),
+            internal_state=SimpleNamespace(last_focus_kind="coding"),
+        )
+
+        self.assertIsInstance(plan.warmth_level, float)
+        self.assertEqual(plan.warmth_level, 0.18)
+        self.assertEqual(plan.sarcasm_level, 0.0)
+
     def test_chat_links_recent_public_turn_as_reply_context(self):
         coordinator = self._make_coordinator()
         coordinator.public_turn_ledger.append(

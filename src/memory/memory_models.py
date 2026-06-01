@@ -131,7 +131,7 @@ def _state_decay_from_memory_decay(decay: DecayPolicy) -> str:
     if decay == DecayPolicy.SESSION:
         return "session_only"
     if decay == DecayPolicy.CANDIDATE:
-        return "slow"
+        return "candidate"
     return "normal"
 
 

@@ -75,7 +75,17 @@ class MemoryRetentionPolicy:
         promote_if = 1
         warnings = list(worthiness.warnings)
 
-        if retention == "short_term":
+        if retention == "candidate" or worthiness.target_layer == "memory_candidate":
+            # Candidate là vùng chờ để consolidator chưng cất lại. Nó được giữ đủ
+            # lâu để worker nền có cơ hội xử lý, nhưng không được surface như fact
+            # ổn định. Một chút kỷ luật, thật kỳ lạ là lại cần viết ra.
+            decay = "candidate"
+            revisit_after = 3600.0
+            prune_after = 86400.0 * 14
+            demote_days = 14
+            promote_if = 1
+            warnings.append("candidate_requires_consolidation")
+        elif retention == "short_term":
             # current_location, age_observed... không được sống dai như name/hometown.
             prune_after = 3600.0 if claim.predicate == "current_location_is" else 86400.0 * 30
             revisit_after = prune_after
