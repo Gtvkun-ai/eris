@@ -49,6 +49,11 @@ RELATION_TO_PREDICATE: dict[tuple[str, str], str] = {
     ("preference", "preference_location"): "preference_location",
     ("preference", "general_preference"): "general_preference",
 
+    # Profile học tập/ngành học. Tách khỏi preference để câu "Tôi đang học IT"
+    # không bị nhớ thành "tôi thích IT". Một chữ sai predicate, sau này recall sai cả đời.
+    ("project", "study_field"): "study_field_is",
+    ("project", "study_field_is"): "study_field_is",
+
     ("instruction", "response_style"): "response_style_prefers",
     ("instruction", "response_style_prefers"): "response_style_prefers",
     ("feedback", "tone_feedback"): "response_style_prefers",
@@ -69,6 +74,7 @@ PREDICATE_DEFAULTS: dict[str, dict[str, Any]] = {
     "hometown_is": {"object_type": "location", "modality": "fact", "temporal": "stable", "stability": "stable"},
     "preference_location": {"object_type": "location", "modality": "preference", "temporal": "stable", "stability": "medium"},
     "general_preference": {"object_type": "unknown", "modality": "preference", "temporal": "stable", "stability": "medium"},
+    "study_field_is": {"object_type": "study_field", "modality": "fact", "temporal": "current", "stability": "medium", "confidence_floor": 0.74},
     "response_style_prefers": {"object_type": "style_rule", "modality": "preference", "temporal": "stable", "stability": "medium"},
     "mentioned_location": {"object_type": "location", "modality": "observation", "temporal": "session", "stability": "session"},
     "greeted": {"object_type": "utterance", "modality": "observation", "temporal": "session", "stability": "session"},

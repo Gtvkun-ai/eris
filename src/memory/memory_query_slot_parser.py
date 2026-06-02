@@ -177,6 +177,7 @@ class MemoryQuerySlotParser:
                 surface=SurfaceMode.EXACT,
                 confidence=conf,
                 ambiguity=1.0 - conf,
+                intercept_permission=True,
                 evidence=("slot:fact_key", fact_signal.evidence),
                 raw_text=raw,
             )
@@ -193,6 +194,7 @@ class MemoryQuerySlotParser:
                 surface=SurfaceMode.COUNT,
                 confidence=conf,
                 ambiguity=1.0 - conf,
+                intercept_permission=True,
                 evidence=("slot:count",),
                 raw_text=raw,
             )
@@ -216,6 +218,7 @@ class MemoryQuerySlotParser:
                 surface=SurfaceMode.EXACT,
                 confidence=conf,
                 ambiguity=1.0 - conf,
+                intercept_permission=True,
                 evidence=("slot:recent_quantity_questions",),
                 raw_text=raw,
             )
@@ -247,6 +250,7 @@ class MemoryQuerySlotParser:
                 surface=SurfaceMode.EXACT,
                 confidence=conf,
                 ambiguity=1.0 - conf,
+                intercept_permission=True,
                 evidence=("slot:answer_to_relation",),
                 raw_text=raw,
             )
@@ -269,6 +273,7 @@ class MemoryQuerySlotParser:
                 surface=SurfaceMode.EXACT,
                 confidence=conf,
                 ambiguity=1.0 - conf,
+                intercept_permission=True,
                 evidence=("slot:ordinal_question",),
                 raw_text=raw,
             )
@@ -284,6 +289,7 @@ class MemoryQuerySlotParser:
                 surface=SurfaceMode.EXACT,
                 confidence=conf,
                 ambiguity=1.0 - conf,
+                intercept_permission=True,
                 evidence=("slot:assistant_ordinal",),
                 raw_text=raw,
             )
@@ -299,6 +305,7 @@ class MemoryQuerySlotParser:
                 surface=SurfaceMode.GIST if conf < 0.62 else SurfaceMode.EXACT,
                 confidence=conf,
                 ambiguity=1.0 - conf,
+                intercept_permission=False,
                 evidence=("slot:generic_recall",),
                 warnings=("generic_slot_query",),
                 raw_text=raw,

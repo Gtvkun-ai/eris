@@ -1006,8 +1006,12 @@ class RuntimeCoordinator(
         )
 
     def _build_body_bias_payload(self) -> dict[str, object]:
+        frame = getattr(self, "last_cognitive_frame", None)
+        action_plan = getattr(frame, "action_plan", None) if frame is not None else None
+        impulse_hint = getattr(action_plan, "body_bias_hint", {}) if action_plan is not None else {}
         return self.body_bias_projector.build_payload(
             observer_frame=getattr(self, "last_observer_frame", None),
+            impulse_hint=impulse_hint,
         )
 
     def _build_emotion_debug_payload(self) -> dict[str, object]:
@@ -2189,6 +2193,7 @@ class RuntimeCoordinator(
             self_state=frame.self_state,
             meaning_layer=getattr(frame, "meaning_layer", None),
             personality_lens=getattr(frame, "personality_lens", None),
+            agent_mind=getattr(getattr(self, "memory_core", None), "agent_mind", None),
             safe_small_talk_allowed=self._safe_small_talk_budget_allowed(
                 channel=channel,
                 snapshot=snapshot,

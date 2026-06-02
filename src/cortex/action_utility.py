@@ -40,6 +40,7 @@ ACTION_SPACE: tuple[str, ...] = (
     "curious_question",
     "relational_checkin",
     "light_muse",
+    "practical_help",
     "soft_boundary",
     "system_action",
 )
@@ -114,6 +115,13 @@ class ActionContext:
     relationship_dynamics: Any = None
     goal_state: Any = None
     action_memory: ActionMemoryState | None = None
+
+    # Full impulse report from SpontaneousLife/AgentStateStack. This is optional
+    # so old call-sites still run, but when present it lets ActionUtility choose
+    # from the actual winning motive instead of staring at proposed_speech_act
+    # like a clerk who only received page 10 of a court file.
+    impulse_arbitration: Mapping[str, Any] | None = None
+    body_bias_hint: Mapping[str, Any] | None = None
 
     has_broadcast_signal: bool = False
     now: float = 0.0
@@ -200,6 +208,10 @@ class ActionUtilityReport:
     transition_reason: str = ""
     memory_pressure: tuple[str, ...] = ()
     hard_override: bool = False
+    selected_impulse: str = ""
+    impulse_scores: tuple[str, ...] = ()
+    impulse_arbitration: dict[str, Any] = field(default_factory=dict)
+    body_bias_hint: dict[str, Any] = field(default_factory=dict)
 
     def utility_scores(self) -> dict[str, float]:
         return {action: round(score.total, 4) for action, score in self.scores.items()}
@@ -219,6 +231,8 @@ class ActionUtilityReport:
             f"transition={self.transition_reason}",
             "action_scores=" + "; ".join(self.top_reasons(5)),
             *self.memory_pressure,
+            f"selected_impulse={self.selected_impulse}" if self.selected_impulse else "selected_impulse=none",
+            "impulse_scores=" + "; ".join(self.impulse_scores[:6]) if self.impulse_scores else "impulse_scores=none",
         )
 
 
@@ -245,8 +259,12 @@ class ActionUtilityScorer:
                 suppressed_actions=(),
                 rhythm_phase=self._memory(ctx).rhythm_phase,
                 transition_reason="hard override from system/safety/no_speech contract",
-                memory_pressure=(*self._memory_pressure_notes(ctx), *self._goal_pressure_notes(ctx)),
+                memory_pressure=(*self._memory_pressure_notes(ctx), *self._goal_pressure_notes(ctx), *self._impulse_pressure_notes(ctx)),
                 hard_override=True,
+                selected_impulse=self._selected_impulse_name(ctx),
+                impulse_scores=self._impulse_score_notes(ctx),
+                impulse_arbitration=self._impulse_report(ctx),
+                body_bias_hint=self._body_bias_hint(ctx),
             )
 
         candidates = self._candidate_actions(ctx)
@@ -261,6 +279,7 @@ class ActionUtilityScorer:
             self._apply_relationship_pressure(score, ctx)
             self._apply_goal_persistence_pressure(score, ctx)
             self._apply_memory_pressure(score, ctx)
+            self._apply_impulse_arbitration_pressure(score, ctx)
             self._apply_rhythm(score, ctx)
             self._apply_risk_penalty(score, ctx)
             self._apply_repetition_penalty(score, ctx)
@@ -279,8 +298,12 @@ class ActionUtilityScorer:
             suppressed_actions=suppressed,
             rhythm_phase=memory.rhythm_phase,
             transition_reason=self._transition_reason(selected, ctx),
-            memory_pressure=(*self._memory_pressure_notes(ctx), *self._goal_pressure_notes(ctx)),
+            memory_pressure=(*self._memory_pressure_notes(ctx), *self._goal_pressure_notes(ctx), *self._impulse_pressure_notes(ctx)),
             hard_override=False,
+            selected_impulse=self._selected_impulse_name(ctx),
+            impulse_scores=self._impulse_score_notes(ctx),
+            impulse_arbitration=self._impulse_report(ctx),
+            body_bias_hint=self._body_bias_hint(ctx),
         )
 
     def _hard_override(self, ctx: ActionContext) -> str:
@@ -312,7 +335,7 @@ class ActionUtilityScorer:
             if mode in {"repair", "execute", "compress"}:
                 base.update({"mirror", "react", "meta_reply", "hesitate"})
             if self._looks_like_technical_request(ctx.user_text):
-                base.update({"mirror", "react", "meta_reply"})
+                base.update({"mirror", "react", "meta_reply", "practical_help"})
             return self._with_proposed(base, ctx)
 
         if ctx.channel == "force_speak" or ctx.force_speak:
@@ -325,6 +348,7 @@ class ActionUtilityScorer:
                 "curious_question",
                 "inner_whim",
                 "react",
+                "practical_help",
             }
             return self._with_proposed(base, ctx)
 
@@ -343,6 +367,7 @@ class ActionUtilityScorer:
             "light_muse",
             "tease",
             "reengagement",
+            "practical_help",
         }
         if self._goal_can_intervene(ctx):
             base.update({"guarded_reply", "soft_boundary", "reengagement"})
@@ -375,6 +400,8 @@ class ActionUtilityScorer:
             "ambient_comment": "micro_presence",
             "companionship_ping": "micro_presence",
             "micro_story": "light_muse",
+            "practical_help": "practical_help",
+            "technical_help": "practical_help",
         }.get(intent, "")
 
     def _apply_base(self, score: ActionScore, ctx: ActionContext) -> None:
@@ -385,6 +412,8 @@ class ActionUtilityScorer:
             score.add(0.22, "chat_needs_direct_response", "base")
         if score.action == "observe" and ctx.has_concrete_signal:
             score.add(0.22, "grounded_signal_available", "base")
+        if score.action == "practical_help":
+            score.add(0.08, "practical_help_available", "base")
         if score.action in {"withdraw", "suppress", "hesitate"}:
             score.add(0.04, "restraint_is_allowed", "base")
 
@@ -585,6 +614,153 @@ class ActionUtilityScorer:
         if score.action in FREEFORM_SOCIAL_ACTIONS:
             score.add(-0.28 * mem.social_fatigue, "social_fatigue", "fatigue")
 
+    def _apply_impulse_arbitration_pressure(self, score: ActionScore, ctx: ActionContext) -> None:
+        """Bias action utility bằng full ArbitrationReport.
+
+        Đây là bước "nối sâu": ActionUtility không chỉ nghe
+        proposed_speech_act nữa, mà đọc được impulse nào thắng và các impulse thua
+        sát nút. Nhờ vậy scene_curiosity tạo micro_observation ngắn, technical_help
+        tạo practical_help, body_only giữ im + body bias, còn silence không bị biến
+        thành câu social vô cớ. Nếu không có báo cáo thì hàm này im, giữ tương thích.
+        """
+        report = self._impulse_report(ctx)
+        if not report:
+            return
+        selected_name = self._selected_impulse_name(ctx)
+        selected_total = self._selected_impulse_total(ctx)
+        selected_action = self._impulse_to_action(selected_name)
+        silence_total = self._candidate_impulse_total(ctx, "silence_impulse")
+        body_total = self._candidate_impulse_total(ctx, "body_only_impulse")
+
+        if selected_action and score.action == selected_action:
+            score.add(0.18 + selected_total * 0.34, f"impulse_winner:{selected_name}", "pressure")
+
+        # Nếu silence sát nút, giảm các hành vi kéo chú ý. Đây là cách mềm hơn
+        # nhiều so với hard cooldown kiểu đồng hồ báo thức mặc váy cognitive.
+        if silence_total and selected_total - silence_total <= 0.10:
+            if score.action in {"curious_question", "reengagement", "random_chatter", "relational_checkin"}:
+                score.add(-0.26, "silence_close_runner_up_reduce_pull", "risk")
+            if score.action in {"micro_observation", "micro_presence", "inner_whim", "light_muse"}:
+                score.add(-0.08, "silence_close_runner_up_keep_tiny", "risk")
+
+        if selected_name == "silence_impulse":
+            if score.action == "no_speech":
+                score.add(0.34 + selected_total * 0.20, "intentional_silence_winner", "pressure")
+            elif score.action in FREEFORM_SOCIAL_ACTIONS | SCREEN_CLAIM_ACTIONS | {"micro_presence", "reengagement"}:
+                score.add(-0.30, "silence_winner_blocks_surface_noise", "risk")
+
+        elif selected_name == "body_only_impulse":
+            if score.action == "no_speech":
+                score.add(0.26 + body_total * 0.16, "body_only_prefers_no_bubble", "pressure")
+            if score.action in {"indirect_presence", "micro_presence"}:
+                score.add(0.08, "body_only_allows_low_presence_if_forced", "pressure")
+            if score.action in FREEFORM_SOCIAL_ACTIONS | SCREEN_CLAIM_ACTIONS:
+                score.add(-0.24, "body_only_not_verbal_surface", "risk")
+
+        elif selected_name == "scene_curiosity_impulse":
+            if score.action == "micro_observation":
+                score.add(0.20, "scene_curiosity_wants_grounded_micro_line", "pressure")
+            if score.action == "curious_question":
+                score.add(-0.24, "scene_curiosity_no_intrusive_question", "risk")
+            if score.action in {"random_chatter", "light_muse", "inner_whim"}:
+                score.add(-0.10, "scene_curiosity_prefers_scene_anchor", "risk")
+
+        elif selected_name == "technical_help_impulse":
+            if score.action == "practical_help":
+                score.add(0.30 + selected_total * 0.24, "technical_impulse_competence_wins", "pressure")
+            if score.action in FREEFORM_SOCIAL_ACTIONS | {"tease", "micro_presence", "reengagement"}:
+                score.add(-0.34, "technical_impulse_no_personality_noise", "risk")
+            if score.action == "no_speech" and selected_total >= 0.62:
+                score.add(-0.18, "technical_impulse_reduces_silence", "risk")
+
+        elif selected_name in {"inner_whim_impulse", "micro_story_impulse", "companionship_impulse"}:
+            if selected_name == "inner_whim_impulse" and score.action == "inner_whim":
+                score.add(0.18, "inner_whim_winner", "pressure")
+            if selected_name == "micro_story_impulse" and score.action == "light_muse":
+                score.add(0.18, "micro_story_winner", "pressure")
+            if selected_name == "companionship_impulse" and score.action == "micro_presence":
+                score.add(0.16, "companionship_winner", "pressure")
+            if score.action == "curious_question":
+                score.add(-0.16, "internal_impulse_no_question_pull", "risk")
+
+    def _impulse_report(self, ctx: ActionContext) -> dict[str, Any]:
+        report = getattr(ctx, "impulse_arbitration", None) or None
+        if isinstance(report, Mapping):
+            return dict(report)
+        core = getattr(ctx, "speech_core", None)
+        impulse = getattr(core, "speech_impulse", None)
+        report = getattr(impulse, "arbitration_report", None) if impulse is not None else None
+        return dict(report) if isinstance(report, Mapping) else {}
+
+    def _body_bias_hint(self, ctx: ActionContext) -> dict[str, Any]:
+        hint = getattr(ctx, "body_bias_hint", None) or None
+        if isinstance(hint, Mapping):
+            return dict(hint)
+        core = getattr(ctx, "speech_core", None)
+        impulse = getattr(core, "speech_impulse", None)
+        hint = getattr(impulse, "body_bias_hint", None) if impulse is not None else None
+        return dict(hint) if isinstance(hint, Mapping) else {}
+
+    def _selected_impulse_name(self, ctx: ActionContext) -> str:
+        report = self._impulse_report(ctx)
+        selected = report.get("selected") if isinstance(report, Mapping) else None
+        if isinstance(selected, Mapping):
+            return str(selected.get("name") or "")
+        core = getattr(ctx, "speech_core", None)
+        impulse = getattr(core, "speech_impulse", None)
+        return str(getattr(impulse, "selected_impulse", "") or "") if impulse is not None else ""
+
+    def _selected_impulse_total(self, ctx: ActionContext) -> float:
+        report = self._impulse_report(ctx)
+        selected = report.get("selected") if isinstance(report, Mapping) else None
+        if isinstance(selected, Mapping):
+            return _num(selected.get("total", 0.0))
+        return 0.0
+
+    def _selected_impulse_has_evidence(self, ctx: ActionContext) -> bool:
+        report = self._impulse_report(ctx)
+        selected = report.get("selected") if isinstance(report, Mapping) else None
+        evidence = selected.get("evidence", ()) if isinstance(selected, Mapping) else ()
+        return bool(evidence)
+
+    def _candidate_impulse_total(self, ctx: ActionContext, name: str) -> float:
+        report = self._impulse_report(ctx)
+        candidates = report.get("candidates", ()) if isinstance(report, Mapping) else ()
+        if not isinstance(candidates, (list, tuple)):
+            return 0.0
+        for item in candidates:
+            if isinstance(item, Mapping) and str(item.get("name") or "") == name:
+                return _num(item.get("total", 0.0))
+        return 0.0
+
+    def _impulse_score_notes(self, ctx: ActionContext) -> tuple[str, ...]:
+        report = self._impulse_report(ctx)
+        candidates = report.get("candidates", ()) if isinstance(report, Mapping) else ()
+        notes: list[str] = []
+        if isinstance(candidates, (list, tuple)):
+            for item in candidates[:8]:
+                if isinstance(item, Mapping):
+                    notes.append(f"impulse.{item.get('name', 'unknown')}={_num(item.get('total', 0.0)):.2f}")
+        return tuple(notes)
+
+    def _impulse_pressure_notes(self, ctx: ActionContext) -> tuple[str, ...]:
+        selected = self._selected_impulse_name(ctx) or "none"
+        scores = self._impulse_score_notes(ctx)
+        hint = self._body_bias_hint(ctx)
+        body = "body_bias_hint=" + ",".join(f"{k}:{v}" for k, v in list(hint.items())[:5]) if hint else "body_bias_hint=none"
+        return (f"selected_impulse={selected}", *(scores[:6]), body)
+
+    def _impulse_to_action(self, name: str) -> str:
+        return {
+            "silence_impulse": "no_speech",
+            "body_only_impulse": "no_speech",
+            "scene_curiosity_impulse": "micro_observation",
+            "technical_help_impulse": "practical_help",
+            "inner_whim_impulse": "inner_whim",
+            "micro_story_impulse": "light_muse",
+            "companionship_impulse": "micro_presence",
+        }.get(str(name or ""), "")
+
     def _apply_rhythm(self, score: ActionScore, ctx: ActionContext) -> None:
         phase = self._memory(ctx).rhythm_phase
         action = score.action
@@ -621,7 +797,14 @@ class ActionUtilityScorer:
     def _apply_risk_penalty(self, score: ActionScore, ctx: ActionContext) -> None:
         action = score.action
         if action in SCREEN_CLAIM_ACTIONS and not ctx.has_concrete_signal:
-            score.add(-0.60, "screen_action_without_evidence", "risk")
+            # Một ngoại lệ nhỏ: micro_observation từ scene_curiosity có evidence nằm
+            # trong impulse report, không nhất thiết nằm trong concrete_signals cũ.
+            if action == "micro_observation" and self._selected_impulse_name(ctx) == "scene_curiosity_impulse" and self._selected_impulse_has_evidence(ctx):
+                score.add(0.10, "scene_impulse_supplies_grounding", "pressure")
+            else:
+                score.add(-0.60, "screen_action_without_evidence", "risk")
+        if action == "practical_help" and not (ctx.explicit_user_pull or ctx.has_concrete_signal or self._selected_impulse_name(ctx) == "technical_help_impulse"):
+            score.add(-0.45, "practical_help_without_task_evidence", "risk")
         if action in FREEFORM_SOCIAL_ACTIONS and ctx.channel == "autonomous" and not self._meaning_shift(ctx):
             if self._has_internal_impulse(ctx):
                 score.add(0.18, "endogenous_impulse_can_surface_without_external_shift", "pressure")

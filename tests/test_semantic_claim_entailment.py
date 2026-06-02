@@ -31,9 +31,9 @@ def test_preference_location_does_not_entail_hometown_or_current_location():
     assert claim.predicate == "preference_location"
 
     engine = ClaimEntailmentEngine()
-    hometown = engine.evaluate(claim, compile_semantic_query("quê tôi ở đâu"))
-    current = engine.evaluate(claim, compile_semantic_query("tôi đang ở đâu"))
-    preference = engine.evaluate(claim, compile_semantic_query("tôi thích nơi nào"))
+    hometown = engine.evaluate(claim, compile_semantic_query("quê tôi ở đâu", allow_fallback=True))
+    current = engine.evaluate(claim, compile_semantic_query("tôi đang ở đâu", allow_fallback=True))
+    preference = engine.evaluate(claim, compile_semantic_query("tôi thích nơi nào", allow_fallback=True))
 
     assert not hometown.can_answer
     assert not current.can_answer

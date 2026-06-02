@@ -50,6 +50,7 @@ class MemoryKind(str, Enum):
 
     USER_NAME = "user_identity.name"
     USER_BIRTH_MONTH = "user_identity.birth_month"
+    USER_STUDY_FIELD = "user_identity.study_field"
     USER_RESPONSE_STYLE = "user_preference.response_style"
     USER_CONVENTION = "user.convention"
     PROCEDURAL_RULE = "procedural.rule"

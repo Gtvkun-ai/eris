@@ -49,6 +49,7 @@ from .memory_cue import MemoryCue, MemoryCueBuilder
 from .memory_retrieval_engine import MemoryStores, MemoryRetrievalEngine
 from .memory_packet_builder import MemoryPacket, MemoryPacketBuilder
 from .memory_activation import MemoryActivation
+from cortex.agent_mind_persistence import PersistentAgentMindStore, agent_mind_path_for_memory_core
 
 BudgetMode = Literal["fast", "normal", "deep", "reflection"]
 CommitOutcome = Literal["accepted", "rejected", "tentative", "ignored"]
@@ -188,6 +189,7 @@ class MemoryCognitionCore:
         self.procedural = ProceduralMemoryStore(os.path.join(base_dir, "procedural_memory.json"))
         self.repair = RepairMemoryStore(os.path.join(base_dir, "repair_memory.json"))
         self.memory_candidate = UnresolvedMemoryStore(os.path.join(base_dir, "memory_candidate.json"))
+        self.agent_mind = PersistentAgentMindStore(agent_mind_path_for_memory_core(base_dir))
 
         self.cue_builder = MemoryCueBuilder()
         self.packet_builder = MemoryPacketBuilder()
@@ -363,6 +365,7 @@ class MemoryCognitionCore:
             "procedural_memory": [item.to_dict() for item in self.procedural.load()],
             "repair_memory": [item.to_dict() for item in self.repair.load()],
             "memory_candidate": [item.to_dict() for item in self.memory_candidate.load()],
+            "agent_mind": self.agent_mind.to_dict(),
         }
 
     def save(self, snapshot: Mapping[str, Any] | None = None) -> None:
@@ -384,6 +387,10 @@ class MemoryCognitionCore:
         self.procedural.save(self.procedural.load())
         self.repair.save(self.repair.load())
         self.memory_candidate.save(self.memory_candidate.load())
+        if "agent_mind" in snapshot and isinstance(snapshot["agent_mind"], Mapping):
+            self.agent_mind.replace_from_dict(snapshot["agent_mind"])
+        else:
+            self.agent_mind.save()
 
     def render_context(self, query: MemoryQuery | str = "", *, snapshot: Any = None, frame: Any = None, max_lines: int = 18) -> str:
         packet = self.recall(query or self._query_from_snapshot(snapshot), frame=frame)

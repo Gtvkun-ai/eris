@@ -94,6 +94,7 @@ class SemanticQueryIntentCompiler:
 
     structured_parser: Callable[[str], Mapping[str, Any] | None] | None = None
     threshold: float = 0.64
+    allow_fallback: bool = False
 
     def compile(self, text: str, *, structured: Mapping[str, Any] | None = None) -> SemanticQueryIntent:
         raw = str(text or "").strip()
@@ -111,6 +112,8 @@ class SemanticQueryIntentCompiler:
             if intent.is_known and intent.confidence >= self.threshold:
                 return intent
 
+        if not self.allow_fallback:
+            return SemanticQueryIntent(raw_text=raw, confidence=0.0, evidence=("structured_query_required",))
         return self._fallback_compile(raw)
 
     def _from_structured(self, raw: str, data: Mapping[str, Any]) -> SemanticQueryIntent:
@@ -180,8 +183,13 @@ class SemanticQueryIntentCompiler:
         return max(0.0, score), tuple(evidence)
 
 
-def compile_semantic_query(text: str) -> SemanticQueryIntent:
-    return SemanticQueryIntentCompiler().compile(text)
+def compile_semantic_query(
+    text: str,
+    *,
+    structured: Mapping[str, Any] | None = None,
+    allow_fallback: bool = False,
+) -> SemanticQueryIntent:
+    return SemanticQueryIntentCompiler(allow_fallback=allow_fallback).compile(text, structured=structured)
 
 
 def normalize_vi(text: str) -> str:

@@ -152,7 +152,7 @@ class DecisionParserTests(unittest.TestCase):
     def test_salvages_non_json_text(self):
         decision = self.parser.parse("ERIS: toi da monitor code cua du an nay roi")
 
-        self.assertEqual(decision.animation, "read")
+        self.assertEqual(decision.animation, "stand")
 
     def test_strips_previous_answer_prefix_from_salvaged_text(self):
         decision = self.parser.parse("Tra loi truoc: xin chao, toi dang o day")
@@ -181,7 +181,7 @@ class DecisionParserTests(unittest.TestCase):
         decision = self.parser.parse("ERIS: move sang phai")
 
         self.assertEqual(decision.direction, 1)
-        self.assertEqual(decision.animation, "stand_walk")
+        self.assertEqual(decision.animation, "stand")
         self.assertGreater(decision.target_x, 0.0)
 
     def test_salvage_does_not_false_positive_food_from_bat_dau(self):
@@ -349,7 +349,7 @@ class DecisionParserTests(unittest.TestCase):
         self.assertEqual(decision.extracted_fact, "")
         self.assertEqual(decision.action_input, "")
 
-    def test_rewrites_overmanaged_language_into_more_natural_text(self):
+    def test_keeps_overmanaged_language_without_parser_style_rewrite(self):
         raw = (
             '{"text":"Do la mot tap hop cac tien trinh dang chay nhung thieu su dong bo hoa nhip do. '
             'Hay dung lai va chon mot phan mem duy nhat de tuong tac trong vong ba phut toi, toi se ngung theo doi cac tien trinh phu do.",'
@@ -360,12 +360,11 @@ class DecisionParserTests(unittest.TestCase):
         decision = self.parser.parse(raw)
         normalized = _norm(decision.text)
 
-        self.assertNotIn("dong bo hoa nhip do", normalized)
-        self.assertNotIn("phan mem duy nhat", normalized)
-        self.assertNotIn("ba phut", normalized)
-        self.assertIn("giu lai mot", normalized)
+        self.assertIn("dong bo hoa nhip do", normalized)
+        self.assertIn("phan mem duy nhat", normalized)
+        self.assertIn("ba phut", normalized)
 
-    def test_rewrites_philosophical_resource_guard_style(self):
+    def test_keeps_philosophical_style_without_parser_rewrite(self):
         raw = (
             '{"text":"Tam trang trung tinh la diem dung hoan hao nhat cho nhung viec khong quan trong. '
             'Moi thu khac deu chi la nhung bien so thua trong bai toan nay. '
@@ -377,10 +376,9 @@ class DecisionParserTests(unittest.TestCase):
         decision = self.parser.parse(raw)
         normalized = _norm(decision.text)
 
-        self.assertNotIn("diem dung hoan hao", normalized)
-        self.assertNotIn("bien so thua", normalized)
-        self.assertNotIn("lam mau", normalized)
-        self.assertTrue("may dang" in normalized or "dung yen qua lau" in normalized)
+        self.assertIn("diem dung hoan hao", normalized)
+        self.assertIn("bien so thua", normalized)
+        self.assertIn("lam mau", normalized)
 
     def test_repair_sentence_boundaries_does_not_split_before_ngai(self):
         repaired = self.parser._repair_sentence_boundaries(

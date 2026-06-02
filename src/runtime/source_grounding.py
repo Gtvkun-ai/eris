@@ -402,7 +402,16 @@ class SourceGroundingEngine:
         refers_to_screen, screen_strength = self._detect_screen_reference(normalized)
 
         memory_ref = self._has_any(normalized, self.MEMORY_REFERENCE_MARKERS)
-        web_ref = self._has_any(normalized, self.WEB_REFERENCE_MARKERS)
+        # Không coi mọi chữ "hôm nay/hiện tại/bây giờ" là web request.
+        # Một turn có thể chứa nhiều mệnh đề: "Tôi tên Hòa" là user_text,
+        # còn "thời tiết hôm nay bao nhiêu độ" mới cần web. Nếu không tách ý,
+        # một marker thời gian sẽ kéo cả turn xuống web_missing rồi cap confidence vô lý.
+        grounding_clauses = self._split_grounding_clauses(text)
+        has_self_disclosure_clause = any(self._is_self_disclosure_clause(clause) for clause in grounding_clauses)
+        has_web_marker = self._has_any(normalized, self.WEB_REFERENCE_MARKERS)
+        web_ref = self._has_actionable_web_reference(normalized, text, clauses=grounding_clauses)
+        if has_web_marker and not web_ref:
+            notes.append("web_marker_demoted_to_user_text_transient_report")
 
         file_evidence = self._collect_file_evidence(frame=frame, active_files=active_files, runtime_state=runtime_state)
         screen_evidence = self._collect_screen_evidence(frame=frame, screen_facts=screen_facts, runtime_state=runtime_state)
@@ -510,11 +519,15 @@ class SourceGroundingEngine:
 
         # User text luôn là nguồn nền nếu có text.
         if text.strip():
+            # Nếu turn có mệnh đề tự khai báo như tên/sở thích/ngành học, user_text
+            # phải là nguồn đủ mạnh. Nó không cần web, không cần memory, và cũng không
+            # nên bị một clause thời tiết kéo tụt confidence của cả lượt nói.
+            user_text_confidence = 0.78 if has_self_disclosure_clause else (0.72 if not candidates else 0.55)
             candidates.append(
                 SourceCandidate(
                     kind="user_text",
-                    confidence=0.72 if not candidates else 0.55,
-                    reason="Có thể trả lời dựa trên câu user hiện tại.",
+                    confidence=user_text_confidence,
+                    reason="Có self-disclosure trong câu user hiện tại." if has_self_disclosure_clause else "Có thể trả lời dựa trên câu user hiện tại.",
                     evidence_ids=user_evidence["ids"],
                     evidence_preview=user_evidence["preview"],
                 )
@@ -972,6 +985,79 @@ class SourceGroundingEngine:
                 "State uncertainty through phrasing if the memory anchor is weak or absent.",
             ],
         )
+
+    def _split_grounding_clauses(self, text: str) -> list[str]:
+        """Tách mệnh đề rất nhẹ cho source grounding.
+
+        Đây không phải parser cú pháp. Nó chỉ ngăn lỗi kiến trúc: một mệnh đề
+        phụ kiểu "hôm nay trời nóng" không được quyền bắt cóc cả turn thành web.
+        Chú ý: kết quả chỉ dùng để chọn nguồn, không dùng để commit memory.
+        """
+
+        raw = str(text or "")
+        if not raw.strip():
+            return []
+        parts = re.split(r"[.!?;。！？；]+|\n+|\s+(?:và|va|nhưng|nhung|còn|con)\s+", raw, flags=re.IGNORECASE)
+        return [part.strip() for part in parts if part and part.strip()]
+
+    def _is_self_disclosure_clause(self, clause: str) -> bool:
+        """Nhận diện mệnh đề user tự khai báo fact/preference/profile.
+
+        Hàm này nằm ở source grounding nên chỉ trả tín hiệu nguồn. Nó không sinh
+        MemoryCommitDecision, không lưu ký ức. Việc lưu vẫn thuộc memory policy.
+        """
+
+        norm = self._normalize(clause)
+        if not norm:
+            return False
+        if self._looks_like_question(norm):
+            return False
+        self_markers = ("toi", "minh", "tui", "to", "em", "i", "my")
+        if not any(re.search(r"(?:^|\s)" + re.escape(marker) + r"(?:\s|$)", norm) for marker in self_markers):
+            return False
+        disclosure_markers = (
+            "ten", "ten that", "goi toi", "thich", "khong thich",
+            "dang hoc", "hoc nganh", "la sinh vien", "sinh vien", "nganh",
+            "dang song", "song o", "dang o", "que", "sinh nam", "sinh thang",
+        )
+        return any(marker in norm for marker in disclosure_markers)
+
+    def _looks_like_question(self, normalized: str) -> bool:
+        tokens = set(str(normalized or "").split())
+        if tokens & {"gi", "nao", "dau", "sao", "khong", "chua", "may", "bao", "nhieu"}:
+            return True
+        return any(phrase in str(normalized or "") for phrase in (
+            "la gi", "bao nhieu", "nhu the nao", "tim giup", "tra cuu", "search", "look up",
+        ))
+
+    def _has_actionable_web_reference(self, normalized: str, raw_text: str, *, clauses: Sequence[str]) -> bool:
+        """Chỉ route web khi user thật sự đòi dữ liệu hiện tại.
+
+        Marker thời gian đơn độc như "hôm nay" chỉ là ngữ cảnh của user_text.
+        Marker domain có nhu cầu tra cứu như giá/lịch/tin mới nhất thì mới là web.
+        Đây là cầu semantic nhỏ để tránh source grounding chọn web_missing bừa.
+        """
+
+        norm = str(normalized or "")
+        if not self._has_any(norm, self.WEB_REFERENCE_MARKERS):
+            return False
+        strong_web_markers = (
+            "moi nhat", "latest", "news", "tin tuc", "release", "gia", "price",
+            "lich", "schedule", "ti gia", "ty gia", "exchange rate", "current version",
+        )
+        if any(marker in norm for marker in strong_web_markers):
+            return True
+        web_question_markers = (
+            "bao nhieu", "may do", "nhiet do", "thoi tiet", "weather", "temperature",
+            "tim", "tra cuu", "search", "look up", "kiem tra", "check", "cap nhat",
+        )
+        if "?" in str(raw_text or "") and any(marker in norm for marker in web_question_markers):
+            return True
+        for clause in clauses or ():
+            c_norm = self._normalize(clause)
+            if self._looks_like_question(c_norm) and any(marker in c_norm for marker in web_question_markers):
+                return True
+        return False
 
     def _choose_primary_source(self, candidates: Sequence[SourceCandidate]) -> SourceCandidate:
         """

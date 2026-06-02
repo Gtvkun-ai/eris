@@ -551,6 +551,46 @@ class LlmServiceTests(unittest.TestCase):
         self.assertEqual(len(style_client.calls), 1)
         self.assertIn('"debug_trace":"local"', raw)
 
+    def test_chat_reply_uses_local_fallback_when_remote_returns_prose(self):
+        main_client = _FakeClient(["Day la ban nhap loi format."])
+        style_client = _FakeClient(
+            [
+                (
+                    '{"text":"Local da sua format.","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+                    '"debug_trace":"local_recovery","next_animation":"","system_action":"","action_input":""}'
+                ),
+            ]
+        )
+        service = LlmService(main_client, style_client=style_client)
+
+        raw = service.generate_chat_reply(
+            chat_history=[],
+            user_message="xin chao",
+            allow_local_fallback=True,
+        )
+
+        self.assertEqual(len(main_client.calls), 1)
+        self.assertEqual(len(style_client.calls), 1)
+        self.assertIn('"debug_trace":"local_recovery"', raw)
+
+    def test_chat_reply_force_local_fallback_raises_when_local_output_is_invalid(self):
+        main_client = _FakeClient([])
+        style_client = _FakeClient(["Minh vua noi loay xoay ngoai JSON."])
+        service = LlmService(main_client, style_client=style_client)
+
+        with self.assertRaises(FormatViolationException) as ctx:
+            service.generate_chat_reply(
+                chat_history=[],
+                user_message="xin chao",
+                allow_local_fallback=True,
+                force_local_fallback=True,
+            )
+
+        self.assertEqual(len(main_client.calls), 0)
+        self.assertEqual(len(style_client.calls), 1)
+        self.assertIn("model.gguf", str(ctx.exception))
+
     def test_directive_raises_on_plain_text_instead_of_wrapping_json(self):
         client = _FakeClient(
             [

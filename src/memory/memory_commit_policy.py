@@ -480,6 +480,8 @@ class MemoryCommitPolicy:
         if claim.predicate == "preference_location":
             verb = "không thích" if claim.assertion == "denied" else "thích"
             return f"Người dùng {verb} địa điểm {obj}."
+        if claim.predicate == "study_field_is":
+            return f"Người dùng nói đang học/lĩnh vực học là {obj}."
         if claim.predicate == "response_style_prefers":
             return f"Người dùng nêu preference về cách trả lời: {obj}"
         if claim.predicate == "general_preference":
@@ -493,6 +495,8 @@ class MemoryCommitPolicy:
             return MemoryKind.USER_NAME
         if claim.predicate == "birth_month_is":
             return MemoryKind.USER_BIRTH_MONTH
+        if claim.predicate == "study_field_is":
+            return getattr(MemoryKind, "USER_STUDY_FIELD", MemoryKind.USER_GENERAL_TOPIC)
         if claim.predicate == "response_style_prefers":
             return MemoryKind.USER_RESPONSE_STYLE
         if claim.predicate == "remember_unresolved":

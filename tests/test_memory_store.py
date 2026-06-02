@@ -7,6 +7,8 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from cortex.internal_state import PersistentInternalState
+from cortex.agent_mind_persistence import agent_mind_path_for_memory_core
+from cortex.agent_state_stack import build_agent_state_stack
 from memory.memory_cognition import MemoryCognitionCore
 
 
@@ -218,6 +220,57 @@ class MemoryCognitionCoreFacadeTests(unittest.TestCase):
             self.assertIn("silent_residue", str(loaded["affective_residue_memory"][0]))
             self.assertIn("affective_residue_memory", context)
             self.assertTrue(any(item.layer == "affective_residue" for item in report.activations))
+
+    def test_agent_mind_store_lives_under_memory_core_base_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            core = MemoryCognitionCore(tmpdir)
+
+            expected = agent_mind_path_for_memory_core(tmpdir)
+
+            self.assertEqual(core.agent_mind.path, expected)
+            self.assertTrue(expected.exists())
+            self.assertIn("agent_mind", core.load())
+
+    def test_save_can_round_trip_agent_mind_snapshot_through_memory_core(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            core = MemoryCognitionCore(tmpdir)
+            snapshot = core.load()
+            snapshot["agent_mind"]["last_feedback_events"] = [
+                {
+                    "ts": 123.0,
+                    "text": "debug that first",
+                    "sentiment": "positive",
+                    "topics": ["technical_help"],
+                    "speech_act": "practical_help",
+                    "selected_impulse": "technical_help_impulse",
+                    "markers": ["feedback.technical_help"],
+                }
+            ]
+
+            core.save(snapshot)
+            loaded = core.load()
+
+            self.assertEqual(len(loaded["agent_mind"]["last_feedback_events"]), 1)
+            self.assertEqual(loaded["agent_mind"]["last_feedback_events"][0]["markers"], ["feedback.technical_help"])
+
+    def test_agent_state_stack_prefers_explicit_agent_mind_store(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            core = MemoryCognitionCore(tmpdir)
+            core.agent_mind.preferences["short_resonant_line"].strength = 0.91
+            core.agent_mind.save()
+
+            stack = build_agent_state_stack(
+                snapshot=SimpleNamespace(
+                    active_window_title="parser traceback",
+                    active_app="VS Code",
+                    focus_kind_hint="code",
+                    idle_seconds=3,
+                ),
+                agent_mind=core.agent_mind,
+            )
+
+            self.assertIs(stack.habits.agent_mind, core.agent_mind)
+            self.assertAlmostEqual(stack.preferences.short_resonant_line, 0.91, places=2)
 
 
 if __name__ == "__main__":

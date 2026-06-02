@@ -101,12 +101,24 @@ class FrameBuilderMixin:
                 disturbances.append(disturbance)
 
         if force_speak:
+            # P0: force_speak là explicit pull từ user. Nếu không có evidence màn
+            # hình cụ thể, vẫn phải tạo requested_presence cực mạnh để thought_stream
+            # và impulse arbitration có chất liệu nội sinh, thay vì rơi xuống
+            # micro_presence máy móc.
+            concrete = ()
+            try:
+                concrete = tuple(self._concrete_screen_signals(snapshot) or ())
+            except Exception:
+                concrete = ()
+            force_evidence = tuple(vision_facts or ())[:3] or ("ui_request",)
+            if not concrete:
+                force_evidence = tuple(dict.fromkeys((*force_evidence, "requested_presence", "no_concrete_screen_signal")))
             disturbance = self._make_cognitive_disturbance(
                 channel=channel,
                 kind="user_force_speak",
-                content="force_speak requested",
-                evidence=tuple(vision_facts or ())[:3] or ("ui_request",),
-                intensity=0.96,
+                content="requested_presence: force_speak requested without concrete screen evidence" if not concrete else "force_speak requested",
+                evidence=force_evidence,
+                intensity=1.0 if not concrete else 0.92,
             )
             if disturbance is not None:
                 disturbances.append(disturbance)
@@ -948,6 +960,7 @@ class FrameBuilderMixin:
             self_state=frame.self_state,
             meaning_layer=getattr(frame, "meaning_layer", None),
             personality_lens=getattr(frame, "personality_lens", None),
+            agent_mind=getattr(getattr(self, "memory_core", None), "agent_mind", None),
             safe_small_talk_allowed=self._safe_small_talk_budget_allowed(
                 channel=channel,
                 snapshot=snapshot,

@@ -93,6 +93,7 @@ public partial class UdpListener : Node2D
 	private Texture2D _chatSubmitTexture;
 	private Texture2D _chatCloseTexture;
 	private TextureRect _switchTexture;
+	private OptionButton _modeDropdown;
 	private bool _emotionSwitchEnabled = true;
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
@@ -842,26 +843,26 @@ public partial class UdpListener : Node2D
 		_emotionHintLabel.Size = new Vector2(250f, 24f);
 		_emotionPanel.AddChild(_emotionHintLabel);
 
-		var closeButton = CreateTextureButton("res://asset/Resource/x.png", CloseEmotionPanel, new Vector2(44f, 44f));
-		closeButton.Position = new Vector2(684f, 24f);
-		_emotionPanel.AddChild(closeButton);
-		var minimizeButton = CreateTextureButton("res://asset/Resource/_.png", () => _emotionPanel.Visible = false, new Vector2(34f, 34f));
-		minimizeButton.Position = new Vector2(642f, 29f);
-		_emotionPanel.AddChild(minimizeButton);
+		var windowControls = CreateWindowControlCapsule();
+		windowControls.Position = new Vector2(635f, 20f);
+		_emotionPanel.AddChild(windowControls);
 
-		var modeButton = CreateTextureButton("res://asset/Resource/dev mode.png", () => { }, new Vector2(176f, 48f));
-		modeButton.Position = new Vector2(536f, 124f);
-		_emotionPanel.AddChild(modeButton);
-		var moreButton = CreateTextureButton("res://asset/Resource/more.png", () => { }, new Vector2(36f, 36f));
-		moreButton.Position = new Vector2(668f, 130f);
-		_emotionPanel.AddChild(moreButton);
+		var modeLabel = CreateUiLabel("Chế độ", 16, new Color(0.69f, 0.30f, 0.47f));
+		modeLabel.Position = new Vector2(536f, 98f);
+		modeLabel.Size = new Vector2(160f, 24f);
+		modeLabel.Visible = false;
+		_emotionPanel.AddChild(modeLabel);
+
+		_modeDropdown = CreateModeDropdown();
+		_modeDropdown.Position = new Vector2(580f, 118f);
+		_emotionPanel.AddChild(_modeDropdown);
 
 		_switchTexture = new TextureRect
 		{
 			Texture = _switchOnTexture,
 			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
 			StretchMode = TextureRect.StretchModeEnum.Scale,
-			Position = new Vector2(666f, 194f),
+			Position = new Vector2(666f, 160f),
 			Size = new Vector2(58f, 34f),
 			CustomMinimumSize = new Vector2(58f, 34f),
 			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
@@ -869,22 +870,6 @@ public partial class UdpListener : Node2D
 		_switchTexture.GuiInput += OnEmotionSwitchGuiInput;
 		_emotionPanel.AddChild(_switchTexture);
 
-		var resetButton = CreateTextureButton("res://asset/Resource/reset all mode.png", () => SendChatSignal("reset_all_mood"), new Vector2(190f, 40f));
-		resetButton.Position = new Vector2(535f, 286f);
-		_emotionPanel.AddChild(resetButton);
-		var randomButton = CreateTextureButton("res://asset/Resource/randomize mode.png", () => SendChatSignal("randomize_mood"), new Vector2(190f, 40f));
-		randomButton.Position = new Vector2(535f, 330f);
-		_emotionPanel.AddChild(randomButton);
-		var console = new TextureRect
-		{
-			Texture = GD.Load<Texture2D>("res://asset/Resource/console output.png"),
-			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-			StretchMode = TextureRect.StretchModeEnum.Scale,
-			Position = new Vector2(535f, 374f),
-			Size = new Vector2(190f, 112f),
-			CustomMinimumSize = new Vector2(190f, 112f),
-		};
-		_emotionPanel.AddChild(console);
 	}
 
 	private Label CreateUiLabel(string text, int fontSize, Color color)
@@ -907,6 +892,192 @@ public partial class UdpListener : Node2D
 		};
 		button.Pressed += onPressed;
 		return button;
+	}
+
+	private Control CreateWindowControlCapsule()
+	{
+		var capsule = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(94f, 34f),
+			Size = new Vector2(94f, 34f),
+		};
+
+		var capsuleStyle = new StyleBoxFlat
+		{
+			BgColor = new Color(1.00f, 0.94f, 0.97f, 0.88f),
+			BorderColor = new Color(0.95f, 0.78f, 0.86f, 0.95f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 17,
+			CornerRadiusTopRight = 17,
+			CornerRadiusBottomRight = 17,
+			CornerRadiusBottomLeft = 17,
+			ContentMarginLeft = 6f,
+			ContentMarginTop = 3f,
+			ContentMarginRight = 6f,
+			ContentMarginBottom = 3f,
+			ShadowColor = new Color(0.94f, 0.76f, 0.84f, 0.20f),
+			ShadowSize = 1,
+		};
+		capsule.AddThemeStyleboxOverride("panel", capsuleStyle);
+
+		var row = new HBoxContainer();
+		row.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		row.AddThemeConstantOverride("separation", 6);
+		capsule.AddChild(row);
+
+		var minimizeButton = CreateWindowControlButton("─", () => _emotionPanel.Visible = false, 34f, 16);
+		var closeButton = CreateWindowControlButton("✕", CloseEmotionPanel, 34f, 14);
+		row.AddChild(minimizeButton);
+		row.AddChild(closeButton);
+		return capsule;
+	}
+
+	private Button CreateWindowControlButton(string symbol, Action onPressed, float diameter, int fontSize)
+	{
+		var button = new Button
+		{
+			Text = symbol,
+			CustomMinimumSize = new Vector2(diameter, diameter),
+			Size = new Vector2(diameter, diameter),
+			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+			Flat = false,
+		};
+
+		var normalStyle = new StyleBoxFlat
+		{
+			BgColor = new Color(1.00f, 1.00f, 1.00f, 0.36f),
+			BorderColor = new Color(0.95f, 0.78f, 0.86f, 0.00f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 14,
+			CornerRadiusTopRight = 14,
+			CornerRadiusBottomRight = 14,
+			CornerRadiusBottomLeft = 14,
+			ContentMarginLeft = 0f,
+			ContentMarginTop = 0f,
+			ContentMarginRight = 0f,
+			ContentMarginBottom = 0f,
+		};
+		var hoverStyle = (StyleBoxFlat)normalStyle.Duplicate();
+		hoverStyle.BgColor = new Color(1.00f, 0.98f, 0.99f, 0.92f);
+		hoverStyle.BorderColor = new Color(0.96f, 0.66f, 0.79f, 0.55f);
+		var pressedStyle = (StyleBoxFlat)hoverStyle.Duplicate();
+		pressedStyle.BgColor = new Color(0.99f, 0.93f, 0.96f, 0.98f);
+		var focusStyle = (StyleBoxFlat)hoverStyle.Duplicate();
+		focusStyle.BorderWidthLeft = 2;
+		focusStyle.BorderWidthTop = 2;
+		focusStyle.BorderWidthRight = 2;
+		focusStyle.BorderWidthBottom = 2;
+
+		button.AddThemeStyleboxOverride("normal", normalStyle);
+		button.AddThemeStyleboxOverride("hover", hoverStyle);
+		button.AddThemeStyleboxOverride("pressed", pressedStyle);
+		button.AddThemeStyleboxOverride("focus", focusStyle);
+		button.AddThemeColorOverride("font_color", new Color(0.86f, 0.45f, 0.63f));
+		button.AddThemeColorOverride("font_hover_color", new Color(0.90f, 0.40f, 0.62f));
+		button.AddThemeColorOverride("font_pressed_color", new Color(0.84f, 0.36f, 0.57f));
+		button.AddThemeFontSizeOverride("font_size", fontSize);
+		button.Alignment = HorizontalAlignment.Center;
+		button.PivotOffset = new Vector2(diameter * 0.5f, diameter * 0.5f);
+		button.MouseEntered += () => button.Scale = new Vector2(1.05f, 1.05f);
+		button.MouseExited += () => button.Scale = Vector2.One;
+		button.Pressed += onPressed;
+		return button;
+	}
+
+	private OptionButton CreateModeDropdown()
+	{
+		var dropdown = new OptionButton
+		{
+			CustomMinimumSize = new Vector2(112f, 25f),
+			Size = new Vector2(112f, 25f),
+			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+			Text = "Dev",
+			Alignment = HorizontalAlignment.Left,
+		};
+		dropdown.AddItem("Dev Mode");
+		dropdown.AddItem("Casual Mode");
+		dropdown.Select(0);
+
+		var normalStyle = new StyleBoxFlat
+		{
+			BgColor = new Color(1.00f, 0.97f, 0.98f),
+			BorderColor = new Color(0.95f, 0.82f, 0.88f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 14,
+			CornerRadiusTopRight = 14,
+			CornerRadiusBottomRight = 14,
+			CornerRadiusBottomLeft = 14,
+			ContentMarginLeft = 16f,
+			ContentMarginTop = 10f,
+			ContentMarginRight = 34f,
+			ContentMarginBottom = 10f,
+			ShadowColor = new Color(0.90f, 0.70f, 0.79f, 0.20f),
+			ShadowSize = 1,
+		};
+		var hoverStyle = (StyleBoxFlat)normalStyle.Duplicate();
+		hoverStyle.BorderColor = new Color(0.93f, 0.70f, 0.81f);
+		var focusStyle = (StyleBoxFlat)hoverStyle.Duplicate();
+		focusStyle.BorderWidthLeft = 2;
+		focusStyle.BorderWidthTop = 2;
+		focusStyle.BorderWidthRight = 2;
+		focusStyle.BorderWidthBottom = 2;
+
+		dropdown.AddThemeStyleboxOverride("normal", normalStyle);
+		dropdown.AddThemeStyleboxOverride("hover", hoverStyle);
+		dropdown.AddThemeStyleboxOverride("pressed", hoverStyle);
+		dropdown.AddThemeStyleboxOverride("focus", focusStyle);
+		dropdown.AddThemeColorOverride("font_color", new Color(0.35f, 0.24f, 0.31f));
+		dropdown.AddThemeColorOverride("font_hover_color", new Color(0.35f, 0.24f, 0.31f));
+		dropdown.AddThemeColorOverride("font_focus_color", new Color(0.35f, 0.24f, 0.31f));
+		dropdown.AddThemeColorOverride("font_disabled_color", new Color(0.58f, 0.49f, 0.54f));
+		dropdown.AddThemeColorOverride("modulate_arrow", new Color(0.90f, 0.56f, 0.72f));
+		dropdown.AddThemeFontSizeOverride("font_size", 13);
+
+		var popup = dropdown.GetPopup();
+		var popupStyle = new StyleBoxFlat
+		{
+			BgColor = new Color(1.00f, 0.97f, 0.98f),
+			BorderColor = new Color(0.95f, 0.82f, 0.88f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 14,
+			CornerRadiusTopRight = 14,
+			CornerRadiusBottomRight = 14,
+			CornerRadiusBottomLeft = 14,
+			ContentMarginLeft = 8f,
+			ContentMarginTop = 8f,
+			ContentMarginRight = 8f,
+			ContentMarginBottom = 8f,
+		};
+		var popupHoverStyle = new StyleBoxFlat
+		{
+			BgColor = new Color(0.98f, 0.90f, 0.94f),
+			CornerRadiusTopLeft = 10,
+			CornerRadiusTopRight = 10,
+			CornerRadiusBottomRight = 10,
+			CornerRadiusBottomLeft = 10,
+		};
+		popup.AddThemeStyleboxOverride("panel", popupStyle);
+		popup.AddThemeStyleboxOverride("hover", popupHoverStyle);
+		popup.AddThemeStyleboxOverride("hover_mirrored", popupHoverStyle);
+		popup.AddThemeColorOverride("font_color", new Color(0.35f, 0.24f, 0.31f));
+		popup.AddThemeColorOverride("font_hover_color", new Color(0.35f, 0.24f, 0.31f));
+		popup.AddThemeColorOverride("font_accelerator_color", new Color(0.58f, 0.49f, 0.54f));
+		popup.AddThemeConstantOverride("v_separation", 4);
+
+		dropdown.ItemSelected += OnModeDropdownSelected;
+		return dropdown;
 	}
 
 	private void AddEmotionRow(VBoxContainer parent, string title, string note, float value, string portraitPath)
@@ -1015,6 +1186,14 @@ public partial class UdpListener : Node2D
 		if (_switchTexture != null)
 			_switchTexture.Texture = _emotionSwitchEnabled ? _switchOnTexture : _switchOffTexture;
 		SendChatSignal(_emotionSwitchEnabled ? "switch_case_on" : "switch_case_off");
+	}
+
+	private void OnModeDropdownSelected(long index)
+	{
+		if (_modeDropdown == null)
+			return;
+
+		_modeDropdown.Text = index == 0 ? "Dev" : "Casual";
 	}
 
 	private void BeginDrag(Vector2 mousePosition)

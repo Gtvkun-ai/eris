@@ -2,17 +2,17 @@
   "version": 1,
   "items": [
     {
-      "id": "res_3918bda86dd6",
+      "id": "res_9b34291bb904",
       "residue_type": "affective_echo",
-      "description": "tender_under_cold: residue_strength=0.80184335050083; threat=0.1656733644859813; intimacy=0.80184335050083; tenderness=0.5469750484069953; fatigue=0.21929416388810655; outcome=json",
+      "description": "tender_under_cold: residue_strength=0.8841023265013447; threat=0.1277633967162954; intimacy=0.8841023265013447; tenderness=0.5641475485185493; fatigue=0.09646889241945339; outcome=repeat_guard",
       "intensity": 0.72,
       "valence": 0.0,
       "confidence": 0.72,
       "evidence_ids": [
-        "percept:user_message:12:02:0"
+        "percept:user_message:10:45:0"
       ],
-      "first_seen_at": "2026-05-27T12:02:57+0700",
-      "updated_at": "2026-05-27T12:02:57+0700",
+      "first_seen_at": "2026-06-02T10:45:57+0700",
+      "updated_at": "2026-06-02T10:45:57+0700",
       "observations": 1,
       "decay_policy": "normal",
       "surface_policy": "never_direct_claim",
@@ -24,17 +24,17 @@
       }
     },
     {
-      "id": "res_76ae3ffb412b",
+      "id": "res_bc69db5dd0a2",
       "residue_type": "affective_echo",
-      "description": "tender_under_cold: residue_strength=0.806355485659938; threat=0.17182102803738317; intimacy=0.806355485659938; tenderness=0.5495384452332203; fatigue=0.21527864667129223; outcome=json",
+      "description": "tender_under_cold: residue_strength=0.8837635860329359; threat=0.1656733644859813; intimacy=0.8837635860329359; tenderness=0.5594121793788603; fatigue=0.09646893727415393; outcome=memory_recall",
       "intensity": 0.72,
       "valence": 0.0,
       "confidence": 0.72,
       "evidence_ids": [
-        "percept:user_message:12:00:0"
+        "percept:user_message:10:45:0"
       ],
-      "first_seen_at": "2026-05-27T12:00:42+0700",
-      "updated_at": "2026-05-27T12:00:42+0700",
+      "first_seen_at": "2026-06-02T10:45:47+0700",
+      "updated_at": "2026-06-02T10:45:47+0700",
       "observations": 1,
       "decay_policy": "normal",
       "surface_policy": "never_direct_claim",
@@ -46,68 +46,69 @@
       }
     },
     {
-      "id": "res_91d8fd1b028d",
-      "residue_type": "affective_echo",
-      "description": "tender_under_cold: residue_strength=0.8288217418817565; threat=0.1656733644859813; intimacy=0.8288217418817565; tenderness=0.5618467674716238; fatigue=0.16173242981653357; outcome=json",
+      "id": "res_d53eff07ca80",
+      "residue_type": "repair_residue",
+      "description": "tender_under_cold: residue_strength=0.7366104975727141; threat=0.1656733644859813; intimacy=0.7366104975727141; tenderness=0.46539944370659597; fatigue=0.09559706591418758; outcome=hard_json_repair",
       "intensity": 0.72,
-      "valence": 0.0,
+      "valence": 0.12,
+      "confidence": 0.72,
+      "evidence_ids": [
+        "percept:user_message:10:45:0"
+      ],
+      "first_seen_at": "2026-06-02T10:45:42+0700",
+      "updated_at": "2026-06-02T10:45:42+0700",
+      "observations": 1,
+      "decay_policy": "normal",
+      "surface_policy": "never_direct_claim",
+      "pressure_effects": {
+        "overread_brake": 0.576,
+        "repair_priority": 0.36
+      },
+      "metadata": {
+        "reason": "store affective residue as internal bias, not public fact"
+      }
+    },
+    {
+      "id": "res_ce36ca9fdb70",
+      "residue_type": "repair_residue",
+      "description": "tender_under_cold: residue_strength=0.7664227933011636; threat=0.1671605919003115; intimacy=0.7664227933011636; tenderness=0.4771698828233872; fatigue=0.09412511427019106; outcome=hard_json_repair",
+      "intensity": 0.72,
+      "valence": 0.12,
+      "confidence": 0.72,
+      "evidence_ids": [
+        "percept:user_message:10:44:0"
+      ],
+      "first_seen_at": "2026-06-02T10:45:01+0700",
+      "updated_at": "2026-06-02T10:45:01+0700",
+      "observations": 1,
+      "decay_policy": "normal",
+      "surface_policy": "never_direct_claim",
+      "pressure_effects": {
+        "overread_brake": 0.576,
+        "repair_priority": 0.36
+      },
+      "metadata": {
+        "reason": "store affective residue as internal bias, not public fact"
+      }
+    },
+    {
+      "id": "res_9a0d643c3613",
+      "residue_type": "repair_residue",
+      "description": "tender_under_cold: residue_strength=0.7819351247254611; threat=0.18497990654205607; intimacy=0.7819351247254611; tenderness=0.4802772466654223; fatigue=0.09349681607016389; outcome=hard_json_repair",
+      "intensity": 0.72,
+      "valence": 0.12,
       "confidence": 0.72,
       "evidence_ids": [
         "percept:user_message:10:43:0"
       ],
-      "first_seen_at": "2026-05-27T10:43:12+0700",
-      "updated_at": "2026-05-27T10:43:12+0700",
+      "first_seen_at": "2026-06-02T10:44:19+0700",
+      "updated_at": "2026-06-02T10:44:19+0700",
       "observations": 1,
       "decay_policy": "normal",
       "surface_policy": "never_direct_claim",
       "pressure_effects": {
-        "background_tension": 0.288
-      },
-      "metadata": {
-        "reason": "store affective residue as internal bias, not public fact"
-      }
-    },
-    {
-      "id": "res_2c2a2fa1cfbc",
-      "residue_type": "repair_residue",
-      "description": "tired: residue_strength=0.5820456519993823; threat=0.16688644859813082; intimacy=0.4403761926579914; tenderness=0.363749245096697; fatigue=0.5820456519993823; outcome=hard_json_repair",
-      "intensity": 0.582,
-      "valence": 0.12,
-      "confidence": 0.582,
-      "evidence_ids": [
-        "percept:user_message:13:33:0"
-      ],
-      "first_seen_at": "2026-05-30T13:33:49+0700",
-      "updated_at": "2026-05-30T13:33:49+0700",
-      "observations": 1,
-      "decay_policy": "normal",
-      "surface_policy": "never_direct_claim",
-      "pressure_effects": {
-        "overread_brake": 0.46563652159950586,
-        "repair_priority": 0.29102282599969115
-      },
-      "metadata": {
-        "reason": "store affective residue as internal bias, not public fact"
-      }
-    },
-    {
-      "id": "res_ba8164219c25",
-      "residue_type": "repair_residue",
-      "description": "tired: residue_strength=0.5776860028578668; threat=0.1671605919003115; intimacy=0.4387582017254132; tenderness=0.3638392547638568; fatigue=0.5776860028578668; outcome=hard_json_repair",
-      "intensity": 0.5777,
-      "valence": 0.12,
-      "confidence": 0.5777,
-      "evidence_ids": [
-        "percept:user_message:13:34:0"
-      ],
-      "first_seen_at": "2026-05-30T13:34:22+0700",
-      "updated_at": "2026-05-30T13:34:22+0700",
-      "observations": 1,
-      "decay_policy": "normal",
-      "surface_policy": "never_direct_claim",
-      "pressure_effects": {
-        "overread_brake": 0.4621488022862934,
-        "repair_priority": 0.2888430014289334
+        "overread_brake": 0.576,
+        "repair_priority": 0.36
       },
       "metadata": {
         "reason": "store affective residue as internal bias, not public fact"

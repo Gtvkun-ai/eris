@@ -494,6 +494,14 @@ class CognitiveActionPlan:
     memory_pressure: tuple[str, ...] = ()
     suppressed_actions: tuple[str, ...] = ()
 
+    # Impulse layer sống tới tận action plan để final wording/body/guard biết
+    # hành vi được chọn vì lực nào, không chỉ thấy cái nhãn "micro_observation"
+    # trơ trọi như biên bản họp bị xé mất 9 trang đầu.
+    selected_impulse: str = ""
+    impulse_arbitration: dict[str, object] = field(default_factory=dict)
+    impulse_scores: tuple[str, ...] = ()
+    body_bias_hint: dict[str, object] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, object]:
         reason = self.reason_to_speak or self.reason
         return {
@@ -518,6 +526,10 @@ class CognitiveActionPlan:
             "transition_reason": self.transition_reason,
             "memory_pressure": list(self.memory_pressure),
             "suppressed_actions": list(self.suppressed_actions),
+            "selected_impulse": self.selected_impulse,
+            "impulse_arbitration": dict(self.impulse_arbitration),
+            "impulse_scores": list(self.impulse_scores),
+            "body_bias_hint": dict(self.body_bias_hint),
         }
 
 
@@ -837,6 +849,17 @@ class SpeechImpulse:
     cooldown_seconds: float = 0.0
     reason: str = ""
 
+    # Báo cáo arbitration giữ nguyên dạng plain dict để tránh contracts.py import ngược
+    # impulse_arbitration.py rồi tạo vòng phụ thuộc. Đây là "hồ sơ vụ án" của
+    # impulse competition: impulse nào thắng, impulse nào thua, điểm vì sao.
+    # ActionUtility/SpeechCore/PromptContext có thể đọc nó mà không cần bói qua
+    # suggested_speech_act. Một tiến bộ nhỏ, tiếc là phải nói ra.
+    selected_impulse: str = ""
+    impulse_scores: tuple[str, ...] = ()
+    arbitration_report: dict[str, object] = field(default_factory=dict)
+    agent_state_notes: tuple[str, ...] = ()
+    body_bias_hint: dict[str, object] = field(default_factory=dict)
+
     @property
     def active(self) -> bool:
         return bool(self.source or self.impulse_type or self.suggested_speech_act)
@@ -866,6 +889,11 @@ class SpeechImpulse:
             "suggested_speech_act": self.suggested_speech_act,
             "cooldown_seconds": round(float(self.cooldown_seconds), 3),
             "reason": self.reason,
+            "selected_impulse": self.selected_impulse,
+            "impulse_scores": list(self.impulse_scores),
+            "arbitration_report": dict(self.arbitration_report),
+            "agent_state_notes": list(self.agent_state_notes),
+            "body_bias_hint": dict(self.body_bias_hint),
         }
 
 

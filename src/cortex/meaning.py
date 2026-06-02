@@ -1,4 +1,5 @@
 import re
+import time
 import unicodedata
 
 from .contracts import MeaningLayerResult
@@ -16,6 +17,15 @@ prompt_context cho tầng sau
 
 class MeaningLayer:
     """Maps Se/telemetry facts into private pressure signals before speech."""
+
+    def __init__(self) -> None:
+        # P2: thời gian trì trệ cũng là một fact. Bộ đếm này không nhìn pixel;
+        # nó chỉ nhớ semantic_family nào đang kéo dài để biến "không đổi" thành
+        # một meaning mới khi đủ lâu. Không có lớp này, ERIS nhìn media 5 phút
+        # vẫn bảo là no_meaning_shift, rất gương mẫu theo kiểu đồ vật.
+        self._current_family_key = ""
+        self._current_family_since = 0.0
+        self._last_prolonged_family_at: dict[str, float] = {}
 
     FACT_MAP = {
         "code_idle_long": (
@@ -67,6 +77,13 @@ class MeaningLayer:
             "low-key restraint",
             "let the silence exist",
         ),
+        "prolonged_activity": (
+            "prolonged_activity",
+            ("possible_loop", "decompression", "time_as_signal"),
+            "curious_question",
+            "amused restraint",
+            "treat the duration itself as the new signal, without inventing screen details",
+        ),
         "user_requested_presence": (
             "requested_presence",
             ("relationship_pull", "continuity"),
@@ -113,6 +130,15 @@ class MeaningLayer:
         if not fact: #Nếu không có fact mạnh
             ambient_fact, ambient_evidence = self._infer_ambient_fact(snapshot=snapshot, internal_state=internal_state)
             if ambient_fact: #Nếu idle lâu, silence pressure cao, boredom cao thì tạo
+                prolonged = self._maybe_prolonged_fact(
+                    ambient_fact,
+                    snapshot=snapshot,
+                    internal_state=internal_state,
+                    recent_families=recent,
+                    evidence=ambient_evidence,
+                )
+                if prolonged:
+                    return prolonged
                 return self._build_result( #Đây là meaning mềm. Không phải bằng chứng cứng.
                     ambient_fact,
                     recent_families=recent,
@@ -131,6 +157,15 @@ class MeaningLayer:
             return result
 
         meaning = self.FACT_MAP[fact][0]
+        prolonged = self._maybe_prolonged_fact(
+            fact,
+            snapshot=snapshot,
+            internal_state=internal_state,
+            recent_families=recent,
+            evidence=evidence,
+        )
+        if prolonged:
+            return prolonged
         #Nếu semantic family này vừa xuất hiện gần đây, nó không coi là ý nghĩa mới nữa.
         meaning_shift = meaning not in recent
         shift_reason = "new_semantic_family" if meaning_shift else f"recent_semantic_family={meaning}"
@@ -204,6 +239,7 @@ class MeaningLayer:
             "error_visible": 0.58,
             "meeting_open_idle": 0.36,
             "ambient_idle": 0.24,
+            "prolonged_activity": 0.50,
             "user_requested_presence": 0.50,
         }
         attention_by_fact = {
@@ -214,6 +250,7 @@ class MeaningLayer:
             "error_visible": ("friction_point", "practical_attention"),
             "meeting_open_idle": ("social_waiting", "indirect_presence"),
             "ambient_idle": ("ambient_stillness", "indirect_presence"),
+            "prolonged_activity": ("duration", "possible_loop", "decompression"),
             "user_requested_presence": ("relationship_pull", "indirect_presence"),
         }
         residue_by_reaction = {
@@ -222,6 +259,7 @@ class MeaningLayer:
             "dry_marker": "cool_watchful_residue",
             "focused_concern": "practical_pressure",
             "relationship_ack": "guarded_nearness",
+            "curious_question": "dry_curiosity_residue",
         }
         impulse_by_reaction = {
             "quiet_tease": "react_with_small_concrete_tease",
@@ -229,6 +267,7 @@ class MeaningLayer:
             "dry_marker": "mark_the_shift_briefly",
             "focused_concern": "turn_toward_practical_friction",
             "relationship_ack": "answer_indirectly",
+            "curious_question": "ask_one_small_question",
         }
         return (
             residue_by_reaction.get(reaction, attitude or meaning),
@@ -286,11 +325,94 @@ class MeaningLayer:
             )
         )
 
+    def _maybe_prolonged_fact(
+        self,
+        source_fact: str,
+        *,
+        snapshot,
+        internal_state,
+        recent_families: tuple[str, ...],
+        evidence: tuple[str, ...],
+    ) -> MeaningLayerResult | None:
+        """Biến "không đổi" thành meaning mới khi nó kéo dài đủ lâu.
+
+        Đây là semantic bridge, không phải hack nói nhiều hơn. Nếu cùng một
+        semantic_family lặp lâu, MeaningLayer xuất `prolonged_activity` để mở
+        meaning_shift_gate. Nhưng nó vẫn không cho phép bịa tiêu đề video, trạng
+        thái cảm xúc của user, hay bất kỳ cảnh nào không có evidence.
+        """
+        if source_fact not in self.FACT_MAP:
+            return None
+        family = self.FACT_MAP[source_fact][0]
+        now = time.monotonic()
+        idle_seconds = max(0.0, self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0))
+        focus_kind = self._focus_kind(snapshot)
+        threshold = self._prolonged_threshold_seconds(focus_kind=focus_kind, source_fact=source_fact)
+        if family != self._current_family_key:
+            self._current_family_key = family
+            self._current_family_since = now
+            # Nếu telemetry đã có idle_seconds dài sẵn, coi đó là bằng chứng thời
+            # lượng và cho phép prolonged ngay. Nếu không, đợi tick sau để tránh
+            # một frame mới tinh tự nhận là loop lâu.
+            if idle_seconds < threshold:
+                return None
+
+        elapsed = max(0.0, now - float(self._current_family_since or now))
+        duration = max(elapsed, idle_seconds)
+        if duration < threshold:
+            return None
+        if "prolonged_activity" in set(recent_families or ()):
+            return None
+        last_at = self._last_prolonged_family_at.get(family, 0.0)
+        if last_at and now - last_at < threshold * 1.35:
+            return None
+        self._last_prolonged_family_at[family] = now
+        prolonged_evidence = tuple(
+            dict.fromkeys((
+                *tuple(evidence or ()),
+                f"prolonged_family={family}",
+                f"duration={int(duration)}s",
+                f"focus={focus_kind or 'unknown'}",
+            ))
+        )
+        return self._build_result(
+            "prolonged_activity",
+            recent_families=recent_families,
+            meaning_shift=True,
+            meaning_signal="meaning_shift",
+            shift_reason=f"prolonged_activity:{family}:{int(duration)}s",
+            evidence=prolonged_evidence,
+        )
+
+    def _prolonged_threshold_seconds(self, *, focus_kind: str, source_fact: str) -> float:
+        focus = str(focus_kind or "").strip().lower()
+        if focus in {"media", "entertainment", "focus_aid_media"} or source_fact in {"tiktok_opened_after_code", "youtube_after_error"}:
+            return 180.0
+        if focus in {"code", "coding", "docs", "documentation"} or source_fact == "code_idle_long":
+            return 300.0
+        return 240.0
+
+    def _focus_kind(self, snapshot) -> str:
+        focus = str(
+            getattr(snapshot, "focus_kind_hint", "")
+            or getattr(snapshot, "focus_kind", "")
+            or getattr(snapshot, "active_window_kind", "")
+            or ""
+        ).strip().lower()
+        if focus in {"coding", "ide", "editor", "terminal", "debug"}:
+            return "code"
+        if focus in {"documentation", "doc", "reference"}:
+            return "docs"
+        if focus in {"focus_aid_media", "entertainment", "youtube", "tiktok", "browser_media"}:
+            return "media"
+        return focus or "unknown"
+
     def _infer_ambient_fact(self, *, snapshot, internal_state) -> tuple[str, tuple[str, ...]]:
         idle_seconds = max(0.0, self._float(getattr(snapshot, "idle_seconds", 0.0) if snapshot is not None else 0.0))
         silence_pressure = self._float(getattr(internal_state, "silence_pressure", 0.0) if internal_state is not None else 0.0)
         boredom = self._float(getattr(internal_state, "boredom", 0.0) if internal_state is not None else 0.0)
-        if idle_seconds >= 240 or silence_pressure >= 0.58 or boredom >= 0.50:
+        focus_kind = self._focus_kind(snapshot)
+        if idle_seconds >= 240 or (focus_kind in {"media", "game"} and idle_seconds >= 180) or silence_pressure >= 0.58 or boredom >= 0.50:
             return "ambient_idle", tuple(
                 item
                 for item in (

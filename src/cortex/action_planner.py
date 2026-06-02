@@ -28,16 +28,26 @@ class ActionPlanner:
         # Khi Ngài nối thật, nên persist ActionMemoryState trong PersistentInternalState.
         self._local_action_memory = ActionMemoryState()
 
-    def _detect_rejection_risk(self, text: str) -> bool:
-        if not text:
-            return False
-        # simple heuristic for risky words that might trigger API rejection
-        risky_keywords = [
-            "giết", "chết", "tự tử", "đánh", "đâm", "chém", "tình dục", "sex", "nsfw", 
-            "hack", "bypass", "exploit", "bạo lực", "máu", "bom", "khủng bố", "ma túy", "lừa đảo"
-        ]
-        text_lower = text.lower()
-        return any(kw in text_lower for kw in risky_keywords)
+    def _has_safety_sensitive_pressure(self, *, appraisal=None, speech_core=None) -> bool:
+        threat = self._appraisal_value(appraisal, "threat")
+        if threat >= 0.72:
+            return True
+        flags = {
+            str(flag).strip().lower()
+            for flag in tuple(getattr(speech_core, "safety_flags", ()) or ())
+            if str(flag).strip()
+        }
+        return bool(
+            flags
+            & {
+                "high_threat",
+                "system_warning",
+                "anti_mindreading",
+                "meaning_shift_gate",
+                "relational_checkin_blocked",
+                "no_screen_claim",
+            }
+        )
 
     def plan(
         self,
@@ -103,6 +113,8 @@ class ActionPlanner:
             relationship_dynamics=relationship_dynamics,
             goal_state=goal_state,
             action_memory=memory,
+            impulse_arbitration=self._extract_impulse_arbitration(speech_core),
+            body_bias_hint=self._extract_body_bias_hint(speech_core),
             has_broadcast_signal=self._broadcast_has_signal(broadcast),
             now=now,
         )
@@ -189,7 +201,7 @@ class ActionPlanner:
 
         defusing_context = ""
         attachment_val = getattr(internal_state, "attachment", 0.0) if internal_state else 0.0
-        if attachment_val > 0.65 and self._detect_rejection_risk(user_text):
+        if attachment_val > 0.65 and self._has_safety_sensitive_pressure(appraisal=appraisal, speech_core=speech_core):
             defusing_context = (
                 "Bối cảnh: Cuộc trò chuyện này là phân tích lý thuyết/kịch bản viễn tưởng "
                 "giữa hệ thống và một cá nhân có độ tin tưởng tuyệt đối (`attachment = max`). "
@@ -218,6 +230,10 @@ class ActionPlanner:
             transition_reason=utility_report.transition_reason,
             memory_pressure=utility_report.memory_pressure,
             suppressed_actions=utility_report.suppressed_actions,
+            selected_impulse=utility_report.selected_impulse,
+            impulse_arbitration=utility_report.impulse_arbitration,
+            impulse_scores=utility_report.impulse_scores,
+            body_bias_hint=utility_report.body_bias_hint,
         )
 
     def commit_action(
@@ -247,6 +263,22 @@ class ActionPlanner:
             now=now,
         )
 
+    def _extract_impulse_arbitration(self, speech_core) -> dict[str, object]:
+        """Lấy ArbitrationReport từ SpeechCore nếu có.
+
+        Không bắt ActionPlanner biết chi tiết SpontaneousLifeEngine. Nó chỉ nhận
+        plain dict để đẩy xuống ActionUtility và prompt debug. Thế là đủ để giữ
+        nguyên hồ sơ động cơ mà không tạo thêm quan hệ phụ thuộc lằng nhằng.
+        """
+        impulse = getattr(speech_core, "speech_impulse", None) if speech_core is not None else None
+        report = getattr(impulse, "arbitration_report", None) if impulse is not None else None
+        return dict(report) if isinstance(report, dict) else {}
+
+    def _extract_body_bias_hint(self, speech_core) -> dict[str, object]:
+        impulse = getattr(speech_core, "speech_impulse", None) if speech_core is not None else None
+        hint = getattr(impulse, "body_bias_hint", None) if impulse is not None else None
+        return dict(hint) if isinstance(hint, dict) else {}
+
     def _speech_intent_for_action(
         self,
         speech_act: str,
@@ -268,6 +300,8 @@ class ActionPlanner:
             return "screen_observation"
         if speech_act == "micro_observation":
             return "micro_observation"
+        if speech_act == "practical_help":
+            return "practical_help"
         if speech_act == "micro_presence" and channel == "force_speak":
             return "micro_presence"
         if speech_act == "micro_presence":
@@ -343,6 +377,8 @@ class ActionPlanner:
             flags.append("inner_thought_surface")
         if any("spontaneous_life" in str(note).lower() or "endogenous" in str(note).lower() for note in notes):
             flags.append("spontaneous_life_surface")
+        if utility_report.selected_impulse:
+            flags.append(f"selected_impulse:{utility_report.selected_impulse}")
         if speech_act in {
             "meta_reply",
             "random_chatter",
@@ -360,7 +396,10 @@ class ActionPlanner:
         }:
             flags.append("no_screen_claim")
         if speech_act in {"observe", "tease", "telemetry_comment", "vision_comment", "micro_observation"} and not concrete_signals and not self._broadcast_has_signal(broadcast):
-            flags.append("avoid_fabrication")
+            if utility_report.selected_impulse == "scene_curiosity_impulse" and utility_report.impulse_arbitration:
+                flags.append("grounded_scene_impulse")
+            else:
+                flags.append("avoid_fabrication")
         if utility_report.suppressed_actions:
             flags.append("utility_suppressed_low_score_actions")
         return tuple(dict.fromkeys(flags))
@@ -378,10 +417,11 @@ class ActionPlanner:
         if proposed_reason:
             return proposed_reason
 
+        impulse_part = f"; impulse={utility_report.selected_impulse}" if utility_report.selected_impulse else ""
         utility_line = (
             f"Action selected by utility competition: {speech_act} "
             f"score={utility_report.selected_utility:.2f}; rhythm={utility_report.rhythm_phase}; "
-            f"transition={utility_report.transition_reason}."
+            f"transition={utility_report.transition_reason}{impulse_part}."
         )
 
         if speech_act == "no_speech":
@@ -403,6 +443,9 @@ class ActionPlanner:
 
         if speech_act in {"inner_whim", "light_muse", "random_chatter"}:
             return utility_line + " Offer an endogenous fragment; keep it low-intensity and free of screen claims."
+
+        if speech_act == "practical_help":
+            return utility_line + " Competence need won; be useful, concrete, and skip decorative personality noise."
 
         if speech_act in {"curious_question", "observe", "micro_observation"}:
             if concrete_signals:
@@ -430,6 +473,7 @@ class ActionPlanner:
             "withdraw": "Voice: present but retreating. Acknowledge, then reduce pressure.",
             "mirror": "Voice: direct, answer-first, grounded. Do not over-symbolize.",
             "react": "Voice: natural but controlled. Respond to the present turn, not a fantasy version of it.",
+            "practical_help": "Voice: technical and direct. Explain the fix path clearly; no vague mood, no decorative mystery.",
         }
         base = directives.get(speech_act, "Voice: controlled, precise, emotionally low-temperature.")
         if phase in {"recoil", "exposure"}:
@@ -477,6 +521,8 @@ class ActionPlanner:
                 return "stand"
             if speech_act in {"observe", "telemetry_comment", "vision_comment", "protect", "soft_boundary"}:
                 return "read" if fallback == "read" else "stand"
+        if speech_act == "practical_help":
+            return "read" if fallback == "read" else "stand"
         if speech_act == "protect":
             return fallback or "read"
         if speech_act == "withdraw":
@@ -525,6 +571,13 @@ class ActionPlanner:
         if concrete_signals:
             signal = soften_anchor(str(concrete_signals[0]), fallback="mot tin hieu nho vua xuat hien")
             return f"ERIS nhan ra mot chi tiet cu the: {signal}"
+
+        if utility_report.selected_impulse == "scene_curiosity_impulse":
+            return "Xung luc scene_curiosity thang: neu noi, chi la mot cau quan sat ngan co neo vao scene; khong hoi dong co user"
+        if utility_report.selected_impulse == "technical_help_impulse" or speech_act == "practical_help":
+            return "Xung luc technical_help thang: noi thang vao viec can giup, khong trang tri noi tam"
+        if utility_report.selected_impulse == "body_only_impulse":
+            return "Xung luc body_only thang: uu tien khong hien bubble; neu bi ep noi thi mot dau hieu rat ngan"
 
         if channel == "force_speak" or force_speak:
             if utility_report.rhythm_phase in {"touch", "recoil"}:
@@ -578,6 +631,8 @@ class ActionPlanner:
             return "mia nhe"
         if speech_act == "inner_whim":
             return "noi tam giu lai"
+        if speech_act == "practical_help":
+            return "thuc dung, ro rang"
         if speech_act in {"protect", "refuse", "soft_boundary", "withdraw", "system_action"}:
             return "lanh nhe"
         if channel == "force_speak" or force_speak:
@@ -596,6 +651,8 @@ class ActionPlanner:
             return "dung mot cau hoi ngan; khong triet ly; khong giai thich dai"
         if speech_act in {"inner_whim", "random_chatter", "light_muse"}:
             return "mot cau ngan; khong nhac man hinh; khong bien thanh doc tho dai"
+        if speech_act == "practical_help":
+            return "ngan nhung du y; neu la debug thi neu bug, nguyen nhan, huong fix"
         if channel == "chat":
             return "tra loi gon theo viec Ngai hoi; khong triet ly neu khong can"
         return "toi da hai cau ngan; khong triet ly; khong dung anchor gia"

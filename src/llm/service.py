@@ -332,16 +332,6 @@ class LlmService:
         )
         return any(pattern in normalized for pattern in patterns)
 
-    def _user_intent_inference_risk_score(self, text: str) -> float:
-        """Disabled voice blacklist scoring.
-
-        ERIS should not rewrite/cap wording based on final-text phrase hits.
-        Grounding and capability checks must live in parser/Ti, not here.
-        """
-        return 0.0
-    def _soften_user_intent_inference_text(self, text: str) -> str:
-        """Disabled regex softener. Preserve model wording."""
-        return re.sub(r"\s+", " ", str(text or "")).strip()
     def _build_chat_contract_prompt(self, raw_user_text: str, act: ChatAct | None = None) -> str:
         act = act or classify_chat_act(raw_user_text)
         clauses = [
@@ -1577,30 +1567,6 @@ class LlmService:
             return repaired_candidate
         return self._build_json_fallback(raw_text, channel=channel)
 
-    def _contains_forbidden_user_inference(self, text: str) -> bool:
-        """Disabled text blacklist matcher."""
-        return False
-    def _guard_forbidden_inference(self, raw_json: str, *, channel: str) -> str:
-        """Disable text blacklist fallback.
-
-        The old version replaced lines mentioning loneliness, trauma, wounds,
-        etc. with a generic uncertainty fallback. That made ERIS sound like a
-        moderated assistant instead of a runtime presence. Keep this as a no-op;
-        grounding/capability violations belong in parser/Ti, not here.
-        """
-        return raw_json
-
-    def _infj_594_rewrite_bad_line(self, text: str) -> str | None:
-        """Disabled persona-policy regex rewrite."""
-        return None
-    def _guard_infj_594_policy(self, raw_json: str, *, channel: str) -> str:
-        """Disable INFJ/personality text rewrite.
-
-        Persona should be shaped by prompts, memory, appraisal, SpeechCore and
-        model behavior, not regex substitutions over the final sentence.
-        """
-        return raw_json
-
     def _strict_decision_candidate_or_raise(self, raw: str, *, channel: str) -> str:
         raw_text = str(raw or "").strip()
         if not raw_text:
@@ -1739,15 +1705,49 @@ class LlmService:
 
         raw = self._extract_content(response)
         self._log_raw_api_text(channel, raw)
-        candidate = self._strict_decision_candidate_or_raise(raw, channel=channel)
+        try:
+            candidate = self._strict_decision_candidate_or_raise(raw, channel=channel)
+        except FormatViolationException as exc:
+            can_try_local = (
+                allow_local_fallback
+                and self.style_client is not None
+                and initial_client is not self.style_client
+            )
+            if can_try_local:
+                self.logger.warning(
+                    "[llm local format recovery] channel=%s reason=%s",
+                    channel,
+                    exc.reason,
+                )
+                local_response = _call(messages, stage="local_format_recovery", override_client=self.style_client)
+                local_raw = self._extract_content(local_response)
+                self._log_raw_api_text(channel, local_raw)
+                candidate = self._strict_decision_candidate_or_raise(local_raw, channel=channel)
+                raw = local_raw
+            elif allow_local_fallback or force_local_fallback:
+                self.logger.warning(
+                    "[llm format violation after local handoff] channel=%s stage=%s reason=%s",
+                    channel,
+                    "local" if force_local_fallback else "remote",
+                    exc.reason,
+                )
+                raise FormatViolationException(
+                    (
+                        f"LlmService local model.gguf also returned invalid {channel} JSON. "
+                        f"Call model.gguf again with stricter JSON enforcement. Root cause: {exc.reason}"
+                    ),
+                    channel=channel,
+                    raw_text=getattr(exc, "raw_text", raw),
+                )
+            else:
+                raise
         if require_text and self._decision_text_is_invalid(candidate):
             raise FormatViolationException(
                 f"LlmService blocked invalid {channel} decision text.",
                 channel=channel,
                 raw_text=raw,
             )
-        candidate = self._guard_forbidden_inference(candidate, channel=channel)
-        return self._guard_infj_594_policy(candidate, channel=channel)
+        return candidate
 
     def _normalize_for_claim_diff(self, text: str) -> str:
         normalized = (text or "").lower()

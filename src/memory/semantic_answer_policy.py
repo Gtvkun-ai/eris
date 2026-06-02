@@ -42,7 +42,7 @@ class SemanticAnswerPolicy:
         self.entailment = ClaimEntailmentEngine()
 
     def answer(self, query: str | SemanticQueryIntent, memory_items: Iterable[Any]) -> SemanticAnswer:
-        intent = compile_semantic_query(query) if isinstance(query, str) else query
+        intent = compile_semantic_query(query, allow_fallback=True) if isinstance(query, str) else query
         if not intent.is_known:
             return SemanticAnswer(False, "Tôi chưa xác định được Ngài đang hỏi loại ký ức nào.", 0.0, warnings=("unknown_query_intent",))
 

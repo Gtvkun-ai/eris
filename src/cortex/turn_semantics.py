@@ -33,6 +33,7 @@ RepeatIntent = Literal[
     "repair_reframe",
     "relational_probe",
     "identity_boundary_probe",
+    "fact_disclosure_refresh",
     "live_evidence_refresh",
 ]
 
@@ -69,6 +70,7 @@ class TurnSemanticsReport:
     live_evidence_pressure: float = 0.0
     prior_failure_pressure: float = 0.0
     new_information_pressure: float = 0.0
+    fact_disclosure_pressure: float = 0.0
     spam_pressure: float = 0.0
 
     reasons: tuple[str, ...] = ()
@@ -116,6 +118,7 @@ class TurnSemanticsEngine:
         correction_pressure = self._correction_pressure(conversation_report, affect_signal, normalized)
         relational_pressure = self._relational_pressure(affect_signal, relationship_report)
         identity_pressure = self._identity_pressure(affect_signal, relationship_report)
+        fact_disclosure_pressure = self._fact_disclosure_pressure(user_text=user_text, normalized=normalized, grounding_report=grounding_report)
         live_evidence_pressure = self._live_evidence_pressure(grounding_report)
         prior_failure_pressure = self._prior_failure_pressure(last_assistant_text, conversation_report)
         new_information_pressure = self._new_information_pressure(
@@ -123,6 +126,7 @@ class TurnSemanticsEngine:
             correction_pressure=correction_pressure,
             prior_failure_pressure=prior_failure_pressure,
             question_pressure=question_pressure,
+            fact_disclosure_pressure=fact_disclosure_pressure,
         )
 
         reasons: list[str] = []
@@ -142,6 +146,7 @@ class TurnSemanticsEngine:
                 live_evidence_pressure=live_evidence_pressure,
                 prior_failure_pressure=prior_failure_pressure,
                 new_information_pressure=new_information_pressure,
+                fact_disclosure_pressure=fact_disclosure_pressure,
                 spam_pressure=0.0,
                 reasons=("not_repeated",),
             )
@@ -162,6 +167,13 @@ class TurnSemanticsEngine:
             action = "pass_to_llm"
             confidence = identity_pressure
             reasons.append("repeat_as_identity_boundary_probe")
+        elif fact_disclosure_pressure >= 0.50:
+            # Câu lặp nhưng chứa self-disclosure/profile update không phải spam rỗng.
+            # Nó có thể là user đang test memory, nhấn mạnh fact, hoặc sửa lại bản ghi.
+            intent = "fact_disclosure_refresh"
+            action = "pass_to_llm"
+            confidence = fact_disclosure_pressure
+            reasons.append("repeat_as_fact_disclosure_refresh")
         elif relational_pressure >= 0.50:
             intent = "relational_probe"
             action = "pass_to_llm"
@@ -183,6 +195,7 @@ class TurnSemanticsEngine:
                 identity_pressure=identity_pressure,
                 live_evidence_pressure=live_evidence_pressure,
                 prior_failure_pressure=prior_failure_pressure,
+                fact_disclosure_pressure=fact_disclosure_pressure,
             )
             if spam_pressure >= 0.62:
                 intent = "low_value_repeat"
@@ -205,6 +218,7 @@ class TurnSemanticsEngine:
             identity_pressure=identity_pressure,
             live_evidence_pressure=live_evidence_pressure,
             prior_failure_pressure=prior_failure_pressure,
+            fact_disclosure_pressure=fact_disclosure_pressure,
         )
 
         report = TurnSemanticsReport(
@@ -222,6 +236,7 @@ class TurnSemanticsEngine:
             live_evidence_pressure=live_evidence_pressure,
             prior_failure_pressure=prior_failure_pressure,
             new_information_pressure=new_information_pressure,
+            fact_disclosure_pressure=fact_disclosure_pressure,
             spam_pressure=spam_pressure,
             reasons=tuple(dict.fromkeys(reasons)),
         )
@@ -286,6 +301,35 @@ class TurnSemanticsEngine:
             pressure = max(pressure, 0.62)
         return self._clamp01(pressure)
 
+    def _fact_disclosure_pressure(self, *, user_text: str, normalized: str, grounding_report: Any = None) -> float:
+        """Áp lực self-disclosure/profile update cho repeat guard.
+
+        Đây là cầu nối semantic rẻ giữa memory intake và repeat arbitration. Nó không
+        commit memory ở đây; nó chỉ nói rằng câu lặp có thể vẫn có giá trị vì user
+        đang khai báo/sửa fact về bản thân. Đỡ hơn việc thấy trùng text rồi chụp mũ spam.
+        """
+
+        norm = str(normalized or "")
+        if not norm or self._looks_like_question(norm):
+            return 0.0
+        source = str(getattr(grounding_report, "primary_source", "") or "")
+        allowed = set(getattr(grounding_report, "allowed_sources", ()) or ())
+        pressure = 0.0
+        fact_markers = (
+            "toi ten", "ten toi", "ten that", "goi toi",
+            "toi thich", "minh thich", "tui thich", "toi khong thich",
+            "toi dang hoc", "toi hoc", "hoc nganh", "nganh hoc", "sinh vien",
+            "toi dang song", "toi song o", "toi dang o", "que toi", "toi que",
+            "toi sinh nam", "toi sinh thang", "toi nam nay", "toi duoc",
+        )
+        if any(marker in norm for marker in fact_markers):
+            pressure = max(pressure, 0.62)
+        if any(marker in norm for marker in ("thuc ra", "that ra", "ten that", "sua lai", "doi lai")) and any(marker in norm for marker in ("ten", "toi", "minh")):
+            pressure = max(pressure, 0.72)
+        if source == "user_text" or "user_text" in allowed:
+            pressure = max(pressure, 0.52 if pressure else 0.0)
+        return self._clamp01(pressure)
+
     def _live_evidence_pressure(self, grounding_report: Any) -> float:
         if grounding_report is None:
             return 0.0
@@ -328,12 +372,14 @@ class TurnSemanticsEngine:
         correction_pressure: float,
         prior_failure_pressure: float,
         question_pressure: float,
+        fact_disclosure_pressure: float = 0.0,
     ) -> float:
         return self._clamp01(max(
             live_evidence_pressure,
             correction_pressure * 0.86,
             prior_failure_pressure * 0.78,
             question_pressure * 0.55,
+            fact_disclosure_pressure * 0.82,
         ))
 
     def _spam_pressure(
@@ -348,6 +394,7 @@ class TurnSemanticsEngine:
         identity_pressure: float,
         live_evidence_pressure: float,
         prior_failure_pressure: float,
+        fact_disclosure_pressure: float = 0.0,
     ) -> float:
         base = 0.28 + min(0.34, max(0, repeat_count - 1) * 0.12)
         base += literal_repeat_score * 0.22
@@ -356,6 +403,7 @@ class TurnSemanticsEngine:
         base -= correction_pressure * 0.28
         base -= relational_pressure * 0.24
         base -= identity_pressure * 0.30
+        base -= fact_disclosure_pressure * 0.36
         base -= live_evidence_pressure * 0.34
         base -= prior_failure_pressure * 0.26
         return self._clamp01(base)
@@ -376,6 +424,7 @@ class TurnSemanticsEngine:
                 "pressures: "
                 f"question={report.question_pressure:.2f}; correction={report.correction_pressure:.2f}; "
                 f"relational={report.relational_pressure:.2f}; identity={report.identity_pressure:.2f}; "
+                f"fact_disclosure={report.fact_disclosure_pressure:.2f}; "
                 f"live_evidence={report.live_evidence_pressure:.2f}; prior_failure={report.prior_failure_pressure:.2f}; "
                 f"spam={report.spam_pressure:.2f}."
             ),
@@ -405,6 +454,7 @@ class TurnSemanticsEngine:
             live_evidence_pressure=report.live_evidence_pressure,
             prior_failure_pressure=report.prior_failure_pressure,
             new_information_pressure=report.new_information_pressure,
+            fact_disclosure_pressure=report.fact_disclosure_pressure,
             spam_pressure=report.spam_pressure,
             reasons=report.reasons,
             prompt_context="\n".join(lines),

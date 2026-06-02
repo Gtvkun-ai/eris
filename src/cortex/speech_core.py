@@ -3,6 +3,7 @@ from .internal_state import PersistentInternalState
 from .inner_thought import InnerThoughtEngine
 from .modes import QUIET_MODES as SHARED_QUIET_MODES
 from .spontaneous_life import SpontaneousLifeEngine
+from .agent_mind_persistence import PersistentAgentMindStore
 
 
 class SpeechCoreEngine:
@@ -63,6 +64,7 @@ class SpeechCoreEngine:
         personality_lens=None,
         safe_small_talk_allowed: bool = False,
         spontaneous_impulse: SpeechImpulse | None = None,
+        agent_mind: PersistentAgentMindStore | None = None,
     ) -> AgentSpeechCore:
         channel_name = str(channel or "autonomous")
         surface = thought_surface if thought_surface is not None else subconscious_seed
@@ -96,6 +98,7 @@ class SpeechCoreEngine:
                 relationship_state=getattr(internal_state, "relationship_dynamics", None) if internal_state is not None else None,
                 concrete_signals=tuple(concrete_signals or ()),
                 recent_speech_acts=tuple(getattr(internal_state, "recent_speech_acts", ()) or ()) if internal_state is not None else (),
+                agent_mind=agent_mind,
             )
         spontaneous_ready = self._spontaneous_ready(spontaneous_impulse, channel=channel_name)
 
@@ -230,18 +233,38 @@ class SpeechCoreEngine:
             if speech_source == "none":
                 speech_source = "random"
             if utterance_type == "no_speech":
-                utterance_type = "micro_presence"
-                winner = MotivationalUrge(
-                    label="force_speak_fallback_presence",
-                    score=1.0,
-                    utterance_type=utterance_type,
-                    speech_source=speech_source,
-                    risk_level="micro_presence",
-                    grounding="situated_residue",
-                    reason="Force speak fell back to a tiny situated presence line.",
-                    evidence=("force_speak requested",),
-                    safety_flags=("force_speak_required", "situated_residue", "micro_presence"),
-                )
+                # P0: force_speak là explicit pull. Nếu impulse arbitration đã chọn
+                # một xung nội sinh hợp lệ, đừng ép nó xuống micro_presence.
+                # Micro-presence chỉ là đáy an toàn cuối cùng, không phải cửa chính.
+                spontaneous_act = str(getattr(spontaneous_impulse, "suggested_speech_act", "") or "").strip()
+                spontaneous_pressure = self._clamp01(getattr(spontaneous_impulse, "surface_pressure", 0.0))
+                if spontaneous_ready and spontaneous_act and spontaneous_act != "no_speech" and spontaneous_pressure >= 0.22:
+                    utterance_type = spontaneous_act
+                    winner = MotivationalUrge(
+                        label="force_speak_endogenous_fallback",
+                        score=max(0.82, spontaneous_pressure),
+                        utterance_type=utterance_type,
+                        speech_source="freeform",
+                        risk_level=str(getattr(spontaneous_impulse, "risk", "texture") or "texture"),
+                        grounding="endogenous_anchor",
+                        reason="Force speak recovered through endogenous impulse arbitration instead of micro-presence.",
+                        evidence=tuple(str(item) for item in (getattr(spontaneous_impulse, "evidence", ()) or ()))[:6] or ("force_speak requested",),
+                        safety_flags=("force_speak_required", "endogenous_anchor", "no_screen_claim"),
+                    )
+                    speech_source = "freeform"
+                else:
+                    utterance_type = "micro_presence"
+                    winner = MotivationalUrge(
+                        label="force_speak_fallback_presence",
+                        score=1.0,
+                        utterance_type=utterance_type,
+                        speech_source=speech_source,
+                        risk_level="micro_presence",
+                        grounding="situated_residue",
+                        reason="Force speak fell back to a tiny situated presence line.",
+                        evidence=("force_speak requested",),
+                        safety_flags=("force_speak_required", "situated_residue", "micro_presence"),
+                    )
         speech_risk_level = self._risk_level_for_winner(
             winner=winner,
             speech_source=speech_source,
@@ -553,12 +576,29 @@ class SpeechCoreEngine:
             )
         )
 
+        # Tính spontaneous trước micro_presence để force_speak có thể nhường lượt
+        # cho nội sinh trước khi rơi xuống câu presence máy móc.
+        spontaneous = spontaneous_impulse or SpeechImpulse()
+        spontaneous_pressure = self._clamp01(getattr(spontaneous, "surface_pressure", 0.0))
+        spontaneous_act = str(getattr(spontaneous, "suggested_speech_act", "") or "").strip() or "inner_whim"
+        force_speak_no_screen_internal_ready = (
+            channel == "force_speak"
+            and not concrete_signals
+            and spontaneous_pressure >= 0.24
+            and spontaneous_act != "no_speech"
+            and not bool(getattr(spontaneous, "needs_external_evidence", False))
+        )
         user_requested_score = (
             0.92
             + self._pressure(state, "social_pressure") * 0.20
             + self._pressure(state, "tender_pressure") * 0.08
             - fatigue * 0.08
         )
+        if force_speak_no_screen_internal_ready:
+            # Đạp micro_presence xuống khi có xung nội sinh đủ sạch. Nếu không làm
+            # vậy, force_speak cứ rơi vào câu presence nhỏ, còn thought stream thì
+            # đứng ngoài cửa nhìn vào như intern không có thẻ ra vào.
+            user_requested_score = min(user_requested_score, 0.34)
         candidates.append(
             MotivationalUrge(
                 label="micro_presence",
@@ -570,7 +610,7 @@ class SpeechCoreEngine:
                 reason="User explicitly requested a small situated residue, not a presence declaration.",
                 evidence=(self._inner_anchor(inner_thought) or "force_speak requested",),
                 safety_flags=("force_speak_required", "situated_residue", "micro_presence", "anti_presence_declaration"),
-                blocked=channel != "force_speak",
+                blocked=channel != "force_speak" or force_speak_no_screen_internal_ready,
             )
         )
 
@@ -767,6 +807,22 @@ class SpeechCoreEngine:
             or spontaneous_act == "no_speech"
             or spontaneous_pressure <= 0.0
         )
+        spontaneous_evidence = tuple(str(item) for item in (getattr(spontaneous, "evidence", ()) or ()))[:8]
+        spontaneous_source_fact = str(getattr(spontaneous, "source_fact", "") or "")
+        spontaneous_has_scene_grounding = (
+            "scene_evidence" in spontaneous_source_fact
+            or any("ev.active_window" in item or "ev.active_app" in item or "ev.ocr" in item for item in spontaneous_evidence)
+        )
+        spontaneous_flags = [
+            "spontaneous_life",
+            "endogenous_anchor",
+            "anti_mindreading",
+            f"family={spontaneous_family}",
+        ]
+        if spontaneous_has_scene_grounding:
+            spontaneous_flags.append("grounded_scene_impulse")
+        else:
+            spontaneous_flags.append("no_screen_claim")
         candidates.append(
             MotivationalUrge(
                 label="spontaneous_life",
@@ -774,20 +830,10 @@ class SpeechCoreEngine:
                 utterance_type=spontaneous_act,
                 speech_source="freeform",
                 risk_level=str(getattr(spontaneous, "risk", "texture") or "texture"),
-                grounding="endogenous_anchor",
+                grounding="scene_evidence" if spontaneous_has_scene_grounding else "endogenous_anchor",
                 reason=str(getattr(spontaneous, "reason", "") or "Internal life produced a low-claim speech impulse."),
-                evidence=tuple(str(item) for item in (getattr(spontaneous, "evidence", ()) or ()))[:6],
-                safety_flags=tuple(
-                    dict.fromkeys(
-                        (
-                            "spontaneous_life",
-                            "endogenous_anchor",
-                            "no_screen_claim",
-                            "anti_mindreading",
-                            f"family={spontaneous_family}",
-                        )
-                    )
-                ),
+                evidence=spontaneous_evidence[:6],
+                safety_flags=tuple(dict.fromkeys(spontaneous_flags)),
                 blocked=spontaneous_blocked,
             )
         )

@@ -457,7 +457,10 @@ class StateCommitServiceMixin:
             can_be_replied_to=True,
         )
     def _build_body_bias_payload(self) -> dict[str, object]:
-        return self.body_bias_projector.build_payload()
+        frame = getattr(self, "last_cognitive_frame", None)
+        action_plan = getattr(frame, "action_plan", None) if frame is not None else None
+        impulse_hint = getattr(action_plan, "body_bias_hint", {}) if action_plan is not None else {}
+        return self.body_bias_projector.build_payload(impulse_hint=impulse_hint)
     def _body_bias_clamp(value: object) -> float:
         return BodyBiasProjector.clamp(value)
     def _normalize_body_focus_kind(value: str) -> str:

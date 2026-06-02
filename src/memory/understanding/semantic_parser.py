@@ -16,6 +16,7 @@ callable trả dict JSON.
 """
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
 from .entity_linker import clean_surface, link_entity, normalize, strip_accents
@@ -251,10 +252,25 @@ def _parse_clause_as_frames(clause: str, surface: Any) -> list[MeaningFrame]:
         return []
     frames: list[MeaningFrame] = []
 
-    # Các pattern ở đây là frame-level, không phải predicate final. Giữ rất ít.
-    identity = _extract_after(raw, (("toi ten la", "name"), ("ten toi la", "name"), ("my name is", "name")))
+    # Các pattern ở đây là frame-level, không phải predicate final.
+    # Bản cũ chỉ bắt "tôi tên là X", nên câu đời thường "tôi tên Hòa" hoặc
+    # correction "thực ra tên thật tôi là Minh" bị rơi xuống unknown. Parser fallback
+    # chỉ mở rộng MeaningFrame; claim/retention vẫn do tầng sau phán xét.
+    identity = _extract_identity_name(raw)
     if identity:
-        frames.append(_mk_frame("identity", "name", identity, "person_name", raw, 0.88, "stable", "fact", surface))
+        identity_value, is_correction = identity
+        frames.append(_mk_frame(
+            "identity",
+            "name",
+            identity_value,
+            "person_name",
+            raw,
+            0.92 if is_correction else 0.88,
+            "stable",
+            "fact",
+            surface,
+            polarity="corrected" if is_correction else None,
+        ))
 
     birth_year = _extract_year(norm)
     if birth_year is not None and _has_self(norm):
@@ -276,6 +292,13 @@ def _parse_clause_as_frames(clause: str, surface: Any) -> list[MeaningFrame]:
     if pref:
         target, kind = pref
         frames.append(_mk_frame("preference", "likes", target, kind, raw, 0.66 if kind == "unknown" else 0.72, "stable", "preference", surface, stability="medium"))
+
+    study_field = _extract_study_field(raw)
+    if study_field:
+        # "Tôi đang học IT" là profile học tập/ngành học, không phải preference.
+        # Đưa thành frame project/profile để ontology lưu đúng fact_key thay vì nhét
+        # bừa vào general_preference rồi sau này recall sai như một trò xiếc token.
+        frames.append(_mk_frame("project", "study_field", study_field, "study_field", raw, 0.78, "current", "fact", surface, stability="medium"))
 
     if _looks_like_style_instruction(norm):
         frames.append(MeaningFrame(
@@ -310,12 +333,12 @@ def _parse_clause_as_frames(clause: str, surface: Any) -> list[MeaningFrame]:
     return frames
 
 
-def _mk_frame(frame_type: str, relation: str, value: str, kind: str, evidence: str, certainty: float, time_scope: str, modality: str, surface: Any, *, stability: str = "stable") -> MeaningFrame:
+def _mk_frame(frame_type: str, relation: str, value: str, kind: str, evidence: str, certainty: float, time_scope: str, modality: str, surface: Any, *, stability: str = "stable", polarity: str | None = None) -> MeaningFrame:
     return MeaningFrame(
         frame_type=frame_type,  # type: ignore[arg-type]
         relation=relation,
         target=link_entity(value, hinted_kind=kind),
-        polarity=surface.polarity,
+        polarity=polarity or surface.polarity,
         modality=modality,
         time_scope=time_scope if surface.time_scope == "unknown" else surface.time_scope,
         scope="self",
@@ -335,6 +358,69 @@ def _extract_after(norm: str, raw: str, cues: Iterable[tuple[str, str]]) -> str:
                 continue
             # Fallback không cố map span perfect. Lấy tail surface tương đối đủ dùng.
             return clean_surface(tail_norm)
+    return ""
+
+
+def _extract_identity_name(raw: str) -> tuple[str, bool] | None:
+    """Bắt các câu khai báo/correction tên ở tầng MeaningFrame.
+
+    Dùng `_extract_after()` để match trên bản normalize không dấu nhưng lấy lại
+    surface gốc có dấu. Regex trực tiếp với tiếng Việt dễ trượt ở chữ như "tên"
+    vì dấu thanh nằm trên nguyên âm ghép. Một trò Unicode nhỏ, đủ làm memory ngu.
+    """
+
+    corrected_cues = (
+        ("thuc ra ten that cua toi la", "name"),
+        ("thuc ra ten that toi la", "name"),
+        ("thuc ra toi ten la", "name"),
+        ("thuc ra toi ten", "name"),
+        ("ten that cua toi la", "name"),
+        ("ten that toi la", "name"),
+        ("ten that cua toi", "name"),
+        ("ten that toi", "name"),
+    )
+    value = _extract_after(raw, corrected_cues)
+    if value and len(value) <= 60:
+        return value, True
+
+    regular_cues = (
+        ("toi ten la", "name"),
+        ("toi ten", "name"),
+        ("minh ten la", "name"),
+        ("minh ten", "name"),
+        ("tui ten la", "name"),
+        ("tui ten", "name"),
+        ("em ten la", "name"),
+        ("em ten", "name"),
+        ("ten cua toi la", "name"),
+        ("ten toi la", "name"),
+        ("my name is", "name"),
+        ("call me", "name"),
+    )
+    value = _extract_after(raw, regular_cues)
+    if value and len(value) <= 60:
+        return value, False
+    return None
+
+def _extract_study_field(raw: str) -> str:
+    """Rút ngành/lĩnh vực học từ self-disclosure ngắn.
+
+    Đây là fact profile hiện tại, không phải world/current-info. Vì vậy nó nên đi
+    theo user_text -> semantic_memory thay vì bị source grounding kéo sang web.
+    """
+
+    patterns = (
+        r"(?:^|\b)(?:tôi|toi|mình|minh|tui|em|i)\s+(?:đang\s+)?học\s+(?:ngành\s+)?(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
+        r"(?:^|\b)(?:ngành\s+học\s+(?:của\s+)?(?:tôi|toi|mình|minh|tui|em)\s+(?:là|la)\s+)(.+?)(?=$|[.,;!?])",
+        r"(?:^|\b)(?:i\s+study|i\s+am\s+studying)\s+(.+?)(?=$|[.,;!?])",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw, flags=re.IGNORECASE | re.UNICODE)
+        if not match:
+            continue
+        value = clean_surface(match.group(1))
+        if value and 1 <= len(value) <= 80:
+            return value
     return ""
 
 
@@ -432,6 +518,8 @@ def _infer_frame_type(relation: str) -> str:
     r = relation.lower()
     if r in {"name", "name_is", "birth_year", "birth_year_is", "birth_month", "birth_month_is", "age", "age_observed_is"}:
         return "identity"
+    if r in {"study_field", "study_field_is", "education_field", "education_field_is"}:
+        return "project"
     if "location" in r or r in {"hometown", "living_location", "current_location", "hometown_is", "living_location_is", "current_location_is"}:
         return "location"
     if "pref" in r or r in {"likes", "dislikes", "general_preference", "preference_location"}:

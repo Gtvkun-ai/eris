@@ -43,7 +43,7 @@ class ClaimEntailmentEngine:
     """Engine entailment giữa SemanticClaim và SemanticQueryIntent."""
 
     def evaluate(self, claim: SemanticClaim, query: SemanticQueryIntent | str) -> ClaimEntailmentDecision:
-        intent = compile_semantic_query(query) if isinstance(query, str) else query
+        intent = compile_semantic_query(query, allow_fallback=True) if isinstance(query, str) else query
         if not intent.is_known:
             return ClaimEntailmentDecision(EntailmentType.UNKNOWN, 0.0, "unknown_query_intent")
         if claim.subject != intent.subject:

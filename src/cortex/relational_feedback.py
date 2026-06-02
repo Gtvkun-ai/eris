@@ -173,6 +173,7 @@ class RelationalFeedbackAnalyzer:
     )
     _ROBOTIC = (
         "robot", "may moc", "nhu may", "nhu bot", "chatbot", "assistant", "support",
+        "camera", "nhu camera", "giong camera", "bao cao man hinh",
         "corporate", "hanh chinh", "form mau", "policy", "doc bien ban",
     )
     _LIFELESS = (

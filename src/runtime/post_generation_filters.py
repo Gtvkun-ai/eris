@@ -36,7 +36,68 @@ class PostGenerationFiltersMixin:
             pass
         return decision
 
+    def _record_agent_mind_feedback_from_user(self, user_text: str, *, frame=None) -> tuple[str, ...]:
+        """Ghi feedback semantic vào Persistent Agent Mind Layer nếu user đang phản hồi hành vi.
+
+        Câu như "đừng hỏi dồn", "nói vậy sống hơn", "đừng nói như camera"
+        không nên nằm chết trong chat history. Nó phải thành habit/preference mềm
+        cho impulse scoring. Nhưng cũng không được biến thành luật cứng, vì một
+        câu cáu lúc 2 giờ sáng không nên cai trị cả runtime.
+        """
+        try:
+            from cortex.agent_mind_persistence import get_default_agent_mind_store
+        except Exception:
+            return ()
+        try:
+            # Ưu tiên last_cognitive_frame vì feedback hiện tại thường nhắm vào
+            # lượt vừa thấy, không phải action_plan đang được dựng cho câu trả lời mới.
+            previous_frame = getattr(self, "last_cognitive_frame", None)
+            action_plan = getattr(previous_frame, "action_plan", None) or getattr(frame, "action_plan", None)
+            if action_plan is None:
+                return ()
+            tags: list[str] = []
+            report = getattr(action_plan, "impulse_arbitration", {}) or {}
+            if isinstance(report, dict):
+                selected = report.get("selected")
+                if isinstance(selected, dict):
+                    tags.extend(str(item) for item in selected.get("evidence", ()) if str(item or "").strip())
+
+            # P3: feedback về giọng/hiện diện đi vào AgentMind/HabitMemory, không
+            # nhét vào semantic_memory như fact tĩnh. RelationalFeedbackAnalyzer
+            # chỉ sinh signal mềm; store mới quyết định habit/preference/belief.
+            try:
+                from cortex.relational_feedback import RelationalFeedbackAnalyzer
+                previous_text = str(getattr(previous_frame, "final_text", "") or getattr(self, "last_text", "") or "")
+                feedback = RelationalFeedbackAnalyzer().analyze(user_text, previous_assistant_text=previous_text)
+                if getattr(feedback, "detected", False):
+                    tags.extend(("relational_feedback", f"rel_feedback:{feedback.kind}"))
+                    if feedback.kind in {"robotic_feedback", "too_formal_feedback", "lifeless_feedback"}:
+                        tags.extend(("camera_voice", "style"))
+                    if feedback.kind in {"coldness_feedback", "distance_feedback"}:
+                        tags.extend(("distance", "warmth_request"))
+                elif str(getattr(feedback, "kind", "") or "") == "tone_acceptance":
+                    tags.extend(("relational_feedback", "tone_acceptance"))
+            except Exception:
+                pass
+
+            store = getattr(getattr(self, "memory_core", None), "agent_mind", None) or get_default_agent_mind_store()
+            markers = store.record_user_feedback(
+                user_text,
+                action_plan=action_plan,
+                context_tags=tuple(dict.fromkeys(tags)),
+            )
+            return tuple(markers or ())
+        except Exception as exc:
+            try:
+                self.logger.warning("Agent mind feedback record error: %s", exc)
+            except Exception:
+                pass
+            return ()
+
     def _apply_chat_final_guards(self, decision: Decision, *, user_text: str, frame=None) -> Decision:
+        feedback_markers = self._record_agent_mind_feedback_from_user(user_text, frame=frame)
+        if feedback_markers:
+            decision = self._trace_only_guard(decision, "agent_mind_feedback=" + ",".join(feedback_markers[:6]))
         state = None
         try:
             state = self._get_internal_state()
@@ -650,6 +711,97 @@ class PostGenerationFiltersMixin:
             return texture
         return ""
 
+    def _arbitration_report_from_speech_core(self, speech_core: AgentSpeechCore | None) -> dict:
+        """Lấy arbitration_report từ SpeechCore nếu có.
+
+        Guard dùng cái này để phân biệt: motive inference có evidence thật hay
+        chỉ là mindreading mặc áo văn chương. Regex không đủ thông minh cho việc
+        đó, bất ngờ ghê.
+        """
+        try:
+            impulse = getattr(speech_core, "speech_impulse", None) if speech_core is not None else None
+            report = getattr(impulse, "arbitration_report", None) if impulse is not None else None
+            return dict(report) if isinstance(report, dict) else {}
+        except Exception:
+            return {}
+
+    def _selected_impulse_from_arbitration(self, report: dict) -> tuple[str, dict]:
+        selected = report.get("selected") if isinstance(report, dict) else None
+        if isinstance(selected, dict):
+            return str(selected.get("name") or ""), selected
+        return "", {}
+
+    def _arbitration_selected_has_evidence(self, selected: dict) -> bool:
+        evidence = selected.get("evidence", ()) if isinstance(selected, dict) else ()
+        return bool(evidence)
+
+    def _mindreading_is_grounded_task_or_scene(self, text: str, *, selected_impulse: str, selected: dict) -> bool:
+        """Cho phép suy diễn động cơ nông nếu nó bám scene/task evidence.
+
+        Cho phép: "có vẻ Ngài đang debug/test/xem log" khi technical_help_impulse
+        có evidence.
+        Không cho: "Ngài đang buồn/mệt/cần được..." vì đó là claim tâm lý sâu.
+        """
+        normalized = self._normalize_user_message(text)
+        if not self._arbitration_selected_has_evidence(selected):
+            return False
+        deep_state_markers = ("buon", "met", "cang", "can mot", "can duoc", "co don", "so", "dau")
+        if any(marker in normalized for marker in deep_state_markers):
+            return False
+        task_markers = ("debug", "test", "sua", "fix", "log", "loi", "code", "parser", "contract", "pytest")
+        scene_markers = ("xem", "nhin", "doc", "mo", "youtube", "video", "game")
+        if selected_impulse == "technical_help_impulse" and any(marker in normalized for marker in task_markers):
+            return True
+        if selected_impulse == "scene_curiosity_impulse" and any(marker in normalized for marker in scene_markers):
+            return True
+        return False
+
+    def _arbitration_rewrite_for_mindreading(
+        self,
+        *,
+        text: str,
+        speech_core: AgentSpeechCore,
+        snapshot=None,
+        momentum_topic: str = "",
+    ) -> tuple[str, str, bool]:
+        """Rewrite mindreading bằng arbitration_report.
+
+        Return: (replacement, marker, allow_original). Nếu allow_original=True thì
+        guard chỉ ghi trace, không sửa text.
+        """
+        report = self._arbitration_report_from_speech_core(speech_core)
+        selected_impulse, selected = self._selected_impulse_from_arbitration(report)
+        if not selected_impulse:
+            return "", "", False
+        if self._mindreading_is_grounded_task_or_scene(text, selected_impulse=selected_impulse, selected=selected):
+            return "", f"arbitration_mindreading_guard=allow_grounded:{selected_impulse}", True
+
+        if selected_impulse == "scene_curiosity_impulse":
+            replacement = self._small_soft_fallback_ladder_text(
+                snapshot=snapshot,
+                momentum_topic=momentum_topic,
+            ) or "Tôi chỉ bám vào cảnh hiện tại thôi. Một nhận xét nhỏ thì được, đoán sâu hơn thì không sạch."
+            return replacement, "arbitration_mindreading_guard=rewrite_scene_curiosity", False
+        if selected_impulse == "technical_help_impulse":
+            return (
+                "Tôi chỉ bám vào dấu hiệu kỹ thuật hiện có. Nếu đang debug thì nên soi evidence/log gần nhất trước, không cần đoán tâm trạng Ngài.",
+                "arbitration_mindreading_guard=rewrite_technical_help",
+                False,
+            )
+        if selected_impulse in {"companionship_impulse", "inner_whim_impulse", "micro_story_impulse"}:
+            return (
+                "Tôi không đoán tâm trạng Ngài hộ đâu. Tôi giữ một nhịp nhỏ ở đây thôi.",
+                f"arbitration_mindreading_guard=rewrite_internal:{selected_impulse}",
+                False,
+            )
+        if selected_impulse in {"silence_impulse", "body_only_impulse"}:
+            return (
+                "Ít evidence để đoán sâu. Tôi giữ im phần đó.",
+                f"arbitration_mindreading_guard=rewrite_quiet:{selected_impulse}",
+                False,
+            )
+        return "", "", False
+
     def _apply_anti_mindreading_filter(
         self,
         decision: Decision,
@@ -672,7 +824,17 @@ class PostGenerationFiltersMixin:
             return decision
 
         replacement = ""
-        if speech_core.utterance_type == "curious_question":
+        arbitration_replacement, arbitration_marker, allow_original = self._arbitration_rewrite_for_mindreading(
+            text=decision.text or "",
+            speech_core=speech_core,
+            snapshot=snapshot,
+            momentum_topic=momentum_topic,
+        )
+        if allow_original:
+            return self._trace_only_guard(decision, arbitration_marker or "arbitration_mindreading_guard=allow")
+        if arbitration_replacement:
+            replacement = arbitration_replacement
+        elif speech_core.utterance_type == "curious_question":
             shaped = self._reshape_statement_as_question(decision.text or "")
             if shaped and not self._is_near_duplicate_text(shaped, self.last_text):
                 replacement = shaped
@@ -688,23 +850,12 @@ class PostGenerationFiltersMixin:
                 snapshot=snapshot,
                 momentum_topic=momentum_topic,
             )
-        trace = decision.debug_trace or ""
-        filtered_trace = f"{trace} | anti_mindreading_filter" if trace else "anti_mindreading_filter"
-        return Decision(
+        marker = arbitration_marker or "anti_mindreading_filter"
+        return self._copy_decision_with_text(
+            decision,
             text=replacement,
-            animation=decision.animation or "stand",
-            direction=decision.direction,
-            next_animation=decision.next_animation,
-            target_x=decision.target_x,
-            bounce_action=decision.bounce_action,
-            debug_trace=filtered_trace,
-            parser_trace=decision.parser_trace,
-            parse_mode=decision.parse_mode,
-            system_action="",
-            action_input="",
-            motion_intent=decision.motion_intent,
-            motion_target_x=decision.motion_target_x,
-            motion_facing=decision.motion_facing,
+            trace_marker=marker,
+            parse_mode="arbitration_mindreading_guard" if arbitration_marker else decision.parse_mode,
         )
 
     def _guard_force_speak_repetition(

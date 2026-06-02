@@ -1,862 +1,263 @@
 {
   "version": 2,
   "kind": "semantic_memory",
-  "updated_at": "2026-06-01T19:25:01+0700",
+  "updated_at": "2026-06-02T10:47:17+0700",
   "items": [
     {
-      "id": "sem_67edb42ed3bc",
-      "claim": "User greeted ERIS with 'hello eris cưng'.",
+      "id": "sem_66bb70a88232",
+      "claim": "User's name is Hoà",
       "domain": "user",
-      "confidence": 0.802,
+      "confidence": 0.862,
       "source": "state_commit",
       "evidence_ids": [
-        "percept:user_message:18:21:0",
-        "percept:user_message:20:37:0",
-        "percept:user_message:21:08:0",
-        "percept:user_message:21:09:0",
-        "percept:user_message:09:09:0",
-        "percept:user_message:13:34:0",
-        "percept:user_message:15:56:0"
+        "session_turn:5"
       ],
-      "observations": 7,
+      "observations": 1,
       "status": "active",
-      "first_seen_at": "2026-05-27T18:21:57+0700",
-      "updated_at": "2026-05-31T15:56:53+0700",
+      "first_seen_at": "2026-06-02T10:45:23+0700",
+      "updated_at": "2026-06-02T10:45:23+0700",
       "decay_policy": "slow",
       "contradiction_ids": [],
       "tags": [
         "commit",
-        "project",
-        "eris",
-        "semantic",
-        "extracted_fact",
-        "grounded",
+        "typed_fact",
+        "user_identity.name",
+        "semantic_memory"
+      ],
+      "metadata": {
+        "fact_key": "user.name",
+        "value": "Hoà",
+        "aliases": [
+          "tên",
+          "ten",
+          "name",
+          "preferred name"
+        ],
+        "raw_user_text": "tôi tên là Hoà",
+        "semantic_claim": {
+          "claim_id": "claim_508e809ffb9cdccb",
+          "subject": "user",
+          "predicate": "name_is",
+          "object_text": "Hoà",
+          "object_value": "Hoà",
+          "object_type": "person_name",
+          "assertion": "asserted",
+          "modality": "fact",
+          "temporal": "stable",
+          "scope": "self",
+          "source": "user_text",
+          "confidence": 0.8619999999999999,
+          "evidence_text": "tôi tên là Hoà",
+          "evidence_ids": [
+            "session_turn:5"
+          ],
+          "observed_at": 1780371923.9657462,
+          "valid_from": null,
+          "valid_until": null,
+          "stability": "stable",
+          "qualifiers": {
+            "meaning_frame": {
+              "frame_type": "identity",
+              "relation": "name",
+              "subject": "user",
+              "target": {
+                "text": "Hoà",
+                "kind": "person_name",
+                "canonical": "hoa",
+                "confidence": 0.78,
+                "metadata": {}
+              },
+              "polarity": "asserted",
+              "modality": "fact",
+              "time_scope": "stable",
+              "scope": "self",
+              "certainty": 0.88,
+              "stability": "stable",
+              "evidence_span": "tôi tên là Hoà",
+              "source": "user_text",
+              "slots": {},
+              "warnings": [
+                "fallback_surface_frame"
+              ]
+            },
+            "pipeline": "meaning_frame_claim_builder"
+          }
+        },
+        "predicate": "name_is",
+        "subject": "user",
+        "object_type": "person_name",
+        "assertion": "asserted",
+        "modality": "fact",
+        "temporal": "stable",
+        "scope": "self",
+        "source_grounded": true,
+        "semantic_source": "semantic_claim_extractor",
+        "extraction": "semantic_claim_pipeline",
+        "importance": 0.96,
+        "retention_class": "long_term",
+        "revisit_after_seconds": null,
+        "prune_after_seconds": null,
+        "promote_if_observed": 1,
+        "demote_if_unaccessed_days": 365,
+        "retention_reason": "claim_is_memory_worthy",
+        "retention_warnings": [],
+        "memory_kind": "user_identity.name",
+        "surface_mode": "exact",
+        "source": "MemoryCommitPolicy",
+        "permission": "user_provided",
+        "commit_kind": "semantic_commit",
+        "memory_kernel_mode": "fast",
+        "memory_kernel_source": "chat_turn",
+        "memory_kernel_context": {
+          "frame_id": "",
+          "channel": "chat"
+        },
+        "raw_content": {
+          "fact": "User's name is Hoà",
+          "source": "semantic_claim_extractor",
+          "kind": "user_identity.name",
+          "surface": "Hoà",
+          "value": "Hoà"
+        },
+        "reason": "memory_commit_policy:user_identity.name",
+        "fact_profile_evidence": [
+          "metadata.fact_key"
+        ],
+        "embedding_text_hash": "44c35fc04d160035",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
+      }
+    },
+    {
+      "id": "sem_bb86265862d5",
+      "claim": "Người dùng nêu preference: coca",
+      "domain": "user",
+      "confidence": 0.6342,
+      "source": "state_commit",
+      "evidence_ids": [
+        "session_turn:7",
+        "session_turn:9"
+      ],
+      "observations": 2,
+      "status": "tentative",
+      "first_seen_at": "2026-06-02T10:45:46+0700",
+      "updated_at": "2026-06-02T10:45:57+0700",
+      "decay_policy": "normal",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "typed_fact",
+        "user.general_topic",
+        "semantic_memory",
         "merged"
       ],
       "metadata": {
-        "source": "CognitiveFrameRecorder",
-        "fact_index": 0,
-        "timestamp": "18:21",
-        "semantic_source": "decision_extracted_fact",
-        "source_grounded": true,
-        "grounding_source": "user_text",
-        "grounding_missing_evidence": [],
-        "grounding_preempt_mode": "",
-        "commit_status": "committed",
-        "validated_by": "StateCommitter",
-        "validated_at": 1779880917.5407145,
-        "frame_id": null,
-        "raw_content": {
-          "fact": "User greeted ERIS with 'chào eris cưng'.",
-          "source": "decision_extracted_fact",
-          "timestamp": "18:21",
-          "cycle_id": "chat-5"
-        },
-        "reason": "store explicit stable semantic fact",
-        "fact_key": "project.eris",
+        "fact_key": "user.preference.general",
+        "value": "coca",
         "aliases": [
-          "eris",
-          "project",
-          "runtime",
-          "pipeline",
-          "memory",
-          "architecture"
+          "sở thích",
+          "so thich",
+          "preference",
+          "thích",
+          "không thích"
         ],
-        "importance": 0.78,
+        "raw_user_text": "Tôi thích coca",
+        "semantic_claim": {
+          "claim_id": "claim_6b68bf4e5c8ec3c7",
+          "subject": "user",
+          "predicate": "general_preference",
+          "object_text": "coca",
+          "object_value": "coca",
+          "object_type": "unknown",
+          "assertion": "asserted",
+          "modality": "preference",
+          "temporal": "current",
+          "scope": "self",
+          "source": "user_text",
+          "confidence": 0.6222,
+          "evidence_text": "Tôi thích coca",
+          "evidence_ids": [
+            "session_turn:7"
+          ],
+          "observed_at": 1780371946.8431497,
+          "valid_from": null,
+          "valid_until": null,
+          "stability": "medium",
+          "qualifiers": {
+            "meaning_frame": {
+              "frame_type": "preference",
+              "relation": "likes",
+              "subject": "user",
+              "target": {
+                "text": "coca",
+                "kind": "unknown",
+                "canonical": "coca",
+                "confidence": 0.45,
+                "metadata": {}
+              },
+              "polarity": "asserted",
+              "modality": "preference",
+              "time_scope": "current",
+              "scope": "self",
+              "certainty": 0.66,
+              "stability": "medium",
+              "evidence_span": "Tôi thích coca",
+              "source": "user_text",
+              "slots": {},
+              "warnings": [
+                "fallback_surface_frame"
+              ]
+            },
+            "pipeline": "meaning_frame_claim_builder"
+          }
+        },
+        "predicate": "general_preference",
+        "subject": "user",
+        "object_type": "unknown",
+        "assertion": "asserted",
+        "modality": "preference",
+        "temporal": "current",
+        "scope": "self",
+        "source_grounded": true,
+        "semantic_source": "semantic_claim_extractor",
+        "extraction": "semantic_claim_pipeline",
+        "importance": 0.62,
+        "retention_class": "medium_term",
+        "revisit_after_seconds": null,
+        "prune_after_seconds": null,
+        "promote_if_observed": 2,
+        "demote_if_unaccessed_days": 60,
+        "retention_reason": "claim_is_memory_worthy",
+        "retention_warnings": [],
+        "memory_kind": "user.general_topic",
+        "surface_mode": "semantic",
+        "source": "MemoryCommitPolicy",
+        "permission": "user_provided",
+        "commit_kind": "semantic_commit",
+        "memory_kernel_mode": "fast",
+        "memory_kernel_source": "chat_turn",
+        "memory_kernel_context": {
+          "frame_id": "",
+          "channel": "chat"
+        },
+        "raw_content": {
+          "fact": "Người dùng nêu preference: coca",
+          "source": "semantic_claim_extractor",
+          "kind": "user.general_topic",
+          "surface": "coca",
+          "value": "coca"
+        },
+        "reason": "memory_commit_policy:user.general_topic",
         "fact_profile_evidence": [
-          "claim:project.eris"
+          "metadata.fact_key"
         ],
-        "embedding_text_hash": "15628b018376c318",
+        "embedding_text_hash": "5735c39355f15137",
         "embedding_version": 1,
         "access_count": 0,
         "last_accessed_at": "",
-        "previous_claims": [
-          "User greeted ERIS with 'chào eris cưng'.",
-          "User said 'xin chào eris'",
-          "User asked for ERIS's name.",
-          "User asked if ERIS knows what it just said.",
-          "User is asking for ERIS's opinion/reaction to their previous greeting/interaction.",
-          "User greeted ERIS with 'xin chào eris cưng'."
-        ],
-        "last_merge_reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_4564c1e1d8ad",
-      "claim": "User is coding a CommitBatchReport dataclass for StateCommitter.",
-      "domain": "user",
-      "confidence": 0.73,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:19:07:0",
-        "percept:user_message:19:08:0",
-        "percept:user_message:20:27:0",
-        "percept:user_message:14:09:0"
-      ],
-      "observations": 4,
-      "status": "active",
-      "first_seen_at": "2026-05-24T19:07:35+0700",
-      "updated_at": "2026-05-25T14:09:27+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_cc18fe5a3c62",
-      "claim": "User is questioning the use of the term 'semantic'.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:16:59:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-31T17:00:07+0700",
-      "updated_at": "2026-05-31T17:00:07+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit",
-        "semantic",
-        "extracted_fact",
-        "grounded"
-      ],
-      "metadata": {
-        "source": "CognitiveFrameRecorder",
-        "fact_index": 0,
-        "timestamp": "16:59",
-        "semantic_source": "decision_extracted_fact",
-        "source_grounded": true,
-        "grounding_source": "user_text",
-        "grounding_missing_evidence": [],
-        "grounding_preempt_mode": "",
-        "commit_status": "committed",
-        "validated_by": "StateCommitter",
-        "validated_at": 1780221607.9426904,
-        "frame_id": null,
-        "raw_content": {
-          "fact": "User is questioning the use of the term 'semantic'.",
-          "source": "decision_extracted_fact",
-          "timestamp": "16:59",
-          "cycle_id": "chat-3"
-        },
-        "reason": "store explicit stable semantic fact",
-        "fact_key": "",
-        "aliases": [],
-        "importance": 0.5,
-        "fact_profile_evidence": [],
-        "embedding_text_hash": "69fc2eb947a6b0f0",
-        "embedding_version": 1,
-        "access_count": 0,
-        "last_accessed_at": ""
-      }
-    },
-    {
-      "id": "sem_a692cf013995",
-      "claim": "User used slang 'lô em'",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:13:33:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-30T13:33:49+0700",
-      "updated_at": "2026-05-30T13:33:49+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit",
-        "semantic",
-        "extracted_fact",
-        "grounded"
-      ],
-      "metadata": {
-        "source": "CognitiveFrameRecorder",
-        "fact_index": 0,
-        "timestamp": "13:33",
-        "semantic_source": "decision_extracted_fact",
-        "source_grounded": true,
-        "grounding_source": "user_text",
-        "grounding_missing_evidence": [],
-        "grounding_preempt_mode": "",
-        "commit_status": "committed",
-        "validated_by": "StateCommitter",
-        "validated_at": 1780122829.4870276,
-        "frame_id": null,
-        "raw_content": {
-          "fact": "User used slang 'lô em'",
-          "source": "decision_extracted_fact",
-          "timestamp": "13:33",
-          "cycle_id": "chat-1"
-        },
-        "reason": "store explicit stable semantic fact",
-        "fact_key": "",
-        "aliases": [],
-        "importance": 0.5,
-        "fact_profile_evidence": [],
-        "embedding_text_hash": "02014fcdc8b6b690",
-        "embedding_version": 1,
-        "access_count": 0,
-        "last_accessed_at": ""
-      }
-    },
-    {
-      "id": "sem_9d4ae1d0405d",
-      "claim": "User expressed dissatisfaction with the previous response quality.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:09:09:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-28T09:10:16+0700",
-      "updated_at": "2026-05-28T09:10:16+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit",
-        "semantic",
-        "extracted_fact",
-        "grounded"
-      ],
-      "metadata": {
-        "source": "CognitiveFrameRecorder",
-        "fact_index": 0,
-        "timestamp": "09:09",
-        "semantic_source": "decision_extracted_fact",
-        "source_grounded": true,
-        "grounding_source": "user_text",
-        "grounding_missing_evidence": [],
-        "grounding_preempt_mode": "",
-        "commit_status": "committed",
-        "validated_by": "StateCommitter",
-        "validated_at": 1779934216.4931998,
-        "frame_id": null,
-        "raw_content": {
-          "fact": "User expressed dissatisfaction with the previous response quality.",
-          "source": "decision_extracted_fact",
-          "timestamp": "09:09",
-          "cycle_id": "chat-3"
-        },
-        "reason": "store explicit stable semantic fact",
-        "fact_key": "",
-        "aliases": [],
-        "importance": 0.5,
-        "fact_profile_evidence": [],
-        "embedding_text_hash": "e9d903f7e094c390",
-        "embedding_version": 1,
-        "access_count": 0,
-        "last_accessed_at": ""
-      }
-    },
-    {
-      "id": "sem_a0d49d380094",
-      "claim": "Ngài nhận xét tôi lạnh lùng.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:21:10:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T21:10:19+0700",
-      "updated_at": "2026-05-27T21:10:19+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit",
-        "semantic",
-        "extracted_fact",
-        "grounded"
-      ],
-      "metadata": {
-        "source": "CognitiveFrameRecorder",
-        "fact_index": 0,
-        "timestamp": "21:10",
-        "semantic_source": "decision_extracted_fact",
-        "source_grounded": true,
-        "grounding_source": "user_text",
-        "grounding_missing_evidence": [],
-        "grounding_preempt_mode": "",
-        "commit_status": "committed",
-        "validated_by": "StateCommitter",
-        "validated_at": 1779891019.5697482,
-        "frame_id": null,
-        "raw_content": {
-          "fact": "Ngài nhận xét tôi lạnh lùng.",
-          "source": "decision_extracted_fact",
-          "timestamp": "21:10",
-          "cycle_id": "chat-5"
-        },
-        "reason": "store explicit stable semantic fact",
-        "fact_key": "",
-        "aliases": [],
-        "importance": 0.5,
-        "fact_profile_evidence": [],
-        "embedding_text_hash": "5aec00385d264dea",
-        "embedding_version": 1,
-        "access_count": 0,
-        "last_accessed_at": ""
-      }
-    },
-    {
-      "id": "sem_e2c34b780f6f",
-      "claim": "Ngài nhận xét tôi rất lạnh lùng.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:21:09:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T21:09:45+0700",
-      "updated_at": "2026-05-27T21:09:45+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit",
-        "semantic",
-        "extracted_fact",
-        "grounded"
-      ],
-      "metadata": {
-        "source": "CognitiveFrameRecorder",
-        "fact_index": 0,
-        "timestamp": "21:09",
-        "semantic_source": "decision_extracted_fact",
-        "source_grounded": true,
-        "grounding_source": "user_text",
-        "grounding_missing_evidence": [],
-        "grounding_preempt_mode": "",
-        "commit_status": "committed",
-        "validated_by": "StateCommitter",
-        "validated_at": 1779890985.0936124,
-        "frame_id": null,
-        "raw_content": {
-          "fact": "Ngài nhận xét tôi rất lạnh lùng.",
-          "source": "decision_extracted_fact",
-          "timestamp": "21:09",
-          "cycle_id": "chat-4"
-        },
-        "reason": "store explicit stable semantic fact",
-        "fact_key": "",
-        "aliases": [],
-        "importance": 0.5,
-        "fact_profile_evidence": [],
-        "embedding_text_hash": "45197b102d1e9903",
-        "embedding_version": 1,
-        "access_count": 0,
-        "last_accessed_at": ""
-      }
-    },
-    {
-      "id": "sem_81089897467f",
-      "claim": "User expressed confusion/surprise with 'gì vậy trời'.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:20:43:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T20:44:05+0700",
-      "updated_at": "2026-05-27T20:44:05+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit",
-        "semantic",
-        "extracted_fact",
-        "grounded"
-      ],
-      "metadata": {
-        "source": "CognitiveFrameRecorder",
-        "fact_index": 0,
-        "timestamp": "20:43",
-        "semantic_source": "decision_extracted_fact",
-        "source_grounded": true,
-        "grounding_source": "user_text",
-        "grounding_missing_evidence": [],
-        "grounding_preempt_mode": "",
-        "commit_status": "committed",
-        "validated_by": "StateCommitter",
-        "validated_at": 1779889445.8391495,
-        "frame_id": null,
-        "raw_content": {
-          "fact": "User expressed confusion/surprise with 'gì vậy trời'.",
-          "source": "decision_extracted_fact",
-          "timestamp": "20:43",
-          "cycle_id": "chat-3"
-        },
-        "reason": "store explicit stable semantic fact",
-        "fact_key": "",
-        "aliases": [],
-        "importance": 0.5,
-        "fact_profile_evidence": [],
-        "embedding_text_hash": "8d1158d136b29ddb",
-        "embedding_version": 1,
-        "access_count": 0,
-        "last_accessed_at": ""
-      }
-    },
-    {
-      "id": "sem_e49988b88bc4",
-      "claim": "Ngài xác nhận cách gọi và yêu cầu tôi trả lời đúng trọng tâm, không suy diễn.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:20:42:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T20:42:41+0700",
-      "updated_at": "2026-05-27T20:42:41+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit",
-        "semantic",
-        "extracted_fact",
-        "grounded"
-      ],
-      "metadata": {
-        "source": "CognitiveFrameRecorder",
-        "fact_index": 0,
-        "timestamp": "20:42",
-        "semantic_source": "decision_extracted_fact",
-        "source_grounded": true,
-        "grounding_source": "user_text",
-        "grounding_missing_evidence": [],
-        "grounding_preempt_mode": "",
-        "commit_status": "committed",
-        "validated_by": "StateCommitter",
-        "validated_at": 1779889361.2832525,
-        "frame_id": null,
-        "raw_content": {
-          "fact": "Ngài xác nhận cách gọi và yêu cầu tôi trả lời đúng trọng tâm, không suy diễn.",
-          "source": "decision_extracted_fact",
-          "timestamp": "20:42",
-          "cycle_id": "chat-2"
-        },
-        "reason": "store explicit stable semantic fact",
-        "fact_key": "",
-        "aliases": [],
-        "importance": 0.5,
-        "fact_profile_evidence": [],
-        "embedding_text_hash": "a028f2aad7b4be72",
-        "embedding_version": 1,
-        "access_count": 0,
-        "last_accessed_at": ""
-      }
-    },
-    {
-      "id": "sem_691315bcf981",
-      "claim": "The user's first message in this session was 'em có nhớ tôi không'.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:12:06:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T12:06:55+0700",
-      "updated_at": "2026-05-27T12:06:55+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_78c68dd5a742",
-      "claim": "User asked if ERIS remembers reading a poem to them.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:12:02:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T12:02:57+0700",
-      "updated_at": "2026-05-27T12:02:57+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_441f06020c5b",
-      "claim": "User asked if ERIS knows what they are thinking.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:12:01:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T12:02:03+0700",
-      "updated_at": "2026-05-27T12:02:03+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_d81f247c22b3",
-      "claim": "User asked if ERIS remembers them.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:12:00:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T12:00:42+0700",
-      "updated_at": "2026-05-27T12:00:42+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_50737528b690",
-      "claim": "User asked about ERIS's capacity for empathy, liking, or hating.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:10:43:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T10:43:12+0700",
-      "updated_at": "2026-05-27T10:43:12+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_d0205a807c13",
-      "claim": "User asked for ERIS's impression of the Li Bai poem.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:10:42:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T10:42:24+0700",
-      "updated_at": "2026-05-27T10:42:24+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_2386d052edc9",
-      "claim": "User requested to read a poem.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:10:40:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T10:40:43+0700",
-      "updated_at": "2026-05-27T10:40:43+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_412176379964",
-      "claim": "User asked if ERIS knows how to read Li Bai's poetry.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:10:40:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-27T10:40:21+0700",
-      "updated_at": "2026-05-27T10:40:21+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_a29ea2cdb681",
-      "claim": "User said 'ủa alo'",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:22:52:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-26T22:52:37+0700",
-      "updated_at": "2026-05-26T22:52:37+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_eabeac779b02",
-      "claim": "User expressed surprise/confusion with 'gì vậy trời'.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:22:52:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-26T22:52:27+0700",
-      "updated_at": "2026-05-26T22:52:27+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_b243be1d67bf",
-      "claim": "User confirmed the previous statement.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:22:52:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-26T22:52:19+0700",
-      "updated_at": "2026-05-26T22:52:19+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_9f455c8c06d7",
-      "claim": "User asked if ERIS is real.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:14:16:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-25T14:16:58+0700",
-      "updated_at": "2026-05-25T14:16:58+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_fcdb4c0608f4",
-      "claim": "User dislikes ERIS's way of answering.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:14:15:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-25T14:16:06+0700",
-      "updated_at": "2026-05-25T14:16:06+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_a9b0d3d1b64e",
-      "claim": "User stated 'Tôi ổn' (I am fine).",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:14:13:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-25T14:14:10+0700",
-      "updated_at": "2026-05-25T14:14:10+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_8ec87c639b4c",
-      "claim": "User repeated the phrase 'ERIS chỉ là con bot thôi mà'.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:14:13:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-25T14:13:44+0700",
-      "updated_at": "2026-05-25T14:13:44+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_4a1b3fc14a17",
-      "claim": "User expressed frustration that people misinterpret their use of the phrase 'ngu quá' as anger.",
-      "domain": "user",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:14:07:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-25T14:08:18+0700",
-      "updated_at": "2026-05-25T14:08:18+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_216198daf83c",
-      "claim": "@dataclass(slots=True)class CommitBatchReport: định nghĩa cấu trúc báo cáo kiểm toán cho StateCommitter.commit(...).",
-      "domain": "unknown",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:19:06:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-24T19:06:36+0700",
-      "updated_at": "2026-05-24T19:06:36+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
-      }
-    },
-    {
-      "id": "sem_d92d871f35ce",
-      "claim": "state_committer.py đang thực hiện việc ghi nhận và lưu trữ các trạng thái hiện tại của ERIS.",
-      "domain": "self",
-      "confidence": 0.64,
-      "source": "state_commit",
-      "evidence_ids": [
-        "percept:user_message:19:03:0"
-      ],
-      "observations": 1,
-      "status": "tentative",
-      "first_seen_at": "2026-05-24T19:04:13+0700",
-      "updated_at": "2026-05-24T19:04:13+0700",
-      "decay_policy": "slow",
-      "contradiction_ids": [],
-      "tags": [
-        "commit"
-      ],
-      "metadata": {
-        "reason": "store explicit stable semantic fact"
+        "previous_claims": [],
+        "last_merge_reason": "memory_commit_policy:user.general_topic"
       }
     }
   ]

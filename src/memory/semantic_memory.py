@@ -741,6 +741,7 @@ class SemanticMemoryStore:
                 evidence_ids=evidence_ids,
                 profile=profile,
                 reason=reason,
+                request_metadata=request_metadata,
                 now=now,
             )
             self.save(items)
@@ -832,6 +833,7 @@ class SemanticMemoryStore:
         evidence_ids: list[str],
         profile: FactProfile,
         reason: str,
+        request_metadata: Mapping[str, Any],
         now: str,
     ) -> None:
         """Merge claim mới vào item cũ.
@@ -840,7 +842,7 @@ class SemanticMemoryStore:
         Ta tăng contradiction marker để downstream biết phải cẩn thận.
         """
 
-        conflict = self._detect_value_conflict(item, new_claim=claim, profile=profile)
+        conflict = self._detect_value_conflict(item, new_claim=claim, profile=profile, request_metadata=request_metadata)
         old_claim = item.claim
 
         item.observations += 1
@@ -895,7 +897,14 @@ class SemanticMemoryStore:
             score -= 0.08
         return clamp01(score)
 
-    def _detect_value_conflict(self, item: SemanticMemoryItem, *, new_claim: str, profile: FactProfile) -> bool:
+    def _detect_value_conflict(
+        self,
+        item: SemanticMemoryItem,
+        *,
+        new_claim: str,
+        profile: FactProfile,
+        request_metadata: Mapping[str, Any],
+    ) -> bool:
         """Bắt mâu thuẫn rõ cho vài fact_key có value đơn giản.
 
         Không cố làm natural language contradiction detection. Làm quá tay ở đây sẽ thành ToM rẻ tiền.
@@ -905,11 +914,30 @@ class SemanticMemoryStore:
         if not key:
             return False
 
-        old_value = self._extract_simple_value(item.claim, key)
-        new_value = self._extract_simple_value(new_claim, key)
+        old_value = item.semantic_value or self._extract_simple_value(item.claim, key)
+        new_value = self._extract_metadata_value(request_metadata, key) or self._extract_simple_value(new_claim, key)
         if not old_value or not new_value:
             return False
         return normalize_text(old_value) != normalize_text(new_value)
+
+    def _extract_metadata_value(self, metadata: Mapping[str, Any], fact_key: str) -> str:
+        data = _mapping(metadata)
+        raw_content = _mapping(data.get("raw_content"))
+        raw_meta = _mapping(raw_content.get("metadata"))
+        semantic_claim = _mapping(data.get("semantic_claim"))
+        if fact_key in {"user.current_location", "user.living_location", "user.hometown", "user.preference.location"}:
+            for value in (
+                data.get("value"),
+                raw_meta.get("value"),
+                raw_content.get("value"),
+                semantic_claim.get("object_value"),
+                semantic_claim.get("object_text"),
+            ):
+                clean = str(value or "").strip()
+                if clean:
+                    return clean
+            return ""
+        return ""
 
     def _extract_simple_value(self, claim: str, fact_key: str) -> str:
         normalized = normalize_text(claim)
@@ -932,9 +960,7 @@ class SemanticMemoryStore:
             return match.group(1).strip() if match else ""
 
         if fact_key in {"user.current_location", "user.living_location", "user.hometown", "user.preference.location"}:
-            # Ưu tiên metadata.value nếu có; regex claim tiếng Việt chỉ là fallback nghèo.
-            match = re.search(r"(?:o|tai|la|dia diem)\s+(.+)$", normalized)
-            return match.group(1).strip() if match else ""
+            return ""
 
         # Các fact phức tạp không nên tự detect conflict bằng regex.
         return ""
@@ -1384,10 +1410,11 @@ class SemanticMemoryStore:
         """
 
         metadata = dict(request_metadata or {})
+        legacy_profile_infer = bool(metadata.get("legacy_profile_infer") or metadata.get("migration_profile_infer"))
         normalized = normalize_text(" ".join((claim, reason, " ".join(request_tags))))
         target_norm = normalize_text(str(target or ""))
         reason_norm = normalize_text(reason)
-        profile = FactProfile(domain=self._infer_domain(claim, target), importance=0.50)
+        profile = FactProfile(domain="unknown", importance=0.50)
 
         explicit_key = str(metadata.get("fact_key") or "").strip()
         if explicit_key:
@@ -1398,6 +1425,11 @@ class SemanticMemoryStore:
             profile.evidence.append("metadata.fact_key")
             profile.tags.append("typed_fact")
             return profile
+
+        explicit_domain = str(metadata.get("domain") or "").strip()
+        if explicit_domain in {"user", "self", "world", "technical", "project", "relationship", "unknown"}:
+            profile.domain = explicit_domain  # type: ignore[assignment]
+            profile.evidence.append("metadata.domain")
 
         # Reason từ memory_commit_policy thường ổn định hơn claim text.
         if any(key in reason_norm for key in ("user_name", "username", "preferred_name")):
@@ -1426,6 +1458,17 @@ class SemanticMemoryStore:
             profile.tags.extend(["user_preference", "reply_style"])
             profile.evidence.append("reason:response_style")
             return profile
+
+        if not legacy_profile_infer:
+            if not profile.fact_key:
+                profile.tags.extend(["fact_key_missing_candidate", "legacy_infer_disabled"])
+                profile.evidence.append("candidate:missing_fact_key")
+            profile.tags = unique_keep_order([*profile.tags, *request_tags])
+            profile.aliases = unique_keep_order(profile.aliases)
+            profile.evidence = unique_keep_order(profile.evidence)
+            return profile
+
+        profile.domain = self._infer_domain(claim, target)
 
         # Claim parser nhẹ.
         if profile.domain == "user" and _matches_any(normalized, USER_NAME_PATTERNS):

@@ -190,6 +190,7 @@ class MemoryQueryIR:
     surface: SurfaceMode = SurfaceMode.EXACT
     confidence: float = 0.0
     ambiguity: float = 1.0
+    intercept_permission: bool = False
     evidence: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     raw_text: str = ""
@@ -203,6 +204,7 @@ class MemoryQueryIR:
             surface=self.surface,
             confidence=clamp01(self.confidence),
             ambiguity=clamp01(self.ambiguity),
+            intercept_permission=bool(self.intercept_permission),
             evidence=self.evidence,
             warnings=self.warnings,
             raw_text=self.raw_text,

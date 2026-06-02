@@ -216,6 +216,10 @@ class PromptContextBuilderMixin:
         rhythm_phase = str(getattr(action_plan, "rhythm_phase", "") or "settled")
         transition_reason = str(getattr(action_plan, "transition_reason", "") or "none")
         memory_pressure = " | ".join(getattr(action_plan, "memory_pressure", ()) or ()) or "none"
+        selected_impulse = str(getattr(action_plan, "selected_impulse", "") or "none")
+        impulse_scores = " | ".join(getattr(action_plan, "impulse_scores", ()) or ()) or "none"
+        body_bias_hint = getattr(action_plan, "body_bias_hint", {}) or {}
+        body_bias_line = ", ".join(f"{key}={value}" for key, value in list(body_bias_hint.items())[:6]) or "none"
         style_block = (
             "Reason to speak:\n"
             f"{reason}\n\n"
@@ -241,6 +245,9 @@ class PromptContextBuilderMixin:
             f"- rhythm_phase={rhythm_phase}\n"
             f"- transition_reason={transition_reason}\n"
             f"- memory_pressure={memory_pressure}\n"
+            f"- selected_impulse={selected_impulse}\n"
+            f"- impulse_scores={impulse_scores}\n"
+            f"- body_bias_hint={body_bias_line}\n"
             f"- risk_flags={flags}\n"
             f"- notes={notes}\n"
             f"{style_block}\n"

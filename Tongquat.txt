@@ -1,16 +1,39 @@
 TỔNG QUAN PROJECT ERIS
 ======================
 
-Cập nhật: 2026-06-01
 Mã hóa: UTF-8
 
-Bổ sung nhanh 2026-06-01:
+Logic hiện tại của ERIS nên được đọc như một pipeline nhiều tầng, không phải một chatbot gọi model rồi bơm text ra body.
+
+Khung logic chính:
+- Tầng cảm nhận nhận event/chat từ Godot, telemetry desktop, screen diff, OCR/vision facts và tín hiệu session; các lớp như `BackgroundObserver`, `SignalBuffer`, `VisionSemanticCompressor`, `RuntimeSensoryModelAdapter` chỉ nén tín hiệu và gợi wake decision, chưa tạo output public.
+- Tầng hiểu ngữ cảnh dùng `AttentionSalience`, `WorkingMemory`, `MeaningLayer`, `AffectSemanticSignal`, `ConversationDynamicsState`, `RelationshipDynamicsState` và `turn_semantics.py` để biến dữ liệu thô thành ý nghĩa hội thoại: user đang hỏi thẳng, sửa sai, ra lệnh, kéo boundary, hay chỉ tạo một cue mơ hồ.
+- Tầng nội trạng giữ continuity qua `internal_state.py`, `self_model.py`, `goal_persistence.py`, `thought_stream.py`, `social_presence.py`, `session_ritual.py`; `thought_stream.py` chủ yếu nuôi unresolved loop/attractor/momentum chứ không phải máy phát câu.
+- Tầng xung nội sinh giờ đi qua `agent_state_stack.py` và `impulse_arbitration.py`: evidence -> belief -> preference -> need -> trait -> habit -> affordance được gom thành contract trước ngôn ngữ, rồi nhiều impulse cạnh tranh bằng score thay vì hardcode “im lâu thì nói”.
+- `agent_mind_persistence.py` lưu belief/preference/habit mềm dài hạn để feedback của user ngấm vào hành vi và style, nhưng không biến một phản hồi đơn lẻ thành luật cứng.
+- Kết quả của nhánh nội sinh chỉ là `SpeechImpulse`, `arbitration_report` và `body_bias_hint`; nó vẫn phải đi qua `SpeechCore`, `ActionUtility`, `ActionPlanner`, `Ti` và `post_generation_filters` trước khi surface.
+- `LlmService` không chỉ gọi model; nó gắn chat-contract theo loại turn như `direct_question`, `command_style`, `identity_reduction`, `insult_provocation` để prompt có shape đúng ngay từ đầu.
+- `post_generation_filters.py` là hàng rào cuối cho output public: nó lọc protocol-surface, internal-object leak, memory-haunting, chat grounding, repetition/style drift và micro-line policy; đồng thời ghi một phần feedback hành vi của user vào `PersistentAgentMindStore`.
+- `MemoryCognitionCore` là facade trung tâm cho commit/recall/snapshot memory có cấu trúc; cần phân biệt `memory_core` là store đầy đủ, còn “long-term memory” flattened trong runtime chỉ là recall text dùng cho context/fallback.
+- `RuntimeCoordinator` là đầu mối điều phối, nhưng logic đã tản bớt sang `session_turn_ledger`, `public_turn_ledger`, `memory_recall_adapter`, `state_commit_service`, `frame_builder`, `prompt_context_builder`, `source_grounding` và các gate wake path.
+- Tầng body dùng `UdpListener.cs`, `LocalBodyAutonomy.cs`, `MotionController.cs` để nhận payload, body bias, motion explicit và tự chọn vi động tác; Python định “khí hậu” nội trạng, Godot giữ phần lớn nhịp thân thể cục bộ.
+
+Chi tiết runtime:
+- `LlmService` giờ có lớp chat-act/contract rõ hơn thay vì chỉ guard đầu ra: nó phân loại nhanh các turn như `direct_question`, `command_style`, `identity_reduction`, `insult_provocation`, rồi gắn contract answer-first / cool-boundary / self-identity tương ứng vào prompt chat. Mục tiêu là giảm kiểu trả lời “fallback chung chung” khi user đang hỏi thẳng, kéo boundary xuống lạnh-vừa đủ khi bị objectify/xúc phạm, và giữ ERIS nhất quán hơn ở các turn ngắn hoặc phản ứng nối đuôi lượt public trước.
+- `turn_semantics.py` hiện là lớp arbitration riêng cho repeat guard: không còn coi mọi câu lặp là spam. Nó đọc `affect_signal`, `conversation_report`, `relationship_report`, `grounding_report`, áp lực correction/question/live-evidence/prior-failure rồi mới quyết định pass tiếp cho LLM, repair-ack, answer lại với certainty thấp hơn, hay mới thực sự chặn repeat. Nghĩa là “lặp” giờ được hiểu theo ý định của turn chứ không chỉ theo token.
+- `thought_stream.py` đã thành substrate nền chính thức thay cho mô tả “subconscious loop” cũ: nó giữ `ThoughtObject`, unresolved loop, attractor, momentum, closure signal và chỉ thỉnh thoảng mới surface `ThoughtSurface`. Điểm quan trọng là phần lớn tick vẫn ở nội bộ; loop này chủ yếu nuôi continuity, chứ không phải máy phát câu tự trị.
+- `spontaneous_life.py` cũng đã rõ vai hơn: nó dựng `AgentStateStack`, cho nhiều impulse cạnh tranh qua `ImpulseArbitrator`, rồi chỉ trả `SpeechImpulse` + `arbitration_report` + `body_bias_hint`. Tức là endogenous speech giờ không còn là vài rule boredom/cooldown rời rạc, mà là một nhánh arbitration nhẹ có hồ sơ debug riêng để `SpeechCore` và `ActionUtility` đọc tiếp.
+- Repo hiện có thêm các file owner mới cho nhánh trên như `agent_mind_persistence.py`, `agent_state_stack.py`, `impulse_arbitration.py`; khi đọc kiến trúc nên hiểu `SpontaneousLifeEngine` giờ đứng trên một cụm substrate riêng, không còn là một helper lẻ của `SpeechCore`.
+- `post_generation_filters.py` giờ không chỉ là lớp “chặn overclaim” chung chung nữa. Nó có guard protocol-surface, internal-object leak, memory-haunting, chat grounding, micro-line policy và repetition/style filter; đồng thời còn ghi feedback hành vi của user vào `PersistentAgentMindStore` để impulse system học mềm từ các câu kiểu “đừng hỏi dồn”, “nói vậy sống hơn”, “đừng nói như camera”.
+- `state_commit_service.py`, `body_bias.py`, `frame_builder.py` và `memory_cognition.py` đã thành các cầu nối quan trọng ở giữa runtime: một nhánh lo disturbance/frame, một nhánh lo route commit/recall + public turn ledger, một nhánh chiếu nội trạng thành `body_bias`, và một nhánh làm facade memory + retrieval + `agent_mind`. Vì vậy tài liệu cần hiểu runtime hiện tại theo kiểu nhiều cầu nối nhỏ phối hợp, không còn là một coordinator ôm thẳng mọi việc.
+
+Chi tiết wake gate và FE:
 - Wake-gate local plan đã được siết lại để giống shape của `ti_enforce` hơn: `_wake_gate_ti_report()` giờ luôn mang đủ các hint field như `force_animation`, `motion_intent_hint`, `motion_target_x_hint`, `motion_facing_hint`, `target_x_hint`, `direction_hint`, dù nhánh này không đi xuống main cognition. Mục tiêu là tránh các nhánh local/wake-gate phải đoán thiếu field rồi lệch contract với parser/body.
 - FE runtime cũng được dọn một lớp tương thích dữ liệu cũ: `FeRenderer` giờ không giả định `warmth_level`/`sarcasm_level` luôn là float. Nó có `_style_level()` để ép các nhãn legacy như `low`/`mid`/`high`, `cool`/`warm`, `guarded`/`steady` về trục số trước khi blend/anchor/clamp. Nhờ vậy style memory cũ không còn làm trượt kiểu dữ liệu ở autonomous path.
 - `_wake_gate_fe_plan()` cũng đã đổi `warmth_level` từ chuỗi `"low"` sang số `0.18` để cùng hệ với phần FE mới; wake-gate presence vì vậy không còn là ngoại lệ legacy giữa đường blend style.
 - Regression hiện có thêm test chốt hai điểm trên trong `tests/test_runtime_coordinator.py` và `tests/test_fe_renderer.py`.
 
-Bổ sung nhanh 2026-05-30:
+Chi tiết memory semantics và dọn legacy:
 - Đợt dọn legacy vừa rồi đã bỏ bớt các đường tương thích không còn cần: `src/cortex/subconscious.py` đã được gỡ, `StateCommitter` không còn route qua fallback request cũ, `ActionPlanner`/`InternalState`/`orientation_*` cũng đã đổi bớt các tên gọi mang dấu vết legacy để tài liệu và code đỡ lệch nhau.
 - `body/UdpListener.cs` không còn cờ `EnableLegacyRemoteMotionCommands`; body chỉ áp dụng `MotionCommand` khi payload có explicit motion, còn nhịp nền bình thường vẫn đi qua `body_bias` + `LocalBodyAutonomy`.
 - Memory semantic stack đã rõ hơn thành các lớp: `query_intent.py` biên dịch câu hỏi sang `SemanticQueryIntent`, `predicate_ontology.py` định nghĩa predicate/answer target/mâu thuẫn, còn `claim_entailment.py` quyết định claim nào thực sự được phép trả lời query nào thay vì dựa overlap text.
@@ -21,7 +44,7 @@ Bổ sung nhanh 2026-05-30:
 - Regression đã pass cho `tests/test_subconscious.py`, `tests/test_state_committer.py`, `tests/test_runtime_coordinator.py` và `tests/test_llm_service.py`.
 
 
-Bổ sung nhanh 2026-05-28:
+Chi tiết memory intake và recall:
 - Memory intake giờ có 3 tầng rõ hơn: extract thẳng semantic/procedural/episodic nếu parse được; nếu user explicit muốn ERIS nhớ nhưng câu còn mờ, request sẽ đi vào `memory_candidate` thay vì giả vờ “đã nhớ chắc”.
 - `StateCommitter`, `MemoryCognitionCore` và `memory_models` đã mở route/contract cho `memory_candidate` và alias `unresolved_memory`; candidate giữ `raw_text`, `candidate_fact_keys`, `extraction_status`, `needs_consolidation` và số lần thử chưng cất lại.
 - `MemoryCommitPolicy` nhận thêm nhánh `user_convention`: các câu kiểu `từ giờ nếu tôi hỏi X thì hiểu là Y` đi vào `procedural_memory`; còn các câu kiểu `nhớ vibe này`, `đừng quên logic này` nhưng chưa parse sạch sẽ vào candidate store để consolidator xử lý sau.
@@ -31,7 +54,7 @@ Bổ sung nhanh 2026-05-28:
 - `SignalBuffer -> BackgroundObserver -> VisionSemanticCompressor` giờ là một pipeline local rõ hơn: diff trước, text observer sau, vision compressor cuối cùng; mục tiêu là tiết kiệm budget và tránh wake main cognition vì những thay đổi vụn trên desktop.
 - Regression hiện đã pass cho `tests/test_memory_commit_protocol.py`, `tests/test_memory_store.py` và `tests/test_memory_query_system.py`.
 
-Bổ sung nhanh 2026-05-29:
+Chi tiết entrypoint và spontaneous life:
 - `vision.py` hiện boot luôn `ActionExecutor` và `ActionRouter`, đồng thời nạp `memory_core` như structured persistent store rồi prebuild `long_term_memory` từ `MemoryPacket` để coordinator có fallback context khi recall có cấu trúc không khả dụng.
 - `SpeechCoreEngine` nhận thêm `SpontaneousLifeEngine`: ERIS có một nguồn xung phát ngôn nội sinh riêng, không dựa vào claim về màn hình, nhưng vẫn phải đi qua gate của `SpeechCore` và `ActionPlanner` trước khi được phép surface.
 - `spontaneous_life.py` hiện là tầng low-gain cho endogenous speech pressure: nó đọc boredom, silence, thought pressure, memory residue, attachment visibility, fatigue, restraint, cooldown family và work-focus penalty để đề xuất `SpeechImpulse` nội tại.
@@ -113,6 +136,7 @@ Kết nối mặc định:
 - Có cơ chế kéo/thả nhân vật: touch mode được bật từ context menu, click giữ để kéo, thả ra sẽ tính vận tốc chuột thành impulse ném cho `MotionController`.
 - Khi đang kéo, body bị clamp trong viewport; khi bắt đầu kéo dùng pose `air_swing_l/r`, khi thả thì ghi nhận rough handling để tăng overload/solitude trong body autonomy.
 - Remote motion từ cognition giờ chỉ chạy khi payload có `HasExplicitMotion`; mặc định body vẫn tự giữ nhịp qua speech + `body_bias`, tránh cognition override mọi chuyển động cục bộ.
+- Bản hiện tại còn có thêm desktop-overlay/window setup, emotion panel, mode switch UI và debug branch `emotion_debug` để body có thể soi tóm tắt emotional state do runtime nén ra thay vì chỉ đọc text thuần.
 - Chuẩn hóa animation model hay gọi sai, ví dụ `walk`/`run` -> `stand_walk`.
 - Vẫn còn khá dày bên C#, nhưng phần process/service lifecycle đã được tách khỏi file này.
 - Lưu ý bảo mật: đang có API key hardcoded trong `DefaultRemoteApiKey`.
@@ -211,7 +235,7 @@ Kết nối mặc định:
 - Nhận event từ Godot: autonomous tick, `chat_start`, `chat`, `chat_end`, `force_speak`.
 - Kết nối Se/telemetry, Evidence bridge, AttentionSalience, WorkingMemory, MeaningLayer, PersonalityLens, appraisal, internal_state, self_model, session_ritual, social_presence, thought_stream, speech_core, action_planner, micro_policy, Ni, Ti, Fe, LLM, parser, memory và action router/executor.
 - File này không còn ôm toàn bộ runtime một mình. `RuntimeCoordinator` hiện kế thừa các mixin trong `src/runtime/*` để tách bớt trách nhiệm: prompt/context building, speech path, presence/micro-presence, post-generation filters, fallback policy và cognitive-frame recording.
-- Đợt 2026-05-31 đẩy coordinator sang vai trò “đầu mối nghe wake governor thật” thay vì chỉ ghi telemetry 3-tier cho đẹp. Khi boot, coordinator hiện khởi tạo thêm `RuntimeSensoryModelAdapter`, `InternalAgendaStack`, `UserContextStream`, `EndogenousDriveEngine`, `ModelBudgetPolicy`, `AutonomousWakeGovernor`, `RuntimeDaydreamModelAdapter` và `ContextualAutonomyLoop`, rồi giữ `last_wake_decision`, `rolling_user_context`, `rolling_internal_state`, `last_daydream_result` như state runtime hạng nhất chứ không phải debug phụ.
+- Coordinator hiện đã chuyển sang vai trò “đầu mối nghe wake governor thật” thay vì chỉ ghi telemetry 3-tier cho đẹp. Khi boot, coordinator khởi tạo thêm `RuntimeSensoryModelAdapter`, `InternalAgendaStack`, `UserContextStream`, `EndogenousDriveEngine`, `ModelBudgetPolicy`, `AutonomousWakeGovernor`, `RuntimeDaydreamModelAdapter` và `ContextualAutonomyLoop`, rồi giữ `last_wake_decision`, `rolling_user_context`, `rolling_internal_state`, `last_daydream_result` như state runtime hạng nhất chứ không phải debug phụ.
 - Giữ state runtime: chat history, last response, active conversational topic, repeated guard, vision facts, cognitive frames, mental process loop, session ritual flag, public turn ledger, reply context, rapid chat burst queue và presence/reengagement cooldown.
 - Khởi tạo thêm ba đầu mối memory-chat mới: `session_turn_ledger` cho transcript public trong phiên hiện tại, `memory_commit_policy` để biến user self-disclosure thành `StateCommitRequest`, và `memory_recall_adapter` để chạy structured memory query pipeline trước khi gọi LLM.
 - Cần phân biệt hai ledger: `public_turn_ledger` là sổ những câu thật sự đã hiện ra cho user để nối reply-context/public history; `session_turn_ledger` là sổ deterministic theo role user/assistant trong phiên để đếm câu, lấy câu thứ N, câu dài nhất và các gist topic gần đây.
@@ -262,7 +286,7 @@ Kết nối mặc định:
 `src/cortex/background_observer.py`
 - Observer nền chạy song song với cognition chính, nhưng không được phép tự trả lời user, không commit memory và không tạo `Decision` public.
 - Có hai tầng: rule-based luôn chạy được, và optional Ollama text observer để phân loại mềm hơn khi env bật.
-- Từ đợt 2026-05-31, observer không còn gắn cứng với mỗi `ERIS_BACKGROUND_OBSERVER_LLM`. Nó có thể nhận một `RuntimeSensoryModelAdapter` riêng cho tầng 0.6B, nên path “sensory model” đã được tách owner rõ hơn khỏi path cognition/style cũ.
+- Observer không còn gắn cứng với mỗi `ERIS_BACKGROUND_OBSERVER_LLM`. Nó có thể nhận một `RuntimeSensoryModelAdapter` riêng cho tầng 0.6B, nên path “sensory model” đã được tách owner rõ hơn khỏi path cognition/style cũ.
 - Đọc `SignalSnapshot` + `SignalDiff`, rồi dựng `ObserverFrame` với các trục như `focus_kind`, `activity_intent`, `possible_error`, `fragmented`, `user_presence`, `salience`, `recommended_action`, `recommended_budget`.
 - `recommended_action` hiện có các nấc chính: `observe_only`, `update_body_bias`, `call_vision_compressor`, `wake_main_cognition`; nhưng bản này vẫn khóa quyền interrupt cứng, observer chỉ được phát hint.
 - `BackgroundObserverConfig` hiện hiểu đồng thời hai họ env:
@@ -446,6 +470,13 @@ Kết nối mặc định:
 - `PostGenerationFiltersMixin`.
 - Tách các guard sau khi LLM/parser sinh decision: lọc overclaim, motive inference, screen claim thiếu evidence, câu hỏi đuôi sai intent, micro-line rỗng/generic và các leak nội bộ.
 - Đây là lớp chốt cuối trước Ti/body/memory commit ở nhiều đường nói.
+- Ngoài việc chặn leak, mixin này còn ghi semantic feedback của user vào `agent_mind` bằng `_record_agent_mind_feedback_from_user()`, nên các phản hồi về “giọng camera”, “hỏi dồn”, “im quá lâu”, “cần technical help” không chết trong chat history mà được chuyển thành belief/preference/habit mềm cho arbitration các turn sau.
+- Các guard cụ thể đáng chú ý hiện có:
+  - `protocol_surface_guard`: chặn prompt/contract nội bộ bị lộ ra text public.
+  - `internal_object_surface_guard`: chặn `MemoryPacket(...)`, `RecallAnswer(...)`, object repr tương tự.
+  - `memory_haunting_guard`: không cho memory giả dạng evidence hiện tại.
+  - `chat_grounding_guard`: chặn claim về file/screen/web khi thiếu nguồn thật.
+  - `micro_line_policy_filter` + `repetition_filter`: giữ micro-line ngắn, có neo, không lặp gia đình nghĩa quá sát.
 
 `src/runtime/cognitive_frame_recorder.py`
 - `CognitiveFrameRecorderMixin`.
@@ -457,6 +488,8 @@ Kết nối mặc định:
 - `FrameBuilderMixin`.
 - Gom logic dựng cognitive frame/autonomous frame và một số đường session ritual/fallback liên quan.
 - Khi session ritual hoặc public autonomous greeting thật sự gửi text, mixin gọi `_block_autonomous_presence_after_public_turn()` để presence maintenance/reengagement không chen ngay sau đó.
+- Bản hiện tại còn là nơi dựng `CognitiveDisturbance` từ user text, force-speak, autonomous tick, recent event và vision fact; rồi tiêm chúng xuống `thought_stream`/cognitive substrate bằng `inject_disturbances(...)`. Nhờ vậy disturbance đã thành contract có `channel`, `kind`, `content`, `evidence`, `intensity`, `closes_loop` thay vì vài cue rải rác trong coordinator.
+- `FrameBuilderMixin` cũng chịu trách nhiệm “lấy surface đúng lúc”: nếu substrate có disturbance mới nhưng chưa surface, autonomous path chỉ cập nhật continuity; còn nếu `SurfaceSelector` đã chọn seed, mixin mới pop/report nó sang các tầng speech/planning kế tiếp.
 
 `src/runtime/state_commit_service.py`
 - `StateCommitServiceMixin`.
@@ -466,6 +499,7 @@ Kết nối mặc định:
 - Có thêm lookup mềm `_semantic_memory_lookup()` và `_episodic_memory_lookup()` đọc từ `memory_core.load()`/`memory_state`/`memory_core.recall()` để structured memory query path có thể trả lời fact hoặc gist mà không buộc downstream phải biết shape store cụ thể.
 - `_build_memory_recall_decision()` giờ chỉ gọi adapter mới và nhận về `Decision`; phần đổi `RecallAnswer -> Decision` không còn nằm ở mixin nữa.
 - `_add_user_turn_memory_commit_requests()` hiện append request ngay cả khi frame không có method `add_commit_request()`: nó fallback sang `frame.commit_requests = existing + new_requests`. Đây là chi tiết nhỏ nhưng quan trọng vì runtime hiện vẫn song song hai contract frame cũ/mới.
+- Ngoài commit/recall, mixin này còn là nơi neo `MemoryKernel`, `background_memory_digest`, `session_turn_ledger`, `public_turn_ledger`, `body_bias_projector` và route action-result về body. Nói ngắn: đây là adapter tầng giữa giúp coordinator không phải biết trực tiếp chi tiết từng store, từng ledger, từng kiểu payload body.
 
 `src/runtime/outcome_observer.py`
 - `OutcomeObserver` đọc hậu quả sau turn: action/text có chạy không, body/modality có khớp không, user có accepted/corrected/confused/intruded/ignored không nếu có feedback hoặc idle signal.
@@ -483,6 +517,7 @@ Kết nối mặc định:
 - `BodyBiasProjector`.
 - Tách việc chiếu internal state thành `body_bias` gửi xuống Godot: continuity_anxiety, curiosity, overload, solitude, focus_kind, preferred_anchor.
 - Nhờ vậy body autonomy có thể tự chọn chuyển động cục bộ mà coordinator không điều khiển pixel trực tiếp.
+- Bản hiện tại còn nhận `impulse_hint` từ `ActionPlan`/`arbitration_report` để blend nhẹ `curiosity_delta`, `overload_delta`, `preferred_anchor`, `body_action_bias`, `selected_impulse` xuống body. Tức là thân thể giờ không chỉ biết “đang mệt hay tò mò”, mà còn biết vì sao nhánh nội sinh vừa thắng là scene curiosity, technical help hay intentional silence.
 
     
 `src/app_logging.py`
@@ -555,6 +590,7 @@ Kết nối mặc định:
 - Lớp bọc LLM.
 - Sinh directive/autonomous response, chat reply, screen/vision facts và micro-presence line.
 - Gọi style rewrite khi có local style client.
+- Phân loại nhanh speech-act của user (`direct_question`, `command_style`, `identity_reduction`, `insult_provocation`, `normal_chat`) để build chat contract đúng loại turn trước khi gọi model.
 - Extract content từ nhiều dạng response: OpenAI, llama.cpp, Gemini-like nested output.
 - Sửa JSON hỏng, extract first JSON object, salvage prose nếu model trả sai format.
 - Retry/fallback khi lỗi 5xx; nếu service lỗi thì tạo JSON fallback có intent/confidence/reasoning_tags.
@@ -566,6 +602,7 @@ Kết nối mặc định:
 - Khi `reply_context.previous_public_turn` tồn tại, service render block `Reply context` vào system prompt với channel, parse_mode và text của lượt public gần nhất.
 - `_guard_chat_output()` không còn là lớp rewrite diện rộng như bản cũ. Guard bề mặt hiện hẹp hơn: nếu user đang phản hồi kiểu `lạnh`, `robotic`, `xa cách` mà model trả câu phòng thủ/disclaimer, service sẽ rewrite sang một `tone_repair` ngắn với reasoning tag như `relational_repair_guard` và `small_concession`.
 - Có thêm `_guard_infj_594_policy()` để dập các line quá gắt, quá thử thách, quá performative hoặc quá "waifu script" trước khi decision đi tiếp.
+- `generate_micro_presence_line()` và `generate_screen_facts()` giờ là hai micro-service riêng có JSON contract hẹp: một nhánh chỉ sinh one-liner hiện diện cực ngắn, nhánh kia chỉ rút tối đa vài fact nhìn-thấy-rõ từ ảnh/screen thay vì để prompt chat gánh luôn hai việc đó.
 
 
 5. Parser / Grounding
@@ -872,6 +909,26 @@ Kết nối mặc định:
 - Biến disturbance/memory/signal thành `ThoughtObject`.
 - Giữ các loop chưa giải, tính tension/momentum/attractor.
 - Chọn `ThoughtSurface` khi áp lực và novelty đủ cao.
+- `ThoughtStream` còn có background loop riêng: giữ queue surface, pending disturbance, latest report và chỉ đẩy ra public candidate khi `SurfaceSelector` thật sự chọn surface; đa số tick chỉ cập nhật continuity nội bộ rồi thôi.
+
+`src/cortex/agent_mind_persistence.py`
+- `PersistentAgentMindStore`.
+- Lớp trí nhớ dài hơi riêng cho impulse system, lưu ba nhánh:
+  - `BeliefCore`: ERIS hiện tin gì về user/self/scene/task.
+  - `PreferenceModel`: gu riêng của ERIS, không đồng nghĩa user preference.
+  - `HabitMemory`: feedback hành vi ở dạng semantic rule mềm.
+- Store này sống trong `memory_core/agent_mind.json`, không dùng LLM để tự append bừa; nó chỉ đọc/ghi record schema rõ ràng để spontaneous/action path có ký ức hành vi dài hạn nhưng không biến một câu chê thành chân lý bất di bất dịch.
+
+`src/cortex/agent_state_stack.py`
+- `build_agent_state_stack()` và các lớp `EvidenceView`, `BeliefSnapshot`, `PreferenceProfile`, `NeedVector`, `TraitVector`, `HabitSnapshot`, `AffordanceMap`.
+- Đây là contract gom state đang rải trong runtime thành một stack nhỏ: Evidence -> Belief -> Preference -> Need -> Trait -> Habit -> Affordance.
+- Mục tiêu là để `SpontaneousLifeEngine`, `SpeechCore` và `ActionUtility` đọc cùng một “bản đồ trạng thái” thay vì mỗi nơi tự vá if-chain theo app/focus/cảm giác.
+
+`src/cortex/impulse_arbitration.py`
+- `ImpulseCandidate`, `ImpulseArbitrator`, `ArbitrationReport`.
+- Tạo và chấm điểm các impulse như `silence_impulse`, `scene_curiosity_impulse`, `inner_whim_impulse`, `micro_story_impulse`, `companionship_impulse`, `technical_help_impulse`, `body_only_impulse`.
+- Score được cộng/trừ bởi base, evidence fit, belief support, need pressure, preference fit, trait bias, affordance allowance, habit bias, risk, repetition penalty, interrupt cost và resource cost.
+- Kết quả không phải câu nói cuối, mà là “hồ sơ vì sao impulse nào thắng” để các tầng sau còn debug được.
 
 `src/cortex/inner_thought.py`
 - `InnerThoughtEngine`.
@@ -885,6 +942,8 @@ Kết nối mặc định:
 - Tầng áp lực phát ngôn nội sinh, không đọc “sự thật màn hình” và không tự viết public line.
 - Nó chỉ trả `SpeechImpulse` với family/topic/pressure/evidence nội tại; sau đó `SpeechCore` và `ActionUtility` mới quyết định có được nổi lên thành hành vi public hay không.
 - Penalty mạnh khi user đang focus code hoặc vừa mới có speech gần đây; vì thế endogenous speech không dễ chen vào lúc user đang làm việc thật sự.
+- Bản hiện tại dựng `AgentStateStack`, cho nhiều candidate impulse cạnh tranh qua `ImpulseArbitrator`, rồi trả kèm `arbitration_report`, `impulse_scores`, `agent_state_notes` và `body_bias_hint`; nhờ vậy endogenous drive đã thành một nhánh có trace/debug riêng thay vì chỉ là pressure vô danh.
+- Nó còn quản lý cooldown theo semantic family và có `SpontaneousLifeTrace` riêng (`selected_impulse`, `arbitration_reason`, `candidate_scores`, `blocked_reason`) để phân biệt rõ các trường hợp “có impulse nhưng bị chặn” với “không có impulse nào đủ sống”.
 
 `src/cortex/speech_core.py`
 - `SpeechCoreEngine`.
@@ -896,6 +955,11 @@ Kết nối mặc định:
 - Với autonomous channel, nếu MeaningLayer không có `meaning_shift`, SpeechCore giữ im lặng bằng `meaning_shift_gate`.
 - Khi MeaningLayer có semantic shift, SpeechCore chọn phản ứng theo meaning/reaction seed thay vì chỉ nói lại fact từ màn hình.
 - `SpeechCore` giờ vừa gate theo `meaning_shift`, vừa nhận `spontaneous_impulse` từ `SpontaneousLifeEngine`; endogenous speech chỉ được phép surface nếu không bị external signal priority, fatigue, family cooldown hoặc quiet guard chặn.
+
+`src/cortex/turn_semantics.py`
+- `TurnSemanticsEngine` và `TurnSemanticsReport`.
+- Tầng hiểu-nghĩa cho một user turn lặp: phân biệt `low_value_repeat`, `reask_same_question`, `repair_reframe`, `relational_probe`, `identity_boundary_probe`, `live_evidence_refresh`.
+- Output của nó là action mức nhỏ như `pass_to_llm`, `repair_ack_then_answer`, `answer_again_with_lower_certainty`, hoặc `guard_repeat`; đây là lớp giúp repeat guard thôi mang tính exact-match cơ học.
 
 `src/cortex/action_planner.py`
 - `ActionPlanner`.
@@ -972,6 +1036,7 @@ Cụm semantic/understanding mới trong memory:
 - Target được route sang `event_ledger`, `active_state`, `homeostatic_baseline`, `self_continuity`, `episodic_memory`, `semantic_memory`, `relational_memory`, `affective_residue_memory`, `procedural_memory`, `repair_memory` và `memory_candidate`/`unresolved_memory`.
 - Recall trả `MemoryPacket` với quota theo budget mode `fast/normal/deep/reflection`, có confidence notes để nhắc downstream: residue là áp lực nội bộ, relational là nhịp quan hệ tích tụ, episodic là quá khứ.
 - Bản mới không còn tự đo resonance bằng token overlap ngay trong facade; nó đi theo pipeline `MemoryCueBuilder` -> `MemoryRetrievalEngine` -> `MemoryActivation` -> `MemoryPacketBuilder`.
+- Ngoài các layer memory quen thuộc, `MemoryCognitionCore` giờ còn giữ `agent_mind = PersistentAgentMindStore(...)`; tức là memory runtime không chỉ có semantic/episodic/procedural, mà còn có một nhánh trí nhớ hành vi dài hạn phục vụ spontaneous/arbitration path.
 
 `src/memory/memory_record.py`
 - Helper nền cho memory retrieval stack: normalize text, tokenize, anchor, compact text, clamp, fingerprint và các tiện ích chuẩn hóa record.
@@ -1113,6 +1178,10 @@ Cụm semantic/understanding mới trong memory:
 - File snapshot runtime thật cho active state hiện tại.
 - Đang modified trong working tree vì các lượt chạy gần đây đã cập nhật internal state/continuity mới.
 
+`memory_core/agent_mind.json`
+- File store dài hạn cho `PersistentAgentMindStore`.
+- Chứa `beliefs`, `preferences`, `habits` và `last_feedback_events`; đây là nơi các feedback kiểu “đừng hỏi dồn”, “giọng này như camera”, “nói vậy sống hơn” được cô lại thành adjustment mềm cho impulse system.
+
 `memory_core/episodic_memory.json`
 - File dữ liệu episodic runtime thật.
 - Đang modified và có thêm bản ghi sự kiện cụ thể đã xảy ra trong các lượt test/chạy gần đây.
@@ -1124,6 +1193,14 @@ Cụm semantic/understanding mới trong memory:
 `memory_core/event_ledger.json`
 - File ledger sự kiện runtime thật.
 - Đang modified và có thêm trace/audit event từ commit cycle gần đây.
+
+`memory_core/memory_candidate.json`
+- File store cho unresolved/candidate memory.
+- Dùng giữ các thứ user explicit muốn ERIS nhớ nhưng parse/retention hiện chưa đủ sạch để promote thành fact chắc.
+
+`memory_core/internal_agenda.json`
+- File persistence cho `InternalAgendaStack`.
+- Giữ unresolved agenda, pressure và continuity task nền qua restart; không phải semantic memory, mà là “việc còn vướng trong đầu” của runtime.
 
 `goal_memory.json`, `src/goal_memory.json`
 - Dữ liệu goal/focus phục vụ drift và goal tracking.
@@ -1352,6 +1429,7 @@ Lưu ý test gap hiện tại:
 Luồng chat:
 - User mở chat panel -> Godot gửi `chat_start`.
 - User gửi text -> Godot gửi `{"type":"chat","message":"...", "timestamp": ...}` nếu có timestamp.
+- Trước khi repeat guard chặn gì, coordinator có thể dùng `TurnSemanticsEngine` để đọc xem câu lặp đó là spam, sửa sai, hỏi lại vì thiếu evidence, hay đang probe boundary/quan hệ.
 - Coordinator nhận `user_timestamp`, link previous public turn trong cửa sổ 30 giây nếu user có vẻ đang phản ứng, rồi đưa context đó vào Ti prompt và `reply_context`.
 - Nếu nhiều chat message đến sát nhau, `_chat_processing`/`_chat_burst_queue`/`_poll_ready_chat_events()` gom chúng theo `ERIS_RAPID_BURST_WINDOW` rồi mới gọi LLM một lần.
 - Coordinator build context chat, route action trực tiếp nếu rõ, nếu không gọi LLM; riêng chat path dùng `chat_meaning_layer_light`/`chat_personality_pressure_light` thay vì full autonomous MeaningLayer/PersonalityLens để tránh symbolic inference chen vào phần trả lời trực tiếp.
@@ -1407,8 +1485,10 @@ Luồng touch/throw:
 
 Theo `git status --short` lúc cập nhật:
 - `Tongquat.txt` đang modified và được cập nhật trong lần này.
-- Ở snapshot hiện tại không thấy thêm file code đang modified ngoài tài liệu này; phần thay đổi đáng chú ý nằm ở runtime/test đã được merge vào cây code và được phản ánh trong các mục phía trên.
-- Các bổ sung kiến trúc gần nhất đáng chú ý cho tài liệu là `src/runtime/eris_pathology_policy.py`, `tests/test_eris_pathology_scenarios.py` và luồng chat grounding/repeat semantics mới trong `src/runtime/chat_cycle.py`.
+- Working tree hiện đang bẩn ở nhiều nhánh cùng lúc, không chỉ riêng tài liệu. Có thay đổi trong `body/UdpListener.cs`, cụm `src/cortex/*`, cụm `src/memory/*`, cụm `src/runtime/*`, `src/llm/service.py`, `src/parser_grounding/decision.py` và nhiều test liên quan.
+- Có ba file mới chưa track: `src/cortex/agent_mind_persistence.py`, `src/cortex/agent_state_stack.py`, `src/cortex/impulse_arbitration.py`. Đây là dấu hiệu rõ ràng rằng nhánh spontaneous/agent-mind vẫn đang ở pha kết cấu, chưa phải đoạn ổn định hoàn toàn.
+- Có một file bị xóa khỏi cây là `src/src.zip`; ngoài ra `commit_notes.md` đang untracked và có thể đang được dùng như ghi chú snapshot commit cục bộ.
+- Khối `memory_core/*.json` cũng đang modified, nghĩa là repo hiện không chỉ đổi code mà còn đang mang theo state runtime thật. Khi debug hành vi, cần phân biệt rõ lỗi đến từ logic mới hay từ memory/state đã tích lũy trên đĩa.
 
 
 14. Điểm Kiến Trúc Đáng Chú Ý
@@ -1423,6 +1503,8 @@ Theo `git status --short` lúc cập nhật:
 - Remote motion đã bị rút về explicit command path; nếu model không gửi `MotionCommand` rõ ràng thì body chỉ nhận speech/bias chứ không bị điều khiển pixel-level.
 - `meaning.py` là lớp mới rất quan trọng: nó cắt lớp "nhìn thấy fact" khỏi lớp "nên hiểu fact đó là gì". Nhờ vậy ERIS bớt nói như camera/telemetry logger.
 - `thought_stream.py`, `internal_state.py`, `speech_core.py`, `goal_persistence.py`, `micro_policy.py` là phần làm ERIS có "nhịp nền" thay vì chỉ reply từng câu.
+- `agent_state_stack.py` + `impulse_arbitration.py` là bước tách kiến trúc đáng chú ý: nội sinh speech không còn là vài biến boredom/silence pressure cộng thẳng thành một quyết định, mà đi qua một lớp biểu diễn trạng thái rồi mới cho nhiều impulse cạnh tranh. Đây là hướng đúng nếu sau này muốn debug "vì sao impulse này thắng" thay vì chỉ thấy một tổng điểm khó lần.
+- `agent_mind_persistence.py` làm cho feedback user chảy vào habit/preference/belief mềm thay vì chỉ bị mất sau một turn hoặc bị hardcode thành policy. Lớp này đáng chú ý vì nó nằm giữa memory dài hạn và style hành vi, không hoàn toàn thuộc memory factual cũng không chỉ là prompt styling.
 - Memory đã chuyển trọng tâm sang `MemoryCognitionCore` và các file layer trong `src/memory/*`. `memory/store.py` vẫn là nền/legacy quan trọng, nhưng coordinator hiện không nên quay lại đường `memory_store` cũ để ghi/recall state.
 - `public_turn_ledger.py` là boundary mới giữa câu đã nói ra public và chat reply context; cần giữ nó nhỏ, thread-safe và không biến thành chat history thứ hai.
 - Remote cognition + local style/vision là kiến trúc linh hoạt, nhưng cần đổi lại default và secrets trước khi public.

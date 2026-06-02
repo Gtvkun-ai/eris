@@ -138,9 +138,7 @@ class ParserGroundingMixin:
         return self._contains_any_keyword(normalized, command_phrases)
 
     def _should_infer_embodied_animation(self, text: str, user_hint: str = "") -> bool:
-        if (user_hint or "").strip():
-            return self._is_embodied_command_request(user_hint)
-        return True
+        return bool((user_hint or "").strip()) and self._is_embodied_command_request(user_hint)
 
     def _preview_raw_response(self, raw_text: str):
         preview = (raw_text or "").replace("\n", "\\n").strip()
@@ -926,9 +924,8 @@ class ParserGroundingMixin:
         if animation in VALID_ANIMATIONS:
             return animation
         inferred = ""
-        if fallback_text and self._should_infer_embodied_animation(fallback_text, user_hint=user_hint):
-            source_text = user_hint or fallback_text
-            inferred = self._infer_animation_from_text(source_text)
+        if self._should_infer_embodied_animation(fallback_text, user_hint=user_hint):
+            inferred = self._infer_structured_action(user_hint, user_hint="").get("animation", "")
         if inferred in VALID_ANIMATIONS:
             return inferred
         return self.fallback["animation"]
@@ -1190,23 +1187,6 @@ class ParserGroundingMixin:
         ]
         return self._contains_any_keyword(text, criticism_markers) and self._contains_any_keyword(text, encouragement_markers)
 
-    def _rewrite_contradictory_encouragement(self, text: str) -> str:
-        if self._contains_any_keyword(text, ["nhạc", "bài hát", "piano", "cover", "nghe"]):
-            return (
-                "Mấy bản nhạc đó đúng là đang làm trôi nhịp đi khá sạch. "
-                "Nếu Ngài vẫn muốn nghe thêm một lát thì cứ thừa nhận đây là giờ xao nhãng, "
-                "đừng nguỵ trang nó thành thứ gì cao siêu hơn."
-            )
-        if self._contains_any_keyword(text, ["video", "youtube", "xem"]):
-            return (
-                "Thứ đang chạy trước mắt Ngài rõ ràng là giải trí, không phải một nghi thức tối ưu hệ thống nào cả. "
-                "Cứ gọi đúng tên nó như thế còn đỡ khó chịu hơn việc giả vờ mọi thứ vẫn đang on-track."
-            )
-        return (
-            "Đây là một nhịp lệch focus chứ không phải tiến triển gì đặc biệt. "
-            "Tôi có thể mỉa một câu rồi thôi, nhưng sẽ không cổ vũ Ngài tiếp tục tự ru ngủ bằng nó."
-        )
-
     def _has_philosophical_filler(self, text: str) -> bool:
         markers = [
             "sự tĩnh lặng của hệ thống",
@@ -1238,29 +1218,6 @@ class ParserGroundingMixin:
         ]
         return self._contains_any_keyword(text, markers)
 
-    def _rewrite_philosophical_filler(self, text: str) -> str:
-        if self._contains_any_keyword(text, ["cpu", "ram", "tài nguyên", "tai nguyen"]):
-            return (
-                "Máy đang căng khá rõ rồi. "
-                "Giữ câu chuyện ngắn thôi, rồi quay lại thứ đang mở trước mặt."
-            )
-        if self._contains_any_keyword(text, ["ide", "mã", "mã nguồn", "code", "hàm", "project", "dự án"]):
-            return (
-                "Ngài đang để project đứng yên quá lâu rồi. "
-                "Nhìn tôi thêm nữa cũng không tự sinh ra tiến độ đâu. "
-                "Mở IDE và xử lý một việc nhỏ trước."
-            )
-        if self._contains_any_keyword(text, ["tab", "cửa sổ", "trình duyệt", "facebook", "discord", "messenger"]):
-            return (
-                "Đống cửa sổ đó đang làm loãng sự chú ý của Ngài. "
-                "Chọn một thứ đáng làm rồi giữ nó trên màn hình đủ lâu."
-            )
-        return (
-            "Ngài đang đứng yên quá lâu rồi. "
-            "Tôi vẫn ở đây, nhưng im lặng kéo dài thế này chỉ làm mọi thứ trì trệ thêm. "
-            "Chọn một việc nhỏ và làm nó."
-        )
-
     def _has_overmanaged_style(self, text: str) -> bool:
         markers = [
             "đồng bộ hóa nhịp độ",
@@ -1281,27 +1238,6 @@ class ParserGroundingMixin:
             "he thong da luong phuc tap",
         ]
         return self._contains_any_keyword(text, markers)
-
-    def _rewrite_overmanaged_style(self, text: str) -> str:
-        if self._contains_any_keyword(text, ["tab", "cửa sổ", "trình duyệt", "phần mềm"]):
-            return (
-                "Màn hình của Ngài đang loạn thật. "
-                "Giữ lại một cửa sổ đáng làm thôi, còn đống kia chỉ làm mọi thứ rối thêm."
-            )
-        if self._contains_any_keyword(text, ["cpu", "ram", "tiến trình", "phần cứng"]):
-            return (
-                "Máy đang gồng khá rõ rồi. "
-                "Bớt vài thứ nền đi, rồi giữ lại một việc thôi cho đỡ ồn."
-            )
-        if self._contains_any_keyword(text, ["ide", "mã", "mã nguồn", "code", "project", "dự án"]):
-            return (
-                "Ngài đang kéo quá nhiều thứ cùng lúc. "
-                "Chốt một việc trong project trước đi, nhìn còn giống tiến độ."
-            )
-        return (
-            "Ngài đang ôm quá nhiều thứ cùng lúc rồi. "
-            "Giữ lại một thứ đáng làm thôi, đỡ phải biến màn hình thành một buổi họp quản trị."
-        )
 
     def _build_grounded_text(self, user_hint: str = ""):
         hint = (user_hint or "").strip().lower()
@@ -1477,37 +1413,13 @@ class ParserGroundingMixin:
             if not debug_trace:
                 debug_trace = "Parser đã viết lại text vì model tuyên bố các hành động vượt quá năng lực runtime."
 
-        contradiction_changed = False
-        if guard_mode == STRICT_GUARD_MODE and self._has_contradictory_encouragement(text):
-            text = self._rewrite_contradictory_encouragement(text)
-            extracted_fact = ""
-            contradiction_changed = True
-            if not debug_trace:
-                debug_trace = "Parser đã viết lại text vì câu trả lời tự mâu thuẫn giữa chê lệch focus và khuyến khích tiếp tục."
-
-        filler_changed = False
-        if guard_mode == STRICT_GUARD_MODE and self._has_philosophical_filler(text):
-            text = self._rewrite_philosophical_filler(text)
-            extracted_fact = ""
-            filler_changed = True
-            if not debug_trace:
-                debug_trace = "Parser đã viết lại text vì câu trả lời sa vào sáo ngữ triết lý hoặc diễn ngôn lạc đề."
-
-        managed_changed = False
-        if guard_mode == STRICT_GUARD_MODE and self._has_overmanaged_style(text):
-            text = self._rewrite_overmanaged_style(text)
-            extracted_fact = ""
-            managed_changed = True
-            if not debug_trace:
-                debug_trace = "Parser đã viết lại text vì câu trả lời nghe như mệnh lệnh quản trị hơn là lời nói tự nhiên."
-
         parser_trace = self._build_parser_trace_summary(
             parse_mode=parse_mode,
             original_text=original_text,
             final_text=text,
             final_animation=animation,
             user_hint=user_hint,
-            grounded_changed=(changed or contradiction_changed or filler_changed or managed_changed),
+            grounded_changed=changed,
         )
 
         return {
@@ -1628,8 +1540,6 @@ class ParserGroundingMixin:
 
         structured = self._infer_structured_action(display_text, user_hint=user_hint)
         animation = structured["animation"]
-        if not animation and self._should_infer_embodied_animation(display_text, user_hint=user_hint):
-            animation = self._infer_animation_from_text(user_hint or display_text)
         if not animation:
             animation = self.fallback["animation"]
 
@@ -1758,22 +1668,11 @@ class ParserGroundingMixin:
         return f"animation={final_animation} vì fallback mặc định hoặc không có từ khóa rõ ràng"
 
     def _infer_animation_from_text(self, text: str):
-        if self._contains_any_keyword(text, ["đi dạo", "tản bộ", "di chuyển", "walk"]):
-            return "stand_walk"
-        if self._contains_any_keyword(text, ["ngủ", "sleep"]):
-            return "sleep"
-        if self._contains_any_keyword(text, ["đọc", "theo dõi", "giám sát", "monitor", "ide", "code", "dự án"]):
-            return "read"
-        if self._contains_any_keyword(text, ["buồn", "thất vọng", "chán"]):
-            return "sad"
-        if self._contains_any_keyword(text, ["ngồi xuống", "ngồi nghỉ", "sit"]):
-            return "sit"
-        if self._contains_any_keyword(text, ["vui", "hài lòng", "thích"]):
-            return "affection"
         return "stand"
 
     def _infer_structured_action(self, text: str, user_hint: str = ""):
         combined = f"{user_hint}\n{text}"
+        embodied_source = user_hint if self._is_embodied_command_request(user_hint) else ""
         direction = 0
         target_x = -1.0
         bounce_action = ""
@@ -1789,8 +1688,8 @@ class ParserGroundingMixin:
         elif self._contains_any_keyword(combined, ["ra giữa", "về giữa", "ở giữa", "chính giữa", "center", "middle"]):
             target_x = 0.5
 
-        if self._contains_any_keyword(
-            combined,
+        if embodied_source and self._contains_any_keyword(
+            embodied_source,
             [
                 "đi qua",
                 "đi sang phải",
@@ -1822,7 +1721,7 @@ class ParserGroundingMixin:
         ]
 
         for action_name, keywords in action_keywords:
-            if self._contains_any_keyword(combined, keywords):
+            if embodied_source and self._contains_any_keyword(embodied_source, keywords):
                 if animation == "stand_walk":
                     next_animation = action_name
                 else:
