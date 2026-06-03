@@ -302,6 +302,15 @@ class MemoryCognitionCore:
     # Recall path v2
     # ------------------------------------------------------------------
 
+    def lookup_fact(self, fact_key: str) -> Any:
+        return self.semantic.lookup_fact(fact_key)
+
+    def get_fact(self, fact_key: str) -> Any:
+        return self.lookup_fact(fact_key)
+
+    def semantic_lookup(self, fact_key: str) -> Any:
+        return self.lookup_fact(fact_key)
+
     def recall(
         self,
         query: MemoryQuery | str = "",

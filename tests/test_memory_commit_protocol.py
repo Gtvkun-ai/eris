@@ -8,6 +8,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from memory.memory_commit_policy import MemoryCommitPolicy
 from memory.memory_cognition import MemoryCognitionCore
+from runtime.memory_recall_adapter import MemoryRecallAdapter
+from runtime.session_turn_ledger import SessionTurnLedger
 from runtime.state_committer import StateCommitter
 
 
@@ -173,6 +175,54 @@ class MemoryCommitProtocolTests(unittest.TestCase):
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0].metadata.get("fact_key"), "user.name")
         self.assertEqual(decisions[0].metadata.get("value"), "Hồ Trung Tín")
+
+    def test_user_rename_replaces_current_semantic_name_for_recall(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            core = MemoryCognitionCore(tmpdir)
+            policy = MemoryCommitPolicy()
+            frame = SimpleNamespace(
+                frame_id="frame-rename",
+                permission=SimpleNamespace(memory_storable=True, raw_evidence_storable=True),
+                evidence=[],
+                debug_notes=[],
+                audit_mutations=[],
+            )
+            committer = StateCommitter(core)
+
+            for turn_id, text in (
+                ("session_turn:3", "toi ten la Hoa"),
+                ("session_turn:4", "tôi mới đổi tên sang Hồ Trung Tín sáng nay"),
+            ):
+                decisions = policy.decide_from_user_turn(text, turn_id=turn_id)
+                self.assertEqual(len(decisions), 1)
+                request = decisions[0].to_state_commit_request(
+                    storage_permission=True,
+                    permission_required=False,
+                )
+                report = committer.commit([request], frame=frame)
+                self.assertEqual(report.committed, 1)
+
+            snapshot = core.load()
+            name_items = [
+                item for item in snapshot["semantic_memory"]
+                if item.get("metadata", {}).get("fact_key") == "user.name"
+            ]
+            self.assertEqual(len(name_items), 1)
+            current = name_items[0]
+            self.assertEqual(current["metadata"].get("value"), "Hồ Trung Tín")
+            self.assertIn("Hoa", current["metadata"].get("previous_values", []))
+            self.assertEqual(current["status"], "active")
+            self.assertEqual(current["contradiction_ids"], [])
+            self.assertEqual(core.lookup_fact("user.name"), "Hồ Trung Tín")
+
+            ledger = SessionTurnLedger()
+            ledger.record_user("xin chao", timestamp=1.0)
+            adapter = MemoryRecallAdapter(ledger=ledger, memory_core=core)
+            decision = adapter.try_answer("toi ten gi")
+
+            self.assertIsNotNone(decision)
+            self.assertIn("Hồ Trung Tín", decision.text)
+            self.assertNotIn("Hoa", decision.text)
 
 
 class MemoryIntakeCandidateTests(unittest.TestCase):

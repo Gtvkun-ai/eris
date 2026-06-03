@@ -85,6 +85,10 @@ class BackgroundMemoryDigestKernelConfig:
     requeue_delay_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_DIGEST_REQUEUE_DELAY_SEC", 0.35))
     max_defer_count: int = field(default_factory=lambda: _env_int("ERIS_MEMORY_DIGEST_MAX_DEFER", 240))
     storage_permission: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_DIGEST_STORAGE_PERMISSION", True))
+    maintenance_enabled: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_DIGEST_MAINTENANCE", True))
+    maintenance_interval_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_MAINTENANCE_INTERVAL_SEC", 300.0))
+    maintenance_budget: str = field(default_factory=lambda: os.getenv("ERIS_MEMORY_MAINTENANCE_BUDGET", "small").strip().lower() or "small")
+    maintenance_destructive: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_MAINTENANCE_DESTRUCTIVE", False))
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,9 +120,12 @@ class MemoryDigestKernelStats:
     skipped: int = 0
     failed: int = 0
     committed: int = 0
+    maintenance_runs: int = 0
+    maintenance_failed: int = 0
     last_error: str = ""
     last_job_id: str = ""
     last_result: dict[str, Any] = field(default_factory=dict)
+    last_maintenance: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,9 +134,12 @@ class MemoryDigestKernelStats:
             "skipped": self.skipped,
             "failed": self.failed,
             "committed": self.committed,
+            "maintenance_runs": self.maintenance_runs,
+            "maintenance_failed": self.maintenance_failed,
             "last_error": self.last_error,
             "last_job_id": self.last_job_id,
             "last_result": dict(self.last_result),
+            "last_maintenance": dict(self.last_maintenance),
         }
 
 
@@ -155,6 +165,7 @@ class BackgroundMemoryDigestKernelService:
         self._thread: Optional[threading.Thread] = None
         self._remote_inflight = threading.Event()
         self._last_user_input_at = 0.0
+        self._last_maintenance_at = 0.0
 
     def start(self) -> None:
         """Start worker nếu chưa chạy."""
@@ -260,6 +271,7 @@ class BackgroundMemoryDigestKernelService:
             try:
                 job = self._queue.get_nowait()
             except queue.Empty:
+                self._maybe_run_idle_maintenance(reason="test_idle")
                 return processed
             try:
                 action = self._gate_job(job)
@@ -283,6 +295,7 @@ class BackgroundMemoryDigestKernelService:
             try:
                 job = self._queue.get(timeout=self.config.worker_idle_sleep)
             except queue.Empty:
+                self._maybe_run_idle_maintenance(reason="worker_idle")
                 continue
             try:
                 action = self._gate_job(job)
@@ -390,6 +403,47 @@ class BackgroundMemoryDigestKernelService:
         self.stats.committed += result.committed_count
         self.stats.last_result = result.to_dict()
         self._log("debug", f"memory_digest_processed:{job.job_id}:{result.committed_count}")
+
+    def _maybe_run_idle_maintenance(self, *, reason: str) -> bool:
+        if not self.config.maintenance_enabled:
+            return False
+        if not callable(getattr(self.memory_kernel, "maintain", None)):
+            return False
+        if not self._queue.empty():
+            return False
+        now = time.time()
+        interval = max(0.0, float(self.config.maintenance_interval_seconds))
+        if interval > 0.0 and now - float(self._last_maintenance_at or 0.0) < interval:
+            return False
+        if self.config.only_when_remote_inflight and not self._remote_inflight.is_set():
+            return False
+        if self.config.avoid_remote_inflight and self._remote_inflight.is_set():
+            return False
+        if self.config.pause_on_user_input and now - self._last_user_input_at < self.config.user_input_pause_seconds:
+            return False
+        if self.config.idle_only and not self._runtime_idle_enough(now):
+            return False
+
+        budget = str(self.config.maintenance_budget or "small").strip().lower()
+        if budget not in {"small", "normal", "deep"}:
+            budget = "small"
+        self._last_maintenance_at = now
+        try:
+            report = self.memory_kernel.maintain(
+                budget=budget,
+                reason=reason,
+                destructive=bool(self.config.maintenance_destructive),
+            )
+            payload = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
+            self.stats.maintenance_runs += 1
+            self.stats.last_maintenance = payload
+            self._log("debug", f"memory_maintenance_ran:{reason}:{budget}")
+            return True
+        except Exception as exc:  # pragma: no cover - janitor không được làm chết worker
+            self.stats.maintenance_failed += 1
+            self.stats.last_error = f"maintenance:{type(exc).__name__}:{exc}"
+            self._log("exception", "background_memory_maintenance_failed", exc_info=exc)
+            return False
 
     def _log(self, level: str, message: str, **kwargs: Any) -> None:
         logger = self.logger

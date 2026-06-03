@@ -1115,6 +1115,12 @@ class ChatCycleMixin:
             return None
         text = engine.build_preemptive_reply(report)
         if not text:
+            text = self._generate_grounding_preempt_text(report, user_text=user_text)
+        if not text:
+            # No Python-authored sentence here. If local wording is unavailable,
+            # let the normal chat LLM path continue with source_grounding context
+            # and let post-generation guards catch any overclaim. Apparently even
+            # a machine needs due process now.
             return None
         warnings = ",".join(getattr(report, "warnings", ()) or ())
         debug_trace = (
@@ -1133,9 +1139,64 @@ class ChatCycleMixin:
             should_speak=True,
             confidence=float(getattr(report, "max_confidence", 0.30) or 0.30),
             parse_mode="source_grounding_probe" if is_probe else "source_grounding_preempt",
-            debug_trace=debug_trace + (f";epistemic_mode={epistemic_mode}" if epistemic_mode else ""),
+            debug_trace=debug_trace + (f";epistemic_mode={epistemic_mode};llm_generated=1" if epistemic_mode else ";llm_generated=1"),
         )
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
+
+    def _generate_grounding_preempt_text(self, report, *, user_text: str) -> str:
+        service = getattr(self, "llm_service", None)
+        reroll = getattr(service, "rewrite_guard_violation_text", None)
+        if not callable(reroll):
+            return ""
+        fallback_decision = getattr(report, "fallback_decision", None)
+        missing = tuple(str(item) for item in (getattr(report, "missing_evidence", ()) or ()) if str(item or "").strip())
+        reason = (
+            str(getattr(fallback_decision, "reason", "") or "")
+            or str(getattr(report, "preempt_mode", "") or "")
+            or "source_grounding_preempt"
+        )
+        try:
+            internal_context_fn = getattr(self, "_guard_internal_state_context", None)
+            internal_context = internal_context_fn() if callable(internal_context_fn) else ""
+        except Exception:
+            internal_context = ""
+        try:
+            text = reroll(
+                original_text="",
+                violation_rule="source_grounding_preempt",
+                violation_reason=reason,
+                missing_evidence=missing,
+                fallback_text="",
+                channel="chat",
+                user_text=user_text,
+                internal_state_context=internal_context,
+                grounding_context=str(getattr(report, "prompt_context", "") or ""),
+                arbitration_context=(
+                    "SourceGrounding is a flag emitter only. Generate a short public line "
+                    "that respects missing evidence without using a static Python fallback."
+                ),
+            )
+        except Exception as exc:
+            try:
+                self.logger.warning("[source grounding] preempt llm repair failed: %s", exc)
+            except Exception:
+                pass
+            return ""
+        text = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not text:
+            return ""
+        missing_set = set(missing)
+        try:
+            if "file_evidence" in missing_set and self._looks_like_file_grounded_claim(text, report=report):
+                return ""
+            if "screen_evidence" in missing_set and self._looks_like_screen_grounded_claim(text):
+                return ""
+            if "web_access_or_search_result" in missing_set and self._looks_like_live_web_claim(text):
+                return ""
+        except Exception:
+            return ""
+        return text
+
     def _build_user_message_signature(self, user_text: str) -> str:
         normalized = self._normalize_user_message(user_text)
         if not normalized:

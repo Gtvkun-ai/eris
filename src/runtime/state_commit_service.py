@@ -153,6 +153,14 @@ class StateCommitServiceMixin:
 
     def _extract_semantic_value_from_record(self, record: object, kind: MemoryKind) -> str | None:
         metadata = self._record_metadata(record)
+        fact_key = self._fact_key_for_memory_kind(kind)
+        record_fact_key = str(metadata.get("fact_key") or self._record_value(record, "fact_key", "") or "").strip()
+        if fact_key and record_fact_key and record_fact_key != fact_key:
+            return None
+        for direct_value in (metadata.get("value"), metadata.get("current_value")):
+            if direct_value:
+                return self._clean_memory_value(direct_value)
+
         raw_content = metadata.get("raw_content")
         if isinstance(raw_content, Mapping):
             raw_kind = str(raw_content.get("kind", "") or "").strip()
@@ -205,11 +213,46 @@ class StateCommitServiceMixin:
 
     def _semantic_memory_lookup(self, kind: MemoryKind):
         snapshot = self._memory_snapshot_for_lookup()
-        for record in reversed(self._memory_snapshot_items(snapshot, "semantic_memory")):
+        candidates: list[tuple[tuple[float, float, float, str], str]] = []
+        for record in self._memory_snapshot_items(snapshot, "semantic_memory"):
             value = self._extract_semantic_value_from_record(record, kind)
             if value:
-                return value
+                candidates.append((self._semantic_record_rank(record), value))
+        if candidates:
+            return max(candidates, key=lambda item: item[0])[1]
         return None
+
+    @staticmethod
+    def _fact_key_for_memory_kind(kind: MemoryKind) -> str:
+        if kind == MemoryKind.USER_NAME:
+            return "user.name"
+        if kind == MemoryKind.USER_BIRTH_MONTH:
+            return "user.birth_month"
+        if kind == MemoryKind.USER_RESPONSE_STYLE:
+            return "user.response_style"
+        return ""
+
+    def _semantic_record_rank(self, record: object) -> tuple[float, float, float, str]:
+        metadata = self._record_metadata(record)
+        status = str(self._record_value(record, "status", "") or metadata.get("status", "") or "").strip()
+        status_rank = {"active": 2.0, "tentative": 1.0}.get(status, 0.5)
+        updated_text = str(
+            self._record_value(record, "updated_at", "")
+            or metadata.get("updated_at", "")
+            or metadata.get("last_accessed_at", "")
+            or ""
+        )
+        updated_rank = 0.0
+        if updated_text:
+            try:
+                updated_rank = time.mktime(time.strptime(updated_text, "%Y-%m-%dT%H:%M:%S%z"))
+            except Exception:
+                updated_rank = 0.0
+        try:
+            confidence = float(self._record_value(record, "confidence", metadata.get("confidence", 0.0)) or 0.0)
+        except Exception:
+            confidence = 0.0
+        return (status_rank, updated_rank, confidence, str(self._record_value(record, "id", "") or ""))
 
     def _episodic_memory_lookup(self, query: str):
         recall = getattr(getattr(self, "memory_core", None), "recall", None)

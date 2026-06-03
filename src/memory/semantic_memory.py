@@ -55,6 +55,19 @@ from typing import Any, Callable, Iterable, Literal, Mapping, Optional, Sequence
 SemanticDomain = Literal["user", "self", "world", "technical", "project", "relationship", "unknown"]
 SemanticStatus = Literal["active", "tentative", "contradicted", "rejected", "archived"]
 
+CURRENT_FACT_KEYS = frozenset(
+    {
+        "user.name",
+        "user.birth_month",
+        "user.current_location",
+        "user.living_location",
+        "user.hometown",
+        "user.response_style",
+        "user.preference.location",
+        "user.preference.general",
+    }
+)
+
 
 # =============================================================================
 # 1. Helpers nền: thời gian, ghi file, normalize text
@@ -842,7 +855,21 @@ class SemanticMemoryStore:
         Ta tăng contradiction marker để downstream biết phải cẩn thận.
         """
 
-        conflict = self._detect_value_conflict(item, new_claim=claim, profile=profile, request_metadata=request_metadata)
+        key = profile.fact_key or item.fact_key
+        old_value = item.semantic_value or self._extract_simple_value(item.claim, key)
+        new_value = self._extract_metadata_value(request_metadata, key) or self._extract_simple_value(claim, key)
+        replacement = self._is_current_fact_replacement(
+            key,
+            old_value=old_value,
+            new_value=new_value,
+            confidence=confidence,
+        )
+        conflict = False if replacement else self._detect_value_conflict(
+            item,
+            new_claim=claim,
+            profile=profile,
+            request_metadata=request_metadata,
+        )
         old_claim = item.claim
 
         item.observations += 1
@@ -854,7 +881,11 @@ class SemanticMemoryStore:
         item.tags = unique_keep_order([*item.tags, *profile.tags, "merged"])[-18:]
 
         # Nếu claim mới tự tin hơn hoặc claim cũ là mơ hồ, dùng claim mới làm surface chính.
-        if not conflict and (confidence >= item.confidence - 0.08) and self._claim_surface_quality(claim) >= self._claim_surface_quality(item.claim):
+        if replacement or (
+            not conflict
+            and (confidence >= item.confidence - 0.08)
+            and self._claim_surface_quality(claim) >= self._claim_surface_quality(item.claim)
+        ):
             item.claim = compact_text(claim, limit=520)
 
         metadata = dict(item.metadata or {})
@@ -869,7 +900,32 @@ class SemanticMemoryStore:
         if profile.fact_key and not metadata.get("fact_key"):
             metadata["fact_key"] = profile.fact_key
         metadata["aliases"] = unique_keep_order([*metadata.get("aliases", []), *profile.aliases])[-16:]
-        metadata["embedding_text_hash"] = stable_hash(self.embedding_text_for_item(item))
+
+        if replacement:
+            previous_values = list(metadata.get("previous_values") or [])
+            if old_value and normalize_text(old_value) != normalize_text(new_value):
+                previous_values.append(old_value)
+            metadata["previous_values"] = unique_keep_order(previous_values)[-8:]
+            superseded = list(metadata.get("superseded_facts") or [])
+            if old_value or old_claim:
+                superseded.append(
+                    {
+                        "value": old_value,
+                        "claim": old_claim,
+                        "at": now,
+                        "replaced_by": new_value,
+                    }
+                )
+            metadata["superseded_facts"] = superseded[-8:]
+            metadata["value"] = new_value
+            metadata["current_value"] = new_value
+            metadata["last_update_policy"] = "current_fact_replacement"
+            metadata["raw_user_text"] = str(request_metadata.get("raw_user_text") or metadata.get("raw_user_text") or "")
+            for key_name in ("semantic_claim", "predicate", "subject", "object_type", "assertion", "modality", "temporal", "scope"):
+                if key_name in request_metadata:
+                    metadata[key_name] = request_metadata[key_name]
+            item.status = "active" if item.confidence >= 0.55 else item.status
+            item.contradiction_ids = []
 
         if conflict:
             contradiction_id = f"contr_{uuid.uuid4().hex[:10]}"
@@ -881,6 +937,25 @@ class SemanticMemoryStore:
             metadata["contradictions"] = contradictions[-8:]
 
         item.metadata = metadata
+        item.metadata["embedding_text_hash"] = stable_hash(self.embedding_text_for_item(item))
+
+    def _is_current_fact_replacement(
+        self,
+        fact_key: str,
+        *,
+        old_value: str,
+        new_value: str,
+        confidence: float,
+    ) -> bool:
+        if fact_key not in CURRENT_FACT_KEYS:
+            return False
+        if not new_value:
+            return False
+        if confidence < 0.55:
+            return False
+        if not old_value:
+            return True
+        return normalize_text(old_value) != normalize_text(new_value)
 
     def _claim_surface_quality(self, claim: str) -> float:
         """Ước lượng claim nào đáng dùng làm surface chính.
@@ -925,18 +1000,17 @@ class SemanticMemoryStore:
         raw_content = _mapping(data.get("raw_content"))
         raw_meta = _mapping(raw_content.get("metadata"))
         semantic_claim = _mapping(data.get("semantic_claim"))
-        if fact_key in {"user.current_location", "user.living_location", "user.hometown", "user.preference.location"}:
-            for value in (
-                data.get("value"),
-                raw_meta.get("value"),
-                raw_content.get("value"),
-                semantic_claim.get("object_value"),
-                semantic_claim.get("object_text"),
-            ):
-                clean = str(value or "").strip()
-                if clean:
-                    return clean
-            return ""
+        for value in (
+            data.get("value"),
+            data.get("current_value"),
+            raw_meta.get("value"),
+            raw_content.get("value"),
+            semantic_claim.get("object_value"),
+            semantic_claim.get("object_text"),
+        ):
+            clean = str(value or "").strip()
+            if clean:
+                return clean
         return ""
 
     def _extract_simple_value(self, claim: str, fact_key: str) -> str:
@@ -946,8 +1020,9 @@ class SemanticMemoryStore:
         if fact_key == "user.name":
             # Các pattern đơn giản: "tên ... là X", "user name: X".
             patterns = [
-                r"(?:ten cua nguoi dung|ten cua ngai|nguoi dung ten|ngai ten|user name|preferred name)\s*(?:la|:)?\s*([a-zA-Z0-9_\-]{2,40})",
-                r"(?:goi nguoi dung la|goi ngai la)\s*([a-zA-Z0-9_\-]{2,40})",
+                r"(?:user s name is|users name is|user name|preferred name)\s*(?:la|is|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
+                r"(?:ten cua nguoi dung|ten cua ngai|nguoi dung ten|ngai ten)\s*(?:la|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
+                r"(?:goi nguoi dung la|goi ngai la)\s*([a-zA-Z0-9_\- ]{2,80})",
             ]
             for pattern in patterns:
                 match = re.search(pattern, normalized)
@@ -968,6 +1043,37 @@ class SemanticMemoryStore:
     # ------------------------------------------------------------------
     # Recall path
     # ------------------------------------------------------------------
+
+    def lookup_fact(self, fact_key: str) -> Any:
+        """Return the current value for a stable fact_key.
+
+        This is intentionally stricter than generic recall: for single-source-of-truth
+        facts such as user.name, the newest active keyed item wins.
+        """
+
+        key = str(fact_key or "").strip()
+        if not key:
+            return None
+        candidates = [
+            item
+            for item in self.load()
+            if item.fact_key == key and item.status in {"active", "tentative"}
+        ]
+        if not candidates:
+            return None
+        item = max(candidates, key=self._current_fact_rank)
+        return item.semantic_value or self._extract_simple_value(item.claim, key) or None
+
+    def get_fact(self, fact_key: str) -> Any:
+        return self.lookup_fact(fact_key)
+
+    def semantic_lookup(self, fact_key: str) -> Any:
+        return self.lookup_fact(fact_key)
+
+    def _current_fact_rank(self, item: SemanticMemoryItem) -> tuple[float, float, float, float, str]:
+        status_rank = {"active": 2.0, "tentative": 1.0}.get(item.status, 0.0)
+        updated = max(_safe_epoch_from_iso(item.updated_at), _safe_epoch_from_iso(item.last_accessed_at))
+        return (status_rank, updated, float(item.confidence), float(item.importance), item.id)
 
     def recall(self, query: str = "", *, limit: int = 8, min_score: float | None = None) -> list[SemanticMemoryItem]:
         """Recall tương thích API cũ: trả list item.

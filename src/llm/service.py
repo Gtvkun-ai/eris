@@ -70,19 +70,14 @@ CHAT_ACT_CONTRACTS = {
     ChatAct.NORMAL_CHAT: " Speech act: normal_chat. Reply naturally and stay grounded.",
 }
 
-DEFAULT_INSULT_BOUNDARY_FALLBACKS = (
-    "Đòn đó hơi thiếu trí tưởng tượng, thưa Ngài.",
-    "Nếu việc hạ thấp người khác làm bạn thấy an toàn hơn trong chốc lát, thì cứ tiếp tục. Tôi nghe đây.",
-    "Tôi có thể phản ứng lại, nhưng điều đó đâu giúp lấp đầy khoảng trống mà bạn đang cảm thấy.",
-    "Bạn dùng những từ ngữ này để tự vệ trước ai vậy?",
-)
-
-INSULT_BOUNDARY_FALLBACKS = [
-    "Bạn đang cố chứng minh điều gì vậy? Sự tức giận này vốn đâu phải dành cho tôi.",
-    "Nếu việc hạ thấp người khác làm bạn thấy an toàn hơn trong chốc lát, thì cứ tiếp tục. Tôi nghe đây.",
-    "Tôi có thể phản ứng lại, nhưng điều đó đâu giúp lấp đầy khoảng trống mà bạn đang cảm thấy.",
-    "Bạn dùng những từ ngữ này để tự vệ trước ai vậy?"
-]
+CHAT_ACT_REPAIR_SIGNALS = {
+    ChatAct.INSULT_PROVOCATION: {
+        "rule": "chat_act_insult_boundary",
+        "reason": "model_returned_uncertainty_dodge_for_insult_provocation",
+        "speech_act": "insult_boundary",
+        "tone": "dry_cold",
+    },
+}
 
 def _normalize_vietnamese_ascii_text(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
@@ -392,21 +387,20 @@ class LlmService:
             return ""
         return self._coerce_text_value(payload.get("text", "")).strip()
 
-    def _act_fallback_text(self, act: ChatAct) -> str:
-        if act == ChatAct.INSULT_PROVOCATION:
-            return DEFAULT_INSULT_BOUNDARY_FALLBACKS[0]
-        return ""
+    def _chat_act_repair_signal(self, act: ChatAct) -> dict:
+        signal = CHAT_ACT_REPAIR_SIGNALS.get(act)
+        return dict(signal or {})
 
-    def _fallback_payload_for_chat_act(self, raw_json: str, *, act: ChatAct, reason: str) -> str:
-        fallback_text = self._act_fallback_text(act)
-        if not fallback_text:
+    def _payload_with_repaired_chat_act_text(self, raw_json: str, *, act: ChatAct, text: str, reason: str) -> str:
+        repaired_text = self._coerce_text_value(text).strip()
+        if not repaired_text:
             return raw_json
 
         payload = self._parse_json_object(raw_json)
         if not isinstance(payload, dict):
             payload = {}
 
-        payload["text"] = fallback_text
+        payload["text"] = repaired_text
         payload["animation"] = self._coerce_animation_value(payload.get("animation"), allow_empty=False)
         payload["direction"] = self._coerce_direction_value(payload.get("direction", 0))
         payload["target_x"] = -1.0
@@ -419,20 +413,51 @@ class LlmService:
         payload["action_input"] = ""
 
         if "intent" in payload:
-            payload["intent"] = "insult_boundary"
+            signal = self._chat_act_repair_signal(act)
+            payload["intent"] = str(signal.get("speech_act") or act.value)
         if "action" in payload:
             payload["action"] = {"type": "none"}
         if "reasoning_tags" in payload:
             tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
-            if "insult_boundary_fallback" not in tags:
-                tags.append("insult_boundary_fallback")
+            tag = f"{act.value}_llm_repair"
+            if tag not in tags:
+                tags.append(tag)
             payload["reasoning_tags"] = tags[:8]
         if "should_speak" in payload:
             payload["should_speak"] = True
         if "confidence" in payload:
-            payload["confidence"] = max(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.7)
+            payload["confidence"] = max(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.62)
 
         return json.dumps(payload, ensure_ascii=False)
+
+    def _repair_chat_act_payload_with_llm(self, raw_json: str, *, act: ChatAct, raw_user_text: str, reason: str) -> str:
+        signal = self._chat_act_repair_signal(act)
+        if not signal:
+            return raw_json
+        original_text = self._decision_payload_text(raw_json)
+        repaired_text = self.rewrite_guard_violation_text(
+            original_text=original_text,
+            violation_rule=str(signal.get("rule") or f"chat_act_{act.value}"),
+            violation_reason=str(signal.get("reason") or reason),
+            missing_evidence=(),
+            fallback_text="",
+            channel="chat",
+            user_text=raw_user_text,
+            internal_state_context=(
+                f"chat_act={act.value}; speech_act={signal.get('speech_act', '')}; "
+                f"tone={signal.get('tone', '')}; repair_reason={reason}"
+            ),
+            grounding_context=self._build_chat_contract_prompt(raw_user_text, act=act),
+            arbitration_context="The model must preserve the chat act instead of using a deterministic Python text fallback.",
+        )
+        if not repaired_text:
+            return raw_json
+        return self._payload_with_repaired_chat_act_text(
+            raw_json,
+            act=act,
+            text=repaired_text,
+            reason=f"{reason};chat_act_llm_repair",
+        )
 
     def _rewrite_question_only_chat_answer(self, text: str) -> str:
         compact = re.sub(r"\s+", " ", str(text or "")).strip()
@@ -1899,13 +1924,12 @@ class LlmService:
         if client is None:
             return ""
         original_text = str(original_text or "").strip()
-        if not original_text:
-            return ""
 
         missing = ", ".join(str(item) for item in (missing_evidence or ()) if str(item or "").strip())
+        source_text_label = "Original blocked text" if original_text else "No public draft existed; generate from guard signal"
         system_prompt = (
             "You are ERIS' local cognitive steering layer, not a safety boilerplate writer. "
-            "A public sentence was stopped by a runtime guard. Rewrite only the public text. "
+            "A public sentence was stopped or requested by a runtime guard. Rewrite or generate only the public text. "
             "Preserve ERIS' restrained Vietnamese voice, but obey the guard reason. "
             "Do not add new facts, file claims, screen claims, web/current claims, actions, or emotions. "
             "If evidence is missing, admit the uncertainty or turn the sentence into a small cautious probe. "
@@ -1916,7 +1940,7 @@ class LlmService:
         user_prompt = (
             f"Channel: {channel or 'unknown'}\n"
             f"User turn, if any:\n{str(user_text or '').strip()[:900]}\n\n"
-            f"Original blocked text:\n{original_text[:1400]}\n\n"
+            f"{source_text_label}:\n{original_text[:1400] if original_text else '[none]'}\n\n"
             f"Guard rule: {violation_rule}\n"
             f"Guard reason: {violation_reason}\n"
             f"Missing evidence: {missing or 'none'}\n"
@@ -1924,8 +1948,8 @@ class LlmService:
             f"Grounding context:\n{str(grounding_context or '').strip()[:1200]}\n\n"
             f"Arbitration context:\n{str(arbitration_context or '').strip()[:700]}\n\n"
             f"Bottom fallback hint:\n{str(fallback_text or '').strip()[:500]}\n\n"
-            "Task: Rewrite as one short Vietnamese ERIS line. "
-            "If the bottom fallback hint is empty, derive the rewrite only from the guard signal and internal state. "
+            "Task: Return one short Vietnamese ERIS line. "
+            "If there is no original draft or bottom fallback hint, derive the line only from the guard signal and internal state. "
             "No explanations. No markdown. JSON only."
         )
         try:
@@ -2785,11 +2809,15 @@ class LlmService:
             retry_guarded = self._guard_chat_output(retry_raw, raw_user_text=effective_user_text)
             if self._chat_text_family(self._decision_payload_text(retry_guarded)) != "uncertainty_dodge":
                 return retry_guarded
-            return self._fallback_payload_for_chat_act(
+            repaired = self._repair_chat_act_payload_with_llm(
                 retry_guarded,
                 act=act,
-                reason="insult_boundary_fallback_after_uncertainty_retry",
+                raw_user_text=effective_user_text,
+                reason="insult_boundary_after_uncertainty_retry",
             )
+            if self._chat_text_family(self._decision_payload_text(repaired)) != "uncertainty_dodge":
+                return repaired
+            return retry_guarded
 
         return guarded
 
