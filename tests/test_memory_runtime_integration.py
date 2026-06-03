@@ -25,12 +25,23 @@ class _DummyLogger:
 class _RecordingKernel:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.maintenance_calls: list[dict[str, object]] = []
 
     def ingest(self, text: str, **kwargs):
         self.calls.append({"text": text, **kwargs})
         return SimpleNamespace(
             committed_count=1,
             to_dict=lambda: {"committed_count": 1, "mode": kwargs.get("mode")},
+        )
+
+    def maintain(self, **kwargs):
+        self.maintenance_calls.append(dict(kwargs))
+        return SimpleNamespace(
+            to_dict=lambda: {
+                "reason": kwargs.get("reason"),
+                "budget": kwargs.get("budget"),
+                "destructive": kwargs.get("destructive"),
+            },
         )
 
 
@@ -95,3 +106,58 @@ def test_background_digest_requeues_recent_user_input_instead_of_dropping() -> N
     assert processed == 1
     assert service.stats.processed == 1
     assert len(kernel.calls) == 1
+
+
+def test_background_digest_runs_memory_maintenance_when_idle() -> None:
+    kernel = _RecordingKernel()
+    service = BackgroundMemoryDigestKernelService(
+        kernel,
+        config=BackgroundMemoryDigestKernelConfig(
+            enabled=True,
+            worker_idle_sleep=0.001,
+            pause_on_user_input=False,
+            idle_only=False,
+            only_when_remote_inflight=False,
+            maintenance_enabled=True,
+            maintenance_interval_seconds=0.0,
+            maintenance_budget="normal",
+            maintenance_destructive=False,
+        ),
+        logger=_DummyLogger(),
+    )
+
+    processed = service.drain_once_for_tests()
+
+    assert processed == 0
+    assert len(kernel.calls) == 0
+    assert len(kernel.maintenance_calls) == 1
+    assert kernel.maintenance_calls[0]["budget"] == "normal"
+    assert kernel.maintenance_calls[0]["reason"] == "test_idle"
+    assert kernel.maintenance_calls[0]["destructive"] is False
+    assert service.stats.maintenance_runs == 1
+    assert service.stats.last_maintenance["budget"] == "normal"
+
+
+def test_background_digest_defers_memory_maintenance_after_user_input() -> None:
+    kernel = _RecordingKernel()
+    service = BackgroundMemoryDigestKernelService(
+        kernel,
+        config=BackgroundMemoryDigestKernelConfig(
+            enabled=True,
+            worker_idle_sleep=0.001,
+            pause_on_user_input=True,
+            user_input_pause_seconds=60.0,
+            idle_only=False,
+            only_when_remote_inflight=False,
+            maintenance_enabled=True,
+            maintenance_interval_seconds=0.0,
+        ),
+        logger=_DummyLogger(),
+    )
+
+    service.notify_user_input()
+    processed = service.drain_once_for_tests()
+
+    assert processed == 0
+    assert kernel.maintenance_calls == []
+    assert service.stats.maintenance_runs == 0
