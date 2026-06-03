@@ -6,8 +6,8 @@ from dataclasses import replace
 from cortex.contracts import AgentSpeechCore
 from domain import Decision
 from guard_config import LOG_ONLY_GUARD_MODE, OFF_GUARD_MODE, get_guard_mode
-from runtime.fallback_policy import FALLBACK_BY_INTENT
 from runtime.controlled_slippage import resolve_controlled_slippage
+from runtime.guard_violations import GuardViolation
 
 
 class PostGenerationFiltersMixin:
@@ -36,6 +36,231 @@ class PostGenerationFiltersMixin:
         except Exception:
             pass
         return decision
+
+    # ------------------------------------------------------------------
+    # Guard violation / cognitive reroll layer
+    # ------------------------------------------------------------------
+    # P0 của bản vá: post-generation guard không còn phải là "tác giả"
+    # câu cuối.  Guard tạo một GuardViolation có cấu trúc; tầng runtime/LLM
+    # được quyền reroll đúng một lần. Nếu reroll không có model hoặc vẫn bẩn,
+    # lúc đó mới rơi xuống fallback nhỏ. Vâng, cuối cùng cái máy chém cũng được
+    # hạ cấp thành cái phanh. Văn minh mất 90k dòng để nhớ ra chuyện đó.
+
+    def _remember_guard_violation(self, violation: GuardViolation) -> None:
+        try:
+            self.last_guard_violation = violation
+        except Exception:
+            pass
+
+    def _guard_internal_state_values(self) -> dict:
+        try:
+            state = self._get_internal_state()
+        except Exception:
+            state = None
+        if state is None:
+            return {}
+        values: dict[str, float] = {}
+        for name in (
+            "silence_pressure",
+            "curiosity",
+            "overload",
+            "attachment",
+            "restraint",
+            "fatigue",
+            "tension",
+            "social_energy",
+        ):
+            try:
+                raw = getattr(state, name, None)
+                if raw is not None:
+                    values[name] = float(raw)
+            except Exception:
+                continue
+        mental = getattr(state, "mental_processes", None)
+        if mental is not None:
+            for public_name, internal_name in (
+                ("curiosity_pressure", "curiosity"),
+                ("restraint_pressure", "restraint"),
+                ("continuity_pressure", "continuity"),
+                ("attachment_pressure", "attachment"),
+                ("cognitive_load", "cognitive_load"),
+            ):
+                try:
+                    proc = getattr(mental, internal_name, None)
+                    if proc is not None:
+                        pressure = getattr(proc, "pressure", None)
+                        level = getattr(proc, "level", None)
+                        if pressure is not None:
+                            values[public_name] = float(pressure)
+                        elif level is not None:
+                            values[public_name] = float(level)
+                except Exception:
+                    continue
+        return values
+
+    def _guard_internal_state_context(self) -> str:
+        values = self._guard_internal_state_values()
+        if not values:
+            return "Internal state unavailable; keep the repair short and grounded."
+        parts = []
+        for key in sorted(values):
+            try:
+                parts.append(f"{key}={max(0.0, min(1.0, float(values[key]))):.2f}")
+            except Exception:
+                continue
+        return "; ".join(parts) or "Internal state unavailable; keep the repair short and grounded."
+
+    def _dynamic_guard_bottom_fallback(self, violation: GuardViolation, *, channel: str = "") -> str:
+        values = self._guard_internal_state_values()
+        overload = float(values.get("overload", values.get("cognitive_load", 0.0)) or 0.0)
+        curiosity = float(values.get("curiosity", values.get("curiosity_pressure", 0.0)) or 0.0)
+        silence = float(values.get("silence_pressure", 0.0) or 0.0)
+        attachment = float(values.get("attachment", values.get("attachment_pressure", 0.0)) or 0.0)
+
+        if violation.suggested_action in {"suppress", "body_only"}:
+            return ""
+        if violation.rule in {"protocol_surface_guard", "internal_object_surface_guard"}:
+            return "Tôi vừa nuốt lại một mảnh nội bộ bị lộ. Phần đó không nên đi ra ngoài."
+        if overload >= 0.72:
+            return "Tín hiệu mờ quá. Tôi lùi lại một nhịp."
+        if curiosity >= 0.65 and attachment >= 0.45:
+            return "Tôi chưa có đủ neo để nói chắc. Tôi chỉ dám hỏi nhẹ thôi."
+        if silence >= 0.65:
+            return "Hm... đoạn này không đủ sạch để tôi đoán tiếp."
+        if "screen_evidence" in violation.missing_evidence:
+            return "Tôi chưa có evidence màn hình đủ rõ. Phần kia tôi hạ xuống."
+        if "file_evidence" in violation.missing_evidence:
+            return "Tôi chưa có nội dung file đủ chắc để kết luận."
+        if "web_access_or_search_result" in violation.missing_evidence:
+            return "Tôi chưa có nguồn web hiện tại để nói chắc."
+        return "Tôi không đủ bằng chứng cho câu đó. Tôi hạ nó xuống."
+
+    def _guard_arbitration_context(self, speech_core: AgentSpeechCore | None = None) -> str:
+        report = self._arbitration_report_from_speech_core(speech_core)
+        if not report:
+            return ""
+        try:
+            selected = report.get("selected") if isinstance(report, dict) else None
+            if isinstance(selected, dict):
+                name = str(selected.get("name") or "")
+                reason = str(selected.get("reason") or "")
+                evidence = tuple(str(item) for item in selected.get("evidence", ()) if str(item or "").strip())
+                return f"selected_impulse={name}; reason={reason[:180]}; evidence={', '.join(evidence[:5])}"
+        except Exception:
+            return ""
+        return ""
+
+    def _guard_grounding_context(self, frame=None, grounding=None) -> str:
+        report = grounding
+        if report is None and frame is not None:
+            report = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
+        if report is None:
+            report = getattr(self, "last_grounding_context", None)
+        if report is None:
+            return ""
+        prompt_context = str(getattr(report, "prompt_context", "") or "").strip()
+        if prompt_context:
+            return prompt_context[:1600]
+        bits = []
+        for name in ("epistemic_mode", "primary_source", "grounding_source", "missing_evidence"):
+            try:
+                value = getattr(report, name, None)
+                if value:
+                    bits.append(f"{name}={value}")
+            except Exception:
+                continue
+        return "; ".join(bits)
+
+    def _guard_reroll_is_clean(self, text: str, violation: GuardViolation, *, grounding=None) -> bool:
+        candidate = str(text or "").strip()
+        if not candidate:
+            return False
+        if violation.rule in {"protocol_surface_guard", "internal_object_surface_guard"}:
+            if self._detect_protocol_surface_leak(candidate) or self._detect_internal_object_surface_leak(candidate):
+                return False
+        missing = set(violation.missing_evidence or ())
+        if "file_evidence" in missing and self._looks_like_file_grounded_claim(candidate, report=grounding):
+            return False
+        if "screen_evidence" in missing and self._looks_like_screen_grounded_claim(candidate):
+            return False
+        if "web_access_or_search_result" in missing and self._looks_like_live_web_claim(candidate):
+            return False
+        if violation.rule == "anti_mindreading" and self._contains_mindreading_claim(candidate) and not self._is_interactive_guess_text(candidate):
+            return False
+        return True
+
+    def _repair_guard_violation_decision(
+        self,
+        decision: Decision,
+        violation: GuardViolation,
+        *,
+        frame=None,
+        grounding=None,
+        channel: str = "",
+        speech_core: AgentSpeechCore | None = None,
+        user_text: str = "",
+        parse_mode: str | None = None,
+        allow_reroll: bool = True,
+    ) -> Decision:
+        self._remember_guard_violation(violation)
+        trace_marker = violation.trace_marker or violation.compact_trace()
+        if self._guard_is_log_only(violation.rule):
+            return self._trace_only_guard(decision, f"{trace_marker}; log_only")
+
+        if allow_reroll and violation.suggested_action in {"reroll", "soften"}:
+            service = getattr(self, "llm_service", None)
+            reroll = getattr(service, "rewrite_guard_violation_text", None)
+            if callable(reroll):
+                try:
+                    repaired_text = reroll(
+                        original_text=violation.original_text,
+                        violation_rule=violation.rule,
+                        violation_reason=violation.reason,
+                        missing_evidence=violation.missing_evidence,
+                        fallback_text=violation.fallback_text,
+                        channel=channel,
+                        user_text=user_text,
+                        internal_state_context=self._guard_internal_state_context(),
+                        grounding_context=self._guard_grounding_context(frame=frame, grounding=grounding),
+                        arbitration_context=self._guard_arbitration_context(speech_core),
+                    )
+                    if self._guard_reroll_is_clean(repaired_text, violation, grounding=grounding):
+                        repaired = self._copy_decision_with_text(
+                            decision,
+                            text=repaired_text,
+                            trace_marker=f"{trace_marker}; reroll=ok",
+                            parse_mode=parse_mode or decision.parse_mode,
+                        )
+                        try:
+                            repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.55)
+                        except Exception:
+                            repaired.confidence = 0.45
+                        return repaired
+                    decision = self._trace_only_guard(decision, f"{trace_marker}; reroll=dirty")
+                except Exception as exc:
+                    try:
+                        self.logger.warning("[guard reroll] failed rule=%s: %s", violation.rule, exc)
+                    except Exception:
+                        pass
+
+        fallback_text = self._dynamic_guard_bottom_fallback(violation, channel=channel)
+        repaired = self._copy_decision_with_text(
+            decision,
+            text=fallback_text,
+            trace_marker=f"{trace_marker}; fallback=dynamic",
+            parse_mode=parse_mode or "guard_violation_fallback",
+        )
+        if not fallback_text:
+            repaired.should_speak = False
+            repaired.intent = repaired.intent or "body_only_guard_repair"
+        elif violation.rule in {"memory_haunting_guard", "chat_grounding_guard"}:
+            repaired.intent = "grounding_clarification"
+            repaired.action = "none"
+        try:
+            repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.35)
+        except Exception:
+            repaired.confidence = 0.35
+        return repaired
 
     def _record_agent_mind_feedback_from_user(self, user_text: str, *, frame=None) -> tuple[str, ...]:
         """Ghi feedback semantic vào Persistent Agent Mind Layer nếu user đang phản hồi hành vi.
@@ -95,7 +320,7 @@ class PostGenerationFiltersMixin:
                 pass
             return ()
 
-    def _apply_chat_final_guards(self, decision: Decision, *, user_text: str, frame=None) -> Decision:
+    def _apply_chat_final_guards(self, decision: Decision, *, user_text: str, frame=None, allow_reroll: bool = True) -> Decision:
         feedback_markers = self._record_agent_mind_feedback_from_user(user_text, frame=frame)
         if feedback_markers:
             decision = self._trace_only_guard(decision, "agent_mind_feedback=" + ",".join(feedback_markers[:6]))
@@ -124,8 +349,12 @@ class PostGenerationFiltersMixin:
         decision = self._apply_memory_haunting_guard(
             decision,
             grounding=(getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)) if frame is not None else None,
+            frame=frame,
+            channel="chat",
+            user_text=user_text,
+            allow_reroll=allow_reroll,
         )
-        return self._apply_chat_grounding_guard(decision, user_text=user_text, frame=frame)
+        return self._apply_chat_grounding_guard(decision, user_text=user_text, frame=frame, allow_reroll=allow_reroll)
 
     def _append_trace(self, trace: str, marker: str) -> str:
         trace = str(trace or "").strip()
@@ -235,7 +464,17 @@ class PostGenerationFiltersMixin:
             repaired.confidence = 0.35
         return repaired
 
-    def _apply_memory_haunting_guard(self, decision: Decision, *, grounding=None) -> Decision:
+    def _apply_memory_haunting_guard(
+        self,
+        decision: Decision,
+        *,
+        grounding=None,
+        frame=None,
+        channel: str = "",
+        speech_core: AgentSpeechCore | None = None,
+        user_text: str = "",
+        allow_reroll: bool = True,
+    ) -> Decision:
         # Hard truth guard: memory must not masquerade as current evidence.
         # It can be explicitly disabled for dev experiments, but default behavior stays honest.
         if self._guard_is_off("memory_haunting_guard"):
@@ -257,32 +496,25 @@ class PostGenerationFiltersMixin:
         if not memory_used or bool(getattr(grounding, "memory_answer_allowed", True)):
             return decision
 
-        fallback = ""
-        engine = getattr(self, "source_grounding_engine", None)
-        builder = getattr(engine, "build_preemptive_reply", None)
-        if callable(builder):
-            try:
-                fallback = builder(grounding)
-            except Exception:
-                fallback = ""
-
-        decision.text = fallback or (
-            "Tôi chỉ có ký ức/ngữ cảnh trước đó, không có bằng chứng hiện tại đủ rõ. "
-            "Nếu muốn tôi xem màn hình thật, cần lấy vision snapshot mới."
+        return self._repair_guard_violation_decision(
+            decision,
+            GuardViolation(
+                rule="memory_haunting_guard",
+                severity="hard",
+                reason="memory_was_about_to_masquerade_as_current_evidence",
+                original_text=str(getattr(decision, "text", "") or ""),
+                suggested_action="reroll",
+                missing_evidence=tuple(getattr(grounding, "missing_evidence", ()) or ()),
+                trace_marker="memory_haunting_guard=violation_memory_as_current_evidence",
+            ),
+            frame=frame,
+            grounding=grounding,
+            channel=channel,
+            speech_core=speech_core,
+            user_text=user_text,
+            parse_mode="source_grounding_guard",
+            allow_reroll=allow_reroll,
         )
-        decision.intent = "grounding_clarification"
-        decision.action = "none"
-        try:
-            decision.confidence = min(float(getattr(decision, "confidence", 0.5) or 0.5), float(getattr(grounding, "max_confidence", 0.35) or 0.35))
-        except Exception:
-            decision.confidence = 0.35
-        decision.debug_trace = self._append_trace(
-            getattr(decision, "debug_trace", ""),
-            "memory_haunting_guard=rewrite_memory_as_current_evidence",
-        )
-        decision.parse_mode = "source_grounding_guard"
-        return decision
-
     def _guard_recent_context_as_screen_observation(self, decision: Decision) -> Decision:
         extracted = str(getattr(decision, "extracted_fact", "") or "").lower()
         intent = str(getattr(decision, "intent", "") or "").lower()
@@ -318,7 +550,14 @@ class PostGenerationFiltersMixin:
             )
         return decision
 
-    def _apply_chat_grounding_guard(self, decision: Decision, *, user_text: str, frame=None) -> Decision:
+    def _apply_chat_grounding_guard(
+        self,
+        decision: Decision,
+        *,
+        user_text: str,
+        frame=None,
+        allow_reroll: bool = True,
+    ) -> Decision:
         # Hard truth guard: file/screen/web claims still need evidence.
         if self._guard_is_off("chat_grounding_guard"):
             return self._trace_only_guard(decision, "chat_grounding_guard_off")
@@ -331,32 +570,63 @@ class PostGenerationFiltersMixin:
         if not missing:
             return decision
 
-        fallback = getattr(report, "fallback_decision", None)
-        fallback_text = str(getattr(fallback, "text", "") or "").strip()
-        if not fallback_text:
-            return decision
-
         text = decision.text or ""
         if "file_evidence" in missing and self._looks_like_file_grounded_claim(text, report=report):
-            return self._copy_decision_with_text(
+            return self._repair_guard_violation_decision(
                 decision,
-                text=fallback_text,
-                trace_marker="chat_grounding_guard; missing_file_evidence",
+                GuardViolation(
+                    rule="chat_grounding_guard",
+                    severity="hard",
+                    reason="missing_file_evidence",
+                    original_text=text,
+                    suggested_action="reroll",
+                    missing_evidence=("file_evidence",),
+                    trace_marker="chat_grounding_guard; missing_file_evidence",
+                ),
+                frame=frame,
+                grounding=report,
+                channel="chat",
+                user_text=user_text,
                 parse_mode="source_grounding_guard",
+                allow_reroll=allow_reroll,
             )
         if "screen_evidence" in missing and self._looks_like_screen_grounded_claim(text):
-            return self._copy_decision_with_text(
+            return self._repair_guard_violation_decision(
                 decision,
-                text=fallback_text,
-                trace_marker="chat_grounding_guard; missing_screen_evidence",
+                GuardViolation(
+                    rule="chat_grounding_guard",
+                    severity="hard",
+                    reason="missing_screen_evidence",
+                    original_text=text,
+                    suggested_action="reroll",
+                    missing_evidence=("screen_evidence",),
+                    trace_marker="chat_grounding_guard; missing_screen_evidence",
+                ),
+                frame=frame,
+                grounding=report,
+                channel="chat",
+                user_text=user_text,
                 parse_mode="source_grounding_guard",
+                allow_reroll=allow_reroll,
             )
         if "web_access_or_search_result" in missing and self._looks_like_live_web_claim(text):
-            return self._copy_decision_with_text(
+            return self._repair_guard_violation_decision(
                 decision,
-                text=fallback_text,
-                trace_marker="chat_grounding_guard; missing_web_evidence",
+                GuardViolation(
+                    rule="chat_grounding_guard",
+                    severity="hard",
+                    reason="missing_web_evidence",
+                    original_text=text,
+                    suggested_action="reroll",
+                    missing_evidence=("web_access_or_search_result",),
+                    trace_marker="chat_grounding_guard; missing_web_evidence",
+                ),
+                frame=frame,
+                grounding=report,
+                channel="chat",
+                user_text=user_text,
                 parse_mode="source_grounding_guard",
+                allow_reroll=allow_reroll,
             )
         return decision
 
@@ -416,20 +686,28 @@ class PostGenerationFiltersMixin:
         normalized = self._normalize_guard_text(text)
         if not normalized:
             return False
-        markers = (
+        # Chỉ bắt claim màn hình có dạng assertive. Các từ rời như "nút",
+        # "tab", "cửa sổ" có thể là ẩn dụ/UI discussion/hypothesis; bắt rộng
+        # ở đây là cách biến guard thành máy bóp cổ câu sống. Cảm ơn regex,
+        # phát minh đã chứng minh nhân loại thích tự làm đau mình.
+        probe_markers = ("co ve", "hinh nhu", "toi doan", "co phai", "phai khong", "dung khong", "neu")
+        if any(marker in normalized for marker in probe_markers) and self._is_interactive_guess_text(text):
+            return False
+        strong_markers = (
             "toi thay",
             "tren man hinh",
             "man hinh dang",
-            "cua so",
-            "tab ",
-            "nut ",
-            "o ben trai",
-            "o ben phai",
+            "toi dang nhin",
+            "toi nhin thay",
+            "dang hien tren man hinh",
+            "cua so dang",
+            "tab dang",
             "dang mo",
             "dang hien",
+            "dang bao loi",
             "traceback",
         )
-        return any(marker in normalized for marker in markers)
+        return any(marker in normalized for marker in strong_markers)
 
     def _looks_like_live_web_claim(self, text: str) -> bool:
         normalized = self._normalize_guard_text(text)
@@ -542,6 +820,7 @@ class PostGenerationFiltersMixin:
 
     def _inner_thought_alignment_fallback_text(
         self,
+        speech_core: AgentSpeechCore | None,
         intent: str,
         *,
         repeated: bool = False,
@@ -549,12 +828,28 @@ class PostGenerationFiltersMixin:
         window_title: str = "",
         momentum_topic: str = "",
     ) -> str:
-        return self._force_speak_fallback_by_intent_text(
-            intent if intent in FALLBACK_BY_INTENT else "inner_whim",
+        # Không import FALLBACK_BY_INTENT ở post-filter nữa. Guard chỉ chọn
+        # intent repair rất nhỏ, còn kho fallback legacy nằm ngoài đường guard.
+        # Nếu không, reroll vừa được sinh ra đã bị kéo ngược về template pool,
+        # đúng kiểu vá cửa trước rồi đào hầm phía sau.
+        allowed = {
+            "curious_question",
+            "inner_whim",
+            "random_chatter",
+            "micro_presence",
+            "micro_observation",
+            "social_presence",
+            "screen_observation",
+        }
+        repair_intent = intent if intent in allowed else "inner_whim"
+        return self.speech_core_engine.render_force_speak_repair_text(
+            speech_core,
+            normalize_text=self._normalize_user_message,
+            is_near_duplicate=self._is_near_duplicate_text,
+            last_text=self.last_text,
+            intent=repair_intent,
             counter=self.force_speak_intent_guard_count,
             repeated=repeated,
-            focus_kind=focus_kind,
-            window_title=window_title,
             momentum_topic=momentum_topic,
         )
 
@@ -599,32 +894,106 @@ class PostGenerationFiltersMixin:
             return decision
 
         self.force_speak_intent_guard_count += 1
-        context = self._fallback_context(
+        context = self.speech_core_engine.fallback_context(
             speech_core,
             snapshot=snapshot,
             momentum_topic=momentum_topic,
         )
-        replacement = self._inner_thought_alignment_fallback_text(intent, **context)
+        replacement = self._inner_thought_alignment_fallback_text(speech_core, intent, **context)
         if self._is_near_duplicate_text(replacement, self.last_text):
-            replacement = self._inner_thought_alignment_fallback_text(intent, repeated=True, **context)
+            replacement = self._inner_thought_alignment_fallback_text(speech_core, intent, repeated=True, **context)
         return self._copy_decision_with_text(decision, text=replacement, trace_marker=marker)
 
     def _contains_mindreading_claim(self, text: str) -> bool:
         normalized = self._normalize_user_message(text)
         if not normalized:
             return False
+        # _normalize_user_message bỏ dấu tiếng Việt, nên pattern ở đây cũng phải bỏ dấu.
+        # Nếu để pattern có dấu thì guard tưởng mình tinh tế, thực tế là không match gì cả.
         patterns = (
-            "có vẻ ngài đang",
-            "hình như ngài đang",
-            "chắc ngài đang",
-            "ngài đang muốn",
-            "ngài đang cần",
-            "ngài đang buồn",
-            "ngài đang mệt",
-            "ngài đang căng",
-            "ngài cần một",
+            "co ve ngai dang",
+            "hinh nhu ngai dang",
+            "chac ngai dang",
+            "ngai dang muon",
+            "ngai dang can",
+            "ngai dang buon",
+            "ngai dang met",
+            "ngai dang cang",
+            "ngai can mot",
         )
         return any(pattern in normalized for pattern in patterns)
+
+    def _is_interactive_guess_text(self, text: str) -> bool:
+        """Phân biệt phỏng đoán tương tác với đọc tâm trí độc đoán.
+
+        “Có vẻ Ngài đang... phải không?” là probe: nó mời user sửa.
+        “Ngài đang...” trơn như phán quyết là authoritative mindreading.
+        Guard chỉ nên chặn cái thứ hai. Nếu không, ERIS sẽ trở thành một cái
+        máy không bao giờ dám nghĩ khi thiếu dữ kiện. Một thành tựu đáng buồn.
+        """
+
+        raw = str(text or "").strip()
+        normalized = self._normalize_user_message(raw)
+        if not normalized:
+            return False
+        hedge_markers = (
+            "co ve",
+            "hinh nhu",
+            "toi doan",
+            "neu toi doc dung",
+            "neu doc dung",
+            "co phai",
+            "phai khong",
+            "dung khong",
+            "hay la",
+        )
+        has_hedge = any(marker in normalized for marker in hedge_markers)
+        has_question_shape = raw.endswith("?") or "?" in raw or "phai khong" in normalized or "dung khong" in normalized
+        return bool(has_hedge and has_question_shape)
+
+    def _source_grounding_allows_probe(self) -> bool:
+        """Cho post-filter biết SourceGrounding đang ở mode curiosity/probe.
+
+        Thiếu evidence kiểu screen/memory có thể cho phép giả thuyết/câu hỏi,
+        nhưng tuyệt đối không mở quyền claim 'tôi thấy/đọc được'.
+        """
+
+        report = getattr(self, "last_grounding_context", None)
+        if report is None:
+            return False
+        mode = str(getattr(report, "epistemic_mode", "") or "")
+        if mode not in {"probe", "hypothesis"}:
+            return False
+        return bool(getattr(report, "probe_allowed", False) or getattr(report, "hypothesis_allowed", False))
+
+    def _interactive_guess_allowed(
+        self,
+        text: str,
+        *,
+        speech_core: AgentSpeechCore,
+        slippage_profile=None,
+        selected_impulse: str = "",
+    ) -> bool:
+        """Quyền được đoán-sai-có-mời-sửa.
+
+        Điều kiện cố ý hẹp:
+        - phải là câu phỏng đoán có hedge/câu hỏi;
+        - hoặc intent là curious_question, hoặc SourceGrounding đang ở probe mode,
+          hoặc ControlledSlippage cho phép motive hypothesis, hoặc impulse nội sinh/scene curiosity thắng.
+        Như vậy ERIS có được sự tò mò mà không được biến nó thành phán quyết.
+        """
+
+        if not self._is_interactive_guess_text(text):
+            return False
+        if str(getattr(speech_core, "utterance_type", "") or "") == "curious_question":
+            return True
+        if self._source_grounding_allows_probe():
+            return True
+        if bool(getattr(slippage_profile, "allow_motive_hypothesis", False)):
+            return True
+        if selected_impulse in {"scene_curiosity_impulse", "companionship_impulse", "inner_whim_impulse", "micro_story_impulse"}:
+            return True
+        return False
 
     def _speech_core_safe_fallback_text(
         self,
@@ -634,83 +1003,15 @@ class PostGenerationFiltersMixin:
         snapshot=None,
         momentum_topic: str = "",
     ) -> str:
-        context = self._fallback_context(
+        return self.speech_core_engine.render_safe_fallback_text(
             speech_core,
+            normalize_text=self._normalize_user_message,
+            is_near_duplicate=self._is_near_duplicate_text,
+            last_text=self.last_text,
+            repeated=repeated,
             snapshot=snapshot,
             momentum_topic=momentum_topic,
         )
-        perception = next((item for item in getattr(speech_core, "perception", ()) if str(item or "").strip()), "")
-        if speech_core.utterance_type in {"micro_observation", "micro_presence", "inner_whim", "light_muse"}:
-            ladder_text = self._small_soft_fallback_ladder_text(
-                snapshot=snapshot,
-                momentum_topic=momentum_topic,
-                repeated=repeated,
-            )
-            if ladder_text:
-                return ladder_text
-        if speech_core.utterance_type in {"telemetry_comment", "vision_comment"} and perception:
-            return f"Tôi chỉ dám bám vào chỗ này: {perception}."
-        if speech_core.utterance_type == "curious_question":
-            return self._force_speak_fallback_by_intent_text(
-                "curious_question",
-                counter=2 if repeated else 1,
-                **context,
-            )
-        if speech_core.utterance_type in {"relational_checkin", "guarded_reply"}:
-            return "Tôi không đoán tâm trạng Ngài hộ đâu. Nếu muốn, Ngài cứ nói thẳng phần đang nặng nhất."
-        if speech_core.utterance_type == "random_chatter":
-            return self._force_speak_fallback_by_intent_text(
-                "random_chatter",
-                counter=2 if repeated else 1,
-                **context,
-            )
-        if speech_core.utterance_type == "micro_presence":
-            return self._force_speak_fallback_by_intent_text(
-                "micro_presence",
-                counter=2 if repeated else 1,
-                **context,
-            )
-        return self._force_speak_fallback_by_intent_text(
-            "inner_whim",
-            counter=2 if repeated else 1,
-            **context,
-        )
-
-    def _small_soft_fallback_ladder_text(
-        self,
-        *,
-        snapshot=None,
-        momentum_topic: str = "",
-        repeated: bool = False,
-    ) -> str:
-        context = self._fallback_context(None, snapshot=snapshot, momentum_topic=momentum_topic)
-        raw_window = str(context.get("window_title", "") or "").strip()
-        raw_topic = str(context.get("momentum_topic", "") or "").strip()
-        anchor = self._screen_fallback_anchor(
-            window_title=raw_window,
-            momentum_topic=raw_topic,
-        )
-        if (raw_window or (raw_topic and not self._looks_internal_topic(raw_topic))) and anchor:
-            pool = FALLBACK_BY_INTENT["micro_observation"]
-            template = pool[1 if repeated else 0]
-            return template.format(anchor=anchor[:48])
-
-        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0)) if snapshot is not None else 0.0
-        if idle_seconds >= 60.0:
-            return "nhịp này yên hơi lâu rồi."
-
-        atmosphere = (
-            "nhịp này vẫn hơi nghẽn.",
-            "không khí hiện tại hơi lệch.",
-        )
-        for candidate in atmosphere:
-            if not self._is_near_duplicate_text(candidate, self.last_text):
-                return candidate
-
-        texture = "cái im lặng này không sạch lắm."
-        if not self._is_near_duplicate_text(texture, self.last_text):
-            return texture
-        return ""
 
     def _arbitration_report_from_speech_core(self, speech_core: AgentSpeechCore | None) -> dict:
         """Lấy arbitration_report từ SpeechCore nếu có.
@@ -778,10 +1079,14 @@ class PostGenerationFiltersMixin:
             return "", f"arbitration_mindreading_guard=allow_grounded:{selected_impulse}", True
 
         if selected_impulse == "scene_curiosity_impulse":
-            replacement = self._small_soft_fallback_ladder_text(
+            replacement = self.speech_core_engine.render_safe_fallback_text(
+                speech_core,
+                normalize_text=self._normalize_user_message,
+                is_near_duplicate=self._is_near_duplicate_text,
+                last_text=self.last_text,
                 snapshot=snapshot,
                 momentum_topic=momentum_topic,
-            ) or "Tôi chỉ bám vào cảnh hiện tại thôi. Một nhận xét nhỏ thì được, đoán sâu hơn thì không sạch."
+            ) or "Toi chi bam vao canh hien tai thoi. Mot nhan xet nho thi duoc, doan sau hon thi khong sach."
             return replacement, "arbitration_mindreading_guard=rewrite_scene_curiosity", False
         if selected_impulse == "technical_help_impulse":
             return (
@@ -840,6 +1145,21 @@ class PostGenerationFiltersMixin:
         selected_impulse, _selected = self._selected_impulse_from_arbitration(
             self._arbitration_report_from_speech_core(speech_core)
         )
+
+        # InformationGap/Curiosity: nếu câu là phỏng đoán tương tác có mời sửa
+        # ("có vẻ... phải không?"), đừng chém nó như mindreading độc đoán.
+        # Đây là mảnh còn thiếu: thiếu dữ kiện phải sinh curiosity/probe, không phải câm.
+        if self._interactive_guess_allowed(
+            decision.text or "",
+            speech_core=speech_core,
+            slippage_profile=slippage_profile,
+            selected_impulse=selected_impulse,
+        ):
+            return self._trace_only_guard(
+                decision,
+                f"interactive_guess_allow:{getattr(slippage_profile, 'mode', 'none')}:{selected_impulse or 'none'}",
+            )
+
         if (
             getattr(slippage_profile, "allow_motive_hypothesis", False)
             and selected_impulse in {"companionship_impulse", "inner_whim_impulse", "micro_story_impulse"}
@@ -849,6 +1169,10 @@ class PostGenerationFiltersMixin:
                 f"controlled_slippage_allow_mindread:{slippage_profile.mode}:{selected_impulse}",
             )
 
+        # Không lấy fallback_policy làm đáy cho anti-mindreading nữa.
+        # Nếu có rewrite dựa trên arbitration thật hoặc reshape thành câu hỏi sạch
+        # thì dùng làm hint; còn không, GuardViolation sẽ tự rơi xuống
+        # _dynamic_guard_bottom_fallback(). Template pool không được làm tác giả.
         replacement = ""
         arbitration_replacement, arbitration_marker, allow_original = self._arbitration_rewrite_for_mindreading(
             text=decision.text or "",
@@ -864,23 +1188,21 @@ class PostGenerationFiltersMixin:
             shaped = self._reshape_statement_as_question(decision.text or "")
             if shaped and not self._is_near_duplicate_text(shaped, self.last_text):
                 replacement = shaped
-            else:
-                replacement = self._speech_core_safe_fallback_text(
-                    speech_core,
-                    snapshot=snapshot,
-                    momentum_topic=momentum_topic,
-                )
-        if not replacement:
-            replacement = self._speech_core_safe_fallback_text(
-                speech_core,
-                snapshot=snapshot,
-                momentum_topic=momentum_topic,
-            )
         marker = arbitration_marker or "anti_mindreading_filter"
-        return self._copy_decision_with_text(
+        return self._repair_guard_violation_decision(
             decision,
-            text=replacement,
-            trace_marker=marker,
+            GuardViolation(
+                rule="anti_mindreading",
+                severity="soft",
+                reason="unsupported_authoritative_mindreading",
+                original_text=str(getattr(decision, "text", "") or ""),
+                suggested_action="reroll",
+                missing_evidence=(),
+                trace_marker=marker,
+                fallback_text=replacement if replacement else "",
+            ),
+            channel="autonomous",
+            speech_core=speech_core,
             parse_mode="arbitration_mindreading_guard" if arbitration_marker else decision.parse_mode,
         )
 
@@ -906,28 +1228,33 @@ class PostGenerationFiltersMixin:
             return decision
 
         self.force_speak_repeat_guard_count += 1
-        fallback_intent = self._force_speak_fallback_intent(speech_core)
+        fallback_intent = self.speech_core_engine.fallback_intent(speech_core)
         marker = (
             f"force_speak_semantic_family_guard={semantic_family or repeated_family}"
             if (semantic_family or repeated_family)
             else "force_speak_repeat_guard"
         )
-        context = self._fallback_context(
+        replacement = self.speech_core_engine.render_force_speak_repair_text(
             speech_core,
+            normalize_text=self._normalize_user_message,
+            is_near_duplicate=self._is_near_duplicate_text,
+            last_text=self.last_text,
+            intent=fallback_intent,
+            counter=self.force_speak_repeat_guard_count,
             snapshot=snapshot,
             momentum_topic=momentum_topic,
         )
-        replacement = self._force_speak_fallback_by_intent_text(
-            fallback_intent,
-            counter=self.force_speak_repeat_guard_count,
-            **context,
-        )
         if self._is_near_duplicate_text(replacement, self.last_text):
-            replacement = self._force_speak_fallback_by_intent_text(
-                fallback_intent,
+            replacement = self.speech_core_engine.render_force_speak_repair_text(
+                speech_core,
+                normalize_text=self._normalize_user_message,
+                is_near_duplicate=self._is_near_duplicate_text,
+                last_text=self.last_text,
+                intent=fallback_intent,
                 counter=self.force_speak_repeat_guard_count,
                 repeated=True,
-                **context,
+                snapshot=snapshot,
+                momentum_topic=momentum_topic,
             )
 
         trace = decision.debug_trace or ""
@@ -1244,7 +1571,12 @@ class PostGenerationFiltersMixin:
                 probe = self._apply_protocol_surface_guard(probe)
                 probe = self._apply_internal_object_surface_guard(probe)
                 probe = self._guard_recent_context_as_screen_observation(probe)
-                probe = self._apply_memory_haunting_guard(probe)
+                probe = self._apply_memory_haunting_guard(
+                    probe,
+                    channel=channel,
+                    speech_core=speech_core,
+                    allow_reroll=False,
+                )
                 probe = self._apply_force_speak_no_evidence_topic_filter(
                     probe,
                     channel=channel,
@@ -1266,7 +1598,11 @@ class PostGenerationFiltersMixin:
         decision = self._apply_protocol_surface_guard(decision)
         decision = self._apply_internal_object_surface_guard(decision)
         decision = self._guard_recent_context_as_screen_observation(decision)
-        decision = self._apply_memory_haunting_guard(decision)
+        decision = self._apply_memory_haunting_guard(
+            decision,
+            channel=channel,
+            speech_core=speech_core,
+        )
         decision = self._apply_anti_mindreading_filter(
             decision,
             speech_core=speech_core,

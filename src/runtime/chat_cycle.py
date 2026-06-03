@@ -481,18 +481,24 @@ class ChatCycleMixin:
             user_text=user_text,
         )
         if grounding_preempt is not None:
+            # Nếu SourceGrounding chuyển thiếu dữ kiện sang epistemic_curiosity,
+            # action plan cũng phải mang shape probe/curious_question. Nếu vẫn đánh dấu
+            # guarded_reply thì các guard sau lại hiểu đây là câu tự vệ chết khô.
+            epistemic_mode = str(getattr(grounding_report, "epistemic_mode", "") or "")
+            preempt_speech_act = "curious_question" if epistemic_mode in {"probe", "hypothesis"} else "guarded_reply"
+            preempt_intent = "epistemic_probe" if epistemic_mode in {"probe", "hypothesis"} else "user_requested"
             self._set_cognitive_action_plan(
                 frame,
                 should_speak=True,
-                speech_intent="user_requested",
-                speech_act="guarded_reply",
+                speech_intent=preempt_intent,
+                speech_act=preempt_speech_act,
                 reason=f"Source grounding preempted chat turn ({grounding_report.preempt_mode}).",
                 snapshot=snapshot,
                 user_text=user_text,
                 concrete_signals=self._concrete_screen_signals(snapshot),
                 ti_report=ti_report,
                 fe_plan=fe_plan,
-                notes=("source_grounding_preempt", grounding_report.preempt_mode or "unknown"),
+                notes=("source_grounding_preempt", grounding_report.preempt_mode or "unknown", epistemic_mode or "unknown"),
             )
             self._commit_chat_decision(grounding_preempt, fe_plan, frame=frame)
             self.last_user_text_for_semantics = user_text
@@ -1059,15 +1065,17 @@ class ChatCycleMixin:
             f"preempt={getattr(report, 'preempt_mode', '') or 'unknown'};"
             f"warnings={warnings}"
         )
+        epistemic_mode = str(getattr(report, "epistemic_mode", "") or "")
+        is_probe = epistemic_mode in {"probe", "hypothesis"}
         decision = Decision(
             text=text,
-            intent="grounding_clarification",
+            intent="epistemic_probe" if is_probe else "grounding_clarification",
             action="none",
             animation="stand",
             should_speak=True,
             confidence=float(getattr(report, "max_confidence", 0.30) or 0.30),
-            parse_mode="source_grounding_preempt",
-            debug_trace=debug_trace,
+            parse_mode="source_grounding_probe" if is_probe else "source_grounding_preempt",
+            debug_trace=debug_trace + (f";epistemic_mode={epistemic_mode}" if epistemic_mode else ""),
         )
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
     def _build_user_message_signature(self, user_text: str) -> str:

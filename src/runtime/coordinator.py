@@ -78,7 +78,7 @@ from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.cognitive_cycle import CognitiveCycleMixin
 from runtime.cognitive_frame_recorder import CognitiveFrameRecorderMixin
-from runtime.fallback_policy import FALLBACK_BY_INTENT, FallbackPolicyMixin
+from runtime.force_speak_surface_policy import ForceSpeakSurfacePolicyMixin
 from runtime.force_speak_cycle import ForceSpeakCycleMixin
 from runtime.frame_builder import FrameBuilderMixin
 from runtime.outcome_observer import OutcomeObserver
@@ -89,6 +89,7 @@ from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_chann
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
 from runtime.state_commit_service import StateCommitServiceMixin
+from runtime.text_repeat_guard import TextRepeatGuardMixin
 from memory.memory_kernel import MemoryKernel
 
 '''coordinator.py là “bộ điều phối runtime” (orchestrator) cho ERIS: nó đứng giữa telemetry 
@@ -112,7 +113,8 @@ class RuntimeCoordinator(
     PromptContextBuilderMixin,
     CognitiveFrameRecorderMixin,
     PresenceControllerMixin,
-    FallbackPolicyMixin,
+    TextRepeatGuardMixin,
+    ForceSpeakSurfacePolicyMixin,
     PostGenerationFiltersMixin,
 ):
     #Đây là trung tâm điều phối.

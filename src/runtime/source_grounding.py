@@ -12,12 +12,12 @@ Nhiệm vụ:
 - Phân loại nguồn trả lời chính.
 - Cap confidence theo độ chắc của nguồn.
 - Tạo prompt context cho LLM để tránh overclaim.
-- Tạo fallback decision khi thiếu evidence.
+- Tạo grounding signal/probe policy khi thiếu evidence: thiếu dữ kiện không đồng nghĩa cấm tư duy.
 
 Nguyên tắc:
 - File này KHÔNG đọc file thật, KHÔNG OCR, KHÔNG gọi web, KHÔNG ghi memory.
 - Nó chỉ nhìn các tín hiệu đã có trong frame/runtime và quyết định "được phép dựa vào nguồn nào".
-- Nếu thiếu evidence, nó phải ép fallback thay vì để model bịa "tôi thấy/đọc được".
+- Nếu thiếu evidence, nó phải cấm claim khẳng định; nhưng vẫn được chuyển sang hypothesis/probe nếu khoảng trống thông tin còn đáng điều tra.
 """
 
 import json
@@ -66,10 +66,13 @@ class SourceCandidate:
 @dataclass(slots=True)
 class SourceFallbackDecision:
     """
-    Decision tối thiểu khi thiếu evidence.
+    Compatibility signal khi thiếu evidence.
 
-    Đây không nhất thiết là `domain.Decision` thật của repo.
-    Runtime có thể dùng `to_payload()` hoặc `to_runtime_decision()` để nối.
+    Lớp này từng chứa câu fallback public. Bản mới giữ field `text` để
+    không phá caller cũ, nhưng SourceGroundingEngine không còn là tác giả câu
+    nói cuối. Nó chỉ phát tín hiệu: thiếu evidence gì, cap confidence bao nhiêu,
+    parse_mode nào, và lý do gì. Lời nói public phải được LLM wording/reroll
+    hoặc post-filter đáy quyết định.
     """
 
     should_fallback: bool
@@ -185,6 +188,16 @@ class SourceGroundingReport:
     missing_evidence: list[str] = field(default_factory=list)
     preempt_mode: str = ""
     preempt_recommended: bool = False
+
+    # Information-gap policy:
+    # - "fallback": thiếu bằng chứng nghiêm trọng, chỉ được trả lời tối thiểu.
+    # - "probe": thiếu bằng chứng hiện tại nhưng vẫn được đặt giả thuyết/câu hỏi thăm dò.
+    # - "hypothesis": được phân tích như giả thuyết, không được nói như fact.
+    # Thiếu dữ kiện không được biến thành câm lặng; nó phải biến thành tò mò có kỷ luật.
+    epistemic_mode: Literal["claim", "hypothesis", "probe", "fallback"] = "claim"
+    information_gap: float = 0.0
+    hypothesis_allowed: bool = False
+    probe_allowed: bool = False
     memory_allowed: bool = True
     memory_surface_allowed: bool = True
     memory_answer_allowed: bool = True
@@ -227,6 +240,9 @@ class SourceGroundingEngine:
         frame.source_grounding = report
         prompt += report.prompt_context
         if report.should_fallback():
+            # Compatibility only. SourceGroundingEngine no longer authors
+            # public fallback text; callers should pass report.prompt_context
+            # into wording/reroll layers instead of returning this directly.
             return report.fallback_decision.to_runtime_decision()
 
     Các nguồn được ưu tiên theo tính trực tiếp:
@@ -655,7 +671,11 @@ class SourceGroundingEngine:
             grounding_source=grounding_source,
             missing_evidence=missing_evidence,
             preempt_mode=preempt_mode,
-            preempt_recommended=should_preempt or preempt_mode in {"filename_only", "deictic_without_vision"},
+            preempt_recommended=should_preempt or preempt_mode in {"filename_only", "deictic_without_vision", "epistemic_curiosity", "investigate"},
+            epistemic_mode="claim",
+            information_gap=0.0,
+            hypothesis_allowed=False,
+            probe_allowed=False,
             memory_allowed=memory_allowed,
             memory_surface_allowed=memory_surface_allowed,
             memory_answer_allowed=memory_answer_allowed,
@@ -666,6 +686,27 @@ class SourceGroundingEngine:
             answer_style_rules=answer_rules,
             notes=notes,
         )
+
+        # Information Gap -> Curiosity/Probe:
+        # preempt cũ hay biến thiếu evidence thành một câu chết. Ở đây ta phân loại lại:
+        # nếu thiếu screen/memory evidence nhưng còn đủ neo tương tác, ERIS được hỏi/probe
+        # như giả thuyết. Claim khẳng định vẫn bị cấm bởi forbidden_assumptions và guard sau.
+        try:
+            if self._is_epistemic_curiosity_gap(report):
+                report.epistemic_mode = "probe"
+                report.information_gap = max(0.35, 1.0 - float(report.confidence_cap or 0.0))
+                report.hypothesis_allowed = True
+                report.probe_allowed = True
+                if report.preempt_mode in {"deictic_without_vision", ""}:
+                    report.preempt_mode = "epistemic_curiosity"
+                report.notes.append("information_gap_to_probe")
+                if "Use hypothesis/probe wording; do not state missing source as observed fact." not in report.answer_style_rules:
+                    report.answer_style_rules.append("Use hypothesis/probe wording; do not state missing source as observed fact.")
+            elif report.missing_evidence:
+                report.epistemic_mode = "fallback"
+                report.information_gap = max(0.25, 1.0 - float(report.confidence_cap or 0.0))
+        except Exception:
+            pass
 
         report.prompt_context = self.render_prompt_context(report)
         report.fallback_decision = self.build_fallback_decision(report)
@@ -717,12 +758,14 @@ class SourceGroundingEngine:
         self,
         report_or_frame: Any,
         *,
-        modes: Sequence[str] = ("filename_only", "deictic_without_vision"),
+        modes: Sequence[str] = ("filename_only", "deictic_without_vision", "investigate"),
     ) -> bool:
         report = report_or_frame
         if not isinstance(report_or_frame, SourceGroundingReport):
             report = getattr(report_or_frame, "source_grounding", None) or getattr(report_or_frame, "grounding", None)
         if not isinstance(report, SourceGroundingReport):
+            return False
+        if str(getattr(report, "epistemic_mode", "") or "") in {"probe", "hypothesis"}:
             return False
         return bool(report.should_preempt_llm or (report.preempt_mode and report.preempt_mode in set(modes)))
 
@@ -738,6 +781,8 @@ class SourceGroundingEngine:
             "[SOURCE_GROUNDING]",
             f"primary_source: {report.primary_source}",
             f"confidence_cap: {report.confidence_cap:.2f}",
+            f"epistemic_mode: {getattr(report, 'epistemic_mode', 'claim')}",
+            f"information_gap: {float(getattr(report, 'information_gap', 0.0) or 0.0):.2f}",
         ]
 
         if report.allowed_sources:
@@ -783,6 +828,11 @@ class SourceGroundingEngine:
             lines.append("forbidden_assumptions:")
             for item in report.forbidden_assumptions[:8]:
                 lines.append(f"- {item}")
+        if getattr(report, "hypothesis_allowed", False) or getattr(report, "probe_allowed", False):
+            lines.append("information_gap_rules:")
+            lines.append("- Missing evidence forbids authoritative claims, not thinking.")
+            lines.append("- ERIS may offer a hypothesis or a confirming probe using wording like 'có vẻ', 'tôi đoán', 'phải không'.")
+            lines.append("- Do not say 'tôi thấy', 'tôi đã đọc', or 'tôi biết' for a missing source.")
         if report.answer_style_rules:
             lines.append("answer_rules:")
             for rule in report.answer_style_rules[:8]:
@@ -791,17 +841,62 @@ class SourceGroundingEngine:
         lines.append("[/SOURCE_GROUNDING]")
         return "\n".join(lines)
 
+    def _is_epistemic_curiosity_gap(self, report: SourceGroundingReport) -> bool:
+        """Thiếu evidence nhưng còn đủ neo để hỏi/thăm dò thay vì trả payload chết.
+
+        Đây là ranh giới chống đánh tráo:
+        - Cấm claim: ERIS không được nói đã thấy/đọc được nguồn chưa có.
+        - Cho phép probe: ERIS được nói “có vẻ / tôi đoán / phải không?” nếu nó tự nhận
+          đây là giả thuyết cần user xác nhận.
+        """
+
+        missing = set(getattr(report, "missing_evidence", ()) or ())
+        if not missing:
+            return False
+        if "web_access_or_search_result" in missing:
+            # Web/latest thường biến động thật; không probe như thể vừa biết nguồn hiện tại.
+            return False
+        if "file_evidence" in missing:
+            # Với file cụ thể, không có nội dung thì chỉ được xin/paste file, không đoán nội dung.
+            return False
+        if "screen_evidence" in missing:
+            # Deictic screen query thiếu ảnh/OCR: được hỏi/probe rất nhẹ, vì user thường đang muốn ERIS
+            # tham gia vào khoảng trống trước mắt, không phải im như máy in log.
+            return bool(getattr(report, "refers_to_current_screen", False))
+        if "memory_packet" in missing:
+            return True
+        return False
+
     def build_fallback_decision(self, report: SourceGroundingReport) -> SourceFallbackDecision:
         """
-        Tạo fallback nếu nguồn user yêu cầu chưa có evidence.
+        Tạo signal khi nguồn user yêu cầu chưa có evidence.
 
-        Rule:
-        - Hỏi file mà không có file evidence: không được tóm tắt/đánh giá file.
-        - Trỏ màn hình mà không có screen evidence: không được nói đang thấy gì.
-        - Hỏi thông tin mới nhất nhưng chưa search: không được phán theo memory.
+        Bản cũ sinh text public ở đây, rồi `post_generation_filters.py` dùng lại
+        nó như một câu thay thế. Đó là text surgery: SourceGrounding tự biến mình
+        thành tác giả lời nói cuối. Bản này cố tình không làm vậy nữa.
+
+        Rule mới:
+        - SourceGrounding chỉ báo thiếu evidence gì, confidence cap, parse_mode,
+          reason/debug trace và epistemic_mode.
+        - Nếu `probe/hypothesis` còn hợp lệ, không fallback, để LLM tự viết câu
+          thăm dò có hedge.
+        - Nếu thiếu evidence hard, vẫn đánh dấu `should_fallback=True` như signal
+          tương thích, nhưng `text=""` để caller không thể nôn văn mẫu tĩnh ra UI.
         """
 
-        missing = set(report.missing_evidence)
+        missing = tuple(self._dedupe(getattr(report, "missing_evidence", ()) or ()))
+        if getattr(report, "epistemic_mode", "") == "probe" and (
+            getattr(report, "probe_allowed", False) or getattr(report, "hypothesis_allowed", False)
+        ):
+            return SourceFallbackDecision(
+                should_fallback=False,
+                text="",
+                parse_mode="source_grounding_probe",
+                confidence=min(0.48, max(0.30, float(getattr(report, "confidence_cap", 0.32) or 0.32))),
+                reason="information_gap_probe",
+                missing_evidence=list(missing),
+                debug_trace=f"source_grounding:information_gap_probe:{','.join(missing)}",
+            )
         if not missing:
             return SourceFallbackDecision(
                 should_fallback=False,
@@ -811,42 +906,43 @@ class SourceGroundingEngine:
                 debug_trace="source_grounding:ok",
             )
 
-        text = ""
-        reason = "missing_evidence"
-
-        if "file_evidence" in missing:
-            file_name = (report.file_mentions[0] if getattr(report, "file_mentions", None) else "file đó")
-            text = (
-                f"Tôi chưa đọc được nội dung `{file_name}` trong runtime này. "
-                "Nếu chỉ dựa vào tên file hoặc ký ức cũ thì tôi chỉ đang đoán. "
-                "Mở file lên rõ hơn hoặc paste đoạn cần xem, rồi tôi phân tích chắc."
-            )
+        missing_set = set(missing)
+        if "file_evidence" in missing_set:
             reason = "missing_file_evidence"
-        elif "screen_evidence" in missing:
-            text = "Tôi chưa có bằng chứng màn hình ở turn này, nên không được giả vờ là đang thấy nó. Gửi ảnh, OCR hoặc mô tả lỗi hiện trên màn hình."
+            parse_mode = "source_grounding_missing_file_signal"
+        elif "screen_evidence" in missing_set:
             reason = "missing_screen_evidence"
-        elif "web_access_or_search_result" in missing:
-            text = "Thông tin này cần nguồn hiện tại. Chưa có kết quả web/search trong frame, nên tôi không nên phán như thể vừa kiểm tra."
+            parse_mode = "source_grounding_missing_screen_signal"
+        elif "web_access_or_search_result" in missing_set:
             reason = "missing_web_evidence"
-        elif "memory_packet" in missing:
-            text = "Tôi chưa có memory packet đủ chắc cho chi tiết đó. Tôi có thể trả lời theo phần Ngài vừa nói, nhưng không nên giả vờ nhớ chính xác."
+            parse_mode = "source_grounding_missing_web_signal"
+        elif "memory_packet" in missing_set:
             reason = "missing_memory_evidence"
+            parse_mode = "source_grounding_missing_memory_signal"
         else:
-            text = "Tín hiệu chưa đủ để trả lời chắc. Cần thêm evidence trước khi kết luận."
             reason = "missing_required_evidence"
+            parse_mode = "source_grounding_missing_evidence_signal"
 
         return SourceFallbackDecision(
             should_fallback=True,
-            text=text,
-            confidence=min(0.35, report.confidence_cap),
+            text="",
+            parse_mode=parse_mode,
+            confidence=min(0.35, float(getattr(report, "confidence_cap", 0.35) or 0.35)),
             reason=reason,
-            missing_evidence=report.missing_evidence,
-            debug_trace=f"source_grounding:{reason}:{','.join(report.missing_evidence)}",
+            missing_evidence=list(missing),
+            debug_trace=f"source_grounding:{reason}:{','.join(missing)}",
         )
 
     def build_preemptive_reply(self, report: SourceGroundingReport) -> str:
-        fallback = self.build_fallback_decision(report)
-        return str(getattr(fallback, "text", "") or "").strip()
+        """Deprecated compatibility hook.
+
+        SourceGroundingEngine không còn sinh text public. Caller cũ có thể vẫn
+        gọi hàm này, nhưng nó phải nhận chuỗi rỗng để không còn đường preempt
+        bằng văn mẫu tĩnh. Dùng `report.prompt_context`, `report.missing_evidence`,
+        `report.epistemic_mode` và `report.fallback_decision.reason` làm signal
+        cho LLM wording/reroll thay thế.
+        """
+        return ""
 
     def _derive_memory_answer_profile(
         self,
@@ -1161,9 +1257,9 @@ class SourceGroundingEngine:
 
     def _derive_answer_style_rules(self, primary: SourceKind, *, missing_evidence: Sequence[str]) -> list[str]:
         rules = [
-            "Answer-first nếu evidence đủ; fallback-first nếu evidence thiếu.",
+            "Answer-first nếu evidence đủ; nếu thiếu evidence thì chuyển sang uncertainty/probe, không claim như fact.",
             "Nêu rõ nguồn đang dùng nếu có nguy cơ lẫn file/màn hình/memory.",
-            "Không chuyển thiếu evidence thành suy diễn tâm lý.",
+            "Không chuyển thiếu evidence thành suy diễn tâm lý hoặc văn mẫu fallback tĩnh.",
         ]
 
         if primary == "pasted_code":
@@ -1211,7 +1307,7 @@ class SourceGroundingEngine:
             rules.append("Chỉ dùng web nếu runtime đã search hoặc allow_web bật.")
 
         if missing_evidence:
-            rules.append("Không gọi LLM dài dòng; trả fallback ngắn để lấy đúng evidence.")
+            rules.append("Thiếu evidence chỉ là tín hiệu steering: giữ câu ngắn, giảm certainty, hỏi/probe hoặc yêu cầu nguồn đúng; không dùng canned fallback.")
         return self._dedupe(rules)
 
     def _derive_preempt_mode(

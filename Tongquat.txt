@@ -420,6 +420,7 @@ Kết nối mặc định:
 - Trước khi gọi LLM, chat cycle link previous public turn qua `_link_previous_public_turn_for_chat()` và đưa `_previous_public_turn_context()` vào Ti context nếu user đang phản ứng với câu ERIS vừa hiện.
 - Có pre-grounding chạy trước memory recall để chặn memory cũ tự leo lên thành "evidence hiện tại" trong các câu kiểu `tôi đang làm gì`, `xem đi`, `đoạn đang mở`.
 - Nếu grounding báo memory không được phép trả lời (`memory_answer_allowed=False`), chat cycle quarantine memory recall/resonance cho turn đó và chỉ giữ procedural guard tối thiểu.
+- Nếu preempt của `source_grounding` rơi vào `epistemic_mode=probe/hypothesis`, chat cycle không còn đóng khung câu đó như `guarded_reply` nữa; action plan sẽ mang `speech_intent=epistemic_probe`, `speech_act=curious_question`, và decision đi ra với `parse_mode=source_grounding_probe` để các guard sau hiểu đây là một câu thăm dò có mời user sửa, không phải phòng thủ chết cứng.
 - `_observe_previous_turn_feedback()` gắn phản hồi của user vào frame trước để OutcomeObserver/SelfObservation đọc được accepted/corrected/confused ở đúng lượt sau.
 - Ngay đầu mỗi user turn, chat cycle gọi `session_turn_ledger.record_user(user_text, timestamp=cycle_start, meta={"channel": "chat"})`; đây là bước tách “điều user vừa nói trong phiên” khỏi long-term memory, để exact recall trong phiên không phải đi vòng qua episodic store.
 - Sau khi dựng `frame`, chat cycle gọi `_add_user_turn_memory_commit_requests(frame, user_text)`. Tức là mọi self-disclosure như tên, tháng sinh, response style hay memory-test hint sẽ được policy hóa thành `commit_requests` ngay ở lượt chat đó, rồi vẫn đi qua `StateCommitter/MemoryCognitionCore` như các request khác.
@@ -447,14 +448,24 @@ Kết nối mặc định:
 
 `src/runtime/source_grounding.py`
 - `SourceGroundingEngine`, cổng phân loại nguồn trước khi chat gọi LLM hoặc dựng câu trả lời.
-- Mục tiêu của tầng này không phải đọc file/web/OCR thật, mà là quyết định ERIS đang được phép dựa vào nguồn nào: `pasted_code`, `uploaded_file`, `filename_only`, `current_screen`, `live_vision`, `user_text`, `memory`, `web`, `runtime_state`, `unknown`.
-- `SourceGroundingReport` giữ metadata quan trọng cho cả prompt lẫn guard: `primary_source`, `confidence_cap`, `allowed_sources`, `grounding_source`, `missing_evidence`, `preempt_mode`, `memory_answer_allowed`, `memory_answer_profile`, `forbidden_assumptions`, `answer_style_rules`, `fallback_decision`.
-- Có logic bắt deictic/screen reference riêng: nếu user nói kiểu `lỗi này`, `xem đi`, `đoạn đang mở` mà không có screen evidence tươi, report sẽ đẩy sang `preempt_mode=deictic_without_vision`.
-- Có logic bắt `filename_only`: nếu user hỏi nội dung/lỗi của một file chỉ bằng tên file mà runtime chưa có file evidence thật, grounding sẽ không cho memory hay LLM đoán tiếp.
-- Pasted code được ưu tiên cao hơn screen-deictic: nếu user vừa dán code rồi nói `đoạn này`, engine hiểu đó là trỏ vào code chat chứ không ép phải có screenshot.
-- Memory được chia thành nhiều mức quyền: có thể cho continuity/procedural grounding, nhưng bị cấm trả lời như bằng chứng hiện tại nếu câu hỏi thực chất đòi file/screen/live evidence.
-- `MemoryAnswerProfile` là policy riêng cho các câu hỏi dạng nhớ-lịch-sử: continuity check, specific recall, session history, memory lookup; nó giới hạn confidence và ép stance kiểu `anchored_recall` hoặc `admit_uncertainty`.
-- Khi thiếu evidence đúng loại, engine tạo `SourceFallbackDecision` hoặc recommend preempt sớm; mục đích là chặn câu kiểu `tôi thấy`, `đang mở`, `file này lỗi ở...` khi runtime thực ra chưa có nguồn để nói vậy.
+- File này không đọc file thật, không OCR, không search web; nó chỉ nhìn tín hiệu runtime đã có (`frame`, `active_files`, `screen_facts`, `memory_packet`, `runtime_state`) rồi quyết định ERIS đang được phép dựa vào nguồn nào để trả lời.
+- Nguồn được phân hạng thành `pasted_code`, `uploaded_file`, `filename_only`, `current_screen`, `live_vision`, `user_text`, `memory`, `web`, `runtime_state`, `unknown`; mỗi nguồn có confidence cap riêng để chặn overclaim từ rất sớm.
+- `analyze(...)` là entrypoint chính: nó detect file mention, screen/deictic reference, pasted code, memory/history marker, web/latest marker, rồi tổng hợp thành `SourceGroundingReport`.
+- `SourceGroundingReport` là contract trung tâm cho cả prompt lẫn guard sau này: giữ `primary_source`, `allowed_sources`, `grounding_source`, `missing_evidence`, `forbidden_assumptions`, `answer_style_rules`, `preempt_mode`, `fallback_decision`, cùng toàn bộ policy memory answer và information-gap.
+- Với file query, engine phân biệt rất rõ:
+  - có file content/evidence thật thì mới cho `uploaded_file`
+  - chỉ có tên file mà chưa có nội dung thì hạ xuống `filename_only`
+  - nếu user vừa paste code trong chat thì ưu tiên `pasted_code`, không ép phải có screenshot hay file attachment
+- Với screen query, engine có detection riêng cho deictic như `lỗi này`, `xem đi`, `đoạn đang mở`; nếu không có `screen_evidence` đủ tươi thì report sẽ ghi thiếu bằng chứng thay vì cho chat giả vờ “thấy màn hình”.
+- Nhánh memory không còn là “có thì dùng hết”: engine tách quyền dùng memory thành continuity/procedural support với quyền trả lời thật sự. Khi câu hỏi thực chất đòi file/screen/live evidence, `memory_answer_allowed` sẽ bị tắt để chat cycle quarantine recall/resonance trước khi model kịp overread.
+- `MemoryAnswerProfile` là policy riêng cho các câu hỏi kiểu “bạn còn nhớ không / lần trước tôi nói gì / tên tôi là gì”: nó gắn mode như `continuity_check`, `specific_recall`, `session_history`, `memory_lookup`, đồng thời ép epistemic stance như `anchored_recall` hoặc `admit_uncertainty`.
+- Điểm mới quan trọng của file này là information-gap policy:
+  - `epistemic_mode=claim`: có nguồn đủ tốt, được trả lời bình thường
+  - `epistemic_mode=fallback`: thiếu bằng chứng nghiêm trọng, chỉ được fallback ngắn
+  - `epistemic_mode=probe/hypothesis`: thiếu evidence nhưng vẫn còn neo tương tác, ERIS được quyền thăm dò/đặt giả thuyết có hedge thay vì câm hẳn
+- Nhánh curiosity/probe này chỉ mở trong các khoảng trống “có thể điều tra” như thiếu screen evidence cho một câu deictic hiện tại hoặc thiếu memory packet; nó không mở cho `file_evidence` hay `web_access_or_search_result`, vì hai case đó mà đoán bừa thì sai bản chất.
+- `build_fallback_decision()` vì thế không còn luôn trả một payload chết. Nếu report đang ở `epistemic_mode=probe`, decision có thể đi ra với `parse_mode=source_grounding_probe` và để chat layer tiếp tục dựng một câu hỏi/phỏng đoán có kiểm soát.
+- `render_prompt_context()` cũng đã mang cả `epistemic_mode`, `information_gap` và `information_gap_rules` vào prompt để LLM biết ranh giới: được nói “có vẻ / tôi đoán / phải không”, nhưng không được nói “tôi thấy / tôi đã đọc / tôi biết” cho nguồn đang thiếu.
 
 `src/runtime/speech_pipeline.py`
 - `SpeechPipelineMixin` và `SpeechIntentDecision`.
@@ -468,15 +479,23 @@ Kết nối mặc định:
 
 `src/runtime/post_generation_filters.py`
 - `PostGenerationFiltersMixin`.
-- Tách các guard sau khi LLM/parser sinh decision: lọc overclaim, motive inference, screen claim thiếu evidence, câu hỏi đuôi sai intent, micro-line rỗng/generic và các leak nội bộ.
-- Đây là lớp chốt cuối trước Ti/body/memory commit ở nhiều đường nói.
-- Ngoài việc chặn leak, mixin này còn ghi semantic feedback của user vào `agent_mind` bằng `_record_agent_mind_feedback_from_user()`, nên các phản hồi về “giọng camera”, “hỏi dồn”, “im quá lâu”, “cần technical help” không chết trong chat history mà được chuyển thành belief/preference/habit mềm cho arbitration các turn sau.
-- Các guard cụ thể đáng chú ý hiện có:
-  - `protocol_surface_guard`: chặn prompt/contract nội bộ bị lộ ra text public.
-  - `internal_object_surface_guard`: chặn `MemoryPacket(...)`, `RecallAnswer(...)`, object repr tương tự.
-  - `memory_haunting_guard`: không cho memory giả dạng evidence hiện tại.
-  - `chat_grounding_guard`: chặn claim về file/screen/web khi thiếu nguồn thật.
-  - `micro_line_policy_filter` + `repetition_filter`: giữ micro-line ngắn, có neo, không lặp gia đình nghĩa quá sát.
+- Đây là lớp hậu kiểm cuối cho `Decision` public sau khi cognition/LLM/parser đã xong. Nó không phải nơi “viết tính cách” cho ERIS; nhiệm vụ của file là giữ biên sự thật, dọn leak và ép output quay về contract nói được.
+- `PostGenerationFiltersMixin` chạy trên cả chat path lẫn các đường force-speak/autonomous line, nên nhiều guard ở đây là guard liên kênh chứ không chỉ riêng chat.
+- ` _apply_chat_final_guards(...)` là nhánh chat-specific: trước tiên nó ghi nhận user feedback vào `agent_mind`, sau đó chạy protocol leak guard, internal-object guard, memory haunting guard và cuối cùng là chat grounding guard dựa trên `frame.source_grounding`.
+- `_record_agent_mind_feedback_from_user()` là điểm nối quan trọng giữa chat feedback và habit/preference dài hạn. Các câu kiểu “đừng hỏi dồn”, “nói vậy sống hơn”, “đừng nói như camera”, “giọng xa cách quá” không nằm chết trong transcript mà được gửi vào `PersistentAgentMindStore` như tín hiệu mềm cho các lượt sau.
+- Hai guard bề mặt lớn nhất của file này là:
+  - `protocol_surface_guard`: chặn text public vô tình lòi prompt/contract/debug token như `user input:`, `goal:`, `return only`, `debug_trace`, `should_speak`
+  - `internal_object_surface_guard`: chặn object repr nội bộ kiểu `MemoryPacket(...)`, `RecallAnswer(...)`, `SemanticMemoryItem(...)`
+- `memory_haunting_guard` là hard truth guard cho memory: nếu decision đang nói bằng trace/tag của memory nhưng `SourceGrounding` đánh dấu `memory_answer_allowed=False`, output sẽ bị rewrite về một câu thừa nhận “chỉ có ký ức/ngữ cảnh cũ, không có bằng chứng hiện tại”.
+- `chat_grounding_guard` là lớp bảo hiểm cuối cho claim về file/screen/web. Nếu text nhìn như đang nói “trong file này... / trên màn hình... / hiện tại trên web...” mà `SourceGroundingReport` đang có `missing_evidence`, guard sẽ ép decision quay về fallback từ grounding layer.
+- File này cũng có nhánh chặn “recent context masquerading as screen observation”: nếu một câu screen-observation thực chất chỉ dựa trên context gần đây hay memory trace, nó sẽ bị hạ xuống `micro_presence` hoặc im luôn.
+- `anti_mindreading_filter` không còn chém bừa mọi câu đoán. Nó tách:
+  - mindreading độc đoán: `Ngài đang...`, `Ngài muốn...`, `Ngài cần...` nói như phán quyết thì vẫn bị rewrite
+  - interactive guess: câu có hedge + question shape như `có vẻ... phải không?` có thể được giữ lại nếu ngữ cảnh thực sự cho phép probe
+- Quyền giữ interactive guess này đi qua `_interactive_guess_allowed()`: hoặc `speech_core.utterance_type=curious_question`, hoặc `SourceGrounding` đang ở `probe/hypothesis`, hoặc `ControlledSlippage`/impulse nội sinh đã mở quyền motive hypothesis. Tức là ERIS được tò mò, nhưng chỉ được tò mò có dây an toàn.
+- Nhánh force-speak trong file này cũng khá dày: có guard chặn generic ack, withdrawal phrase, lặp semantic family, force-speak không có evidence topic, rồi fallback lại bằng các line an toàn theo intent thay vì để model nói rỗng.
+- `micro_line_policy_filter` + `repetition_filter` là hai bộ phanh cuối cho micro-line: line phải ngắn, có neo, đúng loại speech act, không placeholder, không status report, không hỏi sai kiểu, không lặp gần như y chang các câu vừa nói.
+- Tóm gọn: file này là “hàng rào public surface” của ERIS. Nếu upstream có gì hơi trượt, phần lớn nó sẽ bị bắt ở đây trước khi tới body hoặc transcript công khai.
 
 `src/runtime/cognitive_frame_recorder.py`
 - `CognitiveFrameRecorderMixin`.
@@ -587,22 +606,35 @@ Kết nối mặc định:
 - `CHAT_RULES_PROMPT` giờ có answer-first contract: trả lời trực tiếp trước, chỉ phản chiếu mềm nếu có ích, chỉ hỏi lại khi thật sự cần và không được mindread kiểu "Ngài muốn/Ngài định...".
 
 `src/llm/service.py`
-- Lớp bọc LLM.
-- Sinh directive/autonomous response, chat reply, screen/vision facts và micro-presence line.
-- Gọi style rewrite khi có local style client.
-- Phân loại nhanh speech-act của user (`direct_question`, `command_style`, `identity_reduction`, `insult_provocation`, `normal_chat`) để build chat contract đúng loại turn trước khi gọi model.
-- Extract content từ nhiều dạng response: OpenAI, llama.cpp, Gemini-like nested output.
-- Sửa JSON hỏng, extract first JSON object, salvage prose nếu model trả sai format.
-- Retry/fallback khi lỗi 5xx; nếu service lỗi thì tạo JSON fallback có intent/confidence/reasoning_tags.
-- Tự shrink message khi gặp context-size error.
-- Lọc provider metadata, ép schema decision/cognition payload và coerce bool/confidence/action fields.
-- Bổ sung inference ladder cho chat để giảm suy diễn quá bằng chứng.
-- Force-speak không có evidence sẽ bỏ memory block khỏi prompt, chỉ neo vào current_focus/nhu cầu gọi ERIS lên tiếng để tránh lỗi cũ "lấy memory làm chủ đề".
-- `generate_chat_reply()` giờ nhận cả `raw_user_text` và `reply_context` để build chat contract theo đúng turn thật: câu hỏi trực tiếp phải answer-first, câu hỏi self-identity phải bám `SelfIdentityProfile`, prompt ngắn/mơ hồ thì tự cap confidence thấp hơn, còn câu ngắn sau một public turn có thể được hiểu như phản ứng với câu ERIS vừa nói.
-- Khi `reply_context.previous_public_turn` tồn tại, service render block `Reply context` vào system prompt với channel, parse_mode và text của lượt public gần nhất.
-- `_guard_chat_output()` không còn là lớp rewrite diện rộng như bản cũ. Guard bề mặt hiện hẹp hơn: nếu user đang phản hồi kiểu `lạnh`, `robotic`, `xa cách` mà model trả câu phòng thủ/disclaimer, service sẽ rewrite sang một `tone_repair` ngắn với reasoning tag như `relational_repair_guard` và `small_concession`.
-- Có thêm `_guard_infj_594_policy()` để dập các line quá gắt, quá thử thách, quá performative hoặc quá "waifu script" trước khi decision đi tiếp.
-- `generate_micro_presence_line()` và `generate_screen_facts()` giờ là hai micro-service riêng có JSON contract hẹp: một nhánh chỉ sinh one-liner hiện diện cực ngắn, nhánh kia chỉ rút tối đa vài fact nhìn-thấy-rõ từ ảnh/screen thay vì để prompt chat gánh luôn hai việc đó.
+- Đây là lớp service đứng giữa runtime và model client. Nó không chỉ “gọi LLM”, mà còn dựng system prompt, ép contract JSON, sửa output hỏng, retry lỗi provider và tạo fallback deterministic khi model/service trượt.
+- File này bao nhiều đường gọi khác nhau:
+  - decision/directive generation cho autonomous/runtime path
+  - `generate_chat_reply()` cho chat turn
+  - `generate_micro_presence_line()` cho one-line hiện diện cực ngắn
+  - `generate_screen_facts()` cho vision captioning tối giản
+  - một số path critic/analysis phụ như Ni meta-critic
+- Một thay đổi rất quan trọng là chat path giờ có `ChatAct` rõ ràng. `classify_chat_act()` phân loại turn user thành `direct_question`, `insult_provocation`, `identity_reduction`, `command_style`, `normal_chat`, rồi `_build_chat_contract_prompt()` gắn đúng contract vào system prompt trước khi model sinh câu.
+- Vì thế `generate_chat_reply()` không còn chỉ dựa vào chat history thô. Nó nhận thêm `raw_user_text`, `reply_context`, `grounding_context`, `memory_context`, `ti_context`, `ni_context`, `conversation_context` để dựng prompt đúng loại turn:
+  - question trực tiếp phải answer-first
+  - self-identity question phải bám `SelfIdentityProfile`
+  - insult/objectification phải chuyển sang boundary shape phù hợp
+  - short ambiguous turn phải tự hạ confidence
+- Khi có `reply_context.previous_public_turn`, service render block `Reply context` vào prompt để model hiểu user đang phản ứng với câu public vừa rồi, thay vì đọc câu ngắn mới như một turn độc lập vô ngữ cảnh.
+- File này cũng lo phần hygiene của output model:
+  - extract text từ nhiều dạng payload khác nhau
+  - bóc JSON object đầu tiên
+  - salvage prose khi model phá format
+  - coerce các field như `confidence`, `should_speak`, `animation`, `direction`, `reasoning_tags`
+  - build fallback JSON chuẩn khi service lỗi
+- `_guard_chat_output()` bây giờ chỉ còn là guard hẹp cho một failure mode cụ thể: user chê ERIS lạnh/robotic/xa cách mà model lại trả lời kiểu phòng thủ/disclaimer. Khi đó service rewrite về một câu `tone_repair` ngắn để không làm vết nứt quan hệ to thêm.
+- Ngoài ra còn có guard cho các chat-act đặc biệt:
+  - insult/provocation mà model lỡ trả về `uncertainty_dodge` thì service sẽ retry một lần với contract boundary cứng hơn
+  - nếu vẫn sai shape thì rơi về fallback deterministic kiểu `insult_boundary`
+- Với force-speak không có evidence, file này cố tình bỏ memory block khỏi prompt. Ý là “force_speak là trigger để ERIS lên tiếng”, không phải giấy phép lấy memory cũ ra làm chủ đề chính rồi nói như thể có lý do thật.
+- `generate_micro_presence_line()` và `generate_screen_facts()` được tách thành hai micro-service riêng vì chúng có contract cực hẹp:
+  - micro-presence: đúng một JSON `{"text": ...}` với line ngắn, có dấu, không placeholder, không status-report
+  - screen facts: tối đa vài fact nhìn-thấy-rõ từ ảnh, không suy diễn, không kể UI rác
+- Tóm lại, `service.py` là nơi “shape” việc nói chuyện với model: chọn contract đúng, giữ format đúng, và chặn các failure mode provider/model trước khi output đi sang parser và post-filter.
 
 
 5. Parser / Grounding
@@ -947,14 +979,33 @@ Kết nối mặc định:
 
 `src/cortex/speech_core.py`
 - `SpeechCoreEngine`.
-- Nơi quyết định "có nói không".
-- Tạo các `MotivationalUrge`: screen_vision, screen_telemetry, meaning_reaction, micro_presence, protective_guard, tender_checkin, social_presence, curiosity, playful_aside, thought_stream_surface, silence_restraint, và nhánh `spontaneous_life` khi endogenous impulse đủ điều kiện.
-- Mỗi urge có score, grounding, safety flags.
-- Winner phải vượt threshold; threshold tăng khi overloaded và giảm nhẹ khi engaged/force_speak.
-- Signal cụ thể từ màn hình vẫn ưu tiên hơn freeform/subconscious.
-- Với autonomous channel, nếu MeaningLayer không có `meaning_shift`, SpeechCore giữ im lặng bằng `meaning_shift_gate`.
-- Khi MeaningLayer có semantic shift, SpeechCore chọn phản ứng theo meaning/reaction seed thay vì chỉ nói lại fact từ màn hình.
-- `SpeechCore` giờ vừa gate theo `meaning_shift`, vừa nhận `spontaneous_impulse` từ `SpontaneousLifeEngine`; endogenous speech chỉ được phép surface nếu không bị external signal priority, fatigue, family cooldown hoặc quiet guard chặn.
+- Đây là file quyết định “áp lực nói” của ERIS có đủ vượt ngưỡng thành public speech hay không. Nó không viết câu cuối, nhưng nó chọn liệu turn này là im lặng, micro-presence, screen comment, meaning reaction hay endogenous line.
+- Entry chính là `SpeechCoreEngine.evaluate(...)`. Hàm này nhận snapshot, internal_state, appraisal, `ti_report`, `meaning_layer`, `thought_surface`, `self_state`, `personality_lens`, các concrete/vision/telemetry signals và optional `spontaneous_impulse`, rồi trả về một `AgentSpeechCore`.
+- Bên trong nó hợp nhất ba nguồn áp lực:
+  - `InnerThoughtEngine`: cho các intent nhẹ như `curious_question`, `inner_whim`, `random_chatter`
+  - `MeaningLayer`: cho semantic reaction khi runtime thật sự có shift/meaning residue
+  - `SpontaneousLifeEngine`: cho endogenous impulse có arbitration report riêng
+- File này có hai lớp gate rất quan trọng trước khi so urge:
+  - `meaning_shift_gate`: autonomous speech bị chặn nếu loại meaning hiện tại đòi semantic shift mà `MeaningLayer` chưa thật sự shift
+  - `quiet_guard`: nếu user đang focus, context lặp, drift thấp và Ti đang ở quiet/focus mode thì ERIS phải câm dù vẫn có pressure nền
+- Chỉ sau khi qua các gate đó, `_evaluate_motivational_pressure()` mới dựng và chấm các `MotivationalUrge`, rồi chọn `winner`. Winner mang `score`, `utterance_type`, `speech_source`, `risk_level`, `grounding`, `reason`, `evidence`, `safety_flags`.
+- Threshold nói không cố định:
+  - autonomous có threshold phụ thuộc `self_state.overload` và `engagement`
+  - force_speak có threshold gần như bằng 0 vì đó là explicit pull
+  - channel khác có ngưỡng riêng
+- File này cũng giữ trật tự ưu tiên nguồn:
+  - vision/telemetry cụ thể vẫn được ưu tiên hơn freeform
+  - meaning reaction được đứng giữa: không phải “screen fact”, nhưng cũng không phải random chatter
+  - endogenous spontaneous line chỉ được nổi lên nếu đủ pressure và không bị external signal/quiet guard chặn
+- Force-speak path trong file này đã được làm khôn hơn. Nếu explicit pull xảy ra mà endogenous arbitration đã chọn được một `suggested_speech_act` hợp lệ với pressure đủ cao, SpeechCore sẽ giữ act đó thay vì luôn ép rơi về `micro_presence`. `micro_presence` chỉ còn là đáy an toàn cuối cùng.
+- Khi có winner, file này dựng thêm:
+  - `speech_risk_level`
+  - `perception` sẽ được surface cho line đó
+  - `safety_flags`
+  - `SpeechImpulse`/`motivation_pressure`
+  - hoặc `SilenceState` nếu quyết định là im
+- `AgentSpeechCore` trả ra vì thế vừa là “có nói không”, vừa là hồ sơ giải thích tại sao: nói từ nguồn nào, loại utterance gì, risk gì, bị chặn bởi gate nào nếu im.
+- Tóm gọn: `speech_core.py` là bộ chuyển “nội áp lực” thành quyền được phát ngôn. Nó đứng giữa substrate nội sinh và wording layer, nên đây là file quan trọng nhất để debug vì sao ERIS nói, hoặc vì sao ERIS đã có tension mà vẫn im.
 
 `src/cortex/turn_semantics.py`
 - `TurnSemanticsEngine` và `TurnSemanticsReport`.

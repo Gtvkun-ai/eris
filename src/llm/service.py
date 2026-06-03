@@ -1873,6 +1873,98 @@ class LlmService:
         )
         return decision
 
+    def rewrite_guard_violation_text(
+        self,
+        *,
+        original_text: str,
+        violation_rule: str,
+        violation_reason: str,
+        missing_evidence: tuple[str, ...] = (),
+        fallback_text: str = "",
+        channel: str = "",
+        user_text: str = "",
+        internal_state_context: str = "",
+        grounding_context: str = "",
+        arbitration_context: str = "",
+    ) -> str:
+        """One-shot cognitive steering repair for post-generation guards.
+
+        This is deliberately narrower than normal style rewrite.  It may soften,
+        hedge, retreat, or admit uncertainty, but it must not introduce fresh
+        facts.  The caller still performs a second cheap safety check before the
+        text is allowed out.
+        """
+
+        client = self.style_client or self.client
+        if client is None:
+            return ""
+        original_text = str(original_text or "").strip()
+        if not original_text:
+            return ""
+
+        missing = ", ".join(str(item) for item in (missing_evidence or ()) if str(item or "").strip())
+        system_prompt = (
+            "You are ERIS' local cognitive steering layer, not a safety boilerplate writer. "
+            "A public sentence was stopped by a runtime guard. Rewrite only the public text. "
+            "Preserve ERIS' restrained Vietnamese voice, but obey the guard reason. "
+            "Do not add new facts, file claims, screen claims, web/current claims, actions, or emotions. "
+            "If evidence is missing, admit the uncertainty or turn the sentence into a small cautious probe. "
+            "If the problem is mindreading, use hedge/question form or step back. "
+            "If the problem is grounding, remove the unsupported claim. "
+            "Return one JSON object only: {\"text\":\"...\"}."
+        )
+        user_prompt = (
+            f"Channel: {channel or 'unknown'}\n"
+            f"User turn, if any:\n{str(user_text or '').strip()[:900]}\n\n"
+            f"Original blocked text:\n{original_text[:1400]}\n\n"
+            f"Guard rule: {violation_rule}\n"
+            f"Guard reason: {violation_reason}\n"
+            f"Missing evidence: {missing or 'none'}\n"
+            f"Internal state snapshot:\n{str(internal_state_context or '').strip()[:900]}\n\n"
+            f"Grounding context:\n{str(grounding_context or '').strip()[:1200]}\n\n"
+            f"Arbitration context:\n{str(arbitration_context or '').strip()[:700]}\n\n"
+            f"Bottom fallback hint:\n{str(fallback_text or '').strip()[:500]}\n\n"
+            "Task: Rewrite as one short Vietnamese ERIS line. "
+            "If the bottom fallback hint is empty, derive the rewrite only from the guard signal and internal state. "
+            "No explanations. No markdown. JSON only."
+        )
+        try:
+            response = client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.25,
+                frequency_penalty=0.2,
+                presence_penalty=0.0,
+                max_tokens=160,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+            raw = self._extract_content(response)
+            extracted = self._extract_first_json_object(raw) or raw
+            payload = self._parse_json_object(extracted) or {}
+            text = self._coerce_text_value(payload.get("text", "")).strip()
+            text = re.sub(r"\s+", " ", text)
+            if text:
+                self.logger.info(
+                    "[%s guard_reroll] rule=%s text=\"%s\" | original=\"%s\"",
+                    channel or "guard",
+                    violation_rule,
+                    self._preview_log_text(text, limit=240),
+                    self._preview_log_text(original_text, limit=240),
+                )
+            return text
+        except Exception as exc:
+            self.logger.info(
+                "[%s guard_reroll] skipped=exception rule=%s err=%s | original=\"%s\"",
+                channel or "guard",
+                violation_rule,
+                exc,
+                self._preview_log_text(original_text, limit=240),
+            )
+            return ""
+
     def _compress_internal_context(self, text: str, *, kind: str) -> str:
         lowered = (text or "").lower()
         if not lowered:

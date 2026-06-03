@@ -1,3 +1,5 @@
+import re
+
 from .contracts import AgentSpeechCore, MotivationalPressureReport, MotivationalUrge, SelfState, SilenceState, SpeechImpulse
 from .internal_state import PersistentInternalState
 from .inner_thought import InnerThoughtEngine
@@ -26,6 +28,54 @@ class SpeechCoreEngine:
         "worried",
     )
 
+    FALLBACK_BY_INTENT = {
+        "random_chatter": (
+            "Yên hơi lâu rồi. Tôi vẫn theo được.",
+            "Tôi chưa chen vào. Lần này tôi biết tự kiềm chế, hiếm đấy.",
+            "Không có gì gấp. Tôi để khoảng trống này yên một chút.",
+        ),
+        "inner_whim": (
+            "Có chỗ hơi cấn, nhưng tôi chưa đủ chắc để phán.",
+            "Tôi nghi nhẹ thôi. Chưa đáng làm ầm lên.",
+            "Đoạn này có vẻ cần kiểm tra thêm, không phải đoán bừa.",
+        ),
+        "social_presence": (
+            "Tôi vẫn theo bên cạnh. Không kéo Ngài ra khỏi việc chính.",
+            "Tôi đứng ngoài một chút. Cần thì tôi vào.",
+            "Tôi để Ngài làm tiếp. Tôi chưa thấy lý do để phá nhịp.",
+        ),
+        "micro_presence": (
+            "Tôi nghe rồi. Không làm quá.",
+            "Ừ, tôi còn theo được.",
+            "Tôi giữ ý đó lại. Chưa cần nói dài.",
+        ),
+        "indirect_presence": (
+            "Tôi hiểu phần đó. Nói thêm dễ thừa.",
+            "Đoạn đó đủ rõ rồi. Tôi không bẻ nó thành chuyện lớn.",
+            "Tôi nhận rồi. Giữ nó gọn thì tốt hơn.",
+        ),
+        "guarded_reply": (
+            "Tôi hiểu. Khó chịu thật, nhưng vẫn gỡ được.",
+            "Đoạn đó không nhẹ. Ta xử lý từng phần thôi.",
+            "Tôi nghe rồi. Tôi không phủ đường lên nó đâu.",
+        ),
+        "micro_observation": (
+            "{anchor} vẫn là chỗ đáng nhìn nhất.",
+            "Tôi đang bám vào {anchor}. Vậy là đủ để nói vừa phải.",
+            "{anchor} lặp lại hơi nhiều. Có thể nên kiểm tra.",
+        ),
+        "curious_question": (
+            "Bóc tiếp không, hay tạm để đó?",
+            "Ngài muốn tôi nhìn kỹ phần này không?",
+            "Chỗ này cần kiểm tra tiếp không?",
+        ),
+        "screen_observation": (
+            "Tôi chỉ bám được vào {anchor}. Nói hơn là đoán mò.",
+            "{anchor} là nguồn rõ nhất hiện tại. Phần khác chưa đủ chắc.",
+            "Tôi đọc {anchor} trước. Đừng bắt tôi làm thầy bói.",
+        ),
+    }
+
     def __init__(
         self,
         *,
@@ -34,6 +84,330 @@ class SpeechCoreEngine:
     ):
         self.inner_thought_engine = inner_thought_engine or InnerThoughtEngine()
         self.spontaneous_life_engine = spontaneous_life_engine or SpontaneousLifeEngine()
+
+    def fallback_intent(self, speech_core: AgentSpeechCore | None) -> str:
+        if speech_core is None:
+            return "micro_presence"
+        inner_intent = str(getattr(getattr(speech_core, "inner_thought", None), "intent", "") or "")
+        utterance_type = str(getattr(speech_core, "utterance_type", "") or "")
+        speech_source = str(getattr(speech_core, "speech_source", "") or "")
+        if utterance_type in {"telemetry_comment", "vision_comment"} or speech_source in {"vision", "telemetry"}:
+            return "screen_observation"
+        for candidate in (inner_intent, utterance_type):
+            if candidate == "curious_question":
+                return candidate
+            if candidate in self.FALLBACK_BY_INTENT:
+                return candidate
+        return "micro_presence"
+
+    def fallback_context(
+        self,
+        speech_core: AgentSpeechCore | None,
+        *,
+        snapshot=None,
+        momentum_topic: str = "",
+    ) -> dict[str, str]:
+        inner_thought = getattr(speech_core, "inner_thought", None) if speech_core is not None else None
+        return {
+            "focus_kind": str(getattr(snapshot, "active_window_kind", "") or ""),
+            "window_title": str(
+                getattr(snapshot, "active_window", "")
+                or getattr(snapshot, "active_app", "")
+                or ""
+            ),
+            "momentum_topic": str(
+                momentum_topic
+                or getattr(inner_thought, "topic_seed", "")
+                or getattr(inner_thought, "evidence_anchor", "")
+                or ""
+            ),
+        }
+
+    def render_force_speak_repair_text(
+        self,
+        speech_core: AgentSpeechCore | None,
+        *,
+        normalize_text,
+        is_near_duplicate,
+        last_text: str = "",
+        counter: int = 1,
+        repeated: bool = False,
+        snapshot=None,
+        momentum_topic: str = "",
+        intent: str = "",
+    ) -> str:
+        context = self.fallback_context(
+            speech_core,
+            snapshot=snapshot,
+            momentum_topic=momentum_topic,
+        )
+        return self._force_speak_fallback_by_intent_text(
+            intent or self.fallback_intent(speech_core),
+            normalize_text=normalize_text,
+            is_near_duplicate=is_near_duplicate,
+            last_text=last_text,
+            counter=counter,
+            repeated=repeated,
+            **context,
+        )
+
+    def render_safe_fallback_text(
+        self,
+        speech_core: AgentSpeechCore,
+        *,
+        normalize_text,
+        is_near_duplicate,
+        last_text: str = "",
+        repeated: bool = False,
+        snapshot=None,
+        momentum_topic: str = "",
+    ) -> str:
+        perception = next((item for item in getattr(speech_core, "perception", ()) if str(item or "").strip()), "")
+        if speech_core.utterance_type in {"micro_observation", "micro_presence", "inner_whim", "light_muse"}:
+            ladder_text = self._small_soft_fallback_ladder_text(
+                normalize_text=normalize_text,
+                is_near_duplicate=is_near_duplicate,
+                last_text=last_text,
+                snapshot=snapshot,
+                momentum_topic=momentum_topic,
+                repeated=repeated,
+            )
+            if ladder_text:
+                return ladder_text
+        if speech_core.utterance_type in {"telemetry_comment", "vision_comment"} and perception:
+            return f"Tôi chỉ dám bám vào chỗ này: {perception}."
+        if speech_core.utterance_type == "curious_question":
+            return self.render_force_speak_repair_text(
+                speech_core,
+                normalize_text=normalize_text,
+                is_near_duplicate=is_near_duplicate,
+                last_text=last_text,
+                counter=2 if repeated else 1,
+                snapshot=snapshot,
+                momentum_topic=momentum_topic,
+                intent="curious_question",
+            )
+        if speech_core.utterance_type in {"relational_checkin", "guarded_reply"}:
+            return "Tôi không đoán tâm trạng Ngài hộ đâu. Nếu muốn, Ngài cứ nói thẳng phần đang nặng nhất."
+        if speech_core.utterance_type == "random_chatter":
+            return self.render_force_speak_repair_text(
+                speech_core,
+                normalize_text=normalize_text,
+                is_near_duplicate=is_near_duplicate,
+                last_text=last_text,
+                counter=2 if repeated else 1,
+                snapshot=snapshot,
+                momentum_topic=momentum_topic,
+                intent="random_chatter",
+            )
+        if speech_core.utterance_type == "micro_presence":
+            return self.render_force_speak_repair_text(
+                speech_core,
+                normalize_text=normalize_text,
+                is_near_duplicate=is_near_duplicate,
+                last_text=last_text,
+                counter=2 if repeated else 1,
+                snapshot=snapshot,
+                momentum_topic=momentum_topic,
+                intent="micro_presence",
+            )
+        return self.render_force_speak_repair_text(
+            speech_core,
+            normalize_text=normalize_text,
+            is_near_duplicate=is_near_duplicate,
+            last_text=last_text,
+            counter=2 if repeated else 1,
+            snapshot=snapshot,
+            momentum_topic=momentum_topic,
+            intent="inner_whim",
+        )
+
+    def _force_speak_fallback_by_intent_text(
+        self,
+        intent: str,
+        *,
+        normalize_text,
+        is_near_duplicate,
+        last_text: str = "",
+        counter: int = 1,
+        repeated: bool = False,
+        focus_kind: str = "",
+        window_title: str = "",
+        momentum_topic: str = "",
+    ) -> str:
+        if intent == "screen_observation":
+            anchor = self._screen_fallback_anchor(
+                normalize_text=normalize_text,
+                window_title=window_title,
+                momentum_topic=momentum_topic,
+            )
+            pool = self.FALLBACK_BY_INTENT["screen_observation"]
+            template = pool[(max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)]
+            return template.format(anchor=anchor)
+        if intent == "micro_observation":
+            anchor = self._screen_fallback_anchor(
+                normalize_text=normalize_text,
+                window_title=window_title,
+                momentum_topic=momentum_topic,
+            )
+            pool = self.FALLBACK_BY_INTENT["micro_observation"]
+            template = pool[(max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)]
+            return template.format(anchor=anchor)
+        if intent == "curious_question":
+            return self._thought_surface_template(
+                normalize_text=normalize_text,
+                counter=counter,
+                repeated=repeated,
+                focus_kind=focus_kind,
+                momentum_topic=momentum_topic,
+            )
+        if intent == "micro_presence":
+            pool = self.FALLBACK_BY_INTENT["micro_presence"]
+            start = (max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)
+            for offset in range(len(pool)):
+                candidate = pool[(start + offset) % len(pool)]
+                if not is_near_duplicate(candidate, last_text):
+                    return candidate
+            return pool[start]
+        if intent == "social_presence":
+            return self._light_presence_template(
+                counter=counter,
+                repeated=repeated,
+                focus_kind=focus_kind,
+            )
+        pool = self.FALLBACK_BY_INTENT.get(intent) or self.FALLBACK_BY_INTENT["random_chatter"]
+        start = (max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)
+        for offset in range(len(pool)):
+            candidate = pool[(start + offset) % len(pool)]
+            if not is_near_duplicate(candidate, last_text):
+                return candidate
+        return pool[start]
+
+    def _screen_fallback_anchor(
+        self,
+        *,
+        normalize_text,
+        window_title: str = "",
+        momentum_topic: str = "",
+    ) -> str:
+        raw_topic = str(momentum_topic or "")
+        topic = re.sub(r"[_:]+", " ", raw_topic).strip(" .:-")
+        if topic and not self._looks_internal_topic(raw_topic, normalize_text=normalize_text):
+            return topic[:120]
+        title = re.sub(r"\s+", " ", str(window_title or "")).strip()
+        return title[:120] if title else "tín hiệu hiện tại"
+
+    def _thought_surface_template(
+        self,
+        *,
+        normalize_text,
+        counter: int = 1,
+        repeated: bool = False,
+        focus_kind: str = "",
+        momentum_topic: str = "",
+    ) -> str:
+        topic = self._public_thought_topic(momentum_topic, normalize_text=normalize_text)
+        if topic:
+            pool = (
+                f"Phần {topic} cần kiểm tra tiếp không?",
+                f"Phần {topic} nên xử lý ngay hay tạm bỏ qua?",
+            )
+        elif focus_kind == "coding":
+            pool = (
+                "Bóc lỗi trước hay đọc tổng thể trước?",
+                "Ngài muốn tôi nhìn lỗi cụ thể hay cấu trúc lớn hơn?",
+                "Chọn một hướng trước. Đứng giữa hai hướng lâu quá thì dễ rối.",
+            )
+        else:
+            pool = self.FALLBACK_BY_INTENT["curious_question"]
+        return pool[(max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)]
+
+    def _light_presence_template(
+        self,
+        *,
+        counter: int = 1,
+        repeated: bool = False,
+        focus_kind: str = "",
+    ) -> str:
+        if focus_kind == "coding":
+            pool = (
+                "Tôi theo phần code. Chưa chen nếu chưa cần.",
+                "Phần code đang là hướng chính. Tôi đứng ngoài, nhưng vẫn theo.",
+                "Tôi để Ngài đọc tiếp. Code đã đủ ồn rồi, tôi khỏi góp thêm.",
+            )
+        else:
+            pool = self.FALLBACK_BY_INTENT["social_presence"]
+        return pool[(max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)]
+
+    def _public_thought_topic(self, value: str, *, normalize_text) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if not text or self._looks_internal_topic(text, normalize_text=normalize_text):
+            return ""
+        text = re.sub(r"^[a-z_]+:", "", text, flags=re.IGNORECASE).strip()
+        text = text.replace("_", " ")
+        if len(text) > 60:
+            text = text[:57].rstrip() + "..."
+        return text
+
+    def _looks_internal_topic(self, value: str, *, normalize_text) -> bool:
+        normalized = str(normalize_text(value) or "")
+        if not normalized:
+            return False
+        internal_markers = (
+            "associative_drift",
+            "cognitive_tension",
+            "input_disturbance",
+            "force_speak",
+            "memory_replay",
+            "norm_active_window_kind",
+            "loop_",
+            "thought_",
+            "subconscious",
+        )
+        return any(marker in normalized for marker in internal_markers)
+
+    def _small_soft_fallback_ladder_text(
+        self,
+        *,
+        normalize_text,
+        is_near_duplicate,
+        last_text: str = "",
+        snapshot=None,
+        momentum_topic: str = "",
+        repeated: bool = False,
+    ) -> str:
+        context = self.fallback_context(None, snapshot=snapshot, momentum_topic=momentum_topic)
+        raw_window = str(context.get("window_title", "") or "").strip()
+        raw_topic = str(context.get("momentum_topic", "") or "").strip()
+        anchor = self._screen_fallback_anchor(
+            normalize_text=normalize_text,
+            window_title=raw_window,
+            momentum_topic=raw_topic,
+        )
+        if (raw_window or (raw_topic and not self._looks_internal_topic(raw_topic, normalize_text=normalize_text))) and anchor:
+            pool = (
+                "{anchor} vẫn là neo rõ nhất. Tôi nói vừa thôi.",
+                "Tôi chỉ bám vào {anchor}. Phần khác để yên.",
+            )
+            template = pool[1 if repeated else 0]
+            return template.format(anchor=anchor[:48])
+
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0)) if snapshot is not None else 0.0
+        if idle_seconds >= 60.0:
+            return "nhịp này yên hơi lâu rồi."
+
+        atmosphere = (
+            "nhịp này vẫn hơi nghẹn.",
+            "không khí hiện tại hơi lệch.",
+        )
+        for candidate in atmosphere:
+            if not is_near_duplicate(candidate, last_text):
+                return candidate
+
+        texture = "cái im lặng này không sạch lắm."
+        if not is_near_duplicate(texture, last_text):
+            return texture
+        return ""
 
     def evaluate(
         self,
