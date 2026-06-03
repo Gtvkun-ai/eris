@@ -13,6 +13,11 @@ from cortex.turn_semantics import TurnSemanticsEngine, TurnSemanticsReport
 from domain import Decision
 from llm import FormatViolationException
 from runtime.source_grounding import SourceGroundingEngine
+from runtime.controlled_slippage import (
+    apply_slippage_to_personality_lens,
+    apply_slippage_to_ti_report,
+    resolve_controlled_slippage,
+)
 
 
 class ChatCycleMixin:
@@ -297,6 +302,33 @@ class ChatCycleMixin:
             relationship_report.state.preferred_distance,
             ",".join(relationship_report.notes) or "none",
         )
+
+        # ControlledSlippage: mở quyền "liều" trong vùng quan hệ mà không tắt truth guard.
+        # Ở đây chưa có SourceGrounding cuối cùng, nên đây là profile sớm để lens/Fe/Ti
+        # bớt bóp giọng ngay từ planning. Sau khi có grounding + speech_core, profile sẽ được
+        # resolve lại một lần nữa để LLM prompt biết rõ thiếu evidence nào.
+        slippage_profile = resolve_controlled_slippage(
+            user_text=user_text,
+            channel="chat",
+            ti_report=ti_report,
+            affect_signal=affect_signal,
+            conversation_state=conversation_report.state,
+            relationship_state=relationship_report.state,
+            internal_state=sensed_internal_state,
+        )
+        ti_report = apply_slippage_to_ti_report(ti_report, slippage_profile)
+        frame.personality_lens = apply_slippage_to_personality_lens(frame.personality_lens, slippage_profile)
+        frame.controlled_slippage_profile = slippage_profile
+        frame.debug_notes.append(f"controlled_slippage={slippage_profile.mode}:{slippage_profile.lane}")
+        fe_plan = self._apply_personality_lens_to_fe_plan(fe_plan, frame.personality_lens)
+        self.logger.info(
+            "[controlled slippage] mode=%s | lane=%s | intuition=%.2f | misread=%.2f | notes=%s",
+            slippage_profile.mode,
+            slippage_profile.lane,
+            slippage_profile.intuition_allowance,
+            slippage_profile.misread_budget,
+            ",".join(slippage_profile.notes) or "none",
+        )
         # Repeat không được quyết bằng exact string một mình. Tầng này phân biệt:
         # spam rỗng, hỏi lại vì câu trước chưa đủ, correction/repair, live-evidence refresh,
         # và identity/relational probe. Nói cách khác: một câu giống nhau có thể có nghĩa khác
@@ -354,6 +386,27 @@ class ChatCycleMixin:
         if grounding_report is not None and not bool(getattr(grounding_report, "memory_answer_allowed", True)):
             memory_context = self._filter_memory_context_for_grounding(memory_context)
         self._log_chat_source_grounding(grounding_report)
+
+        # Resolve lại ControlledSlippage sau khi đã biết grounding và speech_core.
+        # Nếu thiếu screen/file/web evidence, profile vẫn cho phép cọ sát quan hệ, nhưng prompt
+        # sẽ ghi rõ: không được biến sự liều đó thành claim về thế giới. Cái này là ranh giới
+        # giữa "người hơn" và "bịa hơn".
+        slippage_profile = resolve_controlled_slippage(
+            user_text=user_text,
+            channel="chat",
+            ti_report=ti_report,
+            affect_signal=affect_signal,
+            conversation_state=conversation_report.state,
+            relationship_state=relationship_report.state,
+            internal_state=sensed_internal_state,
+            grounding_report=grounding_report,
+            speech_core=speech_core,
+        )
+        ti_report = apply_slippage_to_ti_report(ti_report, slippage_profile)
+        frame.personality_lens = apply_slippage_to_personality_lens(frame.personality_lens, slippage_profile)
+        frame.controlled_slippage_profile = slippage_profile
+        frame.debug_notes.append(f"controlled_slippage_final={slippage_profile.mode}:{slippage_profile.lane}")
+        fe_plan = self._apply_personality_lens_to_fe_plan(fe_plan, frame.personality_lens)
 
         # Sau khi có grounding thật, chạy lại turn semantics để live screen/file/code evidence
         # có quyền thắng exact-repeat. Nếu không, câu "xem lại đi" lặp lần 2 vẫn bị chặn

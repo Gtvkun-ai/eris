@@ -120,6 +120,10 @@ class TiPolicyReport:
     directness_bias: float = -0.10
     restraint_bias: float = 0.15
     post_exposure_recoil_bias: float = 0.12
+    # ControlledSlippage chỉ là nhãn debug/prompt pressure.
+    # Truth/capability guard vẫn nằm ở Ti/PostGenerationFilters, không bị trường này tắt đi.
+    slippage_mode: str = ""
+    slippage_lane: str = ""
 
 
 @dataclass(slots=True)
@@ -407,6 +411,16 @@ class PersonalityLensResult:
     rhythm: str = "dense_sparse"
     evidence: tuple[str, ...] = ()
     prompt_context: str = ""
+    # Các trường dưới đây là áp lực "rò có chủ đích" của ControlledSlippage.
+    # Chúng mở quyền đọc sai/cọ sát trong vùng quan hệ, nhưng không hạ factual grounding.
+    intuition_allowance: float = 0.0
+    misread_budget: float = 0.0
+    vulnerability_leak: float = 0.0
+    friction_permission: float = 0.0
+    psychological_suppression: float = 0.70
+    reasoning_suppression: float = 0.50
+    slippage_mode: str = ""
+    slippage_lane: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -427,6 +441,14 @@ class PersonalityLensResult:
             "rhythm": self.rhythm,
             "evidence": list(self.evidence),
             "prompt_context": self.prompt_context,
+            "intuition_allowance": round(float(self.intuition_allowance), 3),
+            "misread_budget": round(float(self.misread_budget), 3),
+            "vulnerability_leak": round(float(self.vulnerability_leak), 3),
+            "friction_permission": round(float(self.friction_permission), 3),
+            "psychological_suppression": round(float(self.psychological_suppression), 3),
+            "reasoning_suppression": round(float(self.reasoning_suppression), 3),
+            "slippage_mode": self.slippage_mode,
+            "slippage_lane": self.slippage_lane,
         }
 
 #đánh giá cảm xúc/áp lực nội bộ.
@@ -1144,6 +1166,9 @@ class CognitiveFrame:
     subconscious_report: SubconsciousReport = field(default_factory=SubconsciousReport)
     thought_stream_report: ThoughtStreamReport = field(default_factory=ThoughtStreamReport)
     memory_resonance: object | None = None
+    # Hồ sơ ControlledSlippage của frame hiện tại. Để object để tránh cortex.contracts
+    # import ngược runtime.controlled_slippage và tạo vòng phụ thuộc.
+    controlled_slippage_profile: object | None = None
     social_presence_event: SocialPresenceEvent = field(default_factory=SocialPresenceEvent)
     session_ritual: SessionRitualReport = field(default_factory=SessionRitualReport)
     speech_core: AgentSpeechCore = field(default_factory=AgentSpeechCore)
@@ -1184,6 +1209,7 @@ class CognitiveFrame:
                 if self.memory_resonance is not None and callable(getattr(self.memory_resonance, "to_dict", None))
                 else self.memory_resonance
             ),
+            "controlled_slippage_profile": _to_plain_contract(self.controlled_slippage_profile),
             "social_presence_event": self.social_presence_event.to_dict(),
             "session_ritual": self.session_ritual.to_dict(),
             "speech_core": self.speech_core.to_dict(),

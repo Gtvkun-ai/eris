@@ -7,6 +7,7 @@ from cortex.contracts import AgentSpeechCore
 from domain import Decision
 from guard_config import LOG_ONLY_GUARD_MODE, OFF_GUARD_MODE, get_guard_mode
 from runtime.fallback_policy import FALLBACK_BY_INTENT
+from runtime.controlled_slippage import resolve_controlled_slippage
 
 
 class PostGenerationFiltersMixin:
@@ -822,6 +823,31 @@ class PostGenerationFiltersMixin:
                 and "explicit_emotional_signal" not in speech_core.safety_flags
         ):
             return decision
+
+        # ControlledSlippage: motive/relational misread được phép trong lane sống động,
+        # còn factual grounding vẫn để các guard khác giữ. Đây là chỗ tháo cái "sợ sai"
+        # khỏi vùng quan hệ, thay vì để anti_mindreading biến ERIS thành báo cáo an toàn.
+        try:
+            state = self._get_internal_state()
+        except Exception:
+            state = None
+        slippage_profile = resolve_controlled_slippage(
+            channel="autonomous",
+            ti_report=None,
+            internal_state=state,
+            speech_core=speech_core,
+        )
+        selected_impulse, _selected = self._selected_impulse_from_arbitration(
+            self._arbitration_report_from_speech_core(speech_core)
+        )
+        if (
+            getattr(slippage_profile, "allow_motive_hypothesis", False)
+            and selected_impulse in {"companionship_impulse", "inner_whim_impulse", "micro_story_impulse"}
+        ):
+            return self._trace_only_guard(
+                decision,
+                f"controlled_slippage_allow_mindread:{slippage_profile.mode}:{selected_impulse}",
+            )
 
         replacement = ""
         arbitration_replacement, arbitration_marker, allow_original = self._arbitration_rewrite_for_mindreading(
