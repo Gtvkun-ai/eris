@@ -1,28 +1,31 @@
 {
   "version": 2,
   "kind": "semantic_memory",
-  "updated_at": "2026-06-02T10:47:17+0700",
+  "updated_at": "2026-06-03T15:52:41+0700",
   "items": [
     {
       "id": "sem_66bb70a88232",
-      "claim": "User's name is Hoà",
+      "claim": "User's name is gì",
       "domain": "user",
-      "confidence": 0.862,
+      "confidence": 0.994,
       "source": "state_commit",
       "evidence_ids": [
-        "session_turn:5"
+        "session_turn:5",
+        "session_turn:3",
+        "session_turn:1"
       ],
-      "observations": 1,
+      "observations": 4,
       "status": "active",
       "first_seen_at": "2026-06-02T10:45:23+0700",
-      "updated_at": "2026-06-02T10:45:23+0700",
+      "updated_at": "2026-06-03T15:50:44+0700",
       "decay_policy": "slow",
       "contradiction_ids": [],
       "tags": [
         "commit",
         "typed_fact",
         "user_identity.name",
-        "semantic_memory"
+        "semantic_memory",
+        "merged"
       ],
       "metadata": {
         "fact_key": "user.name",
@@ -31,7 +34,9 @@
           "tên",
           "ten",
           "name",
-          "preferred name"
+          "preferred name",
+          "gọi tên",
+          "goi ten"
         ],
         "raw_user_text": "tôi tên là Hoà",
         "semantic_claim": {
@@ -123,26 +128,31 @@
         "fact_profile_evidence": [
           "metadata.fact_key"
         ],
-        "embedding_text_hash": "44c35fc04d160035",
+        "embedding_text_hash": "f8648cb80fa9d12a",
         "embedding_version": 1,
         "access_count": 0,
-        "last_accessed_at": ""
+        "last_accessed_at": "",
+        "previous_claims": [
+          "User's name is Hoà",
+          "User's name is Tín"
+        ],
+        "last_merge_reason": "memory_commit_policy:user_identity.name"
       }
     },
     {
       "id": "sem_bb86265862d5",
-      "claim": "Người dùng nêu preference: coca",
+      "claim": "Người dùng nêu preference: tôi thích gì nhỉ",
       "domain": "user",
-      "confidence": 0.6342,
+      "confidence": 0.698,
       "source": "state_commit",
       "evidence_ids": [
         "session_turn:7",
         "session_turn:9"
       ],
-      "observations": 2,
+      "observations": 3,
       "status": "tentative",
       "first_seen_at": "2026-06-02T10:45:46+0700",
-      "updated_at": "2026-06-02T10:45:57+0700",
+      "updated_at": "2026-06-03T15:51:49+0700",
       "decay_policy": "normal",
       "contradiction_ids": [],
       "tags": [
@@ -160,7 +170,8 @@
           "so thich",
           "preference",
           "thích",
-          "không thích"
+          "không thích",
+          "khong thich"
         ],
         "raw_user_text": "Tôi thích coca",
         "semantic_claim": {
@@ -222,7 +233,7 @@
         "source_grounded": true,
         "semantic_source": "semantic_claim_extractor",
         "extraction": "semantic_claim_pipeline",
-        "importance": 0.62,
+        "importance": 0.66,
         "retention_class": "medium_term",
         "revisit_after_seconds": null,
         "prune_after_seconds": null,
@@ -252,11 +263,13 @@
         "fact_profile_evidence": [
           "metadata.fact_key"
         ],
-        "embedding_text_hash": "5735c39355f15137",
+        "embedding_text_hash": "c8f173f6e5ed9597",
         "embedding_version": 1,
         "access_count": 0,
         "last_accessed_at": "",
-        "previous_claims": [],
+        "previous_claims": [
+          "Người dùng nêu preference: coca"
+        ],
         "last_merge_reason": "memory_commit_policy:user.general_topic"
       }
     }

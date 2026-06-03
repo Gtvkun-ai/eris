@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 import unicodedata
@@ -629,6 +630,7 @@ class ChatCycleMixin:
         format_errors = 0
         max_format_retries = 2
         raw = None
+        format_repair_fallback = False
 
         self._set_background_memory_digest_remote_inflight(True)
         try:
@@ -670,18 +672,48 @@ class ChatCycleMixin:
                     "[llm format retry] remote retries exhausted; routing chat turn to local fallback | errors=%d",
                     format_errors,
                 )
-                raw = self.llm_service.generate_chat_reply(
-                    **chat_generation_kwargs,
-                    format_retry_context=format_retry_context,
-                    last_failure="format_error",
-                    allow_local_fallback=True,
-                    force_local_fallback=True,
-                )
+                try:
+                    raw = self.llm_service.generate_chat_reply(
+                        **chat_generation_kwargs,
+                        format_retry_context=format_retry_context,
+                        last_failure="format_error",
+                        allow_local_fallback=True,
+                        force_local_fallback=True,
+                    )
+                except FormatViolationException as exc:
+                    format_errors += 1
+                    format_repair_fallback = True
+                    self.last_failure = "format_error"
+                    conversation_report.state.last_failure = ConversationFailure(
+                        type="format_error",
+                        trigger=str(getattr(exc, "reason", "") or exc),
+                        correction_needed="Deterministic chat fallback was used after remote and local JSON failures.",
+                    )
+                    frame.debug_notes.append(
+                        f"llm_format_errors={format_errors}; route=deterministic_fallback; reason={getattr(exc, 'reason', str(exc))}"
+                    )
+                    self.logger.warning(
+                        "[llm format fallback] recovered chat turn after local JSON failure | errors=%d | reason=%s",
+                        format_errors,
+                        getattr(exc, "reason", str(exc)),
+                    )
+                    raw = self._build_chat_format_repair_fallback_raw(exc)
         finally:
             self._set_background_memory_digest_remote_inflight(False)
         self._log_raw_llm_output("chat", raw)
         self._log_pre_parser("chat", raw)
         decision = self.parser.parse(raw, user_hint=user_text)
+        if format_repair_fallback:
+            decision.intent = "format_repair_fallback"
+            decision.action = "guarded_reply"
+            decision.reasoning_tags = ("format_repair", "deterministic_fallback")
+            decision.should_speak = True
+            decision.confidence = 0.45
+            decision.parse_mode = "format_repair_fallback"
+            decision.debug_trace = self._join_debug_trace(
+                decision.debug_trace,
+                "format_violation_recovered",
+            )
         self._log_decision_stage("chat", "after_parser", decision)
         self._log_decision_stage("chat", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
@@ -691,6 +723,32 @@ class ChatCycleMixin:
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return
+
+    def _build_chat_format_repair_fallback_raw(self, exc: FormatViolationException) -> str:
+        reason = str(getattr(exc, "reason", "") or exc)
+        payload = {
+            "text": "Tôi bị lỗi định dạng khi sinh phản hồi. Ý chính: tôi chưa có đủ dữ liệu chắc để trả lời an toàn.",
+            "intent": "format_repair_fallback",
+            "action": "guarded_reply",
+            "animation": "stand",
+            "reasoning_tags": ["format_repair", "deterministic_fallback"],
+            "should_speak": True,
+            "confidence": 0.45,
+            "direction": 0,
+            "target_x": -1.0,
+            "bounce_action": "",
+            "extracted_fact": "",
+            "debug_trace": f"format_violation_recovered: {reason[:180]}",
+            "next_animation": "stand",
+            "system_action": "",
+            "action_input": "",
+            "parse_mode": "format_repair_fallback",
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    @staticmethod
+    def _join_debug_trace(*parts: str) -> str:
+        return " | ".join(str(part or "").strip() for part in parts if str(part or "").strip())
 
     def _queue_chat_burst_event(self, user_text: str, timestamp: float | None = None) -> None:
         text = str(user_text or "").strip()

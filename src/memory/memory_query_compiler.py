@@ -30,7 +30,7 @@ from .memory_query_ir import (
     SurfaceMode,
     clamp01,
 )
-from .memory_query_slot_parser import MemoryQuerySlotParser
+from .memory_query_slot_parser import MemoryQuerySlotParser, user_is_declaring_or_updating_fact
 from .memory_query_semantics import MemoryQuerySemanticHintEngine, SemanticQueryHint
 from .memory_query_llm_parser import MemoryQueryLLMParser
 from .memory_query_repair import MemoryQueryRepairStore
@@ -79,7 +79,7 @@ class MemoryQueryCompiler:
         semantic_hint = self.semantic_engine.analyze(text)
         notes: list[str] = []
 
-        if slot_result.has_self_disclosure:
+        if slot_result.has_self_disclosure or user_is_declaring_or_updating_fact(text):
             debug = CompileDebug(
                 slot_hypotheses=len(slot_result.hypotheses),
                 semantic_confidence=semantic_hint.confidence,

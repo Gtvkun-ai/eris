@@ -104,11 +104,14 @@ def test_fact_disclosure_statement_is_not_compiled_as_recall_query():
 
     name_result = compiler.compile("toi ten la Tin")
     birth_result = compiler.compile("toi sinh thang 8")
+    rename_result = compiler.compile("toi moi doi ten sang Ho Trung Tin sang nay")
 
     assert name_result.best is None
     assert "fact_disclosure_not_recall" in name_result.debug.notes
     assert birth_result.best is None
     assert "fact_disclosure_not_recall" in birth_result.debug.notes
+    assert rename_result.best is None
+    assert "fact_disclosure_not_recall" in rename_result.debug.notes
 
 
 def test_compiler_suppresses_high_ambiguity_semantic_recall():
@@ -176,7 +179,17 @@ def test_runtime_adapter_ignores_user_fact_disclosure_and_ambiguous_semantic_pro
     )
 
     assert adapter.try_answer("toi ten la Tin") is None
+    assert adapter.try_answer("toi moi doi ten sang Ho Trung Tin sang nay") is None
     assert adapter.try_answer("ten") is None
+
+
+def test_runtime_adapter_fact_update_guard_runs_before_memory_kernel_answer():
+    ledger = SessionTurnLedger()
+    ledger.record_user("xin chao", timestamp=1.0)
+    kernel = SimpleNamespace(answer=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("kernel recall should not run")))
+    adapter = MemoryRecallAdapter(ledger=ledger, memory_kernel=kernel)
+
+    assert adapter.try_answer("doi ten sang Ho Trung Tin") is None
 
 
 def test_surface_policy_blocks_raw_object_repr():

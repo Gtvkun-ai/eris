@@ -1097,6 +1097,9 @@ class AgentSpeechCore:
     speech_impulse: SpeechImpulse = field(default_factory=SpeechImpulse)
     motivation_pressure: MotivationalPressureReport = field(default_factory=MotivationalPressureReport)
     silence_state: SilenceState = field(default_factory=SilenceState)
+    requires_dynamic_fallback: bool = False
+    fallback_intent: str = ""
+    fallback_context: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -1115,6 +1118,9 @@ class AgentSpeechCore:
             "speech_impulse": self.speech_impulse.to_dict(),
             "motivation_pressure": self.motivation_pressure.to_dict(),
             "silence_state": self.silence_state.to_dict(),
+            "requires_dynamic_fallback": bool(self.requires_dynamic_fallback),
+            "fallback_intent": self.fallback_intent,
+            "fallback_context": dict(self.fallback_context),
         }
 
 

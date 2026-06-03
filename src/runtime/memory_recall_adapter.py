@@ -15,6 +15,7 @@ try:
     from ..memory.memory_query_ir import RecallAnswer
     from ..memory.memory_query_llm_parser import MemoryQueryLLMClient, MemoryQueryLLMParser
     from ..memory.memory_recall_policy import MemoryRecallSurfacePolicy
+    from ..memory.memory_query_slot_parser import user_is_declaring_or_updating_fact
     from ..memory.memory_turn_annotator import TurnAnnotator
     from ..memory.memory_turn_graph import TurnGraph
     from .session_turn_ledger import SessionTurnLedger
@@ -27,6 +28,7 @@ except ImportError:
     from memory.memory_query_ir import RecallAnswer
     from memory.memory_query_llm_parser import MemoryQueryLLMClient, MemoryQueryLLMParser
     from memory.memory_recall_policy import MemoryRecallSurfacePolicy
+    from memory.memory_query_slot_parser import user_is_declaring_or_updating_fact
     from memory.memory_turn_annotator import TurnAnnotator
     from memory.memory_turn_graph import TurnGraph
     from runtime.session_turn_ledger import SessionTurnLedger
@@ -99,6 +101,9 @@ class MemoryRecallAdapter:
         return payload
 
     def _recall(self, user_text: str) -> Optional["_RecallOutcome"]:
+        if user_is_declaring_or_updating_fact(user_text):
+            return None
+
         kernel = getattr(self, "memory_kernel", None)
         if kernel is not None and callable(getattr(kernel, "answer", None)):
             try:

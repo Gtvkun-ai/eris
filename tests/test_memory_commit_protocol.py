@@ -163,6 +163,17 @@ class MemoryCommitProtocolTests(unittest.TestCase):
             self.assertEqual(snapshot["semantic_memory"][0]["metadata"].get("fact_key"), "user.name")
             self.assertEqual(snapshot["semantic_memory"][0]["claim"], "User's name is Tin")
 
+    def test_user_rename_update_memory_commit_policy_persists_new_name(self):
+        policy = MemoryCommitPolicy()
+        decisions = policy.decide_from_user_turn(
+            "tôi mới đổi tên sang Hồ Trung Tín sáng nay",
+            turn_id="session_turn:4",
+        )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].metadata.get("fact_key"), "user.name")
+        self.assertEqual(decisions[0].metadata.get("value"), "Hồ Trung Tín")
+
 
 class MemoryIntakeCandidateTests(unittest.TestCase):
     def test_explicit_unparsed_memory_request_becomes_candidate(self):

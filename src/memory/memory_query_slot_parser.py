@@ -414,6 +414,8 @@ def infer_fact_key(norm: str) -> Optional[tuple[str, float]]:
 
 
 def infer_self_disclosure_fact(norm: str) -> Optional[tuple[str, float]]:
+    if _looks_like_fact_update_disclosure(norm):
+        return ("user.name", 0.96)
     if _looks_like_name_disclosure(norm):
         return ("user.name", 0.96)
     if _looks_like_birth_month_disclosure(norm):
@@ -518,7 +520,7 @@ def _signal_value(signals: list[SlotSignal], name: str) -> object:
 
 
 def normalize_vi(text: str) -> str:
-    text = unicodedata.normalize("NFD", text.lower())
+    text = unicodedata.normalize("NFD", text.lower()).replace("đ", "d")
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
     text = re.sub(r"[^a-z0-9\s_.-]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
@@ -557,6 +559,67 @@ def _looks_like_name_disclosure(norm: str) -> bool:
     if re.search(r"\bgoi\s+toi\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
         return True
     return False
+
+
+UPDATE_FACT_PATTERNS = (
+    "toi ten la",
+    "toi la",
+    "toi moi doi ten",
+    "doi ten sang",
+    "tu gio goi toi la",
+    "nho la toi",
+    "nho rang toi",
+    "hay nho la toi",
+    "hay nho rang toi",
+    "ten toi la",
+    "ten cua toi la",
+)
+
+
+def user_is_declaring_or_updating_fact(text: str) -> bool:
+    norm = normalize_vi(text)
+    if not norm:
+        return False
+    if _looks_like_fact_update_question(norm, raw=text):
+        return False
+    if infer_self_disclosure_fact(norm):
+        return True
+    return any(pattern in norm for pattern in UPDATE_FACT_PATTERNS)
+
+
+def _looks_like_fact_update_disclosure(norm: str) -> bool:
+    if _looks_like_fact_update_question(norm, raw=norm):
+        return False
+    return any(
+        re.search(pattern, norm)
+        for pattern in (
+            r"\btoi\s+moi\s+doi\s+ten\s+(?:sang|thanh)\s+[a-z0-9_ -]{2,60}\b",
+            r"\bdoi\s+ten\s+(?:sang|thanh)\s+[a-z0-9_ -]{2,60}\b",
+            r"\btu\s+gio\s+(?:cu\s+)?goi\s+toi\s+la\s+[a-z0-9_ -]{2,60}\b",
+            r"\bnho\s+(?:la|rang)\s+toi\s+(?:ten\s+la|la)\s+[a-z0-9_ -]{2,60}\b",
+            r"\bhay\s+nho\s+(?:la|rang)\s+toi\s+(?:ten\s+la|la)\s+[a-z0-9_ -]{2,60}\b",
+        )
+    )
+
+
+def _looks_like_fact_update_question(norm: str, *, raw: str) -> bool:
+    remember_disclosure = ("nho la toi", "nho rang toi", "hay nho la toi", "hay nho rang toi")
+    if any(marker in norm for marker in remember_disclosure):
+        return False
+    if "?" in str(raw or ""):
+        return True
+    question_markers = (
+        "toi ten gi",
+        "ten toi la gi",
+        "toi la ai",
+        "toi la gi",
+        "toi thich gi",
+        "toi thich gi nhi",
+        "toi sinh thang may",
+        "toi dang o dau",
+        "toi hien o dau",
+    )
+    return any(re.search(r"(?:^|\s)" + re.escape(marker) + r"(?:\s|$)", norm) for marker in question_markers)
 
 
 def _looks_like_birth_month_disclosure(norm: str) -> bool:

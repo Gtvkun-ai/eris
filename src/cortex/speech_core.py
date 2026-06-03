@@ -28,53 +28,20 @@ class SpeechCoreEngine:
         "worried",
     )
 
-    FALLBACK_BY_INTENT = {
-        "random_chatter": (
-            "Yên hơi lâu rồi. Tôi vẫn theo được.",
-            "Tôi chưa chen vào. Lần này tôi biết tự kiềm chế, hiếm đấy.",
-            "Không có gì gấp. Tôi để khoảng trống này yên một chút.",
-        ),
-        "inner_whim": (
-            "Có chỗ hơi cấn, nhưng tôi chưa đủ chắc để phán.",
-            "Tôi nghi nhẹ thôi. Chưa đáng làm ầm lên.",
-            "Đoạn này có vẻ cần kiểm tra thêm, không phải đoán bừa.",
-        ),
-        "social_presence": (
-            "Tôi vẫn theo bên cạnh. Không kéo Ngài ra khỏi việc chính.",
-            "Tôi đứng ngoài một chút. Cần thì tôi vào.",
-            "Tôi để Ngài làm tiếp. Tôi chưa thấy lý do để phá nhịp.",
-        ),
-        "micro_presence": (
-            "Tôi nghe rồi. Không làm quá.",
-            "Ừ, tôi còn theo được.",
-            "Tôi giữ ý đó lại. Chưa cần nói dài.",
-        ),
-        "indirect_presence": (
-            "Tôi hiểu phần đó. Nói thêm dễ thừa.",
-            "Đoạn đó đủ rõ rồi. Tôi không bẻ nó thành chuyện lớn.",
-            "Tôi nhận rồi. Giữ nó gọn thì tốt hơn.",
-        ),
-        "guarded_reply": (
-            "Tôi hiểu. Khó chịu thật, nhưng vẫn gỡ được.",
-            "Đoạn đó không nhẹ. Ta xử lý từng phần thôi.",
-            "Tôi nghe rồi. Tôi không phủ đường lên nó đâu.",
-        ),
-        "micro_observation": (
-            "{anchor} vẫn là chỗ đáng nhìn nhất.",
-            "Tôi đang bám vào {anchor}. Vậy là đủ để nói vừa phải.",
-            "{anchor} lặp lại hơi nhiều. Có thể nên kiểm tra.",
-        ),
-        "curious_question": (
-            "Bóc tiếp không, hay tạm để đó?",
-            "Ngài muốn tôi nhìn kỹ phần này không?",
-            "Chỗ này cần kiểm tra tiếp không?",
-        ),
-        "screen_observation": (
-            "Tôi chỉ bám được vào {anchor}. Nói hơn là đoán mò.",
-            "{anchor} là nguồn rõ nhất hiện tại. Phần khác chưa đủ chắc.",
-            "Tôi đọc {anchor} trước. Đừng bắt tôi làm thầy bói.",
-        ),
-    }
+    DYNAMIC_FALLBACK_INTENTS = frozenset({
+        "random_chatter",
+        "inner_whim",
+        "social_presence",
+        "micro_presence",
+        "indirect_presence",
+        "guarded_reply",
+        "micro_observation",
+        "curious_question",
+        "screen_observation",
+        "light_muse",
+        "telemetry_comment",
+        "vision_comment",
+    })
 
     def __init__(
         self,
@@ -96,7 +63,7 @@ class SpeechCoreEngine:
         for candidate in (inner_intent, utterance_type):
             if candidate == "curious_question":
                 return candidate
-            if candidate in self.FALLBACK_BY_INTENT:
+            if candidate in self.DYNAMIC_FALLBACK_INTENTS:
                 return candidate
         return "micro_presence"
 
@@ -136,20 +103,24 @@ class SpeechCoreEngine:
         momentum_topic: str = "",
         intent: str = "",
     ) -> str:
-        context = self.fallback_context(
+        """Compatibility hook: request dynamic wording, never emit template text.
+
+        SpeechCore is allowed to decide that a tiny fallback line is needed, but
+        it is not allowed to own the public wording.  Older post-generation
+        guards still call this method; instead of returning a canned sentence,
+        we stamp the request onto AgentSpeechCore and let the wording layer
+        reroll from the current pressure/context.
+        """
+        resolved_intent = intent or self.fallback_intent(speech_core)
+        self._mark_dynamic_fallback_request(
             speech_core,
+            intent=resolved_intent,
             snapshot=snapshot,
             momentum_topic=momentum_topic,
-        )
-        return self._force_speak_fallback_by_intent_text(
-            intent or self.fallback_intent(speech_core),
-            normalize_text=normalize_text,
-            is_near_duplicate=is_near_duplicate,
-            last_text=last_text,
-            counter=counter,
             repeated=repeated,
-            **context,
+            counter=counter,
         )
+        return ""
 
     def render_safe_fallback_text(
         self,
@@ -162,65 +133,50 @@ class SpeechCoreEngine:
         snapshot=None,
         momentum_topic: str = "",
     ) -> str:
-        perception = next((item for item in getattr(speech_core, "perception", ()) if str(item or "").strip()), "")
-        if speech_core.utterance_type in {"micro_observation", "micro_presence", "inner_whim", "light_muse"}:
-            ladder_text = self._small_soft_fallback_ladder_text(
-                normalize_text=normalize_text,
-                is_near_duplicate=is_near_duplicate,
-                last_text=last_text,
-                snapshot=snapshot,
-                momentum_topic=momentum_topic,
-                repeated=repeated,
-            )
-            if ladder_text:
-                return ladder_text
-        if speech_core.utterance_type in {"telemetry_comment", "vision_comment"} and perception:
-            return f"Tôi chỉ dám bám vào chỗ này: {perception}."
-        if speech_core.utterance_type == "curious_question":
-            return self.render_force_speak_repair_text(
-                speech_core,
-                normalize_text=normalize_text,
-                is_near_duplicate=is_near_duplicate,
-                last_text=last_text,
-                counter=2 if repeated else 1,
-                snapshot=snapshot,
-                momentum_topic=momentum_topic,
-                intent="curious_question",
-            )
-        if speech_core.utterance_type in {"relational_checkin", "guarded_reply"}:
-            return "Tôi không đoán tâm trạng Ngài hộ đâu. Nếu muốn, Ngài cứ nói thẳng phần đang nặng nhất."
-        if speech_core.utterance_type == "random_chatter":
-            return self.render_force_speak_repair_text(
-                speech_core,
-                normalize_text=normalize_text,
-                is_near_duplicate=is_near_duplicate,
-                last_text=last_text,
-                counter=2 if repeated else 1,
-                snapshot=snapshot,
-                momentum_topic=momentum_topic,
-                intent="random_chatter",
-            )
-        if speech_core.utterance_type == "micro_presence":
-            return self.render_force_speak_repair_text(
-                speech_core,
-                normalize_text=normalize_text,
-                is_near_duplicate=is_near_duplicate,
-                last_text=last_text,
-                counter=2 if repeated else 1,
-                snapshot=snapshot,
-                momentum_topic=momentum_topic,
-                intent="micro_presence",
-            )
-        return self.render_force_speak_repair_text(
+        """Compatibility hook: ask downstream wording layer for dynamic fallback.
+
+        Returning a string here would reintroduce the old choke point.  The
+        post-generation layer should see an empty string and call the local
+        micro-wording/reroll service, or keep silence/body-only if no generator
+        is available.
+        """
+        self._mark_dynamic_fallback_request(
             speech_core,
-            normalize_text=normalize_text,
-            is_near_duplicate=is_near_duplicate,
-            last_text=last_text,
-            counter=2 if repeated else 1,
+            intent=self.fallback_intent(speech_core),
             snapshot=snapshot,
             momentum_topic=momentum_topic,
-            intent="inner_whim",
+            repeated=repeated,
         )
+        return ""
+
+    def _mark_dynamic_fallback_request(
+        self,
+        speech_core: AgentSpeechCore | None,
+        *,
+        intent: str,
+        snapshot=None,
+        momentum_topic: str = "",
+        repeated: bool = False,
+        counter: int = 1,
+    ) -> dict[str, str]:
+        context = self.fallback_context(
+            speech_core,
+            snapshot=snapshot,
+            momentum_topic=momentum_topic,
+        )
+        context.update({
+            "fallback_intent": str(intent or "micro_presence"),
+            "fallback_repeated": "1" if repeated else "0",
+            "fallback_counter": str(max(1, int(counter or 1))),
+        })
+        if speech_core is not None:
+            try:
+                speech_core.requires_dynamic_fallback = True
+                speech_core.fallback_intent = str(intent or "micro_presence")
+                speech_core.fallback_context = dict(context)
+            except Exception:
+                pass
+        return context
 
     def _force_speak_fallback_by_intent_text(
         self,
@@ -235,53 +191,10 @@ class SpeechCoreEngine:
         window_title: str = "",
         momentum_topic: str = "",
     ) -> str:
-        if intent == "screen_observation":
-            anchor = self._screen_fallback_anchor(
-                normalize_text=normalize_text,
-                window_title=window_title,
-                momentum_topic=momentum_topic,
-            )
-            pool = self.FALLBACK_BY_INTENT["screen_observation"]
-            template = pool[(max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)]
-            return template.format(anchor=anchor)
-        if intent == "micro_observation":
-            anchor = self._screen_fallback_anchor(
-                normalize_text=normalize_text,
-                window_title=window_title,
-                momentum_topic=momentum_topic,
-            )
-            pool = self.FALLBACK_BY_INTENT["micro_observation"]
-            template = pool[(max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)]
-            return template.format(anchor=anchor)
-        if intent == "curious_question":
-            return self._thought_surface_template(
-                normalize_text=normalize_text,
-                counter=counter,
-                repeated=repeated,
-                focus_kind=focus_kind,
-                momentum_topic=momentum_topic,
-            )
-        if intent == "micro_presence":
-            pool = self.FALLBACK_BY_INTENT["micro_presence"]
-            start = (max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)
-            for offset in range(len(pool)):
-                candidate = pool[(start + offset) % len(pool)]
-                if not is_near_duplicate(candidate, last_text):
-                    return candidate
-            return pool[start]
-        if intent == "social_presence":
-            return self._light_presence_template(
-                counter=counter,
-                repeated=repeated,
-                focus_kind=focus_kind,
-            )
-        pool = self.FALLBACK_BY_INTENT.get(intent) or self.FALLBACK_BY_INTENT["random_chatter"]
-        start = (max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)
-        for offset in range(len(pool)):
-            candidate = pool[(start + offset) % len(pool)]
-            if not is_near_duplicate(candidate, last_text):
-                return candidate
-        return pool[start]
+        # Legacy private API kept for callers that have not been migrated yet.
+        # It intentionally returns no wording; public text must be generated by
+        # LLM wording / local micro-presence layer.
+        return ""
 
     def _screen_fallback_anchor(
         self,
@@ -297,47 +210,11 @@ class SpeechCoreEngine:
         title = re.sub(r"\s+", " ", str(window_title or "")).strip()
         return title[:120] if title else "tín hiệu hiện tại"
 
-    def _thought_surface_template(
-        self,
-        *,
-        normalize_text,
-        counter: int = 1,
-        repeated: bool = False,
-        focus_kind: str = "",
-        momentum_topic: str = "",
-    ) -> str:
-        topic = self._public_thought_topic(momentum_topic, normalize_text=normalize_text)
-        if topic:
-            pool = (
-                f"Phần {topic} cần kiểm tra tiếp không?",
-                f"Phần {topic} nên xử lý ngay hay tạm bỏ qua?",
-            )
-        elif focus_kind == "coding":
-            pool = (
-                "Bóc lỗi trước hay đọc tổng thể trước?",
-                "Ngài muốn tôi nhìn lỗi cụ thể hay cấu trúc lớn hơn?",
-                "Chọn một hướng trước. Đứng giữa hai hướng lâu quá thì dễ rối.",
-            )
-        else:
-            pool = self.FALLBACK_BY_INTENT["curious_question"]
-        return pool[(max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)]
+    def _thought_surface_template(self, *args, **kwargs) -> str:
+        return ""
 
-    def _light_presence_template(
-        self,
-        *,
-        counter: int = 1,
-        repeated: bool = False,
-        focus_kind: str = "",
-    ) -> str:
-        if focus_kind == "coding":
-            pool = (
-                "Tôi theo phần code. Chưa chen nếu chưa cần.",
-                "Phần code đang là hướng chính. Tôi đứng ngoài, nhưng vẫn theo.",
-                "Tôi để Ngài đọc tiếp. Code đã đủ ồn rồi, tôi khỏi góp thêm.",
-            )
-        else:
-            pool = self.FALLBACK_BY_INTENT["social_presence"]
-        return pool[(max(1, counter) - 1 + (1 if repeated else 0)) % len(pool)]
+    def _light_presence_template(self, *args, **kwargs) -> str:
+        return ""
 
     def _public_thought_topic(self, value: str, *, normalize_text) -> str:
         text = re.sub(r"\s+", " ", str(value or "")).strip()
@@ -366,47 +243,7 @@ class SpeechCoreEngine:
         )
         return any(marker in normalized for marker in internal_markers)
 
-    def _small_soft_fallback_ladder_text(
-        self,
-        *,
-        normalize_text,
-        is_near_duplicate,
-        last_text: str = "",
-        snapshot=None,
-        momentum_topic: str = "",
-        repeated: bool = False,
-    ) -> str:
-        context = self.fallback_context(None, snapshot=snapshot, momentum_topic=momentum_topic)
-        raw_window = str(context.get("window_title", "") or "").strip()
-        raw_topic = str(context.get("momentum_topic", "") or "").strip()
-        anchor = self._screen_fallback_anchor(
-            normalize_text=normalize_text,
-            window_title=raw_window,
-            momentum_topic=raw_topic,
-        )
-        if (raw_window or (raw_topic and not self._looks_internal_topic(raw_topic, normalize_text=normalize_text))) and anchor:
-            pool = (
-                "{anchor} vẫn là neo rõ nhất. Tôi nói vừa thôi.",
-                "Tôi chỉ bám vào {anchor}. Phần khác để yên.",
-            )
-            template = pool[1 if repeated else 0]
-            return template.format(anchor=anchor[:48])
-
-        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0)) if snapshot is not None else 0.0
-        if idle_seconds >= 60.0:
-            return "nhịp này yên hơi lâu rồi."
-
-        atmosphere = (
-            "nhịp này vẫn hơi nghẹn.",
-            "không khí hiện tại hơi lệch.",
-        )
-        for candidate in atmosphere:
-            if not is_near_duplicate(candidate, last_text):
-                return candidate
-
-        texture = "cái im lặng này không sạch lắm."
-        if not is_near_duplicate(texture, last_text):
-            return texture
+    def _small_soft_fallback_ladder_text(self, *args, **kwargs) -> str:
         return ""
 
     def evaluate(
@@ -476,11 +313,17 @@ class SpeechCoreEngine:
             )
         spontaneous_ready = self._spontaneous_ready(spontaneous_impulse, channel=channel_name)
 
+        extreme_internal_pressure = self._extreme_internal_speech_pressure(
+            spontaneous_impulse=spontaneous_impulse,
+            internal_state=internal_state,
+            thought_surface=surface,
+        )
         if ( #ERIS autonomous KHÔNG được nói chỉ vì telemetry thay đổi. Chỉ nói khi MeaningLayer báo có sự thay đổi về meaning, và nếu có meaning shift thì sẽ phải nói dù có signal nào đi nữa, còn nếu không có meaning shift thì sẽ chỉ nói khi có signal mạnh về meaning như weak_meaning, ambient_meaning hoặc vibe_signal, còn nếu không có signal mạnh về meaning thì sẽ không nói mà chỉ tạo một soft impression với lý do là MeaningLayer chỉ có tín hiệu yếu/ambient/vibe, nên nói như một ấn tượng mềm thay vì một quan sát cứng nhắc.
             channel_name == "autonomous"
             and meaning_layer is not None
             and not bool(getattr(meaning_layer, "meaning_shift", False))
             and not spontaneous_ready
+            and not extreme_internal_pressure
             and self._meaning_shift_required_for_layer(meaning_layer)
             and not self._allows_soft_non_shift_speech(
                 meaning_layer=meaning_layer,
@@ -667,6 +510,27 @@ class SpeechCoreEngine:
             should_speak=should_speak,
             spontaneous_impulse=spontaneous_impulse,
         )
+        dynamic_fallback_context = self.fallback_context(
+            None,
+            snapshot=snapshot,
+            momentum_topic=(
+                str(getattr(inner_thought, "topic_seed", "") or "")
+                or str(getattr(inner_thought, "evidence_anchor", "") or "")
+            ),
+        )
+        dynamic_fallback_intent = self.fallback_intent(
+            AgentSpeechCore(utterance_type=utterance_type, speech_source=speech_source, inner_thought=inner_thought)
+        )
+        requires_dynamic_fallback = bool(
+            should_speak
+            and speech_source in {"freeform", "random"}
+            and (
+                channel_name == "force_speak"
+                or utterance_type in self.DYNAMIC_FALLBACK_INTENTS
+                or "endogenous_anchor" in set(safety_flags)
+            )
+        )
+
         return AgentSpeechCore(
             perception=perception,
             mood=self._resolve_mood(snapshot=snapshot, appraisal=appraisal, fe_plan=fe_plan),
@@ -700,6 +564,9 @@ class SpeechCoreEngine:
                     safety_flags=safety_flags,
                 )
             ),
+            requires_dynamic_fallback=requires_dynamic_fallback,
+            fallback_intent=dynamic_fallback_intent if requires_dynamic_fallback else "",
+            fallback_context=dynamic_fallback_context if requires_dynamic_fallback else {},
         )
 
     def _evaluate_motivational_pressure(
@@ -1367,6 +1234,41 @@ class SpeechCoreEngine:
             blocked=blocked,
         )
 
+    def _silence_body_bias_hint(
+        self,
+        *,
+        reason: str,
+        inner_thought,
+        pressure_report: MotivationalPressureReport,
+        speech_impulse: SpeechImpulse,
+    ) -> dict[str, object]:
+        """Project suppressed speech into body-only bias.
+
+        Silence should still leave a body affordance for Godot: observe, idle
+        shift, or stillness.  No text is generated here.
+        """
+        hint: dict[str, object] = {}
+        raw_hint = getattr(speech_impulse, "body_bias_hint", {}) or {}
+        if isinstance(raw_hint, dict):
+            hint.update(raw_hint)
+        candidates = tuple(getattr(pressure_report, "candidates", ()) or ())
+        best = next((item for item in candidates if not getattr(item, "blocked", False)), None)
+        label = str(getattr(best, "label", "") or getattr(getattr(pressure_report, "winner", None), "label", "") or "")
+        score = self._clamp01(getattr(best, "score", 0.0) if best is not None else 0.0)
+        inner_intent = str(getattr(inner_thought, "intent", "") or "")
+        reason_name = str(reason or "")
+        if label in {"curiosity", "spontaneous_life", "thought_stream_surface", "soft_meaning_presence"} or inner_intent == "curious_question":
+            hint.setdefault("body_action_bias", "ObserveCode")
+            hint.setdefault("curiosity_delta", round(max(0.08, min(0.24, score * 0.22)), 3))
+        elif "quiet_guard" in reason_name or "meaning_shift_gate" in reason_name:
+            hint.setdefault("body_action_bias", "idle_shift")
+            hint.setdefault("solitude_delta", 0.06)
+        if reason_name:
+            hint.setdefault("silence_reason", reason_name)
+        if label:
+            hint.setdefault("suppressed_impulse", label)
+        return hint
+
     def _build_silence_state(
         self,
         *,
@@ -1427,6 +1329,12 @@ class SpeechCoreEngine:
                 if str(item or "").strip()
             )
         )
+        body_bias_hint = self._silence_body_bias_hint(
+            reason=reason,
+            inner_thought=inner_thought,
+            pressure_report=pressure_report,
+            speech_impulse=speech_impulse,
+        )
         return SilenceState(
             mode="intentional_withholding",
             intentional_withholding=True,
@@ -1437,6 +1345,7 @@ class SpeechCoreEngine:
             reason=reason or "speech_withheld",
             evidence=evidence,
             generation_failure=False,
+            body_bias_hint=body_bias_hint,
         )
 
     def _meaning_reaction_score(
@@ -1638,6 +1547,42 @@ class SpeechCoreEngine:
             surface_intent=str(getattr(winner, "reason", "") or "speak briefly"),
             evidence=tuple(str(item) for item in (getattr(winner, "evidence", ()) or ()))[:4],
         )
+    def _extreme_internal_speech_pressure(
+        self,
+        *,
+        spontaneous_impulse: SpeechImpulse | None,
+        internal_state: PersistentInternalState | None,
+        thought_surface=None,
+    ) -> bool:
+        """Allow bounded endogenous leakage to bypass meaning_shift_gate.
+
+        This is not permission to make screen claims. It only lets a low-claim,
+        internally anchored utterance compete in motivation arbitration when the
+        system has been silent too long or an endogenous impulse is very strong.
+        """
+        state = internal_state or PersistentInternalState()
+        spontaneous_pressure = self._clamp01(getattr(spontaneous_impulse, "surface_pressure", 0.0))
+        spontaneous_act = str(getattr(spontaneous_impulse, "suggested_speech_act", "") or "")
+        if (
+            spontaneous_pressure >= 0.85
+            and spontaneous_act
+            and spontaneous_act != "no_speech"
+            and not bool(getattr(spontaneous_impulse, "needs_external_evidence", False))
+        ):
+            return True
+        silence_pressure = self._float(getattr(state, "silence_pressure", 0.0))
+        boredom = self._float(getattr(state, "boredom", 0.0))
+        curiosity_pressure = max(
+            self._pressure(state, "curiosity_pressure"),
+            self._float(getattr(state, "curiosity", 0.0)),
+        )
+        surface_pressure = self._float(getattr(thought_surface, "pressure", 0.0) if thought_surface is not None else 0.0)
+        surface_momentum = self._float(getattr(thought_surface, "momentum_score", 0.0) if thought_surface is not None else 0.0)
+        return bool(
+            silence_pressure >= 0.72
+            or (silence_pressure >= 0.64 and max(boredom, curiosity_pressure, surface_pressure, surface_momentum) >= 0.58)
+        )
+
     def _spontaneous_ready(self, impulse: SpeechImpulse | None, *, channel: str) -> bool:
         if impulse is None:
             return False

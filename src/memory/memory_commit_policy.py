@@ -69,7 +69,7 @@ def normalize_vi(text: str) -> str:
     vì làm mất dấu tên riêng kiểu "Tín" thì hơi tội nghiệp dữ liệu.
     """
 
-    lowered = _strip_accents(str(text or "").lower()).replace("đ", "d")
+    lowered = _strip_accents(str(text or "").lower()).replace("đ", "d").replace("Đ", "D")
     lowered = re.sub(r"[^\w\s:/@.+#-]", " ", lowered, flags=re.UNICODE)
     return " ".join(lowered.split())
 
@@ -525,6 +525,10 @@ class MemoryCommitPolicy:
                 r"(?:^|\b)(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+t[eê]n\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
                 r"(?:^|\b)t[eê]n\s+(?:của\s+)?(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
                 r"(?:^|\b)(?:gọi|goi|cứ gọi|cu goi)\s+(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
+                r"(?:^|\b)(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+mới\s+(?:đổi|doi)\s+t[eê]n\s+(?:sang|thành|thanh)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung|sáng|sang nay|hôm|hom)\b)",
+                r"(?:^|\b)(?:đổi|doi)\s+t[eê]n\s+(?:sang|thành|thanh)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung|sáng|sang nay|hôm|hom)\b)",
+                r"(?:^|\b)(?:từ|tu)\s+giờ\s+(?:cứ\s+|cu\s+)?(?:gọi|goi)\s+(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
+                r"(?:^|\b)(?:nhớ|nho|hãy nhớ|hay nho)\s+(?:là|la|rằng|rang)\s+(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+(?:t[eê]n\s+(?:là|la)|(?:là|la))\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
                 r"(?:^|\b)my\s+name\s+is\s+(.+?)(?=$|[.,;!?])",
                 r"(?:^|\b)call\s+me\s+(.+?)(?=$|[.,;!?])",
             ),
