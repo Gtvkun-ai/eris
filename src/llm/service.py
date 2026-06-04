@@ -2200,13 +2200,13 @@ class LlmService:
         except Exception:
             return None
 
-    def _fallback_greeting_text(self, *, telemetry_data: str = "", reason: str = "") -> str:
+    def _fallback_greeting_text(self, *, telemetry_data: str = "", reason: str = "", avoid_text: str = "") -> str:
         engine = self._fallback_greeting_engine()
         if engine is None:
             return "Ngài quay lại rồi."
         try:
             frame = engine.from_prompt_context(telemetry_data)
-            return engine.deterministic_greeting(frame)
+            return engine.deterministic_greeting(frame, avoid_text=avoid_text)
         except Exception:
             return "Ngài quay lại rồi."
 
@@ -2283,7 +2283,11 @@ class LlmService:
         engine = self._fallback_greeting_engine()
         scorer = self._session_greeting_quality_scorer()
         if frame is None or engine is None or scorer is None:
-            text = self._fallback_greeting_text(telemetry_data=telemetry_data, reason="missing_greeting_modules")
+            text = self._fallback_greeting_text(
+                telemetry_data=telemetry_data,
+                reason="missing_greeting_modules",
+                avoid_text=avoid_text,
+            )
             return self._build_session_greeting_payload(
                 text=text,
                 reason="session_ritual_fallback;missing_greeting_modules",
@@ -2294,7 +2298,7 @@ class LlmService:
         # A startup with thin evidence should not invite poetry, meta comments, or
         # a whole tiny theater production. Appalling that this needs saying, but here we are.
         if frame.situation in {"low_evidence_start", "plain_return"} and not frame.active_anchor:
-            text = engine.deterministic_greeting(frame)
+            text = engine.deterministic_greeting(frame, avoid_text=avoid_text)
             return self._build_session_greeting_payload(
                 text=text,
                 reason=f"session_ritual_deterministic; situation={frame.situation}",
@@ -2345,7 +2349,7 @@ class LlmService:
             candidates = []
             self.logger.info("[session_greeting] candidate generation failed: %s", exc)
 
-        best = scorer.choose_best(candidates, frame)
+        best = scorer.choose_best(candidates, frame, avoid_text=avoid_text)
         return self._build_session_greeting_payload(
             text=best.text,
             reason=f"session_ritual_greeting_cognition; situation={frame.situation}; intent={frame.intent}",

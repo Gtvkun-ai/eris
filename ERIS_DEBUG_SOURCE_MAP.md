@@ -1,0 +1,1553 @@
+# ERIS DEBUG SOURCE MAP
+
+Mục tiêu: tài liệu này không dành cho người đọc ngoài. Nó dùng để debug repo ERIS theo kiểu file-to-file: file nào giữ vai trò gì, state nào đọc/ghi, đường gọi nào cần soi khi lỗi.
+
+Nguồn dựng bản này:
+- Repo public `Gtvkun-ai/Eris` tại nhánh `main`.
+- `Tongquat.txt` bản hiện tại trong workspace.
+- `Eris Cognitive Pipeline V3 Grand Architecture.pdf` để đối chiếu kiến trúc chuẩn.
+
+Giới hạn trung thực:
+- Bản này chưa phải kết quả clone và đọc từng dòng source trong container.
+- Đây là bản source-map debug ưu tiên chính xác theo tài liệu nội bộ + file tree public + mô tả module hiện có.
+- Những file được đánh dấu `VERIFY_IN_CODE` cần mở source thật để xác nhận function/class cụ thể.
+- Dùng bản này để debug luồng, không dùng làm README public.
+
+---
+
+# 0. Luồng sống chính của ERIS
+
+```text
+Godot Body
+  body/UdpListener.cs
+    ↓ UDP event 4243
+Python Runtime
+  src/vision.py
+    ↓ build services
+  src/runtime/coordinator.py
+    ↓ mixins/runtime gates
+  source_grounding / chat_cycle / frame_builder / speech_pipeline
+    ↓
+Cortex
+  Se -> Evidence -> AttentionSalience -> WorkingMemory -> Meaning -> InternalState -> SpeechCore -> ActionPlanner
+    ↓
+LLM / Parser / Ti / PostGenerationFilters
+    ↓ UDP decision 4242
+Godot Body
+  UdpDecisionParser -> MotionController / LocalBodyAutonomy / UI bubble
+```
+
+Quy tắc debug:
+- Nếu ERIS **không nói**: kiểm tra wake gate -> speech_core -> action_utility -> post_generation_filters -> should_speak.
+- Nếu ERIS **nói sai nguồn**: kiểm tra source_grounding -> parser_grounding -> Ti -> post_generation_filters.
+- Nếu ERIS **lặp hoặc lạnh**: kiểm tra turn_semantics -> conversation_dynamics -> relational_feedback -> FeRenderer -> LlmService chat contract.
+- Nếu ERIS **có nội sinh nhưng không surface**: kiểm tra thought_stream -> spontaneous_life -> impulse_arbitration -> speech_core quiet guard.
+- Nếu ERIS **nhớ sai**: kiểm tra memory_commit_policy -> MemoryCognitionCore -> memory_recall_adapter -> SourceGrounding memory_answer_allowed.
+- Nếu body **đơ hoặc động tác sai**: kiểm tra Decision.to_payload -> UdpDecisionParser -> MotionController -> LocalBodyAutonomy.
+
+---
+
+# 1. Root / Project files
+
+## `project.godot`
+Role: cấu hình Godot project.
+Reads/Writes: Godot editor/runtime.
+Debug khi: scene không chạy, node path lỗi, C# binding lỗi.
+Status: ACTIVE.
+
+## `Eris.csproj`, `Eris.sln`
+Role: project .NET/Godot C#.
+Debug khi: build Godot C# fail, script không compile, target framework lệch.
+Status: ACTIVE.
+
+## `.env.example`
+Role: mẫu env. Dùng để chuyển secret/key/config runtime ra khỏi source.
+Debug khi: remote/local model không nhận config.
+Status: ACTIVE CONFIG.
+Note: phải ưu tiên thay hardcoded key bằng env. Nhân loại phát minh ra secret scanning không phải để trang trí.
+
+## `requirements.txt`
+Role: dependency Python.
+Debug khi: import fail, runtime boot fail, pytest fail do thiếu lib.
+Status: ACTIVE.
+
+## `pytest.ini`
+Role: cấu hình pytest/import path.
+Debug khi: ModuleNotFoundError, test discovery lệch.
+Status: ACTIVE.
+
+## `Tongquat.txt`
+Role: kiến trúc/tổng quan hiện tại.
+Debug khi: cần hiểu nhanh đường runtime, nhưng không thay thế source.
+Status: ACTIVE DOC.
+Gap: quá dài cho debug nhanh, thiếu bảng owner/state/dependency.
+
+## `commit_notes.md`
+Role: ghi chú commit/snapshot.
+Status: SUPPORT DOC / VERIFY.
+
+## `pytest-output.txt`, `pytest-report.xml`
+Role: kết quả test gần nhất.
+Debug khi: cần truy failure cụ thể.
+Status: GENERATED DEBUG ARTIFACT.
+
+## `tmp_llama_out.log`, `tmp_llama_err.log`, `tmp_vision_smoke.png`
+Role: artifact runtime/test tạm.
+Status: GENERATED / SHOULD_NOT_COMMIT nếu public sạch.
+
+## `focus_context_config.json`
+Role: override phân loại focus context cho Se/Ni, ví dụ YouTube/nhạc/podcast nền không bị hiểu thành distraction.
+Debug khi: ERIS đọc sai active app/activity kind.
+Status: ACTIVE CONFIG.
+
+## `ni_focus_config.json`, `goal_profiles.json`, `goal_memory.json`, `ni_drift_samples.jsonl`
+Role: cấu hình/memory mẫu cho Ni drift, goal tracking.
+Debug khi: ERIS nhắc goal sai, coi leisure là lệch goal, hoặc goal không close.
+Status: ACTIVE DATA/CONFIG.
+
+---
+
+# 2. Body Godot / C#
+
+## `body/UdpListener.tscn`
+Role: scene body gốc.
+Owns: CanvasLayer, chat panel, context menu, sprite, bubble.
+Calls: `UdpListener.cs`.
+Debug khi: body không hiện, UI node path null, context menu lỗi.
+Status: ACTIVE.
+
+## `body/UdpListener.cs`
+Role: trung tâm body runtime.
+Owns:
+- UDP receive decision port 4242.
+- UDP send event/chat port 4243.
+- chat panel, bubble, context menu.
+- connect process manager, parser, motion, audio, local autonomy.
+Reads:
+- payload decision từ Python.
+- input user chat / force speak / touch.
+Writes:
+- event UDP sang Python.
+- UI bubble, animation, local body state.
+Calls:
+- `UdpDecisionParser`
+- `ErisProcessManager`
+- `MotionController`
+- `LocalBodyAutonomy`
+- `BodyAudioController`
+Debug khi:
+- body không nhận text: kiểm tra bind 4242, payload JSON, `should_speak`.
+- chat không sang Python: kiểm tra send 4243, event shape.
+- body override sai: kiểm tra explicit motion vs body_bias.
+Status: ACTIVE GOD OBJECT.
+Risk:
+- vẫn quá dày: UI + UDP + process + state body.
+- nếu còn hardcoded API key thì phải dọn.
+
+## `body/UdpDecisionParser.cs`
+Role: parse payload UDP từ Python sang object body.
+Reads: raw UDP JSON/plain text.
+Outputs: `UdpDecisionPayload`.
+Normalizes:
+- text, should_speak, parse_mode, debug_trace, parser_trace.
+- animation alias: walk/run -> stand_walk, wave -> stand.
+- body_bias, emotion_debug, motion fields.
+Debug khi:
+- payload có text nhưng bubble không hiện.
+- animation bị reject.
+- motion không chạy dù Python gửi.
+Status: ACTIVE.
+
+## `body/ErisProcessManager.cs`
+Role: start/stop Python `vision.py` và llama-server.
+Reads: Godot export config/env.
+Writes: process lifecycle, stdout/stderr log.
+Injects env:
+- PYTHONUTF8, PYTHONIOENCODING, PYTHONUNBUFFERED.
+- LLAMA_SERVER_*, GGUF_MODEL_PATH, ERIS_N_CTX.
+- remote API vars, GEMINI_API_KEY.
+Debug khi:
+- vision.py không boot.
+- llama-server không mở.
+- stdout/stderr mất traceback.
+Status: ACTIVE.
+Risk: secret/env handling cần sạch trước public.
+
+## `body/LocalBodyAutonomy.cs`
+Role: autonomy cục bộ của thân thể.
+Reads:
+- BodyBias từ Python: continuity_anxiety, curiosity, overload, solitude, focus_kind, preferred_anchor.
+- BodyAutonomyContext: position, screen size, action state, chat visible, top perch.
+Writes:
+- BodyAutonomyDecision / MotionCommand local.
+Behavior:
+- ReturnToAnchor, ReadQuietly, ObserveCode, ClimbWall, DropFromCeiling, Withdraw, DormantSit, QuietObserve.
+Debug khi:
+- body đi lại vô lý.
+- body spam climb/drop.
+- body không phản ứng body_bias.
+Status: ACTIVE.
+
+## `body/MotionController.cs`
+Role: physics/movement body.
+Reads: MotionCommand.
+Owns:
+- gravity, horizontal velocity, facing, bubble flip.
+- climb/drop/throw/walk_to/pose.
+Debug khi:
+- body mắc tường, không rơi, không quay mặt, ném sai impulse.
+Status: ACTIVE.
+
+## `body/BodyAudioController.cs`
+Role: audio theo animation.
+Reads: animation name, sound map.
+Writes: AudioStreamPlayer.
+Debug khi: âm thanh loop sai, sound không phát.
+Status: ACTIVE.
+
+## `asset/Resource/Monika.tscn`
+Role: sprite frames/animation map.
+Debug khi: animation name hợp lệ nhưng không có frame.
+Status: ACTIVE ASSET.
+
+## `asset/Monika/*.png`, `asset/Monika/sound/*.wav`, `asset/icon/*`, `*.import`, `*.uid`
+Role: asset body/UI/Godot metadata.
+Debug khi: sprite mất frame, import lỗi, sound thiếu.
+Status: ASSET.
+
+---
+
+# 3. Entrypoint / Runtime spine
+
+## `src/vision.py`
+Role: entrypoint Python cognition.
+Boot order:
+1. stdout/stderr UTF-8.
+2. SingleInstanceLock `.vision.lock`.
+3. logging.
+4. build LLM clients/process manager.
+5. load MemoryCognitionCore.
+6. build parser, telemetry, Ni/Ti/Fe.
+7. boot ActionExecutor/ActionRouter.
+8. create RuntimeCoordinator.
+9. run_loop.
+Reads:
+- env remote/local model.
+- memory_core.
+- telemetry.
+Writes:
+- process logs.
+- runtime state through coordinator.
+Debug khi:
+- app boot nhưng cognition không chạy.
+- import/config/model path lỗi.
+- memory load làm chết boot.
+Status: ACTIVE ENTRYPOINT.
+
+## `src/app_logging.py`
+Role: logging formatter/grouping.
+Debug khi: log quá ồn hoặc mất nhóm traceback.
+Status: ACTIVE SUPPORT.
+
+## `src/sender.py`
+Role: UDP sender thủ công test body.
+Debug khi: muốn test Godot body không cần full Python runtime.
+Status: DEBUG TOOL.
+
+## `src/guard_config.py`
+Role: cấu hình guard, VERIFY_IN_CODE.
+Debug khi: guard quá gắt/quá lỏng.
+Status: CONFIG / VERIFY.
+
+## `src/eris_secrets.py`
+Role: secrets wrapper, VERIFY_IN_CODE.
+Debug khi: env/key không load đúng.
+Risk: không commit secret thật.
+Status: SECURITY SUPPORT.
+
+---
+
+# 4. Runtime package `src/runtime/*`
+
+## `src/runtime/coordinator.py`
+Role: orchestrator trung tâm.
+Owns state:
+- chat history.
+- last response.
+- active conversational topic.
+- repeated guard.
+- vision facts.
+- cognitive frames.
+- mental process loop.
+- session ritual flag.
+- public/session turn ledger.
+- reply context.
+- rapid chat burst queue.
+- presence/reengagement cooldown.
+- last_wake_decision / rolling_user_context / rolling_internal_state / daydream result.
+Calls:
+- telemetry/Se.
+- attention/working memory/meaning/personality.
+- internal_state/self_model/social_presence/session_ritual/thought_stream.
+- speech_core/action_planner/micro_policy.
+- LLM/parser/Ti/Fe.
+- memory/action router/executor.
+- runtime mixins.
+Debug khi:
+- lỗi end-to-end không rõ owner.
+- autonomous gọi main model dù wake gate không cho.
+- chat burst/lặp/previous public turn sai.
+Status: ACTIVE GOD OBJECT, đã tách bớt bằng mixin nhưng vẫn là nơi hợp mạch.
+
+## `src/runtime/chat_cycle.py`
+Role: path xử lý chat user.
+Owns:
+- user_timestamp.
+- rapid burst queue.
+- source grounding precheck.
+- memory recall deterministic trước LLM.
+- direct action route.
+- link previous public turn.
+- final chat guards.
+Reads:
+- user text, reply_context, source_grounding, memory_recall_adapter, turn_semantics.
+Writes:
+- session_turn_ledger user/assistant.
+- commit_requests từ user disclosure.
+- Decision chat.
+Debug khi:
+- hỏi trực tiếp mà ERIS trả vòng vo.
+- user gửi nhiều tin ngắn bị trả từng mảnh.
+- câu “tôi vừa hỏi gì” sai.
+Status: ACTIVE.
+
+## `src/runtime/source_grounding.py`
+Role: phân loại nguồn trước khi trả lời.
+Sources:
+- pasted_code, uploaded_file, filename_only, current_screen, live_vision, user_text, memory, web, runtime_state, unknown.
+Outputs:
+- SourceGroundingReport.
+- allowed_sources.
+- missing_evidence.
+- forbidden_assumptions.
+- epistemic_mode: claim/fallback/probe/hypothesis.
+- memory_answer_allowed.
+Debug khi:
+- ERIS nói “tôi thấy màn hình” khi không có screenshot.
+- memory giả dạng evidence hiện tại.
+- file mention nhưng chưa có file content.
+Status: ACTIVE CRITICAL GUARD.
+
+## `src/runtime/post_generation_filters.py`
+Role: hàng rào cuối output public.
+Guards:
+- protocol_surface_guard.
+- internal_object_surface_guard.
+- memory_haunting_guard.
+- chat_grounding_guard.
+- micro_line_policy_filter.
+- repetition/style drift.
+- anti_mindreading_filter.
+Side effect:
+- ghi feedback user vào PersistentAgentMindStore.
+Debug khi:
+- output bị rewrite mất hồn.
+- output leak `MemoryPacket(...)` hoặc prompt/debug.
+- output đang đúng mà bị guard đập thành fallback.
+Status: ACTIVE CRITICAL SURFACE GUARD.
+
+## `src/runtime/frame_builder.py`
+Role: dựng cognitive frame/disturbance/autonomous frame.
+Creates:
+- CognitiveDisturbance từ user text, force_speak, autonomous tick, recent event, vision fact.
+Calls:
+- thought_stream.inject_disturbances.
+Handles:
+- session ritual fallback.
+- surface selector pop/report.
+Debug khi:
+- nội sinh có pressure nhưng không vào thought_stream.
+- force_speak không tạo requested_presence.
+Status: ACTIVE.
+
+## `src/runtime/cognitive_frame_recorder.py`
+Role: finalize cognitive frame + outcome/self-observation/commit.
+Order:
+1. execution/action done.
+2. OutcomeObserver.observe(frame).
+3. SelfObserver.reflect(frame).
+4. append repair memory request.
+5. build/dedupe StateCommitRequest.
+6. StateCommitter.commit(frame).
+Debug khi:
+- user correction không đi vào repair memory.
+- frame không ghi outcome.
+- memory_update debug sai.
+Status: ACTIVE.
+
+## `src/runtime/state_commit_service.py`
+Role: adapter commit/recall/body bias/public ledger.
+Owns helpers:
+- _send_decision_to_body.
+- _record_public_turn.
+- _ensure_session_turn_ledger.
+- _ensure_memory_commit_policy.
+- _ensure_memory_recall_adapter.
+- _semantic_memory_lookup.
+- _episodic_memory_lookup.
+Debug khi:
+- decision nói rồi nhưng ledger không ghi.
+- body_bias không gửi.
+- memory recall deterministic không chạy.
+Status: ACTIVE MIDDLE ADAPTER.
+
+## `src/runtime/prompt_context_builder.py`
+Role: dựng context prompt cho LLM.
+Includes:
+- internal state context.
+- memory context.
+- action plan context.
+- Ti context.
+- speech evidence/current focus.
+- session ritual fallback.
+Debug khi:
+- prompt bị nhét quá nhiều context.
+- LLM thấy memory không nên thấy.
+Status: ACTIVE.
+
+## `src/runtime/speech_pipeline.py`
+Role: helper path speech/autonomous intent.
+Debug khi: speech intent mapping lệch, force_speak/chat path lẫn nhau.
+Status: ACTIVE / VERIFY.
+
+## `src/runtime/presence_controller.py`
+Role: presence maintenance, reengagement, micro-presence synthesis.
+Debug khi:
+- ERIS spam câu hiện diện.
+- vừa nói xong lại chen micro-line.
+- force speak không có evidence sinh câu rỗng.
+Status: ACTIVE.
+
+## `src/runtime/fallback_policy.py`
+Role: fallback khi LLM/parser/runtime fail.
+Debug khi: lỗi runtime nhưng output fallback quá ngu hoặc sai nguồn.
+Status: ACTIVE.
+
+## `src/runtime/public_turn_ledger.py`
+Role: sổ các lượt public thật sự visible.
+Stores:
+- text, timestamp, channel: chat/session_ritual/presence/reengagement/autonomous.
+Used by:
+- reply_context.previous_public_turn.
+Debug khi: user phản ứng câu vừa nói nhưng ERIS không hiểu ngữ cảnh.
+Status: ACTIVE.
+
+## `src/runtime/session_turn_ledger.py`
+Role: transcript deterministic trong phiên.
+Functions:
+- nth_user_turn.
+- nth_assistant_turn.
+- count_user_questions.
+- longest_user_question.
+- gist_recent_user_topics.
+Debug khi: exact recall trong phiên sai.
+Status: ACTIVE.
+
+## `src/runtime/memory_recall_adapter.py`
+Role: nối chat_cycle với structured memory query.
+Pipeline:
+MemoryQueryCompiler -> TurnGraph -> MemoryQueryExecutor -> MemoryRecallSurfacePolicy -> Decision.
+Debug khi:
+- câu hỏi memory đáng ra deterministic nhưng lại gọi LLM.
+- câu “tôi tên gì” sai.
+Status: ACTIVE.
+
+## `src/runtime/memory_semantic_parser_adapter.py`
+Role: parse user text thành MeaningFrame cho memory intake.
+Boundary: không commit, không quyết retention.
+Debug khi: user self-disclosure không được parse thành claim.
+Status: ACTIVE.
+
+## `src/runtime/body_bias.py`
+Role: project internal state / impulse hint thành body_bias.
+Fields:
+- continuity_anxiety, curiosity, overload, solitude, focus_kind, preferred_anchor.
+Debug khi: body không phản ánh nội trạng.
+Status: ACTIVE.
+
+## `src/runtime/outcome_observer.py`
+Role: đọc hậu quả sau turn.
+Detects:
+- user accepted/corrected/confused/ignored/intruded.
+- action success.
+- body match success.
+Debug khi: self_observation không có dữ liệu học sửa.
+Status: ACTIVE.
+
+## `src/runtime/eris_pathology_policy.py`
+Role: deterministic pathology repair/test policy.
+Scenarios:
+- misread_correction.
+- overread_short_ambiguous.
+- underacted_fix_request.
+- overexplained_short_answer.
+- tone_mismatch_technical.
+- privacy_intrusion_no_evidence.
+- body_mismatch_presence.
+- assistant_flattening.
+- overhumanization_identity_boundary.
+- public_turn_correction.
+- memory_not_current_evidence.
+Debug khi: muốn regression observable behavior mà không boot full runtime.
+Status: ACTIVE TEST/REPAIR POLICY.
+
+## `src/runtime/signal_buffer.py`
+Role: rolling signal snapshot/diff trước observer.
+Computes:
+- novelty, repetition, diff_score.
+- window/app/focus/ocr/screen/event/resource/idle transition changes.
+Debug khi: observer chạy quá nhiều hoặc không chạy khi nên chạy.
+Status: ACTIVE.
+
+## `src/runtime/sensory_model_adapter.py`
+Role: adapter 0.6B sensory/observer model.
+Reads env:
+- ERIS_SENSORY_ENABLED, PROVIDER, MODEL, KEEP_ALIVE, TEMP.
+Outputs ObserverFrame JSON schema.
+Debug khi: sensory model không trả schema hoặc observer fallback sai.
+Status: ACTIVE.
+
+## `src/runtime/contextual_autonomy_loop.py`
+Role: backbone 3-tier autonomy.
+Tick does:
+- update RollingUserContext.
+- update RollingInternalState.
+- capture ResourceSnapshot.
+- call AutonomousWakeGovernor.
+- optionally daydream.
+Debug khi: wake/sleep cadence sai, daydream không trigger, budget veto bất thường.
+Status: ACTIVE.
+
+## `src/runtime/autonomous_wake_governor.py`
+Role: quyết định mức thức.
+Outputs WakeDecision:
+- level, should_speak, should_call_vision, should_wake_main, should_run_daydream.
+- reason, confidence, external_pressure, internal_drive, compute_budget, permission, speech_value, interrupt_cost.
+Debug khi: main cognition chạy sai lúc hoặc im sai lúc.
+Status: ACTIVE CRITICAL GATE.
+
+## `src/runtime/model_budget_policy.py`
+Role: budget gatekeeper, chưa phải scheduler production.
+Capabilities:
+- CPU/RAM/GPU/VRAM best-effort.
+- veto tier inference.
+- mark_started/mark_finished.
+Limit:
+- chưa global lock/queue/cancel/unload orchestration.
+Debug khi: nhiều model chạy chồng, daydream/vision/main đụng resource.
+Status: ACTIVE BUT INCOMPLETE.
+
+## `src/runtime/daydream_model_adapter.py`
+Role: adapter 4B daydream model.
+Providers:
+- Ollama.
+- llama-server chat/completions JSON.
+Debug khi: daydream không parse JSON, provider timeout.
+Status: ACTIVE.
+
+---
+
+# 5. Domain / Transport
+
+## `src/domain/decision.py`
+Role: contract cuối giữa cognition và Godot.
+Fields:
+- text, intent, action, animation, should_speak, confidence.
+- direction, target_x, bounce_action, next_animation.
+- system_action, action_input.
+- motion_intent, motion_target_x, motion_facing.
+- debug_trace, parser_trace, parse_mode.
+- body_bias, emotion_debug.
+Resolvers:
+- climb + climb_top -> climb_to_top.
+- air_swing -> drop.
+- target_x -> walk_to.
+- stand_walk -> walk.
+Debug khi: Python nghĩ có motion nhưng body không chạy.
+Status: ACTIVE CRITICAL CONTRACT.
+
+## `src/transport/udp.py`
+Role: UDP transport Python.
+Ports:
+- send decision to Godot 4242.
+- receive Godot events 4243.
+Debug khi: chat/body mất kết nối.
+Status: ACTIVE.
+
+---
+
+# 6. LLM layer `src/llm/*`
+
+## `src/llm/client.py`
+Role: clients cho llama-server/OpenAI-compatible/Gemini.
+Handles:
+- response format fallback.
+- grammar unsupported fallback.
+- image payload conversion.
+- HTTP error body.
+Debug khi: provider trả shape lạ, Gemini/OpenAI-compatible không parse được.
+Status: ACTIVE.
+
+## `src/llm/ollama_client.py`
+Role: client Ollama cho observer/vision/daydream local.
+Supports:
+- chat_json, generate_json.
+- image base64/data URI.
+- keep_alive.
+- unload/list_models.
+Debug khi: Ollama model giữ RAM, JSON bẩn, vision local lỗi.
+Status: ACTIVE.
+
+## `src/llm/process_manager.py`
+Role: quản lý llama-server và build clients.
+Reads:
+- env remote/local.
+- model/mmproj paths.
+Builds:
+- main cognition client.
+- style client.
+- vision client.
+Debug khi: remote/local path sai, llama-server port conflict, context size error.
+Risk: hardcoded default key cần dọn.
+Status: ACTIVE.
+
+## `src/llm/contracts.py`
+Role: prompt contract/schema/whitelist.
+Contains:
+- animation whitelist.
+- system action whitelist.
+- JSON required fields.
+- runtime/chat/autonomous rules.
+- SelfIdentityProfile.
+Debug khi: LLM output hay phá format hoặc role boundary sai.
+Status: ACTIVE.
+
+## `src/llm/service.py`
+Role: service shape prompt + gọi model + fallback.
+Methods:
+- generate directive/autonomous.
+- generate_chat_reply.
+- generate_micro_presence_line.
+- generate_screen_facts.
+- critic/analysis phụ.
+ChatAct:
+- direct_question.
+- insult_provocation.
+- identity_reduction.
+- command_style.
+- normal_chat.
+Guards:
+- tone_repair hẹp.
+- retry insult boundary nếu uncertainty_dodge.
+Debug khi:
+- hỏi thẳng nhưng model vòng vo.
+- insult/objectification khiến ERIS quá mềm hoặc quá gắt.
+- output JSON lỗi.
+Status: ACTIVE CRITICAL.
+
+---
+
+# 7. Parser / Grounding
+
+## `src/parser_grounding/service.py`
+Role: public DecisionParser API.
+Calls: parser_grounding/decision.py mixin.
+Debug khi: parse service import/API mismatch.
+Status: ACTIVE.
+
+## `src/parser_grounding/decision.py`
+Role: parse raw LLM output thành Decision.
+Handles:
+- JSON strict/lax.
+- unwrap structured text.
+- salvage prose.
+- normalize bool/confidence/action/system_action.
+- motion inference.
+- capability/perception guard.
+Debug khi:
+- LLM trả prose nhưng parser không salvage.
+- claim screen/action thiếu evidence không bị chặn.
+- animation/motion hint lệch.
+Status: ACTIVE CRITICAL.
+
+---
+
+# 8. Telemetry / Perception
+
+## `src/telemetry/system.py`
+Role: Windows telemetry mixin.
+Reads:
+- foreground window.
+- active app.
+- browser/tab via UIAutomation.
+- CPU/RAM.
+- idle time.
+- open windows.
+Debug khi: active window/browser title sai.
+Status: ACTIVE.
+
+## `src/telemetry/service.py`
+Role: telemetry service + screenshot capture.
+Outputs:
+- dict/snapshot input cho Se.
+- JPEG base64 data URI for vision.
+Debug khi: screen vision request không có image_data_uri.
+Status: ACTIVE.
+
+## `src/cortex/se.py`
+Role: SeLens, cảm nhận trực tiếp.
+Inputs: telemetry raw.
+Outputs:
+- TelemetrySnapshot.
+- focus context.
+- recent events.
+- user signals.
+- evidence.
+- claim_style.
+Debug khi:
+- ERIS nói quá chắc từ evidence mỏng.
+- YouTube/nhạc bị hiểu thành distraction.
+- generic window facts tràn prompt.
+Status: ACTIVE FRONTLINE EVIDENCE.
+
+---
+
+# 9. Core contracts `src/core/*`
+
+## `src/core/evidence.py`
+Role: RawSignal, EvidenceItem, ModuleReport, StateCommitRequest, DebugTrace.
+Debug khi: module ghi thẳng memory không qua request, evidence thiếu confidence/source.
+Status: ACTIVE CONTRACT.
+
+## `src/core/cognitive_frame.py`
+Role: CognitiveFrame contract rộng.
+Slots:
+- salience, working_memory, workspace, meaning, agency, speech_plan, grounding, etc.
+Methods:
+- set_slot, add_report, add_commit_request, validate, build_prompt_packet.
+Debug khi: frame mutation không audit được.
+Status: ACTIVE / PARTIAL MIGRATION.
+
+---
+
+# 10. Cortex cognition `src/cortex/*`
+
+## `src/cortex/contracts.py`
+Role: contract runtime cũ/chung.
+Contains:
+- telemetry snapshot, goal drift, Ti policy, Fe style, percept/social events.
+- session ritual, attention broadcast, MeaningLayerResult, PersonalityLensResult.
+- appraisal, self state, speech core, speech impulse, thought stream, motivational urge, action plan, cognitive frame, memory update.
+Debug khi: dataclass field mismatch, runtime module không hiểu nhau.
+Status: ACTIVE CORE LANGUAGE.
+
+## `src/cortex/attention_salience.py`
+Role: chọn evidence đáng chú ý.
+Scores:
+- novelty, urgency, goal/user/identity/relational relevance.
+- affective/risk/unresolved tension.
+- recurrence/habituation/false alarm.
+Outputs: SalienceFrame.
+Debug khi: context flood, signal rác thắng user request, memory echo trồi sai.
+Status: ACTIVE.
+
+## `src/cortex/working_memory.py`
+Role: bottleneck 3-7 slots.
+Inputs:
+- frame evidence, salience, memory_packet, goal/relation/affect/constraints.
+Outputs:
+- WorkingMemoryFrame.
+- dominant_thread.
+- recall_competition.
+- anti_drift_notes.
+Debug khi: prompt bị nhồi toàn bộ memory/context.
+Status: ACTIVE.
+
+## `src/cortex/background_observer.py`
+Role: observer nền không tạo output public.
+Inputs: SignalSnapshot + SignalDiff.
+Outputs: ObserverFrame.
+Modes:
+- rule-based.
+- optional Ollama text observer.
+- sensory adapter route.
+Debug khi: wake main quá nhiều hoặc quá ít.
+Status: ACTIVE.
+
+## `src/cortex/observer_contracts.py`
+Role: SignalSnapshot, SignalDiff, ObserverFrame contract.
+Debug khi: observer/signal_buffer/sensory mismatch fields.
+Status: ACTIVE CONTRACT.
+
+## `src/cortex/vision_semantic_compressor.py`
+Role: nén scene bằng vision model khi salience/diff đủ.
+Does not: tự chụp screenshot, tự trả user.
+Debug khi: vision compressor chạy khi không cần hoặc OCR-only fallback.
+Status: ACTIVE.
+
+## `src/cortex/affect_semantics.py`
+Role: phân tích chat user thành pressure nghĩa.
+Axes:
+- technicality, distress, intimacy, attachment, conflict, correction, objectification, playfulness, directive_pressure, ambiguity, answer_need.
+Debug khi: chửi đùa bị hiểu như attack, correction bị bỏ qua, technical request bị emotionalize.
+Status: ACTIVE.
+
+## `src/cortex/meaning.py`
+Role: biến fact thô thành meaning có thể phản ứng.
+Examples:
+- code_idle_long -> cognitive_stall.
+- tiktok_after_code -> decompression.
+- error_visible -> friction_point.
+- force_speak -> requested_presence.
+Outputs:
+- MeaningLayerResult.
+- semantic_family.
+- meaning_shift.
+Debug khi: autonomous lặp quan sát thô như camera.
+Status: ACTIVE CRITICAL.
+
+## `src/cortex/appraisal.py`
+Role: sắc thái trước-ngôn-ngữ.
+Axes:
+- threat, certainty, intimacy, protectiveness, tenderness, amusement, fatigue.
+Debug khi: tone quá nóng/lạnh so với context.
+Status: ACTIVE.
+
+## `src/cortex/ni.py`
+Role: orientation/drift engine.
+Uses:
+- HybridOrientationInterpreter.
+- GoalPersistenceState.
+Outputs drift/coherence/intervention pressure.
+Debug khi: ERIS nhắc quay lại goal sai, đọc activity lệch.
+Status: ACTIVE.
+
+## `src/cortex/orientation_context.py`
+Role: lexical fallback + shared orientation contracts.
+Handles:
+- activity intent.
+- goal relation.
+- closure detection with negation.
+Debug khi: “chưa xong” bị hiểu là xong.
+Status: ACTIVE FALLBACK.
+
+## `src/cortex/orientation_semantics.py`
+Role: hybrid semantic orientation.
+Debug khi: semantic path overread leisure/recovery thành goal conflict.
+Status: ACTIVE.
+
+## `src/cortex/semantic_encoder.py`
+Role: semantic vector provider/fallback router.
+Contains:
+- ProviderBacked, Cached, Null, LexicalHashing encoder.
+Debug khi: fallback hash bị coi như semantic thật.
+Status: ACTIVE INFRA.
+
+## `src/cortex/semantic_hypothesis.py`
+Role: compare context with prototypes, produce semantic hypotheses.
+Debug khi: dominant label/ambiguity margin sai.
+Status: ACTIVE.
+
+## `src/cortex/semantic_prototypes.py`
+Role: prototype bank cho activity/goal relation.
+Debug khi: muốn tune nhãn semantic mà không sửa engine.
+Status: ACTIVE CONFIG-LIKE.
+
+## `src/cortex/ti.py`
+Role: TiGovernor, logic/grounding/capability enforce.
+Modes:
+- observe, chat_code, chat_emotional, resource_guard, goal_drift_alert.
+Guards:
+- capability violation.
+- perception violation.
+- screen claim without evidence.
+- action claim without execution.
+Debug khi: output bịa quyền năng hoặc bị Ti rewrite quá sạch.
+Status: ACTIVE CRITICAL GUARD.
+
+## `src/cortex/fe.py`
+Role: FeRenderer style/tone.
+Tracks:
+- FeStyleMemory.
+- recent modes/tones/intents/topic tags.
+- warmth/sarcasm/brevity bias.
+Reads affect/conversation/relationship.
+Debug khi: style lạnh, quá formal, quá emotional, type legacy low/mid/high gây crash.
+Status: ACTIVE.
+
+## `src/cortex/conversation_dynamics.py`
+Role: state hội thoại.
+Tracks:
+- mode: explore/clarify/repair/relational_repair/execute/compress/defer/settled.
+- semantic_tension, correction_severity, frustration_estimate, correction_streak.
+Debug khi: user sửa mà ERIS không repair hoặc overrepair.
+Status: ACTIVE.
+
+## `src/cortex/relationship_dynamics.py`
+Role: state quan hệ lâu hơn một turn.
+Tracks:
+- familiarity, trust, rupture, repair, ritual_strength.
+- attachment_visibility, preferred_distance, dignity_defense, technical_respect.
+Debug khi: ERIS bám quá, lạnh quá, không học boundary.
+Status: ACTIVE.
+
+## `src/cortex/relationship_event_builder.py`
+Role: build RelationshipTurnEvent từ affect/context/evidence.
+Debug khi: relationship state update sai vì event classify sai.
+Status: ACTIVE.
+
+## `src/cortex/relational_feedback.py`
+Role: detect feedback về cách hiện diện.
+Detects:
+- lạnh, xa cách, robot, máy móc, vô hồn, formal, cứng.
+Avoids false positive:
+- trời lạnh, máy lạnh.
+Debug khi: user chê lạnh mà ERIS phòng thủ/disclaimer.
+Status: ACTIVE.
+
+## `src/cortex/personality.py`
+Role: PersonalityLens INFJ-ish pressure, không phải roleplay.
+Outputs:
+- interpretation, stance, coloring, social distance, meaningfulness.
+Rules:
+- suppression ratio ~70%.
+- identity_reduction -> cool_boundary/dry_low_heat.
+Debug khi: ERIS quá poetic, quá bám, hoặc thành assistant phẳng.
+Status: ACTIVE.
+
+## `src/cortex/internal_state.py`
+Role: persistent internal state.
+Tracks:
+- valence, arousal, curiosity, boredom, social_energy, attachment, fatigue, silence_pressure.
+- MentalProcessSystem: curiosity/restraint/tension/continuity/attachment/reflection/social_presence/cognitive_load/background_thought.
+Persists:
+- goal_persistence, conversation_dynamics, relationship_dynamics, action_memory.
+Debug khi: continuity mất sau restart hoặc pressure không decay.
+Status: ACTIVE CRITICAL STATE.
+
+## `src/cortex/self_model.py`
+Role: SelfModelEngine.
+States:
+- settled, watchful, engaged, overloaded.
+Computes:
+- overload, engagement, initiative_bias, brevity_bias, embodiment_bias, continuity_pull.
+Debug khi: ERIS tự định nghĩa sai, overhumanize, hoặc objectification không làm lạnh xuống.
+Status: ACTIVE.
+
+## `src/cortex/social_presence.py`
+Role: nhận biết user hiện diện nền.
+Kinds:
+- focused_co_presence, passive_companionship, anxious_hovering, fragmented_multitasking, ambient_co_presence, absent/fading.
+Debug khi: presence bị hiểu thành lệnh nói.
+Status: ACTIVE.
+
+## `src/cortex/event_semantics.py`
+Role: semantic tags/clusters cho recent events.
+Tags:
+- mouse/click/scroll/keyboard/editing/coding/window_switch/restless/build_error/stall/distraction.
+Debug khi: event primitive gây embedding spam.
+Status: ACTIVE.
+
+## `src/cortex/session_ritual.py`
+Role: startup continuity ritual.
+Inputs:
+- active goal, attractor, unresolved loops, recent direction, self continuity.
+Outputs:
+- SessionRitualReport.
+Debug khi: greeting lạnh hoặc lộ internal label.
+Status: ACTIVE.
+
+## `src/cortex/micro_policy.py`
+Role: policy cho micro-line.
+Rejects:
+- generic line.
+- no anchor observation.
+- blunt emotion declaration.
+- no diacritics Vietnamese.
+- placeholder/status report.
+Debug khi: force_speak/presence line ngu, lặp, hoặc không grounded.
+Status: ACTIVE CRITICAL MICRO GUARD.
+
+## `src/cortex/micro_contracts.py`
+Role: shared dataclasses/helpers cho micro guard.
+Status: ACTIVE CONTRACT.
+
+## `src/cortex/micro_grounding_guard.py`
+Role: anchor/grounding validation cho micro line.
+Debug khi: micro observation nói lệch evidence.
+Status: ACTIVE.
+
+## `src/cortex/micro_repeat_guard.py`
+Role: semantic family repeat guard cho micro line.
+Status: ACTIVE.
+
+## `src/cortex/micro_surface_lint.py`
+Role: lint bề mặt micro line.
+Status: ACTIVE.
+
+## `src/cortex/goal_persistence.py`
+Role: goal nền bền qua turn/session.
+Fields:
+- summary, source, status, strength, urgency, drift, progress, recurrence, confidence, actionability, intervention_permission, anchors.
+Debug khi: active goal bị ghi đè bởi candidate yếu hoặc close sai.
+Status: ACTIVE.
+
+## `src/cortex/action_memory.py`
+Role: nhớ action gần đây và rhythm.
+Tracks:
+- social_fatigue, boredom_pressure, exposure_recoil, continuity_pressure, habituation, rhythm_phase.
+Debug khi: ERIS lặp cùng kiểu hành động/câu nói.
+Status: ACTIVE.
+
+## `src/cortex/thought_stream.py`
+Role: substrate suy nghĩ nền.
+Owns:
+- ThoughtObject.
+- association graph.
+- prediction tracker.
+- tension engine.
+- unresolved loop.
+- cognitive momentum.
+- closure.
+- reactivation/reheater.
+- surface selector.
+Debug khi: unresolved loop không giữ, thought pressure không surface, hoặc surface quá nhiều.
+Status: ACTIVE CRITICAL SUBSTRATE.
+
+## `src/cortex/agent_mind_persistence.py`
+Role: persistent belief/preference/habit cho impulse system.
+Stores in: memory_core/agent_mind.json.
+Debug khi: feedback “đừng hỏi dồn” không ảnh hưởng hành vi sau.
+Status: ACTIVE.
+
+## `src/cortex/agent_state_stack.py`
+Role: contract stack Evidence -> Belief -> Preference -> Need -> Trait -> Habit -> Affordance.
+Used by: spontaneous_life / impulse_arbitration / speech/action.
+Debug khi: impulse score thiếu state nền.
+Status: ACTIVE.
+
+## `src/cortex/impulse_arbitration.py`
+Role: chấm điểm impulse cạnh tranh.
+Candidates:
+- silence, scene_curiosity, inner_whim, micro_story, companionship, technical_help, body_only.
+Score terms:
+- base, evidence fit, belief support, need pressure, preference fit, trait bias, affordance, habit, risk, repetition, interrupt, resource.
+Debug khi: nội sinh có nhưng impulse sai thắng.
+Status: ACTIVE CRITICAL.
+
+## `src/cortex/inner_thought.py`
+Role: biến thought surface/social pressure thành intent nhẹ.
+Intents:
+- curious_question, inner_whim, random_chatter.
+Debug khi: force_speak mỏng không sinh câu hỏi/whim phù hợp.
+Status: ACTIVE.
+
+## `src/cortex/spontaneous_life.py`
+Role: endogenous speech pressure low-gain.
+Reads:
+- boredom, silence, thought pressure, memory residue, attachment visibility, fatigue, restraint, cooldown, work-focus penalty.
+Outputs:
+- SpeechImpulse + arbitration_report + body_bias_hint.
+Debug khi: autonomous im dù có nội sinh, hoặc chen vào lúc user focus code.
+Status: ACTIVE.
+
+## `src/cortex/speech_core.py`
+Role: chuyển pressure thành quyền public speech.
+Inputs:
+- snapshot, internal_state, appraisal, ti_report, meaning_layer, thought_surface, self_state, personality_lens, signals, spontaneous_impulse.
+Gates:
+- meaning_shift_gate.
+- quiet_guard.
+Outputs:
+- AgentSpeechCore with winner/silence state.
+Debug khi: có tension nhưng im, hoặc nói dù không có shift.
+Status: ACTIVE MOST IMPORTANT SPEECH DEBUG FILE.
+
+## `src/cortex/turn_semantics.py`
+Role: hiểu nghĩa turn lặp.
+Distinguishes:
+- low_value_repeat, reask_same_question, repair_reframe, relational_probe, identity_boundary_probe, live_evidence_refresh.
+Debug khi: repeat guard chặn nhầm user sửa sai/hỏi lại.
+Status: ACTIVE.
+
+## `src/cortex/action_planner.py`
+Role: orchestrator chọn action trước LLM.
+Calls: ActionUtilityScorer.
+Outputs: CognitiveActionPlan.
+Debug khi: speech act/animation/style anchor sai.
+Status: ACTIVE.
+
+## `src/cortex/action_utility.py`
+Role: chấm điểm action space.
+Actions:
+- no_speech, observe, protect, withdraw, mirror, micro_presence, reengagement, inner_whim, soft_boundary, system_action.
+Debug khi: no_speech thắng sai, proactive reengagement quá nhiều.
+Status: ACTIVE.
+
+## `src/cortex/daydream_consolidation.py`
+Role: 4B consolidation from filtered packets.
+Inputs:
+- structured memory layers + activation + agenda.
+Validator: reject nếu evidence_ids không khớp input.
+Debug khi: daydream bịa insight.
+Status: ACTIVE.
+
+## `src/cortex/internal_agenda.py`
+Role: unresolved agenda stack persist nhẹ.
+Stores: memory_core/internal_agenda.json.
+Debug khi: agenda mất sau restart.
+Status: ACTIVE.
+
+## `src/cortex/self_observation.py`
+Role: reflect frame/outcome thành failure class.
+Failures:
+- misread, overread, overexplained, underacted, tone_mismatch, privacy_intrusion, body_mismatch, assistant_flattening, overhumanization.
+Outputs: repair memory request.
+Debug khi: lỗi lặp không học sửa.
+Status: ACTIVE.
+
+---
+
+# 11. Actions `src/actions/*`
+
+## `src/actions/contracts.py`
+Role: whitelist action + ActionExecutionResult.
+Actions:
+- get_now_playing, focus_window, open_url, set_volume, play_pause_media, copy_text, launch_app, search_web, get_weather.
+Debug khi: model/router muốn action ngoài whitelist.
+Status: ACTIVE.
+
+## `src/actions/router.py`
+Role: regex/router từ chat command sang action.
+Debug khi: lệnh rõ vẫn gọi LLM thay vì action.
+Status: ACTIVE.
+
+## `src/actions/executor.py`
+Role: thực thi action desktop/API.
+Debug khi: action nói thành công nhưng OS không làm.
+Status: ACTIVE, VERIFY SECURITY.
+
+---
+
+# 12. Memory `src/memory/*`
+
+## `src/memory/memory_cognition.py`
+Role: facade commit/recall memory.
+Routes StateCommitRequest to:
+- event_ledger, active_state, homeostatic_baseline, self_continuity.
+- episodic, semantic, relational, affective_residue, procedural, repair.
+- memory_candidate / unresolved_memory.
+Recall path:
+- MemoryCueBuilder -> MemoryRetrievalEngine -> MemoryActivation -> MemoryPacketBuilder.
+Also owns: agent_mind store.
+Debug khi: commit target sai, recall thiếu layer, memory_candidate không route.
+Status: ACTIVE CRITICAL FACADE.
+
+## `src/memory/memory_models.py`
+Role: contracts MemoryTarget/Kind/Surface/Decay/CommitDecision/RecallAnswer.
+Debug khi: policy -> StateCommitRequest adapter sai.
+Status: ACTIVE CONTRACT.
+
+## `src/memory/memory_record.py`
+Role: normalize/tokenize/anchor/fingerprint helpers.
+Status: ACTIVE INFRA.
+
+## `src/memory/memory_cue.py`
+Role: build MemoryCue from query/current context.
+Debug khi: recall mode/domain hint sai.
+Status: ACTIVE.
+
+## `src/memory/memory_candidate.py`
+Role: adapt layer items into common candidate shape.
+Status: ACTIVE.
+
+## `src/memory/memory_scoring.py`
+Role: relevance/recency/confidence/privacy/layer bias scoring.
+Debug khi: procedural/relational recall rỗng dù có data.
+Status: ACTIVE.
+
+## `src/memory/memory_activation.py`
+Role: select activated candidates/quota/suppression.
+Status: ACTIVE.
+
+## `src/memory/memory_retrieval_engine.py`
+Role: orchestrator retrieval.
+Status: ACTIVE.
+
+## `src/memory/memory_packet_builder.py`
+Role: build MemoryPacket final.
+Status: ACTIVE.
+
+## `src/memory/event_ledger.py`
+Role: append-only raw event ledger.
+Debug khi: audit evidence mất.
+Status: ACTIVE.
+
+## `src/memory/active_state_snapshot.py`
+Role: overwrite current state snapshot.
+Debug khi: active goal/session arc/current relation state sai.
+Status: ACTIVE.
+
+## `src/memory/episodic_memory.py`
+Role: store concrete events.
+Status: ACTIVE.
+
+## `src/memory/semantic_memory.py`
+Role: stable facts with status/confidence/evidence.
+Debug khi: fact mơ hồ thành active truth.
+Status: ACTIVE.
+
+## `src/memory/relational_memory.py`
+Role: relation patterns.
+Status: ACTIVE.
+
+## `src/memory/affective_residue_memory.py`
+Role: affective pressure residue, not public claim.
+Debug khi: ERIS nói “tôi buồn/cô đơn” từ residue.
+Status: ACTIVE.
+
+## `src/memory/procedural_memory.py`
+Role: learned handling rules.
+Status: ACTIVE.
+
+## `src/memory/repair_memory.py`
+Role: failure + correction + future suppression rule.
+Status: ACTIVE.
+
+## `src/memory/unresolved_memory.py`
+Role: memory_candidate store.
+Debug khi: explicit remember but parse unclear.
+Status: ACTIVE.
+
+## `src/memory/memory_consolidator.py`
+Role: reprocess unresolved candidates during reflection.
+Debug khi: candidate never promotes or promotes hallucinated fact.
+Status: ACTIVE.
+
+## `src/memory/memory_commit_policy.py`
+Role: rule extraction from user turn into MemoryCommitDecision.
+Extracts:
+- name, birth year/month, observed age, place/current residence, response style, memory test hint, preference, user_convention.
+Guards:
+- do not commit questions as facts.
+Debug khi: “tôi tên X” không nhớ hoặc “tôi tên gì” bị commit thành fact.
+Status: ACTIVE CRITICAL.
+
+## `src/memory/memory_recall_policy.py`
+Role: surface policy for RawRecallResult.
+Decides:
+- exact quote/gist/count/explain/admit uncertain.
+Status: ACTIVE.
+
+## `src/memory/memory_query_ir.py`
+Role: IR/AST memory query.
+Status: ACTIVE CONTRACT.
+
+## `src/memory/memory_turn_graph.py`
+Role: graph from session_turn_ledger.
+Used for exact ordinal/count/relations.
+Status: ACTIVE.
+
+## `src/memory/memory_turn_annotator.py`
+Role: annotate turns with speech_act/tags/fact_mentions/edges.
+Status: ACTIVE.
+
+## `src/memory/memory_query_slot_parser.py`
+Role: slot parser Vietnamese memory queries.
+Status: ACTIVE.
+
+## `src/memory/memory_query_semantics.py`
+Role: semantic hints for ambiguous memory query.
+Status: ACTIVE.
+
+## `src/memory/memory_query_llm_parser.py`
+Role: optional LLM JSON parser for MemoryQueryIR, not answer generator.
+Status: ACTIVE.
+
+## `src/memory/memory_query_compiler.py`
+Role: compile query from slot/semantic/repair/LLM parser.
+Status: ACTIVE.
+
+## `src/memory/memory_query_executor.py`
+Role: execute MemoryQueryIR over TurnGraph/memory_core.
+Status: ACTIVE.
+
+## `src/memory/memory_query_repair.py`
+Role: prior store for corrected memory query binding.
+Status: ACTIVE.
+
+## `src/memory/understanding/*`
+Role: parse user text into MeaningFrame.
+Files:
+- meaning_frame.py.
+- entity_linker.py.
+- polarity_temporal.py.
+- semantic_parser.py.
+Debug khi: memory intake parse sai subject/target/time/certainty.
+Status: ACTIVE.
+
+## `src/memory/semantic_text.py`, `semantic_claim.py`, `claim_extractor.py`, `claims/*`
+Role: convert text/MeaningFrame into SemanticClaim/ExtractedClaim with ontology.
+Status: ACTIVE.
+
+## `src/memory/predicate_ontology.py`, `query_intent.py`, `claim_entailment.py`, `semantic_answer_policy.py`
+Role: query-answer ontology for memory facts.
+Debug khi: overlap text trả lời sai predicate.
+Status: ACTIVE.
+
+## `src/memory/memory_worthiness.py`, `memory_retention_policy.py`, `judgement/*`, `claim_consolidator.py`, `memory_pruner.py`
+Role: judge keep/promote/prune memory lifecycle.
+Debug khi: memory rác được giữ, memory quan trọng bị prune, candidate không promote.
+Status: ACTIVE.
+
+---
+
+# 13. memory_core data files
+
+## `memory_core/*.json`
+Role: runtime persistent state.
+Files đáng chú ý:
+- active_state_snapshot.json.
+- agent_mind.json.
+- episodic_memory.json.
+- semantic_memory.json.
+- event_ledger.json.
+- memory_candidate.json.
+- internal_agenda.json.
+Debug khi:
+- behavior sai nhưng code có vẻ đúng: kiểm tra data/state tích lũy.
+Rule:
+- phân biệt bug logic với state bẩn. Đây là nơi nhiều người tự bắn vào chân rồi đổ lỗi cho kiến trúc, truyền thống cao quý của nghề code.
+Status: RUNTIME DATA.
+
+## `memory_core_backup_*/`
+Role: backup memory core.
+Debug khi: muốn so sánh state trước/sau.
+Status: BACKUP DATA.
+
+---
+
+# 14. Training / Dataset / Scripts
+
+## `src/full_train_dataset.py`, `src/full_train.ipynb`
+Role: build dataset train, normalize conversation/context/action.
+Debug khi: dataset context sai shape.
+Status: TRAINING SUPPORT.
+
+## `src/datasets_clean/*`
+Role: cleaned datasets: desktop/persona/fe/se/tools + quarantine.
+Status: TRAINING DATA.
+
+## `scripts/clean_split_jsonl.py`
+Role: clean/split JSONL.
+## `scripts/build_fe_style_supervision.py`
+Role: generate FE style supervision.
+## `scripts/build_se_supervision.py`
+Role: generate Se supervision.
+## `scripts/extend_dataset_infj.py`
+Role: expand INFJ style data.
+## `scripts/prune_dataset_infj.py`
+Role: prune weak/redundant INFJ samples.
+## `scripts/quarantine_desktop_overinference.py`
+Role: quarantine desktop over-inference samples.
+## `scripts/rewrite_dataset_infj.py`
+Role: rewrite style dataset.
+## `scripts/split_training_jsonl.py`
+Role: split train/eval/groups.
+## `scripts/uniqueify_dataset_assistant.py`
+Role: reduce duplicate assistant outputs.
+Status: OFFLINE SUPPORT.
+
+---
+
+# 15. Tests
+
+## `tests/test_runtime_coordinator.py`
+Role: orchestration regression.
+Covers:
+- chat/autonomous/force_speak.
+- micro_presence/presence/reengagement.
+- session ritual.
+- action route.
+- vision facts.
+- repeat guard.
+- public turn ledger.
+- source grounding.
+Debug when: integrated behavior breaks.
+Status: CRITICAL TEST.
+
+## `tests/test_llm_service.py`
+Role: LLM service fallback/contract/context.
+Status: CRITICAL TEST.
+
+## `tests/test_llm_client.py`
+Role: provider clients/payload fallback/key normalization.
+Status: ACTIVE.
+
+## `tests/test_decision_parser.py`, `tests/test_parser_climb.py`
+Role: parser/motion/capability regression.
+Status: CRITICAL.
+
+## `tests/test_memory_store.py`, `tests/test_memory_commit_protocol.py`, `tests/test_memory_query_system.py`
+Role: memory store/commit/query tests.
+Status: CRITICAL.
+
+## `tests/test_semantic_claim_entailment.py`
+Role: claim-query entailment.
+Status: CRITICAL for memory correctness.
+
+## `tests/test_se_lens.py`, `tests/test_attention_salience.py`, `tests/test_background_observer.py`
+Role: perception/attention/observer tests.
+Status: ACTIVE.
+
+## `tests/test_appraisal_engine.py`, `tests/test_fe_renderer.py`, `tests/test_personality_lens.py`, `tests/test_meaning_layer.py`
+Role: cognition/style/meaning regression.
+Status: ACTIVE.
+
+## `tests/test_speech_core.py`, `tests/test_micro_policy.py`, `tests/test_inner_thought.py`, `tests/test_subconscious.py`
+Role: speech/internal/micro/substrate regression.
+Status: CRITICAL for “có hồn nhưng không spam”.
+
+## `tests/test_ti_governor.py`
+Role: capability/perception guard regression.
+Status: CRITICAL.
+
+## `tests/test_self_model.py`, `tests/test_session_ritual.py`, `tests/test_internal_state.py`, `tests/test_conversation_dynamics.py`, `tests/test_relational_feedback.py`
+Role: continuity/self/relation/dialogue state tests.
+Status: ACTIVE.
+
+## `tests/test_eris_pathology_scenarios.py`, `tests/eris_test_adapter.py`
+Role: observable pathology regression without full runtime.
+Status: CRITICAL BEHAVIOR TEST.
+
+## `tests/test_action_router.py`
+Role: command-to-action mapping.
+Status: ACTIVE.
+
+## `tests/test_full_train_dataset.py`, `tests/test_build_fe_style_supervision.py`
+Role: dataset/training scripts.
+Status: SUPPORT.
+
+---
+
+# 16. Debug decision table
+
+## Case: user hỏi “lỗi này là gì” nhưng không có screenshot
+Check:
+1. `chat_cycle.py` calls source grounding.
+2. `source_grounding.py` detects deictic/current_screen.
+3. If no screen evidence -> missing_evidence.
+4. LLM should be preempted or output guarded.
+5. `post_generation_filters.py` chat_grounding_guard catches any escaped claim.
+
+## Case: force_speak im hoặc nói rỗng
+Check:
+1. Godot sends force_speak on 4243.
+2. coordinator/frame_builder creates CognitiveDisturbance `requested_presence`.
+3. thought_stream receives disturbance.
+4. spontaneous_life/inner_thought propose impulse.
+5. speech_core force_speak threshold near 0.
+6. micro_policy rejects generic/no-anchor bad line.
+7. post_generation_filters final force_speak guard.
+
+## Case: autonomous không nói dù có nội sinh
+Check:
+1. signal_buffer/background_observer diff.
+2. contextual_autonomy_loop wake decision.
+3. autonomous_wake_governor should_wake_main/should_speak.
+4. thought_stream surface selector.
+5. spontaneous_life impulse score.
+6. speech_core meaning_shift_gate / quiet_guard.
+7. action_utility no_speech score.
+
+## Case: ERIS nói như camera/telemetry logger
+Check:
+1. Se claim_style.
+2. AttentionSalience suppress generic evidence.
+3. MeaningLayer converts fact -> meaning.
+4. PersonalityLens suppression.
+5. LlmService prompt contract.
+6. Ti/post_generation_filters remove raw observation claim.
+
+## Case: memory trả lời sai
+Check:
+1. memory_commit_policy did it store fact correctly?
+2. MemoryCognitionCore target/layer.
+3. memory_query_compiler IR.
+4. TurnGraph vs memory_core executor.
+5. SurfacePolicy exact/gist/count.
+6. SourceGrounding memory_answer_allowed.
+
+## Case: body nhận payload nhưng không động
+Check:
+1. Decision.to_payload motion fields.
+2. UDP payload at Godot.
+3. UdpDecisionParser HasExplicitMotion.
+4. MotionController busy state.
+5. LocalBodyAutonomy cooldown/action score.
+6. Animation exists in Monika.tscn.
+
+---
+
+# 17. Những gap cần sửa tiếp trong tài liệu/source-map
+
+1. Cần clone repo và chạy script generate inventory thật:
+   - list all files.
+   - LOC.
+   - imports.
+   - class/function names.
+   - call graph sơ bộ.
+   - dead/legacy candidate.
+
+2. Cần thêm bảng ownership:
+   ```text
+   file | owner layer | reads | writes | called by | calls | debug symptom
+   ```
+
+3. Cần thêm state map:
+   ```text
+   internal_state.json -> read by X -> written by Y
+   memory_core/semantic_memory.json -> read by A -> written by B
+   ```
+
+4. Cần thêm guard map:
+   ```text
+   source_grounding -> parser_grounding -> Ti -> post_generation_filters -> micro_policy
+   ```
+
+5. Cần thêm test coverage map:
+   ```text
+   file -> covered by tests -> missing tests
+   ```
+
+6. Cần phân loại rõ:
+   - ACTIVE.
+   - ACTIVE BUT GOD OBJECT.
+   - FACADE.
+   - LEGACY.
+   - GENERATED.
+   - CONFIG.
+   - SHOULD_NOT_COMMIT.
+
+---
+
+# 18. Kết luận debug
+
+`Tongquat.txt` hiện tại mô tả kiến trúc tốt, nhưng chưa đủ chuẩn debug vì thiếu:
+- bảng dependency.
+- bảng state read/write.
+- bảng symptom -> file.
+- trạng thái active/legacy/generated.
+- test coverage map.
+
+Bản `ERIS_DEBUG_SOURCE_MAP.md` này là bước chuyển từ “tổng quan kiến trúc” sang “bản đồ debug”. Nó vẫn cần một lần audit bằng source thật để thành file-to-file hoàn chỉnh tuyệt đối.

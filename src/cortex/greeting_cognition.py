@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import time
 from dataclasses import dataclass
 from typing import Literal
 
@@ -125,7 +127,42 @@ class GreetingCognitionEngine:
         "Tôi sẽ bớt sắc lại. Một chút.",
         "Ừm. Tôi sẽ không đẩy Ngài ra xa như vừa rồi.",
     )
-    
+
+    def _fallback_pool(self, frame: GreetingFrame) -> tuple[str, ...]:
+        if frame.situation == "after_relational_feedback":
+            return self._REPAIR_FALLBACKS
+        if frame.situation in {"resume_project", "resume_unresolved_loop"}:
+            if clean_text(frame.active_anchor or "", limit=64):
+                return self._RESUME_FALLBACKS
+            return self._RESUME_FALLBACKS[1:] or self._RESUME_FALLBACKS
+        if frame.situation == "plain_return" and frame.evidence_strength >= 0.30:
+            return self._QUIET_FALLBACKS
+        return self._LOW_EVIDENCE_FALLBACKS
+
+    def _normalized_surface(self, text: str) -> str:
+        return re.sub(r"\s+", " ", str(text or "").strip().lower())
+
+    def _fallback_index(self, frame: GreetingFrame, *, pool_size: int) -> int:
+        if pool_size <= 1:
+            return 0
+        anchor = clean_text(frame.active_anchor or "", limit=96)
+        seed = "|".join(
+            (
+                frame.situation,
+                frame.intent,
+                f"{frame.evidence_strength:.2f}",
+                f"{frame.continuity_strength:.2f}",
+                f"{frame.familiarity:.2f}",
+                f"{frame.warmth:.2f}",
+                f"{frame.dry_edge:.2f}",
+                anchor,
+            )
+        )
+        if not anchor and frame.situation in {"low_evidence_start", "plain_return"}:
+            seed = f"{seed}|{time.time_ns()}"
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        return int(digest[:8], 16) % pool_size
+
     def build(
         self,
         *,
@@ -267,16 +304,15 @@ class GreetingCognitionEngine:
             tone=re.search(r"tone=([^,\.]+)", flags_line).group(1).strip() if re.search(r"tone=([^,\.]+)", flags_line) else "",
         )
 
-    def deterministic_greeting(self, frame: GreetingFrame) -> str:
-        if frame.situation == "after_relational_feedback":
-            return self._REPAIR_FALLBACKS[0]
-        if frame.situation in {"resume_project", "resume_unresolved_loop"}:
-            anchor = clean_text(frame.active_anchor or "", limit=64)
-            if anchor:
-                # Keep the anchor implicit. Startup greetings should not dump
-                # telemetry or internal labels into the user's face.
-                return self._RESUME_FALLBACKS[0]
-            return self._RESUME_FALLBACKS[1]
-        if frame.situation == "plain_return" and frame.evidence_strength >= 0.30:
-            return self._QUIET_FALLBACKS[0]
-        return self._LOW_EVIDENCE_FALLBACKS[0]
+    def deterministic_greeting(self, frame: GreetingFrame, *, avoid_text: str = "") -> str:
+        pool = self._fallback_pool(frame)
+        if not pool:
+            return ""
+        start = self._fallback_index(frame, pool_size=len(pool))
+        avoid_norm = self._normalized_surface(avoid_text)
+        ordered = [pool[(start + offset) % len(pool)] for offset in range(len(pool))]
+        if avoid_norm:
+            for candidate in ordered:
+                if self._normalized_surface(candidate) != avoid_norm:
+                    return candidate
+        return ordered[0]

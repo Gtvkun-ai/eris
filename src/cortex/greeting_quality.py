@@ -131,15 +131,21 @@ class GreetingQualityScorer:
             reasons=tuple(dict.fromkeys(reasons)),
         )
 
-    def choose_best(self, candidates: list[str] | tuple[str, ...], frame: GreetingFrame) -> GreetingQuality:
+    def choose_best(
+        self,
+        candidates: list[str] | tuple[str, ...],
+        frame: GreetingFrame,
+        *,
+        avoid_text: str = "",
+    ) -> GreetingQuality:
         scored = [self.score(candidate, frame) for candidate in candidates if clean_text(candidate)]
         if not scored:
-            fallback = self.cognition.deterministic_greeting(frame)
+            fallback = self.cognition.deterministic_greeting(frame, avoid_text=avoid_text)
             return self.score(fallback, frame)
         scored.sort(key=lambda item: item.score, reverse=True)
         best = scored[0]
         if not best.accepted:
-            fallback = self.cognition.deterministic_greeting(frame)
+            fallback = self.cognition.deterministic_greeting(frame, avoid_text=avoid_text)
             fallback_quality = self.score(fallback, frame)
             if fallback_quality.score >= best.score or best.meta_leak or best.fake_evidence:
                 return fallback_quality
