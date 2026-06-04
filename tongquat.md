@@ -283,6 +283,7 @@ Owns state:
 - public/session turn ledger.
 - reply context.
 - rapid chat burst queue.
+- memory_kernel wrapper + background_memory_digest service.
 - presence/reengagement cooldown.
 - last_wake_decision / rolling_user_context / rolling_internal_state / daydream result.
 Calls:
@@ -292,10 +293,12 @@ Calls:
 - speech_core/action_planner/micro_policy.
 - LLM/parser/Ti/Fe.
 - memory/action router/executor.
+- ModelBudgetPolicy queue wrapper cho các model nặng.
 - runtime mixins.
 Debug khi:
 - lỗi end-to-end không rõ owner.
 - autonomous gọi main model dù wake gate không cho.
+- background digest commit sai lúc runtime còn bận chat.
 - chat burst/lặp/previous public turn sai.
 Status: ACTIVE GOD OBJECT, đã tách bớt bằng mixin nhưng vẫn là nơi hợp mạch.
 
@@ -454,12 +457,20 @@ Debug khi: exact recall trong phiên sai.
 Status: ACTIVE.
 
 ## `src/runtime/memory_recall_adapter.py`
-Role: nối chat_cycle với structured memory query.
+Role: adapter chặn sớm chat memory trước khi rơi vào general LLM path.
 Pipeline:
-MemoryQueryCompiler -> TurnGraph -> MemoryQueryExecutor -> MemoryRecallSurfacePolicy -> Decision.
+1. bỏ qua nếu user đang self-disclose/update fact.
+2. ưu tiên `MemoryKernel.answer(...)` nếu kernel có mặt và query được phép intercept.
+3. fallback sang `MemoryQueryCompiler -> TurnGraph -> MemoryQueryExecutor -> MemoryRecallSurfacePolicy -> Decision`.
+4. optional `MemoryQueryLLMParser` chỉ dùng để parse IR JSON, không generate answer.
+Guards:
+- chỉ intercept nếu `intercept_permission=true`, confidence đủ cao, ambiguity đủ thấp.
+- scrub internal memory surfaces kiểu `MemoryPacket(...)` trước khi public.
+- có `_MemoryCoreProxy` để bridge `memory_core` cũ với semantic/episodic lookup helpers.
 Debug khi:
-- câu hỏi memory đáng ra deterministic nhưng lại gọi LLM.
+- câu hỏi memory đáng ra deterministic nhưng lại rơi xuống general LLM path.
 - câu “tôi tên gì” sai.
+- payload memory_recall thiếu `memory_source` / `memory_surface`.
 Status: ACTIVE.
 
 ## `src/runtime/memory_semantic_parser_adapter.py`
@@ -537,15 +548,20 @@ Debug khi: main cognition chạy sai lúc hoặc im sai lúc.
 Status: ACTIVE CRITICAL GATE.
 
 ## `src/runtime/model_budget_policy.py`
-Role: budget gatekeeper, chưa phải scheduler production.
+Role: budget gatekeeper + lightweight inference scheduler cho model nặng.
 Capabilities:
 - CPU/RAM/GPU/VRAM best-effort.
-- veto tier inference.
-- mark_started/mark_finished.
+- global heavy-model lock qua lease.
+- priority queue + timeout + cancel_event.
+- `run_queued(...)` / `lease(...)` lifecycle bọc inference thật.
+- unload hook sau request xong để tránh load/unload đè VRAM.
+- snapshot có active tiers, reserved VRAM, queue depth, `main_cognition_recent`.
+- legacy-compatible `mark_started/mark_finished` vẫn còn để giữ cooldown markers.
 Limit:
-- chưa global lock/queue/cancel/unload orchestration.
+- không kill được request remote/local đã bay vào provider.
+- vẫn là scheduler nhẹ trong-process, chưa phải orchestrator đa worker.
 Debug khi: nhiều model chạy chồng, daydream/vision/main đụng resource.
-Status: ACTIVE BUT INCOMPLETE.
+Status: ACTIVE CRITICAL RESOURCE GATE.
 
 ## `src/runtime/daydream_model_adapter.py`
 Role: adapter 4B daydream model.
@@ -1259,7 +1275,15 @@ Used for exact ordinal/count/relations.
 Status: ACTIVE.
 
 ## `src/memory/memory_turn_annotator.py`
-Role: annotate turns with speech_act/tags/fact_mentions/edges.
+Role: annotate turn thô thành `TurnNode` có speech_act/tags/fact_mentions rồi dựng edge cho `TurnGraph`.
+Does:
+- detect fallback kỹ thuật để không coi lỗi service là answer semantic.
+- gắn speech act như question/command/correction/fact_disclosure/answer/repair.
+- extract một số fact mention tiếng Việt như `user.name`, `user.birth_month`, `user.current_location`, `user.past_location`, `user.response_style`.
+- build edges `ANSWERS`, `CORRECTS`, `REPEATS`, `STORES_FACT`.
+Boundary:
+- không tự trả lời memory query.
+- không quyết định user đang hỏi loại IR nào.
 Status: ACTIVE.
 
 ## `src/memory/memory_query_slot_parser.py`
@@ -1271,7 +1295,8 @@ Role: semantic hints for ambiguous memory query.
 Status: ACTIVE.
 
 ## `src/memory/memory_query_llm_parser.py`
-Role: optional LLM JSON parser for MemoryQueryIR, not answer generator.
+Role: optional LLM JSON parser for `MemoryQueryIR`, không phải answer generator.
+Debug khi: slot/semantic parser local không đủ để parse query mơ hồ nhưng cũng không được để LLM trả lời thay memory system.
 Status: ACTIVE.
 
 ## `src/memory/memory_query_compiler.py`
