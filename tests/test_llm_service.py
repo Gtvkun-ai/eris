@@ -258,6 +258,46 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("insult_boundary_fallback_after_uncertainty_retry", payload["debug_trace"])
         self.assertEqual(len(client.calls), 2)
 
+    def _test_chat_insult_no_fallback_mode_keeps_second_dodge(self):
+        dodge = (
+            '{"text":"TÃ´i chÆ°a Ä‘á»§ cháº¯c Ä‘á»ƒ Ä‘oÃ¡n Ã½ NgÃ i.","animation":"stand",'
+            '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"dodge","next_animation":"","system_action":"","action_input":""}'
+        )
+        os.environ["ERIS_NO_FALLBACK_MODE"] = "1"
+        try:
+            client = _FakeClient([dodge, dodge])
+            service = LlmService(client)
+
+            raw = service.generate_chat_reply(chat_history=[], user_message="mÃ y ngu tháº­t")
+
+            payload = json.loads(raw)
+            self.assertEqual(payload["text"], "TÃ´i chÆ°a Ä‘á»§ cháº¯c Ä‘á»ƒ Ä‘oÃ¡n Ã½ NgÃ i.")
+            self.assertEqual(payload["debug_trace"], "dodge")
+            self.assertEqual(len(client.calls), 2)
+        finally:
+            os.environ.pop("ERIS_NO_FALLBACK_MODE", None)
+
+    def test_chat_insult_no_fallback_mode_skips_boundary_fallback(self):
+        dodge = (
+            '{"text":"T\\u00f4i ch\\u01b0a \\u0111\\u1ee7 ch\\u1eafc \\u0111\\u1ec3 \\u0111o\\u00e1n \\u00fd Ng\\u00e0i.","animation":"stand",'
+            '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"dodge","next_animation":"","system_action":"","action_input":""}'
+        )
+        os.environ["ERIS_NO_FALLBACK_MODE"] = "1"
+        try:
+            client = _FakeClient([dodge, dodge])
+            service = LlmService(client)
+
+            raw = service.generate_chat_reply(chat_history=[], user_message="m\u00e0y ngu th\u1eadt")
+
+            payload = json.loads(raw)
+            self.assertEqual(payload["text"], "Tôi chưa đủ chắc để đoán ý Ngài.")
+            self.assertEqual(payload["debug_trace"], "dodge")
+            self.assertNotIn("insult_boundary_fallback_after_uncertainty_retry", payload["debug_trace"])
+        finally:
+            os.environ.pop("ERIS_NO_FALLBACK_MODE", None)
+
     def test_directive_includes_appraisal_context_as_preverbal_state(self):
         client = _FakeClient(
             [

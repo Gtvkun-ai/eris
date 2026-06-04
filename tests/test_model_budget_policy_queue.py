@@ -158,6 +158,30 @@ class ModelBudgetPolicyQueueTests(unittest.TestCase):
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.reason, "scheduler_allow")
 
+    def test_vision_can_bypass_vram_guard_on_4gb_profile(self):
+        policy = ModelBudgetPolicy(
+            make_config(
+                assume_gtx_1650ti_4gb=True,
+                cpu_block_percent=80.0,
+                ram_block_percent=80.0,
+                gpu_block_percent=70.0,
+                vram_block_percent=72.0,
+            )
+        )
+        snapshot = policy.capture()
+        snapshot.cpu_percent = 24.0
+        snapshot.ram_percent = 41.0
+        snapshot.gpu_util_percent = 18.0
+        snapshot.vram_used_mb = 3920.0
+        snapshot.vram_total_mb = 4096.0
+        snapshot.external_vram_used_mb = 3920.0
+
+        decision = policy.can_run("vision_compressor", resource_snapshot=snapshot, reason="vision_must_try")
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.reason, "scheduler_allow")
+        self.assertTrue(decision.debug.get("vision_vram_guard_bypassed"))
+
 
 if __name__ == "__main__":
     unittest.main()

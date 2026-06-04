@@ -59,8 +59,8 @@ def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
     parse_mode = str(getattr(decision, "parse_mode", "") or "")
     debug_trace = str(getattr(decision, "debug_trace", "") or "")
     text = str(getattr(decision, "text", "") or "").lower()
-    fallback_intents = {"fallback_reply", "format_repair_fallback", "service_error"}
-    fallback_modes = {"format_repair_fallback", "service_error"}
+    fallback_intents = {"fallback_reply", "format_repair_fallback", "service_error", "no_fallback_block"}
+    fallback_modes = {"format_repair_fallback", "service_error", "no_fallback_block"}
     if intent in fallback_intents or parse_mode in fallback_modes:
         return True
     if "http_5xx_fallback" in debug_trace or "format_violation_recovered" in debug_trace:

@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
+from runtime.no_fallback_policy import no_fallback_mode_enabled
 
 try:
     from cortex.observer_contracts import (
@@ -238,6 +239,8 @@ class VisionSemanticCompressor:
             image_path=image_path,
         )
         if not self.config.enabled:
+            if no_fallback_mode_enabled():
+                raise RuntimeError("no_fallback_vision:vision_compressor_disabled")
             return self._fallback_ocr_note(
                 ocr_text=ocr_text,
                 observer_frame=observer_frame,
@@ -245,6 +248,8 @@ class VisionSemanticCompressor:
                 reason="vision_compressor_disabled",
             )
         if not self.config.model:
+            if no_fallback_mode_enabled():
+                raise RuntimeError("no_fallback_vision:missing_vision_model")
             return self._fallback_ocr_note(
                 ocr_text=ocr_text,
                 observer_frame=observer_frame,
@@ -252,6 +257,8 @@ class VisionSemanticCompressor:
                 reason="missing_vision_model",
             )
         if not image:
+            if no_fallback_mode_enabled():
+                raise RuntimeError("no_fallback_vision:missing_image")
             return self._fallback_ocr_note(
                 ocr_text=ocr_text,
                 observer_frame=observer_frame,
@@ -259,6 +266,8 @@ class VisionSemanticCompressor:
                 reason="missing_image",
             )
         if self.client is None or not callable(getattr(self.client, "chat_json", None)):
+            if no_fallback_mode_enabled():
+                raise RuntimeError("no_fallback_vision:missing_ollama_client")
             return self._fallback_ocr_note(
                 ocr_text=ocr_text,
                 observer_frame=observer_frame,
@@ -286,6 +295,8 @@ class VisionSemanticCompressor:
 
         if not getattr(result, "ok", False):
             self._log_warning("Vision compressor Ollama failed: %s", getattr(result, "error", "unknown"))
+            if no_fallback_mode_enabled():
+                raise RuntimeError(f"no_fallback_vision:ollama_failed:{getattr(result, 'error', 'unknown')}")
             return self._fallback_ocr_note(
                 ocr_text=ocr_text,
                 observer_frame=observer_frame,

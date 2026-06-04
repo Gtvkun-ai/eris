@@ -523,19 +523,32 @@ class MemoryCognitionCore:
         return True, "ok"
 
     def _commit_event_ledger(self, request: Any, *, frame: Any = None) -> EventLedgerRecord:
+        request_tags = tuple(str(tag) for tag in (_request_get(request, "tags", []) or []) if str(tag).strip())
+        request_metadata = _request_metadata(request)
+        decay_policy = str(_request_get(request, "decay_policy", request_metadata.get("decay_policy", "normal")) or "normal")
+        ephemeral_presence = bool(
+            request_metadata.get("ephemeral_presence")
+            or "ephemeral_presence" in request_tags
+            or "signal_buffer_only" in request_tags
+            or decay_policy == "session_only"
+        )
         metadata = {
-            "commit_reason": compact_text(getattr(request, "reason", "") or "", limit=260),
-            "commit_confidence": clamp01(float(getattr(request, "confidence", 0.0) or 0.0)),
-            "commit_target": str(getattr(request, "target", "event_ledger") or "event_ledger"),
+            "commit_reason": compact_text(_request_get(request, "reason", "") or "", limit=260),
+            "commit_confidence": clamp01(float(_request_get(request, "confidence", 0.0) or 0.0)),
+            "commit_target": str(_request_get(request, "target", "event_ledger") or "event_ledger"),
+            "decay_policy": decay_policy,
+            "request_tags": list(request_tags),
+            "ephemeral_presence": ephemeral_presence,
         }
+        metadata.update({key: value for key, value in request_metadata.items() if key not in metadata})
         return self.event_ledger.append_raw_event(
-            frame_id=str(getattr(frame, "frame_id", "") or getattr(request, "frame_id", "") or ""),
+            frame_id=str(getattr(frame, "frame_id", "") or _request_get(request, "frame_id", "") or ""),
             source="state_commit_request",
-            content=compact_text(getattr(request, "content", "") or "", limit=1000),
-            evidence_ids=getattr(request, "evidence_ids", []) or [],
-            reliability=clamp01(float(getattr(request, "confidence", 1.0) or 1.0)),
+            content=compact_text(_request_get(request, "content", "") or "", limit=1000),
+            evidence_ids=_request_get(request, "evidence_ids", []) or [],
+            reliability=clamp01(float(_request_get(request, "confidence", 1.0) or 1.0)),
             privacy_level="normal",
-            tags=("commit",),
+            tags=("commit", *request_tags),
             metadata=metadata,
         )
 

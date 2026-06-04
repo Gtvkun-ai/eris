@@ -212,3 +212,29 @@ def test_chat_format_violation_after_local_fallback_commits_deterministic_reply(
     assert sent["parse_mode"] == "format_repair_fallback"
     assert "lỗi định dạng" in sent["text"]
     assert "format_violation_recovered" in sent["debug_trace"]
+def test_chat_format_violation_no_fallback_mode_blocks_instead_of_recovering():
+    os.environ["ERIS_NO_FALLBACK_MODE"] = "1"
+    try:
+        llm = _FormatFailingChatLlmService()
+        coordinator = RuntimeCoordinator(
+            logger=_DummyLogger(),
+            transport=_DummyTransport(),
+            llm_service=llm,
+            parser=_JsonParser(),
+            telemetry_service=_DummyTelemetry(),
+            ni_engine=_DummyNi(),
+            ti_governor=_DummyTi(),
+            fe_renderer=_DummyFe(),
+            memory_core=_DummyMemory(),
+            body_running_fn=lambda: True,
+        )
+
+        coordinator._run_chat_cycle("xin chao", user_timestamp=100.0)
+
+        sent = coordinator.transport.sent[-1]
+        assert llm.chat_calls == 3
+        assert sent["intent"] == "no_fallback_block"
+        assert sent["parse_mode"] == "no_fallback_block"
+        assert "no-fallback mode" in sent["text"].lower()
+    finally:
+        os.environ.pop("ERIS_NO_FALLBACK_MODE", None)

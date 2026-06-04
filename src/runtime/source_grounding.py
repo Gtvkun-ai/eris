@@ -81,6 +81,7 @@ class SourceFallbackDecision:
     confidence: float = 0.30
     reason: str = ""
     missing_evidence: list[str] = field(default_factory=list)
+    flags: dict[str, Any] = field(default_factory=dict)
     debug_trace: str = ""
 
     def to_payload(self) -> dict[str, Any]:
@@ -107,6 +108,7 @@ class SourceFallbackDecision:
                 confidence=self.confidence,
                 parse_mode=self.parse_mode,
                 debug_trace=self.debug_trace or self.reason,
+                action_input=json.dumps({"grounding_flags": self.flags or {}}, ensure_ascii=False),
             )
         except Exception:
             return self.to_payload()
@@ -208,6 +210,7 @@ class SourceGroundingReport:
     answer_style_rules: list[str] = field(default_factory=list)
     prompt_context: str = ""
     fallback_decision: SourceFallbackDecision | None = None
+    cognitive_flags: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def should_fallback(self) -> bool:
@@ -708,6 +711,17 @@ class SourceGroundingEngine:
         except Exception:
             pass
 
+        report.cognitive_flags = {
+            "missing_evidence_ids": bool(report.missing_evidence),
+            "missing_evidence": list(report.missing_evidence),
+            "confidence": float(report.confidence_cap),
+            "curiosity": float(report.information_gap),
+            "focus_family": report.preempt_mode or report.grounding_source or report.primary_source,
+            "epistemic_mode": report.epistemic_mode,
+            "hypothesis_allowed": bool(report.hypothesis_allowed),
+            "probe_allowed": bool(report.probe_allowed),
+            "grounding_source": report.grounding_source,
+        }
         report.prompt_context = self.render_prompt_context(report)
         report.fallback_decision = self.build_fallback_decision(report)
 
@@ -850,6 +864,8 @@ class SourceGroundingEngine:
           đây là giả thuyết cần user xác nhận.
         """
 
+        if str(getattr(report, "preempt_mode", "") or "") == "deictic_without_vision":
+            return False
         missing = set(getattr(report, "missing_evidence", ()) or ())
         if not missing:
             return False
@@ -885,6 +901,7 @@ class SourceGroundingEngine:
         """
 
         missing = tuple(self._dedupe(getattr(report, "missing_evidence", ()) or ()))
+        flags = dict(getattr(report, "cognitive_flags", {}) or {})
         if getattr(report, "epistemic_mode", "") == "probe" and (
             getattr(report, "probe_allowed", False) or getattr(report, "hypothesis_allowed", False)
         ):
@@ -895,6 +912,7 @@ class SourceGroundingEngine:
                 confidence=min(0.48, max(0.30, float(getattr(report, "confidence_cap", 0.32) or 0.32))),
                 reason="information_gap_probe",
                 missing_evidence=list(missing),
+                flags=flags,
                 debug_trace=f"source_grounding:information_gap_probe:{','.join(missing)}",
             )
         if not missing:
@@ -903,6 +921,7 @@ class SourceGroundingEngine:
                 text="",
                 confidence=report.confidence_cap,
                 reason="source_grounding_ok",
+                flags=flags,
                 debug_trace="source_grounding:ok",
             )
 
@@ -930,6 +949,7 @@ class SourceGroundingEngine:
             confidence=min(0.35, float(getattr(report, "confidence_cap", 0.35) or 0.35)),
             reason=reason,
             missing_evidence=list(missing),
+            flags=flags,
             debug_trace=f"source_grounding:{reason}:{','.join(missing)}",
         )
 

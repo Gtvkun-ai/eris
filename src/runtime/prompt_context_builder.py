@@ -15,6 +15,7 @@ from cortex.contracts import (
 )
 from cortex.internal_state import PersistentInternalState
 from domain import Decision
+from runtime.no_fallback_policy import no_fallback_mode_enabled
 
 
 class PromptContextBuilderMixin:
@@ -27,6 +28,17 @@ class PromptContextBuilderMixin:
         self.logger.warning("%s %s", rendered, traceback.format_exc().strip())
 
     def _session_ritual_fallback_decision(self, *, source: str, tone: str = "quiet_background") -> Decision:
+        if no_fallback_mode_enabled():
+            return Decision(
+                text="",
+                animation="stand",
+                intent="no_fallback_block",
+                reasoning_tags=("session_ritual", "no_fallback_mode"),
+                should_speak=False,
+                confidence=0.0,
+                parse_mode="no_fallback_block",
+                debug_trace=f"session_ritual_layer; source={source}; tone={tone}; no_fallback_mode=1",
+            )
         return Decision(
             text="Ngài quay lại rồi.",
             animation="stand",
@@ -45,6 +57,8 @@ class PromptContextBuilderMixin:
         tone: str = "quiet_background",
     ) -> Decision:
         decision = self._session_ritual_fallback_decision(source=source, tone=tone)
+        if not bool(getattr(decision, "should_speak", True)) or not str(getattr(decision, "text", "") or "").strip():
+            return decision
         self.last_text = decision.text
         spoken_at = time.time()
         self._note_autonomous_spoken(now=spoken_at)

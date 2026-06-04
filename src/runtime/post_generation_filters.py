@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import replace
 
@@ -111,6 +112,8 @@ class PostGenerationFiltersMixin:
         return "; ".join(parts) or "Internal state unavailable; keep the repair short and grounded."
 
     def _dynamic_guard_bottom_fallback(self, violation: GuardViolation, *, channel: str = "") -> str:
+        del violation, channel
+        return ""
         values = self._guard_internal_state_values()
         overload = float(values.get("overload", values.get("cognitive_load", 0.0)) or 0.0)
         curiosity = float(values.get("curiosity", values.get("curiosity_pressure", 0.0)) or 0.0)
@@ -149,6 +152,56 @@ class PostGenerationFiltersMixin:
         except Exception:
             return ""
         return ""
+
+    def _guard_body_only_decision(
+        self,
+        decision: Decision,
+        violation: GuardViolation,
+        *,
+        trace_marker: str,
+        parse_mode: str | None = None,
+    ) -> Decision:
+        values = self._guard_internal_state_values()
+        curiosity = max(
+            float(values.get("curiosity", 0.0) or 0.0),
+            float(values.get("curiosity_pressure", 0.0) or 0.0),
+        )
+        missing = set(violation.missing_evidence or ())
+        if "file_evidence" in missing or "screen_evidence" in missing:
+            body_action = "ObserveCode"
+            animation = "read"
+        elif curiosity >= 0.55:
+            body_action = "tilt_head"
+            animation = decision.animation or "stand"
+        else:
+            body_action = "idle_shift"
+            animation = decision.animation or "stand"
+        payload = {
+            "type": "body_only_guard_repair",
+            "body_action": body_action,
+            "guard_rule": violation.rule,
+            "missing_evidence": list(violation.missing_evidence or ()),
+            "curiosity": round(float(curiosity), 3),
+            "confidence": min(float(getattr(decision, "confidence", 0.35) or 0.35), 0.35),
+            "reason": violation.reason,
+        }
+        repaired = self._copy_decision_with_text(
+            decision,
+            text="",
+            trace_marker=f"{trace_marker}; body_only_motion",
+            parse_mode=parse_mode or "guard_body_only",
+        )
+        repaired.should_speak = False
+        repaired.intent = repaired.intent or "body_only_guard_repair"
+        repaired.action = "MotionCommand"
+        repaired.action_input = json.dumps(payload, ensure_ascii=False)
+        repaired.animation = animation
+        repaired.motion_intent = repaired.motion_intent or "pose"
+        try:
+            repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.35)
+        except Exception:
+            repaired.confidence = 0.35
+        return repaired
 
     def _guard_grounding_context(self, frame=None, grounding=None) -> str:
         report = grounding
@@ -243,24 +296,12 @@ class PostGenerationFiltersMixin:
                     except Exception:
                         pass
 
-        fallback_text = self._dynamic_guard_bottom_fallback(violation, channel=channel)
-        repaired = self._copy_decision_with_text(
+        return self._guard_body_only_decision(
             decision,
-            text=fallback_text,
-            trace_marker=f"{trace_marker}; fallback=dynamic",
-            parse_mode=parse_mode or "guard_violation_fallback",
+            violation,
+            trace_marker=f"{trace_marker}; fallback=body_only",
+            parse_mode=parse_mode or "guard_body_only",
         )
-        if not fallback_text:
-            repaired.should_speak = False
-            repaired.intent = repaired.intent or "body_only_guard_repair"
-        elif violation.rule in {"memory_haunting_guard", "chat_grounding_guard"}:
-            repaired.intent = "grounding_clarification"
-            repaired.action = "none"
-        try:
-            repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.35)
-        except Exception:
-            repaired.confidence = 0.35
-        return repaired
 
     def _record_agent_mind_feedback_from_user(self, user_text: str, *, frame=None) -> tuple[str, ...]:
         """Ghi feedback semantic vào Persistent Agent Mind Layer nếu user đang phản hồi hành vi.
@@ -842,7 +883,7 @@ class PostGenerationFiltersMixin:
             "screen_observation",
         }
         repair_intent = intent if intent in allowed else "inner_whim"
-        return self.speech_core_engine.render_force_speak_repair_text(
+        text = self.speech_core_engine.render_force_speak_repair_text(
             speech_core,
             normalize_text=self._normalize_user_message,
             is_near_duplicate=self._is_near_duplicate_text,
@@ -850,6 +891,19 @@ class PostGenerationFiltersMixin:
             intent=repair_intent,
             counter=self.force_speak_intent_guard_count,
             repeated=repeated,
+            momentum_topic=momentum_topic,
+        )
+        if text:
+            return text
+        fallback_fn = getattr(self, "_force_speak_fallback_by_intent_text", None)
+        if not callable(fallback_fn):
+            return ""
+        return fallback_fn(
+            repair_intent,
+            counter=self.force_speak_intent_guard_count,
+            repeated=repeated,
+            focus_kind=focus_kind,
+            window_title=window_title,
             momentum_topic=momentum_topic,
         )
 
@@ -1078,6 +1132,17 @@ class PostGenerationFiltersMixin:
         if self._mindreading_is_grounded_task_or_scene(text, selected_impulse=selected_impulse, selected=selected):
             return "", f"arbitration_mindreading_guard=allow_grounded:{selected_impulse}", True
 
+        if selected_impulse in {
+            "scene_curiosity_impulse",
+            "technical_help_impulse",
+            "companionship_impulse",
+            "inner_whim_impulse",
+            "micro_story_impulse",
+            "silence_impulse",
+            "body_only_impulse",
+        }:
+            return "", f"arbitration_mindreading_guard=flag:{selected_impulse}", False
+
         if selected_impulse == "scene_curiosity_impulse":
             replacement = self.speech_core_engine.render_safe_fallback_text(
                 speech_core,
@@ -1244,6 +1309,14 @@ class PostGenerationFiltersMixin:
             snapshot=snapshot,
             momentum_topic=momentum_topic,
         )
+        if not replacement:
+            replacement = self._force_speak_fallback_by_intent_text(
+                fallback_intent,
+                counter=self.force_speak_repeat_guard_count,
+                focus_kind=str(getattr(snapshot, "active_window_kind", "") or "") if snapshot is not None else "",
+                window_title=str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or "") if snapshot is not None else "",
+                momentum_topic=momentum_topic,
+            )
         if self._is_near_duplicate_text(replacement, self.last_text):
             replacement = self.speech_core_engine.render_force_speak_repair_text(
                 speech_core,
@@ -1256,6 +1329,15 @@ class PostGenerationFiltersMixin:
                 snapshot=snapshot,
                 momentum_topic=momentum_topic,
             )
+            if not replacement:
+                replacement = self._force_speak_fallback_by_intent_text(
+                    fallback_intent,
+                    counter=self.force_speak_repeat_guard_count,
+                    repeated=True,
+                    focus_kind=str(getattr(snapshot, "active_window_kind", "") or "") if snapshot is not None else "",
+                    window_title=str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or "") if snapshot is not None else "",
+                    momentum_topic=momentum_topic,
+                )
 
         trace = decision.debug_trace or ""
         guard_trace = f"{trace} | {marker}" if trace else marker
@@ -1294,39 +1376,22 @@ class PostGenerationFiltersMixin:
             )
         if not self._is_near_duplicate_text(decision.text or "", self.last_text):
             return decision
-
-        replacement = self._speech_core_safe_fallback_text(
-            speech_core,
-            repeated=True,
-            snapshot=snapshot,
-            momentum_topic=momentum_topic,
+        violation = GuardViolation(
+            rule="repetition_filter",
+            severity="soft",
+            reason="near_duplicate_public_text",
+            original_text=decision.text or "",
+            suggested_action="reroll",
+            fallback_text="",
+            trace_marker="repetition_filter",
         )
-        if not replacement and getattr(speech_core, "utterance_type", "") == "curious_question":
-            replacement = self._speech_core_safe_fallback_text(
-                speech_core,
-                repeated=True,
-                snapshot=snapshot,
-                momentum_topic=momentum_topic,
-            )
-        if self._is_near_duplicate_text(replacement, self.last_text):
-            return decision
-        trace = decision.debug_trace or ""
-        repeat_trace = f"{trace} | repetition_filter" if trace else "repetition_filter"
-        return Decision(
-            text=replacement,
-            animation=decision.animation or "stand",
-            direction=decision.direction,
-            next_animation=decision.next_animation,
-            target_x=decision.target_x,
-            bounce_action=decision.bounce_action,
-            debug_trace=repeat_trace,
-            parser_trace=decision.parser_trace,
+        return self._repair_guard_violation_decision(
+            decision,
+            violation,
+            channel=channel,
+            speech_core=speech_core,
             parse_mode="speech_repeat_guard",
-            system_action="",
-            action_input="",
-            motion_intent=decision.motion_intent,
-            motion_target_x=decision.motion_target_x,
-            motion_facing=decision.motion_facing,
+            allow_reroll=True,
         )
 
     def _looks_like_unanchored_style_line(self, text: str) -> bool:
@@ -1369,6 +1434,23 @@ class PostGenerationFiltersMixin:
     ) -> Decision:
         if not self._looks_like_unanchored_style_line(decision.text or ""):
             return decision
+        violation = GuardViolation(
+            rule="style_contract_anchor_guard",
+            severity="soft",
+            reason="unanchored_style_line",
+            original_text=decision.text or "",
+            suggested_action="reroll",
+            fallback_text="",
+            trace_marker="style_contract_anchor_guard",
+        )
+        return self._repair_guard_violation_decision(
+            decision,
+            violation,
+            channel=channel,
+            speech_core=speech_core,
+            parse_mode=decision.parse_mode,
+            allow_reroll=True,
+        )
         replacement = self._speech_core_safe_fallback_text(
             speech_core,
             snapshot=snapshot,
@@ -1458,6 +1540,37 @@ class PostGenerationFiltersMixin:
             return decision
 
         marker = "micro_line_policy=" + ",".join(reasons)
+        silence_reasons = (
+            "vietnamese_requires_diacritics",
+            "micro_line_too_short_without_clear_meaning",
+            "micro_observation_requires_anchor",
+            "screen_observation_requires_anchor",
+            "placeholder_text_blocked",
+        )
+        suggested = "body_only" if any(
+            reason == "no_speech_blocks_final"
+            or reason.startswith("micro_observation_not_grounded:")
+            or reason.startswith("screen_observation_not_grounded:")
+            or reason in silence_reasons
+            for reason in reasons
+        ) else "reroll"
+        violation = GuardViolation(
+            rule="micro_line_policy",
+            severity="soft",
+            reason="; ".join(reasons),
+            original_text=decision.text or "",
+            suggested_action=suggested,
+            fallback_text="",
+            trace_marker=marker,
+        )
+        return self._repair_guard_violation_decision(
+            decision,
+            violation,
+            channel=channel,
+            speech_core=speech_core,
+            parse_mode="no_speech_policy" if suggested == "body_only" else decision.parse_mode,
+            allow_reroll=suggested == "reroll",
+        )
         relational_rewrite = self.micro_line_policy.rewrite_relational_line(
             decision.text or "",
             relational_context=relational_context,
@@ -1661,16 +1774,19 @@ class PostGenerationFiltersMixin:
     ) -> Decision:
         if self._force_speak_banned_family_for_text(decision.text or "") != "internal_meaning_label":
             return decision
-        replacement = self._speech_core_safe_fallback_text(
-            speech_core,
-            snapshot=snapshot,
-            momentum_topic=momentum_topic,
-        )
-        if not replacement:
-            replacement = "hm. noi bang nhan noi bo nghe ky qua."
-        return self._copy_decision_with_text(
-            decision,
-            text=replacement,
+        violation = GuardViolation(
+            rule="internal_meaning_label_filter",
+            severity="soft",
+            reason="internal_meaning_label_surface",
+            original_text=decision.text or "",
+            suggested_action="reroll",
+            fallback_text="",
             trace_marker="internal_meaning_label_filter",
+        )
+        return self._repair_guard_violation_decision(
+            decision,
+            violation,
+            speech_core=speech_core,
             parse_mode=decision.parse_mode,
+            allow_reroll=True,
         )

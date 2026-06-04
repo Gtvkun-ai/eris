@@ -73,6 +73,7 @@ from runtime.body_bias import BodyBiasProjector
 from runtime.contextual_autonomy_loop import ContextualAutonomyLoop
 from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
 from runtime.model_budget_policy import ModelBudgetPolicy
+from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.sensory_model_adapter import RuntimeSensoryModelAdapter
 from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
 from runtime.chat_cycle import ChatCycleMixin
@@ -81,6 +82,7 @@ from runtime.cognitive_frame_recorder import CognitiveFrameRecorderMixin
 from runtime.force_speak_surface_policy import ForceSpeakSurfacePolicyMixin
 from runtime.force_speak_cycle import ForceSpeakCycleMixin
 from runtime.frame_builder import FrameBuilderMixin
+from runtime.guard_violations import GuardViolation
 from runtime.outcome_observer import OutcomeObserver
 from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
@@ -100,6 +102,29 @@ from memory.memory_kernel import MemoryKernel
 
 VISION_TRACE_MARKER = "vision_facts_attached"
 
+FALLBACK_BY_INTENT: dict[str, tuple[str, ...]] = {
+    "random_chatter": (
+        "Ngài gọi tôi ra chỉ để nghe tôi nói linh tinh à.",
+        "Tín hiệu mờ quá. Tôi lùi lại một nhịp.",
+    ),
+    "inner_whim": (
+        "Mạch này vẫn hơi nghẽn lại.",
+        "Nhịp này cứ để nhỏ thôi.",
+    ),
+    "micro_presence": (
+        "Mạch này vẫn hơi nghẽn.",
+        "Nhịp này vẫn còn ở đây.",
+    ),
+    "curious_question": (
+        "Có chỗ nào đang vướng nhẹ không?",
+        "Đoạn này còn mắc ở đâu à?",
+    ),
+    "screen_observation": (
+        "Tôi chỉ dám bám vào chỗ này: file_saved.",
+        "Tôi giữ câu này sát phần đang hiện ra thôi.",
+    ),
+}
+
 
 
 
@@ -115,8 +140,8 @@ def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
     parse_mode = str(getattr(decision, "parse_mode", "") or "")
     debug_trace = str(getattr(decision, "debug_trace", "") or "")
     text = str(getattr(decision, "text", "") or "").lower()
-    fallback_intents = {"fallback_reply", "format_repair_fallback", "service_error"}
-    fallback_modes = {"format_repair_fallback", "service_error"}
+    fallback_intents = {"fallback_reply", "format_repair_fallback", "service_error", "no_fallback_block"}
+    fallback_modes = {"format_repair_fallback", "service_error", "no_fallback_block"}
     if intent in fallback_intents or parse_mode in fallback_modes:
         return True
     if "http_5xx_fallback" in debug_trace or "format_violation_recovered" in debug_trace:
@@ -140,6 +165,50 @@ class RuntimeCoordinator(
     PostGenerationFiltersMixin,
 ):
     #Đây là trung tâm điều phối.
+    def _fallback_lines_for_intent(self, intent: str) -> tuple[str, ...]:
+        key = str(intent or "").strip() or "micro_presence"
+        return FALLBACK_BY_INTENT.get(key, FALLBACK_BY_INTENT["micro_presence"])
+
+    def _force_speak_fallback_by_intent_text(
+        self,
+        intent: str,
+        *,
+        counter: int = 1,
+        repeated: bool = False,
+        focus_kind: str = "",
+        window_title: str = "",
+        momentum_topic: str = "",
+    ) -> str:
+        del focus_kind, window_title, momentum_topic
+        if no_fallback_mode_enabled():
+            return ""
+        lines = self._fallback_lines_for_intent(intent)
+        if not lines:
+            return ""
+        start = max(0, int(counter or 1) - 1)
+        if repeated:
+            start += 1
+        last_text = str(getattr(self, "last_text", "") or "")
+        for offset in range(len(lines)):
+            candidate = lines[(start + offset) % len(lines)]
+            if not last_text or not self._is_near_duplicate_text(candidate, last_text):
+                return candidate
+        return lines[start % len(lines)]
+
+    def _public_thought_topic(self, value: str) -> str:
+        return self.speech_core_engine._public_thought_topic(  # type: ignore[attr-defined]
+            value,
+            normalize_text=self._normalize_user_message,
+        )
+
+    def _looks_internal_topic(self, value: str) -> bool:
+        return bool(
+            self.speech_core_engine._looks_internal_topic(  # type: ignore[attr-defined]
+                value,
+                normalize_text=self._normalize_user_message,
+            )
+        )
+
     def _background_memory_digest_idle_probe(self, *, quiet_for: float = 0.0, now: float | None = None) -> bool:
         """Chỉ cho semantic digest chạy khi runtime thật sự rảnh."""
 
@@ -3131,7 +3200,19 @@ class RuntimeCoordinator(
             momentum_topic=momentum_topic,
         )
         if not replacement:
-            return decision
+            return self._guard_body_only_decision(
+                decision,
+                GuardViolation(
+                    rule="force_speak_no_evidence_topic_filter",
+                    severity="soft",
+                    reason="missing_current_evidence_for_memory_topic",
+                    original_text=decision.text or "",
+                    suggested_action="body_only",
+                    trace_marker="force_speak_no_evidence_topic_filter",
+                ),
+                trace_marker="force_speak_no_evidence_topic_filter",
+                parse_mode="force_speak_no_evidence_topic_filter",
+            )
         return self._copy_decision_with_text(
             decision,
             text=replacement,
@@ -3630,9 +3711,32 @@ class RuntimeCoordinator(
         max_len = max(40, min(max_len, 240))
         return enabled, interval, max_items, max_len
 
+    def _vision_queue_timeout_seconds(self, channel: str) -> float:
+        env_name = "ERIS_VISION_QUEUE_TIMEOUT_CHAT_SEC" if channel == "chat" else "ERIS_VISION_QUEUE_TIMEOUT_SEC"
+        default = 30.0 if channel == "chat" else 12.0
+        raw = os.environ.get(env_name, "").strip()
+        try:
+            value = float(raw) if raw else default
+        except ValueError:
+            value = default
+        return max(1.0, min(value, 120.0))
+
+    def _vision_failure_backoff_seconds(self, stage: str, exc: Exception) -> float:
+        text = f"{stage}:{exc}".lower()
+        if any(marker in text for marker in ("model_queue_timeout", "resource_guard:", "tier_cooldown_active", "active_heavy_lease")):
+            raw = os.environ.get("ERIS_VISION_SOFT_RETRY_BACKOFF_SEC", "2").strip()
+            try:
+                value = float(raw) if raw else 2.0
+            except ValueError:
+                value = 2.0
+            return max(0.0, min(value, 10.0))
+        return -1.0
+
     def _note_vision_failure(self, stage: str, exc: Exception) -> None:
-        self.vision_failure_count += 1
-        backoff = min(300, 15 * self.vision_failure_count)
+        backoff = self._vision_failure_backoff_seconds(stage, exc)
+        if backoff < 0.0:
+            self.vision_failure_count += 1
+            backoff = min(300, 15 * self.vision_failure_count)
         self.vision_disabled_until = time.time() + backoff
         self.logger.warning(
             "[vision_facts] %s failed: %s | backoff=%ss",
@@ -3906,9 +4010,15 @@ class RuntimeCoordinator(
         note: SemanticSceneNote | None = None
         trace = ""
         cleaned: tuple[str, ...] = ()
+        compressor = getattr(self, "vision_semantic_compressor", None)
+        can_use_compressor = callable(getattr(compressor, "compress", None))
+        use_compressor = can_use_compressor and (
+            force_refresh
+            or channel in {"chat", "force_speak"}
+            or self._should_use_vision_compressor(observer_frame=observer_frame, force_refresh=False)
+        )
 
-        if self._should_use_vision_compressor(observer_frame=observer_frame, force_refresh=force_refresh):
-            compressor = getattr(self, "vision_semantic_compressor", None)
+        if use_compressor:
             try:
                 signal_snapshot = None
                 if snapshot is not None:
@@ -3927,7 +4037,7 @@ class RuntimeCoordinator(
                     compressor.compress,
                     reason=f"vision_compressor:{channel}",
                     priority=45 if channel == "chat" else 25,
-                    timeout_seconds=30.0 if channel == "chat" else 1.0,
+                    timeout_seconds=self._vision_queue_timeout_seconds(channel),
                     image_data_uri=data_uri,
                     ocr_text=str(getattr(signal_snapshot, "ocr_text", "") or "") if signal_snapshot is not None else "",
                     observer_frame=observer_frame,
@@ -3940,6 +4050,8 @@ class RuntimeCoordinator(
                 self._note_vision_failure("compressor", exc)
                 return self.vision_facts
         else:
+            if can_use_compressor:
+                return self.vision_facts
             try:
                 mode = "chat_requested" if channel == "chat" else "ambient"
                 facts, trace = self.llm_service.generate_screen_facts(
@@ -4507,48 +4619,74 @@ class RuntimeCoordinator(
         decision.debug = debug
 
     def _build_local_presence_maintenance_decision(self, *, snapshot) -> Decision | None:
-        lines = self._presence_maintenance_lines(snapshot)
-        fallback_text = self._choose_local_micro_line(
-            lines,
-            counter=self.presence_maintenance_silent_cycles,
-            threshold=self.presence_maintenance_silent_loop_threshold,
-        )
-        if not fallback_text:
+        cue = self._derive_micro_presence_cue(snapshot=snapshot, reason="wake_gate_presence_maintenance")
+        if not cue.needs_micro_presence:
             return None
+        text, source = self._generate_micro_presence_from_cue(
+            kind="presence_maintenance",
+            snapshot=snapshot,
+            cue=cue,
+            seeds=cue.evidence,
+        )
+        if not text:
+            return self._body_only_presence_decision(
+                cue,
+                intent="presence_maintenance",
+                parse_mode="presence_maintenance_body_only",
+                source=f"wake_gate_{source}",
+            )
         return Decision(
-            text=fallback_text,
-            animation="stand",
+            text=text,
+            animation="read" if cue.focus_family == "code_stalled" else "stand",
             intent="presence_maintenance",
-            reasoning_tags=("presence_maintenance", "micro_presence", "local_template"),
+            reasoning_tags=("presence_maintenance", "micro_presence", "llm_wording", cue.focus_family, "wake_gate"),
             should_speak=True,
-            confidence=0.44,
+            confidence=max(0.38, min(0.62, cue.confidence)),
             parse_mode="presence_maintenance",
             debug_trace=(
-                "presence_maintenance_local"
+                "presence_maintenance_wake_gate"
+                f"; source={source}"
+                f"; focus_family={cue.focus_family}"
+                f"; missing_evidence_ids={cue.missing_evidence_ids}"
                 f"; silent_cycles={self.presence_maintenance_silent_cycles}"
                 f"; threshold={self.presence_maintenance_silent_loop_threshold}"
             ),
         )
 
     def _build_local_reengagement_decision(self, *, snapshot) -> Decision | None:
-        lines = self._reengagement_lines(snapshot)
-        fallback_text = self._choose_local_micro_line(
-            lines,
-            counter=self.reengagement_quiet_cycles,
-            threshold=self.reengagement_quiet_loop_threshold,
-        )
-        if not fallback_text:
+        try:
+            internal_state = self._get_internal_state()
+        except Exception:
+            internal_state = None
+        cue = self._derive_reengagement_cue(snapshot=snapshot, internal_state=internal_state)
+        if not cue.needs_micro_presence:
             return None
+        text, source = self._generate_micro_presence_from_cue(
+            kind="re_engagement",
+            snapshot=snapshot,
+            cue=cue,
+            seeds=cue.evidence,
+            force_llm=True,
+        )
+        if not text:
+            return self._body_only_presence_decision(
+                cue,
+                intent="re_engagement",
+                parse_mode="re_engagement_body_only",
+                source=f"wake_gate_{source}",
+            )
         return Decision(
-            text=fallback_text,
+            text=text,
             animation="stand",
             intent="re_engagement",
-            reasoning_tags=("re_engagement", "long_silence_outreach", "local_template"),
+            reasoning_tags=("re_engagement", "long_silence_outreach", "llm_wording", cue.focus_family, "wake_gate"),
             should_speak=True,
-            confidence=0.50,
+            confidence=max(0.42, min(0.62, cue.confidence)),
             parse_mode="re_engagement",
             debug_trace=(
-                "reengagement_local"
+                "reengagement_wake_gate"
+                f"; source={source}"
+                f"; focus_family={cue.focus_family}"
                 f"; quiet_cycles={self.reengagement_quiet_cycles}"
                 f"; threshold={self.reengagement_quiet_loop_threshold}"
             ),
@@ -4586,18 +4724,21 @@ class RuntimeCoordinator(
         reengagement_status: dict[str, object] | None = None,
     ) -> bool:
         decision = self.ti_governor.enforce_decision(decision, ti_report)
-        decision = self._filter_public_micro_decision(
-            decision,
-            channel="autonomous",
-            frame=frame,
-            snapshot=snapshot,
-            speech_core=getattr(frame, "speech_core", None),
-        )
+        if bool(getattr(decision, "should_speak", True)):
+            decision = self._filter_public_micro_decision(
+                decision,
+                channel="autonomous",
+                frame=frame,
+                snapshot=snapshot,
+                speech_core=getattr(frame, "speech_core", None),
+            )
         if not bool(getattr(decision, "should_speak", True)) or not str(getattr(decision, "text", "") or "").strip():
-            return False
+            if not self._is_body_only_presence_decision(decision):
+                return False
+        should_speak_now = bool(getattr(decision, "should_speak", True)) and bool(str(getattr(decision, "text", "") or "").strip())
         self._set_cognitive_action_plan(
             frame,
-            should_speak=True,
+            should_speak=should_speak_now,
             speech_intent=str(getattr(decision, "intent", "") or note),
             speech_act="reengagement" if str(getattr(decision, "intent", "") or "") == "re_engagement" else "micro_presence",
             reason=f"Wake-gated reflex surfaced through {note}.",
@@ -4607,15 +4748,22 @@ class RuntimeCoordinator(
             fe_plan=fe_plan,
             notes=(note, f"wake_gate={getattr(self, 'last_wake_decision', WakeDecision('sleep', False, False, False, False, '', 0.0)).level}"),
         )
-        self.fe_style_memory = self.fe_renderer.remember_style(
-            self.fe_style_memory,
-            plan=fe_plan,
-            rendered_text=decision.text,
-        )
         now = time.time()
-        self.last_text = decision.text
-        self.last_autonomous_spoken_at = now
-        self._note_autonomous_spoken(now=now, **(spoken_kwargs or {}))
+        if should_speak_now:
+            self.fe_style_memory = self.fe_renderer.remember_style(
+                self.fe_style_memory,
+                plan=fe_plan,
+                rendered_text=decision.text,
+            )
+            self.last_text = decision.text
+            self.last_autonomous_spoken_at = now
+            self._note_autonomous_spoken(now=now, **(spoken_kwargs or {}))
+        else:
+            self._note_autonomous_presence_action(
+                presence_maintenance=str(getattr(decision, "intent", "") or "") == "presence_maintenance",
+                reengagement=str(getattr(decision, "intent", "") or "") == "re_engagement",
+                now=now,
+            )
         self._apply_position_update(decision)
         frame.final_decision = self._decision_to_frame_dict(decision)
         self._attach_speak_truth_table(
@@ -4780,7 +4928,7 @@ class RuntimeCoordinator(
             return False
         decision = self._build_local_presence_maintenance_decision(snapshot=snapshot)
         if decision is None:
-            self._update_wake_gate_debug(wake_decision, presence_probe={**presence_status, "rejected_by": "local_template_empty"})
+            self._update_wake_gate_debug(wake_decision, presence_probe={**presence_status, "rejected_by": "micro_presence_cue_empty"})
             return False
         fe_plan = self._wake_gate_fe_plan(ti_report=ti_report, snapshot=snapshot, internal_state=internal_state)
         frame = self._build_wake_gate_frame(

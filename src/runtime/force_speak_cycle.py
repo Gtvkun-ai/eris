@@ -36,6 +36,7 @@ from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from domain import Decision
 from runtime.body_bias import BodyBiasProjector
+from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.presence_controller import SocialPresenceEvent
 from runtime.speech_pipeline import SpeechIntentDecision
 
@@ -207,6 +208,8 @@ class ForceSpeakCycleMixin:
             )
             signal_score = policy.signal_score
             local_fallback = self._local_grounded_micro_presence_text(synthesis)
+            if no_fallback_mode_enabled():
+                local_fallback = ""
             if signal_score >= 0.55:
                 text, source = self._hybrid_micro_presence_text(
                     kind=synthesis.kind,
@@ -224,7 +227,7 @@ class ForceSpeakCycleMixin:
                 animation=frame.action_plan.animation_hint or "stand",
                 intent="micro_presence",
                 reasoning_tags=("force_speak", "micro_presence", synthesis.kind),
-                should_speak=bool(synthesis.should_verbalize),
+                should_speak=bool(synthesis.should_verbalize and str(text or "").strip()),
                 confidence=0.58,
                 parse_mode="micro_presence",
                 debug_trace=(

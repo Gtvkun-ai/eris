@@ -5,6 +5,7 @@ import unicodedata
 from actions.contracts import VALID_SYSTEM_ACTIONS
 from guard_config import OFF_GUARD_MODE, STRICT_GUARD_MODE, get_guard_mode
 from llm.contracts import VALID_ANIMATIONS
+from runtime.no_fallback_policy import no_fallback_mode_enabled
 # ParserGroundingMixin là một lớp mixin cung cấp các phương thức để xử lý và
 #  "ground" (định hình) các quyết định được tạo ra bởi một mô hình ngôn ngữ lớn (LLM)
 #  thành các hành động có thể thực thi trong runtime của ứng dụng.
@@ -1499,6 +1500,16 @@ class ParserGroundingMixin:
 
     def _salvage_non_json_response(self, cleaned: str, user_hint: str = ""):
         text = cleaned.strip()
+        if no_fallback_mode_enabled():
+            return self._finalize_decision({
+                **self.fallback,
+                "text": "",
+                "should_speak": False,
+                "debug_trace": "Parser blocked non-JSON/raw salvage because no-fallback mode is enabled.",
+                "parse_mode": "no_fallback_block",
+                "system_action": "",
+                "action_input": "",
+            }, user_hint=user_hint)
         if not text:
             return self._finalize_decision({
                 **self.fallback,

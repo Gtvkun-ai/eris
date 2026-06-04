@@ -39,6 +39,35 @@ class CognitiveFrameRecorderMixin:
         self._append_commit_requests(frame, requests)
         self._refresh_memory_update_from_commit_requests(frame, requests)
 
+    def _is_ephemeral_micro_presence_observation(self, frame: CognitiveFrame, observation: Mapping[str, Any]) -> bool:
+        final_decision = getattr(frame, "final_decision", {}) or {}
+        if not isinstance(final_decision, Mapping):
+            final_decision = {}
+        parse_mode = str(observation.get("parse_mode", "") or final_decision.get("parse_mode", "") or "")
+        tags = {str(item) for item in (observation.get("tags", ()) or ()) if str(item).strip()}
+        intent = str(final_decision.get("intent", "") or getattr(frame.action_plan, "speech_intent", "") or "")
+        action = str(final_decision.get("action", "") or "")
+        reasoning_tags = {str(item) for item in (final_decision.get("reasoning_tags", ()) or ()) if str(item).strip()}
+        ephemeral_parse_modes = {
+            "presence_maintenance",
+            "presence_maintenance_body_only",
+            "micro_presence",
+            "micro_observation",
+            "micro_observation_body_only",
+            "re_engagement_body_only",
+            "guard_body_only",
+            "no_speech_policy",
+        }
+        if parse_mode in ephemeral_parse_modes:
+            return True
+        if intent in {"presence_maintenance", "micro_presence", "micro_observation", "body_only_guard_repair"}:
+            return True
+        if "micro_presence" in tags or "micro_presence" in reasoning_tags or "body_only_motion" in reasoning_tags:
+            return True
+        if action == "MotionCommand" and not str(observation.get("final_text", "") or "").strip():
+            return True
+        return False
+
     def _derive_state_commit_requests(self, frame: CognitiveFrame) -> list[Mapping[str, Any]]:
         """Sinh toàn bộ StateCommitRequest từ frame hiện tại.
 
@@ -51,6 +80,8 @@ class CognitiveFrameRecorderMixin:
         evidence_ids = list(observation["evidence_ids"])
         timestamp = str(observation["timestamp"])
         storage_permission = self._frame_storage_permission(frame)
+        ephemeral_presence = self._is_ephemeral_micro_presence_observation(frame, observation)
+        event_decay_policy = "session_only" if ephemeral_presence else "none"
         requests: list[Mapping[str, Any]] = []
 
         # 1. Event ledger: audit thô của turn. Đây là dấu vết, không phải ký ức
@@ -66,7 +97,7 @@ class CognitiveFrameRecorderMixin:
                     "seen": list(observation["seen"]),
                     "said": observation["final_text"],
                     "outcome": observation["outcome"],
-                    "tags": list(observation["tags"]),
+                    "tags": [*list(observation["tags"]), *(["signal_buffer_only", "ephemeral_presence"] if ephemeral_presence else [])],
                     "system_action": observation["system_action"],
                     "salience": observation["salience"],
                     "parse_mode": observation["parse_mode"],
@@ -75,17 +106,17 @@ class CognitiveFrameRecorderMixin:
                 evidence_ids=evidence_ids,
                 permission_required=False,
                 storage_permission=storage_permission,
-                decay_policy="none",
-                reason="audit raw cognitive frame outcome",
-                tags=("cognitive_frame", "event_ledger", str(frame.channel or "")),
-                metadata={"source": "CognitiveFrameRecorder", "timestamp": timestamp},
+                decay_policy=event_decay_policy,
+                reason="audit raw cognitive frame outcome" if not ephemeral_presence else "audit ephemeral micro-presence/body-only signal",
+                tags=("cognitive_frame", "event_ledger", str(frame.channel or ""), *(("signal_buffer_only", "ephemeral_presence") if ephemeral_presence else ())),
+                metadata={"source": "CognitiveFrameRecorder", "timestamp": timestamp, "ephemeral_presence": ephemeral_presence},
             )
         )
 
         # 2. Episodic memory: chuyện cụ thể vừa xảy ra. Nếu frame không có gì
         # đáng kể thì bỏ, tránh lưu một bãi episode rỗng chỉ để tự an ủi rằng
         # hệ thống có memory.
-        if observation["seen"] or observation["final_text"] or observation["system_action"]:
+        if (not ephemeral_presence) and (observation["seen"] or observation["final_text"] or observation["system_action"]):
             requests.append(
                 self._make_commit_request(
                     target="episodic_memory",
@@ -1171,10 +1202,27 @@ class CognitiveFrameRecorderMixin:
         notes: tuple[str, ...] = (),
     ) -> None:
         remembered_fact = (decision.extracted_fact if decision else "") or ""
+        ephemeral_presence = False
         if decision is not None:
             parse_mode = str(getattr(decision, "parse_mode", "") or "")
+            intent = str(getattr(decision, "intent", "") or "")
+            tags = {str(item) for item in (getattr(decision, "reasoning_tags", ()) or ()) if str(item).strip()}
+            ephemeral_presence = (
+                parse_mode in {
+                    "presence_maintenance",
+                    "presence_maintenance_body_only",
+                    "micro_presence",
+                    "micro_observation",
+                    "micro_observation_body_only",
+                    "re_engagement_body_only",
+                    "guard_body_only",
+                    "no_speech_policy",
+                }
+                or intent in {"presence_maintenance", "micro_presence", "micro_observation", "body_only_guard_repair"}
+                or "micro_presence" in tags
+            )
             grounding = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
-            if parse_mode in {"no_speech_policy", "semantic_repair_failed", "source_grounding_guard"}:
+            if ephemeral_presence or parse_mode in {"no_speech_policy", "semantic_repair_failed", "source_grounding_guard"}:
                 remembered_fact = ""
             elif grounding is not None and not bool(getattr(grounding, "memory_answer_allowed", True)):
                 # Nếu turn này đang cần evidence hiện tại, extracted_fact từ model rất dễ là memory giả làm mắt.
@@ -1187,10 +1235,10 @@ class CognitiveFrameRecorderMixin:
         )[:220]
         frame.memory_update = CognitiveMemoryUpdate(
             remembered_fact=remembered_fact,
-            remembered_style_excerpt=(decision.text if decision else "")[:140] if decision else "",
+            remembered_style_excerpt="" if ephemeral_presence else ((decision.text if decision else "")[:140] if decision else ""),
             last_text=(self.last_text or "")[:140],
             system_action=(decision.system_action if decision else "") or "",
-            notes=tuple(notes),
+            notes=tuple((*notes, *(("ephemeral_presence_signal_buffer_only",) if ephemeral_presence else ()))),
             semantic_fact=remembered_fact,
             norm_deviation=norm_deviation,
             relationship_reflection=getattr(frame.memory_update, "relationship_reflection", ""),

@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1100,6 +1101,61 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertIn("main.py", coordinator.vision_facts[0].lower())
         self.assertEqual(coordinator.vision_last_trace, "qwen4b_vision:code_workspace")
 
+    def test_vision_soft_queue_failures_use_short_backoff(self):
+        coordinator = self._make_coordinator()
+
+        coordinator._note_vision_failure(
+            "compressor",
+            TimeoutError("model_queue_timeout:req123:vision_compressor:vision_compressor:autonomous"),
+        )
+
+        self.assertEqual(coordinator.vision_failure_count, 0)
+        self.assertLessEqual(coordinator.vision_disabled_until - time.time(), 2.5)
+
+    def test_autonomous_vision_uses_extended_queue_timeout(self):
+        coordinator = self._make_coordinator(
+            telemetry_service=_ScreenTelemetry(),
+            llm_service=_DummyLlmService(),
+        )
+        compressor = _FakeVisionCompressor(
+            SemanticSceneNote(
+                visible_context="Terminal shows a Python traceback in VS Code.",
+                important_text=["AssertionError: test failed"],
+                activity_intent="debugging",
+                semantic_family="test_failure_loop",
+                salience=0.92,
+                possible_error=0.95,
+                confidence=0.86,
+                source="qwen4b_vision",
+            ),
+            should_compress=True,
+        )
+        coordinator.vision_semantic_compressor = compressor
+        call = {}
+
+        def fake_run_queued(tier, func, *args, **kwargs):
+            call["tier"] = tier
+            call["timeout_seconds"] = kwargs.get("timeout_seconds")
+            return compressor.note
+
+        coordinator.model_budget_policy = SimpleNamespace(run_queued=fake_run_queued)
+        snapshot = coordinator.telemetry_service.capture_snapshot()
+        observer_frame = coordinator._run_background_observer(
+            snapshot=snapshot,
+            channel="autonomous",
+            started_at=1.0,
+        )
+
+        coordinator._maybe_update_screen_facts(
+            snapshot=snapshot,
+            channel="autonomous",
+            observer_frame=observer_frame,
+            started_at=1.0,
+        )
+
+        self.assertEqual(call["tier"], "vision_compressor")
+        self.assertEqual(call["timeout_seconds"], 12.0)
+
     def test_queued_subconscious_seed_is_consumed_once(self):
         coordinator = self._make_coordinator()
         coordinator.memory_state = SimpleNamespace(
@@ -1195,7 +1251,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         guarded = coordinator._apply_chat_final_guards(decision, user_text="loi nay la gi", frame=frame)
 
         self.assertEqual(guarded.parse_mode, "source_grounding_guard")
-        self.assertIn("màn hình", guarded.text.lower())
+        self.assertEqual(guarded.text, "")
+        self.assertFalse(guarded.should_speak)
         self.assertIn("chat_grounding_guard", guarded.debug_trace)
 
     def test_chat_final_guard_allows_sharp_identity_boundary_without_real_risk(self):
@@ -1225,8 +1282,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "micro_presence")
         self.assertIn("micro_presence_synthesizer", coordinator.transport.sent[-1]["debug_trace"])
         self.assertIn("kind=", coordinator.transport.sent[-1]["debug_trace"])
-        self.assertTrue(coordinator.transport.sent[-1]["text"])
-        self.assertEqual(coordinator.last_text, coordinator.transport.sent[-1]["text"])
+        self.assertEqual(coordinator.transport.sent[-1]["text"], "")
+        self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
+        self.assertEqual(coordinator.last_text, "")
         self.assertGreater(coordinator.last_autonomous_spoken_at, 1.0)
 
     def test_force_speak_without_evidence_passes_neutral_current_focus(self):
@@ -1237,7 +1295,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         sent = coordinator.transport.sent[-1]
         self.assertEqual(sent["parse_mode"], "micro_presence")
         self.assertIn("kind=", sent["debug_trace"])
-        self.assertIn("general", sent["text"])
+        self.assertIn("focus_kind=general", sent["debug_trace"])
+        self.assertEqual(sent["text"], "")
+        self.assertFalse(sent["should_speak"])
 
     def test_force_speak_low_signal_uses_local_micro_presence_even_when_llm_enabled(self):
         llm_service = _HybridMicroLlmService("Khung chat van yen.")
@@ -1276,8 +1336,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             speech_risk_level="micro_presence",
         )
 
-        self.assertTrue(text)
-        self.assertNotIn("vietnamese_requires_diacritics", reasons)
+        self.assertEqual(text, "")
         self.assertEqual(reasons, ())
 
     def test_forced_micro_presence_llm_supports_generate_micro_presence_api(self):
@@ -1316,6 +1375,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
 
         self.assertIn("force_speak_no_evidence_topic_filter", decision.debug_trace)
+        self.assertFalse(decision.should_speak)
         self.assertNotIn("game", coordinator._normalize_user_message(decision.text))
         self.assertNotIn("nhac", coordinator._normalize_user_message(decision.text))
 
@@ -1349,7 +1409,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "micro_presence")
         self.assertIn("micro_presence_synthesizer", coordinator.transport.sent[-1]["debug_trace"])
         self.assertNotIn("muốn tôi nói gì", coordinator.transport.sent[-1]["text"])
-        self.assertTrue(coordinator.transport.sent[-1]["text"])
+        self.assertEqual(coordinator.transport.sent[-1]["text"], "")
+        self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
 
     def test_force_speak_anti_mindreading_filter_rewrites_unfounded_emotion_claim(self):
         coordinator = self._make_coordinator(
@@ -1380,8 +1441,13 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
 
         normalized = coordinator._normalize_user_message(decision.text)
-        self.assertIn("style_contract_anchor_guard", decision.debug_trace)
-        self.assertIn(decision.text, FALLBACK_BY_INTENT["random_chatter"])
+        self.assertTrue(
+            "style_contract_anchor_guard" in decision.debug_trace
+            or "micro_line_policy" in decision.debug_trace
+        )
+        self.assertEqual(decision.text, "")
+        self.assertFalse(decision.should_speak)
+        self.assertEqual(decision.action, "MotionCommand")
         self.assertNotIn("cai ghe", normalized)
 
     def test_log_only_skips_relational_post_generation_rewrite(self):
@@ -1650,7 +1716,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.llm_service.last_directive_kwargs["speech_intent"], "screen_observation")
         self.assertIn("speech_evidence=", coordinator.llm_service.last_directive_kwargs["telemetry_data"])
         self.assertNotIn("ambient cues", coordinator.llm_service.last_directive_kwargs["telemetry_data"])
-        self.assertEqual(coordinator.transport.sent[-1]["text"], "Tôi chỉ dám bám vào chỗ này: file_saved.")
+        self.assertEqual(coordinator.transport.sent[-1]["text"], "")
+        self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
+        self.assertIn("micro_line_policy", coordinator.transport.sent[-1]["debug_trace"])
 
     def test_force_speak_moderate_resource_pressure_does_not_override_screen_signal(self):
         coordinator = self._make_coordinator(telemetry_service=_PressureSignalTelemetry())
@@ -1696,7 +1764,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         coordinator._handle_incoming({"type": "force_speak"})
 
-        self.assertEqual(llm_service.screen_fact_calls, 1)
+        self.assertEqual(llm_service.screen_fact_calls, 0)
         self.assertEqual(coordinator.vision_facts, ())
         self.assertEqual(coordinator.llm_service.directive_calls, 0)
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "micro_presence")
@@ -1951,6 +2019,14 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertNotIn("goi", coordinator._normalize_user_message(text))
 
+    def test_no_fallback_mode_disables_force_speak_fallback_pool(self):
+        os.environ["ERIS_NO_FALLBACK_MODE"] = "1"
+        try:
+            coordinator = self._make_coordinator()
+            self.assertEqual(coordinator._force_speak_fallback_by_intent_text("inner_whim"), "")
+        finally:
+            os.environ.pop("ERIS_NO_FALLBACK_MODE", None)
+
     def test_presence_maintenance_hybrid_accepts_safe_llm_micro_line(self):
         llm_service = _HybridMicroLlmService("Nhip nay van yen.")
         coordinator = self._make_coordinator(llm_service=llm_service)
@@ -1992,7 +2068,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertIsNotNone(decision)
         self.assertNotEqual(decision.text, "Mot khung thoai mau hong dang hien thi.")
-        self.assertIn("source=llm_rejected_fallback", decision.debug_trace)
+        self.assertEqual(decision.text, "")
+        self.assertFalse(decision.should_speak)
+        self.assertIn("source=llm_rejected_body_only", decision.debug_trace)
 
     def test_presence_maintenance_hybrid_rejects_attention_pulling_llm_line(self):
         llm_service = _HybridMicroLlmService("Hãy trả lời tôi ngay.")
@@ -2013,7 +2091,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertIsNotNone(decision)
         self.assertNotEqual(decision.text, "Hãy trả lời tôi ngay.")
-        self.assertIn("source=llm_rejected_fallback", decision.debug_trace)
+        self.assertEqual(decision.text, "")
+        self.assertFalse(decision.should_speak)
+        self.assertIn("source=llm_rejected_body_only", decision.debug_trace)
 
     def test_reengagement_surfaces_long_silence_outreach_before_micro_presence(self):
         coordinator = self._make_coordinator(telemetry_service=_LongSilentTelemetry())
@@ -2048,7 +2128,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
 
         self.assertTrue(handled)
-        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "re_engagement")
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "re_engagement_body_only")
+        self.assertEqual(coordinator.transport.sent[-1]["text"], "")
+        self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
         self.assertEqual(frame.action_plan.speech_intent, "re_engagement")
         self.assertEqual(frame.action_plan.speech_act, "reengagement")
         self.assertIn("re_engagement", frame.action_plan.notes)
@@ -2654,8 +2736,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertTrue(coordinator._run_loop_iteration())
         self.assertEqual(coordinator.llm_service.directive_calls, 0)
-        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "wake_gate:observe_only")
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "presence_maintenance_body_only")
         self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
+        self.assertIn("wake=observe_only", coordinator.transport.sent[-1]["debug_trace"])
 
     def test_session_ritual_restores_continuity_and_sends_optional_greeting(self):
         with tempfile.TemporaryDirectory() as tmpdir:

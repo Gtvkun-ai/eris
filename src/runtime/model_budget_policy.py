@@ -214,6 +214,7 @@ class ModelBudgetPolicyConfig:
     queue_poll_seconds: float = field(default_factory=lambda: _env_float("ERIS_MODEL_QUEUE_POLL", 0.20))
     max_queue_size: int = field(default_factory=lambda: _env_int("ERIS_MODEL_QUEUE_MAX", 32))
     assume_gtx_1650ti_4gb: bool = field(default_factory=lambda: _env_flag("ERIS_ASSUME_4GB_VRAM", True))
+    vision_bypass_vram_guard: bool = field(default_factory=lambda: _env_flag("ERIS_VISION_BYPASS_VRAM_GUARD", False))
     nvidia_smi_timeout: float = 0.35
     sensory_cpu_soft_block_percent: float = field(default_factory=lambda: _env_float("ERIS_SENSORY_CPU_SOFT_BLOCK", 96.0))
     sensory_ram_soft_block_percent: float = field(default_factory=lambda: _env_float("ERIS_SENSORY_RAM_SOFT_BLOCK", 94.0))
@@ -336,6 +337,7 @@ class ModelBudgetPolicy:
             "queue_depth": len(self._queue),
             "heavy_tier": heavy_tier,
             "active_lock_ignored": bool(ignore_active_lock),
+            "vision_vram_guard_bypassed": self._should_bypass_vision_vram_guard(tier),
             "reserved_vram_mb": round(reserved_vram, 2),
             "external_vram_used_mb": round(external_vram_used, 2),
             "external_vram_percent": round(external_vram_percent, 2),
@@ -695,6 +697,14 @@ class ModelBudgetPolicy:
             return max(0.0, float(self.config.sensory_vram_reservation_mb))
         return 0.0
 
+    def _should_bypass_vision_vram_guard(self, tier: str) -> bool:
+        if tier != "vision_compressor":
+            return False
+        return bool(
+            getattr(self.config, "vision_bypass_vram_guard", False)
+            or getattr(self.config, "assume_gtx_1650ti_4gb", False)
+        )
+
     def _reserved_vram_for_active_leases_locked(self) -> float:
         return sum(self._estimated_vram_need_mb(lease.tier) for lease in self._active_leases.values())
 
@@ -724,6 +734,7 @@ class ModelBudgetPolicy:
         vram = float(external_vram_percent or 0.0)
         local_tier = not uses_remote_api and tier != "unknown"
         sensory_tier = tier == "sensory_0_6b"
+        bypass_vision_vram_guard = self._should_bypass_vision_vram_guard(tier)
 
         if sensory_tier:
             if cpu >= self.config.sensory_cpu_soft_block_percent:
@@ -740,7 +751,7 @@ class ModelBudgetPolicy:
         if local_tier:
             if gpu >= self.config.gpu_block_percent:
                 reasons.append("gpu_busy")
-            if vram >= self.config.vram_block_percent:
+            if vram >= self.config.vram_block_percent and not bypass_vision_vram_guard:
                 reasons.append("vram_busy")
             if snapshot.is_game_or_heavy_app and (
                 gpu >= self.config.heavy_foreground_gpu_percent or vram >= self.config.heavy_foreground_vram_percent
@@ -752,7 +763,7 @@ class ModelBudgetPolicy:
             needed_vram = self._estimated_vram_need_mb(tier)
             if needed_vram > 0.0 and snapshot.vram_total_mb > 0.0:
                 headroom = max(0.0, snapshot.vram_total_mb - max(0.0, snapshot.external_vram_used_mb or 0.0))
-                if headroom < needed_vram:
+                if headroom < needed_vram and not bypass_vision_vram_guard:
                     reasons.append("vram_headroom_low")
 
         return list(dict.fromkeys(reasons))

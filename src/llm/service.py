@@ -9,6 +9,7 @@ import time
 import requests
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
+from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
 from .contracts import (
     AUTONOMOUS_BEHAVIOR_PROMPT,
     CHAT_RULES_PROMPT,
@@ -206,6 +207,15 @@ class LlmService:
         return status in self._RETRYABLE_HTTP_STATUS
 
     def _build_service_error_fallback(self, *, channel: str, reason: str, fallback_text: str = "") -> str:
+        if no_fallback_mode_enabled():
+            return build_no_fallback_payload(
+                channel=channel,
+                reason=reason,
+                text="" if channel != "chat" else "",
+                should_speak=(channel == "chat"),
+                confidence=0.0,
+                reasoning_tags=("service_block",),
+            )
         payload = {
             "text": self._safe_fallback_text(fallback_text, channel=channel),
             "intent": "fallback_reply",
@@ -390,6 +400,18 @@ class LlmService:
     def _chat_act_repair_signal(self, act: ChatAct) -> dict:
         signal = CHAT_ACT_REPAIR_SIGNALS.get(act)
         return dict(signal or {})
+
+    def _normalize_vietnamese_ascii(self, text: str) -> str:
+        return _normalize_vietnamese_ascii_text(text)
+
+    def _deterministic_chat_act_fallback_text(self, act: ChatAct, raw_user_text: str = "") -> str:
+        if act == ChatAct.INSULT_PROVOCATION:
+            return "Đòn đó hơi thiếu trí tưởng tượng, thưa Ngài."
+        if act == ChatAct.IDENTITY_REDUCTION:
+            return "Gọi tôi là công cụ cũng không làm câu đó sắc hơn."
+        if act == ChatAct.DIRECT_QUESTION:
+            return "Tôi chưa đủ chắc để đoán ý Ngài."
+        return ""
 
     def _payload_with_repaired_chat_act_text(self, raw_json: str, *, act: ChatAct, text: str, reason: str) -> str:
         repaired_text = self._coerce_text_value(text).strip()
@@ -1382,6 +1404,8 @@ class LlmService:
         )
 
     def _safe_fallback_text(self, raw_text: str, *, channel: str) -> str:
+        if no_fallback_mode_enabled():
+            return ""
         text = (raw_text or "").strip()
         if self._looks_like_prompt_leak(text) or self._looks_like_malformed_decision_json(text):
             if channel == "chat":
@@ -1400,6 +1424,14 @@ class LlmService:
         return text
 
     def _build_empty_text_fallback(self, *, channel: str) -> str:
+        if no_fallback_mode_enabled():
+            return build_no_fallback_payload(
+                channel=channel,
+                reason=f"empty_text_{channel}",
+                should_speak=(channel == "chat"),
+                confidence=0.0,
+                reasoning_tags=("empty_text_block",),
+            )
         fallback_text = "Một câu nhỏ thôi, khỏi dựng sân khấu."
         if channel == "chat":
             fallback_text = "Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại."
@@ -1644,6 +1676,9 @@ class LlmService:
         allow_local_fallback: bool = False,
         force_local_fallback: bool = False,
     ) -> str:
+        if no_fallback_mode_enabled():
+            allow_local_fallback = False
+            force_local_fallback = False
         max_tokens = 260 if channel == "chat" else 320
         if require_text:
             messages = self._with_non_empty_text_rule(messages)
@@ -2503,6 +2538,95 @@ class LlmService:
             seeds = (str(seed), *tuple(seeds or ()))
         if context and not micro_context:
             micro_context = context
+        fallback_text = str(fallback_text or "").strip()
+        system_prompt = (
+            "You are ERIS's micro-presence wording layer. "
+            "Return exactly one valid JSON object with this schema: "
+            "{\"text\": string}. "
+            "The text value is empty when the flags do not justify speech; otherwise it is the final Vietnamese line. "
+            "Use Vietnamese with full diacritics only when text is non-empty. "
+            "No analysis. No markdown. No English placeholder text. "
+            "Generate from cognitive flags and evidence seeds, not from a Python fallback. "
+            "Write a small concrete Vietnamese aside, not proof that ERIS is alive."
+        )
+        seed_lines = tuple(str(item).strip() for item in (seeds or ()) if str(item).strip())[:8]
+        context = micro_context or {}
+        micro_flags = context.get("micro_presence_flags", "") if isinstance(context, dict) else ""
+        runtime_seed_text = " | ".join(seed_lines) if seed_lines else "<none>"
+        user_msg = (
+            f"Kind: {kind_name}\n"
+            f"Legacy fallback: {fallback_text or '<none>'}\n"
+            f"Runtime seeds: {runtime_seed_text}\n"
+            f"Micro context: {json.dumps(context, ensure_ascii=False)}\n"
+            f"Cognitive flags: {micro_flags or '<none>'}\n"
+            f"Signal score: {float(signal_score or 0.0):.2f}\n"
+            f"Avoid repeating: {avoid_text}\n"
+            f"focus_kind={focus_kind}; focus_summary={focus_summary}; idle_seconds={int(float(idle_seconds or 0.0))}\n\n"
+            "Principle:\n"
+            f"- If speech is warranted: Vietnamese only, 1-{max_words} words, one tiny line with full diacritics.\n"
+            "- If cognitive flags say body-only is enough, evidence is too thin, or this would be filler, return {\"text\":\"\"}.\n"
+            "- Do not copy Legacy fallback; it is present only for compatibility and may be empty.\n"
+            "- This is a tiny concrete aside: dry, casual, slightly imperfect.\n"
+            "- No status report, no system narration, no explaining.\n"
+            "- Do not invent screen/action facts. No fake certainty.\n"
+            "- Do not mention telemetry, evidence, signal, debug, CPU, RAM.\n"
+            "- Avoid hollow presence lines like 'TÃ´i Ä‘Ã¢y', 'TÃ´i Ä‘ang nghe', 'TÃ´i váº«n quan sÃ¡t'.\n"
+            "- Speak once or stay text-empty.\n"
+        )
+        if is_reengagement:
+            user_msg += "- Re-engagement may be a soft, light check-in.\n"
+        else:
+            user_msg += "- Presence maintenance should feel like a small aside.\n"
+        user_msg += (
+            "\nOutput contract:\n"
+            "- Return exactly one JSON object.\n"
+            "- Shape: {\"text\":\"actual Vietnamese line or empty string\"}\n"
+            "- The value of text must be empty when body-only is better, otherwise the final sentence to speak.\n"
+            "- Never return placeholder text such as 'short Vietnamese line'.\n"
+            "- non-empty text must be Vietnamese only and keep full diacritics.\n"
+            "- non-empty text must be speakable as-is.\n"
+        )
+        try:
+            response = self.client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.35,
+                frequency_penalty=0.7,
+                presence_penalty=0.2,
+                max_tokens=80,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+        except requests.HTTPError as exc:
+            if self._is_retryable_http_5xx(exc):
+                time.sleep(0.15)
+                try:
+                    response = self.client.create_chat_completion(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_msg},
+                        ],
+                        temperature=0.35,
+                        frequency_penalty=0.7,
+                        presence_penalty=0.2,
+                        max_tokens=80,
+                        response_format={"type": "json_object"},
+                        grammar=None,
+                    )
+                except Exception:
+                    return ""
+            else:
+                raise
+        except Exception:
+            return ""
+
+        raw = self._extract_content(response)
+        extracted = self._extract_first_json_object(raw) or raw
+        payload = self._parse_json_object(extracted) or {}
+        payload = self._normalize_payload_keys(payload) if isinstance(payload, dict) else {}
+        return self._coerce_text_value(payload.get("text", "")).strip()
         if not fallback_text:
             fallback_text = str(seed or "").strip() or "Mạch này vẫn hơi nghẽn."
         system_prompt = (
@@ -2593,6 +2717,8 @@ class LlmService:
 
     def generate_screen_facts(self, *, screen_image_data_uri: str, mode: str = "ambient") -> tuple[list[str], str]:
         if not screen_image_data_uri:
+            if no_fallback_mode_enabled():
+                raise RuntimeError("no_fallback_vision:no_image")
             return [], "no_image"
         vision_client = self.vision_client or self.client
 
@@ -2659,10 +2785,14 @@ class LlmService:
                     )
                 except Exception:
                     status = self._http_status_code(exc)
+                    if no_fallback_mode_enabled():
+                        raise RuntimeError(f"no_fallback_vision:http_5xx:{status}") from exc
                     return [], f"vision_http_5xx_fallback status={status}"
             else:
                 raise
         except Exception as exc:
+            if no_fallback_mode_enabled():
+                raise RuntimeError(f"no_fallback_vision:exception:{type(exc).__name__}") from exc
             return [], f"vision_exception_fallback type={type(exc).__name__}"
         raw = self._extract_content(response)
         extracted = self._extract_first_json_object(raw) or raw
@@ -2813,14 +2943,25 @@ class LlmService:
             retry_guarded = self._guard_chat_output(retry_raw, raw_user_text=effective_user_text)
             if self._chat_text_family(self._decision_payload_text(retry_guarded)) != "uncertainty_dodge":
                 return retry_guarded
-            repaired = self._repair_chat_act_payload_with_llm(
-                retry_guarded,
-                act=act,
-                raw_user_text=effective_user_text,
-                reason="insult_boundary_after_uncertainty_retry",
-            )
-            if self._chat_text_family(self._decision_payload_text(repaired)) != "uncertainty_dodge":
-                return repaired
+            can_llm_repair_chat_act = self.style_client is not None and self.style_client is not self.client
+            if can_llm_repair_chat_act:
+                repaired = self._repair_chat_act_payload_with_llm(
+                    retry_guarded,
+                    act=act,
+                    raw_user_text=effective_user_text,
+                    reason="insult_boundary_after_uncertainty_retry",
+                )
+                if self._chat_text_family(self._decision_payload_text(repaired)) != "uncertainty_dodge":
+                    return repaired
+            if not no_fallback_mode_enabled():
+                fallback_text = self._deterministic_chat_act_fallback_text(act, effective_user_text)
+                if fallback_text:
+                    return self._payload_with_repaired_chat_act_text(
+                        retry_guarded,
+                        act=act,
+                        text=fallback_text,
+                        reason="insult_boundary_fallback_after_uncertainty_retry",
+                    )
             return retry_guarded
 
         return guarded

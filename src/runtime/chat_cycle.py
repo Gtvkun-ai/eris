@@ -13,6 +13,7 @@ from cortex.relational_feedback import RelationalFeedbackAnalyzer, merge_affect_
 from cortex.turn_semantics import TurnSemanticsEngine, TurnSemanticsReport
 from domain import Decision
 from llm import FormatViolationException
+from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.controlled_slippage import (
     apply_slippage_to_personality_lens,
@@ -631,6 +632,7 @@ class ChatCycleMixin:
         max_format_retries = 2
         raw = None
         format_repair_fallback = False
+        no_fallback_block = False
 
         self._set_background_memory_digest_remote_inflight(True)
         try:
@@ -681,37 +683,52 @@ class ChatCycleMixin:
                         getattr(exc, "reason", str(exc)),
                     )
             if raw is None:
-                frame.debug_notes.append(f"llm_format_errors={format_errors}; route=local_fallback")
-                self.logger.warning(
-                    "[llm format retry] remote retries exhausted; routing chat turn to local fallback | errors=%d",
-                    format_errors,
-                )
-                try:
-                    raw = self.llm_service.generate_chat_reply(
-                        **chat_generation_kwargs,
-                        format_retry_context=format_retry_context,
-                        last_failure="format_error",
-                        allow_local_fallback=True,
-                        force_local_fallback=True,
-                    )
-                except FormatViolationException as exc:
-                    format_errors += 1
-                    format_repair_fallback = True
-                    self.last_failure = "format_error"
-                    conversation_report.state.last_failure = ConversationFailure(
-                        type="format_error",
-                        trigger=str(getattr(exc, "reason", "") or exc),
-                        correction_needed="Deterministic chat fallback was used after remote and local JSON failures.",
-                    )
-                    frame.debug_notes.append(
-                        f"llm_format_errors={format_errors}; route=deterministic_fallback; reason={getattr(exc, 'reason', str(exc))}"
-                    )
+                if no_fallback_mode_enabled():
+                    no_fallback_block = True
+                    frame.debug_notes.append(f"llm_format_errors={format_errors}; route=no_fallback_block")
                     self.logger.warning(
-                        "[llm format fallback] recovered chat turn after local JSON failure | errors=%d | reason=%s",
+                        "[llm format block] remote retries exhausted under no-fallback mode | errors=%d",
                         format_errors,
-                        getattr(exc, "reason", str(exc)),
                     )
-                    raw = self._build_chat_format_repair_fallback_raw(exc)
+                    raw = self._build_chat_format_repair_fallback_raw(
+                        FormatViolationException(
+                            "chat_format_contract_exhausted_in_no_fallback_mode",
+                            channel="chat",
+                            raw_text=str(raw or ""),
+                        )
+                    )
+                else:
+                    frame.debug_notes.append(f"llm_format_errors={format_errors}; route=local_fallback")
+                    self.logger.warning(
+                        "[llm format retry] remote retries exhausted; routing chat turn to local fallback | errors=%d",
+                        format_errors,
+                    )
+                    try:
+                        raw = self.llm_service.generate_chat_reply(
+                            **chat_generation_kwargs,
+                            format_retry_context=format_retry_context,
+                            last_failure="format_error",
+                            allow_local_fallback=True,
+                            force_local_fallback=True,
+                        )
+                    except FormatViolationException as exc:
+                        format_errors += 1
+                        format_repair_fallback = True
+                        self.last_failure = "format_error"
+                        conversation_report.state.last_failure = ConversationFailure(
+                            type="format_error",
+                            trigger=str(getattr(exc, "reason", "") or exc),
+                            correction_needed="Deterministic chat fallback was used after remote and local JSON failures.",
+                        )
+                        frame.debug_notes.append(
+                            f"llm_format_errors={format_errors}; route=deterministic_fallback; reason={getattr(exc, 'reason', str(exc))}"
+                        )
+                        self.logger.warning(
+                            "[llm format fallback] recovered chat turn after local JSON failure | errors=%d | reason=%s",
+                            format_errors,
+                            getattr(exc, "reason", str(exc)),
+                        )
+                        raw = self._build_chat_format_repair_fallback_raw(exc)
         finally:
             self._set_background_memory_digest_remote_inflight(False)
         self._log_raw_llm_output("chat", raw)
@@ -728,6 +745,13 @@ class ChatCycleMixin:
                 decision.debug_trace,
                 "format_violation_recovered",
             )
+        if no_fallback_block:
+            decision.intent = "no_fallback_block"
+            decision.action = "none"
+            decision.reasoning_tags = ("no_fallback_mode", "format_error")
+            decision.should_speak = True
+            decision.confidence = 0.0
+            decision.parse_mode = "no_fallback_block"
         self._log_decision_stage("chat", "after_parser", decision)
         self._log_decision_stage("chat", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
@@ -740,6 +764,14 @@ class ChatCycleMixin:
 
     def _build_chat_format_repair_fallback_raw(self, exc: FormatViolationException) -> str:
         reason = str(getattr(exc, "reason", "") or exc)
+        if no_fallback_mode_enabled():
+            return build_no_fallback_payload(
+                channel="chat",
+                reason=reason,
+                should_speak=True,
+                confidence=0.0,
+                reasoning_tags=("format_block",),
+            )
         payload = {
             "text": "Tôi bị lỗi định dạng khi sinh phản hồi. Ý chính: tôi chưa có đủ dữ liệu chắc để trả lời an toàn.",
             "intent": "format_repair_fallback",
@@ -1161,7 +1193,7 @@ class ChatCycleMixin:
         service = getattr(self, "llm_service", None)
         reroll = getattr(service, "rewrite_guard_violation_text", None)
         if not callable(reroll):
-            return ""
+            return self._local_grounding_preempt_text(report, user_text=user_text)
         fallback_decision = getattr(report, "fallback_decision", None)
         missing = tuple(str(item) for item in (getattr(report, "missing_evidence", ()) or ()) if str(item or "").strip())
         reason = (
@@ -1195,21 +1227,38 @@ class ChatCycleMixin:
                 self.logger.warning("[source grounding] preempt llm repair failed: %s", exc)
             except Exception:
                 pass
-            return ""
+            return self._local_grounding_preempt_text(report, user_text=user_text)
         text = re.sub(r"\s+", " ", str(text or "")).strip()
         if not text:
-            return ""
+            return self._local_grounding_preempt_text(report, user_text=user_text)
         missing_set = set(missing)
         try:
             if "file_evidence" in missing_set and self._looks_like_file_grounded_claim(text, report=report):
-                return ""
+                return self._local_grounding_preempt_text(report, user_text=user_text)
             if "screen_evidence" in missing_set and self._looks_like_screen_grounded_claim(text):
-                return ""
+                return self._local_grounding_preempt_text(report, user_text=user_text)
             if "web_access_or_search_result" in missing_set and self._looks_like_live_web_claim(text):
-                return ""
+                return self._local_grounding_preempt_text(report, user_text=user_text)
         except Exception:
-            return ""
+            return self._local_grounding_preempt_text(report, user_text=user_text)
         return text
+
+    def _local_grounding_preempt_text(self, report, *, user_text: str = "") -> str:
+        del user_text
+        mode = str(getattr(report, "preempt_mode", "") or "")
+        file_mentions = tuple(str(item) for item in (getattr(report, "file_mentions", ()) or ()) if str(item or "").strip())
+        if mode == "filename_only":
+            label = file_mentions[0] if file_mentions else "file đó"
+            return f"Tôi mới chỉ có tên file {label}, chưa có nội dung file để kết luận."
+        if mode == "deictic_without_vision":
+            return "Tôi chưa có evidence màn hình đủ mới để nói câu này chắc được."
+        missing = set(str(item) for item in (getattr(report, "missing_evidence", ()) or ()) if str(item or "").strip())
+        if "file_evidence" in missing:
+            label = file_mentions[0] if file_mentions else "file đó"
+            return f"Tôi chưa có nội dung {label} để trả lời chắc tay."
+        if "screen_evidence" in missing:
+            return "Tôi chưa có evidence màn hình đủ rõ cho câu hỏi này."
+        return ""
 
     def _build_user_message_signature(self, user_text: str) -> str:
         normalized = self._normalize_user_message(user_text)

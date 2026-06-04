@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
@@ -9,6 +10,7 @@ from dataclasses import dataclass
 from cortex.contracts import SessionRitualReport
 from cortex.social_presence import SocialPresenceDetector
 from domain import Decision
+from runtime.no_fallback_policy import no_fallback_mode_enabled
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +59,36 @@ class SocialPresenceEvent:
         }
 
 
+
+
+@dataclass(frozen=True, slots=True)
+class MicroPresenceCue:
+    """Steering flags for micro-presence, not public wording."""
+
+    needs_micro_presence: bool
+    focus_family: str = "general_idle"
+    confidence: float = 0.0
+    curiosity: float = 0.0
+    missing_evidence_ids: bool = False
+    body_action: str = "idle_shift"
+    reason: str = ""
+    evidence: tuple[str, ...] = ()
+    should_call_llm: bool = False
+    allow_body_only: bool = True
+
+    def to_context(self) -> dict[str, object]:
+        return {
+            "needs_micro_presence": bool(self.needs_micro_presence),
+            "focus_family": self.focus_family,
+            "confidence": round(float(self.confidence), 3),
+            "curiosity": round(float(self.curiosity), 3),
+            "missing_evidence_ids": bool(self.missing_evidence_ids),
+            "body_action": self.body_action,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+            "should_call_llm": bool(self.should_call_llm),
+            "allow_body_only": bool(self.allow_body_only),
+        }
 
 
 class PresenceControllerMixin:
@@ -219,19 +251,174 @@ class PresenceControllerMixin:
         return present or idle_seconds <= 300.0 or bool(recent_events)
 
     def _presence_maintenance_lines(self, snapshot) -> tuple[str, ...]:
+        return ()
+
+    def _focus_family_for_snapshot(self, snapshot) -> str:
+        focus_kind = str(getattr(snapshot, "active_window_kind", "") or "").strip().lower()
         active_window = str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or "")
-        browser_url = str(getattr(snapshot, "browser_url", "") or "")
-        focus_kind = str(getattr(snapshot, "active_window_kind", "") or "")
         focus_summary = str(getattr(snapshot, "focus_summary", "") or "")
+        browser_url = str(getattr(snapshot, "browser_url", "") or "")
+        haystack = self._normalize_user_message(" ".join((focus_kind, active_window, focus_summary, browser_url)))
+        if focus_kind in {"coding", "documentation"} or any(term in haystack for term in ("code", "vscode", "visual studio", "debug", "python", "godot")):
+            return "code_stalled"
+        if any(term in haystack for term in ("meet", "meeting", "cuoc goi", "cuộc gọi")):
+            return "meeting_idle"
+        if any(term in haystack for term in ("youtube", "music", "nhac", "nhạc")):
+            return "media_background"
+        if focus_kind == "communication" or any(term in haystack for term in ("chat", "message", "zalo", "discord", "slack")):
+            return "communication_idle"
+        return "general_idle"
+
+    def _internal_curiosity_for_micro_presence(self) -> float:
+        try:
+            state = self._get_internal_state()
+        except Exception:
+            state = None
+        values: list[float] = []
+        if state is not None:
+            for name in ("curiosity", "curiosity_pressure", "silence_pressure"):
+                try:
+                    raw = getattr(state, name, None)
+                    if raw is not None:
+                        values.append(float(raw))
+                except Exception:
+                    pass
+            mental = getattr(state, "mental_processes", None)
+            proc = getattr(mental, "curiosity", None) if mental is not None else None
+            if proc is not None:
+                for name in ("pressure", "level"):
+                    try:
+                        raw = getattr(proc, name, None)
+                        if raw is not None:
+                            values.append(float(raw))
+                    except Exception:
+                        pass
+        return max(0.0, min(1.0, max(values or (0.0,))))
+
+    def _derive_micro_presence_cue(
+        self,
+        *,
+        snapshot,
+        social_presence_event: SocialPresenceEvent | None = None,
+        reason: str = "presence_maintenance",
+        signal_score: float = 0.0,
+    ) -> MicroPresenceCue:
+        focus_family = self._focus_family_for_snapshot(snapshot)
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        recent_events = tuple(str(item or "").strip() for item in (getattr(snapshot, "recent_events", ()) or ()) if str(item or "").strip())
         vision_facts = tuple(str(item or "").strip() for item in (getattr(snapshot, "vision_facts", ()) or ()) if str(item or "").strip())
-        cue = vision_facts[0] if vision_facts else (focus_summary or active_window or focus_kind)
-        return self._cue_micro_lines(
-            cue=cue,
-            active_window=active_window,
-            browser_url=browser_url,
-            focus_kind=focus_kind,
-            focus_summary=focus_summary,
-            presence=True,
+        has_screen_evidence = bool(vision_facts or self._has_concrete_screen_signal(snapshot))
+        present = bool(getattr(social_presence_event, "present", False))
+        curiosity = self._internal_curiosity_for_micro_presence()
+
+        evidence: list[str] = []
+        if idle_seconds:
+            evidence.append(f"idle_seconds={idle_seconds:.1f}")
+        if focus_family:
+            evidence.append(f"focus_family={focus_family}")
+        if recent_events:
+            evidence.append("recent_events=" + ",".join(recent_events[:3]))
+        if vision_facts:
+            evidence.append("vision_fact=" + vision_facts[0][:100])
+        if present:
+            evidence.append("social_presence_event=true")
+
+        stalled = idle_seconds >= 60.0 or self.presence_maintenance_silent_cycles >= self.presence_maintenance_silent_loop_threshold
+        confidence = max(float(signal_score or 0.0), 0.32)
+        if focus_family == "code_stalled" and stalled:
+            confidence = max(confidence, 0.62 if has_screen_evidence else 0.48)
+            body_action = "ObserveCode" if has_screen_evidence else "tilt_head"
+        elif present or recent_events or idle_seconds >= 90.0:
+            confidence = max(confidence, 0.46)
+            body_action = "tilt_head" if curiosity >= 0.55 and not has_screen_evidence else "idle_shift"
+        else:
+            body_action = "idle_shift"
+
+        needs = bool(stalled or present or recent_events or signal_score >= 0.38)
+        return MicroPresenceCue(
+            needs_micro_presence=needs,
+            focus_family=focus_family,
+            confidence=max(0.0, min(1.0, confidence)),
+            curiosity=max(0.0, min(1.0, curiosity)),
+            missing_evidence_ids=not has_screen_evidence,
+            body_action=body_action,
+            reason=reason,
+            evidence=tuple(dict.fromkeys(evidence))[:8],
+            should_call_llm=bool(needs and (has_screen_evidence or curiosity >= 0.35 or focus_family in {"code_stalled", "communication_idle"})),
+            allow_body_only=True,
+        )
+
+    def _body_only_presence_decision(self, cue: MicroPresenceCue, *, intent: str, parse_mode: str, source: str = "flag_only") -> Decision:
+        payload = {
+            "type": "MotionCommand",
+            "name": cue.body_action or "idle_shift",
+            "focus_family": cue.focus_family,
+            "reason": cue.reason,
+            "confidence": round(float(cue.confidence), 3),
+            "curiosity": round(float(cue.curiosity), 3),
+            "missing_evidence_ids": bool(cue.missing_evidence_ids),
+            "evidence": list(cue.evidence),
+        }
+        animation = "read" if cue.body_action == "ObserveCode" else "stand"
+        return Decision(
+            text="",
+            animation=animation,
+            intent=intent,
+            action="MotionCommand",
+            action_input=json.dumps(payload, ensure_ascii=False),
+            reasoning_tags=("body_only", "micro_presence_flag", cue.focus_family),
+            should_speak=False,
+            confidence=max(0.30, min(0.62, float(cue.confidence or 0.0))),
+            parse_mode=parse_mode,
+            debug_trace=(
+                f"{parse_mode}; source={source}; needs_micro_presence={cue.needs_micro_presence}; "
+                f"focus_family={cue.focus_family}; body_action={cue.body_action}; missing_evidence_ids={cue.missing_evidence_ids}"
+            ),
+            motion_intent="pose",
+        )
+
+    def _is_body_only_presence_decision(self, decision: Decision | None) -> bool:
+        if decision is None:
+            return False
+        return (
+            not bool(getattr(decision, "should_speak", True))
+            and str(getattr(decision, "action", "") or "") == "MotionCommand"
+        )
+
+    def _note_autonomous_presence_action(
+        self,
+        *,
+        presence_maintenance: bool = False,
+        reengagement: bool = False,
+        now: float | None = None,
+    ) -> None:
+        current_time = time.time() if now is None else now
+        self.presence_maintenance_silent_cycles = 0
+        if presence_maintenance:
+            self.last_presence_maintenance_at = current_time
+        if reengagement:
+            self.last_reengagement_at = current_time
+            self.reengagement_quiet_cycles = 0
+
+    def _generate_micro_presence_from_cue(
+        self,
+        *,
+        kind: str,
+        snapshot,
+        cue: MicroPresenceCue,
+        seeds: tuple[str, ...] = (),
+        force_llm: bool = False,
+    ) -> tuple[str, str]:
+        if not cue.needs_micro_presence or not cue.should_call_llm:
+            return "", "flag_only_body"
+        return self._hybrid_micro_presence_text(
+            kind=kind,
+            snapshot=snapshot,
+            fallback_text="",
+            seeds=seeds,
+            micro_context={"micro_presence_flags": json.dumps(cue.to_context(), ensure_ascii=False)},
+            force_llm=force_llm,
+            signal_score=cue.confidence,
         )
 
     def _cue_micro_lines(
@@ -244,6 +431,8 @@ class PresenceControllerMixin:
         focus_summary: str = "",
         presence: bool = False,
     ) -> tuple[str, ...]:
+        del cue, active_window, browser_url, focus_kind, focus_summary, presence
+        return ()
         compact_cue = re.sub(r"\s+", " ", str(cue or "").strip()).strip(" .")
         window = re.sub(r"\s+", " ", str(active_window or "").strip()).strip(" .")
         summary = re.sub(r"\s+", " ", str(focus_summary or "").strip()).strip(" .")
@@ -378,35 +567,51 @@ class PresenceControllerMixin:
         snapshot,
         now: float | None = None,
     ) -> Decision | None:
+        del now
         if self.presence_maintenance_silent_cycles < 1:
             return None
-        cue, score = self._vision_fact_micro_observation_candidate(frame)
-        if not cue:
+        cue_text, score = self._vision_fact_micro_observation_candidate(frame)
+        if not cue_text:
             return None
-        lines = self._cue_micro_lines(
-            cue=cue,
-            active_window=str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or ""),
-            browser_url=str(getattr(snapshot, "browser_url", "") or ""),
-            focus_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
-            focus_summary=str(getattr(snapshot, "focus_summary", "") or ""),
+        cue = self._derive_micro_presence_cue(
+            snapshot=snapshot,
+            reason="micro_observation",
+            signal_score=score,
         )
-        text = self._choose_local_micro_line(
-            lines,
-            counter=self.presence_maintenance_silent_cycles,
-            threshold=1,
+        cue = MicroPresenceCue(
+            needs_micro_presence=True,
+            focus_family=cue.focus_family,
+            confidence=max(cue.confidence, score),
+            curiosity=cue.curiosity,
+            missing_evidence_ids=False,
+            body_action="ObserveCode" if cue.focus_family == "code_stalled" else cue.body_action,
+            reason="vision_fact_micro_observation",
+            evidence=tuple(dict.fromkeys((cue_text, *cue.evidence)))[:8],
+            should_call_llm=True,
+            allow_body_only=True,
+        )
+        text, source = self._generate_micro_presence_from_cue(
+            kind="micro_observation",
+            snapshot=snapshot,
+            cue=cue,
+            seeds=(cue_text,),
+            force_llm=True,
         )
         if not text:
-            return None
+            return self._body_only_presence_decision(cue, intent="micro_observation", parse_mode="micro_observation_body_only", source=source)
         return Decision(
             text=text,
-            animation="stand",
+            animation="read" if cue.focus_family == "code_stalled" else "stand",
             intent="micro_observation",
-            reasoning_tags=("micro_observation", "vision_fact"),
+            action="",
+            reasoning_tags=("micro_observation", "vision_fact", "llm_wording", cue.focus_family),
             should_speak=True,
             confidence=max(0.50, min(0.78, score)),
             parse_mode="micro_observation",
             debug_trace=(
                 "micro_observation_layer"
+                f"; source={source}"
+                f"; focus_family={cue.focus_family}"
                 f"; vision_fact_score={score:.2f}"
                 f"; silent_cycles={self.presence_maintenance_silent_cycles}"
             ),
@@ -452,18 +657,21 @@ class PresenceControllerMixin:
             fe_plan=fe_plan,
             notes=("micro_observation", f"vision_fact_score={score:.2f}", f"silent_cycles={self.presence_maintenance_silent_cycles}"),
         )
-        if not frame.action_plan.should_speak:
+        if not frame.action_plan.should_speak and not self._is_body_only_presence_decision(decision):
             return False
         decision = self.ti_governor.enforce_decision(decision, ti_report)
-        decision.parse_mode = "micro_observation"
-        self.fe_style_memory = self.fe_renderer.remember_style(
-            self.fe_style_memory,
-            plan=fe_plan,
-            rendered_text=decision.text,
-        )
-        self.last_text = decision.text
-        self.last_autonomous_spoken_at = now
-        self._note_autonomous_spoken(now=now)
+        if bool(getattr(decision, "should_speak", True)):
+            decision.parse_mode = "micro_observation"
+            self.fe_style_memory = self.fe_renderer.remember_style(
+                self.fe_style_memory,
+                plan=fe_plan,
+                rendered_text=decision.text,
+            )
+            self.last_text = decision.text
+            self.last_autonomous_spoken_at = now
+            self._note_autonomous_spoken(now=now)
+        else:
+            self._note_autonomous_presence_action(presence_maintenance=True, now=now)
         self._apply_position_update(decision)
         frame.final_decision = self._decision_to_frame_dict(decision)
         self._set_cognitive_memory_update(frame, decision=decision, notes=("micro_observation",))
@@ -530,6 +738,57 @@ class PresenceControllerMixin:
         social_presence_event: SocialPresenceEvent | None = None,
         inner_thought: InnerThought | None = None,
     ) -> MicroPresenceSynthesis:
+        focus_kind = str(getattr(snapshot, "active_window_kind", "") or "").strip() or "general"
+        focus_summary = str(getattr(snapshot, "focus_summary", "") or "").strip()
+        active_window = str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or "").strip()
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        recent_events = tuple(
+            str(item or "").strip()
+            for item in (getattr(snapshot, "recent_events", ()) or ())
+            if str(item or "").strip()
+        )
+        seed_hint = str(getattr(inner_thought, "topic_seed", "") or "")
+        kind = self._micro_presence_kind_from_seed(seed_hint)
+
+        seeds: list[str] = []
+        haystack = self._normalize_user_message(" ".join((active_window, focus_summary, focus_kind, " ".join(recent_events))))
+        if active_window and not self._looks_internal_topic(active_window):
+            seeds.append(f"active_window={active_window[:80]}")
+        if focus_summary and not self._looks_internal_topic(focus_summary):
+            seeds.append(f"focus_summary={focus_summary[:96]}")
+        if focus_kind:
+            seeds.append(f"focus_kind={focus_kind}")
+        if any("log" in self._normalize_user_message(item) for item in recent_events):
+            seeds.append("pattern=repetitive_logs")
+        if idle_seconds >= 240:
+            seeds.append(f"idle_seconds={int(idle_seconds)}")
+        if any(term in haystack for term in ("code", "vscode", "visual studio", "debug", "godot", "python")):
+            seeds.append("focus_family=code_stalled")
+
+        thought_seeds = self._thought_residue_seeds(thought_stream_report)
+        if thought_seeds:
+            kind = "thought_residue"
+            seeds.extend(f"thought_seed={seed}" for seed in thought_seeds)
+
+        if kind == "social_residue" or bool(getattr(social_presence_event, "present", False)):
+            kind = "social_residue"
+            seeds.append("social_presence=True")
+        elif kind == "bodily_residue":
+            seeds.append("bodily_residue=True")
+
+        seeds_tuple = tuple(dict.fromkeys(seed for seed in seeds if str(seed or "").strip()))[:8]
+        return MicroPresenceSynthesis(
+            kind=kind,
+            seeds=seeds_tuple,
+            context={
+                "window": active_window[:80],
+                "idle": "long" if idle_seconds >= 240 else "short",
+                "pattern": "repetitive_logs" if any("log" in self._normalize_user_message(item) for item in recent_events) else "",
+                "focus": focus_kind,
+            },
+            fallback_text="",
+            should_verbalize=bool(seeds_tuple),
+        )
         focus_kind = str(getattr(snapshot, "active_window_kind", "") or "").strip() or "general"
         focus_summary = str(getattr(snapshot, "focus_summary", "") or "").strip() or focus_kind
         active_window = str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or "").strip()
@@ -598,6 +857,8 @@ class PresenceControllerMixin:
         return text
 
     def _local_grounded_micro_presence_text(self, synthesis: MicroPresenceSynthesis) -> str:
+        del synthesis
+        return ""
         candidates = tuple(synthesis.seeds or ()) or (synthesis.fallback_text,)
         for candidate in candidates:
             cleaned = re.sub(r"\s+", " ", str(candidate or "").strip()).replace("!", ".")
@@ -716,16 +977,19 @@ class PresenceControllerMixin:
         *,
         kind: str,
         snapshot,
-        fallback_text: str,
+        fallback_text: str = "",
         seeds: tuple[str, ...] = (),
         micro_context: dict[str, str] | None = None,
         force_llm: bool = False,
         signal_score: float = 0.0,
     ) -> tuple[str, str]:
-        if not fallback_text:
-            return "", "empty_fallback"
+        if no_fallback_mode_enabled() and not force_llm:
+            return "", "no_fallback_block"
         if not self._should_try_micro_presence_llm(kind=kind, force_llm=force_llm):
-            return fallback_text, "local"
+            return "", "flag_only_no_llm"
+        fallback_text = fallback_text or ""
+        if no_fallback_mode_enabled() and not force_llm:
+            return "", "no_fallback_block"
 
         generator = self._micro_presence_generator()
         try:
@@ -742,7 +1006,7 @@ class PresenceControllerMixin:
             )
         except Exception as exc:
             self.logger.warning("Micro-presence LLM failed: %s", exc)
-            return fallback_text, "llm_error_fallback"
+            return "", "llm_error_body_only"
 
         safe = self._sanitize_micro_presence_llm_text(
             draft,
@@ -750,7 +1014,7 @@ class PresenceControllerMixin:
             fallback_text=fallback_text,
         )
         if not safe:
-            return fallback_text, "llm_rejected_fallback"
+            return "", "llm_rejected_body_only"
         return safe, "llm_signal" if force_llm else "llm"
 
     def _filter_public_micro_decision(
@@ -800,37 +1064,37 @@ class PresenceControllerMixin:
         ):
             return None
 
-        lines = self._presence_maintenance_lines(snapshot)
-        if not lines:
-            return None
-        fallback_text = self._choose_local_micro_line(
-            lines,
-            counter=self.presence_maintenance_silent_cycles,
-            threshold=self.presence_maintenance_silent_loop_threshold,
+        cue = self._derive_micro_presence_cue(
+            snapshot=snapshot,
+            social_presence_event=social_presence_event,
+            reason="presence_maintenance",
         )
-        text, source = self._hybrid_micro_presence_text(
+        if not cue.needs_micro_presence:
+            return None
+        text, source = self._generate_micro_presence_from_cue(
             kind="presence_maintenance",
             snapshot=snapshot,
-            fallback_text=fallback_text,
-            seeds=lines,
-            micro_context={
-                "window": str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or "")[:80],
-                "focus": str(getattr(snapshot, "active_window_kind", "") or ""),
-                "vision": str((tuple(getattr(snapshot, "vision_facts", ()) or ("",))[0]) if tuple(getattr(snapshot, "vision_facts", ()) or ()) else "")[:120],
-            },
+            cue=cue,
+            seeds=cue.evidence,
         )
+        if not text:
+            return self._body_only_presence_decision(cue, intent="presence_maintenance", parse_mode="presence_maintenance_body_only", source=source)
 
         return Decision(
             text=text,
-            animation="stand",
+            animation="read" if cue.focus_family == "code_stalled" else "stand",
             intent="presence_maintenance",
-            reasoning_tags=("presence_maintenance", "micro_presence"),
+            action="",
+            reasoning_tags=("presence_maintenance", "micro_presence", "llm_wording", cue.focus_family),
             should_speak=True,
-            confidence=0.48,
+            confidence=max(0.38, min(0.62, cue.confidence)),
             parse_mode="presence_maintenance",
             debug_trace=(
                 "presence_maintenance_layer"
                 f"; source={source}"
+                f"; focus_family={cue.focus_family}"
+                f"; needs_micro_presence={cue.needs_micro_presence}"
+                f"; missing_evidence_ids={cue.missing_evidence_ids}"
                 f"; silent_cycles={self.presence_maintenance_silent_cycles}"
                 f"; threshold={self.presence_maintenance_silent_loop_threshold}"
             ),
@@ -870,24 +1134,29 @@ class PresenceControllerMixin:
             notes=("presence_maintenance", f"silent_cycles={self.presence_maintenance_silent_cycles}"),
         )
         decision = self.ti_governor.enforce_decision(decision, ti_report)
-        decision.parse_mode = "presence_maintenance"
-        decision = self._filter_public_micro_decision(
-            decision,
-            channel="autonomous",
-            frame=frame,
-            snapshot=snapshot,
-            speech_core=getattr(frame, "speech_core", None),
-        )
+        if bool(getattr(decision, "should_speak", True)):
+            decision.parse_mode = "presence_maintenance"
+            decision = self._filter_public_micro_decision(
+                decision,
+                channel="autonomous",
+                frame=frame,
+                snapshot=snapshot,
+                speech_core=getattr(frame, "speech_core", None),
+            )
         if not bool(getattr(decision, "should_speak", True)) or not str(getattr(decision, "text", "") or "").strip():
-            return False
-        self.fe_style_memory = self.fe_renderer.remember_style(
-            self.fe_style_memory,
-            plan=fe_plan,
-            rendered_text=decision.text,
-        )
-        self.last_text = decision.text
-        self.last_autonomous_spoken_at = now
-        self._note_autonomous_spoken(presence_maintenance=True, now=now)
+            if not self._is_body_only_presence_decision(decision):
+                return False
+        if bool(getattr(decision, "should_speak", True)) and str(getattr(decision, "text", "") or "").strip():
+            self.fe_style_memory = self.fe_renderer.remember_style(
+                self.fe_style_memory,
+                plan=fe_plan,
+                rendered_text=decision.text,
+            )
+            self.last_text = decision.text
+            self.last_autonomous_spoken_at = now
+            self._note_autonomous_spoken(presence_maintenance=True, now=now)
+        else:
+            self._note_autonomous_presence_action(presence_maintenance=True, now=now)
         self._apply_position_update(decision)
         frame.final_decision = self._decision_to_frame_dict(decision)
         self._set_cognitive_memory_update(frame, decision=decision, notes=("presence_maintenance",))
@@ -988,6 +1257,8 @@ class PresenceControllerMixin:
 
     # Dựa trên ngữ cảnh hiện tại của người dùng (như loại cửa sổ đang hoạt động, URL trình duyệt, tóm tắt tập trung), chọn một số câu phù hợp để re-engagement. Những câu này nên cảm thấy liên quan đến tình huống hiện tại của người dùng để tăng khả năng họ sẽ phản hồi tích cực.
     def _reengagement_lines(self, snapshot) -> tuple[str, ...]:
+        del snapshot
+        return ()
         focus_kind = str(getattr(snapshot, "active_window_kind", "") or "")
         idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
         if focus_kind in {"coding", "documentation"}: #coding, documentation: nếu người dùng đang tập trung vào các cửa sổ liên quan đến lập trình hoặc tài liệu, ERIS có thể chọn những câu re-engagement liên quan đến việc hỗ trợ hoặc cung cấp thông tin hữu ích cho công việc của họ, giúp tăng khả năng tương tác tích cực.
@@ -1011,6 +1282,23 @@ class PresenceControllerMixin:
         )
 
     # Khi quyết định re-engagement, hãy đảm bảo rằng ERIS không lặp lại cùng một câu hoặc câu quá giống nhau nhiều lần liên tiếp, vì điều này có thể khiến người dùng cảm thấy bị làm phiền hoặc như đang nói chuyện với một cỗ máy lặp đi lặp lại. Việc đa dạng hóa các câu re-engagement có thể giúp giữ cho tương tác cảm thấy tươi mới và tự nhiên hơn.
+    def _derive_reengagement_cue(self, *, snapshot, internal_state: PersistentInternalState | None) -> MicroPresenceCue:
+        cue = self._derive_micro_presence_cue(snapshot=snapshot, reason="re_engagement")
+        social_energy = self._social_energy_for_reengagement(internal_state)
+        evidence = (*cue.evidence, f"social_energy={social_energy:.2f}")
+        return MicroPresenceCue(
+            needs_micro_presence=True,
+            focus_family=f"reengagement_{cue.focus_family}",
+            confidence=max(cue.confidence, 0.44 + min(0.20, social_energy * 0.20)),
+            curiosity=cue.curiosity,
+            missing_evidence_ids=cue.missing_evidence_ids,
+            body_action="tilt_head" if cue.curiosity >= 0.45 else "idle_shift",
+            reason="long_silence_reengagement",
+            evidence=tuple(dict.fromkeys(evidence))[:8],
+            should_call_llm=social_energy >= 0.18,
+            allow_body_only=True,
+        )
+
     def _build_reengagement_decision(
         self,
         *,
@@ -1027,6 +1315,43 @@ class PresenceControllerMixin:
         ):
             return None
 
+        cue = self._derive_reengagement_cue(snapshot=snapshot, internal_state=internal_state)
+        text, source = self._generate_micro_presence_from_cue(
+            kind="re_engagement",
+            snapshot=snapshot,
+            cue=cue,
+            seeds=cue.evidence,
+            force_llm=True,
+        )
+        if not text:
+            return self._body_only_presence_decision(cue, intent="re_engagement", parse_mode="re_engagement_body_only", source=source)
+
+        return Decision(
+            text=text,
+            animation="stand",
+            intent="re_engagement",
+            action="",
+            reasoning_tags=("re_engagement", "long_silence_outreach", "llm_wording", cue.focus_family),
+            should_speak=True,
+            confidence=max(0.42, min(0.62, cue.confidence)),
+            parse_mode="re_engagement",
+            debug_trace=(
+                "reengagement_layer"
+                f"; source={source}"
+                f"; focus_family={cue.focus_family}"
+                f"; quiet_cycles={self.reengagement_quiet_cycles}"
+                f"; idle={int(float(getattr(snapshot, 'idle_seconds', 0.0) or 0.0))}s"
+                f"; social_energy={self._social_energy_for_reengagement(internal_state):.2f}"
+            ),
+        )
+        if not self._should_allow_reengagement(
+            snapshot=snapshot,
+            ti_report=ti_report,
+            internal_state=internal_state,
+            now=now,
+        ):
+            return None
+
         lines = self._reengagement_lines(snapshot)
         if not lines:
             return None
@@ -1035,6 +1360,8 @@ class PresenceControllerMixin:
             counter=self.reengagement_quiet_cycles,
             threshold=self.reengagement_quiet_loop_threshold,
         )
+        if no_fallback_mode_enabled():
+            fallback_text = ""
         text, source = self._hybrid_micro_presence_text(
             kind="re_engagement",
             snapshot=snapshot,
@@ -1046,7 +1373,7 @@ class PresenceControllerMixin:
             animation="stand",
             intent="re_engagement",
             reasoning_tags=("re_engagement", "long_silence_outreach"),
-            should_speak=True,
+            should_speak=bool(str(text or "").strip()),
             confidence=0.52,
             parse_mode="re_engagement",
             debug_trace=(
@@ -1092,24 +1419,29 @@ class PresenceControllerMixin:
             notes=("re_engagement", f"quiet_cycles={quiet_cycles}"),
         )
         decision = self.ti_governor.enforce_decision(decision, ti_report)
-        decision.parse_mode = "re_engagement"
-        decision = self._filter_public_micro_decision(
-            decision,
-            channel="autonomous",
-            frame=frame,
-            snapshot=snapshot,
-            speech_core=getattr(frame, "speech_core", None),
-        )
+        if bool(getattr(decision, "should_speak", True)):
+            decision.parse_mode = "re_engagement"
+            decision = self._filter_public_micro_decision(
+                decision,
+                channel="autonomous",
+                frame=frame,
+                snapshot=snapshot,
+                speech_core=getattr(frame, "speech_core", None),
+            )
         if not bool(getattr(decision, "should_speak", True)) or not str(getattr(decision, "text", "") or "").strip():
-            return False
-        self.fe_style_memory = self.fe_renderer.remember_style(
-            self.fe_style_memory,
-            plan=fe_plan,
-            rendered_text=decision.text,
-        )
-        self.last_text = decision.text
-        self.last_autonomous_spoken_at = now
-        self._note_autonomous_spoken(reengagement=True, now=now)
+            if not self._is_body_only_presence_decision(decision):
+                return False
+        if bool(getattr(decision, "should_speak", True)) and str(getattr(decision, "text", "") or "").strip():
+            self.fe_style_memory = self.fe_renderer.remember_style(
+                self.fe_style_memory,
+                plan=fe_plan,
+                rendered_text=decision.text,
+            )
+            self.last_text = decision.text
+            self.last_autonomous_spoken_at = now
+            self._note_autonomous_spoken(reengagement=True, now=now)
+        else:
+            self._note_autonomous_presence_action(reengagement=True, now=now)
         self._apply_position_update(decision)
         frame.final_decision = self._decision_to_frame_dict(decision)
         self._set_cognitive_memory_update(frame, decision=decision, notes=("re_engagement",))
