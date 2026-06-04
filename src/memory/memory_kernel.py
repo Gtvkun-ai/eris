@@ -269,6 +269,21 @@ class MemoryKernel:
             )
 
         best = compile_result.best
+        # P0: Compiler có quyền đánh dấu một IR là "chỉ dùng làm hint".
+        # Ví dụ semantic_hint có thể đoán gần đúng vùng nhớ, nhưng không được
+        # chặn hot path chat để trả public answer. Trước đây kernel bỏ qua
+        # intercept_permission nên câu hỏi mơ hồ như "sở thích của tôi là gì"
+        # có thể bị surface nhầm thành user.name. Memory chỉ được cầm mic khi
+        # compiler cấp quyền intercept rõ ràng.
+        if not bool(getattr(best, "intercept_permission", False)):
+            return MemoryAnswerResult(
+                intercepted=False,
+                compile_result=compile_result,
+                reason="query_no_intercept_permission",
+                debug=self._compile_debug(compile_result),
+                warnings=["memory_query_hint_not_allowed_to_surface"],
+            )
+
         confidence = float(getattr(best, "confidence", 0.0) or 0.0)
         ambiguity = float(getattr(best, "ambiguity", 1.0) or 1.0)
         if confidence < min_confidence:

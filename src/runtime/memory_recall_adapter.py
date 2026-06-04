@@ -111,8 +111,15 @@ class MemoryRecallAdapter:
             except Exception:
                 result = None
             if result is not None and bool(getattr(result, "intercepted", False)) and getattr(result, "answer", None) is not None:
+                compile_result = getattr(result, "compile_result", None)
+                # Belt-and-suspenders: kernel đã kiểm intercept_permission, nhưng adapter
+                # vẫn kiểm lại để tránh một facade cũ/khác trả intercepted=True quá rộng.
+                # Memory recall chỉ được cắt ngang chat khi IR thật sự được cấp quyền.
+                best = getattr(compile_result, "best", None)
+                if best is not None and not self._should_intercept(best):
+                    return None
                 answer = result.answer
-                decision = self._build_decision(answer, compile_result=getattr(result, "compile_result", None))
+                decision = self._build_decision(answer, compile_result=compile_result)
                 return _RecallOutcome(decision=decision, answer=answer)
 
         compiler = self._ensure_compiler()

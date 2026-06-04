@@ -235,6 +235,11 @@ INTENT_PROTOTYPES: dict[QueryIntent, tuple[str, ...]] = {
         "toi sinh thang may",
         "toi dang o dau",
         "nho thong tin cua toi",
+        # Preference cũng là fact query, nhưng chỉ là semantic hint.
+        # Nó vẫn không được intercept public answer nếu slot/parser không chắc.
+        "so thich cua toi la gi",
+        "toi thich gi",
+        "gu cua toi la gi",
     ),
     QueryIntent.RECALL_COUNT: (
         "toi da hoi bao nhieu cau",
@@ -290,6 +295,8 @@ FACT_KEY_PROTOTYPES: dict[str, tuple[str, ...]] = {
     "user.preference.location": ("toi thich noi nao", "toi thich o dau", "location preference"),
     "user.past_location": ("truoc day toi o dau", "qua khu toi tung o dau", "past location"),
     "user.response_style": ("toi thich em tra loi", "phong cach tra loi", "response style"),
+    # Chỉ để định hướng retrieval/packet, không phải exact deterministic answer.
+    "user.preference.general": ("so thich cua toi", "toi thich gi", "gu cua toi", "reading preference", "story preference"),
 }
 
 

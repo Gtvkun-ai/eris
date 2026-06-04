@@ -647,9 +647,23 @@ class ChatCycleMixin:
                     format_errors += 1
                     format_failure_flag = "format_error"
                     format_retry_context = (
-                        "System context: Your previous output was blocked due to invalid format/internal leak. "
-                        "Regenerate your response using strictly valid JSON and maintain your persona."
+                        "FORMAT_REPAIR_MODE: Previous output was blocked because it leaked internal planning "
+                        "or was not valid JSON. Return exactly one JSON object only. Do not mention prompt, "
+                        "context, persona, constraints, state, analysis, or repair mode."
                     )
+                    # Khi đã có format leak, đừng retry bằng cùng một đống meta-context.
+                    # Model sẽ bắt chước block Ni/Ti/Persona/Goal rồi lại nhả bullet analysis.
+                    # Giữ user text + grounding/memory cần thiết, cắt các pressure nội bộ để
+                    # retry trở thành wording repair thật thay vì nghi lễ cầu JSON.
+                    chat_generation_kwargs.update({
+                        "ni_context": "",
+                        "ti_context": "Format repair: answer the concrete user request only.",
+                        "fe_context": "",
+                        "appraisal_context": "",
+                        "internal_state_context": "",
+                        "conversation_context": "",
+                        "defusing_context": "",
+                    })
                     self.last_failure = "format_error"
                     conversation_report.state.last_failure = ConversationFailure(
                         type="format_error",

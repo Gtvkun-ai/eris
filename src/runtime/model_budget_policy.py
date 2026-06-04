@@ -89,6 +89,8 @@ class ResourceSnapshot:
     main_cognition_recent: bool = False
     telemetry_ok: bool = True
     active_model_tiers: tuple[str, ...] = ()
+    eris_reserved_vram_mb: float = 0.0
+    external_vram_used_mb: float = 0.0
     queue_depth: int = 0
     notes: tuple[str, ...] = ()
 
@@ -213,6 +215,14 @@ class ModelBudgetPolicyConfig:
     max_queue_size: int = field(default_factory=lambda: _env_int("ERIS_MODEL_QUEUE_MAX", 32))
     assume_gtx_1650ti_4gb: bool = field(default_factory=lambda: _env_flag("ERIS_ASSUME_4GB_VRAM", True))
     nvidia_smi_timeout: float = 0.35
+    sensory_cpu_soft_block_percent: float = field(default_factory=lambda: _env_float("ERIS_SENSORY_CPU_SOFT_BLOCK", 96.0))
+    sensory_ram_soft_block_percent: float = field(default_factory=lambda: _env_float("ERIS_SENSORY_RAM_SOFT_BLOCK", 94.0))
+    heavy_foreground_gpu_percent: float = field(default_factory=lambda: _env_float("ERIS_HEAVY_FOREGROUND_GPU_BLOCK", 55.0))
+    heavy_foreground_vram_percent: float = field(default_factory=lambda: _env_float("ERIS_HEAVY_FOREGROUND_VRAM_BLOCK", 60.0))
+    local_main_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_MAIN_VRAM_MB", 2300.0))
+    four_b_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_4B_VRAM_MB", 2200.0))
+    vision_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_VISION_VRAM_MB", 1100.0))
+    sensory_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_SENSORY_VRAM_MB", 450.0))
 
 
 class ModelBudgetPolicy:
@@ -269,10 +279,12 @@ class ModelBudgetPolicy:
         with self._lock:
             active_tiers = tuple(lease.tier for lease in self._active_leases.values())
             active_main = any(lease.tier == "main_cognition" for lease in self._active_leases.values())
+            reserved_vram = self._reserved_vram_for_active_leases_locked()
             queue_depth = len(self._queue)
         main_recent = active_main or (now - max(self.last_main_started_at, self.last_main_finished_at)) < self.config.main_cooldown_seconds
         if active_tiers:
             notes.append("active_model:" + ",".join(active_tiers))
+        external_vram = max(0.0, vram_used - reserved_vram)
         snapshot = ResourceSnapshot(
             cpu_percent=cpu,
             ram_percent=ram,
@@ -287,6 +299,8 @@ class ModelBudgetPolicy:
             main_cognition_recent=main_recent,
             telemetry_ok=not any(note.startswith("psutil_unavailable") for note in notes),
             active_model_tiers=active_tiers,
+            eris_reserved_vram_mb=reserved_vram,
+            external_vram_used_mb=external_vram,
             queue_depth=queue_depth,
             notes=tuple(notes),
         )
@@ -301,25 +315,96 @@ class ModelBudgetPolicy:
         reason: str = "",
         ignore_active_lock: bool = False,
     ) -> BudgetDecision:
-        del ignore_active_lock
         if not self.config.enabled:
             snapshot = resource_snapshot or self.capture()
             return BudgetDecision("allow", True, tier, "budget_policy_disabled", snapshot, debug={"reason": reason})
         snapshot = resource_snapshot or self.capture()
+        now = time.time()
+        cooldown = self._cooldown_for(tier, now)
+        uses_remote_api = self._uses_remote_api(tier)
+        heavy_tier = self._is_heavy_tier(tier)
+        reserved_vram = self._active_reserved_vram_mb(snapshot)
+        external_vram_used = max(0.0, snapshot.external_vram_used_mb or (snapshot.vram_used_mb - reserved_vram))
+        external_vram_percent = 0.0
+        if snapshot.vram_total_mb > 0:
+            external_vram_percent = max(0.0, min(100.0, external_vram_used / snapshot.vram_total_mb * 100.0))
+
+        debug = {
+            "request_reason": reason,
+            "remote_api_enabled": bool(getattr(self.config, "remote_api_enabled", False)),
+            "uses_remote_api": uses_remote_api,
+            "queue_depth": len(self._queue),
+            "heavy_tier": heavy_tier,
+            "active_lock_ignored": bool(ignore_active_lock),
+            "reserved_vram_mb": round(reserved_vram, 2),
+            "external_vram_used_mb": round(external_vram_used, 2),
+            "external_vram_percent": round(external_vram_percent, 2),
+        }
+
+        if heavy_tier and cooldown > 0.0:
+            return BudgetDecision(
+                verdict="block",
+                allowed=False,
+                tier=tier,
+                reason="tier_cooldown_active",
+                resource_snapshot=snapshot,
+                cooldown_seconds=cooldown,
+                hard_veto=False,
+                debug=debug,
+            )
+
+        if snapshot.gpu_temperature_c >= self.config.gpu_temp_block_c > 0:
+            debug["overheat"] = round(snapshot.gpu_temperature_c, 2)
+            return BudgetDecision(
+                verdict="kill",
+                allowed=False,
+                tier=tier,
+                reason="gpu_overheat",
+                resource_snapshot=snapshot,
+                hard_veto=True,
+                debug=debug,
+            )
+
+        resource_reasons = self._resource_block_reasons(
+            tier,
+            snapshot=snapshot,
+            external_vram_percent=external_vram_percent,
+            uses_remote_api=uses_remote_api,
+        )
+        if resource_reasons:
+            debug["resource_reasons"] = resource_reasons
+            return BudgetDecision(
+                verdict="block",
+                allowed=False,
+                tier=tier,
+                reason="resource_guard:" + ",".join(resource_reasons),
+                resource_snapshot=snapshot,
+                hard_veto=False,
+                cooldown_seconds=max(cooldown, self.config.queue_poll_seconds),
+                debug=debug,
+            )
+
+        if heavy_tier and not ignore_active_lock and self._has_incompatible_active_lease(tier):
+            return BudgetDecision(
+                verdict="block",
+                allowed=False,
+                tier=tier,
+                reason="active_heavy_lease",
+                resource_snapshot=snapshot,
+                hard_veto=False,
+                cooldown_seconds=max(cooldown, self.config.queue_poll_seconds),
+                debug=debug,
+            )
+
         return BudgetDecision(
             verdict="allow",
             allowed=True,
             tier=tier,
-            reason="queue_only_policy",
+            reason="scheduler_allow",
             resource_snapshot=snapshot,
             hard_veto=False,
-            cooldown_seconds=self._cooldown_for(tier, time.time()),
-            debug={
-                "request_reason": reason,
-                "remote_api_enabled": bool(getattr(self.config, "remote_api_enabled", False)),
-                "queue_depth": len(self._queue),
-                "resource_guard_disabled": True,
-            },
+            cooldown_seconds=cooldown,
+            debug=debug,
         )
 
     # ------------------------------------------------------------------
@@ -598,6 +683,79 @@ class ModelBudgetPolicy:
 
     def _uses_remote_api(self, tier: str) -> bool:
         return tier == "main_cognition" and bool(getattr(self.config, "remote_api_enabled", False))
+
+    def _estimated_vram_need_mb(self, tier: str) -> float:
+        if tier == "main_cognition":
+            return max(0.0, float(self.config.local_main_vram_reservation_mb))
+        if tier == "subconscious_4b":
+            return max(0.0, float(self.config.four_b_vram_reservation_mb))
+        if tier == "vision_compressor":
+            return max(0.0, float(self.config.vision_vram_reservation_mb))
+        if tier == "sensory_0_6b":
+            return max(0.0, float(self.config.sensory_vram_reservation_mb))
+        return 0.0
+
+    def _reserved_vram_for_active_leases_locked(self) -> float:
+        return sum(self._estimated_vram_need_mb(lease.tier) for lease in self._active_leases.values())
+
+    def _active_reserved_vram_mb(self, snapshot: ResourceSnapshot) -> float:
+        reserved = float(getattr(snapshot, "eris_reserved_vram_mb", 0.0) or 0.0)
+        if reserved > 0.0:
+            return reserved
+        with self._lock:
+            return self._reserved_vram_for_active_leases_locked()
+
+    def _has_incompatible_active_lease(self, tier: ModelTier) -> bool:
+        with self._lock:
+            return self._has_incompatible_active_lease_locked(tier)
+
+    def _resource_block_reasons(
+        self,
+        tier: ModelTier,
+        *,
+        snapshot: ResourceSnapshot,
+        external_vram_percent: float,
+        uses_remote_api: bool,
+    ) -> list[str]:
+        reasons: list[str] = []
+        cpu = float(snapshot.cpu_percent or 0.0)
+        ram = float(snapshot.ram_percent or 0.0)
+        gpu = float(snapshot.gpu_util_percent or 0.0)
+        vram = float(external_vram_percent or 0.0)
+        local_tier = not uses_remote_api and tier != "unknown"
+        sensory_tier = tier == "sensory_0_6b"
+
+        if sensory_tier:
+            if cpu >= self.config.sensory_cpu_soft_block_percent:
+                reasons.append("cpu_busy")
+            if ram >= self.config.sensory_ram_soft_block_percent:
+                reasons.append("ram_busy")
+            return reasons
+
+        if cpu >= self.config.cpu_block_percent:
+            reasons.append("cpu_busy")
+        if ram >= self.config.ram_block_percent:
+            reasons.append("ram_busy")
+
+        if local_tier:
+            if gpu >= self.config.gpu_block_percent:
+                reasons.append("gpu_busy")
+            if vram >= self.config.vram_block_percent:
+                reasons.append("vram_busy")
+            if snapshot.is_game_or_heavy_app and (
+                gpu >= self.config.heavy_foreground_gpu_percent or vram >= self.config.heavy_foreground_vram_percent
+            ):
+                reasons.append("heavy_foreground_gpu_owner")
+            if snapshot.is_compile_or_godot and tier in {"subconscious_4b", "vision_compressor"} and (cpu >= 70.0 or ram >= 75.0):
+                reasons.append("compile_or_editor_pressure")
+
+            needed_vram = self._estimated_vram_need_mb(tier)
+            if needed_vram > 0.0 and snapshot.vram_total_mb > 0.0:
+                headroom = max(0.0, snapshot.vram_total_mb - max(0.0, snapshot.external_vram_used_mb or 0.0))
+                if headroom < needed_vram:
+                    reasons.append("vram_headroom_low")
+
+        return list(dict.fromkeys(reasons))
 
     def _entry_cancelled(self, entry: ModelQueueEntry) -> bool:
         return bool(entry.cancel_event is not None and entry.cancel_event.is_set())

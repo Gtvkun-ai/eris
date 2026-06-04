@@ -46,6 +46,28 @@ from runtime.session_turn_ledger import SessionTurnLedger
 from runtime.speech_pipeline import SpeechIntentDecision
 
 
+
+
+def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
+    """True nếu decision chỉ là fallback kỹ thuật, không phải answer nội dung.
+
+    Chú thích kiến trúc: public_turn có thể ghi để user thấy, nhưng semantic
+    history/TurnGraph không được coi các câu này là bằng chứng hội thoại.
+    """
+
+    intent = str(getattr(decision, "intent", "") or "")
+    parse_mode = str(getattr(decision, "parse_mode", "") or "")
+    debug_trace = str(getattr(decision, "debug_trace", "") or "")
+    text = str(getattr(decision, "text", "") or "").lower()
+    fallback_intents = {"fallback_reply", "format_repair_fallback", "service_error"}
+    fallback_modes = {"format_repair_fallback", "service_error"}
+    if intent in fallback_intents or parse_mode in fallback_modes:
+        return True
+    if "http_5xx_fallback" in debug_trace or "format_violation_recovered" in debug_trace:
+        return True
+    return "lỗi định dạng" in text or "loi dinh dang" in text or "vấn đề đường truyền" in text
+
+
 class StateCommitServiceMixin:
     def _memory_kernel(self):
         return getattr(self, "memory_kernel", None)
@@ -600,15 +622,26 @@ class StateCommitServiceMixin:
         )
         self.last_chat_answer = decision.text
         self.last_system_action = decision.system_action
-        self._append_chat_history("assistant", decision.text)
+        invalid_for_semantic_history = _is_nonsemantic_fallback_decision(decision)
+        # Fallback/service-error vẫn có thể hiện ra UI, nhưng không được đưa vào
+        # LLM semantic history như một câu trả lời thật. Nếu không, prompt lượt sau
+        # tự nhiễm câu "tôi bị lỗi định dạng" và TurnGraph nối nhầm ANSWERS.
+        self._append_chat_history("assistant", decision.text, invalid=invalid_for_semantic_history)
         if bool(decision.should_speak) and str(decision.text or "").strip():
+            assistant_meta = {
+                "intent": decision.intent,
+                "parse_mode": decision.parse_mode,
+                "system_action": decision.system_action,
+            }
+            if invalid_for_semantic_history:
+                assistant_meta.update({
+                    "is_service_fallback": True,
+                    "counts_as_answer": False,
+                    "invalid_for_semantic_context": True,
+                })
             self._ensure_session_turn_ledger().record_assistant(
                 decision.text,
-                meta={
-                    "intent": decision.intent,
-                    "parse_mode": decision.parse_mode,
-                    "system_action": decision.system_action,
-                },
+                meta=assistant_meta,
             )
         if len(self.chat_history) > 32:
             self.chat_history = self.chat_history[-32:]

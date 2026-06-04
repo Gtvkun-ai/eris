@@ -278,6 +278,7 @@ class SpeechCoreEngine:
         agent_mind: PersistentAgentMindStore | None = None,
     ) -> AgentSpeechCore:
         channel_name = str(channel or "autonomous")
+        spontaneous_explicit = spontaneous_impulse is not None
         surface = thought_surface if thought_surface is not None else subconscious_seed
         emotional_signal = self._has_emotional_signal(
             concrete_signals=concrete_signals,
@@ -440,6 +441,7 @@ class SpeechCoreEngine:
             personality_lens=personality_lens,
             safe_small_talk_allowed=safe_small_talk_allowed,
             spontaneous_impulse=spontaneous_impulse,
+            spontaneous_explicit=spontaneous_explicit,
         )
         winner = pressure_report.winner
         speech_source = winner.speech_source or "none"
@@ -455,7 +457,7 @@ class SpeechCoreEngine:
                 # Micro-presence chỉ là đáy an toàn cuối cùng, không phải cửa chính.
                 spontaneous_act = str(getattr(spontaneous_impulse, "suggested_speech_act", "") or "").strip()
                 spontaneous_pressure = self._clamp01(getattr(spontaneous_impulse, "surface_pressure", 0.0))
-                if spontaneous_ready and spontaneous_act and spontaneous_act != "no_speech" and spontaneous_pressure >= 0.22:
+                if spontaneous_explicit and spontaneous_ready and spontaneous_act and spontaneous_act != "no_speech" and spontaneous_pressure >= 0.22:
                     utterance_type = spontaneous_act
                     winner = MotivationalUrge(
                         label="force_speak_endogenous_fallback",
@@ -589,6 +591,7 @@ class SpeechCoreEngine:
         personality_lens,
         safe_small_talk_allowed: bool,
         spontaneous_impulse: SpeechImpulse | None = None,
+        spontaneous_explicit: bool = False,
     ) -> MotivationalPressureReport:
         threshold = self._threshold_for_channel(channel, self_state=self_state)
         candidates = self._build_urge_candidates(
@@ -608,6 +611,7 @@ class SpeechCoreEngine:
             meaning_layer=meaning_layer,
             safe_small_talk_allowed=safe_small_talk_allowed,
             spontaneous_impulse=spontaneous_impulse,
+            spontaneous_explicit=spontaneous_explicit,
         )
         candidates = self._apply_self_state_to_candidates(candidates, channel=channel, self_state=self_state)
         candidates = self._apply_personality_restraint_to_candidates(
@@ -650,6 +654,7 @@ class SpeechCoreEngine:
         meaning_layer,
         safe_small_talk_allowed: bool,
         spontaneous_impulse: SpeechImpulse | None = None,
+        spontaneous_explicit: bool = False,
     ) -> tuple[MotivationalUrge, ...]:
         state = internal_state or PersistentInternalState()
         desire = getattr(state, "desire", None)
@@ -824,6 +829,7 @@ class SpeechCoreEngine:
         spontaneous_act = str(getattr(spontaneous, "suggested_speech_act", "") or "").strip() or "inner_whim"
         force_speak_no_screen_internal_ready = (
             channel == "force_speak"
+            and spontaneous_explicit
             and not concrete_signals
             and spontaneous_pressure >= 0.24
             and spontaneous_act != "no_speech"
@@ -1047,6 +1053,7 @@ class SpeechCoreEngine:
             or bool(getattr(spontaneous, "needs_external_evidence", False))
             or spontaneous_act == "no_speech"
             or spontaneous_pressure <= 0.0
+            or (channel == "force_speak" and not spontaneous_explicit)
         )
         spontaneous_evidence = tuple(str(item) for item in (getattr(spontaneous, "evidence", ()) or ()))[:8]
         spontaneous_source_fact = str(getattr(spontaneous, "source_fact", "") or "")

@@ -210,7 +210,19 @@ class TurnAnnotator:
         norm = normalize_vi(text)
         facts: list[FactMention] = []
 
-        name_match = re.search(r"\btoi\s+ten\s+la\s+([a-zA-Z0-9_ -]{1,40})", norm)
+        # Nhận cả "tôi tên là X" lẫn dạng chat rút gọn "tôi tên X".
+        # Dạng rút gọn rất phổ biến trong test memory; nếu bỏ sót, TurnGraph
+        # không biết đây là FACT_DISCLOSURE và recall có thể bám nhầm vào fact cũ.
+        name_match = None
+        name_pattern = ""
+        for pattern_name, pattern in (
+            ("pattern:toi_ten_la", r"\btoi\s+ten\s+la\s+([a-zA-Z0-9_ -]{1,40})"),
+            ("pattern:toi_ten_short", r"\b(?:toi|minh|tui|tao|to|em)\s+ten\s+(?!(?:la|gi)\b)([a-zA-Z0-9_ -]{1,40})"),
+        ):
+            name_match = re.search(pattern, norm)
+            if name_match:
+                name_pattern = pattern_name
+                break
         if name_match:
             value = name_match.group(1).strip().title()
             facts.append(
@@ -218,7 +230,7 @@ class TurnAnnotator:
                     key="user.name",
                     value=value,
                     confidence=0.92,
-                    evidence=("pattern:toi_ten_la",),
+                    evidence=(name_pattern,),
                 )
             )
 
@@ -339,9 +351,15 @@ class TurnAnnotator:
     def _is_service_fallback(self, norm: str, metadata: dict[str, Any]) -> bool:
         if metadata.get("is_service_fallback") is True:
             return True
-        if metadata.get("intent") == "fallback_reply":
+        intent = str(metadata.get("intent", "") or "")
+        parse_mode = str(metadata.get("parse_mode", "") or "")
+        # Fallback kỹ thuật không được tính là answer semantic. Nếu để nó nối
+        # cạnh ANSWERS, lượt sau sẽ đọc "tôi bị lỗi định dạng" như nội dung thật.
+        if intent in {"fallback_reply", "format_repair_fallback", "service_error"}:
             return True
-        return "van de duong truyen" in norm or "service_error" in norm
+        if parse_mode in {"format_repair_fallback", "service_error"}:
+            return True
+        return "van de duong truyen" in norm or "service_error" in norm or "loi dinh dang" in norm
 
 
 # ---------------------------------------------------------------------------

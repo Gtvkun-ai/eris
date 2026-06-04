@@ -177,7 +177,7 @@ def test_wake_governor_keeps_main_wake_under_extreme_pressure():
     assert decision.level == "wake_main_cognition"
     assert decision.should_speak is True
     assert decision.should_wake_main is True
-    assert decision.budget_reason == "queue_only_policy"
+    assert decision.budget_reason.startswith("resource_guard:")
 
 
 def test_wake_governor_silence_debt_adds_speech_pressure():

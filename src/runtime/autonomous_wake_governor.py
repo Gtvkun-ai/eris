@@ -164,7 +164,7 @@ class AutonomousWakeGovernor:
         )
         wants_vision = str(getattr(user_context, "recommended_action", "")) == "call_vision_compressor" or external_pressure >= self.config.vision_threshold
         wants_main = str(getattr(user_context, "recommended_action", "")) == "wake_main_cognition" or score >= self.config.main_threshold
-        budget_reason = "queue_only_policy"
+        budget_reason = budget_main.reason if wants_main else (budget_vision.reason if wants_vision else budget_4b.reason)
 
         level: WakeLevel = "sleep"
         reason = "below_observe_threshold"

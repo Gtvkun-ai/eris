@@ -523,6 +523,9 @@ class MemoryCommitPolicy:
             raw,
             (
                 r"(?:^|\b)(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+t[eê]n\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
+                # Dạng rút gọn trong chat: "tôi tên Tín". Negative lookahead chặn
+                # các câu hỏi như "tôi tên gì" / "tôi tên là gì" để không lưu rác.
+                r"(?:^|\b)(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+t[eê]n\s+(?!(?:là|la|gì|gi)\b)(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
                 r"(?:^|\b)t[eê]n\s+(?:của\s+)?(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
                 r"(?:^|\b)(?:gọi|goi|cứ gọi|cu goi)\s+(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
                 r"(?:^|\b)(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+mới\s+(?:đổi|doi)\s+t[eê]n\s+(?:sang|thành|thanh)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung|sáng|sang nay|hôm|hom)\b)",

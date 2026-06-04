@@ -102,6 +102,28 @@ VISION_TRACE_MARKER = "vision_facts_attached"
 
 
 
+
+
+def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
+    """True nếu decision chỉ là fallback kỹ thuật, không phải answer nội dung.
+
+    Chú thích kiến trúc: public_turn có thể ghi để user thấy, nhưng semantic
+    history/TurnGraph không được coi các câu này là bằng chứng hội thoại.
+    """
+
+    intent = str(getattr(decision, "intent", "") or "")
+    parse_mode = str(getattr(decision, "parse_mode", "") or "")
+    debug_trace = str(getattr(decision, "debug_trace", "") or "")
+    text = str(getattr(decision, "text", "") or "").lower()
+    fallback_intents = {"fallback_reply", "format_repair_fallback", "service_error"}
+    fallback_modes = {"format_repair_fallback", "service_error"}
+    if intent in fallback_intents or parse_mode in fallback_modes:
+        return True
+    if "http_5xx_fallback" in debug_trace or "format_violation_recovered" in debug_trace:
+        return True
+    return "lỗi định dạng" in text or "loi dinh dang" in text or "vấn đề đường truyền" in text
+
+
 class RuntimeCoordinator(
     CognitiveCycleMixin,
     ChatCycleMixin,
@@ -442,12 +464,41 @@ class RuntimeCoordinator(
             setattr(_wrapped, "_eris_original", original)
             setattr(service, method_name, _wrapped)
 
+        def _wrap_adapter_method(adapter, *, method_name: str, tier: str, priority: int, wrapped_flag: str) -> None:
+            if adapter is None or getattr(adapter, wrapped_flag, False):
+                return
+            original = getattr(adapter, method_name, None)
+            if not callable(original):
+                return
+
+            def _wrapped(*args, **kwargs):
+                return policy.run_queued(
+                    tier,
+                    original,
+                    *args,
+                    reason=f"{adapter.__class__.__name__}.{method_name}",
+                    priority=priority,
+                    **kwargs,
+                )
+
+            setattr(_wrapped, "_eris_queue_wrapped", True)
+            setattr(_wrapped, "_eris_original", original)
+            setattr(adapter, method_name, _wrapped)
+            setattr(adapter, wrapped_flag, True)
+
         _wrap_method("generate_chat_reply", "main_cognition", 100)
         _wrap_method("generate_directive", "main_cognition", 80)
         _wrap_method("generate_screen_facts", "vision_compressor", 35)
+        _wrap_adapter_method(
+            getattr(self, "sensory_model_adapter", None),
+            method_name="observe",
+            tier="sensory_0_6b",
+            priority=18,
+            wrapped_flag="_eris_model_queue_wrapped",
+        )
         setattr(service, "_eris_model_queue_wrapped", True)
         try:
-            self.logger.info("Model inference queue đã bọc llm_service: chat/directive/main + screen_facts/vision.")
+            self.logger.info("Model inference scheduler đã bọc llm_service và sensory adapter: main, vision, sensory.")
         except Exception:
             pass
 
@@ -2619,6 +2670,196 @@ class RuntimeCoordinator(
             merged.append(f"meaning_reaction={reaction}")
         return tuple(dict.fromkeys(str(item) for item in merged if str(item or "").strip()))
 
+    def _speak_truth_probe_row(self, status: dict[str, object] | None) -> dict[str, object]:
+        if not status:
+            return {}
+        checked = bool(status.get("checked", False))
+        allowed = bool(status.get("allowed", False))
+        row: dict[str, object] = {
+            "checked": checked,
+            "result": "allowed" if allowed else ("blocked" if checked else "skipped"),
+        }
+        for key in ("candidate", "cooldown_ok", "silent_cycles", "quiet_cycles"):
+            if key in status:
+                row[key] = status[key]
+        rejected_by = str(status.get("rejected_by", "") or "")
+        if rejected_by:
+            row["reason"] = rejected_by
+        return row
+
+    def _build_speak_truth_table(
+        self,
+        *,
+        frame: CognitiveFrame,
+        decision: Decision | None = None,
+        wake_decision: WakeDecision | None = None,
+        ambient_hold: bool | None = None,
+        ambient_reason: str = "",
+        presence_status: dict[str, object] | None = None,
+        reengagement_status: dict[str, object] | None = None,
+        post_filters_ran: bool = False,
+    ) -> dict[str, object]:
+        wake = wake_decision or getattr(self, "last_wake_decision", None)
+        speech_core = getattr(frame, "speech_core", None)
+        action_plan = getattr(frame, "action_plan", None)
+        final_payload = dict(getattr(frame, "final_decision", {}) or {})
+
+        if decision is not None:
+            final_should_speak = bool(getattr(decision, "should_speak", True)) and bool(str(getattr(decision, "text", "") or "").strip())
+        elif "text" in final_payload:
+            final_should_speak = bool(str(final_payload.get("text", "") or "").strip()) and bool(final_payload.get("should_speak", True))
+        else:
+            final_should_speak = bool(getattr(action_plan, "should_speak", False) if action_plan is not None else False)
+        final_reason = str(
+            final_payload.get("reason")
+            or (getattr(action_plan, "reason_to_speak", "") if action_plan is not None else "")
+            or (getattr(speech_core, "reason", "") if speech_core is not None else "")
+            or ""
+        )
+        final_parse_mode = str(
+            (getattr(decision, "parse_mode", "") if decision is not None else "")
+            or final_payload.get("parse_mode")
+            or ""
+        )
+
+        table: dict[str, object] = {
+            "final": {
+                "should_speak": final_should_speak,
+                "parse_mode": final_parse_mode,
+                "reason": final_reason,
+            }
+        }
+
+        if wake is not None:
+            table["wake_gate"] = {
+                "level": str(getattr(wake, "level", "") or ""),
+                "should_speak": bool(getattr(wake, "should_speak", False)),
+                "should_wake_main": bool(getattr(wake, "should_wake_main", False)),
+                "should_call_vision": bool(getattr(wake, "should_call_vision", False)),
+                "reason": str(getattr(wake, "reason", "") or ""),
+                "budget_reason": str(getattr(wake, "budget_reason", "") or ""),
+            }
+
+        if speech_core is not None:
+            silence = getattr(speech_core, "silence_state", None)
+            table["speech_core"] = {
+                "should_speak": bool(getattr(speech_core, "should_speak", False)),
+                "source": str(getattr(speech_core, "speech_source", "") or ""),
+                "utterance_type": str(getattr(speech_core, "utterance_type", "") or ""),
+                "reason": str(getattr(speech_core, "reason", "") or ""),
+                "safety_flags": list(tuple(getattr(speech_core, "safety_flags", ()) or ())),
+                "silence_reason": str(getattr(silence, "reason", "") or ""),
+                "silence_mode": str(getattr(silence, "mode", "") or ""),
+            }
+
+        if action_plan is not None:
+            table["planner"] = {
+                "should_speak": bool(getattr(action_plan, "should_speak", False)),
+                "speech_intent": str(getattr(action_plan, "speech_intent", "") or ""),
+                "speech_act": str(getattr(action_plan, "speech_act", "") or ""),
+                "reason": str(getattr(action_plan, "reason_to_speak", "") or getattr(action_plan, "reason", "") or ""),
+                "selected_utility": round(float(getattr(action_plan, "selected_utility", 0.0) or 0.0), 4),
+                "suppressed_actions": list(tuple(getattr(action_plan, "suppressed_actions", ()) or ())),
+                "risk_flags": list(tuple(getattr(action_plan, "risk_flags", ()) or ())),
+            }
+
+        if ambient_hold is not None:
+            ambient_row: dict[str, object] = {
+                "checked": True,
+                "result": "held" if ambient_hold else "passed",
+            }
+            if ambient_reason:
+                ambient_row["reason"] = ambient_reason
+            table["ambient_silence"] = ambient_row
+
+        if presence_status is not None:
+            table["presence_probe"] = self._speak_truth_probe_row(presence_status)
+        if reengagement_status is not None:
+            table["reengagement_probe"] = self._speak_truth_probe_row(reengagement_status)
+
+        table["post_filters"] = {
+            "ran": bool(post_filters_ran),
+            "result": (
+                "passed"
+                if decision is not None and bool(getattr(decision, "should_speak", True)) and bool(str(getattr(decision, "text", "") or "").strip())
+                else ("suppressed" if post_filters_ran else "not_run")
+            ),
+            "parse_mode": final_parse_mode,
+        }
+        return table
+
+    def _summarize_speak_truth_table(self, table: dict[str, object]) -> str:
+        final = dict(table.get("final", {}) or {})
+        wake = dict(table.get("wake_gate", {}) or {})
+        speech = dict(table.get("speech_core", {}) or {})
+        planner = dict(table.get("planner", {}) or {})
+        ambient = dict(table.get("ambient_silence", {}) or {})
+        presence = dict(table.get("presence_probe", {}) or {})
+        reengagement = dict(table.get("reengagement_probe", {}) or {})
+        post = dict(table.get("post_filters", {}) or {})
+
+        parts = [
+            f"final={'speak' if bool(final.get('should_speak', False)) else 'silent'}:{final.get('parse_mode', '') or 'unknown'}",
+        ]
+        if wake:
+            parts.append(
+                f"wake={wake.get('level', '') or 'unknown'}:{wake.get('reason', '') or 'unknown'}"
+            )
+        if speech:
+            parts.append(
+                f"speech_core={'speak' if bool(speech.get('should_speak', False)) else 'silent'}:{speech.get('reason', '') or speech.get('silence_reason', '') or 'unknown'}"
+            )
+        if planner:
+            parts.append(
+                f"planner={'speak' if bool(planner.get('should_speak', False)) else 'silent'}:{planner.get('speech_act', '') or planner.get('speech_intent', '') or 'unknown'}"
+            )
+        if ambient:
+            parts.append(f"ambient={ambient.get('result', 'unknown')}")
+        if presence:
+            parts.append(f"presence={presence.get('result', 'unknown')}:{presence.get('reason', '') or 'ok'}")
+        if reengagement:
+            parts.append(f"reengagement={reengagement.get('result', 'unknown')}:{reengagement.get('reason', '') or 'ok'}")
+        if post:
+            parts.append(f"post={post.get('result', 'unknown')}:{post.get('parse_mode', '') or 'n/a'}")
+        return " | ".join(str(part) for part in parts if str(part or "").strip())
+
+    def _attach_speak_truth_table(
+        self,
+        frame: CognitiveFrame,
+        *,
+        decision: Decision | None = None,
+        wake_decision: WakeDecision | None = None,
+        ambient_hold: bool | None = None,
+        ambient_reason: str = "",
+        presence_status: dict[str, object] | None = None,
+        reengagement_status: dict[str, object] | None = None,
+        post_filters_ran: bool = False,
+    ) -> dict[str, object]:
+        table = self._build_speak_truth_table(
+            frame=frame,
+            decision=decision,
+            wake_decision=wake_decision,
+            ambient_hold=ambient_hold,
+            ambient_reason=ambient_reason,
+            presence_status=presence_status,
+            reengagement_status=reengagement_status,
+            post_filters_ran=post_filters_ran,
+        )
+        summary = self._summarize_speak_truth_table(table)
+        frame.debug_notes.append(f"speak_truth={summary}")
+        if getattr(frame, "action_plan", None) is not None:
+            frame.action_plan.notes = tuple(
+                dict.fromkeys((*tuple(frame.action_plan.notes or ()), f"speak_truth={summary}"))
+            )
+        final_payload = dict(getattr(frame, "final_decision", {}) or {})
+        final_payload["speak_truth_table"] = table
+        final_payload["speak_truth_summary"] = summary
+        if decision is not None:
+            decision.debug_trace = self._append_trace(decision.debug_trace, f"speak_truth={summary}")
+            final_payload["debug_trace"] = decision.debug_trace
+        frame.final_decision = final_payload
+        return table
+
     def _merge_memory_resonance_notes(self, notes: tuple[str, ...], memory_resonance) -> tuple[str, ...]:
         merged = list(notes or ())
         if memory_resonance is None:
@@ -3290,15 +3531,26 @@ class RuntimeCoordinator(
 
         self.last_chat_answer = decision.text
         self.last_system_action = decision.system_action
-        self._append_chat_history("assistant", decision.text)
+        invalid_for_semantic_history = _is_nonsemantic_fallback_decision(decision)
+        # Fallback/service-error vẫn có thể hiện ra UI, nhưng không được đưa vào
+        # LLM semantic history như một câu trả lời thật. Nếu không, prompt lượt sau
+        # tự nhiễm câu "tôi bị lỗi định dạng" và TurnGraph nối nhầm ANSWERS.
+        self._append_chat_history("assistant", decision.text, invalid=invalid_for_semantic_history)
         if bool(decision.should_speak) and str(decision.text or "").strip():
+            assistant_meta = {
+                "intent": decision.intent,
+                "parse_mode": decision.parse_mode,
+                "system_action": decision.system_action,
+            }
+            if invalid_for_semantic_history:
+                assistant_meta.update({
+                    "is_service_fallback": True,
+                    "counts_as_answer": False,
+                    "invalid_for_semantic_context": True,
+                })
             self._ensure_session_turn_ledger().record_assistant(
                 decision.text,
-                meta={
-                    "intent": decision.intent,
-                    "parse_mode": decision.parse_mode,
-                    "system_action": decision.system_action,
-                },
+                meta=assistant_meta,
             )
         if len(self.chat_history) > 32:
             self.chat_history = self.chat_history[-32:]
@@ -4330,6 +4582,8 @@ class RuntimeCoordinator(
         cycle_start: float,
         note: str,
         spoken_kwargs: dict[str, object] | None = None,
+        presence_status: dict[str, object] | None = None,
+        reengagement_status: dict[str, object] | None = None,
     ) -> bool:
         decision = self.ti_governor.enforce_decision(decision, ti_report)
         decision = self._filter_public_micro_decision(
@@ -4364,6 +4618,13 @@ class RuntimeCoordinator(
         self._note_autonomous_spoken(now=now, **(spoken_kwargs or {}))
         self._apply_position_update(decision)
         frame.final_decision = self._decision_to_frame_dict(decision)
+        self._attach_speak_truth_table(
+            frame,
+            decision=decision,
+            wake_decision=getattr(self, "last_wake_decision", None),
+            presence_status=presence_status,
+            reengagement_status=reengagement_status,
+        )
         self._set_cognitive_memory_update(frame, decision=decision, notes=(note,))
         self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
         self._finalize_cognitive_frame(frame)
@@ -4442,6 +4703,8 @@ class RuntimeCoordinator(
                     cycle_start=cycle_start,
                     note="re_engagement",
                     spoken_kwargs={"reengagement": True},
+                    presence_status=presence_status,
+                    reengagement_status=reengagement_status,
                 )
 
         if presence_status["allowed"]:
@@ -4462,6 +4725,8 @@ class RuntimeCoordinator(
                     cycle_start=cycle_start,
                     note="presence_maintenance",
                     spoken_kwargs={"presence_maintenance": True},
+                    presence_status=presence_status,
+                    reengagement_status=reengagement_status,
                 )
 
         rejected_by = reengagement_status["rejected_by"] or presence_status["rejected_by"] or "wake_gate_return_early"
@@ -4533,6 +4798,7 @@ class RuntimeCoordinator(
             cycle_start=cycle_start,
             note="presence_maintenance",
             spoken_kwargs={"presence_maintenance": True},
+            presence_status=presence_status,
         )
 
     def _finalize_autonomous_wake_gate(
@@ -4679,6 +4945,11 @@ class RuntimeCoordinator(
                 debug_trace=wake_decision.reason or "wake_governor_think_only",
             )
             frame.final_decision = self._decision_to_frame_dict(decision)
+            self._attach_speak_truth_table(
+                frame,
+                decision=decision,
+                wake_decision=wake_decision,
+            )
             self._set_cognitive_memory_update(frame, decision=decision, notes=("think_only", "active_state_commit"))
             self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
             self._finalize_cognitive_frame(frame)
@@ -5011,6 +5282,11 @@ class RuntimeCoordinator(
             if motion_decision is not None:
                 self._apply_position_update(motion_decision)
                 frame.final_decision = self._decision_to_frame_dict(motion_decision)
+                self._attach_speak_truth_table(
+                    frame,
+                    decision=motion_decision,
+                    wake_decision=getattr(self, "last_wake_decision", None),
+                )
                 self._set_cognitive_memory_update(frame, decision=motion_decision, notes=("silent_motion",))
                 self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
                 self._finalize_cognitive_frame(frame)
@@ -5069,6 +5345,10 @@ class RuntimeCoordinator(
                 "system_action": "",
                 "reason": frame.action_plan.reason_to_speak,
             }
+            self._attach_speak_truth_table(
+                frame,
+                wake_decision=getattr(self, "last_wake_decision", None),
+            )
             self._set_cognitive_memory_update(frame, notes=("no_speech",))
             self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
             self._finalize_cognitive_frame(frame)
@@ -5146,6 +5426,12 @@ class RuntimeCoordinator(
                 "system_action": "",
                 "reason": "ambient_silence",
             }
+            self._attach_speak_truth_table(
+                frame,
+                wake_decision=getattr(self, "last_wake_decision", None),
+                ambient_hold=True,
+                ambient_reason=f"cooldown={cooldown}s",
+            )
             self._set_cognitive_memory_update(frame, notes=("ambient_silence",))
             self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
             self._finalize_cognitive_frame(frame)
@@ -5199,6 +5485,10 @@ class RuntimeCoordinator(
                 "system_action": "",
                 "reason": "wake_governor_held_main_cognition",
             }
+            self._attach_speak_truth_table(
+                frame,
+                wake_decision=self._current_autonomous_wake_decision(),
+            )
             self._set_cognitive_memory_update(frame, notes=("wake_gate_no_main",))
             self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
             self._finalize_cognitive_frame(frame)
@@ -5260,6 +5550,13 @@ class RuntimeCoordinator(
             self._note_autonomous_spoken()
             self._apply_position_update(decision)
             frame.final_decision = self._decision_to_frame_dict(decision)
+            self._attach_speak_truth_table(
+                frame,
+                decision=decision,
+                wake_decision=getattr(self, "last_wake_decision", None),
+                ambient_hold=False,
+                post_filters_ran=True,
+            )
             self._set_cognitive_memory_update(frame, decision=decision, notes=("autonomous_inner_thought",))
             self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
             self._send_decision_to_body(decision, channel="autonomous")
@@ -5324,6 +5621,13 @@ class RuntimeCoordinator(
         self._note_autonomous_spoken()
         self._apply_position_update(decision)
         frame.final_decision = self._decision_to_frame_dict(decision)
+        self._attach_speak_truth_table(
+            frame,
+            decision=decision,
+            wake_decision=getattr(self, "last_wake_decision", None),
+            ambient_hold=False,
+            post_filters_ran=True,
+        )
         self._set_cognitive_memory_update(frame, decision=decision, notes=("autonomous_commit",))
         self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
         self._send_decision_to_body(decision, channel="autonomous")

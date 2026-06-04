@@ -932,6 +932,7 @@ class SilenceState:
     reason: str = ""
     evidence: tuple[str, ...] = ()
     generation_failure: bool = False
+    body_bias_hint: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -944,6 +945,7 @@ class SilenceState:
             "reason": self.reason,
             "evidence": list(self.evidence),
             "generation_failure": bool(self.generation_failure),
+            "body_bias_hint": dict(self.body_bias_hint),
         }
 
 

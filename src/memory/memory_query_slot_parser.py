@@ -554,6 +554,11 @@ def _looks_like_name_disclosure(norm: str) -> bool:
         return False
     if re.search(r"\btoi\s+ten\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
         return True
+    # P0: tiếng Việt chat hay rút gọn "tôi tên Tín" thay vì "tôi tên là Tín".
+    # Nếu không nhận dạng dạng này là fact disclosure, compiler sẽ cho semantic
+    # recall xử lý và có thể biến lượt cập nhật tên thành câu hỏi memory.
+    if re.search(r"\b(?:toi|minh|tui|tao|to|em|ngai)\s+ten\s+(?!gi\b|la\s+gi\b|la\b)[a-z0-9_ -]{2,40}\b", norm):
+        return True
     if re.search(r"\bten\s+(?:cua\s+)?toi\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
         return True
     if re.search(r"\bgoi\s+toi\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
