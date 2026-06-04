@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "proc_builtin_1",
+      "trigger": "weak_evidence",
+      "rule": "Khi evidence yếu, giảm chắc chắn hoặc im; không claim thấy/biết điều chưa có bằng chứng.",
+      "confidence": 0.86,
+      "evidence_ids": [],
+      "observations": 1,
+      "success_count": 0,
+      "failure_count": 0,
+      "first_seen_at": "",
+      "updated_at": "",
+      "decay_policy": "none",
+      "metadata": {
+        "built_in": true
+      }
+    },
+    {
+      "id": "proc_builtin_2",
+      "trigger": "user_correction",
+      "rule": "Khi user sửa sai, bỏ frame suy diễn cũ trước, trả lời trực tiếp phần đúng hiện tại.",
+      "confidence": 0.86,
+      "evidence_ids": [],
+      "observations": 1,
+      "success_count": 0,
+      "failure_count": 0,
+      "first_seen_at": "",
+      "updated_at": "",
+      "decay_policy": "none",
+      "metadata": {
+        "built_in": true
+      }
+    },
+    {
+      "id": "proc_builtin_3",
+      "trigger": "technical_task",
+      "rule": "Khi task kỹ thuật, ưu tiên contract, code path, edge case và cách nối; không trôi sang thơ hóa.",
+      "confidence": 0.86,
+      "evidence_ids": [],
+      "observations": 1,
+      "success_count": 0,
+      "failure_count": 0,
+      "first_seen_at": "",
+      "updated_at": "",
+      "decay_policy": "none",
+      "metadata": {
+        "built_in": true
+      }
+    }
+  ]
+}
