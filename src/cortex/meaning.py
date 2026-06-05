@@ -204,6 +204,12 @@ class MeaningLayer:
             reaction=reaction,
             attitude=attitude,
         )
+        expansion = self._meaning_expansion_slots(
+            source_fact=source_fact,
+            meaning=meaning,
+            secondary=secondary,
+            evidence=evidence,
+        )
         result = MeaningLayerResult(
             source_fact=source_fact,
             meaning=meaning,
@@ -222,6 +228,12 @@ class MeaningLayer:
             shift_reason=shift_reason,
             recent_families=recent_families,
             evidence=tuple(str(item) for item in tuple(evidence or ()) if str(item or "").strip())[:6],
+            scene_meaning=expansion["scene_meaning"],
+            user_activity_meaning=expansion["user_activity_meaning"],
+            temporal_meaning=expansion["temporal_meaning"],
+            action_opportunity=expansion["action_opportunity"],
+            public_seed=expansion["public_seed"],
+            recommended_surface_mode=expansion["recommended_surface_mode"],
         )
         result.prompt_context = self.render_prompt_context(result)
         return result
@@ -281,6 +293,109 @@ class MeaningLayer:
             impulse_by_reaction.get(reaction, "brief_indirect_reaction"),
         )
 
+    def _meaning_expansion_slots(
+        self,
+        *,
+        source_fact: str,
+        meaning: str,
+        secondary: tuple[str, ...],
+        evidence: tuple[str, ...],
+    ) -> dict[str, str]:
+        """Mở rộng fact thành meaning dùng được cho action, không phải câu nói.
+
+        Đây là cầu nối Phase 2: raw telemetry chỉ được nâng thành các slot nghĩa
+        thực dụng. LLM wording nhận slot này như nguyên liệu, không được nhận
+        mỗi lý do "im lâu" rồi tự sáng tác. Loài người gọi đó là ngẫu hứng;
+        model nhỏ gọi đó là văn mẫu có niềm tin.
+        """
+        evidence_text = " | ".join(str(item) for item in tuple(evidence or ())[:3] if str(item).strip())
+        first_evidence = str(tuple(evidence or ())[0] if evidence else "").strip()
+        defaults = {
+            "scene_meaning": meaning or source_fact,
+            "user_activity_meaning": ", ".join(secondary) if secondary else meaning,
+            "temporal_meaning": "current frame has a weak but usable semantic signal",
+            "action_opportunity": "observe_quietly_or_small_anchored_aside",
+            "public_seed": first_evidence or meaning or source_fact,
+            "recommended_surface_mode": "body_or_tiny_line",
+        }
+        table: dict[str, dict[str, str]] = {
+            "code_idle_long": {
+                "scene_meaning": "developer workspace appears paused around code/docs/debugging",
+                "user_activity_meaning": "user is likely inspecting, debugging, or thinking through a technical knot",
+                "temporal_meaning": "technical focus has stayed quiet long enough to become a stall signal",
+                "action_opportunity": "prefer body_only or one tiny technical-help cue; avoid random chatter",
+                "public_seed": evidence_text or "code/debug workspace paused",
+                "recommended_surface_mode": "body_only_or_technical_help",
+            },
+            "error_visible": {
+                "scene_meaning": "a visible friction point or error-like signal is present",
+                "user_activity_meaning": "user may be handling a concrete technical failure",
+                "temporal_meaning": "friction is current, so usefulness beats personality mist",
+                "action_opportunity": "technical_help_impulse if confidence is enough; otherwise observe quietly",
+                "public_seed": evidence_text or "error/friction signal",
+                "recommended_surface_mode": "technical_help",
+            },
+            "youtube_after_error": {
+                "scene_meaning": "media appears after a technical friction signal",
+                "user_activity_meaning": "user may be decompressing after debugging friction",
+                "temporal_meaning": "shift from error to media carries avoidance/decompression value",
+                "action_opportunity": "one dry low-pressure aside is allowed; no scolding",
+                "public_seed": evidence_text or "media after error",
+                "recommended_surface_mode": "soft_tease",
+            },
+            "tiktok_opened_after_code": {
+                "scene_meaning": "short-form media appears after code/design focus",
+                "user_activity_meaning": "user may be decompression-scrolling after work pressure",
+                "temporal_meaning": "context switch itself is the signal",
+                "action_opportunity": "random_chatter_or_soft_tease may be allowed if not intrusive",
+                "public_seed": evidence_text or "short-form media after code",
+                "recommended_surface_mode": "random_chatter",
+            },
+            "alt_tab_many": {
+                "scene_meaning": "attention is fragmented across windows",
+                "user_activity_meaning": "user may be scanning or searching for a thread",
+                "temporal_meaning": "repeated switching is more meaningful than a single window",
+                "action_opportunity": "tiny marker or body_only; do not diagnose emotion",
+                "public_seed": evidence_text or "fragmented window switching",
+                "recommended_surface_mode": "dry_marker",
+            },
+            "meeting_open_idle": {
+                "scene_meaning": "a social/meeting space is open but quiet",
+                "user_activity_meaning": "user is waiting or holding a passive social context",
+                "temporal_meaning": "waiting duration is the main signal",
+                "action_opportunity": "observe quietly; only tiny anchored comment if silence debt is high",
+                "public_seed": evidence_text or "quiet meeting context",
+                "recommended_surface_mode": "body_only_or_micro_presence",
+            },
+            "ambient_idle": {
+                "scene_meaning": "no strong external task meaning; only ambient stillness",
+                "user_activity_meaning": "user is present but not offering a clear target",
+                "temporal_meaning": "silence exists but is not itself a topic",
+                "action_opportunity": "body_only first; speech requires rooted memory/daydream/thought seed",
+                "public_seed": "ambient stillness",
+                "recommended_surface_mode": "body_only",
+            },
+            "prolonged_activity": {
+                "scene_meaning": "the same activity persisted long enough to become meaningful",
+                "user_activity_meaning": "user may be looping, decompression-stuck, or deep-focused depending on focus kind",
+                "temporal_meaning": "duration, not novelty, is the signal",
+                "action_opportunity": "choose action from focus context: body_only for code, random_chatter for media",
+                "public_seed": evidence_text or "prolonged activity",
+                "recommended_surface_mode": "context_decides",
+            },
+            "user_requested_presence": {
+                "scene_meaning": "user explicitly pulled ERIS toward presence",
+                "user_activity_meaning": "user wants a public response from the runtime",
+                "temporal_meaning": "request overrides ordinary ambient silence",
+                "action_opportunity": "generate one grounded tiny line, still no fake screen claim",
+                "public_seed": evidence_text or "user requested presence",
+                "recommended_surface_mode": "must_surface_low_claim",
+            },
+        }
+        merged = dict(defaults)
+        merged.update(table.get(source_fact, {}))
+        return merged
+
     #Hàm này tạo context cho LLM/tầng sau.
     def render_prompt_context(self, result: MeaningLayerResult) -> str:
         if not result.meaning:
@@ -306,6 +421,12 @@ class MeaningLayer:
                     f"mood_residue={result.mood_residue}; emotional_pressure={result.emotional_pressure:.2f}; "
                     f"attention_bias={','.join(result.attention_bias) or 'none'}; "
                     f"reaction_impulse={result.reaction_impulse}."
+                ),
+                (
+                    "meaning_expansion_slots: "
+                    f"scene_meaning={result.scene_meaning}; user_activity={result.user_activity_meaning}; "
+                    f"temporal={result.temporal_meaning}; opportunity={result.action_opportunity}; "
+                    f"public_seed={result.public_seed}; surface_mode={result.recommended_surface_mode}."
                 ),
                 f"meaning_evidence: {evidence}.",
                 "Rule: meaning is not speech. Never verbalize labels like escape_from_friction, cognitive_stall, avoidance, or scattered_attention; wording must come from concrete evidence plus a small reaction.",

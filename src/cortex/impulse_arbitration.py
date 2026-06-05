@@ -39,6 +39,9 @@ class ImpulseCandidate:
     evidence: tuple[str, ...] = ()
     reason: str = ""
     requires_scene_evidence: bool = False
+    root_source: str = ""
+    action_opportunity: str = ""
+    llm_contract: str = ""
 
     @property
     def total(self) -> float:
@@ -85,6 +88,9 @@ class ImpulseCandidate:
             "evidence": list(self.evidence),
             "reason": self.reason,
             "requires_scene_evidence": bool(self.requires_scene_evidence),
+            "root_source": self.root_source,
+            "action_opportunity": self.action_opportunity,
+            "llm_contract": self.llm_contract,
         }
 
 
@@ -184,13 +190,21 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
 
     scene_anchor = _scene_anchor(ev)
     thought_topic = _text(getattr(thought_surface, "topic_seed", "") if thought_surface is not None else "", limit=80)
-    has_internal_content = bool(thought_topic)
+    thought_source_memory = _text(getattr(thought_surface, "source_memory", "") if thought_surface is not None else "", limit=180)
+    thought_root_source = _text(getattr(thought_surface, "root_source", "") if thought_surface is not None else "", limit=40)
+    thought_impulse_kind = _text(getattr(thought_surface, "impulse_kind", "") if thought_surface is not None else "", limit=40)
+    thought_public_seed = _text(getattr(thought_surface, "public_seed", "") if thought_surface is not None else "", limit=180)
+    rooted_topic = _text(thought_public_seed or thought_source_memory or thought_topic, limit=160)
+    rooted_inner = bool(rooted_topic and _has_real_thought_root(rooted_topic, root_source=thought_root_source))
+    focus_is_deep_work = ev.focus_kind in {"code", "docs"} or ev.has_tag("technical_scene") or ev.has_tag("docs_scene")
+    focus_allows_chatter = bool(aff.random_chatter_allowed and not focus_is_deep_work)
+    has_internal_content = bool(rooted_inner)
     has_scene_or_internal_context = bool(ev.has_scene_anchor or scene_anchor or has_internal_content or memory_residue_pressure >= 0.42)
     empty_context_presence_penalty = status_ping_low_value * (0.34 if not has_scene_or_internal_context else 0.18)
     vital_body_release = vital_pressure * (0.30 if not has_scene_or_internal_context else 0.14)
     family_scene = "scene_curiosity:" + _family_key(scene_anchor)
-    family_whim = "inner_whim:" + _family_key(thought_topic or "quiet_whim")
-    family_story = "micro_story:" + _family_key(thought_topic or "memory_dust")
+    family_whim = "inner_whim:" + _family_key(rooted_topic or "unrooted_whim")
+    family_story = "micro_story:" + _family_key(rooted_topic or "memory_dust")
 
     candidates: list[ImpulseCandidate] = []
 
@@ -255,22 +269,25 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             name="inner_whim_impulse",
             impulse_type="inner_whim",
             speech_act="inner_whim",
-            topic_seed=thought_topic or "quiet_whim",
+            topic_seed=rooted_topic or "unrooted_whim",
             family=family_whim,
-            base_score=0.10 + internal_pull_boost,
-            evidence_fit=(0.10 if thought_topic else 0.03) + requested_presence * 0.10,
+            base_score=0.08 + internal_pull_boost,
+            evidence_fit=(0.16 if rooted_inner else -0.10) + requested_presence * 0.08,
             belief_support=max(beliefs.confidence("eris.should_not_sound_like_camera", 0.50), pattern_observation_belief) * 0.12,
             need_pressure=needs.expression_need * 0.24 + needs.curiosity_need * 0.10 + cognitive_stimulation * 0.28 + requested_presence * 0.18 + vital_speech_bonus,
             preference_fit=prefs.fit_for("inner_whim_impulse") * 0.20,
             trait_bias=traits.bias_for("inner_whim_impulse"),
-            affordance_allowance=0.06,
-            risk=needs.rest_need * 0.12 + needs.competence_need * 0.16,
+            affordance_allowance=(0.08 if rooted_inner else -0.16),
+            risk=needs.rest_need * 0.12 + needs.competence_need * 0.16 + (0.18 if not rooted_inner else 0.0),
             interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.46 - requested_presence * 0.36 - media_relief),
             repetition_penalty=habits.repetition_penalty(action="inner_whim", family=family_whim),
             habit_bias=habits.semantic_bias(action="inner_whim", impulse_name="inner_whim_impulse", family=family_whim),
-            metabolic_adjustment=vital_speech_bonus * 0.82,
-            evidence=(*stack.debug_notes()[:5], f"metabolic.vital={vital_pressure:.2f}", "source=thought_or_internal_state"),
-            reason="Internal residue wants a short low-claim line.",
+            metabolic_adjustment=vital_speech_bonus * (0.64 if rooted_inner else 0.18),
+            evidence=(*stack.debug_notes()[:5], f"metabolic.vital={vital_pressure:.2f}", f"root_source={thought_root_source or 'none'}", "source=rooted_thought" if rooted_inner else "source=unrooted_pressure"),
+            reason="Inner whim may surface only when it has a memory/daydream/thought root, not from empty silence.",
+            root_source=thought_root_source or ("thought" if rooted_inner else "none"),
+            action_opportunity="tiny rooted stray thought; no generic silence/status line",
+            llm_contract="inner_whim: topic_seed must be the root; do not invent a new subject",
         )
     )
 
@@ -281,18 +298,18 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             name="curious_question_impulse",
             impulse_type="curious_question",
             speech_act="curious_question",
-            topic_seed=thought_topic or scene_anchor or "requested_presence",
-            family="curious_question:" + _family_key(thought_topic or scene_anchor or "requested_presence"),
+            topic_seed=rooted_topic or scene_anchor or "requested_presence",
+            family="curious_question:" + _family_key(rooted_topic or scene_anchor or "requested_presence"),
             base_score=0.06 + requested_presence * 0.34 + media_relief * 0.06,
-            evidence_fit=0.08 if (thought_topic or scene_anchor) else 0.02,
+            evidence_fit=0.08 if (rooted_topic or scene_anchor) else 0.02,
             belief_support=beliefs.confidence("eris.should_not_sound_like_camera", 0.50) * 0.06,
             need_pressure=needs.curiosity_need * 0.26 + needs.expression_need * 0.16 + requested_presence * 0.20 + vital_speech_bonus * 0.72,
             preference_fit=prefs.fit_for("inner_whim_impulse") * 0.10,
             trait_bias=traits.bias_for("scene_curiosity_impulse") * 0.42,
             affordance_allowance=0.06 + (0.08 if explicit_no_screen_pull else 0.0),
             risk=aff.intrusive_question_risk * 0.12 + needs.rest_need * 0.10,
-            repetition_penalty=habits.repetition_penalty(action="curious_question", family="curious_question:" + _family_key(thought_topic or scene_anchor or "requested_presence")),
-            habit_bias=habits.semantic_bias(action="curious_question", impulse_name="curious_question_impulse", family="curious_question:" + _family_key(thought_topic or scene_anchor or "requested_presence")),
+            repetition_penalty=habits.repetition_penalty(action="curious_question", family="curious_question:" + _family_key(rooted_topic or scene_anchor or "requested_presence")),
+            habit_bias=habits.semantic_bias(action="curious_question", impulse_name="curious_question_impulse", family="curious_question:" + _family_key(rooted_topic or scene_anchor or "requested_presence")),
             interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.38 - requested_presence * 0.30 - media_relief),
             metabolic_adjustment=vital_speech_bonus * 0.60,
             evidence=("requested_presence" if requested_presence else "curiosity_pressure", f"metabolic.vital={vital_pressure:.2f}", *stack.debug_notes()[:5]),
@@ -306,10 +323,10 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             name="micro_story_impulse",
             impulse_type="micro_story",
             speech_act="light_muse",
-            topic_seed=thought_topic or "memory_dust",
+            topic_seed=rooted_topic or "memory_dust",
             family=family_story,
             base_score=0.07 + requested_presence * 0.28,
-            evidence_fit=(0.10 if thought_topic else 0.04) + requested_presence * 0.06,
+            evidence_fit=(0.12 if rooted_inner else 0.02) + requested_presence * 0.05,
             belief_support=pattern_observation_belief * 0.10,
             need_pressure=needs.expression_need * 0.18 + cognitive_stimulation * 0.22 + requested_presence * 0.14 + vital_speech_bonus * 0.86,
             preference_fit=prefs.fit_for("micro_story_impulse") * 0.16,
@@ -350,54 +367,60 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
 
     # 6. Random chatter: nói nhảm có kiểm soát khi boredom/silence nén đủ lâu.
     # Không claim màn hình; nó là mẩu nội sinh thấp rủi ro, dùng để ERIS bớt hóa tượng.
-    random_family = "random_chatter:" + _family_key(thought_topic or scene_anchor or "ambient_runtime")
+    random_family = "random_chatter:" + _family_key(rooted_topic or scene_anchor or "ambient_runtime")
     candidates.append(
         ImpulseCandidate(
             name="random_chatter_impulse",
             impulse_type="random_chatter",
             speech_act="random_chatter",
-            topic_seed=thought_topic or "ambient_runtime",
+            topic_seed=rooted_topic or ("media_idle" if focus_allows_chatter else "ambient_runtime"),
             family=random_family,
             base_score=0.045 + boredom_pressure * 0.08 + requested_presence * 0.08,
-            evidence_fit=0.06 if thought_topic else 0.02,
+            evidence_fit=0.08 if (rooted_inner or focus_allows_chatter) else -0.04,
             belief_support=max(beliefs.confidence("eris.should_not_sound_like_camera", 0.50), pattern_observation_belief) * 0.08,
             need_pressure=boredom_pressure * 0.22 + needs.expression_need * 0.18 + cognitive_stimulation * 0.18 + vital_speech_bonus * 0.80,
             preference_fit=prefs.fit_for("random_chatter_impulse") * 0.14,
             trait_bias=traits.bias_for("random_chatter_impulse"),
-            affordance_allowance=0.09 if aff.random_chatter_allowed else -0.04,
-            risk=needs.rest_need * 0.12 + aff.intrusive_question_risk * 0.08,
-            interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.34 - requested_presence * 0.24 - media_relief - vital_pressure * 0.18),
+            affordance_allowance=0.14 if focus_allows_chatter else -0.22,
+            risk=needs.rest_need * 0.12 + aff.intrusive_question_risk * 0.08 + (0.28 if focus_is_deep_work else 0.0),
+            interrupt_cost=max(0.0, dynamic_interrupt_cost * (0.62 if focus_is_deep_work else 0.26) - requested_presence * 0.18 - media_relief - vital_pressure * (0.08 if focus_is_deep_work else 0.20)),
             repetition_penalty=habits.repetition_penalty(action="random_chatter", family=random_family),
             habit_bias=habits.semantic_bias(action="random_chatter", impulse_name="random_chatter_impulse", family=random_family),
             metabolic_adjustment=vital_speech_bonus * 0.64,
-            evidence=("source=endogenous_boredom", f"metabolic.vital={vital_pressure:.2f}", f"boredom={boredom_pressure:.2f}"),
-            reason="Compressed boredom/silence can surface as one tiny no-claim chatter fragment.",
+            evidence=("source=endogenous_boredom", f"metabolic.vital={vital_pressure:.2f}", f"boredom={boredom_pressure:.2f}", f"focus_allows_chatter={focus_allows_chatter}", f"deep_work={focus_is_deep_work}"),
+            reason="Random chatter is only for low-focus/media contexts or a real rooted topic; code/docs should discharge through body-only.",
+            root_source=thought_root_source or ("boredom" if focus_allows_chatter else "none"),
+            action_opportunity="dry casual chatter in media/low-focus only; body_only during code/docs",
+            llm_contract="random_chatter: dry everyday aside; no status ping; do not interrupt deep work",
         )
     )
 
     # 7. Memory resonance: ký ức/pattern cũ nổi lên, nhưng vẫn phải nói thấp-claim.
-    memory_family = "memory_resonance:" + _family_key(thought_topic or "pattern_residue")
+    memory_family = "memory_resonance:" + _family_key(rooted_topic or "pattern_residue")
     candidates.append(
         ImpulseCandidate(
             name="memory_resonance_impulse",
             impulse_type="memory_resonance",
             speech_act="light_muse",
-            topic_seed=thought_topic or "pattern_residue",
+            topic_seed=rooted_topic or "pattern_residue",
             family=memory_family,
             base_score=0.05 + memory_residue_pressure * 0.10,
-            evidence_fit=0.12 if thought_topic else 0.04,
+            evidence_fit=0.18 if rooted_inner and (thought_root_source in {"memory", "daydream", "unresolved_memory"} or thought_source_memory) else 0.02,
             belief_support=pattern_observation_belief * 0.18,
             need_pressure=memory_residue_pressure * 0.28 + thought_pressure * 0.18 + vital_speech_bonus * 0.62,
             preference_fit=prefs.fit_for("memory_resonance_impulse") * 0.16,
             trait_bias=traits.bias_for("memory_resonance_impulse"),
-            affordance_allowance=0.06,
-            risk=needs.rest_need * 0.10 + needs.competence_need * 0.08,
+            affordance_allowance=0.08 if rooted_inner else -0.08,
+            risk=needs.rest_need * 0.10 + needs.competence_need * 0.08 + (0.16 if not rooted_inner else 0.0),
             interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.32 - vital_pressure * 0.16 - requested_presence * 0.18),
             repetition_penalty=habits.repetition_penalty(action="light_muse", family=memory_family),
             habit_bias=habits.semantic_bias(action="light_muse", impulse_name="memory_resonance_impulse", family=memory_family),
             metabolic_adjustment=vital_speech_bonus * 0.54,
-            evidence=("source=memory_residue", f"memory_residue={memory_residue_pressure:.2f}", f"metabolic.vital={vital_pressure:.2f}"),
-            reason="A remembered pattern/residue wants a short surface trace.",
+            evidence=("source=memory_residue", f"memory_residue={memory_residue_pressure:.2f}", f"metabolic.vital={vital_pressure:.2f}", f"root_source={thought_root_source or 'none'}"),
+            reason="A remembered/daydream/unresolved pattern wants a short surface trace, only with a real root.",
+            root_source=thought_root_source or ("memory" if thought_source_memory else "none"),
+            action_opportunity="low-claim recalled-pattern observation; compare with current context without pretending memory is current evidence",
+            llm_contract="memory_resonance: reflective/recalled tone; no screen claim beyond current evidence",
         )
     )
 
@@ -408,7 +431,7 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             name="reengagement_impulse",
             impulse_type="reengagement",
             speech_act="reengagement",
-            topic_seed=scene_anchor or thought_topic or "quiet_return",
+            topic_seed=scene_anchor or rooted_topic or "quiet_return",
             family=reengagement_family,
             base_score=0.035 + min(0.14, silence_pressure * 0.12),
             evidence_fit=0.08 if ev.has_scene_anchor else 0.02,
@@ -433,7 +456,7 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             name="technical_help_impulse",
             impulse_type="technical_help",
             speech_act="practical_help",
-            topic_seed="task_assistance",
+            topic_seed=scene_anchor or rooted_topic or "task_assistance",
             family="technical:task_assistance",
             base_score=0.05,
             evidence_fit=0.24 if aff.technical_help_relevant else 0.0,
@@ -473,6 +496,35 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
     )
 
     return tuple(candidates)
+
+
+def _has_real_thought_root(value: str, *, root_source: str = "") -> bool:
+    """Không cho inner_whim lấy pressure-only label làm topic root."""
+    text = str(value or "").strip().lower()
+    root = str(root_source or "").strip().lower()
+    if root in {"memory", "daydream", "unresolved_memory"}:
+        return True
+    if not text:
+        return False
+    hollow = {
+        "quiet_whim",
+        "unrooted_whim",
+        "ambient_runtime",
+        "pattern_residue",
+        "memory_dust",
+        "body_bias_only",
+        "intentional_silence",
+        "quiet_co_presence",
+        "present_room",
+    }
+    compact = re.sub(r"[^a-z0-9_]+", "_", text).strip("_")
+    if compact in hollow:
+        return False
+    if text.startswith(("idle_seconds=", "silent_cycles=", "metabolic.vital=", "boredom=", "silence_pressure=")):
+        return False
+    if any(marker in text for marker in ("daydream", "unresolved_memory", "candidate[", "memory_replay", "open_question")):
+        return True
+    return len([part for part in re.split(r"[\s_:/;-]+", text) if len(part) >= 3]) >= 2
 
 
 def _scene_anchor(ev) -> str:

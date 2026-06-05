@@ -3,7 +3,15 @@ import datetime
 import threading
 
 import psutil
-import uiautomation as auto
+try:
+    import uiautomation as auto
+except Exception:  # pragma: no cover - Linux/CI hoặc máy chưa cài UIAutomation
+    auto = None  # type: ignore
+
+try:
+    from .content_metadata import ContentMetadataCollector
+except Exception:  # pragma: no cover - fallback nếu chạy file lẻ ngoài package
+    ContentMetadataCollector = None  # type: ignore
 
 _com_state = threading.local()
 
@@ -21,8 +29,27 @@ def _ensure_com_initialized() -> None:
 
 
 class TelemetryMixin:
+    def _get_content_metadata_collector(self):
+        # Collector được lazy-init vì TelemetryMixin không chắc có __init__ riêng.
+        # Nếu import/OS không hỗ trợ thì trả None, runtime vẫn sống. Đáng tiếc là
+        # phần mềm cần sống trước khi tỏ ra thông minh.
+        collector = getattr(self, "_content_metadata_collector", None)
+        if collector is not None:
+            return collector
+        if ContentMetadataCollector is None:
+            return None
+        try:
+            collector = ContentMetadataCollector()
+            self._content_metadata_collector = collector
+            return collector
+        except Exception:
+            self._content_metadata_collector = None
+            return None
+
     def _get_browser_telemetry_uia(self) -> dict:
         try:
+            if auto is None:
+                return {"url": "", "tabs": (), "available": False}
             _ensure_com_initialized()
             window = auto.GetForegroundControl()
             if window.ClassName != "Chrome_WidgetWin_1":
@@ -99,6 +126,21 @@ class TelemetryMixin:
             all_windows = []
 
         try:
+            collector = self._get_content_metadata_collector()
+            if collector is None:
+                content_metadata = {}
+            else:
+                content_metadata = collector.collect(
+                    active_window=active_window,
+                    browser_url=str(browser_info.get("url", "") or ""),
+                    browser_tabs=tuple(browser_info.get("tabs", ()) or ()),
+                )
+        except Exception:
+            # Metadata nội dung là steroid, không phải single point of failure.
+            # Để collector làm sập telemetry thì đúng là nâng cấp theo trường phái tự hủy.
+            content_metadata = {}
+
+        try:
             cpu = psutil.cpu_percent(interval=0.2)
             ram = psutil.virtual_memory().percent
         except Exception:
@@ -117,6 +159,7 @@ class TelemetryMixin:
             "active_app": active_window,
             "browser_url": str(browser_info.get("url", "") or ""),
             "browser_tabs": tuple(browser_info.get("tabs", ()) or ()),
+            "content_metadata": content_metadata,
             "open_windows": tuple(all_windows),
             "cpu_percent": cpu,
             "ram_percent": ram,
@@ -152,11 +195,25 @@ class TelemetryMixin:
         active_window = str(raw["active_window"])
         browser_url = str(raw["browser_url"])
         browser_tabs = tuple(raw["browser_tabs"])
+        content_metadata = raw.get("content_metadata", {}) if isinstance(raw.get("content_metadata", {}), dict) else {}
         all_windows = list(raw["open_windows"])
         cpu = float(raw["cpu_percent"])
         ram = float(raw["ram_percent"])
         current_time = str(raw["captured_at"])
         idle_seconds = float(raw["idle_seconds"])
+
+        content_str = ""
+        if content_metadata:
+            title = str(content_metadata.get("title", "") or "").strip()
+            caption = str(content_metadata.get("caption_sample", "") or "").strip()
+            source = str(content_metadata.get("source", "") or "").strip()
+            tier = str(content_metadata.get("tier", "") or "").strip()
+            confidence = content_metadata.get("confidence", 0.0)
+            visible_piece = caption or title
+            if visible_piece:
+                if len(visible_piece) > 96:
+                    visible_piece = visible_piece[:93].rstrip() + "..."
+                content_str = f" Nội dung thấy được: [{visible_piece}] source={source}/{tier} conf={confidence}."
 
         if browser_url:
             tabs_str = ", ".join(browser_tabs[:10]) if browser_tabs else "Không rõ"
@@ -170,7 +227,8 @@ class TelemetryMixin:
             f"Tâm trạng: {mood_str} ({mood_score}/100). "
             f"Vị trí ERIS: {pos_str}. "
             f"Ứng dụng đang focus: [{active_window}]. "
-            f"Tất cả cửa sổ đang mở: [{other_windows_str}]. "
+            f"Tất cả cửa sổ đang mở: [{other_windows_str}]."
+            f"{content_str} "
             f"CPU: {cpu}%. RAM: {ram}%. "
             f"Idle: {int(idle_seconds)}s."
         )

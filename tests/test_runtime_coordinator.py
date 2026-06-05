@@ -14,7 +14,9 @@ import runtime.coordinator as coordinator_module
 from domain import Decision
 from cortex.contracts import CognitiveBroadcast, CognitiveMomentum, ThoughtStreamReport, UnresolvedTensionLoop
 from cortex.internal_state import PersistentInternalState
+from cortex.low_level_speech_policy import LowLevelSpeechPolicy, LowLevelSpeechPolicyConfig
 from cortex.observer_contracts import SemanticSceneNote
+from cortex.surface_arbiter import SurfaceArbiter
 from memory.memory_cognition import MemoryCognitionCore
 from runtime.coordinator import FALLBACK_BY_INTENT, RuntimeCoordinator
 from runtime.presence_controller import SurfaceImpulse
@@ -370,6 +372,24 @@ class _MeetScreenTelemetry(_ScreenTelemetry):
             typing_speed="zero",
             window_switching="zero",
             focus_pattern="quiet",
+        )
+        return snapshot
+
+
+class _TongquatTelemetry(_DummyTelemetry):
+    def capture_snapshot(self, **kwargs):
+        snapshot = super().capture_snapshot(**kwargs)
+        snapshot.active_window = "tongquat.md - Visual Studio Code"
+        snapshot.active_window_kind = "coding"
+        snapshot.focus_summary = "editing tongquat.md"
+        snapshot.idle_seconds = 75.0
+        snapshot.idle_label = "focused"
+        snapshot.recent_events = ()
+        snapshot.evidence = ("active editor tongquat.md",)
+        snapshot.user_signals = SimpleNamespace(
+            typing_speed="zero",
+            window_switching="zero",
+            focus_pattern="steady",
         )
         return snapshot
 
@@ -2210,6 +2230,92 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(text, "Nhịp này vẫn giữ một góc im.")
         self.assertIn("thin_presence_no_screen", llm_service.last_micro_kwargs["micro_context"]["surface_contract"])
 
+    def test_behavior_contract_vscode_focus_silence_prefers_anchored_presence_over_hollow_thought_surface(self):
+        llm_service = _HybridMicroLlmService("")
+        coordinator = self._make_coordinator(
+            llm_service=llm_service,
+            telemetry_service=_TongquatTelemetry(),
+            parser=_JsonParser(),
+        )
+        coordinator.reengagement_enabled = False
+        coordinator.presence_maintenance_silent_loop_threshold = 1
+        coordinator.presence_maintenance_cooldown_sec = 0.0
+        coordinator._sleep_interruptible = lambda seconds: None
+        coordinator.presence_maintenance_silent_cycles = 6
+        original_build_frame = coordinator._build_wake_gate_frame
+
+        def _frame_with_hollow_thought(**kwargs):
+            frame = original_build_frame(**kwargs)
+            frame.thought_stream_report = SimpleNamespace(
+                topic_seed="",
+                pressure=0.94,
+                momentum_score=0.94,
+                residue_reason="",
+            )
+            frame.internal_state_before = coordinator._get_internal_state()
+            frame.internal_state_after = coordinator._get_internal_state()
+            return frame
+
+        coordinator._build_wake_gate_frame = _frame_with_hollow_thought
+
+        def _fake_observer(**kwargs):
+            coordinator.last_wake_decision = coordinator_module.WakeDecision(
+                level="observe_only",
+                should_speak=False,
+                should_call_vision=False,
+                should_wake_main=False,
+                should_run_daydream=False,
+                reason="behavior_contract_vscode_focus",
+                confidence=0.71,
+            )
+            return None
+
+        coordinator._run_background_observer = _fake_observer
+
+        self.assertTrue(coordinator._run_loop_iteration())
+        sent = coordinator.transport.sent[-1]
+        self.assertTrue(str(sent["parse_mode"]).endswith("body_only"))
+        self.assertNotEqual(coordinator.last_wake_decision.debug["presence_probe"].get("rejected_by", ""), "reject:not_started")
+        self.assertNotEqual(coordinator.last_cognitive_frame.final_decision.get("surface_override"), "thought_stream_surface")
+        self.assertEqual(sent["text"], "")
+        self.assertFalse(sent["should_speak"])
+
+    def test_behavior_contract_body_only_does_not_reset_silent_debt_or_mark_spoken(self):
+        coordinator = self._make_coordinator(
+            telemetry_service=_SignalTelemetry(),
+            llm_service=_HybridMicroLlmService(""),
+            parser=_JsonParser(),
+        )
+        coordinator.reengagement_enabled = False
+        coordinator.presence_maintenance_silent_loop_threshold = 1
+        coordinator.presence_maintenance_cooldown_sec = 0.0
+        coordinator._sleep_interruptible = lambda seconds: None
+        coordinator.presence_maintenance_silent_cycles = 4
+        coordinator.reengagement_quiet_cycles = 4
+        coordinator.last_autonomous_spoken_at = 0.0
+
+        def _fake_observer(**kwargs):
+            coordinator.last_wake_decision = coordinator_module.WakeDecision(
+                level="observe_only",
+                should_speak=False,
+                should_call_vision=False,
+                should_wake_main=False,
+                should_run_daydream=False,
+                reason="behavior_contract_body_only",
+                confidence=0.66,
+            )
+            return None
+
+        coordinator._run_background_observer = _fake_observer
+
+        self.assertTrue(coordinator._run_loop_iteration())
+        sent = coordinator.transport.sent[-1]
+        self.assertEqual(sent["parse_mode"], "presence_maintenance_body_only")
+        self.assertFalse(sent["should_speak"])
+        self.assertEqual(sent["text"], "")
+        self.assertEqual(coordinator.presence_maintenance_silent_cycles, 5)
+        self.assertEqual(coordinator.last_autonomous_spoken_at, 0.0)
+
     def test_wake_gate_presence_adds_surface_override_when_thought_stream_wins(self):
         llm_service = _ModernMicroLlmService("Nhịp kia vẫn cấn ở mép ý nghĩ.")
         coordinator = self._make_coordinator(
@@ -2260,6 +2366,57 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertTrue(coordinator._run_loop_iteration())
         self.assertEqual(coordinator.last_cognitive_frame.final_decision["surface_override"], "thought_stream_surface")
         self.assertIn("surface_override=thought_stream_surface", coordinator.last_cognitive_frame.action_plan.notes)
+
+    def test_behavior_contract_surface_family_cooldown_blocks_repeat_family(self):
+        policy = LowLevelSpeechPolicy(
+            LowLevelSpeechPolicyConfig.from_mapping(
+                {
+                    "force_llm_after_silent": 3,
+                    "high_conf_threshold": 0.55,
+                    "min_surface_confidence": 0.38,
+                    "body_only_min_confidence": 0.32,
+                    "min_surface_interval_seconds": 0,
+                    "family_cooldown_seconds": 999,
+                    "max_body_only_streak": 3,
+                    "always_llm_kinds": ("presence_maintenance",),
+                },
+                use_env=False,
+            )
+        )
+        arbiter = SurfaceArbiter(
+            policy=policy,
+            llm_micro_gen=lambda **kwargs: ("tongquat.md vẫn đứng yên ở đó.", "fake_llm"),
+        )
+        cue = SimpleNamespace(
+            needs_micro_presence=True,
+            focus_family="code_stalled",
+            confidence=0.62,
+            curiosity=0.0,
+            missing_evidence_ids=False,
+            body_action="ObserveCode",
+            reason="presence_maintenance",
+            evidence=("vision_fact=VS Code đang mở tongquat.md",),
+            should_call_llm=True,
+            allow_body_only=True,
+        )
+
+        first = arbiter.arbitrate(
+            presence_cue=cue,
+            snapshot=SimpleNamespace(idle_seconds=75.0),
+            surface_kind="presence_maintenance",
+            silent_cycles=0,
+        )
+        second = arbiter.arbitrate(
+            presence_cue=cue,
+            snapshot=SimpleNamespace(idle_seconds=75.0),
+            surface_kind="presence_maintenance",
+            silent_cycles=0,
+        )
+
+        self.assertTrue(first.should_speak)
+        self.assertFalse(second.should_speak)
+        self.assertEqual(second.generation_mode, "reject")
+        self.assertIn("family_cooldown", second.reason)
 
     def test_reengagement_surfaces_long_silence_outreach_before_micro_presence(self):
         coordinator = self._make_coordinator(telemetry_service=_LongSilentTelemetry())

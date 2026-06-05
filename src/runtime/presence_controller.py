@@ -13,6 +13,7 @@ from cortex.low_level_speech_policy import LowLevelSpeechPolicy
 from cortex.surface_arbiter import SurfaceArbiter, SurfaceDecision, SurfaceImpulse
 from domain import Decision
 from runtime.no_fallback_policy import no_fallback_mode_enabled
+from runtime.sensor_visibility import SensorVisibilityState, derive_sensor_visibility_state
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,7 @@ class MicroPresenceCue:
     evidence: tuple[str, ...] = ()
     should_call_llm: bool = False
     allow_body_only: bool = True
+    sensor_visibility_state: dict[str, object] | None = None
 
     def to_context(self) -> dict[str, object]:
         return {
@@ -90,6 +92,7 @@ class MicroPresenceCue:
             "evidence": list(self.evidence),
             "should_call_llm": bool(self.should_call_llm),
             "allow_body_only": bool(self.allow_body_only),
+            "sensor_visibility_state": dict(self.sensor_visibility_state or {}),
         }
 
 
@@ -127,13 +130,38 @@ class PresenceControllerMixin:
             impulse.kind in {"inner_whim", "random_chatter", "thought_stream_surface", "curious_question", "light_muse", "memory_resonance"}
             or impulse.source in {"endogenous_drive", "thought_stream", "spontaneous_life", "internal_agenda", "inner_thought"}
         )
-        allow_no_screen_anchor = bool(endogenous_like or (force_llm and impulse.missing_evidence_ids))
+        sensor_like = bool(impulse.kind == "blind_frustration" or impulse.source == "sensor_visibility")
+        sensor_context: dict[str, object] = {}
+        if sensor_like:
+            raw_sensor = getattr(impulse, "raw", None)
+            if isinstance(raw_sensor, SensorVisibilityState):
+                sensor_context = raw_sensor.to_context()
+            elif callable(getattr(raw_sensor, "to_context", None)):
+                try:
+                    sensor_context = dict(raw_sensor.to_context())
+                except Exception:
+                    sensor_context = {}
+            if not sensor_context:
+                sensor_context = {
+                    "reason": str(getattr(impulse, "reason", "") or ""),
+                    "evidence": list(tuple(getattr(impulse, "evidence", ()) or ())),
+                }
+        allow_no_screen_anchor = bool(sensor_like or endogenous_like or (force_llm and impulse.missing_evidence_ids))
         must_not_claim_screen = bool(impulse.missing_evidence_ids or allow_no_screen_anchor)
-        must_surface = bool(force_llm or (not presence_like and (silent_cycles >= 4 or impulse.confidence >= 0.76)))
+        must_surface = bool(sensor_like or force_llm or (not presence_like and (silent_cycles >= 4 or impulse.confidence >= 0.76)))
         thin_presence_no_screen = bool(presence_like and impulse.missing_evidence_ids)
         ego_state = self._current_ego_surface_state()
+        impulse_kind = str(impulse.kind or impulse.speech_act or "surface")
+        root_source = str(getattr(impulse, "root_source", "") or "")
+        action_opportunity = str(getattr(impulse, "action_opportunity", "") or "")
+        llm_contract = str(getattr(impulse, "llm_contract", "") or "")
         micro_context = {
             "surface_impulse": json.dumps(impulse.to_context(), ensure_ascii=False),
+            "impulse_kind": impulse_kind,
+            "root_source": root_source,
+            "topic_seed": str(impulse.topic_seed or ""),
+            "action_opportunity": action_opportunity,
+            "llm_contract": llm_contract,
             "ego_surface_state": json.dumps(ego_state, ensure_ascii=False),
             "ego_surface_contract": (
                 "Use valence/social_energy/boredom/trust/rupture/dignity_defense as the style axis. "
@@ -158,24 +186,41 @@ class PresenceControllerMixin:
                 + ("; must_not_claim_screen" if must_not_claim_screen else "")
                 + ("; thin_presence_no_screen" if thin_presence_no_screen else "")
                 + ("; endogenous_surface" if endogenous_like else "")
+                + (f"; impulse_kind={impulse_kind}" if impulse_kind else "")
+                + (f"; root_source={root_source}" if root_source else "")
             ),
             "allow_no_screen_anchor": str(bool(allow_no_screen_anchor)).lower(),
             "must_not_claim_screen": str(bool(must_not_claim_screen)).lower(),
             "thin_presence_no_screen": str(bool(thin_presence_no_screen)).lower(),
         }
+        if sensor_like:
+            micro_context["sensor_visibility_state"] = json.dumps(sensor_context, ensure_ascii=False)
+            micro_context["sensor_visibility_contract"] = (
+                "Write one tiny Vietnamese line about limited vision or missing screen evidence. "
+                "Do not claim what is on screen. "
+                "Do not blame the user unless evidence includes recent_context_shift=true. "
+                "No poetic silence line. No technical debug dump. "
+                "Tone: restrained irritation, not panic."
+            )
+            micro_context["surface_contract"] = (
+                str(micro_context.get("surface_contract", ""))
+                + "; sensor_visibility_surface; allow_no_screen_anchor; must_not_claim_screen"
+            )
         fallback_text = ""
         presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence"})
         # Presence maintenance không được fallback bằng hũ câu mẫu. Nếu LLM/ego
         # không tạo được câu có chất, im còn đúng hơn. Thật sốc: ít nói hơn đôi khi
         # giống có nhân cách hơn.
-        if not no_fallback_mode_enabled() and not presence_like:
+        # Endogenous surface phải sinh từ root seed/daydream/memory, không rơi về hũ câu mẫu.
+        # Nếu không có rễ thì trả rỗng để arbiter chuyển body-only.
+        if not no_fallback_mode_enabled() and not presence_like and not sensor_like:
             fallback_text = self._local_micro_presence_fallback_text(
                 kind=impulse.kind or impulse.speech_act or "surface",
                 snapshot=snapshot,
                 seeds=seeds,
                 focus_family=impulse.focus_family,
             )
-        return self._hybrid_micro_presence_text(
+        text, source = self._hybrid_micro_presence_text(
             kind=impulse.kind or impulse.speech_act or "surface",
             snapshot=snapshot,
             fallback_text=fallback_text,
@@ -184,6 +229,18 @@ class PresenceControllerMixin:
             force_llm=must_surface,
             signal_score=impulse.confidence,
         )
+        if sensor_like and text and self._blind_frustration_blames_user_without_evidence(text, impulse):
+            return "", "blind_frustration_blame_blocked"
+        return text, source
+
+    def _blind_frustration_blames_user_without_evidence(self, text: str, impulse: SurfaceImpulse) -> bool:
+        evidence_blob = " ".join(str(item or "") for item in tuple(getattr(impulse, "evidence", ()) or ())).lower()
+        if "recent_context_shift=true" in evidence_blob:
+            return False
+        normalized = self._normalize_user_message(text)
+        user_markers = ("ngai", "ban", "ong", "may", "cau")
+        blame_markers = ("doi", "chuyen", "lam", "gay", "khien", "che", "nhay", "keo", "tat", "chan")
+        return bool(any(marker in normalized for marker in user_markers) and any(marker in normalized for marker in blame_markers))
 
     def _local_micro_presence_fallback_text(
         self,
@@ -296,6 +353,9 @@ class PresenceControllerMixin:
         if surface is None:
             return ""
         winner = str(getattr(surface, "kind", "") or getattr(surface, "intent", "") or "").strip()
+        source = str(getattr(surface, "source", "") or "").strip()
+        if source == "thought_stream" and winner in {"inner_whim", "memory_resonance", "random_chatter", "light_muse"}:
+            winner = "thought_stream_surface"
         requested = str(requested_kind or "").strip()
         if not winner or not requested or requested == "surface" or winner == requested:
             return ""
@@ -878,6 +938,7 @@ class PresenceControllerMixin:
         idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
         recent_events = tuple(str(item or "").strip() for item in (getattr(snapshot, "recent_events", ()) or ()) if str(item or "").strip())
         vision_facts = tuple(str(item or "").strip() for item in (getattr(snapshot, "vision_facts", ()) or ()) if str(item or "").strip())
+        sensor_visibility = derive_sensor_visibility_state(snapshot=snapshot)
         has_screen_evidence = bool(vision_facts or self._has_concrete_screen_signal(snapshot))
         present = bool(getattr(social_presence_event, "present", False))
         curiosity = self._internal_curiosity_for_micro_presence()
@@ -893,6 +954,8 @@ class PresenceControllerMixin:
             evidence.append("recent_events=" + ",".join(recent_events[:3]))
         if vision_facts:
             evidence.append("vision_fact=" + vision_facts[0][:100])
+        for item in tuple(sensor_visibility.evidence or ())[:5]:
+            evidence.append(f"sensor_visibility.{item}")
         if present:
             evidence.append("social_presence_event=true")
         evidence.append(
@@ -940,6 +1003,40 @@ class PresenceControllerMixin:
                 )
             ),
             allow_body_only=True,
+            sensor_visibility_state=sensor_visibility.to_context(),
+        )
+
+    def _blind_frustration_surface_impulse(
+        self,
+        *,
+        snapshot=None,
+        frame=None,
+        sensor_visibility: SensorVisibilityState | None = None,
+    ) -> SurfaceImpulse | None:
+        state = sensor_visibility or derive_sensor_visibility_state(snapshot=snapshot, frame=frame)
+        if not state.public_frustration_allowed:
+            return None
+        focus_family = self._focus_family_for_snapshot(snapshot) if snapshot is not None else "general_idle"
+        confidence = max(0.56, min(0.74, float(state.confidence or 0.0)))
+        evidence = tuple(dict.fromkeys(("sensor_visibility=limited", *tuple(state.evidence or ()))))[:10]
+        return SurfaceImpulse(
+            kind="blind_frustration",
+            source="sensor_visibility",
+            confidence=confidence,
+            pressure=confidence,
+            score=max(confidence, 0.61),
+            topic_seed=state.reason,
+            speech_act="blind_frustration",
+            family=f"sensor_visibility:{state.reason}",
+            evidence=evidence,
+            reason=state.reason,
+            focus_family=focus_family,
+            body_action="tilt_head",
+            missing_evidence_ids=True,
+            is_presence=False,
+            should_surface=True,
+            needs_external_evidence=False,
+            raw=state,
         )
 
     def _body_only_presence_decision(self, cue: MicroPresenceCue, *, intent: str, parse_mode: str, source: str = "flag_only") -> Decision:
@@ -1015,11 +1112,16 @@ class PresenceControllerMixin:
             frame=cognitive_frame,
             snapshot=snapshot,
         )
+        sensor_impulse = self._blind_frustration_surface_impulse(
+            snapshot=snapshot,
+            frame=cognitive_frame,
+            sensor_visibility=derive_sensor_visibility_state(snapshot=snapshot, frame=cognitive_frame),
+        )
         surface = self._surface_arbiter().arbitrate(
             snapshot=snapshot,
             cognitive_frame=cognitive_frame,
             presence_cue=cue,
-            extra_impulses=endogenous_impulses,
+            extra_impulses=tuple(item for item in (*endogenous_impulses, sensor_impulse) if item is not None),
             surface_kind=kind,
             force_llm=force_llm,
             silent_cycles=self.presence_maintenance_silent_cycles,
@@ -1540,7 +1642,7 @@ class PresenceControllerMixin:
             return ""
         is_reengagement = kind == "re_engagement"
         words = [item for item in re.split(r"\s+", cleaned) if item]
-        max_words = 14 if kind in {"presence_maintenance", "micro_presence", "re_engagement"} else 12
+        max_words = 14 if kind in {"presence_maintenance", "micro_presence", "re_engagement", "blind_frustration"} else 12
         if len(words) > max_words:
             return ""
         if "\n" in cleaned or cleaned.count("?") > (1 if is_reengagement else 0):
@@ -1551,6 +1653,8 @@ class PresenceControllerMixin:
             return ""
 
         normalized = self._normalize_user_message(cleaned)
+        if kind == "blind_frustration":
+            return self._sanitize_blind_frustration_text(cleaned, normalized=normalized)
         if self._force_speak_banned_family_for_text(cleaned) == "presence_declaration":
             return ""
         banned = (
@@ -1593,6 +1697,25 @@ class PresenceControllerMixin:
         if any(self._normalize_user_message(item) in normalized for item in (*banned, *banned_ascii)):
             return ""
         if not is_reengagement and any(item in normalized for item in ("ồn chứ", "còn thức", "sao", "không")):
+            return ""
+        return cleaned
+
+    def _sanitize_blind_frustration_text(self, cleaned: str, *, normalized: str) -> str:
+        words = [item for item in re.split(r"\s+", cleaned.strip(" .?")) if item]
+        if len(words) < 4 or len(words) > 14:
+            return ""
+        banned = (
+            "telemetry", "debug", "json", "cpu", "ram", "vram", "schema", "log",
+            "khoang lang", "im lang", "nhip nay", "van o day", "dang nghe",
+            "toi thay", "toi dang thay", "man hinh dang", "cua so dang",
+        )
+        if any(marker in normalized for marker in banned):
+            return ""
+        allowed_markers = (
+            "khong thay", "chua thay", "nhin", "tam nhin", "man hinh",
+            "bang chung", "du lieu", "tin hieu", "mo", "nghen", "can", "hut", "thieu",
+        )
+        if not any(marker in normalized for marker in allowed_markers):
             return ""
         return cleaned
 
@@ -1764,6 +1887,12 @@ class PresenceControllerMixin:
             frame=frame,
             snapshot=snapshot,
         )
+        sensor_visibility = derive_sensor_visibility_state(snapshot=snapshot, frame=frame)
+        sensor_impulse = self._blind_frustration_surface_impulse(
+            snapshot=snapshot,
+            frame=frame,
+            sensor_visibility=sensor_visibility,
+        )
         self.logger.info(
             "[surface_arbiter] input kind=%s silent_cycles=%d force_llm=%s cue_should_call_llm=%s cue_missing_evidence_ids=%s",
             surface_kind,
@@ -1776,7 +1905,7 @@ class PresenceControllerMixin:
             snapshot=snapshot,
             cognitive_frame=frame,
             presence_cue=cue,
-            extra_impulses=(*endogenous_impulses, *tuple(extra_impulses or ())),
+            extra_impulses=tuple(item for item in (*endogenous_impulses, sensor_impulse, *tuple(extra_impulses or ())) if item is not None),
             surface_kind=surface_kind,
             force_llm=force_llm,
             silent_cycles=self.presence_maintenance_silent_cycles,

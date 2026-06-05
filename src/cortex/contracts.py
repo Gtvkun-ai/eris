@@ -60,6 +60,9 @@ class TelemetrySnapshot:
     evidence: tuple[str, ...] = ()
     claim_style: str = "WEAK_IMPRESSION"
     vision_facts: tuple[str, ...] = ()
+    # Metadata nội dung foreground theo ladder L0-L5.
+    # Đây là raw/normalized fact cho SeLens, không phải kết luận tâm lý của user.
+    content_metadata: dict[str, object] = field(default_factory=dict)
 
     def to_machine_context(self) -> dict[str, object]:
         context: dict[str, object] = {
@@ -70,6 +73,7 @@ class TelemetrySnapshot:
             "user_signals": self.user_signals.to_dict(),
             "evidence": list(self.evidence),
             "vision_facts": list(self.vision_facts),
+            "content_metadata": _to_plain_contract(self.content_metadata),
             "claim_style": self.claim_style,
             "active_window_kind": self.active_window_kind,
             "focus_summary": self.focus_summary,
@@ -249,6 +253,17 @@ class SessionRitualReport:
     evidence: tuple[str, ...] = ()
     prompt_context: str = ""
 
+    # Phase 2+: Meaning expansion. Các field này là slot nghĩa công khai-an-toàn,
+    # không phải câu thoại. Tầng speech/body dùng chúng làm nguyên liệu để quyết
+    # định nói, im, hay chỉ cử động. Nếu thiếu các slot này, LLM chỉ còn silence
+    # pressure để bám và sẽ đẻ văn mẫu, một thảm hoạ nhỏ nhưng rất chăm chỉ.
+    scene_meaning: str = ""
+    user_activity_meaning: str = ""
+    temporal_meaning: str = ""
+    action_opportunity: str = ""
+    public_seed: str = ""
+    recommended_surface_mode: str = ""
+
     def to_dict(self) -> dict[str, object]:
         return {
             "restored": bool(self.restored),
@@ -265,6 +280,12 @@ class SessionRitualReport:
             "unresolved_loops": list(self.unresolved_loops),
             "evidence": list(self.evidence),
             "prompt_context": self.prompt_context,
+            "scene_meaning": self.scene_meaning,
+            "user_activity_meaning": self.user_activity_meaning,
+            "temporal_meaning": self.temporal_meaning,
+            "action_opportunity": self.action_opportunity,
+            "public_seed": self.public_seed,
+            "recommended_surface_mode": self.recommended_surface_mode,
         }
 
 
@@ -366,6 +387,17 @@ class MeaningLayerResult:
     recent_families: tuple[str, ...] = ()
     evidence: tuple[str, ...] = ()
     prompt_context: str = ""
+
+    # Phase 2+: Meaning expansion. Các field này là slot nghĩa công khai-an-toàn,
+    # không phải câu thoại. Tầng speech/body dùng chúng làm nguyên liệu để quyết
+    # định nói, im, hay chỉ cử động. Nếu thiếu các slot này, LLM chỉ còn silence
+    # pressure để bám và sẽ đẻ văn mẫu, một thảm hoạ nhỏ nhưng rất chăm chỉ.
+    scene_meaning: str = ""
+    user_activity_meaning: str = ""
+    temporal_meaning: str = ""
+    action_opportunity: str = ""
+    public_seed: str = ""
+    recommended_surface_mode: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -731,6 +763,15 @@ class ThoughtSurface:
     momentum_score: float = 0.0
     affordance: str = ""
 
+    # Root metadata cho surface. Thought stream có thể nổi lên từ memory,
+    # daydream insight, unresolved loop hoặc boredom. SurfaceArbiter đọc các
+    # trường này để tách inner_whim/memory_resonance/random_chatter thay vì gom
+    # tất cả thành thought_stream_surface rồi cầu nguyện model hiểu.
+    impulse_kind: str = ""
+    root_source: str = ""
+    action_opportunity: str = ""
+    public_seed: str = ""
+
     def to_dict(self) -> dict[str, object]:
         return {
             "mode": self.mode,
@@ -750,6 +791,10 @@ class ThoughtSurface:
             "surfaced_count": int(self.surfaced_count),
             "momentum_score": round(float(self.momentum_score), 3),
             "affordance": self.affordance,
+            "impulse_kind": self.impulse_kind,
+            "root_source": self.root_source,
+            "action_opportunity": self.action_opportunity,
+            "public_seed": self.public_seed,
         }
 
 

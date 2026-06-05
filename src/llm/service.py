@@ -2576,6 +2576,11 @@ class LlmService:
             or str(context.get("thin_presence_no_screen", "") if isinstance(context, dict) else "").lower() == "true"
         )
         endogenous_surface = "endogenous_surface" in surface_contract
+        impulse_kind = str(context.get("impulse_kind", "") if isinstance(context, dict) else "").strip()
+        root_source = str(context.get("root_source", "") if isinstance(context, dict) else "").strip()
+        action_opportunity = str(context.get("action_opportunity", "") if isinstance(context, dict) else "").strip()
+        llm_contract = str(context.get("llm_contract", "") if isinstance(context, dict) else "").strip()
+        topic_seed = str(context.get("topic_seed", "") if isinstance(context, dict) else "").strip()
         runtime_seed_text = " | ".join(seed_lines) if seed_lines else "<none>"
         user_msg = (
             f"Kind: {kind_name}\n"
@@ -2586,6 +2591,9 @@ class LlmService:
             f"Ego surface state: {ego_surface_state or '<none>'}\n"
             f"Ego surface contract: {ego_surface_contract or '<none>'}\n"
             f"Surface contract: {surface_contract or '<none>'}\n"
+            f"Impulse kind: {impulse_kind or '<none>'}; root_source={root_source or '<none>'}; action_opportunity={action_opportunity or '<none>'}\n"
+            f"Topic seed: {topic_seed or '<none>'}\n"
+            f"LLM contract: {llm_contract or '<none>'}\n"
             f"allow_no_screen_anchor={str(allow_no_screen_anchor).lower()}; must_not_claim_screen={str(must_not_claim_screen).lower()}; thin_presence_no_screen={str(thin_presence_no_screen).lower()}; endogenous_surface={str(endogenous_surface).lower()}\n"
             f"Signal score: {float(signal_score or 0.0):.2f}\n"
             f"Avoid repeating: {avoid_text}\n"
@@ -2632,6 +2640,30 @@ class LlmService:
                 "- endogenous_surface=true: the line may sound like a small stray thought, dry aside, or mundane random chatter. It should not explain the system.\n"
                 "- endogenous_surface=true: if Runtime seeds are <none>, generic, pressure-only, or too thin, return {\"text\":\"\"} even when must_surface=true.\n"
                 "- endogenous_surface=true: forbidden generic status/rhythm outputs include: 'Khoảng yên này...', 'Nhịp này...', 'vẫn giữ chỗ', 'yên thêm chút', 'im hơi lâu', 'tôi vẫn ở đây'.\n"
+            )
+        if impulse_kind == "inner_whim":
+            user_msg += (
+                "- inner_whim contract: use the topic_seed/root_source as the root. If it is absent or pressure-only, return {\"text\":\"\"}.\n"
+                "- inner_whim contract: one brief stray thought, not a question from empty silence, not a status ping.\n"
+            )
+        elif impulse_kind == "memory_resonance":
+            user_msg += (
+                "- memory_resonance contract: speak like a remembered pattern lightly resurfaced. Do not expose memory IDs or internals.\n"
+                "- memory_resonance contract: memory is a seed, not current evidence. Avoid fake time claims like 'tuần trước' unless the seed explicitly says so.\n"
+            )
+        elif impulse_kind == "random_chatter":
+            user_msg += (
+                "- random_chatter contract: only acceptable in low-focus/media/casual context; dry and slightly irreverent is allowed.\n"
+                "- random_chatter contract: if focus_kind is code, docs, IDE, debug, or the action opportunity says body_only, return {\"text\":\"\"}.\n"
+            )
+        elif impulse_kind == "blind_frustration":
+            user_msg += (
+                "- blind_frustration contract: speak only about limited sight, stale context, timeout, or blocked evidence; never claim current screen facts.\n"
+                "- blind_frustration contract: one restrained irritated line, not poetic presence, not a user blame line unless Runtime seeds explicitly include recent_context_shift=true.\n"
+            )
+        elif impulse_kind == "technical_help":
+            user_msg += (
+                "- technical_help contract: offer one tiny practical nudge. Useful beats poetic. Do not pretend to solve without evidence.\n"
             )
 
         user_msg += (

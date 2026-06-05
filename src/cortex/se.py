@@ -280,10 +280,13 @@ class SeLens:
         browser_url = str(raw.get("browser_url", "") or "")
         browser_tabs = self._normalize_string_tuple(raw.get("browser_tabs", ()))
         open_windows = self._normalize_string_tuple(raw.get("open_windows", ()))
+        content_metadata = self._normalize_content_metadata(raw.get("content_metadata", {}))
 
         # Phân loại bối cảnh bằng classifier mềm.
-        # `active_window_kind` vẫn là field cũ để không phá contract của TelemetrySnapshot.
-        context_classification = self._classify_window_context(active_window, browser_url, browser_tabs)
+        # Metadata DOM/OCR/accessibility được đưa vào như text phụ, không ghi đè tabs gốc.
+        # Nói cách khác: SeLens được cho ăn evidence tốt hơn, nhưng không được tự phong thánh.
+        classification_tabs = self._augment_browser_tabs_with_content_metadata(browser_tabs, content_metadata)
+        context_classification = self._classify_window_context(active_window, browser_url, classification_tabs)
         active_window_kind = context_classification.primary_kind
 
         idle_seconds = float(raw.get("idle_seconds", 0.0) or 0.0)
@@ -300,6 +303,7 @@ class SeLens:
             cpu_percent=cpu_percent,
             ram_percent=ram_percent,
             context_classification=context_classification,
+            content_metadata=content_metadata,
         )
         user_signals = self._build_user_signals(
             raw=raw,
@@ -320,6 +324,7 @@ class SeLens:
             ram_percent=ram_percent,
             recent_events=recent_events,
             context_classification=context_classification,
+            content_metadata=content_metadata,
         )
         claim_style = self._build_claim_style(
             raw=raw,
@@ -327,6 +332,7 @@ class SeLens:
             idle_seconds=idle_seconds,
             evidence=evidence,
             context_classification=context_classification,
+            content_metadata=content_metadata,
         )
         ambient_seed = int(raw.get("ambient_tone_score", raw.get("mood_score", 50)) or 50)
 
@@ -352,6 +358,7 @@ class SeLens:
             evidence=evidence,
             claim_style=claim_style,
             vision_facts=self._normalize_string_tuple(raw.get("vision_facts", ())),
+            content_metadata=content_metadata,
         )
 
     def build_machine_context(self, raw: dict) -> dict[str, object]:
@@ -403,6 +410,7 @@ class SeLens:
             f"- recent_events: {json.dumps(machine_context['recent_events'], ensure_ascii=False)}",
             f"- user_signals: {json.dumps(machine_context['user_signals'], ensure_ascii=False, sort_keys=True)}",
             f"- evidence: {json.dumps(machine_context['evidence'], ensure_ascii=False)}",
+            f"- content_metadata: {json.dumps(machine_context.get('content_metadata', {}), ensure_ascii=False, sort_keys=True)}",
             f"- claim_style: {machine_context['claim_style']}",
             f"- browser_url: {machine_context['browser_url'] or ''}",
             f"- browser_tabs: {json.dumps(machine_context['browser_tabs'], ensure_ascii=False)}",
@@ -440,12 +448,16 @@ class SeLens:
         app = app.replace("\n", " ")
         if len(app) > 96:
             app = app[:93].rstrip() + "..."
+        content_meta = getattr(snapshot, "content_metadata", {}) or {}
+        content_bits = self._format_content_metadata_inline(content_meta)
         context_meta = self._extract_context_meta_from_evidence(snapshot.evidence)
         if context_meta:
             confidence = context_meta.get("confidence")
             ambiguity = context_meta.get("ambiguity")
-            return f"{app} | kind={snapshot.active_window_kind} | confidence={confidence:.2f} | ambiguity={ambiguity:.2f} | idle={snapshot.idle_label}"
-        return f"{app} | kind={snapshot.active_window_kind} | idle={snapshot.idle_label}"
+            base = f"{app} | kind={snapshot.active_window_kind} | confidence={confidence:.2f} | ambiguity={ambiguity:.2f} | idle={snapshot.idle_label}"
+        else:
+            base = f"{app} | kind={snapshot.active_window_kind} | idle={snapshot.idle_label}"
+        return f"{base} | content={content_bits}" if content_bits else base
 
     def _is_generic_prompt_event(self, event: str) -> bool:
         normalized = str(event or "").strip().lower()
@@ -476,6 +488,8 @@ class SeLens:
 
     def _build_prompt_screen_facts(self, snapshot: TelemetrySnapshot) -> list[str]:
         facts: list[str] = []
+        content_facts = self._content_metadata_prompt_facts(getattr(snapshot, "content_metadata", {}) or {})
+        facts.extend(content_facts)
         for item in getattr(snapshot, "vision_facts", ()) or ():
             facts.append(str(item))
         for event in snapshot.recent_events:
@@ -512,6 +526,7 @@ class SeLens:
         cpu_percent: float,
         ram_percent: float,
         context_classification: _ContextClassification | None = None,
+        content_metadata: dict[str, object] | None = None,
     ) -> tuple[str, ...]:
         explicit = self._normalize_string_tuple(raw.get("recent_events", ()))
         if explicit:
@@ -534,6 +549,14 @@ class SeLens:
             events.append("entertainment_window_active")
         else:
             events.append("general_window_active")
+
+        content_source = str((content_metadata or {}).get("source", "") or "")
+        content_tier = str((content_metadata or {}).get("tier", "") or "")
+        content_confidence = self._coerce_float((content_metadata or {}).get("confidence"), 0.0)
+        if content_source and content_confidence >= 0.55:
+            events.append("content_metadata_visible")
+        if content_tier in {"L4", "L5"} and content_confidence >= 0.75:
+            events.append("strong_content_evidence_visible")
 
         if browser_url:
             events.append("browser_url_visible")
@@ -644,36 +667,37 @@ class SeLens:
         ram_percent: float,
         recent_events: tuple[str, ...],
         context_classification: _ContextClassification | None = None,
+        content_metadata: dict[str, object] | None = None,
     ) -> tuple[str, ...]:
-        explicit = self._normalize_string_tuple(raw.get("evidence", ()))
-        if explicit:
-            return explicit
+        explicit = list(self._normalize_string_tuple(raw.get("evidence", ())))
 
-        evidence = [
+        evidence = explicit or [
             f"active window is {active_app}",
             f"focus kind is {active_window_kind}",
             f"there has been no input for {int(idle_seconds)} seconds",
         ]
-        if context_classification:
+        if context_classification and not explicit:
             evidence.append(self._format_context_classification_evidence(context_classification))
-        if browser_url:
+        evidence.extend(self._build_content_metadata_evidence(content_metadata or {}))
+        if browser_url and not explicit:
             parsed = urlparse(browser_url)
             browser_target = parsed.netloc or browser_url
             evidence.append(f"browser target is visible: {browser_target}")
-        evidence.extend(
-            self._build_weak_context_hints(
-                active_window=active_app,
-                browser_url=browser_url,
-                browser_tabs=browser_tabs,
+        if not explicit:
+            evidence.extend(
+                self._build_weak_context_hints(
+                    active_window=active_app,
+                    browser_url=browser_url,
+                    browser_tabs=browser_tabs,
+                )
             )
-        )
-        if browser_tabs:
-            evidence.append(f"{len(browser_tabs)} browser tabs are visible")
-        if open_windows:
-            evidence.append(f"{len(open_windows)} windows are open")
-        if recent_events:
-            evidence.append(f"recent events include {', '.join(recent_events[:2])}")
-        return tuple(dict.fromkeys(evidence))[:9]
+            if browser_tabs:
+                evidence.append(f"{len(browser_tabs)} browser tabs are visible")
+            if open_windows:
+                evidence.append(f"{len(open_windows)} windows are open")
+            if recent_events:
+                evidence.append(f"recent events include {', '.join(recent_events[:2])}")
+        return tuple(dict.fromkeys(evidence))[:12]
 
     def _build_claim_style(
         self,
@@ -683,17 +707,26 @@ class SeLens:
         idle_seconds: float,
         evidence: tuple[str, ...],
         context_classification: _ContextClassification | None = None,
+        content_metadata: dict[str, object] | None = None,
     ) -> str:
         explicit = str(raw.get("claim_style", "") or "").strip()
         if explicit:
             return self._normalize_claim_style(explicit)
 
+        content_confidence = self._content_metadata_confidence(content_metadata or {})
+        content_tier = str((content_metadata or {}).get("tier", "") or "")
+        has_concrete_content = self._content_metadata_has_concrete_text(content_metadata or {})
+        if has_concrete_content and content_tier == "L5" and content_confidence >= 0.86:
+            return "OBSERVED_PATTERN"
+        if has_concrete_content and content_tier == "L4" and content_confidence >= 0.78:
+            return "OBSERVED_PATTERN"
+
         concrete_evidence = self._concrete_evidence(evidence)
         quality_score = self._evidence_quality_score(concrete_evidence)
 
-        # Router mơ hồ thì không được cho phép giọng chắc. Đây là chỗ sửa bệnh lớn:
+        # Router mơ hồ thì không được cho phép giọng chắc, trừ khi DOM/OCR đã có fact cụ thể.
         # classification yếu không được biến thành "Ngài đang ..." như sự thật.
-        if context_classification:
+        if context_classification and content_confidence < 0.72:
             if context_classification.confidence < 0.48:
                 return "WEAK_IMPRESSION"
             if context_classification.ambiguity >= 0.66:
@@ -701,6 +734,8 @@ class SeLens:
             if context_classification.confidence_cap < 0.55:
                 return "WEAK_IMPRESSION"
 
+        if has_concrete_content and content_confidence >= 0.62:
+            return "DIRECT_FACT"
         if active_window_kind in {"communication", "documentation", "system", "focus_aid_media"} and idle_seconds >= 600:
             return "WEAK_IMPRESSION"
         if not concrete_evidence or quality_score < 1.0:
@@ -820,8 +855,11 @@ class SeLens:
         research_anchor = self._contains_any_phrase(combined_text, self._RESEARCH_ANCHORS)
 
         if media_domain:
-            add("focus_aid_media", 0.65, "media domain visible")
-            add("entertainment", 0.55, "media domain may be leisure")
+            dom_content_hint = self._contains_any_phrase(browser_text, ("browser_dom", "dom_ocr_agreement", "youtube_video", "tiktok_video"))
+            add("focus_aid_media", 0.80 if dom_content_hint else 0.65, "media domain visible")
+            add("entertainment", 0.70 if dom_content_hint else 0.55, "media domain may be leisure")
+            if dom_content_hint:
+                subtract("general", 0.25, "concrete media metadata weakens generic browser reading")
             if technical_anchor or research_anchor:
                 add("documentation", 0.95, "media title/tabs contain technical or research anchor")
                 add("focus_aid_media", 0.85, "media may support current work/research")
@@ -1122,6 +1160,189 @@ class SeLens:
 
         return cues[:7]
 
+    # ------------------------------------------------------------------
+    # Content metadata L0-L5
+    # ------------------------------------------------------------------
+    def _normalize_content_metadata(self, value) -> dict[str, object]:
+        if not isinstance(value, dict):
+            return {}
+        allowed_scalars = {
+            "source",
+            "tier",
+            "privacy_level",
+            "page_kind",
+            "url",
+            "title",
+            "creator",
+            "caption_sample",
+            "visible_text_sample",
+            "media_state",
+        }
+        normalized: dict[str, object] = {}
+        for key in allowed_scalars:
+            raw_value = value.get(key)
+            if raw_value is None:
+                continue
+            text = str(raw_value).replace("\n", " ").replace("\t", " ").strip()
+            text = re.sub(r"\s+", " ", text)
+            if key in {"title", "caption_sample", "visible_text_sample"} and len(text) > 360:
+                text = text[:357].rstrip() + "..."
+            elif len(text) > 500:
+                text = text[:497].rstrip() + "..."
+            if text:
+                normalized[key] = text
+        hashtags = value.get("hashtags") or ()
+        if isinstance(hashtags, str):
+            raw_tags = re.findall(r"#[\w\-À-ỹ]+", hashtags, flags=re.UNICODE)
+            if not raw_tags:
+                raw_tags = [part.strip() for part in re.split(r"[,\s]+", hashtags) if part.strip()]
+        elif isinstance(hashtags, (list, tuple, set)):
+            raw_tags = [str(item).strip() for item in hashtags if str(item).strip()]
+        else:
+            raw_tags = []
+        normalized_tags: list[str] = []
+        for tag in raw_tags:
+            tag = tag if tag.startswith("#") else f"#{tag}"
+            tag = tag[:48]
+            if tag and tag != "#":
+                normalized_tags.append(tag)
+        if normalized_tags:
+            normalized["hashtags"] = tuple(dict.fromkeys(normalized_tags))[:12]
+        for key in ("confidence", "reliability", "collected_at", "stale_after_seconds"):
+            if key in value:
+                normalized[key] = self._coerce_float(value.get(key), 0.0)
+        notes = self._normalize_string_tuple(value.get("evidence_notes", ()))[:6]
+        conflicts = self._normalize_string_tuple(value.get("conflicts", ()))[:4]
+        if notes:
+            normalized["evidence_notes"] = notes
+        if conflicts:
+            normalized["conflicts"] = conflicts
+        return normalized
+
+    def _augment_browser_tabs_with_content_metadata(
+        self,
+        browser_tabs: tuple[str, ...],
+        content_metadata: dict[str, object],
+    ) -> tuple[str, ...]:
+        extras: list[str] = []
+        for key in ("title", "creator", "caption_sample", "visible_text_sample", "page_kind", "source", "tier"):
+            value = str(content_metadata.get(key, "") or "").strip()
+            if value:
+                extras.append(value)
+        hashtags = content_metadata.get("hashtags", ())
+        if isinstance(hashtags, (list, tuple)) and hashtags:
+            extras.append(" ".join(str(tag) for tag in hashtags[:8]))
+        return tuple(dict.fromkeys((*browser_tabs, *extras)))[:14]
+
+    def _build_content_metadata_evidence(self, content_metadata: dict[str, object]) -> tuple[str, ...]:
+        if not content_metadata:
+            return ()
+        source = str(content_metadata.get("source", "") or "").strip()
+        tier = str(content_metadata.get("tier", "") or "").strip()
+        confidence = self._content_metadata_confidence(content_metadata)
+        privacy_level = str(content_metadata.get("privacy_level", "normal") or "normal")
+        page_kind = str(content_metadata.get("page_kind", "unknown") or "unknown")
+        if not source:
+            return ()
+        evidence = [
+            "content metadata: "
+            f"source={source} tier={tier or 'unknown'} confidence={confidence:.2f} "
+            f"privacy={privacy_level} page_kind={page_kind}"
+        ]
+        title = str(content_metadata.get("title", "") or "").strip()
+        creator = str(content_metadata.get("creator", "") or "").strip()
+        caption = str(content_metadata.get("caption_sample", "") or "").strip()
+        visible_text = str(content_metadata.get("visible_text_sample", "") or "").strip()
+        media_state = str(content_metadata.get("media_state", "") or "").strip()
+        hashtags = content_metadata.get("hashtags", ())
+        if title:
+            evidence.append(f"content title visible: {self._trim_text(title, 160)}")
+        if creator:
+            evidence.append(f"content creator visible: {self._trim_text(creator, 96)}")
+        if caption:
+            evidence.append(f"visible video caption: {self._trim_text(caption, 220)}")
+        if isinstance(hashtags, (list, tuple)) and hashtags:
+            evidence.append("visible hashtags: " + " ".join(str(tag) for tag in hashtags[:8]))
+        if visible_text and visible_text != caption:
+            label = "accessibility text visible" if source == "accessibility" else "visible text sample"
+            evidence.append(f"{label}: {self._trim_text(visible_text, 240)}")
+        if media_state and media_state != "unknown":
+            evidence.append(f"media state visible: {media_state}")
+        conflicts = self._normalize_string_tuple(content_metadata.get("conflicts", ()))[:2]
+        if conflicts:
+            evidence.append("content metadata conflicts: " + ", ".join(conflicts))
+        return tuple(dict.fromkeys(evidence))[:7]
+
+    def _content_metadata_prompt_facts(self, content_metadata: dict[str, object]) -> list[str]:
+        if not content_metadata:
+            return []
+        confidence = self._content_metadata_confidence(content_metadata)
+        if confidence < 0.55:
+            return []
+        source = str(content_metadata.get("source", "") or "")
+        tier = str(content_metadata.get("tier", "") or "")
+        facts: list[str] = []
+        title = str(content_metadata.get("title", "") or "").strip()
+        caption = str(content_metadata.get("caption_sample", "") or "").strip()
+        visible_text = str(content_metadata.get("visible_text_sample", "") or "").strip()
+        hashtags = content_metadata.get("hashtags", ())
+        if title:
+            facts.append(f"content title: {self._trim_text(title, 150)}")
+        if caption:
+            facts.append(f"visible caption: {self._trim_text(caption, 180)}")
+        if isinstance(hashtags, (list, tuple)) and hashtags:
+            facts.append("visible hashtags: " + " ".join(str(tag) for tag in hashtags[:6]))
+        if visible_text and not caption:
+            facts.append(f"visible text: {self._trim_text(visible_text, 180)}")
+        if facts:
+            facts.append(f"content evidence tier={tier or 'unknown'} source={source} confidence={confidence:.2f}")
+        return facts[:4]
+
+    def _format_content_metadata_inline(self, content_metadata: dict[str, object]) -> str:
+        if not content_metadata:
+            return ""
+        confidence = self._content_metadata_confidence(content_metadata)
+        if confidence < 0.45:
+            return ""
+        title = str(content_metadata.get("title", "") or "").strip()
+        caption = str(content_metadata.get("caption_sample", "") or "").strip()
+        source = str(content_metadata.get("source", "") or "").strip()
+        tier = str(content_metadata.get("tier", "") or "").strip()
+        text = caption or title
+        if not text:
+            return f"{source}/{tier} conf={confidence:.2f}" if source else ""
+        return f"{self._trim_text(text, 72)} ({source}/{tier} conf={confidence:.2f})"
+
+    def _content_metadata_confidence(self, content_metadata: dict[str, object]) -> float:
+        return self._clamp(self._coerce_float(content_metadata.get("confidence"), 0.0), 0.0, 1.0)
+
+    def _content_metadata_has_concrete_text(self, content_metadata: dict[str, object]) -> bool:
+        if not content_metadata:
+            return False
+        if str(content_metadata.get("privacy_level", "normal") or "normal") in {"private", "sensitive"}:
+            return False
+        if str(content_metadata.get("title", "") or "").strip():
+            return True
+        if str(content_metadata.get("caption_sample", "") or "").strip():
+            return True
+        if str(content_metadata.get("visible_text_sample", "") or "").strip():
+            return True
+        hashtags = content_metadata.get("hashtags", ())
+        return isinstance(hashtags, (list, tuple)) and bool(hashtags)
+
+    def _trim_text(self, value: str, limit: int) -> str:
+        text = str(value or "").replace("\n", " ").replace("\t", " ").strip()
+        text = re.sub(r"\s+", " ", text)
+        if len(text) > limit:
+            return text[: max(0, limit - 3)].rstrip() + "..."
+        return text
+
+    def _coerce_float(self, value, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
     def _looks_like_browser_surface(self, active_window: str, browser_url: str, browser_tabs: tuple[str, ...]) -> bool:
         title = self._normalize_text(active_window)
         return bool(browser_url) or self._contains_any_phrase(title, self._BROWSER_SURFACE_KEYWORDS)
@@ -1161,6 +1382,21 @@ class SeLens:
         lowered = str(evidence or "").strip().lower()
         if not lowered:
             return 0.0
+        if lowered.startswith("content metadata:"):
+            confidence_match = re.search(r"confidence=([0-9.]+)", lowered)
+            try:
+                confidence = float(confidence_match.group(1)) if confidence_match else 0.0
+            except ValueError:
+                confidence = 0.0
+            if "tier=l5" in lowered:
+                return 2.4
+            if "tier=l4" in lowered:
+                return 2.0
+            if "tier=l3" in lowered:
+                return 1.4
+            return 0.6 + confidence
+        if lowered.startswith(("content title visible:", "visible video caption:", "visible hashtags:", "accessibility text visible:", "visible text sample:")):
+            return 1.6
         if any(
             marker in lowered
             for marker in (

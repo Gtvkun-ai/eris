@@ -38,6 +38,9 @@ class SurfaceImpulse:
     needs_external_evidence: bool = False
     vital_pressure: float = 0.0
     is_vital_pressure: bool = False
+    root_source: str = ""
+    action_opportunity: str = ""
+    llm_contract: str = ""
     raw: Any = None
 
     def to_context(self) -> dict[str, object]:
@@ -60,6 +63,9 @@ class SurfaceImpulse:
             "needs_external_evidence": bool(self.needs_external_evidence),
             "vital_pressure": round(float(self.vital_pressure), 3),
             "is_vital_pressure": bool(self.is_vital_pressure),
+            "root_source": self.root_source,
+            "action_opportunity": self.action_opportunity,
+            "llm_contract": self.llm_contract,
         }
 
 
@@ -142,6 +148,9 @@ class SurfaceArbiter:
         "screen_observation",
         "telemetry_comment",
     })
+    _SENSOR_INTERNAL_KINDS = frozenset({
+        "blind_frustration",
+    })
     _ENDOGENOUS_NO_ANCHOR_KINDS = frozenset({
         "inner_whim",
         "random_chatter",
@@ -150,6 +159,7 @@ class SurfaceArbiter:
         "curious_question",
         "memory_resonance",
         "light_muse",
+        "technical_help",
     })
 
     # Những seed này không phải chất liệu nội sinh, chỉ là nhãn kỹ thuật hoặc
@@ -497,6 +507,17 @@ class SurfaceArbiter:
         confidence = _clamp01(getattr(cue, "confidence", 0.0), 0.0)
         curiosity = _clamp01(getattr(cue, "curiosity", 0.0), 0.0)
         evidence = tuple(str(item) for item in (getattr(cue, "evidence", ()) or ()) if str(item).strip())[:10]
+        meaning_context = getattr(cue, "meaning_context", None) or {}
+        if isinstance(meaning_context, Mapping):
+            meaning_seed = str(
+                meaning_context.get("public_seed")
+                or meaning_context.get("action_opportunity")
+                or meaning_context.get("user_activity_meaning")
+                or meaning_context.get("scene_meaning")
+                or ""
+            ).strip()
+            if meaning_seed:
+                evidence = tuple(dict.fromkeys((meaning_seed, *evidence)))[:10]
         focus_family = str(getattr(cue, "focus_family", "general_idle") or "general_idle")
         reason = str(getattr(cue, "reason", "") or surface_kind or "micro_presence")
         kind = surface_kind or reason or "presence_maintenance"
@@ -522,6 +543,9 @@ class SurfaceArbiter:
             is_presence=True,
             should_surface=needs,
             needs_external_evidence=False,
+            root_source="meaning_context" if isinstance(meaning_context, Mapping) and meaning_context else "presence",
+            action_opportunity=str(meaning_context.get("action_opportunity", "") if isinstance(meaning_context, Mapping) else ""),
+            llm_contract="presence: use meaning_context if available; no generic status ping",
             raw=cue,
         )
 
@@ -556,6 +580,9 @@ class SurfaceArbiter:
             needs_external_evidence=bool(getattr(impulse, "needs_external_evidence", False)),
             vital_pressure=vital_pressure,
             is_vital_pressure=bool(getattr(impulse, "is_vital_pressure", False)) or vital_pressure >= 0.55,
+            root_source=str(getattr(impulse, "root_source", "") or getattr(impulse, "source_layer", "") or "spontaneous"),
+            action_opportunity=str(getattr(impulse, "action_opportunity", "") or "use impulse contract, not silence pressure"),
+            llm_contract=str(getattr(impulse, "llm_contract", "") or f"{act}: keep low-claim and rooted"),
             raw=impulse,
         )
 
@@ -594,7 +621,8 @@ class SurfaceArbiter:
                     _clamp01(getattr(item, "novelty", 0.0)) * 0.7,
                 )
             residue_reason = self._specific_thought_residue_reason(item)
-            payload_seed = self._clean_payload_text(topic or residue_reason)
+            public_seed = self._clean_payload_text(getattr(item, "public_seed", "") if not isinstance(item, Mapping) else item.get("public_seed", ""))
+            payload_seed = self._clean_payload_text(public_seed or topic or residue_reason)
             anchors = self._thought_surface_anchor_notes(item=item, frame=frame, snapshot=snapshot, topic=payload_seed)
             if (payload_seed or anchors) and pressure >= 0.25:
                 state = self._runtime_internal_state(frame=frame, snapshot=snapshot)
@@ -606,7 +634,7 @@ class SurfaceArbiter:
                 )
                 evidence: list[str] = []
                 if payload_seed:
-                    evidence.append(payload_seed[:120])
+                    evidence.append(payload_seed[:140])
                 if residue_reason:
                     evidence.append(f"residue_reason={residue_reason[:96]}")
                 evidence.extend(anchors)
@@ -616,7 +644,7 @@ class SurfaceArbiter:
                     confidence=max(0.34, capped_pressure),
                     pressure=capped_pressure,
                     score=capped_pressure,
-                    topic_seed=payload_seed[:120],
+                    topic_seed=payload_seed[:160],
                     speech_act="inner_whim",
                     family="thought_stream:" + self._family_key(payload_seed or residue_reason or "residue"),
                     evidence=tuple(dict.fromkeys(item for item in evidence if item))[:10],
@@ -628,9 +656,95 @@ class SurfaceArbiter:
                     should_surface=True,
                     vital_pressure=vital,
                     is_vital_pressure=vital >= 0.55,
+                    root_source="thought_stream",
+                    action_opportunity="surface one tiny rooted stray thought; no screen claim",
+                    llm_contract="Tone: brief stray thought with a clear root seed; no generic silence line.",
                     raw=item,
                 )
         return None
+
+    def _classify_thought_surface(
+        self,
+        *,
+        item: Any,
+        topic: str,
+        frame: Any = None,
+        snapshot: Any = None,
+    ) -> tuple[str, str, str, str, str]:
+        """Tách thought surface thành impulse cụ thể.
+
+        - memory/daydream/unresolved -> memory_resonance
+        - boredom/attention drift -> random_chatter, nhưng context vẫn có quyền ép body-only
+        - thought/association thật -> inner_whim
+
+        Không có chuyện mọi thứ gom vào `thought_stream_surface`. Cái tên đó tiện
+        cho debug nhưng tệ cho hành vi, giống đặt tên biến là `thing2`.
+        """
+        get = item.get if isinstance(item, Mapping) else lambda name, default=None: getattr(item, name, default)
+        root_source = str(get("root_source", "") or "").strip()
+        declared_kind = str(get("impulse_kind", "") or "").strip()
+        action = str(get("action_opportunity", "") or "").strip()
+        source_memory = str(get("source_memory", "") or "")
+        mode = str(get("mode", "") or "")
+        evidence = " ".join(str(value) for value in (get("evidence", ()) or ()))
+        hay = f"{root_source} {declared_kind} {source_memory} {mode} {topic} {evidence}".lower()
+        if not root_source:
+            if any(token in hay for token in ("daydream", "insight", "open_question")):
+                root_source = "daydream"
+            elif any(token in hay for token in ("unresolved_memory", "candidate[", "memory_candidate")):
+                root_source = "unresolved_memory"
+            elif source_memory or "memory_replay" in hay:
+                root_source = "memory"
+            elif "attention_drift" in hay or "boredom" in hay:
+                root_source = "boredom"
+            else:
+                root_source = "thought"
+
+        if declared_kind in {"inner_whim", "memory_resonance", "random_chatter", "technical_help"}:
+            kind = declared_kind
+        elif root_source in {"memory", "daydream", "unresolved_memory"}:
+            kind = "memory_resonance"
+        elif root_source == "boredom":
+            kind = "random_chatter"
+        else:
+            kind = "inner_whim"
+
+        focus = self._focus_family_from_snapshot(snapshot)
+        if kind == "random_chatter" and focus in {"code", "docs", "coding", "documentation"}:
+            action = action or "body_only unless silence debt is high; do not interrupt code focus with chatter"
+        elif kind == "memory_resonance":
+            action = action or "compare current context with remembered/daydream residue using one low-claim line"
+        elif kind == "inner_whim":
+            action = action or "surface one tiny rooted stray thought; no screen claim"
+
+        speech_act = {
+            "memory_resonance": "light_muse",
+            "random_chatter": "random_chatter",
+            "technical_help": "practical_help",
+            "inner_whim": "inner_whim",
+        }.get(kind, "inner_whim")
+        llm_contract = {
+            "memory_resonance": "Tone: recalled-pattern observation; cite only the seed, not memory internals; no fake current claim.",
+            "random_chatter": "Tone: dry casual chatter; only in low-focus/media context; no status ping.",
+            "technical_help": "Tone: practical tiny cue; useful beats poetic; do not solve without evidence.",
+            "inner_whim": "Tone: brief stray thought with a clear root seed; no generic silence line.",
+        }.get(kind, "Low-claim rooted surface only.")
+        return root_source, kind, speech_act, action, llm_contract
+
+    def _focus_family_from_snapshot(self, snapshot: Any) -> str:
+        focus = str(
+            getattr(snapshot, "focus_kind_hint", "")
+            or getattr(snapshot, "focus_kind", "")
+            or getattr(snapshot, "active_window_kind", "")
+            or ""
+        ).strip().lower()
+        if focus in {"coding", "ide", "editor", "terminal", "debug"}:
+            return "code"
+        if focus in {"documentation", "doc", "reference", "paper"}:
+            return "docs"
+        if focus in {"focus_aid_media", "entertainment", "youtube", "tiktok", "browser_media"}:
+            return "media"
+        return focus or "thought_stream"
 
     def _specific_thought_residue_reason(self, item: Any) -> str:
         for value in (
@@ -762,6 +876,9 @@ class SurfaceArbiter:
             needs_external_evidence=bool(get("needs_external_evidence", False)),
             vital_pressure=_clamp01(get("vital_pressure", 0.0)),
             is_vital_pressure=bool(get("is_vital_pressure", False)) or _clamp01(get("vital_pressure", 0.0)) >= 0.55,
+            root_source=str(get("root_source", "") or get("source_layer", "") or ""),
+            action_opportunity=str(get("action_opportunity", "") or ""),
+            llm_contract=str(get("llm_contract", "") or ""),
             raw=item,
         )
 
@@ -854,6 +971,8 @@ class SurfaceArbiter:
         if not self._endogenous_no_anchor_like(impulse):
             return ""
         kind = str(impulse.kind or impulse.speech_act or "")
+        if kind in self._SENSOR_INTERNAL_KINDS:
+            return ""
         # Presence-like impulses already have their own body-only path. This
         # contract is specifically for no-screen endogenous speech.
         if self._presence_like(impulse):
@@ -917,6 +1036,16 @@ class SurfaceArbiter:
             return "forced_body_only:needs_external_evidence_missing"
         if self._presence_like(impulse) and impulse.missing_evidence_ids and not self._has_concrete_evidence_anchor(impulse):
             return "forced_body_only:presence_missing_evidence"
+        # Context thắng impulse: random chatter không được chen vào khi user đang code/docs.
+        # Chán thì ngọ nguậy/body-only, không phải mở miệng phá deep work.
+        focus = str(getattr(impulse, "focus_family", "") or "").strip().lower()
+        if kind == "random_chatter" and focus in {"code", "coding", "docs", "documentation"}:
+            if _clamp01(getattr(impulse, "vital_pressure", 0.0)) < 0.72 and self.silent_cycles < 5:
+                return "forced_body_only:random_chatter_deep_work"
+        # Inner whim phải có rễ thật. Nếu chỉ là áp lực/chán/im lâu thì nó là motion,
+        # không phải nội tâm đáng phát ngôn.
+        if kind == "inner_whim" and not self._has_public_internal_anchor(impulse):
+            return "forced_body_only:inner_whim_unrooted"
         if kind == "thought_stream_surface":
             if not self._clean_payload_text(impulse.topic_seed):
                 return "forced_body_only:thought_surface_missing_payload"
@@ -1160,6 +1289,7 @@ class SurfaceArbiter:
             "thought_stream_surface": 0.50,
             "random_chatter": 0.49,
             "memory_resonance": 0.48,
+            "blind_frustration": 0.70,
             "micro_presence": 0.44,
         }.get(key, 0.40 if source else 0.0)
 

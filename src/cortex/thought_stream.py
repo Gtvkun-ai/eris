@@ -1350,6 +1350,9 @@ class SurfaceSelector:
             return ThoughtSurface(), "below_surface_pressure"
         if thought.surfaced_count > 0 and thought.tension < 0.74:
             return ThoughtSurface(), "internal_reentry_only"
+        root_source = self._root_source(thought)
+        impulse_kind = self._impulse_kind(thought, root_source=root_source)
+        public_seed = self._public_seed(thought)
         surface = ThoughtSurface(
             mode=thought.mode,
             topic_seed=thought.topic_seed,
@@ -1358,7 +1361,7 @@ class SurfaceSelector:
             pressure=thought.tension,
             novelty=thought.novelty,
             evidence=thought.evidence,
-            risk_flags=thought.risk_flags,
+            risk_flags=tuple(dict.fromkeys((*thought.risk_flags, f"root_source={root_source}", f"impulse_kind={impulse_kind}"))),
             created_at=now,
             thought_id=thought.thought_id,
             tension=thought.tension,
@@ -1368,6 +1371,10 @@ class SurfaceSelector:
             surfaced_count=thought.surfaced_count,
             momentum_score=_clamp01(getattr(momentum, "score", 0.0) if momentum is not None else 0.0),
             affordance="speech",
+            impulse_kind=impulse_kind,
+            root_source=root_source,
+            action_opportunity=self._action_opportunity(thought, impulse_kind=impulse_kind),
+            public_seed=public_seed,
         )
         return surface, ""
 
@@ -1381,6 +1388,50 @@ class SurfaceSelector:
         if thought.associations:
             return f"{thought.mode} connected through {', '.join(thought.associations[:3])}"
         return f"{thought.mode} linked to {thought.topic_seed}"
+
+    def _root_source(self, thought: ThoughtObject) -> str:
+        """Phân loại rễ của thought trước khi cho phép surface.
+
+        Random chat của người thật thường là liên tưởng cũ bị bật lại, không phải
+        một model nhìn khoảng trắng rồi nói nhảm. Field này cho SurfaceArbiter
+        biết thought đến từ memory/daydream/unresolved loop hay chỉ là boredom.
+        """
+        source = _normalize_ascii(thought.source_memory)
+        topic = _normalize_ascii(thought.topic_seed)
+        evidence = _normalize_ascii(" ".join(thought.evidence))
+        hay = " ".join((source, topic, evidence))
+        if "daydream" in hay or "insight" in hay or "open_question" in hay:
+            return "daydream"
+        if "unresolved_memory" in hay or "candidate[" in hay or "memory_candidate" in hay:
+            return "unresolved_memory"
+        if thought.source_memory or "memory_replay" in hay:
+            return "memory"
+        if thought.mode == "attention_drift":
+            return "boredom"
+        return "thought"
+
+    def _impulse_kind(self, thought: ThoughtObject, *, root_source: str) -> str:
+        if root_source in {"memory", "daydream", "unresolved_memory"}:
+            return "memory_resonance"
+        if root_source == "boredom" or thought.mode == "attention_drift":
+            return "random_chatter"
+        return "inner_whim"
+
+    def _action_opportunity(self, thought: ThoughtObject, *, impulse_kind: str) -> str:
+        if impulse_kind == "memory_resonance":
+            return "surface a low-claim remembered pattern only if current context allows interruption"
+        if impulse_kind == "random_chatter":
+            return "casual dry chatter only in low-focus/media contexts; otherwise body_only"
+        return "one tiny stray thought if rooted and not intrusive"
+
+    def _public_seed(self, thought: ThoughtObject) -> str:
+        source = _clean_text(thought.source_memory, limit=180)
+        if source:
+            return source
+        partial = _clean_text(thought.partial_text, limit=160)
+        if partial and not partial.startswith("presence continuity"):
+            return partial
+        return _clean_text(thought.topic_seed, limit=120)
 
 '''
 Thứ tự trong evaluate():

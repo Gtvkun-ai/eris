@@ -94,6 +94,9 @@ class PromptContextBuilderMixin:
             inferred_pos_x = self.inferred_pos_x #vị trí
             internal_state = self._get_internal_state() # pose suy luận
             long_term_memory = tuple(self.long_term_memory or ()) #memory dài hạn
+            thought_roots = self._thought_stream_root_seeds(limit=10)
+            if thought_roots:
+                long_term_memory = tuple(dict.fromkeys((*long_term_memory, *thought_roots)))
             last_text = self.last_text #câu vừa nói gần nhất
             recent_inner_seeds = tuple(self.recent_inner_thought_seeds or ()) #các seed suy nghĩ gần đây
             recent_thought_seeds = tuple(getattr(internal_state, "recent_thought_seeds", ()) or ()) #các seed suy nghĩ gần đây được lưu trong internal state
@@ -112,6 +115,74 @@ class PromptContextBuilderMixin:
             "recent_thought_seeds": recent_thought_seeds,
             "recent_subconscious_seeds": recent_subconscious,
         }
+
+    def _thought_stream_root_seeds(self, *, limit: int = 8) -> tuple[str, ...]:
+        """Lấy rễ cho inner_whim từ unresolved memory và daydream.
+
+        ThoughtStream chỉ nên ngẫu hứng từ thứ từng có thật: candidate chưa giải
+        quyết, insight 4B đã consolidate, hoặc agenda còn mở. Không feed rễ thì
+        LLM sẽ feed lại cho ta món cháo "im lặng vẫn giữ chỗ". Nhân loại đã khổ
+        đủ với câu đó rồi.
+        """
+        roots: list[str] = []
+
+        def add(prefix: str, text: object, *, confidence: object = "", pressure: object = "") -> None:
+            value = " ".join(str(text or "").split()).strip()
+            if not value:
+                return
+            meta = []
+            if confidence != "":
+                try:
+                    meta.append(f"confidence={float(confidence):.2f}")
+                except Exception:
+                    pass
+            if pressure != "":
+                try:
+                    meta.append(f"pressure={float(pressure):.2f}")
+                except Exception:
+                    pass
+            suffix = f"; {'; '.join(meta)}" if meta else ""
+            roots.append(f"{prefix}: {value[:260]}{suffix}")
+
+        memory_core = getattr(self, "memory_core", None)
+        store = getattr(memory_core, "memory_candidate", None)
+        search = getattr(store, "search", None)
+        if callable(search):
+            try:
+                for item in search("", limit=max(1, min(limit, 5)), include_promoted=False):
+                    status = str(getattr(item, "extraction_status", "") or "")
+                    raw = getattr(item, "recall_line", None)
+                    text = raw() if callable(raw) else getattr(item, "raw_text", "")
+                    add(f"unresolved_memory[{status or 'open'}]", text, confidence=getattr(item, "confidence", ""), pressure=getattr(item, "importance", ""))
+            except Exception as exc:
+                logger = getattr(self, "logger", None)
+                if logger is not None:
+                    try:
+                        logger.debug("Thought root unresolved_memory skipped: %s", exc)
+                    except Exception:
+                        pass
+
+        result = getattr(self, "last_daydream_result", None)
+        for insight in tuple(getattr(result, "insights", ()) or ())[: max(0, limit - len(roots))]:
+            if bool(getattr(insight, "rejected", False)):
+                continue
+            add(
+                f"daydream_insight[{getattr(insight, 'kind', 'open_question') or 'open_question'}]",
+                getattr(insight, "summary", ""),
+                confidence=getattr(insight, "confidence", ""),
+                pressure=getattr(insight, "pressure", ""),
+            )
+
+        agenda = getattr(self, "internal_agenda", None)
+        top_items = getattr(agenda, "top_items", None)
+        if callable(top_items) and len(roots) < limit:
+            try:
+                for item in top_items(limit=max(1, limit - len(roots))):
+                    add("internal_agenda", getattr(item, "summary", ""), confidence=getattr(item, "confidence", ""), pressure=getattr(item, "pressure", ""))
+            except Exception:
+                pass
+
+        return tuple(dict.fromkeys(roots))[:limit]
 
     def _build_subconscious_context(self) -> dict[str, object]:
         return self._build_thought_stream_context()

@@ -155,6 +155,11 @@ class EvidenceView:
             tags.append("docs_scene")
         if _contains_any(blob, _ERROR_TERMS):
             tags.append("error_signal")
+        if focus in {"code", "docs"} and idle >= 90:
+            # Không phán user stress. Chỉ ghi một affordance kỹ thuật: code/docs
+            # đứng lâu thì nếu có nói, nói hữu ích hơn nói nhảm. Một phát minh
+            # lạ lùng: context quyết định hành động.
+            tags.append("technical_stall")
         if focus in {"code", "docs"}:
             tags.append(f"focus:{focus}")
         if focus in {"media", "game"}:
@@ -572,6 +577,7 @@ class AffordanceMap:
     def from_stack_parts(cls, *, evidence: EvidenceView, needs: NeedVector, traits: TraitVector) -> "AffordanceMap":
         technical = evidence.has_tag("technical_scene") or evidence.has_tag("docs_scene")
         error_signal = evidence.has_tag("error_signal")
+        technical_stall = evidence.has_tag("technical_stall")
         casual_scene = evidence.has_tag("food_scene") or evidence.has_tag("media_scene") or evidence.has_tag("game_scene")
         external = evidence.has_tag("external_signal_present")
         casual_allowed = bool(casual_scene and not external and needs.rest_need < 0.70 and needs.competence_need < 0.62)
@@ -580,7 +586,7 @@ class AffordanceMap:
         # khe cho khịa nhẹ. Đây là ma sát hành vi, không phải luật cấm nói.
         focus = evidence.focus_kind
         if technical:
-            interrupt_cost = 0.74 if not error_signal else 0.52
+            interrupt_cost = 0.74 if not (error_signal or technical_stall) else 0.52
         elif focus in {"media", "game"} or casual_scene:
             interrupt_cost = 0.14
         elif focus in {"communication", "chat"}:
@@ -593,13 +599,13 @@ class AffordanceMap:
             interrupt_cost = max(0.16, interrupt_cost - needs.vital_pressure * 0.28)
         return cls(
             casual_comment_allowed=casual_allowed,
-            technical_help_relevant=bool(technical and error_signal),
+            technical_help_relevant=bool(technical and (error_signal or technical_stall)),
             intrusive_question_risk=_clamp01(question_risk),
             body_only_allowed=not external,
             silence_allowed=True,
             surface_scene_claim_allowed=bool(casual_scene and evidence.has_scene_anchor and not external),
             endogenous_interrupt_cost=_clamp01(interrupt_cost),
-            random_chatter_allowed=bool((focus in {"media", "game", "communication", "chat"} or casual_scene or needs.vital_pressure >= 0.55) and not external),
+            random_chatter_allowed=bool((focus in {"media", "game", "communication", "chat"} or casual_scene or (needs.vital_pressure >= 0.55 and not technical)) and not external),
             reason=("technical_affordance" if technical else "casual_scene_affordance" if casual_scene else "low_signal_affordance"),
         )
 
