@@ -181,6 +181,13 @@ class SurfaceArbiter:
 
         mode = "force_llm" if force_llm else self.policy.decide_generation_mode(winner, self.silent_cycles)
         if mode == "reject":
+            # Defensive override: micro/re-engagement đã đủ điểm hoặc im quá lâu thì không được
+            # rơi về reject/body-only. Policy là cổng điều tiết, không phải máy nghiền ý định nói.
+            kind = str(getattr(winner, "kind", "") or "").strip()
+            always_llm = set(getattr(self.policy.config, "always_llm_kinds", ()) or ())
+            if self.silent_cycles >= self.policy.config.force_llm_after_silent or (kind in always_llm and winner.confidence >= self.policy.config.min_surface_confidence):
+                mode = "force_llm"
+        if mode == "reject":
             self._note_non_speech(body_only=False)
             decision = SurfaceDecision(
                 body_only=False,
@@ -560,8 +567,11 @@ class SurfaceArbiter:
             if self.silent_cycles < self.policy.config.force_llm_after_silent:
                 return f"family_cooldown:{family}:{now - last_family:.1f}/{family_cooldown:.1f}s"
         if self._body_only_streak >= self.policy.config.max_body_only_streak:
-            # Body-only quá nhiều thì không tiếp tục nhúc nhích giả vờ sống; đẩy silent cycle lên để tới force LLM.
-            return f"body_only_streak_limit:{self._body_only_streak}"
+            # Body-only quá nhiều thì không tiếp tục nhúc nhích giả vờ sống.
+            # Không trả rate-limit nữa, vì rate-limit sẽ chặn luôn vòng force LLM.
+            # Đẩy silent_cycles tới ngưỡng rồi cho policy đi tiếp. Máy móc cũng cần bớt tự cắn dây điện.
+            self.silent_cycles = max(self.silent_cycles, int(self.policy.config.force_llm_after_silent))
+            return ""
         return ""
 
     def _family_id(self, impulse: SurfaceImpulse) -> str:

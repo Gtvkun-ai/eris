@@ -2046,8 +2046,56 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertIsNotNone(decision)
         self.assertEqual(decision.text, "Nhip nay van yen.")
-        self.assertIn("source=llm", decision.debug_trace)
+        self.assertIn("source=surface_arbiter_llm", decision.debug_trace)
         self.assertEqual(llm_service.micro_calls, 1)
+        self.assertIn("micro_presence_flags", llm_service.last_micro_kwargs["micro_context"])
+        self.assertIn("silent_cycles=1", llm_service.last_micro_kwargs["micro_context"]["micro_presence_flags"])
+
+    def test_endogenous_silence_pressure_can_surface_through_arbiter(self):
+        llm_service = _ModernMicroLlmService("Nhip nay van yen.")
+        coordinator = self._make_coordinator(llm_service=llm_service)
+        coordinator.micro_presence_llm_probability = 1.0
+        coordinator.presence_maintenance_cooldown_sec = 0.0
+        coordinator.presence_maintenance_silent_cycles = 3
+        snapshot = coordinator.telemetry_service.capture_snapshot()
+        state = PersistentInternalState(
+            silence_pressure=0.78,
+            thought_stream_pressure=0.52,
+            last_focus_kind="coding",
+        )
+        frame = coordinator._start_cognitive_frame(
+            channel="autonomous",
+            started_at=1.0,
+            snapshot=snapshot,
+            internal_state_before=state,
+            sensed_internal_state=state,
+            ni_report=SimpleNamespace(drift_score=0.0, confidence=0.50, should_raise_guard=False),
+            ti_report=SimpleNamespace(mode="steady_observe"),
+            fe_plan=coordinator.fe_renderer.evaluate_autonomous(),
+        )
+
+        decision = coordinator._build_surface_arbiter_decision(
+            frame=frame,
+            snapshot=snapshot,
+            surface_kind="surface",
+            force_llm=True,
+        )
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.text, "Nhip nay van yen.")
+        self.assertEqual(llm_service.micro_calls, 1)
+        surface_context = llm_service.last_micro_kwargs["micro_context"]["surface_impulse"]
+        self.assertIn('"source": "endogenous_drive"', surface_context)
+        self.assertIn('"family": "continuity:silence_pressure"', surface_context)
+
+    def test_presence_spoken_resets_presence_silent_cycles(self):
+        coordinator = self._make_coordinator()
+        coordinator.presence_maintenance_silent_cycles = 4
+
+        coordinator._note_autonomous_spoken(presence_maintenance=True, now=100.0)
+
+        self.assertEqual(coordinator.presence_maintenance_silent_cycles, 0)
+        self.assertEqual(coordinator.last_presence_maintenance_at, 100.0)
 
     def test_presence_maintenance_hybrid_rejects_ui_narration_line(self):
         llm_service = _HybridMicroLlmService("Mot khung thoai mau hong dang hien thi.")

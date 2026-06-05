@@ -224,6 +224,9 @@ class ModelBudgetPolicyConfig:
     four_b_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_4B_VRAM_MB", 2200.0))
     vision_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_VISION_VRAM_MB", 1100.0))
     sensory_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_SENSORY_VRAM_MB", 450.0))
+    force_local_gguf_main: bool = field(default_factory=lambda: _env_flag("ERIS_FORCE_LOCAL_GGUF_MAIN", True))
+    force_local_gguf_priority: int = field(default_factory=lambda: _env_int("ERIS_FORCE_LOCAL_GGUF_PRIORITY", 10000))
+    force_local_gguf_queue_timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_FORCE_LOCAL_GGUF_QUEUE_TIMEOUT", 0.0))
 
 
 class ModelBudgetPolicy:
@@ -315,10 +318,12 @@ class ModelBudgetPolicy:
         resource_snapshot: ResourceSnapshot | None = None,
         reason: str = "",
         ignore_active_lock: bool = False,
+        force_local_gguf: bool = False,
     ) -> BudgetDecision:
         if not self.config.enabled:
             snapshot = resource_snapshot or self.capture()
             return BudgetDecision("allow", True, tier, "budget_policy_disabled", snapshot, debug={"reason": reason})
+        force_local_gguf = bool(force_local_gguf or self._should_force_local_gguf(tier))
         snapshot = resource_snapshot or self.capture()
         now = time.time()
         cooldown = self._cooldown_for(tier, now)
@@ -341,19 +346,8 @@ class ModelBudgetPolicy:
             "reserved_vram_mb": round(reserved_vram, 2),
             "external_vram_used_mb": round(external_vram_used, 2),
             "external_vram_percent": round(external_vram_percent, 2),
+            "force_local_gguf": bool(force_local_gguf),
         }
-
-        if heavy_tier and cooldown > 0.0:
-            return BudgetDecision(
-                verdict="block",
-                allowed=False,
-                tier=tier,
-                reason="tier_cooldown_active",
-                resource_snapshot=snapshot,
-                cooldown_seconds=cooldown,
-                hard_veto=False,
-                debug=debug,
-            )
 
         if snapshot.gpu_temperature_c >= self.config.gpu_temp_block_c > 0:
             debug["overheat"] = round(snapshot.gpu_temperature_c, 2)
@@ -364,6 +358,30 @@ class ModelBudgetPolicy:
                 reason="gpu_overheat",
                 resource_snapshot=snapshot,
                 hard_veto=True,
+                debug=debug,
+            )
+
+        if force_local_gguf and self._can_force_local_gguf(tier):
+            return BudgetDecision(
+                verdict="allow",
+                allowed=True,
+                tier=tier,
+                reason="force_local_gguf_main",
+                resource_snapshot=snapshot,
+                hard_veto=False,
+                cooldown_seconds=0.0,
+                debug=debug,
+            )
+
+        if heavy_tier and cooldown > 0.0:
+            return BudgetDecision(
+                verdict="block",
+                allowed=False,
+                tier=tier,
+                reason="tier_cooldown_active",
+                resource_snapshot=snapshot,
+                cooldown_seconds=cooldown,
+                hard_veto=False,
                 debug=debug,
             )
 
@@ -489,11 +507,21 @@ class ModelBudgetPolicy:
         cancel_event: threading.Event | None = None,
         request_id: str | None = None,
     ) -> InferenceLease:
+        force_local_gguf = self._should_force_local_gguf(tier)
+        if force_local_gguf:
+            priority = max(int(priority), int(self.config.force_local_gguf_priority))
+            if timeout_seconds is None:
+                timeout_seconds = self.config.force_local_gguf_queue_timeout_seconds
         timeout = self.config.default_queue_timeout_seconds if timeout_seconds is None else float(timeout_seconds)
         request_id = request_id or f"{tier}:{uuid.uuid4().hex[:12]}"
 
         if not self.config.enabled or not self.config.queue_enabled:
-            decision = self.can_run(tier, resource_snapshot=resource_snapshot, reason=reason)
+            decision = self.can_run(
+                tier,
+                resource_snapshot=resource_snapshot,
+                reason=reason,
+                force_local_gguf=force_local_gguf,
+            )
             if not decision.allowed:
                 raise RuntimeError(f"model_budget_veto:{tier}:{decision.reason}")
             lease = InferenceLease(
@@ -511,7 +539,7 @@ class ModelBudgetPolicy:
             return lease
 
         with self._condition:
-            if len(self._queue) >= self.config.max_queue_size:
+            if len(self._queue) >= self.config.max_queue_size and not force_local_gguf:
                 raise RuntimeError(f"model_queue_full:{tier}:{len(self._queue)}")
             self._sequence += 1
             entry = ModelQueueEntry(
@@ -543,13 +571,19 @@ class ModelBudgetPolicy:
                 if self._queue_head_locked() is not entry:
                     self._condition.wait(self._wait_seconds(entry, now))
                     continue
-                if self._has_incompatible_active_lease_locked(tier):
+                if self._has_incompatible_active_lease_locked(tier) and not force_local_gguf:
                     self._condition.wait(self._wait_seconds(entry, now))
                     continue
 
                 # Đến lượt mình rồi mới đo/veto. Nếu tài nguyên đang căng nhưng không hard veto,
                 # request được giữ ở đầu queue và chờ tài nguyên hạ xuống.
-                decision = self.can_run(tier, resource_snapshot=resource_snapshot, reason=reason, ignore_active_lock=True)
+                decision = self.can_run(
+                    tier,
+                    resource_snapshot=resource_snapshot,
+                    reason=reason,
+                    ignore_active_lock=True,
+                    force_local_gguf=force_local_gguf,
+                )
                 entry.last_budget_decision = decision
                 if not decision.allowed:
                     if decision.hard_veto or decision.verdict == "kill":
@@ -685,6 +719,16 @@ class ModelBudgetPolicy:
 
     def _uses_remote_api(self, tier: str) -> bool:
         return tier == "main_cognition" and bool(getattr(self.config, "remote_api_enabled", False))
+
+    def _can_force_local_gguf(self, tier: str) -> bool:
+        return (
+            tier == "main_cognition"
+            and bool(getattr(self.config, "force_local_gguf_main", False))
+            and not self._uses_remote_api(tier)
+        )
+
+    def _should_force_local_gguf(self, tier: str) -> bool:
+        return self._can_force_local_gguf(tier)
 
     def _estimated_vram_need_mb(self, tier: str) -> float:
         if tier == "main_cognition":

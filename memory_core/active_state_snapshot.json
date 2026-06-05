@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-05T09:05:47+0700",
+  "updated_at": "2026-06-05T16:39:36+0700",
   "current_goal": "",
   "current_goal_confidence": 0.0,
   "session_arc": "unknown",
@@ -22,30 +22,30 @@
     "internal_state": {
       "valence": 0.034,
       "arousal": 0.181,
-      "curiosity": 0.211,
+      "curiosity": 0.195,
       "boredom": 0.067,
-      "social_energy": 0.176,
-      "attachment": 0.343,
+      "social_energy": 0.177,
+      "attachment": 0.344,
       "irritation": 0.098,
       "protectiveness": 0.153,
       "confidence": 0.439,
-      "fatigue": 0.157,
+      "fatigue": 0.177,
       "tenderness": 0.18,
-      "silence_pressure": 0.112,
+      "silence_pressure": 0.14,
       "social_pressure": 0.049,
       "curiosity_pressure": 0.086,
       "protective_pressure": 0.042,
       "tender_pressure": 0.073,
       "playful_pressure": 0.006,
       "watchful_pressure": 0.049,
-      "restraint_pressure": 0.703,
-      "subconscious_pressure": 0.307,
-      "memory_replay_pressure": 0.337,
-      "association_pressure": 0.202,
-      "thought_stream_pressure": 0.35,
-      "cognitive_tension": 0.107,
-      "unresolved_prediction_pressure": 0.157,
-      "recursive_reactivation_pressure": 0.28,
+      "restraint_pressure": 0.697,
+      "subconscious_pressure": 0.349,
+      "memory_replay_pressure": 0.369,
+      "association_pressure": 0.196,
+      "thought_stream_pressure": 0.388,
+      "cognitive_tension": 0.098,
+      "unresolved_prediction_pressure": 0.165,
+      "recursive_reactivation_pressure": 0.324,
       "last_cognition_at": 1780622758.921,
       "last_elapsed_seconds": 1.0,
       "last_memory_resonance": 0.0,
@@ -54,10 +54,10 @@
       "last_social_presence_present": false,
       "last_social_presence_confidence": 0.0,
       "last_social_presence_intensity": 0.0,
-      "last_session_ritual_at": 0.0,
-      "last_session_greeting_at": 0.0,
-      "session_resume_count": 0,
-      "last_session_tone": "",
+      "last_session_ritual_at": 1780652164.618,
+      "last_session_greeting_at": 1780652164.618,
+      "session_resume_count": 1,
+      "last_session_tone": "focused",
       "last_channel": "chat",
       "last_focus_kind": "general",
       "last_ti_mode": "chat_general",
@@ -114,7 +114,8 @@
         "spoken_this_turn: reset cold-restart feeling",
         "last_act=mirror",
         "focus_continuity=general",
-        "stance_continuity=grounded"
+        "stance_continuity=grounded",
+        "session_ritual=focused:continuity_restored:presence_restored"
       ],
       "desire_dynamics": {
         "want": 0.194,
@@ -178,9 +179,9 @@
       "mental_processes": {
         "curiosity": {
           "name": "curiosity",
-          "level": 0.176,
-          "pressure": 0.277,
-          "activation": 0.151,
+          "level": 0.171,
+          "pressure": 0.263,
+          "activation": 0.159,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.24,
@@ -188,33 +189,33 @@
         },
         "restraint": {
           "name": "restraint",
-          "level": 0.465,
-          "pressure": 0.665,
-          "activation": 0.407,
+          "level": 0.482,
+          "pressure": 0.668,
+          "activation": 0.511,
           "volatility": 0.2,
           "decay_rate": 0.08,
-          "last_signal": 0.26,
-          "last_interaction": 0.113
+          "last_signal": 0.4,
+          "last_interaction": 0.12
         },
         "tension": {
           "name": "tension",
           "level": 0.062,
           "pressure": 0.091,
-          "activation": 0.058,
+          "activation": 0.065,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.04,
-          "last_interaction": 0.021
+          "last_interaction": 0.027
         },
         "continuity": {
           "name": "continuity",
           "level": 0.44,
-          "pressure": 0.577,
-          "activation": 0.446,
+          "pressure": 0.584,
+          "activation": 0.442,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.34,
-          "last_interaction": 0.093
+          "last_interaction": 0.095
         },
         "attachment": {
           "name": "attachment",
@@ -224,47 +225,47 @@
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.2,
-          "last_interaction": 0.067
+          "last_interaction": 0.069
         },
         "reflection": {
           "name": "reflection",
-          "level": 0.354,
-          "pressure": 0.456,
-          "activation": 0.377,
+          "level": 0.36,
+          "pressure": 0.467,
+          "activation": 0.363,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.24,
-          "last_interaction": 0.104
+          "last_interaction": 0.106
         },
         "social_presence": {
           "name": "social_presence",
-          "level": 0.114,
-          "pressure": 0.14,
-          "activation": 0.158,
+          "level": 0.134,
+          "pressure": 0.164,
+          "activation": 0.16,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.2,
-          "last_interaction": -0.04
+          "last_interaction": -0.043
         },
         "cognitive_load": {
           "name": "cognitive_load",
-          "level": 0.193,
-          "pressure": 0.24,
-          "activation": 0.189,
+          "level": 0.218,
+          "pressure": 0.273,
+          "activation": 0.203,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.1,
-          "last_interaction": 0.03
+          "last_interaction": 0.029
         },
         "background_thought": {
           "name": "background_thought",
-          "level": 0.284,
-          "pressure": 0.362,
-          "activation": 0.336,
+          "level": 0.302,
+          "pressure": 0.387,
+          "activation": 0.325,
           "volatility": 0.2,
           "decay_rate": 0.08,
           "last_signal": 0.24,
-          "last_interaction": 0.067
+          "last_interaction": 0.068
         }
       },
       "conversation_dynamics": {

@@ -2534,6 +2534,12 @@ class LlmService:
     ) -> str:
         kind_name = (kind or "presence_maintenance").strip()
         is_reengagement = kind_name in {"re_engagement", "reengagement"}
+        force_surface = bool(
+            kwargs.get("force_llm")
+            or kwargs.get("require_non_empty")
+            or kwargs.get("must_surface")
+            or kwargs.get("surface_force_speech")
+        )
         max_words = 12
         if seed:
             seeds = (str(seed), *tuple(seeds or ()))
@@ -2544,7 +2550,8 @@ class LlmService:
             "You are ERIS's micro-presence wording layer. "
             "Return exactly one valid JSON object with this schema: "
             "{\"text\": string}. "
-            "The text value is empty when the flags do not justify speech; otherwise it is the final Vietnamese line. "
+            "When must_surface is false, text may be empty if speech is not warranted. "
+            "When must_surface is true, text must be non-empty unless safety would be violated. "
             "Use Vietnamese with full diacritics only when text is non-empty. "
             "No analysis. No markdown. No English placeholder text. "
             "Generate from cognitive flags and evidence seeds, not from a Python fallback. "
@@ -2562,10 +2569,22 @@ class LlmService:
             f"Cognitive flags: {micro_flags or '<none>'}\n"
             f"Signal score: {float(signal_score or 0.0):.2f}\n"
             f"Avoid repeating: {avoid_text}\n"
+            f"must_surface={str(force_surface).lower()}\n"
             f"focus_kind={focus_kind}; focus_summary={focus_summary}; idle_seconds={int(float(idle_seconds or 0.0))}\n\n"
             "Principle:\n"
             f"- If speech is warranted: Vietnamese only, 1-{max_words} words, one tiny line with full diacritics.\n"
-            "- If cognitive flags say body-only is enough, evidence is too thin, or this would be filler, return {\"text\":\"\"}.\n"
+        )
+        if force_surface:
+            user_msg += (
+                "- must_surface=true: do not return empty just because evidence is thin; the arbiter already chose speech.\n"
+                "- With thin evidence, speak only about the current rhythm/silence/focus family, not about invented screen facts.\n"
+                "- Keep it tiny, concrete, and low-pressure.\n"
+            )
+        else:
+            user_msg += (
+                "- If cognitive flags say body-only is enough, evidence is too thin, or this would be filler, return {\"text\":\"\"}.\n"
+            )
+        user_msg += (
             "- Do not copy Legacy fallback; it is present only for compatibility and may be empty.\n"
             "- This is a tiny concrete aside: dry, casual, slightly imperfect.\n"
             "- No status report, no system narration, no explaining.\n"
@@ -2582,7 +2601,8 @@ class LlmService:
             "\nOutput contract:\n"
             "- Return exactly one JSON object.\n"
             "- Shape: {\"text\":\"actual Vietnamese line or empty string\"}\n"
-            "- The value of text must be empty when body-only is better, otherwise the final sentence to speak.\n"
+            "- If must_surface=false, the value of text may be empty when body-only is better.\n"
+            "- If must_surface=true, the value of text must be a final sentence to speak.\n"
             "- Never return placeholder text such as 'short Vietnamese line'.\n"
             "- non-empty text must be Vietnamese only and keep full diacritics.\n"
             "- non-empty text must be speakable as-is.\n"

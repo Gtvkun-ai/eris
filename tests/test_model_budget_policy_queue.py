@@ -182,6 +182,63 @@ class ModelBudgetPolicyQueueTests(unittest.TestCase):
         self.assertEqual(decision.reason, "scheduler_allow")
         self.assertTrue(decision.debug.get("vision_vram_guard_bypassed"))
 
+    def test_local_gguf_main_forces_past_resource_pressure_and_active_lease(self):
+        policy = ModelBudgetPolicy(
+            make_config(
+                remote_api_enabled=False,
+                cpu_block_percent=80.0,
+                ram_block_percent=80.0,
+                gpu_block_percent=70.0,
+                vram_block_percent=72.0,
+                main_cooldown_seconds=60.0,
+            )
+        )
+        policy.mark_started("main_cognition")
+        policy._active_leases["vision_busy"] = SimpleNamespace(tier="vision_compressor")
+        snapshot = policy.capture()
+        snapshot.cpu_percent = 98.0
+        snapshot.ram_percent = 97.0
+        snapshot.gpu_util_percent = 94.0
+        snapshot.vram_used_mb = 3900.0
+        snapshot.vram_total_mb = 4096.0
+        snapshot.external_vram_used_mb = 3900.0
+
+        decision = policy.can_run("main_cognition", resource_snapshot=snapshot, reason="must_wake")
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.reason, "force_local_gguf_main")
+        self.assertTrue(decision.debug.get("force_local_gguf"))
+
+    def test_local_gguf_main_uses_priority_lane_without_queue_timeout(self):
+        policy = ModelBudgetPolicy(
+            make_config(
+                remote_api_enabled=False,
+                max_queue_size=1,
+                default_queue_timeout_seconds=0.01,
+                force_local_gguf_priority=9000,
+            )
+        )
+        policy._queue.append(
+            SimpleNamespace(
+                request_id="stale",
+                tier="vision_compressor",
+                reason="stale",
+                priority=1,
+                enqueued_at=time.time(),
+                timeout_seconds=10.0,
+                sequence=1,
+                status="queued",
+                cancel_event=None,
+                last_budget_decision=None,
+                to_dict=lambda: {},
+            )
+        )
+
+        result = policy.run_queued("main_cognition", lambda: "ran", reason="forced_main")
+
+        self.assertEqual(result, "ran")
+        self.assertEqual(policy.last_main_finished_at > 0.0, True)
+
 
 if __name__ == "__main__":
     unittest.main()

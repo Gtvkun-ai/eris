@@ -4,7 +4,7 @@ Mục tiêu: tài liệu này không dành cho người đọc ngoài. Nó dùng
 
 Nguồn dựng bản này:
 - Repo public `Gtvkun-ai/Eris` tại nhánh `main`.
-- `Tongquat.txt` bản hiện tại trong workspace.
+- `Tongquat.txt` bản cũ/legacy nếu còn trong workspace; hiện bản debug chính là `tongquat.md`.
 - `Eris Cognitive Pipeline V3 Grand Architecture.pdf` để đối chiếu kiến trúc chuẩn.
 
 Giới hạn trung thực:
@@ -41,6 +41,7 @@ Quy tắc debug:
 - Nếu ERIS **không nói**: kiểm tra wake gate -> speech_core -> action_utility -> post_generation_filters -> should_speak.
 - Nếu ERIS **nói sai nguồn**: kiểm tra source_grounding -> parser_grounding -> Ti -> post_generation_filters.
 - Nếu ERIS **lặp hoặc lạnh**: kiểm tra turn_semantics -> conversation_dynamics -> relational_feedback -> FeRenderer -> LlmService chat contract.
+- Nếu ERIS **mất câu trả lời do JSON cụt**: kiểm tra LlmService `_complete_decision` max_tokens -> malformed JSON salvage -> parser_grounding strict/lax -> chat_cycle format fallback.
 - Nếu ERIS **có nội sinh nhưng không surface**: kiểm tra thought_stream -> spontaneous_life -> impulse_arbitration -> speech_core quiet guard.
 - Nếu ERIS **nhớ sai**: kiểm tra memory_commit_policy -> MemoryCognitionCore -> memory_recall_adapter -> SourceGrounding memory_answer_allowed.
 - Nếu body **đơ hoặc động tác sai**: kiểm tra Decision.to_payload -> UdpDecisionParser -> MotionController -> LocalBodyAutonomy.
@@ -77,10 +78,10 @@ Debug khi: ModuleNotFoundError, test discovery lệch.
 Status: ACTIVE.
 
 ## `Tongquat.txt`
-Role: kiến trúc/tổng quan hiện tại.
-Debug khi: cần hiểu nhanh đường runtime, nhưng không thay thế source.
-Status: ACTIVE DOC.
-Gap: quá dài cho debug nhanh, thiếu bảng owner/state/dependency.
+Role: kiến trúc/tổng quan cũ, đã được thay bằng `tongquat.md`.
+Debug khi: chỉ dùng làm tham chiếu legacy nếu file còn tồn tại hoặc cần diff lịch sử.
+Status: LEGACY / DELETED IN CURRENT WORKTREE.
+Note: không còn coi là nguồn hiện tại. Nếu IDE còn mở tab này thì đó là tab cũ, không phải file source-map chính.
 
 ## `commit_notes.md`
 Role: ghi chú commit/snapshot.
@@ -98,6 +99,34 @@ Status: GENERATED / SHOULD_NOT_COMMIT nếu public sạch.
 ## `focus_context_config.json`
 Role: override phân loại focus context cho Se/Ni, ví dụ YouTube/nhạc/podcast nền không bị hiểu thành distraction.
 Debug khi: ERIS đọc sai active app/activity kind.
+Status: ACTIVE CONFIG.
+
+## `config/low_level_speech_policy.yaml`
+Role: knobs cho `LowLevelSpeechPolicy` / `SurfaceArbiter`.
+Controls:
+- force_llm_after_silent.
+- high_conf_threshold.
+- min_surface_confidence / body_only_min_confidence.
+- min_surface_interval_seconds.
+- family_cooldown_seconds.
+- max_body_only_streak.
+- body_only_after_llm_decline.
+- always_llm_kinds.
+Env override:
+- `ERIS_SURFACE_POLICY_CONFIG`.
+- `ERIS_SURFACE_FORCE_LLM_AFTER_SILENT`.
+- `ERIS_SURFACE_HIGH_CONF_THRESHOLD`.
+- `ERIS_SURFACE_MIN_CONFIDENCE`.
+- `ERIS_SURFACE_BODY_ONLY_MIN_CONFIDENCE`.
+- `ERIS_SURFACE_MIN_INTERVAL_SEC`.
+- `ERIS_SURFACE_FAMILY_COOLDOWN_SEC`.
+- `ERIS_SURFACE_MAX_BODY_ONLY_STREAK`.
+- `ERIS_SURFACE_ALWAYS_LLM_KINDS`.
+Debug khi:
+- micro-presence/re-engagement không gọi LLM dù cue đủ mạnh.
+- surface quá dày do cooldown thấp.
+- body-only kéo dài thành giả sống mà không nói.
+- thought_stream_surface hoặc inner_whim không bao giờ ra câu.
 Status: ACTIVE CONFIG.
 
 ## `ni_focus_config.json`, `goal_profiles.json`, `goal_memory.json`, `ni_drift_samples.jsonl`
@@ -425,10 +454,17 @@ Status: ACTIVE / VERIFY.
 
 ## `src/runtime/presence_controller.py`
 Role: presence maintenance, reengagement, micro-presence synthesis.
+Feeds:
+- presence cue cho `SurfaceArbiter`.
+- body_action/focus_family/evidence/reason.
+Should not:
+- tự giữ nhiều hũ câu mẫu độc lập.
+- biến absence/idle thành guilt-trip.
 Debug khi:
 - ERIS spam câu hiện diện.
 - vừa nói xong lại chen micro-line.
 - force speak không có evidence sinh câu rỗng.
+- presence cue có `needs_micro_presence=true` nhưng `SurfaceArbiter` reject/rate-limit.
 Status: ACTIVE.
 
 ## `src/runtime/fallback_policy.py`
@@ -665,10 +701,20 @@ ChatAct:
 Guards:
 - tone_repair hẹp.
 - retry insult boundary nếu uncertainty_dodge.
+- strict decision JSON gate trước parser.
+- malformed decision JSON salvage: nếu JSON bị cụt nhưng có `"text"` sạch, rebuild payload an toàn thay vì leak schema hoặc ném format violation ngay.
+- protocol failure fallback: dùng payload `protocol_repair`, không wrap raw JSON/prose vào `text`.
 Debug khi:
 - hỏi thẳng nhưng model vòng vo.
 - insult/objectification khiến ERIS quá mềm hoặc quá gắt.
 - output JSON lỗi.
+- raw API text bắt đầu bằng `{` nhưng thiếu `}` hoặc chết giữa `debug_trace`.
+- log có `MAX_TOKENS`, `malformed decision JSON`, hoặc `format_violation_recovered`.
+- remote provider trả animation/direction ngoài whitelist như `idle_thoughtful`, `subtle_nod`, `neutral`.
+Notes:
+- `_complete_decision` hiện dùng output budget rộng hơn cho schema đầy đủ: chat 512 tokens, directive 384 tokens.
+- `debug_trace` phải ngắn: 3-8 words hoặc một marker ngắn. Nếu để model viết trace dài, JSON rất dễ bị cụt.
+- Plain prose ngoài JSON vẫn phải bị chặn; chỉ salvage JSON cụt có field `"text"` sạch.
 Status: ACTIVE CRITICAL.
 
 ---
@@ -1011,6 +1057,75 @@ Status: ACTIVE.
 Role: lint bề mặt micro line.
 Status: ACTIVE.
 
+## `src/cortex/low_level_speech_policy.py`
+Role: policy knobs cho utterance thấp tầng.
+Does:
+- quyết định generation mode: `reject`, `body_only`, `normal_llm`, `force_llm`.
+- load config từ `config/low_level_speech_policy.yaml` nếu env không override.
+- hỗ trợ parser YAML tối giản nếu PyYAML không có.
+- clamp threshold/env để tránh config bẩn phá runtime.
+Does not:
+- không viết câu public.
+- không chọn impulse thắng.
+- không bypass grounding/post-generation guard.
+Inputs:
+- SurfaceImpulse-like object: `should_surface`, `confidence`, `kind`.
+- silent_cycles.
+Rules:
+- dưới `body_only_min_confidence` -> reject.
+- silent_cycles >= `force_llm_after_silent` -> force_llm.
+- kind trong `always_llm_kinds` và đủ confidence -> force_llm.
+- confidence cao -> force_llm.
+- confidence vừa -> normal_llm.
+- còn lại -> body_only.
+Debug khi:
+- cue presence đủ mạnh nhưng không gọi LLM.
+- silent lâu mà vẫn im.
+- env/config YAML không được load.
+- body-only nhiều vòng nhưng không leo lên force LLM.
+Status: ACTIVE POLICY.
+
+## `src/cortex/surface_arbiter.py`
+Role: single source of truth cho low-level surface utterances.
+Purpose:
+- gom micro presence, re-engagement, spontaneous inner whim, idle curiosity, thought-stream surface.
+- chọn có nên surface không và dùng mode sinh nào.
+- không hardcode câu thoại public.
+Core contracts:
+- `SurfaceImpulse`: normalized cue/impulse với kind/source/confidence/pressure/score/topic_seed/evidence/body_action/focus_family.
+- `SurfaceDecision`: output cho runtime gồm text/body_only/should_speak/parse_mode/generation_mode/debug_trace/suppressed.
+Inputs:
+- presence_cue từ `presence_controller`.
+- cognitive_frame speech_core `SpeechImpulse`.
+- frame/snapshot `surface_impulses`, `low_level_impulses`, `speech_impulses`.
+- thought_stream `get_surface_candidates`.
+- thought_surface/subconscious seed.
+- long silence synthetic impulse.
+- extra_impulses.
+Pipeline:
+1. collect all impulses.
+2. normalize/coerce các cue khác nhau thành `SurfaceImpulse`.
+3. dedupe theo source/kind/family.
+4. loại impulse không `should_surface` hoặc cần external evidence.
+5. chọn winner bằng score + priority.
+6. áp rate-limit interval/family/body-only streak.
+7. hỏi `LowLevelSpeechPolicy` để chọn reject/body_only/normal_llm/force_llm.
+8. nếu LLM trả text -> `SurfaceDecision.should_speak=true`.
+9. nếu LLM decline và policy cho phép -> body_only.
+Debug khi:
+- presence/re-engagement bị nhiều module tự nói chồng nhau.
+- thought_stream có pressure nhưng không ra surface.
+- inner_whim thắng sai micro-presence hoặc ngược lại.
+- rate-limit/family cooldown chặn câu tưởng như nên nói.
+- LLM trả rỗng rồi body-only streak tăng mãi.
+Important traces:
+- `surface_arbiter; kind=...; source=...; mode=...`
+- `surface_interval_cooldown`
+- `family_cooldown`
+- `body_only_streak_limit`
+- `llm_declined`
+Status: ACTIVE CRITICAL SURFACE ROUTER.
+
 ## `src/cortex/goal_persistence.py`
 Role: goal nền bền qua turn/session.
 Fields:
@@ -1037,6 +1152,8 @@ Owns:
 - closure.
 - reactivation/reheater.
 - surface selector.
+Feeds:
+- `SurfaceArbiter` qua thought_stream candidates / thought_surface residue.
 Debug khi: unresolved loop không giữ, thought pressure không surface, hoặc surface quá nhiều.
 Status: ACTIVE CRITICAL SUBSTRATE.
 
@@ -1065,6 +1182,8 @@ Status: ACTIVE CRITICAL.
 Role: biến thought surface/social pressure thành intent nhẹ.
 Intents:
 - curious_question, inner_whim, random_chatter.
+Feeds:
+- SpeechImpulse cho `SurfaceArbiter` nếu active và public-safe.
 Debug khi: force_speak mỏng không sinh câu hỏi/whim phù hợp.
 Status: ACTIVE.
 
@@ -1074,6 +1193,8 @@ Reads:
 - boredom, silence, thought pressure, memory residue, attachment visibility, fatigue, restraint, cooldown, work-focus penalty.
 Outputs:
 - SpeechImpulse + arbitration_report + body_bias_hint.
+Feeds:
+- `SurfaceArbiter` qua speech_core/frame speech impulse.
 Debug khi: autonomous im dù có nội sinh, hoặc chen vào lúc user focus code.
 Status: ACTIVE.
 
@@ -1086,6 +1207,8 @@ Gates:
 - quiet_guard.
 Outputs:
 - AgentSpeechCore with winner/silence state.
+Feeds:
+- Surface-level `SpeechImpulse` cho `SurfaceArbiter` trong các cue thấp tầng.
 Debug khi: có tension nhưng im, hoặc nói dù không có shift.
 Status: ACTIVE MOST IMPORTANT SPEECH DEBUG FILE.
 
@@ -1443,6 +1566,20 @@ Status: ACTIVE.
 Role: speech/internal/micro/substrate regression.
 Status: CRITICAL for “có hồn nhưng không spam”.
 
+## `tests/test_surface_arbiter.py`
+Role: unit tests độc lập cho low-level surface arbitration.
+Covers:
+- presence cue force LLM sau silence.
+- spontaneous impulse thắng weak presence khi score cao hơn.
+- LLM decline chuyển thành body_only và track streak.
+- YAML/config loader.
+- default repo YAML load khi env thiếu.
+Debug khi:
+- sửa `SurfaceArbiter` làm micro-presence im.
+- config threshold đổi nhưng runtime không ăn.
+- body-only streak/rate-limit hành xử lạ.
+Status: CRITICAL SURFACE TEST.
+
 ## `tests/test_ti_governor.py`
 Role: capability/perception guard regression.
 Status: CRITICAL.
@@ -1494,6 +1631,32 @@ Check:
 5. spontaneous_life impulse score.
 6. speech_core meaning_shift_gate / quiet_guard.
 7. action_utility no_speech score.
+8. SurfaceArbiter collected the impulse and did not rate-limit it.
+
+## Case: low-level surface cue có nhưng ERIS vẫn im/body-only
+Symptom:
+- presence/re-engagement/thought_stream có cue, nhưng final decision `should_speak=false`.
+- debug_trace có `surface_rate_limited`, `surface_reject`, `body_only_by_policy`, `llm_declined`.
+Check:
+1. `presence_controller.py` cue có `needs_micro_presence=true`, confidence, focus_family, evidence không.
+2. `surface_arbiter.py` `_collect_all_impulses` có nhận cue từ presence/frame/thought_stream/extra_impulses không.
+3. `_score_and_select_winner` có loại vì `should_surface=false` hoặc `needs_external_evidence=true` không.
+4. `_rate_limit_reason` có chặn vì `min_surface_interval_seconds`, `family_cooldown_seconds`, hoặc `max_body_only_streak` không.
+5. `low_level_speech_policy.py` threshold có đẩy mode thành reject/body_only thay vì normal_llm/force_llm không.
+6. LLM micro generator có trả text rỗng khiến body_only không.
+7. `post_generation_filters.py` có chặn micro-line sau khi sinh không.
+Fix direction:
+- Tune `config/low_level_speech_policy.yaml` trước, đừng rải thêm câu mẫu trong từng module.
+- Nếu cue thiếu evidence, sửa source cue; nếu policy reject đúng thì không ép LLM.
+- Nếu body-only streak kẹt, kiểm tra `body_only_after_llm_decline` và `max_body_only_streak`.
+
+## Case: low-level speech policy config không ăn
+Check:
+1. `ERIS_SURFACE_POLICY_CONFIG` có trỏ sai path không.
+2. Nếu env trống, `_default_policy_config_path()` có thấy `config/low_level_speech_policy.yaml` không.
+3. YAML key có đúng tên config dataclass không.
+4. Env override có đang đè YAML không.
+5. `tests/test_surface_arbiter.py::test_default_repo_yaml_is_loaded_when_env_is_missing`.
 
 ## Case: ERIS nói như camera/telemetry logger
 Check:
@@ -1503,6 +1666,24 @@ Check:
 4. PersonalityLens suppression.
 5. LlmService prompt contract.
 6. Ti/post_generation_filters remove raw observation claim.
+
+## Case: chat mất câu trả lời vì JSON cụt / malformed decision JSON
+Symptom:
+- Raw API text có `"text"` sạch nhưng JSON dừng giữa field sau đó, thường là `debug_trace`.
+- Log báo malformed JSON, `MAX_TOKENS`, hoặc format violation dù nội dung trả lời nghe ổn.
+Check:
+1. `src/llm/service.py` `_complete_decision` max_tokens có đủ cho full schema không.
+2. Prompt contract có ép compact JSON và `debug_trace` ngắn không.
+3. `_strict_decision_candidate_or_raise` có gọi `_coerce_malformed_decision_payload` trước khi raise không.
+4. `_coerce_malformed_decision_payload` chỉ lấy field `"text"` sạch, không surface raw JSON/schema.
+5. Nếu không có `"text"` sạch hoặc có prompt leak -> `_build_protocol_failure_fallback`.
+6. `parser_grounding/decision.py` không được nhận raw malformed JSON như public speech.
+7. `chat_cycle.py` format fallback chỉ nên chạy sau khi LlmService không salvage được.
+Fix direction:
+- Tăng output budget cho decision schema đầy đủ.
+- Giữ `debug_trace` cực ngắn.
+- Không sửa bằng cách wrap raw malformed JSON vào `text`.
+- Remote provider không tuân grammar/schema thì sanitize animation/direction sau parse, nhưng lỗi JSON cụt phải xử lý trước parse.
 
 ## Case: memory trả lời sai
 Check:
@@ -1568,11 +1749,11 @@ Check:
 
 # 18. Kết luận debug
 
-`Tongquat.txt` hiện tại mô tả kiến trúc tốt, nhưng chưa đủ chuẩn debug vì thiếu:
+`tongquat.md` hiện tại mô tả kiến trúc theo hướng debug tốt hơn bản `Tongquat.txt` cũ, nhưng vẫn chưa đủ chuẩn audit tuyệt đối vì còn thiếu:
 - bảng dependency.
 - bảng state read/write.
 - bảng symptom -> file.
 - trạng thái active/legacy/generated.
 - test coverage map.
 
-Bản `ERIS_DEBUG_SOURCE_MAP.md` này là bước chuyển từ “tổng quan kiến trúc” sang “bản đồ debug”. Nó vẫn cần một lần audit bằng source thật để thành file-to-file hoàn chỉnh tuyệt đối.
+Bản `tongquat.md` này là bước chuyển từ “tổng quan kiến trúc” sang “bản đồ debug”. Nó vẫn cần một lần audit bằng source thật để thành file-to-file hoàn chỉnh tuyệt đối.

@@ -111,8 +111,27 @@ class PresenceControllerMixin:
         seeds = tuple(str(item) for item in (impulse.evidence or ()) if str(item).strip())
         if not seeds and impulse.topic_seed:
             seeds = (impulse.topic_seed,)
+        silent_cycles = int(getattr(self, 'presence_maintenance_silent_cycles', 0) or 0)
+        # Khi SurfaceArbiter đã chọn force_llm, wording layer không được tự hạ về body-only
+        # chỉ vì evidence mỏng. Nó chỉ được viết một câu thật ngắn, không bịa screen fact.
+        # Nếu không, pipeline tạo ra nghịch lý: planner=speak nhưng final=<empty>. Vâng,
+        # một kiểu "có ý định giao tiếp" nhưng lại tự tháo dây thanh quản.
+        must_surface = bool(force_llm or no_fallback_mode_enabled() or silent_cycles >= 3 or impulse.confidence >= 0.70)
         micro_context = {
             "surface_impulse": json.dumps(impulse.to_context(), ensure_ascii=False),
+            "micro_presence_flags": (
+                f"kind={impulse.kind}; "
+                f"focus_family={impulse.focus_family}; "
+                f"confidence={impulse.confidence:.2f}; "
+                f"pressure={impulse.pressure:.2f}; "
+                f"score={impulse.score:.2f}; "
+                f"missing_evidence_ids={impulse.missing_evidence_ids}; "
+                f"silent_cycles={silent_cycles}; "
+                f"body_action={impulse.body_action}; "
+                f"must_surface={must_surface}; "
+                f"reason={impulse.reason}"
+            ),
+            "surface_contract": "must_return_tiny_text" if must_surface else "may_decline_to_body_only",
         }
         return self._hybrid_micro_presence_text(
             kind=impulse.kind or impulse.speech_act or "surface",
@@ -120,7 +139,7 @@ class PresenceControllerMixin:
             fallback_text="",
             seeds=seeds,
             micro_context=micro_context,
-            force_llm=force_llm or no_fallback_mode_enabled(),
+            force_llm=must_surface,
             signal_score=impulse.confidence,
         )
 
@@ -260,6 +279,7 @@ class PresenceControllerMixin:
         # policy force-LLM sẽ không bao giờ tới lượt; hệ sẽ múa idle_shift đến hết đời runtime.
         if presence_maintenance:
             self.last_presence_maintenance_at = current_time
+            self.presence_maintenance_silent_cycles = 0
         if reengagement:
             self.last_reengagement_at = current_time
             self.reengagement_quiet_cycles = 0
@@ -287,6 +307,137 @@ class PresenceControllerMixin:
         has_window = bool(str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or "").strip())
         has_presence = idle_seconds >= 60.0 or bool(tuple(getattr(snapshot, "recent_events", ()) or ()))
         return bool(has_window or has_presence)
+
+    def _surface_float(self, value, default: float = 0.0) -> float:
+        try:
+            number = float(value)
+        except Exception:
+            number = default
+        if number != number:
+            number = default
+        return max(0.0, min(1.0, number))
+
+    def _build_endogenous_surface_impulses(
+        self,
+        *,
+        frame=None,
+        snapshot=None,
+        internal_state=None,
+        agenda_stack=None,
+        thought_stream_report=None,
+    ) -> tuple[SurfaceImpulse, ...]:
+        state = (
+            internal_state
+            or getattr(frame, "internal_state_after", None)
+            or getattr(frame, "internal_state_before", None)
+            or (self._get_internal_state() if callable(getattr(self, "_get_internal_state", None)) else None)
+        )
+        agenda = agenda_stack or getattr(self, "internal_agenda", None)
+        thought_report = thought_stream_report or getattr(frame, "thought_stream_report", None) or getattr(frame, "subconscious_report", None)
+        focus_family = str(getattr(snapshot, "active_window_kind", "") or getattr(state, "last_focus_kind", "") or "general_idle")
+        silent_cycles = int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0)
+        impulses: list[SurfaceImpulse] = []
+
+        if state is not None:
+            silence_pressure = self._surface_float(getattr(state, "silence_pressure", 0.0))
+            continuity_pressure = max(
+                self._surface_float(getattr(state, "social_pressure", 0.0)),
+                self._surface_float(getattr(state, "thought_stream_pressure", 0.0)),
+                self._surface_float(getattr(state, "cognitive_tension", 0.0)),
+                self._surface_float(getattr(state, "unresolved_prediction_pressure", 0.0)),
+                min(1.0, silent_cycles / 6.0),
+            )
+            pressure = max(silence_pressure, continuity_pressure * 0.86)
+            if pressure >= 0.45:
+                impulses.append(
+                    SurfaceImpulse(
+                        kind="micro_presence",
+                        source="endogenous_drive",
+                        confidence=max(0.38, pressure),
+                        pressure=pressure,
+                        score=max(pressure, 0.46 + min(0.16, silent_cycles * 0.03)),
+                        topic_seed="quiet continuity pressure",
+                        speech_act="micro_presence",
+                        family="continuity:silence_pressure",
+                        evidence=(f"silent_cycles={silent_cycles}",),
+                        reason="silence pressure wants small grounded presence",
+                        focus_family=focus_family,
+                        body_action="low_pressure_presence",
+                        missing_evidence_ids=True,
+                        is_presence=True,
+                        should_surface=True,
+                    )
+                )
+
+        if agenda is not None and callable(getattr(agenda, "top_items", None)):
+            try:
+                top_items = tuple(agenda.top_items(limit=1) or ())
+            except Exception:
+                top_items = ()
+            if top_items:
+                top = top_items[0]
+                speech_value = self._surface_float(getattr(top, "speech_value", 0.0))
+                pressure = max(self._surface_float(getattr(top, "pressure", 0.0)), self._surface_float(getattr(top, "score", 0.0)))
+                if pressure >= 0.45 and speech_value >= 0.30:
+                    evidence = tuple(str(item) for item in (getattr(top, "evidence_ids", ()) or ()) if str(item).strip())[:8]
+                    kind = str(getattr(top, "kind", "") or "misc")
+                    impulses.append(
+                        SurfaceImpulse(
+                            kind="thought_stream_surface",
+                            source="internal_agenda",
+                            confidence=max(0.34, self._surface_float(getattr(top, "confidence", 0.0), pressure)),
+                            pressure=pressure,
+                            score=max(pressure, speech_value),
+                            topic_seed=str(getattr(top, "summary", "") or "")[:120],
+                            speech_act="inner_whim",
+                            family=f"agenda:{kind}",
+                            evidence=evidence,
+                            reason="open internal agenda has public-safe residue",
+                            focus_family="internal_agenda",
+                            body_action="low_pressure_presence",
+                            missing_evidence_ids=not bool(evidence),
+                            is_presence=False,
+                            should_surface=True,
+                        )
+                    )
+
+        seed = getattr(thought_report, "latest_seed", None)
+        seed_text = str(
+            getattr(seed, "topic_seed", "")
+            or getattr(seed, "partial_text", "")
+            or getattr(seed, "unfinished_impulse", "")
+            or getattr(seed, "almost_spoke", "")
+            or ""
+        ).strip()
+        seed_pressure = max(
+            self._surface_float(getattr(thought_report, "stream_tension", 0.0)),
+            self._surface_float(getattr(thought_report, "pressure", 0.0)),
+            self._surface_float(getattr(seed, "pressure", 0.0)),
+            self._surface_float(getattr(seed, "momentum_score", 0.0)),
+        )
+        if seed_text and seed_pressure >= 0.32:
+            impulses.append(
+                SurfaceImpulse(
+                    kind="thought_stream_surface",
+                    source="thought_stream",
+                    confidence=max(0.34, seed_pressure),
+                    pressure=seed_pressure,
+                    score=max(0.34, seed_pressure),
+                    topic_seed=seed_text[:120],
+                    speech_act="inner_whim",
+                    family="thought_stream:latest_seed",
+                    evidence=(seed_text[:120],),
+                    reason="thought stream has a small public-safe residue",
+                    focus_family="thought_stream",
+                    body_action="low_pressure_presence",
+                    missing_evidence_ids=True,
+                    is_presence=False,
+                    should_surface=True,
+                    raw=seed,
+                )
+            )
+
+        return tuple(impulses)
 
     def _should_allow_presence_maintenance(
         self,
@@ -495,14 +646,20 @@ class PresenceControllerMixin:
         cue: MicroPresenceCue,
         seeds: tuple[str, ...] = (),
         force_llm: bool = False,
+        cognitive_frame=None,
     ) -> tuple[str, str]:
         del seeds
         if not cue.needs_micro_presence:
             return "", "flag_only_body"
+        endogenous_impulses = self._build_endogenous_surface_impulses(
+            frame=cognitive_frame,
+            snapshot=snapshot,
+        )
         surface = self._surface_arbiter().arbitrate(
             snapshot=snapshot,
-            cognitive_frame=None,
+            cognitive_frame=cognitive_frame,
             presence_cue=cue,
+            extra_impulses=endogenous_impulses,
             surface_kind=kind,
             force_llm=force_llm,
             silent_cycles=self.presence_maintenance_silent_cycles,
@@ -510,7 +667,14 @@ class PresenceControllerMixin:
         if surface.text.strip():
             return surface.text.strip(), surface.source
         # Giữ trace chi tiết để log biết bị policy reject, LLM decline, hay body-only.
-        return "", surface.source or surface.reason or "surface_arbiter_body_only"
+        trace = str(surface.debug_trace or surface.source or surface.reason or "surface_arbiter_body_only")
+        if "llm_rejected_body_only" in trace:
+            return "", "llm_rejected_body_only"
+        if "llm_error_body_only" in trace:
+            return "", "llm_error_body_only"
+        if "llm_declined" in trace:
+            return "", "llm_declined_body_only"
+        return "", trace
 
     def _cue_micro_lines(
         self,
@@ -1091,6 +1255,8 @@ class PresenceControllerMixin:
                 seeds=tuple(seeds or ()),
                 micro_context=micro_context or {},
                 signal_score=float(signal_score or 0.0),
+                force_llm=bool(force_llm),
+                require_non_empty=bool(force_llm),
             )
         except Exception as exc:
             self.logger.warning("Micro-presence LLM failed: %s", exc)
@@ -1101,6 +1267,34 @@ class PresenceControllerMixin:
             kind=kind,
             fallback_text=fallback_text,
         )
+        if not safe and force_llm:
+            # Lần thử đầu có thể bị prompt cũ kéo về {"text":""}. Thử lại bằng LLM,
+            # không dùng câu mẫu local, để vẫn giữ no-fallback đúng nghĩa: không hardcode lời thoại.
+            retry_context = dict(micro_context or {})
+            retry_context["surface_contract"] = "must_return_tiny_text_retry"
+            retry_context["micro_presence_flags"] = str(retry_context.get("micro_presence_flags", "")) + "; retry_after_empty=true"
+            try:
+                draft = generator(
+                    kind=kind,
+                    fallback_text="",
+                    avoid_text=self.last_text,
+                    focus_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
+                    focus_summary=str(getattr(snapshot, "focus_summary", "") or ""),
+                    idle_seconds=float(getattr(snapshot, "idle_seconds", 0.0) or 0.0),
+                    seeds=tuple(seeds or ()),
+                    micro_context=retry_context,
+                    signal_score=max(float(signal_score or 0.0), 0.62),
+                    force_llm=True,
+                    require_non_empty=True,
+                )
+                safe = self._sanitize_micro_presence_llm_text(
+                    draft,
+                    kind=kind,
+                    fallback_text="",
+                )
+            except Exception as exc:
+                self.logger.warning("Micro-presence LLM retry failed: %s", exc)
+                safe = ""
         if not safe:
             return "", "llm_rejected_body_only"
         return safe, "llm_signal" if force_llm else "llm"
@@ -1163,11 +1357,15 @@ class PresenceControllerMixin:
             social_presence_event=social_presence_event,
             reason=surface_kind,
         )
+        endogenous_impulses = self._build_endogenous_surface_impulses(
+            frame=frame,
+            snapshot=snapshot,
+        )
         surface = self._surface_arbiter().arbitrate(
             snapshot=snapshot,
             cognitive_frame=frame,
             presence_cue=cue,
-            extra_impulses=extra_impulses,
+            extra_impulses=(*endogenous_impulses, *tuple(extra_impulses or ())),
             surface_kind=surface_kind,
             force_llm=force_llm,
             silent_cycles=self.presence_maintenance_silent_cycles,
@@ -1299,6 +1497,7 @@ class PresenceControllerMixin:
                 snapshot=snapshot,
                 social_presence_event=social_presence_event,
                 surface_kind="presence_maintenance",
+                force_llm=cue.should_call_llm,
                 presence_cue=cue,
             )
 
@@ -1308,6 +1507,7 @@ class PresenceControllerMixin:
             snapshot=snapshot,
             cue=cue,
             seeds=cue.evidence,
+            force_llm=cue.should_call_llm,
         )
         if not text:
             return self._body_only_presence_decision(cue, intent="presence_maintenance", parse_mode="presence_maintenance_body_only", source=source)
