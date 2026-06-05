@@ -9,7 +9,7 @@ Nguồn dựng bản này:
 
 Giới hạn trung thực:
 - Bản này vẫn chưa phải inventory/audit toàn repo theo kiểu đọc từng dòng tất cả source.
-- Tuy vậy, revision hiện tại đã đối chiếu source thật trong workspace cho các điểm nóng đang mở: `src/llm/service.py`, `src/cortex/surface_arbiter.py`, `src/cortex/speech_core.py`, `src/runtime/presence_controller.py`, `src/runtime/coordinator.py`, `body/MotionController.cs`.
+- Tuy vậy, revision hiện tại đã đối chiếu source thật trong workspace cho các điểm nóng đang mở: `src/llm/service.py`, `src/cortex/surface_arbiter.py`, `src/cortex/speech_core.py`, `src/runtime/presence_controller.py`, `src/runtime/autonomous_wake_governor.py`, `src/runtime/coordinator.py`, `src/runtime/no_fallback_policy.py`, `body/MotionController.cs`.
 - Những section khác vẫn là source-map debug ưu tiên chính xác theo tài liệu nội bộ + file tree public + mô tả module hiện có.
 - Những file được đánh dấu `VERIFY_IN_CODE` cần mở source thật để xác nhận function/class cụ thể.
 - Dùng bản này để debug luồng, không dùng làm README public.
@@ -18,7 +18,12 @@ Giới hạn trung thực:
 
 # 0A. Git delta gần đây
 
-Khoảng thay đổi đã soi trực tiếp: từ `2026-06-04` đến `2026-06-05`, chủ yếu qua các commit `fdfe52c`, `c268eab`, `aa9af6f`, `04bd5f6`, `5f812fc`.
+Khoảng thay đổi đã soi trực tiếp: từ `2026-06-04` đến `2026-06-06`, chủ yếu qua các commit `fdfe52c`, `c268eab`, `aa9af6f`, `04bd5f6`, `5f812fc`, `553985e`.
+
+Trạng thái sync với remote lúc rà tài liệu:
+- `git fetch origin` chạy sạch.
+- `git rev-parse HEAD` = `git rev-parse origin/main` = `553985e189ab44140b8bfe46d7aa025a199c34f7`.
+- nghĩa là hiện **không có gì bị thiếu do chưa pull**; phần cần cập nhật là tài liệu và local worktree, không phải thiếu commit upstream.
 
 Trục thay đổi chính theo git:
 - low-level surface path được gom về một trục `PresenceController -> SurfaceArbiter -> LowLevelSpeechPolicy -> LlmService.generate_micro_presence_line`, thay cho nhiều nhánh micro-presence rải rác.
@@ -26,11 +31,52 @@ Trục thay đổi chính theo git:
 - `ModelBudgetPolicy` chuyển trọng tâm sang queue/lease scheduler; `ERIS_RESOURCE_GUARD_ENABLED` hiện mặc định `false`, tức runtime thường là queue-only chứ không chặn vì máy “đang bận”.
 - `LlmService` được siết lại ở decision JSON: compact contract, sanitize decision-like JSON, salvage JSON cụt nếu còn `"text"` sạch, và chặn việc wrap metadata/prose thẳng vào `text`.
 - tầng nội sinh được đẩy mạnh ở `agent_state_stack.py`, `impulse_arbitration.py`, `speech_core.py`, `surface_arbiter.py`: thêm `vital_pressure`, `metabolic_pressure`, memory/silence/boredom residue, và re-engagement sau im lặng dài.
+- `presence_controller.py` tiếp tục được bơm thêm đường `active_memory_resonance -> memory_resonance impulse`, cộng cơ chế tách `body-only presence action` khỏi spoken cooldown.
+- `autonomous_wake_governor.py` đã thành gate wake rõ nghĩa hơn: wake level tách hẳn `sleep/observe/think/micro_presence/vision/main`, có degrade theo interrupt cost thay vì chỉ một cờ wake/no-wake.
+- `coordinator.py` tiếp tục phình thành nơi hợp mạch runtime thật sự; commit `553985e` còn sửa khá mạnh file này và chính `tongquat.md`, nên các mô tả coordinator nên ưu tiên workspace hiện tại hơn snapshot cũ.
 - test coverage mới bám đúng các thay đổi trên: `tests/test_surface_arbiter.py`, `tests/test_model_budget_policy_queue.py`, `tests/test_presence_controller_memory_surface.py`, cùng các ca salvage/repair trong `tests/test_llm_service.py`.
 
+Nhìn theo `git show --stat`, mấy cụm thay đổi đáng chú ý nhất trong chuỗi commit vừa rà là:
+- `fdfe52c`: introduce `LowLevelSpeechPolicy`, `SurfaceArbiter`, test `tests/test_surface_arbiter.py`, và dời low-level surface sang một trục thống nhất.
+- `c268eab`: xóa `Tongquat.txt`, mở rộng `presence_controller.py`, tăng coverage queue/runtime coordinator, và chuyển `tongquat.md` thành bản chính.
+- `aa9af6f`: thêm mạnh vào memory/event ledger + `presence_controller.py` + `autonomous_wake_governor.py`, đẩy hướng presence có residue/memory-resonance.
+- `04bd5f6`: tune YAML/policy, tăng `impulse_arbitration.py`, `surface_arbiter.py`, `model_budget_policy.py`, và thêm `tests/test_model_budget_policy_queue.py`.
+- `5f812fc`: tăng `micro_repeat_guard.py`, `surface_arbiter.py`, `presence_controller.py`, cùng regression test cho memory-surface.
+- `553985e`: tiếp tục sửa `coordinator.py`, `presence_controller.py`, cập nhật `tongquat.md`, và thay đổi runtime state files.
+
 Tình trạng worktree lúc cập nhật tài liệu này:
-- `git status --short` chỉ còn đổi dữ liệu runtime: `memory_core/active_state_snapshot.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl`.
-- nghĩa là phần source hiện tại của repo về cơ bản đang bám `HEAD`, nên mô tả dưới đây nên ưu tiên revision đã commit hơn là ba file state đang trôi theo runtime.
+- `git status --short` hiện có cả drift dữ liệu runtime lẫn source chưa commit:
+  - runtime data: `memory_core/active_state_snapshot.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl`.
+  - source local: `src/runtime/autonomous_wake_governor.py`, `src/runtime/coordinator.py`.
+- nghĩa là repo **không thiếu pull**, nhưng workspace hiện tại **không hoàn toàn sạch**; khi mô tả behavior phải phân biệt đâu là code đã commit ở `HEAD`, đâu là local patch đang nằm ngoài commit.
+
+---
+
+# 0B. Repo snapshot hiện tại
+
+Snapshot thô để khỏi phải đoán “repo giờ to đến đâu”:
+- tổng source code đã đếm: khoảng `108,437` dòng trong `247` file code (`.py` + `.cs`).
+- riêng Python: `104,703` dòng trong `241` file.
+- riêng C#: `3,734` dòng trong `6` file.
+
+Phân theo vùng chính:
+- `src/`: `181` file, khoảng `90,044` dòng.
+- `tests/`: `49` file, khoảng `10,949` dòng.
+- `body/`: `13` file, khoảng `3,888` dòng.
+- `scripts/`: `11` file, khoảng `4,408` dòng.
+- `memory_core/`: `10` file dữ liệu/state, khoảng `4,270` dòng JSON.
+- `config/`: `5` file, khoảng `119` dòng.
+
+Các cụm Python lớn nhất hiện tại:
+- `src/cortex/`: `59` file, khoảng `38,582` dòng.
+- `src/runtime/`: `36` file, khoảng `27,484` dòng.
+- `src/memory/`: `48` file, khoảng `12,500` dòng, chưa tính các tiểu mục `claims/`, `judgement/`, `understanding/`.
+
+Hot files đã soi trực tiếp trong workspace:
+- `src/runtime/coordinator.py`: khoảng `6,011` dòng, đúng nghĩa god object/orchestrator.
+- `src/runtime/presence_controller.py`: khoảng `2,209` dòng, hiện là trục low-level presence sống nhất.
+- `src/cortex/surface_arbiter.py`: khoảng `1,005` dòng, là router low-level surface trọng yếu.
+- `src/runtime/autonomous_wake_governor.py`: khoảng `234` dòng, nhỏ hơn nhiều nhưng là gate wake rất nhạy.
 
 ---
 
@@ -509,12 +555,18 @@ Current code specifics:
 - `_derive_micro_presence_cue()` kết hợp `idle_seconds`, `recent_events`, `vision_facts`, `social_presence_event`, curiosity, và ego gate; idle một mình chưa đủ để nói.
 - cue có thể chọn `ObserveCode`, `tilt_head`, hoặc `idle_shift`; `missing_evidence_ids` được set khi không có concrete screen evidence.
 - `_build_endogenous_surface_impulses()` hiện có thể nâng `active_memory_resonance` public-safe thành impulse `memory_resonance`; residue private hoặc activation `may_surface=false` phải bị giữ lại.
-- `_build_surface_arbiter_decision()` tự chặn bằng `autonomous_presence_blocked_until`, `presence_maintenance_cooldown_sec`, và `last_autonomous_spoken_at` trước khi gọi arbiter.
+- `_build_surface_arbiter_result()` là helper mới trả cả `Decision | None` lẫn `SurfaceDecision | None`; wake-gated route dùng nó để giữ reject/body-only/speak status của chính lượt arbitrate hiện tại, thay vì đọc lại `arbiter.last_decision`.
+- `_build_surface_arbiter_decision()` giờ chỉ còn là wrapper tương thích ngược trên `_build_surface_arbiter_result()`.
+- `_build_surface_arbiter_decision()` chỉ tự chặn bằng `autonomous_presence_blocked_until`; cooldown/spoken-floor/presence gating vẫn nằm ở `_should_allow_presence_maintenance()` và `_should_allow_reengagement()` trước khi vào arbiter.
 - body-only presence/re-engagement được convert thành `MotionCommand` thay vì giả vờ có câu nói; body-only không được reset silent cycles như speech thật.
 - re-engagement hiện build bằng cue + extra impulse `long_silence` và gọi `SurfaceArbiter` với `force_llm=True`.
+- wake-gated telemetry giờ log ngắn cả input/output của arbiter: `surface_kind`, `silent_cycles`, `force_llm`, `cue.should_call_llm`, `cue.missing_evidence_ids`, rồi `kind/generation_mode/should_speak/body_only/reason`.
+- `_surface_arbiter_llm_generate()` giờ gắn thêm contract `thin_presence_no_screen` cho presence-like impulse thiếu screen evidence: LLM được phép viết một câu hiện diện rất ngắn dựa vào silence/continuity, nhưng không được claim đang nhìn màn hình, không được hỏi dồn, và không được rơi về status ping.
+- sanitizer cho micro-presence/re-engagement hiện cho phép tối đa khoảng 14 từ thay vì cắt cứng ở 8 từ cho mọi route, để contract thin-evidence presence có chỗ thở mà vẫn giữ câu ngắn.
 - `_surface_arbiter_llm_generate()` luôn gửi kèm `surface_impulse`, `ego_surface_state`, `micro_presence_flags`, và `surface_contract`; presence-like cue chỉ bị ép `must_return_tiny_text` khi arbiter thật sự force hoặc impulse không-phải-presence đã đủ mạnh/silent lâu.
 - local fallback text hiện chỉ còn là lưới an toàn cho non-presence route; presence maintenance không còn giữ “hũ câu mẫu” riêng để spam cho có vẻ sống.
 - `_note_autonomous_presence_action()` tách riêng việc ghi nhận presence/re-engagement body-only khỏi `_note_autonomous_spoken()`, để cooldown có tăng nhưng speech debt không bị reset nhầm.
+- nếu winner thật của surface khác route gọi ban đầu, planner/final payload giờ có thể gắn `surface_override=...` để debug bớt lú; ví dụ wake-gated presence vào arbiter nhưng winner thật là `thought_stream_surface`.
 - env knobs hiện có:
   `ERIS_PRESENCE_MAINTENANCE`,
   `ERIS_PRESENCE_MAINTENANCE_SILENT_LOOPS`,
@@ -537,10 +589,18 @@ Debug khi:
 - re-engagement không nổ dù quiet cycles/idleness đủ lớn vì bị `autonomous_presence_blocked_until` hoặc activity gate chặn.
 Status: ACTIVE VERIFIED_IN_WORKSPACE.
 
-## `src/runtime/fallback_policy.py`
-Role: fallback khi LLM/parser/runtime fail.
-Debug khi: lỗi runtime nhưng output fallback quá ngu hoặc sai nguồn.
-Status: ACTIVE.
+## `src/runtime/no_fallback_policy.py`
+Role: bật/tắt chế độ chặn fallback mềm ở các path chat/autonomous/presence/force_speak.
+Provides:
+- `no_fallback_mode_enabled()`: đọc env `ERIS_NO_FALLBACK_MODE`.
+- `build_no_fallback_payload(...)`: trả payload chuẩn `no_fallback_block` thay vì để từng nơi tự bịa fallback.
+Current code specifics:
+- chat path có thể trả text giải thích ngắn khi bị block, nhưng `session_ritual`, `directive`, `autonomous`, `force_speak`, `presence` mặc định ưu tiên im hơn là nói bừa.
+- payload có `intent=no_fallback_block`, `parse_mode=no_fallback_block`, `debug_trace=no_fallback_mode:<channel>:<reason>`.
+Debug khi:
+- runtime tưởng “bị câm” nhưng thật ra đang ở no-fallback mode.
+- một path lẽ ra phải im lại còn nhả câu fallback kỹ thuật ra public.
+Status: ACTIVE VERIFIED_IN_WORKSPACE.
 
 ## `src/runtime/public_turn_ledger.py`
 Role: sổ các lượt public thật sự visible.
@@ -1246,6 +1306,8 @@ Current code specifics:
 - có synthetic `long_silence_impulse` khi `idle_seconds >= 120` hoặc `silent_cycles >= 3`.
 - winner còn đi qua `_ego_gate_reason()` trước rate-limit; mood/rupture/dignity/social_energy/preferred_distance có thể chặn hẳn presence-like impulse dù score đủ.
 - `_score_and_select_winner()` cộng nhẹ `vital_pressure` vào score để impulse nội sinh bị nén lâu không thua mãi silence/presence cue yếu.
+- `thought_stream_surface` không còn được “leo thang vô cớ” khi thiếu neo: nếu `missing_evidence_ids=true` và `vital_pressure` thấp, confidence/effective score bị cap về vùng khoảng `0.68` thay vì có thể trôi lên `1.00`.
+- `thought_stream_surface` giờ phải có payload nội sinh thật (`topic_seed` hoặc `residue_reason`) và ít nhất một anchor nội sinh public-safe như `recent_silence`, `debug_continuity`, `session_ritual_afterglow`, `memory_resonance`, hoặc `unresolved_loop`; thiếu anchor thì bị ép về `forced_body_only:thought_surface_missing_anchor`.
 - nếu `silent_cycles` vượt `force_llm_after_silent`, arbiter có thể override `reject` thành `force_llm`.
 - `always_llm_kinds` cũng có thể đẩy một kind đủ confidence sang `force_llm` dù policy ban đầu reject.
 - `vital_pressure_force_llm_threshold` cũng là đường nâng từ reject lên `force_llm` cho impulse có áp lực nội sinh đủ lớn và vẫn public-safe.
@@ -1888,6 +1950,10 @@ Check:
 7. `post_generation_filters.py` có chặn micro-line sau khi sinh không.
 8. `silent_cycles` đã đủ ngưỡng để `SurfaceArbiter` tự override sang `force_llm` chưa, hay vẫn còn đang dưới `force_llm_after_silent`.
 9. Có synthetic `long_silence_impulse` được thêm vào pool nhưng bị impulse khác đè điểm không.
+10. Nếu wake-gated log ghi `stage=surface_arbiter`, `rejected_by` giờ phải phản ánh `SurfaceDecision.debug_trace/reason` thật của lượt hiện tại; `reject:not_started` không còn là reject hợp lệ, mà là dấu hiệu status adapter đang đọc sai state cũ/sentinel.
+11. Nếu winner là `thought_stream_surface`, kiểm tra nó có payload nội sinh thật và có anchor kiểu `anchor=recent_silence` / `anchor=debug_continuity` / `anchor=session_ritual_afterglow` / `anchor=memory_resonance` / `anchor=unresolved_loop` không; thiếu thì phải body-only chứ không nên thắng slot nói.
+12. Nếu presence-like route thiếu evidence mà vẫn muốn nói, kiểm tra `surface_contract` có `thin_presence_no_screen` chưa; nếu chưa có, LLM dễ tự decline hoặc trượt sang status ping vô hồn.
+13. Nếu planner/action vẫn ghi `presence_maintenance` nhưng winner thật là route khác, kiểm tra `surface_override` trong `action_plan.notes` hoặc `final_decision` để biết có mismatch route hay không.
 Fix direction:
 - Tune `config/low_level_speech_policy.yaml` trước, đừng rải thêm câu mẫu trong từng module.
 - Nếu cue thiếu evidence, sửa source cue; nếu policy reject đúng thì không ép LLM.
@@ -2002,4 +2068,4 @@ Check:
 - trạng thái active/legacy/generated.
 - test coverage map.
 
-Bản `tongquat.md` này là bước chuyển từ “tổng quan kiến trúc” sang “bản đồ debug”. Nó vẫn cần một lần audit bằng source thật để thành file-to-file hoàn chỉnh tuyệt đối.
+Bản `tongquat.md` này là bước chuyển từ “tổng quan kiến trúc” sang “bản đồ debug”. Ở revision hiện tại, nó đã bám đúng việc `HEAD` đang sync với `origin/main` và workspace còn vài local patch chưa commit; nhưng nó vẫn cần một lần audit bằng source thật để thành file-to-file hoàn chỉnh tuyệt đối.

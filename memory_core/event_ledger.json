@@ -3016,6 +3016,127 @@
           "parse_mode": "presence_maintenance"
         }
       }
+    },
+    {
+      "id": "evt_35e469d43c004ac9",
+      "timestamp": 1780680870.9128811,
+      "iso_timestamp": "2026-06-06T00:34:30+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'autonomous-4', 'channel': 'autonomous', 'timestamp': '2026-06-06T00:34:24+0700', 'seen': [], 'said': '', 'outcome': 'micro_presence_body_only', 'tags': ['autonomous', 'presence_maintenance', 'micro_presence', 'signal_buffer_only', 'ephemeral_presence'], 'system_action': '', 'salience': 0.0, 'parse_mode': 'micro_presence_body_only'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [],
+      "tags": [
+        "commit",
+        "cognitive_frame",
+        "event_ledger",
+        "autonomous",
+        "signal_buffer_only",
+        "ephemeral_presence"
+      ],
+      "metadata": {
+        "commit_reason": "audit ephemeral micro-presence/body-only signal",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger",
+        "decay_policy": "session_only",
+        "request_tags": [
+          "cognitive_frame",
+          "event_ledger",
+          "autonomous",
+          "signal_buffer_only",
+          "ephemeral_presence"
+        ],
+        "ephemeral_presence": true,
+        "source": "CognitiveFrameRecorder",
+        "timestamp": "2026-06-06T00:34:24+0700",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780680870.9126484,
+        "frame_id": null,
+        "raw_content": {
+          "cycle_id": "autonomous-4",
+          "channel": "autonomous",
+          "timestamp": "2026-06-06T00:34:24+0700",
+          "seen": [],
+          "said": "",
+          "outcome": "micro_presence_body_only",
+          "tags": [
+            "autonomous",
+            "presence_maintenance",
+            "micro_presence",
+            "signal_buffer_only",
+            "ephemeral_presence"
+          ],
+          "system_action": "",
+          "salience": 0.0,
+          "parse_mode": "micro_presence_body_only"
+        }
+      }
+    },
+    {
+      "id": "evt_a64fac903ca241b1",
+      "timestamp": 1780680937.7804244,
+      "iso_timestamp": "2026-06-06T00:35:37+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'autonomous-5', 'channel': 'autonomous', 'timestamp': '00:35', 'seen': ['thought=thought_433725; mode=memory_replay; topic=memory_replay:relationship_reflection'], 'said': 'Khoảng yên này vẫn giữ chỗ.', 'outcome': 'spontaneous', 'tags': ['autonomous', 'presence_maintenance', 'micro_presence', 'cognitive_momentum', 'signal_buffer_only', 'ephemeral_presence'], 'system_action': '', 'salience': 0.3104257646559624, 'parse_mode': 'spontaneous'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [],
+      "tags": [
+        "commit",
+        "cognitive_frame",
+        "event_ledger",
+        "autonomous",
+        "signal_buffer_only",
+        "ephemeral_presence"
+      ],
+      "metadata": {
+        "commit_reason": "audit ephemeral micro-presence/body-only signal",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger",
+        "decay_policy": "session_only",
+        "request_tags": [
+          "cognitive_frame",
+          "event_ledger",
+          "autonomous",
+          "signal_buffer_only",
+          "ephemeral_presence"
+        ],
+        "ephemeral_presence": true,
+        "source": "CognitiveFrameRecorder",
+        "timestamp": "00:35",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780680937.7802052,
+        "frame_id": null,
+        "raw_content": {
+          "cycle_id": "autonomous-5",
+          "channel": "autonomous",
+          "timestamp": "00:35",
+          "seen": [
+            "thought=thought_433725; mode=memory_replay; topic=memory_replay:relationship_reflection"
+          ],
+          "said": "Khoảng yên này vẫn giữ chỗ.",
+          "outcome": "spontaneous",
+          "tags": [
+            "autonomous",
+            "presence_maintenance",
+            "micro_presence",
+            "cognitive_momentum",
+            "signal_buffer_only",
+            "ephemeral_presence"
+          ],
+          "system_action": "",
+          "salience": 0.3104257646559624,
+          "parse_mode": "spontaneous"
+        }
+      }
     }
   ]
 }

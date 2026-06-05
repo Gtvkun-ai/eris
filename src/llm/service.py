@@ -2571,6 +2571,10 @@ class LlmService:
             "must_not_claim_screen" in surface_contract
             or str(context.get("must_not_claim_screen", "") if isinstance(context, dict) else "").lower() == "true"
         )
+        thin_presence_no_screen = (
+            "thin_presence_no_screen" in surface_contract
+            or str(context.get("thin_presence_no_screen", "") if isinstance(context, dict) else "").lower() == "true"
+        )
         endogenous_surface = "endogenous_surface" in surface_contract
         runtime_seed_text = " | ".join(seed_lines) if seed_lines else "<none>"
         user_msg = (
@@ -2582,7 +2586,7 @@ class LlmService:
             f"Ego surface state: {ego_surface_state or '<none>'}\n"
             f"Ego surface contract: {ego_surface_contract or '<none>'}\n"
             f"Surface contract: {surface_contract or '<none>'}\n"
-            f"allow_no_screen_anchor={str(allow_no_screen_anchor).lower()}; must_not_claim_screen={str(must_not_claim_screen).lower()}; endogenous_surface={str(endogenous_surface).lower()}\n"
+            f"allow_no_screen_anchor={str(allow_no_screen_anchor).lower()}; must_not_claim_screen={str(must_not_claim_screen).lower()}; thin_presence_no_screen={str(thin_presence_no_screen).lower()}; endogenous_surface={str(endogenous_surface).lower()}\n"
             f"Signal score: {float(signal_score or 0.0):.2f}\n"
             f"Avoid repeating: {avoid_text}\n"
             f"must_surface={str(force_surface).lower()}\n"
@@ -2617,6 +2621,12 @@ class LlmService:
             user_msg += (
                 "- must_not_claim_screen=true: never claim visible screen/window/action facts. No 'tôi thấy...', no 'màn hình...', no UI narration.\n"
             )
+        if thin_presence_no_screen:
+            user_msg += (
+                "- thin_presence_no_screen=true: there is no usable screen evidence; anchor only on silence, continuity, or nearby co-presence rhythm.\n"
+                "- thin_presence_no_screen=true: do not say 'tôi thấy', do not claim what is visible, do not ask a pushy question, do not narrate UI.\n"
+                "- thin_presence_no_screen=true: keep it roughly 8-14 words, one small nearby reaction, not a status ping.\n"
+            )
         if endogenous_surface:
             user_msg += (
                 "- endogenous_surface=true: the line may sound like a small stray thought, dry aside, or mundane random chatter. It should not explain the system.\n"
@@ -2630,7 +2640,7 @@ class LlmService:
             "- No status report, no system narration, no explaining.\n"
             "- Do not invent screen/action facts. No fake certainty.\n"
             "- Do not mention telemetry, evidence, signal, debug, CPU, RAM.\n"
-            "- Avoid hollow presence lines like 'TÃ´i Ä‘Ã¢y', 'TÃ´i Ä‘ang nghe', 'TÃ´i váº«n quan sÃ¡t'.\n"
+            "- Avoid hollow presence lines like 'Tôi ở đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'.\n"
             "- Also avoid stale micro templates: 'Mạch này vẫn giữ chỗ', 'Nhịp này im hơi lâu rồi', 'Vẫn đang đợi chút nhé', 'Khoảng yên này vẫn giữ chỗ', 'Nhịp này vẫn yên thêm chút'.\n"
             "- Speak once or stay text-empty.\n"
         )

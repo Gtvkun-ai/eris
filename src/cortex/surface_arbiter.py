@@ -593,26 +593,110 @@ class SurfaceArbiter:
                     _clamp01(getattr(item, "momentum_score", 0.0)),
                     _clamp01(getattr(item, "novelty", 0.0)) * 0.7,
                 )
-            if topic and pressure >= 0.25:
+            residue_reason = self._specific_thought_residue_reason(item)
+            payload_seed = self._clean_payload_text(topic or residue_reason)
+            anchors = self._thought_surface_anchor_notes(item=item, frame=frame, snapshot=snapshot, topic=payload_seed)
+            if (payload_seed or anchors) and pressure >= 0.25:
+                state = self._runtime_internal_state(frame=frame, snapshot=snapshot)
+                vital = _clamp01(getattr(state, "vital_pressure", 0.0) if state is not None else 0.0)
+                capped_pressure = self._thought_surface_confidence_cap(
+                    pressure=pressure,
+                    vital=vital,
+                    missing_evidence_ids=True,
+                )
+                evidence: list[str] = []
+                if payload_seed:
+                    evidence.append(payload_seed[:120])
+                if residue_reason:
+                    evidence.append(f"residue_reason={residue_reason[:96]}")
+                evidence.extend(anchors)
                 return SurfaceImpulse(
                     kind="thought_stream_surface",
                     source="thought_stream",
-                    confidence=max(0.34, pressure),
-                    pressure=pressure,
-                    score=pressure,
-                    topic_seed=topic[:120],
+                    confidence=max(0.34, capped_pressure),
+                    pressure=capped_pressure,
+                    score=capped_pressure,
+                    topic_seed=payload_seed[:120],
                     speech_act="inner_whim",
-                    family="thought_stream:" + self._family_key(topic),
-                    evidence=(topic[:120],),
-                    reason="thought stream has a small public-safe residue",
+                    family="thought_stream:" + self._family_key(payload_seed or residue_reason or "residue"),
+                    evidence=tuple(dict.fromkeys(item for item in evidence if item))[:10],
+                    reason=residue_reason or "thought stream has a small public-safe residue",
                     focus_family="thought_stream",
                     body_action="low_pressure_presence",
                     missing_evidence_ids=True,
                     is_presence=False,
                     should_surface=True,
+                    vital_pressure=vital,
+                    is_vital_pressure=vital >= 0.55,
                     raw=item,
                 )
         return None
+
+    def _specific_thought_residue_reason(self, item: Any) -> str:
+        for value in (
+            getattr(item, "residue_reason", ""),
+            getattr(item, "reason", ""),
+            getattr(item, "prediction_key", ""),
+        ):
+            text = self._clean_payload_text(value)
+            if not text:
+                continue
+            normalized = text.lower()
+            if normalized in {"open_loop", "quiet_whim", "present_whim"}:
+                continue
+            if normalized.startswith(("mode=", "source=", "thought=")):
+                continue
+            if len(normalized) < 6:
+                continue
+            return text
+        return ""
+
+    def _thought_surface_confidence_cap(self, *, pressure: float, vital: float, missing_evidence_ids: bool) -> float:
+        capped = _clamp01(pressure)
+        if missing_evidence_ids and vital < 0.20:
+            return min(capped, 0.68)
+        return capped
+
+    def _thought_surface_anchor_notes(self, *, item: Any, frame: Any, snapshot: Any, topic: str) -> tuple[str, ...]:
+        state = self._runtime_internal_state(frame=frame, snapshot=snapshot)
+        anchors: list[str] = []
+        idle = 0.0
+        try:
+            idle = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        except Exception:
+            idle = 0.0
+        lowered_topic = str(topic or "").lower()
+        if self.silent_cycles >= 2 or idle >= 45.0:
+            anchors.append("anchor=recent_silence")
+        continuity_process = getattr(getattr(state, "mental_processes", None), "continuity", None) if state is not None else None
+        continuity_pressure = max(
+            _clamp01(getattr(state, "recursive_reactivation_pressure", 0.0) if state is not None else 0.0),
+            _clamp01(getattr(state, "memory_replay_pressure", 0.0) if state is not None else 0.0),
+            _clamp01(getattr(continuity_process, "level", 0.0) if continuity_process is not None else 0.0),
+        )
+        if continuity_pressure >= 0.20 or any(token in lowered_topic for token in ("continuity", "associative_drift", "memory_replay")):
+            anchors.append("anchor=debug_continuity")
+        if (
+            (state is not None and (float(getattr(state, "last_session_ritual_at", 0.0) or 0.0) > 0.0 or int(getattr(state, "session_resume_count", 0) or 0) > 0))
+            or "session ritual" in lowered_topic
+            or "resume" in lowered_topic
+        ):
+            anchors.append("anchor=session_ritual_afterglow")
+        memory_resonance = max(
+            _clamp01(getattr(state, "last_memory_resonance", 0.0) if state is not None else 0.0),
+            _clamp01(getattr(getattr(frame, "memory_resonance", None), "score", 0.0) if frame is not None else 0.0),
+        )
+        if memory_resonance >= 0.18 or "memory" in lowered_topic:
+            anchors.append("anchor=memory_resonance")
+        unresolved_loops = tuple(getattr(item, "unresolved_loops", ()) or ())
+        active_attractor = getattr(item, "active_attractor", None)
+        if (
+            unresolved_loops
+            or str(getattr(active_attractor, "topic_seed", "") or "").strip()
+            or any(token in lowered_topic for token in ("unfinished", "open_loop", "unresolved", "prediction"))
+        ):
+            anchors.append("anchor=unresolved_loop")
+        return tuple(dict.fromkeys(anchors))
 
     def _long_silence_impulse(self, *, snapshot: Any, surface_kind: str) -> SurfaceImpulse | None:
         idle = 0.0
@@ -833,6 +917,11 @@ class SurfaceArbiter:
             return "forced_body_only:needs_external_evidence_missing"
         if self._presence_like(impulse) and impulse.missing_evidence_ids and not self._has_concrete_evidence_anchor(impulse):
             return "forced_body_only:presence_missing_evidence"
+        if kind == "thought_stream_surface":
+            if not self._clean_payload_text(impulse.topic_seed):
+                return "forced_body_only:thought_surface_missing_payload"
+            if not any(str(item or "").startswith("anchor=") for item in tuple(impulse.evidence or ())):
+                return "forced_body_only:thought_surface_missing_anchor"
         return ""
 
     def _effective_score(self, impulse: SurfaceImpulse) -> float:
@@ -856,6 +945,9 @@ class SurfaceArbiter:
             # Không giết presence; chỉ hạ nó khỏi cuộc tranh lời nói.
             # Nếu không có candidate nào khác, nó vẫn có thể trả body-only.
             effective -= 0.34 + min(0.22, max(0, int(self.silent_cycles) - 2) * 0.025)
+
+        if str(getattr(impulse, "kind", "") or "") == "thought_stream_surface" and impulse.missing_evidence_ids and vital < 0.20:
+            effective = min(effective, 0.68)
 
         return self._clamp_score(effective)
 

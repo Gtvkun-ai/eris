@@ -164,6 +164,10 @@ class AutonomousWakeGovernor:
         )
         wants_vision = str(getattr(user_context, "recommended_action", "")) == "call_vision_compressor" or external_pressure >= self.config.vision_threshold
         wants_main = str(getattr(user_context, "recommended_action", "")) == "wake_main_cognition" or score >= self.config.main_threshold
+        vision_permission_ok = bool(permission >= 0.35)
+        vision_rejected_by = ""
+        if wants_vision and not vision_permission_ok:
+            vision_rejected_by = "permission_below_threshold"
         budget_reason = budget_main.reason if wants_main else (budget_vision.reason if wants_vision else budget_4b.reason)
 
         level: WakeLevel = "sleep"
@@ -238,6 +242,10 @@ class AutonomousWakeGovernor:
                 "silence_debt_weight": 0.25,
                 "silence_debt_micro_floor": silence_debt_micro_floor,
                 "silence_debt_micro_ready": silence_debt_micro_ready,
+                "wants_vision": wants_vision,
+                "vision_permission_ok": vision_permission_ok,
+                "vision_rejected_by": vision_rejected_by,
+                "wants_main": wants_main,
                 "budget_4b": budget_4b.to_dict(),
                 "budget_main": budget_main.to_dict(),
                 "budget_vision": budget_vision.to_dict(),

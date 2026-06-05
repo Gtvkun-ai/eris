@@ -93,6 +93,12 @@ class MicroPresenceCue:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class SurfaceArbitrationResult:
+    decision: Decision | None
+    surface: SurfaceDecision | None
+
+
 class PresenceControllerMixin:
     def _surface_arbiter(self) -> SurfaceArbiter:
         """Lazy init SurfaceArbiter: một cổng duy nhất cho micro/re-engagement/spontaneous surface."""
@@ -124,6 +130,7 @@ class PresenceControllerMixin:
         allow_no_screen_anchor = bool(endogenous_like or (force_llm and impulse.missing_evidence_ids))
         must_not_claim_screen = bool(impulse.missing_evidence_ids or allow_no_screen_anchor)
         must_surface = bool(force_llm or (not presence_like and (silent_cycles >= 4 or impulse.confidence >= 0.76)))
+        thin_presence_no_screen = bool(presence_like and impulse.missing_evidence_ids)
         ego_state = self._current_ego_surface_state()
         micro_context = {
             "surface_impulse": json.dumps(impulse.to_context(), ensure_ascii=False),
@@ -149,10 +156,12 @@ class PresenceControllerMixin:
                 ("must_return_tiny_text" if must_surface else "may_decline_to_body_only")
                 + ("; allow_no_screen_anchor" if allow_no_screen_anchor else "")
                 + ("; must_not_claim_screen" if must_not_claim_screen else "")
+                + ("; thin_presence_no_screen" if thin_presence_no_screen else "")
                 + ("; endogenous_surface" if endogenous_like else "")
             ),
             "allow_no_screen_anchor": str(bool(allow_no_screen_anchor)).lower(),
             "must_not_claim_screen": str(bool(must_not_claim_screen)).lower(),
+            "thin_presence_no_screen": str(bool(thin_presence_no_screen)).lower(),
         }
         fallback_text = ""
         presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence"})
@@ -282,6 +291,15 @@ class PresenceControllerMixin:
             parse_mode=surface.parse_mode or intent,
             debug_trace=surface.debug_trace,
         )
+
+    def _surface_override_note(self, *, requested_kind: str, surface: SurfaceDecision | None) -> str:
+        if surface is None:
+            return ""
+        winner = str(getattr(surface, "kind", "") or getattr(surface, "intent", "") or "").strip()
+        requested = str(requested_kind or "").strip()
+        if not winner or not requested or requested == "surface" or winner == requested:
+            return ""
+        return f"surface_override={winner}"
 
     def _event_semantic_presence_detector(self) -> SocialPresenceDetector:
         detector = getattr(self, "_social_presence_detector", None)
@@ -1522,7 +1540,8 @@ class PresenceControllerMixin:
             return ""
         is_reengagement = kind == "re_engagement"
         words = [item for item in re.split(r"\s+", cleaned) if item]
-        if len(words) > 8:
+        max_words = 14 if kind in {"presence_maintenance", "micro_presence", "re_engagement"} else 12
+        if len(words) > max_words:
             return ""
         if "\n" in cleaned or cleaned.count("?") > (1 if is_reengagement else 0):
             return ""
@@ -1701,13 +1720,35 @@ class PresenceControllerMixin:
         presence_cue: MicroPresenceCue | None = None,
         extra_impulses: tuple[object, ...] = (),
     ) -> Decision | None:
+        result = self._build_surface_arbiter_result(
+            frame=frame,
+            snapshot=snapshot,
+            social_presence_event=social_presence_event,
+            surface_kind=surface_kind,
+            force_llm=force_llm,
+            presence_cue=presence_cue,
+            extra_impulses=extra_impulses,
+        )
+        return result.decision
+
+    def _build_surface_arbiter_result(
+        self,
+        *,
+        frame: CognitiveFrame,
+        snapshot,
+        social_presence_event: SocialPresenceEvent | None = None,
+        surface_kind: str = "surface",
+        force_llm: bool = False,
+        presence_cue: MicroPresenceCue | None = None,
+        extra_impulses: tuple[object, ...] = (),
+    ) -> SurfaceArbitrationResult:
         now = time.time()
         if now < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
             self.logger.info(
                 "[surface_arbiter] blocked before arbitration kind=%s reason=presence_blocked_until",
                 surface_kind,
             )
-            return None
+            return SurfaceArbitrationResult(decision=None, surface=None)
 
         # Không đặt thêm cooldown/rate-limit ở đây. PresenceController chỉ tạo cue
         # và đưa xung vào SurfaceArbiter; chính SurfaceArbiter/LowLevelSpeechPolicy
@@ -1723,6 +1764,14 @@ class PresenceControllerMixin:
             frame=frame,
             snapshot=snapshot,
         )
+        self.logger.info(
+            "[surface_arbiter] input kind=%s silent_cycles=%d force_llm=%s cue_should_call_llm=%s cue_missing_evidence_ids=%s",
+            surface_kind,
+            int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0),
+            bool(force_llm),
+            bool(getattr(cue, "should_call_llm", False)),
+            bool(getattr(cue, "missing_evidence_ids", False)),
+        )
         surface = self._surface_arbiter().arbitrate(
             snapshot=snapshot,
             cognitive_frame=frame,
@@ -1732,10 +1781,24 @@ class PresenceControllerMixin:
             force_llm=force_llm,
             silent_cycles=self.presence_maintenance_silent_cycles,
         )
+        self.logger.info(
+            "[surface_arbiter] output kind=%s mode=%s should_speak=%s body_only=%s reason=%s",
+            surface.kind or surface_kind,
+            surface.generation_mode,
+            bool(surface.should_speak),
+            bool(surface.body_only),
+            surface.reason,
+        )
         if surface.should_speak and surface.text.strip():
-            return self._surface_speech_decision(surface)
+            return SurfaceArbitrationResult(
+                decision=self._surface_speech_decision(surface),
+                surface=surface,
+            )
         if surface.body_only:
-            return self._surface_body_only_decision(surface)
+            return SurfaceArbitrationResult(
+                decision=self._surface_body_only_decision(surface),
+                surface=surface,
+            )
         self.logger.info(
             "[surface_arbiter] rejected kind=%s mode=%s reason=%s trace=%s",
             surface.kind or surface_kind,
@@ -1743,7 +1806,7 @@ class PresenceControllerMixin:
             surface.reason,
             surface.debug_trace,
         )
-        return None
+        return SurfaceArbitrationResult(decision=None, surface=surface)
 
     def _try_finalize_surface_arbiter_cycle(
         self,
@@ -1757,17 +1820,19 @@ class PresenceControllerMixin:
         surface_kind: str = "surface",
         force_llm: bool = False,
     ) -> bool:
-        decision = self._build_surface_arbiter_decision(
+        result = self._build_surface_arbiter_result(
             frame=frame,
             snapshot=snapshot,
             social_presence_event=social_presence_event,
             surface_kind=surface_kind,
             force_llm=force_llm,
         )
+        decision = result.decision
         if decision is None:
             return False
 
         should_speak = bool(getattr(decision, "should_speak", True)) and bool(str(getattr(decision, "text", "") or "").strip())
+        surface_override = self._surface_override_note(requested_kind=surface_kind, surface=result.surface)
         self._set_cognitive_action_plan(
             frame,
             should_speak=should_speak,
@@ -1778,7 +1843,9 @@ class PresenceControllerMixin:
             concrete_signals=(),
             ti_report=ti_report,
             fe_plan=fe_plan,
-            notes=("surface_arbiter", f"silent_cycles={self.presence_maintenance_silent_cycles}"),
+            notes=tuple(
+                item for item in ("surface_arbiter", f"silent_cycles={self.presence_maintenance_silent_cycles}", surface_override) if item
+            ),
         )
         decision = self.ti_governor.enforce_decision(decision, ti_report)
         if bool(getattr(decision, "should_speak", True)):
@@ -1817,6 +1884,8 @@ class PresenceControllerMixin:
 
         self._apply_position_update(decision)
         frame.final_decision = self._decision_to_frame_dict(decision)
+        if surface_override:
+            frame.final_decision["surface_override"] = surface_override.split("=", 1)[-1]
         self._set_cognitive_memory_update(frame, decision=decision, notes=("surface_arbiter",))
         self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
         self._finalize_cognitive_frame(frame)

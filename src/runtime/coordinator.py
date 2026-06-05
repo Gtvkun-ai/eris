@@ -687,18 +687,23 @@ class RuntimeCoordinator(
             self.last_wake_decision = result.wake_decision
             if result.daydream_result is not None:
                 self.last_daydream_result = result.daydream_result
+            wake_debug = getattr(result.wake_decision, "debug", {}) or {}
             self.logger.info(
-                "[wake governor] level=%s ext=%.2f internal=%.2f interrupt=%.2f speech=%.2f budget=%s silence_debt=%.2f cycles=%d micro_checked=%s reengagement_checked=%s",
+                "[wake governor] level=%s ext=%.2f internal=%.2f permission=%.2f interrupt=%.2f speech=%.2f wants_vision=%s vision_permission_ok=%s vision_rejected_by=%s budget=%s silence_debt=%.2f cycles=%d micro_checked=%s reengagement_checked=%s",
                 result.wake_decision.level,
                 result.wake_decision.external_pressure,
                 result.wake_decision.internal_drive,
+                result.wake_decision.permission,
                 result.wake_decision.interrupt_cost,
                 result.wake_decision.speech_value,
+                bool(wake_debug.get("wants_vision", False)),
+                bool(wake_debug.get("vision_permission_ok", False)),
+                str(wake_debug.get("vision_rejected_by", "") or "none"),
                 result.wake_decision.budget_reason,
-                float((getattr(result.wake_decision, "debug", {}) or {}).get("silence_debt", 0.0) or 0.0),
-                int((getattr(result.wake_decision, "debug", {}) or {}).get("autonomous_silent_cycles", 0) or 0),
-                (getattr(result.wake_decision, "debug", {}) or {}).get("micro_presence_checked", False),
-                (getattr(result.wake_decision, "debug", {}) or {}).get("reengagement_checked", False),
+                float(wake_debug.get("silence_debt", 0.0) or 0.0),
+                int(wake_debug.get("autonomous_silent_cycles", 0) or 0),
+                wake_debug.get("micro_presence_checked", False),
+                wake_debug.get("reengagement_checked", False),
             )
         except Exception as exc:
             self.logger.warning("3-tier autonomy update error: %s", exc)
@@ -4014,6 +4019,7 @@ class RuntimeCoordinator(
         cleaned: tuple[str, ...] = ()
         compressor = getattr(self, "vision_semantic_compressor", None)
         can_use_compressor = callable(getattr(compressor, "compress", None))
+        compressor_enabled = bool(getattr(getattr(compressor, "config", None), "enabled", False))
         use_compressor = can_use_compressor and (
             force_refresh
             or channel in {"chat", "force_speak"}
@@ -4052,7 +4058,12 @@ class RuntimeCoordinator(
                 self._note_vision_failure("compressor", exc)
                 return self.vision_facts
         else:
-            if can_use_compressor:
+            if can_use_compressor and compressor_enabled:
+                self.logger.info(
+                    "[vision_facts] source=cached reason=compressor_policy_skip channel=%s trace=%s",
+                    channel,
+                    self.vision_last_trace or "<empty>",
+                )
                 return self.vision_facts
             try:
                 mode = "chat_requested" if channel == "chat" else "ambient"
@@ -4078,6 +4089,15 @@ class RuntimeCoordinator(
         self.vision_facts_signature = signature
         self.vision_facts = cleaned
         self.vision_last_trace = trace or ""
+        self.logger.info(
+            "[vision_facts] source=%s channel=%s count=%d novelty=%s trace=%s fact=%s",
+            "compressor" if note is not None else "llm_service",
+            channel,
+            len(cleaned),
+            self.vision_facts_novelty_hint,
+            self.vision_last_trace or "<empty>",
+            cleaned[0] if cleaned else "<empty>",
+        )
         if snapshot is not None:
             snapshot.vision_facts = tuple(cleaned)
         return self.vision_facts
@@ -4545,6 +4565,9 @@ class RuntimeCoordinator(
             "cooldown_ok": True,
             "allowed": False,
             "rejected_by": "",
+            "stage": "pre_gate",
+            "owner": "presence_probe",
+            "generation_mode": "",
         }
         if not getattr(self, "presence_maintenance_enabled", True):
             status["rejected_by"] = "presence_maintenance_disabled"
@@ -4590,6 +4613,9 @@ class RuntimeCoordinator(
             "cooldown_ok": True,
             "allowed": False,
             "rejected_by": "",
+            "stage": "pre_gate",
+            "owner": "reengagement_probe",
+            "generation_mode": "",
         }
         if not getattr(self, "reengagement_enabled", True):
             status["rejected_by"] = "reengagement_disabled"
@@ -4630,6 +4656,58 @@ class RuntimeCoordinator(
         debug = dict(getattr(decision, "debug", {}) or {})
         debug.update(fields)
         decision.debug = debug
+
+    def _presence_surface_status_label(self, status: dict[str, object] | None) -> str:
+        if not status:
+            return "not_checked"
+        rejected_by = str(status.get("rejected_by", "") or "").strip()
+        if rejected_by:
+            return f"reject:{rejected_by}"
+        if bool(status.get("allowed", False)):
+            return "allow"
+        if bool(status.get("checked", False)):
+            return "checked"
+        return "not_checked"
+
+    def _log_presence_surface_statuses(
+        self,
+        *,
+        presence_status: dict[str, object],
+        reengagement_status: dict[str, object],
+        final_rejected_by: str,
+    ) -> None:
+        self.logger.info(
+            "[presence.micro] stage=%s owner=%s checked=%s candidate=%s allowed=%s rejected_by=%s generation_mode=%s",
+            str(presence_status.get("stage", "") or "pre_gate"),
+            str(presence_status.get("owner", "") or "presence_probe"),
+            bool(presence_status.get("checked", False)),
+            bool(presence_status.get("candidate", False)),
+            bool(presence_status.get("allowed", False)),
+            str(presence_status.get("rejected_by", "") or "none"),
+            str(presence_status.get("generation_mode", "") or "none"),
+        )
+        self.logger.info(
+            "[presence.reengagement] stage=%s owner=%s checked=%s candidate=%s allowed=%s rejected_by=%s generation_mode=%s",
+            str(reengagement_status.get("stage", "") or "pre_gate"),
+            str(reengagement_status.get("owner", "") or "reengagement_probe"),
+            bool(reengagement_status.get("checked", False)),
+            bool(reengagement_status.get("candidate", False)),
+            bool(reengagement_status.get("allowed", False)),
+            str(reengagement_status.get("rejected_by", "") or "none"),
+            str(reengagement_status.get("generation_mode", "") or "none"),
+        )
+        final_stage = "surface_arbiter" if (
+            str(presence_status.get("stage", "") or "") == "surface_arbiter"
+            or str(reengagement_status.get("stage", "") or "") == "surface_arbiter"
+        ) else "pre_gate"
+        self.logger.info(
+            "[presence.surface] stage=%s micro=%s reengagement=%s final=%s final_rejected_by=%s",
+            final_stage,
+            self._presence_surface_status_label(presence_status),
+            self._presence_surface_status_label(reengagement_status),
+            "no_surface",
+            final_rejected_by or "none",
+        )
 
     def _build_local_presence_maintenance_decision(self, *, snapshot) -> Decision | None:
         # LEGACY: giữ lại cho tương thích nếu có call-site cũ, nhưng wake gate
@@ -4733,6 +4811,8 @@ class RuntimeCoordinator(
         *,
         frame: CognitiveFrame,
         decision: Decision,
+        surface=None,
+        requested_kind: str = "",
         snapshot,
         ti_report,
         fe_plan,
@@ -4755,6 +4835,10 @@ class RuntimeCoordinator(
             if not self._is_body_only_presence_decision(decision):
                 return False
         should_speak_now = bool(getattr(decision, "should_speak", True)) and bool(str(getattr(decision, "text", "") or "").strip())
+        surface_override = self._surface_override_note(
+            requested_kind=requested_kind,
+            surface=surface,
+        )
         self._set_cognitive_action_plan(
             frame,
             should_speak=should_speak_now,
@@ -4765,7 +4849,15 @@ class RuntimeCoordinator(
             concrete_signals=(),
             ti_report=ti_report,
             fe_plan=fe_plan,
-            notes=(note, f"wake_gate={getattr(self, 'last_wake_decision', WakeDecision('sleep', False, False, False, False, '', 0.0)).level}"),
+            notes=tuple(
+                item
+                for item in (
+                    note,
+                    f"wake_gate={getattr(self, 'last_wake_decision', WakeDecision('sleep', False, False, False, False, '', 0.0)).level}",
+                    surface_override,
+                )
+                if item
+            ),
         )
         now = time.time()
         if should_speak_now:
@@ -4785,6 +4877,8 @@ class RuntimeCoordinator(
             )
         self._apply_position_update(decision)
         frame.final_decision = self._decision_to_frame_dict(decision)
+        if surface_override:
+            frame.final_decision["surface_override"] = surface_override.split("=", 1)[-1]
         self._attach_speak_truth_table(
             frame,
             decision=decision,
@@ -4832,6 +4926,50 @@ class RuntimeCoordinator(
             return reason
         return default
 
+    def _surface_arbiter_drop_status(
+        self,
+        *,
+        default: str = "surface_arbiter_no_decision",
+        owner: str,
+    ) -> dict[str, str]:
+        try:
+            arbiter = self._surface_arbiter()
+            last = getattr(arbiter, "last_decision", None)
+        except Exception:
+            last = None
+        return {
+            "stage": "surface_arbiter",
+            "owner": owner,
+            "generation_mode": str(getattr(last, "generation_mode", "") or "reject"),
+            "rejected_by": self._surface_arbiter_drop_reason(default),
+        }
+
+    def _surface_arbiter_reason_from_surface(self, surface, default: str) -> str:
+        trace = str(getattr(surface, "debug_trace", "") or "").strip()
+        reason = str(getattr(surface, "reason", "") or "").strip()
+        mode = str(getattr(surface, "generation_mode", "") or "").strip()
+        if trace:
+            return trace
+        if reason and mode:
+            return f"{mode}:{reason}"
+        if reason:
+            return reason
+        return default
+
+    def _surface_arbiter_status_from_surface(
+        self,
+        *,
+        surface,
+        owner: str,
+        default: str,
+    ) -> dict[str, str]:
+        return {
+            "stage": "surface_arbiter",
+            "owner": owner,
+            "generation_mode": str(getattr(surface, "generation_mode", "") or "reject"),
+            "rejected_by": self._surface_arbiter_reason_from_surface(surface, default),
+        }
+
     def _maybe_low_level_surface_from_wake_gate(
         self,
         *,
@@ -4877,6 +5015,9 @@ class RuntimeCoordinator(
             "cooldown_ok": True,
             "allowed": False,
             "rejected_by": "not_checked_for_this_wake_level",
+            "stage": "pre_gate",
+            "owner": "reengagement_probe",
+            "generation_mode": "",
         }
         if check_reengagement:
             reengagement_status = self._reengagement_probe_status(
@@ -4896,21 +5037,6 @@ class RuntimeCoordinator(
             surface_budget_source=reason,
         )
 
-        first_reject = (
-            str(reengagement_status.get("rejected_by", "") or "")
-            or str(presence_status.get("rejected_by", "") or "")
-            or "surface_not_attempted_yet"
-        )
-        self.logger.info(
-            "[presence] silent_cycles=%s cooldown_ok=%s candidate=%s reengagement_checked=%s micro_presence_checked=%s rejected_by=%s",
-            presence_status["silent_cycles"],
-            presence_status["cooldown_ok"],
-            presence_status["candidate"],
-            reengagement_status.get("checked", False),
-            presence_status["checked"],
-            first_reject,
-        )
-
         fe_plan = self._wake_gate_fe_plan(ti_report=ti_report, snapshot=snapshot, internal_state=internal_state)
         frame = self._build_wake_gate_frame(
             cycle_start=cycle_start,
@@ -4923,17 +5049,37 @@ class RuntimeCoordinator(
         # thử trước. Nhưng nó vẫn phải qua SurfaceArbiter, không tự cầm câu mẫu
         # nhảy ra làm NPC hỏi "Ngài ổn chứ" sau mỗi khoảng im lặng.
         if bool(reengagement_status.get("allowed", False)):
-            decision = self._build_reengagement_decision(
+            cue = self._derive_reengagement_cue(snapshot=snapshot, internal_state=internal_state)
+            result = self._build_surface_arbiter_result(
                 frame=frame,
                 snapshot=snapshot,
-                ti_report=ti_report,
-                internal_state=internal_state,
-                now=now,
+                surface_kind="re_engagement",
+                force_llm=True,
+                presence_cue=cue,
+                extra_impulses=(
+                    {
+                        "kind": "re_engagement",
+                        "source": "long_silence",
+                        "confidence": cue.confidence,
+                        "score": cue.confidence + 0.02,
+                        "topic_seed": f"idle={int(float(getattr(snapshot, 'idle_seconds', 0.0) or 0.0))}s",
+                        "family": "re_engagement:long_silence",
+                        "evidence": cue.evidence,
+                        "reason": "long_silence_reengagement",
+                        "focus_family": cue.focus_family,
+                        "body_action": cue.body_action,
+                        "is_presence": True,
+                        "should_surface": True,
+                    },
+                ),
             )
+            decision = result.decision
             if decision is not None:
                 return self._finalize_wake_gate_micro_decision(
                     frame=frame,
                     decision=decision,
+                    surface=result.surface,
+                    requested_kind="re_engagement",
                     snapshot=snapshot,
                     ti_report=ti_report,
                     fe_plan=fe_plan,
@@ -4943,23 +5089,41 @@ class RuntimeCoordinator(
                     presence_status=presence_status,
                     reengagement_status=reengagement_status,
                 )
-            reengagement_status = {
-                **reengagement_status,
-                "rejected_by": self._surface_arbiter_drop_reason("reengagement_surface_declined"),
-            }
+            if result.surface is not None:
+                reengagement_status = {
+                    **reengagement_status,
+                    **self._surface_arbiter_status_from_surface(
+                        surface=result.surface,
+                        default="reengagement_surface_declined",
+                        owner="surface_arbiter.reengagement",
+                    ),
+                }
 
         if bool(presence_status.get("allowed", False)):
-            decision = self._build_presence_maintenance_decision(
+            cue = self._derive_micro_presence_cue(
+                snapshot=snapshot,
+                social_presence_event=social_presence_event,
+                reason="presence_maintenance",
+            )
+            llm_requested = bool(
+                cue.should_call_llm
+                or self._should_try_micro_presence_llm(kind="presence_maintenance", force_llm=False)
+            )
+            result = self._build_surface_arbiter_result(
                 frame=frame,
                 snapshot=snapshot,
-                ti_report=ti_report,
                 social_presence_event=social_presence_event,
-                now=now,
+                surface_kind="presence_maintenance",
+                force_llm=llm_requested,
+                presence_cue=cue,
             )
+            decision = result.decision
             if decision is not None:
                 return self._finalize_wake_gate_micro_decision(
                     frame=frame,
                     decision=decision,
+                    surface=result.surface,
+                    requested_kind="presence_maintenance",
                     snapshot=snapshot,
                     ti_report=ti_report,
                     fe_plan=fe_plan,
@@ -4969,28 +5133,37 @@ class RuntimeCoordinator(
                     presence_status=presence_status,
                     reengagement_status=reengagement_status,
                 )
-            presence_status = {
-                **presence_status,
-                "rejected_by": self._surface_arbiter_drop_reason("presence_surface_declined"),
-            }
+            if result.surface is not None:
+                presence_status = {
+                    **presence_status,
+                    **self._surface_arbiter_status_from_surface(
+                        surface=result.surface,
+                        default="presence_surface_declined",
+                        owner="surface_arbiter.micro_presence",
+                    ),
+                }
 
-        rejected_by = (
-            str(reengagement_status.get("rejected_by", "") or "")
-            or str(presence_status.get("rejected_by", "") or "")
-            or "surface_candidate_dropped_without_reason"
-        )
+        presence_rejected_by = str(presence_status.get("rejected_by", "") or "")
+        reengagement_rejected_by = str(reengagement_status.get("rejected_by", "") or "")
+        final_rejected_by = presence_rejected_by or reengagement_rejected_by or "surface_candidate_dropped_without_reason"
         self._update_wake_gate_debug(
             wake_decision,
             presence_probe=presence_status,
             reengagement_probe=reengagement_status,
-            surface_rejected_by=rejected_by,
+            presence_rejected_by=presence_rejected_by,
+            reengagement_rejected_by=reengagement_rejected_by,
+            surface_rejected_by=final_rejected_by,
+            surface_stage=(
+                "surface_arbiter"
+                if str(presence_status.get("stage", "") or "") == "surface_arbiter"
+                or str(reengagement_status.get("stage", "") or "") == "surface_arbiter"
+                else "pre_gate"
+            ),
         )
-        self.logger.info(
-            "[presence] silent_cycles=%s cooldown_ok=%s candidate=%s rejected_by=%s",
-            presence_status["silent_cycles"],
-            presence_status["cooldown_ok"],
-            presence_status["candidate"],
-            rejected_by,
+        self._log_presence_surface_statuses(
+            presence_status=presence_status,
+            reengagement_status=reengagement_status,
+            final_rejected_by=final_rejected_by,
         )
         return False
 

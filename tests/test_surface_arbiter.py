@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -118,6 +119,62 @@ class SurfaceArbiterTests(unittest.TestCase):
         self.assertTrue(first.body_only)
         self.assertTrue(second.body_only)
         self.assertEqual(arbiter._body_only_streak, 2)
+
+    def test_thought_stream_surface_without_anchor_is_body_only(self) -> None:
+        arbiter = SurfaceArbiter(policy=self._policy(), llm_micro_gen=lambda **kwargs: ("kind=thought", "fake"))
+        report = SimpleNamespace(
+            topic_seed="small stray thought",
+            pressure=0.82,
+            momentum_score=0.82,
+        )
+        snapshot = SimpleNamespace(idle_seconds=0.0)
+        frame = SimpleNamespace(
+            thought_stream_report=report,
+            internal_state_before=SimpleNamespace(vital_pressure=0.0),
+            internal_state_after=SimpleNamespace(vital_pressure=0.0),
+        )
+
+        decision = arbiter.arbitrate(
+            cognitive_frame=frame,
+            snapshot=snapshot,
+            surface_kind="presence_maintenance",
+            silent_cycles=0,
+        )
+
+        self.assertTrue(decision.body_only)
+        self.assertEqual(decision.kind, "thought_stream_surface")
+        self.assertEqual(decision.reason, "forced_body_only:thought_surface_missing_anchor")
+
+    def test_thought_stream_surface_caps_confidence_when_vital_is_low(self) -> None:
+        arbiter = SurfaceArbiter(policy=self._policy(), llm_micro_gen=lambda **kwargs: ("kind=thought", "fake"))
+        report = SimpleNamespace(
+            topic_seed="associative_drift:cognition_layer",
+            pressure=0.95,
+            momentum_score=0.95,
+        )
+        state = SimpleNamespace(
+            vital_pressure=0.0,
+            recursive_reactivation_pressure=0.28,
+            memory_replay_pressure=0.0,
+            mental_processes=SimpleNamespace(continuity=SimpleNamespace(level=0.22)),
+        )
+        frame = SimpleNamespace(
+            thought_stream_report=report,
+            internal_state_before=state,
+            internal_state_after=state,
+        )
+        snapshot = SimpleNamespace(idle_seconds=0.0)
+
+        decision = arbiter.arbitrate(
+            cognitive_frame=frame,
+            snapshot=snapshot,
+            surface_kind="surface",
+            silent_cycles=0,
+        )
+
+        self.assertTrue(decision.should_speak)
+        self.assertEqual(decision.kind, "thought_stream_surface")
+        self.assertLessEqual(decision.confidence, 0.68)
 
     def test_yaml_policy_loader(self) -> None:
         config = LowLevelSpeechPolicyConfig.from_mapping(
