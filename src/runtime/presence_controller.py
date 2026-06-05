@@ -116,9 +116,17 @@ class PresenceControllerMixin:
         # chỉ vì evidence mỏng. Nó chỉ được viết một câu thật ngắn, không bịa screen fact.
         # Nếu không, pipeline tạo ra nghịch lý: planner=speak nhưng final=<empty>. Vâng,
         # một kiểu "có ý định giao tiếp" nhưng lại tự tháo dây thanh quản.
-        must_surface = bool(force_llm or no_fallback_mode_enabled() or silent_cycles >= 3 or impulse.confidence >= 0.70)
+        presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence"})
+        must_surface = bool(force_llm or (not presence_like and (silent_cycles >= 4 or impulse.confidence >= 0.76)))
+        ego_state = self._current_ego_surface_state()
         micro_context = {
             "surface_impulse": json.dumps(impulse.to_context(), ensure_ascii=False),
+            "ego_surface_state": json.dumps(ego_state, ensure_ascii=False),
+            "ego_surface_contract": (
+                "Use valence/social_energy/boredom/trust/rupture/dignity_defense as the style axis. "
+                "High trust + good mood -> sharp caring aside. Medium trust + boredom -> detached pattern observation. "
+                "Rupture/dignity defense -> silence unless explicitly forced, then a cool boundary."
+            ),
             "micro_presence_flags": (
                 f"kind={impulse.kind}; "
                 f"focus_family={impulse.focus_family}; "
@@ -133,15 +141,93 @@ class PresenceControllerMixin:
             ),
             "surface_contract": "must_return_tiny_text" if must_surface else "may_decline_to_body_only",
         }
+        fallback_text = ""
+        presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence"})
+        # Presence maintenance không được fallback bằng hũ câu mẫu. Nếu LLM/ego
+        # không tạo được câu có chất, im còn đúng hơn. Thật sốc: ít nói hơn đôi khi
+        # giống có nhân cách hơn.
+        if not no_fallback_mode_enabled() and not presence_like:
+            fallback_text = self._local_micro_presence_fallback_text(
+                kind=impulse.kind or impulse.speech_act or "surface",
+                snapshot=snapshot,
+                seeds=seeds,
+                focus_family=impulse.focus_family,
+            )
         return self._hybrid_micro_presence_text(
             kind=impulse.kind or impulse.speech_act or "surface",
             snapshot=snapshot,
-            fallback_text="",
+            fallback_text=fallback_text,
             seeds=seeds,
             micro_context=micro_context,
             force_llm=must_surface,
             signal_score=impulse.confidence,
         )
+
+    def _local_micro_presence_fallback_text(
+        self,
+        *,
+        kind: str,
+        snapshot,
+        seeds: tuple[str, ...] = (),
+        focus_family: str = "",
+    ) -> str:
+        """Tiny public line for presence routes when evidence ids are thin."""
+        if no_fallback_mode_enabled():
+            return ""
+        kind_name = str(kind or "").strip().lower()
+        focus = str(focus_family or getattr(snapshot, "active_window_kind", "") or "general_idle")
+        seed_blob = " ".join(str(item or "") for item in tuple(seeds or ())[:6])
+        haystack = self._normalize_user_message(
+            " ".join(
+                (
+                    focus,
+                    seed_blob,
+                    str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or ""),
+                    str(getattr(snapshot, "focus_summary", "") or ""),
+                )
+            )
+        )
+        candidates: list[str] = []
+        if kind_name in {"re_engagement", "reengagement"}:
+            candidates.extend(
+                (
+                    "Ng\u00e0i im h\u01a1i l\u00e2u r\u1ed3i.",
+                    "Ng\u00e0i \u1ed5n ch\u1ee9.",
+                )
+            )
+        if "log" in haystack:
+            candidates.append("Log c\u0169 l\u1ea1i l\u1eb7p th\u00eam m\u1ed9t nh\u1ecbp.")
+        if any(term in haystack for term in ("code", "vscode", "visual studio", "debug", "python", "godot")):
+            candidates.append("M\u1ea1ch n\u00e0y v\u1eabn gi\u1eef ch\u1ed7.")
+        if any(term in haystack for term in ("meet", "meeting", "cuoc goi")):
+            candidates.append("Ph\u00f2ng Meet kia v\u1eabn y\u00ean m\u1ed9t ch\u00fat.")
+        if any(term in haystack for term in ("youtube", "music", "nhac")):
+            candidates.append("Tab YouTube v\u1eabn m\u1edf \u1edf \u0111\u00f3.")
+        if "idle_seconds" in haystack or "general_idle" in haystack:
+            candidates.append("Nh\u1ecbp n\u00e0y im h\u01a1i l\u00e2u r\u1ed3i.")
+        candidates.extend(
+            (
+                "Kho\u1ea3ng y\u00ean n\u00e0y v\u1eabn gi\u1eef ch\u1ed7.",
+                "Nh\u1ecbp n\u00e0y v\u1eabn y\u00ean th\u00eam ch\u00fat.",
+            )
+        )
+        for candidate in tuple(dict.fromkeys(candidates)):
+            safe = self._safe_local_micro_presence_fallback(candidate, kind=kind_name)
+            if safe:
+                return safe
+        return ""
+
+    def _safe_local_micro_presence_fallback(self, text: str, *, kind: str) -> str:
+        if no_fallback_mode_enabled():
+            return ""
+        safe = self._sanitize_micro_presence_llm_text(
+            text,
+            kind=kind or "micro_presence",
+            fallback_text="",
+        )
+        if not safe or self._is_near_duplicate_text(safe, self.last_text):
+            return ""
+        return safe
 
     def _surface_body_only_decision(self, surface: SurfaceDecision) -> Decision:
         payload = {
@@ -317,6 +403,76 @@ class PresenceControllerMixin:
             number = default
         return max(0.0, min(1.0, number))
 
+    def _surface_signed_float(self, value, default: float = 0.0) -> float:
+        try:
+            number = float(value)
+        except Exception:
+            number = default
+        if number != number:
+            number = default
+        return max(-1.0, min(1.0, number))
+
+    def _current_ego_surface_state(self) -> dict[str, float | str]:
+        """Đọc nhanh mood + relationship để presence không hành xử như đồng hồ báo thức."""
+        try:
+            state = self._get_internal_state()
+        except Exception:
+            state = None
+        rel = getattr(state, "relationship_dynamics", None) if state is not None else None
+        valence = self._surface_signed_float(getattr(state, "valence", 0.02) if state is not None else 0.02, 0.02)
+        social_energy = self._surface_float(getattr(state, "social_energy", 0.38) if state is not None else 0.38, 0.38)
+        irritation = self._surface_float(getattr(state, "irritation", 0.0) if state is not None else 0.0)
+        boredom = self._surface_float(getattr(state, "boredom", 0.0) if state is not None else 0.0)
+        curiosity = self._surface_float(getattr(state, "curiosity", 0.0) if state is not None else 0.0)
+        rupture = self._surface_float(getattr(rel, "rupture", 0.0) if rel is not None else 0.0)
+        dignity = self._surface_float(getattr(rel, "dignity_defense", 0.0) if rel is not None else 0.0)
+        preferred_distance = self._surface_float(getattr(rel, "preferred_distance", 0.58) if rel is not None else 0.58, 0.58)
+        trust = self._surface_float(getattr(rel, "trust", 0.25) if rel is not None else 0.25, 0.25)
+        attachment_visibility = self._surface_float(getattr(rel, "attachment_visibility", 0.12) if rel is not None else 0.12, 0.12)
+        return {
+            "valence": round(valence, 3),
+            "social_energy": round(social_energy, 3),
+            "irritation": round(irritation, 3),
+            "boredom": round(boredom, 3),
+            "curiosity": round(curiosity, 3),
+            "rupture": round(rupture, 3),
+            "dignity_defense": round(dignity, 3),
+            "preferred_distance": round(preferred_distance, 3),
+            "trust": round(trust, 3),
+            "attachment_visibility": round(attachment_visibility, 3),
+        }
+
+    def _presence_ego_gate_reason(self, *, snapshot=None, social_presence_event: SocialPresenceEvent | None = None) -> str:
+        """Trả reason nếu presence maintenance không được sinh impulse.
+
+        Đây là ego-gate cấp nguồn: tâm trạng tồi, social_energy cạn, rupture hoặc
+        dignity_defense cao thì micro-presence bị cắt từ gốc, không đợi filter cuối.
+        """
+        ego = self._current_ego_surface_state()
+        valence = float(ego.get("valence", 0.0) or 0.0)
+        social_energy = float(ego.get("social_energy", 0.0) or 0.0)
+        irritation = float(ego.get("irritation", 0.0) or 0.0)
+        rupture = float(ego.get("rupture", 0.0) or 0.0)
+        dignity = float(ego.get("dignity_defense", 0.0) or 0.0)
+        distance = float(ego.get("preferred_distance", 0.58) or 0.58)
+        trust = float(ego.get("trust", 0.25) or 0.25)
+        present = bool(getattr(social_presence_event, "present", False))
+        recent_events = tuple(getattr(snapshot, "recent_events", ()) or ()) if snapshot is not None else ()
+
+        if valence <= -0.18 or irritation >= 0.55:
+            return "ego_mood_blocks_presence"
+        if social_energy <= 0.16:
+            return "ego_social_energy_empty"
+        if rupture >= 0.42 or dignity >= 0.42:
+            return "ego_dignity_distance"
+        if distance >= 0.74 and trust <= 0.34 and not present:
+            return "ego_preferred_distance_high"
+        # Nếu chỉ là idle không sự kiện, ambient co-presence thắng.
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0)) if snapshot is not None else 0.0
+        if idle_seconds >= 60.0 and not present and not recent_events:
+            return "ambient_copresence_no_ping"
+        return ""
+
     def _build_endogenous_surface_impulses(
         self,
         *,
@@ -465,7 +621,11 @@ class PresenceControllerMixin:
             return False
 
         mode = str(getattr(ti_report, "mode", "") or "")
-        if mode in {"resource_guard", "goal_drift_alert", "goal_realign", "system_warning"}:
+        if mode in {"goal_drift_alert", "goal_realign", "system_warning"}:
+            return False
+
+        ego_block = self._presence_ego_gate_reason(snapshot=snapshot, social_presence_event=social_presence_event)
+        if ego_block:
             return False
 
         idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
@@ -535,6 +695,8 @@ class PresenceControllerMixin:
         has_screen_evidence = bool(vision_facts or self._has_concrete_screen_signal(snapshot))
         present = bool(getattr(social_presence_event, "present", False))
         curiosity = self._internal_curiosity_for_micro_presence()
+        ego_state = self._current_ego_surface_state()
+        ego_block_reason = self._presence_ego_gate_reason(snapshot=snapshot, social_presence_event=social_presence_event)
 
         evidence: list[str] = []
         if idle_seconds:
@@ -547,6 +709,16 @@ class PresenceControllerMixin:
             evidence.append("vision_fact=" + vision_facts[0][:100])
         if present:
             evidence.append("social_presence_event=true")
+        evidence.append(
+            "ego="
+            + ",".join(
+                f"{key}:{ego_state[key]}"
+                for key in ("valence", "social_energy", "boredom", "rupture", "dignity_defense", "preferred_distance")
+                if key in ego_state
+            )
+        )
+        if ego_block_reason:
+            evidence.append(f"ego_gate={ego_block_reason}")
 
         stalled = idle_seconds >= 60.0 or self.presence_maintenance_silent_cycles >= self.presence_maintenance_silent_loop_threshold
         confidence = max(float(signal_score or 0.0), 0.32)
@@ -559,7 +731,9 @@ class PresenceControllerMixin:
         else:
             body_action = "idle_shift"
 
-        needs = bool(stalled or present or recent_events or signal_score >= 0.38)
+        # Idle alone is not enough. Presence must have ego permission or concrete
+        # evidence; otherwise silence is treated as ambient co-presence.
+        needs = bool((stalled or present or recent_events or signal_score >= 0.38) and not ego_block_reason)
         return MicroPresenceCue(
             needs_micro_presence=needs,
             focus_family=focus_family,
@@ -571,12 +745,12 @@ class PresenceControllerMixin:
             evidence=tuple(dict.fromkeys(evidence))[:8],
             should_call_llm=bool(
                 needs
+                and not ego_block_reason
                 and (
                     has_screen_evidence
-                    or curiosity >= 0.30
-                    or focus_family in {"code_stalled", "communication_idle"}
-                    or idle_seconds >= 90.0
-                    or self.presence_maintenance_silent_cycles >= 3
+                    or (curiosity >= 0.45 and float(ego_state.get("boredom", 0.0) or 0.0) >= 0.18)
+                    or present
+                    or bool(recent_events)
                 )
             ),
             allow_body_only=True,
@@ -1029,6 +1203,12 @@ class PresenceControllerMixin:
             seeds.append("bodily_residue=True")
 
         seeds_tuple = tuple(dict.fromkeys(seed for seed in seeds if str(seed or "").strip()))[:8]
+        fallback = self._local_micro_presence_fallback_text(
+            kind=kind,
+            snapshot=snapshot,
+            seeds=seeds_tuple,
+            focus_family=focus_kind,
+        )
         return MicroPresenceSynthesis(
             kind=kind,
             seeds=seeds_tuple,
@@ -1038,8 +1218,8 @@ class PresenceControllerMixin:
                 "pattern": "repetitive_logs" if any("log" in self._normalize_user_message(item) for item in recent_events) else "",
                 "focus": focus_kind,
             },
-            fallback_text="",
-            should_verbalize=bool(seeds_tuple),
+            fallback_text=fallback,
+            should_verbalize=bool(seeds_tuple or fallback),
         )
         focus_kind = str(getattr(snapshot, "active_window_kind", "") or "").strip() or "general"
         focus_summary = str(getattr(snapshot, "focus_summary", "") or "").strip() or focus_kind
@@ -1109,12 +1289,12 @@ class PresenceControllerMixin:
         return text
 
     def _local_grounded_micro_presence_text(self, synthesis: MicroPresenceSynthesis) -> str:
-        del synthesis
-        return ""
-        candidates = tuple(synthesis.seeds or ()) or (synthesis.fallback_text,)
+        candidates = tuple(item for item in (synthesis.fallback_text, *tuple(synthesis.seeds or ())) if str(item or "").strip())
         for candidate in candidates:
             cleaned = re.sub(r"\s+", " ", str(candidate or "").strip()).replace("!", ".")
             if not cleaned:
+                continue
+            if "=" in cleaned:
                 continue
             if self._is_placeholder_micro_text(cleaned):
                 continue
@@ -1125,7 +1305,7 @@ class PresenceControllerMixin:
             words = [item for item in re.split(r"\s+", cleaned.strip(" .")) if item]
             if 3 <= len(words) <= 8:
                 return cleaned[:80]
-        return "Mạch này vẫn hơi nghẽn."
+        return synthesis.fallback_text or "M\u1ea1ch n\u00e0y v\u1eabn gi\u1eef ch\u1ed7."
 
     def _is_placeholder_micro_text(self, text: str) -> bool:
         normalized = self._normalize_user_message(str(text or "").strip())
@@ -1237,7 +1417,10 @@ class PresenceControllerMixin:
     ) -> tuple[str, str]:
         if no_fallback_mode_enabled() and not force_llm:
             return "", "no_fallback_block"
+        fallback_safe = self._safe_local_micro_presence_fallback(fallback_text, kind=kind) if fallback_text else ""
         if not self._should_try_micro_presence_llm(kind=kind, force_llm=force_llm):
+            if fallback_safe:
+                return fallback_safe, "local_fallback_no_llm"
             return "", "flag_only_no_llm"
         fallback_text = fallback_text or ""
         if no_fallback_mode_enabled() and not force_llm:
@@ -1260,6 +1443,8 @@ class PresenceControllerMixin:
             )
         except Exception as exc:
             self.logger.warning("Micro-presence LLM failed: %s", exc)
+            if fallback_safe:
+                return fallback_safe, "local_after_llm_error"
             return "", "llm_error_body_only"
 
         safe = self._sanitize_micro_presence_llm_text(
@@ -1295,6 +1480,8 @@ class PresenceControllerMixin:
             except Exception as exc:
                 self.logger.warning("Micro-presence LLM retry failed: %s", exc)
                 safe = ""
+        if not safe and fallback_safe:
+            return fallback_safe, "local_after_llm_decline"
         if not safe:
             return "", "llm_rejected_body_only"
         return safe, "llm_signal" if force_llm else "llm"
@@ -1645,6 +1832,20 @@ class PresenceControllerMixin:
                 return True
         return False
 
+    def _reengagement_idle_debt_allows(self, idle_seconds: float) -> bool:
+        min_idle = float(getattr(self, "reengagement_min_idle_sec", 45.0) or 45.0)
+        if idle_seconds >= min_idle:
+            return True
+        quiet_cycles = int(getattr(self, "reengagement_quiet_cycles", 0) or 0)
+        silent_cycles = int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0)
+        threshold = int(getattr(self, "reengagement_quiet_loop_threshold", 1) or 1)
+        debt_cycles = max(quiet_cycles, silent_cycles)
+        if debt_cycles >= max(threshold + 5, 6) and idle_seconds >= 8.0:
+            return True
+        if debt_cycles >= max(threshold + 2, 3) and idle_seconds >= min(min_idle, 20.0):
+            return True
+        return False
+
     # Sau một khoảng thời gian im lặng đủ dài, ERIS có nên chủ động tương tác lại với user không?
     def _should_allow_reengagement(
         self,
@@ -1668,12 +1869,12 @@ class PresenceControllerMixin:
             return False
 
         mode = str(getattr(ti_report, "mode", "") or "")
-        if mode in {"resource_guard", "goal_drift_alert", "goal_realign", "system_warning"}:
+        if mode in {"goal_drift_alert", "goal_realign", "system_warning"}:
             return False
 
         # Kiểm tra xem có tín hiệu nào gần đây cho thấy người dùng vẫn đang hoạt động và có thể không cần re-engagement hay không. Nếu có những tín hiệu này, ERIS sẽ tránh re-engagement để không làm phiền người dùng khi họ đang tương tác bình thường.
         idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
-        if idle_seconds < self.reengagement_min_idle_sec:
+        if not self._reengagement_idle_debt_allows(idle_seconds):
             return False
         if self._has_meaningful_recent_activity(snapshot):
             return False

@@ -775,10 +775,8 @@ class ModelBudgetPolicy:
         cpu = float(snapshot.cpu_percent or 0.0)
         ram = float(snapshot.ram_percent or 0.0)
         gpu = float(snapshot.gpu_util_percent or 0.0)
-        vram = float(external_vram_percent or 0.0)
         local_tier = not uses_remote_api and tier != "unknown"
         sensory_tier = tier == "sensory_0_6b"
-        bypass_vision_vram_guard = self._should_bypass_vision_vram_guard(tier)
 
         if sensory_tier:
             if cpu >= self.config.sensory_cpu_soft_block_percent:
@@ -795,20 +793,10 @@ class ModelBudgetPolicy:
         if local_tier:
             if gpu >= self.config.gpu_block_percent:
                 reasons.append("gpu_busy")
-            if vram >= self.config.vram_block_percent and not bypass_vision_vram_guard:
-                reasons.append("vram_busy")
-            if snapshot.is_game_or_heavy_app and (
-                gpu >= self.config.heavy_foreground_gpu_percent or vram >= self.config.heavy_foreground_vram_percent
-            ):
+            if snapshot.is_game_or_heavy_app and gpu >= self.config.heavy_foreground_gpu_percent:
                 reasons.append("heavy_foreground_gpu_owner")
             if snapshot.is_compile_or_godot and tier in {"subconscious_4b", "vision_compressor"} and (cpu >= 70.0 or ram >= 75.0):
                 reasons.append("compile_or_editor_pressure")
-
-            needed_vram = self._estimated_vram_need_mb(tier)
-            if needed_vram > 0.0 and snapshot.vram_total_mb > 0.0:
-                headroom = max(0.0, snapshot.vram_total_mb - max(0.0, snapshot.external_vram_used_mb or 0.0))
-                if headroom < needed_vram and not bypass_vision_vram_guard:
-                    reasons.append("vram_headroom_low")
 
         return list(dict.fromkeys(reasons))
 

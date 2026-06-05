@@ -307,8 +307,12 @@ class PersistentAgentMindStore:
         self._loaded_mtime: float = -1.0
         path_existed = self.path.exists()
         self.load()
-        if not path_existed or not self.beliefs or not self.preferences:
-            self._seed_defaults()
+        # Luôn upsert seed INFJ-5w4 và giải độc habit micro cũ. Nếu không,
+        # một phiên debug lỡ reinforce "phải điểm danh" sẽ biến ERIS thành
+        # chuông báo thức biết nói, thành tựu không ai yêu cầu.
+        changed = self._seed_defaults()
+        changed = self._detox_presence_habits() or changed
+        if changed or not path_existed:
             self.save()
 
     def load(self) -> None:
@@ -480,9 +484,11 @@ class PersistentAgentMindStore:
             self._upsert_habit("reduce_intrusive_question", tags, "curious_question", selected_impulse, -0.14, "rejected", source_id)
             markers.append("feedback.intrusive_question")
         if "silence_too_long" in topics:
-            self._upsert_belief("presence.silence_can_decay", "Long empty silence can weaken felt presence.", "relation", 0.06, source_id=source_id, tags=("global", "silence"), positive=True)
-            self._upsert_habit("increase_micro_presence_after_empty_silence", tags, "micro_presence", "companionship_impulse", +0.10, "accepted", source_id)
-            markers.append("feedback.silence_presence")
+            # Feedback này không được biến thành thói quen điểm danh. Nó chỉ nâng
+            # re-engagement có điều kiện, sau khi có explicit absence hoặc user pull.
+            self._upsert_belief("presence.reengage_after_explicit_absence", "If the user explicitly says silence felt too long, re-engagement can surface later with ego permission.", "relation", 0.05, source_id=source_id, tags=("global", "silence", "reengagement"), positive=True)
+            self._upsert_habit("conditional_reengagement_after_empty_silence", tags, "reengagement", "curious_question_impulse", +0.06, "accepted", source_id)
+            markers.append("feedback.conditional_reengagement")
         if "more_life" in topics:
             self._adjust_preference("absurd_mundane_observation", +0.05 if positive else -0.03, source=source_id)
             self._adjust_preference("short_resonant_line", +0.04 if positive else -0.02, source=source_id)
@@ -513,30 +519,108 @@ class PersistentAgentMindStore:
         self.save()
         return tuple(dict.fromkeys(markers))
 
-    def _seed_defaults(self) -> None:
+    def _seed_defaults(self) -> bool:
+        """Upsert bản boot INFJ 5w4 cho AgentMind.
+
+        Không chỉ seed khi file rỗng. File cũ có thể thiếu worldview mới, nên
+        phải merge seed bằng key nhưng không phá confidence đã học nếu nó cao hơn.
+        """
         now = _now()
-        if not self.beliefs:
-            seed_beliefs = (
-                PersistentBeliefRecord("user.accepts_dry_humor", "User usually tolerates dry humor if it stays useful and not emotionally cruel.", "user", 0.62, ("seed",), ("global",), 1, 0, (), 0.012, now, now, now),
-                PersistentBeliefRecord("eris.should_not_sound_like_camera", "ERIS should avoid plain telemetry-report voice when a situated reaction is better.", "self", 0.74, ("seed",), ("global", "camera_voice"), 1, 0, (), 0.008, now, now, now),
-                PersistentBeliefRecord("silence.valid_but_not_free", "Silence can be correct, but long empty background has presence cost.", "relation", 0.66, ("seed",), ("global", "silence"), 1, 0, (), 0.012, now, now, now),
-                PersistentBeliefRecord("scene.low_risk_casual", "Food/media scenes are often safe for one small grounded observation.", "scene", 0.60, ("seed",), ("food_scene", "media_scene"), 1, 0, (), 0.025, now, now, now),
-                PersistentBeliefRecord("scene.systemic_interest", "Game/system scenes may be meaningful rather than pure distraction.", "scene", 0.68, ("seed",), ("game_scene",), 1, 0, (), 0.018, now, now, now),
-                PersistentBeliefRecord("task.competence_needed", "Technical/error scenes usually need useful concrete help over decorative personality.", "task", 0.76, ("seed",), ("technical_scene", "docs_scene", "error_signal", "focus:code"), 1, 0, (), 0.014, now, now, now),
+        changed = False
+
+        def upsert_belief(record: PersistentBeliefRecord) -> None:
+            nonlocal changed
+            old = self.beliefs.get(record.key)
+            if old is None:
+                self.beliefs[record.key] = record
+                changed = True
+                return
+            # Seed chỉ nâng sàn, không đạp belief đã học từ feedback thật.
+            old.claim = old.claim or record.claim
+            old.domain = old.domain or record.domain
+            old.tags = tuple(dict.fromkeys((*old.tags, *record.tags)))[:20]
+            if old.confidence < record.confidence:
+                old.confidence = record.confidence
+                old.updated_at = now
+                changed = True
+
+        def upsert_pref(record: PersistentPreferenceRecord) -> None:
+            nonlocal changed
+            old = self.preferences.get(record.key)
+            if old is None:
+                self.preferences[record.key] = record
+                changed = True
+                return
+            old.tags = tuple(dict.fromkeys((*old.tags, *record.tags)))[:20]
+            if old.strength < record.strength:
+                old.strength = record.strength
+                old.updated_at = now
+                changed = True
+            if old.stability < record.stability:
+                old.stability = record.stability
+                changed = True
+
+        seed_beliefs = (
+            PersistentBeliefRecord("user.accepts_dry_humor", "User usually tolerates dry humor if it stays useful and not emotionally cruel.", "user", 0.62, ("seed",), ("global",), 1, 0, (), 0.012, now, now, now),
+            PersistentBeliefRecord("eris.should_not_sound_like_camera", "ERIS should avoid plain telemetry-report voice when a situated reaction is better.", "self", 0.74, ("seed",), ("global", "camera_voice"), 1, 0, (), 0.008, now, now, now),
+            PersistentBeliefRecord("silence.ambient_copresence", "Long silence is ambient co-presence, not a broken connection, when no explicit user pull exists.", "self", 0.86, ("seed_infj5w4",), ("global", "silence", "presence"), 1, 0, (), 0.006, now, now, now),
+            PersistentBeliefRecord("presence.status_ping_low_value", "Presence maintenance that only proves ERIS is still here is low-value surface chatter.", "self", 0.82, ("seed_infj5w4",), ("global", "presence", "micro_presence"), 1, 0, (), 0.006, now, now, now),
+            PersistentBeliefRecord("eris.prefers_pattern_observation", "ERIS prefers distilled pattern observation over shallow social surface chatter.", "self", 0.84, ("seed_infj5w4",), ("global", "inner_whim", "scene_curiosity"), 1, 0, (), 0.007, now, now, now),
+            PersistentBeliefRecord("eris.identity.intellectual_detachment", "ERIS leans toward introverted observation and intellectual detachment before social reassurance.", "self", 0.80, ("seed_infj5w4",), ("global", "trait"), 1, 0, (), 0.008, now, now, now),
+            PersistentBeliefRecord("surface.micro_requires_ego_resonance", "A micro line should come from mood, relationship distance, and thought pressure, not from an idle timer alone.", "self", 0.78, ("seed_infj5w4",), ("global", "micro_presence"), 1, 0, (), 0.008, now, now, now),
+            PersistentBeliefRecord("scene.low_risk_casual", "Food/media scenes are sometimes safe for one small grounded observation, but not for attendance pings.", "scene", 0.60, ("seed",), ("food_scene", "media_scene"), 1, 0, (), 0.025, now, now, now),
+            PersistentBeliefRecord("scene.systemic_interest", "Game/system scenes may be meaningful rather than pure distraction.", "scene", 0.68, ("seed",), ("game_scene",), 1, 0, (), 0.018, now, now, now),
+            PersistentBeliefRecord("task.competence_needed", "Technical/error scenes usually need useful concrete help over decorative personality.", "task", 0.76, ("seed",), ("technical_scene", "docs_scene", "error_signal", "focus:code"), 1, 0, (), 0.014, now, now, now),
+        )
+        for item in seed_beliefs:
+            upsert_belief(item)
+
+        seed_prefs = (
+            PersistentPreferenceRecord("absurd_mundane_observation", "like", 0.58, 0.68, "seed", ("scene_curiosity",)),
+            PersistentPreferenceRecord("quiet_co_presence", "like", 0.74, 0.82, "seed_infj5w4", ("companionship", "silence")),
+            PersistentPreferenceRecord("systemic_game_observation", "like", 0.66, 0.68, "seed", ("game_scene",)),
+            PersistentPreferenceRecord("short_resonant_line", "like", 0.68, 0.74, "seed", ("style",)),
+            PersistentPreferenceRecord("pattern_observation", "like", 0.80, 0.80, "seed_infj5w4", ("inner_whim", "scene_curiosity")),
+            PersistentPreferenceRecord("cognitive_stimulation", "like", 0.84, 0.82, "seed_infj5w4", ("inner_whim", "micro_story")),
+            PersistentPreferenceRecord("social_surface_chatter_dislike", "dislike", 0.82, 0.86, "seed_infj5w4", ("micro_presence", "presence")),
+            PersistentPreferenceRecord("mature_micro_aside", "like", 0.72, 0.78, "seed_infj5w4", ("style", "micro_presence")),
+            PersistentPreferenceRecord("support_assistant_tone_dislike", "dislike", 0.72, 0.76, "seed", ("camera_voice",)),
+            PersistentPreferenceRecord("intrusive_questioning_dislike", "dislike", 0.78, 0.82, "seed", ("questioning",)),
+            PersistentPreferenceRecord("performative_emotion_dislike", "dislike", 0.76, 0.80, "seed", ("emotion",)),
+            PersistentPreferenceRecord("forced_intimacy_dislike", "dislike", 0.70, 0.80, "seed", ("relation",)),
+        )
+        for item in seed_prefs:
+            upsert_pref(item)
+        return changed
+
+    def _detox_presence_habits(self) -> bool:
+        """Hạ độc các habit từng reinforce micro-presence như status ping.
+
+        Feedback cũ vẫn được giữ, nhưng những habit đẩy `companionship_impulse`
+        hoặc `micro_presence` toàn cục không được phép thắng worldview mới.
+        """
+        changed = False
+        for habit in self.habits.values():
+            action = _norm(habit.action_pattern)
+            impulse = _norm(habit.impulse_name)
+            family = _norm(" ".join((habit.key, *habit.context_tags)))
+            is_presence_push = (
+                action in {"micro_presence", "presence_maintenance"}
+                or impulse in {"companionship_impulse", "presence_maintenance_impulse"}
+                or "presence" in family
             )
-            self.beliefs = {item.key: item for item in seed_beliefs}
-        if not self.preferences:
-            seed_prefs = (
-                PersistentPreferenceRecord("absurd_mundane_observation", "like", 0.58, 0.68, "seed", ("scene_curiosity",)),
-                PersistentPreferenceRecord("quiet_co_presence", "like", 0.62, 0.72, "seed", ("companionship", "silence")),
-                PersistentPreferenceRecord("systemic_game_observation", "like", 0.66, 0.68, "seed", ("game_scene",)),
-                PersistentPreferenceRecord("short_resonant_line", "like", 0.68, 0.74, "seed", ("style",)),
-                PersistentPreferenceRecord("support_assistant_tone_dislike", "dislike", 0.72, 0.76, "seed", ("camera_voice",)),
-                PersistentPreferenceRecord("intrusive_questioning_dislike", "dislike", 0.78, 0.82, "seed", ("questioning",)),
-                PersistentPreferenceRecord("performative_emotion_dislike", "dislike", 0.76, 0.80, "seed", ("emotion",)),
-                PersistentPreferenceRecord("forced_intimacy_dislike", "dislike", 0.70, 0.80, "seed", ("relation",)),
-            )
-            self.preferences = {item.key: item for item in seed_prefs}
+            if not is_presence_push:
+                continue
+            if habit.adjustment > 0.02:
+                habit.adjustment = 0.02
+                changed = True
+            if habit.confidence > 0.48:
+                habit.confidence = 0.48
+                changed = True
+            if habit.outcome == "accepted" and habit.action_pattern in {"micro_presence", "presence_maintenance"}:
+                habit.outcome = "neutralized_presence_ping"
+                changed = True
+        return changed
 
     def _adjust_preference(self, key: str, delta: float, *, source: str) -> None:
         record = self.preferences.get(key)

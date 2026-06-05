@@ -8,8 +8,9 @@ Nguồn dựng bản này:
 - `Eris Cognitive Pipeline V3 Grand Architecture.pdf` để đối chiếu kiến trúc chuẩn.
 
 Giới hạn trung thực:
-- Bản này chưa phải kết quả clone và đọc từng dòng source trong container.
-- Đây là bản source-map debug ưu tiên chính xác theo tài liệu nội bộ + file tree public + mô tả module hiện có.
+- Bản này vẫn chưa phải inventory/audit toàn repo theo kiểu đọc từng dòng tất cả source.
+- Tuy vậy, revision hiện tại đã đối chiếu source thật trong workspace cho các điểm nóng đang mở: `src/llm/service.py`, `src/cortex/surface_arbiter.py`, `body/MotionController.cs`.
+- Những section khác vẫn là source-map debug ưu tiên chính xác theo tài liệu nội bộ + file tree public + mô tả module hiện có.
 - Những file được đánh dấu `VERIFY_IN_CODE` cần mở source thật để xác nhận function/class cụ thể.
 - Dùng bản này để debug luồng, không dùng làm README public.
 
@@ -221,11 +222,19 @@ Status: ACTIVE.
 Role: physics/movement body.
 Reads: MotionCommand.
 Owns:
-- gravity, horizontal velocity, facing, bubble flip.
-- climb/drop/throw/walk_to/pose.
+- gravity, velocity X/Y, facing, sprite+bubble flip.
+- state machine leo tường: `GoingToWall -> Up -> Top -> TopHold -> Down`.
+- `walk`, `walk_to`, `climb_to_top`, `climb_loop`, `drop`, `throw`, `face`, `pose`.
+- airborne wall contact + cơ chế `cling:<chance>` để cú ném có thể bám tường rồi leo tiếp.
+- busy/perched/thrown state (`IsBusy`, `IsTopPerched`, `IsThrown`) cho body autonomy/UI gate.
+Notes:
+- `TargetX` là tỷ lệ 0..1 theo bề ngang màn hình, được resolve sang absolute X trong `ResolveAbsoluteTargetX`.
+- `NotifyAnimationFinished()` dùng `bounce_action` để tiếp tục walk sau animation va tường.
 Debug khi:
 - body mắc tường, không rơi, không quay mặt, ném sai impulse.
-Status: ACTIVE.
+- leo lên trần nhưng không giữ `TopHold` hoặc xuống tường sai phía.
+- payload `throw` có `clingChance` nhưng không bám tường khi va chạm.
+Status: ACTIVE VERIFIED_IN_WORKSPACE.
 
 ## `body/BodyAudioController.cs`
 Role: audio theo animation.
@@ -315,6 +324,11 @@ Owns state:
 - memory_kernel wrapper + background_memory_digest service.
 - presence/reengagement cooldown.
 - last_wake_decision / rolling_user_context / rolling_internal_state / daydream result.
+- signal buffer / observer snapshot / semantic scene note.
+- model_budget_policy + installed queue wrappers cho `llm_service` và `sensory_model_adapter.observe`.
+- wake_governor + contextual_autonomy_loop.
+- autonomous presence block window, silent cycle counters, reengagement counters.
+- ni_meta flags (`ni_meta_chat_enabled`, `ni_meta_auto_enabled`) từ env + `ni_meta_config.json`.
 Calls:
 - telemetry/Se.
 - attention/working memory/meaning/personality.
@@ -324,12 +338,19 @@ Calls:
 - memory/action router/executor.
 - ModelBudgetPolicy queue wrapper cho các model nặng.
 - runtime mixins.
+Current code specifics:
+- `__init__` bọc `memory_core` thành `MemoryKernel` nếu cần, rồi chỉ bật `background_memory_digest` khi semantic parser khởi tạo được.
+- `_install_model_inference_queue()` wrap ở service boundary thay vì từng call-site: `generate_chat_reply -> main_cognition`, `generate_directive -> main_cognition`, `generate_screen_facts -> vision_compressor`, `sensory_model_adapter.observe -> sensory_0_6b`.
+- coordinator giữ cả state runtime “có thể nói lại được” lẫn state gate/cooldown: `last_autonomous_spoken_at`, `autonomous_presence_blocked_until`, `presence_maintenance_silent_cycles`, `last_reengagement_at`, `_chat_burst_queue`.
+- `contextual_autonomy_loop` nhận chung `agenda_stack`, `daydream`, `budget_policy`, `wake_governor`, nên wake path thực tế không còn là vài if rải rác nữa.
 Debug khi:
 - lỗi end-to-end không rõ owner.
 - autonomous gọi main model dù wake gate không cho.
 - background digest commit sai lúc runtime còn bận chat.
 - chat burst/lặp/previous public turn sai.
-Status: ACTIVE GOD OBJECT, đã tách bớt bằng mixin nhưng vẫn là nơi hợp mạch.
+- queue wrap không ăn khiến một đường model nặng chạy chui ngoài scheduler.
+- ni meta chat/autonomous bật sai mode làm drift score thay đổi khó hiểu.
+Status: ACTIVE GOD OBJECT VERIFIED_IN_WORKSPACE, đã tách bớt bằng mixin nhưng vẫn là nơi hợp mạch.
 
 ## `src/runtime/chat_cycle.py`
 Role: path xử lý chat user.
@@ -457,6 +478,27 @@ Role: presence maintenance, reengagement, micro-presence synthesis.
 Feeds:
 - presence cue cho `SurfaceArbiter`.
 - body_action/focus_family/evidence/reason.
+Core contracts:
+- `MicroPresenceCue`: steering flags cho arbiter, không phải public wording.
+- `SocialPresenceEvent`: semantic presence signal + vector/stability/fragmentation/anxiety.
+- `MicroPresenceSynthesis`: container cho seed/context/fallback của wording layer.
+Current code specifics:
+- `PresenceControllerMixin` lazy-init một `SurfaceArbiter` duy nhất; micro presence/re-engagement/spontaneous low-level surface đều đi qua cổng này.
+- `_derive_micro_presence_cue()` kết hợp `idle_seconds`, `recent_events`, `vision_facts`, `social_presence_event`, curiosity, và ego gate; idle một mình chưa đủ để nói.
+- cue có thể chọn `ObserveCode`, `tilt_head`, hoặc `idle_shift`; `missing_evidence_ids` được set khi không có concrete screen evidence.
+- `_build_surface_arbiter_decision()` tự chặn bằng `autonomous_presence_blocked_until`, `presence_maintenance_cooldown_sec`, và `last_autonomous_spoken_at` trước khi gọi arbiter.
+- body-only presence/re-engagement được convert thành `MotionCommand` thay vì giả vờ có câu nói; body-only không được reset silent cycles như speech thật.
+- re-engagement hiện build bằng cue + extra impulse `long_silence` và gọi `SurfaceArbiter` với `force_llm=True`.
+- env knobs hiện có:
+  `ERIS_PRESENCE_MAINTENANCE`,
+  `ERIS_PRESENCE_MAINTENANCE_SILENT_LOOPS`,
+  `ERIS_PRESENCE_MAINTENANCE_COOLDOWN_SEC`,
+  `ERIS_MICRO_PRESENCE_LLM`,
+  `ERIS_MICRO_PRESENCE_LLM_PROBABILITY`,
+  `ERIS_REENGAGEMENT`,
+  `ERIS_REENGAGEMENT_QUIET_LOOPS`,
+  `ERIS_REENGAGEMENT_MIN_IDLE_SEC`,
+  `ERIS_REENGAGEMENT_COOLDOWN_SEC`.
 Should not:
 - tự giữ nhiều hũ câu mẫu độc lập.
 - biến absence/idle thành guilt-trip.
@@ -465,7 +507,9 @@ Debug khi:
 - vừa nói xong lại chen micro-line.
 - force speak không có evidence sinh câu rỗng.
 - presence cue có `needs_micro_presence=true` nhưng `SurfaceArbiter` reject/rate-limit.
-Status: ACTIVE.
+- body-only presence bị tính nhầm là “đã nói”, làm force-LLM không bao giờ tới lượt.
+- re-engagement không nổ dù quiet cycles/idleness đủ lớn vì bị `autonomous_presence_blocked_until` hoặc activity gate chặn.
+Status: ACTIVE VERIFIED_IN_WORKSPACE.
 
 ## `src/runtime/fallback_policy.py`
 Role: fallback khi LLM/parser/runtime fail.
@@ -580,8 +624,25 @@ Role: quyết định mức thức.
 Outputs WakeDecision:
 - level, should_speak, should_call_vision, should_wake_main, should_run_daydream.
 - reason, confidence, external_pressure, internal_drive, compute_budget, permission, speech_value, interrupt_cost.
-Debug khi: main cognition chạy sai lúc hoặc im sai lúc.
-Status: ACTIVE CRITICAL GATE.
+Wake levels:
+- `sleep`
+- `observe_only`
+- `think_only`
+- `micro_presence`
+- `call_vision_compressor`
+- `wake_main_cognition`
+Current code specifics:
+- score chính được pha từ `external_pressure`, `internal_drive`, `permission`, `speech_value`, `agenda_pressure`.
+- `speech_value` còn được boost bởi `possible_error`, `user_presence`, và `silence_debt` từ `autonomous_silent_cycles / 12`.
+- `recommended_action` trong `RollingUserContext` có thể ép nhánh `call_vision_compressor` hoặc `wake_main_cognition`.
+- `should_run_daydream` hiện bật khi `consolidation_pressure >= 0.65` hoặc `insight_pressure >= 0.70`.
+- nếu main wake đáng ra được gọi nhưng interrupt cost cao, governor có thể degrade xuống `micro_presence` hoặc thậm chí `think_only/observe_only` thay vì đánh thức main.
+- debug payload giữ cả budget decision của `4b`, `main`, `vision`, cùng `silence_debt_micro_ready`.
+Debug khi:
+- main cognition chạy sai lúc hoặc im sai lúc.
+- wake level bị degrade thành `micro_presence`/`think_only` dù external pressure nhìn có vẻ cao.
+- silence debt đủ lớn nhưng vẫn không lên `micro_presence`.
+Status: ACTIVE CRITICAL GATE VERIFIED_IN_WORKSPACE.
 
 ## `src/runtime/model_budget_policy.py`
 Role: budget gatekeeper + lightweight inference scheduler cho model nặng.
@@ -593,11 +654,21 @@ Capabilities:
 - unload hook sau request xong để tránh load/unload đè VRAM.
 - snapshot có active tiers, reserved VRAM, queue depth, `main_cognition_recent`.
 - legacy-compatible `mark_started/mark_finished` vẫn còn để giữ cooldown markers.
+Current code specifics:
+- heavy tiers thực tế là `main_cognition`, `subconscious_4b`, `vision_compressor`; `sensory_0_6b` dùng soft block riêng.
+- queue là in-process priority queue; request chỉ bị đo/veto khi đã lên đầu queue, nên soft block sẽ giữ request ở head thay vì fail sớm.
+- hard veto hiện đi qua `gpu_overheat` hoặc budget decision `kill`; còn soft block thường thành `resource_guard:*`, `tier_cooldown_active`, `active_heavy_lease`.
+- có special path `force_local_gguf_main`: priority cực cao, timeout riêng, và bỏ qua một số giới hạn queue thường.
+- resource guard đáng chú ý trong code hiện tại: `cpu_busy`, `ram_busy`, `gpu_busy`, `heavy_foreground_gpu_owner`, `compile_or_editor_pressure`.
+- snapshot phân biệt `eris_reserved_vram_mb` với `external_vram_used_mb`; nghĩa là VRAM của lease đang active không bị tính lẫn hoàn toàn như “ngoài hệ”.
+- `queue_state()`, `cancel_queued_request()`, `cancel_all_queued()` là điểm debug khi nghi scheduler kẹt.
 Limit:
 - không kill được request remote/local đã bay vào provider.
 - vẫn là scheduler nhẹ trong-process, chưa phải orchestrator đa worker.
 Debug khi: nhiều model chạy chồng, daydream/vision/main đụng resource.
-Status: ACTIVE CRITICAL RESOURCE GATE.
+- remote main đang bật `remote_api_enabled` nên behavior heavy/local lock khác với lúc chạy local GGUF.
+- compile Godot/pytest làm 4B hoặc vision bị block bằng `compile_or_editor_pressure`.
+Status: ACTIVE CRITICAL RESOURCE GATE VERIFIED_IN_WORKSPACE.
 
 ## `src/runtime/daydream_model_adapter.py`
 Role: adapter 4B daydream model.
@@ -701,9 +772,11 @@ ChatAct:
 Guards:
 - tone_repair hẹp.
 - retry insult boundary nếu uncertainty_dodge.
-- strict decision JSON gate trước parser.
+- strict decision JSON gate trước parser (`response_format=json_object` + `DECISION_GBNF`).
 - malformed decision JSON salvage: nếu JSON bị cụt nhưng có `"text"` sạch, rebuild payload an toàn thay vì leak schema hoặc ném format violation ngay.
 - protocol failure fallback: dùng payload `protocol_repair`, không wrap raw JSON/prose vào `text`.
+- non-empty text rule khi channel yêu cầu phải nói.
+- local/style fallback path cho một số lỗi provider như prompt leak/safety block.
 Debug khi:
 - hỏi thẳng nhưng model vòng vo.
 - insult/objectification khiến ERIS quá mềm hoặc quá gắt.
@@ -712,10 +785,12 @@ Debug khi:
 - log có `MAX_TOKENS`, `malformed decision JSON`, hoặc `format_violation_recovered`.
 - remote provider trả animation/direction ngoài whitelist như `idle_thoughtful`, `subtle_nod`, `neutral`.
 Notes:
-- `_complete_decision` hiện dùng output budget rộng hơn cho schema đầy đủ: chat 512 tokens, directive 384 tokens.
+- `_complete_decision` hiện dùng output budget: chat `512` tokens, non-chat `384` tokens.
+- mọi system prompt cho decision đều được append contract: bắt đầu bằng `{`, kết thúc bằng `}`, đúng 1 compact JSON object, `debug_trace` phải ngắn.
 - `debug_trace` phải ngắn: 3-8 words hoặc một marker ngắn. Nếu để model viết trace dài, JSON rất dễ bị cụt.
 - Plain prose ngoài JSON vẫn phải bị chặn; chỉ salvage JSON cụt có field `"text"` sạch.
-Status: ACTIVE CRITICAL.
+- `generate_micro_presence_line()` và `generate_screen_facts()` cũng ép trả về JSON object riêng, không nhận prose tự do.
+Status: ACTIVE CRITICAL VERIFIED_IN_WORKSPACE.
 
 ---
 
@@ -1112,6 +1187,12 @@ Pipeline:
 7. hỏi `LowLevelSpeechPolicy` để chọn reject/body_only/normal_llm/force_llm.
 8. nếu LLM trả text -> `SurfaceDecision.should_speak=true`.
 9. nếu LLM decline và policy cho phép -> body_only.
+Current code specifics:
+- có synthetic `long_silence_impulse` khi `idle_seconds >= 120` hoặc `silent_cycles >= 3`.
+- nếu `silent_cycles` vượt `force_llm_after_silent`, arbiter có thể override `reject` thành `force_llm`.
+- `always_llm_kinds` cũng có thể đẩy một kind đủ confidence sang `force_llm` dù policy ban đầu reject.
+- nếu `body_only_streak` chạm trần, code không rate-limit cứng nữa mà đẩy `silent_cycles` lên ngưỡng force-LLM để tránh kẹt body-only mãi.
+- `debug_trace` luôn giữ winner + mode + suppressed candidates để soi xung đột impulse.
 Debug khi:
 - presence/re-engagement bị nhiều module tự nói chồng nhau.
 - thought_stream có pressure nhưng không ra surface.
@@ -1122,9 +1203,9 @@ Important traces:
 - `surface_arbiter; kind=...; source=...; mode=...`
 - `surface_interval_cooldown`
 - `family_cooldown`
-- `body_only_streak_limit`
 - `llm_declined`
-Status: ACTIVE CRITICAL SURFACE ROUTER.
+- `suppressed=thought_stream_surface:...`
+Status: ACTIVE CRITICAL SURFACE ROUTER VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/goal_persistence.py`
 Role: goal nền bền qua turn/session.
@@ -1632,6 +1713,8 @@ Check:
 6. speech_core meaning_shift_gate / quiet_guard.
 7. action_utility no_speech score.
 8. SurfaceArbiter collected the impulse and did not rate-limit it.
+9. WakeDecision có bị degrade từ `wake_main_cognition` xuống `micro_presence` hoặc `think_only` vì `interrupt_cost`/`speech_value` không.
+10. `model_budget_policy` có đang giữ main/vision ở queue head bằng `tier_cooldown_active`, `active_heavy_lease`, hoặc `resource_guard:*` không.
 
 ## Case: low-level surface cue có nhưng ERIS vẫn im/body-only
 Symptom:
@@ -1645,10 +1728,12 @@ Check:
 5. `low_level_speech_policy.py` threshold có đẩy mode thành reject/body_only thay vì normal_llm/force_llm không.
 6. LLM micro generator có trả text rỗng khiến body_only không.
 7. `post_generation_filters.py` có chặn micro-line sau khi sinh không.
+8. `silent_cycles` đã đủ ngưỡng để `SurfaceArbiter` tự override sang `force_llm` chưa, hay vẫn còn đang dưới `force_llm_after_silent`.
+9. Có synthetic `long_silence_impulse` được thêm vào pool nhưng bị impulse khác đè điểm không.
 Fix direction:
 - Tune `config/low_level_speech_policy.yaml` trước, đừng rải thêm câu mẫu trong từng module.
 - Nếu cue thiếu evidence, sửa source cue; nếu policy reject đúng thì không ép LLM.
-- Nếu body-only streak kẹt, kiểm tra `body_only_after_llm_decline` và `max_body_only_streak`.
+- Nếu body-only streak kẹt, kiểm tra `body_only_after_llm_decline` và `max_body_only_streak`; code hiện tại sẽ cố đẩy sang force-LLM chứ không muốn kẹt body-only vô hạn.
 
 ## Case: low-level speech policy config không ăn
 Check:
@@ -1679,6 +1764,7 @@ Check:
 5. Nếu không có `"text"` sạch hoặc có prompt leak -> `_build_protocol_failure_fallback`.
 6. `parser_grounding/decision.py` không được nhận raw malformed JSON như public speech.
 7. `chat_cycle.py` format fallback chỉ nên chạy sau khi LlmService không salvage được.
+8. Xác nhận `_complete_decision` vẫn còn append compact-JSON contract vào system prompt, nhất là ở các nhánh retry/context shrink/local fallback.
 Fix direction:
 - Tăng output budget cho decision schema đầy đủ.
 - Giữ `debug_trace` cực ngắn.
@@ -1744,6 +1830,8 @@ Check:
    - GENERATED.
    - CONFIG.
    - SHOULD_NOT_COMMIT.
+
+7. Với các section đã đọc source thật trong revision này, nên gắn marker `VERIFIED_IN_WORKSPACE` để tách khỏi phần còn đang dựa trên source-map/tài liệu.
 
 ---
 

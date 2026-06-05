@@ -2560,6 +2560,8 @@ class LlmService:
         seed_lines = tuple(str(item).strip() for item in (seeds or ()) if str(item).strip())[:8]
         context = micro_context or {}
         micro_flags = context.get("micro_presence_flags", "") if isinstance(context, dict) else ""
+        ego_surface_state = context.get("ego_surface_state", "") if isinstance(context, dict) else ""
+        ego_surface_contract = context.get("ego_surface_contract", "") if isinstance(context, dict) else ""
         runtime_seed_text = " | ".join(seed_lines) if seed_lines else "<none>"
         user_msg = (
             f"Kind: {kind_name}\n"
@@ -2567,12 +2569,22 @@ class LlmService:
             f"Runtime seeds: {runtime_seed_text}\n"
             f"Micro context: {json.dumps(context, ensure_ascii=False)}\n"
             f"Cognitive flags: {micro_flags or '<none>'}\n"
+            f"Ego surface state: {ego_surface_state or '<none>'}\n"
+            f"Ego surface contract: {ego_surface_contract or '<none>'}\n"
             f"Signal score: {float(signal_score or 0.0):.2f}\n"
             f"Avoid repeating: {avoid_text}\n"
             f"must_surface={str(force_surface).lower()}\n"
             f"focus_kind={focus_kind}; focus_summary={focus_summary}; idle_seconds={int(float(idle_seconds or 0.0))}\n\n"
             "Principle:\n"
             f"- If speech is warranted: Vietnamese only, 1-{max_words} words, one tiny line with full diacritics.\n"
+        )
+        user_msg += (
+            "Style law from ego-state:\n"
+            "- Do not write attendance/status pings. Micro-presence must sound like temperament, not uptime monitoring.\n"
+            "- Good mood + higher trust: dry, sharp, lightly caring aside.\n"
+            "- Boredom/cognitive stimulation: detached pattern observation or quiet grumble.\n"
+            "- Rupture/dignity defense: prefer empty text unless must_surface=true; if forced, make it cool and bounded.\n"
+            "- Immature/guarded ERIS may be restrained, slightly proud, and less socially sweet.\n"
         )
         if force_surface:
             user_msg += (
@@ -2591,6 +2603,7 @@ class LlmService:
             "- Do not invent screen/action facts. No fake certainty.\n"
             "- Do not mention telemetry, evidence, signal, debug, CPU, RAM.\n"
             "- Avoid hollow presence lines like 'TÃ´i Ä‘Ã¢y', 'TÃ´i Ä‘ang nghe', 'TÃ´i váº«n quan sÃ¡t'.\n"
+            "- Also avoid stale micro templates: 'Mạch này vẫn giữ chỗ', 'Nhịp này im hơi lâu rồi', 'Vẫn đang đợi chút nhé', 'Khoảng yên này vẫn giữ chỗ'.\n"
             "- Speak once or stay text-empty.\n"
         )
         if is_reengagement:

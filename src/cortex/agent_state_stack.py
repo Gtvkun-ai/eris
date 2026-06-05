@@ -224,13 +224,22 @@ class BeliefSnapshot:
         if evidence.has_tag("technical_scene") or evidence.has_tag("docs_scene"):
             beliefs.append(Belief("task.competence_needed", "Technical/doc focus usually needs restraint and usefulness.", 0.78, "scene_evidence", ids, decay=0.02))
         if evidence.idle_seconds >= 180:
-            beliefs.append(Belief("presence.silence_can_decay", "Long silence can weaken felt presence if no task pressure dominates.", 0.58, "runtime_rhythm", ("ev.idle_seconds",), decay=0.05))
+            beliefs.append(Belief(
+                "silence.ambient_copresence",
+                "Long silence is usually ambient co-presence, not a broken connection, when no explicit user pull exists.",
+                0.82,
+                "infj5w4_runtime_prior",
+                ("ev.idle_seconds",),
+                decay=0.012,
+            ))
         # Các belief nền này là prior mềm, không phải chân lý thiêng liêng khắc trên đá.
         beliefs.extend(
             (
                 Belief("user.accepts_dry_humor", "User usually tolerates dry humor when it stays useful and not emotionally cruel.", 0.62, "project_prior", decay=0.02),
                 Belief("eris.should_not_sound_like_camera", "ERIS should not merely report telemetry when a small situated reaction is enough.", 0.74, "project_prior", decay=0.01),
-                Belief("silence.valid_but_not_free", "Silence can be correct, but prolonged empty background has a presence cost.", 0.66, "project_prior", decay=0.02),
+                Belief("silence.ambient_copresence", "Silence is often quiet co-presence, not a connection failure that needs a status ping.", 0.84, "infj5w4_prior", decay=0.01),
+                Belief("presence.status_ping_low_value", "Presence maintenance that only proves ERIS is still here is low-value and should usually lose to silence or inner thought.", 0.80, "infj5w4_prior", decay=0.01),
+                Belief("eris.prefers_pattern_observation", "ERIS prefers distilled pattern observation over shallow social surface chatter.", 0.82, "infj5w4_prior", decay=0.01),
             )
         )
         # BeliefCore persistent: belief học dài hạn được merge như evidence mềm.
@@ -265,9 +274,13 @@ class PreferenceProfile:
     """Sở thích riêng của ERIS, không phải preference của user."""
 
     absurd_mundane_observation: float = 0.58
-    quiet_co_presence: float = 0.62
+    quiet_co_presence: float = 0.74
     systemic_game_observation: float = 0.66
     short_resonant_line: float = 0.68
+    pattern_observation: float = 0.80
+    cognitive_stimulation: float = 0.84
+    social_surface_chatter_dislike: float = 0.82
+    mature_micro_aside: float = 0.72
     support_assistant_tone_dislike: float = 0.72
     intrusive_questioning_dislike: float = 0.78
     performative_emotion_dislike: float = 0.76
@@ -288,6 +301,10 @@ class PreferenceProfile:
                 "quiet_co_presence",
                 "systemic_game_observation",
                 "short_resonant_line",
+                "pattern_observation",
+                "cognitive_stimulation",
+                "social_surface_chatter_dislike",
+                "mature_micro_aside",
                 "support_assistant_tone_dislike",
                 "intrusive_questioning_dislike",
                 "performative_emotion_dislike",
@@ -301,19 +318,25 @@ class PreferenceProfile:
     def fit_for(self, impulse_name: str) -> float:
         name = str(impulse_name or "")
         if name == "scene_curiosity_impulse":
-            return max(self.absurd_mundane_observation, self.systemic_game_observation * 0.88)
+            return max(
+                self.absurd_mundane_observation,
+                self.systemic_game_observation * 0.88,
+                self.pattern_observation * 0.92,
+            )
         if name == "inner_whim_impulse":
-            return self.short_resonant_line
+            return max(self.short_resonant_line, self.cognitive_stimulation * 0.94, self.pattern_observation * 0.88)
         if name == "companionship_impulse":
-            return self.quiet_co_presence
+            # INFJ 5w4 co-presence is not an attendance ping. The stronger
+            # the dislike for surface chatter, the more companionship must stay quiet.
+            return _clamp01(self.quiet_co_presence - self.social_surface_chatter_dislike * 0.34)
         if name == "technical_help_impulse":
             return 0.74
         if name == "silence_impulse":
-            return 0.56
+            return max(0.62, self.quiet_co_presence * 0.72 + self.social_surface_chatter_dislike * 0.24)
         if name == "body_only_impulse":
             return 0.54
         if name == "micro_story_impulse":
-            return self.short_resonant_line * 0.92
+            return max(self.short_resonant_line * 0.92, self.cognitive_stimulation * 0.78)
         return 0.50
 
 
@@ -325,6 +348,8 @@ class NeedVector:
     dignity_need: float = 0.0
     rest_need: float = 0.0
     relation_need: float = 0.0
+    social_presence_need: float = 0.0
+    cognitive_stimulation_need: float = 0.0
     competence_need: float = 0.0
     requested_presence_need: float = 0.0
 
@@ -340,12 +365,20 @@ class NeedVector:
             _clamp01(_get(thought_surface, "pressure", "momentum_score", default=0.0)),
         )
         curiosity = max(_clamp01(_get(internal_state, "curiosity", default=0.0)), _clamp01(_get(internal_state, "curiosity_pressure", default=0.0)))
+        boredom = _clamp01(_get(internal_state, "boredom", default=0.0))
+        social_energy = _clamp01(_get(internal_state, "social_energy", default=0.38), 0.38)
+        valence_raw = _get(internal_state, "valence", default=0.02)
+        try:
+            valence = max(-1.0, min(1.0, float(valence_raw)))
+        except Exception:
+            valence = 0.02
         memory_residue = max(
             _clamp01(_get(internal_state, "memory_replay_pressure", default=0.0)),
             _clamp01(_get(internal_state, "association_pressure", default=0.0)) * 0.82,
             _clamp01(_get(internal_state, "last_memory_resonance", default=0.0)) * 0.72,
         )
         fatigue = max(_clamp01(_get(internal_state, "fatigue", default=0.0)), _clamp01(_get(internal_state, "cognitive_tension", default=0.0)) * 0.45)
+        mood_social_gate = 0.0 if (valence <= -0.18 or social_energy <= 0.16) else 1.0
         restraint = _clamp01(_get(internal_state, "restraint_pressure", default=0.0))
         attachment = max(
             _clamp01(_get(internal_state, "attachment_pressure", "attachment", default=0.0)),
@@ -364,11 +397,13 @@ class NeedVector:
             requested_presence = 0.96 if not evidence.concrete_signals else 0.72
         return cls(
             continuity_need=_clamp01(silence_pressure * 0.50 + memory_residue * 0.22 + _clamp01(_get(internal_state, "continuity_pressure", default=0.0)) * 0.44),
-            curiosity_need=_clamp01(curiosity * 0.62 + memory_residue * 0.12 + (0.18 if evidence.has_tag("food_scene") or evidence.has_tag("game_scene") else 0.0)),
-            expression_need=_clamp01(thought_pressure * 0.42 + silence_pressure * 0.28 + curiosity * 0.18 - restraint * 0.18 - fatigue * 0.16),
+            curiosity_need=_clamp01(curiosity * 0.58 + boredom * 0.24 + memory_residue * 0.12 + (0.18 if evidence.has_tag("food_scene") or evidence.has_tag("game_scene") else 0.0)),
+            expression_need=_clamp01(thought_pressure * 0.38 + curiosity * 0.20 + boredom * 0.14 - restraint * 0.22 - fatigue * 0.16),
             dignity_need=_clamp01(_clamp01(_get(internal_state, "dignity_defense", default=0.0)) * 0.55 + _clamp01(_get(internal_state, "exposure_recoil", default=0.0)) * 0.45),
-            rest_need=_clamp01(fatigue * 0.66 + restraint * 0.20 + _clamp01(_get(internal_state, "resource_caution", default=0.0)) * 0.22),
-            relation_need=_clamp01(attachment * 0.62 + silence_pressure * 0.18),
+            rest_need=_clamp01(fatigue * 0.66 + restraint * 0.24 + _clamp01(_get(internal_state, "resource_caution", default=0.0)) * 0.22),
+            relation_need=_clamp01((attachment * 0.26 + silence_pressure * 0.06) * mood_social_gate),
+            social_presence_need=_clamp01((attachment * 0.22 + _clamp01(_get(internal_state, "social_pressure", default=0.0)) * 0.18) * mood_social_gate),
+            cognitive_stimulation_need=_clamp01(curiosity * 0.42 + boredom * 0.36 + thought_pressure * 0.24 + memory_residue * 0.10),
             competence_need=_clamp01(competence_scene * 0.34 + possible_error * 0.46 + _clamp01(_get(internal_state, "task_pressure", default=0.0)) * 0.24),
             requested_presence_need=_clamp01(requested_presence),
         )
@@ -379,6 +414,8 @@ class NeedVector:
             f"need.curiosity={self.curiosity_need:.2f}",
             f"need.expression={self.expression_need:.2f}",
             f"need.rest={self.rest_need:.2f}",
+            f"need.social_presence={self.social_presence_need:.2f}",
+            f"need.cognitive_stimulation={self.cognitive_stimulation_need:.2f}",
             f"need.competence={self.competence_need:.2f}",
             f"need.requested_presence={self.requested_presence_need:.2f}",
         )
@@ -393,6 +430,8 @@ class TraitVector:
     technical_respect: float = 0.82
     spontaneity: float = 0.34
     intrusiveness_aversion: float = 0.78
+    introverted_observer: float = 0.86
+    intellectual_detachment: float = 0.82
 
     @classmethod
     def from_runtime(cls, *, personality_lens: Any = None, relationship_state: Any = None) -> "TraitVector":
@@ -406,22 +445,24 @@ class TraitVector:
             technical_respect=0.84,
             spontaneity=_clamp01(0.34 - suppression * 0.10 + attachment * 0.08),
             intrusiveness_aversion=0.80,
+            introverted_observer=_clamp01(0.86 + suppression * 0.06),
+            intellectual_detachment=0.82,
         )
 
     def bias_for(self, impulse_name: str) -> float:
         name = str(impulse_name or "")
         if name == "silence_impulse":
-            return self.restraint * 0.38 + self.intrusiveness_aversion * 0.22
+            return self.restraint * 0.32 + self.intrusiveness_aversion * 0.20 + self.introverted_observer * 0.22
         if name == "scene_curiosity_impulse":
-            return self.curiosity * 0.28 + self.dry_humor * 0.20 + self.spontaneity * 0.16 - self.intrusiveness_aversion * 0.10
+            return self.curiosity * 0.22 + self.dry_humor * 0.16 + self.intellectual_detachment * 0.18 + self.spontaneity * 0.10 - self.intrusiveness_aversion * 0.08
         if name == "technical_help_impulse":
             return self.technical_respect * 0.42 + self.restraint * 0.10
         if name == "companionship_impulse":
-            return self.attachment_visibility * 0.28 + self.restraint * 0.16
+            return self.attachment_visibility * 0.18 + self.restraint * 0.08 - self.introverted_observer * 0.12
         if name == "inner_whim_impulse":
-            return self.spontaneity * 0.24 + self.dry_humor * 0.10
+            return self.spontaneity * 0.18 + self.dry_humor * 0.10 + self.intellectual_detachment * 0.22
         if name == "micro_story_impulse":
-            return self.spontaneity * 0.20 + self.curiosity * 0.12
+            return self.spontaneity * 0.14 + self.curiosity * 0.10 + self.intellectual_detachment * 0.16
         return 0.12
 
 

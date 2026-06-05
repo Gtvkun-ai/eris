@@ -157,8 +157,32 @@ class SurfaceArbiter:
             self.last_decision = decision
             return decision
 
+        ego_gate_reason = self._ego_gate_reason(winner, snapshot=snapshot, frame=cognitive_frame, force_llm=force_llm)
+        if ego_gate_reason:
+            self._mark_attempt(winner, result="ego_reject", body_only=False)
+            self._note_non_speech(body_only=False)
+            decision = SurfaceDecision(
+                body_only=False,
+                should_speak=False,
+                parse_mode="surface_ego_reject",
+                intent=surface_kind,
+                source="surface_arbiter",
+                generation_mode="reject",
+                confidence=winner.confidence,
+                kind=winner.kind,
+                body_action=winner.body_action,
+                focus_family=winner.focus_family,
+                reason=ego_gate_reason,
+                debug_trace=self._trace(winner, suppressed, "reject", ego_gate_reason),
+                impulse=winner,
+                suppressed=suppressed,
+            )
+            self.last_decision = decision
+            return decision
+
         rate_limit_reason = self._rate_limit_reason(winner, force_llm=force_llm)
         if rate_limit_reason:
+            self._mark_attempt(winner, result="rate_limited", body_only=False)
             self._note_non_speech(body_only=False)
             decision = SurfaceDecision(
                 body_only=False,
@@ -188,6 +212,7 @@ class SurfaceArbiter:
             if self.silent_cycles >= self.policy.config.force_llm_after_silent or (kind in always_llm and winner.confidence >= self.policy.config.min_surface_confidence):
                 mode = "force_llm"
         if mode == "reject":
+            self._mark_attempt(winner, result="policy_reject", body_only=False)
             self._note_non_speech(body_only=False)
             decision = SurfaceDecision(
                 body_only=False,
@@ -236,6 +261,7 @@ class SurfaceArbiter:
                 self.last_decision = decision
                 return decision
 
+            self._mark_attempt(winner, result="llm_decline", body_only=True)
             self._note_non_speech(body_only=True)
             if not self.policy.config.body_only_after_llm_decline:
                 decision = SurfaceDecision(
@@ -276,6 +302,7 @@ class SurfaceArbiter:
             self.last_decision = decision
             return decision
 
+        self._mark_attempt(winner, result="body_only_by_policy", body_only=True)
         self._note_non_speech(body_only=True)
         decision = SurfaceDecision(
             body_only=True,
@@ -551,6 +578,60 @@ class SurfaceArbiter:
         ordered = tuple(sorted(viable, key=lambda item: (item.score, self._priority(item.kind, item.source)), reverse=True))
         return ordered[0], ordered[1:]
 
+    def _signed_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            number = float(value)
+        except Exception:
+            number = default
+        if number != number:
+            number = default
+        return max(-1.0, min(1.0, number))
+
+    def _runtime_internal_state(self, *, frame: Any = None, snapshot: Any = None) -> Any:
+        for owner in (frame, snapshot):
+            if owner is None:
+                continue
+            for attr in ("internal_state_after", "internal_state_before", "internal_state", "state"):
+                value = getattr(owner, attr, None)
+                if value is not None:
+                    return value
+        return None
+
+    def _ego_gate_reason(self, impulse: SurfaceImpulse, *, snapshot: Any = None, frame: Any = None, force_llm: bool = False) -> str:
+        """Ego-gate for low-level surface.
+
+        Đây không phải filter câu chữ. Nó chặn ngay quyền surface khi impulse mâu
+        thuẫn với mood/relationship distance. Presence maintenance là thứ chịu
+        phạt mạnh nhất; inner_whim vẫn có cửa nếu có thought/cognitive pressure.
+        """
+        if force_llm:
+            return ""
+        kind = str(impulse.kind or impulse.speech_act or "")
+        presence_like = bool(impulse.is_presence or kind in {"presence_maintenance", "micro_presence", "companionship_ping", "re_engagement"})
+        if not presence_like:
+            return ""
+        state = self._runtime_internal_state(frame=frame, snapshot=snapshot)
+        rel = getattr(state, "relationship_dynamics", None) if state is not None else None
+        valence = self._signed_float(getattr(state, "valence", 0.02) if state is not None else 0.02, 0.02)
+        social_energy = _clamp01(getattr(state, "social_energy", 0.38) if state is not None else 0.38, 0.38)
+        irritation = _clamp01(getattr(state, "irritation", 0.0) if state is not None else 0.0)
+        rupture = _clamp01(getattr(rel, "rupture", 0.0) if rel is not None else 0.0)
+        dignity = _clamp01(getattr(rel, "dignity_defense", 0.0) if rel is not None else 0.0)
+        preferred_distance = _clamp01(getattr(rel, "preferred_distance", 0.58) if rel is not None else 0.58, 0.58)
+        trust = _clamp01(getattr(rel, "trust", 0.25) if rel is not None else 0.25, 0.25)
+
+        if valence <= -0.18 or irritation >= 0.55:
+            return "ego_gate:mood_blocks_presence"
+        if social_energy <= 0.16:
+            return "ego_gate:social_energy_empty"
+        if rupture >= 0.42 or dignity >= 0.42:
+            return "ego_gate:dignity_distance"
+        if preferred_distance >= 0.74 and trust <= 0.34:
+            return "ego_gate:preferred_distance_high"
+        if kind == "presence_maintenance" and impulse.missing_evidence_ids and impulse.score < 0.72:
+            return "ego_gate:ambient_copresence_no_anchor"
+        return ""
+
     def _rate_limit_reason(self, impulse: SurfaceImpulse, *, force_llm: bool) -> str:
         if force_llm:
             return ""
@@ -576,6 +657,20 @@ class SurfaceArbiter:
 
     def _family_id(self, impulse: SurfaceImpulse) -> str:
         return f"{impulse.kind}:{impulse.family or self._family_key(impulse.topic_seed)}"[:160]
+
+    def _mark_attempt(self, impulse: SurfaceImpulse, *, result: str, body_only: bool) -> None:
+        """Ghi cả reject/body-only như một lần chạm surface budget.
+
+        Nếu chỉ ghi khi speak, presence sẽ gõ cửa liên tục rồi giả vờ chưa làm gì.
+        Một kiểu gaslight rất máy móc, và máy móc còn không có cớ hay.
+        """
+        now = time.time()
+        presence_like = bool(impulse.is_presence or impulse.kind in {"presence_maintenance", "micro_presence", "re_engagement"})
+        if presence_like or body_only:
+            self.last_surface_time = now
+        family = self._family_id(impulse)
+        if family and (presence_like or body_only):
+            self._last_family_at[family] = now
 
     def _mark_surface(self, impulse: SurfaceImpulse) -> None:
         now = time.time()

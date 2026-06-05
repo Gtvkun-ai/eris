@@ -182,6 +182,12 @@ class AutonomousWakeGovernor:
             level = "call_vision_compressor"
             should_call_vision = True
             reason = "vision_needed"
+        silence_debt_micro_floor = 0.20 if silence_debt >= 0.60 else 0.26
+        silence_debt_micro_ready = bool(
+            silence_debt >= 0.40
+            and speech_value >= min(self.config.min_speech_value, silence_debt_micro_floor)
+            and interrupt_cost <= self.config.max_interrupt_for_speech
+        )
         if (
             score >= self.config.micro_presence_threshold
             and speech_value >= self.config.min_speech_value
@@ -190,6 +196,10 @@ class AutonomousWakeGovernor:
             level = "micro_presence"
             should_speak = True
             reason = "micro_presence_value_ok"
+        elif silence_debt_micro_ready:
+            level = "micro_presence"
+            should_speak = True
+            reason = "silence_debt_micro_presence"
         if wants_main:
             if interrupt_cost <= self.config.max_interrupt_for_main and speech_value >= self.config.min_speech_value:
                 level = "wake_main_cognition"
@@ -226,6 +236,8 @@ class AutonomousWakeGovernor:
                 "autonomous_silent_cycles": int(autonomous_silent_cycles or 0),
                 "silence_debt": silence_debt,
                 "silence_debt_weight": 0.25,
+                "silence_debt_micro_floor": silence_debt_micro_floor,
+                "silence_debt_micro_ready": silence_debt_micro_ready,
                 "budget_4b": budget_4b.to_dict(),
                 "budget_main": budget_main.to_dict(),
                 "budget_vision": budget_vision.to_dict(),

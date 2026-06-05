@@ -4557,7 +4557,7 @@ class RuntimeCoordinator(
             status["rejected_by"] = "spoken_floor"
             return status
         mode = str(getattr(ti_report, "mode", "") or "")
-        if mode in {"resource_guard", "goal_drift_alert", "goal_realign", "system_warning"}:
+        if mode in {"goal_drift_alert", "goal_realign", "system_warning"}:
             status["rejected_by"] = f"ti_mode:{mode}"
             return status
         idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
@@ -4596,13 +4596,16 @@ class RuntimeCoordinator(
             status["rejected_by"] = "reengagement_cooldown"
             return status
         mode = str(getattr(ti_report, "mode", "") or "")
-        if mode in {"resource_guard", "goal_drift_alert", "goal_realign", "system_warning"}:
+        if mode in {"goal_drift_alert", "goal_realign", "system_warning"}:
             status["rejected_by"] = f"ti_mode:{mode}"
             return status
         idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
-        if idle_seconds < self.reengagement_min_idle_sec:
+        if not self._reengagement_idle_debt_allows(idle_seconds):
             status["rejected_by"] = "idle_below_reengagement_min"
+            status["idle_debt_override"] = False
             return status
+        if idle_seconds < self.reengagement_min_idle_sec:
+            status["idle_debt_override"] = True
         if self._has_meaningful_recent_activity(snapshot):
             status["candidate"] = False
             status["rejected_by"] = "meaningful_recent_activity"

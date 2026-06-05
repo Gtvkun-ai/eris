@@ -156,6 +156,15 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
     internal_pull_boost = requested_presence * (0.42 if explicit_no_screen_pull else 0.18)
     micro_presence_demote = requested_presence * 0.30 if explicit_no_screen_pull else 0.0
 
+    # INFJ 5w4 prior: silence is not a broken pipe. Presence pings must fight
+    # worldview friction; inner thought and pattern observation should be the
+    # natural outlet when boredom/curiosity rises.
+    ambient_copresence = beliefs.confidence("silence.ambient_copresence", 0.74)
+    status_ping_low_value = beliefs.confidence("presence.status_ping_low_value", 0.72)
+    pattern_observation_belief = beliefs.confidence("eris.prefers_pattern_observation", 0.70)
+    cognitive_stimulation = _clamp01(getattr(needs, "cognitive_stimulation_need", 0.0))
+    social_presence_need = _clamp01(getattr(needs, "social_presence_need", needs.relation_need))
+
     scene_anchor = _scene_anchor(ev)
     thought_topic = _text(getattr(thought_surface, "topic_seed", "") if thought_surface is not None else "", limit=80)
     family_scene = "scene_curiosity:" + _family_key(scene_anchor)
@@ -173,11 +182,12 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             topic_seed="intentional_silence",
             family="silence:intentional",
             base_score=0.26,
-            need_pressure=needs.rest_need * 0.38 + needs.competence_need * 0.22,
-            preference_fit=prefs.fit_for("silence_impulse") * 0.10,
+            belief_support=ambient_copresence * 0.22 + status_ping_low_value * 0.10,
+            need_pressure=needs.rest_need * 0.34 + needs.competence_need * 0.22 + cognitive_stimulation * 0.06,
+            preference_fit=prefs.fit_for("silence_impulse") * 0.14,
             trait_bias=traits.bias_for("silence_impulse"),
             affordance_allowance=0.12 if aff.silence_allowed else 0.0,
-            risk=needs.expression_need * 0.10 + needs.continuity_need * 0.08 + requested_presence * 0.24,
+            risk=needs.expression_need * 0.08 + requested_presence * 0.24,
             habit_bias=habits.semantic_bias(action="no_speech", impulse_name="silence_impulse", family="silence:intentional"),
             evidence=(*needs.notes(), "silence_is_candidate"),
             reason="Rest, restraint, or task pressure may make silence the least stupid option.",
@@ -186,7 +196,7 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
 
     # 2. Current scene curiosity, only when the scene itself affords a casual line.
     scene_allowed = aff.casual_comment_allowed and ev.has_scene_anchor
-    scene_need = needs.curiosity_need * 0.28 + needs.expression_need * 0.18 + needs.continuity_need * 0.12
+    scene_need = needs.curiosity_need * 0.22 + cognitive_stimulation * 0.24 + needs.expression_need * 0.12
     if ev.has_tag("food_scene"):
         scene_need += 0.12
     if ev.has_tag("game_scene"):
@@ -200,9 +210,9 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             family=family_scene,
             base_score=0.10,
             evidence_fit=0.22 if scene_allowed else 0.0,
-            belief_support=max(beliefs.confidence("scene.low_risk_casual"), beliefs.confidence("scene.systemic_interest")) * 0.20,
-            need_pressure=scene_need + requested_presence * 0.18 + media_relief * 0.10,
-            preference_fit=prefs.fit_for("scene_curiosity_impulse") * 0.18,
+            belief_support=max(beliefs.confidence("scene.low_risk_casual"), beliefs.confidence("scene.systemic_interest"), pattern_observation_belief) * 0.20,
+            need_pressure=scene_need + requested_presence * 0.12 + media_relief * 0.10,
+            preference_fit=prefs.fit_for("scene_curiosity_impulse") * 0.20,
             trait_bias=traits.bias_for("scene_curiosity_impulse"),
             affordance_allowance=0.18 if scene_allowed else -0.10,
             risk=aff.intrusive_question_risk * 0.10 + needs.rest_need * 0.10,
@@ -226,9 +236,9 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             family=family_whim,
             base_score=0.10 + internal_pull_boost,
             evidence_fit=(0.10 if thought_topic else 0.03) + requested_presence * 0.10,
-            belief_support=beliefs.confidence("eris.should_not_sound_like_camera", 0.50) * 0.08,
-            need_pressure=needs.expression_need * 0.30 + needs.curiosity_need * 0.12 + requested_presence * 0.22,
-            preference_fit=prefs.fit_for("inner_whim_impulse") * 0.16,
+            belief_support=max(beliefs.confidence("eris.should_not_sound_like_camera", 0.50), pattern_observation_belief) * 0.12,
+            need_pressure=needs.expression_need * 0.24 + needs.curiosity_need * 0.10 + cognitive_stimulation * 0.28 + requested_presence * 0.18,
+            preference_fit=prefs.fit_for("inner_whim_impulse") * 0.20,
             trait_bias=traits.bias_for("inner_whim_impulse"),
             affordance_allowance=0.06,
             risk=needs.rest_need * 0.12 + needs.competence_need * 0.16,
@@ -275,9 +285,9 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             family=family_story,
             base_score=0.07 + requested_presence * 0.28,
             evidence_fit=(0.10 if thought_topic else 0.04) + requested_presence * 0.06,
-            belief_support=beliefs.confidence("silence.valid_but_not_free", 0.50) * 0.08,
-            need_pressure=needs.expression_need * 0.22 + needs.continuity_need * 0.16 + requested_presence * 0.18,
-            preference_fit=prefs.fit_for("micro_story_impulse") * 0.14,
+            belief_support=pattern_observation_belief * 0.10,
+            need_pressure=needs.expression_need * 0.18 + cognitive_stimulation * 0.22 + requested_presence * 0.14,
+            preference_fit=prefs.fit_for("micro_story_impulse") * 0.16,
             trait_bias=traits.bias_for("micro_story_impulse"),
             affordance_allowance=0.05,
             risk=needs.rest_need * 0.14 + needs.competence_need * 0.16,
@@ -297,17 +307,17 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             speech_act="micro_presence",
             topic_seed="quiet_co_presence",
             family="companionship:quiet_co_presence",
-            base_score=0.08,
-            belief_support=beliefs.confidence("presence.silence_can_decay", 0.42) * 0.16,
-            need_pressure=needs.relation_need * 0.22 + needs.continuity_need * 0.18 + requested_presence * 0.06,
-            preference_fit=prefs.fit_for("companionship_impulse") * 0.13,
+            base_score=0.035,
+            belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.06 - ambient_copresence * 0.16 - status_ping_low_value * 0.18),
+            need_pressure=social_presence_need * 0.16 + needs.continuity_need * 0.06 + requested_presence * 0.04,
+            preference_fit=prefs.fit_for("companionship_impulse") * 0.10,
             trait_bias=traits.bias_for("companionship_impulse"),
-            affordance_allowance=0.08 if aff.body_only_allowed else 0.0,
-            risk=aff.intrusive_question_risk * 0.10 + needs.rest_need * 0.12 + micro_presence_demote,
+            affordance_allowance=0.04 if aff.body_only_allowed else 0.0,
+            risk=aff.intrusive_question_risk * 0.12 + needs.rest_need * 0.16 + micro_presence_demote + status_ping_low_value * 0.16,
             repetition_penalty=habits.repetition_penalty(action="micro_presence", family="companionship:quiet_co_presence"),
             habit_bias=habits.semantic_bias(action="micro_presence", impulse_name="companionship_impulse", family="companionship:quiet_co_presence"),
             evidence=("need.relation", "need.continuity", "low_claim_presence"),
-            reason="Continuity wants a small co-presence signal.",
+            reason="Co-presence ping must beat ambient-silence belief before it can speak.",
         )
     )
 

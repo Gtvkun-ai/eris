@@ -1,6 +1,134 @@
 {
   "version": 2,
   "kind": "semantic_memory",
-  "updated_at": "2026-06-05T16:39:36+0700",
-  "items": []
+  "updated_at": "2026-06-05T18:30:18+0700",
+  "items": [
+    {
+      "id": "sem_9cdba867dc8a",
+      "claim": "Người dùng nêu preference về cách trả lời: lạnh lùng quá nha",
+      "domain": "user",
+      "confidence": 0.6836,
+      "source": "state_commit",
+      "evidence_ids": [
+        "session_turn:7"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-06-05T18:29:30+0700",
+      "updated_at": "2026-06-05T18:29:30+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "typed_fact",
+        "user_preference.response_style",
+        "semantic_memory"
+      ],
+      "metadata": {
+        "fact_key": "user.response_style",
+        "value": "lạnh lùng quá nha",
+        "aliases": [
+          "cách trả lời",
+          "cach tra loi",
+          "response style",
+          "chú thích",
+          "comment"
+        ],
+        "raw_user_text": "lạnh lùng quá nha",
+        "semantic_claim": {
+          "claim_id": "claim_5818ac434bf6b897",
+          "subject": "user",
+          "predicate": "response_style_prefers",
+          "object_text": "lạnh lùng quá nha",
+          "object_value": "lạnh lùng quá nha",
+          "object_type": "style_rule",
+          "assertion": "asserted",
+          "modality": "preference",
+          "temporal": "stable",
+          "scope": "relationship",
+          "source": "user_text",
+          "confidence": 0.6836,
+          "evidence_text": "lạnh lùng quá nha",
+          "evidence_ids": [
+            "session_turn:7"
+          ],
+          "observed_at": 1780658970.2298179,
+          "valid_from": null,
+          "valid_until": null,
+          "stability": "medium",
+          "qualifiers": {
+            "meaning_frame": {
+              "frame_type": "feedback",
+              "relation": "tone_feedback",
+              "subject": "user",
+              "target": {
+                "text": "lạnh lùng quá nha",
+                "kind": "style_rule",
+                "canonical": "lanh lung qua nha",
+                "confidence": 0.7,
+                "metadata": {}
+              },
+              "polarity": "asserted",
+              "modality": "feedback",
+              "time_scope": "stable",
+              "scope": "relationship",
+              "certainty": 0.68,
+              "stability": "medium",
+              "evidence_span": "lạnh lùng quá nha",
+              "source": "user_text",
+              "slots": {},
+              "warnings": [
+                "fallback_relational_feedback"
+              ]
+            },
+            "pipeline": "meaning_frame_claim_builder"
+          }
+        },
+        "predicate": "response_style_prefers",
+        "subject": "user",
+        "object_type": "style_rule",
+        "assertion": "asserted",
+        "modality": "preference",
+        "temporal": "stable",
+        "scope": "relationship",
+        "source_grounded": true,
+        "semantic_source": "semantic_claim_extractor",
+        "extraction": "semantic_claim_pipeline",
+        "importance": 0.82,
+        "retention_class": "long_term",
+        "revisit_after_seconds": null,
+        "prune_after_seconds": null,
+        "promote_if_observed": 1,
+        "demote_if_unaccessed_days": 365,
+        "retention_reason": "claim_is_memory_worthy",
+        "retention_warnings": [],
+        "memory_kind": "user_preference.response_style",
+        "surface_mode": "semantic",
+        "source": "MemoryCommitPolicy",
+        "permission": "user_provided",
+        "commit_kind": "semantic_commit",
+        "memory_kernel_mode": "fast",
+        "memory_kernel_source": "chat_turn",
+        "memory_kernel_context": {
+          "frame_id": "",
+          "channel": "chat"
+        },
+        "raw_content": {
+          "fact": "Người dùng nêu preference về cách trả lời: lạnh lùng quá nha",
+          "source": "semantic_claim_extractor",
+          "kind": "user_preference.response_style",
+          "surface": "lạnh lùng quá nha",
+          "value": "lạnh lùng quá nha"
+        },
+        "reason": "memory_commit_policy:user_preference.response_style",
+        "fact_profile_evidence": [
+          "metadata.fact_key"
+        ],
+        "embedding_text_hash": "1fb39560b2a3ba84",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
+      }
+    }
+  ]
 }
