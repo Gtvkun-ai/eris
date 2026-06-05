@@ -723,6 +723,29 @@ class LlmServiceTests(unittest.TestCase):
 
         self.assertEqual(len(client.calls), 1)
 
+    def test_chat_reply_salvages_truncated_decision_json_text(self):
+        truncated = (
+            '{"text":"Một câu triết lý sạch vẫn nên được nói ra.",'
+            '"intent":"philosophical_discussion","action":{"type":"none"},'
+            '"animation":"stand","reasoning_tags":["chat"],"should_speak":true,'
+            '"confidence":0.72,"direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"","debug_trace":"'
+        )
+        client = _FakeClient([truncated])
+        service = LlmService(client)
+
+        raw = service.generate_chat_reply(chat_history=[], user_message="nói tiếp đi")
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["text"], "Một câu triết lý sạch vẫn nên được nói ra.")
+        self.assertEqual(payload["intent"], "philosophical_discussion")
+        self.assertEqual(payload["animation"], "stand")
+        self.assertEqual(payload["direction"], 0)
+        self.assertIn("malformed_json_salvaged", payload["reasoning_tags"])
+        self.assertIn("salvaged text", payload["debug_trace"])
+        self.assertNotIn('"intent"', payload["text"])
+        self.assertEqual(client.calls[0]["max_tokens"], 512)
+
     def test_coerces_json_with_missing_required_fields_without_repair(self):
         client = _FakeClient(
             [

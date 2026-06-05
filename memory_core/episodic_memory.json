@@ -1,4 +1,71 @@
 {
   "version": 1,
-  "items": []
+  "items": [
+    {
+      "id": "epi_56f1cdd99e7f",
+      "timestamp": "2026-06-05T09:05:42+0700",
+      "frame_id": "",
+      "summary": "em nghĩ thế giới sẽ lụi tàn không -> Tôi không có khả năng dự đoán tương lai, nhưng sự lụi tàn thường là một quá trình tất yếu của mọi hệ thống, dù là sinh học hay kỹ thuật. -> hard_json_repair",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:09:05:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_e98d38405f7d",
+      "timestamp": "2026-06-05T08:27:57+0700",
+      "frame_id": "",
+      "summary": "em có tin rằng. thế giới sẽ đến hồi kết không -> Tôi bị lỗi định dạng khi sinh phản hồi. Ý chính: tôi chưa có đủ dữ liệu chắc để trả lời an toàn. -> format_repair_fallback",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:08:25:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_613ea1907f7e",
+      "timestamp": "2026-06-05T08:25:46+0700",
+      "frame_id": "",
+      "summary": "chào em -> Chào Ngài. -> hard_json_repair",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:08:25:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    }
+  ]
 }

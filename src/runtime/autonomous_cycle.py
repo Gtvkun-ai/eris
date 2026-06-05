@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -302,6 +302,17 @@ class AutonomousCycleMixin:
                 return True
         if not frame.action_plan.should_speak:
             self._note_autonomous_silence()
+            if not meaning_blocks_autonomous:
+                if self._try_finalize_surface_arbiter_cycle(
+                    frame=frame,
+                    snapshot=snapshot,
+                    ti_report=ti_report,
+                    fe_plan=fe_plan,
+                    social_presence_event=social_presence_event,
+                    cycle_start=cycle_start,
+                    surface_kind="surface",
+                ):
+                    return True
             motion_decision = self._build_silent_motion_decision(ti_report)
             if motion_decision is not None:
                 self._apply_position_update(motion_decision)
@@ -390,6 +401,17 @@ class AutonomousCycleMixin:
             now=time.time(),
         ):
             self._note_autonomous_silence()
+            if not meaning_blocks_autonomous:
+                if self._try_finalize_surface_arbiter_cycle(
+                    frame=frame,
+                    snapshot=snapshot,
+                    ti_report=ti_report,
+                    fe_plan=fe_plan,
+                    social_presence_event=social_presence_event,
+                    cycle_start=cycle_start,
+                    surface_kind="surface",
+                ):
+                    return True
             if not meaning_blocks_autonomous:
                 if self._try_finalize_micro_observation_cycle(
                     frame=frame,

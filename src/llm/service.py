@@ -701,7 +701,6 @@ class LlmService:
             return value.replace('\\n', ' ').replace('\\"', '"').strip()
 
     def _build_protocol_failure_fallback(self, *, channel: str, reason: str, text: str = "") -> str:
-        raise FormatViolationException(reason, channel=channel, raw_text=text)
         if not text:
             if channel == "chat":
                 text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
@@ -736,11 +735,6 @@ class LlmService:
         surface raw schema text. If a clean text field exists, use only that;
         otherwise return a protocol-repair fallback.
         """
-        raise FormatViolationException(
-            f"LlmService blocked malformed decision JSON on {channel}.",
-            channel=channel,
-            raw_text=raw_text,
-        )
         if not self._looks_like_malformed_decision_json(raw_text):
             return ""
         text = self._json_string_field_from_raw(raw_text, "text").strip()
@@ -1561,6 +1555,9 @@ class LlmService:
                 raw_text=raw_text,
             )
         if self._looks_like_malformed_decision_json(raw_text):
+            salvaged = self._coerce_malformed_decision_payload(raw_text, channel=channel)
+            if salvaged:
+                return salvaged
             raise FormatViolationException(
                 f"LlmService blocked malformed decision JSON on {channel}.",
                 channel=channel,
@@ -1639,6 +1636,9 @@ class LlmService:
                 raw_text=raw_text,
             )
         if self._looks_like_malformed_decision_json(raw_text):
+            salvaged = self._coerce_malformed_decision_payload(raw_text, channel=channel)
+            if salvaged:
+                return salvaged
             raise FormatViolationException(
                 f"LlmService blocked malformed decision JSON on {channel}.",
                 channel=channel,
@@ -1679,14 +1679,15 @@ class LlmService:
         if no_fallback_mode_enabled():
             allow_local_fallback = False
             force_local_fallback = False
-        max_tokens = 260 if channel == "chat" else 320
+        max_tokens = 512 if channel == "chat" else 384
         if require_text:
             messages = self._with_non_empty_text_rule(messages)
         no_cot_contract = (
             "CRITICAL OUTPUT CONTRACT: Start your response with '{' as the first character. "
             "End with '}' as the last character. Return exactly one compact JSON object. "
             "Do not write reasoning, analysis, options, bullets, markdown, code fences, "
-            "self-checks, translations, or explanations before or after the JSON."
+            "self-checks, translations, or explanations before or after the JSON. "
+            "Keep debug_trace compact: 3-8 words or one short marker."
         )
         messages = [dict(message) for message in messages]
         for message in messages:

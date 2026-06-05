@@ -1,0 +1,21 @@
+# SurfaceArbiter low-level speech knobs.
+# Có thể override bằng env ERIS_SURFACE_POLICY_CONFIG=./config/low_level_speech_policy.yaml
+force_llm_after_silent: 3
+high_conf_threshold: 0.55
+min_surface_confidence: 0.38
+body_only_min_confidence: 0.32
+normal_llm_probability: 1.0
+min_surface_interval_seconds: 12
+family_cooldown_seconds: 90
+max_body_only_streak: 3
+body_only_after_llm_decline: true
+always_llm_kinds:
+  - presence_maintenance
+  - re_engagement
+  - micro_observation
+  - inner_whim
+  - curious_question
+  - light_muse
+  - micro_presence
+  - idle_curiosity
+  - thought_stream_surface

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 from cortex.contracts import SessionRitualReport
 from cortex.social_presence import SocialPresenceDetector
+from cortex.low_level_speech_policy import LowLevelSpeechPolicy
+from cortex.surface_arbiter import SurfaceArbiter, SurfaceDecision, SurfaceImpulse
 from domain import Decision
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 
@@ -92,6 +94,77 @@ class MicroPresenceCue:
 
 
 class PresenceControllerMixin:
+    def _surface_arbiter(self) -> SurfaceArbiter:
+        """Lazy init SurfaceArbiter: một cổng duy nhất cho micro/re-engagement/spontaneous surface."""
+        arbiter = getattr(self, "_low_level_surface_arbiter", None)
+        if arbiter is None:
+            arbiter = SurfaceArbiter(
+                policy=LowLevelSpeechPolicy(),
+                llm_micro_gen=self._surface_arbiter_llm_generate,
+                thought_stream=getattr(self, "thought_stream", None),
+            )
+            self._low_level_surface_arbiter = arbiter
+        return arbiter
+
+    def _surface_arbiter_llm_generate(self, *, impulse: SurfaceImpulse, snapshot, force_llm: bool = False) -> tuple[str, str]:
+        """Adapter để SurfaceArbiter dùng generator micro hiện có, không tự viết fallback."""
+        seeds = tuple(str(item) for item in (impulse.evidence or ()) if str(item).strip())
+        if not seeds and impulse.topic_seed:
+            seeds = (impulse.topic_seed,)
+        micro_context = {
+            "surface_impulse": json.dumps(impulse.to_context(), ensure_ascii=False),
+        }
+        return self._hybrid_micro_presence_text(
+            kind=impulse.kind or impulse.speech_act or "surface",
+            snapshot=snapshot,
+            fallback_text="",
+            seeds=seeds,
+            micro_context=micro_context,
+            force_llm=force_llm or no_fallback_mode_enabled(),
+            signal_score=impulse.confidence,
+        )
+
+    def _surface_body_only_decision(self, surface: SurfaceDecision) -> Decision:
+        payload = {
+            "type": "MotionCommand",
+            "name": surface.body_action or "idle_shift",
+            "focus_family": surface.focus_family,
+            "reason": surface.reason,
+            "confidence": round(float(surface.confidence), 3),
+            "surface_kind": surface.kind,
+            "generation_mode": surface.generation_mode,
+            "source": surface.source,
+        }
+        animation = "read" if surface.body_action in {"ObserveCode", "quiet_observe_scene", "hold_focus"} else "stand"
+        return Decision(
+            text="",
+            animation=animation,
+            intent=surface.intent or surface.kind or "surface",
+            action="MotionCommand",
+            action_input=json.dumps(payload, ensure_ascii=False),
+            reasoning_tags=("surface_arbiter", "body_only", surface.kind or "surface"),
+            should_speak=False,
+            confidence=max(0.30, min(0.62, float(surface.confidence or 0.0))),
+            parse_mode=surface.parse_mode or "surface_body_only",
+            debug_trace=surface.debug_trace,
+            motion_intent="pose",
+        )
+
+    def _surface_speech_decision(self, surface: SurfaceDecision) -> Decision:
+        intent = surface.intent or surface.kind or "surface"
+        animation = "read" if surface.focus_family == "code_stalled" else "stand"
+        return Decision(
+            text=surface.text,
+            animation=animation,
+            intent=intent,
+            action="",
+            reasoning_tags=("surface_arbiter", "llm_wording", surface.kind or intent, surface.focus_family),
+            should_speak=True,
+            confidence=max(0.38, min(0.78, float(surface.confidence or 0.0))),
+            parse_mode=surface.parse_mode or intent,
+            debug_trace=surface.debug_trace,
+        )
+
     def _event_semantic_presence_detector(self) -> SocialPresenceDetector:
         detector = getattr(self, "_social_presence_detector", None)
         if detector is None:
@@ -183,7 +256,8 @@ class PresenceControllerMixin:
         now: float | None = None,
     ) -> None:
         current_time = time.time() if now is None else now
-        self.presence_maintenance_silent_cycles = 0
+        # Body-only presence không được tính là ERIS đã "nói". Nếu reset silent_cycles ở đây,
+        # policy force-LLM sẽ không bao giờ tới lượt; hệ sẽ múa idle_shift đến hết đời runtime.
         if presence_maintenance:
             self.last_presence_maintenance_at = current_time
         if reengagement:
@@ -344,7 +418,16 @@ class PresenceControllerMixin:
             body_action=body_action,
             reason=reason,
             evidence=tuple(dict.fromkeys(evidence))[:8],
-            should_call_llm=bool(needs and (has_screen_evidence or curiosity >= 0.35 or focus_family in {"code_stalled", "communication_idle"})),
+            should_call_llm=bool(
+                needs
+                and (
+                    has_screen_evidence
+                    or curiosity >= 0.30
+                    or focus_family in {"code_stalled", "communication_idle"}
+                    or idle_seconds >= 90.0
+                    or self.presence_maintenance_silent_cycles >= 3
+                )
+            ),
             allow_body_only=True,
         )
 
@@ -372,7 +455,9 @@ class PresenceControllerMixin:
             parse_mode=parse_mode,
             debug_trace=(
                 f"{parse_mode}; source={source}; needs_micro_presence={cue.needs_micro_presence}; "
-                f"focus_family={cue.focus_family}; body_action={cue.body_action}; missing_evidence_ids={cue.missing_evidence_ids}"
+                f"focus_family={cue.focus_family}; body_action={cue.body_action}; "
+                f"missing_evidence_ids={cue.missing_evidence_ids}; should_call_llm={cue.should_call_llm}; "
+                f"curiosity={cue.curiosity:.2f}; confidence={cue.confidence:.2f}"
             ),
             motion_intent="pose",
         )
@@ -393,12 +478,14 @@ class PresenceControllerMixin:
         now: float | None = None,
     ) -> None:
         current_time = time.time() if now is None else now
-        self.presence_maintenance_silent_cycles = 0
+        # Body-only presence không được tính là đã nói. Nếu reset silent_cycles ở đây,
+        # force-LLM-after-silent không bao giờ tới lượt, và ERIS sẽ chỉ idle_shift mãi.
         if presence_maintenance:
             self.last_presence_maintenance_at = current_time
         if reengagement:
             self.last_reengagement_at = current_time
-            self.reengagement_quiet_cycles = 0
+            # Re-engagement body-only cũng không reset quiet_cycles; chỉ spoken text mới reset.
+            pass
 
     def _generate_micro_presence_from_cue(
         self,
@@ -409,17 +496,21 @@ class PresenceControllerMixin:
         seeds: tuple[str, ...] = (),
         force_llm: bool = False,
     ) -> tuple[str, str]:
-        if not cue.needs_micro_presence or not cue.should_call_llm:
+        del seeds
+        if not cue.needs_micro_presence:
             return "", "flag_only_body"
-        return self._hybrid_micro_presence_text(
-            kind=kind,
+        surface = self._surface_arbiter().arbitrate(
             snapshot=snapshot,
-            fallback_text="",
-            seeds=seeds,
-            micro_context={"micro_presence_flags": json.dumps(cue.to_context(), ensure_ascii=False)},
+            cognitive_frame=None,
+            presence_cue=cue,
+            surface_kind=kind,
             force_llm=force_llm,
-            signal_score=cue.confidence,
+            silent_cycles=self.presence_maintenance_silent_cycles,
         )
+        if surface.text.strip():
+            return surface.text.strip(), surface.source
+        # Giữ trace chi tiết để log biết bị policy reject, LLM decline, hay body-only.
+        return "", surface.source or surface.reason or "surface_arbiter_body_only"
 
     def _cue_micro_lines(
         self,
@@ -590,30 +681,27 @@ class PresenceControllerMixin:
             should_call_llm=True,
             allow_body_only=True,
         )
-        text, source = self._generate_micro_presence_from_cue(
-            kind="micro_observation",
+        return self._build_surface_arbiter_decision(
+            frame=frame,
             snapshot=snapshot,
-            cue=cue,
-            seeds=(cue_text,),
+            surface_kind="micro_observation",
             force_llm=True,
-        )
-        if not text:
-            return self._body_only_presence_decision(cue, intent="micro_observation", parse_mode="micro_observation_body_only", source=source)
-        return Decision(
-            text=text,
-            animation="read" if cue.focus_family == "code_stalled" else "stand",
-            intent="micro_observation",
-            action="",
-            reasoning_tags=("micro_observation", "vision_fact", "llm_wording", cue.focus_family),
-            should_speak=True,
-            confidence=max(0.50, min(0.78, score)),
-            parse_mode="micro_observation",
-            debug_trace=(
-                "micro_observation_layer"
-                f"; source={source}"
-                f"; focus_family={cue.focus_family}"
-                f"; vision_fact_score={score:.2f}"
-                f"; silent_cycles={self.presence_maintenance_silent_cycles}"
+            presence_cue=cue,
+            extra_impulses=(
+                {
+                    "kind": "micro_observation",
+                    "source": "vision_fact",
+                    "confidence": score,
+                    "score": max(score, cue.confidence),
+                    "topic_seed": cue_text,
+                    "family": f"vision_fact:{self._normalize_user_message(cue_text)[:64]}",
+                    "evidence": (cue_text,),
+                    "reason": "vision_fact_micro_observation",
+                    "focus_family": cue.focus_family,
+                    "body_action": cue.body_action,
+                    "is_presence": True,
+                    "should_surface": True,
+                },
             ),
         )
 
@@ -1048,9 +1136,143 @@ class PresenceControllerMixin:
                 self.logger.warning("%s post-generation filter failed: %s", channel, exc)
         return decision
 
+    def _build_surface_arbiter_decision(
+        self,
+        *,
+        frame: CognitiveFrame,
+        snapshot,
+        social_presence_event: SocialPresenceEvent | None = None,
+        surface_kind: str = "surface",
+        force_llm: bool = False,
+        presence_cue: MicroPresenceCue | None = None,
+        extra_impulses: tuple[object, ...] = (),
+    ) -> Decision | None:
+        now = time.time()
+        if now < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
+            return None
+        cooldown = max(8.0, float(getattr(self, "presence_maintenance_cooldown_sec", 0.0) or 0.0))
+        last_presence = float(getattr(self, "last_presence_maintenance_at", 0.0) or 0.0)
+        last_spoken = float(getattr(self, "last_autonomous_spoken_at", 0.0) or 0.0)
+        if not force_llm and last_presence > 0.0 and now - last_presence < cooldown:
+            return None
+        if not force_llm and last_spoken > 0.0 and now - last_spoken < max(cooldown, 20.0):
+            return None
+
+        cue = presence_cue or self._derive_micro_presence_cue(
+            snapshot=snapshot,
+            social_presence_event=social_presence_event,
+            reason=surface_kind,
+        )
+        surface = self._surface_arbiter().arbitrate(
+            snapshot=snapshot,
+            cognitive_frame=frame,
+            presence_cue=cue,
+            extra_impulses=extra_impulses,
+            surface_kind=surface_kind,
+            force_llm=force_llm,
+            silent_cycles=self.presence_maintenance_silent_cycles,
+        )
+        if surface.should_speak and surface.text.strip():
+            return self._surface_speech_decision(surface)
+        if surface.body_only:
+            return self._surface_body_only_decision(surface)
+        return None
+
+    def _try_finalize_surface_arbiter_cycle(
+        self,
+        *,
+        frame: CognitiveFrame,
+        snapshot,
+        ti_report,
+        fe_plan,
+        social_presence_event: SocialPresenceEvent | None,
+        cycle_start: float,
+        surface_kind: str = "surface",
+        force_llm: bool = False,
+    ) -> bool:
+        decision = self._build_surface_arbiter_decision(
+            frame=frame,
+            snapshot=snapshot,
+            social_presence_event=social_presence_event,
+            surface_kind=surface_kind,
+            force_llm=force_llm,
+        )
+        if decision is None:
+            return False
+
+        should_speak = bool(getattr(decision, "should_speak", True)) and bool(str(getattr(decision, "text", "") or "").strip())
+        self._set_cognitive_action_plan(
+            frame,
+            should_speak=should_speak,
+            speech_intent=str(getattr(decision, "intent", "") or surface_kind),
+            speech_act="surface_utterance" if should_speak else "surface_body_only",
+            reason="SurfaceArbiter selected the winning low-level surface impulse.",
+            snapshot=snapshot,
+            concrete_signals=(),
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            notes=("surface_arbiter", f"silent_cycles={self.presence_maintenance_silent_cycles}"),
+        )
+        decision = self.ti_governor.enforce_decision(decision, ti_report)
+        if bool(getattr(decision, "should_speak", True)):
+            decision = self._filter_public_micro_decision(
+                decision,
+                channel="autonomous",
+                frame=frame,
+                snapshot=snapshot,
+                speech_core=getattr(frame, "speech_core", None),
+            )
+
+        should_speak = bool(getattr(decision, "should_speak", True)) and bool(str(getattr(decision, "text", "") or "").strip())
+        if not should_speak and not self._is_body_only_presence_decision(decision):
+            return False
+
+        now = time.time()
+        if should_speak:
+            self.fe_style_memory = self.fe_renderer.remember_style(
+                self.fe_style_memory,
+                plan=fe_plan,
+                rendered_text=decision.text,
+            )
+            self.last_text = decision.text
+            self.last_autonomous_spoken_at = now
+            self._note_autonomous_spoken(
+                presence_maintenance=str(getattr(decision, "intent", "") or "") in {"presence_maintenance", "surface", "micro_presence"},
+                reengagement=str(getattr(decision, "intent", "") or "") == "re_engagement",
+                now=now,
+            )
+        else:
+            self._note_autonomous_presence_action(
+                presence_maintenance=str(getattr(decision, "intent", "") or "") in {"presence_maintenance", "surface", "micro_presence"},
+                reengagement=str(getattr(decision, "intent", "") or "") == "re_engagement",
+                now=now,
+            )
+
+        self._apply_position_update(decision)
+        frame.final_decision = self._decision_to_frame_dict(decision)
+        self._set_cognitive_memory_update(frame, decision=decision, notes=("surface_arbiter",))
+        self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+        self._finalize_cognitive_frame(frame)
+        self.logger.info(
+            '[surface_arbiter] text="%s" | intent=%s | silent_cycles=%d',
+            decision.text,
+            decision.intent,
+            self.presence_maintenance_silent_cycles,
+        )
+        self._send_decision_to_body(decision)
+        elapsed = time.time() - cycle_start
+        sleep_duration = self._choose_autonomous_sleep_duration(
+            suppressed=not should_speak,
+            ti_mode=getattr(ti_report, "mode", ""),
+        )
+        self.logger.info("Hoàn tất chu kỳ surface_arbiter trong %.2fs. Nghỉ %ss.", elapsed, sleep_duration)
+        self._sleep_interruptible(sleep_duration)
+        return True
+
     def _build_presence_maintenance_decision(
         self,
         *,
+        frame: CognitiveFrame | None = None,
         snapshot,
         ti_report,
         social_presence_event: SocialPresenceEvent | None,
@@ -1071,6 +1293,16 @@ class PresenceControllerMixin:
         )
         if not cue.needs_micro_presence:
             return None
+        if frame is not None:
+            return self._build_surface_arbiter_decision(
+                frame=frame,
+                snapshot=snapshot,
+                social_presence_event=social_presence_event,
+                surface_kind="presence_maintenance",
+                presence_cue=cue,
+            )
+
+        # Legacy fallback path cho call-site cũ chưa truyền frame. Vẫn đi qua SurfaceArbiter.
         text, source = self._generate_micro_presence_from_cue(
             kind="presence_maintenance",
             snapshot=snapshot,
@@ -1079,7 +1311,6 @@ class PresenceControllerMixin:
         )
         if not text:
             return self._body_only_presence_decision(cue, intent="presence_maintenance", parse_mode="presence_maintenance_body_only", source=source)
-
         return Decision(
             text=text,
             animation="read" if cue.focus_family == "code_stalled" else "stand",
@@ -1089,15 +1320,7 @@ class PresenceControllerMixin:
             should_speak=True,
             confidence=max(0.38, min(0.62, cue.confidence)),
             parse_mode="presence_maintenance",
-            debug_trace=(
-                "presence_maintenance_layer"
-                f"; source={source}"
-                f"; focus_family={cue.focus_family}"
-                f"; needs_micro_presence={cue.needs_micro_presence}"
-                f"; missing_evidence_ids={cue.missing_evidence_ids}"
-                f"; silent_cycles={self.presence_maintenance_silent_cycles}"
-                f"; threshold={self.presence_maintenance_silent_loop_threshold}"
-            ),
+            debug_trace=f"presence_maintenance_layer; source={source}; focus_family={cue.focus_family}",
         )
 
     def _try_finalize_presence_maintenance_cycle(
@@ -1112,6 +1335,7 @@ class PresenceControllerMixin:
     ) -> bool:
         now = time.time()
         decision = self._build_presence_maintenance_decision(
+            frame=frame,
             snapshot=snapshot,
             ti_report=ti_report,
             social_presence_event=social_presence_event,
@@ -1302,6 +1526,7 @@ class PresenceControllerMixin:
     def _build_reengagement_decision(
         self,
         *,
+        frame: CognitiveFrame | None = None,
         snapshot,
         ti_report,
         internal_state: PersistentInternalState | None,
@@ -1316,6 +1541,31 @@ class PresenceControllerMixin:
             return None
 
         cue = self._derive_reengagement_cue(snapshot=snapshot, internal_state=internal_state)
+        if frame is not None:
+            return self._build_surface_arbiter_decision(
+                frame=frame,
+                snapshot=snapshot,
+                surface_kind="re_engagement",
+                force_llm=True,
+                presence_cue=cue,
+                extra_impulses=(
+                    {
+                        "kind": "re_engagement",
+                        "source": "long_silence",
+                        "confidence": cue.confidence,
+                        "score": cue.confidence + 0.02,
+                        "topic_seed": f"idle={int(float(getattr(snapshot, 'idle_seconds', 0.0) or 0.0))}s",
+                        "family": "re_engagement:long_silence",
+                        "evidence": cue.evidence,
+                        "reason": "long_silence_reengagement",
+                        "focus_family": cue.focus_family,
+                        "body_action": cue.body_action,
+                        "is_presence": True,
+                        "should_surface": True,
+                    },
+                ),
+            )
+
         text, source = self._generate_micro_presence_from_cue(
             kind="re_engagement",
             snapshot=snapshot,
@@ -1325,7 +1575,6 @@ class PresenceControllerMixin:
         )
         if not text:
             return self._body_only_presence_decision(cue, intent="re_engagement", parse_mode="re_engagement_body_only", source=source)
-
         return Decision(
             text=text,
             animation="stand",
@@ -1335,14 +1584,7 @@ class PresenceControllerMixin:
             should_speak=True,
             confidence=max(0.42, min(0.62, cue.confidence)),
             parse_mode="re_engagement",
-            debug_trace=(
-                "reengagement_layer"
-                f"; source={source}"
-                f"; focus_family={cue.focus_family}"
-                f"; quiet_cycles={self.reengagement_quiet_cycles}"
-                f"; idle={int(float(getattr(snapshot, 'idle_seconds', 0.0) or 0.0))}s"
-                f"; social_energy={self._social_energy_for_reengagement(internal_state):.2f}"
-            ),
+            debug_trace=f"reengagement_layer; source={source}; focus_family={cue.focus_family}",
         )
         if not self._should_allow_reengagement(
             snapshot=snapshot,
@@ -1397,6 +1639,7 @@ class PresenceControllerMixin:
     ) -> bool:
         now = time.time()
         decision = self._build_reengagement_decision(
+            frame=frame,
             snapshot=snapshot,
             ti_report=ti_report,
             internal_state=internal_state,
