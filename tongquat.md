@@ -16,6 +16,24 @@ Giới hạn trung thực:
 
 ---
 
+# 0A. Git delta gần đây
+
+Khoảng thay đổi đã soi trực tiếp: từ `2026-06-04` đến `2026-06-05`, chủ yếu qua các commit `fdfe52c`, `c268eab`, `aa9af6f`, `04bd5f6`, `5f812fc`.
+
+Trục thay đổi chính theo git:
+- low-level surface path được gom về một trục `PresenceController -> SurfaceArbiter -> LowLevelSpeechPolicy -> LlmService.generate_micro_presence_line`, thay cho nhiều nhánh micro-presence rải rác.
+- `config/low_level_speech_policy.yaml` + env override được thêm để tune `force_llm_after_silent`, threshold, cooldown, và body-only streak mà không phải sửa code.
+- `ModelBudgetPolicy` chuyển trọng tâm sang queue/lease scheduler; `ERIS_RESOURCE_GUARD_ENABLED` hiện mặc định `false`, tức runtime thường là queue-only chứ không chặn vì máy “đang bận”.
+- `LlmService` được siết lại ở decision JSON: compact contract, sanitize decision-like JSON, salvage JSON cụt nếu còn `"text"` sạch, và chặn việc wrap metadata/prose thẳng vào `text`.
+- tầng nội sinh được đẩy mạnh ở `agent_state_stack.py`, `impulse_arbitration.py`, `speech_core.py`, `surface_arbiter.py`: thêm `vital_pressure`, `metabolic_pressure`, memory/silence/boredom residue, và re-engagement sau im lặng dài.
+- test coverage mới bám đúng các thay đổi trên: `tests/test_surface_arbiter.py`, `tests/test_model_budget_policy_queue.py`, `tests/test_presence_controller_memory_surface.py`, cùng các ca salvage/repair trong `tests/test_llm_service.py`.
+
+Tình trạng worktree lúc cập nhật tài liệu này:
+- `git status --short` chỉ còn đổi dữ liệu runtime: `memory_core/active_state_snapshot.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl`.
+- nghĩa là phần source hiện tại của repo về cơ bản đang bám `HEAD`, nên mô tả dưới đây nên ưu tiên revision đã commit hơn là ba file state đang trôi theo runtime.
+
+---
+
 # 0. Luồng sống chính của ERIS
 
 ```text
@@ -490,6 +508,7 @@ Current code specifics:
 - `PresenceControllerMixin` lazy-init một `SurfaceArbiter` duy nhất; micro presence/re-engagement/spontaneous low-level surface đều đi qua cổng này.
 - `_derive_micro_presence_cue()` kết hợp `idle_seconds`, `recent_events`, `vision_facts`, `social_presence_event`, curiosity, và ego gate; idle một mình chưa đủ để nói.
 - cue có thể chọn `ObserveCode`, `tilt_head`, hoặc `idle_shift`; `missing_evidence_ids` được set khi không có concrete screen evidence.
+- `_build_endogenous_surface_impulses()` hiện có thể nâng `active_memory_resonance` public-safe thành impulse `memory_resonance`; residue private hoặc activation `may_surface=false` phải bị giữ lại.
 - `_build_surface_arbiter_decision()` tự chặn bằng `autonomous_presence_blocked_until`, `presence_maintenance_cooldown_sec`, và `last_autonomous_spoken_at` trước khi gọi arbiter.
 - body-only presence/re-engagement được convert thành `MotionCommand` thay vì giả vờ có câu nói; body-only không được reset silent cycles như speech thật.
 - re-engagement hiện build bằng cue + extra impulse `long_silence` và gọi `SurfaceArbiter` với `force_llm=True`.
@@ -752,6 +771,14 @@ Builds:
 - main cognition client.
 - style client.
 - vision client.
+Current code specifics:
+- remote path hiện ưu tiên `ERIS_REMOTE_API_ENABLED`; mặc định provider là Gemini qua `ERIS_REMOTE_PROVIDER=gemini`.
+- remote Gemini mặc định trỏ `https://generativelanguage.googleapis.com/v1beta` và fallback model hiện là `gemma-4-26b-a4b-it` nếu env trống.
+- local path sẽ reuse `llama-server` đang chạy chỉ khi server hiện tại có `n_ctx` đủ; nếu phát hiện `n_ctx` thấp hơn nhu cầu, manager cố thay server cũ thay vì cứ tăng port mãi.
+- `_detect_running_server_n_ctx()` probe `/props` hoặc `/v1/props` để đọc context size của server đang sống.
+- nếu host local đang bị một `llama-server` cũ giữ port, code có best-effort kill theo port nhưng chỉ kill process có tên giống `llama-server`.
+- `_resolve_mmproj_path()` cho phép text-only mode khi không tìm thấy mmproj; `build_vision_client()` chỉ bật khi có cả model và mmproj.
+- `build_style_client()` và `build_vision_client()` cưỡng bức local mode tạm thời bằng cách hạ `ERIS_REMOTE_API_ENABLED=0` quanh lúc build client.
 Debug khi: remote/local path sai, llama-server port conflict, context size error.
 Risk: hardcoded default key cần dọn.
 Status: ACTIVE.
@@ -900,11 +927,11 @@ Contains:
 Current code specifics:
 - `SpeechImpulse` đã có `vital_pressure`, `metabolic_pressure`, `is_vital_pressure` để đưa áp lực nội sinh sang SurfaceArbiter/LLM micro wording.
 - `CognitiveActionPlan.to_dict()` hiện serialize `vital_pressure`, `metabolic_pressure`, `is_vital_pressure`.
-Known risk:
-- `CognitiveActionPlan` dataclass trong source hiện chưa khai báo ba field này trước `to_dict()`. Nếu frame/action plan không được set dynamic attribute, `frame.to_dict()` có thể rơi `AttributeError`.
-Debug trace:
-- Full pytest fail ở `frame.to_dict()` / `CognitiveActionPlan.to_dict()` với `AttributeError: 'CognitiveActionPlan' object has no attribute 'vital_pressure'` là mismatch contract, không phải lỗi SurfaceArbiter hay LLM.
-Debug khi: dataclass field mismatch, runtime module không hiểu nhau.
+Status note:
+- revision hiện tại đã có ba field này ngay trong dataclass `CognitiveActionPlan`; cảnh báo mismatch cũ không còn là mô tả đúng của `HEAD`.
+Debug khi:
+- object test double/legacy payload dựng thiếu field contract mới.
+- runtime module không hiểu nhau vì caller serialize/deserialize theo schema cũ.
 Status: ACTIVE CORE LANGUAGE.
 
 ## `src/cortex/attention_salience.py`
@@ -962,14 +989,23 @@ Status: ACTIVE.
 Role: biến fact thô thành meaning có thể phản ứng.
 Examples:
 - code_idle_long -> cognitive_stall.
-- tiktok_after_code -> decompression.
+- tiktok_opened_after_code -> decompression.
 - error_visible -> friction_point.
-- force_speak -> requested_presence.
+- force_speak -> user_requested_presence.
 Outputs:
 - MeaningLayerResult.
 - semantic_family.
 - meaning_shift.
-Debug khi: autonomous lặp quan sát thô như camera.
+Current code specifics:
+- `force_speak`/`channel=force_speak` được map thẳng thành `user_requested_presence`; đây là explicit pull chứ không phải “context rỗng”.
+- `_infer_fact()` trộn `snapshot`, `broadcast`, `thought_stream_report`, `user_text`; nó nhìn signal semantic chứ không đọc pixel trực tiếp.
+- `ambient_idle` là meaning mềm khi idle/silence/boredom đủ dài; nó không được tự động thăng cấp thành câu chuyện lớn chỉ vì im lâu.
+- `_maybe_prolonged_fact()` là semantic bridge mới: nếu cùng semantic family kéo dài đủ lâu thì nảy `prolonged_activity`, mở `meaning_shift_gate` mà vẫn không được bịa chi tiết màn hình.
+- `render_prompt_context()` đóng dấu rất rõ: meaning là private pressure layer, không được nói thẳng label kiểu `escape_from_friction`, `cognitive_stall`, `scattered_attention`.
+Debug khi:
+- autonomous lặp quan sát thô như camera.
+- force_speak bị hiểu như thiếu evidence thay vì user gọi hiện diện.
+- idle lâu mà `meaning_shift` không bao giờ mở dù activity thực sự bị kéo dài.
 Status: ACTIVE CRITICAL.
 
 ## `src/cortex/appraisal.py`
@@ -1692,6 +1728,11 @@ Status: CRITICAL TEST.
 
 ## `tests/test_llm_service.py`
 Role: LLM service fallback/contract/context.
+Notable recent coverage:
+- `generate_micro_presence_line()` trả tiny text qua JSON API riêng.
+- salvage malformed decision JSON mà không leak `intent/debug_trace/action` vào `text`.
+- Gemini/OpenAI-compatible metadata không được wrap thành public speech.
+- coerce decision-like JSON thiếu field/sai kiểu/sai spacing mà không phải dùng wrapper prose.
 Status: CRITICAL TEST.
 
 ## `tests/test_llm_client.py`
@@ -1722,6 +1763,19 @@ Status: ACTIVE.
 Role: speech/internal/micro/substrate regression.
 Status: CRITICAL for “có hồn nhưng không spam”.
 
+## `tests/test_model_budget_policy_queue.py`
+Role: queue/lease regression cho heavy-model scheduler.
+Covers:
+- queue-only mode với `resource_guard_enabled=false`.
+- heavy tiers không overlap.
+- cancel queued request trước khi nó chạy.
+- `vision_force_run` bỏ qua soft guard/queue timeout nhưng vẫn tôn trọng hard veto như GPU overheat.
+- `force_local_gguf_main` có priority lane riêng.
+Debug khi:
+- log có `model_queue_timeout`, `model_request_cancelled`, `vision_force_run`, `scheduler_allow`.
+- main/vision/daydream tưởng đã bỏ guard nhưng vẫn nghẽn vì queue head hoặc timeout lane.
+Status: CRITICAL QUEUE TEST.
+
 ## `tests/test_surface_arbiter.py`
 Role: unit tests độc lập cho low-level surface arbitration.
 Covers:
@@ -1735,6 +1789,16 @@ Debug khi:
 - config threshold đổi nhưng runtime không ăn.
 - body-only streak/rate-limit hành xử lạ.
 Status: CRITICAL SURFACE TEST.
+
+## `tests/test_presence_controller_memory_surface.py`
+Role: regression test cho đường `active_memory_resonance -> endogenous surface impulse`.
+Covers:
+- memory resonance public-safe được convert thành `SurfaceImpulse(kind="memory_resonance")`.
+- affective/private resonance `may_surface=false` không được surface.
+Debug khi:
+- memory residue đúng ra chỉ nên thành low-claim muse nhưng lại im hoàn toàn.
+- affective residue private bị lộ ra presence/surface path.
+Status: ACTIVE TARGETED REGRESSION.
 
 ## `tests/test_ti_governor.py`
 Role: capability/perception guard regression.

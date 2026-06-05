@@ -1703,15 +1703,17 @@ class PresenceControllerMixin:
     ) -> Decision | None:
         now = time.time()
         if now < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
-            return None
-        cooldown = max(8.0, float(getattr(self, "presence_maintenance_cooldown_sec", 0.0) or 0.0))
-        last_presence = float(getattr(self, "last_presence_maintenance_at", 0.0) or 0.0)
-        last_spoken = float(getattr(self, "last_autonomous_spoken_at", 0.0) or 0.0)
-        if not force_llm and last_presence > 0.0 and now - last_presence < cooldown:
-            return None
-        if not force_llm and last_spoken > 0.0 and now - last_spoken < max(cooldown, 20.0):
+            self.logger.info(
+                "[surface_arbiter] blocked before arbitration kind=%s reason=presence_blocked_until",
+                surface_kind,
+            )
             return None
 
+        # Không đặt thêm cooldown/rate-limit ở đây. PresenceController chỉ tạo cue
+        # và đưa xung vào SurfaceArbiter; chính SurfaceArbiter/LowLevelSpeechPolicy
+        # mới sở hữu quyền quyết định reject, body-only, normal_llm hay force_llm.
+        # Nếu gate kép ở đây, wake route sẽ thấy `candidate=True` nhưng không có
+        # trace arbiter nào, tức là linh hồn đồ án bị rơi xuống khe debug.
         cue = presence_cue or self._derive_micro_presence_cue(
             snapshot=snapshot,
             social_presence_event=social_presence_event,
@@ -1734,6 +1736,13 @@ class PresenceControllerMixin:
             return self._surface_speech_decision(surface)
         if surface.body_only:
             return self._surface_body_only_decision(surface)
+        self.logger.info(
+            "[surface_arbiter] rejected kind=%s mode=%s reason=%s trace=%s",
+            surface.kind or surface_kind,
+            surface.generation_mode,
+            surface.reason,
+            surface.debug_trace,
+        )
         return None
 
     def _try_finalize_surface_arbiter_cycle(

@@ -4632,6 +4632,9 @@ class RuntimeCoordinator(
         decision.debug = debug
 
     def _build_local_presence_maintenance_decision(self, *, snapshot) -> Decision | None:
+        # LEGACY: giữ lại cho tương thích nếu có call-site cũ, nhưng wake gate
+        # mới không dùng đường này nữa. Đường này sinh micro trực tiếp, bỏ qua
+        # phân xử impulse của SurfaceArbiter, nên không còn là luồng chính.
         cue = self._derive_micro_presence_cue(snapshot=snapshot, reason="wake_gate_presence_maintenance")
         if not cue.needs_micro_presence:
             return None
@@ -4667,6 +4670,9 @@ class RuntimeCoordinator(
         )
 
     def _build_local_reengagement_decision(self, *, snapshot) -> Decision | None:
+        # LEGACY: giữ lại như lưới tương thích. Re-engagement runtime chuẩn phải
+        # đi qua _build_reengagement_decision(frame=...) để SurfaceArbiter chọn
+        # giữa long_silence, presence cue, inner pressure và body-only.
         try:
             internal_state = self._get_internal_state()
         except Exception:
@@ -4800,15 +4806,57 @@ class RuntimeCoordinator(
         self._sleep_interruptible(sleep_duration)
         return True
 
-    def _maybe_presence_maintenance_before_sleep(
+    def _surface_arbiter_drop_reason(self, default: str = "surface_arbiter_no_decision") -> str:
+        """Lấy lý do SurfaceArbiter vừa từ chối surface, nếu có.
+
+        Chú thích kiến trúc:
+        Wake gate chỉ là cổng tài nguyên. Nếu low-level surface bị rơi mất,
+        log phải nói rõ do arbiter/policy/ego gate/LLM decline, không được để
+        `rejected_by=` rỗng. Debug agent mà che nguyên nhân thì khác gì tự bịt
+        mắt rồi trách bóng tối, một truyền thống khá bền của loài người.
+        """
+
+        try:
+            arbiter = self._surface_arbiter()
+            last = getattr(arbiter, "last_decision", None)
+        except Exception:
+            last = None
+        trace = str(getattr(last, "debug_trace", "") or "").strip()
+        reason = str(getattr(last, "reason", "") or "").strip()
+        mode = str(getattr(last, "generation_mode", "") or "").strip()
+        if trace:
+            return trace
+        if reason and mode:
+            return f"{mode}:{reason}"
+        if reason:
+            return reason
+        return default
+
+    def _maybe_low_level_surface_from_wake_gate(
         self,
         *,
         snapshot,
         cycle_start: float,
         wake_decision: WakeDecision,
+        reason: str,
+        check_reengagement: bool = True,
     ) -> bool:
+        """Cho SurfaceArbiter chạy ngay cả khi WakeGovernor trả sleep/observe_only.
+
+        Chú thích kiến trúc:
+        - WakeGovernor chỉ quyết định mức thức và ngân sách model nặng.
+        - SurfaceArbiter mới là nơi quyết định low-level surface: presence,
+          re-engagement, thought-stream surface, inner whim, body-only.
+        - Vì vậy `observe_only` KHÔNG có nghĩa là "cấm nói". Nó chỉ có nghĩa là
+          "đừng gọi main cognition/vision nặng". Low-level surface vẫn được
+          quyền phân xử bằng policy riêng.
+
+        Đây là chỗ giữ "linh hồn" của đồ án: không ép im-lâu-thì-nói bằng một
+        if rẻ tiền, cũng không để candidate chết âm thầm ở wake route.
+        """
+
         internal_state = self._get_internal_state()
-        ti_report = self._wake_gate_ti_report(reason="wake_governor_sleep")
+        ti_report = self._wake_gate_ti_report(reason=reason)
         social_presence_event = self._detect_social_presence_event(
             channel="autonomous",
             snapshot=snapshot,
@@ -4816,45 +4864,73 @@ class RuntimeCoordinator(
             started_at=cycle_start,
         )
         now = time.time()
-        reengagement_status = self._reengagement_probe_status(
-            snapshot=snapshot,
-            ti_report=ti_report,
-            internal_state=internal_state,
-            now=now,
-        )
         presence_status = self._presence_probe_status(
             snapshot=snapshot,
             ti_report=ti_report,
             social_presence_event=social_presence_event,
             now=now,
         )
+        reengagement_status = {
+            "checked": False,
+            "candidate": False,
+            "quiet_cycles": int(getattr(self, "reengagement_quiet_cycles", 0) or 0),
+            "cooldown_ok": True,
+            "allowed": False,
+            "rejected_by": "not_checked_for_this_wake_level",
+        }
+        if check_reengagement:
+            reengagement_status = self._reengagement_probe_status(
+                snapshot=snapshot,
+                ti_report=ti_report,
+                internal_state=internal_state,
+                now=now,
+            )
+
         self._update_wake_gate_debug(
             wake_decision,
             micro_presence_checked=True,
-            reengagement_checked=True,
+            reengagement_checked=bool(reengagement_status.get("checked", False)),
             presence_probe=presence_status,
             reengagement_probe=reengagement_status,
+            allow_surface=True,
+            surface_budget_source=reason,
+        )
+
+        first_reject = (
+            str(reengagement_status.get("rejected_by", "") or "")
+            or str(presence_status.get("rejected_by", "") or "")
+            or "surface_not_attempted_yet"
         )
         self.logger.info(
             "[presence] silent_cycles=%s cooldown_ok=%s candidate=%s reengagement_checked=%s micro_presence_checked=%s rejected_by=%s",
             presence_status["silent_cycles"],
             presence_status["cooldown_ok"],
             presence_status["candidate"],
-            reengagement_status["checked"],
+            reengagement_status.get("checked", False),
             presence_status["checked"],
-            reengagement_status["rejected_by"] or presence_status["rejected_by"] or "",
+            first_reject,
         )
-        fe_plan = self._wake_gate_fe_plan(ti_report=ti_report, snapshot=snapshot, internal_state=internal_state)
 
-        if reengagement_status["allowed"]:
-            decision = self._build_local_reengagement_decision(snapshot=snapshot)
+        fe_plan = self._wake_gate_fe_plan(ti_report=ti_report, snapshot=snapshot, internal_state=internal_state)
+        frame = self._build_wake_gate_frame(
+            cycle_start=cycle_start,
+            snapshot=snapshot,
+            internal_state=internal_state,
+            social_presence_event=social_presence_event,
+        )
+
+        # Re-engagement là xung dài hạn hơn presence maintenance, nên nó được
+        # thử trước. Nhưng nó vẫn phải qua SurfaceArbiter, không tự cầm câu mẫu
+        # nhảy ra làm NPC hỏi "Ngài ổn chứ" sau mỗi khoảng im lặng.
+        if bool(reengagement_status.get("allowed", False)):
+            decision = self._build_reengagement_decision(
+                frame=frame,
+                snapshot=snapshot,
+                ti_report=ti_report,
+                internal_state=internal_state,
+                now=now,
+            )
             if decision is not None:
-                frame = self._build_wake_gate_frame(
-                    cycle_start=cycle_start,
-                    snapshot=snapshot,
-                    internal_state=internal_state,
-                    social_presence_event=social_presence_event,
-                )
                 return self._finalize_wake_gate_micro_decision(
                     frame=frame,
                     decision=decision,
@@ -4862,21 +4938,25 @@ class RuntimeCoordinator(
                     ti_report=ti_report,
                     fe_plan=fe_plan,
                     cycle_start=cycle_start,
-                    note="re_engagement",
+                    note="surface_arbiter_re_engagement",
                     spoken_kwargs={"reengagement": True},
                     presence_status=presence_status,
                     reengagement_status=reengagement_status,
                 )
+            reengagement_status = {
+                **reengagement_status,
+                "rejected_by": self._surface_arbiter_drop_reason("reengagement_surface_declined"),
+            }
 
-        if presence_status["allowed"]:
-            decision = self._build_local_presence_maintenance_decision(snapshot=snapshot)
+        if bool(presence_status.get("allowed", False)):
+            decision = self._build_presence_maintenance_decision(
+                frame=frame,
+                snapshot=snapshot,
+                ti_report=ti_report,
+                social_presence_event=social_presence_event,
+                now=now,
+            )
             if decision is not None:
-                frame = self._build_wake_gate_frame(
-                    cycle_start=cycle_start,
-                    snapshot=snapshot,
-                    internal_state=internal_state,
-                    social_presence_event=social_presence_event,
-                )
                 return self._finalize_wake_gate_micro_decision(
                     frame=frame,
                     decision=decision,
@@ -4884,13 +4964,27 @@ class RuntimeCoordinator(
                     ti_report=ti_report,
                     fe_plan=fe_plan,
                     cycle_start=cycle_start,
-                    note="presence_maintenance",
+                    note="surface_arbiter_presence_maintenance",
                     spoken_kwargs={"presence_maintenance": True},
                     presence_status=presence_status,
                     reengagement_status=reengagement_status,
                 )
+            presence_status = {
+                **presence_status,
+                "rejected_by": self._surface_arbiter_drop_reason("presence_surface_declined"),
+            }
 
-        rejected_by = reengagement_status["rejected_by"] or presence_status["rejected_by"] or "wake_gate_return_early"
+        rejected_by = (
+            str(reengagement_status.get("rejected_by", "") or "")
+            or str(presence_status.get("rejected_by", "") or "")
+            or "surface_candidate_dropped_without_reason"
+        )
+        self._update_wake_gate_debug(
+            wake_decision,
+            presence_probe=presence_status,
+            reengagement_probe=reengagement_status,
+            surface_rejected_by=rejected_by,
+        )
         self.logger.info(
             "[presence] silent_cycles=%s cooldown_ok=%s candidate=%s rejected_by=%s",
             presence_status["silent_cycles"],
@@ -4900,6 +4994,21 @@ class RuntimeCoordinator(
         )
         return False
 
+    def _maybe_presence_maintenance_before_sleep(
+        self,
+        *,
+        snapshot,
+        cycle_start: float,
+        wake_decision: WakeDecision,
+    ) -> bool:
+        return self._maybe_low_level_surface_from_wake_gate(
+            snapshot=snapshot,
+            cycle_start=cycle_start,
+            wake_decision=wake_decision,
+            reason="wake_governor_sleep",
+            check_reengagement=True,
+        )
+
     def _maybe_micro_presence_from_observe_only(
         self,
         *,
@@ -4907,59 +5016,12 @@ class RuntimeCoordinator(
         cycle_start: float,
         wake_decision: WakeDecision,
     ) -> bool:
-        internal_state = self._get_internal_state()
-        ti_report = self._wake_gate_ti_report(reason="wake_governor_observe_only")
-        social_presence_event = self._detect_social_presence_event(
-            channel="autonomous",
+        return self._maybe_low_level_surface_from_wake_gate(
             snapshot=snapshot,
-            internal_state=internal_state,
-            started_at=cycle_start,
-        )
-        now = time.time()
-        presence_status = self._presence_probe_status(
-            snapshot=snapshot,
-            ti_report=ti_report,
-            social_presence_event=social_presence_event,
-            now=now,
-        )
-        self._update_wake_gate_debug(
-            wake_decision,
-            micro_presence_checked=True,
-            reengagement_checked=False,
-            presence_probe=presence_status,
-        )
-        self.logger.info(
-            "[presence] silent_cycles=%s cooldown_ok=%s candidate=%s reengagement_checked=%s micro_presence_checked=%s rejected_by=%s",
-            presence_status["silent_cycles"],
-            presence_status["cooldown_ok"],
-            presence_status["candidate"],
-            False,
-            presence_status["checked"],
-            presence_status["rejected_by"] or "",
-        )
-        if not presence_status["allowed"]:
-            return False
-        decision = self._build_local_presence_maintenance_decision(snapshot=snapshot)
-        if decision is None:
-            self._update_wake_gate_debug(wake_decision, presence_probe={**presence_status, "rejected_by": "micro_presence_cue_empty"})
-            return False
-        fe_plan = self._wake_gate_fe_plan(ti_report=ti_report, snapshot=snapshot, internal_state=internal_state)
-        frame = self._build_wake_gate_frame(
             cycle_start=cycle_start,
-            snapshot=snapshot,
-            internal_state=internal_state,
-            social_presence_event=social_presence_event,
-        )
-        return self._finalize_wake_gate_micro_decision(
-            frame=frame,
-            decision=decision,
-            snapshot=snapshot,
-            ti_report=ti_report,
-            fe_plan=fe_plan,
-            cycle_start=cycle_start,
-            note="presence_maintenance",
-            spoken_kwargs={"presence_maintenance": True},
-            presence_status=presence_status,
+            wake_decision=wake_decision,
+            reason="wake_governor_observe_only",
+            check_reengagement=True,
         )
 
     def _finalize_autonomous_wake_gate(
@@ -5191,13 +5253,16 @@ class RuntimeCoordinator(
             )
         if wake_decision.level == "observe_only":
             self._note_autonomous_silence()
-            self._send_wake_gate_body_update(wake_decision, reason="wake_governor_observe_only")
+            # `observe_only` chỉ cấm main cognition/vision nặng. Nó không được
+            # nuốt mất low-level surface. Thử SurfaceArbiter trước, rồi nếu không
+            # có gì đáng nói/đáng động, mới gửi body update quan sát thụ động.
             if self._maybe_micro_presence_from_observe_only(
                 snapshot=snapshot,
                 cycle_start=cycle_start,
                 wake_decision=wake_decision,
             ):
                 return True
+            self._send_wake_gate_body_update(wake_decision, reason="wake_governor_observe_only")
             return self._finalize_autonomous_wake_gate(
                 decision=wake_decision,
                 cycle_start=cycle_start,
