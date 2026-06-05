@@ -36,6 +36,8 @@ class SurfaceImpulse:
     is_presence: bool = False
     should_surface: bool = False
     needs_external_evidence: bool = False
+    vital_pressure: float = 0.0
+    is_vital_pressure: bool = False
     raw: Any = None
 
     def to_context(self) -> dict[str, object]:
@@ -56,6 +58,8 @@ class SurfaceImpulse:
             "is_presence": bool(self.is_presence),
             "should_surface": bool(self.should_surface),
             "needs_external_evidence": bool(self.needs_external_evidence),
+            "vital_pressure": round(float(self.vital_pressure), 3),
+            "is_vital_pressure": bool(self.is_vital_pressure),
         }
 
 
@@ -120,6 +124,34 @@ class SurfaceArbiter:
         self._last_family_at: dict[str, float] = {}
         self._body_only_streak = 0
 
+
+    # Các nhóm này là chính sách phân xử, không phải văn mẫu.
+    # Mục tiêu: tách "giữ nhịp hiện diện" khỏi "quyền tranh slot phát ngôn".
+    # Nếu không tách, micro_presence sẽ cứ thắng vì silence_debt rồi lại câm vì thiếu evidence.
+    # Đó là priority inversion: thắng bầu cử nhưng không có hộ chiếu để qua cửa thực thi.
+    _PRESENCE_LIKE_KINDS = frozenset({
+        "presence_maintenance",
+        "micro_presence",
+        "companionship_ping",
+        "re_engagement",
+        "idle_curiosity",
+    })
+    _SCREEN_ANCHORED_KINDS = frozenset({
+        "micro_observation",
+        "vision_comment",
+        "screen_observation",
+        "telemetry_comment",
+    })
+    _ENDOGENOUS_NO_ANCHOR_KINDS = frozenset({
+        "inner_whim",
+        "random_chatter",
+        "thought_stream_surface",
+        "idle_curiosity_inner",
+        "curious_question",
+        "memory_resonance",
+        "light_muse",
+    })
+
     def arbitrate(
         self,
         *,
@@ -153,6 +185,31 @@ class SurfaceArbiter:
                 generation_mode="reject",
                 reason="no_winner_impulse",
                 debug_trace="surface_arbiter; reason=no_winner_impulse",
+            )
+            self.last_decision = decision
+            return decision
+
+        forced_body_only_reason = self._forced_body_only_reason(winner)
+        if forced_body_only_reason:
+            # Micro/presence thiếu anchor không được gọi LLM để rồi trả rỗng.
+            # Nó chỉ được giữ thân thể/nhịp, còn slot lời nói phải nhường cho impulse nội sinh nếu có.
+            self._mark_attempt(winner, result=forced_body_only_reason, body_only=True)
+            self._note_non_speech(body_only=True)
+            decision = SurfaceDecision(
+                body_only=True,
+                should_speak=False,
+                parse_mode=f"{winner.kind or surface_kind}_body_only",
+                intent=winner.kind or surface_kind,
+                source="surface_arbiter_body_only",
+                generation_mode="forced_body_only",
+                confidence=winner.confidence,
+                kind=winner.kind,
+                body_action=winner.body_action,
+                focus_family=winner.focus_family,
+                reason=forced_body_only_reason,
+                debug_trace=self._trace(winner, suppressed, "forced_body_only", forced_body_only_reason),
+                impulse=winner,
+                suppressed=suppressed,
             )
             self.last_decision = decision
             return decision
@@ -209,7 +266,12 @@ class SurfaceArbiter:
             # rơi về reject/body-only. Policy là cổng điều tiết, không phải máy nghiền ý định nói.
             kind = str(getattr(winner, "kind", "") or "").strip()
             always_llm = set(getattr(self.policy.config, "always_llm_kinds", ()) or ())
-            if self.silent_cycles >= self.policy.config.force_llm_after_silent or (kind in always_llm and winner.confidence >= self.policy.config.min_surface_confidence):
+            vital = _clamp01(getattr(winner, "vital_pressure", 0.0))
+            if (
+                self.silent_cycles >= self.policy.config.force_llm_after_silent
+                or (kind in always_llm and winner.confidence >= self.policy.config.min_surface_confidence)
+                or (vital >= getattr(self.policy.config, "vital_pressure_force_llm_threshold", 0.62) and winner.confidence >= self.policy.config.body_only_min_confidence)
+            ):
                 mode = "force_llm"
         if mode == "reject":
             self._mark_attempt(winner, result="policy_reject", body_only=False)
@@ -236,6 +298,7 @@ class SurfaceArbiter:
         if mode in {"force_llm", "normal_llm"}:
             text, trace = self._call_llm_generator(winner, snapshot=snapshot, force_llm=(mode == "force_llm" or force_llm))
             if str(text or "").strip():
+                debug_trace = self._trace(winner, suppressed, mode, str(trace or "llm_ok"))
                 self._reset_silence()
                 self._mark_surface(winner)
                 parse_mode = "presence_maintenance" if winner.is_presence else "spontaneous"
@@ -254,7 +317,7 @@ class SurfaceArbiter:
                     body_action=winner.body_action,
                     focus_family=winner.focus_family,
                     reason=winner.reason,
-                    debug_trace=self._trace(winner, suppressed, mode, str(trace or "llm_ok")),
+                    debug_trace=debug_trace,
                     impulse=winner,
                     suppressed=suppressed,
                 )
@@ -428,6 +491,8 @@ class SurfaceArbiter:
         if not act or act == "no_speech":
             return None
         pressure = _clamp01(getattr(impulse, "surface_pressure", 0.0), _clamp01(getattr(impulse, "emotional_pressure", 0.0)))
+        vital_pressure = _clamp01(getattr(impulse, "vital_pressure", 0.0))
+        pressure = max(pressure, vital_pressure * 0.82)
         evidence = tuple(str(item) for item in (getattr(impulse, "evidence", ()) or ()) if str(item).strip())[:10]
         body_hint = getattr(impulse, "body_bias_hint", {}) or {}
         body_action = str(body_hint.get("body_action_bias", "low_pressure_presence") or "low_pressure_presence")
@@ -448,6 +513,8 @@ class SurfaceArbiter:
             is_presence=act in {"micro_presence", "companionship_ping"},
             should_surface=pressure > 0.0 and not bool(getattr(impulse, "needs_external_evidence", False)),
             needs_external_evidence=bool(getattr(impulse, "needs_external_evidence", False)),
+            vital_pressure=vital_pressure,
+            is_vital_pressure=bool(getattr(impulse, "is_vital_pressure", False)) or vital_pressure >= 0.55,
             raw=impulse,
         )
 
@@ -568,15 +635,152 @@ class SurfaceArbiter:
             is_presence=bool(get("is_presence", kind in {"presence_maintenance", "micro_presence", "re_engagement"})),
             should_surface=bool(get("should_surface", True)),
             needs_external_evidence=bool(get("needs_external_evidence", False)),
+            vital_pressure=_clamp01(get("vital_pressure", 0.0)),
+            is_vital_pressure=bool(get("is_vital_pressure", False)) or _clamp01(get("vital_pressure", 0.0)) >= 0.55,
             raw=item,
         )
 
     def _score_and_select_winner(self, impulses: tuple[SurfaceImpulse, ...]) -> tuple[SurfaceImpulse | None, tuple[SurfaceImpulse, ...]]:
-        viable = tuple(item for item in impulses if item.should_surface and not item.needs_external_evidence)
-        if not viable:
-            return None, ()
-        ordered = tuple(sorted(viable, key=lambda item: (item.score, self._priority(item.kind, item.source)), reverse=True))
-        return ordered[0], ordered[1:]
+        """Chọn winner theo hai hàng đợi: speakable trước, body-only sau.
+
+        Luật dài hạn:
+        - Presence/micro-presence thiếu evidence hiện tại vẫn được giữ body rhythm,
+          nhưng không được tranh slot public speech.
+        - Inner_whim/random_chatter/thought_stream_surface là impulse nội sinh thấp-claim,
+          nên được phép thắng khi silence kéo dài mà không cần screen anchor.
+        - vital_pressure không còn là cộng nhẹ tuyến tính. Khi bị nén lâu, nó tăng theo
+          multiplier phi tuyến có trần, đủ để phá starvation nhưng không biến thành spam.
+        """
+        speakable: list[tuple[float, SurfaceImpulse]] = []
+        body_only: list[tuple[float, SurfaceImpulse]] = []
+
+        for item in impulses:
+            if not item.should_surface:
+                continue
+            effective = self._effective_score(item)
+            forced_reason = self._forced_body_only_reason(item)
+            if forced_reason:
+                body_only.append((effective, item))
+                continue
+            if item.needs_external_evidence:
+                # Cần evidence ngoài nhưng không có forced-body-only reason rõ ràng thì loại hẳn.
+                # Không để LLM tự tưởng tượng một cái neo màn hình. Máy đã đủ sáng tạo trong việc tự phá rồi.
+                continue
+            speakable.append((effective, item))
+
+        if speakable:
+            ordered_pairs = tuple(sorted(
+                speakable,
+                key=lambda pair: (pair[0], self._priority(pair[1].kind, pair[1].source)),
+                reverse=True,
+            ))
+            suppressed_pairs = tuple(sorted(
+                (*ordered_pairs[1:], *body_only),
+                key=lambda pair: (pair[0], self._priority(pair[1].kind, pair[1].source)),
+                reverse=True,
+            ))
+            return ordered_pairs[0][1], tuple(item for _, item in suppressed_pairs)
+
+        if body_only:
+            # Không có impulse nói được thì trả body-only thay vì gọi LLM vào khoảng trắng.
+            ordered_pairs = tuple(sorted(
+                body_only,
+                key=lambda pair: (pair[0], self._priority(pair[1].kind, pair[1].source)),
+                reverse=True,
+            ))
+            return ordered_pairs[0][1], tuple(item for _, item in ordered_pairs[1:])
+
+        return None, ()
+
+    def _presence_like(self, impulse: SurfaceImpulse) -> bool:
+        kind = str(impulse.kind or impulse.speech_act or "")
+        return bool(impulse.is_presence or kind in self._PRESENCE_LIKE_KINDS)
+
+    def _endogenous_no_anchor_like(self, impulse: SurfaceImpulse) -> bool:
+        kind = str(impulse.kind or impulse.speech_act or "")
+        source = str(impulse.source or "")
+        return bool(
+            kind in self._ENDOGENOUS_NO_ANCHOR_KINDS
+            or source in {"thought_stream", "endogenous_drive", "spontaneous_life", "inner_thought"}
+            or bool(getattr(impulse, "is_vital_pressure", False))
+        )
+
+    def _has_concrete_evidence_anchor(self, impulse: SurfaceImpulse) -> bool:
+        text = " ".join(str(item) for item in (impulse.evidence or ())).lower()
+        if not text.strip():
+            return False
+        concrete_markers = (
+            "scene_evidence", "vision_fact", "ev.active_window", "ev.active_app",
+            "ev.ocr", "screen_fact", "user_chat", "runtime_event",
+        )
+        return any(marker in text for marker in concrete_markers)
+
+    def _forced_body_only_reason(self, impulse: SurfaceImpulse) -> str:
+        """Trả reason nếu impulse chỉ được body-only, không được tranh slot nói.
+
+        Đây là chốt chống priority inversion: micro_presence thiếu anchor không còn
+        được thắng rồi bắt LLM viết câu rỗng. Nó lui về body-only, nhường lời cho
+        inner_whim/random_chatter nếu các impulse đó đủ áp lực.
+        """
+        if not impulse.should_surface:
+            return ""
+        kind = str(impulse.kind or impulse.speech_act or "")
+        if kind in self._SCREEN_ANCHORED_KINDS:
+            return ""
+        if impulse.needs_external_evidence and impulse.missing_evidence_ids:
+            return "forced_body_only:needs_external_evidence_missing"
+        if self._presence_like(impulse) and impulse.missing_evidence_ids and not self._has_concrete_evidence_anchor(impulse):
+            return "forced_body_only:presence_missing_evidence"
+        return ""
+
+    def _effective_score(self, impulse: SurfaceImpulse) -> float:
+        base = self._clamp_score(getattr(impulse, "score", 0.0))
+        vital = _clamp01(getattr(impulse, "vital_pressure", 0.0))
+        effective = base
+
+        if self._endogenous_no_anchor_like(impulse):
+            # Phi tuyến có trần: im càng lâu thì nội sinh càng có quyền phá bĩnh,
+            # nhưng không vượt khỏi vùng low-claim. Đây là starvation prevention,
+            # không phải giấy phép nói lảm nhảm như NPC hết thoại.
+            over = max(0, int(self.silent_cycles) - 3)
+            multiplier = min(2.10, 1.0 + (over ** 1.35) * 0.075)
+            effective += vital * 0.24 * multiplier
+            effective += min(0.22, over * 0.028)
+            if impulse.missing_evidence_ids:
+                # Nội sinh được thiếu screen anchor, miễn là không claim screen.
+                effective += 0.04
+
+        if self._presence_like(impulse) and impulse.missing_evidence_ids and not self._has_concrete_evidence_anchor(impulse):
+            # Không giết presence; chỉ hạ nó khỏi cuộc tranh lời nói.
+            # Nếu không có candidate nào khác, nó vẫn có thể trả body-only.
+            effective -= 0.34 + min(0.22, max(0, int(self.silent_cycles) - 2) * 0.025)
+
+        return self._clamp_score(effective)
+
+    @staticmethod
+    def _clamp_score(value: Any) -> float:
+        try:
+            number = float(value)
+        except Exception:
+            number = 0.0
+        if number != number:
+            number = 0.0
+        return max(-1.0, min(2.0, number))
+
+    def _candidate_notes(self, impulse: SurfaceImpulse) -> str:
+        notes: list[str] = []
+        forced = self._forced_body_only_reason(impulse)
+        if forced:
+            notes.append(forced)
+        if self._endogenous_no_anchor_like(impulse):
+            vital = _clamp01(getattr(impulse, "vital_pressure", 0.0))
+            over = max(0, int(self.silent_cycles) - 3)
+            if vital > 0 or over > 0:
+                multiplier = min(2.10, 1.0 + (over ** 1.35) * 0.075)
+                notes.append(f"endogenous_boost:vital={vital:.2f}x{multiplier:.2f}")
+        if self._presence_like(impulse) and impulse.missing_evidence_ids and not self._has_concrete_evidence_anchor(impulse):
+            notes.append("presence_penalty:missing_anchor")
+        return ",".join(notes)
 
     def _signed_float(self, value: Any, default: float = 0.0) -> float:
         try:
@@ -628,7 +832,7 @@ class SurfaceArbiter:
             return "ego_gate:dignity_distance"
         if preferred_distance >= 0.74 and trust <= 0.34:
             return "ego_gate:preferred_distance_high"
-        if kind == "presence_maintenance" and impulse.missing_evidence_ids and impulse.score < 0.72:
+        if kind == "presence_maintenance" and impulse.missing_evidence_ids and impulse.score < 0.72 and _clamp01(getattr(impulse, "vital_pressure", 0.0)) < 0.58:
             return "ego_gate:ambient_copresence_no_anchor"
         return ""
 
@@ -637,15 +841,16 @@ class SurfaceArbiter:
             return ""
         now = time.time()
         min_interval = float(getattr(self.policy.config, "min_surface_interval_seconds", 0.0) or 0.0)
+        vital = _clamp01(getattr(impulse, "vital_pressure", 0.0))
         if self.last_surface_time > 0 and min_interval > 0 and now - self.last_surface_time < min_interval:
-            # Không rate-limit long-silence force path; còn lại thì chặn để tránh lải nhải.
-            if self.silent_cycles < self.policy.config.force_llm_after_silent:
+            # Không rate-limit long-silence/vital force path; còn lại thì chặn để tránh lải nhải.
+            if self.silent_cycles < self.policy.config.force_llm_after_silent and vital < 0.66:
                 return f"surface_interval_cooldown:{now - self.last_surface_time:.1f}/{min_interval:.1f}s"
         family_cooldown = float(getattr(self.policy.config, "family_cooldown_seconds", 0.0) or 0.0)
         family = self._family_id(impulse)
         last_family = float(self._last_family_at.get(family, 0.0) or 0.0)
         if family and last_family > 0 and family_cooldown > 0 and now - last_family < family_cooldown:
-            if self.silent_cycles < self.policy.config.force_llm_after_silent:
+            if self.silent_cycles < self.policy.config.force_llm_after_silent and vital < 0.66:
                 return f"family_cooldown:{family}:{now - last_family:.1f}/{family_cooldown:.1f}s"
         if self._body_only_streak >= self.policy.config.max_body_only_streak:
             # Body-only quá nhiều thì không tiếp tục nhúc nhích giả vờ sống.
@@ -714,19 +919,26 @@ class SurfaceArbiter:
         self.last_surface_time = time.time()
 
     def _trace(self, winner: SurfaceImpulse, suppressed: tuple[SurfaceImpulse, ...], mode: str, result: str) -> str:
-        suppressed_note = ",".join(f"{item.kind}:{item.score:.2f}" for item in suppressed[:4])
+        candidate_items = (winner, *suppressed[:5])
+        candidate_note = " | ".join(
+            f"{item.kind}:raw={item.score:.2f},eff={self._effective_score(item):.2f}"
+            + (f"[{self._candidate_notes(item)}]" if self._candidate_notes(item) else "")
+            for item in candidate_items
+        )
         return (
-            "surface_arbiter"
+            "[surface_arbiter_arbitration]"
+            f" winner={winner.kind}"
             f"; source={winner.source}"
-            f"; kind={winner.kind}"
             f"; mode={mode}"
             f"; confidence={winner.confidence:.2f}"
-            f"; score={winner.score:.2f}"
+            f"; raw_score={winner.score:.2f}"
+            f"; effective_score={self._effective_score(winner):.2f}"
             f"; silent_cycles={self.silent_cycles}"
             f"; focus_family={winner.focus_family}"
             f"; missing_evidence_ids={winner.missing_evidence_ids}"
+            f"; vital={_clamp01(getattr(winner, 'vital_pressure', 0.0)):.2f}"
             f"; result={result}"
-            f"; suppressed={suppressed_note}"
+            f"; candidates={candidate_note}"
         )
 
     @staticmethod
@@ -740,7 +952,9 @@ class SurfaceArbiter:
             "curious_question": 0.54,
             "inner_whim": 0.50,
             "light_muse": 0.48,
-            "thought_stream_surface": 0.46,
+            "thought_stream_surface": 0.50,
+            "random_chatter": 0.49,
+            "memory_resonance": 0.48,
             "micro_presence": 0.44,
         }.get(key, 0.40 if source else 0.0)
 

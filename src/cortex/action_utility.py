@@ -462,11 +462,22 @@ class ActionUtilityScorer:
                 if score.action == "micro_presence":
                     score.add(-0.12, "meaning_quiet_observe_not_plain_presence", "risk")
             meaning_shift = self._meaning_shift(ctx)
+            vital = self._vital_pressure(ctx)
+            has_internal = self._has_internal_impulse(ctx)
             if not meaning_shift:
                 if score.action == "no_speech":
-                    score.add(0.34, "no_meaning_shift", "pressure")
+                    # Không có meaning shift vẫn nên thiên im, nhưng vital pressure
+                    # bào mòn điểm im. Nếu không, autonomous có tim mà bị tắt loa mãi.
+                    score.add(max(0.06, 0.34 - vital * 0.34), "no_meaning_shift", "pressure")
+                    if vital >= 0.55:
+                        score.add(-0.22 * vital, "vital_pressure_reduces_silence", "risk")
                 if score.action in FREEFORM_SOCIAL_ACTIONS | SCREEN_CLAIM_ACTIONS and _clean(ctx.proposed_speech_act) != score.action:
-                    score.add(-0.28, "autonomous_needs_meaning_shift", "risk")
+                    if score.action in SCREEN_CLAIM_ACTIONS and not ctx.has_concrete_signal:
+                        score.add(-0.28, "autonomous_needs_grounding_for_screen_claim", "risk")
+                    elif has_internal or vital >= 0.50:
+                        score.add(0.16 + vital * 0.18, "endogenous_vital_bypasses_meaning_shift_softly", "pressure")
+                    else:
+                        score.add(-0.28, "autonomous_needs_meaning_shift", "risk")
             else:
                 if score.action in {"observe", "micro_observation", "micro_presence"}:
                     score.add(0.24, "meaning_shift_allows_small_surface", "pressure")
@@ -637,17 +648,23 @@ class ActionUtilityScorer:
 
         # Nếu silence sát nút, giảm các hành vi kéo chú ý. Đây là cách mềm hơn
         # nhiều so với hard cooldown kiểu đồng hồ báo thức mặc váy cognitive.
-        if silence_total and selected_total - silence_total <= 0.10:
+        vital = self._vital_pressure(ctx)
+        if silence_total and selected_total - silence_total <= 0.10 and vital < 0.56:
             if score.action in {"curious_question", "reengagement", "random_chatter", "relational_checkin"}:
                 score.add(-0.26, "silence_close_runner_up_reduce_pull", "risk")
             if score.action in {"micro_observation", "micro_presence", "inner_whim", "light_muse"}:
                 score.add(-0.08, "silence_close_runner_up_keep_tiny", "risk")
+        elif vital >= 0.56 and score.action in {"micro_presence", "inner_whim", "light_muse", "random_chatter", "reengagement"}:
+            score.add(0.14 + vital * 0.16, "vital_pressure_keeps_surface_alive", "pressure")
 
         if selected_name == "silence_impulse":
             if score.action == "no_speech":
-                score.add(0.34 + selected_total * 0.20, "intentional_silence_winner", "pressure")
+                score.add(max(0.05, 0.34 + selected_total * 0.20 - vital * 0.42), "intentional_silence_winner", "pressure")
             elif score.action in FREEFORM_SOCIAL_ACTIONS | SCREEN_CLAIM_ACTIONS | {"micro_presence", "reengagement"}:
-                score.add(-0.30, "silence_winner_blocks_surface_noise", "risk")
+                if vital >= 0.58 and score.action not in SCREEN_CLAIM_ACTIONS:
+                    score.add(0.12 + vital * 0.14, "vital_pressure_overrides_silence_winner_low_claim", "pressure")
+                else:
+                    score.add(-0.30, "silence_winner_blocks_surface_noise", "risk")
 
         elif selected_name == "body_only_impulse":
             if score.action == "no_speech":
@@ -673,14 +690,18 @@ class ActionUtilityScorer:
             if score.action == "no_speech" and selected_total >= 0.62:
                 score.add(-0.18, "technical_impulse_reduces_silence", "risk")
 
-        elif selected_name in {"inner_whim_impulse", "micro_story_impulse", "companionship_impulse"}:
+        elif selected_name in {"inner_whim_impulse", "micro_story_impulse", "companionship_impulse", "random_chatter_impulse", "memory_resonance_impulse", "reengagement_impulse"}:
             if selected_name == "inner_whim_impulse" and score.action == "inner_whim":
-                score.add(0.18, "inner_whim_winner", "pressure")
-            if selected_name == "micro_story_impulse" and score.action == "light_muse":
-                score.add(0.18, "micro_story_winner", "pressure")
+                score.add(0.18 + vital * 0.10, "inner_whim_winner", "pressure")
+            if selected_name in {"micro_story_impulse", "memory_resonance_impulse"} and score.action == "light_muse":
+                score.add(0.18 + vital * 0.10, f"{selected_name}_winner", "pressure")
+            if selected_name == "random_chatter_impulse" and score.action == "random_chatter":
+                score.add(0.18 + vital * 0.12, "random_chatter_winner", "pressure")
             if selected_name == "companionship_impulse" and score.action == "micro_presence":
-                score.add(0.16, "companionship_winner", "pressure")
-            if score.action == "curious_question":
+                score.add(0.16 + vital * 0.08, "companionship_winner", "pressure")
+            if selected_name == "reengagement_impulse" and score.action == "reengagement":
+                score.add(0.22 + vital * 0.14, "reengagement_winner", "pressure")
+            if score.action == "curious_question" and selected_name not in {"reengagement_impulse"}:
                 score.add(-0.16, "internal_impulse_no_question_pull", "risk")
 
     def _impulse_report(self, ctx: ActionContext) -> dict[str, Any]:
@@ -759,6 +780,9 @@ class ActionUtilityScorer:
             "inner_whim_impulse": "inner_whim",
             "micro_story_impulse": "light_muse",
             "companionship_impulse": "micro_presence",
+            "random_chatter_impulse": "random_chatter",
+            "memory_resonance_impulse": "light_muse",
+            "reengagement_impulse": "reengagement",
         }.get(str(name or ""), "")
 
     def _apply_rhythm(self, score: ActionScore, ctx: ActionContext) -> None:
@@ -928,7 +952,32 @@ class ActionUtilityScorer:
         act = str(getattr(impulse, "suggested_speech_act", "") or "").lower()
         pressure = _num(getattr(impulse, "surface_pressure", 0.0))
         needs_external = bool(getattr(impulse, "needs_external_evidence", False))
-        return (source == "endogenous" or layer == "spontaneous_life") and not needs_external and act not in {"", "no_speech"} and pressure >= 0.35
+        vital = self._vital_pressure(ctx)
+        return (source == "endogenous" or layer == "spontaneous_life") and not needs_external and act not in {"", "no_speech"} and (pressure >= 0.35 or vital >= 0.50)
+
+    def _vital_pressure(self, ctx: ActionContext) -> float:
+        core = getattr(ctx, "speech_core", None)
+        impulse = getattr(core, "speech_impulse", None) if core is not None else None
+        if impulse is not None:
+            value = _num(getattr(impulse, "vital_pressure", 0.0))
+            if value > 0.0:
+                return max(0.0, min(1.0, value))
+            hint = getattr(impulse, "body_bias_hint", None) or {}
+            if isinstance(hint, Mapping):
+                value = _num(hint.get("vital_pressure", 0.0))
+                if value > 0.0:
+                    return max(0.0, min(1.0, value))
+        report = self._impulse_report(ctx)
+        selected = report.get("selected") if isinstance(report, Mapping) else None
+        if isinstance(selected, Mapping):
+            for item in selected.get("evidence", ()) or ():
+                text = str(item or "")
+                if "metabolic.vital=" in text:
+                    try:
+                        return max(0.0, min(1.0, float(text.split("metabolic.vital=", 1)[1].split()[0])))
+                    except Exception:
+                        pass
+        return 0.0
 
     def _looks_like_question(self, text: str) -> bool:
         text = _normalize_text(text)

@@ -135,6 +135,7 @@ def test_wake_governor_keeps_main_wake_under_extreme_pressure():
         ModelBudgetPolicyConfig(
             enabled=True,
             queue_enabled=True,
+            resource_guard_enabled=True,
             remote_api_enabled=True,
             cpu_block_percent=80.0,
             ram_block_percent=80.0,

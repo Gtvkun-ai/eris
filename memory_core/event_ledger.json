@@ -2175,6 +2175,316 @@
           "parse_mode": "hard_json_repair"
         }
       }
+    },
+    {
+      "id": "evt_8ecc4e2f3f3b4b67",
+      "timestamp": 1780664041.6031916,
+      "iso_timestamp": "2026-06-05T19:54:01+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'autonomous-1', 'channel': 'autonomous', 'timestamp': '19:53', 'seen': ['thought=thought_548391; mode=memory_replay; topic=memory_replay:relationship_reflection'], 'said': '', 'outcome': 'micro_presence_body_only', 'tags': ['autonomous', 'presence_maintenance', 'micro_presence', 'cognitive_momentum', 'signal_buffer_only', 'ephemeral_presence'], 'system_action': '', 'salience': 0.3099778255880709, 'parse_mode': 'micro_presence_body_only'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [],
+      "tags": [
+        "commit",
+        "cognitive_frame",
+        "event_ledger",
+        "autonomous",
+        "signal_buffer_only",
+        "ephemeral_presence"
+      ],
+      "metadata": {
+        "commit_reason": "audit ephemeral micro-presence/body-only signal",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger",
+        "decay_policy": "session_only",
+        "request_tags": [
+          "cognitive_frame",
+          "event_ledger",
+          "autonomous",
+          "signal_buffer_only",
+          "ephemeral_presence"
+        ],
+        "ephemeral_presence": true,
+        "source": "CognitiveFrameRecorder",
+        "timestamp": "19:53",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780664041.6029906,
+        "frame_id": null,
+        "raw_content": {
+          "cycle_id": "autonomous-1",
+          "channel": "autonomous",
+          "timestamp": "19:53",
+          "seen": [
+            "thought=thought_548391; mode=memory_replay; topic=memory_replay:relationship_reflection"
+          ],
+          "said": "",
+          "outcome": "micro_presence_body_only",
+          "tags": [
+            "autonomous",
+            "presence_maintenance",
+            "micro_presence",
+            "cognitive_momentum",
+            "signal_buffer_only",
+            "ephemeral_presence"
+          ],
+          "system_action": "",
+          "salience": 0.3099778255880709,
+          "parse_mode": "micro_presence_body_only"
+        }
+      }
+    },
+    {
+      "id": "evt_3c91aed646be4e66",
+      "timestamp": 1780664158.607559,
+      "iso_timestamp": "2026-06-05T19:55:58+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'autonomous-3', 'channel': 'autonomous', 'timestamp': '19:55', 'seen': ['thought=thought_548391; mode=memory_replay; topic=memory_replay:relationship_reflection'], 'said': '', 'outcome': 'micro_presence_body_only', 'tags': ['autonomous', 'presence_maintenance', 'micro_presence', 'cognitive_momentum', 'signal_buffer_only', 'ephemeral_presence'], 'system_action': '', 'salience': 0.24015058563746242, 'parse_mode': 'micro_presence_body_only'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [],
+      "tags": [
+        "commit",
+        "cognitive_frame",
+        "event_ledger",
+        "autonomous",
+        "signal_buffer_only",
+        "ephemeral_presence"
+      ],
+      "metadata": {
+        "commit_reason": "audit ephemeral micro-presence/body-only signal",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger",
+        "decay_policy": "session_only",
+        "request_tags": [
+          "cognitive_frame",
+          "event_ledger",
+          "autonomous",
+          "signal_buffer_only",
+          "ephemeral_presence"
+        ],
+        "ephemeral_presence": true,
+        "source": "CognitiveFrameRecorder",
+        "timestamp": "19:55",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780664158.60735,
+        "frame_id": null,
+        "raw_content": {
+          "cycle_id": "autonomous-3",
+          "channel": "autonomous",
+          "timestamp": "19:55",
+          "seen": [
+            "thought=thought_548391; mode=memory_replay; topic=memory_replay:relationship_reflection"
+          ],
+          "said": "",
+          "outcome": "micro_presence_body_only",
+          "tags": [
+            "autonomous",
+            "presence_maintenance",
+            "micro_presence",
+            "cognitive_momentum",
+            "signal_buffer_only",
+            "ephemeral_presence"
+          ],
+          "system_action": "",
+          "salience": 0.24015058563746242,
+          "parse_mode": "micro_presence_body_only"
+        }
+      }
+    },
+    {
+      "id": "evt_8786085366664aa9",
+      "timestamp": 1780664247.1208725,
+      "iso_timestamp": "2026-06-05T19:57:27+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'autonomous-5', 'channel': 'autonomous', 'timestamp': '19:57', 'seen': ['loop=loop_382081; topic=memory_replay:relationship_reflection'], 'said': '', 'outcome': 'micro_presence_body_only', 'tags': ['autonomous', 'presence_maintenance', 'micro_presence', 'cognitive_attractor', 'signal_buffer_only', 'ephemeral_presence'], 'system_action': '', 'salience': 0.289514817175306, 'parse_mode': 'micro_presence_body_only'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [],
+      "tags": [
+        "commit",
+        "cognitive_frame",
+        "event_ledger",
+        "autonomous",
+        "signal_buffer_only",
+        "ephemeral_presence"
+      ],
+      "metadata": {
+        "commit_reason": "audit ephemeral micro-presence/body-only signal",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger",
+        "decay_policy": "session_only",
+        "request_tags": [
+          "cognitive_frame",
+          "event_ledger",
+          "autonomous",
+          "signal_buffer_only",
+          "ephemeral_presence"
+        ],
+        "ephemeral_presence": true,
+        "source": "CognitiveFrameRecorder",
+        "timestamp": "19:57",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780664247.1205413,
+        "frame_id": null,
+        "raw_content": {
+          "cycle_id": "autonomous-5",
+          "channel": "autonomous",
+          "timestamp": "19:57",
+          "seen": [
+            "loop=loop_382081; topic=memory_replay:relationship_reflection"
+          ],
+          "said": "",
+          "outcome": "micro_presence_body_only",
+          "tags": [
+            "autonomous",
+            "presence_maintenance",
+            "micro_presence",
+            "cognitive_attractor",
+            "signal_buffer_only",
+            "ephemeral_presence"
+          ],
+          "system_action": "",
+          "salience": 0.289514817175306,
+          "parse_mode": "micro_presence_body_only"
+        }
+      }
+    },
+    {
+      "id": "evt_a097c6cc859c4c44",
+      "timestamp": 1780664290.0926714,
+      "iso_timestamp": "2026-06-05T19:58:10+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'autonomous-6', 'channel': 'autonomous', 'timestamp': '19:57', 'seen': ['loop=loop_382081; topic=memory_replay:relationship_reflection'], 'said': '', 'outcome': 'micro_presence_body_only', 'tags': ['autonomous', 'presence_maintenance', 'micro_presence', 'cognitive_attractor', 'signal_buffer_only', 'ephemeral_presence'], 'system_action': '', 'salience': 0.2615973131964073, 'parse_mode': 'micro_presence_body_only'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [],
+      "tags": [
+        "commit",
+        "cognitive_frame",
+        "event_ledger",
+        "autonomous",
+        "signal_buffer_only",
+        "ephemeral_presence"
+      ],
+      "metadata": {
+        "commit_reason": "audit ephemeral micro-presence/body-only signal",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger",
+        "decay_policy": "session_only",
+        "request_tags": [
+          "cognitive_frame",
+          "event_ledger",
+          "autonomous",
+          "signal_buffer_only",
+          "ephemeral_presence"
+        ],
+        "ephemeral_presence": true,
+        "source": "CognitiveFrameRecorder",
+        "timestamp": "19:57",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780664290.0925372,
+        "frame_id": null,
+        "raw_content": {
+          "cycle_id": "autonomous-6",
+          "channel": "autonomous",
+          "timestamp": "19:57",
+          "seen": [
+            "loop=loop_382081; topic=memory_replay:relationship_reflection"
+          ],
+          "said": "",
+          "outcome": "micro_presence_body_only",
+          "tags": [
+            "autonomous",
+            "presence_maintenance",
+            "micro_presence",
+            "cognitive_attractor",
+            "signal_buffer_only",
+            "ephemeral_presence"
+          ],
+          "system_action": "",
+          "salience": 0.2615973131964073,
+          "parse_mode": "micro_presence_body_only"
+        }
+      }
+    },
+    {
+      "id": "evt_207c13edea8f47b9",
+      "timestamp": 1780664318.972168,
+      "iso_timestamp": "2026-06-05T19:58:38+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'autonomous-7', 'channel': 'autonomous', 'timestamp': '19:58', 'seen': ['loop=loop_382081; topic=memory_replay:relationship_reflection'], 'said': '', 'outcome': 'micro_presence_body_only', 'tags': ['autonomous', 'presence_maintenance', 'micro_presence', 'cognitive_attractor', 'signal_buffer_only', 'ephemeral_presence'], 'system_action': '', 'salience': 0.23295345569597084, 'parse_mode': 'micro_presence_body_only'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [],
+      "tags": [
+        "commit",
+        "cognitive_frame",
+        "event_ledger",
+        "autonomous",
+        "signal_buffer_only",
+        "ephemeral_presence"
+      ],
+      "metadata": {
+        "commit_reason": "audit ephemeral micro-presence/body-only signal",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger",
+        "decay_policy": "session_only",
+        "request_tags": [
+          "cognitive_frame",
+          "event_ledger",
+          "autonomous",
+          "signal_buffer_only",
+          "ephemeral_presence"
+        ],
+        "ephemeral_presence": true,
+        "source": "CognitiveFrameRecorder",
+        "timestamp": "19:58",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780664318.9719331,
+        "frame_id": null,
+        "raw_content": {
+          "cycle_id": "autonomous-7",
+          "channel": "autonomous",
+          "timestamp": "19:58",
+          "seen": [
+            "loop=loop_382081; topic=memory_replay:relationship_reflection"
+          ],
+          "said": "",
+          "outcome": "micro_presence_body_only",
+          "tags": [
+            "autonomous",
+            "presence_maintenance",
+            "micro_presence",
+            "cognitive_attractor",
+            "signal_buffer_only",
+            "ephemeral_presence"
+          ],
+          "system_action": "",
+          "salience": 0.23295345569597084,
+          "parse_mode": "micro_presence_body_only"
+        }
+      }
     }
   ]
 }

@@ -10,6 +10,7 @@ def make_config(**overrides):
     data = dict(
         enabled=True,
         queue_enabled=True,
+        resource_guard_enabled=True,
         remote_api_enabled=False,
         cpu_block_percent=999.0,
         ram_block_percent=999.0,
@@ -22,6 +23,7 @@ def make_config(**overrides):
         queue_poll_seconds=0.01,
         max_queue_size=8,
         assume_gtx_1650ti_4gb=False,
+        vision_force_run=False,
     )
     data.update(overrides)
     return ModelBudgetPolicyConfig(**data)
@@ -52,6 +54,32 @@ class ModelBudgetPolicyQueueTests(unittest.TestCase):
         self.assertIn("resource_guard:", decision.reason)
         self.assertIn("cpu_busy", decision.debug.get("resource_reasons", ()))
         self.assertIn("vram_busy", decision.debug.get("resource_reasons", ()))
+
+    def test_queue_only_mode_allows_high_resource_pressure(self):
+        policy = ModelBudgetPolicy(
+            make_config(
+                resource_guard_enabled=False,
+                cpu_block_percent=80.0,
+                ram_block_percent=80.0,
+                gpu_block_percent=70.0,
+                vram_block_percent=72.0,
+                gpu_temp_block_c=82.0,
+            )
+        )
+        snapshot = policy.capture()
+        snapshot.cpu_percent = 99.0
+        snapshot.ram_percent = 98.0
+        snapshot.gpu_util_percent = 96.0
+        snapshot.vram_used_mb = 4000.0
+        snapshot.vram_total_mb = 4096.0
+        snapshot.external_vram_used_mb = 4000.0
+        snapshot.gpu_temperature_c = 90.0
+
+        decision = policy.can_run("vision_compressor", resource_snapshot=snapshot, reason="queue_only")
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.reason, "scheduler_allow")
+        self.assertFalse(decision.debug.get("resource_guard_enabled"))
 
     def test_remote_main_ignores_gpu_vram_pressure_but_still_has_scheduler_reason(self):
         policy = ModelBudgetPolicy(make_config(remote_api_enabled=True, cpu_block_percent=80.0, ram_block_percent=80.0))
@@ -181,6 +209,88 @@ class ModelBudgetPolicyQueueTests(unittest.TestCase):
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.reason, "scheduler_allow")
         self.assertTrue(decision.debug.get("vision_vram_guard_bypassed"))
+
+    def test_vision_force_run_ignores_soft_resource_guard(self):
+        policy = ModelBudgetPolicy(
+            make_config(
+                vision_force_run=True,
+                cpu_block_percent=80.0,
+                ram_block_percent=80.0,
+                gpu_block_percent=70.0,
+                vram_block_percent=72.0,
+            )
+        )
+        snapshot = policy.capture()
+        snapshot.cpu_percent = 98.0
+        snapshot.ram_percent = 97.0
+        snapshot.gpu_util_percent = 94.0
+        snapshot.vram_used_mb = 3900.0
+        snapshot.vram_total_mb = 4096.0
+        snapshot.external_vram_used_mb = 3900.0
+
+        decision = policy.can_run("vision_compressor", resource_snapshot=snapshot, reason="blindness_recovery")
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.reason, "vision_force_run")
+        self.assertTrue(decision.debug.get("vision_force_run"))
+        ignored = decision.debug.get("ignored_resource_reasons", ())
+        self.assertIn("cpu_busy", ignored)
+        self.assertIn("ram_busy", ignored)
+        self.assertIn("gpu_busy", ignored)
+        self.assertIn("vram_busy", ignored)
+
+    def test_vision_force_run_priority_lane_ignores_queue_full_and_timeout(self):
+        policy = ModelBudgetPolicy(
+            make_config(
+                vision_force_run=True,
+                max_queue_size=1,
+                default_queue_timeout_seconds=0.01,
+                vision_force_run_priority=5000,
+                vision_force_run_queue_timeout_seconds=0.0,
+            )
+        )
+        policy._queue.append(
+            SimpleNamespace(
+                request_id="stale",
+                tier="subconscious_4b",
+                reason="stale",
+                priority=1,
+                enqueued_at=time.time(),
+                timeout_seconds=10.0,
+                sequence=1,
+                status="queued",
+                cancel_event=None,
+                last_budget_decision=None,
+                to_dict=lambda: {},
+            )
+        )
+
+        result = policy.run_queued(
+            "vision_compressor",
+            lambda: "saw",
+            reason="forced_vision",
+            priority=1,
+            timeout_seconds=0.01,
+        )
+
+        self.assertEqual(result, "saw")
+        self.assertGreater(policy.last_4b_finished_at, 0.0)
+
+    def test_vision_force_run_keeps_gpu_overheat_hard_veto(self):
+        policy = ModelBudgetPolicy(
+            make_config(
+                vision_force_run=True,
+                gpu_temp_block_c=82.0,
+            )
+        )
+        snapshot = policy.capture()
+        snapshot.gpu_temperature_c = 90.0
+
+        decision = policy.can_run("vision_compressor", resource_snapshot=snapshot, reason="too_hot")
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.verdict, "kill")
+        self.assertEqual(decision.reason, "gpu_overheat")
 
     def test_local_gguf_main_forces_past_resource_pressure_and_active_lease(self):
         policy = ModelBudgetPolicy(

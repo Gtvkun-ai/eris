@@ -435,7 +435,9 @@ class RuntimeCoordinator(
         )
         self.autonomous_suppressed_sleep_seconds = self._load_autonomous_sleep_seconds(
             "ERIS_AUTONOMOUS_SUPPRESSED_SLEEP_SEC",
-            default=(45, 60, 90, 120),
+            # No-speech không phải output đã lặp. Giữ vòng suppressed ngắn hơn
+            # để silence_debt/vital pressure có cơ hội tích và surface.
+            default=(12, 18, 25, 35),
         )
         self.force_speak_repeat_guard_count = 0
         self.force_speak_intent_guard_count = 0
@@ -4439,7 +4441,15 @@ class RuntimeCoordinator(
     #  để tránh tạo pattern lặp lại quá đều đặn.
     def _choose_autonomous_sleep_duration(self, *, suppressed: bool, ti_mode: str) -> int:
         if suppressed:
-            return random.choice(self.autonomous_suppressed_sleep_seconds)
+            base = random.choice(self.autonomous_suppressed_sleep_seconds)
+            silent_cycles = int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0)
+            # Nếu đã im nhiều vòng, đừng ngủ như thể vừa nói xong. Đây là nhịp tim,
+            # không phải nhân viên văn phòng nghỉ sau khi không làm gì.
+            if silent_cycles >= 6:
+                return max(8, min(base, 12))
+            if silent_cycles >= 3:
+                return max(10, min(base, 18))
+            return base
         return random.choice(self.autonomous_sleep_seconds)
 
     def _current_autonomous_wake_decision(self) -> WakeDecision:
@@ -5523,7 +5533,7 @@ class RuntimeCoordinator(
                 self._preview_text(signature, limit=180),
             )
             self.logger.info(
-                "Hoàn tất chu kỳ trong %.2fs. Nghỉ %ss để tránh lặp nội dung.",
+                "Hoàn tất chu kỳ no-speech trong %.2fs. Nghỉ %ss để giữ nhịp sống.",
                 elapsed,
                 sleep_duration,
             )

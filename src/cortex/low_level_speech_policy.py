@@ -119,7 +119,18 @@ def _load_simple_yaml(path: str | os.PathLike[str]) -> dict[str, Any]:
 
 
 def _default_policy_config_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "config" / "low_level_speech_policy.yaml"
+    # Repo thật thường là <repo>/src/cortex/... nên config nằm ở <repo>/config.
+    # Bản zip debug đôi khi chỉ chứa nội dung src, khi đó config có thể nằm cạnh
+    # các package ở <src>/config. Tìm cả hai để người dùng không phải thờ Pathlib.
+    here = Path(__file__).resolve()
+    candidates = (
+        here.parents[2] / "config" / "low_level_speech_policy.yaml",
+        here.parents[1] / "config" / "low_level_speech_policy.yaml",
+    )
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
 
 
 @dataclass(slots=True)
@@ -145,8 +156,11 @@ class LowLevelSpeechPolicyConfig:
     normal_llm_probability: float = 1.0
     min_surface_interval_seconds: float = 12.0
     family_cooldown_seconds: float = 90.0
-    max_body_only_streak: int = 3
+    max_body_only_streak: int = 2
     body_only_after_llm_decline: bool = True
+    # Nếu impulse mang vital pressure cao, policy phải thử LLM thay vì reject.
+    # Đây là cổng "bị chặn ở mồm thì xả body/LLM", không phải câu fallback mẫu.
+    vital_pressure_force_llm_threshold: float = 0.62
     always_llm_kinds: tuple[str, ...] = field(
         default_factory=lambda: (
             "presence_maintenance",
@@ -158,6 +172,9 @@ class LowLevelSpeechPolicyConfig:
             "micro_presence",
             "idle_curiosity",
             "thought_stream_surface",
+            "random_chatter",
+            "memory_resonance",
+            "reengagement",
         )
     )
 
@@ -181,6 +198,7 @@ class LowLevelSpeechPolicyConfig:
             "family_cooldown_seconds": _float_from_env("ERIS_SURFACE_FAMILY_COOLDOWN_SEC", base.family_cooldown_seconds, maximum=3600.0),
             "max_body_only_streak": _int_from_env("ERIS_SURFACE_MAX_BODY_ONLY_STREAK", base.max_body_only_streak, minimum=1),
             "body_only_after_llm_decline": os.environ.get("ERIS_SURFACE_BODY_ONLY_AFTER_LLM_DECLINE", str(base.body_only_after_llm_decline)).strip().lower() not in {"0", "false", "no", "off"},
+            "vital_pressure_force_llm_threshold": _float_from_env("ERIS_SURFACE_VITAL_FORCE_LLM_THRESHOLD", base.vital_pressure_force_llm_threshold),
             "always_llm_kinds": _tuple_from_env("ERIS_SURFACE_ALWAYS_LLM_KINDS", base.always_llm_kinds),
         }
         return cls.from_mapping(env_data, use_env=False)
@@ -207,6 +225,7 @@ class LowLevelSpeechPolicyConfig:
             family_cooldown_seconds=max(0.0, float(data.get("family_cooldown_seconds", base.family_cooldown_seconds))),
             max_body_only_streak=max(1, int(data.get("max_body_only_streak", base.max_body_only_streak))),
             body_only_after_llm_decline=bool(data.get("body_only_after_llm_decline", base.body_only_after_llm_decline)),
+            vital_pressure_force_llm_threshold=_clamp01(data.get("vital_pressure_force_llm_threshold", base.vital_pressure_force_llm_threshold), base.vital_pressure_force_llm_threshold),
             always_llm_kinds=tuple(str(item) for item in always if str(item).strip()) or base.always_llm_kinds,
         )
 
@@ -235,14 +254,15 @@ class LowLevelSpeechPolicy:
 
         confidence = _clamp01(getattr(impulse, "confidence", 0.0))
         kind = str(getattr(impulse, "kind", "") or "").strip()
-        if confidence < self.config.body_only_min_confidence:
+        vital = _clamp01(getattr(impulse, "vital_pressure", 0.0))
+        if confidence < self.config.body_only_min_confidence and vital < 0.52:
             return "reject"
-        if silent_cycles >= self.config.force_llm_after_silent:
+        if silent_cycles >= self.config.force_llm_after_silent or vital >= self.config.vital_pressure_force_llm_threshold:
             return "force_llm"
         if kind in set(self.config.always_llm_kinds) and confidence >= self.config.min_surface_confidence:
             return "force_llm"
         if confidence >= self.config.high_conf_threshold:
             return "force_llm"
-        if confidence >= self.config.min_surface_confidence:
+        if confidence >= self.config.min_surface_confidence or vital >= 0.48:
             return "normal_llm"
         return "body_only"

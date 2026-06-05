@@ -9,7 +9,7 @@ Nguồn dựng bản này:
 
 Giới hạn trung thực:
 - Bản này vẫn chưa phải inventory/audit toàn repo theo kiểu đọc từng dòng tất cả source.
-- Tuy vậy, revision hiện tại đã đối chiếu source thật trong workspace cho các điểm nóng đang mở: `src/llm/service.py`, `src/cortex/surface_arbiter.py`, `body/MotionController.cs`.
+- Tuy vậy, revision hiện tại đã đối chiếu source thật trong workspace cho các điểm nóng đang mở: `src/llm/service.py`, `src/cortex/surface_arbiter.py`, `src/cortex/speech_core.py`, `src/runtime/presence_controller.py`, `src/runtime/coordinator.py`, `body/MotionController.cs`.
 - Những section khác vẫn là source-map debug ưu tiên chính xác theo tài liệu nội bộ + file tree public + mô tả module hiện có.
 - Những file được đánh dấu `VERIFY_IN_CODE` cần mở source thật để xác nhận function/class cụ thể.
 - Dùng bản này để debug luồng, không dùng làm README public.
@@ -343,6 +343,9 @@ Current code specifics:
 - `_install_model_inference_queue()` wrap ở service boundary thay vì từng call-site: `generate_chat_reply -> main_cognition`, `generate_directive -> main_cognition`, `generate_screen_facts -> vision_compressor`, `sensory_model_adapter.observe -> sensory_0_6b`.
 - coordinator giữ cả state runtime “có thể nói lại được” lẫn state gate/cooldown: `last_autonomous_spoken_at`, `autonomous_presence_blocked_until`, `presence_maintenance_silent_cycles`, `last_reengagement_at`, `_chat_burst_queue`.
 - `contextual_autonomy_loop` nhận chung `agenda_stack`, `daydream`, `budget_policy`, `wake_governor`, nên wake path thực tế không còn là vài if rải rác nữa.
+- `_background_memory_digest_idle_probe()` chỉ cho semantic digest chạy khi không đang chat, không còn burst queue pending, và đã đủ yên theo `ERIS_MEMORY_DIGEST_CHAT_IDLE_SEC`.
+- coordinator còn giữ nhánh direct-action riêng: `_build_direct_action_decision()` route qua `action_router/action_executor`, còn `_execute_system_action()` hậu xử lý kết quả action vào `Decision` thay vì nhét hết vào LLM path.
+- `ni_meta_config.json` hiện được đọc qua `_load_ni_meta_mode_flags()` với default `(chat=True, autonomous=False)` khi file lỗi/mất; `_maybe_apply_ni_meta_critic()` chỉ là lớp làm mềm drift score/confidence, không phải thay luôn base Ni report.
 Debug khi:
 - lỗi end-to-end không rõ owner.
 - autonomous gọi main model dù wake gate không cho.
@@ -350,6 +353,7 @@ Debug khi:
 - chat burst/lặp/previous public turn sai.
 - queue wrap không ăn khiến một đường model nặng chạy chui ngoài scheduler.
 - ni meta chat/autonomous bật sai mode làm drift score thay đổi khó hiểu.
+- action route trả text đúng mà trace/system_action bị mất hoặc bị double-execute.
 Status: ACTIVE GOD OBJECT VERIFIED_IN_WORKSPACE, đã tách bớt bằng mixin nhưng vẫn là nơi hợp mạch.
 
 ## `src/runtime/chat_cycle.py`
@@ -489,6 +493,9 @@ Current code specifics:
 - `_build_surface_arbiter_decision()` tự chặn bằng `autonomous_presence_blocked_until`, `presence_maintenance_cooldown_sec`, và `last_autonomous_spoken_at` trước khi gọi arbiter.
 - body-only presence/re-engagement được convert thành `MotionCommand` thay vì giả vờ có câu nói; body-only không được reset silent cycles như speech thật.
 - re-engagement hiện build bằng cue + extra impulse `long_silence` và gọi `SurfaceArbiter` với `force_llm=True`.
+- `_surface_arbiter_llm_generate()` luôn gửi kèm `surface_impulse`, `ego_surface_state`, `micro_presence_flags`, và `surface_contract`; presence-like cue chỉ bị ép `must_return_tiny_text` khi arbiter thật sự force hoặc impulse không-phải-presence đã đủ mạnh/silent lâu.
+- local fallback text hiện chỉ còn là lưới an toàn cho non-presence route; presence maintenance không còn giữ “hũ câu mẫu” riêng để spam cho có vẻ sống.
+- `_note_autonomous_presence_action()` tách riêng việc ghi nhận presence/re-engagement body-only khỏi `_note_autonomous_spoken()`, để cooldown có tăng nhưng speech debt không bị reset nhầm.
 - env knobs hiện có:
   `ERIS_PRESENCE_MAINTENANCE`,
   `ERIS_PRESENCE_MAINTENANCE_SILENT_LOOPS`,
@@ -1189,9 +1196,13 @@ Pipeline:
 9. nếu LLM decline và policy cho phép -> body_only.
 Current code specifics:
 - có synthetic `long_silence_impulse` khi `idle_seconds >= 120` hoặc `silent_cycles >= 3`.
+- winner còn đi qua `_ego_gate_reason()` trước rate-limit; mood/rupture/dignity/social_energy/preferred_distance có thể chặn hẳn presence-like impulse dù score đủ.
+- `_score_and_select_winner()` cộng nhẹ `vital_pressure` vào score để impulse nội sinh bị nén lâu không thua mãi silence/presence cue yếu.
 - nếu `silent_cycles` vượt `force_llm_after_silent`, arbiter có thể override `reject` thành `force_llm`.
 - `always_llm_kinds` cũng có thể đẩy một kind đủ confidence sang `force_llm` dù policy ban đầu reject.
+- `vital_pressure_force_llm_threshold` cũng là đường nâng từ reject lên `force_llm` cho impulse có áp lực nội sinh đủ lớn và vẫn public-safe.
 - nếu `body_only_streak` chạm trần, code không rate-limit cứng nữa mà đẩy `silent_cycles` lên ngưỡng force-LLM để tránh kẹt body-only mãi.
+- `_mark_attempt()` ghi cả reject/body-only presence-like vào budget thời gian/family cooldown; không đợi đến lúc nói thật mới coi là đã “gõ cửa”.
 - `debug_trace` luôn giữ winner + mode + suppressed candidates để soi xung đột impulse.
 Debug khi:
 - presence/re-engagement bị nhiều module tự nói chồng nhau.
@@ -1199,11 +1210,15 @@ Debug khi:
 - inner_whim thắng sai micro-presence hoặc ngược lại.
 - rate-limit/family cooldown chặn câu tưởng như nên nói.
 - LLM trả rỗng rồi body-only streak tăng mãi.
+- presence cue đúng score nhưng bị `ego_gate:*` chặn vì mood/distance chứ không phải vì policy threshold.
 Important traces:
 - `surface_arbiter; kind=...; source=...; mode=...`
 - `surface_interval_cooldown`
 - `family_cooldown`
 - `llm_declined`
+- `ego_gate:mood_blocks_presence`
+- `ego_gate:dignity_distance`
+- `ego_gate:ambient_copresence_no_anchor`
 - `suppressed=thought_stream_surface:...`
 Status: ACTIVE CRITICAL SURFACE ROUTER VERIFIED_IN_WORKSPACE.
 
@@ -1290,8 +1305,17 @@ Outputs:
 - AgentSpeechCore with winner/silence state.
 Feeds:
 - Surface-level `SpeechImpulse` cho `SurfaceArbiter` trong các cue thấp tầng.
+Current code specifics:
+- các hook fallback cũ (`render_force_speak_repair_text`, `render_safe_fallback_text`) giờ không tự trả public wording nữa; chúng chỉ đóng dấu `requires_dynamic_fallback` + `fallback_intent/context` để wording layer xử lý sau.
+- `meaning_shift_gate` chỉ chặn autonomous speech shape cần shift; nếu `spontaneous_impulse` đủ mạnh hoặc silence/internal pressure quá cao thì `_extreme_internal_speech_pressure()` vẫn cho endogenous line đi tiếp vào arbitration.
+- `spontaneous_ready` hiện check cả `needs_external_evidence`, `suggested_speech_act`, `surface_pressure`, và `vital_pressure`; force-speak có ngưỡng thấp hơn autonomous.
+- `_threshold_for_channel()` không cố định: autonomous threshold tăng theo overload và giảm theo engagement; force_speak gần như mở cổng hoàn toàn.
+- `SpeechImpulse` dựng từ `MeaningLayer` vẫn là residue/reactive contract, không phải giấy phép để surface nguyên label nội bộ.
 Debug khi: có tension nhưng im, hoặc nói dù không có shift.
-Status: ACTIVE MOST IMPORTANT SPEECH DEBUG FILE.
+- fallback guard vẫn muốn “chữa cháy” bằng câu mẫu cứng dù code hiện tại đã đẩy wording ra downstream layer.
+- autonomous bị `meaning_shift_gate` giữ im dù `vital_pressure` hoặc `silence_pressure` nhìn có vẻ đã đủ để cho endogenous leakage.
+- `spontaneous_impulse` có act rõ nhưng bị đánh rớt vì `needs_external_evidence=true`.
+Status: ACTIVE MOST IMPORTANT SPEECH DEBUG FILE VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/turn_semantics.py`
 Role: hiểu nghĩa turn lặp.

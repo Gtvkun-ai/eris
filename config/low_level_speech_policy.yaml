@@ -1,21 +1,44 @@
-# SurfaceArbiter low-level speech knobs.
-# Có thể override bằng env ERIS_SURFACE_POLICY_CONFIG=./config/low_level_speech_policy.yaml
+# ERIS low-level surface policy
+# Chú thích tiếng Việt:
+# - File này không viết câu thoại. Nó chỉ điều tiết việc SurfaceArbiter nên reject,
+#   body-only, normal_llm hay force_llm.
+# - Mục tiêu dài hạn: autonomous có nhịp tim hơn nhưng không spam/bịa màn hình.
+
+# Im liên tục đủ vòng thì phải thử LLM micro, không body-only mãi.
 force_llm_after_silent: 3
-high_conf_threshold: 0.55
-min_surface_confidence: 0.38
-body_only_min_confidence: 0.32
-normal_llm_probability: 1.0
-min_surface_interval_seconds: 12
-family_cooldown_seconds: 90
-max_body_only_streak: 3
+
+# Ngưỡng gọi force LLM khi confidence cao.
+high_conf_threshold: 0.52
+
+# Ngưỡng tối thiểu để được thử sinh câu nhỏ.
+min_surface_confidence: 0.36
+
+# Dưới ngưỡng này mới reject hẳn; trên ngưỡng này ít nhất xả body-only.
+body_only_min_confidence: 0.26
+
+# Nếu vital_pressure vượt ngưỡng, policy ưu tiên force_llm.
+# Đây là "áp lực sống" bị nén lâu, không phải state mới.
+vital_pressure_force_llm_threshold: 0.60
+
+# Không cho body-only kéo dài vô hạn. Sau 2 lần body-only, vòng sau sẽ bị đẩy lên force_llm.
+max_body_only_streak: 2
 body_only_after_llm_decline: true
+
+# Cooldown nhỏ để có nhịp, nhưng không khóa chết autonomous.
+min_surface_interval_seconds: 10
+family_cooldown_seconds: 70
+
+# Các kind thấp tầng được phép gọi LLM khi đủ confidence.
 always_llm_kinds:
   - presence_maintenance
   - re_engagement
+  - reengagement
   - micro_observation
   - inner_whim
   - curious_question
+  - random_chatter
   - light_muse
+  - memory_resonance
   - micro_presence
   - idle_curiosity
   - thought_stream_surface

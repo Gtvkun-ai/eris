@@ -202,6 +202,7 @@ class InferenceLease:
 class ModelBudgetPolicyConfig:
     enabled: bool = field(default_factory=lambda: _env_flag("ERIS_MODEL_BUDGET_POLICY", True))
     queue_enabled: bool = field(default_factory=lambda: _env_flag("ERIS_MODEL_QUEUE_ENABLED", True))
+    resource_guard_enabled: bool = field(default_factory=lambda: _env_flag("ERIS_RESOURCE_GUARD_ENABLED", False))
     remote_api_enabled: bool = field(default_factory=lambda: _env_flag("ERIS_REMOTE_API_ENABLED", True))
     cpu_block_percent: float = field(default_factory=lambda: _env_float("ERIS_BUDGET_CPU_BLOCK", 92.0))
     ram_block_percent: float = field(default_factory=lambda: _env_float("ERIS_BUDGET_RAM_BLOCK", 90.0))
@@ -227,6 +228,9 @@ class ModelBudgetPolicyConfig:
     force_local_gguf_main: bool = field(default_factory=lambda: _env_flag("ERIS_FORCE_LOCAL_GGUF_MAIN", True))
     force_local_gguf_priority: int = field(default_factory=lambda: _env_int("ERIS_FORCE_LOCAL_GGUF_PRIORITY", 10000))
     force_local_gguf_queue_timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_FORCE_LOCAL_GGUF_QUEUE_TIMEOUT", 0.0))
+    vision_force_run: bool = field(default_factory=lambda: _env_flag("ERIS_VISION_FORCE_RUN", True))
+    vision_force_run_priority: int = field(default_factory=lambda: _env_int("ERIS_VISION_FORCE_RUN_PRIORITY", 5000))
+    vision_force_run_queue_timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_VISION_FORCE_RUN_QUEUE_TIMEOUT", 0.0))
 
 
 class ModelBudgetPolicy:
@@ -347,7 +351,32 @@ class ModelBudgetPolicy:
             "external_vram_used_mb": round(external_vram_used, 2),
             "external_vram_percent": round(external_vram_percent, 2),
             "force_local_gguf": bool(force_local_gguf),
+            "resource_guard_enabled": bool(getattr(self.config, "resource_guard_enabled", False)),
         }
+
+        if force_local_gguf and self._can_force_local_gguf(tier):
+            return BudgetDecision(
+                verdict="allow",
+                allowed=True,
+                tier=tier,
+                reason="force_local_gguf_main",
+                resource_snapshot=snapshot,
+                hard_veto=False,
+                cooldown_seconds=0.0,
+                debug=debug,
+            )
+
+        if not getattr(self.config, "resource_guard_enabled", False):
+            return BudgetDecision(
+                verdict="allow",
+                allowed=True,
+                tier=tier,
+                reason="scheduler_allow",
+                resource_snapshot=snapshot,
+                hard_veto=False,
+                cooldown_seconds=0.0,
+                debug=debug,
+            )
 
         if snapshot.gpu_temperature_c >= self.config.gpu_temp_block_c > 0:
             debug["overheat"] = round(snapshot.gpu_temperature_c, 2)
@@ -361,12 +390,22 @@ class ModelBudgetPolicy:
                 debug=debug,
             )
 
-        if force_local_gguf and self._can_force_local_gguf(tier):
+        if self._should_force_vision(tier):
+            ignored_reasons = self._resource_block_reasons(
+                tier,
+                snapshot=snapshot,
+                external_vram_percent=external_vram_percent,
+                uses_remote_api=uses_remote_api,
+            )
+            debug["vision_force_run"] = True
+            debug["ignored_resource_reasons"] = ignored_reasons
+            if cooldown > 0.0:
+                debug["ignored_cooldown_seconds"] = round(cooldown, 2)
             return BudgetDecision(
                 verdict="allow",
                 allowed=True,
                 tier=tier,
-                reason="force_local_gguf_main",
+                reason="vision_force_run",
                 resource_snapshot=snapshot,
                 hard_veto=False,
                 cooldown_seconds=0.0,
@@ -508,10 +547,14 @@ class ModelBudgetPolicy:
         request_id: str | None = None,
     ) -> InferenceLease:
         force_local_gguf = self._should_force_local_gguf(tier)
+        force_vision = self._should_force_vision(tier)
         if force_local_gguf:
             priority = max(int(priority), int(self.config.force_local_gguf_priority))
             if timeout_seconds is None:
                 timeout_seconds = self.config.force_local_gguf_queue_timeout_seconds
+        if force_vision:
+            priority = max(int(priority), int(self.config.vision_force_run_priority))
+            timeout_seconds = self.config.vision_force_run_queue_timeout_seconds
         timeout = self.config.default_queue_timeout_seconds if timeout_seconds is None else float(timeout_seconds)
         request_id = request_id or f"{tier}:{uuid.uuid4().hex[:12]}"
 
@@ -539,7 +582,7 @@ class ModelBudgetPolicy:
             return lease
 
         with self._condition:
-            if len(self._queue) >= self.config.max_queue_size and not force_local_gguf:
+            if len(self._queue) >= self.config.max_queue_size and not force_local_gguf and not force_vision:
                 raise RuntimeError(f"model_queue_full:{tier}:{len(self._queue)}")
             self._sequence += 1
             entry = ModelQueueEntry(
@@ -730,6 +773,9 @@ class ModelBudgetPolicy:
     def _should_force_local_gguf(self, tier: str) -> bool:
         return self._can_force_local_gguf(tier)
 
+    def _should_force_vision(self, tier: str) -> bool:
+        return tier == "vision_compressor" and bool(getattr(self.config, "vision_force_run", False))
+
     def _estimated_vram_need_mb(self, tier: str) -> float:
         if tier == "main_cognition":
             return max(0.0, float(self.config.local_main_vram_reservation_mb))
@@ -793,6 +839,8 @@ class ModelBudgetPolicy:
         if local_tier:
             if gpu >= self.config.gpu_block_percent:
                 reasons.append("gpu_busy")
+            if external_vram_percent >= self.config.vram_block_percent and not self._should_bypass_vision_vram_guard(tier):
+                reasons.append("vram_busy")
             if snapshot.is_game_or_heavy_app and gpu >= self.config.heavy_foreground_gpu_percent:
                 reasons.append("heavy_foreground_gpu_owner")
             if snapshot.is_compile_or_godot and tier in {"subconscious_4b", "vision_compressor"} and (cpu >= 70.0 or ram >= 75.0):

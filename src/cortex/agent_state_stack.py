@@ -332,11 +332,17 @@ class PreferenceProfile:
         if name == "technical_help_impulse":
             return 0.74
         if name == "silence_impulse":
-            return max(0.62, self.quiet_co_presence * 0.72 + self.social_surface_chatter_dislike * 0.24)
+            return max(0.50, self.quiet_co_presence * 0.62 + self.social_surface_chatter_dislike * 0.18)
         if name == "body_only_impulse":
             return 0.54
         if name == "micro_story_impulse":
             return max(self.short_resonant_line * 0.92, self.cognitive_stimulation * 0.78)
+        if name == "random_chatter_impulse":
+            return max(self.mature_micro_aside * 0.82, self.short_resonant_line * 0.76)
+        if name == "memory_resonance_impulse":
+            return max(self.pattern_observation * 0.86, self.short_resonant_line * 0.72)
+        if name == "reengagement_impulse":
+            return max(self.quiet_co_presence * 0.70, self.mature_micro_aside * 0.62)
         return 0.50
 
 
@@ -352,6 +358,18 @@ class NeedVector:
     cognitive_stimulation_need: float = 0.0
     competence_need: float = 0.0
     requested_presence_need: float = 0.0
+
+    # Các trường dưới đây KHÔNG phải state mới. Chúng là đạo hàm tức thời
+    # từ internal_state/action_memory/thought_surface hiện có để các tầng sau
+    # không phải tự đoán "nhịp tim" của ERIS bằng mỗi kiểu một công thức.
+    # Nói cách khác: thông mạch máu cũ, không gắn thêm quả tim nhựa.
+    silence_pressure: float = 0.0
+    boredom_pressure: float = 0.0
+    thought_pressure: float = 0.0
+    memory_residue_pressure: float = 0.0
+    attachment_pressure: float = 0.0
+    metabolic_pressure: float = 0.0
+    vital_pressure: float = 0.0
 
     @classmethod
     def from_runtime(cls, *, internal_state: Any = None, evidence: EvidenceView | None = None, thought_surface: Any = None, relationship_state: Any = None) -> "NeedVector":
@@ -395,17 +413,43 @@ class NeedVector:
         requested_presence = 0.0
         if evidence.channel == "force_speak":
             requested_presence = 0.96 if not evidence.concrete_signals else 0.72
+        # Metabolism pressure: áp lực sống tổng hợp, chỉ là đạo hàm trong frame.
+        # - tuyến thấp vẫn thấp để ERIS không thành loa phường.
+        # - tuyến cao nén lâu sẽ bật mạnh hơn để sự im lặng mất dần giá trị.
+        continuity_raw = _clamp01(_get(internal_state, "continuity_pressure", default=0.0))
+        social_raw = _clamp01(_get(internal_state, "social_pressure", default=0.0))
+        metabolic_pressure = _clamp01(max(
+            silence_pressure * 0.82,
+            boredom * 0.72,
+            thought_pressure * 0.78,
+            memory_residue * 0.64,
+            continuity_raw * 0.86,
+            attachment * 0.54,
+            social_raw * 0.52,
+            requested_presence * 0.95,
+        ))
+        # Phi tuyến nhẹ: pressure nhỏ bị nén xuống, pressure lớn được quyền phá bĩnh.
+        # Đây là "không chịu nổi nữa" ở mức utility, không phải câu chữ dramatic.
+        vital_pressure = _clamp01(metabolic_pressure ** 1.45)
+
         return cls(
-            continuity_need=_clamp01(silence_pressure * 0.50 + memory_residue * 0.22 + _clamp01(_get(internal_state, "continuity_pressure", default=0.0)) * 0.44),
-            curiosity_need=_clamp01(curiosity * 0.58 + boredom * 0.24 + memory_residue * 0.12 + (0.18 if evidence.has_tag("food_scene") or evidence.has_tag("game_scene") else 0.0)),
-            expression_need=_clamp01(thought_pressure * 0.38 + curiosity * 0.20 + boredom * 0.14 - restraint * 0.22 - fatigue * 0.16),
+            continuity_need=_clamp01(silence_pressure * 0.50 + memory_residue * 0.22 + continuity_raw * 0.44 + vital_pressure * 0.14),
+            curiosity_need=_clamp01(curiosity * 0.58 + boredom * 0.24 + memory_residue * 0.12 + vital_pressure * 0.10 + (0.18 if evidence.has_tag("food_scene") or evidence.has_tag("game_scene") else 0.0)),
+            expression_need=_clamp01(thought_pressure * 0.38 + curiosity * 0.20 + boredom * 0.14 + vital_pressure * 0.18 - restraint * 0.18 - fatigue * 0.12),
             dignity_need=_clamp01(_clamp01(_get(internal_state, "dignity_defense", default=0.0)) * 0.55 + _clamp01(_get(internal_state, "exposure_recoil", default=0.0)) * 0.45),
             rest_need=_clamp01(fatigue * 0.66 + restraint * 0.24 + _clamp01(_get(internal_state, "resource_caution", default=0.0)) * 0.22),
-            relation_need=_clamp01((attachment * 0.26 + silence_pressure * 0.06) * mood_social_gate),
-            social_presence_need=_clamp01((attachment * 0.22 + _clamp01(_get(internal_state, "social_pressure", default=0.0)) * 0.18) * mood_social_gate),
-            cognitive_stimulation_need=_clamp01(curiosity * 0.42 + boredom * 0.36 + thought_pressure * 0.24 + memory_residue * 0.10),
+            relation_need=_clamp01((attachment * 0.26 + silence_pressure * 0.06 + vital_pressure * 0.08) * mood_social_gate),
+            social_presence_need=_clamp01((attachment * 0.22 + social_raw * 0.18 + vital_pressure * 0.10) * mood_social_gate),
+            cognitive_stimulation_need=_clamp01(curiosity * 0.42 + boredom * 0.36 + thought_pressure * 0.24 + memory_residue * 0.10 + vital_pressure * 0.12),
             competence_need=_clamp01(competence_scene * 0.34 + possible_error * 0.46 + _clamp01(_get(internal_state, "task_pressure", default=0.0)) * 0.24),
             requested_presence_need=_clamp01(requested_presence),
+            silence_pressure=_clamp01(silence_pressure),
+            boredom_pressure=_clamp01(boredom),
+            thought_pressure=_clamp01(thought_pressure),
+            memory_residue_pressure=_clamp01(memory_residue),
+            attachment_pressure=_clamp01(attachment),
+            metabolic_pressure=metabolic_pressure,
+            vital_pressure=vital_pressure,
         )
 
     def notes(self) -> tuple[str, ...]:
@@ -418,6 +462,9 @@ class NeedVector:
             f"need.cognitive_stimulation={self.cognitive_stimulation_need:.2f}",
             f"need.competence={self.competence_need:.2f}",
             f"need.requested_presence={self.requested_presence_need:.2f}",
+            f"need.metabolic={self.metabolic_pressure:.2f}",
+            f"need.vital={self.vital_pressure:.2f}",
+            f"need.silence_pressure={self.silence_pressure:.2f}",
         )
 
 
@@ -452,7 +499,7 @@ class TraitVector:
     def bias_for(self, impulse_name: str) -> float:
         name = str(impulse_name or "")
         if name == "silence_impulse":
-            return self.restraint * 0.32 + self.intrusiveness_aversion * 0.20 + self.introverted_observer * 0.22
+            return self.restraint * 0.22 + self.intrusiveness_aversion * 0.14 + self.introverted_observer * 0.14
         if name == "scene_curiosity_impulse":
             return self.curiosity * 0.22 + self.dry_humor * 0.16 + self.intellectual_detachment * 0.18 + self.spontaneity * 0.10 - self.intrusiveness_aversion * 0.08
         if name == "technical_help_impulse":
@@ -463,6 +510,12 @@ class TraitVector:
             return self.spontaneity * 0.18 + self.dry_humor * 0.10 + self.intellectual_detachment * 0.22
         if name == "micro_story_impulse":
             return self.spontaneity * 0.14 + self.curiosity * 0.10 + self.intellectual_detachment * 0.16
+        if name == "random_chatter_impulse":
+            return self.spontaneity * 0.22 + self.dry_humor * 0.16 + self.intellectual_detachment * 0.10
+        if name == "memory_resonance_impulse":
+            return self.intellectual_detachment * 0.18 + self.curiosity * 0.12 + self.restraint * 0.06
+        if name == "reengagement_impulse":
+            return self.attachment_visibility * 0.14 + self.restraint * 0.08 + self.dry_humor * 0.05
         return 0.12
 
 
@@ -530,10 +583,14 @@ class AffordanceMap:
             interrupt_cost = 0.74 if not error_signal else 0.52
         elif focus in {"media", "game"} or casual_scene:
             interrupt_cost = 0.14
-        elif focus == "communication":
-            interrupt_cost = 0.58
+        elif focus in {"communication", "chat"}:
+            interrupt_cost = 0.48
         else:
             interrupt_cost = 0.38
+        # Áp lực sống tích tụ không xóa interrupt cost, chỉ bào mòn nó.
+        # Nếu không, chỉ cần user đang mở IDE là ERIS sẽ hóa đá dù đã im quá lâu.
+        if needs.vital_pressure >= 0.52:
+            interrupt_cost = max(0.16, interrupt_cost - needs.vital_pressure * 0.28)
         return cls(
             casual_comment_allowed=casual_allowed,
             technical_help_relevant=bool(technical and error_signal),
@@ -542,7 +599,7 @@ class AffordanceMap:
             silence_allowed=True,
             surface_scene_claim_allowed=bool(casual_scene and evidence.has_scene_anchor and not external),
             endogenous_interrupt_cost=_clamp01(interrupt_cost),
-            random_chatter_allowed=bool((focus in {"media", "game"} or casual_scene) and not external),
+            random_chatter_allowed=bool((focus in {"media", "game", "communication", "chat"} or casual_scene or needs.vital_pressure >= 0.55) and not external),
             reason=("technical_affordance" if technical else "casual_scene_affordance" if casual_scene else "low_signal_affordance"),
         )
 

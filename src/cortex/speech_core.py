@@ -372,8 +372,11 @@ class SpeechCoreEngine:
                     safety_flags=safety_flags,
                 ),
             )
-        #Nếu user đang tập trung thật sự, ERIS phải câm.
-        if channel_name == "autonomous" and self._should_stay_silent(
+        # Nếu user đang tập trung thật sự, ERIS phải câm.
+        # Ngoại lệ dài hạn: áp lực nội sinh cực mạnh được quyền đi tiếp vào arbitration,
+        # nhưng vẫn chỉ được tạo câu low-claim/no-screen-claim. Nếu không có ngoại lệ này,
+        # quiet_guard sẽ chặn inner_whim trước khi SurfaceArbiter kịp cho nó tranh với micro_presence.
+        if channel_name == "autonomous" and not extreme_internal_pressure and self._should_stay_silent(
             ti_mode=str(getattr(ti_report, "mode", "") or ""),
             repeat_count=repeat_count,
             repeated_topic_tag=repeated_topic_tag,
@@ -1526,7 +1529,7 @@ class SpeechCoreEngine:
         spontaneous_impulse: SpeechImpulse | None = None,
     ) -> SpeechImpulse:
         spontaneous = spontaneous_impulse or SpeechImpulse()
-        if str(getattr(winner, "label", "") or "") == "spontaneous_life" and getattr(spontaneous, "active", False):
+        if str(getattr(winner, "label", "") or "") in {"spontaneous_life", "force_speak_endogenous_fallback"} and getattr(spontaneous, "active", False):
             return spontaneous
 
         meaning = str(getattr(meaning_layer, "meaning", "") or "")
@@ -1569,9 +1572,10 @@ class SpeechCoreEngine:
         """
         state = internal_state or PersistentInternalState()
         spontaneous_pressure = self._clamp01(getattr(spontaneous_impulse, "surface_pressure", 0.0))
+        vital_pressure = self._clamp01(getattr(spontaneous_impulse, "vital_pressure", 0.0))
         spontaneous_act = str(getattr(spontaneous_impulse, "suggested_speech_act", "") or "")
         if (
-            spontaneous_pressure >= 0.85
+            (spontaneous_pressure >= 0.78 or vital_pressure >= 0.60)
             and spontaneous_act
             and spontaneous_act != "no_speech"
             and not bool(getattr(spontaneous_impulse, "needs_external_evidence", False))
@@ -1586,8 +1590,9 @@ class SpeechCoreEngine:
         surface_pressure = self._float(getattr(thought_surface, "pressure", 0.0) if thought_surface is not None else 0.0)
         surface_momentum = self._float(getattr(thought_surface, "momentum_score", 0.0) if thought_surface is not None else 0.0)
         return bool(
-            silence_pressure >= 0.72
-            or (silence_pressure >= 0.64 and max(boredom, curiosity_pressure, surface_pressure, surface_momentum) >= 0.58)
+            vital_pressure >= 0.60
+            or silence_pressure >= 0.70
+            or (silence_pressure >= 0.58 and max(boredom, curiosity_pressure, surface_pressure, surface_momentum) >= 0.52)
         )
 
     def _spontaneous_ready(self, impulse: SpeechImpulse | None, *, channel: str) -> bool:
@@ -1600,8 +1605,15 @@ class SpeechCoreEngine:
         act = str(getattr(impulse, "suggested_speech_act", "") or "")
         if not act or act == "no_speech":
             return False
+        vital = self._clamp01(getattr(impulse, "vital_pressure", 0.0))
         threshold = 0.30 if channel == "force_speak" else 0.50
-        return self._clamp01(getattr(impulse, "surface_pressure", 0.0)) >= threshold
+        threshold = max(0.22 if channel == "force_speak" else 0.36, threshold - vital * 0.16)
+        act = str(getattr(impulse, "suggested_speech_act", "") or "")
+        if channel == "autonomous" and act in {"inner_whim", "random_chatter", "curious_question", "thought_stream_surface"}:
+            # Nội sinh không cần màn hình làm neo. Nó chỉ cần đủ áp lực và cam kết không claim screen.
+            # Đây là cửa chống starvation, không phải hũ câu mẫu thứ hai.
+            threshold = max(0.30, threshold - max(vital * 0.18, 0.08))
+        return max(self._clamp01(getattr(impulse, "surface_pressure", 0.0)), vital * 0.82) >= threshold
 
     #Autonomous cần vượt threshold mới được nói. ERIS overloaded sẽ tự ít nói hơn. 
     def _threshold_for_channel(self, channel: str, *, self_state: SelfState | None = None) -> float:
@@ -1620,7 +1632,8 @@ class SpeechCoreEngine:
             0.20
             + self._pressure(state, "restraint_pressure") * 0.44
             + self._float(getattr(state, "fatigue", 0.0)) * 0.16
-            - self._float(getattr(state, "silence_pressure", 0.0)) * 0.24
+            - self._float(getattr(state, "silence_pressure", 0.0)) * 0.30
+            - self._float(getattr(state, "vital_pressure", 0.0)) * 0.18
         )
         if mode in self.QUIET_MODES or mode == "social_watch":
             score += 0.12

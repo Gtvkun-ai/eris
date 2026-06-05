@@ -2562,6 +2562,16 @@ class LlmService:
         micro_flags = context.get("micro_presence_flags", "") if isinstance(context, dict) else ""
         ego_surface_state = context.get("ego_surface_state", "") if isinstance(context, dict) else ""
         ego_surface_contract = context.get("ego_surface_contract", "") if isinstance(context, dict) else ""
+        surface_contract = str(context.get("surface_contract", "") if isinstance(context, dict) else "")
+        allow_no_screen_anchor = (
+            "allow_no_screen_anchor" in surface_contract
+            or str(context.get("allow_no_screen_anchor", "") if isinstance(context, dict) else "").lower() == "true"
+        )
+        must_not_claim_screen = (
+            "must_not_claim_screen" in surface_contract
+            or str(context.get("must_not_claim_screen", "") if isinstance(context, dict) else "").lower() == "true"
+        )
+        endogenous_surface = "endogenous_surface" in surface_contract
         runtime_seed_text = " | ".join(seed_lines) if seed_lines else "<none>"
         user_msg = (
             f"Kind: {kind_name}\n"
@@ -2571,6 +2581,8 @@ class LlmService:
             f"Cognitive flags: {micro_flags or '<none>'}\n"
             f"Ego surface state: {ego_surface_state or '<none>'}\n"
             f"Ego surface contract: {ego_surface_contract or '<none>'}\n"
+            f"Surface contract: {surface_contract or '<none>'}\n"
+            f"allow_no_screen_anchor={str(allow_no_screen_anchor).lower()}; must_not_claim_screen={str(must_not_claim_screen).lower()}; endogenous_surface={str(endogenous_surface).lower()}\n"
             f"Signal score: {float(signal_score or 0.0):.2f}\n"
             f"Avoid repeating: {avoid_text}\n"
             f"must_surface={str(force_surface).lower()}\n"
@@ -2596,6 +2608,20 @@ class LlmService:
             user_msg += (
                 "- If cognitive flags say body-only is enough, evidence is too thin, or this would be filler, return {\"text\":\"\"}.\n"
             )
+        if allow_no_screen_anchor:
+            user_msg += (
+                "- allow_no_screen_anchor=true: this is an endogenous/inner surface, not a screen observation. Use Runtime seeds, memory residue, open question, or rhythm as the anchor.\n"
+                "- Do not ask for screen evidence. Do not say there is no evidence. Do not downgrade to status ping.\n"
+            )
+        if must_not_claim_screen:
+            user_msg += (
+                "- must_not_claim_screen=true: never claim visible screen/window/action facts. No 'tôi thấy...', no 'màn hình...', no UI narration.\n"
+            )
+        if endogenous_surface:
+            user_msg += (
+                "- endogenous_surface=true: the line may sound like a small stray thought, dry aside, or mundane random chatter. It should not explain the system.\n"
+            )
+
         user_msg += (
             "- Do not copy Legacy fallback; it is present only for compatibility and may be empty.\n"
             "- This is a tiny concrete aside: dry, casual, slightly imperfect.\n"
@@ -2615,7 +2641,7 @@ class LlmService:
             "- Return exactly one JSON object.\n"
             "- Shape: {\"text\":\"actual Vietnamese line or empty string\"}\n"
             "- If must_surface=false, the value of text may be empty when body-only is better.\n"
-            "- If must_surface=true, the value of text must be a final sentence to speak.\n"
+            "- If must_surface=true, the value of text must be a final sentence to speak; if allow_no_screen_anchor=true, use the seed/rhythm instead of screen facts.\n"
             "- Never return placeholder text such as 'short Vietnamese line'.\n"
             "- non-empty text must be Vietnamese only and keep full diacritics.\n"
             "- non-empty text must be speakable as-is.\n"

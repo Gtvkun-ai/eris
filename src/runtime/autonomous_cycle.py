@@ -46,7 +46,15 @@ VISION_TRACE_MARKER = "vision_facts_attached"
 class AutonomousCycleMixin:
     def _choose_autonomous_sleep_duration(self, *, suppressed: bool, ti_mode: str) -> int:
         if suppressed:
-            return random.choice(self.autonomous_suppressed_sleep_seconds)
+            base = random.choice(self.autonomous_suppressed_sleep_seconds)
+            silent_cycles = int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0)
+            # No-speech không reset nhịp. Càng im lâu, vòng sau càng quay lại sớm
+            # để metabolism có cơ hội thắng, thay vì ngủ 60s rồi hỏi sao ERIS chết.
+            if silent_cycles >= 6:
+                return max(8, min(base, 12))
+            if silent_cycles >= 3:
+                return max(10, min(base, 18))
+            return base
         return random.choice(self.autonomous_sleep_seconds)
     def _process_pending_user_input(self) -> bool:
         msg = self.transport.poll_json()
@@ -387,7 +395,7 @@ class AutonomousCycleMixin:
                 self._preview_text(signature, limit=180),
             )
             self.logger.info(
-                "Hoàn tất chu kỳ trong %.2fs. Nghỉ %ss để tránh lặp nội dung.",
+                "Hoàn tất chu kỳ no-speech trong %.2fs. Nghỉ %ss để giữ nhịp sống.",
                 elapsed,
                 sleep_duration,
             )

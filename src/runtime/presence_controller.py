@@ -116,7 +116,13 @@ class PresenceControllerMixin:
         # chỉ vì evidence mỏng. Nó chỉ được viết một câu thật ngắn, không bịa screen fact.
         # Nếu không, pipeline tạo ra nghịch lý: planner=speak nhưng final=<empty>. Vâng,
         # một kiểu "có ý định giao tiếp" nhưng lại tự tháo dây thanh quản.
-        presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence"})
+        presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence", "re_engagement", "idle_curiosity"})
+        endogenous_like = bool(
+            impulse.kind in {"inner_whim", "random_chatter", "thought_stream_surface", "curious_question", "light_muse", "memory_resonance"}
+            or impulse.source in {"endogenous_drive", "thought_stream", "spontaneous_life", "internal_agenda", "inner_thought"}
+        )
+        allow_no_screen_anchor = bool(endogenous_like or (force_llm and impulse.missing_evidence_ids))
+        must_not_claim_screen = bool(impulse.missing_evidence_ids or allow_no_screen_anchor)
         must_surface = bool(force_llm or (not presence_like and (silent_cycles >= 4 or impulse.confidence >= 0.76)))
         ego_state = self._current_ego_surface_state()
         micro_context = {
@@ -139,7 +145,14 @@ class PresenceControllerMixin:
                 f"must_surface={must_surface}; "
                 f"reason={impulse.reason}"
             ),
-            "surface_contract": "must_return_tiny_text" if must_surface else "may_decline_to_body_only",
+            "surface_contract": (
+                ("must_return_tiny_text" if must_surface else "may_decline_to_body_only")
+                + ("; allow_no_screen_anchor" if allow_no_screen_anchor else "")
+                + ("; must_not_claim_screen" if must_not_claim_screen else "")
+                + ("; endogenous_surface" if endogenous_like else "")
+            ),
+            "allow_no_screen_anchor": str(bool(allow_no_screen_anchor)).lower(),
+            "must_not_claim_screen": str(bool(must_not_claim_screen)).lower(),
         }
         fallback_text = ""
         presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence"})
@@ -412,6 +425,48 @@ class PresenceControllerMixin:
             number = default
         return max(-1.0, min(1.0, number))
 
+    def _endogenous_topic_seed(self, *, state=None, agenda=None, thought_report=None) -> str:
+        """Lấy topic seed không phụ thuộc màn hình cho inner_whim/random_chatter.
+
+        Đây là lớp chất liệu, không phải fallback câu thoại. Nó ưu tiên dư âm nhận thức
+        đang có sẵn: unresolved loop, active attractor, agenda summary, worldview/open question
+        nếu runtime có field đó. Nếu không có gì đủ sạch thì trả seed trừu tượng ngắn, để
+        wording layer nói theo nhịp nội sinh thay vì bịa rằng nó thấy IDE/cửa sổ nào đó.
+        """
+        candidates: list[str] = []
+        for owner in (thought_report, agenda, state):
+            if owner is None:
+                continue
+            for attr in (
+                "topic_seed",
+                "latest_topic",
+                "active_attractor",
+                "unresolved_reason",
+                "open_question",
+                "worldview_tension",
+                "concept_tension",
+                "memory_residue",
+                "affective_residue",
+                "current_concern",
+                "summary",
+            ):
+                value = getattr(owner, attr, "")
+                text = re.sub(r"\s+", " ", str(value or "")).strip()
+                if text and not self._looks_internal_topic(text):
+                    candidates.append(text)
+        if agenda is not None and callable(getattr(agenda, "top_items", None)):
+            try:
+                for item in tuple(agenda.top_items(limit=3) or ()):  # type: ignore[misc]
+                    text = re.sub(r"\s+", " ", str(getattr(item, "summary", "") or getattr(item, "reason", "") or "")).strip()
+                    if text and not self._looks_internal_topic(text):
+                        candidates.append(text)
+            except Exception:
+                pass
+        for text in candidates:
+            if 3 <= len(text) <= 140:
+                return text[:120]
+        return "nhịp nội sinh bị nén lâu"
+
     def _current_ego_surface_state(self) -> dict[str, float | str]:
         """Đọc nhanh mood + relationship để presence không hành xử như đồng hồ báo thức."""
         try:
@@ -492,36 +547,68 @@ class PresenceControllerMixin:
         thought_report = thought_stream_report or getattr(frame, "thought_stream_report", None) or getattr(frame, "subconscious_report", None)
         focus_family = str(getattr(snapshot, "active_window_kind", "") or getattr(state, "last_focus_kind", "") or "general_idle")
         silent_cycles = int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0)
+        endogenous_seed = self._endogenous_topic_seed(state=state, agenda=agenda, thought_report=thought_report)
         impulses: list[SurfaceImpulse] = []
 
         if state is not None:
             silence_pressure = self._surface_float(getattr(state, "silence_pressure", 0.0))
+            boredom_pressure = self._surface_float(getattr(state, "boredom", 0.0))
+            thought_pressure = max(
+                self._surface_float(getattr(state, "thought_stream_pressure", 0.0)),
+                self._surface_float(getattr(state, "subconscious_pressure", 0.0)),
+                self._surface_float(getattr(state, "unresolved_prediction_pressure", 0.0)),
+            )
             continuity_pressure = max(
                 self._surface_float(getattr(state, "social_pressure", 0.0)),
-                self._surface_float(getattr(state, "thought_stream_pressure", 0.0)),
+                thought_pressure,
                 self._surface_float(getattr(state, "cognitive_tension", 0.0)),
-                self._surface_float(getattr(state, "unresolved_prediction_pressure", 0.0)),
                 min(1.0, silent_cycles / 6.0),
             )
             pressure = max(silence_pressure, continuity_pressure * 0.86)
-            if pressure >= 0.45:
+            metabolic_pressure = max(pressure, boredom_pressure * 0.74, thought_pressure * 0.78)
+            vital_pressure = max(0.0, min(1.0, metabolic_pressure ** 1.35))
+            if pressure >= 0.42 or vital_pressure >= 0.48:
                 impulses.append(
                     SurfaceImpulse(
                         kind="micro_presence",
                         source="endogenous_drive",
-                        confidence=max(0.38, pressure),
-                        pressure=pressure,
-                        score=max(pressure, 0.46 + min(0.16, silent_cycles * 0.03)),
+                        confidence=max(0.38, pressure, vital_pressure * 0.82),
+                        pressure=max(pressure, vital_pressure * 0.82),
+                        score=max(pressure, vital_pressure * 0.88, 0.46 + min(0.16, silent_cycles * 0.03)),
                         topic_seed="quiet continuity pressure",
                         speech_act="micro_presence",
                         family="continuity:silence_pressure",
-                        evidence=(f"silent_cycles={silent_cycles}",),
-                        reason="silence pressure wants small grounded presence",
+                        evidence=(f"silent_cycles={silent_cycles}", f"vital_pressure={vital_pressure:.2f}", f"boredom={boredom_pressure:.2f}"),
+                        reason="silence/metabolic pressure wants small grounded presence",
                         focus_family=focus_family,
                         body_action="low_pressure_presence",
                         missing_evidence_ids=True,
                         is_presence=True,
                         should_surface=True,
+                        vital_pressure=vital_pressure,
+                        is_vital_pressure=vital_pressure >= 0.55,
+                    )
+                )
+            if vital_pressure >= 0.55 and max(boredom_pressure, thought_pressure) >= 0.36:
+                impulses.append(
+                    SurfaceImpulse(
+                        kind="random_chatter" if boredom_pressure >= thought_pressure else "thought_stream_surface",
+                        source="endogenous_drive",
+                        confidence=max(0.40, vital_pressure * 0.84),
+                        pressure=max(0.40, vital_pressure * 0.86),
+                        score=max(0.45, vital_pressure * 0.90),
+                        topic_seed=endogenous_seed,
+                        speech_act="random_chatter" if boredom_pressure >= thought_pressure else "inner_whim",
+                        family="metabolic:endogenous_seed",
+                        evidence=(endogenous_seed, f"silent_cycles={silent_cycles}", f"vital_pressure={vital_pressure:.2f}", f"thought={thought_pressure:.2f}"),
+                        reason="metabolic pressure produced a low-claim autonomous surface impulse from non-screen topic seed",
+                        focus_family=focus_family,
+                        body_action="look_at_focus",
+                        missing_evidence_ids=True,
+                        is_presence=False,
+                        should_surface=True,
+                        vital_pressure=vital_pressure,
+                        is_vital_pressure=True,
                     )
                 )
 
@@ -1639,10 +1726,11 @@ class PresenceControllerMixin:
         self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
         self._finalize_cognitive_frame(frame)
         self.logger.info(
-            '[surface_arbiter] text="%s" | intent=%s | silent_cycles=%d',
+            '[surface_arbiter] text="%s" | intent=%s | silent_cycles=%d | trace=%s',
             decision.text,
             decision.intent,
             self.presence_maintenance_silent_cycles,
+            getattr(decision, "debug_trace", ""),
         )
         self._send_decision_to_body(decision)
         elapsed = time.time() - cycle_start

@@ -65,6 +65,8 @@ class SpontaneousLifeConfig:
 class SpontaneousLifeTrace:
     pressure: float = 0.0
     novelty: float = 0.0
+    vital_pressure: float = 0.0
+    metabolic_pressure: float = 0.0
     impulse_type: str = "none"
     family: str = ""
     blocked_reason: str = ""
@@ -77,6 +79,8 @@ class SpontaneousLifeTrace:
         return {
             "pressure": round(float(self.pressure), 3),
             "novelty": round(float(self.novelty), 3),
+            "vital_pressure": round(float(self.vital_pressure), 3),
+            "metabolic_pressure": round(float(self.metabolic_pressure), 3),
             "impulse_type": self.impulse_type,
             "family": self.family,
             "blocked_reason": self.blocked_reason,
@@ -135,7 +139,21 @@ class SpontaneousLifeEngine:
         report = self._arbitrator.select(candidates)
         selected = report.selected
 
+        vital_pressure = _clamp01(getattr(stack.needs, "vital_pressure", 0.0))
+        metabolic_pressure = _clamp01(getattr(stack.needs, "metabolic_pressure", vital_pressure))
+        # Nếu silence/body-only thắng sát nút nhưng áp lực sống đã cao, lấy runner-up
+        # nội sinh thay vì để no_speech nuốt toàn bộ. Đây không phải bypass guard:
+        # scene claim vẫn cần evidence, còn câu nội sinh vẫn đi qua SurfaceArbiter/Policy.
+        if selected.name in {"silence_impulse", "body_only_impulse"} and vital_pressure >= 0.50:
+            for runner in report.candidates[1:]:
+                if runner.name not in {"silence_impulse", "body_only_impulse"} and not (runner.requires_scene_evidence and not stack.evidence.has_scene_anchor):
+                    if runner.total >= max(0.30, selected.total - 0.16):
+                        selected = runner
+                        break
+
         pressure = _clamp01(selected.total)
+        if selected.name not in {"silence_impulse", "body_only_impulse"}:
+            pressure = max(pressure, min(0.82, vital_pressure * 0.86))
         novelty = _clamp01(
             max(
                 getattr(thought_surface, "novelty", 0.0) if thought_surface is not None else 0.0,
@@ -149,6 +167,9 @@ class SpontaneousLifeEngine:
         cooldown = self._cooldown_for(impulse_type=impulse_type, pressure=pressure)
         cooldown_left = self._cooldown_left(family, now=now, cooldown=cooldown)
         threshold = self.config.force_speak_threshold if channel_name == "force_speak" else self.config.autonomous_threshold
+        # Threshold thích nghi theo metabolism: bình thường vẫn trầm, nhưng khi
+        # silence/boredom/thought bị nén lâu thì impulse được quyền ra tòa.
+        threshold = max(0.24 if channel_name == "force_speak" else 0.34, threshold - vital_pressure * 0.18)
 
         blocked_reason = ""
         if channel_name not in {"autonomous", "force_speak"}:
@@ -163,7 +184,7 @@ class SpontaneousLifeEngine:
             blocked_reason = f"rest_need_high:{stack.needs.rest_need:.2f}"
         elif selected.requires_scene_evidence and not stack.evidence.has_scene_anchor:
             blocked_reason = "scene_impulse_without_scene_evidence"
-        elif cooldown_left > 0 and channel_name != "force_speak":
+        elif cooldown_left > 0 and channel_name != "force_speak" and vital_pressure < 0.66:
             blocked_reason = f"family_cooldown:{cooldown_left:.0f}s"
 
         evidence = tuple(
@@ -173,6 +194,9 @@ class SpontaneousLifeEngine:
                     *stack.debug_notes(),
                     *report.evidence_notes(),
                     f"family={family}",
+                    f"metabolic_pressure={metabolic_pressure:.2f}",
+                    f"vital_pressure={vital_pressure:.2f}",
+                    "is_vital_pressure=true" if vital_pressure >= 0.55 else "",
                     f"blocked={blocked_reason}" if blocked_reason else "",
                 )
             )
@@ -189,6 +213,8 @@ class SpontaneousLifeEngine:
         self.last_trace = SpontaneousLifeTrace(
             pressure=pressure,
             novelty=novelty,
+            vital_pressure=vital_pressure,
+            metabolic_pressure=metabolic_pressure,
             impulse_type=impulse_type,
             family=family,
             blocked_reason=blocked_reason,
@@ -222,6 +248,9 @@ class SpontaneousLifeEngine:
                 arbitration_report=arbitration_report,
                 agent_state_notes=agent_state_notes,
                 body_bias_hint=body_bias_hint,
+                vital_pressure=vital_pressure,
+                metabolic_pressure=metabolic_pressure,
+                is_vital_pressure=vital_pressure >= 0.55,
             )
 
         self._last_family_at[family] = now
@@ -254,6 +283,9 @@ class SpontaneousLifeEngine:
             arbitration_report=arbitration_report,
             agent_state_notes=agent_state_notes,
             body_bias_hint=body_bias_hint,
+            vital_pressure=vital_pressure,
+            metabolic_pressure=metabolic_pressure,
+            is_vital_pressure=vital_pressure >= 0.55,
         )
 
     def _body_bias_hint(self, *, selected_name: str, stack, pressure: float) -> dict[str, object]:
@@ -271,10 +303,12 @@ class SpontaneousLifeEngine:
         needs = getattr(stack, "needs", None)
         focus_kind = str(getattr(ev, "focus_kind", "unknown") or "unknown")
         pressure_value = round(_clamp01(pressure), 3)
+        vital_pressure = _clamp01(getattr(getattr(stack, "needs", None), "vital_pressure", 0.0))
         hint: dict[str, object] = {
             "source": "impulse_arbitration",
             "selected_impulse": str(selected_name or ""),
             "pressure": pressure_value,
+            "vital_pressure": round(vital_pressure, 3),
             "focus_kind": focus_kind,
         }
         if selected_name == "scene_curiosity_impulse":
@@ -307,7 +341,7 @@ class SpontaneousLifeEngine:
         else:
             hint.update({
                 "preferred_anchor": "chat_near",
-                "body_action_bias": "low_pressure_presence",
+                "body_action_bias": "look_at_focus" if vital_pressure >= 0.58 else "low_pressure_presence",
                 "speech_shape": "short_internal_fragment",
             })
         return hint
@@ -337,7 +371,9 @@ class SpontaneousLifeEngine:
         }.get(impulse_type, self.config.default_cooldown_seconds)
         if pressure >= 0.72:
             base *= 0.72
-        return max(45.0, base)
+        if pressure >= 0.58:
+            base *= 0.82
+        return max(35.0, base)
 
     def _cooldown_left(self, family: str, *, now: float, cooldown: float) -> float:
         last = float(self._last_family_at.get(family, 0.0) or 0.0)

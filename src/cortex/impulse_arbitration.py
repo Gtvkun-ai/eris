@@ -35,6 +35,7 @@ class ImpulseCandidate:
     habit_bias: float = 0.0
     interrupt_cost: float = 0.0
     resource_cost: float = 0.0
+    metabolic_adjustment: float = 0.0
     evidence: tuple[str, ...] = ()
     reason: str = ""
     requires_scene_evidence: bool = False
@@ -54,6 +55,7 @@ class ImpulseCandidate:
             - self.repetition_penalty
             - self.interrupt_cost
             - self.resource_cost
+            + self.metabolic_adjustment
         )
 
     def score_note(self) -> str:
@@ -79,6 +81,7 @@ class ImpulseCandidate:
             "habit_bias": round(self.habit_bias, 3),
             "interrupt_cost": round(self.interrupt_cost, 3),
             "resource_cost": round(self.resource_cost, 3),
+            "metabolic_adjustment": round(self.metabolic_adjustment, 3),
             "evidence": list(self.evidence),
             "reason": self.reason,
             "requires_scene_evidence": bool(self.requires_scene_evidence),
@@ -123,14 +126,17 @@ def _priority(name: str) -> float:
     # Tie-break nhẹ: task thật > scene > companionship > whim > silence. Nếu cứ để
     # silence thắng mọi tie thì ERIS thành tranh nền có UDP, một tiến hóa đáng buồn.
     return {
-        "technical_help_impulse": 0.70,
-        "scene_curiosity_impulse": 0.62,
-        "curious_question_impulse": 0.58,
+        "technical_help_impulse": 0.74,
+        "scene_curiosity_impulse": 0.68,
+        "reengagement_impulse": 0.64,
+        "curious_question_impulse": 0.60,
+        "memory_resonance_impulse": 0.57,
+        "random_chatter_impulse": 0.55,
         "companionship_impulse": 0.52,
-        "micro_story_impulse": 0.48,
-        "inner_whim_impulse": 0.44,
-        "body_only_impulse": 0.40,
-        "silence_impulse": 0.36,
+        "micro_story_impulse": 0.50,
+        "inner_whim_impulse": 0.48,
+        "body_only_impulse": 0.42,
+        "silence_impulse": 0.30,
     }.get(str(name or ""), 0.0)
 
 
@@ -164,6 +170,17 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
     pattern_observation_belief = beliefs.confidence("eris.prefers_pattern_observation", 0.70)
     cognitive_stimulation = _clamp01(getattr(needs, "cognitive_stimulation_need", 0.0))
     social_presence_need = _clamp01(getattr(needs, "social_presence_need", needs.relation_need))
+    vital_pressure = _clamp01(getattr(needs, "vital_pressure", 0.0))
+    metabolic_pressure = _clamp01(getattr(needs, "metabolic_pressure", vital_pressure))
+    silence_pressure = _clamp01(getattr(needs, "silence_pressure", 0.0))
+    thought_pressure = _clamp01(getattr(needs, "thought_pressure", 0.0))
+    memory_residue_pressure = _clamp01(getattr(needs, "memory_residue_pressure", 0.0))
+    boredom_pressure = _clamp01(getattr(needs, "boredom_pressure", 0.0))
+
+    # Metabolic adjustment xuyên suốt arbitration. Đây là điểm "tim đập":
+    # im lặng vẫn là ứng viên hợp lệ, nhưng càng nén lâu thì silence càng mất giá.
+    vital_speech_bonus = min(0.32, vital_pressure * 0.34)
+    vital_silence_discount = min(0.48, vital_pressure * 0.52 + requested_presence * 0.20)
 
     scene_anchor = _scene_anchor(ev)
     thought_topic = _text(getattr(thought_surface, "topic_seed", "") if thought_surface is not None else "", limit=80)
@@ -181,16 +198,17 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             speech_act="no_speech",
             topic_seed="intentional_silence",
             family="silence:intentional",
-            base_score=0.26,
-            belief_support=ambient_copresence * 0.22 + status_ping_low_value * 0.10,
-            need_pressure=needs.rest_need * 0.34 + needs.competence_need * 0.22 + cognitive_stimulation * 0.06,
-            preference_fit=prefs.fit_for("silence_impulse") * 0.14,
+            base_score=0.20,
+            belief_support=ambient_copresence * 0.16 + status_ping_low_value * 0.06,
+            need_pressure=needs.rest_need * 0.28 + needs.competence_need * 0.18 + cognitive_stimulation * 0.03,
+            preference_fit=prefs.fit_for("silence_impulse") * 0.10,
             trait_bias=traits.bias_for("silence_impulse"),
-            affordance_allowance=0.12 if aff.silence_allowed else 0.0,
-            risk=needs.expression_need * 0.08 + requested_presence * 0.24,
+            affordance_allowance=0.10 if aff.silence_allowed else 0.0,
+            risk=needs.expression_need * 0.08 + requested_presence * 0.24 + vital_silence_discount,
             habit_bias=habits.semantic_bias(action="no_speech", impulse_name="silence_impulse", family="silence:intentional"),
-            evidence=(*needs.notes(), "silence_is_candidate"),
-            reason="Rest, restraint, or task pressure may make silence the least stupid option.",
+            metabolic_adjustment=-vital_silence_discount,
+            evidence=(*needs.notes(), f"metabolic.vital={vital_pressure:.2f}", f"silence_discount={vital_silence_discount:.2f}", "silence_is_candidate"),
+            reason="Silence is valid, but metabolic pressure discounts it when ERIS has been compressed too long.",
         )
     )
 
@@ -211,7 +229,7 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             base_score=0.10,
             evidence_fit=0.22 if scene_allowed else 0.0,
             belief_support=max(beliefs.confidence("scene.low_risk_casual"), beliefs.confidence("scene.systemic_interest"), pattern_observation_belief) * 0.20,
-            need_pressure=scene_need + requested_presence * 0.12 + media_relief * 0.10,
+            need_pressure=scene_need + requested_presence * 0.12 + media_relief * 0.10 + vital_speech_bonus * 0.52,
             preference_fit=prefs.fit_for("scene_curiosity_impulse") * 0.20,
             trait_bias=traits.bias_for("scene_curiosity_impulse"),
             affordance_allowance=0.18 if scene_allowed else -0.10,
@@ -220,7 +238,8 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             habit_bias=habits.semantic_bias(action="micro_observation", impulse_name="scene_curiosity_impulse", family=family_scene),
             interrupt_cost=max(0.0, needs.competence_need * 0.18 + dynamic_interrupt_cost * 0.22 - requested_presence * 0.18 - media_relief),
             resource_cost=0.02,
-            evidence=(*ev.evidence_ids, *ev.tags, "belief.scene_low_risk", "pref.absurd_mundane"),
+            metabolic_adjustment=vital_speech_bonus if ev.has_scene_anchor else 0.0,
+            evidence=(*ev.evidence_ids, *ev.tags, "belief.scene_low_risk", "pref.absurd_mundane", f"metabolic.vital={vital_pressure:.2f}"),
             reason="Scene curiosity can surface as a small grounded observation.",
             requires_scene_evidence=True,
         )
@@ -237,7 +256,7 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             base_score=0.10 + internal_pull_boost,
             evidence_fit=(0.10 if thought_topic else 0.03) + requested_presence * 0.10,
             belief_support=max(beliefs.confidence("eris.should_not_sound_like_camera", 0.50), pattern_observation_belief) * 0.12,
-            need_pressure=needs.expression_need * 0.24 + needs.curiosity_need * 0.10 + cognitive_stimulation * 0.28 + requested_presence * 0.18,
+            need_pressure=needs.expression_need * 0.24 + needs.curiosity_need * 0.10 + cognitive_stimulation * 0.28 + requested_presence * 0.18 + vital_speech_bonus,
             preference_fit=prefs.fit_for("inner_whim_impulse") * 0.20,
             trait_bias=traits.bias_for("inner_whim_impulse"),
             affordance_allowance=0.06,
@@ -245,7 +264,8 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.46 - requested_presence * 0.36 - media_relief),
             repetition_penalty=habits.repetition_penalty(action="inner_whim", family=family_whim),
             habit_bias=habits.semantic_bias(action="inner_whim", impulse_name="inner_whim_impulse", family=family_whim),
-            evidence=(*stack.debug_notes()[:5], "source=thought_or_internal_state"),
+            metabolic_adjustment=vital_speech_bonus * 0.82,
+            evidence=(*stack.debug_notes()[:5], f"metabolic.vital={vital_pressure:.2f}", "source=thought_or_internal_state"),
             reason="Internal residue wants a short low-claim line.",
         )
     )
@@ -262,7 +282,7 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             base_score=0.06 + requested_presence * 0.34 + media_relief * 0.06,
             evidence_fit=0.08 if (thought_topic or scene_anchor) else 0.02,
             belief_support=beliefs.confidence("eris.should_not_sound_like_camera", 0.50) * 0.06,
-            need_pressure=needs.curiosity_need * 0.26 + needs.expression_need * 0.16 + requested_presence * 0.20,
+            need_pressure=needs.curiosity_need * 0.26 + needs.expression_need * 0.16 + requested_presence * 0.20 + vital_speech_bonus * 0.72,
             preference_fit=prefs.fit_for("inner_whim_impulse") * 0.10,
             trait_bias=traits.bias_for("scene_curiosity_impulse") * 0.42,
             affordance_allowance=0.06 + (0.08 if explicit_no_screen_pull else 0.0),
@@ -270,7 +290,8 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             repetition_penalty=habits.repetition_penalty(action="curious_question", family="curious_question:" + _family_key(thought_topic or scene_anchor or "requested_presence")),
             habit_bias=habits.semantic_bias(action="curious_question", impulse_name="curious_question_impulse", family="curious_question:" + _family_key(thought_topic or scene_anchor or "requested_presence")),
             interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.38 - requested_presence * 0.30 - media_relief),
-            evidence=("requested_presence" if requested_presence else "curiosity_pressure", *stack.debug_notes()[:5]),
+            metabolic_adjustment=vital_speech_bonus * 0.60,
+            evidence=("requested_presence" if requested_presence else "curiosity_pressure", f"metabolic.vital={vital_pressure:.2f}", *stack.debug_notes()[:5]),
             reason="Explicit pull or low-risk curiosity can surface as one small question without screen claims.",
         )
     )
@@ -286,7 +307,7 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             base_score=0.07 + requested_presence * 0.28,
             evidence_fit=(0.10 if thought_topic else 0.04) + requested_presence * 0.06,
             belief_support=pattern_observation_belief * 0.10,
-            need_pressure=needs.expression_need * 0.18 + cognitive_stimulation * 0.22 + requested_presence * 0.14,
+            need_pressure=needs.expression_need * 0.18 + cognitive_stimulation * 0.22 + requested_presence * 0.14 + vital_speech_bonus * 0.86,
             preference_fit=prefs.fit_for("micro_story_impulse") * 0.16,
             trait_bias=traits.bias_for("micro_story_impulse"),
             affordance_allowance=0.05,
@@ -294,7 +315,8 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.44 - requested_presence * 0.32 - media_relief),
             repetition_penalty=habits.repetition_penalty(action="light_muse", family=family_story),
             habit_bias=habits.semantic_bias(action="light_muse", impulse_name="micro_story_impulse", family=family_story),
-            evidence=("source=memory_or_thought_residue", *needs.notes()[:3]),
+            metabolic_adjustment=vital_speech_bonus * 0.72,
+            evidence=("source=memory_or_thought_residue", f"metabolic.vital={vital_pressure:.2f}", *needs.notes()[:3]),
             reason="A tiny memory/thought residue is competing for surface.",
         )
     )
@@ -307,17 +329,97 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             speech_act="micro_presence",
             topic_seed="quiet_co_presence",
             family="companionship:quiet_co_presence",
-            base_score=0.035,
+            base_score=0.045 + vital_pressure * 0.06,
             belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.06 - ambient_copresence * 0.16 - status_ping_low_value * 0.18),
-            need_pressure=social_presence_need * 0.16 + needs.continuity_need * 0.06 + requested_presence * 0.04,
+            need_pressure=social_presence_need * 0.16 + needs.continuity_need * 0.16 + requested_presence * 0.04 + vital_speech_bonus * 0.70,
             preference_fit=prefs.fit_for("companionship_impulse") * 0.10,
             trait_bias=traits.bias_for("companionship_impulse"),
             affordance_allowance=0.04 if aff.body_only_allowed else 0.0,
-            risk=aff.intrusive_question_risk * 0.12 + needs.rest_need * 0.16 + micro_presence_demote + status_ping_low_value * 0.16,
+            risk=aff.intrusive_question_risk * 0.12 + needs.rest_need * 0.16 + micro_presence_demote + max(0.0, status_ping_low_value * 0.16 - vital_pressure * 0.12),
             repetition_penalty=habits.repetition_penalty(action="micro_presence", family="companionship:quiet_co_presence"),
             habit_bias=habits.semantic_bias(action="micro_presence", impulse_name="companionship_impulse", family="companionship:quiet_co_presence"),
-            evidence=("need.relation", "need.continuity", "low_claim_presence"),
+            metabolic_adjustment=vital_speech_bonus * 0.58,
+            evidence=("need.relation", "need.continuity", f"metabolic.vital={vital_pressure:.2f}", "low_claim_presence"),
             reason="Co-presence ping must beat ambient-silence belief before it can speak.",
+        )
+    )
+
+    # 6. Random chatter: nói nhảm có kiểm soát khi boredom/silence nén đủ lâu.
+    # Không claim màn hình; nó là mẩu nội sinh thấp rủi ro, dùng để ERIS bớt hóa tượng.
+    random_family = "random_chatter:" + _family_key(thought_topic or scene_anchor or "ambient_runtime")
+    candidates.append(
+        ImpulseCandidate(
+            name="random_chatter_impulse",
+            impulse_type="random_chatter",
+            speech_act="random_chatter",
+            topic_seed=thought_topic or "ambient_runtime",
+            family=random_family,
+            base_score=0.045 + boredom_pressure * 0.08 + requested_presence * 0.08,
+            evidence_fit=0.06 if thought_topic else 0.02,
+            belief_support=max(beliefs.confidence("eris.should_not_sound_like_camera", 0.50), pattern_observation_belief) * 0.08,
+            need_pressure=boredom_pressure * 0.22 + needs.expression_need * 0.18 + cognitive_stimulation * 0.18 + vital_speech_bonus * 0.80,
+            preference_fit=prefs.fit_for("random_chatter_impulse") * 0.14,
+            trait_bias=traits.bias_for("random_chatter_impulse"),
+            affordance_allowance=0.09 if aff.random_chatter_allowed else -0.04,
+            risk=needs.rest_need * 0.12 + aff.intrusive_question_risk * 0.08,
+            interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.34 - requested_presence * 0.24 - media_relief - vital_pressure * 0.18),
+            repetition_penalty=habits.repetition_penalty(action="random_chatter", family=random_family),
+            habit_bias=habits.semantic_bias(action="random_chatter", impulse_name="random_chatter_impulse", family=random_family),
+            metabolic_adjustment=vital_speech_bonus * 0.64,
+            evidence=("source=endogenous_boredom", f"metabolic.vital={vital_pressure:.2f}", f"boredom={boredom_pressure:.2f}"),
+            reason="Compressed boredom/silence can surface as one tiny no-claim chatter fragment.",
+        )
+    )
+
+    # 7. Memory resonance: ký ức/pattern cũ nổi lên, nhưng vẫn phải nói thấp-claim.
+    memory_family = "memory_resonance:" + _family_key(thought_topic or "pattern_residue")
+    candidates.append(
+        ImpulseCandidate(
+            name="memory_resonance_impulse",
+            impulse_type="memory_resonance",
+            speech_act="light_muse",
+            topic_seed=thought_topic or "pattern_residue",
+            family=memory_family,
+            base_score=0.05 + memory_residue_pressure * 0.10,
+            evidence_fit=0.12 if thought_topic else 0.04,
+            belief_support=pattern_observation_belief * 0.18,
+            need_pressure=memory_residue_pressure * 0.28 + thought_pressure * 0.18 + vital_speech_bonus * 0.62,
+            preference_fit=prefs.fit_for("memory_resonance_impulse") * 0.16,
+            trait_bias=traits.bias_for("memory_resonance_impulse"),
+            affordance_allowance=0.06,
+            risk=needs.rest_need * 0.10 + needs.competence_need * 0.08,
+            interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.32 - vital_pressure * 0.16 - requested_presence * 0.18),
+            repetition_penalty=habits.repetition_penalty(action="light_muse", family=memory_family),
+            habit_bias=habits.semantic_bias(action="light_muse", impulse_name="memory_resonance_impulse", family=memory_family),
+            metabolic_adjustment=vital_speech_bonus * 0.54,
+            evidence=("source=memory_residue", f"memory_residue={memory_residue_pressure:.2f}", f"metabolic.vital={vital_pressure:.2f}"),
+            reason="A remembered pattern/residue wants a short surface trace.",
+        )
+    )
+
+    # 8. Re-engagement: sau im lâu, không chỉ 'tôi ở đây' mà kéo nhịp lại thật nhẹ.
+    reengagement_family = "reengagement:quiet_return"
+    candidates.append(
+        ImpulseCandidate(
+            name="reengagement_impulse",
+            impulse_type="reengagement",
+            speech_act="reengagement",
+            topic_seed=scene_anchor or thought_topic or "quiet_return",
+            family=reengagement_family,
+            base_score=0.035 + min(0.14, silence_pressure * 0.12),
+            evidence_fit=0.08 if ev.has_scene_anchor else 0.02,
+            belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.10 - ambient_copresence * 0.08),
+            need_pressure=needs.continuity_need * 0.22 + social_presence_need * 0.14 + vital_speech_bonus * 0.92,
+            preference_fit=prefs.fit_for("reengagement_impulse") * 0.14,
+            trait_bias=traits.bias_for("reengagement_impulse"),
+            affordance_allowance=0.08 if aff.body_only_allowed else -0.04,
+            risk=aff.intrusive_question_risk * 0.10 + needs.rest_need * 0.12,
+            interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.30 - vital_pressure * 0.22 - requested_presence * 0.20),
+            repetition_penalty=habits.repetition_penalty(action="reengagement", family=reengagement_family),
+            habit_bias=habits.semantic_bias(action="reengagement", impulse_name="reengagement_impulse", family=reengagement_family),
+            metabolic_adjustment=vital_speech_bonus * 0.70,
+            evidence=(f"silence_pressure={silence_pressure:.2f}", f"metabolic.vital={vital_pressure:.2f}", "low_claim_reengagement"),
+            reason="Long compressed silence can ask for one restrained re-engagement line.",
         )
     )
 
@@ -354,13 +456,14 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             topic_seed="body_bias_only",
             family="body:quiet_adjustment",
             base_score=0.12,
-            need_pressure=needs.continuity_need * 0.16 + needs.curiosity_need * 0.08,
+            need_pressure=needs.continuity_need * 0.16 + needs.curiosity_need * 0.08 + vital_pressure * 0.16,
             preference_fit=prefs.fit_for("body_only_impulse") * 0.10,
             trait_bias=traits.bias_for("body_only_impulse"),
             affordance_allowance=0.16 if aff.body_only_allowed else -0.04,
             risk=0.04,
             habit_bias=habits.semantic_bias(action="no_speech", impulse_name="body_only_impulse", family="body:quiet_adjustment"),
-            evidence=("body_only_affordance", *needs.notes()[:2]),
+            metabolic_adjustment=vital_pressure * 0.08,
+            evidence=("body_only_affordance", f"metabolic.vital={vital_pressure:.2f}", *needs.notes()[:2]),
             reason="Presence can move through body bias without forcing speech.",
         )
     )

@@ -551,7 +551,10 @@ class CognitiveActionPlan:
             "selected_impulse": self.selected_impulse,
             "impulse_arbitration": dict(self.impulse_arbitration),
             "impulse_scores": list(self.impulse_scores),
-            "body_bias_hint": dict(self.body_bias_hint),
+                        "body_bias_hint": dict(self.body_bias_hint),
+            "vital_pressure": round(float(self.vital_pressure), 3),
+            "metabolic_pressure": round(float(self.metabolic_pressure), 3),
+            "is_vital_pressure": bool(self.is_vital_pressure),
         }
 
 
@@ -881,6 +884,13 @@ class SpeechImpulse:
     arbitration_report: dict[str, object] = field(default_factory=dict)
     agent_state_notes: tuple[str, ...] = ()
     body_bias_hint: dict[str, object] = field(default_factory=dict)
+
+    # Đạo hàm metabolism từ AgentStateStack/SpontaneousLife. Đây không phải
+    # memory/state mới; nó là "áp lực sống" đi kèm impulse để các gate phía sau
+    # hiểu rằng im lâu khác với im có chủ đích.
+    vital_pressure: float = 0.0
+    metabolic_pressure: float = 0.0
+    is_vital_pressure: bool = False
 
     @property
     def active(self) -> bool:
