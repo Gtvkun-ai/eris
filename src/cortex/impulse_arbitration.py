@@ -184,6 +184,10 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
 
     scene_anchor = _scene_anchor(ev)
     thought_topic = _text(getattr(thought_surface, "topic_seed", "") if thought_surface is not None else "", limit=80)
+    has_internal_content = bool(thought_topic)
+    has_scene_or_internal_context = bool(ev.has_scene_anchor or scene_anchor or has_internal_content or memory_residue_pressure >= 0.42)
+    empty_context_presence_penalty = status_ping_low_value * (0.34 if not has_scene_or_internal_context else 0.18)
+    vital_body_release = vital_pressure * (0.30 if not has_scene_or_internal_context else 0.14)
     family_scene = "scene_curiosity:" + _family_key(scene_anchor)
     family_whim = "inner_whim:" + _family_key(thought_topic or "quiet_whim")
     family_story = "micro_story:" + _family_key(thought_topic or "memory_dust")
@@ -329,18 +333,18 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             speech_act="micro_presence",
             topic_seed="quiet_co_presence",
             family="companionship:quiet_co_presence",
-            base_score=0.045 + vital_pressure * 0.06,
-            belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.06 - ambient_copresence * 0.16 - status_ping_low_value * 0.18),
-            need_pressure=social_presence_need * 0.16 + needs.continuity_need * 0.16 + requested_presence * 0.04 + vital_speech_bonus * 0.70,
+            base_score=0.025 + vital_pressure * 0.025,
+            belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.04 - ambient_copresence * 0.20 - status_ping_low_value * 0.32),
+            need_pressure=social_presence_need * 0.10 + needs.continuity_need * 0.08 + requested_presence * 0.02 + vital_speech_bonus * 0.24,
             preference_fit=prefs.fit_for("companionship_impulse") * 0.10,
             trait_bias=traits.bias_for("companionship_impulse"),
-            affordance_allowance=0.04 if aff.body_only_allowed else 0.0,
-            risk=aff.intrusive_question_risk * 0.12 + needs.rest_need * 0.16 + micro_presence_demote + max(0.0, status_ping_low_value * 0.16 - vital_pressure * 0.12),
+            affordance_allowance=0.02 if aff.body_only_allowed and has_scene_or_internal_context else -0.04,
+            risk=aff.intrusive_question_risk * 0.12 + needs.rest_need * 0.18 + micro_presence_demote + empty_context_presence_penalty + max(0.0, status_ping_low_value * 0.26 - vital_pressure * 0.05),
             repetition_penalty=habits.repetition_penalty(action="micro_presence", family="companionship:quiet_co_presence"),
             habit_bias=habits.semantic_bias(action="micro_presence", impulse_name="companionship_impulse", family="companionship:quiet_co_presence"),
-            metabolic_adjustment=vital_speech_bonus * 0.58,
-            evidence=("need.relation", "need.continuity", f"metabolic.vital={vital_pressure:.2f}", "low_claim_presence"),
-            reason="Co-presence ping must beat ambient-silence belief before it can speak.",
+            metabolic_adjustment=max(0.0, vital_speech_bonus * 0.18 - empty_context_presence_penalty * 0.35),
+            evidence=("need.relation", "need.continuity", f"metabolic.vital={vital_pressure:.2f}", f"belief.status_ping_low_value={status_ping_low_value:.2f}", "low_claim_presence"),
+            reason="Co-presence ping is strongly demoted by the belief that empty status pings have low value.",
         )
     )
 
@@ -408,17 +412,17 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             family=reengagement_family,
             base_score=0.035 + min(0.14, silence_pressure * 0.12),
             evidence_fit=0.08 if ev.has_scene_anchor else 0.02,
-            belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.10 - ambient_copresence * 0.08),
-            need_pressure=needs.continuity_need * 0.22 + social_presence_need * 0.14 + vital_speech_bonus * 0.92,
+            belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.08 - ambient_copresence * 0.10 - status_ping_low_value * 0.10),
+            need_pressure=needs.continuity_need * 0.16 + social_presence_need * 0.08 + vital_speech_bonus * (0.52 if has_scene_or_internal_context else 0.24),
             preference_fit=prefs.fit_for("reengagement_impulse") * 0.14,
             trait_bias=traits.bias_for("reengagement_impulse"),
             affordance_allowance=0.08 if aff.body_only_allowed else -0.04,
-            risk=aff.intrusive_question_risk * 0.10 + needs.rest_need * 0.12,
+            risk=aff.intrusive_question_risk * 0.10 + needs.rest_need * 0.12 + empty_context_presence_penalty * 0.65,
             interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.30 - vital_pressure * 0.22 - requested_presence * 0.20),
             repetition_penalty=habits.repetition_penalty(action="reengagement", family=reengagement_family),
             habit_bias=habits.semantic_bias(action="reengagement", impulse_name="reengagement_impulse", family=reengagement_family),
-            metabolic_adjustment=vital_speech_bonus * 0.70,
-            evidence=(f"silence_pressure={silence_pressure:.2f}", f"metabolic.vital={vital_pressure:.2f}", "low_claim_reengagement"),
+            metabolic_adjustment=vital_speech_bonus * (0.40 if has_scene_or_internal_context else 0.12),
+            evidence=(f"silence_pressure={silence_pressure:.2f}", f"metabolic.vital={vital_pressure:.2f}", f"belief.status_ping_low_value={status_ping_low_value:.2f}", "low_claim_reengagement"),
             reason="Long compressed silence can ask for one restrained re-engagement line.",
         )
     )
@@ -455,16 +459,16 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             speech_act="no_speech",
             topic_seed="body_bias_only",
             family="body:quiet_adjustment",
-            base_score=0.12,
-            need_pressure=needs.continuity_need * 0.16 + needs.curiosity_need * 0.08 + vital_pressure * 0.16,
+            base_score=0.12 + vital_body_release * 0.25,
+            need_pressure=needs.continuity_need * 0.18 + needs.curiosity_need * 0.08 + vital_pressure * 0.20 + empty_context_presence_penalty * 0.38,
             preference_fit=prefs.fit_for("body_only_impulse") * 0.10,
             trait_bias=traits.bias_for("body_only_impulse"),
-            affordance_allowance=0.16 if aff.body_only_allowed else -0.04,
+            affordance_allowance=(0.16 + vital_body_release) if aff.body_only_allowed else -0.04,
             risk=0.04,
             habit_bias=habits.semantic_bias(action="no_speech", impulse_name="body_only_impulse", family="body:quiet_adjustment"),
-            metabolic_adjustment=vital_pressure * 0.08,
-            evidence=("body_only_affordance", f"metabolic.vital={vital_pressure:.2f}", *needs.notes()[:2]),
-            reason="Presence can move through body bias without forcing speech.",
+            metabolic_adjustment=vital_pressure * 0.12 + vital_body_release * 0.22,
+            evidence=("body_only_affordance", f"metabolic.vital={vital_pressure:.2f}", f"belief.status_ping_low_value={status_ping_low_value:.2f}", *needs.notes()[:2]),
+            reason="When there is no real context, vital pressure should discharge through body rhythm instead of empty presence speech.",
         )
     )
 

@@ -476,10 +476,10 @@ class LlamaServerProcessManager:
             return None
         mmproj_path = self._resolve_mmproj_path()
         if not mmproj_path:
-            self.logger.warning("Khong tim thay mmproj vision; vision_facts se dung client cognition chinh.")
+            self.logger.warning("Khong tim thay mmproj vision; vision_facts se khong dung client cognition chinh.")
             return None
         if not os.path.isfile(model_path):
-            self.logger.warning("Khong tim thay GGUF vision model tai %s; vision_facts se dung client cognition chinh.", model_path)
+            self.logger.warning("Khong tim thay GGUF vision model tai %s; vision_facts se khong dung client cognition chinh.", model_path)
             return None
 
         previous_remote = os.environ.get("ERIS_REMOTE_API_ENABLED")

@@ -107,6 +107,18 @@ class LlmServiceTests(unittest.TestCase):
         self.assertEqual(len(main_client.calls), 0)
         self.assertEqual(len(vision_client.calls), 1)
 
+    def test_screen_facts_do_not_fall_back_to_main_or_style_client(self):
+        main_client = _FakeClient(['{"facts":["main should not see image"],"debug_trace":"main"}'])
+        style_client = _FakeClient(['{"facts":["style should not see image"],"debug_trace":"style"}'])
+        service = LlmService(main_client, style_client=style_client)
+
+        facts, trace = service.generate_screen_facts(screen_image_data_uri="data:image/png;base64,abc")
+
+        self.assertEqual(facts, [])
+        self.assertEqual(trace, "vision_client_missing")
+        self.assertEqual(len(main_client.calls), 0)
+        self.assertEqual(len(style_client.calls), 0)
+
     def test_directive_includes_autonomous_behavior_prompt(self):
         client = _FakeClient(
             [

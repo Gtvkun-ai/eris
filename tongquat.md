@@ -652,9 +652,9 @@ Debug khi:
 Status: ACTIVE CRITICAL GATE VERIFIED_IN_WORKSPACE.
 
 ## `src/runtime/model_budget_policy.py`
-Role: budget gatekeeper + lightweight inference scheduler cho model nặng.
+Role: lightweight inference scheduler cho model nặng; Resource Guard hiện là opt-in.
 Capabilities:
-- CPU/RAM/GPU/VRAM best-effort.
+- CPU/RAM/GPU/VRAM best-effort telemetry.
 - global heavy-model lock qua lease.
 - priority queue + timeout + cancel_event.
 - `run_queued(...)` / `lease(...)` lifecycle bọc inference thật.
@@ -662,20 +662,25 @@ Capabilities:
 - snapshot có active tiers, reserved VRAM, queue depth, `main_cognition_recent`.
 - legacy-compatible `mark_started/mark_finished` vẫn còn để giữ cooldown markers.
 Current code specifics:
+- Mặc định runtime là queue-only: `ERIS_RESOURCE_GUARD_ENABLED` default `false`.
+- Khi `resource_guard_enabled=false`, `can_run()` trả `scheduler_allow` dù CPU/RAM/GPU/VRAM/temp/cooldown cao. Guard không còn bóp main/vision/daydream vì máy luôn bận.
+- Queue/lease vẫn hoạt động: heavy tiers không chạy chồng nhau vì `_has_incompatible_active_lease_locked()` giữ `main_cognition`, `subconscious_4b`, `vision_compressor` tuần tự.
+- Nếu muốn behavior cũ để test/debug, bật `ERIS_RESOURCE_GUARD_ENABLED=1`; lúc đó mới có `gpu_overheat`, `tier_cooldown_active`, `resource_guard:*`, `active_heavy_lease`.
+- `vision_force_run` default `true`: trong mode guard-on, `vision_compressor` có priority lane riêng, timeout mặc định `0.0`, bỏ qua queue full mềm, và nếu qua được overheat thì reason thành `vision_force_run`.
+- `force_local_gguf_main` vẫn là special path riêng: priority cực cao, timeout riêng, bỏ qua một số giới hạn queue thường.
 - heavy tiers thực tế là `main_cognition`, `subconscious_4b`, `vision_compressor`; `sensory_0_6b` dùng soft block riêng.
-- queue là in-process priority queue; request chỉ bị đo/veto khi đã lên đầu queue, nên soft block sẽ giữ request ở head thay vì fail sớm.
-- hard veto hiện đi qua `gpu_overheat` hoặc budget decision `kill`; còn soft block thường thành `resource_guard:*`, `tier_cooldown_active`, `active_heavy_lease`.
-- có special path `force_local_gguf_main`: priority cực cao, timeout riêng, và bỏ qua một số giới hạn queue thường.
-- resource guard đáng chú ý trong code hiện tại: `cpu_busy`, `ram_busy`, `gpu_busy`, `heavy_foreground_gpu_owner`, `compile_or_editor_pressure`.
+- queue là in-process priority queue; nếu guard-on, request chỉ bị đo/veto khi đã lên đầu queue.
+- resource guard opt-in đáng chú ý: `cpu_busy`, `ram_busy`, `gpu_busy`, `vram_busy`, `heavy_foreground_gpu_owner`, `compile_or_editor_pressure`.
 - snapshot phân biệt `eris_reserved_vram_mb` với `external_vram_used_mb`; nghĩa là VRAM của lease đang active không bị tính lẫn hoàn toàn như “ngoài hệ”.
 - `queue_state()`, `cancel_queued_request()`, `cancel_all_queued()` là điểm debug khi nghi scheduler kẹt.
 Limit:
 - không kill được request remote/local đã bay vào provider.
 - vẫn là scheduler nhẹ trong-process, chưa phải orchestrator đa worker.
-Debug khi: nhiều model chạy chồng, daydream/vision/main đụng resource.
+Debug khi: nhiều model chạy chồng, daydream/vision/main đụng queue/lease.
 - remote main đang bật `remote_api_enabled` nên behavior heavy/local lock khác với lúc chạy local GGUF.
-- compile Godot/pytest làm 4B hoặc vision bị block bằng `compile_or_editor_pressure`.
-Status: ACTIVE CRITICAL RESOURCE GATE VERIFIED_IN_WORKSPACE.
+- Nếu log còn thấy `resource_guard:*` trong runtime thường, kiểm tra env có bật `ERIS_RESOURCE_GUARD_ENABLED=1` không.
+- Nếu vision vẫn `model_queue_timeout`, kiểm tra caller có override `timeout_seconds` không và queue head có active heavy lease nào giữ lâu không.
+Status: ACTIVE CRITICAL QUEUE SCHEDULER VERIFIED_IN_WORKSPACE.
 
 ## `src/runtime/daydream_model_adapter.py`
 Role: adapter 4B daydream model.
@@ -892,6 +897,13 @@ Contains:
 - telemetry snapshot, goal drift, Ti policy, Fe style, percept/social events.
 - session ritual, attention broadcast, MeaningLayerResult, PersonalityLensResult.
 - appraisal, self state, speech core, speech impulse, thought stream, motivational urge, action plan, cognitive frame, memory update.
+Current code specifics:
+- `SpeechImpulse` đã có `vital_pressure`, `metabolic_pressure`, `is_vital_pressure` để đưa áp lực nội sinh sang SurfaceArbiter/LLM micro wording.
+- `CognitiveActionPlan.to_dict()` hiện serialize `vital_pressure`, `metabolic_pressure`, `is_vital_pressure`.
+Known risk:
+- `CognitiveActionPlan` dataclass trong source hiện chưa khai báo ba field này trước `to_dict()`. Nếu frame/action plan không được set dynamic attribute, `frame.to_dict()` có thể rơi `AttributeError`.
+Debug trace:
+- Full pytest fail ở `frame.to_dict()` / `CognitiveActionPlan.to_dict()` với `AttributeError: 'CognitiveActionPlan' object has no attribute 'vital_pressure'` là mismatch contract, không phải lỗi SurfaceArbiter hay LLM.
 Debug khi: dataclass field mismatch, runtime module không hiểu nhau.
 Status: ACTIVE CORE LANGUAGE.
 
@@ -1256,23 +1268,62 @@ Status: ACTIVE CRITICAL SUBSTRATE.
 ## `src/cortex/agent_mind_persistence.py`
 Role: persistent belief/preference/habit cho impulse system.
 Stores in: memory_core/agent_mind.json.
-Debug khi: feedback “đừng hỏi dồn” không ảnh hưởng hành vi sau.
-Status: ACTIVE.
+Layers:
+- persistent belief: `beliefs` với claim/domain/confidence/source/tags/decay/contradiction.
+- persistent preference: `preferences` với polarity/strength/stability/source/tags.
+- semantic habit: context tags + action pattern + impulse name -> adjustment.
+Current seeds đáng chú ý trong `agent_mind.json`:
+- `eris.identity.intellectual_detachment`.
+- `eris.prefers_pattern_observation`.
+- `eris.should_not_sound_like_camera`.
+- `presence.status_ping_low_value`.
+- `scene.low_risk_casual`.
+- `scene.systemic_interest`.
+Debug khi:
+- feedback “đừng hỏi dồn” không ảnh hưởng hành vi sau.
+- ERIS vẫn thích status ping dù đã có belief `presence.status_ping_low_value`.
+- habit bias không vào impulse score vì context tags/action/impulse_name không match.
+Status: ACTIVE VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/agent_state_stack.py`
 Role: contract stack Evidence -> Belief -> Preference -> Need -> Trait -> Habit -> Affordance.
 Used by: spontaneous_life / impulse_arbitration / speech/action.
-Debug khi: impulse score thiếu state nền.
-Status: ACTIVE.
+Current code specifics:
+- `BeliefSnapshot` thêm INFJ5w4 priors: `silence.ambient_copresence`, `presence.status_ping_low_value`, `eris.prefers_pattern_observation`.
+- `PreferenceProfile` tăng trọng số quiet co-presence/pattern observation/cognitive stimulation và giảm companionship thành attendance ping.
+- `NeedVector` có đạo hàm tức thời: `silence_pressure`, `boredom_pressure`, `thought_pressure`, `memory_residue_pressure`, `attachment_pressure`, `metabolic_pressure`, `vital_pressure`.
+- `metabolic_pressure` là max blend từ silence/boredom/thought/memory/continuity/attachment/social/requested presence.
+- `vital_pressure = metabolic_pressure ** 1.45`: áp lực nhỏ bị nén, áp lực lớn được quyền phá im lặng.
+- `relation_need` và `social_presence_need` bị mood/social-energy gate; mood xấu hoặc social energy thấp sẽ không biến im lặng thành ping tình cảm.
+- `TraitVector` thêm `introverted_observer` và `intellectual_detachment`, làm silence/pattern/inner whim tự nhiên hơn companionship ping.
+- `AffordanceMap` bào mòn interrupt cost khi `vital_pressure` cao; code/docs vẫn ma sát cao, nhưng ERIS không hóa đá vĩnh viễn.
+Debug khi:
+- impulse score thiếu state nền.
+- `vital_pressure` nhìn cao nhưng downstream vẫn không surface.
+- ERIS biến long silence thành status ping thay vì inner whim/pattern observation.
+- force_speak không có screen evidence bị coi như context rỗng thay vì explicit requested presence.
+Status: ACTIVE VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/impulse_arbitration.py`
 Role: chấm điểm impulse cạnh tranh.
 Candidates:
-- silence, scene_curiosity, inner_whim, micro_story, companionship, technical_help, body_only.
+- silence, scene_curiosity, inner_whim, curious_question, micro_story, companionship, random_chatter, memory_resonance, reengagement, technical_help, body_only.
 Score terms:
-- base, evidence fit, belief support, need pressure, preference fit, trait bias, affordance, habit, risk, repetition, interrupt, resource.
-Debug khi: nội sinh có nhưng impulse sai thắng.
-Status: ACTIVE CRITICAL.
+- base, evidence fit, belief support, need pressure, preference fit, trait bias, affordance, habit, risk, repetition, interrupt, resource, metabolic_adjustment.
+Current code specifics:
+- silence là candidate thật nhưng bị `vital_silence_discount` phạt khi compressed silence/requested presence tăng.
+- `scene_curiosity` cần scene affordance/evidence; không được dùng để bịa screen claim.
+- `inner_whim`, `random_chatter`, `memory_resonance` là outlet nội sinh/no-screen-claim khi thought/boredom/memory residue tăng.
+- `companionship_impulse` bị demote bởi `presence.status_ping_low_value`; co-presence không đồng nghĩa phải nói “tôi còn đây”.
+- `reengagement_impulse` là restrained return sau silence dài, không phải attendance ping.
+- `technical_help_impulse` chỉ thắng khi competence/task pressure thật.
+- `body_only_impulse` vẫn cho presence đi qua motion khi speech quá intrusive.
+Debug khi:
+- nội sinh có nhưng impulse sai thắng.
+- silence thắng dù `metabolic.vital` cao.
+- companionship/micro_presence thắng inner_whim vì priors/habit chưa đúng.
+- random_chatter chen vào code/docs vì `endogenous_interrupt_cost` hoặc focus tags sai.
+Status: ACTIVE CRITICAL VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/inner_thought.py`
 Role: biến thought surface/social pressure thành intent nhẹ.
@@ -1738,7 +1789,26 @@ Check:
 7. action_utility no_speech score.
 8. SurfaceArbiter collected the impulse and did not rate-limit it.
 9. WakeDecision có bị degrade từ `wake_main_cognition` xuống `micro_presence` hoặc `think_only` vì `interrupt_cost`/`speech_value` không.
-10. `model_budget_policy` có đang giữ main/vision ở queue head bằng `tier_cooldown_active`, `active_heavy_lease`, hoặc `resource_guard:*` không.
+10. `model_budget_policy` queue có active heavy lease nào giữ head quá lâu không (`queue_state().active`, `queue_state().queued`).
+11. Nếu thấy `resource_guard:*`, `gpu_overheat`, hoặc `tier_cooldown_active`, kiểm tra env `ERIS_RESOURCE_GUARD_ENABLED`; mặc định hiện tại phải là queue-only.
+12. Nếu `CognitiveFrame.to_dict()` fail, kiểm tra mismatch `CognitiveActionPlan` field vs `to_dict()` trước khi đổ lỗi cho speech/surface.
+
+## Case: vision/main/daydream vẫn bị nghẽn dù đã bỏ Resource Guard
+Symptom:
+- log còn báo `model_queue_timeout`.
+- wake decision đúng `call_vision_compressor` nhưng facts không update.
+- `can_run()` reason là `scheduler_allow`, nhưng request vẫn không vào inference thật.
+Check:
+1. `ModelBudgetPolicyConfig.resource_guard_enabled` có thật sự false không.
+2. `queue_state().active` có heavy lease đang chạy lâu không.
+3. caller có truyền `timeout_seconds` ngắn làm request tự timeout dù guard đã tắt không.
+4. `vision_force_run_queue_timeout_seconds` có bị env override khỏi `0.0` không.
+5. `max_queue_size` chỉ bị bypass cho `force_local_gguf` và `vision_force_run`; các tier khác vẫn có thể `model_queue_full`.
+6. Nếu muốn debug guard cũ, bật `ERIS_RESOURCE_GUARD_ENABLED=1` có chủ đích rồi mới đọc `resource_guard:*`.
+Fix direction:
+- Với máy luôn CPU/GPU/VRAM cao, để `ERIS_RESOURCE_GUARD_ENABLED` trống hoặc `0`.
+- Giữ queue để tránh chạy chồng model nặng; đừng disable queue trừ khi đang smoke test rất nhỏ.
+- Nếu vision timeout vì active main đang giữ lease, tăng caller timeout hoặc dùng lane priority/timeout riêng.
 
 ## Case: low-level surface cue có nhưng ERIS vẫn im/body-only
 Symptom:

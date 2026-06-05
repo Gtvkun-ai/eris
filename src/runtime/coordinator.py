@@ -5062,6 +5062,7 @@ class RuntimeCoordinator(
                 ni_report=ni_report,
                 ti_report=ti_report,
                 fe_plan=fe_plan,
+                memory_resonance=memory_resonance,
                 social_presence_event=social_presence_event,
             )
             thought_stream_report = self._disturb_cognitive_substrate(
@@ -5286,6 +5287,7 @@ class RuntimeCoordinator(
             ni_report=ni_report,
             ti_report=ti_report,
             fe_plan=fe_plan,
+            memory_resonance=memory_resonance,
             social_presence_event=social_presence_event,
         )
         thought_stream_report = self._disturb_cognitive_substrate(

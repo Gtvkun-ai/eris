@@ -523,6 +523,13 @@ class CognitiveActionPlan:
     impulse_arbitration: dict[str, object] = field(default_factory=dict)
     impulse_scores: tuple[str, ...] = ()
     body_bias_hint: dict[str, object] = field(default_factory=dict)
+    # Metabolic/vital pressure is consumed by debug output and downstream
+    # body/surface arbitration.  The serializer already exposed these fields,
+    # but the dataclass forgot to own them, because apparently contracts enjoy
+    # cosplaying as runtime exceptions.
+    vital_pressure: float = 0.0
+    metabolic_pressure: float = 0.0
+    is_vital_pressure: bool = False
 
     def to_dict(self) -> dict[str, object]:
         reason = self.reason_to_speak or self.reason

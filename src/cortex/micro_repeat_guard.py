@@ -13,6 +13,17 @@ from .micro_contracts import (
     phrase_in_normalized,
 )
 
+try:  # Optional: semantic guard should degrade, not drag boot down with it.
+    from .semantic_encoder import (
+        BaseSemanticEncoder,
+        LexicalHashingSemanticEncoder,
+        cosine_similarity,
+    )
+except Exception:  # pragma: no cover - import fallback for partial test envs.
+    BaseSemanticEncoder = None  # type: ignore[assignment]
+    LexicalHashingSemanticEncoder = None  # type: ignore[assignment]
+    cosine_similarity = None  # type: ignore[assignment]
+
 
 class SemanticRepeatGuard:
     """Chặn lặp semantic family, nhưng không để keyword fallback cầm lái.
@@ -29,6 +40,11 @@ class SemanticRepeatGuard:
     """
 
     FAMILY_MARKERS: dict[str, tuple[str, ...]] = {
+        "ambient_presence_status_ping": (
+            "khoang yen", "nhip nay", "van giu cho", "yen them chut",
+            "im hoi lau", "toi van o day", "toi o day", "van dang nghe",
+            "van dang quan sat", "giu cho", "o day them chut",
+        ),
         "code_stalled": (
             "code", "debug", "loi", "traceback", "terminal", "python", "vscode",
             "visual studio", "mach code",
@@ -56,6 +72,18 @@ class SemanticRepeatGuard:
         ),
     }
 
+    SEMANTIC_PROTOTYPES: dict[str, tuple[str, ...]] = {
+        "ambient_presence_status_ping": (
+            "Khoảng yên này vẫn giữ chỗ.",
+            "Nhịp này vẫn yên thêm chút.",
+            "Tôi vẫn ở đây.",
+            "Tôi vẫn đang nghe.",
+            "Im thêm chút cũng được.",
+            "Tôi vẫn đang quan sát thôi.",
+            "Nhịp im này vẫn còn đó.",
+        ),
+    }
+
     SYNONYMS: tuple[tuple[str, str], ...] = (
         ("ma nguon", "code"),
         ("lap trinh", "code"),
@@ -75,11 +103,17 @@ class SemanticRepeatGuard:
         max_items: int = 20,
         window_seconds: float = 240.0,
         exact_repeat_seconds: float = 90.0,
+        semantic_encoder: object | None = None,
+        semantic_threshold: float = 0.78,
     ):
         self.max_items = max(10, min(40, int(max_items or 20)))
         self.window_seconds = max(90.0, min(600.0, float(window_seconds or 240.0)))
         self.exact_repeat_seconds = max(20.0, min(self.window_seconds, float(exact_repeat_seconds or 90.0)))
         self._items: deque[tuple[float, str, str, str, float, str]] = deque(maxlen=self.max_items)
+        self.semantic_encoder = self._coerce_semantic_encoder(semantic_encoder)
+        self.semantic_threshold = max(0.50, min(0.94, float(semantic_threshold or 0.78)))
+        self._semantic_prototype_vectors: dict[str, tuple[tuple[float, ...], ...]] = {}
+        self._semantic_prototype_ready = False
 
     def remember(
         self,
@@ -213,12 +247,102 @@ class SemanticRepeatGuard:
         for source, target in self.SYNONYMS:
             if phrase_in_normalized(normalized, source):
                 normalized = normalized.replace(source, target)
+        matched: list[tuple[str, int, str, float]] = []
         for family, markers in self.FAMILY_MARKERS.items():
             hits = sum(1 for marker in markers if phrase_in_normalized(normalized, marker))
-            if hits:
-                # Fallback marker luôn confidence thấp. Nó là khói, không phải lửa.
-                return family, "fallback_keyword", min(0.42, 0.22 + hits * 0.08)
+            if not hits:
+                continue
+            if family == "ambient_presence_status_ping" and hits >= 2:
+                matched.append((family, hits, "manual", min(0.72, 0.52 + hits * 0.06)))
+            else:
+                matched.append((family, hits, "fallback_keyword", min(0.42, 0.22 + hits * 0.08)))
+        if matched:
+            # Prefer a concrete domain marker over a generic ambient/status marker
+            # when both are present. "Đoạn code này im" is code_stalled first,
+            # not a decorative status ping. Shocking that words have context.
+            priority = {
+                "code_stalled": 4,
+                "meeting_idle": 4,
+                "log_meta": 4,
+                "chat_idle": 3,
+                "screen_still": 2,
+                "ambient_presence_status_ping": 1,
+                "quiet_still": 0,
+            }
+            family, hits, source, score = max(
+                matched,
+                key=lambda item: (priority.get(item[0], 1), item[1], item[3]),
+            )
+            return family, source, score
+        semantic = self._semantic_family_for_text(text)
+        if semantic:
+            return semantic
         return "", "unknown", 0.0
+
+    def _coerce_semantic_encoder(self, encoder: object | None):
+        if encoder is not None:
+            return encoder
+        if LexicalHashingSemanticEncoder is None:
+            return None
+        # Hashing fallback không được tự nhận là hiểu nghĩa thật, nhưng nó cho
+        # prototype clustering deterministic trong dev/test. Confidence sẽ bị
+        # cap thấp nếu health báo is_fallback=True.
+        try:
+            return LexicalHashingSemanticEncoder()
+        except Exception:
+            return None
+
+    def _ensure_semantic_prototypes(self) -> None:
+        if self._semantic_prototype_ready:
+            return
+        self._semantic_prototype_ready = True
+        encoder = self.semantic_encoder
+        if encoder is None or cosine_similarity is None:
+            return
+        try:
+            for family, samples in self.SEMANTIC_PROTOTYPES.items():
+                vectors = []
+                for sample in samples:
+                    encoded = encoder.encode(sample)  # type: ignore[attr-defined]
+                    vector = tuple(getattr(encoded, "vector", ()) or ())
+                    if vector:
+                        vectors.append(vector)
+                if vectors:
+                    # Dùng sample vectors trực tiếp thay vì centroid để tránh hash
+                    # fallback làm mờ những câu ngắn.
+                    self._semantic_prototype_vectors[family] = tuple(vectors)
+        except Exception:
+            self._semantic_prototype_vectors = {}
+
+    def _semantic_family_for_text(self, text: str) -> tuple[str, str, float]:
+        encoder = self.semantic_encoder
+        if encoder is None or cosine_similarity is None:
+            return "", "unknown", 0.0
+        self._ensure_semantic_prototypes()
+        if not self._semantic_prototype_vectors:
+            return "", "unknown", 0.0
+        try:
+            encoded = encoder.encode(text)  # type: ignore[attr-defined]
+            vector = tuple(getattr(encoded, "vector", ()) or ())
+            if not vector:
+                return "", "unknown", 0.0
+            health = encoder.health() if callable(getattr(encoder, "health", None)) else None  # type: ignore[attr-defined]
+            is_fallback = bool(getattr(health, "is_fallback", getattr(encoded, "is_fallback", False)))
+            best_family = ""
+            best_score = 0.0
+            for family, prototype_vectors in self._semantic_prototype_vectors.items():
+                for proto in prototype_vectors:  # type: ignore[assignment]
+                    score = float(cosine_similarity(vector, proto))
+                    if score > best_score:
+                        best_score = score
+                        best_family = family
+            if not best_family or best_score < self.semantic_threshold:
+                return "", "unknown", 0.0
+            if is_fallback:
+                return best_family, "fallback_keyword", min(0.44, best_score * 0.48)
+            return best_family, "semantic_encoder", min(0.88, best_score)
+        except Exception:
+            return "", "unknown", 0.0
 
     def normalize(self, text: str) -> str:
         return normalize_text(text)

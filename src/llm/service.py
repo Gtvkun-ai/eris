@@ -187,7 +187,7 @@ class LlmService:
     def __init__(self, client, style_client=None, vision_client=None, logger=None):
         self.client = client
         self.style_client = style_client
-        self.vision_client = vision_client or style_client
+        self.vision_client = vision_client
         self.logger = logger or logging.getLogger(__name__)
 
     def _http_status_code(self, exc: Exception) -> int | None:
@@ -2601,7 +2601,7 @@ class LlmService:
         if force_surface:
             user_msg += (
                 "- must_surface=true: do not return empty just because evidence is thin; the arbiter already chose speech.\n"
-                "- With thin evidence, speak only about the current rhythm/silence/focus family, not about invented screen facts.\n"
+                "- With thin evidence, use explicit Runtime seeds or memory/thought residue only; do not fall back to generic rhythm/silence/status lines.\n"
                 "- Keep it tiny, concrete, and low-pressure.\n"
             )
         else:
@@ -2620,6 +2620,8 @@ class LlmService:
         if endogenous_surface:
             user_msg += (
                 "- endogenous_surface=true: the line may sound like a small stray thought, dry aside, or mundane random chatter. It should not explain the system.\n"
+                "- endogenous_surface=true: if Runtime seeds are <none>, generic, pressure-only, or too thin, return {\"text\":\"\"} even when must_surface=true.\n"
+                "- endogenous_surface=true: forbidden generic status/rhythm outputs include: 'Khoảng yên này...', 'Nhịp này...', 'vẫn giữ chỗ', 'yên thêm chút', 'im hơi lâu', 'tôi vẫn ở đây'.\n"
             )
 
         user_msg += (
@@ -2629,7 +2631,7 @@ class LlmService:
             "- Do not invent screen/action facts. No fake certainty.\n"
             "- Do not mention telemetry, evidence, signal, debug, CPU, RAM.\n"
             "- Avoid hollow presence lines like 'TÃ´i Ä‘Ã¢y', 'TÃ´i Ä‘ang nghe', 'TÃ´i váº«n quan sÃ¡t'.\n"
-            "- Also avoid stale micro templates: 'Mạch này vẫn giữ chỗ', 'Nhịp này im hơi lâu rồi', 'Vẫn đang đợi chút nhé', 'Khoảng yên này vẫn giữ chỗ'.\n"
+            "- Also avoid stale micro templates: 'Mạch này vẫn giữ chỗ', 'Nhịp này im hơi lâu rồi', 'Vẫn đang đợi chút nhé', 'Khoảng yên này vẫn giữ chỗ', 'Nhịp này vẫn yên thêm chút'.\n"
             "- Speak once or stay text-empty.\n"
         )
         if is_reengagement:
@@ -2780,7 +2782,11 @@ class LlmService:
             if no_fallback_mode_enabled():
                 raise RuntimeError("no_fallback_vision:no_image")
             return [], "no_image"
-        vision_client = self.vision_client or self.client
+        vision_client = self.vision_client
+        if vision_client is None:
+            if no_fallback_mode_enabled():
+                raise RuntimeError("no_fallback_vision:missing_dedicated_vision_client")
+            return [], "vision_client_missing"
 
         system_prompt = (
             "You are a vision captioning module for ERIS. "

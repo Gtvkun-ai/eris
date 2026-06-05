@@ -465,7 +465,9 @@ class PresenceControllerMixin:
         for text in candidates:
             if 3 <= len(text) <= 140:
                 return text[:120]
-        return "nhịp nội sinh bị nén lâu"
+        # Không có seed thật thì không bịa một "nhịp nội sinh" giả làm chất liệu.
+        # SurfaceArbiter sẽ reject endogenous impulse rỗng và để body-only/silence xử lý.
+        return ""
 
     def _current_ego_surface_state(self) -> dict[str, float | str]:
         """Đọc nhanh mood + relationship để presence không hành xử như đồng hồ báo thức."""
@@ -528,6 +530,77 @@ class PresenceControllerMixin:
             return "ambient_copresence_no_ping"
         return ""
 
+    def _memory_resonance_surface_impulse(
+        self,
+        *,
+        frame=None,
+        snapshot=None,
+        focus_family: str = "general_idle",
+        silent_cycles: int = 0,
+    ) -> SurfaceImpulse | None:
+        report = getattr(frame, "memory_resonance", None) if frame is not None else None
+        if report is None:
+            report = getattr(self, "active_memory_resonance", None)
+        if report is None:
+            return None
+
+        score = self._surface_float(getattr(report, "score", 0.0))
+        attention = self._surface_float(getattr(report, "attention_bias", 0.0))
+        wording = self._surface_float(getattr(report, "wording_bias", 0.0))
+        silence = self._surface_float(getattr(report, "silence_bias", 0.0))
+        pressure = max(score, attention * 0.72, wording * 0.88) - silence * 0.30
+        pressure = max(0.0, min(1.0, pressure))
+        if pressure < 0.34:
+            return None
+
+        activations = tuple(getattr(report, "activations", ()) or ())
+        public_activation = None
+        for item in activations:
+            if bool(getattr(item, "may_surface", False)):
+                public_activation = item
+                break
+        if public_activation is None and (wording >= 0.42 or attention >= 0.50):
+            public_activation = activations[0] if activations else None
+        if public_activation is None:
+            return None
+
+        seed = re.sub(r"\s+", " ", str(getattr(public_activation, "text", "") or "")).strip()
+        if not seed:
+            seed = str(getattr(report, "dominant_layer", "") or "memory resonance").strip()
+        if not seed:
+            return None
+
+        evidence_ids = tuple(
+            str(item)
+            for item in (getattr(public_activation, "evidence_ids", ()) or ())
+            if str(item or "").strip()
+        )[:8]
+        record_id = str(getattr(public_activation, "record_id", "") or "").strip()
+        evidence = evidence_ids or ((f"memory_activation:{record_id}",) if record_id else (seed[:120],))
+        layer = str(getattr(public_activation, "layer", "") or getattr(report, "dominant_layer", "") or "memory")
+        vitality = max(pressure, min(1.0, silent_cycles / 7.0) * 0.72)
+
+        return SurfaceImpulse(
+            kind="memory_resonance",
+            source="memory_resonance",
+            confidence=max(0.34, min(0.82, pressure + 0.08)),
+            pressure=pressure,
+            score=max(0.42, pressure + min(0.14, silent_cycles * 0.018)),
+            topic_seed=seed[:160],
+            speech_act="light_muse",
+            family=f"memory_resonance:{layer}",
+            evidence=evidence,
+            reason="active memory resonance has enough public-safe pressure to replace thin presence",
+            focus_family=focus_family or str(getattr(snapshot, "active_window_kind", "") or "memory_resonance"),
+            body_action="low_pressure_presence",
+            missing_evidence_ids=not bool(evidence_ids),
+            is_presence=False,
+            should_surface=True,
+            vital_pressure=vitality,
+            is_vital_pressure=vitality >= 0.55,
+            raw=public_activation,
+        )
+
     def _build_endogenous_surface_impulses(
         self,
         *,
@@ -549,6 +622,14 @@ class PresenceControllerMixin:
         silent_cycles = int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0)
         endogenous_seed = self._endogenous_topic_seed(state=state, agenda=agenda, thought_report=thought_report)
         impulses: list[SurfaceImpulse] = []
+        memory_impulse = self._memory_resonance_surface_impulse(
+            frame=frame,
+            snapshot=snapshot,
+            focus_family=focus_family,
+            silent_cycles=silent_cycles,
+        )
+        if memory_impulse is not None:
+            impulses.append(memory_impulse)
 
         if state is not None:
             silence_pressure = self._surface_float(getattr(state, "silence_pressure", 0.0))
@@ -1376,6 +1457,11 @@ class PresenceControllerMixin:
         return text
 
     def _local_grounded_micro_presence_text(self, synthesis: MicroPresenceSynthesis) -> str:
+        # Local wording templates are intentionally disabled.  This method now
+        # only preserves the call contract for old force_speak paths; actual text
+        # must come from the LLM wording layer or remain body-only.  Yes, the old
+        # canned lines were convenient. So is duct-taping a database to a bicycle.
+        return ""
         candidates = tuple(item for item in (synthesis.fallback_text, *tuple(synthesis.seeds or ())) if str(item or "").strip())
         for candidate in candidates:
             cleaned = re.sub(r"\s+", " ", str(candidate or "").strip()).replace("!", ".")
@@ -1766,13 +1852,17 @@ class PresenceControllerMixin:
         )
         if not cue.needs_micro_presence:
             return None
+        llm_requested = bool(
+            cue.should_call_llm
+            or self._should_try_micro_presence_llm(kind="presence_maintenance", force_llm=False)
+        )
         if frame is not None:
             return self._build_surface_arbiter_decision(
                 frame=frame,
                 snapshot=snapshot,
                 social_presence_event=social_presence_event,
                 surface_kind="presence_maintenance",
-                force_llm=cue.should_call_llm,
+                force_llm=llm_requested,
                 presence_cue=cue,
             )
 
@@ -1782,7 +1872,7 @@ class PresenceControllerMixin:
             snapshot=snapshot,
             cue=cue,
             seeds=cue.evidence,
-            force_llm=cue.should_call_llm,
+            force_llm=llm_requested,
         )
         if not text:
             return self._body_only_presence_decision(cue, intent="presence_maintenance", parse_mode="presence_maintenance_body_only", source=source)

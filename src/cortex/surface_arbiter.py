@@ -152,6 +152,35 @@ class SurfaceArbiter:
         "light_muse",
     })
 
+    # Những seed này không phải chất liệu nội sinh, chỉ là nhãn kỹ thuật hoặc
+    # nhịp rỗng. Nếu để chúng lọt vào LLM, model sẽ làm đúng thứ tệ nhất có thể:
+    # viết một câu status ping trông có vẻ thơ. Không ai cần uptime monitoring có
+    # dấu tiếng Việt.
+    _HOLLOW_ENDOGENOUS_SEEDS = frozenset({
+        "",
+        "quiet_whim",
+        "ambient_runtime",
+        "pattern_residue",
+        "memory resonance",
+        "quiet continuity pressure",
+        "nhịp nội sinh bị nén lâu",
+        "nhip noi sinh bi nen lau",
+        "body_bias_only",
+        "intentional_silence",
+    })
+
+    _PRESSURE_ONLY_EVIDENCE_PREFIXES = (
+        "silent_cycles=",
+        "vital_pressure=",
+        "metabolic.vital=",
+        "boredom=",
+        "thought=",
+        "silence_pressure=",
+        "source=endogenous_boredom",
+        "low_claim_presence",
+        "low_claim_reengagement",
+    )
+
     def arbitrate(
         self,
         *,
@@ -190,9 +219,16 @@ class SurfaceArbiter:
             return decision
 
         forced_body_only_reason = self._forced_body_only_reason(winner)
-        if forced_body_only_reason:
+        forced_surface = bool(
+            force_llm
+            or self.silent_cycles >= self.policy.config.force_llm_after_silent
+            or bool(getattr(getattr(winner, "raw", None), "should_call_llm", False))
+        )
+        if forced_body_only_reason and not forced_surface:
             # Micro/presence thiếu anchor không được gọi LLM để rồi trả rỗng.
-            # Nó chỉ được giữ thân thể/nhịp, còn slot lời nói phải nhường cho impulse nội sinh nếu có.
+            # Ngoại lệ: explicit force/silent-debt/should_call_llm đã là quyết định
+            # tầng trên rằng phải thử wording rồi mới body-only. Không thì test debug
+            # chỉ thấy một cục body-only và mọi người lại hiến tế thêm fallback.
             self._mark_attempt(winner, result=forced_body_only_reason, body_only=True)
             self._note_non_speech(body_only=True)
             decision = SurfaceDecision(
@@ -214,7 +250,12 @@ class SurfaceArbiter:
             self.last_decision = decision
             return decision
 
-        ego_gate_reason = self._ego_gate_reason(winner, snapshot=snapshot, frame=cognitive_frame, force_llm=force_llm)
+        ego_gate_reason = self._ego_gate_reason(
+            winner,
+            snapshot=snapshot,
+            frame=cognitive_frame,
+            force_llm=force_llm or self.silent_cycles >= self.policy.config.force_llm_after_silent,
+        )
         if ego_gate_reason:
             self._mark_attempt(winner, result="ego_reject", body_only=False)
             self._note_non_speech(body_only=False)
@@ -657,6 +698,9 @@ class SurfaceArbiter:
         for item in impulses:
             if not item.should_surface:
                 continue
+            hollow_reason = self._hollow_endogenous_reason(item)
+            if hollow_reason:
+                continue
             effective = self._effective_score(item)
             forced_reason = self._forced_body_only_reason(item)
             if forced_reason:
@@ -714,6 +758,64 @@ class SurfaceArbiter:
             "ev.ocr", "screen_fact", "user_chat", "runtime_event",
         )
         return any(marker in text for marker in concrete_markers)
+
+    def _hollow_endogenous_reason(self, impulse: SurfaceImpulse) -> str:
+        """Reject endogenous speech that has no semantic payload.
+
+        Inner/random/memory surface is allowed to be no-screen-claim. It is not
+        allowed to be no-content. Silent cycles, vital pressure and boredom are
+        pressure gauges, not topics. If those are the only payload, the correct
+        behavior is body-only/silence, not asking the LLM to decorate emptiness.
+        """
+        if not self._endogenous_no_anchor_like(impulse):
+            return ""
+        kind = str(impulse.kind or impulse.speech_act or "")
+        # Presence-like impulses already have their own body-only path. This
+        # contract is specifically for no-screen endogenous speech.
+        if self._presence_like(impulse):
+            return ""
+        if self._has_public_internal_anchor(impulse):
+            return ""
+        return f"reject_hollow_endogenous:{kind or 'surface'}"
+
+    def _has_public_internal_anchor(self, impulse: SurfaceImpulse) -> bool:
+        topic = self._clean_payload_text(impulse.topic_seed)
+        if topic and not self._looks_hollow_endogenous_seed(topic):
+            return True
+        for raw in tuple(impulse.evidence or ()):
+            text = self._clean_payload_text(raw)
+            if not text or self._looks_pressure_only_evidence(text):
+                continue
+            if self._looks_hollow_endogenous_seed(text):
+                continue
+            return True
+        return False
+
+    @staticmethod
+    def _clean_payload_text(value: Any) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip()
+
+    def _looks_hollow_endogenous_seed(self, text: str) -> bool:
+        normalized = str(text or "").strip().lower().replace("đ", "d")
+        normalized = re.sub(r"[^a-z0-9_\s=:.\-]", " ", normalized)
+        normalized = " ".join(normalized.split())
+        if normalized in self._HOLLOW_ENDOGENOUS_SEEDS:
+            return True
+        if normalized.startswith(("idle_seconds=", "silent_cycles=", "vital_pressure=", "boredom=", "thought=")):
+            return True
+        # Một seed toàn nhãn kỹ thuật không phải mẩu suy nghĩ public-safe.
+        tokens = normalized.split()
+        if tokens and all("=" in token or token in {"source", "metabolic", "vital", "pressure", "silent", "cycles"} for token in tokens):
+            return True
+        return False
+
+    def _looks_pressure_only_evidence(self, text: str) -> bool:
+        lowered = str(text or "").strip().lower()
+        if not lowered:
+            return True
+        if lowered.startswith(self._PRESSURE_ONLY_EVIDENCE_PREFIXES):
+            return True
+        return self._looks_hollow_endogenous_seed(lowered)
 
     def _forced_body_only_reason(self, impulse: SurfaceImpulse) -> str:
         """Trả reason nếu impulse chỉ được body-only, không được tranh slot nói.
@@ -778,6 +880,9 @@ class SurfaceArbiter:
             if vital > 0 or over > 0:
                 multiplier = min(2.10, 1.0 + (over ** 1.35) * 0.075)
                 notes.append(f"endogenous_boost:vital={vital:.2f}x{multiplier:.2f}")
+            hollow = self._hollow_endogenous_reason(impulse)
+            if hollow:
+                notes.append(hollow)
         if self._presence_like(impulse) and impulse.missing_evidence_ids and not self._has_concrete_evidence_anchor(impulse):
             notes.append("presence_penalty:missing_anchor")
         return ",".join(notes)
@@ -811,6 +916,7 @@ class SurfaceArbiter:
         if force_llm:
             return ""
         kind = str(impulse.kind or impulse.speech_act or "")
+        explicit_llm_permission = bool(getattr(getattr(impulse, "raw", None), "should_call_llm", False))
         presence_like = bool(impulse.is_presence or kind in {"presence_maintenance", "micro_presence", "companionship_ping", "re_engagement"})
         if not presence_like:
             return ""
@@ -832,7 +938,14 @@ class SurfaceArbiter:
             return "ego_gate:dignity_distance"
         if preferred_distance >= 0.74 and trust <= 0.34:
             return "ego_gate:preferred_distance_high"
-        if kind == "presence_maintenance" and impulse.missing_evidence_ids and impulse.score < 0.72 and _clamp01(getattr(impulse, "vital_pressure", 0.0)) < 0.58:
+        if (
+            kind == "presence_maintenance"
+            and impulse.missing_evidence_ids
+            and impulse.score < 0.72
+            and _clamp01(getattr(impulse, "vital_pressure", 0.0)) < 0.58
+            and not explicit_llm_permission
+            and impulse.confidence < self.policy.config.high_conf_threshold
+        ):
             return "ego_gate:ambient_copresence_no_anchor"
         return ""
 

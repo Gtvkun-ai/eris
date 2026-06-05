@@ -130,15 +130,20 @@ class MeaningLayer:
         if not fact: #Nếu không có fact mạnh
             ambient_fact, ambient_evidence = self._infer_ambient_fact(snapshot=snapshot, internal_state=internal_state)
             if ambient_fact: #Nếu idle lâu, silence pressure cao, boredom cao thì tạo
-                prolonged = self._maybe_prolonged_fact(
-                    ambient_fact,
-                    snapshot=snapshot,
-                    internal_state=internal_state,
-                    recent_families=recent,
-                    evidence=ambient_evidence,
-                )
-                if prolonged:
-                    return prolonged
+                # Ambient idle is already the lowest-claim interpretation. Do not
+                # immediately promote it into prolonged_activity just because the
+                # idle counter is large; otherwise an empty room becomes a whole
+                # narrative arc, which is how telemetry gets a literature degree.
+                if ambient_fact != "ambient_idle":
+                    prolonged = self._maybe_prolonged_fact(
+                        ambient_fact,
+                        snapshot=snapshot,
+                        internal_state=internal_state,
+                        recent_families=recent,
+                        evidence=ambient_evidence,
+                    )
+                    if prolonged:
+                        return prolonged
                 return self._build_result( #Đây là meaning mềm. Không phải bằng chứng cứng.
                     ambient_fact,
                     recent_families=recent,

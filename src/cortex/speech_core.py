@@ -1074,10 +1074,17 @@ class SpeechCoreEngine:
             spontaneous_flags.append("grounded_scene_impulse")
         else:
             spontaneous_flags.append("no_screen_claim")
+        spontaneous_score = spontaneous_pressure
+        if channel == "autonomous":
+            # SpontaneousLife is a pressure source, not a monarchy.  It should not
+            # drown out MeaningLayer or explicit thought-stream surfaces every time
+            # silence/boredom rises. Keep it speakable, but let ranked semantic
+            # candidates win when they explain the frame better.
+            spontaneous_score = min(spontaneous_pressure * 0.55, 0.60)
         candidates.append(
             MotivationalUrge(
                 label="spontaneous_life",
-                score=spontaneous_pressure,
+                score=spontaneous_score,
                 utterance_type=spontaneous_act,
                 speech_source="freeform",
                 risk_level=str(getattr(spontaneous, "risk", "texture") or "texture"),
