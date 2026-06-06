@@ -28,6 +28,9 @@ class WorkerContext:
     memory_packet: Any = None
     relation: Any = None
     internal_state: Any = None
+    # ThoughtObject chỉ có ở post-synthesis pass. RehearsalAgent dùng field này để
+    # diễn nháp trên object đã thắng cổ chai, không phải trên mớ fragment thô.
+    thought_object: Any = None
     now: float = 0.0
 
 
@@ -35,6 +38,10 @@ class SubconsciousWorker(Protocol):
     """Interface tối thiểu cho worker nền."""
 
     name: str
+
+    # Worker có thể đặt run_after_synthesis=True để chạy sau khi Synthesizer đã
+    # tạo ThoughtObject. Không bắt buộc, vì Phase 1 worker chỉ cần pass đầu.
+    run_after_synthesis: bool
 
     def run(self, context: WorkerContext) -> Iterable[ThoughtFragment | Mapping[str, Any]]:
         """Trả các ThoughtFragment hoặc dict có thể convert thành ThoughtFragment."""
@@ -48,6 +55,7 @@ class RuleBasedWorker:
     """
 
     name = "rule_based_worker"
+    run_after_synthesis = False
 
     def run(self, context: WorkerContext) -> tuple[ThoughtFragment | Mapping[str, Any], ...]:
         return tuple(self.build_fragments(context) or ())

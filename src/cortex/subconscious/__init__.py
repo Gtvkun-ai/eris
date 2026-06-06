@@ -20,6 +20,16 @@ from .blackboard import BlackboardSnapshot, SubconsciousBlackboard
 from .synthesizer import ConsciousSynthesizer, SynthesisPolicy, SynthesisReport
 from .worker_base import RuleBasedWorker, SubconsciousWorker, WorkerContext
 
+from .workers import (
+    UserModelerAgent,
+    MemoryResonatorAgent,
+    GoalSimulatorAgent,
+    SelfRegulatorAgent,
+    RehearsalAgent,
+    CuriosityGapAgent,
+    build_phase12_workers,
+)
+
 __all__ = [
     "PrivacyLevel",
     "RecommendedRoute",
@@ -35,4 +45,11 @@ __all__ = [
     "RuleBasedWorker",
     "SubconsciousWorker",
     "WorkerContext",
+    "UserModelerAgent",
+    "MemoryResonatorAgent",
+    "GoalSimulatorAgent",
+    "SelfRegulatorAgent",
+    "RehearsalAgent",
+    "CuriosityGapAgent",
+    "build_phase12_workers",
 ]
