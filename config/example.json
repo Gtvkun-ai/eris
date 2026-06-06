@@ -13,5 +13,143 @@
         "ERIS_REMOTE_PROVIDER": "gemini",
         "ERIS_REMOTE_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",
         "ERIS_REMOTE_MODEL": "gemma-4-26b-a4b-it"
+    },
+    "providers": {
+        "gemini": {
+            "default": {
+                "api_key": "",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                "model": "gemma-4-26b-a4b-it"
+            },
+            "remote_main": {
+                "api_key": "",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                "model": "gemma-4-26b-a4b-it"
+            },
+            "search_web": {
+                "api_key": "",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                "model": "gemini-2.5-flash"
+            },
+            "weather": {
+                "api_key": "",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                "model": "gemini-2.5-flash"
+            },
+            "lane3_synthesis": {
+                "api_key": "",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                "model": "gemini-2.5-flash-lite"
+            },
+            "lane5_daydream": {
+                "api_key": "",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                "model": "gemini-2.5-flash-lite"
+            }
+        },
+        "openai": {
+            "default": {
+                "api_key": "",
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-4.1-mini"
+            },
+            "lane3_synthesis": {
+                "api_key": "",
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-4.1-mini"
+            }
+        }
+    },
+    "agent_keys": {
+        "remote_main": {
+            "provider": "gemini",
+            "slot": "remote_main"
+        },
+        "search_web": {
+            "provider": "gemini",
+            "slot": "search_web"
+        },
+        "get_weather": {
+            "provider": "gemini",
+            "slot": "weather"
+        },
+        "lane3_synthesis": {
+            "provider": "openai",
+            "slot": "lane3_synthesis"
+        },
+        "lane5_daydream": {
+            "provider": "gemini",
+            "slot": "lane5_daydream"
+        }
+    },
+    "subconscious_runtime": {
+        "enabled": true,
+        "surface_seed_only": true,
+        "scheduler": {
+            "event_tick_enabled": true,
+            "ambient_tick_jitter_seconds": [10, 45],
+            "pressure_tick_enabled": true,
+            "solitude_tick_window_seconds": [120, 300],
+            "reflection_tick_window_seconds": [900, 1800]
+        },
+        "lanes": {
+            "lane1_spark_pulse": {
+                "enabled": true,
+                "jitter_seconds": [5, 20],
+                "allow_api": false,
+                "allow_surface_seed": false,
+                "notes": "ThoughtSpark, DriftPool, self-anchor, memory residue, habitat attachment."
+            },
+            "lane2_worker_fragment_cycle": {
+                "enabled": true,
+                "idle_window_seconds": [30, 90],
+                "allow_api": false,
+                "allow_surface_seed": false,
+                "workers": [
+                    "user_modeler",
+                    "memory_resonator",
+                    "goal_simulator",
+                    "self_regulator",
+                    "curiosity_gap_agent",
+                    "subjective_time_agent",
+                    "spatial_mind_agent"
+                ]
+            },
+            "lane3_synthesis_rehearsal": {
+                "enabled": true,
+                "allow_api": true,
+                "allow_surface_seed": true,
+                "provider": "openai",
+                "provider_slot": "lane3_synthesis",
+                "api_key_env": "OPENAI_API_KEY",
+                "base_url_env": "OPENAI_BASE_URL",
+                "model": "",
+                "min_blackboard_coherence": 0.55,
+                "min_fragment_count": 3,
+                "min_blackboard_pressure": 0.60,
+                "min_recurring_theme_strength": 0.65,
+                "min_unresolved_loop_pressure": 0.60
+            },
+            "lane4_surface_candidate": {
+                "enabled": true,
+                "surface_score_threshold": 0.68,
+                "store_private_range": [0.45, 0.67],
+                "allow_direct_public_output": false,
+                "notes": "surface_seed only -> SurfaceArbiter -> speech policy -> wording -> filters."
+            },
+            "lane5_deep_private_life": {
+                "enabled": true,
+                "idle_window_seconds": [600, 1800],
+                "allow_api": false,
+                "allow_mutation_commit": false,
+                "allow_rupture_surface": false,
+                "workers": [
+                    "daydream_injector",
+                    "independent_agenda_agent",
+                    "belief_mutation_engine",
+                    "shadow_accumulator"
+                ]
+            }
+        }
     }
 }

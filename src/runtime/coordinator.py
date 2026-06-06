@@ -47,6 +47,7 @@ from cortex.contracts import (
     SessionRitualReport,
     SilenceState,
     SubconsciousReport,
+    ThoughtSurface,
     ThoughtStreamReport,
     TiPolicyReport,
 )
@@ -58,6 +59,7 @@ from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from cortex.personality import PersonalityLens
 from cortex.relationship_dynamics import RelationshipDynamicsEngine, RelationshipTurnEvent
+from cortex.subconscious import ModelBackedConsciousSynthesizer, build_phase1234567_workers
 from cortex.self_observation import SelfObservationEngine
 from cortex.self_model import SelfModelEngine
 from cortex.session_ritual import SessionRitualEngine
@@ -72,6 +74,7 @@ from runtime.autonomous_cycle import AutonomousCycleMixin
 from runtime.body_bias import BodyBiasProjector
 from runtime.contextual_autonomy_loop import ContextualAutonomyLoop
 from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
+from runtime.subconscious_model_adapter import RuntimeSubconsciousModelAdapter
 from runtime.model_budget_policy import ModelBudgetPolicy
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.sensory_model_adapter import RuntimeSensoryModelAdapter
@@ -91,8 +94,10 @@ from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_chann
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
 from runtime.state_commit_service import StateCommitServiceMixin
+from runtime.subconscious_loop import SubconsciousLoop as RuntimeSubconsciousLoop
 from runtime.text_repeat_guard import TextRepeatGuardMixin
 from memory.memory_kernel import MemoryKernel
+from eris_secrets import get_config
 
 '''coordinator.py là “bộ điều phối runtime” (orchestrator) cho ERIS: nó đứng giữa telemetry 
 (màn hình/hành vi), các tầng đánh giá (Ni/Ti/FE), LLM + parser, action system và kênh transport để quyết định
@@ -124,6 +129,21 @@ FALLBACK_BY_INTENT: dict[str, tuple[str, ...]] = {
         "Tôi giữ câu này sát phần đang hiện ra thôi.",
     ),
 }
+
+SUBCONSCIOUS_LANE2_WORKERS: tuple[str, ...] = (
+    "user_modeler",
+    "memory_resonator",
+    "goal_simulator",
+    "self_regulator",
+    "curiosity_gap_agent",
+    "subjective_time_agent",
+    "spatial_mind_agent",
+)
+
+SUBCONSCIOUS_LANE3_POST_WORKERS: tuple[str, ...] = ("rehearsal_agent",)
+SUBCONSCIOUS_LANE5_PRE_WORKERS: tuple[str, ...] = ("daydream_injector", "independent_agenda_agent")
+SUBCONSCIOUS_LANE5_POST_WORKERS: tuple[str, ...] = ("belief_mutation_engine", "shadow_accumulator")
+SUBCONSCIOUS_AUDIT_WORKERS: tuple[str, ...] = ("meta_cognitive_audit",)
 
 
 
@@ -362,6 +382,9 @@ class RuntimeCoordinator(
         self.last_wake_decision: WakeDecision | None = None
         self.last_daydream_result = None
         self.daydream_model_adapter = RuntimeDaydreamModelAdapter.from_env(logger=self.logger)
+        # Lane 3 là lớp API synthesis riêng cho "phiên toà nội tâm".
+        # Nó không sinh public text; nó chỉ nén Blackboard thành ThoughtObject có evidence.
+        self.lane3_synthesis_model_adapter = RuntimeSubconsciousModelAdapter.from_env(logger=self.logger)
         self.daydream_consolidator = DaydreamConsolidator(
             llm_client=self.daydream_model_adapter or getattr(llm_service, "style_client", None),
             logger=self.logger,
@@ -489,6 +512,24 @@ class RuntimeCoordinator(
         )
         self.subconscious_loop = self.thought_stream
         self.cognitive_substrate = self.thought_stream
+        self.subconscious_runtime_enabled = self._load_subconscious_runtime_enabled()
+        self.subconscious_runtime = self._build_subconscious_runtime() if self.subconscious_runtime_enabled else None
+        self._pending_subconscious_report = None
+        self._pending_subconscious_seed = None
+        self._subconscious_lane_last_tick = {
+            "lane2": 0.0,
+            "lane3": 0.0,
+            "lane5": 0.0,
+            "reflection": 0.0,
+        }
+        self._subconscious_lane_next_due = {
+            "lane2": time.time() + random.uniform(30.0, 75.0),
+            "lane3": time.time() + random.uniform(60.0, 150.0),
+            "lane5": time.time() + random.uniform(600.0, 1800.0),
+            "reflection": time.time() + random.uniform(900.0, 1800.0),
+        }
+        self._last_subconscious_runtime_tick_at = 0.0
+        self._last_subconscious_runtime_reason = ""
         # Đọc biến môi trường để bật/tắt tầng Ni meta critic.
         flag = os.environ.get("ERIS_NI_META_CRITIC", "1").strip().lower()
         env_enabled = flag not in {"0", "false", "no", "off"}
@@ -1055,6 +1096,24 @@ class RuntimeCoordinator(
         payload["emotion_debug"] = self._build_emotion_debug_payload()
         self._record_public_turn(decision, payload=payload, channel=channel)
         self.transport.send_json(payload)
+        if bool(payload.get("should_speak")) and str(payload.get("text", "") or "").strip() and self.subconscious_runtime_enabled:
+            try:
+                snapshot = self.telemetry_service.capture_snapshot(
+                    mood_score=self.mood_score,
+                    inferred_pos_x=self.inferred_pos_x,
+                )
+                self._maybe_tick_subconscious_runtime(
+                    channel=channel or "assistant_output",
+                    snapshot=snapshot,
+                    internal_state=self._get_internal_state(),
+                    user_text="",
+                    event_text=str(payload.get("text", "") or ""),
+                    event_strength=0.52,
+                    allow_lane5=False,
+                    reflection=False,
+                )
+            except Exception as exc:
+                self.logger.warning("Subconscious post-output tick error: %s", exc)
 
     def _record_public_turn(self, decision: Decision, *, payload: dict | None = None, channel: str | None = None):
         ledger = getattr(self, "public_turn_ledger", None)
@@ -1416,6 +1475,26 @@ class RuntimeCoordinator(
             pop_surface = getattr(substrate, "pop_surface", None)
             if callable(pop_surface):
                 report = self._with_thought_stream_surface(report, pop_surface())
+        event_strength = max(
+            (max(0.0, min(1.0, float(getattr(item, "intensity", 0.0) or 0.0))) for item in tuple(disturbances or ())),
+            default=0.0,
+        )
+        try:
+            internal_state = self._get_internal_state()
+        except Exception:
+            internal_state = None
+        if internal_state is not None and snapshot is not None:
+            self._maybe_tick_subconscious_runtime(
+                channel=channel,
+                snapshot=snapshot,
+                internal_state=internal_state,
+                user_text=user_text,
+                event_text=user_text,
+                vision_facts=vision_facts,
+                event_strength=event_strength,
+                allow_lane5=True,
+                reflection=False,
+            )
         return report
 
     def _with_thought_stream_surface(self, report: ThoughtStreamReport, surface) -> ThoughtStreamReport:
@@ -1475,6 +1554,9 @@ class RuntimeCoordinator(
         )
 
     def _pop_subconscious_report_for_autonomous(self) -> SubconsciousReport:
+        runtime = getattr(self, "subconscious_runtime", None)
+        if runtime is not None and self.subconscious_runtime_enabled:
+            return runtime.latest_report()
         return self._pop_thought_stream_report_for_autonomous()
 
     #Lưu trạng thái bộ nhớ sau mỗi chu kỳ, nếu bộ nhớ có hỗ trợ.
@@ -2448,7 +2530,14 @@ class RuntimeCoordinator(
         )
         if thought_stream_report is not None:
             frame.thought_stream_report = thought_stream_report
+        pending_subconscious = getattr(self, "_pending_subconscious_report", None)
+        if pending_subconscious is not None:
+            frame.subconscious_report = pending_subconscious
+        elif thought_stream_report is not None:
             frame.subconscious_report = thought_stream_report
+        pending_seed = getattr(self, "_pending_subconscious_seed", None)
+        if pending_seed is not None:
+            frame.subconscious_seed = pending_seed
         self._run_context_bottleneck(
             frame,
             snapshot=snapshot,
@@ -3253,7 +3342,31 @@ class RuntimeCoordinator(
     def stop(self):
         self.running = False
         self._stop_mental_process_loop()
+        if self.subconscious_runtime_enabled:
+            try:
+                snapshot = self.telemetry_service.capture_snapshot(
+                    mood_score=self.mood_score,
+                    inferred_pos_x=self.inferred_pos_x,
+                )
+                self._maybe_tick_subconscious_runtime(
+                    channel="reflection",
+                    snapshot=snapshot,
+                    internal_state=self._get_internal_state(),
+                    user_text="",
+                    event_text="shutdown_reflection",
+                    event_strength=0.22,
+                    allow_lane5=True,
+                    reflection=True,
+                )
+            except Exception as exc:
+                self.logger.warning("Subconscious reflection tick error: %s", exc)
         self.cognitive_substrate.stop()
+        runtime = getattr(self, "subconscious_runtime", None)
+        if runtime is not None:
+            try:
+                runtime.stop()
+            except Exception:
+                pass
         self.transport.close()
 
     def _start_mental_process_loop(self) -> None:
@@ -3328,12 +3441,522 @@ class RuntimeCoordinator(
             ),
         )
         self._set_internal_state(updated)
+        self._maybe_tick_subconscious_background(snapshot=snapshot, internal_state=updated)
         return updated
+
+    def _build_subconscious_runtime(self) -> RuntimeSubconsciousLoop | None:
+        try:
+            workers = build_phase1234567_workers(
+                enable_mutation_commit=bool(
+                    get_config(
+                        "subconscious_runtime.lanes.lane5_deep_private_life.allow_mutation_commit",
+                        default=False,
+                    )
+                ),
+                allow_rupture_surface=bool(
+                    get_config(
+                        "subconscious_runtime.lanes.lane5_deep_private_life.allow_rupture_surface",
+                        default=False,
+                    )
+                ),
+            )
+            synthesizer = ModelBackedConsciousSynthesizer(
+                model_adapter=getattr(self, "lane3_synthesis_model_adapter", None),
+                logger=self.logger,
+            )
+            return RuntimeSubconsciousLoop(workers=workers, synthesizer=synthesizer)
+        except Exception as exc:
+            self.logger.warning("Khong khoi tao duoc subconscious runtime: %s", exc)
+            self.subconscious_runtime_enabled = False
+            return None
+
+    def _subconscious_frame_payload(
+        self,
+        *,
+        snapshot,
+        user_text: str,
+        internal_state,
+        channel: str,
+        event_text: str = "",
+        vision_facts: tuple[str, ...] = (),
+    ) -> SimpleNamespace:
+        evidence = tuple(str(item) for item in (*tuple(vision_facts or ()), *tuple(getattr(snapshot, "evidence", ()) or ())) if str(item).strip())[:8]
+        disturbance = {"content": event_text} if event_text else None
+        return SimpleNamespace(
+            user_text=user_text,
+            text=user_text,
+            current_user_text=user_text,
+            evidence=evidence,
+            disturbance=disturbance,
+            idle_seconds=float(getattr(snapshot, "idle_seconds", 0.0) or 0.0),
+            active_goal=str(self.active_conversational_topic or getattr(self, "last_user_intent", "") or ""),
+            focus_family=str(getattr(snapshot, "active_window_kind", "") or ""),
+            activity_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
+            outcome_history=tuple(str(item) for item in tuple(getattr(snapshot, "recent_events", ()) or ())[:6]),
+            relation_history=tuple(str(item) for item in tuple(getattr(snapshot, "recent_events", ()) or ())[:6]),
+            channel=channel,
+        )
+
+    def _subconscious_memory_packet(self, *, limit: int = 12) -> dict[str, tuple[str, ...]]:
+        buckets: dict[str, list[str]] = {
+            "semantic": [],
+            "episodic": [],
+            "relational": [],
+            "affective_residue": [],
+            "procedural": [],
+            "open_questions": [],
+            "repair": [],
+        }
+
+        def add(bucket: str, text: object) -> None:
+            value = re.sub(r"\s+", " ", str(text or "")).strip()
+            if not value:
+                return
+            store = buckets.setdefault(bucket, [])
+            if value not in store:
+                store.append(value[:500])
+
+        for packet in self._daydream_packets_from_runtime(limit=limit):
+            kind = str(getattr(packet, "kind", "") or "").strip().lower()
+            text = getattr(packet, "text", "")
+            if kind == "semantic":
+                add("semantic", text)
+            elif kind == "episodic":
+                add("episodic", text)
+            elif kind == "relational":
+                add("relational", text)
+            elif kind == "repair":
+                add("repair", text)
+            elif kind == "affective":
+                add("affective_residue", text)
+            elif kind == "procedural":
+                add("procedural", text)
+            else:
+                add("open_questions", text)
+
+        for text in tuple(getattr(self, "long_term_memory", ()) or ())[:limit]:
+            add("semantic", text)
+
+        resonance = getattr(self, "active_memory_resonance", None)
+        for activation in tuple(getattr(resonance, "activations", ()) or ())[:6]:
+            add("semantic", getattr(activation, "text", ""))
+
+        return {key: tuple(values[:limit]) for key, values in buckets.items() if values}
+
+    def _subconscious_pressure_metrics(self, *, internal_state, snapshot, event_strength: float) -> dict[str, float]:
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        idle_norm = max(0.0, min(1.0, idle_seconds / 300.0))
+        drift_resonance = max(
+            float(getattr(internal_state, "memory_replay_pressure", 0.0) or 0.0),
+            float(getattr(internal_state, "association_pressure", 0.0) or 0.0),
+            float(getattr(internal_state, "unresolved_prediction_pressure", 0.0) or 0.0),
+            float(getattr(internal_state, "recursive_reactivation_pressure", 0.0) or 0.0),
+        )
+        self_anchor_pressure = max(
+            float(getattr(internal_state, "subconscious_pressure", 0.0) or 0.0),
+            float(getattr(internal_state, "thought_stream_pressure", 0.0) or 0.0),
+            float(getattr(internal_state, "cognitive_tension", 0.0) or 0.0) * 0.85,
+        )
+        solitude_pressure = max(
+            float(getattr(internal_state, "silence_pressure", 0.0) or 0.0),
+            idle_norm,
+            min(1.0, float(getattr(self, "presence_maintenance_silent_cycles", 0) or 0) / 8.0),
+        )
+        repair_need = float(getattr(internal_state, "repair_need", 0.0) or 0.0)
+        rupture = float(getattr(internal_state, "rupture", 0.0) or 0.0)
+        return {
+            "event_strength": max(0.0, min(1.0, float(event_strength or 0.0))),
+            "drift_resonance": max(0.0, min(1.0, drift_resonance)),
+            "self_anchor_pressure": max(0.0, min(1.0, self_anchor_pressure)),
+            "solitude_pressure": max(0.0, min(1.0, solitude_pressure)),
+            "repair_need": max(0.0, min(1.0, repair_need)),
+            "rupture": max(0.0, min(1.0, rupture)),
+            "idle_seconds": idle_seconds,
+        }
+
+    def _subconscious_blackboard_metrics(self, *, now: float) -> dict[str, float]:
+        runtime = getattr(self, "subconscious_runtime", None)
+        if runtime is None:
+            return {
+                "fragment_count": 0.0,
+                "coherence": 0.0,
+                "pressure": 0.0,
+                "recurring_theme_strength": 0.0,
+                "unresolved_loop_pressure": 0.0,
+                "contradiction_pressure": 0.0,
+                "suppressed_recurrence": 0.0,
+                "curiosity_gap_pressure": 0.0,
+            }
+        snapshot = runtime.blackboard.snapshot(now=now)
+        fragments = tuple(getattr(snapshot, "fragments", ()) or ())
+        if not fragments:
+            return {
+                "fragment_count": 0.0,
+                "coherence": 0.0,
+                "pressure": 0.0,
+                "recurring_theme_strength": 0.0,
+                "unresolved_loop_pressure": 0.0,
+                "contradiction_pressure": 0.0,
+                "suppressed_recurrence": 0.0,
+                "curiosity_gap_pressure": 0.0,
+            }
+
+        groups: dict[str, int] = {}
+        unique_evidence: set[str] = set()
+        unresolved_pressure = 0.0
+        contradiction_pressure = 0.0
+        curiosity_gap_pressure = 0.0
+        suppressed_weight = 0.0
+        pressure = 0.0
+        for fragment in fragments:
+            key = str((fragment.tags[0] if getattr(fragment, "tags", ()) else getattr(fragment, "kind", "")) or getattr(fragment, "kind", "misc"))
+            groups[key] = groups.get(key, 0) + 1
+            unique_evidence.update(str(item) for item in tuple(getattr(fragment, "evidence_ids", ()) or ()) if str(item).strip())
+            local_pressure = max(
+                0.0,
+                min(
+                    1.0,
+                    float(getattr(fragment, "urgency", 0.0) or 0.0) * 0.55
+                    + float(getattr(fragment, "confidence", 0.0) or 0.0) * 0.20
+                    + float(getattr(fragment, "affect_charge", 0.0) or 0.0) * 0.25,
+                ),
+            )
+            pressure = max(pressure, local_pressure)
+            tags = tuple(getattr(fragment, "tags", ()) or ())
+            kind = str(getattr(fragment, "kind", "") or "")
+            if kind in {"unresolved_loop", "suppressed_impulse", "repair_aftershock", "shadow_pressure"} or any(tag in {"shadow", "repair_aftershock", "suppressed_impulse"} for tag in tags):
+                unresolved_pressure = max(unresolved_pressure, local_pressure)
+            if kind in {"contradiction", "contradiction_warning"} or "contradiction" in tags:
+                contradiction_pressure = max(contradiction_pressure, local_pressure)
+            if kind in {"knowledge_gap", "curiosity_seed", "ask_later_candidate"} or "curiosity" in tags:
+                curiosity_gap_pressure = max(curiosity_gap_pressure, local_pressure)
+            if kind in {"suppressed_impulse", "rehearsal_result"} or "suppressed_impulse" in tags:
+                suppressed_weight += max(1, len(tuple(getattr(fragment, "evidence_ids", ()) or ())))
+
+        fragment_count = float(len(fragments))
+        dominant_count = max(groups.values()) if groups else 0
+        dominant_ratio = dominant_count / max(1.0, fragment_count)
+        evidence_density = min(1.0, len(unique_evidence) / max(1.0, fragment_count * 2.0))
+        coherence = max(0.0, min(1.0, dominant_ratio * 0.55 + evidence_density * 0.20 + pressure * 0.25))
+        recurring = max(0.0, min(1.0, dominant_ratio * 0.75 + min(0.25, max(0, dominant_count - 1) * 0.10)))
+        return {
+            "fragment_count": fragment_count,
+            "coherence": coherence,
+            "pressure": pressure,
+            "recurring_theme_strength": recurring,
+            "unresolved_loop_pressure": unresolved_pressure,
+            "contradiction_pressure": contradiction_pressure,
+            "suppressed_recurrence": max(0.0, min(1.0, suppressed_weight / 6.0)),
+            "curiosity_gap_pressure": curiosity_gap_pressure,
+        }
+
+    def _schedule_next_subconscious_due(self, lane: str, low: float, high: float, *, now: float) -> None:
+        self._subconscious_lane_next_due[lane] = now + random.uniform(low, high)
+
+    def _score_subconscious_surface(
+        self,
+        *,
+        thought,
+        snapshot,
+        internal_state,
+        recurring_theme_strength: float,
+    ) -> float:
+        if thought is None:
+            return 0.0
+        topic = str(getattr(thought, "topic_seed", "") or getattr(thought, "dominant_theme", "") or "")
+        privacy_level = str(getattr(thought, "privacy_level", "") or "normal").lower()
+        route = str(getattr(thought, "recommended_route", "") or "")
+        focus = str(getattr(snapshot, "active_window_kind", "") or "").lower()
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        usefulness = 0.68 if route == "surface_candidate" else (0.50 if route in {"rehearse", "store"} else 0.28)
+        novelty = max(0.0, min(1.0, float(getattr(thought, "novelty", 0.0) or 0.0)))
+        continuity_gain = max(0.0, min(1.0, recurring_theme_strength * 0.55 + float(getattr(thought, "momentum_score", 0.0) or 0.0) * 0.45))
+        interruption_cost = max(
+            0.0,
+            min(
+                1.0,
+                (0.72 if any(term in focus for term in ("code", "coding", "deep_work", "focused")) else 0.28)
+                - min(0.18, idle_seconds / 1200.0)
+                + float(getattr(internal_state, "silence_pressure", 0.0) or 0.0) * 0.12,
+            ),
+        )
+        privacy_cost = 0.80 if privacy_level in {"private", "sensitive"} else (0.38 if route in {"store", "suppress"} else 0.12)
+        repetition_penalty = 0.0
+        norm_topic = self._normalize_user_message(topic)
+        recent = tuple(getattr(self, "recent_inner_thought_seeds", ()) or ()) + tuple(getattr(self._get_internal_state(), "recent_subconscious_seeds", ()) or ())
+        recent_norm = {self._normalize_user_message(str(item)) for item in recent if str(item).strip()}
+        if norm_topic and norm_topic in recent_norm:
+            repetition_penalty = 0.55
+        timing_fit = max(0.0, min(1.0, 0.82 - interruption_cost * 0.70 + min(0.18, idle_seconds / 600.0)))
+        return max(
+            0.0,
+            min(
+                1.0,
+                float(getattr(thought, "surface_pressure", 0.0) or 0.0) * 0.35
+                + usefulness * 0.20
+                + novelty * 0.15
+                + continuity_gain * 0.15
+                + timing_fit * 0.15
+                - interruption_cost * 0.35
+                - privacy_cost * 0.30
+                - repetition_penalty * 0.25,
+            ),
+        )
+
+    def _surface_from_subconscious_thought(self, thought, *, surface_score: float) -> dict[str, object] | None:
+        if thought is None:
+            return None
+        seed = thought.to_surface_seed()
+        if not isinstance(seed, dict):
+            return None
+        seed = dict(seed)
+        seed["surface_score"] = round(float(surface_score), 3)
+        seed["root_source"] = str(seed.get("root_source") or "subconscious_synthesizer")
+        seed["surface_allowed"] = True
+        return seed
+
+    def _maybe_tick_subconscious_runtime(
+        self,
+        *,
+        channel: str,
+        snapshot,
+        internal_state,
+        user_text: str = "",
+        event_text: str = "",
+        vision_facts: tuple[str, ...] = (),
+        event_strength: float = 0.0,
+        allow_lane5: bool = True,
+        reflection: bool = False,
+    ) -> SubconsciousReport | None:
+        runtime = getattr(self, "subconscious_runtime", None)
+        if runtime is None or not self.subconscious_runtime_enabled:
+            self._pending_subconscious_report = None
+            self._pending_subconscious_seed = None
+            return None
+
+        now = time.time()
+        metrics = self._subconscious_pressure_metrics(
+            internal_state=internal_state,
+            snapshot=snapshot,
+            event_strength=event_strength,
+        )
+        frame_payload = self._subconscious_frame_payload(
+            snapshot=snapshot,
+            user_text=user_text,
+            internal_state=internal_state,
+            channel=channel,
+            event_text=event_text,
+            vision_facts=vision_facts,
+        )
+        memory_packet = self._subconscious_memory_packet()
+        relation = getattr(internal_state, "relationship_dynamics", None)
+
+        lane2_due = now >= float(self._subconscious_lane_next_due.get("lane2", 0.0) or 0.0)
+        should_lane2 = (
+            metrics["event_strength"] > 0.45
+            or metrics["drift_resonance"] > 0.55
+            or metrics["self_anchor_pressure"] > 0.50
+            or metrics["solitude_pressure"] > 0.60
+            or lane2_due
+        )
+        if should_lane2:
+            runtime.tick(
+                frame=frame_payload,
+                snapshot=snapshot,
+                memory_packet=memory_packet,
+                relation=relation,
+                internal_state=internal_state,
+                now=now,
+                pre_worker_names=SUBCONSCIOUS_LANE2_WORKERS,
+                audit_worker_names=SUBCONSCIOUS_AUDIT_WORKERS,
+                run_pre_workers=True,
+                run_audit=True,
+                run_synthesis=False,
+                run_post_workers=False,
+                allow_surface_seed=False,
+            )
+            self._subconscious_lane_last_tick["lane2"] = now
+            self._schedule_next_subconscious_due("lane2", 30.0, 75.0, now=now)
+
+        board = self._subconscious_blackboard_metrics(now=now)
+        lane3_due = now >= float(self._subconscious_lane_next_due.get("lane3", 0.0) or 0.0)
+        # Lane 3 được gọi khi Blackboard đủ coherence/pressure, hoặc đến nhịp nền
+        # định kỳ và đã có ít nhất vài mảnh có evidence. Đây là phần làm "suy nghĩ nền"
+        # chạy đều, nhưng vẫn không gọi API từ không khí rỗng.
+        should_lane3 = (
+            board["fragment_count"] >= 3.0
+            and (
+                (
+                    board["coherence"] > 0.55
+                    and (
+                        board["pressure"] > 0.60
+                        or board["recurring_theme_strength"] > 0.65
+                        or board["unresolved_loop_pressure"] > 0.60
+                        or board["contradiction_pressure"] > 0.55
+                        or board["suppressed_recurrence"] > 0.55
+                        or board["curiosity_gap_pressure"] > 0.55
+                        or metrics["event_strength"] > 0.65
+                    )
+                )
+                or (
+                    lane3_due
+                    and board["coherence"] > 0.42
+                    and board["pressure"] > 0.32
+                )
+            )
+        )
+
+        lane3_result = None
+        if should_lane3:
+            lane3_result = runtime.tick(
+                frame=frame_payload,
+                snapshot=snapshot,
+                memory_packet=memory_packet,
+                relation=relation,
+                internal_state=internal_state,
+                now=now,
+                post_worker_names=SUBCONSCIOUS_LANE3_POST_WORKERS,
+                audit_worker_names=SUBCONSCIOUS_AUDIT_WORKERS,
+                run_pre_workers=False,
+                run_audit=True,
+                run_synthesis=True,
+                run_post_workers=True,
+                allow_surface_seed=False,
+            )
+            self._subconscious_lane_last_tick["lane3"] = now
+            self._schedule_next_subconscious_due(
+                "lane3",
+                float(get_config("subconscious_runtime.lanes.lane3_synthesis.min_interval_seconds", default=75.0) or 75.0),
+                float(get_config("subconscious_runtime.lanes.lane3_synthesis.max_interval_seconds", default=180.0) or 180.0),
+                now=now,
+            )
+
+        lane5_due = now >= float(self._subconscious_lane_next_due.get("lane5", 0.0) or 0.0)
+        should_lane5 = allow_lane5 and (
+            reflection
+            or lane5_due
+            or metrics["idle_seconds"] >= 120.0
+            or metrics["repair_need"] > 0.45
+            or metrics["rupture"] > 0.35
+            or board["suppressed_recurrence"] > 0.55
+        )
+        if should_lane5:
+            runtime.tick(
+                frame=frame_payload,
+                snapshot=snapshot,
+                memory_packet=memory_packet,
+                relation=relation,
+                internal_state=internal_state,
+                now=now,
+                pre_worker_names=SUBCONSCIOUS_LANE5_PRE_WORKERS,
+                post_worker_names=SUBCONSCIOUS_LANE5_POST_WORKERS,
+                audit_worker_names=SUBCONSCIOUS_AUDIT_WORKERS,
+                run_pre_workers=True,
+                run_audit=True,
+                run_synthesis=True,
+                run_post_workers=True,
+                allow_surface_seed=False,
+            )
+            self._subconscious_lane_last_tick["lane5"] = now
+            self._schedule_next_subconscious_due("lane5", 600.0, 1800.0, now=now)
+
+        report = runtime.latest_report()
+        seed = None
+        if lane3_result is not None and getattr(lane3_result, "thought_object", None) is not None:
+            surface_score = self._score_subconscious_surface(
+                thought=lane3_result.thought_object,
+                snapshot=snapshot,
+                internal_state=internal_state,
+                recurring_theme_strength=board["recurring_theme_strength"],
+            )
+            threshold = float(
+                get_config(
+                    "subconscious_runtime.lanes.lane4_surface_candidate.surface_score_threshold",
+                    default=0.68,
+                )
+                or 0.68
+            )
+            if surface_score >= threshold:
+                seed = self._surface_from_subconscious_thought(
+                    lane3_result.thought_object,
+                    surface_score=surface_score,
+                )
+                surface = runtime._surface_from_seed(seed, lane3_result.thought_object) if seed else ThoughtSurface()
+                report = replace(
+                    report,
+                    latest_seed=surface,
+                    recent_seeds=(surface,) if surface.mode else (),
+                    surface_pressure=max(float(getattr(report, "surface_pressure", 0.0) or 0.0), float(surface.pressure or 0.0)),
+                    suppression_reason="",
+                )
+            else:
+                store_range = get_config(
+                    "subconscious_runtime.lanes.lane4_surface_candidate.store_private_range",
+                    default=(0.45, 0.67),
+                )
+                if not isinstance(store_range, (list, tuple)) or len(store_range) < 2:
+                    store_range = (0.45, 0.67)
+                lower = float(store_range[0] or 0.45)
+                upper = float(store_range[1] or 0.67)
+                if lower <= surface_score <= upper:
+                    report = replace(report, suppression_reason=f"store_private(surface_score={surface_score:.2f})")
+                else:
+                    report = replace(report, suppression_reason=f"suppress(surface_score={surface_score:.2f})")
+
+        self._pending_subconscious_report = report
+        self._pending_subconscious_seed = seed
+        self._last_subconscious_runtime_tick_at = now
+        self._last_subconscious_runtime_reason = channel
+        return report
+
+    def _maybe_tick_subconscious_background(self, *, snapshot, internal_state) -> None:
+        if not self.subconscious_runtime_enabled or getattr(self, "_chat_processing", False):
+            return
+        now = time.time()
+        ambient_due = now >= float(self._subconscious_lane_next_due.get("lane2", 0.0) or 0.0)
+        solitude_due = now >= float(self._subconscious_lane_next_due.get("lane5", 0.0) or 0.0)
+        reflection_due = now >= float(self._subconscious_lane_next_due.get("reflection", 0.0) or 0.0)
+        lane3_due = now >= float(self._subconscious_lane_next_due.get("lane3", 0.0) or 0.0)
+        if not any((ambient_due, lane3_due, solitude_due, reflection_due)):
+            return
+        self._maybe_tick_subconscious_runtime(
+            channel="background",
+            snapshot=snapshot,
+            internal_state=internal_state,
+            user_text="",
+            event_text="ambient_tick" if ambient_due else ("lane3_inner_court_due" if lane3_due else ""),
+            event_strength=0.18 if ambient_due else (0.24 if lane3_due else 0.0),
+            allow_lane5=solitude_due or reflection_due,
+            reflection=reflection_due,
+        )
+        if reflection_due:
+            self._subconscious_lane_last_tick["reflection"] = now
+            self._schedule_next_subconscious_due("reflection", 900.0, 1800.0, now=now)
 
     def _mix_axis(self, previous: float, target: float, *, inertia: float) -> float:
         inertia = max(0.0, min(1.0, float(inertia)))
         value = float(previous or 0.0) * inertia + float(target or 0.0) * (1.0 - inertia)
         return max(0.0, min(1.0, value))
+
+    def _load_subconscious_runtime_enabled(self) -> bool:
+        """Bật vòng subconscious runtime theo env/config.
+
+        Default mới là bật. Nếu không có key Lane 3 thì runtime vẫn chạy worker
+        deterministic; chỉ riêng API synthesis sẽ tự tắt. Đây là cách có nền nghĩ
+        liên tục mà không bắt mọi worker phải đốt tiền như một nghi lễ hiến tế token.
+        """
+
+        raw = os.environ.get("ERIS_SUBCONSCIOUS_RUNTIME", "").strip().lower()
+        if raw:
+            return raw not in {"0", "false", "no", "off", "none"}
+
+        cfg = get_config("subconscious_runtime.enabled", default=True)
+        if isinstance(cfg, str):
+            value = cfg.strip().lower()
+            if value:
+                return value not in {"0", "false", "no", "off", "none"}
+            return True
+        return bool(cfg)
 
     def _load_mental_process_enabled(self) -> bool:
         flag = os.environ.get("ERIS_MENTAL_PROCESS_LOOP", "1").strip().lower()

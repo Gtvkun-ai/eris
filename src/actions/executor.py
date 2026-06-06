@@ -8,7 +8,7 @@ import webbrowser
 import os # Thêm import os để sử dụng os.startfile trên Windows
 import requests # Thêm import requests để thực hiện các yêu cầu HTTP khi cần thiết
 
-from eris_secrets import get_secret
+from eris_secrets import get_agent_profile, get_secret
 from .contracts import ActionExecutionResult, VALID_SYSTEM_ACTIONS
 # ActionExecutor là một lớp để thực thi các hành động hệ thống được định nghĩa 
 # trong VALID_SYSTEM_ACTIONS.
@@ -275,18 +275,31 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 message="Thiếu từ khóa để search.",
             )
 
-        api_key = get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
+        profile = get_agent_profile("search_web", default_provider="gemini", default_slot="search_web")
+        api_key = (
+            str(profile.get("api_key") or "").strip()
+            or get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
+        )
+        base_url = (
+            str(profile.get("base_url") or "").strip()
+            or "https://generativelanguage.googleapis.com/v1beta"
+        )
+        model_name = (
+            str(profile.get("model") or "").strip()
+            or str(profile.get("model_name") or "").strip()
+            or self._GEMINI_SEARCH_MODEL
+        )
         if not api_key:
             return ActionExecutionResult(
                 action_name="search_web",
                 action_input=action_input,
                 success=False,
-                message="Chưa cấu hình GEMINI_API_KEY cho search_web.",
+                message="Chưa cấu hình API key riêng cho search_web.",
             )
 
         try:
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{self._GEMINI_SEARCH_MODEL}:generateContent",
+                f"{base_url.rstrip('/')}/models/{model_name}:generateContent",
                 params={"key": api_key},
                 headers={"Content-Type": "application/json"},
                 json={
@@ -376,7 +389,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 "answer": answer_text,
                 "sources": "\n".join(citation_lines),
                 "source_urls": "\n".join(citation_urls),
-                "model": self._GEMINI_SEARCH_MODEL,
+                "model": model_name,
             },
         )
 
@@ -390,18 +403,31 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 message="Thiếu thông tin để xem thời tiết.",
             )
 
-        api_key = get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
+        profile = get_agent_profile("get_weather", default_provider="gemini", default_slot="weather")
+        api_key = (
+            str(profile.get("api_key") or "").strip()
+            or get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
+        )
+        base_url = (
+            str(profile.get("base_url") or "").strip()
+            or "https://generativelanguage.googleapis.com/v1beta"
+        )
+        model_name = (
+            str(profile.get("model") or "").strip()
+            or str(profile.get("model_name") or "").strip()
+            or self._GEMINI_SEARCH_MODEL
+        )
         if not api_key:
             return ActionExecutionResult(
                 action_name="get_weather",
                 action_input=action_input,
                 success=False,
-                message="Chưa cấu hình GEMINI_API_KEY cho get_weather.",
+                message="Chưa cấu hình API key riêng cho get_weather.",
             )
 
         try:
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{self._GEMINI_SEARCH_MODEL}:generateContent",
+                f"{base_url.rstrip('/')}/models/{model_name}:generateContent",
                 params={"key": api_key},
                 headers={"Content-Type": "application/json"},
                 json={

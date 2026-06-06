@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from eris_secrets import apply_secrets_to_environ, get_secret
+from eris_secrets import apply_secrets_to_environ, get_provider_profile, get_secret
 from .client import GeminiClient, LlamaServerClient, OpenAICompatibleClient
 
 
@@ -310,15 +310,24 @@ class LlamaServerProcessManager:
     def _build_remote_client(self):
         apply_secrets_to_environ()
         provider = os.environ.get("ERIS_REMOTE_PROVIDER", "gemini").strip().lower()
-        api_key = get_secret("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+        remote_profile = get_provider_profile(provider, slot="remote_main")
+        api_key = (
+            str(remote_profile.get("api_key") or "").strip()
+            or get_secret("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+        )
 
         if provider == "gemini":
-            base_url = os.environ.get(
-                "ERIS_REMOTE_BASE_URL",
-                "https://generativelanguage.googleapis.com/v1beta",
-            ).strip()
+            base_url = (
+                str(remote_profile.get("base_url") or "").strip()
+                or os.environ.get(
+                    "ERIS_REMOTE_BASE_URL",
+                    "https://generativelanguage.googleapis.com/v1beta",
+                ).strip()
+            )
             model_name = (
-                os.environ.get("ERIS_REMOTE_MODEL", "").strip()
+                str(remote_profile.get("model") or "").strip()
+                or str(remote_profile.get("model_name") or "").strip()
+                or os.environ.get("ERIS_REMOTE_MODEL", "").strip()
                 or os.environ.get("GEMINI_MODEL", "").strip()
                 or "gemma-4-26b-a4b-it"
             )
@@ -330,8 +339,15 @@ class LlamaServerProcessManager:
             except ValueError as exc:
                 raise RuntimeError(f"Loi API key Gemini: {exc}") from exc
 
-        base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "https://api-v2.shopaikey.com/v1").strip()
-        model_name = os.environ.get("ERIS_REMOTE_MODEL", "gemini-3-flash-preview").strip()
+        base_url = (
+            str(remote_profile.get("base_url") or "").strip()
+            or os.environ.get("ERIS_REMOTE_BASE_URL", "https://api-v2.shopaikey.com/v1").strip()
+        )
+        model_name = (
+            str(remote_profile.get("model") or "").strip()
+            or str(remote_profile.get("model_name") or "").strip()
+            or os.environ.get("ERIS_REMOTE_MODEL", "gemini-3-flash-preview").strip()
+        )
         if not api_key:
             raise RuntimeError("Remote API dang bat nhung chua co ERIS_REMOTE_API_KEY.")
         self.logger.info("Dung OpenAI-compatible API tai %s voi model %s", base_url, model_name)

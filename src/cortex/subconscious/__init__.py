@@ -19,6 +19,7 @@ from .thought_fragment import (
 )
 from .blackboard import BlackboardSnapshot, SubconsciousBlackboard
 from .synthesizer import ConsciousSynthesizer, SynthesisPolicy, SynthesisReport
+from .model_synthesizer import ModelBackedConsciousSynthesizer, ModelSynthesisPolicy, InnerCourtReport
 from .worker_base import RuleBasedWorker, SubconsciousWorker, WorkerContext
 
 from .workers import (
@@ -67,6 +68,9 @@ __all__ = [
     "ConsciousSynthesizer",
     "SynthesisPolicy",
     "SynthesisReport",
+    "ModelBackedConsciousSynthesizer",
+    "ModelSynthesisPolicy",
+    "InnerCourtReport",
     "RuleBasedWorker",
     "SubconsciousWorker",
     "WorkerContext",
