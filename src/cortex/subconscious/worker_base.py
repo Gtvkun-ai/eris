@@ -31,6 +31,12 @@ class WorkerContext:
     # ThoughtObject chỉ có ở post-synthesis pass. RehearsalAgent dùng field này để
     # diễn nháp trên object đã thắng cổ chai, không phải trên mớ fragment thô.
     thought_object: Any = None
+    # Phase 5/7 cần nhìn snapshot đã được worker khác submit để audit/shadow.
+    # Đây vẫn là snapshot bất biến, không phải quyền chọc thẳng vào Blackboard sống.
+    blackboard_snapshot: Any = None
+    # Báo cáo audit gần nhất để ShadowAccumulator không tự diễn drama khi MetaAudit
+    # vừa phát hiện hallucination/loop. Drama có kiểm toán, nghe rất doanh nghiệp.
+    audit_report: Any = None
     now: float = 0.0
 
 

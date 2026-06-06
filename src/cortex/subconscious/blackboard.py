@@ -125,6 +125,37 @@ class SubconsciousBlackboard:
         with self._lock:
             return self._fragments.get(str(fragment_id))
 
+    def replace(self, fragment: ThoughtFragment) -> ThoughtFragment:
+        """Thay một fragment đã tồn tại bằng bản mới đã validate.
+
+        Phase 5 MetaAudit dùng method này để hạ confidence/tắt surface_allowed
+        mà không phải xóa rồi submit lại theo đường dedupe. Nếu không có thao tác
+        replace rõ ràng, audit rất dễ biến thành trò ảo thuật: báo đã sửa nhưng
+        Blackboard vẫn giữ bản cũ. Một màn lừa đảo nhỏ, nhưng bug thì không nhỏ.
+        """
+
+        if not isinstance(fragment, ThoughtFragment):
+            raise ThoughtFragmentValidationError("replace() cần ThoughtFragment đã validate.")
+        with self._lock:
+            old = self._fragments.get(fragment.id)
+            if old is not None:
+                old_key = self._dedupe_key(old)
+                if self._dedupe_index.get(old_key) == old.id:
+                    self._dedupe_index.pop(old_key, None)
+            self._fragments[fragment.id] = fragment
+            self._dedupe_index[self._dedupe_key(fragment)] = fragment.id
+            self._trim_locked(now=fragment.updated_at)
+            return fragment
+
+    def remove_many(self, fragment_ids: Iterable[str]) -> tuple[str, ...]:
+        """Xóa nhiều fragment và trả id đã xóa thật."""
+
+        removed: list[str] = []
+        for fragment_id in fragment_ids:
+            if self.remove(str(fragment_id)):
+                removed.append(str(fragment_id))
+        return tuple(removed)
+
     def remove(self, fragment_id: str) -> bool:
         """Xóa fragment theo id.
 

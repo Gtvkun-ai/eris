@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Subconscious Phase 0 package.
+"""Subconscious package Phase 0 → 7.
 
 Public API cố tình nhỏ:
 - ThoughtFragment / ThoughtObject: contract dữ liệu.
 - SubconsciousBlackboard: nơi gom fragment.
 - ConsciousSynthesizer: cổ chai nén fragment thành object.
-- WorkerContext / RuleBasedWorker: nền cho Phase 1+.
+- WorkerContext / RuleBasedWorker: nền cho worker Phase 1+.
+- Worker builders: tạo bộ worker theo phase mà không ép runtime chính phải biết từng class.
 """
 
 from .thought_fragment import (
@@ -27,7 +28,31 @@ from .workers import (
     SelfRegulatorAgent,
     RehearsalAgent,
     CuriosityGapAgent,
+    DaydreamInjector,
+    IndependentAgendaAgent,
+    SpatialMindAgent,
+    SubjectiveTimeAgent,
+    MetaCognitiveAuditAgent,
+    MetaAuditFinding,
+    MetaAuditResult,
+    ShadowAccumulator,
+    ShadowAccumulatorPolicy,
+    BeliefMutationEngine,
+    BeliefMutationProposal,
+    PreferenceDeltaProposal,
+    HabitDeltaProposal,
+    MutationCommitter,
+    MutationCommitRecord,
+    MutationDecision,
     build_phase12_workers,
+    build_phase34_workers,
+    build_phase1234_workers,
+    build_phase5_workers,
+    build_phase7_workers,
+    build_phase6_workers,
+    build_phase1234567_workers,
+    build_phase123457_workers,
+    build_default_subconscious_workers,
 )
 
 __all__ = [
@@ -51,5 +76,29 @@ __all__ = [
     "SelfRegulatorAgent",
     "RehearsalAgent",
     "CuriosityGapAgent",
+    "DaydreamInjector",
+    "IndependentAgendaAgent",
+    "SpatialMindAgent",
+    "SubjectiveTimeAgent",
+    "MetaCognitiveAuditAgent",
+    "MetaAuditFinding",
+    "MetaAuditResult",
+    "ShadowAccumulator",
+    "ShadowAccumulatorPolicy",
+    "BeliefMutationEngine",
+    "BeliefMutationProposal",
+    "PreferenceDeltaProposal",
+    "HabitDeltaProposal",
+    "MutationCommitter",
+    "MutationCommitRecord",
+    "MutationDecision",
     "build_phase12_workers",
+    "build_phase34_workers",
+    "build_phase1234_workers",
+    "build_phase5_workers",
+    "build_phase7_workers",
+    "build_phase6_workers",
+    "build_phase1234567_workers",
+    "build_phase123457_workers",
+    "build_default_subconscious_workers",
 ]
