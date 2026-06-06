@@ -32,9 +32,12 @@ Trục thay đổi chính theo git:
 - `LlmService` được siết lại ở decision JSON: compact contract, sanitize decision-like JSON, salvage JSON cụt nếu còn `"text"` sạch, và chặn việc wrap metadata/prose thẳng vào `text`.
 - tầng nội sinh được đẩy mạnh ở `agent_state_stack.py`, `impulse_arbitration.py`, `speech_core.py`, `surface_arbiter.py`: thêm `vital_pressure`, `metabolic_pressure`, memory/silence/boredom residue, và re-engagement sau im lặng dài.
 - `presence_controller.py` tiếp tục được bơm thêm đường `active_memory_resonance -> memory_resonance impulse`, cộng cơ chế tách `body-only presence action` khỏi spoken cooldown.
+- wake-gated low-level surface đã được sửa lớp status/debug: reject/body-only/speak của micro-presence và re-engagement giờ phản ánh đúng `SurfaceDecision` của chính lượt hiện tại, không còn rò sentinel `reject:not_started` từ `arbiter.last_decision`.
+- Phase 1 behavior contract đã được khóa bằng regression test: route `VS Code + tongquat.md + focused + silence=6 + vital thấp` không được cho `thought_stream_surface` thắng kiểu poetic filler; chỉ được body-only hoặc micro-line có anchor thật.
+- thêm nhánh `sensor_visibility -> blind_frustration`: thiếu screen evidence đơn thuần thì im; timeout / budget block / context shift chưa refresh mới được phép surface một câu grumble rất ngắn, không claim màn hình và không đổ lỗi user nếu thiếu bằng chứng context shift.
 - `autonomous_wake_governor.py` đã thành gate wake rõ nghĩa hơn: wake level tách hẳn `sleep/observe/think/micro_presence/vision/main`, có degrade theo interrupt cost thay vì chỉ một cờ wake/no-wake.
 - `coordinator.py` tiếp tục phình thành nơi hợp mạch runtime thật sự; commit `553985e` còn sửa khá mạnh file này và chính `tongquat.md`, nên các mô tả coordinator nên ưu tiên workspace hiện tại hơn snapshot cũ.
-- test coverage mới bám đúng các thay đổi trên: `tests/test_surface_arbiter.py`, `tests/test_model_budget_policy_queue.py`, `tests/test_presence_controller_memory_surface.py`, cùng các ca salvage/repair trong `tests/test_llm_service.py`.
+- test coverage mới bám đúng các thay đổi trên: `tests/test_surface_arbiter.py`, `tests/test_model_budget_policy_queue.py`, `tests/test_presence_controller_memory_surface.py`, `tests/test_runtime_coordinator.py`, `tests/test_blind_frustration_surface.py`, cùng các ca salvage/repair trong `tests/test_llm_service.py`.
 
 Nhìn theo `git show --stat`, mấy cụm thay đổi đáng chú ý nhất trong chuỗi commit vừa rà là:
 - `fdfe52c`: introduce `LowLevelSpeechPolicy`, `SurfaceArbiter`, test `tests/test_surface_arbiter.py`, và dời low-level surface sang một trục thống nhất.
@@ -562,8 +565,13 @@ Current code specifics:
 - re-engagement hiện build bằng cue + extra impulse `long_silence` và gọi `SurfaceArbiter` với `force_llm=True`.
 - wake-gated telemetry giờ log ngắn cả input/output của arbiter: `surface_kind`, `silent_cycles`, `force_llm`, `cue.should_call_llm`, `cue.missing_evidence_ids`, rồi `kind/generation_mode/should_speak/body_only/reason`.
 - `_surface_arbiter_llm_generate()` giờ gắn thêm contract `thin_presence_no_screen` cho presence-like impulse thiếu screen evidence: LLM được phép viết một câu hiện diện rất ngắn dựa vào silence/continuity, nhưng không được claim đang nhìn màn hình, không được hỏi dồn, và không được rơi về status ping.
+- `MicroPresenceCue` hiện có thể mang theo `sensor_visibility_state`; cue layer không chỉ biết “thiếu evidence” mà còn biết thiếu theo kiểu nào: permission blocked, timeout, budget blocked, hay context shift chưa refresh.
 - sanitizer cho micro-presence/re-engagement hiện cho phép tối đa khoảng 14 từ thay vì cắt cứng ở 8 từ cho mọi route, để contract thin-evidence presence có chỗ thở mà vẫn giữ câu ngắn.
 - `_surface_arbiter_llm_generate()` luôn gửi kèm `surface_impulse`, `ego_surface_state`, `micro_presence_flags`, và `surface_contract`; presence-like cue chỉ bị ép `must_return_tiny_text` khi arbiter thật sự force hoặc impulse không-phải-presence đã đủ mạnh/silent lâu.
+- `_surface_arbiter_llm_generate()` còn có nhánh riêng cho `blind_frustration`: truyền `sensor_visibility_state`, `sensor_visibility_contract`, ép `must_surface` cho sensor-like impulse, cho phép no-screen anchor nhưng vẫn cấm claim current screen.
+- `_blind_frustration_surface_impulse()` chỉ sinh `SurfaceImpulse(kind="blind_frustration")` khi `derive_sensor_visibility_state()` cho phép public frustration; plain missing evidence thì không được tự biến thành than phiền công khai.
+- `_blind_frustration_blames_user_without_evidence()` là chốt hậu kiểm wording: nếu câu nhắm blame user mà evidence không có `recent_context_shift=true`, text bị drop thành `blind_frustration_blame_blocked`.
+- sanitizer có nhánh `_sanitize_blind_frustration_text()`: câu phải ngắn, có marker nói về tầm nhìn/bằng chứng/tín hiệu thiếu, không được biến thành thơ hiện diện hay dump debug.
 - local fallback text hiện chỉ còn là lưới an toàn cho non-presence route; presence maintenance không còn giữ “hũ câu mẫu” riêng để spam cho có vẻ sống.
 - `_note_autonomous_presence_action()` tách riêng việc ghi nhận presence/re-engagement body-only khỏi `_note_autonomous_spoken()`, để cooldown có tăng nhưng speech debt không bị reset nhầm.
 - nếu winner thật của surface khác route gọi ban đầu, planner/final payload giờ có thể gắn `surface_override=...` để debug bớt lú; ví dụ wake-gated presence vào arbiter nhưng winner thật là `thought_stream_surface`.
@@ -588,6 +596,22 @@ Debug khi:
 - body-only presence bị tính nhầm là “đã nói”, làm force-LLM không bao giờ tới lượt.
 - re-engagement không nổ dù quiet cycles/idleness đủ lớn vì bị `autonomous_presence_blocked_until` hoặc activity gate chặn.
 Status: ACTIVE VERIFIED_IN_WORKSPACE.
+
+## `src/runtime/sensor_visibility.py`
+Role: factual contract cho trạng thái “mù màn hình”, tách rõ thiếu evidence kiểu nào trước khi low-level surface quyết định có được than phiền công khai hay không.
+Outputs:
+- `SensorVisibilityState` với các cờ `has_current_screen_evidence`, `vision_permission_blocked`, `vision_timeout`, `budget_blocked`, `recent_context_shift`, `context_shift_without_refresh`, `public_frustration_allowed`, `should_stay_quiet`.
+- `reason/confidence/evidence` để cue layer, arbiter, và wording layer dùng chung.
+Current code specifics:
+- `derive_sensor_visibility_state()` đọc tolerant từ `snapshot`, `frame`, `metadata`, `debug`, `recent_events`, `vision_*` flags; mục tiêu là gom tín hiệu factual chứ không suy bụng mood.
+- permission blocked luôn thắng: nếu bị chặn quyền capture/vision thì route đúng là im, không được public grumble.
+- chỉ `vision_timeout`, `budget_blocked`, hoặc `context_shift_without_refresh` mới mở cửa cho `blind_frustration`.
+- `context_shift_without_refresh` là case quan trọng: user đổi cửa sổ/ngữ cảnh nhưng vision chưa refresh, nên ERIS được phép surface một grumble nhỏ về tín hiệu hụt, miễn không bịa đang thấy gì.
+Debug khi:
+- ERIS than “mù” dù chỉ là thiếu evidence bình thường.
+- permission bị chặn nhưng vẫn có public grumble.
+- timeout/context shift có thật mà route vẫn chỉ rơi về generic body-only.
+Status: ACTIVE SUPPORT CONTRACT VERIFIED_IN_WORKSPACE.
 
 ## `src/runtime/no_fallback_policy.py`
 Role: bật/tắt chế độ chặn fallback mềm ở các path chat/autonomous/presence/force_speak.
@@ -1308,6 +1332,8 @@ Current code specifics:
 - `_score_and_select_winner()` cộng nhẹ `vital_pressure` vào score để impulse nội sinh bị nén lâu không thua mãi silence/presence cue yếu.
 - `thought_stream_surface` không còn được “leo thang vô cớ” khi thiếu neo: nếu `missing_evidence_ids=true` và `vital_pressure` thấp, confidence/effective score bị cap về vùng khoảng `0.68` thay vì có thể trôi lên `1.00`.
 - `thought_stream_surface` giờ phải có payload nội sinh thật (`topic_seed` hoặc `residue_reason`) và ít nhất một anchor nội sinh public-safe như `recent_silence`, `debug_continuity`, `session_ritual_afterglow`, `memory_resonance`, hoặc `unresolved_loop`; thiếu anchor thì bị ép về `forced_body_only:thought_surface_missing_anchor`.
+- thought-stream winner hiện vẫn giữ `kind="thought_stream_surface"` cho trace/policy, dù wording contract có thể dùng `speech_act="inner_whim"`; mục tiêu là không làm mù `surface_override` và regression suite.
+- `blind_frustration` là kind sensor-like mới: không bị coi là hollow endogenous, có base priority riêng cao hơn micro-presence thường, và thường đi vào `always_llm_kinds` để nếu đã được phép public grumble thì không bị chết vì route body-only mơ hồ.
 - nếu `silent_cycles` vượt `force_llm_after_silent`, arbiter có thể override `reject` thành `force_llm`.
 - `always_llm_kinds` cũng có thể đẩy một kind đủ confidence sang `force_llm` dù policy ban đầu reject.
 - `vital_pressure_force_llm_threshold` cũng là đường nâng từ reject lên `force_llm` cho impulse có áp lực nội sinh đủ lớn và vẫn public-safe.
@@ -1844,6 +1870,8 @@ Covers:
 - presence cue force LLM sau silence.
 - spontaneous impulse thắng weak presence khi score cao hơn.
 - LLM decline chuyển thành body_only và track streak.
+- `thought_stream_surface` cap confidence khi vital thấp và body-only khi thiếu anchor/payload.
+- `blind_frustration` speakable path, sensor visibility gating, và blame-block contract.
 - YAML/config loader.
 - default repo YAML load khi env thiếu.
 Debug khi:
@@ -1860,6 +1888,30 @@ Covers:
 Debug khi:
 - memory residue đúng ra chỉ nên thành low-claim muse nhưng lại im hoàn toàn.
 - affective residue private bị lộ ra presence/surface path.
+Status: ACTIVE TARGETED REGRESSION.
+
+## `tests/test_runtime_coordinator.py`
+Role: regression suite cho wake-gated route và behavior contract cấp runtime.
+Covers:
+- reject/body-only/re-engagement status của wake gate không còn leak sentinel `reject:not_started`.
+- `surface_override` được ghi khi winner thật khác route gọi ban đầu.
+- body-only không reset silent debt hay bị tính như speech thật.
+- scenario `VS Code mở tongquat.md + focused + silence=6 + vital thấp` không cho `thought_stream_surface` thắng kiểu filler; chỉ body-only hoặc anchored presence.
+- family cooldown và thin no-screen presence contract.
+Debug khi:
+- sửa `coordinator.py`/`presence_controller.py` xong thấy surface “sống hơn” hay “chết đi” nhưng không biết có đúng contract không.
+- wake debug ghi `stage=surface_arbiter` mà status/reason vẫn mù.
+Status: CRITICAL BEHAVIOR REGRESSION.
+
+## `tests/test_blind_frustration_surface.py`
+Role: targeted regression cho nhánh `sensor_visibility -> blind_frustration`.
+Covers:
+- permission blocked hoặc plain missing evidence thì không được public grumble.
+- timeout / budget blocked / context shift chưa refresh thì được mở cửa cho grumble nhỏ.
+- `blind_frustration` được arbiter coi là speakable sensor impulse.
+- wording context có `sensor_visibility_contract` và blame user bị block nếu thiếu `recent_context_shift=true`.
+Debug khi:
+- vừa merge patch sensor frustration xong mà route này im sạch, hoặc ngược lại than bừa mọi lúc thiếu evidence.
 Status: ACTIVE TARGETED REGRESSION.
 
 ## `tests/test_ti_governor.py`
@@ -1954,6 +2006,9 @@ Check:
 11. Nếu winner là `thought_stream_surface`, kiểm tra nó có payload nội sinh thật và có anchor kiểu `anchor=recent_silence` / `anchor=debug_continuity` / `anchor=session_ritual_afterglow` / `anchor=memory_resonance` / `anchor=unresolved_loop` không; thiếu thì phải body-only chứ không nên thắng slot nói.
 12. Nếu presence-like route thiếu evidence mà vẫn muốn nói, kiểm tra `surface_contract` có `thin_presence_no_screen` chưa; nếu chưa có, LLM dễ tự decline hoặc trượt sang status ping vô hồn.
 13. Nếu planner/action vẫn ghi `presence_maintenance` nhưng winner thật là route khác, kiểm tra `surface_override` trong `action_plan.notes` hoặc `final_decision` để biết có mismatch route hay không.
+14. Nếu route đang than kiểu “mù màn hình”, kiểm tra `sensor_visibility.py` xem đó là plain missing evidence, permission blocked, timeout, budget block, hay `context_shift_without_refresh`; chỉ ba case sau mới nên mở cửa cho `blind_frustration`.
+15. Nếu `blind_frustration` có text nhưng nghe như trách user, kiểm tra evidence có `recent_context_shift=true` không; nếu không có mà text vẫn qua được, thì blame-block contract đang thủng.
+16. Nếu cần biết thay đổi vừa rồi có “sống hơn” mà vẫn đúng luật không, chạy cụm behavior regression trong `tests/test_runtime_coordinator.py` thay vì đoán bằng log mắt thường.
 Fix direction:
 - Tune `config/low_level_speech_policy.yaml` trước, đừng rải thêm câu mẫu trong từng module.
 - Nếu cue thiếu evidence, sửa source cue; nếu policy reject đúng thì không ép LLM.

@@ -49,6 +49,31 @@ def _tuple_from_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return values or default
 
 
+def _bool_value(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _tuple_from_value(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        values = tuple(item.strip() for item in value.split(",") if item.strip())
+        return values or default
+    if isinstance(value, (list, tuple, set)):
+        values = tuple(str(item).strip() for item in value if str(item).strip())
+        return values or default
+    return default
+
+
 def _parse_scalar(value: str) -> Any:
     text = value.strip().strip('"').strip("'")
     lowered = text.lower()
@@ -75,7 +100,7 @@ def _load_simple_yaml(path: str | os.PathLike[str]) -> dict[str, Any]:
         - b
 
     Nếu PyYAML có sẵn thì dùng luôn. Nếu không, parser tối giản này tránh kéo thêm
-    dependency chỉ để đọc năm cái threshold. Loài người đã có đủ dependency đau đầu.
+    dependency chỉ để đọc vài threshold. Loài người đã có đủ dependency đau đầu.
     """
     file_path = Path(path)
     if not file_path.exists():
@@ -147,34 +172,49 @@ class LowLevelSpeechPolicyConfig:
     - ERIS_SURFACE_MIN_INTERVAL_SEC
     - ERIS_SURFACE_FAMILY_COOLDOWN_SEC
     - ERIS_SURFACE_MAX_BODY_ONLY_STREAK
+    - ERIS_SURFACE_PRESENCE_FORCE_LLM_AFTER_SILENT
+    - ERIS_SURFACE_PRESENCE_HIGH_CONF_THRESHOLD
+    - ERIS_SURFACE_PRESENCE_MIN_CONFIDENCE
+    - ERIS_SURFACE_PRESENCE_BODY_ONLY_MIN_CONFIDENCE
+    - ERIS_SURFACE_PRESENCE_VITAL_FORCE_LLM_THRESHOLD
+    - ERIS_SURFACE_PRESENCE_ALWAYS_LLM_KINDS
     """
 
-    force_llm_after_silent: int = 3
-    high_conf_threshold: float = 0.55
-    min_surface_confidence: float = 0.38
-    body_only_min_confidence: float = 0.32
+    # Global path: dùng cho thought_stream / inner_whim / random_chatter / các impulse không thuộc presence.
+    # Global mặc định bảo thủ hơn để đừng kéo mọi impulse vào LLM chỉ vì im lâu.
+    force_llm_after_silent: int = 6
+    high_conf_threshold: float = 0.58
+    min_surface_confidence: float = 0.42
+    body_only_min_confidence: float = 0.30
     normal_llm_probability: float = 1.0
     min_surface_interval_seconds: float = 12.0
     family_cooldown_seconds: float = 90.0
     max_body_only_streak: int = 2
     body_only_after_llm_decline: bool = True
-    # Nếu impulse mang vital pressure cao, policy phải thử LLM thay vì reject.
-    # Đây là cổng "bị chặn ở mồm thì xả body/LLM", không phải câu fallback mẫu.
     vital_pressure_force_llm_threshold: float = 0.62
     always_llm_kinds: tuple[str, ...] = field(
         default_factory=lambda: (
+            # Sensor/action-like routes may still deserve a global force path after upstream gates.
+            "blind_frustration",
+            "technical_help",
+        )
+    )
+
+    # Presence path: dùng riêng cho micro/re-engagement/continuity/memory-resonance.
+    # Đây là cửa hẹp cho hiện diện êm, không phải giấy phép cho mọi thought_stream lên tiếng.
+    presence_force_llm_after_silent: int = 4
+    presence_high_conf_threshold: float = 0.48
+    presence_min_confidence: float = 0.34
+    presence_body_only_min_confidence: float = 0.22
+    presence_vital_force_llm_threshold: float = 0.52
+    presence_always_llm_kinds: tuple[str, ...] = field(
+        default_factory=lambda: (
             "presence_maintenance",
-            "re_engagement",
-            "micro_observation",
-            "inner_whim",
-            "curious_question",
-            "light_muse",
             "micro_presence",
-            "idle_curiosity",
-            "thought_stream_surface",
-            "random_chatter",
-            "memory_resonance",
+            "re_engagement",
             "reengagement",
+            "continuity_presence",
+            "memory_resonance",
         )
     )
 
@@ -197,9 +237,15 @@ class LowLevelSpeechPolicyConfig:
             "min_surface_interval_seconds": _float_from_env("ERIS_SURFACE_MIN_INTERVAL_SEC", base.min_surface_interval_seconds, maximum=3600.0),
             "family_cooldown_seconds": _float_from_env("ERIS_SURFACE_FAMILY_COOLDOWN_SEC", base.family_cooldown_seconds, maximum=3600.0),
             "max_body_only_streak": _int_from_env("ERIS_SURFACE_MAX_BODY_ONLY_STREAK", base.max_body_only_streak, minimum=1),
-            "body_only_after_llm_decline": os.environ.get("ERIS_SURFACE_BODY_ONLY_AFTER_LLM_DECLINE", str(base.body_only_after_llm_decline)).strip().lower() not in {"0", "false", "no", "off"},
+            "body_only_after_llm_decline": _bool_value(os.environ.get("ERIS_SURFACE_BODY_ONLY_AFTER_LLM_DECLINE"), base.body_only_after_llm_decline),
             "vital_pressure_force_llm_threshold": _float_from_env("ERIS_SURFACE_VITAL_FORCE_LLM_THRESHOLD", base.vital_pressure_force_llm_threshold),
             "always_llm_kinds": _tuple_from_env("ERIS_SURFACE_ALWAYS_LLM_KINDS", base.always_llm_kinds),
+            "presence_force_llm_after_silent": _int_from_env("ERIS_SURFACE_PRESENCE_FORCE_LLM_AFTER_SILENT", base.presence_force_llm_after_silent, minimum=1),
+            "presence_high_conf_threshold": _float_from_env("ERIS_SURFACE_PRESENCE_HIGH_CONF_THRESHOLD", base.presence_high_conf_threshold),
+            "presence_min_confidence": _float_from_env("ERIS_SURFACE_PRESENCE_MIN_CONFIDENCE", base.presence_min_confidence),
+            "presence_body_only_min_confidence": _float_from_env("ERIS_SURFACE_PRESENCE_BODY_ONLY_MIN_CONFIDENCE", base.presence_body_only_min_confidence),
+            "presence_vital_force_llm_threshold": _float_from_env("ERIS_SURFACE_PRESENCE_VITAL_FORCE_LLM_THRESHOLD", base.presence_vital_force_llm_threshold),
+            "presence_always_llm_kinds": _tuple_from_env("ERIS_SURFACE_PRESENCE_ALWAYS_LLM_KINDS", base.presence_always_llm_kinds),
         }
         return cls.from_mapping(env_data, use_env=False)
 
@@ -212,9 +258,8 @@ class LowLevelSpeechPolicyConfig:
         if not data:
             return cls.from_env() if use_env else cls()
         base = cls.from_env() if use_env else cls()
-        always = data.get("always_llm_kinds", base.always_llm_kinds)
-        if isinstance(always, str):
-            always = tuple(item.strip() for item in always.split(",") if item.strip())
+        always = _tuple_from_value(data.get("always_llm_kinds"), base.always_llm_kinds)
+        presence_always = _tuple_from_value(data.get("presence_always_llm_kinds"), base.presence_always_llm_kinds)
         return cls(
             force_llm_after_silent=max(1, int(data.get("force_llm_after_silent", base.force_llm_after_silent))),
             high_conf_threshold=_clamp01(data.get("high_conf_threshold", base.high_conf_threshold), base.high_conf_threshold),
@@ -224,9 +269,15 @@ class LowLevelSpeechPolicyConfig:
             min_surface_interval_seconds=max(0.0, float(data.get("min_surface_interval_seconds", base.min_surface_interval_seconds))),
             family_cooldown_seconds=max(0.0, float(data.get("family_cooldown_seconds", base.family_cooldown_seconds))),
             max_body_only_streak=max(1, int(data.get("max_body_only_streak", base.max_body_only_streak))),
-            body_only_after_llm_decline=bool(data.get("body_only_after_llm_decline", base.body_only_after_llm_decline)),
+            body_only_after_llm_decline=_bool_value(data.get("body_only_after_llm_decline"), base.body_only_after_llm_decline),
             vital_pressure_force_llm_threshold=_clamp01(data.get("vital_pressure_force_llm_threshold", base.vital_pressure_force_llm_threshold), base.vital_pressure_force_llm_threshold),
-            always_llm_kinds=tuple(str(item) for item in always if str(item).strip()) or base.always_llm_kinds,
+            always_llm_kinds=always,
+            presence_force_llm_after_silent=max(1, int(data.get("presence_force_llm_after_silent", base.presence_force_llm_after_silent))),
+            presence_high_conf_threshold=_clamp01(data.get("presence_high_conf_threshold", base.presence_high_conf_threshold), base.presence_high_conf_threshold),
+            presence_min_confidence=_clamp01(data.get("presence_min_confidence", base.presence_min_confidence), base.presence_min_confidence),
+            presence_body_only_min_confidence=_clamp01(data.get("presence_body_only_min_confidence", base.presence_body_only_min_confidence), base.presence_body_only_min_confidence),
+            presence_vital_force_llm_threshold=_clamp01(data.get("presence_vital_force_llm_threshold", base.presence_vital_force_llm_threshold), base.presence_vital_force_llm_threshold),
+            presence_always_llm_kinds=presence_always,
         )
 
 
@@ -248,6 +299,9 @@ class LowLevelSpeechPolicy:
         else:
             self.config = LowLevelSpeechPolicyConfig.from_mapping(config)
 
+    def _is_presence_kind(self, kind: str) -> bool:
+        return kind in set(self.config.presence_always_llm_kinds)
+
     def decide_generation_mode(self, impulse, silent_cycles: int) -> str:
         if impulse is None or not bool(getattr(impulse, "should_surface", False)):
             return "reject"
@@ -255,6 +309,26 @@ class LowLevelSpeechPolicy:
         confidence = _clamp01(getattr(impulse, "confidence", 0.0))
         kind = str(getattr(impulse, "kind", "") or "").strip()
         vital = _clamp01(getattr(impulse, "vital_pressure", 0.0))
+
+        # Presence-like impulses get their own threshold lane.
+        # This lets long silence become a tiny speakable line without making
+        # random_chatter / thought_stream_surface inherit the same easy path.
+        if self._is_presence_kind(kind):
+            if confidence < self.config.presence_body_only_min_confidence and vital < 0.42:
+                return "reject"
+            if (
+                silent_cycles >= self.config.presence_force_llm_after_silent
+                or vital >= self.config.presence_vital_force_llm_threshold
+                or confidence >= self.config.presence_high_conf_threshold
+            ):
+                return "force_llm"
+            if confidence >= self.config.presence_min_confidence:
+                return "force_llm"
+            if confidence >= self.config.presence_body_only_min_confidence or vital >= 0.42:
+                return "normal_llm"
+            return "body_only"
+
+        # Global non-presence path stays more conservative.
         if confidence < self.config.body_only_min_confidence and vital < 0.52:
             return "reject"
         if silent_cycles >= self.config.force_llm_after_silent or vital >= self.config.vital_pressure_force_llm_threshold:

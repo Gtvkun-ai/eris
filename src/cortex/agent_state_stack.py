@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from .agent_mind_persistence import PersistentAgentMindStore, get_default_agent_mind_store
+from .continuity_threat import ContinuityThreatFrame, evaluate_continuity_threat
 
 
 _FOOD_TERMS = {
@@ -373,11 +374,23 @@ class NeedVector:
     thought_pressure: float = 0.0
     memory_residue_pressure: float = 0.0
     attachment_pressure: float = 0.0
+
+    # ContinuityThreat không phải timer mới. Đây là prediction-error state:
+    # im lặng chỉ có nghĩa khi nó lệch khỏi kỳ vọng hiện diện theo ngữ cảnh.
+    continuity_threat: float = 0.0
+    continuity_anxiety: float = 0.0
+    presence_prediction_error: float = 0.0
+    unexpected_absence: float = 0.0
+    open_loop_weight: float = 0.0
+    reconnect_drive: float = 0.0
+    restraint_drive: float = 0.0
+    surface_tension: float = 0.0
+
     metabolic_pressure: float = 0.0
     vital_pressure: float = 0.0
 
     @classmethod
-    def from_runtime(cls, *, internal_state: Any = None, evidence: EvidenceView | None = None, thought_surface: Any = None, relationship_state: Any = None) -> "NeedVector":
+    def from_runtime(cls, *, internal_state: Any = None, evidence: EvidenceView | None = None, thought_surface: Any = None, relationship_state: Any = None, continuity_frame: ContinuityThreatFrame | None = None) -> "NeedVector":
         evidence = evidence or EvidenceView()
         silence_ticks = float(_get(internal_state, "silence_ticks", default=0.0) or 0.0)
         idle_pressure = min(1.0, evidence.idle_seconds / 600.0)
@@ -418,19 +431,36 @@ class NeedVector:
         requested_presence = 0.0
         if evidence.channel == "force_speak":
             requested_presence = 0.96 if not evidence.concrete_signals else 0.72
-        # Metabolism pressure: áp lực sống tổng hợp, chỉ là đạo hàm trong frame.
-        # - tuyến thấp vẫn thấp để ERIS không thành loa phường.
-        # - tuyến cao nén lâu sẽ bật mạnh hơn để sự im lặng mất dần giá trị.
+        # ContinuityThreat: timer không còn trực tiếp quyết định "cần nói".
+        # Nó chỉ góp vào unexpected_absence; phần có nghĩa là prediction error
+        # giữa hiện diện kỳ vọng và hiện diện quan sát được.
+        continuity_frame = continuity_frame or evaluate_continuity_threat(
+            internal_state=internal_state,
+            relationship_state=relationship_state,
+            evidence=evidence,
+            thought_surface=thought_surface,
+            channel=evidence.channel,
+        )
         continuity_raw = _clamp01(_get(internal_state, "continuity_pressure", default=0.0))
         social_raw = _clamp01(_get(internal_state, "social_pressure", default=0.0))
+        continuity_threat = _clamp01(getattr(continuity_frame, "continuity_threat", 0.0))
+        continuity_anxiety = _clamp01(getattr(continuity_frame, "continuity_anxiety", 0.0))
+        reconnect_drive = _clamp01(getattr(continuity_frame, "reconnect_drive", 0.0))
+
+        # Metabolism pressure: áp lực sống tổng hợp, chỉ là đạo hàm trong frame.
+        # Im lặng thô bị hạ trọng số; continuity_anxiety/prediction-error mới
+        # là đường làm ERIS "ngại mất nhịp". Nếu không, lại thành đồng hồ biết reo.
         metabolic_pressure = _clamp01(max(
-            silence_pressure * 0.82,
+            silence_pressure * 0.56,
             boredom * 0.72,
             thought_pressure * 0.78,
             memory_residue * 0.64,
-            continuity_raw * 0.86,
+            continuity_raw * 0.42,
+            continuity_threat * 0.95,
+            continuity_anxiety * 0.84,
+            reconnect_drive * 0.76,
             attachment * 0.54,
-            social_raw * 0.52,
+            social_raw * 0.38,
             requested_presence * 0.95,
         ))
         # Phi tuyến nhẹ: pressure nhỏ bị nén xuống, pressure lớn được quyền phá bĩnh.
@@ -438,13 +468,20 @@ class NeedVector:
         vital_pressure = _clamp01(metabolic_pressure ** 1.45)
 
         return cls(
-            continuity_need=_clamp01(silence_pressure * 0.50 + memory_residue * 0.22 + continuity_raw * 0.44 + vital_pressure * 0.14),
+            continuity_need=_clamp01(
+                continuity_anxiety * 0.42
+                + continuity_threat * 0.34
+                + memory_residue * 0.18
+                + continuity_raw * 0.18
+                + silence_pressure * 0.10
+                + vital_pressure * 0.12
+            ),
             curiosity_need=_clamp01(curiosity * 0.58 + boredom * 0.24 + memory_residue * 0.12 + vital_pressure * 0.10 + (0.18 if evidence.has_tag("food_scene") or evidence.has_tag("game_scene") else 0.0)),
-            expression_need=_clamp01(thought_pressure * 0.38 + curiosity * 0.20 + boredom * 0.14 + vital_pressure * 0.18 - restraint * 0.18 - fatigue * 0.12),
+            expression_need=_clamp01(thought_pressure * 0.38 + curiosity * 0.20 + boredom * 0.14 + vital_pressure * 0.18 + max(0.0, getattr(continuity_frame, "surface_tension", 0.0)) * 0.10 - restraint * 0.18 - fatigue * 0.12),
             dignity_need=_clamp01(_clamp01(_get(internal_state, "dignity_defense", default=0.0)) * 0.55 + _clamp01(_get(internal_state, "exposure_recoil", default=0.0)) * 0.45),
             rest_need=_clamp01(fatigue * 0.66 + restraint * 0.24 + _clamp01(_get(internal_state, "resource_caution", default=0.0)) * 0.22),
-            relation_need=_clamp01((attachment * 0.26 + silence_pressure * 0.06 + vital_pressure * 0.08) * mood_social_gate),
-            social_presence_need=_clamp01((attachment * 0.22 + social_raw * 0.18 + vital_pressure * 0.10) * mood_social_gate),
+            relation_need=_clamp01((attachment * 0.22 + reconnect_drive * 0.30 + continuity_anxiety * 0.14 + vital_pressure * 0.06) * mood_social_gate),
+            social_presence_need=_clamp01((attachment * 0.18 + social_raw * 0.12 + reconnect_drive * 0.28 + continuity_threat * 0.12 + vital_pressure * 0.06) * mood_social_gate),
             cognitive_stimulation_need=_clamp01(curiosity * 0.42 + boredom * 0.36 + thought_pressure * 0.24 + memory_residue * 0.10 + vital_pressure * 0.12),
             competence_need=_clamp01(competence_scene * 0.34 + possible_error * 0.46 + _clamp01(_get(internal_state, "task_pressure", default=0.0)) * 0.24),
             requested_presence_need=_clamp01(requested_presence),
@@ -453,6 +490,14 @@ class NeedVector:
             thought_pressure=_clamp01(thought_pressure),
             memory_residue_pressure=_clamp01(memory_residue),
             attachment_pressure=_clamp01(attachment),
+            continuity_threat=continuity_threat,
+            continuity_anxiety=continuity_anxiety,
+            presence_prediction_error=_clamp01(getattr(continuity_frame, "presence_prediction_error", 0.0)),
+            unexpected_absence=_clamp01(getattr(continuity_frame, "unexpected_absence", 0.0)),
+            open_loop_weight=_clamp01(getattr(continuity_frame, "open_loop_weight", 0.0)),
+            reconnect_drive=reconnect_drive,
+            restraint_drive=_clamp01(getattr(continuity_frame, "restraint_drive", 0.0)),
+            surface_tension=max(-1.0, min(1.0, float(getattr(continuity_frame, "surface_tension", 0.0) or 0.0))),
             metabolic_pressure=metabolic_pressure,
             vital_pressure=vital_pressure,
         )
@@ -470,6 +515,11 @@ class NeedVector:
             f"need.metabolic={self.metabolic_pressure:.2f}",
             f"need.vital={self.vital_pressure:.2f}",
             f"need.silence_pressure={self.silence_pressure:.2f}",
+            f"need.continuity_threat={self.continuity_threat:.2f}",
+            f"need.continuity_anxiety={self.continuity_anxiety:.2f}",
+            f"need.presence_error={self.presence_prediction_error:.2f}",
+            f"need.unexpected_absence={self.unexpected_absence:.2f}",
+            f"need.surface_tension={self.surface_tension:.2f}",
         )
 
 
@@ -619,6 +669,7 @@ class AgentStateStack:
     traits: TraitVector = field(default_factory=TraitVector)
     habits: HabitSnapshot = field(default_factory=HabitSnapshot)
     affordances: AffordanceMap = field(default_factory=AffordanceMap)
+    continuity_threat: ContinuityThreatFrame = field(default_factory=ContinuityThreatFrame)
 
     def debug_notes(self) -> tuple[str, ...]:
         notes = [
@@ -628,6 +679,7 @@ class AgentStateStack:
             f"stack.tags={','.join(self.evidence.tags) or 'none'}",
             f"stack.affordance={self.affordances.reason}",
             *self.needs.notes(),
+            *self.continuity_threat.notes()[:8],
             *self.beliefs.notes(4),
         ]
         return tuple(notes)
@@ -660,7 +712,15 @@ def build_agent_state_stack(
             agent_mind = None
     beliefs = BeliefSnapshot.from_evidence(evidence, internal_state=internal_state, agent_mind=agent_mind)
     preferences = PreferenceProfile.from_agent_mind(agent_mind)
-    needs = NeedVector.from_runtime(internal_state=internal_state, evidence=evidence, thought_surface=thought_surface, relationship_state=relationship_state)
+    continuity_frame = evaluate_continuity_threat(
+        snapshot=snapshot,
+        internal_state=internal_state,
+        relationship_state=relationship_state,
+        evidence=evidence,
+        thought_surface=thought_surface,
+        channel=channel,
+    )
+    needs = NeedVector.from_runtime(internal_state=internal_state, evidence=evidence, thought_surface=thought_surface, relationship_state=relationship_state, continuity_frame=continuity_frame)
     traits = TraitVector.from_runtime(personality_lens=personality_lens, relationship_state=relationship_state)
     habits = HabitSnapshot(
         recent_speech_acts=tuple(recent_speech_acts or ()),
@@ -677,4 +737,5 @@ def build_agent_state_stack(
         traits=traits,
         habits=habits,
         affordances=affordances,
+        continuity_threat=continuity_frame,
     )

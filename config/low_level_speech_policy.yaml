@@ -2,25 +2,20 @@
 # Chú thích tiếng Việt:
 # - File này không viết câu thoại. Nó chỉ điều tiết việc SurfaceArbiter nên reject,
 #   body-only, normal_llm hay force_llm.
-# - Mục tiêu dài hạn: autonomous có nhịp tim hơn nhưng không spam/bịa màn hình.
+# - Global path giờ bảo thủ hơn để thought_stream/random_chatter không ăn ké cửa presence.
+# - Presence path có threshold riêng để long silence có đường nói hợp pháp mà không bịa màn hình.
 
-# Im liên tục đủ vòng thì phải thử LLM micro, không body-only mãi.
-force_llm_after_silent: 3
+# =========================
+# GLOBAL NON-PRESENCE POLICY
+# =========================
+# Dùng cho inner_whim / random_chatter / thought_stream_surface / các impulse không thuộc presence.
+force_llm_after_silent: 6
+high_conf_threshold: 0.58
+min_surface_confidence: 0.42
+body_only_min_confidence: 0.30
+vital_pressure_force_llm_threshold: 0.62
 
-# Ngưỡng gọi force LLM khi confidence cao.
-high_conf_threshold: 0.52
-
-# Ngưỡng tối thiểu để được thử sinh câu nhỏ.
-min_surface_confidence: 0.36
-
-# Dưới ngưỡng này mới reject hẳn; trên ngưỡng này ít nhất xả body-only.
-body_only_min_confidence: 0.26
-
-# Nếu vital_pressure vượt ngưỡng, policy ưu tiên force_llm.
-# Đây là "áp lực sống" bị nén lâu, không phải state mới.
-vital_pressure_force_llm_threshold: 0.60
-
-# Không cho body-only kéo dài vô hạn. Sau 2 lần body-only, vòng sau sẽ bị đẩy lên force_llm.
+# Không cho body-only kéo dài vô hạn. SurfaceArbiter dùng streak này để đẩy lượt sau lên LLM.
 max_body_only_streak: 2
 body_only_after_llm_decline: true
 
@@ -28,17 +23,27 @@ body_only_after_llm_decline: true
 min_surface_interval_seconds: 10
 family_cooldown_seconds: 70
 
-# Các kind thấp tầng được phép gọi LLM khi đủ confidence.
+# Global always-LLM chỉ giữ route đã được upstream gate kỹ.
+# Đừng nhét random_chatter/thought_stream_surface vào đây, không thì lại mở hội văn nghệ trong log.
 always_llm_kinds:
+  - blind_frustration
+  - technical_help
+
+# ========================
+# PRESENCE-SPECIFIC POLICY
+# ========================
+# Presence được quyền dễ thở hơn, vì nó không cần claim màn hình.
+# Nó vẫn phải qua SurfaceArbiter + LLM contract + post-generation guard.
+presence_force_llm_after_silent: 4
+presence_high_conf_threshold: 0.48
+presence_min_confidence: 0.34
+presence_body_only_min_confidence: 0.22
+presence_vital_force_llm_threshold: 0.52
+
+presence_always_llm_kinds:
   - presence_maintenance
+  - micro_presence
   - re_engagement
   - reengagement
-  - micro_observation
-  - inner_whim
-  - curious_question
-  - random_chatter
-  - light_muse
+  - continuity_presence
   - memory_resonance
-  - micro_presence
-  - idle_curiosity
-  - thought_stream_surface

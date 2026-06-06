@@ -11,6 +11,7 @@ from cortex.contracts import SessionRitualReport
 from cortex.social_presence import SocialPresenceDetector
 from cortex.low_level_speech_policy import LowLevelSpeechPolicy
 from cortex.surface_arbiter import SurfaceArbiter, SurfaceDecision, SurfaceImpulse
+from cortex.continuity_threat import evaluate_continuity_threat
 from domain import Decision
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.sensor_visibility import SensorVisibilityState, derive_sensor_visibility_state
@@ -125,7 +126,7 @@ class PresenceControllerMixin:
         # chỉ vì evidence mỏng. Nó chỉ được viết một câu thật ngắn, không bịa screen fact.
         # Nếu không, pipeline tạo ra nghịch lý: planner=speak nhưng final=<empty>. Vâng,
         # một kiểu "có ý định giao tiếp" nhưng lại tự tháo dây thanh quản.
-        presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence", "re_engagement", "idle_curiosity"})
+        presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence", "re_engagement", "idle_curiosity", "continuity_presence"})
         endogenous_like = bool(
             impulse.kind in {"inner_whim", "random_chatter", "thought_stream_surface", "curious_question", "light_muse", "memory_resonance"}
             or impulse.source in {"endogenous_drive", "thought_stream", "spontaneous_life", "internal_agenda", "inner_thought"}
@@ -150,6 +151,7 @@ class PresenceControllerMixin:
         must_not_claim_screen = bool(impulse.missing_evidence_ids or allow_no_screen_anchor)
         must_surface = bool(sensor_like or force_llm or (not presence_like and (silent_cycles >= 4 or impulse.confidence >= 0.76)))
         thin_presence_no_screen = bool(presence_like and impulse.missing_evidence_ids)
+        continuity_presence = bool(impulse.kind == "continuity_presence" or getattr(impulse, "emotional_anchor", "") == "fading_presence")
         ego_state = self._current_ego_surface_state()
         impulse_kind = str(impulse.kind or impulse.speech_act or "surface")
         root_source = str(getattr(impulse, "root_source", "") or "")
@@ -162,6 +164,8 @@ class PresenceControllerMixin:
             "topic_seed": str(impulse.topic_seed or ""),
             "action_opportunity": action_opportunity,
             "llm_contract": llm_contract,
+            "emotional_anchor": str(getattr(impulse, "emotional_anchor", "") or ""),
+            "conflict": str(getattr(impulse, "conflict", "") or ""),
             "ego_surface_state": json.dumps(ego_state, ensure_ascii=False),
             "ego_surface_contract": (
                 "Use valence/social_energy/boredom/trust/rupture/dignity_defense as the style axis. "
@@ -185,6 +189,7 @@ class PresenceControllerMixin:
                 + ("; allow_no_screen_anchor" if allow_no_screen_anchor else "")
                 + ("; must_not_claim_screen" if must_not_claim_screen else "")
                 + ("; thin_presence_no_screen" if thin_presence_no_screen else "")
+                + ("; continuity_presence" if continuity_presence else "")
                 + ("; endogenous_surface" if endogenous_like else "")
                 + (f"; impulse_kind={impulse_kind}" if impulse_kind else "")
                 + (f"; root_source={root_source}" if root_source else "")
@@ -207,7 +212,7 @@ class PresenceControllerMixin:
                 + "; sensor_visibility_surface; allow_no_screen_anchor; must_not_claim_screen"
             )
         fallback_text = ""
-        presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence"})
+        presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence", "continuity_presence"})
         # Presence maintenance không được fallback bằng hũ câu mẫu. Nếu LLM/ego
         # không tạo được câu có chất, im còn đúng hơn. Thật sốc: ít nói hơn đôi khi
         # giống có nhân cách hơn.
@@ -717,35 +722,63 @@ class PresenceControllerMixin:
                 self._surface_float(getattr(state, "subconscious_pressure", 0.0)),
                 self._surface_float(getattr(state, "unresolved_prediction_pressure", 0.0)),
             )
-            continuity_pressure = max(
-                self._surface_float(getattr(state, "social_pressure", 0.0)),
-                thought_pressure,
-                self._surface_float(getattr(state, "cognitive_tension", 0.0)),
-                min(1.0, silent_cycles / 6.0),
+            rel_state = getattr(state, "relationship_dynamics", None)
+            continuity_frame = evaluate_continuity_threat(
+                snapshot=snapshot,
+                internal_state=state,
+                relationship_state=rel_state,
+                thought_surface=thought_report,
+                channel="autonomous",
             )
-            pressure = max(silence_pressure, continuity_pressure * 0.86)
-            metabolic_pressure = max(pressure, boredom_pressure * 0.74, thought_pressure * 0.78)
+            continuity_anxiety = self._surface_float(getattr(continuity_frame, "continuity_anxiety", 0.0))
+            continuity_threat = self._surface_float(getattr(continuity_frame, "continuity_threat", 0.0))
+            reconnect_drive = self._surface_float(getattr(continuity_frame, "reconnect_drive", 0.0))
+            surface_tension = max(-1.0, min(1.0, float(getattr(continuity_frame, "surface_tension", 0.0) or 0.0)))
+            metabolic_pressure = max(
+                silence_pressure * 0.42,
+                boredom_pressure * 0.74,
+                thought_pressure * 0.78,
+                continuity_anxiety * 0.84,
+                continuity_threat * 0.95,
+                reconnect_drive * 0.76,
+            )
             vital_pressure = max(0.0, min(1.0, metabolic_pressure ** 1.35))
-            if pressure >= 0.42 or vital_pressure >= 0.48:
+
+            # Presence không còn được sinh từ silent_cycles thuần. Chỉ tạo
+            # continuity_presence khi prediction-error đủ thật; còn không thì body
+            # hoặc các impulse có rễ khác xử lý. Đồng hồ bị giáng chức về phụ tá.
+            continuity_speakable = bool(
+                continuity_anxiety >= 0.42
+                and continuity_threat >= 0.12
+                and surface_tension >= -0.22
+            )
+            if continuity_speakable:
                 impulses.append(
                     SurfaceImpulse(
-                        kind="micro_presence",
-                        source="endogenous_drive",
-                        confidence=max(0.38, pressure, vital_pressure * 0.82),
-                        pressure=max(pressure, vital_pressure * 0.82),
-                        score=max(pressure, vital_pressure * 0.88, 0.46 + min(0.16, silent_cycles * 0.03)),
-                        topic_seed="quiet continuity pressure",
-                        speech_act="micro_presence",
-                        family="continuity:silence_pressure",
-                        evidence=(f"silent_cycles={silent_cycles}", f"vital_pressure={vital_pressure:.2f}", f"boredom={boredom_pressure:.2f}"),
-                        reason="silence/metabolic pressure wants small grounded presence",
+                        kind="continuity_presence",
+                        source="continuity_threat",
+                        confidence=max(0.42, continuity_anxiety, reconnect_drive * 0.86),
+                        pressure=max(continuity_anxiety, reconnect_drive, continuity_threat),
+                        score=max(0.44, continuity_anxiety * 0.92 + max(0.0, surface_tension) * 0.18),
+                        topic_seed=str(getattr(continuity_frame, "emotional_anchor", "fading_presence") or "fading_presence"),
+                        speech_act="continuity_presence",
+                        family="continuity:fading_presence",
+                        evidence=tuple(dict.fromkeys(tuple(getattr(continuity_frame, "evidence", ()) or ())))[:10],
+                        reason=str(getattr(continuity_frame, "reason", "presence_prediction_error") or "presence_prediction_error"),
                         focus_family=focus_family,
                         body_action="low_pressure_presence",
                         missing_evidence_ids=True,
                         is_presence=True,
                         should_surface=True,
+                        needs_external_evidence=False,
                         vital_pressure=vital_pressure,
                         is_vital_pressure=vital_pressure >= 0.55,
+                        root_source="continuity_threat",
+                        action_opportunity="one restrained low-claim line from fading presence; no screen claim; no question",
+                        llm_contract="continuity_presence: speak from prediction-error + restraint conflict, not from timer; avoid silence poetry and attendance ping",
+                        emotional_anchor=str(getattr(continuity_frame, "emotional_anchor", "fading_presence") or "fading_presence"),
+                        conflict=str(getattr(continuity_frame, "conflict", "reconnect_vs_restraint") or "reconnect_vs_restraint"),
+                        raw=continuity_frame,
                     )
                 )
             if vital_pressure >= 0.55 and max(boredom_pressure, thought_pressure) >= 0.36:

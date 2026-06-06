@@ -2551,11 +2551,11 @@ class LlmService:
             "Return exactly one valid JSON object with this schema: "
             "{\"text\": string}. "
             "When must_surface is false, text may be empty if speech is not warranted. "
-            "When must_surface is true, text must be non-empty unless safety would be violated. "
+            "When must_surface is true, text must be non-empty unless safety, permission, or hard grounding would be violated. "
             "Use Vietnamese with full diacritics only when text is non-empty. "
             "No analysis. No markdown. No English placeholder text. "
             "Generate from cognitive flags and evidence seeds, not from a Python fallback. "
-            "Write a small concrete Vietnamese aside, not proof that ERIS is alive."
+            "Write a small state-conditioned Vietnamese aside, not proof that ERIS is alive."
         )
         seed_lines = tuple(str(item).strip() for item in (seeds or ()) if str(item).strip())[:8]
         context = micro_context or {}
@@ -2576,6 +2576,7 @@ class LlmService:
             or str(context.get("thin_presence_no_screen", "") if isinstance(context, dict) else "").lower() == "true"
         )
         endogenous_surface = "endogenous_surface" in surface_contract
+        continuity_presence = "continuity_presence" in surface_contract
         impulse_kind = str(context.get("impulse_kind", "") if isinstance(context, dict) else "").strip()
         root_source = str(context.get("root_source", "") if isinstance(context, dict) else "").strip()
         action_opportunity = str(context.get("action_opportunity", "") if isinstance(context, dict) else "").strip()
@@ -2594,7 +2595,7 @@ class LlmService:
             f"Impulse kind: {impulse_kind or '<none>'}; root_source={root_source or '<none>'}; action_opportunity={action_opportunity or '<none>'}\n"
             f"Topic seed: {topic_seed or '<none>'}\n"
             f"LLM contract: {llm_contract or '<none>'}\n"
-            f"allow_no_screen_anchor={str(allow_no_screen_anchor).lower()}; must_not_claim_screen={str(must_not_claim_screen).lower()}; thin_presence_no_screen={str(thin_presence_no_screen).lower()}; endogenous_surface={str(endogenous_surface).lower()}\n"
+            f"allow_no_screen_anchor={str(allow_no_screen_anchor).lower()}; must_not_claim_screen={str(must_not_claim_screen).lower()}; thin_presence_no_screen={str(thin_presence_no_screen).lower()}; continuity_presence={str(continuity_presence).lower()}; endogenous_surface={str(endogenous_surface).lower()}\n"
             f"Signal score: {float(signal_score or 0.0):.2f}\n"
             f"Avoid repeating: {avoid_text}\n"
             f"must_surface={str(force_surface).lower()}\n"
@@ -2613,7 +2614,9 @@ class LlmService:
         if force_surface:
             user_msg += (
                 "- must_surface=true: do not return empty just because evidence is thin; the arbiter already chose speech.\n"
-                "- With thin evidence, use explicit Runtime seeds or memory/thought residue only; do not fall back to generic rhythm/silence/status lines.\n"
+                "- must_surface=true: return empty only for safety, permission, or hard grounding violations.\n"
+                "- With thin evidence, use allowed internal anchors: silence, continuity, distance, restraint, boredom, irritation, dignity defense, memory/thought residue, or nearby co-presence rhythm.\n"
+                "- The line must be state-conditioned, not a generic attendance/status ping.\n"
                 "- Keep it tiny, concrete, and low-pressure.\n"
             )
         else:
@@ -2631,9 +2634,21 @@ class LlmService:
             )
         if thin_presence_no_screen:
             user_msg += (
-                "- thin_presence_no_screen=true: there is no usable screen evidence; anchor only on silence, continuity, or nearby co-presence rhythm.\n"
-                "- thin_presence_no_screen=true: do not say 'tôi thấy', do not claim what is visible, do not ask a pushy question, do not narrate UI.\n"
-                "- thin_presence_no_screen=true: keep it roughly 8-14 words, one small nearby reaction, not a status ping.\n"
+                "- thin_presence_no_screen=true: there is no usable current screen evidence. This is still allowed to speak if must_surface=true.\n"
+                "- thin_presence_no_screen=true: anchor only on internal/runtime signals: silence, continuity, emotional distance, restraint, boredom, irritation, dignity defense, memory/thought residue, or quiet co-presence rhythm.\n"
+                "- thin_presence_no_screen=true: follow ego_surface_state. Warmth/trust may be dry and lightly caring; boredom may become a detached grumble; irritation may be clipped and cool; dignity defense or rupture should be bounded and distant, not sweet.\n"
+                "- thin_presence_no_screen=true: do not say 'tôi thấy', do not claim what is visible, do not ask any question, do not narrate UI.\n"
+                "- thin_presence_no_screen=true: do not mention missing evidence, telemetry, debug, system state, or contract names.\n"
+                "- thin_presence_no_screen=true: keep it roughly 3-12 Vietnamese words; no positive template examples are provided on purpose. Use state, not mimicry.\n"
+                "- thin_presence_no_screen=true: if must_surface=true, do not return empty unless safety/permission/grounding is genuinely violated.\n"
+            )
+        if continuity_presence:
+            user_msg += (
+                "- continuity_presence=true: speak only from continuity prediction-error, not elapsed time.\n"
+                "- continuity_presence=true: use emotional_anchor and conflict if provided; the felt shape is reconnect_vs_restraint.\n"
+                "- continuity_presence=true: no attendance ping, no 'tôi vẫn ở đây', no generic silence/rhythm poetry, no needy question.\n"
+                "- continuity_presence=true: the line should feel restrained, slightly withheld, and low-pressure.\n"
+                "- continuity_presence=true: if seeds show ordinary_silence or timer-only, return empty unless must_surface=true and the arbiter supplied fading_presence.\n"
             )
         if endogenous_surface:
             user_msg += (
@@ -2672,7 +2687,7 @@ class LlmService:
             "- No status report, no system narration, no explaining.\n"
             "- Do not invent screen/action facts. No fake certainty.\n"
             "- Do not mention telemetry, evidence, signal, debug, CPU, RAM.\n"
-            "- Avoid hollow presence lines like 'Tôi ở đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'.\n"
+            "- Avoid hollow presence/status lines like 'Tôi ở đây', 'Tôi đang nghe', 'Tôi vẫn quan sát', 'Tôi vẫn ở đây'.\n"
             "- Also avoid stale micro templates: 'Mạch này vẫn giữ chỗ', 'Nhịp này im hơi lâu rồi', 'Vẫn đang đợi chút nhé', 'Khoảng yên này vẫn giữ chỗ', 'Nhịp này vẫn yên thêm chút'.\n"
             "- Speak once or stay text-empty.\n"
         )
@@ -2685,98 +2700,12 @@ class LlmService:
             "- Return exactly one JSON object.\n"
             "- Shape: {\"text\":\"actual Vietnamese line or empty string\"}\n"
             "- If must_surface=false, the value of text may be empty when body-only is better.\n"
-            "- If must_surface=true, the value of text must be a final sentence to speak; if allow_no_screen_anchor=true, use the seed/rhythm instead of screen facts.\n"
+            "- If must_surface=true, the value of text must be a final sentence to speak; if allow_no_screen_anchor=true, use seed/state/rhythm instead of screen facts.\n"
+            "- If thin_presence_no_screen=true and must_surface=true, non-empty text is required unless safety/permission/grounding is genuinely violated.\n"
             "- Never return placeholder text such as 'short Vietnamese line'.\n"
             "- non-empty text must be Vietnamese only and keep full diacritics.\n"
             "- non-empty text must be speakable as-is.\n"
         )
-        try:
-            response = self.client.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_msg},
-                ],
-                temperature=0.35,
-                frequency_penalty=0.7,
-                presence_penalty=0.2,
-                max_tokens=80,
-                response_format={"type": "json_object"},
-                grammar=None,
-            )
-        except requests.HTTPError as exc:
-            if self._is_retryable_http_5xx(exc):
-                time.sleep(0.15)
-                try:
-                    response = self.client.create_chat_completion(
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_msg},
-                        ],
-                        temperature=0.35,
-                        frequency_penalty=0.7,
-                        presence_penalty=0.2,
-                        max_tokens=80,
-                        response_format={"type": "json_object"},
-                        grammar=None,
-                    )
-                except Exception:
-                    return ""
-            else:
-                raise
-        except Exception:
-            return ""
-
-        raw = self._extract_content(response)
-        extracted = self._extract_first_json_object(raw) or raw
-        payload = self._parse_json_object(extracted) or {}
-        payload = self._normalize_payload_keys(payload) if isinstance(payload, dict) else {}
-        return self._coerce_text_value(payload.get("text", "")).strip()
-        if not fallback_text:
-            fallback_text = str(seed or "").strip() or "Mạch này vẫn hơi nghẽn."
-        system_prompt = (
-            "You are ERIS's micro-presence wording layer. "
-            "Return exactly one valid JSON object with this schema: "
-            "{\"text\": string}. "
-            "The text value must be the actual Vietnamese line to speak, not a label, not a placeholder. "
-            "Use Vietnamese with full diacritics only. "
-            "No analysis. No markdown. No English placeholder text. "
-            "Write a small concrete Vietnamese aside, not proof that ERIS is alive."
-        )
-        seed_lines = tuple(str(item).strip() for item in (seeds or ()) if str(item).strip())[:5]
-        context = micro_context or {}
-        user_msg = (
-            f"Kind: {kind_name}\n"
-            f"Safe fallback: {fallback_text}\n"
-            f"Runtime seeds: {' | '.join(seed_lines) if seed_lines else fallback_text}\n"
-            f"Micro context: {json.dumps(context, ensure_ascii=False)}\n"
-            f"Signal score: {float(signal_score or 0.0):.2f}\n"
-            f"Avoid repeating: {avoid_text}\n"
-            f"focus_kind={focus_kind}; focus_summary={focus_summary}; idle_seconds={int(float(idle_seconds or 0.0))}\n\n"
-            "Principle:\n"
-            f"- Vietnamese only, 1-{max_words} words; one tiny line with full diacritics.\n"
-            "- This is a tiny concrete aside: dry, casual, slightly imperfect.\n"
-            "- No status report, no system narration, no explaining.\n"
-            "- Do not invent screen/action facts. If evidence is thin, stay vague but human.\n"
-            "- Do not mention telemetry, evidence, signal, debug, CPU, RAM.\n"
-            "- Avoid hollow presence lines like 'Tôi đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'.\n"
-            "- Speak once.\n"
-        )
-        if is_reengagement:
-            user_msg += (
-                "- Re-engagement may be a soft, light check-in.\n"
-            )
-        else:
-            user_msg += "- Presence maintenance should feel like a small aside.\n"
-        user_msg += (
-            "\nOutput contract:\n"
-            "- Return exactly one JSON object.\n"
-            "- Shape: {\"text\":\"actual Vietnamese line\"}\n"
-            "- The value of text must be the final sentence to speak.\n"
-            "- Never return placeholder text such as 'short Vietnamese line'.\n"
-            "- text must be Vietnamese only and keep full diacritics.\n"
-            "- text must be speakable as-is.\n"
-        )
-
         try:
             response = self.client.create_chat_completion(
                 messages=[

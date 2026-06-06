@@ -42,6 +42,8 @@ class ImpulseCandidate:
     root_source: str = ""
     action_opportunity: str = ""
     llm_contract: str = ""
+    emotional_anchor: str = ""
+    conflict: str = ""
 
     @property
     def total(self) -> float:
@@ -91,6 +93,8 @@ class ImpulseCandidate:
             "root_source": self.root_source,
             "action_opportunity": self.action_opportunity,
             "llm_contract": self.llm_contract,
+            "emotional_anchor": self.emotional_anchor,
+            "conflict": self.conflict,
         }
 
 
@@ -134,6 +138,7 @@ def _priority(name: str) -> float:
     return {
         "technical_help_impulse": 0.74,
         "scene_curiosity_impulse": 0.68,
+        "continuity_presence_impulse": 0.66,
         "reengagement_impulse": 0.64,
         "curious_question_impulse": 0.60,
         "memory_resonance_impulse": 0.57,
@@ -179,6 +184,14 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
     vital_pressure = _clamp01(getattr(needs, "vital_pressure", 0.0))
     metabolic_pressure = _clamp01(getattr(needs, "metabolic_pressure", vital_pressure))
     silence_pressure = _clamp01(getattr(needs, "silence_pressure", 0.0))
+    continuity_threat = _clamp01(getattr(needs, "continuity_threat", 0.0))
+    continuity_anxiety = _clamp01(getattr(needs, "continuity_anxiety", 0.0))
+    presence_error = _clamp01(getattr(needs, "presence_prediction_error", 0.0))
+    unexpected_absence = _clamp01(getattr(needs, "unexpected_absence", 0.0))
+    open_loop_weight = _clamp01(getattr(needs, "open_loop_weight", 0.0))
+    reconnect_drive = _clamp01(getattr(needs, "reconnect_drive", 0.0))
+    restraint_drive = _clamp01(getattr(needs, "restraint_drive", 0.0))
+    surface_tension = max(-1.0, min(1.0, float(getattr(needs, "surface_tension", 0.0) or 0.0)))
     thought_pressure = _clamp01(getattr(needs, "thought_pressure", 0.0))
     memory_residue_pressure = _clamp01(getattr(needs, "memory_residue_pressure", 0.0))
     boredom_pressure = _clamp01(getattr(needs, "boredom_pressure", 0.0))
@@ -200,7 +213,8 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
     focus_allows_chatter = bool(aff.random_chatter_allowed and not focus_is_deep_work)
     has_internal_content = bool(rooted_inner)
     has_scene_or_internal_context = bool(ev.has_scene_anchor or scene_anchor or has_internal_content or memory_residue_pressure >= 0.42)
-    empty_context_presence_penalty = status_ping_low_value * (0.34 if not has_scene_or_internal_context else 0.18)
+    continuity_anchor = continuity_threat >= 0.18 or continuity_anxiety >= 0.38 or open_loop_weight >= 0.52 or reconnect_drive >= 0.20
+    empty_context_presence_penalty = status_ping_low_value * (0.34 if not (has_scene_or_internal_context or continuity_anchor) else 0.18)
     vital_body_release = vital_pressure * (0.30 if not has_scene_or_internal_context else 0.14)
     family_scene = "scene_curiosity:" + _family_key(scene_anchor)
     family_whim = "inner_whim:" + _family_key(rooted_topic or "unrooted_whim")
@@ -251,7 +265,7 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             preference_fit=prefs.fit_for("scene_curiosity_impulse") * 0.20,
             trait_bias=traits.bias_for("scene_curiosity_impulse"),
             affordance_allowance=0.18 if scene_allowed else -0.10,
-            risk=aff.intrusive_question_risk * 0.10 + needs.rest_need * 0.10,
+            risk=aff.intrusive_question_risk * 0.10 + needs.rest_need * 0.10 + (0.30 if not scene_allowed else 0.0) + continuity_threat * 0.10,
             repetition_penalty=habits.repetition_penalty(action="micro_observation", family=family_scene),
             habit_bias=habits.semantic_bias(action="micro_observation", impulse_name="scene_curiosity_impulse", family=family_scene),
             interrupt_cost=max(0.0, needs.competence_need * 0.18 + dynamic_interrupt_cost * 0.22 - requested_presence * 0.18 - media_relief),
@@ -365,6 +379,64 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
         )
     )
 
+    # 5b. Continuity presence: nói vì prediction-error của hiện diện, không vì timer.
+    # Đây là đường thay thế "long_silence -> force_llm". Im lặng chỉ là amplifier;
+    # động cơ thật phải là fading_presence + open loop + quan hệ đủ trọng lượng.
+    continuity_family = "continuity_presence:" + _family_key(rooted_topic or scene_anchor or "fading_presence")
+    continuity_seed = rooted_topic or scene_anchor or "fading_presence"
+    candidates.append(
+        ImpulseCandidate(
+            name="continuity_presence_impulse",
+            impulse_type="continuity_presence",
+            speech_act="continuity_presence",
+            topic_seed=continuity_seed,
+            family=continuity_family,
+            base_score=0.055 + continuity_anxiety * 0.06,
+            evidence_fit=0.16 if continuity_anchor else -0.10,
+            belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.08 - ambient_copresence * 0.06 - status_ping_low_value * 0.08),
+            need_pressure=(
+                continuity_anxiety * 0.42
+                + continuity_threat * 0.46
+                + reconnect_drive * 0.30
+                + open_loop_weight * 0.12
+                + memory_residue_pressure * 0.08
+                + vital_speech_bonus * 0.24
+            ),
+            preference_fit=prefs.fit_for("reengagement_impulse") * 0.12,
+            trait_bias=max(0.0, traits.attachment_visibility * 0.10 + traits.restraint * 0.04 - traits.intellectual_detachment * 0.05),
+            affordance_allowance=0.10 if aff.body_only_allowed and continuity_anchor else -0.08,
+            risk=(
+                aff.intrusive_question_risk * 0.08
+                + needs.rest_need * 0.10
+                + restraint_drive * 0.12
+                + max(0.0, -surface_tension) * 0.10
+                + (empty_context_presence_penalty * 0.75 if not continuity_anchor else 0.0)
+            ),
+            interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.22 - max(0.0, surface_tension) * 0.24 - requested_presence * 0.12),
+            repetition_penalty=habits.repetition_penalty(action="continuity_presence", family=continuity_family),
+            habit_bias=habits.semantic_bias(action="continuity_presence", impulse_name="continuity_presence_impulse", family=continuity_family),
+            metabolic_adjustment=max(0.0, surface_tension) * 0.12 + vital_speech_bonus * 0.18,
+            evidence=(
+                f"continuity_threat={continuity_threat:.2f}",
+                f"continuity_anxiety={continuity_anxiety:.2f}",
+                f"presence_error={presence_error:.2f}",
+                f"unexpected_absence={unexpected_absence:.2f}",
+                f"open_loop_weight={open_loop_weight:.2f}",
+                f"reconnect_drive={reconnect_drive:.2f}",
+                f"restraint_drive={restraint_drive:.2f}",
+                f"surface_tension={surface_tension:.2f}",
+                "emotional_anchor=fading_presence" if continuity_anchor else "emotional_anchor=ordinary_silence",
+                "conflict=reconnect_vs_restraint",
+            ),
+            reason="Continuity presence is allowed only when silence violates a relationship/runtime expectation, not when a timer expires.",
+            root_source="continuity_threat",
+            action_opportunity="one restrained low-claim line from fading presence; no question; no screen claim; no status ping",
+            llm_contract="continuity_presence: use emotional_anchor=fading_presence and conflict=reconnect_vs_restraint; never write generic silence poetry",
+            emotional_anchor="fading_presence" if continuity_anchor else "ordinary_silence",
+            conflict="reconnect_vs_restraint",
+        )
+    )
+
     # 6. Random chatter: nói nhảm có kiểm soát khi boredom/silence nén đủ lâu.
     # Không claim màn hình; nó là mẩu nội sinh thấp rủi ro, dùng để ERIS bớt hóa tượng.
     random_family = "random_chatter:" + _family_key(rooted_topic or scene_anchor or "ambient_runtime")
@@ -382,7 +454,7 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             preference_fit=prefs.fit_for("random_chatter_impulse") * 0.14,
             trait_bias=traits.bias_for("random_chatter_impulse"),
             affordance_allowance=0.14 if focus_allows_chatter else -0.22,
-            risk=needs.rest_need * 0.12 + aff.intrusive_question_risk * 0.08 + (0.28 if focus_is_deep_work else 0.0),
+            risk=needs.rest_need * 0.12 + aff.intrusive_question_risk * 0.08 + (0.28 if focus_is_deep_work else 0.0) + (continuity_threat * 0.22 if not rooted_inner else 0.0),
             interrupt_cost=max(0.0, dynamic_interrupt_cost * (0.62 if focus_is_deep_work else 0.26) - requested_presence * 0.18 - media_relief - vital_pressure * (0.08 if focus_is_deep_work else 0.20)),
             repetition_penalty=habits.repetition_penalty(action="random_chatter", family=random_family),
             habit_bias=habits.semantic_bias(action="random_chatter", impulse_name="random_chatter_impulse", family=random_family),
@@ -433,20 +505,23 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             speech_act="reengagement",
             topic_seed=scene_anchor or rooted_topic or "quiet_return",
             family=reengagement_family,
-            base_score=0.035 + min(0.14, silence_pressure * 0.12),
-            evidence_fit=0.08 if ev.has_scene_anchor else 0.02,
-            belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.08 - ambient_copresence * 0.10 - status_ping_low_value * 0.10),
-            need_pressure=needs.continuity_need * 0.16 + social_presence_need * 0.08 + vital_speech_bonus * (0.52 if has_scene_or_internal_context else 0.24),
+            base_score=0.025 + min(0.08, continuity_anxiety * 0.08),
+            evidence_fit=0.10 if (ev.has_scene_anchor or continuity_anchor) else -0.02,
+            belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.08 - ambient_copresence * 0.10 - status_ping_low_value * 0.12),
+            need_pressure=needs.continuity_need * 0.12 + social_presence_need * 0.06 + continuity_threat * 0.18 + reconnect_drive * 0.16 + vital_speech_bonus * (0.34 if (has_scene_or_internal_context or continuity_anchor) else 0.08),
             preference_fit=prefs.fit_for("reengagement_impulse") * 0.14,
             trait_bias=traits.bias_for("reengagement_impulse"),
             affordance_allowance=0.08 if aff.body_only_allowed else -0.04,
-            risk=aff.intrusive_question_risk * 0.10 + needs.rest_need * 0.12 + empty_context_presence_penalty * 0.65,
-            interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.30 - vital_pressure * 0.22 - requested_presence * 0.20),
+            risk=aff.intrusive_question_risk * 0.10 + needs.rest_need * 0.12 + empty_context_presence_penalty * (0.85 if not continuity_anchor else 0.42) + restraint_drive * 0.10,
+            interrupt_cost=max(0.0, dynamic_interrupt_cost * 0.30 - max(0.0, surface_tension) * 0.18 - requested_presence * 0.20),
             repetition_penalty=habits.repetition_penalty(action="reengagement", family=reengagement_family),
             habit_bias=habits.semantic_bias(action="reengagement", impulse_name="reengagement_impulse", family=reengagement_family),
-            metabolic_adjustment=vital_speech_bonus * (0.40 if has_scene_or_internal_context else 0.12),
-            evidence=(f"silence_pressure={silence_pressure:.2f}", f"metabolic.vital={vital_pressure:.2f}", f"belief.status_ping_low_value={status_ping_low_value:.2f}", "low_claim_reengagement"),
-            reason="Long compressed silence can ask for one restrained re-engagement line.",
+            metabolic_adjustment=max(0.0, surface_tension) * 0.10 + vital_speech_bonus * (0.24 if (has_scene_or_internal_context or continuity_anchor) else 0.04),
+            evidence=(f"silence_pressure={silence_pressure:.2f}", f"continuity_anxiety={continuity_anxiety:.2f}", f"presence_error={presence_error:.2f}", f"metabolic.vital={vital_pressure:.2f}", f"belief.status_ping_low_value={status_ping_low_value:.2f}", "low_claim_reengagement"),
+            reason="Re-engagement is restrained return after continuity prediction error, not a timer ping.",
+            root_source="continuity_threat" if continuity_anchor else "silence_pressure",
+            action_opportunity="soft return only if continuity/anxiety is real; no generic silence line",
+            llm_contract="re_engagement: no attendance ping; use continuity state only if anchored",
         )
     )
 

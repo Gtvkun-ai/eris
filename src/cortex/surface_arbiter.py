@@ -41,6 +41,8 @@ class SurfaceImpulse:
     root_source: str = ""
     action_opportunity: str = ""
     llm_contract: str = ""
+    emotional_anchor: str = ""
+    conflict: str = ""
     raw: Any = None
 
     def to_context(self) -> dict[str, object]:
@@ -66,6 +68,8 @@ class SurfaceImpulse:
             "root_source": self.root_source,
             "action_opportunity": self.action_opportunity,
             "llm_contract": self.llm_contract,
+            "emotional_anchor": self.emotional_anchor,
+            "conflict": self.conflict,
         }
 
 
@@ -141,6 +145,7 @@ class SurfaceArbiter:
         "companionship_ping",
         "re_engagement",
         "idle_curiosity",
+        "continuity_presence",
     })
     _SCREEN_ANCHORED_KINDS = frozenset({
         "micro_observation",
@@ -234,7 +239,11 @@ class SurfaceArbiter:
             or self.silent_cycles >= self.policy.config.force_llm_after_silent
             or bool(getattr(getattr(winner, "raw", None), "should_call_llm", False))
         )
-        if forced_body_only_reason and not forced_surface:
+        hard_body_only = forced_body_only_reason in {
+            "forced_body_only:timer_not_motive",
+            "forced_body_only:presence_missing_evidence",
+        }
+        if forced_body_only_reason and (not forced_surface or hard_body_only):
             # Micro/presence thiếu anchor không được gọi LLM để rồi trả rỗng.
             # Ngoại lệ: explicit force/silent-debt/should_call_llm đã là quyết định
             # tầng trên rằng phải thử wording rồi mới body-only. Không thì test debug
@@ -546,6 +555,8 @@ class SurfaceArbiter:
             root_source="meaning_context" if isinstance(meaning_context, Mapping) and meaning_context else "presence",
             action_opportunity=str(meaning_context.get("action_opportunity", "") if isinstance(meaning_context, Mapping) else ""),
             llm_contract="presence: use meaning_context if available; no generic status ping",
+            emotional_anchor=str(meaning_context.get("emotional_anchor", "") if isinstance(meaning_context, Mapping) else ""),
+            conflict=str(meaning_context.get("conflict", "") if isinstance(meaning_context, Mapping) else ""),
             raw=cue,
         )
 
@@ -575,7 +586,7 @@ class SurfaceArbiter:
             focus_family="spontaneous",
             body_action=body_action,
             missing_evidence_ids=not any("scene_evidence" in item or "ev." in item for item in evidence),
-            is_presence=act in {"micro_presence", "companionship_ping"},
+            is_presence=act in {"micro_presence", "companionship_ping", "continuity_presence", "re_engagement"},
             should_surface=pressure > 0.0 and not bool(getattr(impulse, "needs_external_evidence", False)),
             needs_external_evidence=bool(getattr(impulse, "needs_external_evidence", False)),
             vital_pressure=vital_pressure,
@@ -583,6 +594,8 @@ class SurfaceArbiter:
             root_source=str(getattr(impulse, "root_source", "") or getattr(impulse, "source_layer", "") or "spontaneous"),
             action_opportunity=str(getattr(impulse, "action_opportunity", "") or "use impulse contract, not silence pressure"),
             llm_contract=str(getattr(impulse, "llm_contract", "") or f"{act}: keep low-claim and rooted"),
+            emotional_anchor=str(getattr(impulse, "emotional_anchor", "") or ""),
+            conflict=str(getattr(impulse, "conflict", "") or ""),
             raw=impulse,
         )
 
@@ -831,7 +844,8 @@ class SurfaceArbiter:
             speech_act="micro_presence",
             family="long_silence:idle",
             evidence=(f"idle_seconds={idle:.1f}", f"silent_cycles={self.silent_cycles}"),
-            reason="long_silence_impulse",
+            reason="long_silence_impulse_timer_only",
+            llm_contract="timer_only: never generate public text from this impulse; it may only release body rhythm",
             focus_family="general_idle",
             body_action="idle_shift",
             missing_evidence_ids=True,
@@ -871,7 +885,7 @@ class SurfaceArbiter:
             focus_family=str(get("focus_family", "") or "surface"),
             body_action=str(get("body_action", "") or "low_pressure_presence"),
             missing_evidence_ids=bool(get("missing_evidence_ids", False)),
-            is_presence=bool(get("is_presence", kind in {"presence_maintenance", "micro_presence", "re_engagement"})),
+            is_presence=bool(get("is_presence", kind in {"presence_maintenance", "micro_presence", "re_engagement", "continuity_presence"})),
             should_surface=bool(get("should_surface", True)),
             needs_external_evidence=bool(get("needs_external_evidence", False)),
             vital_pressure=_clamp01(get("vital_pressure", 0.0)),
@@ -879,6 +893,8 @@ class SurfaceArbiter:
             root_source=str(get("root_source", "") or get("source_layer", "") or ""),
             action_opportunity=str(get("action_opportunity", "") or ""),
             llm_contract=str(get("llm_contract", "") or ""),
+            emotional_anchor=str(get("emotional_anchor", "") or ""),
+            conflict=str(get("conflict", "") or ""),
             raw=item,
         )
 
@@ -1032,9 +1048,13 @@ class SurfaceArbiter:
         kind = str(impulse.kind or impulse.speech_act or "")
         if kind in self._SCREEN_ANCHORED_KINDS:
             return ""
+        if str(impulse.source or "") == "surface_arbiter" and str(impulse.reason or "").startswith("long_silence_impulse"):
+            return "forced_body_only:timer_not_motive"
         if impulse.needs_external_evidence and impulse.missing_evidence_ids:
             return "forced_body_only:needs_external_evidence_missing"
         if self._presence_like(impulse) and impulse.missing_evidence_ids and not self._has_concrete_evidence_anchor(impulse):
+            if kind == "continuity_presence" and self._has_public_internal_anchor(impulse):
+                return ""
             return "forced_body_only:presence_missing_evidence"
         # Context thắng impulse: random chatter không được chen vào khi user đang code/docs.
         # Chán thì ngọ nguậy/body-only, không phải mở miệng phá deep work.
@@ -1138,7 +1158,7 @@ class SurfaceArbiter:
             return ""
         kind = str(impulse.kind or impulse.speech_act or "")
         explicit_llm_permission = bool(getattr(getattr(impulse, "raw", None), "should_call_llm", False))
-        presence_like = bool(impulse.is_presence or kind in {"presence_maintenance", "micro_presence", "companionship_ping", "re_engagement"})
+        presence_like = bool(impulse.is_presence or kind in {"presence_maintenance", "micro_presence", "companionship_ping", "re_engagement", "continuity_presence"})
         if not presence_like:
             return ""
         state = self._runtime_internal_state(frame=frame, snapshot=snapshot)
@@ -1271,6 +1291,8 @@ class SurfaceArbiter:
             f"; focus_family={winner.focus_family}"
             f"; missing_evidence_ids={winner.missing_evidence_ids}"
             f"; vital={_clamp01(getattr(winner, 'vital_pressure', 0.0)):.2f}"
+            f"; emotional_anchor={getattr(winner, 'emotional_anchor', '') or 'none'}"
+            f"; conflict={getattr(winner, 'conflict', '') or 'none'}"
             f"; result={result}"
             f"; candidates={candidate_note}"
         )
@@ -1286,6 +1308,7 @@ class SurfaceArbiter:
             "curious_question": 0.54,
             "inner_whim": 0.50,
             "light_muse": 0.48,
+            "continuity_presence": 0.64,
             "thought_stream_surface": 0.50,
             "random_chatter": 0.49,
             "memory_resonance": 0.48,
