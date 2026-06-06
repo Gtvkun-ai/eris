@@ -34,11 +34,21 @@ class RehearsalAgent(RuleBasedWorker):
         route = clean_text(getattr(thought, "recommended_route", "suppress"), limit=60)
         theme = clean_text(getattr(thought, "dominant_theme", "thought"), limit=120)
 
-        say_now_score = clamp01(surface * 0.52 + confidence * 0.32 - suppressed * 0.24)
-        delay_score = clamp01(0.24 + suppressed * 0.28 + (0.20 if route == "rehearse" else 0.0))
-        body_only_score = clamp01(0.18 + suppressed * 0.24 + (0.18 if surface < 0.55 else 0.0))
-        store_score = clamp01(0.18 + confidence * 0.34 + suppressed * 0.16)
-        suppress_score = clamp01(0.12 + suppressed * 0.42 + (0.16 if confidence < 0.40 else 0.0))
+        wandering = "wandering" in tuple(getattr(thought, "tags", ()) or ()) or str(getattr(thought, "action_opportunity", "") or "") == "wandering_surface_candidate"
+        deep_focus = self._deep_focus(context)
+        interruption_cost = max(
+            clamp01(safe_get(context.frame, "interruption_cost", 0.0)),
+            clamp01(safe_get(context.snapshot, "interruption_cost", 0.0)),
+            clamp01(safe_get(context.internal_state, "interruption_cost", 0.0)),
+            clamp01(safe_get(context.internal_state, "speech_cost", 0.0)),
+        )
+        wandering_penalty = 0.34 if wandering and (deep_focus or interruption_cost >= 0.60) else 0.0
+
+        say_now_score = clamp01(surface * 0.52 + confidence * 0.32 - suppressed * 0.24 - wandering_penalty)
+        delay_score = clamp01(0.24 + suppressed * 0.28 + (0.20 if route == "rehearse" else 0.0) + (0.18 if wandering and deep_focus else 0.0))
+        body_only_score = clamp01(0.18 + suppressed * 0.24 + (0.18 if surface < 0.55 else 0.0) + (0.16 if wandering and interruption_cost >= 0.60 else 0.0))
+        store_score = clamp01(0.18 + confidence * 0.34 + suppressed * 0.16 + (0.08 if wandering else 0.0))
+        suppress_score = clamp01(0.12 + suppressed * 0.42 + (0.16 if confidence < 0.40 else 0.0) + (0.28 if wandering and deep_focus else 0.0))
         scores = {
             "say_now": say_now_score,
             "delay": delay_score,
@@ -105,6 +115,31 @@ class RehearsalAgent(RuleBasedWorker):
             )
 
         return tuple(fragments)
+
+    def _deep_focus(self, context: WorkerContext) -> bool:
+        focus = clean_text(
+            first_present(
+                safe_get(context.snapshot, "focus_kind_hint"),
+                safe_get(context.snapshot, "focus_kind"),
+                safe_get(context.snapshot, "active_window_kind"),
+                safe_get(context.frame, "dominant_focus"),
+                default="",
+            ),
+            limit=80,
+        ).lower()
+        if any(token in focus for token in ("code", "coding", "ide", "editor", "terminal", "debug", "docs", "documentation")):
+            user_active = bool(
+                safe_get(context.snapshot, "user_is_typing", False)
+                or safe_get(context.snapshot, "keyboard_active", False)
+                or safe_get(context.frame, "user_is_typing", False)
+            )
+            idle = 0.0
+            try:
+                idle = float(safe_get(context.snapshot, "idle_seconds", 0.0) or 0.0)
+            except Exception:
+                idle = 0.0
+            return bool(user_active or idle < 60.0)
+        return False
 
     def _extract_thought_object(self, context: WorkerContext) -> ThoughtObject | None:
         direct = safe_get(context, "thought_object")

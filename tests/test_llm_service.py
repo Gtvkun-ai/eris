@@ -75,7 +75,7 @@ class LlmServiceTests(unittest.TestCase):
         self.assertEqual(call["max_tokens"], 80)
         self.assertEqual(call["response_format"], {"type": "json_object"})
         self.assertIn("micro-presence", call["messages"][0]["content"])
-        self.assertIn("small concrete Vietnamese aside", call["messages"][0]["content"])
+        self.assertIn("small state-conditioned Vietnamese aside", call["messages"][0]["content"])
         self.assertIn("1-12 words", call["messages"][1]["content"])
         self.assertIn("No status report", call["messages"][1]["content"])
         self.assertIn("Do not invent screen/action facts", call["messages"][1]["content"])

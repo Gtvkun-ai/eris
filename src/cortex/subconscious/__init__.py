@@ -22,6 +22,16 @@ from .synthesizer import ConsciousSynthesizer, SynthesisPolicy, SynthesisReport
 from .model_synthesizer import ModelBackedConsciousSynthesizer, ModelSynthesisPolicy, InnerCourtReport
 from .worker_base import RuleBasedWorker, SubconsciousWorker, WorkerContext
 
+from .thought_spark import ThoughtSpark, SparkSource
+from .wandering_contracts import TopicSeed, AssociationPath, WanderingThoughtResult, WanderingTopic
+from .drift_pool import DriftPool, DriftSnapshot, DriftEntry
+from .self_anchor_core import SelfAnchorCore
+from .habitat_seed_extractor import HabitatSeedExtractor
+from .topic_seed_pool import TopicSeedPool
+from .free_association import FreeAssociationEngine
+from .wandering_topic_memory import WanderingTopicMemory
+from .wandering_thought import WanderingThoughtEngine
+
 from .workers import (
     UserModelerAgent,
     MemoryResonatorAgent,
@@ -74,6 +84,21 @@ __all__ = [
     "RuleBasedWorker",
     "SubconsciousWorker",
     "WorkerContext",
+    "WanderingThoughtEngine",
+    "WanderingTopicMemory",
+    "FreeAssociationEngine",
+    "TopicSeedPool",
+    "HabitatSeedExtractor",
+    "SelfAnchorCore",
+    "DriftEntry",
+    "DriftSnapshot",
+    "DriftPool",
+    "WanderingTopic",
+    "WanderingThoughtResult",
+    "AssociationPath",
+    "TopicSeed",
+    "SparkSource",
+    "ThoughtSpark",
     "UserModelerAgent",
     "MemoryResonatorAgent",
     "GoalSimulatorAgent",

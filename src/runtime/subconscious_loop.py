@@ -24,6 +24,7 @@ from cortex.subconscious import (
     ThoughtFragment,
     ThoughtObject,
     WorkerContext,
+    WanderingThoughtEngine,
 )
 from cortex.subconscious.worker_base import SubconsciousWorker
 from cortex.subconscious.thought_fragment import now_timestamp
@@ -38,6 +39,7 @@ class SubconsciousTickResult:
     thought_object: ThoughtObject | None
     surface_seed: dict[str, object] | None
     audit_report: dict[str, object] | None = None
+    wandering_result: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -46,6 +48,7 @@ class SubconsciousTickResult:
             "thought_object": self.thought_object.to_dict() if self.thought_object else None,
             "surface_seed": self.surface_seed,
             "audit_report": self.audit_report,
+            "wandering_result": self.wandering_result,
         }
 
 
@@ -64,16 +67,20 @@ class SubconsciousLoop:
         blackboard: SubconsciousBlackboard | None = None,
         synthesizer: ConsciousSynthesizer | None = None,
         workers: Iterable[SubconsciousWorker] = (),
+        wandering_engine: WanderingThoughtEngine | None = None,
     ) -> None:
         self.blackboard = blackboard or SubconsciousBlackboard()
         self.synthesizer = synthesizer or ConsciousSynthesizer()
         self.workers = tuple(workers or ())
+        self.wandering_engine = wandering_engine
+        self.last_wandering_result: dict[str, object] | None = None
         self.last_tick = SubconsciousTickResult(
             submitted_count=0,
             expired_ids=(),
             thought_object=None,
             surface_seed=None,
             audit_report=None,
+            wandering_result=None,
         )
         self.subconscious_report: SubconsciousReport = SubconsciousReport()
         self.subconscious_seed: dict[str, object] | None = None
@@ -102,6 +109,7 @@ class SubconsciousLoop:
         run_synthesis: bool = True,
         run_post_workers: bool = True,
         allow_surface_seed: bool = True,
+        run_wandering: bool = True,
     ) -> SubconsciousTickResult:
         """Chạy một lượt worker -> audit -> synthesizer -> post-worker -> audit."""
 
@@ -116,8 +124,27 @@ class SubconsciousLoop:
             now=current,
         )
         submitted = 0
+        wandering_payload: dict[str, object] | None = None
+        if run_wandering and self.wandering_engine is not None:
+            try:
+                wandering = self.wandering_engine.tick(
+                    frame=frame,
+                    snapshot=snapshot,
+                    memory_packet=memory_packet,
+                    internal_state=internal_state,
+                    blackboard=self.blackboard,
+                    now=current,
+                    allow_fragments=True,
+                )
+                wandering_payload = wandering.to_dict()
+                submitted += len(wandering.fragments)
+                self.last_wandering_result = wandering_payload
+            except Exception:
+                wandering_payload = {"error": "wandering_engine_failed"}
+                self.last_wandering_result = wandering_payload
+
         if run_pre_workers:
-            submitted = self._run_workers(
+            submitted += self._run_workers(
                 context,
                 after_synthesis=False,
                 worker_names=pre_worker_names,
@@ -200,6 +227,7 @@ class SubconsciousLoop:
             thought_object=thought_object,
             surface_seed=surface_seed,
             audit_report=self.audit_report,
+            wandering_result=wandering_payload,
         )
         return self.last_tick
 
@@ -332,6 +360,7 @@ class SubconsciousLoop:
                 f"subconscious_route={route}" if route else "",
                 f"subconscious_fragments={len(getattr(thought_object, 'fragments', ()) or ())}" if thought_object is not None else "",
                 f"lane3_inner_court={'ok' if bool((inner_court or {}).get('ok')) else 'fallback'}" if inner_court else "",
+                "wandering_thought" if self.last_wandering_result else "",
             ) if item
         )
         return SubconsciousReport(

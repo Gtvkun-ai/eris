@@ -560,9 +560,9 @@ class ThoughtObject:
             "pressure": round(float(self.pressure), 3),
             "momentum_score": round(float(self.momentum_score), 3),
             "novelty": round(float(self.novelty), 3),
-            "impulse_kind": "memory_resonance" if "memory" in self.tags else "inner_whim",
-            "root_source": "subconscious_synthesizer",
-            "action_opportunity": self.recommended_route,
+            "impulse_kind": self._surface_impulse_kind(),
+            "root_source": "wandering" if "wandering" in self.tags else "subconscious_synthesizer",
+            "action_opportunity": "wandering_surface_candidate" if "wandering" in self.tags and self.should_surface else self.recommended_route,
         }
 
     def to_surface_seed(self) -> dict[str, object]:
@@ -581,7 +581,21 @@ class ThoughtObject:
             "novelty": self.novelty,
             "evidence": list(self.evidence_ids),
             "recommended_route": self.recommended_route,
-            "impulse_kind": "memory_resonance" if "memory" in self.tags else "inner_whim",
-            "root_source": "subconscious_synthesizer",
+            "impulse_kind": self._surface_impulse_kind(),
+            "root_source": "wandering" if "wandering" in self.tags else "subconscious_synthesizer",
+            "action_opportunity": "wandering_surface_candidate" if "wandering" in self.tags and self.should_surface else self.recommended_route,
             "surface_allowed": self.should_surface,
         }
+
+    def _surface_impulse_kind(self) -> str:
+        """Tách source surface cho SurfaceArbiter.
+
+        Wandering thought có lane riêng để policy/debug không nhầm nó với status ping
+        hay thought_stream_surface cũ. Một cái tên khác, ít nhất đỡ tự bắn vào chân.
+        """
+
+        if "wandering" in self.tags:
+            return "wandering_surface_candidate"
+        if "memory" in self.tags:
+            return "memory_resonance"
+        return "inner_whim"
