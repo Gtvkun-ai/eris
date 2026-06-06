@@ -18,13 +18,19 @@ Giới hạn trung thực:
 
 # 0A. Git delta gần đây
 
-Khoảng thay đổi đã soi trực tiếp: từ `2026-06-04` đến `2026-06-06`, hiện kéo dài qua các commit `fdfe52c`, `c268eab`, `aa9af6f`, `04bd5f6`, `5f812fc`, `553985e`, `eff0420`, `e8d3511`, `104c45b`.
+Khoảng thay đổi đã soi trực tiếp hiện tại: từ `2026-06-04` đến `2026-06-06`, chuỗi commit cần coi là còn nóng giờ kéo từ `fdfe52c`, `c268eab`, `aa9af6f`, `04bd5f6`, `5f812fc`, `553985e`, `eff0420`, `e8d3511`, `104c45b` lên tiếp `9bbdcd2`, `637e7fc`.
 
 Trạng thái sync với remote lúc rà tài liệu:
 - `git fetch origin` chạy sạch.
-- `git rev-parse HEAD` = `git rev-parse origin/main` = `104c45bf3f924570ba72bef7a2d6ea6aa45f8687`.
-- `git status --short` đang sạch.
-- nghĩa là hiện **không có gì bị thiếu do chưa pull**; phần cần cập nhật là tài liệu source-map để bám đúng `HEAD` mới.
+- `git rev-parse HEAD` = `git rev-parse origin/main` = `637e7fcd1b875df054af8f02e558f007a0310b5f`.
+- `git rev-list --left-right --count HEAD...origin/main` trả `0  0`.
+- `git status --short` hiện không sạch vì có `M src/src.zip`.
+- nghĩa là hiện **không có commit nào bị thiếu do chưa pull**; cái thiếu là bản source-map này chưa bám hết các file đã đổi sau `104c45b`.
+
+Lịch sử `git pull` còn thấy trực tiếp trong reflog gần đây:
+- tổng cộng `6` entry có chữ `pull`.
+- mốc rõ nhất: `2026-06-04 21:24:32 +0700` (merge), `2026-05-30 19:33:35 +0700` (fast-forward), `2026-05-30 18:52:07 +0700` (merge), `2026-05-27 15:55:50 +0700` (merge), `2026-05-26 22:30:42 +0700` (merge).
+- còn một mốc `pull --rebase (start)` tại `2026-05-02 16:02:07 +0700`.
 
 Trục thay đổi chính theo git:
 - low-level surface path đã được khóa thành một trục rõ ràng `PresenceController -> SurfaceArbiter -> LowLevelSpeechPolicy -> LlmService.generate_micro_presence_line`, với thêm các nhánh guard mới cho `blind_frustration`, continuity tension, và thought-surface có anchor.
@@ -42,15 +48,30 @@ Trục thay đổi chính theo git:
 - `event_ledger.json` và `src/memory/event_ledger.py` được nâng tầm thành raw audit layer append-only rõ nghĩa hơn; đây không còn là file phụ mờ nhạt trong memory core.
 - test coverage mới bám theo các trục trên: `tests/test_surface_arbiter.py`, `tests/test_runtime_coordinator.py`, `tests/test_blind_frustration_surface.py`, cùng các test observer/scheduler/memory hiện phản ánh HEAD mới hơn snapshot cũ.
 
-Nhìn theo `git show --stat`, mấy cụm thay đổi đáng chú ý nhất trong chuỗi commit vừa rà là:
+Nhìn theo `git show --stat` và history từng file, mấy cụm thay đổi đáng chú ý nhất trong chuỗi vừa rà là:
 - `fdfe52c` -> `553985e`: dựng xương sống surface/wake/presence mới mà bản tài liệu cũ đã bám tương đối đúng.
 - `eff0420`: mở rộng mạnh `coordinator.py`, `presence_controller.py`, `surface_arbiter.py`; thêm coverage cho runtime coordinator và surface contract.
 - `e8d3511`: thêm `src/runtime/sensor_visibility.py`, `src/telemetry/content_metadata.py`, tăng `se.py`, `meaning.py`, `prompt_context_builder.py`, và test `blind_frustration`.
 - `104c45b`: thêm `src/cortex/continuity_threat.py`, sửa tiếp `agent_state_stack.py`, `impulse_arbitration.py`, `surface_arbiter.py`, `presence_controller.py`, `low_level_speech_policy.py`, đồng thời làm `event_ledger.json` phình mạnh hơn vì runtime state thật đã được ghi.
+- `9bbdcd2`: `surface_arbiter.py` có thêm khoảng `30` dòng để hiểu `subconscious_report` / `surface_seed` Phase 0 tốt hơn; tài liệu cũ chưa nhắc mốc này.
+- `637e7fc`: là đợt chạm file rất lớn sau snapshot cũ, đáng chú ý nhất là `coordinator.py` `+623` dòng, thêm mới `src/cortex/subconscious/model_synthesizer.py` `+412` dòng, cùng các thay đổi tiếp ở `process_manager.py` và `executor.py`.
 
 Tình trạng worktree lúc cập nhật tài liệu này:
-- repo hiện sạch và đang đúng `HEAD`.
+- repo đang đúng `HEAD` và sync với `origin/main`, nhưng worktree không sạch vì `src/src.zip` đang modified.
 - các file runtime data như `memory_core/active_state_snapshot.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl` vẫn là state sống; lần này chúng không còn là drift local mà là một phần snapshot hiện tại của workspace.
+
+---
+
+# 0C. Audit drift của chính `tongquat.md`
+
+Mục này chủ ý chỉ ra chỗ tài liệu đang sai, thiếu, hoặc lạc nhịp so với source thật:
+- `src/runtime/coordinator.py`: tài liệu cũ ghi khoảng `6,088` dòng; file hiện là khoảng `6,681` dòng. Quan trọng hơn, section này chưa ghi rõ mốc `637e7fc` là một lần phình lớn `+623` dòng.
+- `src/cortex/surface_arbiter.py`: tài liệu có bám `blind_frustration`, nhưng chưa ghi patch `9bbdcd2` cho đường `subconscious_report` / `surface_seed` Phase 0.
+- `src/llm/process_manager.py`: có section riêng nhưng thiếu lịch sử chạm file gần nhất và thiếu nhấn mạnh nhánh phát hiện `n_ctx` của server đang sống + best-effort kill đúng `llama-server` trên port local.
+- `src/cortex/subconscious/model_synthesizer.py`: đang mở trong IDE và vừa được thêm mới ở `637e7fc`, nhưng bản tài liệu cũ gần như chưa có mục riêng. Đây là thiếu thật chứ không phải thiếu chi tiết nhỏ.
+- `src/actions/executor.py`: section cũ quá ngắn, không phản ánh việc file đang gộp cả Win32 desktop actions lẫn Gemini-grounded `search_web` / `get_weather`.
+- `src/cortex/speech_core.py`: mô tả đúng hướng nhưng chưa gắn recent history; các mốc `04bd5f6` và `5f812fc` sửa trực tiếp ngưỡng/contract cho endogenous speech sau snapshot cũ.
+- `src/runtime/no_fallback_policy.py`: section không sai nhiều, nhưng đây là file mới tạo từ `e69eccd`; nếu debug path no-fallback mà không biết mốc file này, rất dễ tưởng runtime tự “câm” ngẫu nhiên.
 
 ---
 
@@ -75,10 +96,13 @@ Các cụm Python lớn nhất hiện tại:
 - `src/memory/`: `57` file, khoảng `13,541` dòng.
 
 Hot files đã soi trực tiếp trong workspace:
-- `src/runtime/coordinator.py`: khoảng `6,088` dòng, đúng nghĩa god object/orchestrator.
+- `src/runtime/coordinator.py`: khoảng `6,681` dòng, đúng nghĩa god object/orchestrator.
 - `src/runtime/presence_controller.py`: khoảng `2,432` dòng, hiện là trục low-level presence sống nhất.
-- `src/cortex/surface_arbiter.py`: khoảng `1,239` dòng, là router low-level surface trọng yếu.
+- `src/cortex/surface_arbiter.py`: khoảng `1,268` dòng, là router low-level surface trọng yếu.
 - `src/runtime/autonomous_wake_governor.py`: khoảng `234` dòng, nhỏ hơn nhiều nhưng là gate wake rất nhạy.
+- `src/llm/process_manager.py`: khoảng `459` dòng, là cổng chọn remote/local LLM path và quản lý vòng đời `llama-server`.
+- `src/cortex/subconscious/model_synthesizer.py`: khoảng `374` dòng, là Lane 3 private synthesis mới thêm ở `637e7fc`.
+- `src/actions/executor.py`: khoảng `607` dòng, không còn là action stub nhỏ mà là desktop/API executor thực thụ.
 
 ---
 
@@ -417,6 +441,14 @@ Current code specifics:
 - `_background_memory_digest_idle_probe()` chỉ cho semantic digest chạy khi không đang chat, không còn burst queue pending, và đã đủ yên theo `ERIS_MEMORY_DIGEST_CHAT_IDLE_SEC`.
 - coordinator còn giữ nhánh direct-action riêng: `_build_direct_action_decision()` route qua `action_router/action_executor`, còn `_execute_system_action()` hậu xử lý kết quả action vào `Decision` thay vì nhét hết vào LLM path.
 - `ni_meta_config.json` hiện được đọc qua `_load_ni_meta_mode_flags()` với default `(chat=True, autonomous=False)` khi file lỗi/mất; `_maybe_apply_ni_meta_critic()` chỉ là lớp làm mềm drift score/confidence, không phải thay luôn base Ni report.
+- history gần đây theo file:
+  `553985e` sửa lớn nhánh runtime state/cycle;
+  `eff0420` thêm mạnh wake/surface/runtime coverage;
+  `637e7fc` là một mốc phình lớn khác (`+623` dòng) và phải coi như revision mới, không còn là “cùng snapshot với 104c45b”.
+- `637e7fc` cũng là mốc coordinator import và dựng lane subconscious mới rõ ràng hơn: `ModelBackedConsciousSynthesizer`, `build_phase1234567_workers`, cùng các nhánh audit/subconscious report đi sâu hơn vào frame/runtime loop.
+- nhánh local hiện tại thêm `PrivateMindLoop`: coordinator giữ `private_mind_surface_queue`, `private_mind_speech_bias`, `private_mind_inquiry_plan`, `private_mind_active_state`, `private_mind_thought_pressure`, và `private_mind_digest`.
+- `_update_private_mind_state()` tick private mind theo user/channel/snapshot/wake/memory/ledger/agenda/thought_stream rồi cập nhật digest; `_drain_private_mind_surface_impulses()` cho presence controller hút surface impulse đã qua `SurfaceValve`.
+- UDP payload có thể mang `private_mind_digest` bản compact cho debug menu, còn `transport/udp.py` có guard để strip digest khi cần tránh payload quá lớn hoặc không nên gửi private debug ra body.
 Debug khi:
 - lỗi end-to-end không rõ owner.
 - autonomous gọi main model dù wake gate không cho.
@@ -425,6 +457,7 @@ Debug khi:
 - queue wrap không ăn khiến một đường model nặng chạy chui ngoài scheduler.
 - ni meta chat/autonomous bật sai mode làm drift score thay đổi khó hiểu.
 - action route trả text đúng mà trace/system_action bị mất hoặc bị double-execute.
+- private mind có tick nhưng không thấy bias/mutation/surface candidate đi vào downstream.
 Status: ACTIVE GOD OBJECT VERIFIED_IN_WORKSPACE, đã tách bớt bằng mixin nhưng vẫn là nơi hợp mạch.
 
 ## `src/runtime/chat_cycle.py`
@@ -507,11 +540,74 @@ Order:
 4. append repair memory request.
 5. build/dedupe StateCommitRequest.
 6. StateCommitter.commit(frame).
+Current code specifics:
+- `_feed_private_mind_outcome()` đẩy outcome/frame vừa finalize ngược vào `PrivateMindLoop` để nội tâm không chỉ đọc pre-action context mà còn học từ kết quả thật.
+- nếu digest chạy được, recorder cập nhật `private_mind_digest` và ghi debug note `private_mind_outcome_feedback=...` vào frame.
 Debug khi:
 - user correction không đi vào repair memory.
 - frame không ghi outcome.
 - memory_update debug sai.
+- private mind cứ lặp concern cũ vì không nhận outcome sau khi action/speech đã xảy ra.
 Status: ACTIVE.
+
+## `src/runtime/private_mind_loop.py`
+Role: runtime orchestrator cho private mind 5 phase.
+Pipeline:
+1. build `EvidenceDossier`.
+2. chạy 4 mini-evaluator.
+3. cập nhật `ConcernStore`.
+4. synthesize `InternalJudgment`.
+5. apply `StateMutationBus`.
+6. lọc `SurfaceCandidate` qua `SurfaceValve`.
+7. enqueue `SurfaceImpulse` public-safe nếu được phép.
+Env knobs:
+- `ERIS_PRIVATE_MIND_ENABLED`.
+- `ERIS_PRIVATE_MIND_MIN_INTERVAL_SEC`.
+- `ERIS_PRIVATE_MIND_CONCERNS_PATH`.
+- `ERIS_PRIVATE_MIND_LOG_TICKS`.
+Debug khi:
+- private mind không tick, kiểm tra enabled + min interval trước.
+- tick có judgment nhưng `applied_mutations` rỗng, kiểm tra confidence/target của mutation.
+- surface candidate có trong judgment nhưng không vào `private_mind_surface_queue`, kiểm tra `SurfaceValve` và dedupe key.
+Status: ACTIVE NEW PRIVATE COGNITION LOOP.
+
+## `src/runtime/private_mind_model_adapter.py`
+Role: optional API adapter cho private mind evaluator/synthesizer.
+Providers:
+- injected `llm_service` nếu có method JSON phù hợp.
+- `llama_server`.
+- `gemini`.
+- `openai` / `openai_compatible` / `remote`.
+Env knobs:
+- `ERIS_PRIVATE_MIND_API_ENABLED`.
+- `ERIS_PRIVATE_MIND_PROVIDER`.
+- `ERIS_PRIVATE_MIND_MODEL`.
+- `ERIS_PRIVATE_MIND_BASE_URL`.
+- `ERIS_PRIVATE_MIND_API_KEY`.
+- `ERIS_PRIVATE_MIND_LLAMA_SERVER_URL`.
+- `ERIS_PRIVATE_MIND_TIMEOUT`.
+- `ERIS_PRIVATE_MIND_TEMPERATURE`.
+- `ERIS_PRIVATE_MIND_FRAGMENT_TOKENS`.
+- `ERIS_PRIVATE_MIND_JUDGMENT_TOKENS`.
+Contract:
+- adapter chỉ trả JSON private cho evaluator/judgment.
+- khi API fail hoặc JSON invalid, trả `None` để rule fallback chạy tiếp.
+- `debug_status()` gom calls/latency/token usage best-effort, chưa tính cost thật.
+Debug khi:
+- muốn biết API có thật sự được gọi không: đọc `debug_api` trong `private_mind_digest`.
+- provider có key nhưng vẫn fail: kiểm tra secret loader/env/base URL/model.
+Status: ACTIVE OPTIONAL API ADAPTER.
+
+## `src/runtime/thought_model_adapter.py`
+Role: compatibility adapter cho `ThoughtStream` model reviewer.
+Purpose:
+- giữ import `RuntimeThoughtModelAdapter` không làm runtime chết.
+- nếu `ERIS_THOUGHT_EVALUATOR_API_ENABLED` bật và private adapter build được, trả một review minimal an toàn.
+- đường chính vẫn là `PrivateMindLoop`, không phải adapter này.
+Debug khi:
+- coordinator import fail ở `runtime.thought_model_adapter`.
+- thought stream reviewer bật nhưng không thấy model call riêng; đây là behavior hiện tại, không phải bug nếu PrivateMindLoop đang đảm nhiệm private review.
+Status: ACTIVE COMPATIBILITY SHIM.
 
 ## `src/runtime/state_commit_service.py`
 Role: adapter commit/recall/body bias/public ledger.
@@ -538,9 +634,14 @@ Includes:
 - Ti context.
 - speech evidence/current focus.
 - session ritual fallback.
+- PrivateMind speech bias context.
+Current code specifics:
+- `_render_private_mind_speech_bias_context()` đưa `private_mind_speech_bias` vào prompt như soft internal pressure, không phải lệnh public speech tuyệt đối.
+- context này phải giúp wording/style tương lai đổi nhẹ; nếu nó biến thành confession về private chain thì guard/prompt contract đang thủng.
 Debug khi:
 - prompt bị nhét quá nhiều context.
 - LLM thấy memory không nên thấy.
+- PrivateMind đã apply `speech_bias` nhưng câu trả lời không đổi hoặc đổi quá lộ.
 Status: ACTIVE.
 
 ## `src/runtime/speech_pipeline.py`
@@ -562,6 +663,8 @@ Current code specifics:
 - `_derive_micro_presence_cue()` kết hợp `idle_seconds`, `recent_events`, `vision_facts`, `social_presence_event`, curiosity, và ego gate; idle một mình chưa đủ để nói.
 - cue có thể chọn `ObserveCode`, `tilt_head`, hoặc `idle_shift`; `missing_evidence_ids` được set khi không có concrete screen evidence.
 - `_build_endogenous_surface_impulses()` hiện có thể nâng `active_memory_resonance` public-safe thành impulse `memory_resonance`; residue private hoặc activation `may_surface=false` phải bị giữ lại.
+- `_build_surface_arbiter_result()` hút thêm private mind surface impulses qua `_drain_private_mind_surface_impulses(limit=4)` rồi trộn vào `extra_impulses`; đây là cổng duy nhất để private mind nói gián tiếp.
+- `_derive_micro_presence_cue()`/surface context có thể thấy `private_mind_thought_pressure` và `thought_stream.private_mind_pressure_bias` như áp lực mềm, không phải bằng chứng màn hình.
 - `_build_surface_arbiter_result()` là helper mới trả cả `Decision | None` lẫn `SurfaceDecision | None`; wake-gated route dùng nó để giữ reject/body-only/speak status của chính lượt arbitrate hiện tại, thay vì đọc lại `arbiter.last_decision`.
 - `_build_surface_arbiter_decision()` giờ chỉ còn là wrapper tương thích ngược trên `_build_surface_arbiter_result()`.
 - `_build_surface_arbiter_decision()` chỉ tự chặn bằng `autonomous_presence_blocked_until`; cooldown/spoken-floor/presence gating vẫn nằm ở `_should_allow_presence_maintenance()` và `_should_allow_reengagement()` trước khi vào arbiter.
@@ -625,6 +728,7 @@ Provides:
 Current code specifics:
 - chat path có thể trả text giải thích ngắn khi bị block, nhưng `session_ritual`, `directive`, `autonomous`, `force_speak`, `presence` mặc định ưu tiên im hơn là nói bừa.
 - payload có `intent=no_fallback_block`, `parse_mode=no_fallback_block`, `debug_trace=no_fallback_mode:<channel>:<reason>`.
+- history gần đây: file này xuất hiện ở `e69eccd` với khoảng `56` dòng đầu tiên; từ đó tới snapshot hiện tại chưa có thêm đợt rewrite lớn, nên nếu behavior lạ thì nên soi caller nhiều hơn bản thân policy file.
 Debug khi:
 - runtime tưởng “bị câm” nhưng thật ra đang ở no-fallback mode.
 - một path lẽ ra phải im lại còn nhả câu fallback kỹ thuật ra public.
@@ -755,6 +859,7 @@ Current code specifics:
 - `should_run_daydream` hiện bật khi `consolidation_pressure >= 0.65` hoặc `insight_pressure >= 0.70`.
 - nếu main wake đáng ra được gọi nhưng interrupt cost cao, governor có thể degrade xuống `micro_presence` hoặc thậm chí `think_only/observe_only` thay vì đánh thức main.
 - debug payload giữ cả budget decision của `4b`, `main`, `vision`, cùng `silence_debt_micro_ready`.
+- history gần đây theo file: `aa9af6f` và `eff0420` đều còn chạm trực tiếp governor; đừng debug wake chỉ bằng doc cũ trước `2026-06-05`.
 Debug khi:
 - main cognition chạy sai lúc hoặc im sai lúc.
 - wake level bị degrade thành `micro_presence`/`think_only` dù external pressure nhìn có vẻ cao.
@@ -870,6 +975,10 @@ Current code specifics:
 - nếu host local đang bị một `llama-server` cũ giữ port, code có best-effort kill theo port nhưng chỉ kill process có tên giống `llama-server`.
 - `_resolve_mmproj_path()` cho phép text-only mode khi không tìm thấy mmproj; `build_vision_client()` chỉ bật khi có cả model và mmproj.
 - `build_style_client()` và `build_vision_client()` cưỡng bức local mode tạm thời bằng cách hạ `ERIS_REMOTE_API_ENABLED=0` quanh lúc build client.
+- history gần đây theo file:
+  `6658301` là một đợt chỉnh nhỏ hơn cho path manager;
+  `5f812fc` sửa tiếp nhẹ;
+  `637e7fc` thêm khoảng `25` dòng hữu ích và là mốc nên xem đầu tiên khi local server reuse / context-size behavior có gì lạ.
 Debug khi: remote/local path sai, llama-server port conflict, context size error.
 Risk: hardcoded default key cần dọn.
 Status: ACTIVE.
@@ -920,6 +1029,10 @@ Notes:
 - `debug_trace` phải ngắn: 3-8 words hoặc một marker ngắn. Nếu để model viết trace dài, JSON rất dễ bị cụt.
 - Plain prose ngoài JSON vẫn phải bị chặn; chỉ salvage JSON cụt có field `"text"` sạch.
 - `generate_micro_presence_line()` và `generate_screen_facts()` cũng ép trả về JSON object riêng, không nhận prose tự do.
+- history gần đây theo file:
+  `eff0420` chạm tiếp contract/service,
+  `e8d3511` thêm logic mới liên quan wording/path surface,
+  `104c45b` còn là một đợt cắt bớt khá mạnh (`25` insert / `96` delete), nên doc nào vẫn nói service ôm nhiều fallback cứng hơn hiện tại là đã cũ.
 Status: ACTIVE CRITICAL VERIFIED_IN_WORKSPACE.
 
 ---
@@ -1385,6 +1498,9 @@ Current code specifics:
 - `thought_stream_surface` giờ phải có payload nội sinh thật (`topic_seed` hoặc `residue_reason`) và ít nhất một anchor nội sinh public-safe như `recent_silence`, `debug_continuity`, `session_ritual_afterglow`, `memory_resonance`, hoặc `unresolved_loop`; thiếu anchor thì bị ép về `forced_body_only:thought_surface_missing_anchor`.
 - thought-stream winner hiện vẫn giữ `kind="thought_stream_surface"` cho trace/policy, dù wording contract có thể dùng `speech_act="inner_whim"`; mục tiêu là không làm mù `surface_override` và regression suite.
 - `blind_frustration` là kind sensor-like mới: không bị coi là hollow endogenous, có base priority riêng cao hơn micro-presence thường, và thường đi vào `always_llm_kinds` để nếu đã được phép public grumble thì không bị chết vì route body-only mơ hồ.
+- `9bbdcd2` thêm lớp hiểu `subconscious_report` / `subconscious_seed` kiểu Phase 0 rõ hơn: arbiter có thể đọc `frame.subconscious_seed = ThoughtObject.to_surface_seed()` hoặc `frame.subconscious_report = {"object": ..., ...}` mà không phải đoán mù nguồn surface.
+- private mind surface đi vào arbiter dưới dạng `SurfaceImpulse(source="private_mind", family="private_mind")`, sau khi đã qua `SurfaceValve`; raw `InternalJudgment` không được nhảy thẳng thành public text.
+- `_private_mind_pressure_bias()` đọc pressure từ `thought_stream.private_mind_pressure_bias` và runtime state để cộng nhẹ cho impulse nội sinh phù hợp; chỉ áp dụng cho nguồn private/thought/endogenous, không nâng bừa presence/sensor cue.
 - nếu `silent_cycles` vượt `force_llm_after_silent`, arbiter có thể override `reject` thành `force_llm`.
 - `always_llm_kinds` cũng có thể đẩy một kind đủ confidence sang `force_llm` dù policy ban đầu reject.
 - `vital_pressure_force_llm_threshold` cũng là đường nâng từ reject lên `force_llm` cho impulse có áp lực nội sinh đủ lớn và vẫn public-safe.
@@ -1398,6 +1514,7 @@ Debug khi:
 - rate-limit/family cooldown chặn câu tưởng như nên nói.
 - LLM trả rỗng rồi body-only streak tăng mãi.
 - presence cue đúng score nhưng bị `ego_gate:*` chặn vì mood/distance chứ không phải vì policy threshold.
+- private mind có surface candidate nhưng bị rate-limit/body-only; soi `source=private_mind`, `family=private_mind`, `private_mind_pressure_bias`, và `suppressed`.
 Important traces:
 - `surface_arbiter; kind=...; source=...; mode=...`
 - `surface_interval_cooldown`
@@ -1407,6 +1524,7 @@ Important traces:
 - `ego_gate:dignity_distance`
 - `ego_gate:ambient_copresence_no_anchor`
 - `suppressed=thought_stream_surface:...`
+- `anchor=subconscious_synthesizer`
 Status: ACTIVE CRITICAL SURFACE ROUTER VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/goal_persistence.py`
@@ -1520,6 +1638,148 @@ Feeds:
 Debug khi: autonomous im dù có nội sinh, hoặc chen vào lúc user focus code.
 Status: ACTIVE.
 
+## `src/cortex/subconscious/model_synthesizer.py`
+Role: Lane 3 private synthesizer có model-backed refinement cho subconscious blackboard.
+Purpose:
+- lấy `ThoughtFragment` từ blackboard/snapshot rồi nén thành `ThoughtObject` có evidence gate chặt hơn.
+- thêm lớp “inner court” private: prosecutor / defense / judge chỉ dùng cho audit nội bộ, không phải public text.
+- nếu model fail hoặc bịa evidence, fallback về `ConsciousSynthesizer` deterministic.
+Core contracts:
+- `ModelSynthesisPolicy`: knobs env cho Lane 3 như `ERIS_LANE3_MODEL_SYNTHESIS`, `ERIS_LANE3_MIN_FRAGMENTS`, `ERIS_LANE3_MIN_PRESSURE`, `ERIS_LANE3_PROMPT_FRAGMENTS`.
+- `InnerCourtReport`: report debug có `verdict`, `route`, `confidence`, `evidence_ids`, `fallback_used`.
+- `ModelBackedConsciousSynthesizer`: lớp chính giữ `last_inner_court_report`.
+Current code specifics:
+- file này là hàng mới ở `637e7fc`; trước snapshot đó bản source-map gần như chưa có gì để bám.
+- `synthesize()` luôn chạy deterministic trước; chỉ gọi model khi đủ số fragment sống và board pressure vượt ngưỡng.
+- prompt contract ép JSON private-only, cấm sinh public dialogue, cấm bịa screen facts/memory/user intent.
+- `_object_from_model_payload()` chỉ merge evidence/route/privacy trong giới hạn cho phép; evidence id lạ phải bị loại.
+- `runtime/subconscious_loop.py` sẽ hút `last_inner_court_report` vào `audit_report["lane3_inner_court"]`, còn public surface vẫn phải đi qua `SurfaceArbiter`/permission downstream.
+Debug khi:
+- Lane 3 API gọi rồi nhưng subconscious report luôn fallback deterministic.
+- model synthesis trả route quá tự tin hoặc evidence ids không tồn tại.
+- audit có `lane3_inner_court` nhưng không thấy `surface_seed`/`latest_seed` đi tiếp sang runtime.
+Status: ACTIVE NEW HOT FILE VERIFIED_IN_WORKSPACE.
+
+## `src/cortex/private_mind/__init__.py`
+Role: public API nhỏ cho private mind package.
+Exports:
+- `EvidenceDossier`, `ThoughtFragment`, `PrivateConcern`, `InternalJudgment`, `StateMutation`, `SurfaceCandidate`, `PrivateMindTickResult`.
+- `ConcernStore`, `EvidenceDossierBuilder`, 4 mini-evaluator, `GemmaInnerSynthesizer`, `StateMutationBus`, `SurfaceValve`.
+Debug khi:
+- import vòng giữa coordinator/runtime và cortex private mind.
+- file nào đó import sâu quá nhiều class private thay vì qua package API.
+Status: ACTIVE PACKAGE FACADE.
+
+## `src/cortex/private_mind/contracts.py`
+Role: data contracts cho private cognition.
+Objects:
+- `EvidenceDossier`: evidence bundle cho evaluator/synthesizer.
+- `ThoughtFragment`: claim riêng có confidence/pressure/evidence.
+- `PrivateConcern`: mối bận tâm còn mở trong concern store.
+- `InternalJudgment`: phán quyết tổng hợp private.
+- `StateMutation`: yêu cầu đổi bias/state tương lai.
+- `SurfaceCandidate`: topic seed rất nhỏ có thể đi tới surface valve.
+- `PrivateMindTickResult`: output tick runtime.
+Rules:
+- không object nào là public speech.
+- evidence ids phải được giữ/cắt gọn; model payload không được tự bịa evidence lạ.
+- `SurfaceChannel` tách `none`, `surface_arbiter`, `memory_update_only`, `body_only`.
+Debug khi:
+- JSON/debug digest có object sống hoặc repr lạ.
+- surface candidate bị hiểu nhầm thành câu trả lời public.
+Status: ACTIVE CONTRACT.
+
+## `src/cortex/private_mind/evidence_dossier.py`
+Role: gom evidence runtime thành dossier cho private mind.
+Inputs:
+- user text/channel.
+- telemetry/snapshot/observer frame/wake decision.
+- memory hits/session ledger/internal agenda.
+- concern store và surface outcome gần nhất.
+Debug khi:
+- evaluator nói có bằng chứng nhưng evidence id không tồn tại trong dossier.
+- private mind không thấy user turn hoặc wake/surface outcome mới.
+Status: ACTIVE EVIDENCE BUILDER.
+
+## `src/cortex/private_mind/mini_evaluators.py`
+Role: bốn evaluator nhỏ trước synthesis.
+Evaluators:
+- `IntentEvaluator`.
+- `MemoryResonanceEvaluator`.
+- `RiskAndPermissionEvaluator`.
+- `FutureBiasEvaluator`.
+Contract:
+- mỗi evaluator nhận cùng `EvidenceDossier` và trả `ThoughtFragment`.
+- ưu tiên model fragment nếu adapter trả đủ confidence; nếu không fallback rule deterministic.
+- không evaluator nào được commit memory hoặc nói trực tiếp với user.
+Debug khi:
+- private mind quá câm: kiểm tra rule fallback có tạo fragment đủ confidence không.
+- API trả fragment nhưng bị bỏ: kiểm tra `min_model_confidence`, claim rỗng, evidence ids.
+Status: ACTIVE PRIVATE EVALUATOR PIPELINE.
+
+## `src/cortex/private_mind/inner_synthesizer.py`
+Role: tổng hợp fragments thành `InternalJudgment`.
+Purpose:
+- rank/reject hypotheses.
+- tạo `private_concern_update`.
+- đề xuất `state_mutations`.
+- tạo `surface_candidate` chỉ khi public-safe.
+Contract:
+- model path là optional; deterministic synthesis vẫn phải chạy được.
+- output là private verdict + future bias, không phải dialogue.
+Debug khi:
+- fragments có pressure nhưng không có mutation/surface candidate.
+- model synthesis quá tự tin hoặc quên rejected hypotheses/open questions.
+Status: ACTIVE PRIVATE SYNTHESIZER.
+
+## `src/cortex/private_mind/concern_store.py`
+Role: persist/open private concerns.
+Storage:
+- default path qua runtime: `memory_core/private_concerns.json`.
+Behavior:
+- update từ fragments và judgment concern update.
+- giữ status open/watching/blocked/resolved/rejected/stale.
+- snapshots được đưa vào digest để debug.
+Debug khi:
+- concern cũ không decay/stale.
+- private mind lặp lại cùng mối bận tâm dù outcome đã xử lý.
+Status: ACTIVE PRIVATE STATE STORE.
+
+## `src/cortex/private_mind/state_mutation_bus.py`
+Role: biến `StateMutation` thành ảnh hưởng thật lên runtime.
+Targets:
+- `agenda_stack`.
+- `repair_memory`.
+- `belief_core`.
+- `speech_bias`.
+- `inquiry_plan`.
+- `thought_stream_pressure`.
+- `surface_candidate_queue`.
+- `active_state`.
+- `private_concern`.
+Current code specifics:
+- ghi bias vào owner fields như `private_mind_speech_bias`, `private_mind_inquiry_plan`, `private_mind_active_state`, `private_mind_thought_pressure`.
+- có thể tăng `thought_stream.private_mind_pressure_bias` để downstream surface arbitration cảm được áp lực nội sinh.
+- repair/belief commit đi qua memory/state committer best-effort, không crash runtime nếu fail.
+Debug khi:
+- `state_mutations.requested` có dữ liệu nhưng `applied` báo `confidence_below_threshold`.
+- speech bias không vào prompt hoặc thought pressure không vào surface arbiter.
+Status: ACTIVE MUTATION BUS.
+
+## `src/cortex/private_mind/surface_valve.py`
+Role: chốt lọc public-safe trước khi private mind được surface.
+Purpose:
+- nhận `InternalJudgment.surface_candidate`.
+- loại candidate thiếu an toàn/thiếu evidence/không đủ pressure.
+- convert candidate đạt chuẩn thành `SurfaceImpulse`.
+Contract:
+- chỉ seed/topic nhỏ đi ra; không raw judgment, không chain riêng, không claim màn hình nếu không có evidence.
+- output dùng source/family `private_mind` để `SurfaceArbiter` còn debug được.
+Debug khi:
+- inner judgment có candidate nhưng queue rỗng.
+- private mind surface nghe như confession/debug dump.
+Status: ACTIVE SURFACE SAFETY VALVE.
+
 ## `src/cortex/speech_core.py`
 Role: chuyển pressure thành quyền public speech.
 Inputs:
@@ -1537,6 +1797,10 @@ Current code specifics:
 - `spontaneous_ready` hiện check cả `needs_external_evidence`, `suggested_speech_act`, `surface_pressure`, và `vital_pressure`; force-speak có ngưỡng thấp hơn autonomous.
 - `_threshold_for_channel()` không cố định: autonomous threshold tăng theo overload và giảm theo engagement; force_speak gần như mở cổng hoàn toàn.
 - `SpeechImpulse` dựng từ `MeaningLayer` vẫn là residue/reactive contract, không phải giấy phép để surface nguyên label nội bộ.
+- `private_mind_speech_bias` được nhận như soft wording/style pressure; nó thêm safety flag/context, không được bypass meaning/quiet/source guards.
+- history gần đây theo file:
+  `fd7b903`, `04bd5f6`, `5f812fc` đều còn chạm trực tiếp;
+  tức là doc snapshot nào chỉ bám trước `2026-06-04` sẽ bỏ lỡ một loạt tune mới cho endogenous leakage / fallback contract.
 Debug khi: có tension nhưng im, hoặc nói dù không có shift.
 - fallback guard vẫn muốn “chữa cháy” bằng câu mẫu cứng dù code hiện tại đã đẩy wording ra downstream layer.
 - autonomous bị `meaning_shift_gate` giữ im dù `vital_pressure` hoặc `silence_pressure` nhìn có vẻ đã đủ để cho endogenous leakage.
@@ -1603,9 +1867,27 @@ Debug khi: lệnh rõ vẫn gọi LLM thay vì action.
 Status: ACTIVE.
 
 ## `src/actions/executor.py`
-Role: thực thi action desktop/API.
-Debug khi: action nói thành công nhưng OS không làm.
-Status: ACTIVE, VERIFY SECURITY.
+Role: thực thi action desktop/API đã được router hoặc LLM chọn.
+Handles:
+- Win32 / desktop control: `focus_window`, `set_volume`, `play_pause_media`, `copy_text`, `launch_app`.
+- browser / shell-ish helpers: `open_url`.
+- grounded remote info actions: `search_web`, `get_weather`.
+- media session read: `get_now_playing`.
+Current code specifics:
+- `execute()` validate action qua `VALID_SYSTEM_ACTIONS`, rồi dispatch động sang handler `_action_name`.
+- `search_web` và `get_weather` dùng Gemini grounding API riêng, tự lấy profile/key qua `get_agent_profile(...)` + `get_secret(...)`, và có thể trả kèm citation URLs trong `data`.
+- desktop path vẫn rất Windows-specific: Win32 `SetForegroundWindow`, `keybd_event`, clipboard API, `subprocess.Popen`.
+- `launch_app` có alias map đơn giản cho `notepad`, `calc`, `Code.exe`, `Spotify.exe`, `chrome`, `msedge`.
+- file này không còn là action stub mỏng; nó đang mang cả nhánh OS control lẫn nhánh remote grounded lookup.
+- history gần đây theo file:
+  `27d4d09` là đợt bổ sung đáng kể,
+  `6658301` chỉnh nhẹ,
+  `637e7fc` thêm tiếp khoảng `34` dòng và là mốc gần nhất cần soi nếu `search_web/get_weather` vừa bắt đầu khác hành vi cũ.
+Debug khi:
+- action trả `success=True` nhưng hiệu ứng OS không xảy ra.
+- Gemini grounding có key nhưng `search_web` / `get_weather` vẫn fail.
+- `launch_app` hoặc `focus_window` chạy sai vì alias/title match quá thô.
+Status: ACTIVE VERIFIED_IN_WORKSPACE, VERIFY SECURITY.
 
 ---
 
@@ -1908,6 +2190,13 @@ Status: ACTIVE.
 Role: speech/internal/micro/substrate regression.
 Status: CRITICAL for “có hồn nhưng không spam”.
 
+## `tests/test_subconscious_phase0.py`, `tests/test_subconscious_phase34.py`
+Role: regression cho pipeline subconscious worker + synthesize + seed/audit contract.
+Debug khi:
+- `subconscious_loop` có chạy nhưng không nhả `latest_seed` / `surface_seed`.
+- Lane Phase 0 / Phase 3-4 tạo thought object sai route hoặc leak sang public path quá sớm.
+Status: ACTIVE TARGETED SUBCONSCIOUS TEST.
+
 ## `tests/test_model_budget_policy_queue.py`
 Role: queue/lease regression cho heavy-model scheduler.
 Covers:
@@ -2065,11 +2354,35 @@ Check:
 13. Nếu planner/action vẫn ghi `presence_maintenance` nhưng winner thật là route khác, kiểm tra `surface_override` trong `action_plan.notes` hoặc `final_decision` để biết có mismatch route hay không.
 14. Nếu route đang than kiểu “mù màn hình”, kiểm tra `sensor_visibility.py` xem đó là plain missing evidence, permission blocked, timeout, budget block, hay `context_shift_without_refresh`; chỉ ba case sau mới nên mở cửa cho `blind_frustration`.
 15. Nếu `blind_frustration` có text nhưng nghe như trách user, kiểm tra evidence có `recent_context_shift=true` không; nếu không có mà text vẫn qua được, thì blame-block contract đang thủng.
-16. Nếu cần biết thay đổi vừa rồi có “sống hơn” mà vẫn đúng luật không, chạy cụm behavior regression trong `tests/test_runtime_coordinator.py` thay vì đoán bằng log mắt thường.
+16. Nếu winner/source là `private_mind`, kiểm tra `private_mind_digest.menu.inner_judgment`, `surface_queue`, `state_mutations.applied`, rồi mới soi arbiter; private mind không được surface nếu chưa qua `SurfaceValve`.
+17. Nếu cần biết thay đổi vừa rồi có “sống hơn” mà vẫn đúng luật không, chạy cụm behavior regression trong `tests/test_runtime_coordinator.py` thay vì đoán bằng log mắt thường.
 Fix direction:
 - Tune `config/low_level_speech_policy.yaml` trước, đừng rải thêm câu mẫu trong từng module.
 - Nếu cue thiếu evidence, sửa source cue; nếu policy reject đúng thì không ép LLM.
 - Nếu body-only streak kẹt, kiểm tra `body_only_after_llm_decline` và `max_body_only_streak`; code hiện tại sẽ cố đẩy sang force-LLM chứ không muốn kẹt body-only vô hạn.
+
+## Case: PrivateMind tick nhưng không đổi hành vi / không surface
+Symptom:
+- `private_mind_digest` có fragments/judgment nhưng câu trả lời không đổi.
+- `surface_candidate` có trong digest nhưng `SurfaceArbiter` không thấy winner/source `private_mind`.
+- `debug_api.calls` tăng nhưng `state_mutations.applied` rỗng hoặc toàn fail.
+Check:
+1. `ERIS_PRIVATE_MIND_ENABLED` và `ERIS_PRIVATE_MIND_MIN_INTERVAL_SEC` có làm tick bị skip không.
+2. `ERIS_PRIVATE_MIND_API_ENABLED` chỉ bật API path; nếu tắt thì rule fallback vẫn phải tạo fragment, không phải disable cả loop.
+3. `EvidenceDossier` có recent user turns, wake/surface outcome, memory hits và concern snapshots không.
+4. `MiniEvaluatorPipeline` có ít nhất vài fragment confidence đủ dùng không; model fragment dưới threshold sẽ bị thay bằng rule.
+5. `GemmaInnerSynthesizer` có tạo `state_mutations`/`surface_candidate` hay chỉ tạo private verdict.
+6. `StateMutationBus` báo target nào fail: `speech_bias`, `thought_stream_pressure`, `surface_candidate_queue`, `belief_core`, hay `repair_memory`.
+7. `SurfaceValve` có drop candidate vì thiếu public safety/evidence/pressure không.
+8. `private_mind_surface_queue` có item nhưng bị `_drain_private_mind_surface_impulses()` hút quá sớm hoặc dedupe mất không.
+9. `PresenceController` có truyền private impulses vào `SurfaceArbiter` qua `extra_impulses` không.
+10. `SurfaceArbiter` có rate-limit/family cooldown/body-only policy chặn `source=private_mind` không.
+11. `prompt_context_builder.py` có render `private_mind_speech_bias` vào prompt không; nếu bias vào prompt rồi mà wording không đổi, soi LLM contract/post filters.
+12. `transport/udp.py` có strip `private_mind_digest` ở payload body không; strip digest không có nghĩa loop không chạy.
+Fix direction:
+- Đừng cho raw `InternalJudgment` thành public text; nếu muốn nói, sửa `SurfaceValve`/`SurfaceImpulse`/arbiter path.
+- Nếu muốn private mind ảnh hưởng lâu dài, ưu tiên mutation target `speech_bias`, `thought_stream_pressure`, `belief_core`, hoặc `repair_memory` thay vì chỉ surface một câu.
+- Nếu API fail, sửa provider/env ở `private_mind_model_adapter.py`; runtime vẫn nên sống bằng deterministic fallback.
 
 ## Case: low-level speech policy config không ăn
 Check:

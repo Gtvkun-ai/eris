@@ -59,7 +59,8 @@ class AttentionOverseer:
             n_gpu_layers=n_gpu_layers,
         )
         if style_client is not None:
-            self.logger.info("Local GGUF style rewrite đã sẵn sàng.")
+            provider_label = getattr(style_client, "base_url", "") or style_client.__class__.__name__
+            self.logger.info("Speech/style client đã sẵn sàng: %s", provider_label)
         vision_client = self.process_manager.build_vision_client(
             model_path=model_path,
             n_ctx=min(n_ctx, 4096),

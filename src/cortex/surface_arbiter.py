@@ -160,6 +160,7 @@ class SurfaceArbiter:
         "inner_whim",
         "random_chatter",
         "thought_stream_surface",
+        "private_mind_surface",
         "idle_curiosity_inner",
         "curious_question",
         "memory_resonance",
@@ -1101,11 +1102,14 @@ class SurfaceArbiter:
                 return "forced_body_only:thought_surface_missing_payload"
             if not any(str(item or "").startswith("anchor=") for item in tuple(impulse.evidence or ())):
                 return "forced_body_only:thought_surface_missing_anchor"
+        if kind == "private_mind_surface" and not self._private_mind_has_public_anchor(impulse):
+            return "private_mind_missing_public_anchor"
         return ""
 
     def _effective_score(self, impulse: SurfaceImpulse) -> float:
         base = self._clamp_score(getattr(impulse, "score", 0.0))
         vital = _clamp01(getattr(impulse, "vital_pressure", 0.0))
+        private_pressure = self._private_mind_pressure_bias()
         effective = base
 
         if self._endogenous_no_anchor_like(impulse):
@@ -1120,6 +1124,9 @@ class SurfaceArbiter:
                 # Nội sinh được thiếu screen anchor, miễn là không claim screen.
                 effective += 0.04
 
+        if private_pressure > 0.0 and self._private_mind_pressure_applies(impulse):
+            effective += min(0.18, private_pressure * 0.22)
+
         if self._presence_like(impulse) and impulse.missing_evidence_ids and not self._has_concrete_evidence_anchor(impulse):
             # Không giết presence; chỉ hạ nó khỏi cuộc tranh lời nói.
             # Nếu không có candidate nào khác, nó vẫn có thể trả body-only.
@@ -1127,8 +1134,55 @@ class SurfaceArbiter:
 
         if str(getattr(impulse, "kind", "") or "") == "thought_stream_surface" and impulse.missing_evidence_ids and vital < 0.20:
             effective = min(effective, 0.68)
+        if str(getattr(impulse, "kind", "") or "") == "private_mind_surface" and not self._private_mind_has_public_anchor(impulse):
+            effective = min(effective, 0.18)
 
         return self._clamp_score(effective)
+
+    def _private_mind_has_public_anchor(self, impulse: SurfaceImpulse) -> bool:
+        raw = getattr(impulse, "raw", None)
+        metadata: Mapping[str, Any] = {}
+        if isinstance(raw, Mapping):
+            maybe_metadata = raw.get("metadata")
+            if isinstance(maybe_metadata, Mapping):
+                metadata = maybe_metadata
+        if bool(metadata.get("has_public_anchor")):
+            return True
+        try:
+            if int(metadata.get("public_anchor_count", 0) or 0) > 0:
+                return True
+        except Exception:
+            pass
+        haystack = " ".join(str(item or "") for item in tuple(getattr(impulse, "evidence", ()) or ())).lower()
+        markers = (
+            "dossier.user.",
+            "user_chat",
+            "vision_fact",
+            "screen_fact",
+            "scene_evidence",
+            "ev.active_window",
+            "ev.active_app",
+            "runtime_event",
+        )
+        return any(marker in haystack for marker in markers)
+
+    def _private_mind_pressure_bias(self) -> float:
+        candidates: list[Any] = []
+        if self.thought_stream is not None:
+            candidates.append(getattr(self.thought_stream, "private_mind_pressure_bias", 0.0))
+            state = getattr(self.thought_stream, "state", None)
+            if state is not None:
+                candidates.append(getattr(state, "private_mind_pressure_bias", 0.0))
+        return max((_clamp01(item) for item in candidates), default=0.0)
+
+    def _private_mind_pressure_applies(self, impulse: SurfaceImpulse) -> bool:
+        kind = str(getattr(impulse, "kind", "") or getattr(impulse, "speech_act", "") or "")
+        source = str(getattr(impulse, "source", "") or getattr(impulse, "root_source", "") or "")
+        if source in {"private_mind", "thought_stream", "endogenous_drive", "spontaneous_life", "inner_thought"}:
+            return True
+        if kind in {"thought_stream_surface", "inner_whim", "curious_question", "memory_resonance", "technical_help"}:
+            return True
+        return self._endogenous_no_anchor_like(impulse) and bool(self._has_public_internal_anchor(impulse))
 
     @staticmethod
     def _clamp_score(value: Any) -> float:
@@ -1232,6 +1286,8 @@ class SurfaceArbiter:
                 return f"surface_interval_cooldown:{now - self.last_surface_time:.1f}/{min_interval:.1f}s"
         family_cooldown = float(getattr(self.policy.config, "family_cooldown_seconds", 0.0) or 0.0)
         family = self._family_id(impulse)
+        if "private_mind_continuity_filler" in family:
+            family_cooldown = max(family_cooldown, 900.0)
         last_family = float(self._last_family_at.get(family, 0.0) or 0.0)
         if family and last_family > 0 and family_cooldown > 0 and now - last_family < family_cooldown:
             if self.silent_cycles < self.policy.config.force_llm_after_silent and vital < 0.66:

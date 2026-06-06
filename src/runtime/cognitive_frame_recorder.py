@@ -914,10 +914,47 @@ class CognitiveFrameRecorderMixin:
         if observer is None or not callable(getattr(observer, "observe", None)):
             return getattr(frame, "outcome", None)
         try:
-            return observer.observe(frame)
+            outcome = observer.observe(frame)
+            self._feed_private_mind_outcome(outcome, frame=frame)
+            return outcome
         except Exception as exc:
             self.logger.warning("OutcomeObserver.observe(frame) loi: %s", exc, exc_info=True)
             return getattr(frame, "outcome", None)
+
+    def _feed_private_mind_outcome(self, outcome: Any, *, frame: CognitiveFrame | None = None) -> tuple[dict[str, Any], ...]:
+        loop = getattr(self, "private_mind_loop", None)
+        store = getattr(loop, "concern_store", None) if loop is not None else None
+        updater = getattr(store, "update_from_outcome", None)
+        if not callable(updater):
+            return ()
+        surface_outcome = None
+        if frame is not None:
+            surface_outcome = {
+                "channel": str(getattr(frame, "channel", "") or ""),
+                "cycle_id": str(getattr(frame, "cycle_id", "") or ""),
+                "debug_notes": list(getattr(frame, "debug_notes", []) or [])[-8:],
+                "final_decision": dict(getattr(frame, "final_decision", {}) or {}),
+            }
+        try:
+            reports = tuple(updater(outcome, surface_outcome=surface_outcome) or ())
+        except Exception as exc:
+            try:
+                self.logger.warning("PrivateMind outcome feedback error: %s", exc)
+            except Exception:
+                pass
+            return ()
+        if reports and frame is not None:
+            try:
+                frame.debug_notes.append(f"private_mind_outcome_feedback={len(reports)}")
+            except Exception:
+                pass
+        digest_fn = getattr(loop, "digest", None) if loop is not None else None
+        if callable(digest_fn):
+            try:
+                self.private_mind_digest = digest_fn(surface_queue=getattr(self, "private_mind_surface_queue", None))
+            except Exception:
+                pass
+        return reports
 
     def _reflect_self_observation_for_frame(self, frame: CognitiveFrame) -> Any:
         observer = self._get_self_observer()

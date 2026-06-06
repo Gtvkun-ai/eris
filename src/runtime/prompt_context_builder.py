@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import traceback
+from typing import Any, Mapping
 
 from cortex.action_planner import ACTION_SPACE
 from cortex.contracts import (
@@ -82,9 +83,55 @@ class PromptContextBuilderMixin:
         #self_state thường là mô hình tự nhận thức của agent: “mình đang ở mode nào”, “nên giữ phong cách nào”.
         prompt_context = str(getattr(self_state, "prompt_context", "") or "").strip()
         #Nếu có, nối vào.
+        parts = [state_context]
         if prompt_context:
-            return f"{state_context}\n{prompt_context}"
-        return state_context
+            parts.append(prompt_context)
+        private_bias = self._render_private_mind_speech_bias_context()
+        if private_bias:
+            parts.append(private_bias)
+        return "\n".join(part for part in parts if str(part or "").strip())
+
+    def _render_private_mind_speech_bias_context(self, *, limit: int = 6) -> str:
+        bias = getattr(self, "private_mind_speech_bias", None)
+        if not isinstance(bias, Mapping) or not bias:
+            return ""
+
+        def clean(value: Any, max_len: int = 180) -> str:
+            text = " ".join(str(value or "").split()).strip()
+            if len(text) > max_len:
+                return text[: max(0, max_len - 3)].rstrip() + "..."
+            return text
+
+        items: list[tuple[float, str]] = []
+        for key, payload in bias.items():
+            if isinstance(payload, Mapping):
+                value = payload.get("value")
+                if isinstance(value, Mapping):
+                    preference = value.get("preference") or value.get("text") or value.get("claim") or value.get("summary") or value
+                else:
+                    preference = value or payload.get("preference") or payload.get("reason")
+                try:
+                    confidence = float(payload.get("confidence", 0.0) or 0.0)
+                except Exception:
+                    confidence = 0.0
+                reason = clean(payload.get("reason") or "", 120)
+                text = clean(preference, 220)
+                label = clean(key, 80)
+                if text:
+                    suffix = f"; reason={reason}" if reason else ""
+                    items.append((confidence, f"- {label}: {text}; confidence={confidence:.2f}{suffix}"))
+            else:
+                text = clean(payload, 220)
+                if text:
+                    items.append((0.0, f"- {clean(key, 80)}: {text}; confidence=0.00"))
+        if not items:
+            return ""
+        lines = [line for _, line in sorted(items, key=lambda pair: pair[0], reverse=True)[: max(1, int(limit or 6))]]
+        return (
+            "PrivateMind speech bias (soft, internal):\n"
+            + "\n".join(lines)
+            + "\nContract: use these as quiet wording/style pressure only. Do not state them as facts, do not expose private reasoning, and do not override evidence."
+        )
 
     #Hàm này dựng context cho ThoughtStream.
     def _build_thought_stream_context(self) -> dict[str, object]:
@@ -559,10 +606,14 @@ class PromptContextBuilderMixin:
                 "SpeechCore contract: internal_family is forbidden wording. Use speech_evidence plus mood_residue/reaction_impulse. "
                 "Do not say labels like escape_from_friction, cognitive_stall, avoidance, scattered_attention, decompression, or friction_point.\n"
             )
+        private_bias_context = self._render_private_mind_speech_bias_context()
+        if private_bias_context:
+            private_bias_context += "\n"
         risk_level = str(getattr(speech_core, "speech_risk_level", "") or "texture") if speech_core is not None else "texture"
         return (
             f"{self._build_llm_ti_context(ti_report, action_plan)}\n"
             f"{impulse_context}"
+            f"{private_bias_context}"
             f"Speech risk level: {risk_level}. "
             "hard_claim needs clear evidence; soft_read uses words like co ve/hinh nhu/lai thay; "
             "micro_presence and texture stay tiny, low-claim, under 12 words when possible. "

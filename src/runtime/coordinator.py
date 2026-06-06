@@ -59,7 +59,7 @@ from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from cortex.personality import PersonalityLens
 from cortex.relationship_dynamics import RelationshipDynamicsEngine, RelationshipTurnEvent
-from cortex.subconscious import ModelBackedConsciousSynthesizer, build_phase1234567_workers
+from cortex.subconscious import build_phase1234567_workers
 from cortex.self_observation import SelfObservationEngine
 from cortex.self_model import SelfModelEngine
 from cortex.session_ritual import SessionRitualEngine
@@ -74,7 +74,7 @@ from runtime.autonomous_cycle import AutonomousCycleMixin
 from runtime.body_bias import BodyBiasProjector
 from runtime.contextual_autonomy_loop import ContextualAutonomyLoop
 from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
-from runtime.subconscious_model_adapter import RuntimeSubconsciousModelAdapter
+from runtime.thought_model_adapter import RuntimeThoughtModelAdapter
 from runtime.model_budget_policy import ModelBudgetPolicy
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.sensory_model_adapter import RuntimeSensoryModelAdapter
@@ -88,6 +88,7 @@ from runtime.frame_builder import FrameBuilderMixin
 from runtime.guard_violations import GuardViolation
 from runtime.outcome_observer import OutcomeObserver
 from runtime.post_generation_filters import PostGenerationFiltersMixin
+from runtime.private_mind_loop import PrivateMindLoop
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
 from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
@@ -382,9 +383,6 @@ class RuntimeCoordinator(
         self.last_wake_decision: WakeDecision | None = None
         self.last_daydream_result = None
         self.daydream_model_adapter = RuntimeDaydreamModelAdapter.from_env(logger=self.logger)
-        # Lane 3 là lớp API synthesis riêng cho "phiên toà nội tâm".
-        # Nó không sinh public text; nó chỉ nén Blackboard thành ThoughtObject có evidence.
-        self.lane3_synthesis_model_adapter = RuntimeSubconsciousModelAdapter.from_env(logger=self.logger)
         self.daydream_consolidator = DaydreamConsolidator(
             llm_client=self.daydream_model_adapter or getattr(llm_service, "style_client", None),
             logger=self.logger,
@@ -401,6 +399,19 @@ class RuntimeCoordinator(
         self.last_signal_snapshot: SignalSnapshot | None = None
         self.last_signal_diff = None
         self.last_observer_frame: ObserverFrame | None = None
+        # PrivateMindLoop: 5 phase private cognition. Nó không nói trực tiếp;
+        # nó chỉ giữ concern, synthesize phán quyết và bơm bias/surface impulse đã lọc.
+        self.private_mind_surface_queue: list[object] = []
+        self.private_mind_loop = PrivateMindLoop.from_runtime(
+            runtime_owner=self,
+            llm_service=llm_service,
+            logger=self.logger,
+        )
+        self.private_mind_speech_bias: dict[str, object] = {}
+        self.private_mind_inquiry_plan: list[dict[str, object]] = []
+        self.private_mind_active_state: dict[str, object] = {}
+        self.private_mind_thought_pressure = 0.0
+        self.private_mind_digest: dict[str, object] = {}
         self.last_semantic_scene_note: SemanticSceneNote | None = None
         self._state_lock = threading.RLock()
 
@@ -504,15 +515,19 @@ class RuntimeCoordinator(
         #  dựa trên chuỗi GoalDriftReport, thay vì chỉ nhìn một snapshot đơn lẻ.
         self.autonomous_ni_state = NiStateMachine()
         self.chat_ni_state = NiStateMachine()
-        #ThoughtStream là dòng suy nghĩ nền. Nó có thể sinh seed, tension, unresolved loops, attractor
-        #nó giữ “mạch suy nghĩ ngầm” để ERIS không reset như cá vàng sau mỗi message
+        # ThoughtStream là dòng suy nghĩ nền. Bản cũ chỉ là pressure loop rẻ.
+        # Bản này gắn thêm ThoughtEvaluator API: model đánh giá thought riêng tư,
+        # rồi ghi ngược vào FragmentStore để ảnh hưởng tension/surface/memory sau đó.
+        # Nói cách khác: không chỉ log cho đẹp, mà là một lớp phán xét ngầm thật.
+        self.thought_model_adapter = RuntimeThoughtModelAdapter.from_env(logger=self.logger)
         self.thought_stream = ThoughtStream(
             context_provider=self._build_thought_stream_context,
             logger=self.logger,
+            model_reviewer=self.thought_model_adapter,
         )
         self.subconscious_loop = self.thought_stream
         self.cognitive_substrate = self.thought_stream
-        self.subconscious_runtime_enabled = self._load_subconscious_runtime_enabled()
+        self.subconscious_runtime_enabled = bool(get_config("subconscious_runtime.enabled", default=False))
         self.subconscious_runtime = self._build_subconscious_runtime() if self.subconscious_runtime_enabled else None
         self._pending_subconscious_report = None
         self._pending_subconscious_seed = None
@@ -523,8 +538,7 @@ class RuntimeCoordinator(
             "reflection": 0.0,
         }
         self._subconscious_lane_next_due = {
-            "lane2": time.time() + random.uniform(30.0, 75.0),
-            "lane3": time.time() + random.uniform(60.0, 150.0),
+            "lane2": time.time() + random.uniform(45.0, 120.0),
             "lane5": time.time() + random.uniform(600.0, 1800.0),
             "reflection": time.time() + random.uniform(900.0, 1800.0),
         }
@@ -746,8 +760,80 @@ class RuntimeCoordinator(
                 wake_debug.get("micro_presence_checked", False),
                 wake_debug.get("reengagement_checked", False),
             )
+            self._update_private_mind_state(
+                signal_snapshot=signal_snapshot,
+                observer_frame=observer_frame,
+                wake_decision=result.wake_decision,
+                channel=channel,
+                user_text=user_text,
+            )
         except Exception as exc:
             self.logger.warning("3-tier autonomy update error: %s", exc)
+
+    def _update_private_mind_state(
+        self,
+        *,
+        signal_snapshot,
+        observer_frame,
+        wake_decision,
+        channel: str = "",
+        user_text: str = "",
+    ) -> None:
+        """Chạy private mind 5 phase trên tick nền.
+
+        Hàm này cố ý không trả Decision. Private mind chỉ được quyền:
+        - cập nhật PrivateConcern;
+        - bơm StateMutation vào bias/agenda;
+        - enqueue SurfaceImpulse đã lọc cho SurfaceArbiter.
+        Nếu nó tự nói public thì lại quay về trò nhật ký nội tâm cầm loa.
+        """
+
+        loop = getattr(self, "private_mind_loop", None)
+        if loop is None:
+            return
+        try:
+            state_committer = getattr(self, "state_committer", None)
+            getter = getattr(self, "_get_state_committer", None)
+            if state_committer is None and callable(getter):
+                try:
+                    state_committer = getter()
+                except Exception:
+                    state_committer = None
+            result = loop.tick(
+                user_text=user_text,
+                channel=channel or "autonomous",
+                snapshot=signal_snapshot,
+                observer_frame=observer_frame,
+                wake_decision=wake_decision,
+                memory_core=getattr(self, "memory_core", None),
+                state_committer=state_committer,
+                session_turn_ledger=getattr(self, "session_turn_ledger", None),
+                internal_agenda=getattr(self, "internal_agenda", None),
+                thought_stream=getattr(self, "thought_stream", None),
+                surface_candidate_queue=getattr(self, "private_mind_surface_queue", None),
+                runtime_owner=self,
+            )
+            digest_fn = getattr(loop, "digest", None)
+            if callable(digest_fn):
+                self.private_mind_digest = digest_fn(surface_queue=getattr(self, "private_mind_surface_queue", None))
+            elif result is not None and callable(getattr(result, "to_dict", None)):
+                self.private_mind_digest = result.to_dict()
+        except Exception as exc:
+            try:
+                self.logger.warning("PrivateMind tick error: %s", exc)
+            except Exception:
+                pass
+
+    def _drain_private_mind_surface_impulses(self, *, limit: int = 4) -> tuple[object, ...]:
+        """Lấy impulse đã được SurfaceValve lọc để đưa vào SurfaceArbiter."""
+
+        queue = getattr(self, "private_mind_surface_queue", None)
+        if not isinstance(queue, list) or not queue:
+            return ()
+        items: list[object] = []
+        while queue and len(items) < max(1, int(limit or 4)):
+            items.append(queue.pop(0))
+        return tuple(items)
 
     def _daydream_packets_from_runtime(self, *, limit: int = 20) -> tuple[DaydreamPacket, ...]:
         packets: list[DaydreamPacket] = []
@@ -1093,7 +1179,12 @@ class RuntimeCoordinator(
     def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
+        private_digest = self._private_mind_digest_for_payload()
+        if private_digest:
+            self.private_mind_digest = private_digest
         payload["emotion_debug"] = self._build_emotion_debug_payload()
+        if isinstance(private_digest, dict) and private_digest:
+            payload["private_mind_digest"] = private_digest
         self._record_public_turn(decision, payload=payload, channel=channel)
         self.transport.send_json(payload)
         if bool(payload.get("should_speak")) and str(payload.get("text", "") or "").strip() and self.subconscious_runtime_enabled:
@@ -1114,6 +1205,106 @@ class RuntimeCoordinator(
                 )
             except Exception as exc:
                 self.logger.warning("Subconscious post-output tick error: %s", exc)
+
+    def _private_mind_digest_for_payload(self) -> dict[str, object]:
+        digest = getattr(self, "private_mind_digest", None)
+        if not isinstance(digest, dict):
+            return {}
+        enriched = dict(digest)
+        reason = self._private_mind_speech_silence_reason()
+        if reason:
+            enriched["speech_silence_reason"] = reason
+            menu = dict(enriched.get("menu", {}) or {})
+            menu["speech_silence_reason"] = reason
+            enriched["menu"] = menu
+        return self._compact_private_mind_digest_for_udp(enriched)
+
+    def _compact_private_mind_digest_for_udp(self, digest: dict[str, object]) -> dict[str, object]:
+        menu = digest.get("menu", {}) if isinstance(digest, dict) else {}
+        if not isinstance(menu, dict):
+            menu = {}
+        keys = (
+            "snapshot_current",
+            "current_thought",
+            "retained_thoughts",
+            "pulled_thoughts",
+            "temporary_thoughts",
+            "open_concerns",
+            "evidence_dossier",
+            "mini_evaluators",
+            "inner_judgment",
+            "state_mutations",
+            "future_bias",
+            "surface_queue",
+            "speech_silence_reason",
+            "debug_api",
+        )
+        compact_menu = {
+            key: self._compact_private_mind_debug_value(menu.get(key), depth=0)
+            for key in keys
+            if key in menu
+        }
+        return {
+            "last_tick_at": digest.get("last_tick_at", 0.0),
+            "current": self._compact_private_mind_debug_value(digest.get("current", {}), depth=0),
+            "menu": compact_menu,
+        }
+
+    def _compact_private_mind_debug_value(self, value: object, *, depth: int = 0) -> object:
+        if depth >= 5:
+            return self._compact_private_mind_scalar(value, limit=220)
+        if isinstance(value, dict):
+            out: dict[str, object] = {}
+            for idx, (key, item) in enumerate(value.items()):
+                if idx >= 10:
+                    out["..."] = "truncated"
+                    break
+                out[str(key)[:80]] = self._compact_private_mind_debug_value(item, depth=depth + 1)
+            return out
+        if isinstance(value, (list, tuple)):
+            items = list(value)
+            return [
+                self._compact_private_mind_debug_value(item, depth=depth + 1)
+                for item in items[:8]
+            ] + (["... truncated"] if len(items) > 8 else [])
+        return self._compact_private_mind_scalar(value, limit=360)
+
+    @staticmethod
+    def _compact_private_mind_scalar(value: object, *, limit: int = 260) -> object:
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        text = " ".join(str(value or "").split())
+        if len(text) > limit:
+            return text[: max(0, limit - 3)].rstrip() + "..."
+        return text
+
+    def _private_mind_speech_silence_reason(self) -> dict[str, object]:
+        frame = getattr(self, "last_cognitive_frame", None)
+        speech_core = getattr(frame, "speech_core", None) if frame is not None else None
+        arbiter = None
+        try:
+            getter = getattr(self, "_surface_arbiter", None)
+            arbiter = getter() if callable(getter) else None
+        except Exception:
+            arbiter = None
+        surface = getattr(arbiter, "last_decision", None) if arbiter is not None else None
+        silence = getattr(speech_core, "silence_state", None) if speech_core is not None else None
+        return {
+            "speech_core": {
+                "should_speak": bool(getattr(speech_core, "should_speak", False)) if speech_core is not None else False,
+                "source": str(getattr(speech_core, "speech_source", "") or "") if speech_core is not None else "",
+                "utterance_type": str(getattr(speech_core, "utterance_type", "") or "") if speech_core is not None else "",
+                "reason": str(getattr(speech_core, "reason", "") or "") if speech_core is not None else "",
+                "delivery": str(getattr(speech_core, "delivery", "") or "") if speech_core is not None else "",
+                "safety_flags": list(tuple(getattr(speech_core, "safety_flags", ()) or ())) if speech_core is not None else [],
+                "silence_reason": str(getattr(silence, "reason", "") or "") if silence is not None else "",
+            },
+            "surface_arbiter": (
+                surface.to_context()
+                if surface is not None and callable(getattr(surface, "to_context", None))
+                else {}
+            ),
+        }
 
     def _record_public_turn(self, decision: Decision, *, payload: dict | None = None, channel: str | None = None):
         ledger = getattr(self, "public_turn_ledger", None)
@@ -1281,6 +1472,7 @@ class RuntimeCoordinator(
                 "valence": round(valence, 3),
                 "state": str(value(self_state, "state_label", "") or value(state, "last_self_state_label", "") or ""),
             },
+            "private_mind": getattr(self, "private_mind_digest", {}) or {},
             "items": {
                 "calm_aroused": metric("binh tinh <-> kich thich", value(appraisal, "arousal", value(state, "arousal", 0.0)), group="core"),
                 "emotional_stability": metric("on dinh cam xuc", stability, group="core"),
@@ -2405,6 +2597,7 @@ class RuntimeCoordinator(
             meaning_layer=getattr(frame, "meaning_layer", None),
             personality_lens=getattr(frame, "personality_lens", None),
             agent_mind=getattr(getattr(self, "memory_core", None), "agent_mind", None),
+            private_mind_speech_bias=getattr(self, "private_mind_speech_bias", None),
             safe_small_talk_allowed=self._safe_small_talk_budget_allowed(
                 channel=channel,
                 snapshot=snapshot,
@@ -3460,11 +3653,7 @@ class RuntimeCoordinator(
                     )
                 ),
             )
-            synthesizer = ModelBackedConsciousSynthesizer(
-                model_adapter=getattr(self, "lane3_synthesis_model_adapter", None),
-                logger=self.logger,
-            )
-            return RuntimeSubconsciousLoop(workers=workers, synthesizer=synthesizer)
+            return RuntimeSubconsciousLoop(workers=workers)
         except Exception as exc:
             self.logger.warning("Khong khoi tao duoc subconscious runtime: %s", exc)
             self.subconscious_runtime_enabled = False
@@ -3776,33 +3965,20 @@ class RuntimeCoordinator(
                 allow_surface_seed=False,
             )
             self._subconscious_lane_last_tick["lane2"] = now
-            self._schedule_next_subconscious_due("lane2", 30.0, 75.0, now=now)
+            self._schedule_next_subconscious_due("lane2", 45.0, 120.0, now=now)
 
         board = self._subconscious_blackboard_metrics(now=now)
-        lane3_due = now >= float(self._subconscious_lane_next_due.get("lane3", 0.0) or 0.0)
-        # Lane 3 được gọi khi Blackboard đủ coherence/pressure, hoặc đến nhịp nền
-        # định kỳ và đã có ít nhất vài mảnh có evidence. Đây là phần làm "suy nghĩ nền"
-        # chạy đều, nhưng vẫn không gọi API từ không khí rỗng.
         should_lane3 = (
-            board["fragment_count"] >= 3.0
+            board["coherence"] > 0.55
+            and board["fragment_count"] >= 3.0
             and (
-                (
-                    board["coherence"] > 0.55
-                    and (
-                        board["pressure"] > 0.60
-                        or board["recurring_theme_strength"] > 0.65
-                        or board["unresolved_loop_pressure"] > 0.60
-                        or board["contradiction_pressure"] > 0.55
-                        or board["suppressed_recurrence"] > 0.55
-                        or board["curiosity_gap_pressure"] > 0.55
-                        or metrics["event_strength"] > 0.65
-                    )
-                )
-                or (
-                    lane3_due
-                    and board["coherence"] > 0.42
-                    and board["pressure"] > 0.32
-                )
+                board["pressure"] > 0.60
+                or board["recurring_theme_strength"] > 0.65
+                or board["unresolved_loop_pressure"] > 0.60
+                or board["contradiction_pressure"] > 0.55
+                or board["suppressed_recurrence"] > 0.55
+                or board["curiosity_gap_pressure"] > 0.55
+                or metrics["event_strength"] > 0.65
             )
         )
 
@@ -3824,12 +4000,6 @@ class RuntimeCoordinator(
                 allow_surface_seed=False,
             )
             self._subconscious_lane_last_tick["lane3"] = now
-            self._schedule_next_subconscious_due(
-                "lane3",
-                float(get_config("subconscious_runtime.lanes.lane3_synthesis.min_interval_seconds", default=75.0) or 75.0),
-                float(get_config("subconscious_runtime.lanes.lane3_synthesis.max_interval_seconds", default=180.0) or 180.0),
-                now=now,
-            )
 
         lane5_due = now >= float(self._subconscious_lane_next_due.get("lane5", 0.0) or 0.0)
         should_lane5 = allow_lane5 and (
@@ -3916,16 +4086,15 @@ class RuntimeCoordinator(
         ambient_due = now >= float(self._subconscious_lane_next_due.get("lane2", 0.0) or 0.0)
         solitude_due = now >= float(self._subconscious_lane_next_due.get("lane5", 0.0) or 0.0)
         reflection_due = now >= float(self._subconscious_lane_next_due.get("reflection", 0.0) or 0.0)
-        lane3_due = now >= float(self._subconscious_lane_next_due.get("lane3", 0.0) or 0.0)
-        if not any((ambient_due, lane3_due, solitude_due, reflection_due)):
+        if not any((ambient_due, solitude_due, reflection_due)):
             return
         self._maybe_tick_subconscious_runtime(
             channel="background",
             snapshot=snapshot,
             internal_state=internal_state,
             user_text="",
-            event_text="ambient_tick" if ambient_due else ("lane3_inner_court_due" if lane3_due else ""),
-            event_strength=0.18 if ambient_due else (0.24 if lane3_due else 0.0),
+            event_text="ambient_tick" if ambient_due else "",
+            event_strength=0.18 if ambient_due else 0.0,
             allow_lane5=solitude_due or reflection_due,
             reflection=reflection_due,
         )
@@ -3937,26 +4106,6 @@ class RuntimeCoordinator(
         inertia = max(0.0, min(1.0, float(inertia)))
         value = float(previous or 0.0) * inertia + float(target or 0.0) * (1.0 - inertia)
         return max(0.0, min(1.0, value))
-
-    def _load_subconscious_runtime_enabled(self) -> bool:
-        """Bật vòng subconscious runtime theo env/config.
-
-        Default mới là bật. Nếu không có key Lane 3 thì runtime vẫn chạy worker
-        deterministic; chỉ riêng API synthesis sẽ tự tắt. Đây là cách có nền nghĩ
-        liên tục mà không bắt mọi worker phải đốt tiền như một nghi lễ hiến tế token.
-        """
-
-        raw = os.environ.get("ERIS_SUBCONSCIOUS_RUNTIME", "").strip().lower()
-        if raw:
-            return raw not in {"0", "false", "no", "off", "none"}
-
-        cfg = get_config("subconscious_runtime.enabled", default=True)
-        if isinstance(cfg, str):
-            value = cfg.strip().lower()
-            if value:
-                return value not in {"0", "false", "no", "off", "none"}
-            return True
-        return bool(cfg)
 
     def _load_mental_process_enabled(self) -> bool:
         flag = os.environ.get("ERIS_MENTAL_PROCESS_LOOP", "1").strip().lower()

@@ -59,6 +59,39 @@ def _semantic_tokens(value: object) -> set[str]:
     }
 
 
+def _truthy_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in {"1", "true", "yes", "on", "y"}:
+        return True
+    if raw in {"0", "false", "no", "off", "n"}:
+        return False
+    return bool(default)
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return float(default)
+    try:
+        value = float(raw)
+    except ValueError:
+        return float(default)
+    if value != value:
+        return float(default)
+    return value
+
+
+def _to_dict(value: object) -> dict[str, object]:
+    method = getattr(value, "to_dict", None)
+    if callable(method):
+        try:
+            payload = method()
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
 class FragmentStore:
     """Keeps unfinished thoughts alive even when nothing is spoken."""
 
@@ -1470,6 +1503,11 @@ class ThoughtStreamEngine:
         recursive_reactivation: RecursiveReactivation | None = None,
         loop_reheater: SubconsciousLoopReheater | None = None,
         surface_selector: SurfaceSelector | None = None,
+        model_reviewer=None,
+        model_review_enabled: bool | None = None,
+        model_review_min_interval_seconds: float | None = None,
+        model_review_min_trigger: float | None = None,
+        logger=None,
     ):
         self.fragment_store = fragment_store or FragmentStore()
         self.association_graph = association_graph or AssociationGraph()
@@ -1482,6 +1520,21 @@ class ThoughtStreamEngine:
         self.recursive_reactivation = recursive_reactivation or RecursiveReactivation()
         self.loop_reheater = loop_reheater or SubconsciousLoopReheater()
         self.surface_selector = surface_selector or SurfaceSelector()
+        self.model_reviewer = model_reviewer
+        self.model_review_enabled = bool(model_reviewer) if model_review_enabled is None else bool(model_review_enabled)
+        self.model_review_min_interval_seconds = max(1.0, float(
+            model_review_min_interval_seconds
+            if model_review_min_interval_seconds is not None
+            else getattr(model_reviewer, "min_interval_seconds", _float_env("ERIS_THOUGHT_EVALUATOR_MIN_INTERVAL_SEC", 45.0))
+        ))
+        self.model_review_min_trigger = _clamp01(
+            model_review_min_trigger
+            if model_review_min_trigger is not None
+            else _float_env("ERIS_THOUGHT_EVALUATOR_MIN_TRIGGER", 0.50)
+        )
+        self.logger = logger
+        self._last_model_review_at = 0.0
+        self._last_model_review_report: dict[str, object] = {}
 
     def evaluate(
         self,
@@ -1579,6 +1632,21 @@ class ThoughtStreamEngine:
             now=now,
         )
         momentum = momentum_items[0] if momentum_items else CognitiveMomentum()
+        review_notes: tuple[str, ...] = ()
+        updated, review_notes = self._maybe_apply_model_review(
+            thought=updated,
+            snapshot=snapshot,
+            state=state,
+            unresolved=unresolved,
+            unresolved_loops=unresolved_loops,
+            momentum=momentum,
+            active_attractor=active_attractor,
+            disturbances=disturbances,
+            anchors=all_anchors,
+            long_term_memory=tuple(long_term_memory or ()),
+            last_text=last_text,
+            now=now,
+        )
         surface, suppression = self.surface_selector.select(
             updated,
             state=state,
@@ -1611,6 +1679,7 @@ class ThoughtStreamEngine:
                     active_attractor=active_attractor,
                     closed_ids=closed_ids,
                     disturbances=disturbances,
+                    extra_notes=review_notes,
                 ),
                 disturbances=disturbances,
             )
@@ -1632,9 +1701,330 @@ class ThoughtStreamEngine:
                 active_attractor=active_attractor,
                 closed_ids=closed_ids,
                 disturbances=disturbances,
+                extra_notes=review_notes,
             ),
             disturbances=disturbances,
         )
+
+    def _maybe_apply_model_review(
+        self,
+        *,
+        thought: ThoughtObject,
+        snapshot,
+        state: PersistentInternalState,
+        unresolved: tuple[ThoughtObject, ...],
+        unresolved_loops: tuple[UnresolvedTensionLoop, ...],
+        momentum: CognitiveMomentum,
+        active_attractor: UnresolvedTensionLoop,
+        disturbances: tuple[CognitiveDisturbance, ...],
+        anchors: tuple[str, ...],
+        long_term_memory: tuple[str, ...],
+        last_text: str,
+        now: float,
+    ) -> tuple[ThoughtObject, tuple[str, ...]]:
+        """Cho API đánh giá thought đủ lực rồi ghi ngược vào store.
+
+        ThoughtStream rẻ vẫn là substrate. Nhưng khi thought có tension/momentum,
+        reviewer API đóng vai phiên tòa nội tâm: công tố, biện hộ, thẩm phán.
+        Kết quả không nói ra ngoài; nó sửa tension/persistence/partial_text/evidence
+        để các vòng sau thật sự bị ảnh hưởng. Không ghi ngược thì chỉ là log màu mè,
+        mà loài người đã có đủ dashboard vô dụng rồi.
+        """
+        reviewer = self.model_reviewer
+        if not (self.model_review_enabled and reviewer is not None):
+            return thought, ()
+        trigger = self._model_review_trigger_score(
+            thought=thought,
+            momentum=momentum,
+            active_attractor=active_attractor,
+            disturbances=disturbances,
+            unresolved=unresolved,
+        )
+        due = now - float(self._last_model_review_at or 0.0) >= self.model_review_min_interval_seconds
+        if trigger < self.model_review_min_trigger and not due:
+            return thought, (f"api_eval_wait(trigger={trigger:.2f})",)
+        if trigger < max(0.18, self.model_review_min_trigger * 0.55):
+            return thought, (f"api_eval_skip(trigger={trigger:.2f})",)
+
+        payload = self._model_review_payload(
+            thought=thought,
+            snapshot=snapshot,
+            state=state,
+            unresolved=unresolved,
+            unresolved_loops=unresolved_loops,
+            momentum=momentum,
+            active_attractor=active_attractor,
+            disturbances=disturbances,
+            anchors=anchors,
+            long_term_memory=long_term_memory,
+            last_text=last_text,
+            trigger=trigger,
+            now=now,
+        )
+        try:
+            review = reviewer.review(payload)
+        except Exception as exc:
+            if self.logger is not None:
+                self.logger.warning("[ThoughtEvaluator API] review failed: %s", exc)
+            self._last_model_review_at = now
+            return thought, (f"api_eval_error={type(exc).__name__}",)
+
+        self._last_model_review_at = now
+        normalized = self._normalize_model_review(review, allowed_evidence=self._allowed_model_evidence(payload))
+        self._last_model_review_report = normalized
+        if not normalized.get("ok"):
+            return thought, (f"api_eval_reject={normalized.get('reason', 'invalid')}",)
+
+        reviewed = self._apply_model_review_to_thought(thought, normalized, now=now)
+        self.fragment_store.replace(reviewed)
+        self._log_model_review(normalized, reviewed)
+        route = str(normalized.get("recommended_route") or "keep_private")
+        conf = float(normalized.get("confidence") or 0.0)
+        return reviewed, (f"api_eval={route}:{conf:.2f}",)
+
+    def _model_review_trigger_score(
+        self,
+        *,
+        thought: ThoughtObject,
+        momentum: CognitiveMomentum,
+        active_attractor: UnresolvedTensionLoop,
+        disturbances: tuple[CognitiveDisturbance, ...],
+        unresolved: tuple[ThoughtObject, ...],
+    ) -> float:
+        disturbance_pressure = max((_clamp01(getattr(item, "intensity", 0.0)) for item in disturbances), default=0.0)
+        recurrence = min(1.0, float(getattr(thought, "recurrence_count", 0) or 0) / 4.0)
+        unresolved_pressure = min(1.0, len(tuple(unresolved or ())) / 6.0)
+        return max(
+            _clamp01(getattr(thought, "tension", 0.0)),
+            _clamp01(getattr(momentum, "score", 0.0)),
+            _clamp01(getattr(active_attractor, "score", 0.0)),
+            disturbance_pressure,
+            recurrence * 0.72,
+            unresolved_pressure * 0.45,
+        )
+
+    def _model_review_payload(
+        self,
+        *,
+        thought: ThoughtObject,
+        snapshot,
+        state: PersistentInternalState,
+        unresolved: tuple[ThoughtObject, ...],
+        unresolved_loops: tuple[UnresolvedTensionLoop, ...],
+        momentum: CognitiveMomentum,
+        active_attractor: UnresolvedTensionLoop,
+        disturbances: tuple[CognitiveDisturbance, ...],
+        anchors: tuple[str, ...],
+        long_term_memory: tuple[str, ...],
+        last_text: str,
+        trigger: float,
+        now: float,
+    ) -> dict[str, object]:
+        user_signals = getattr(snapshot, "user_signals", None)
+        pressures = {
+            name: round(float(_clamp01(getattr(state, name, 0.0))), 3)
+            for name in (
+                "curiosity_pressure",
+                "association_pressure",
+                "memory_replay_pressure",
+                "subconscious_pressure",
+                "silence_pressure",
+                "attachment_pressure",
+                "tension",
+            )
+            if hasattr(state, name)
+        }
+        return {
+            "schema_version": "thought_stream_evaluator.v1",
+            "now": round(float(now), 3),
+            "trigger_score": round(float(trigger), 3),
+            "current_thought": thought.to_dict(),
+            "recent_unresolved": [item.to_dict() for item in tuple(unresolved or ())[:6]],
+            "unresolved_loops": [item.to_dict() for item in tuple(unresolved_loops or ())[:4]],
+            "momentum": _to_dict(momentum),
+            "active_attractor": _to_dict(active_attractor),
+            "disturbances": [item.to_dict() for item in tuple(disturbances or ())[:6]],
+            "anchors": [_clean_text(item, limit=160) for item in tuple(anchors or ())[:8]],
+            "memory_clues": [_clean_text(item, limit=180) for item in tuple(long_term_memory or ())[-8:]],
+            "last_public_text": _clean_text(last_text, limit=220),
+            "focus": {
+                "active_window_kind": str(getattr(snapshot, "active_window_kind", "") or ""),
+                "idle_seconds": round(float(getattr(snapshot, "idle_seconds", 0.0) or 0.0), 3),
+                "focus_pattern": str(getattr(user_signals, "focus_pattern", "") or "") if user_signals is not None else "",
+            },
+            "internal_pressures": pressures,
+            "rules": [
+                "private evaluation only; do not write public speech",
+                "ground every hypothesis in current_thought.evidence/disturbances/memory_clues/anchors",
+                "if evidence is weak, choose keep_private or suppress",
+                "surface_candidate only when useful and low-intrusion",
+            ],
+        }
+
+    def _allowed_model_evidence(self, payload: dict[str, object]) -> set[str]:
+        allowed: set[str] = set()
+
+        def add(value: object) -> None:
+            if isinstance(value, str) and value.strip():
+                allowed.add(value.strip())
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    add(item)
+            elif isinstance(value, dict):
+                for key in ("evidence", "evidence_ids"):
+                    add(value.get(key))
+
+        add(payload.get("current_thought"))
+        add(payload.get("recent_unresolved"))
+        add(payload.get("unresolved_loops"))
+        add(payload.get("momentum"))
+        add(payload.get("active_attractor"))
+        add(payload.get("disturbances"))
+        # Cho phép reviewer trích anchor/memory dưới dạng private note, nhưng không
+        # được giả thành evidence id hiện tại.
+        allowed.add("api_model_evaluation")
+        return allowed
+
+    def _normalize_model_review(self, review: object, *, allowed_evidence: set[str]) -> dict[str, object]:
+        if not isinstance(review, dict):
+            return {"ok": False, "reason": "non_dict_review"}
+        route = str(review.get("recommended_route") or review.get("route") or "keep_private").strip().lower()
+        aliases = {
+            "store": "keep_private",
+            "private": "keep_private",
+            "keep": "keep_private",
+            "surface": "surface_candidate",
+            "surface_seed": "surface_candidate",
+        }
+        route = aliases.get(route, route)
+        if route not in {"keep_private", "rehearse", "surface_candidate", "suppress"}:
+            route = "keep_private"
+        confidence = _clamp01(review.get("confidence", 0.0))
+        surface_pressure = _clamp01(review.get("surface_pressure", 0.0))
+        memory_pressure = _clamp01(review.get("memory_pressure", review.get("persistence_pressure", 0.0)))
+        dominant = _clean_text(review.get("dominant_evaluation") or review.get("summary") or review.get("judge_verdict"), limit=220)
+        prosecutor = _clean_text(review.get("prosecutor_case"), limit=260)
+        defense = _clean_text(review.get("defense_case"), limit=260)
+        judge = _clean_text(review.get("judge_verdict"), limit=260)
+        risk = _clean_text(review.get("risk_assessment"), limit=220)
+        raw_evidence = review.get("evidence_ids") or review.get("evidence") or ()
+        if isinstance(raw_evidence, str):
+            raw_evidence = (raw_evidence,)
+        safe_evidence = tuple(
+            item for item in dict.fromkeys(str(ev).strip() for ev in tuple(raw_evidence or ()) if str(ev).strip())
+            if item in allowed_evidence
+        )[:12]
+        hypotheses = []
+        for item in tuple(review.get("hypotheses") or ())[:5]:
+            if not isinstance(item, dict):
+                continue
+            hypotheses.append({
+                "label": _clean_text(item.get("label"), limit=80),
+                "confidence": round(_clamp01(item.get("confidence", 0.0)), 3),
+                "evidence": [str(ev) for ev in tuple(item.get("evidence") or ())[:6] if str(ev) in allowed_evidence],
+            })
+        # Không cho surface nếu model tự thú nhận rủi ro/evidence mỏng.
+        weak_grounding = confidence < 0.42 or (route == "surface_candidate" and not safe_evidence)
+        if weak_grounding and route == "surface_candidate":
+            route = "rehearse" if confidence >= 0.34 else "keep_private"
+        return {
+            "ok": bool(dominant or judge or prosecutor),
+            "reason": "ok" if (dominant or judge or prosecutor) else "empty_review",
+            "recommended_route": route,
+            "confidence": confidence,
+            "surface_pressure": surface_pressure,
+            "memory_pressure": memory_pressure,
+            "dominant_evaluation": dominant,
+            "prosecutor_case": prosecutor,
+            "defense_case": defense,
+            "judge_verdict": judge,
+            "risk_assessment": risk,
+            "evidence_ids": safe_evidence or ("api_model_evaluation",),
+            "hypotheses": tuple(hypotheses),
+            "provider": str(review.get("provider") or ""),
+            "model": str(review.get("model") or ""),
+        }
+
+    def _apply_model_review_to_thought(self, thought: ThoughtObject, review: dict[str, object], *, now: float) -> ThoughtObject:
+        route = str(review.get("recommended_route") or "keep_private")
+        confidence = _clamp01(review.get("confidence", 0.0))
+        surface_pressure = _clamp01(review.get("surface_pressure", 0.0))
+        memory_pressure = _clamp01(review.get("memory_pressure", 0.0))
+        verdict = _clean_text(review.get("judge_verdict") or review.get("dominant_evaluation"), limit=180)
+        if verdict:
+            incoming = f"api_judge:{route}:{verdict}"
+            partial_text = self.fragment_store._mutate_partial(thought.partial_text, incoming)
+        else:
+            partial_text = thought.partial_text
+        if route == "suppress":
+            tension = _clamp01(thought.tension * max(0.42, 1.0 - confidence * 0.38))
+            persistence = _clamp01(thought.persistence * 0.86 + memory_pressure * 0.12)
+        else:
+            route_bonus = 0.10 if route == "rehearse" else 0.18 if route == "surface_candidate" else 0.06
+            tension = _clamp01(max(thought.tension, surface_pressure * 0.92, confidence * route_bonus + thought.tension))
+            persistence = _clamp01(max(thought.persistence, memory_pressure * 0.88, confidence * 0.48))
+        evidence = tuple(dict.fromkeys((
+            *thought.evidence,
+            *tuple(str(item) for item in tuple(review.get("evidence_ids") or ()) if str(item).strip()),
+            f"api_thought_eval:{route}:{confidence:.2f}",
+        )))[-12:]
+        risk_flags = tuple(dict.fromkeys((
+            *thought.risk_flags,
+            "api_reviewed",
+            "private_evaluation",
+            f"eval_route:{route}",
+        )))
+        return ThoughtObject(
+            thought_id=thought.thought_id,
+            mode=thought.mode,
+            topic_seed=thought.topic_seed,
+            partial_text=partial_text,
+            prediction_key=thought.prediction_key,
+            unresolved_reason=review.get("risk_assessment") or thought.unresolved_reason,
+            source_memory=thought.source_memory,
+            associations=thought.associations,
+            tension=tension,
+            novelty=_clamp01(max(thought.novelty, surface_pressure * 0.58 if route == "surface_candidate" else thought.novelty)),
+            persistence=persistence,
+            recurrence_count=thought.recurrence_count,
+            surfaced_count=thought.surfaced_count,
+            resolved=False,
+            evidence=evidence,
+            risk_flags=risk_flags,
+            created_at=thought.created_at,
+            updated_at=now,
+            last_reactivated_at=now,
+        )
+
+    def _log_model_review(self, review: dict[str, object], thought: ThoughtObject) -> None:
+        if self.logger is None:
+            return
+        reviewer = self.model_reviewer
+        log_enabled = bool(getattr(reviewer, "log_api_thoughts", _truthy_env("ERIS_THOUGHT_EVALUATOR_LOG_API_THOUGHTS", True)))
+        if not log_enabled:
+            return
+        route = str(review.get("recommended_route") or "keep_private")
+        conf = float(review.get("confidence") or 0.0)
+        provider = str(review.get("provider") or getattr(getattr(reviewer, "config", None), "provider", ""))
+        model = str(review.get("model") or getattr(getattr(reviewer, "config", None), "model", ""))
+        self.logger.info(
+            "[ThoughtEvaluator API] verdict route=%s conf=%.2f thought=%s provider=%s model=%s eval=%s",
+            route,
+            conf,
+            thought.topic_seed,
+            provider or "unknown",
+            model or "unknown",
+            _clean_text(review.get("dominant_evaluation") or review.get("judge_verdict"), limit=180),
+        )
+        prosecutor = _clean_text(review.get("prosecutor_case"), limit=220)
+        defense = _clean_text(review.get("defense_case"), limit=220)
+        judge = _clean_text(review.get("judge_verdict"), limit=220)
+        if prosecutor:
+            self.logger.info("[ThoughtEvaluator API] prosecutor_piece: %s", prosecutor)
+        if defense:
+            self.logger.info("[ThoughtEvaluator API] defense_piece: %s", defense)
+        if judge:
+            self.logger.info("[ThoughtEvaluator API] judge_piece: %s", judge)
 
     def _anchors(
         self,
@@ -1669,6 +2059,7 @@ class ThoughtStreamEngine:
         active_attractor: UnresolvedTensionLoop | None = None,
         closed_ids: tuple[str, ...] = (),
         disturbances: tuple[CognitiveDisturbance, ...] = (),
+        extra_notes: tuple[str, ...] = (),
     ) -> tuple[str, ...]:
         notes = [
             "thought_stream=unfinished_prediction",
@@ -1690,8 +2081,9 @@ class ThoughtStreamEngine:
             notes.append(f"unresolved_attractor={active_attractor.score:.2f}")
         if closed_ids:
             notes.append(f"momentum_closed={len(closed_ids)}")
+        notes.extend(str(item) for item in tuple(extra_notes or ()) if str(item).strip())
         notes.append("surface_selected" if surfaced else "kept_internal")
-        return tuple(notes[-5:])
+        return tuple(notes[-7:])
 
 
 class ThoughtStream:
@@ -1705,13 +2097,14 @@ class ThoughtStream:
         interval_seconds: float | None = None,
         enabled: bool | None = None,
         logger=None,
+        model_reviewer=None,
     ):
         if interval_seconds is None:
             interval_seconds = self._load_interval()
         if enabled is None:
             enabled = self._load_enabled()
         self.context_provider = context_provider
-        self.engine = engine or ThoughtStreamEngine()
+        self.engine = engine or ThoughtStreamEngine(model_reviewer=model_reviewer, logger=logger)
         self.interval_seconds = max(1.0, float(interval_seconds))
         self.enabled = bool(enabled)
         self.logger = logger

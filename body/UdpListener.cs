@@ -79,9 +79,12 @@ public partial class UdpListener : Node2D
 	private Button _contextTouchButton;
 	private Button _contextForceSpeakButton;
 	private Button _contextEmotionButton;
+	private Button _contextPrivateMindButton;
 	private Button _contextCloseButton;
 	private Panel _emotionPanel;
 	private RichTextLabel _emotionText;
+	private Panel _privateMindPanel;
+	private RichTextLabel _privateMindText;
 	private Label _emotionSummaryLabel;
 	private Label _emotionHintLabel;
 	private readonly List<EmotionRowView> _emotionRows = new();
@@ -98,12 +101,14 @@ public partial class UdpListener : Node2D
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	private Tween _textTween;
-	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 220f);
+	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 262f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
+	private static readonly Vector2 PrivateMindPanelMinSize = new(820f, 560f);
 	private const float EmotionBarWidth = 160f;
 	private const float EmotionBarHeight = 26f;
 	private readonly Random _rng = new Random();
 	private EmotionDebug _latestEmotionDebug;
+	private string _latestPrivateMindDebugJson = "";
 	private Control _bubble;
 	private bool _grabModeArmed = false;
 	private bool _isDraggingCharacter = false;
@@ -195,7 +200,7 @@ public partial class UdpListener : Node2D
 	_chatCloseButton = GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton");
 	_characterContextMenu = GetNode<Panel>("CanvasLayer/Control/CharacterContextMenu");
 	_contextChatButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ChatButton");
-	_contextTouchButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/TouchButton");
+		_contextTouchButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/TouchButton");
 		_contextForceSpeakButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ForceSpeakButton");
 		_contextEmotionButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/EmotionButton");
 		_contextCloseButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/CloseButton");
@@ -208,6 +213,16 @@ public partial class UdpListener : Node2D
 		_emotionPanel.Size = EmotionPanelMinSize;
 		_emotionPanel.ZIndex = 99;
 		_emotionText = GetNodeOrNull<RichTextLabel>("CanvasLayer/Control/EmotionPanel/VBoxContainer/ScrollContainer/EmotionText");
+		_privateMindPanel = new Panel
+		{
+			Name = "PrivateMindPanel",
+			Visible = false,
+			CustomMinimumSize = PrivateMindPanelMinSize,
+			Size = PrivateMindPanelMinSize,
+			ZIndex = 98,
+		};
+		GetNode<Control>("CanvasLayer/Control").AddChild(_privateMindPanel);
+		BuildPrivateMindPanelUi();
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
 		BuildChatPanelUi();
 	_chatSendButton.Pressed += OnSendPressed;
@@ -216,6 +231,8 @@ public partial class UdpListener : Node2D
 	_contextTouchButton.Pressed += OnContextTouchPressed;
 	_contextForceSpeakButton.Pressed += OnContextForceSpeakPressed;
 	_contextEmotionButton.Pressed += OnContextEmotionPressed;
+	if (_contextPrivateMindButton != null)
+		_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
 	_contextCloseButton.Pressed += CloseCharacterContextMenu;
 		_chatInput.TextSubmitted += _ => OnSendPressed();
 		_chatSend.ConnectToHost("127.0.0.1", 4243);
@@ -368,6 +385,11 @@ public partial class UdpListener : Node2D
 				GetViewport().SetInputAsHandled();
 				return;
 			}
+			if (_privateMindPanel != null && _privateMindPanel.Visible && IsMouseOverControl(_privateMindPanel, mouseEvent.Position))
+			{
+				GetViewport().SetInputAsHandled();
+				return;
+			}
 
 			if (IsMouseOverCharacter(mouseEvent.Position))
 			{
@@ -385,6 +407,11 @@ public partial class UdpListener : Node2D
 			if (_emotionPanel.Visible)
 			{
 				CloseEmotionPanel();
+				GetViewport().SetInputAsHandled();
+			}
+			if (_privateMindPanel != null && _privateMindPanel.Visible)
+			{
+				ClosePrivateMindPanel();
 				GetViewport().SetInputAsHandled();
 			}
 
@@ -407,6 +434,15 @@ public partial class UdpListener : Node2D
 		)
 		{
 			CloseEmotionPanel();
+		}
+		if (
+			mouseEvent.ButtonIndex == MouseButton.Left
+			&& _privateMindPanel != null
+			&& _privateMindPanel.Visible
+			&& !IsMouseOverControl(_privateMindPanel, mouseEvent.Position)
+		)
+		{
+			ClosePrivateMindPanel();
 		}
 	}
 
@@ -479,6 +515,12 @@ public partial class UdpListener : Node2D
 		ToggleEmotionPanel();
 	}
 
+	private void OnContextPrivateMindPressed()
+	{
+		_bodyAutonomy?.RecordUserInteraction();
+		TogglePrivateMindPanel();
+	}
+
 	private void ToggleEmotionPanel()
 	{
 		if (_emotionPanel.Visible)
@@ -502,6 +544,36 @@ public partial class UdpListener : Node2D
 	private void CloseEmotionPanel()
 	{
 		_emotionPanel.Visible = false;
+	}
+
+	private void TogglePrivateMindPanel()
+	{
+		if (_privateMindPanel == null)
+			return;
+		if (_privateMindPanel.Visible)
+			ClosePrivateMindPanel();
+		else
+			ShowPrivateMindPanel();
+	}
+
+	private void ShowPrivateMindPanel()
+	{
+		if (_privateMindPanel == null)
+			return;
+		CloseCharacterContextMenu();
+		_privateMindPanel.Visible = true;
+		_privateMindPanel.Size = PrivateMindPanelMinSize;
+		Vector2 screenSize = GetViewportRect().Size;
+		_privateMindPanel.Position = new Vector2(
+			Mathf.Max(0f, screenSize.X - PrivateMindPanelMinSize.X - 28f),
+			Mathf.Max(0f, (screenSize.Y - PrivateMindPanelMinSize.Y) * 0.5f));
+		RefreshPrivateMindPanel();
+	}
+
+	private void ClosePrivateMindPanel()
+	{
+		if (_privateMindPanel != null)
+			_privateMindPanel.Visible = false;
 	}
 
 	private void BuildChatPanelUi()
@@ -744,12 +816,20 @@ public partial class UdpListener : Node2D
 			container.OffsetTop = 8f;
 			container.OffsetRight = -6f;
 			container.OffsetBottom = -8f;
+			if (_contextPrivateMindButton == null)
+			{
+				_contextPrivateMindButton = new Button { Name = "PrivateMindButton" };
+				container.AddChild(_contextPrivateMindButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextPrivateMindButton, Mathf.Max(0, closeIndex));
+			}
 		}
 
 		ConfigureContextMenuButton(_contextChatButton, "Chat", "res://asset/Resource/chat.png");
 		ConfigureContextMenuButton(_contextTouchButton, "Cham / Nem", "res://asset/Resource/tought.png");
 		ConfigureContextMenuButton(_contextForceSpeakButton, "Noi ngay", "res://asset/Resource/force.png");
 		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextPrivateMindButton, "Private Mind", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextCloseButton, "Dong", "res://asset/Resource/exit.png");
 	}
 
@@ -870,6 +950,75 @@ public partial class UdpListener : Node2D
 		_switchTexture.GuiInput += OnEmotionSwitchGuiInput;
 		_emotionPanel.AddChild(_switchTexture);
 
+	}
+
+	private void BuildPrivateMindPanelUi()
+	{
+		if (_privateMindPanel == null)
+			return;
+
+		var panelStyle = new StyleBoxFlat
+		{
+			BgColor = new Color(0.98f, 0.97f, 1.0f, 0.94f),
+			BorderColor = new Color(0.56f, 0.42f, 0.78f, 0.72f),
+			BorderWidthLeft = 2,
+			BorderWidthTop = 2,
+			BorderWidthRight = 2,
+			BorderWidthBottom = 2,
+			CornerRadiusTopLeft = 10,
+			CornerRadiusTopRight = 10,
+			CornerRadiusBottomRight = 10,
+			CornerRadiusBottomLeft = 10,
+			ContentMarginLeft = 14,
+			ContentMarginTop = 12,
+			ContentMarginRight = 14,
+			ContentMarginBottom = 12,
+		};
+		_privateMindPanel.AddThemeStyleboxOverride("panel", panelStyle);
+
+		var root = new VBoxContainer();
+		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		root.OffsetLeft = 18f;
+		root.OffsetTop = 16f;
+		root.OffsetRight = -18f;
+		root.OffsetBottom = -16f;
+		root.AddThemeConstantOverride("separation", 10);
+		_privateMindPanel.AddChild(root);
+
+		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 34f) };
+		root.AddChild(header);
+
+		var title = CreateUiLabel("Private Mind", 20, new Color(0.31f, 0.20f, 0.48f));
+		title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		header.AddChild(title);
+
+		var close = new Button
+		{
+			Text = "X",
+			CustomMinimumSize = new Vector2(34f, 30f),
+			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+		};
+		close.Pressed += ClosePrivateMindPanel;
+		header.AddChild(close);
+
+		var scroll = new ScrollContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+		};
+		root.AddChild(scroll);
+
+		_privateMindText = new RichTextLabel
+		{
+			BbcodeEnabled = true,
+			FitContent = true,
+			ScrollActive = false,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+		};
+		_privateMindText.AddThemeFontSizeOverride("normal_font_size", 14);
+		scroll.AddChild(_privateMindText);
+		RefreshPrivateMindPanel();
 	}
 
 	private Label CreateUiLabel(string text, int fontSize, Color color)
@@ -1603,6 +1752,12 @@ public partial class UdpListener : Node2D
 			if (_emotionPanel != null && _emotionPanel.Visible)
 				RefreshEmotionPanel();
 		}
+		if (payload.HasPrivateMindDebug)
+		{
+			_latestPrivateMindDebugJson = payload.PrivateMindDebugJson;
+			if (_privateMindPanel != null && _privateMindPanel.Visible)
+				RefreshPrivateMindPanel();
+		}
 		if (payload.HasBodyBias)
 			_bodyAutonomy?.ApplyCognitionBias(payload.BodyBias);
 
@@ -1688,6 +1843,146 @@ public partial class UdpListener : Node2D
 		}
 
 		_emotionText.Text = sb.ToString();
+	}
+
+	private void RefreshPrivateMindPanel()
+	{
+		if (_privateMindText == null)
+			return;
+		if (string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson))
+		{
+			_privateMindText.Text = "[i]Chua co private mind digest tu UDP.[/i]";
+			return;
+		}
+
+		try
+		{
+			using var doc = JsonDocument.Parse(_latestPrivateMindDebugJson);
+			JsonElement root = doc.RootElement;
+			JsonElement menu = root;
+			if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("menu", out var menuRoot) && menuRoot.ValueKind == JsonValueKind.Object)
+				menu = menuRoot;
+
+			var sb = new StringBuilder();
+			sb.Append("[b]Private Mind[/b]\n");
+			AppendPrivateMindSection(sb, menu, "snapshot_current", "1. Snapshot hien tai");
+			AppendPrivateMindSection(sb, menu, "current_thought", "2. Suy nghi hien tai");
+			AppendPrivateMindSection(sb, menu, "retained_thoughts", "3. Suy nghi giu lai");
+			AppendPrivateMindSection(sb, menu, "pulled_thoughts", "4. Suy nghi keo ve");
+			AppendPrivateMindSection(sb, menu, "temporary_thoughts", "5. Suy nghi tam thoi");
+			AppendPrivateMindSection(sb, menu, "open_concerns", "6. Concern dang mo");
+			AppendPrivateMindSection(sb, menu, "evidence_dossier", "7. Evidence Dossier");
+			AppendPrivateMindSection(sb, menu, "mini_evaluators", "8. Mini Evaluators");
+			AppendPrivateMindSection(sb, menu, "inner_judgment", "9. Inner Judgment");
+			AppendPrivateMindSection(sb, menu, "state_mutations", "10. State Mutations");
+			AppendPrivateMindSection(sb, menu, "future_bias", "11. Future Bias");
+			AppendPrivateMindSection(sb, menu, "surface_queue", "12. Surface Queue");
+			AppendPrivateMindSection(sb, menu, "speech_silence_reason", "13. Vi sao noi / vi sao im");
+			AppendPrivateMindSection(sb, menu, "debug_api", "14. Debug API / Cost / loi");
+			_privateMindText.Text = sb.ToString();
+		}
+		catch (Exception ex)
+		{
+			_privateMindText.Text = $"[color=#b00030]Private mind JSON loi:[/color] {EscapeBbcode(ex.Message)}\n\n{EscapeBbcode(CompactText(_latestPrivateMindDebugJson, 4000))}";
+		}
+	}
+
+	private static void AppendPrivateMindSection(StringBuilder sb, JsonElement menu, string key, string title)
+	{
+		sb.Append("\n[color=#6f4aa0][b]");
+		sb.Append(EscapeBbcode(title));
+		sb.Append("[/b][/color]\n");
+		if (menu.ValueKind != JsonValueKind.Object || !menu.TryGetProperty(key, out var value))
+		{
+			sb.Append("  [i]chua co du lieu[/i]\n");
+			return;
+		}
+		AppendJsonPreview(sb, value, 1);
+	}
+
+	private static void AppendJsonPreview(StringBuilder sb, JsonElement value, int indent)
+	{
+		string pad = new(' ', Math.Max(0, indent * 2));
+		switch (value.ValueKind)
+		{
+			case JsonValueKind.Object:
+			{
+				int count = 0;
+				foreach (var property in value.EnumerateObject())
+				{
+					if (count++ >= 10)
+					{
+						sb.Append(pad).Append("- ...\n");
+						break;
+					}
+					sb.Append(pad).Append("- ").Append(EscapeBbcode(property.Name)).Append(": ");
+					if (IsScalarJson(property.Value))
+					{
+						sb.Append(EscapeBbcode(ScalarJsonText(property.Value))).Append('\n');
+					}
+					else
+					{
+						sb.Append('\n');
+						AppendJsonPreview(sb, property.Value, indent + 1);
+					}
+				}
+				break;
+			}
+			case JsonValueKind.Array:
+			{
+				int count = 0;
+				foreach (var item in value.EnumerateArray())
+				{
+					if (count++ >= 8)
+					{
+						sb.Append(pad).Append("- ...\n");
+						break;
+					}
+					sb.Append(pad).Append("- ");
+					if (IsScalarJson(item))
+					{
+						sb.Append(EscapeBbcode(ScalarJsonText(item))).Append('\n');
+					}
+					else
+					{
+						sb.Append('\n');
+						AppendJsonPreview(sb, item, indent + 1);
+					}
+				}
+				break;
+			}
+			default:
+				sb.Append(pad).Append(EscapeBbcode(ScalarJsonText(value))).Append('\n');
+				break;
+		}
+	}
+
+	private static bool IsScalarJson(JsonElement value)
+	{
+		return value.ValueKind is JsonValueKind.String or JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null;
+	}
+
+	private static string ScalarJsonText(JsonElement value)
+	{
+		return value.ValueKind switch
+		{
+			JsonValueKind.String => CompactText(value.GetString() ?? "", 260),
+			JsonValueKind.Number => value.GetRawText(),
+			JsonValueKind.True => "true",
+			JsonValueKind.False => "false",
+			JsonValueKind.Null => "null",
+			_ => CompactText(value.GetRawText(), 360),
+		};
+	}
+
+	private static string CompactText(string text, int limit)
+	{
+		string clean = (text ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+		while (clean.Contains("  ", StringComparison.Ordinal))
+			clean = clean.Replace("  ", " ", StringComparison.Ordinal);
+		if (clean.Length <= limit)
+			return clean;
+		return clean.Substring(0, Math.Max(0, limit - 3)).TrimEnd() + "...";
 	}
 
 	private void RefreshEmotionPanelRows()

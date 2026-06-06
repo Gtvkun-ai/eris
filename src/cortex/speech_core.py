@@ -1,4 +1,5 @@
 import re
+from typing import Mapping
 
 from .contracts import AgentSpeechCore, MotivationalPressureReport, MotivationalUrge, SelfState, SilenceState, SpeechImpulse
 from .internal_state import PersistentInternalState
@@ -276,8 +277,10 @@ class SpeechCoreEngine:
         safe_small_talk_allowed: bool = False,
         spontaneous_impulse: SpeechImpulse | None = None,
         agent_mind: PersistentAgentMindStore | None = None,
+        private_mind_speech_bias: Mapping[str, object] | None = None,
     ) -> AgentSpeechCore:
         channel_name = str(channel or "autonomous")
+        private_bias_active = bool(private_mind_speech_bias)
         spontaneous_explicit = spontaneous_impulse is not None
         surface = thought_surface if thought_surface is not None else subconscious_seed
         emotional_signal = self._has_emotional_signal(
@@ -508,6 +511,8 @@ class SpeechCoreEngine:
             inner_thought=inner_thought,
         )
         safety_flags = tuple(dict.fromkeys((*safety_flags, *tuple(winner.safety_flags or ()))))
+        if private_bias_active:
+            safety_flags = tuple(dict.fromkeys((*safety_flags, "private_mind_speech_bias")))
         speech_impulse = self._build_speech_impulse(
             channel=channel_name,
             meaning_layer=meaning_layer,
@@ -536,6 +541,19 @@ class SpeechCoreEngine:
             )
         )
 
+        reason = self._build_reason(
+            channel=channel_name,
+            speech_source=speech_source,
+            utterance_type=utterance_type,
+            inner_thought=inner_thought,
+            emotional_signal=emotional_signal,
+        )
+        if private_bias_active:
+            reason = (
+                f"{reason} PrivateMind speech bias is active as a soft wording/style pressure; "
+                "it must not add facts or expose private reasoning."
+            )
+
         return AgentSpeechCore(
             perception=perception,
             mood=self._resolve_mood(snapshot=snapshot, appraisal=appraisal, fe_plan=fe_plan),
@@ -544,13 +562,7 @@ class SpeechCoreEngine:
             grounding=(winner.grounding or self._grounding_for_source(speech_source)),
             speech_source=speech_source if should_speak else "none",
             speech_risk_level=speech_risk_level if should_speak else "texture",
-            reason=self._build_reason(
-                channel=channel_name,
-                speech_source=speech_source,
-                utterance_type=utterance_type,
-                inner_thought=inner_thought,
-                emotional_signal=emotional_signal,
-            ),
+            reason=reason,
             should_speak=should_speak,
             safety_flags=safety_flags,
             delivery="speak" if should_speak else "silence",

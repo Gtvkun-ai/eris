@@ -65,7 +65,7 @@ class SurfaceArbiterTests(unittest.TestCase):
         data.update(overrides)
         return LowLevelSpeechPolicy(LowLevelSpeechPolicyConfig.from_mapping(data, use_env=False))
 
-    def test_presence_cue_forces_llm_after_silence(self) -> None:
+    def test_presence_cue_forces_llm_after_silence_when_anchored(self) -> None:
         calls: list[SurfaceImpulse] = []
 
         def fake_llm(*, impulse, snapshot, force_llm=False):
@@ -74,12 +74,28 @@ class SurfaceArbiterTests(unittest.TestCase):
             return "Một nhịp yên hơi dài.", "fake_llm"
 
         arbiter = SurfaceArbiter(policy=self._policy(), llm_micro_gen=fake_llm)
-        decision = arbiter.arbitrate(presence_cue=Cue(confidence=0.34), silent_cycles=3, surface_kind="presence_maintenance")
+        cue = Cue(confidence=0.34, missing_evidence_ids=False, evidence=("ev.active_window=VSCode",))
+        decision = arbiter.arbitrate(presence_cue=cue, silent_cycles=4, surface_kind="presence_maintenance")
 
         self.assertTrue(decision.should_speak)
         self.assertEqual(decision.parse_mode, "presence_maintenance")
         self.assertEqual(decision.generation_mode, "force_llm")
         self.assertEqual(len(calls), 1)
+
+    def test_unanchored_presence_after_silence_is_body_only(self) -> None:
+        calls: list[SurfaceImpulse] = []
+
+        def fake_llm(*, impulse, snapshot, force_llm=False):
+            calls.append(impulse)
+            return "Má»™t nhá»‹p yÃªn hÆ¡i dÃ i.", "fake_llm"
+
+        arbiter = SurfaceArbiter(policy=self._policy(), llm_micro_gen=fake_llm)
+        decision = arbiter.arbitrate(presence_cue=Cue(confidence=0.34), silent_cycles=4, surface_kind="presence_maintenance")
+
+        self.assertFalse(decision.should_speak)
+        self.assertTrue(decision.body_only)
+        self.assertEqual(decision.generation_mode, "forced_body_only")
+        self.assertEqual(len(calls), 0)
 
     def test_spontaneous_impulse_can_win_over_weak_presence(self) -> None:
         def fake_llm(*, impulse, snapshot, force_llm=False):
@@ -193,9 +209,11 @@ class SurfaceArbiterTests(unittest.TestCase):
             with patch("cortex.low_level_speech_policy._default_policy_config_path", return_value=Path("config/low_level_speech_policy.yaml")):
                 config = LowLevelSpeechPolicyConfig.from_env()
 
-        self.assertEqual(config.force_llm_after_silent, 3)
-        self.assertEqual(config.high_conf_threshold, 0.55)
-        self.assertIn("presence_maintenance", config.always_llm_kinds)
+        self.assertEqual(config.force_llm_after_silent, 6)
+        self.assertEqual(config.presence_force_llm_after_silent, 4)
+        self.assertEqual(config.high_conf_threshold, 0.58)
+        self.assertNotIn("presence_maintenance", config.always_llm_kinds)
+        self.assertIn("presence_maintenance", config.presence_always_llm_kinds)
 
 
 if __name__ == "__main__":

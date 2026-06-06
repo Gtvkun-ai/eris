@@ -1,6 +1,9 @@
 import json
 import socket
 
+
+MAX_UDP_PAYLOAD_BYTES = 60000
+
 # UdpTransport là một lớp để giao tiếp qua giao thức UDP,
 #  nó cung cấp các phương thức để gửi và nhận dữ liệu dưới dạng văn bản hoặc
 #  JSON. Lớp này sử dụng hai socket riêng biệt: một để gửi dữ liệu đến một địa chỉ và cổng cụ thể,
@@ -23,7 +26,28 @@ class UdpTransport:
 #  đã được cấu hình trong phương thức __init__. Việc sử dụng json.dumps với ensure_ascii=False đảm bảo rằng các ký tự Unicode được giữ nguyên trong chuỗi JSON,
 #  cho phép gửi dữ liệu có chứa các ký tự đặc biệt hoặc ngôn ngữ khác một cách chính xác.
     def send_json(self, payload: dict) -> None:
-        self.send_text(json.dumps(payload, ensure_ascii=False))
+        message = json.dumps(payload, ensure_ascii=False)
+        if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
+            payload = dict(payload)
+            payload.pop("private_mind_digest", None)
+            emotion = payload.get("emotion_debug")
+            if isinstance(emotion, dict):
+                emotion = dict(emotion)
+                emotion.pop("private_mind", None)
+                payload["emotion_debug"] = emotion
+            payload["udp_debug_truncated"] = True
+            message = json.dumps(payload, ensure_ascii=False)
+        if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
+            payload = {
+                "text": str(payload.get("text", ""))[:500],
+                "should_speak": bool(payload.get("should_speak", False)),
+                "animation": str(payload.get("animation", "stand") or "stand"),
+                "parse_mode": str(payload.get("parse_mode", "") or ""),
+                "debug_trace": "udp_payload_truncated",
+                "udp_debug_truncated": True,
+            }
+            message = json.dumps(payload, ensure_ascii=False)
+        self.send_text(message)
 
     def poll_json(self):
         try:

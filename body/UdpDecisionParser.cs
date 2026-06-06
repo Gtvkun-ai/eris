@@ -19,6 +19,8 @@ public sealed class UdpDecisionPayload
 	public string ParserTrace { get; init; } = "";
 	public EmotionDebug EmotionDebug { get; init; }
 	public bool HasEmotionDebug { get; init; }
+	public string PrivateMindDebugJson { get; init; } = "";
+	public bool HasPrivateMindDebug { get; init; }
 }
 
 public sealed class EmotionDebugItem
@@ -173,6 +175,8 @@ public sealed class UdpDecisionParser
 		bool hasBodyBias = false;
 		EmotionDebug emotionDebug = null;
 		bool hasEmotionDebug = false;
+		string privateMindDebugJson = "";
+		bool hasPrivateMindDebug = false;
 
 		try
 		{
@@ -185,6 +189,8 @@ public sealed class UdpDecisionParser
 				hasBodyBias = true;
 			if (EmotionDebug.TryFromJson(root, out emotionDebug))
 				hasEmotionDebug = true;
+			if (TryReadPrivateMindDebugJson(root, out privateMindDebugJson))
+				hasPrivateMindDebug = true;
 			if (root.TryGetProperty("text", out var t))
 			{
 				text = t.GetString() ?? "";
@@ -263,7 +269,30 @@ public sealed class UdpDecisionParser
 			ParserTrace = parserTrace,
 			EmotionDebug = emotionDebug,
 			HasEmotionDebug = hasEmotionDebug,
+			PrivateMindDebugJson = privateMindDebugJson,
+			HasPrivateMindDebug = hasPrivateMindDebug,
 		};
+	}
+
+	private static bool TryReadPrivateMindDebugJson(JsonElement root, out string json)
+	{
+		json = "";
+		if (root.TryGetProperty("private_mind_digest", out var topLevel) && topLevel.ValueKind == JsonValueKind.Object)
+		{
+			json = topLevel.GetRawText();
+			return true;
+		}
+		if (
+			root.TryGetProperty("emotion_debug", out var emotionRoot)
+			&& emotionRoot.ValueKind == JsonValueKind.Object
+			&& emotionRoot.TryGetProperty("private_mind", out var privateMind)
+			&& privateMind.ValueKind == JsonValueKind.Object
+		)
+		{
+			json = privateMind.GetRawText();
+			return true;
+		}
+		return false;
 	}
 
 	private static string StripCodeFence(string cleaned)

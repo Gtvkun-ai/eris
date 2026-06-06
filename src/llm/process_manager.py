@@ -360,6 +360,86 @@ class LlamaServerProcessManager:
         except ValueError as exc:
             raise RuntimeError(f"Loi API key remote: {exc}") from exc
 
+    def _speech_api_requested(self) -> bool:
+        apply_secrets_to_environ()
+        if self._env_flag("ERIS_SPEECH_API_ENABLED", "0"):
+            return True
+        if get_secret("ERIS_SPEECH_API_KEY", "ERIS_STYLE_API_KEY", "OPENAI_SPEECH_API_KEY", "GEMINI_SPEECH_API_KEY"):
+            return True
+        if os.environ.get("ERIS_SPEECH_PROVIDER", "").strip():
+            return True
+        profile_provider = os.environ.get("ERIS_SPEECH_PROVIDER", os.environ.get("ERIS_REMOTE_PROVIDER", "gemini")).strip().lower()
+        return bool(get_provider_profile(profile_provider, slot=os.environ.get("ERIS_SPEECH_SLOT", "speech")))
+
+    def _build_speech_client(self):
+        """Build a dedicated public-speech model client.
+
+        This keeps the main cognition client and the final wording client on
+        separate API keys/endpoints when configured, while preserving the old
+        local style rewrite path as fallback.
+        """
+
+        apply_secrets_to_environ()
+        provider = os.environ.get("ERIS_SPEECH_PROVIDER", os.environ.get("ERIS_REMOTE_PROVIDER", "gemini")).strip().lower()
+        slot = os.environ.get("ERIS_SPEECH_SLOT", "speech").strip() or "speech"
+        profile = get_provider_profile(provider, slot=slot)
+        api_key = (
+            str(profile.get("api_key") or "").strip()
+            or get_secret("ERIS_SPEECH_API_KEY", "ERIS_STYLE_API_KEY")
+        )
+
+        if provider == "gemini":
+            api_key = api_key or get_secret("GEMINI_SPEECH_API_KEY", "GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
+            base_url = (
+                str(profile.get("base_url") or "").strip()
+                or os.environ.get(
+                    "ERIS_SPEECH_BASE_URL",
+                    os.environ.get("ERIS_REMOTE_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
+                ).strip()
+            )
+            model_name = (
+                str(profile.get("model") or "").strip()
+                or str(profile.get("model_name") or "").strip()
+                or os.environ.get("ERIS_SPEECH_MODEL", "").strip()
+                or os.environ.get("ERIS_REMOTE_MODEL", "").strip()
+                or os.environ.get("GEMINI_MODEL", "").strip()
+                or "gemma-4-26b-a4b-it"
+            )
+            if not api_key:
+                raise RuntimeError("Speech Gemini dang bat nhung chua co ERIS_SPEECH_API_KEY hoac GEMINI_API_KEY.")
+            self.logger.info("Dung Gemini speech API tai %s voi model %s", base_url, model_name)
+            try:
+                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name)
+            except ValueError as exc:
+                raise RuntimeError(f"Loi API key speech Gemini: {exc}") from exc
+
+        if provider == "llama_server":
+            base_url = (
+                str(profile.get("base_url") or "").strip()
+                or os.environ.get("ERIS_SPEECH_LLAMA_SERVER_URL", os.environ.get("LLAMA_SERVER_URL", "http://127.0.0.1:8081/v1")).strip()
+            ).rstrip("/")
+            self.logger.info("Dung llama-server speech rieng tai %s", base_url)
+            return LlamaServerClient(base_url)
+
+        api_key = api_key or get_secret("OPENAI_SPEECH_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+        base_url = (
+            str(profile.get("base_url") or "").strip()
+            or os.environ.get("ERIS_SPEECH_BASE_URL", os.environ.get("ERIS_REMOTE_BASE_URL", "https://api.openai.com/v1")).strip()
+        )
+        model_name = (
+            str(profile.get("model") or "").strip()
+            or str(profile.get("model_name") or "").strip()
+            or os.environ.get("ERIS_SPEECH_MODEL", "").strip()
+            or os.environ.get("ERIS_REMOTE_MODEL", "gemma-4-26b-a4b-it").strip()
+        )
+        if not api_key:
+            raise RuntimeError("Speech API dang bat nhung chua co ERIS_SPEECH_API_KEY.")
+        self.logger.info("Dung OpenAI-compatible speech API tai %s voi model %s", base_url, model_name)
+        try:
+            return OpenAICompatibleClient(base_url=base_url, api_key=api_key, model_name=model_name)
+        except ValueError as exc:
+            raise RuntimeError(f"Loi API key speech remote: {exc}") from exc
+
     def build_client(self, *, model_path: str, n_ctx: int, n_gpu_layers: int):
         remote_enabled = self._env_flag("ERIS_REMOTE_API_ENABLED", "1")
         if remote_enabled:
@@ -471,6 +551,9 @@ class LlamaServerProcessManager:
         return LlamaServerClient(f"http://{host}:{port}/v1")
 
     def build_style_client(self, *, model_path: str, n_ctx: int, n_gpu_layers: int):
+        if self._speech_api_requested():
+            return self._build_speech_client()
+
         if not self._env_flag("ERIS_LOCAL_STYLE_REWRITE_ENABLED", "0"):
             return None
         if not os.path.isfile(model_path):

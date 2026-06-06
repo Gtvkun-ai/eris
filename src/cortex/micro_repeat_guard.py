@@ -45,6 +45,14 @@ class SemanticRepeatGuard:
             "im hoi lau", "toi van o day", "toi o day", "van dang nghe",
             "van dang quan sat", "giu cho", "o day them chut",
         ),
+        "private_mind_continuity_filler": (
+            "mach nay van giu cho", "khoang yen nay van giu cho",
+            "toi van giu nhip", "van con o day", "khoang nay chua dut",
+            "mach van con", "mach nay van con", "van giu nhip",
+            "m ch n y v n gi ch", "kho ng y n n y v n gi ch",
+            "t i v n gi nh p", "v n c n y", "kho ng n y ch a t",
+            "m ch v n c n",
+        ),
         "code_stalled": (
             "code", "debug", "loi", "traceback", "terminal", "python", "vscode",
             "visual studio", "mach code",
@@ -83,6 +91,15 @@ class SemanticRepeatGuard:
             "Nhịp im này vẫn còn đó.",
         ),
     }
+
+    SEMANTIC_PROTOTYPES["private_mind_continuity_filler"] = (
+        "Mach nay van giu cho.",
+        "Khoang yen nay van giu cho.",
+        "Toi van giu nhip.",
+        "Van con o day.",
+        "Khoang nay chua dut.",
+        "Mach van con.",
+    )
 
     SYNONYMS: tuple[tuple[str, str], ...] = (
         ("ma nguon", "code"),
@@ -266,6 +283,7 @@ class SemanticRepeatGuard:
                 "log_meta": 4,
                 "chat_idle": 3,
                 "screen_still": 2,
+                "private_mind_continuity_filler": 2,
                 "ambient_presence_status_ping": 1,
                 "quiet_still": 0,
             }

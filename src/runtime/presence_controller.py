@@ -721,6 +721,8 @@ class PresenceControllerMixin:
                 self._surface_float(getattr(state, "thought_stream_pressure", 0.0)),
                 self._surface_float(getattr(state, "subconscious_pressure", 0.0)),
                 self._surface_float(getattr(state, "unresolved_prediction_pressure", 0.0)),
+                self._surface_float(getattr(self, "private_mind_thought_pressure", 0.0)),
+                self._surface_float(getattr(getattr(self, "thought_stream", None), "private_mind_pressure_bias", 0.0)),
             )
             rel_state = getattr(state, "relationship_dynamics", None)
             continuity_frame = evaluate_continuity_threat(
@@ -1926,6 +1928,15 @@ class PresenceControllerMixin:
             frame=frame,
             sensor_visibility=sensor_visibility,
         )
+        private_mind_impulses: tuple[object, ...] = ()
+        private_drain = getattr(self, "_drain_private_mind_surface_impulses", None)
+        if callable(private_drain):
+            try:
+                private_mind_impulses = tuple(private_drain(limit=4) or ())
+            except TypeError:
+                private_mind_impulses = tuple(private_drain() or ())
+            except Exception:
+                private_mind_impulses = ()
         self.logger.info(
             "[surface_arbiter] input kind=%s silent_cycles=%d force_llm=%s cue_should_call_llm=%s cue_missing_evidence_ids=%s",
             surface_kind,
@@ -1938,7 +1949,7 @@ class PresenceControllerMixin:
             snapshot=snapshot,
             cognitive_frame=frame,
             presence_cue=cue,
-            extra_impulses=tuple(item for item in (*endogenous_impulses, sensor_impulse, *tuple(extra_impulses or ())) if item is not None),
+            extra_impulses=tuple(item for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *tuple(extra_impulses or ())) if item is not None),
             surface_kind=surface_kind,
             force_llm=force_llm,
             silent_cycles=self.presence_maintenance_silent_cycles,
