@@ -609,26 +609,47 @@ class SurfaceArbiter:
                 if value is not None:
                     candidates.append(value)
         for item in candidates:
+            # Phase 0 subconscious report có thể được gắn lên frame theo 2 dạng:
+            #   1. frame.subconscious_seed = ThoughtObject.to_surface_seed()
+            #   2. frame.subconscious_report = {"object": ThoughtObject.to_dict(), ...}
+            # Dạng (2) là debug report, nên phải bóc object ra trước. Nếu không,
+            # SurfaceArbiter sẽ nhìn thấy cả report nhưng không thấy payload thật,
+            # rồi lại im như thể không có gì xảy ra. Một kiểu mất thư trong hòm thư.
+            if isinstance(item, Mapping) and isinstance(item.get("object"), Mapping):
+                item = item.get("object") or item
+
             if isinstance(item, Mapping):
+                route = str(item.get("recommended_route", "") or "").strip()
+                if route and route != "surface_candidate":
+                    continue
                 topic = self._first_text(
                     item.get("topic_seed", ""),
+                    item.get("dominant_theme", ""),
                     item.get("partial_text", ""),
+                    item.get("summary", ""),
                     item.get("unfinished_impulse", ""),
                     item.get("almost_spoke", ""),
                 )
                 pressure = max(
+                    _clamp01(item.get("surface_pressure", 0.0)),
                     _clamp01(item.get("pressure", 0.0)),
                     _clamp01(item.get("momentum_score", 0.0)),
                     _clamp01(item.get("novelty", 0.0)) * 0.7,
                 )
             else:
+                route = str(getattr(item, "recommended_route", "") or "").strip()
+                if route and route != "surface_candidate":
+                    continue
                 topic = self._first_text(
                     getattr(item, "topic_seed", ""),
+                    getattr(item, "dominant_theme", ""),
                     getattr(item, "partial_text", ""),
+                    getattr(item, "summary", ""),
                     getattr(item, "unfinished_impulse", ""),
                     getattr(item, "almost_spoke", ""),
                 )
                 pressure = max(
+                    _clamp01(getattr(item, "surface_pressure", 0.0)),
                     _clamp01(getattr(item, "pressure", 0.0)),
                     _clamp01(getattr(item, "momentum_score", 0.0)),
                     _clamp01(getattr(item, "novelty", 0.0)) * 0.7,
@@ -650,6 +671,15 @@ class SurfaceArbiter:
                     evidence.append(payload_seed[:140])
                 if residue_reason:
                     evidence.append(f"residue_reason={residue_reason[:96]}")
+                # Phase 0 Synthesizer đã là một internal anchor hợp lệ: nó có
+                # evidence_ids + route, không phải timer/silence rỗng. Gắn anchor
+                # rõ để forced_body_only không bóp chết seed vừa được nén.
+                root_source = str(
+                    (item.get("root_source", "") if isinstance(item, Mapping) else getattr(item, "root_source", ""))
+                    or ""
+                ).strip()
+                if root_source == "subconscious_synthesizer":
+                    evidence.append("anchor=subconscious_synthesizer")
                 evidence.extend(anchors)
                 return SurfaceImpulse(
                     kind="thought_stream_surface",

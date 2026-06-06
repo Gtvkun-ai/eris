@@ -18,67 +18,66 @@ Giới hạn trung thực:
 
 # 0A. Git delta gần đây
 
-Khoảng thay đổi đã soi trực tiếp: từ `2026-06-04` đến `2026-06-06`, chủ yếu qua các commit `fdfe52c`, `c268eab`, `aa9af6f`, `04bd5f6`, `5f812fc`, `553985e`.
+Khoảng thay đổi đã soi trực tiếp: từ `2026-06-04` đến `2026-06-06`, hiện kéo dài qua các commit `fdfe52c`, `c268eab`, `aa9af6f`, `04bd5f6`, `5f812fc`, `553985e`, `eff0420`, `e8d3511`, `104c45b`.
 
 Trạng thái sync với remote lúc rà tài liệu:
 - `git fetch origin` chạy sạch.
-- `git rev-parse HEAD` = `git rev-parse origin/main` = `553985e189ab44140b8bfe46d7aa025a199c34f7`.
-- nghĩa là hiện **không có gì bị thiếu do chưa pull**; phần cần cập nhật là tài liệu và local worktree, không phải thiếu commit upstream.
+- `git rev-parse HEAD` = `git rev-parse origin/main` = `104c45bf3f924570ba72bef7a2d6ea6aa45f8687`.
+- `git status --short` đang sạch.
+- nghĩa là hiện **không có gì bị thiếu do chưa pull**; phần cần cập nhật là tài liệu source-map để bám đúng `HEAD` mới.
 
 Trục thay đổi chính theo git:
-- low-level surface path được gom về một trục `PresenceController -> SurfaceArbiter -> LowLevelSpeechPolicy -> LlmService.generate_micro_presence_line`, thay cho nhiều nhánh micro-presence rải rác.
-- `config/low_level_speech_policy.yaml` + env override được thêm để tune `force_llm_after_silent`, threshold, cooldown, và body-only streak mà không phải sửa code.
-- `ModelBudgetPolicy` chuyển trọng tâm sang queue/lease scheduler; `ERIS_RESOURCE_GUARD_ENABLED` hiện mặc định `false`, tức runtime thường là queue-only chứ không chặn vì máy “đang bận”.
-- `LlmService` được siết lại ở decision JSON: compact contract, sanitize decision-like JSON, salvage JSON cụt nếu còn `"text"` sạch, và chặn việc wrap metadata/prose thẳng vào `text`.
-- tầng nội sinh được đẩy mạnh ở `agent_state_stack.py`, `impulse_arbitration.py`, `speech_core.py`, `surface_arbiter.py`: thêm `vital_pressure`, `metabolic_pressure`, memory/silence/boredom residue, và re-engagement sau im lặng dài.
-- `presence_controller.py` tiếp tục được bơm thêm đường `active_memory_resonance -> memory_resonance impulse`, cộng cơ chế tách `body-only presence action` khỏi spoken cooldown.
-- wake-gated low-level surface đã được sửa lớp status/debug: reject/body-only/speak của micro-presence và re-engagement giờ phản ánh đúng `SurfaceDecision` của chính lượt hiện tại, không còn rò sentinel `reject:not_started` từ `arbiter.last_decision`.
-- Phase 1 behavior contract đã được khóa bằng regression test: route `VS Code + tongquat.md + focused + silence=6 + vital thấp` không được cho `thought_stream_surface` thắng kiểu poetic filler; chỉ được body-only hoặc micro-line có anchor thật.
-- thêm nhánh `sensor_visibility -> blind_frustration`: thiếu screen evidence đơn thuần thì im; timeout / budget block / context shift chưa refresh mới được phép surface một câu grumble rất ngắn, không claim màn hình và không đổ lỗi user nếu thiếu bằng chứng context shift.
-- `autonomous_wake_governor.py` đã thành gate wake rõ nghĩa hơn: wake level tách hẳn `sleep/observe/think/micro_presence/vision/main`, có degrade theo interrupt cost thay vì chỉ một cờ wake/no-wake.
-- `coordinator.py` tiếp tục phình thành nơi hợp mạch runtime thật sự; commit `553985e` còn sửa khá mạnh file này và chính `tongquat.md`, nên các mô tả coordinator nên ưu tiên workspace hiện tại hơn snapshot cũ.
-- test coverage mới bám đúng các thay đổi trên: `tests/test_surface_arbiter.py`, `tests/test_model_budget_policy_queue.py`, `tests/test_presence_controller_memory_surface.py`, `tests/test_runtime_coordinator.py`, `tests/test_blind_frustration_surface.py`, cùng các ca salvage/repair trong `tests/test_llm_service.py`.
+- low-level surface path đã được khóa thành một trục rõ ràng `PresenceController -> SurfaceArbiter -> LowLevelSpeechPolicy -> LlmService.generate_micro_presence_line`, với thêm các nhánh guard mới cho `blind_frustration`, continuity tension, và thought-surface có anchor.
+- `config/low_level_speech_policy.yaml` tiếp tục được tune; file này giờ quan trọng hơn snapshot cũ vì các threshold/reasoning path đã đổi thêm sau `553985e`, không chỉ còn mỗi force-LLM sau im lặng.
+- `LlmService` vẫn giữ strict decision JSON, nhưng phần mô tả tài liệu cũ đã lạc nhịp với việc service gọn bớt fallback cứng và đẩy nhiều logic route/repair sang các layer quanh nó.
+- `sensor_visibility.py` được thêm hẳn thành contract factual cho trạng thái “mù màn hình”; plain missing evidence thì im, còn timeout / budget block / context shift chưa refresh mới có quyền mở cửa cho `blind_frustration`.
+- `telemetry/system.py` không còn chỉ đọc active window/browser title; nó đã lazy-init `ContentMetadataCollector` để nhặt metadata foreground có source ladder L0-L5 rồi nhét vào telemetry snapshot.
+- `telemetry/content_metadata.py` là mảng mới đáng chú ý: DOM/accessibility/media-session/browser title được gom theo thang nguồn, có privacy guard, stale guard, conflict notes, và cap confidence trước khi Se dùng.
+- `SeLens` đã bớt kiểu router keyword tuyệt đối; hiện nó chấm điểm context cạnh tranh, giữ `confidence`, `ambiguity`, `confidence_cap`, và hấp thụ `content_metadata` vào evidence/claim style/prompt facts.
+- `MeaningLayer` được đẩy thêm nhánh `prolonged_activity`: cùng semantic family kéo dài đủ lâu giờ có thể trở thành meaning shift riêng, thay vì mọi thứ mắc kẹt mãi ở `ambient_idle`.
+- `continuity_threat.py` là module mới tách riêng “im lâu” khỏi “đứt gãy hiện diện”; continuity anxiety giờ được tính như prediction error theo ngữ cảnh, không phải đồng hồ im lặng cosplay cảm xúc.
+- `contracts.py` giờ đã mang `content_metadata` ngay trong `TelemetrySnapshot`, nên các downstream layer không cần tự đoán metadata foreground qua title thô nữa.
+- `sensory_model_adapter.py` được khóa rõ vai trò thành lane `sensory_0_6b`: observer 0.6B qua Ollama chỉ được phân loại snapshot thành JSON, không được trả lời user hay bịa inner life.
+- `coordinator.py` tiếp tục phình thành nơi hợp mạch runtime thật sự; sau pull này nó còn bọc queue cho `sensory_model_adapter.observe`, ghi `surface_override`, và suppress wake-main hint từ background observer thay vì để observer tự cướp quyền.
+- `event_ledger.json` và `src/memory/event_ledger.py` được nâng tầm thành raw audit layer append-only rõ nghĩa hơn; đây không còn là file phụ mờ nhạt trong memory core.
+- test coverage mới bám theo các trục trên: `tests/test_surface_arbiter.py`, `tests/test_runtime_coordinator.py`, `tests/test_blind_frustration_surface.py`, cùng các test observer/scheduler/memory hiện phản ánh HEAD mới hơn snapshot cũ.
 
 Nhìn theo `git show --stat`, mấy cụm thay đổi đáng chú ý nhất trong chuỗi commit vừa rà là:
-- `fdfe52c`: introduce `LowLevelSpeechPolicy`, `SurfaceArbiter`, test `tests/test_surface_arbiter.py`, và dời low-level surface sang một trục thống nhất.
-- `c268eab`: xóa `Tongquat.txt`, mở rộng `presence_controller.py`, tăng coverage queue/runtime coordinator, và chuyển `tongquat.md` thành bản chính.
-- `aa9af6f`: thêm mạnh vào memory/event ledger + `presence_controller.py` + `autonomous_wake_governor.py`, đẩy hướng presence có residue/memory-resonance.
-- `04bd5f6`: tune YAML/policy, tăng `impulse_arbitration.py`, `surface_arbiter.py`, `model_budget_policy.py`, và thêm `tests/test_model_budget_policy_queue.py`.
-- `5f812fc`: tăng `micro_repeat_guard.py`, `surface_arbiter.py`, `presence_controller.py`, cùng regression test cho memory-surface.
-- `553985e`: tiếp tục sửa `coordinator.py`, `presence_controller.py`, cập nhật `tongquat.md`, và thay đổi runtime state files.
+- `fdfe52c` -> `553985e`: dựng xương sống surface/wake/presence mới mà bản tài liệu cũ đã bám tương đối đúng.
+- `eff0420`: mở rộng mạnh `coordinator.py`, `presence_controller.py`, `surface_arbiter.py`; thêm coverage cho runtime coordinator và surface contract.
+- `e8d3511`: thêm `src/runtime/sensor_visibility.py`, `src/telemetry/content_metadata.py`, tăng `se.py`, `meaning.py`, `prompt_context_builder.py`, và test `blind_frustration`.
+- `104c45b`: thêm `src/cortex/continuity_threat.py`, sửa tiếp `agent_state_stack.py`, `impulse_arbitration.py`, `surface_arbiter.py`, `presence_controller.py`, `low_level_speech_policy.py`, đồng thời làm `event_ledger.json` phình mạnh hơn vì runtime state thật đã được ghi.
 
 Tình trạng worktree lúc cập nhật tài liệu này:
-- `git status --short` hiện có cả drift dữ liệu runtime lẫn source chưa commit:
-  - runtime data: `memory_core/active_state_snapshot.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl`.
-  - source local: `src/runtime/autonomous_wake_governor.py`, `src/runtime/coordinator.py`.
-- nghĩa là repo **không thiếu pull**, nhưng workspace hiện tại **không hoàn toàn sạch**; khi mô tả behavior phải phân biệt đâu là code đã commit ở `HEAD`, đâu là local patch đang nằm ngoài commit.
+- repo hiện sạch và đang đúng `HEAD`.
+- các file runtime data như `memory_core/active_state_snapshot.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl` vẫn là state sống; lần này chúng không còn là drift local mà là một phần snapshot hiện tại của workspace.
 
 ---
 
 # 0B. Repo snapshot hiện tại
 
 Snapshot thô để khỏi phải đoán “repo giờ to đến đâu”:
-- tổng source code đã đếm: khoảng `108,437` dòng trong `247` file code (`.py` + `.cs`).
-- riêng Python: `104,703` dòng trong `241` file.
-- riêng C#: `3,734` dòng trong `6` file.
+- tổng source code đã đếm: khoảng `125,358` dòng trong `251` file code (`.py` + `.cs`).
+- riêng Python: `121,201` dòng trong `245` file.
+- riêng C#: `4,157` dòng trong `6` file.
 
 Phân theo vùng chính:
-- `src/`: `181` file, khoảng `90,044` dòng.
-- `tests/`: `49` file, khoảng `10,949` dòng.
-- `body/`: `13` file, khoảng `3,888` dòng.
+- `src/`: `183` file code, khoảng `91,710` dòng.
+- `tests/`: `50` file code, khoảng `11,526` dòng.
+- `body/`: `13` file tổng, riêng code khoảng `3,734` dòng.
 - `scripts/`: `11` file, khoảng `4,408` dòng.
-- `memory_core/`: `10` file dữ liệu/state, khoảng `4,270` dòng JSON.
-- `config/`: `5` file, khoảng `119` dòng.
+- `memory_core/`: `10` file dữ liệu/state, khoảng `5,299` dòng JSON.
+- `config/`: `5` file, khoảng `126` dòng.
 
 Các cụm Python lớn nhất hiện tại:
-- `src/cortex/`: `59` file, khoảng `38,582` dòng.
-- `src/runtime/`: `36` file, khoảng `27,484` dòng.
-- `src/memory/`: `48` file, khoảng `12,500` dòng, chưa tính các tiểu mục `claims/`, `judgement/`, `understanding/`.
+- `src/cortex/`: `60` file, khoảng `39,808` dòng.
+- `src/runtime/`: `37` file, khoảng `28,140` dòng.
+- `src/memory/`: `57` file, khoảng `13,541` dòng.
 
 Hot files đã soi trực tiếp trong workspace:
-- `src/runtime/coordinator.py`: khoảng `6,011` dòng, đúng nghĩa god object/orchestrator.
-- `src/runtime/presence_controller.py`: khoảng `2,209` dòng, hiện là trục low-level presence sống nhất.
-- `src/cortex/surface_arbiter.py`: khoảng `1,005` dòng, là router low-level surface trọng yếu.
+- `src/runtime/coordinator.py`: khoảng `6,088` dòng, đúng nghĩa god object/orchestrator.
+- `src/runtime/presence_controller.py`: khoảng `2,432` dòng, hiện là trục low-level presence sống nhất.
+- `src/cortex/surface_arbiter.py`: khoảng `1,239` dòng, là router low-level surface trọng yếu.
 - `src/runtime/autonomous_wake_governor.py`: khoảng `234` dòng, nhỏ hơn nhiều nhưng là gate wake rất nhạy.
 
 ---
@@ -159,6 +158,11 @@ Status: SUPPORT DOC / VERIFY.
 Role: kết quả test gần nhất.
 Debug khi: cần truy failure cụ thể.
 Status: GENERATED DEBUG ARTIFACT.
+
+## `src/src.zip`
+Role: artifact nén source nội bộ trong workspace.
+Debug khi: chỉ đáng để ý nếu tool/script nào đó đang đọc snapshot zip thay vì tree source thật.
+Status: GENERATED ARTIFACT / SHOULD_NOT_DRIVE_ARCHITECTURE.
 
 ## `tmp_llama_out.log`, `tmp_llama_err.log`, `tmp_vision_smoke.png`
 Role: artifact runtime/test tạm.
@@ -714,8 +718,11 @@ Status: ACTIVE.
 Role: adapter 0.6B sensory/observer model.
 Reads env:
 - ERIS_SENSORY_ENABLED, PROVIDER, MODEL, KEEP_ALIVE, TEMP.
-Outputs ObserverFrame JSON schema.
-Debug khi: sensory model không trả schema hoặc observer fallback sai.
+Current code specifics:
+- mặc định model là `qwen3:0.6b` qua Ollama; đây là lane sensory riêng, không phải main cognition GGUF.
+- system prompt khóa rất rõ: chỉ classify runtime signals, trả JSON only, không được answer user, không được infer hidden inner life.
+- schema output gồm `focus_kind`, `activity_intent`, `salience`, `novelty`, `repetition`, `ambiguity`, `possible_error`, `user_presence`, `recommended_action`, `recommended_budget`, `confidence`.
+Debug khi: sensory model không trả schema, observer fallback sai, hoặc 0.6B tự cư xử như chat model thay vì gate cảm giác.
 Status: ACTIVE.
 
 ## `src/runtime/contextual_autonomy_loop.py`
@@ -950,10 +957,14 @@ Reads:
 - foreground window.
 - active app.
 - browser/tab via UIAutomation.
+- foreground content metadata qua `ContentMetadataCollector`.
 - CPU/RAM.
 - idle time.
 - open windows.
-Debug khi: active window/browser title sai.
+Current code specifics:
+- lazy-init `ContentMetadataCollector`; failure ở collector không được làm sập telemetry.
+- browser URL/tab vẫn là signal riêng, nhưng content metadata giờ có thể bơm thêm `title/caption/source/tier/confidence` vào snapshot.
+Debug khi: active window/browser title sai, content metadata rỗng bất thường, hoặc collector làm telemetry trông “thông minh quá mức”.
 Status: ACTIVE.
 
 ## `src/telemetry/service.py`
@@ -963,6 +974,25 @@ Outputs:
 - JPEG base64 data URI for vision.
 Debug khi: screen vision request không có image_data_uri.
 Status: ACTIVE.
+
+## `src/telemetry/content_metadata.py`
+Role: collector fact foreground content theo source ladder L0-L5 cho Se.
+Inputs:
+- browser DOM bridge cache.
+- accessibility tree.
+- media session cache.
+- browser URL/title fallback.
+- OCR cache nếu có.
+Current code specifics:
+- `ContentMetadataCollector.collect()` ưu tiên DOM -> accessibility/media_session/OCR -> browser/window title fallback.
+- metadata được gắn `source`, `tier`, `confidence`, `privacy_level`, `page_kind`, `visible_text_sample`, `conflicts`, `evidence_notes`.
+- chat/mail/meeting/sensitive app bị privacy guard chặn deep extraction; fallback lúc đó chỉ nên là title/url rất nông.
+- DOM + OCR agreement có thể nâng source lên `dom_ocr_agreement` thay vì cứ tin một nguồn đơn lẻ.
+Debug khi:
+- Se nói quá chắc về nội dung foreground dù source tier thấp.
+- app nhạy cảm vẫn bị lôi caption/text sâu vào prompt.
+- DOM/OCR/accessibility mâu thuẫn nhưng downstream vẫn cư xử như bằng chứng sạch.
+Status: ACTIVE VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/se.py`
 Role: SeLens, cảm nhận trực tiếp.
@@ -974,10 +1004,16 @@ Outputs:
 - user signals.
 - evidence.
 - claim_style.
+Current code specifics:
+- không còn là router keyword tuyệt đối; `_ContextClassification` giữ `primary_kind`, `confidence`, `ambiguity`, `candidates`, `confidence_cap`, `surface_kind`, `content_kind`, `activity_intent`.
+- `content_metadata` được normalize rồi hút vào browser tabs/evidence/prompt facts; Se giờ biết phân biệt title thô với content fact có source/tier.
+- ambiguity cao hoặc confidence thấp sẽ kéo `claim_style` xuống để downstream bớt khẳng định bừa.
+- `compact_summary()`/machine context giờ phản ánh cả context classification lẫn content metadata, nên prompt có thêm layer “mình biết cái này mạnh tới đâu”.
 Debug khi:
 - ERIS nói quá chắc từ evidence mỏng.
 - YouTube/nhạc bị hiểu thành distraction.
 - generic window facts tràn prompt.
+- content metadata tốt mà Se vẫn cư xử như chỉ có title cửa sổ.
 Status: ACTIVE FRONTLINE EVIDENCE.
 
 ---
@@ -1009,6 +1045,7 @@ Contains:
 - session ritual, attention broadcast, MeaningLayerResult, PersonalityLensResult.
 - appraisal, self state, speech core, speech impulse, thought stream, motivational urge, action plan, cognitive frame, memory update.
 Current code specifics:
+- `TelemetrySnapshot` hiện có `content_metadata`; đây là raw/normalized foreground fact cho Se, không phải kết luận tâm lý user.
 - `SpeechImpulse` đã có `vital_pressure`, `metabolic_pressure`, `is_vital_pressure` để đưa áp lực nội sinh sang SurfaceArbiter/LLM micro wording.
 - `CognitiveActionPlan.to_dict()` hiện serialize `vital_pressure`, `metabolic_pressure`, `is_vital_pressure`.
 Status note:
@@ -1091,6 +1128,20 @@ Debug khi:
 - force_speak bị hiểu như thiếu evidence thay vì user gọi hiện diện.
 - idle lâu mà `meaning_shift` không bao giờ mở dù activity thực sự bị kéo dài.
 Status: ACTIVE CRITICAL.
+
+## `src/cortex/continuity_threat.py`
+Role: tách “im lâu” khỏi “đứt gãy hiện diện”, rồi biến nó thành continuity pressure có ngữ cảnh.
+Outputs:
+- `ContinuityThreatFrame` với `expected_silence`, `unexpected_absence`, `presence_prediction_error`, `continuity_threat`, `continuity_anxiety`, `reconnect_drive`, `restraint_drive`, `surface_tension`, `emotional_anchor`, `reason`.
+Current code specifics:
+- `expected_silence_for_context()` co giãn ngưỡng im theo `focus_kind`, `channel`, ritual strength, attachment visibility, session afterglow.
+- `evaluate_continuity_threat()` cố tính prediction error từ `relationship_state`, `internal_state`, social presence, unresolved loop, memory resonance; timer một mình không được quyền đóng vai nỗi cô độc.
+- module này là cầu mới giữa relation/internal state với thought-surface/presence tension; im lâu trong deep work và im lâu sau ritual không còn bị coi như cùng một thứ.
+Debug khi:
+- ERIS than vãn hiện diện chỉ vì idle counter lớn.
+- long silence trong coding focus bị diễn giải như rạn nứt quan hệ.
+- continuity anxiety nhìn cao nhưng route surface vẫn cư xử như chỉ có ambient silence.
+Status: ACTIVE VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/appraisal.py`
 Role: sắc thái trước-ngôn-ngữ.
@@ -1609,8 +1660,12 @@ Status: ACTIVE.
 
 ## `src/memory/event_ledger.py`
 Role: append-only raw event ledger.
-Debug khi: audit evidence mất.
-Status: ACTIVE.
+Current code specifics:
+- `EventLedgerRecord` giữ `frame_id`, `source`, `content`, `reliability`, `privacy_level`, `source_signal_id`, `evidence_ids`, `tags`, `metadata`.
+- `atomic_write_json()` ghi temp rồi replace; ledger này cố sống như audit layer thật chứ không phải file append kiểu phó mặc.
+- public API chỉ có append/query/recent/by_frame; nếu muốn “sửa quá khứ” thì phải ghi event repair mới, không mutate record cũ.
+Debug khi: audit evidence mất, raw event bị overwrite thay vì append, hoặc runtime state trông hợp lý nhưng không truy được nguồn signal/evidence sinh ra nó.
+Status: ACTIVE VERIFIED_IN_WORKSPACE.
 
 ## `src/memory/active_state_snapshot.py`
 Role: overwrite current state snapshot.
@@ -1756,6 +1811,8 @@ Debug khi:
 - behavior sai nhưng code có vẻ đúng: kiểm tra data/state tích lũy.
 Rule:
 - phân biệt bug logic với state bẩn. Đây là nơi nhiều người tự bắn vào chân rồi đổ lỗi cho kiến trúc, truyền thống cao quý của nghề code.
+Note:
+- sau pull này, `event_ledger.json` không còn là file lẻ mờ nhạt; nó đã thành raw audit trail lớn hơn hẳn và đáng kiểm trước khi kết luận “cognition tự bịa”.
 Status: RUNTIME DATA.
 
 ## `memory_core_backup_*/`
