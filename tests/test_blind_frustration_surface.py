@@ -110,6 +110,7 @@ def test_surface_arbiter_treats_blind_frustration_as_speakable_sensor_impulse():
         speech_act="blind_frustration",
         family="sensor_visibility:vision_timeout",
         evidence=(
+            "event_id=sensor_visibility:vision_timeout",
             "sensor_visibility=limited",
             "no_current_screen_evidence=true",
             "vision_timeout=true",

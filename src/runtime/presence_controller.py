@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from cortex.contracts import SessionRitualReport
 from cortex.social_presence import SocialPresenceDetector
 from cortex.low_level_speech_policy import LowLevelSpeechPolicy
 from cortex.surface_arbiter import SurfaceArbiter, SurfaceDecision, SurfaceImpulse
+from cortex.surface_seed_compiler import SurfaceSeedCompiler
 from cortex.continuity_threat import evaluate_continuity_threat
 from domain import Decision
 from runtime.no_fallback_policy import no_fallback_mode_enabled
@@ -104,6 +106,170 @@ class SurfaceArbitrationResult:
 
 
 class PresenceControllerMixin:
+    def _surface_anchor_token(self, kind: str, value: object) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if not text:
+            text = "surface"
+        safe = re.sub(r"[^a-zA-Z0-9_.:-]+", "_", text).strip("_").lower()
+        if len(safe) > 48:
+            digest = hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()[:10]
+            safe = f"{safe[:36].rstrip('_')}_{digest}"
+        key = "vision_fact_id" if kind == "vision_fact" else f"{kind}_id"
+        return f"{key}={safe or 'surface'}"
+
+    def _surface_vision_stale_seconds(self) -> float:
+        raw = os.environ.get("ERIS_SURFACE_VISION_STALE_SEC", "45").strip()
+        try:
+            value = float(raw)
+        except Exception:
+            value = 45.0
+        return max(5.0, value)
+
+    def _surface_has_fresh_vision_evidence(self, snapshot, *, now: float | None = None) -> bool:
+        facts = tuple(
+            str(item or "").strip()
+            for item in (getattr(snapshot, "vision_facts", ()) or getattr(self, "vision_facts", ()) or ())
+            if str(item or "").strip()
+        )
+        if not facts:
+            return False
+        captured_at = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0)
+        if captured_at <= 0.0:
+            return True
+        return (float(now or time.time()) - captured_at) <= self._surface_vision_stale_seconds()
+
+    def _surface_wants_current_context(
+        self,
+        *,
+        surface_kind: str,
+        cue: MicroPresenceCue,
+        extra_impulses: tuple[object, ...],
+    ) -> bool:
+        haystack = " ".join(
+            str(item or "")
+            for item in (
+                surface_kind,
+                getattr(cue, "reason", ""),
+                getattr(cue, "focus_family", ""),
+                *tuple(getattr(cue, "evidence", ()) or ()),
+            )
+        ).lower()
+        markers = (
+            "screen",
+            "vision",
+            "window",
+            "active_app",
+            "active_window",
+            "current_context",
+            "technical_help",
+            "micro_observation",
+            "scene",
+        )
+        if bool(getattr(cue, "should_call_llm", False)) and any(marker in haystack for marker in markers):
+            return True
+        for impulse in tuple(extra_impulses or ()):
+            kind = str(getattr(impulse, "kind", "") or (impulse.get("kind", "") if isinstance(impulse, dict) else "")).lower()
+            source = str(getattr(impulse, "source", "") or (impulse.get("source", "") if isinstance(impulse, dict) else "")).lower()
+            root = str(getattr(impulse, "root_source", "") or (impulse.get("root_source", "") if isinstance(impulse, dict) else "")).lower()
+            if kind in {"technical_help", "screen_observation", "micro_observation"}:
+                return True
+            if source in {"vision", "screen"} or root == "vision_fact":
+                return True
+            if bool(getattr(impulse, "needs_external_evidence", False)):
+                return True
+        return False
+
+    def _surface_refresh_vision_once_if_needed(
+        self,
+        *,
+        snapshot,
+        cue: MicroPresenceCue,
+        surface_kind: str,
+        extra_impulses: tuple[object, ...],
+    ) -> tuple[bool, bool]:
+        wants_current = self._surface_wants_current_context(
+            surface_kind=surface_kind,
+            cue=cue,
+            extra_impulses=extra_impulses,
+        )
+        if not wants_current:
+            return False, self._surface_has_fresh_vision_evidence(snapshot)
+        now = time.time()
+        if self._surface_has_fresh_vision_evidence(snapshot, now=now):
+            return True, True
+        updater = getattr(self, "_maybe_update_screen_facts", None)
+        if not callable(updater):
+            return True, False
+        try:
+            facts = updater(
+                snapshot=snapshot,
+                channel="surface",
+                force_refresh=True,
+                started_at=now,
+            )
+        except TypeError:
+            try:
+                facts = updater(snapshot=snapshot, force_refresh=True)
+            except Exception:
+                facts = ()
+        except Exception as exc:
+            self.logger.warning("[surface_evidence] vision refresh failed: %s", exc)
+            facts = ()
+        if facts:
+            attach = getattr(self, "_attach_screen_facts", None)
+            if callable(attach):
+                try:
+                    attach(snapshot, tuple(facts))
+                except Exception:
+                    snapshot.vision_facts = tuple(facts)
+            else:
+                snapshot.vision_facts = tuple(facts)
+        fresh = self._surface_has_fresh_vision_evidence(snapshot)
+        if not fresh:
+            try:
+                snapshot.vision_facts = ()
+            except Exception:
+                pass
+        self.logger.info(
+            "[surface_evidence] current_context=%s fresh_after_refresh=%s fact_count=%d",
+            bool(wants_current),
+            bool(fresh),
+            len(tuple(getattr(snapshot, "vision_facts", ()) or ())),
+        )
+        return True, fresh
+
+    def _surface_seed_can_speak_without_screen(self, compiled_seed) -> bool:
+        if not bool(getattr(compiled_seed, "selected", False)):
+            return False
+        source = str(getattr(compiled_seed, "root_source", "") or "").strip()
+        if source in {"memory_resonance", "thought_stream", "internal_agenda", "endogenous_drive"}:
+            return bool(getattr(compiled_seed, "public_seed", "").strip())
+        return False
+
+    def _stale_surface_body_only(self, *, surface_kind: str) -> SurfaceArbitrationResult:
+        surface = SurfaceDecision(
+            text="",
+            body_only=True,
+            should_speak=False,
+            parse_mode="surface_body_only",
+            intent=surface_kind or "surface",
+            source="surface_evidence_policy",
+            generation_mode="body_only",
+            confidence=0.34,
+            kind=surface_kind or "surface",
+            body_action="quiet_observe_scene",
+            reason="stale_screen_evidence_no_refresh",
+            debug_trace="surface_evidence:stale_screen_evidence_no_refresh",
+        )
+        return SurfaceArbitrationResult(decision=self._surface_body_only_decision(surface), surface=surface)
+
+    def _surface_seed_compiler(self) -> SurfaceSeedCompiler:
+        compiler = getattr(self, "_low_level_surface_seed_compiler", None)
+        if compiler is None:
+            compiler = SurfaceSeedCompiler()
+            self._low_level_surface_seed_compiler = compiler
+        return compiler
+
     def _surface_arbiter(self) -> SurfaceArbiter:
         """Lazy init SurfaceArbiter: một cổng duy nhất cho micro/re-engagement/spontaneous surface."""
         arbiter = getattr(self, "_low_level_surface_arbiter", None)
@@ -660,6 +826,8 @@ class PresenceControllerMixin:
         )[:8]
         record_id = str(getattr(public_activation, "record_id", "") or "").strip()
         evidence = evidence_ids or ((f"memory_activation:{record_id}",) if record_id else (seed[:120],))
+        memory_anchor = self._surface_anchor_token("memory", evidence_ids[0] if evidence_ids else record_id or seed)
+        evidence = tuple(dict.fromkeys((memory_anchor, *tuple(evidence))))[:10]
         layer = str(getattr(public_activation, "layer", "") or getattr(report, "dominant_layer", "") or "memory")
         vitality = max(pressure, min(1.0, silent_cycles / 7.0) * 0.72)
 
@@ -853,6 +1021,7 @@ class PresenceControllerMixin:
             self._surface_float(getattr(seed, "momentum_score", 0.0)),
         )
         if seed_text and seed_pressure >= 0.32:
+            event_anchor = self._surface_anchor_token("event", f"thought_stream:{seed_text}")
             impulses.append(
                 SurfaceImpulse(
                     kind="thought_stream_surface",
@@ -863,7 +1032,7 @@ class PresenceControllerMixin:
                     topic_seed=seed_text[:120],
                     speech_act="inner_whim",
                     family="thought_stream:latest_seed",
-                    evidence=(seed_text[:120],),
+                    evidence=(event_anchor, seed_text[:120]),
                     reason="thought stream has a small public-safe residue",
                     focus_family="thought_stream",
                     body_action="low_pressure_presence",
@@ -1053,7 +1222,15 @@ class PresenceControllerMixin:
             return None
         focus_family = self._focus_family_for_snapshot(snapshot) if snapshot is not None else "general_idle"
         confidence = max(0.56, min(0.74, float(state.confidence or 0.0)))
-        evidence = tuple(dict.fromkeys(("sensor_visibility=limited", *tuple(state.evidence or ()))))[:10]
+        evidence = tuple(
+            dict.fromkeys(
+                (
+                    self._surface_anchor_token("event", f"sensor_visibility:{state.reason}"),
+                    "sensor_visibility=limited",
+                    *tuple(state.evidence or ()),
+                )
+            )
+        )[:10]
         return SurfaceImpulse(
             kind="blind_frustration",
             source="sensor_visibility",
@@ -1325,6 +1502,7 @@ class PresenceControllerMixin:
         cue_text, score = self._vision_fact_micro_observation_candidate(frame)
         if not cue_text:
             return None
+        vision_anchor = self._surface_anchor_token("vision_fact", cue_text)
         cue = self._derive_micro_presence_cue(
             snapshot=snapshot,
             reason="micro_observation",
@@ -1338,7 +1516,7 @@ class PresenceControllerMixin:
             missing_evidence_ids=False,
             body_action="ObserveCode" if cue.focus_family == "code_stalled" else cue.body_action,
             reason="vision_fact_micro_observation",
-            evidence=tuple(dict.fromkeys((cue_text, *cue.evidence)))[:8],
+            evidence=tuple(dict.fromkeys((vision_anchor, cue_text, *cue.evidence)))[:8],
             should_call_llm=True,
             allow_body_only=True,
         )
@@ -1356,7 +1534,7 @@ class PresenceControllerMixin:
                     "score": max(score, cue.confidence),
                     "topic_seed": cue_text,
                     "family": f"vision_fact:{self._normalize_user_message(cue_text)[:64]}",
-                    "evidence": (cue_text,),
+                    "evidence": (vision_anchor, cue_text),
                     "reason": "vision_fact_micro_observation",
                     "focus_family": cue.focus_family,
                     "body_action": cue.body_action,
@@ -1937,6 +2115,72 @@ class PresenceControllerMixin:
                 private_mind_impulses = tuple(private_drain() or ())
             except Exception:
                 private_mind_impulses = ()
+        original_extra_impulses = tuple(extra_impulses or ())
+        all_extra_impulses = tuple(
+            item
+            for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *original_extra_impulses)
+            if item is not None
+        )
+        current_context_surface, fresh_screen_evidence = self._surface_refresh_vision_once_if_needed(
+            snapshot=snapshot,
+            cue=cue,
+            surface_kind=surface_kind,
+            extra_impulses=all_extra_impulses,
+        )
+        compiled_seed = self._surface_seed_compiler().compile(
+            frame=frame,
+            snapshot=snapshot,
+            surface_kind=surface_kind,
+            presence_cue=cue,
+            internal_state=(
+                getattr(frame, "internal_state_after", None)
+                or getattr(frame, "internal_state_before", None)
+                or (self._get_internal_state() if callable(getattr(self, "_get_internal_state", None)) else None)
+            ),
+            thought_stream=getattr(self, "thought_stream", None),
+            private_mind_digest=getattr(self, "private_mind_digest", None),
+            private_mind_speech_bias=getattr(self, "private_mind_speech_bias", None),
+            private_mind_thought_pressure=float(getattr(self, "private_mind_thought_pressure", 0.0) or 0.0),
+            active_memory_resonance=getattr(self, "active_memory_resonance", None),
+            extra_impulses=all_extra_impulses,
+        )
+        if (
+            current_context_surface
+            and not fresh_screen_evidence
+            and not self._surface_seed_can_speak_without_screen(compiled_seed)
+        ):
+            self.logger.info(
+                "[surface_evidence] blocked speech kind=%s reason=stale_screen_evidence_no_refresh",
+                surface_kind,
+            )
+            return self._stale_surface_body_only(surface_kind=surface_kind)
+        compiled_impulses = (compiled_seed.impulse,) if compiled_seed.impulse is not None else ()
+        if compiled_seed.selected:
+            enriched_evidence = tuple(
+                dict.fromkeys(
+                    (
+                        *tuple(getattr(cue, "evidence", ()) or ()),
+                        f"surface_seed={compiled_seed.public_seed[:120]}",
+                        *compiled_seed.evidence,
+                    )
+                )
+            )[:10]
+            cue = replace(
+                cue,
+                evidence=enriched_evidence,
+                confidence=max(float(getattr(cue, "confidence", 0.0) or 0.0), compiled_seed.confidence),
+                missing_evidence_ids=bool(getattr(cue, "missing_evidence_ids", False) and not compiled_seed.debug.get("public_anchor")),
+                should_call_llm=bool(getattr(cue, "should_call_llm", False) or compiled_seed.confidence >= 0.42),
+            )
+        self.logger.info(
+            "[surface_seed_compiler] kind=%s selected=%s source=%s reason=%s confidence=%.2f public_anchor=%s",
+            surface_kind,
+            bool(compiled_seed.selected),
+            str(compiled_seed.debug.get("source", "") or compiled_seed.root_source or ""),
+            str(compiled_seed.debug.get("reason", "") or ""),
+            float(compiled_seed.confidence or 0.0),
+            bool(compiled_seed.debug.get("public_anchor", False)),
+        )
         self.logger.info(
             "[surface_arbiter] input kind=%s silent_cycles=%d force_llm=%s cue_should_call_llm=%s cue_missing_evidence_ids=%s",
             surface_kind,
@@ -1949,7 +2193,11 @@ class PresenceControllerMixin:
             snapshot=snapshot,
             cognitive_frame=frame,
             presence_cue=cue,
-            extra_impulses=tuple(item for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *tuple(extra_impulses or ())) if item is not None),
+            extra_impulses=tuple(
+                item
+                for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *compiled_impulses, *original_extra_impulses)
+                if item is not None
+            ),
             surface_kind=surface_kind,
             force_llm=force_llm,
             silent_cycles=self.presence_maintenance_silent_cycles,

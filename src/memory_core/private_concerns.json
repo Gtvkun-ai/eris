@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "saved_at": 1780769646.946228,
+  "concerns": [
+    {
+      "id": "concern.3ab200cc1795b705",
+      "theme": "private mind needs permission and leak control",
+      "evidence_ids": [
+        "dossier.user.current",
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "dossier.concern.0",
+        "ev.test",
+        "dossier.concern.1"
+      ],
+      "open_questions": [
+        "Which fields are public-safe and which must remain private-only?",
+        "Which state mutations prove future behavior changed instead of merely logging inner thoughts?",
+        "Did the next response/action reflect the stored bias?",
+        "What runtime state changed after the private judgment?",
+        "Revise this hypothesis after outcome: user_corrected"
+      ],
+      "hypotheses": [
+        {
+          "label": "private_chain_leak_risk",
+          "description": "InternalJudgment and raw ThoughtFragments must not be surfaced as JSON or chain-of-thought-like text.",
+          "confidence": 0.72,
+          "evidence_ids": [
+            "dossier.user.current",
+            "dossier.runtime.state",
+            "dossier.runtime.thought_stream",
+            "dossier.runtime.private_state",
+            "dossier.concern.0",
+            "dossier.concern.1"
+          ],
+          "pressure": 0.72,
+          "rejected": false,
+          "reason": ""
+        },
+        {
+          "label": "implementation_request",
+          "description": "The user asks to edit the repo and send files, with Vietnamese comments.",
+          "confidence": 0.6911999999999999,
+          "evidence_ids": [
+            "dossier.user.current",
+            "dossier.runtime.state",
+            "dossier.runtime.thought_stream",
+            "dossier.runtime.private_state",
+            "dossier.concern.0",
+            "dossier.concern.1"
+          ],
+          "pressure": 0.6204,
+          "rejected": false,
+          "reason": ""
+        },
+        {
+          "label": "mutation_bus_required",
+          "description": "A StateMutationBus is necessary so internal judgments affect agenda, speech bias and surface queue.",
+          "confidence": 0.5952000000000001,
+          "evidence_ids": [
+            "dossier.user.current",
+            "dossier.runtime.state",
+            "dossier.runtime.thought_stream",
+            "dossier.runtime.private_state",
+            "dossier.concern.0"
+          ],
+          "pressure": 0.5451999999999999,
+          "rejected": false,
+          "reason": ""
+        },
+        {
+          "label": "stateful_cognition_needed",
+          "description": "The recurring concern is not quantity of API calls but whether private evaluations persist and bias future decisions.",
+          "confidence": 0.45,
+          "evidence_ids": [
+            "dossier.user.current",
+            "dossier.runtime.state",
+            "dossier.runtime.thought_stream",
+            "dossier.runtime.private_state",
+            "dossier.concern.0",
+            "dossier.concern.1"
+          ],
+          "pressure": 0.42,
+          "rejected": false,
+          "reason": ""
+        },
+        {
+          "label": "api_budget_risk",
+          "description": "Only four evaluators and the inner synthesizer deserve API budget; rules should fallback when API is unavailable.",
+          "confidence": 0.25,
+          "evidence_ids": [
+            "dossier.user.current",
+            "dossier.runtime.state",
+            "dossier.runtime.thought_stream",
+            "dossier.runtime.private_state",
+            "dossier.concern.0",
+            "dossier.concern.1"
+          ],
+          "pressure": 0.25,
+          "rejected": false,
+          "reason": ""
+        },
+        {
+          "label": "discussion_only",
+          "description": "Could be asking for architecture advice only, but upload + send-file wording makes this weak.",
+          "confidence": 0.28,
+          "evidence_ids": [
+            "dossier.user.current",
+            "dossier.runtime.state",
+            "dossier.runtime.thought_stream",
+            "dossier.runtime.private_state",
+            "dossier.concern.0",
+            "dossier.concern.1"
+          ],
+          "pressure": 0.12,
+          "rejected": false,
+          "reason": "User supplied src.zip and asks to send patched files."
+        },
+        {
+          "label": "more_llm_calls_needed",
+          "description": "More API calls alone would not satisfy the repeated complaint.",
+          "confidence": 0.18,
+          "evidence_ids": [
+            "dossier.user.current",
+            "dossier.runtime.state",
+            "dossier.runtime.thought_stream",
+            "dossier.runtime.private_state",
+            "dossier.concern.0",
+            "dossier.concern.1"
+          ],
+          "pressure": 0.18,
+          "rejected": true,
+          "reason": "User explicitly warns that many API workers create parrots wasting keys."
+        }
+      ],
+      "pressure": 1.0,
+      "uncertainty": 0.44,
+      "recurrence": 20,
+      "status": "open",
+      "last_reviewed_at": 1780769646.9460905,
+      "future_biases": [
+        "filter internal judgments through SurfaceValve before public speech",
+        "prefer concrete repo patch over abstract reassurance",
+        "prefer mutation-backed learning over private diary logging",
+        "do not equate more API calls with deeper cognition",
+        "lower confidence in this concern's current hypothesis until new evidence supports it"
+      ],
+      "created_at": 1780769576.489098,
+      "updated_at": 1780769646.9460905,
+      "metadata": {
+        "created_from_fragment": "tf.c53d9a94f689cf7e",
+        "fragment_sources": [
+          "risk_and_permission_evaluator",
+          "intent_evaluator",
+          "future_bias_evaluator",
+          "memory_resonance_evaluator"
+        ],
+        "last_outcome_feedback": {
+          "negative": true,
+          "positive": false,
+          "flags": [
+            "user_corrected"
+          ],
+          "action_success": 0.4,
+          "body_match_success": 0.9,
+          "correction_text": "",
+          "at": 1780769646.9460905
+        }
+      }
+    },
+    {
+      "id": "concern.6bf76853f91a0114",
+      "theme": "private judgments must mutate future behavior",
+      "evidence_ids": [
+        "dossier.user.current",
+        "dossier.runtime.state",
+        "dossier.runtime.private_state",
+        "dossier.concern.0",
+        "ev.test",
+        "dossier.runtime.thought_stream",
+        "dossier.concern.1"
+      ],
+      "open_questions": [
+        "Did the next response/action reflect the stored bias?",
+        "Which fields are public-safe and which must remain private-only?",
+        "What runtime state changed after the private judgment?",
+        "Which state mutations prove future behavior changed instead of merely logging inner thoughts?",
+        "Revise this hypothesis after outcome: user_corrected"
+      ],
+      "hypotheses": [
+        {
+          "label": "mutation_bus_required",
+          "description": "A StateMutationBus is necessary so internal judgments affect agenda, speech bias and surface queue.",
+          "confidence": 0.5952000000000001,
+          "evidence_ids": [
+            "dossier.user.current",
+            "dossier.runtime.state",
+            "dossier.runtime.thought_stream",
+            "dossier.runtime.private_state",
+            "dossier.concern.0",
+            "dossier.concern.1"
+          ],
+          "pressure": 0.5451999999999999,
+          "rejected": false,
+          "reason": ""
+        }
+      ],
+      "pressure": 0.7904608,
+      "uncertainty": 0.44,
+      "recurrence": 5,
+      "status": "open",
+      "last_reviewed_at": 1780769646.9460905,
+      "future_biases": [
+        "prefer mutation-backed learning over private diary logging",
+        "filter internal judgments through SurfaceValve before public speech",
+        "do not equate more API calls with deeper cognition",
+        "prefer concrete repo patch over abstract reassurance",
+        "lower confidence in this concern's current hypothesis until new evidence supports it"
+      ],
+      "created_at": 1780769623.2859843,
+      "updated_at": 1780769646.9460905,
+      "metadata": {
+        "fragment_ids": [
+          "tf.a615932de400dbf9",
+          "tf.fdb8ff57d4ddd32d",
+          "tf.e8d82895c8191f43",
+          "tf.2fe8e02474b06d4a"
+        ],
+        "synthesizer": "deterministic_fallback",
+        "last_outcome_feedback": {
+          "negative": true,
+          "positive": false,
+          "flags": [
+            "user_corrected"
+          ],
+          "action_success": 0.4,
+          "body_match_success": 0.9,
+          "correction_text": "",
+          "at": 1780769646.9460905
+        },
+        "fragment_sources": [
+          "future_bias_evaluator"
+        ]
+      }
+    }
+  ]
+}

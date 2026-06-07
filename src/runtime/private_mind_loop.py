@@ -128,6 +128,9 @@ class PrivateMindLoop:
             session_turn_ledger=session_turn_ledger,
             internal_agenda=internal_agenda,
             concern_store=self.concern_store,
+            thought_stream=thought_stream,
+            surface_candidate_queue=surface_candidate_queue or (),
+            runtime_owner=runtime_owner,
             surface_outcome=surface_outcome,
             metadata={
                 "private_mind_tick_at": now,

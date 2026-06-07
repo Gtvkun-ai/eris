@@ -105,8 +105,10 @@ class StateMutationBus:
             except Exception as exc:
                 report = self._report(mutation, False, f"error:{type(exc).__name__}:{exc}")
             reports.append(report)
-        if judgment.surface_candidate is not None and surface_candidate_queue is not None:
-            reports.append(self._enqueue_surface_candidate(judgment.surface_candidate, surface_candidate_queue))
+        # Không tự enqueue `judgment.surface_candidate` ở đây. SurfaceValve mới là
+        # cửa lọc private-chain -> public-safe impulse. Nếu bus tự ném candidate
+        # thẳng vào queue, nó bypass một nửa lý do tồn tại của private mind. Rất
+        # sáng tạo, theo nghĩa một cái bug cũng sáng tạo.
         self.bias_state.updated_at = time.time()
         self.last_reports = tuple(reports)
         return tuple(report.to_dict() for report in reports)

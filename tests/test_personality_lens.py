@@ -117,6 +117,44 @@ class PersonalityLensTests(unittest.TestCase):
         self.assertLessEqual(result.allowed_expression, 0.12)
         self.assertIn("reduction_guard", result.prompt_context)
 
+    def test_autonomous_weak_anchor_reduces_expression_right(self):
+        weak_scene = SimpleNamespace(
+            active_window_kind="coding",
+            focus_summary="coding workspace",
+            mood_label="neutral",
+            idle_label="slowing down",
+            recent_events=("typing_and_deleting_self_doubt",),
+            evidence=("sentence drafted then deleted",),
+            vision_facts=(),
+            user_signals=SimpleNamespace(
+                typing_speed="erratic",
+                window_switching="low",
+                focus_pattern="hesitant",
+            ),
+        )
+        anchored_scene = SimpleNamespace(
+            active_window_kind="coding",
+            focus_summary="coding workspace",
+            mood_label="neutral",
+            idle_label="slowing down",
+            recent_events=("typing_and_deleting_self_doubt",),
+            evidence=("event_id=typing_delete_01", "sentence drafted then deleted"),
+            vision_facts=(),
+            user_signals=SimpleNamespace(
+                typing_speed="erratic",
+                window_switching="low",
+                focus_pattern="hesitant",
+            ),
+        )
+
+        weak = self.lens.evaluate(scene=weak_scene, internal_state=PersistentInternalState(), channel="autonomous")
+        anchored = self.lens.evaluate(scene=anchored_scene, internal_state=PersistentInternalState(), channel="autonomous")
+
+        self.assertIn("persona_anchor=weak", weak.evidence)
+        self.assertIn("persona_anchor=specific", anchored.evidence)
+        self.assertLess(weak.allowed_expression, anchored.allowed_expression)
+        self.assertGreater(weak.suppression_ratio, anchored.suppression_ratio)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,59 @@ import socket
 
 MAX_UDP_PAYLOAD_BYTES = 60000
 
+
+def _compact_private_mind_for_udp_overflow(value):
+    if not isinstance(value, dict):
+        return {}
+    menu = value.get("menu")
+    if not isinstance(menu, dict):
+        menu = {}
+    compact_menu = {}
+    for key in (
+        "current_thought",
+        "temporary_thoughts",
+        "open_concerns",
+        "inner_judgment",
+        "state_mutations",
+        "future_bias",
+        "surface_queue",
+        "debug_api",
+    ):
+        if key in menu:
+            compact_menu[key] = _compact_debug_value(menu.get(key), depth=0)
+    return {
+        "last_tick_at": value.get("last_tick_at", 0.0),
+        "current": _compact_debug_value(value.get("current", {}), depth=0),
+        "menu": compact_menu,
+        "udp_debug_truncated": True,
+    }
+
+
+def _compact_debug_value(value, *, depth: int):
+    if depth >= 3:
+        return _compact_scalar(value, 180)
+    if isinstance(value, dict):
+        out = {}
+        for idx, (key, item) in enumerate(value.items()):
+            if idx >= 6:
+                out["..."] = "truncated"
+                break
+            out[str(key)[:64]] = _compact_debug_value(item, depth=depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        items = list(value)
+        return [_compact_debug_value(item, depth=depth + 1) for item in items[:4]] + (["... truncated"] if len(items) > 4 else [])
+    return _compact_scalar(value, 240)
+
+
+def _compact_scalar(value, limit: int):
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        return text[: max(0, limit - 3)].rstrip() + "..."
+    return text
+
 # UdpTransport là một lớp để giao tiếp qua giao thức UDP,
 #  nó cung cấp các phương thức để gửi và nhận dữ liệu dưới dạng văn bản hoặc
 #  JSON. Lớp này sử dụng hai socket riêng biệt: một để gửi dữ liệu đến một địa chỉ và cổng cụ thể,
@@ -29,11 +82,18 @@ class UdpTransport:
         message = json.dumps(payload, ensure_ascii=False)
         if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
             payload = dict(payload)
-            payload.pop("private_mind_digest", None)
+            private_mind = _compact_private_mind_for_udp_overflow(payload.get("private_mind_digest"))
+            if private_mind:
+                payload["private_mind_digest"] = private_mind
+            else:
+                payload.pop("private_mind_digest", None)
             emotion = payload.get("emotion_debug")
             if isinstance(emotion, dict):
                 emotion = dict(emotion)
-                emotion.pop("private_mind", None)
+                if private_mind:
+                    emotion["private_mind"] = private_mind
+                else:
+                    emotion.pop("private_mind", None)
                 payload["emotion_debug"] = emotion
             payload["udp_debug_truncated"] = True
             message = json.dumps(payload, ensure_ascii=False)

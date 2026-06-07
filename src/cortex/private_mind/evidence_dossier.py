@@ -64,6 +64,9 @@ class EvidenceDossierBuilder:
         session_turn_ledger: Any = None,
         internal_agenda: Any = None,
         concern_store: Any = None,
+        thought_stream: Any = None,
+        surface_candidate_queue: Iterable[Any] = (),
+        runtime_owner: Any = None,
         surface_outcome: Mapping[str, Any] | None = None,
         active_goal: str = "",
         current_task: str = "",
@@ -78,6 +81,9 @@ class EvidenceDossierBuilder:
             observer_frame=observer_frame,
             wake_decision=wake_decision,
             internal_agenda=internal_agenda,
+            thought_stream=thought_stream,
+            surface_candidate_queue=surface_candidate_queue,
+            runtime_owner=runtime_owner,
             evidence_index=evidence_index,
         )
         resolved_memory_hits = tuple(self._memory_hits(memory_core=memory_core, explicit_hits=memory_hits, evidence_index=evidence_index))
@@ -92,7 +98,12 @@ class EvidenceDossierBuilder:
             recent_turns=recent_turns,
             runtime_state=runtime_state,
             evidence_index=evidence_index,
+            memory_hits=resolved_memory_hits,
+            repair_failures=repair_failures,
+            concerns=concerns,
         )
+        if surface_outcome:
+            evidence_index["dossier.surface.outcome"] = dict(surface_outcome)
         dossier_id = stable_id("dossier", created_at, user_text, channel, task, goal)
         return EvidenceDossier(
             dossier_id=dossier_id,
@@ -148,8 +159,14 @@ class EvidenceDossierBuilder:
         observer_frame: Any,
         wake_decision: Any,
         internal_agenda: Any,
+        thought_stream: Any,
+        surface_candidate_queue: Iterable[Any],
+        runtime_owner: Any,
         evidence_index: dict[str, Any],
     ) -> dict[str, Any]:
+        thought_state = self._thought_stream_state(thought_stream)
+        private_state = self._private_runtime_state(runtime_owner)
+        surface_queue_state = self._surface_queue_state(surface_candidate_queue)
         state = {
             "channel": channel,
             "active_app": compact_text(_get(snapshot, "active_app", _get(snapshot, "active_window", "")), 160),
@@ -175,10 +192,92 @@ class EvidenceDossierBuilder:
                 "budget_reason": _get(wake_decision, "budget_reason", ""),
             },
             "agenda_top": [to_plain(x) for x in (_call(internal_agenda, "top_items", limit=5, default=()) or ())],
+            # ThoughtStream chỉ là substrate: đưa pressure/momentum vào dossier,
+            # không cho nó tự giả làm mind hoàn chỉnh. Đúng vai thì hữu ích, sai vai thì thành sân khấu khói.
+            "thought_stream": thought_state,
+            "private_runtime": private_state,
+            "surface_queue": surface_queue_state,
         }
         eid = "dossier.runtime.state"
         evidence_index[eid] = state
+        if thought_state:
+            evidence_index["dossier.runtime.thought_stream"] = thought_state
+        if private_state:
+            evidence_index["dossier.runtime.private_state"] = private_state
+        if surface_queue_state.get("size", 0):
+            evidence_index["dossier.runtime.surface_queue"] = surface_queue_state
         return state
+
+    def _thought_stream_state(self, thought_stream: Any) -> dict[str, Any]:
+        if thought_stream is None:
+            return {}
+        state: dict[str, Any] = {
+            "private_mind_pressure_bias": clamp01(_get(thought_stream, "private_mind_pressure_bias", 0.0)),
+            "cognitive_momentum": clamp01(_get(thought_stream, "cognitive_momentum", _get(thought_stream, "momentum", 0.0))),
+            "unresolved_pressure": clamp01(_get(thought_stream, "unresolved_pressure", _get(thought_stream, "tension", 0.0))),
+        }
+        candidates = []
+        getter = getattr(thought_stream, "get_surface_candidates", None)
+        if callable(getter):
+            try:
+                candidates = list(getter(limit=5) or [])
+            except TypeError:
+                try:
+                    candidates = list(getter() or [])[:5]
+                except Exception:
+                    candidates = []
+            except Exception:
+                candidates = []
+        if candidates:
+            state["surface_candidates"] = [self._compact_surface_like(item) for item in candidates[:5]]
+        for attr in ("active_threads", "unresolved_loops", "recent_thoughts", "recent_seeds"):
+            value = _get(thought_stream, attr, None)
+            if value:
+                state[attr] = to_plain(value)
+        return {key: value for key, value in state.items() if value not in (None, "", [], {}, ())}
+
+    def _private_runtime_state(self, runtime_owner: Any) -> dict[str, Any]:
+        if runtime_owner is None:
+            return {}
+        return {
+            "speech_bias": to_plain(_get(runtime_owner, "private_mind_speech_bias", {})),
+            "inquiry_plan": to_plain(list(_get(runtime_owner, "private_mind_inquiry_plan", []) or [])[-8:]),
+            "active_state": to_plain(_get(runtime_owner, "private_mind_active_state", {})),
+            "thought_pressure": clamp01(_get(runtime_owner, "private_mind_thought_pressure", 0.0)),
+            "belief_core_last": to_plain(_get(runtime_owner, "private_mind_belief_core_last", {})),
+        }
+
+    def _surface_queue_state(self, queue: Iterable[Any]) -> dict[str, Any]:
+        # Convert một lần thôi. Iterator mà bị đọc hai lần là tự tạo bằng chứng rỗng,
+        # rồi lại đổ lỗi cho model. Một truyền thống debug không đáng giữ.
+        all_items = list(queue or [])
+        return {
+            "size": len(all_items),
+            "preview": [self._compact_surface_like(item) for item in all_items[:8]],
+        }
+
+    def _compact_surface_like(self, item: Any) -> dict[str, Any]:
+        if callable(getattr(item, "to_context", None)):
+            try:
+                data = item.to_context()
+            except Exception:
+                data = to_plain(item)
+        elif callable(getattr(item, "to_dict", None)):
+            data = item.to_dict()
+        elif isinstance(item, Mapping):
+            data = dict(item)
+        else:
+            data = {"value": to_plain(item)}
+        if not isinstance(data, Mapping):
+            data = {"value": to_plain(data)}
+        return {
+            "id": compact_text(data.get("id", ""), 96),
+            "kind": compact_text(data.get("kind", ""), 96),
+            "source": compact_text(data.get("source", data.get("root_source", "")), 96),
+            "topic_seed": compact_text(data.get("topic_seed", data.get("seed", data.get("claim", ""))), 260),
+            "confidence": data.get("confidence", 0.0),
+            "score": data.get("score", data.get("usefulness", 0.0)),
+        }
 
     def _evidence_metrics(
         self,
@@ -186,6 +285,9 @@ class EvidenceDossierBuilder:
         recent_turns: list[dict[str, Any]],
         runtime_state: Mapping[str, Any],
         evidence_index: Mapping[str, Any],
+        memory_hits: Iterable[Mapping[str, Any]] = (),
+        repair_failures: Iterable[Mapping[str, Any]] = (),
+        concerns: Iterable[Mapping[str, Any]] = (),
     ) -> dict[str, Any]:
         observer = runtime_state.get("observer", {}) if isinstance(runtime_state, Mapping) else {}
         novelty = clamp01(observer.get("novelty", 0.0) if isinstance(observer, Mapping) else 0.0)
@@ -194,12 +296,33 @@ class EvidenceDossierBuilder:
         has_recent_user_turn = bool(recent_turns)
         user_turn_age_sec = self._latest_user_turn_age(recent_turns)
         public_anchor_count = self._public_anchor_count(evidence_index)
+        memory_hit_count = len(tuple(memory_hits or ()))
+        repair_count = len(tuple(repair_failures or ()))
+        concern_count = len(tuple(concerns or ()))
+        runtime_anchor_count = 0
+        if isinstance(runtime_state, Mapping):
+            if runtime_state.get("thought_stream"):
+                runtime_anchor_count += 1
+            private_runtime = runtime_state.get("private_runtime")
+            if isinstance(private_runtime, Mapping) and any(private_runtime.values()):
+                runtime_anchor_count += 1
+            surface_queue = runtime_state.get("surface_queue")
+            if isinstance(surface_queue, Mapping) and surface_queue.get("size"):
+                runtime_anchor_count += 1
+        dossier_thickness = clamp01(
+            0.25 * (1.0 if has_recent_user_turn else 0.0)
+            + 0.20 * clamp01(memory_hit_count / 4.0)
+            + 0.20 * clamp01(concern_count / 4.0)
+            + 0.15 * clamp01(repair_count / 3.0)
+            + 0.20 * clamp01((public_anchor_count + runtime_anchor_count) / 5.0)
+        )
         evidence_strength = clamp01(
-            0.35 * novelty
-            + 0.25 * possible_error
-            + 0.25 * (1.0 if has_recent_user_turn else 0.0)
+            0.26 * novelty
+            + 0.19 * possible_error
+            + 0.20 * (1.0 if has_recent_user_turn else 0.0)
             + 0.15 * clamp01(public_anchor_count / 3.0)
-            - 0.35 * repetition
+            + 0.20 * dossier_thickness
+            - 0.30 * repetition
         )
         return {
             "novelty": novelty,
@@ -207,6 +330,11 @@ class EvidenceDossierBuilder:
             "has_recent_user_turn": has_recent_user_turn,
             "user_turn_age_sec": user_turn_age_sec,
             "public_anchor_count": public_anchor_count,
+            "runtime_anchor_count": runtime_anchor_count,
+            "memory_hit_count": memory_hit_count,
+            "repair_failure_count": repair_count,
+            "concern_count": concern_count,
+            "dossier_thickness": dossier_thickness,
             "evidence_strength": evidence_strength,
         }
 

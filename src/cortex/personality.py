@@ -11,6 +11,10 @@ class PersonalityLens:
     PROFILE = "INFJ_5w4_594"
     # Tầng này giữ lại phần đọc nội bộ, nhưng không được biến sự kiềm chế thành sương mù thơ.
     SUPPRESSION_RATIO = 0.66
+    ANCHOR_TOKEN_RE = re.compile(
+        r"\b(?:memory_id|event_id|vision_fact_id)\s*[:=]\s*[a-z0-9][a-z0-9_.:/-]{2,}",
+        re.I,
+    )
 
     BIAS_TERMS: dict[str, tuple[str, ...]] = {
         "hesitation": (
@@ -211,6 +215,14 @@ class PersonalityLens:
             relationship=relationship,
             biases=biases,
         )
+        anchor_strength = self._anchor_strength(
+            scene=scene,
+            attention=attention,
+            meaning_layer=meaning_layer,
+            relationship=relationship,
+            evidence=evidence,
+        )
+        evidence = tuple(dict.fromkeys((*evidence, f"persona_anchor={'specific' if anchor_strength > 0.0 else 'weak'}")))[:8]
         want_to_say = self._want_to_say(
             biases=biases,
             interpretation=interpretation,
@@ -229,6 +241,8 @@ class PersonalityLens:
         allowed_expression = self._allowed_expression(
             want_to_say=want_to_say,
             suppression_pressure=suppression_pressure,
+            anchor_strength=anchor_strength,
+            channel=channel,
         )
         suppression_ratio = self._suppression_ratio(
             want_to_say=want_to_say,
@@ -326,7 +340,7 @@ class PersonalityLens:
                 ),
                 (
                     "evidence_guard: do not claim screen facts, hidden intent, emotional state, file contents, or actions without evidence. "
-                    "If evidence is thin, hedge or stay silent."
+                    "A surface line needs a concrete anchor token (memory_id/event_id/vision_fact_id); if evidence is thin, prefer body_only or silence."
                 ),
                 f"generic_ai_blacklist: do not use {blacklist}.",
             )
@@ -429,10 +443,21 @@ class PersonalityLens:
         score -= social_energy * 0.08
         return self._float(score)
 
-    def _allowed_expression(self, *, want_to_say: float, suppression_pressure: float) -> float:
+    def _allowed_expression(
+        self,
+        *,
+        want_to_say: float,
+        suppression_pressure: float,
+        anchor_strength: float = 1.0,
+        channel: str = "",
+    ) -> float:
         if want_to_say <= 0.0:
             return 0.0
         allowed = want_to_say * (1.0 - suppression_pressure)
+        if channel == "autonomous" and anchor_strength <= 0.0:
+            allowed *= 0.35
+        elif anchor_strength <= 0.0:
+            allowed *= 0.72
         return max(0.02, min(0.52, self._float(allowed)))
 
     def _suppression_ratio(self, *, want_to_say: float, allowed_expression: float) -> float:
@@ -733,6 +758,28 @@ class PersonalityLens:
         if last_intent:
             evidence.append(f"relationship_last_intent={last_intent}")
         return tuple(evidence[:6])
+
+    def _anchor_strength(self, *, scene, attention, meaning_layer, relationship, evidence: tuple[str, ...]) -> float:
+        parts: list[str] = list(evidence)
+        for owner in (scene, attention, meaning_layer, relationship):
+            if owner is None:
+                continue
+            for attr in (
+                "evidence",
+                "evidence_ids",
+                "selected_evidence_ids",
+                "memory_id",
+                "event_id",
+                "vision_fact_id",
+                "debug_trace",
+            ):
+                value = getattr(owner, attr, None)
+                if isinstance(value, (tuple, list, set)):
+                    parts.extend(str(item) for item in value)
+                elif value is not None:
+                    parts.append(str(value))
+        haystack = " | ".join(part for part in parts if part)
+        return 1.0 if self.ANCHOR_TOKEN_RE.search(haystack) else 0.0
 
     def _normalize(self, text: str) -> str:
         lowered = str(text or "").strip().lower()

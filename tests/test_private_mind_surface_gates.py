@@ -107,7 +107,11 @@ def test_private_mind_surface_without_anchor_loses_speech_slot_to_body_only():
 
     assert decision.should_speak is False
     assert decision.body_only is True
-    assert decision.reason in {"forced_body_only:needs_external_evidence_missing", "private_mind_missing_public_anchor"}
+    assert decision.reason in {
+        "forced_body_only:needs_external_evidence_missing",
+        "private_mind_missing_public_anchor",
+        "forced_body_only:persona_anchor_missing",
+    }
 
 
 def test_deterministic_synthesizer_marks_fallback_candidate_with_metrics():

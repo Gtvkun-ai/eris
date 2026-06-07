@@ -312,6 +312,9 @@ class GeminiClient:
             generation_config["thinkingConfig"] = {"thinkingBudget": 0}
         if response_format and response_format.get("type") == "json_object":
             generation_config["responseMimeType"] = "application/json"
+            schema = response_format.get("responseSchema") or response_format.get("schema")
+            if isinstance(schema, dict) and schema:
+                generation_config["responseSchema"] = schema
 
         payload = {
             "contents": contents,

@@ -55,9 +55,25 @@ Nhìn theo `git show --stat` và history từng file, mấy cụm thay đổi đ
 - `104c45b`: thêm `src/cortex/continuity_threat.py`, sửa tiếp `agent_state_stack.py`, `impulse_arbitration.py`, `surface_arbiter.py`, `presence_controller.py`, `low_level_speech_policy.py`, đồng thời làm `event_ledger.json` phình mạnh hơn vì runtime state thật đã được ghi.
 - `9bbdcd2`: `surface_arbiter.py` có thêm khoảng `30` dòng để hiểu `subconscious_report` / `surface_seed` Phase 0 tốt hơn; tài liệu cũ chưa nhắc mốc này.
 - `637e7fc`: là đợt chạm file rất lớn sau snapshot cũ, đáng chú ý nhất là `coordinator.py` `+623` dòng, thêm mới `src/cortex/subconscious/model_synthesizer.py` `+412` dòng, cùng các thay đổi tiếp ở `process_manager.py` và `executor.py`.
+- `f8555c6` (`2026-06-07 00:39:48 +0700`): mốc tracked gần nhất cho private mind base. Theo lịch sử từng file, commit này là lần đầu/đợt chính chạm `src/runtime/private_mind_loop.py`, `src/cortex/private_mind/evidence_dossier.py`, `src/cortex/private_mind/state_mutation_bus.py`; riêng `src/runtime/cognitive_frame_recorder.py` có lịch sử dài hơn từ `afec1a5`, `8a6a329`, `440e71a`, `b303cb8`, `dc51d80`, `6b06e3f`, `e69eccd`, rồi tới `f8555c6`.
+
+AUDIT 2026-06-07 theo từng file đang mở/local:
+- `src/runtime/private_mind_daemon.py`: **THIẾU TRONG DOC CŨ** và hiện là file untracked trong workspace. Source local đã đổi owner lifecycle sang `PrivateMindDaemon`, còn `PrivateMindLoop` chỉ là loop tick bên trong. Vì file chưa tracked, đừng gán nó vào lịch sử commit nếu chưa add/commit.
+- `src/cortex/surface_seed_compiler.py`: **THIẾU TRONG DOC CŨ / UNTRACKED CURRENT WORKSPACE**. Source local thêm compiler gom seed public-safe từ memory resonance, thought/subconscious report, private mind bias đã lọc, vision facts và extra impulses trước khi đưa vào `SurfaceArbiter`. Đây là lớp mới nằm giữa presence cue và arbiter, không phải thay thế arbiter.
+- `src/runtime/presence_controller.py`: **DOC LẠC HẬU MỘT PHẦN** nếu chỉ nói file này hút endogenous/private impulses. Source local hiện lazy-init `SurfaceSeedCompiler`, compile seed public-safe trong `_build_surface_arbiter_result()`, enrich `MicroPresenceCue`, rồi thêm impulse `source="surface_seed_compiler"` vào `extra_impulses`.
+- `src/runtime/coordinator.py`: **DOC LẠC HẬU MỘT PHẦN**. Mô tả "coordinator thêm PrivateMindLoop" không còn đủ: code local import `PrivateMindDaemon`, tạo `self.private_mind_daemon`, giữ `self.private_mind_loop = daemon.loop`, và drain surface qua `daemon.drain_surface_impulses()` trước khi fallback queue cũ.
+- `src/runtime/cognitive_frame_recorder.py`: **DOC LẠC HẬU MỘT PHẦN**. `_feed_private_mind_outcome()` hiện ưu tiên `private_mind_daemon.record_outcome(outcome, frame=frame)`, chỉ fallback sang `private_mind_loop.concern_store.update_from_outcome()` nếu daemon không có. Digest cũng lấy từ daemon trước.
+- `src/cortex/private_mind/evidence_dossier.py`: **DOC THIẾU**. Dossier hiện nhận thêm `thought_stream`, `surface_candidate_queue`, `runtime_owner`; runtime state có `thought_stream`, `private_runtime`, `surface_queue`; metrics có `runtime_anchor_count`, `memory_hit_count`, `repair_failure_count`, `concern_count`, `dossier_thickness`.
+- `src/cortex/private_mind/state_mutation_bus.py`: **DOC CẦN CHÍNH XÁC HƠN**. Bus vẫn hỗ trợ mutation target `surface_candidate_queue`, nhưng không còn tự enqueue `judgment.surface_candidate` mặc định ở cuối `apply()`. Candidate public phải đi qua `SurfaceValve`/loop/daemon trước.
+- `src/runtime/private_mind_loop.py`: **DOC ĐÚNG HƯỚNG NHƯNG THIẾU DAEMON CONTEXT**. Loop vẫn build dossier, chạy evaluator, synthesize, apply mutation và valve surface; nhưng lifecycle queue/outcome/digest bền hơn đang do daemon ôm.
+- `src/runtime/private_mind_model_adapter.py`: **DOC CẦN CHỈ RÕ FAILURE MODE HIỆN TẠI**. Khi log có nhiều `[PrivateMind API] ... error=invalid_json`, lỗi chính là output API không parse được JSON, không phải crash loop. Adapter trả `None`, evaluator/synthesizer rule fallback tiếp tục tạo fragment/judgment.
+- `src/memory_core/private_concerns.json`: **FILE LOCAL/UNTRACKED, PATH DỄ GÂY NHẦM**. Source default trong `private_mind_loop._resolve_concern_path()` vẫn là `Path(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core")) / "private_concerns.json"`, tức mặc định `memory_core/private_concerns.json`. File đang mở ở `src/memory_core/private_concerns.json` chỉ đúng nếu env `ERIS_MEMORY_CORE_DIR=src/memory_core` hoặc có copy local riêng.
+- `tests/test_private_mind_daemon.py`: **THIẾU TRONG DOC CŨ** và hiện untracked. Test này khóa daemon sở hữu queue, outcome feedback cập nhật concern lifecycle, và dossier có thought/runtime/surface queue anchors.
 
 Tình trạng worktree lúc cập nhật tài liệu này:
-- repo đang đúng `HEAD` và sync với `origin/main`, nhưng worktree không sạch vì `src/src.zip` đang modified.
+- AUDIT 2026-06-07: worktree hiện không sạch vì có thay đổi local trong `memory_core/active_state_snapshot.json`, `memory_core/episodic_memory.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl`, `src/cortex/private_mind/evidence_dossier.py`, `src/cortex/private_mind/state_mutation_bus.py`, `src/runtime/cognitive_frame_recorder.py`, `src/runtime/coordinator.py`, `src/runtime/presence_controller.py`, `src/runtime/private_mind_loop.py`, `src/runtime/private_mind_model_adapter.py`, `src/transport/udp.py`, `tests/test_presence_controller_memory_surface.py`, và chính `tongquat.md`.
+- file untracked hiện đáng chú ý: `src/cortex/surface_seed_compiler.py`, `src/memory_core/`, `src/runtime/private_mind_daemon.py`, `tests/test_private_mind_daemon.py`, `tests/test_private_mind_model_adapter.py`, `tests/test_surface_seed_compiler.py`, `tests/test_udp_private_mind_debug.py`.
+- vì có untracked/local patch, mọi dòng trong tài liệu gắn "source local" phải hiểu là đối chiếu workspace hiện tại, không nhất thiết là `origin/main`.
 - các file runtime data như `memory_core/active_state_snapshot.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl` vẫn là state sống; lần này chúng không còn là drift local mà là một phần snapshot hiện tại của workspace.
 
 ---
@@ -72,6 +88,34 @@ Mục này chủ ý chỉ ra chỗ tài liệu đang sai, thiếu, hoặc lạc 
 - `src/actions/executor.py`: section cũ quá ngắn, không phản ánh việc file đang gộp cả Win32 desktop actions lẫn Gemini-grounded `search_web` / `get_weather`.
 - `src/cortex/speech_core.py`: mô tả đúng hướng nhưng chưa gắn recent history; các mốc `04bd5f6` và `5f812fc` sửa trực tiếp ngưỡng/contract cho endogenous speech sau snapshot cũ.
 - `src/runtime/no_fallback_policy.py`: section không sai nhiều, nhưng đây là file mới tạo từ `e69eccd`; nếu debug path no-fallback mà không biết mốc file này, rất dễ tưởng runtime tự “câm” ngẫu nhiên.
+- `body/UdpDecisionParser.cs`: **DOC THIẾU SAU `f8555c6`**. File đã nhận `private_mind_digest` top-level hoặc `emotion_debug.private_mind` và lưu raw JSON vào `PrivateMindDebugJson`; nếu tài liệu chỉ nói parser đọc `emotion_debug` chung thì thiếu debug path private mind ở Godot.
+- `src/transport/udp.py`: **DOC GHI CHƯA CHÍNH XÁC** nếu nói payload private debug bị strip ngay. Source hiện compact `private_mind_digest` trước khi gửi khi vượt `MAX_UDP_PAYLOAD_BYTES=60000`, chỉ rơi về payload tối thiểu khi vẫn quá lớn.
+- `tests/test_udp_private_mind_debug.py`: **THIẾU TRONG DOC CŨ / UNTRACKED CURRENT WORKSPACE**. Test này khóa behavior compact private mind UDP overflow, nên nó là bằng chứng source local đã ưu tiên giữ debug digest bản gọn thay vì xóa sạch.
+
+---
+
+# 0D. Audit lịch sử cập nhật theo từng file 2026-06-07
+
+Mục này là checklist nhanh cho các file đang sai/thiếu/lạc hậu so với source local. `tracked history` là lịch sử git đã commit; `local drift` là thay đổi workspace hiện tại, có thể chưa nằm trong `origin/main`.
+
+| File | Tracked history gần nhất | Local drift / cần sửa trong doc |
+| --- | --- | --- |
+| `src/runtime/coordinator.py` | Chuỗi nóng `fdfe52c -> aa9af6f -> 04bd5f6 -> 5f812fc -> 553985e -> eff0420 -> 637e7fc -> f8555c6`; riêng `637e7fc` phình lớn runtime/subconscious, `f8555c6` thêm private mind base. | Doc nào nói coordinator chỉ giữ `PrivateMindLoop` là lạc hậu. Source local dùng `PrivateMindDaemon.from_runtime()`, giữ `private_mind_loop = daemon.loop`, tick daemon trước, và drain qua `daemon.drain_surface_impulses()` trước fallback queue cũ. |
+| `src/runtime/presence_controller.py` | Chuỗi tracked dày từ `fdfe52c` đến `104c45b`, rồi `f8555c6`; đây là file surface/wake nóng nhất sau các pull 2026-06-05/06. | Source local thêm `SurfaceSeedCompiler`; `_build_surface_arbiter_result()` compile seed public-safe, enrich cue, và thêm impulse `source="surface_seed_compiler"`. Doc chỉ nói endogenous/private impulses là thiếu. |
+| `src/cortex/surface_seed_compiler.py` | Chưa tracked. | File mới local. Cần doc như compiler seed public-safe giữa presence cue và arbiter; guard raw private/debug/timer-only; output `CompiledSurfaceSeed`/`SurfaceImpulse`. |
+| `src/runtime/private_mind_daemon.py` | Chưa tracked. | File mới local. Owner lifecycle private mind: queue/outcome/digest/tick counters; không tự mở thread; loop chỉ còn xử lý một tick. |
+| `src/runtime/private_mind_loop.py` | Tracked gần nhất `f8555c6`. | Loop vẫn build dossier/evaluator/synthesizer/mutation/valve, nhưng lifecycle bền nằm ở daemon. Doc coi loop là owner duy nhất là sai. |
+| `src/runtime/cognitive_frame_recorder.py` | Lịch sử dài `afec1a5 -> 8a6a329 -> 440e71a -> b303cb8 -> dc51d80 -> 6b06e3f -> e69eccd -> f8555c6`. | Source local `_feed_private_mind_outcome()` ưu tiên `private_mind_daemon.record_outcome(outcome, frame=frame)`, fallback loop/store chỉ là tương thích cũ. |
+| `src/cortex/private_mind/evidence_dossier.py` | Tracked gần nhất `f8555c6`. | Dossier nhận thêm `thought_stream`, `surface_candidate_queue`, `runtime_owner`; runtime state có `thought_stream/private_runtime/surface_queue`; metrics thêm `runtime_anchor_count`, `memory_hit_count`, `repair_failure_count`, `concern_count`, `dossier_thickness`. |
+| `src/cortex/private_mind/state_mutation_bus.py` | Tracked gần nhất `f8555c6`. | Bus không tự enqueue `judgment.surface_candidate` ở cuối `apply()` nữa. Candidate public phải qua `SurfaceValve`/loop/daemon; doc cũ nói auto-enqueue là sai. |
+| `src/runtime/private_mind_model_adapter.py` | Tracked gần nhất `f8555c6`. | Source local parser JSON khỏe hơn: code fence, balanced object, repair object cụt, trailing comma/None/True/False, `ast.literal_eval`. Doc chỉ nói `json.loads` rồi fail là lạc hậu. |
+| `src/transport/udp.py` | File có từ `287f857`, sửa `7112553`, gần nhất `f8555c6` cùng private mind/body parser path. | Source local compact `private_mind_digest` khi payload > `60000` bytes và mirror vào `emotion_debug.private_mind`; chỉ fallback payload tối thiểu nếu compact vẫn quá lớn. Không nói "strip ngay". |
+| `body/UdpDecisionParser.cs` | `763d203`, `afec1a5`, `de630ba`, gần nhất `f8555c6`. | Parser đọc `private_mind_digest` top-level hoặc `emotion_debug.private_mind` vào `PrivateMindDebugJson`/`HasPrivateMindDebug`. Doc chỉ nói emotion debug chung là thiếu Godot debug path. |
+| `tests/test_surface_seed_compiler.py` | Chưa tracked. | Test mới local khóa compiler: memory/thought/private-safe seed, raw private reject, invalid JSON reject, timer-only reject. |
+| `tests/test_presence_controller_memory_surface.py` | Tracked cũ đã có memory resonance regression; hiện local patch thêm compiler integration. | Doc test cần ghi thêm case `_build_surface_arbiter_result()` đưa thought seed public-safe vào arbiter. |
+| `tests/test_private_mind_daemon.py` | Chưa tracked. | Test mới local khóa daemon owner queue/outcome/dossier anchors. |
+| `tests/test_private_mind_model_adapter.py` | Chưa tracked. | Test mới local khóa parser/adapter private mind API. Cần bổ sung mục riêng nếu tiếp tục mở rộng test map. |
+| `tests/test_udp_private_mind_debug.py` | Chưa tracked. | Test mới local khóa UDP compact digest overflow; là bằng chứng payload debug không bị xóa sạch ngay. |
 
 ---
 
@@ -277,10 +321,16 @@ Normalizes:
 - text, should_speak, parse_mode, debug_trace, parser_trace.
 - animation alias: walk/run -> stand_walk, wave -> stand.
 - body_bias, emotion_debug, motion fields.
+Current code specifics:
+- AUDIT 2026-06-07: `f8555c6` là mốc tracked gần nhất chạm parser này cùng `src/transport/udp.py`; source local hiện parse thêm private mind debug.
+- `TryReadPrivateMindDebugJson()` nhận `private_mind_digest` ở top-level hoặc fallback `emotion_debug.private_mind`, rồi giữ raw JSON trong `PrivateMindDebugJson`.
+- Nếu parse JSON hỏng nhưng raw là plain text, parser vẫn surface raw text; nếu raw giống JSON/code fence lỗi thì fallback `"Loi duong truyen tin hieu."`.
+- `HasExplicitMotion` chỉ bật khi có `motion_intent`, `motion_facing != 0`, hoặc `motion_target_x >= 0`; còn `HasRemoteMotion` rộng hơn vì animation/next_animation/facing/target cũng tính là remote command.
 Debug khi:
 - payload có text nhưng bubble không hiện.
 - animation bị reject.
 - motion không chạy dù Python gửi.
+- private mind debug không hiện trong UI: kiểm tra payload có `private_mind_digest` hoặc `emotion_debug.private_mind`, rồi kiểm tra `HasPrivateMindDebug`.
 Status: ACTIVE.
 
 ## `body/ErisProcessManager.cs`
@@ -446,9 +496,10 @@ Current code specifics:
   `eff0420` thêm mạnh wake/surface/runtime coverage;
   `637e7fc` là một mốc phình lớn khác (`+623` dòng) và phải coi như revision mới, không còn là “cùng snapshot với 104c45b”.
 - `637e7fc` cũng là mốc coordinator import và dựng lane subconscious mới rõ ràng hơn: `ModelBackedConsciousSynthesizer`, `build_phase1234567_workers`, cùng các nhánh audit/subconscious report đi sâu hơn vào frame/runtime loop.
-- nhánh local hiện tại thêm `PrivateMindLoop`: coordinator giữ `private_mind_surface_queue`, `private_mind_speech_bias`, `private_mind_inquiry_plan`, `private_mind_active_state`, `private_mind_thought_pressure`, và `private_mind_digest`.
-- `_update_private_mind_state()` tick private mind theo user/channel/snapshot/wake/memory/ledger/agenda/thought_stream rồi cập nhật digest; `_drain_private_mind_surface_impulses()` cho presence controller hút surface impulse đã qua `SurfaceValve`.
-- UDP payload có thể mang `private_mind_digest` bản compact cho debug menu, còn `transport/udp.py` có guard để strip digest khi cần tránh payload quá lớn hoặc không nên gửi private debug ra body.
+- nhánh `f8555c6` thêm private mind base; nhánh local hiện tại đã nâng tiếp từ `PrivateMindLoop` sang `PrivateMindDaemon`: coordinator giữ `private_mind_daemon`, `private_mind_loop = daemon.loop`, `private_mind_surface_queue`, `private_mind_speech_bias`, `private_mind_inquiry_plan`, `private_mind_active_state`, `private_mind_thought_pressure`, và `private_mind_digest`.
+- AUDIT 2026-06-07: nếu tài liệu/trace nào nói coordinator chỉ sở hữu `PrivateMindLoop` thì đã lạc hậu so với source local. `_update_private_mind_state()` ưu tiên `daemon.tick(...)`, còn `_drain_private_mind_surface_impulses()` ưu tiên `daemon.drain_surface_impulses(limit=...)`; queue cũ chỉ là fallback tương thích.
+- `_update_private_mind_state()` tick private mind theo user/channel/snapshot/wake/memory/ledger/agenda/thought_stream/runtime_owner rồi cập nhật digest; `_drain_private_mind_surface_impulses()` cho presence controller hút surface impulse đã qua `SurfaceValve`.
+- UDP payload có thể mang `private_mind_digest` bản compact cho debug menu. `transport/udp.py` hiện **compact trước, strip sau**: chỉ rơi về payload tối thiểu khi bản compact vẫn vượt `MAX_UDP_PAYLOAD_BYTES`.
 Debug khi:
 - lỗi end-to-end không rõ owner.
 - autonomous gọi main model dù wake gate không cho.
@@ -541,8 +592,9 @@ Order:
 5. build/dedupe StateCommitRequest.
 6. StateCommitter.commit(frame).
 Current code specifics:
-- `_feed_private_mind_outcome()` đẩy outcome/frame vừa finalize ngược vào `PrivateMindLoop` để nội tâm không chỉ đọc pre-action context mà còn học từ kết quả thật.
-- nếu digest chạy được, recorder cập nhật `private_mind_digest` và ghi debug note `private_mind_outcome_feedback=...` vào frame.
+- `_feed_private_mind_outcome()` đẩy outcome/frame vừa finalize ngược vào private mind để nó không chỉ đọc pre-action context mà còn học từ kết quả thật.
+- AUDIT 2026-06-07: source local ưu tiên `private_mind_daemon.record_outcome(outcome, frame=frame)`. Chỉ khi daemon không có mới fallback sang `private_mind_loop.concern_store.update_from_outcome()`. Vì vậy debug outcome feedback phải soi daemon trước, không soi loop/store trước.
+- nếu digest chạy được, recorder cập nhật `private_mind_digest` từ daemon hoặc loop và ghi debug note `private_mind_outcome_feedback=...` vào frame.
 Debug khi:
 - user correction không đi vào repair memory.
 - frame không ghi outcome.
@@ -551,7 +603,10 @@ Debug khi:
 Status: ACTIVE.
 
 ## `src/runtime/private_mind_loop.py`
-Role: runtime orchestrator cho private mind 5 phase.
+Role: runtime tick orchestrator cho private mind 5 phase.
+AUDIT 2026-06-07:
+- **LẠC HẬU NẾU COI FILE NÀY LÀ OWNER LIFECYCLE DUY NHẤT.** Source local đã thêm `src/runtime/private_mind_daemon.py` làm lifecycle owner cho queue/outcome/digest; `PrivateMindLoop` vẫn xử lý một tick evaluator/synthesis/mutation/valve.
+- lịch sử tracked của file hiện bắt đầu ở `f8555c6`; các thay đổi daemon hiện là local/untracked, chưa có commit history riêng.
 Pipeline:
 1. build `EvidenceDossier`.
 2. chạy 4 mini-evaluator.
@@ -568,8 +623,24 @@ Env knobs:
 Debug khi:
 - private mind không tick, kiểm tra enabled + min interval trước.
 - tick có judgment nhưng `applied_mutations` rỗng, kiểm tra confidence/target của mutation.
-- surface candidate có trong judgment nhưng không vào `private_mind_surface_queue`, kiểm tra `SurfaceValve` và dedupe key.
+- surface candidate có trong judgment nhưng không vào `private_mind_surface_queue`, kiểm tra `SurfaceValve`, daemon queue, và dedupe key.
 Status: ACTIVE NEW PRIVATE COGNITION LOOP.
+
+## `src/runtime/private_mind_daemon.py`
+Role: lifecycle owner local cho private mind.
+AUDIT 2026-06-07:
+- **THIẾU TRONG DOC CŨ / UNTRACKED CURRENT WORKSPACE.**
+- Không tự mở thread; chạy đồng bộ qua runtime tick.
+- Sở hữu `surface_queue`, outcome feedback reports, `last_surface_outcome`, tick/skipped counters, và digest menu `private_mind_daemon`.
+- `from_runtime()` vẫn dựng `PrivateMindLoop.from_runtime()` để ăn các env cũ như `ERIS_PRIVATE_MIND_ENABLED`, provider/model, concern path.
+- `tick()` gọi loop với `thought_stream`, `surface_candidate_queue`, `runtime_owner`, surface outcome đã merge; sau đó trim queue và sync bias/state về runtime owner.
+- `record_outcome()` gọi `ConcernStore.update_from_outcome()` và giữ report cho tick/digest sau.
+- `drain_surface_impulses()` là đường ưu tiên để SurfaceArbiter nhận impulse private đã lọc.
+Debug khi:
+- private mind tick có queue trong daemon digest nhưng coordinator không drain được.
+- concern đã được user sửa/correct nhưng tick sau vẫn không thấy outcome.
+- `private_mind_digest.menu.private_mind_daemon` thiếu dù source local đã có daemon.
+Status: ACTIVE LOCAL UNTRACKED / NEEDS COMMIT OR DOC MAY DRIFT AGAIN.
 
 ## `src/runtime/private_mind_model_adapter.py`
 Role: optional API adapter cho private mind evaluator/synthesizer.
@@ -593,9 +664,20 @@ Contract:
 - adapter chỉ trả JSON private cho evaluator/judgment.
 - khi API fail hoặc JSON invalid, trả `None` để rule fallback chạy tiếp.
 - `debug_status()` gom calls/latency/token usage best-effort, chưa tính cost thật.
+Current code specifics:
+- history tracked: `private_mind_model_adapter.py` mới xuất hiện ở `f8555c6` (`2026-06-07 00:39:48 +0700`) cùng private mind base.
+- source local hiện đã nới parser JSON: `_json_candidates()` bóc code fence, lấy object cân bằng đầu tiên, thử repair object cụt bằng cách bù `}`, rồi `_loads_json_object()` thử `json.loads`, repair noise `None/True/False`/trailing comma, và cuối cùng `ast.literal_eval`.
+- Vì vậy nếu debug thấy API trả JSON hơi bẩn nhưng vẫn có fragment/judgment, đó là behavior mới đúng; nếu vẫn fail thì xem `debug_api.last_error`/`raw` đã bị `_safe_raw()` bỏ prompt/messages chưa.
+Runtime finding 2026-06-07:
+- Kết luận chính từ log đang audit: PrivateMind API trả output không parse được JSON.
+- Dấu hiệu: log lặp `[PrivateMind API] fragment failed ... error=invalid_json` ở `intent_evaluator`, `memory_resonance_evaluator`, `risk_and_permission_evaluator`, `future_bias_evaluator`, rồi có cả `[PrivateMind API] synthesis failed error=invalid_json`.
+- Số đếm trong log đó: khoảng `60` lần `invalid_json`, gồm `49` lần `fragment failed` và `11` lần `synthesis failed`.
+- Sau các lỗi vẫn có `[PrivateMind] fragments=4 concerns=4 judgment=yes ...`, nghĩa là runtime không crash; adapter trả `None`, 4 evaluator rule fallback vẫn tạo fragment, concern store vẫn update, và synthesizer deterministic fallback vẫn tạo judgment.
+- Vì vậy debug root cause trước tiên là JSON contract/provider output của PrivateMind API, không phải daemon/loop/surface valve bị chết.
 Debug khi:
 - muốn biết API có thật sự được gọi không: đọc `debug_api` trong `private_mind_digest`.
 - provider có key nhưng vẫn fail: kiểm tra secret loader/env/base URL/model.
+- thấy `invalid_json` lặp nhưng `fragments=4 ... judgment=yes`: sửa prompt/response_format/parser hoặc provider, đừng coi đó là lỗi ngừng private mind.
 Status: ACTIVE OPTIONAL API ADAPTER.
 
 ## `src/runtime/thought_model_adapter.py`
@@ -664,6 +746,8 @@ Current code specifics:
 - cue có thể chọn `ObserveCode`, `tilt_head`, hoặc `idle_shift`; `missing_evidence_ids` được set khi không có concrete screen evidence.
 - `_build_endogenous_surface_impulses()` hiện có thể nâng `active_memory_resonance` public-safe thành impulse `memory_resonance`; residue private hoặc activation `may_surface=false` phải bị giữ lại.
 - `_build_surface_arbiter_result()` hút thêm private mind surface impulses qua `_drain_private_mind_surface_impulses(limit=4)` rồi trộn vào `extra_impulses`; đây là cổng duy nhất để private mind nói gián tiếp.
+- AUDIT 2026-06-07: source local thêm `SurfaceSeedCompiler` vào ngay trong `_build_surface_arbiter_result()`. Compiler đọc cue/frame/snapshot/internal_state/thought_stream/private_mind_digest/speech_bias/memory resonance/extra impulses, chọn một seed public-safe, enrich cue evidence/confidence, rồi bơm `SurfaceImpulse(source="surface_seed_compiler")` vào arbiter.
+- History theo file: `presence_controller.py` có chuỗi tracked dày từ `fdfe52c` -> `104c45b`, `f8555c6` là mốc private mind base; patch `SurfaceSeedCompiler` hiện là local/untracked companion với `src/cortex/surface_seed_compiler.py`.
 - `_derive_micro_presence_cue()`/surface context có thể thấy `private_mind_thought_pressure` và `thought_stream.private_mind_pressure_bias` như áp lực mềm, không phải bằng chứng màn hình.
 - `_build_surface_arbiter_result()` là helper mới trả cả `Decision | None` lẫn `SurfaceDecision | None`; wake-gated route dùng nó để giữ reject/body-only/speak status của chính lượt arbitrate hiện tại, thay vì đọc lại `arbiter.last_decision`.
 - `_build_surface_arbiter_decision()` giờ chỉ còn là wrapper tương thích ngược trên `_build_surface_arbiter_result()`.
@@ -931,7 +1015,14 @@ Role: UDP transport Python.
 Ports:
 - send decision to Godot 4242.
 - receive Godot events 4243.
+Current code specifics:
+- history tracked: file được thêm ở `287f857` (`2026-03-23`), có sửa ở `7112553`, rồi `f8555c6` chạm lại cùng private mind/body parser path.
+- `MAX_UDP_PAYLOAD_BYTES = 60000`.
+- `send_json()` serialize `ensure_ascii=False`; nếu payload quá lớn thì compact `private_mind_digest` và mirror bản compact vào `emotion_debug.private_mind` khi có `emotion_debug`.
+- Chỉ khi bản compact vẫn vượt limit mới rơi về payload tối thiểu gồm `text`, `should_speak`, `animation`, `parse_mode`, `debug_trace="udp_payload_truncated"`, `udp_debug_truncated=true`.
+- AUDIT 2026-06-07: nói "transport strip private_mind_digest" là thiếu chính xác; source local cố giữ digest debug bản gọn trước khi strip.
 Debug khi: chat/body mất kết nối.
+- private mind chạy nhưng Godot debug không thấy: kiểm tra có `udp_debug_truncated` không, rồi so payload compact trước khi nghi daemon/loop không tick.
 Status: ACTIVE.
 
 ---
@@ -1527,6 +1618,31 @@ Important traces:
 - `anchor=subconscious_synthesizer`
 Status: ACTIVE CRITICAL SURFACE ROUTER VERIFIED_IN_WORKSPACE.
 
+## `src/cortex/surface_seed_compiler.py`
+Role: compiler local gom seed public-safe trước khi vào `SurfaceArbiter`.
+AUDIT 2026-06-07:
+- **UNTRACKED CURRENT WORKSPACE**, chưa có history tracked. Không gán thay đổi này cho `f8555c6`/`9bbdcd2`; các commit đó chỉ chuẩn bị các path liên quan.
+- Được `PresenceControllerMixin._build_surface_arbiter_result()` gọi trước khi arbitrate; nếu compile được seed, cue được enrich evidence/confidence và arbiter nhận thêm `SurfaceImpulse(source="surface_seed_compiler")`.
+Inputs:
+- `extra_impulses` đã có, gồm private mind impulse đã qua `SurfaceValve`.
+- `active_memory_resonance` public-safe.
+- `frame.thought_surface`, `frame.subconscious_seed`, `thought_stream_report.latest_seed`, `subconscious_report.latest_seed`, hoặc `thought_stream.get_surface_candidates()`.
+- `snapshot.vision_facts`/`recent_events` cụ thể.
+- `private_mind_speech_bias` + `private_mind_thought_pressure`, nhưng chỉ như style/pressure seed.
+Guards:
+- drop raw private markers như `InternalJudgment`, `ThoughtFragment`, `private mind json`, `debug_api`.
+- drop JSON-ish/private dump và timer-only seed như `idle=120s`.
+- nếu digest có `invalid_json`, không compile private bias.
+- private mind raw bias không đủ public anchor thì không được xem là screen evidence.
+Outputs:
+- `CompiledSurfaceSeed` với `topic_seed`, `public_seed`, `evidence`, `root_source`, `surface_contract_flags`, `debug`, và optional `SurfaceImpulse`.
+- missing-screen seed có flags `allow_no_screen_anchor`, `must_not_claim_screen`, và với presence/re-engagement có thêm `thin_presence_no_screen`.
+Debug khi:
+- memory/thought/private seed có trong runtime nhưng arbiter vẫn chỉ thấy long-silence cue.
+- surface nghe như raw private/debug dump: kiểm tra compiler guards trước, rồi mới soi `SurfaceValve`.
+- re-engagement sinh câu timer/status ping: kiểm tra compiler có drop timer-only seed và chỉ chọn public anchor không.
+Status: ACTIVE LOCAL UNTRACKED / NEEDS COMMIT WITH PRESENCE PATCH.
+
 ## `src/cortex/goal_persistence.py`
 Role: goal nền bền qua turn/session.
 Fields:
@@ -1696,9 +1812,15 @@ Inputs:
 - telemetry/snapshot/observer frame/wake decision.
 - memory hits/session ledger/internal agenda.
 - concern store và surface outcome gần nhất.
+- AUDIT 2026-06-07: source local đã thêm `thought_stream`, `surface_candidate_queue`, và `runtime_owner` vào input. Nếu doc/trace chỉ thấy telemetry + memory + agenda thì thiếu một lớp runtime anchor mới.
+Current code specifics:
+- runtime state hiện có `thought_stream`, `private_runtime`, `surface_queue`.
+- evidence index có thể thêm `dossier.runtime.thought_stream`, `dossier.runtime.private_state`, `dossier.runtime.surface_queue`, và `dossier.surface.outcome`.
+- metrics hiện có thêm `runtime_anchor_count`, `memory_hit_count`, `repair_failure_count`, `concern_count`, `dossier_thickness`; đây là tín hiệu quan trọng khi evaluator/synthesizer có vẻ "thiếu bằng chứng".
 Debug khi:
 - evaluator nói có bằng chứng nhưng evidence id không tồn tại trong dossier.
 - private mind không thấy user turn hoặc wake/surface outcome mới.
+- private mind không cảm được pressure/momentum/surface queue dù runtime đã có `thought_stream.private_mind_pressure_bias`.
 Status: ACTIVE EVIDENCE BUILDER.
 
 ## `src/cortex/private_mind/mini_evaluators.py`
@@ -1736,6 +1858,7 @@ Status: ACTIVE PRIVATE SYNTHESIZER.
 Role: persist/open private concerns.
 Storage:
 - default path qua runtime: `memory_core/private_concerns.json`.
+- AUDIT 2026-06-07: file IDE đang mở là `src/memory_core/private_concerns.json`, nhưng source default vẫn là `memory_core/private_concerns.json` qua `ERIS_MEMORY_CORE_DIR` mặc định. Nếu không set `ERIS_MEMORY_CORE_DIR=src/memory_core`, file `src/memory_core/private_concerns.json` là local/side path và không phải store mặc định.
 Behavior:
 - update từ fragments và judgment concern update.
 - giữ status open/watching/blocked/resolved/rejected/stale.
@@ -1761,9 +1884,11 @@ Current code specifics:
 - ghi bias vào owner fields như `private_mind_speech_bias`, `private_mind_inquiry_plan`, `private_mind_active_state`, `private_mind_thought_pressure`.
 - có thể tăng `thought_stream.private_mind_pressure_bias` để downstream surface arbitration cảm được áp lực nội sinh.
 - repair/belief commit đi qua memory/state committer best-effort, không crash runtime nếu fail.
+- AUDIT 2026-06-07: bus vẫn có target `surface_candidate_queue`, nhưng không còn tự enqueue `judgment.surface_candidate` sau `apply()`. Nếu surface candidate chỉ nằm trong judgment mà không qua `SurfaceValve`/loop/daemon, nó không nên thành public impulse.
 Debug khi:
 - `state_mutations.requested` có dữ liệu nhưng `applied` báo `confidence_below_threshold`.
 - speech bias không vào prompt hoặc thought pressure không vào surface arbiter.
+- mutation target `surface_candidate_queue` báo applied nhưng SurfaceArbiter không thấy `source=private_mind`: kiểm tra candidate có bị valve/daemon/dedupe/drain xử lý trước không.
 Status: ACTIVE MUTATION BUS.
 
 ## `src/cortex/private_mind/surface_valve.py`
@@ -2197,6 +2322,45 @@ Debug khi:
 - Lane Phase 0 / Phase 3-4 tạo thought object sai route hoặc leak sang public path quá sớm.
 Status: ACTIVE TARGETED SUBCONSCIOUS TEST.
 
+## `tests/test_private_mind_daemon.py`
+Role: regression local cho lifecycle private mind daemon.
+AUDIT 2026-06-07:
+- **UNTRACKED CURRENT WORKSPACE**, chưa có trong history tracked.
+Covers:
+- daemon tick sở hữu surface queue thay vì để coordinator/loop tự giữ rời rạc.
+- outcome feedback cập nhật concern lifecycle qua `record_outcome()`.
+- `EvidenceDossierBuilder` thấy thought_stream/private_runtime/surface_queue anchors.
+Debug khi:
+- thêm `PrivateMindDaemon` xong private mind có tick nhưng không đổi state qua lượt sau.
+- queue có impulse private-safe nhưng SurfaceArbiter không nhận.
+Status: ACTIVE LOCAL REGRESSION / NEEDS COMMIT WITH DAEMON.
+
+## `tests/test_private_mind_model_adapter.py`
+Role: regression local cho parser JSON của private mind API adapter.
+AUDIT 2026-06-07:
+- **UNTRACKED CURRENT WORKSPACE**, đi cùng patch local `src/runtime/private_mind_model_adapter.py`.
+Covers:
+- JSON object bọc trong markdown/code fence vẫn parse được.
+- trailing comma trong object/list được repair.
+- object JSON bị cụt ở cuối được bù brace đủ để lấy judgment/fragment chính.
+Debug khi:
+- private mind API trả text có JSON hợp lệ bên trong nhưng evaluator rơi về rule fallback.
+- `debug_api.last_error=invalid_json` xuất hiện dù raw response chỉ bẩn nhẹ.
+Status: ACTIVE LOCAL REGRESSION / NEEDS COMMIT WITH PRIVATE MODEL ADAPTER.
+
+## `tests/test_udp_private_mind_debug.py`
+Role: regression local cho payload debug private mind qua UDP khi quá lớn.
+AUDIT 2026-06-07:
+- **UNTRACKED CURRENT WORKSPACE**, chưa có trong history tracked.
+Covers:
+- `UdpTransport.send_json()` compact `private_mind_digest` khi payload vượt `MAX_UDP_PAYLOAD_BYTES`.
+- bản compact vẫn giữ `current.dominant_judgment`, `menu.debug_api.last_error`, và gắn `udp_debug_truncated=true`.
+- `emotion_debug.private_mind` được thay bằng digest compact, không giữ blob quá lớn.
+Debug khi:
+- Godot không hiện private mind debug nhưng Python vẫn có digest.
+- payload UDP lớn làm mất toàn bộ decision/body command.
+Status: ACTIVE LOCAL REGRESSION / NEEDS COMMIT WITH UDP DEBUG PATCH.
+
 ## `tests/test_model_budget_policy_queue.py`
 Role: queue/lease regression cho heavy-model scheduler.
 Covers:
@@ -2226,11 +2390,28 @@ Debug khi:
 - body-only streak/rate-limit hành xử lạ.
 Status: CRITICAL SURFACE TEST.
 
+## `tests/test_surface_seed_compiler.py`
+Role: regression local cho `SurfaceSeedCompiler`.
+AUDIT 2026-06-07:
+- **UNTRACKED CURRENT WORKSPACE**, đi cùng patch local `src/cortex/surface_seed_compiler.py` và `presence_controller.py`.
+Covers:
+- memory resonance public-safe compile thành impulse `source="surface_seed_compiler"`.
+- thought/subconscious public seed được chọn thay vì raw/private topic.
+- raw private judgment / `ThoughtFragment` / invalid JSON private bias không được compile.
+- private impulse đã qua `SurfaceValve` và có public anchor được phép compile tiếp.
+- timer-only re-engagement không được tạo speech seed.
+Debug khi:
+- surface seed mới làm ERIS nói kiểu dump private/debug.
+- re-engagement lại rơi về `idle=...`/timer ping.
+- memory resonance/thought seed tồn tại nhưng arbiter không thấy impulse compiled.
+Status: ACTIVE LOCAL REGRESSION / NEEDS COMMIT WITH SURFACE SEED COMPILER.
+
 ## `tests/test_presence_controller_memory_surface.py`
 Role: regression test cho đường `active_memory_resonance -> endogenous surface impulse`.
 Covers:
 - memory resonance public-safe được convert thành `SurfaceImpulse(kind="memory_resonance")`.
 - affective/private resonance `may_surface=false` không được surface.
+- local patch hiện còn cover `_build_surface_arbiter_result()` có gọi compiler và đưa thought seed public-safe vào arbiter.
 Debug khi:
 - memory residue đúng ra chỉ nên thành low-claim muse nhưng lại im hoàn toàn.
 - affective residue private bị lộ ra presence/surface path.
@@ -2366,23 +2547,27 @@ Symptom:
 - `private_mind_digest` có fragments/judgment nhưng câu trả lời không đổi.
 - `surface_candidate` có trong digest nhưng `SurfaceArbiter` không thấy winner/source `private_mind`.
 - `debug_api.calls` tăng nhưng `state_mutations.applied` rỗng hoặc toàn fail.
+- log có nhiều `[PrivateMind API] fragment failed ... error=invalid_json` hoặc `[PrivateMind API] synthesis failed error=invalid_json`, nhưng sau đó vẫn có `[PrivateMind] fragments=4 concerns=4 judgment=yes ...`.
 Check:
-1. `ERIS_PRIVATE_MIND_ENABLED` và `ERIS_PRIVATE_MIND_MIN_INTERVAL_SEC` có làm tick bị skip không.
-2. `ERIS_PRIVATE_MIND_API_ENABLED` chỉ bật API path; nếu tắt thì rule fallback vẫn phải tạo fragment, không phải disable cả loop.
-3. `EvidenceDossier` có recent user turns, wake/surface outcome, memory hits và concern snapshots không.
-4. `MiniEvaluatorPipeline` có ít nhất vài fragment confidence đủ dùng không; model fragment dưới threshold sẽ bị thay bằng rule.
-5. `GemmaInnerSynthesizer` có tạo `state_mutations`/`surface_candidate` hay chỉ tạo private verdict.
-6. `StateMutationBus` báo target nào fail: `speech_bias`, `thought_stream_pressure`, `surface_candidate_queue`, `belief_core`, hay `repair_memory`.
-7. `SurfaceValve` có drop candidate vì thiếu public safety/evidence/pressure không.
-8. `private_mind_surface_queue` có item nhưng bị `_drain_private_mind_surface_impulses()` hút quá sớm hoặc dedupe mất không.
-9. `PresenceController` có truyền private impulses vào `SurfaceArbiter` qua `extra_impulses` không.
-10. `SurfaceArbiter` có rate-limit/family cooldown/body-only policy chặn `source=private_mind` không.
-11. `prompt_context_builder.py` có render `private_mind_speech_bias` vào prompt không; nếu bias vào prompt rồi mà wording không đổi, soi LLM contract/post filters.
-12. `transport/udp.py` có strip `private_mind_digest` ở payload body không; strip digest không có nghĩa loop không chạy.
+1. AUDIT 2026-06-07: nếu log có khoảng `60` lần `invalid_json` (`49` fragment, `11` synthesis) nhưng vẫn có `fragments=4 concerns=4 judgment=yes`, kết luận chính là **PrivateMind API output không parse được JSON nhưng rule fallback đang cứu pipeline**.
+2. Khi gặp case trên, soi `src/runtime/private_mind_model_adapter.py`: `_parse_json()` có bắt được raw content không, provider có thật sự tôn trọng `response_format={"type":"json_object"}` không, output có bị markdown/prose/schema cụt vượt khả năng repair không.
+3. Nếu source local có `PrivateMindDaemon`, soi `private_mind_digest.menu.private_mind_daemon`, `daemon.surface_queue`, `tick_count`, `skipped_count`, `last_surface_outcome`, `outcome_feedback_reports` trước khi đổ lỗi cho loop.
+4. `ERIS_PRIVATE_MIND_ENABLED` và `ERIS_PRIVATE_MIND_MIN_INTERVAL_SEC` có làm tick bị skip không.
+5. `ERIS_PRIVATE_MIND_API_ENABLED` chỉ bật API path; nếu tắt thì rule fallback vẫn phải tạo fragment, không phải disable cả loop.
+6. `EvidenceDossier` có recent user turns, wake/surface outcome, memory hits, concern snapshots, thought_stream/private_runtime/surface_queue anchors không.
+7. `MiniEvaluatorPipeline` có ít nhất vài fragment confidence đủ dùng không; model fragment dưới threshold sẽ bị thay bằng rule.
+8. `GemmaInnerSynthesizer` có tạo `state_mutations`/`surface_candidate` hay chỉ tạo private verdict.
+9. `StateMutationBus` báo target nào fail: `speech_bias`, `thought_stream_pressure`, `surface_candidate_queue`, `belief_core`, hay `repair_memory`.
+10. `SurfaceValve` có drop candidate vì thiếu public safety/evidence/pressure không.
+11. `private_mind_surface_queue`/`daemon.surface_queue` có item nhưng bị `_drain_private_mind_surface_impulses()` hoặc `daemon.drain_surface_impulses()` hút quá sớm hoặc dedupe mất không.
+12. `PresenceController` có truyền private impulses vào `SurfaceArbiter` qua `extra_impulses` không.
+13. `SurfaceArbiter` có rate-limit/family cooldown/body-only policy chặn `source=private_mind` không.
+14. `prompt_context_builder.py` có render `private_mind_speech_bias` vào prompt không; nếu bias vào prompt rồi mà wording không đổi, soi LLM contract/post filters.
+15. `transport/udp.py` có compact hoặc fallback-strip `private_mind_digest` vì payload quá lớn không; `udp_debug_truncated=true` không có nghĩa loop/daemon không chạy.
 Fix direction:
 - Đừng cho raw `InternalJudgment` thành public text; nếu muốn nói, sửa `SurfaceValve`/`SurfaceImpulse`/arbiter path.
 - Nếu muốn private mind ảnh hưởng lâu dài, ưu tiên mutation target `speech_bias`, `thought_stream_pressure`, `belief_core`, hoặc `repair_memory` thay vì chỉ surface một câu.
-- Nếu API fail, sửa provider/env ở `private_mind_model_adapter.py`; runtime vẫn nên sống bằng deterministic fallback.
+- Nếu API fail bằng `invalid_json`, sửa prompt/response_format/provider/parser ở `private_mind_model_adapter.py`; runtime vẫn nên sống bằng deterministic fallback.
 
 ## Case: low-level speech policy config không ăn
 Check:

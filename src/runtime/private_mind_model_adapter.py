@@ -20,6 +20,7 @@ import os
 import re
 import time
 import urllib.request
+from ast import literal_eval
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -83,6 +84,8 @@ class RuntimePrivateMindModelAdapter:
         self._completion_tokens = 0
         self._last_error = ""
         self._last_call_at = 0.0
+        self._invalid_json_streak = 0
+        self._json_cooldown_until = 0.0
 
     @classmethod
     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "RuntimePrivateMindModelAdapter | None":
@@ -100,9 +103,14 @@ class RuntimePrivateMindModelAdapter:
 
     def evaluate_fragment(self, evaluator_name: str, dossier: EvidenceDossier) -> Mapping[str, Any] | None:
         messages = self._fragment_messages(evaluator_name, dossier)
-        result = self._tracked_chat_json(messages, max_tokens=self.config.max_tokens_fragment)
+        result = self._tracked_chat_json(
+            messages,
+            max_tokens=self.config.max_tokens_fragment,
+            response_schema=self._fragment_response_schema(evaluator_name),
+        )
         if not result.ok:
-            self._log("warning", "[PrivateMind API] fragment failed evaluator=%s error=%s", evaluator_name, result.error)
+            if result.error != "invalid_json_cooldown":
+                self._log("warning", "[PrivateMind API] fragment failed evaluator=%s error=%s", evaluator_name, result.error)
             return None
         parsed = dict(result.parsed)
         parsed.setdefault("source", evaluator_name)
@@ -112,9 +120,14 @@ class RuntimePrivateMindModelAdapter:
 
     def synthesize_judgment(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> Mapping[str, Any] | None:
         messages = self._judgment_messages(dossier, fragments)
-        result = self._tracked_chat_json(messages, max_tokens=self.config.max_tokens_judgment)
+        result = self._tracked_chat_json(
+            messages,
+            max_tokens=self.config.max_tokens_judgment,
+            response_schema=self._judgment_response_schema(),
+        )
         if not result.ok:
-            self._log("warning", "[PrivateMind API] synthesis failed error=%s", result.error)
+            if result.error != "invalid_json_cooldown":
+                self._log("warning", "[PrivateMind API] synthesis failed error=%s", result.error)
             return None
         parsed = dict(result.parsed)
         parsed.setdefault("provider", self.config.provider)
@@ -180,6 +193,104 @@ class RuntimePrivateMindModelAdapter:
             {"role": "user", "content": json.dumps(to_plain(payload), ensure_ascii=False)[:18000]},
         ]
 
+    def _fragment_response_schema(self, evaluator_name: str) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string"},
+                "claim": {"type": "string"},
+                "confidence": {"type": "number"},
+                "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                "pressure": {"type": "number"},
+                "suggested_question": {"type": "string"},
+                "hypotheses": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "description": {"type": "string"},
+                            "confidence": {"type": "number"},
+                            "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                            "pressure": {"type": "number"},
+                        },
+                    },
+                },
+                "metadata": {
+                    "type": "object",
+                    "properties": {
+                        "theme": {"type": "string"},
+                        "state_mutations": {"type": "array", "items": {"type": "object"}},
+                    },
+                },
+            },
+            "required": ["claim", "confidence", "evidence_ids", "pressure"],
+        }
+
+    def _judgment_response_schema(self) -> dict[str, Any]:
+        mutation_schema = {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string"},
+                "operation": {"type": "string"},
+                "value": {"type": "string"},
+                "confidence": {"type": "number"},
+                "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                "reason": {"type": "string"},
+                "priority": {"type": "number"},
+            },
+        }
+        hypothesis_schema = {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "description": {"type": "string"},
+                "confidence": {"type": "number"},
+                "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                "pressure": {"type": "number"},
+                "rejected": {"type": "boolean"},
+                "reason": {"type": "string"},
+            },
+        }
+        return {
+            "type": "object",
+            "properties": {
+                "dominant_judgment": {"type": "string"},
+                "ranked_hypotheses": {"type": "array", "items": hypothesis_schema},
+                "rejected_hypotheses": {"type": "array", "items": hypothesis_schema},
+                "open_questions": {"type": "array", "items": {"type": "string"}},
+                "private_concern_update": {
+                    "type": "object",
+                    "properties": {
+                        "theme": {"type": "string"},
+                        "pressure": {"type": "number"},
+                        "uncertainty": {"type": "number"},
+                        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                        "open_questions": {"type": "array", "items": {"type": "string"}},
+                        "future_biases": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+                "state_mutations": {"type": "array", "items": mutation_schema},
+                "surface_candidate": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string"},
+                        "topic_seed": {"type": "string"},
+                        "usefulness": {"type": "number"},
+                        "confidence": {"type": "number"},
+                        "interrupt_cost": {"type": "number"},
+                        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                        "reason": {"type": "string"},
+                    },
+                    "nullable": True,
+                },
+                "confidence": {"type": "number"},
+                "pressure": {"type": "number"},
+                "evidence_ids": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["dominant_judgment", "confidence", "pressure", "evidence_ids"],
+        }
+
     def debug_status(self) -> dict[str, Any]:
         api_key_configured = bool(self.config.api_key or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"))
         average_latency = self._total_latency_ms / self._calls if self._calls else 0.0
@@ -189,12 +300,15 @@ class RuntimePrivateMindModelAdapter:
             "model": self.config.model,
             "base_url": self.config.base_url or (self.config.llama_server_url if self.config.provider == "llama_server" else ""),
             "api_key_configured": api_key_configured,
+            "api_degraded": bool(self._last_error or self._json_cooldown_active()),
             "calls": self._calls,
             "ok_calls": self._ok_calls,
             "failed_calls": self._failed_calls,
             "average_latency_ms": round(average_latency, 1),
             "last_call_at": round(float(self._last_call_at or 0.0), 3),
             "last_error": self._last_error,
+            "invalid_json_streak": self._invalid_json_streak,
+            "json_cooldown_until": round(float(self._json_cooldown_until or 0.0), 3),
             "usage": {
                 "prompt_tokens": self._prompt_tokens,
                 "completion_tokens": self._completion_tokens,
@@ -204,9 +318,18 @@ class RuntimePrivateMindModelAdapter:
             },
         }
 
-    def _tracked_chat_json(self, messages: list[dict[str, str]], *, max_tokens: int) -> PrivateMindModelResult:
+    def _tracked_chat_json(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int,
+        response_schema: dict[str, Any] | None = None,
+    ) -> PrivateMindModelResult:
+        if self._json_cooldown_active():
+            self._last_error = "invalid_json_cooldown"
+            return PrivateMindModelResult(ok=False, error="invalid_json_cooldown")
         started = time.time()
-        result = self._chat_json(messages, max_tokens=max_tokens)
+        result = self._chat_json(messages, max_tokens=max_tokens, response_schema=response_schema)
         elapsed_ms = (time.time() - started) * 1000.0
         self._calls += 1
         self._total_latency_ms += elapsed_ms
@@ -214,14 +337,34 @@ class RuntimePrivateMindModelAdapter:
         if result.ok:
             self._ok_calls += 1
             self._last_error = ""
+            self._invalid_json_streak = 0
         else:
             self._failed_calls += 1
             self._last_error = result.error
+            if result.error == "invalid_json":
+                self._invalid_json_streak += 1
+                self._maybe_enter_json_cooldown()
+            elif result.error != "invalid_json_cooldown":
+                self._invalid_json_streak = 0
         usage = self._extract_usage(result.raw)
         self._prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
         self._completion_tokens += int(usage.get("completion_tokens", 0) or 0)
         self._total_tokens += int(usage.get("total_tokens", 0) or 0)
         return result
+
+    def _json_cooldown_active(self) -> bool:
+        return bool(self._json_cooldown_until and time.time() < self._json_cooldown_until)
+
+    def _maybe_enter_json_cooldown(self) -> None:
+        if self._invalid_json_streak < 3 or self._json_cooldown_active():
+            return
+        self._json_cooldown_until = time.time() + 120.0
+        self._log(
+            "warning",
+            "[PrivateMind API] invalid_json cooldown active seconds=%d streak=%d",
+            120,
+            self._invalid_json_streak,
+        )
 
     def _extract_usage(self, raw: Any) -> dict[str, int]:
         if not isinstance(raw, Mapping):
@@ -240,7 +383,27 @@ class RuntimePrivateMindModelAdapter:
             return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
         return {}
 
-    def _chat_json(self, messages: list[dict[str, str]], *, max_tokens: int) -> PrivateMindModelResult:
+    def _chat_json(self, messages: list[dict[str, str]], *, max_tokens: int, response_schema: dict[str, Any] | None = None) -> PrivateMindModelResult:
+        result = self._chat_json_once(messages, max_tokens=max_tokens, temperature=self.config.temperature, response_schema=response_schema)
+        if result.error == "invalid_json" and result.content:
+            retry = self._chat_json_once(
+                self._json_repair_messages(messages, result.content),
+                max_tokens=max_tokens,
+                temperature=0.0,
+                response_schema=response_schema,
+            )
+            if retry.ok:
+                return retry
+        return result
+
+    def _chat_json_once(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int,
+        temperature: float,
+        response_schema: dict[str, Any] | None = None,
+    ) -> PrivateMindModelResult:
         # Nếu llm_service có method chat JSON riêng thì dùng. Repo này chưa chuẩn hóa
         # hết service boundary, nên adapter phải bớt ngây thơ một chút.
         if self.llm_service is not None:
@@ -248,7 +411,7 @@ class RuntimePrivateMindModelAdapter:
                 method = getattr(self.llm_service, method_name, None)
                 if callable(method):
                     try:
-                        raw = method(messages=messages, temperature=self.config.temperature, max_tokens=max_tokens, response_format={"type": "json_object"})
+                        raw = method(messages=messages, temperature=temperature, max_tokens=max_tokens, response_format=self._response_format(response_schema))
                         content = self._extract_content(raw)
                         parsed = self._parse_json(content)
                         return PrivateMindModelResult(ok=bool(parsed), parsed=parsed, content=content, raw=self._safe_raw(raw), error="" if parsed else "invalid_json")
@@ -257,23 +420,57 @@ class RuntimePrivateMindModelAdapter:
                     except Exception as exc:
                         return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}")
         if self.config.provider == "llama_server":
-            return self._llama_server_chat_json(messages, max_tokens=max_tokens)
+            return self._llama_server_chat_json(messages, max_tokens=max_tokens, temperature=temperature)
         if self.config.provider in {"gemini", "openai", "openai_compatible", "compatible", "remote"}:
-            return self._provider_chat_json(messages, max_tokens=max_tokens)
+            return self._provider_chat_json(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
         return PrivateMindModelResult(ok=False, error=f"unsupported_provider:{self.config.provider}")
 
-    def _provider_chat_json(self, messages: list[dict[str, str]], *, max_tokens: int) -> PrivateMindModelResult:
+    def _response_format(self, response_schema: dict[str, Any] | None = None) -> dict[str, Any]:
+        response_format: dict[str, Any] = {"type": "json_object"}
+        if self.config.provider == "gemini" and response_schema:
+            response_format["schema"] = response_schema
+        return response_format
+
+    def _json_repair_messages(self, messages: list[dict[str, str]], invalid_content: str) -> list[dict[str, str]]:
+        excerpt = compact_text(invalid_content, 1200)
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Return only one JSON object. No markdown. No prose. No code fence. "
+                    "Repair the previous output format only; preserve the intended private-evaluation fields."
+                ),
+            },
+            *messages,
+            {
+                "role": "user",
+                "content": (
+                    "Previous invalid output excerpt, JSON-escaped for repair context: "
+                    f"{json.dumps(excerpt, ensure_ascii=False)}\n"
+                    "Return the corrected JSON object only."
+                ),
+            },
+        ]
+
+    def _provider_chat_json(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int,
+        temperature: float,
+        response_schema: dict[str, Any] | None = None,
+    ) -> PrivateMindModelResult:
         client = self._provider_client_or_build()
         if client is None:
             return PrivateMindModelResult(ok=False, error=f"missing_provider_client:{self.config.provider}")
         try:
             raw = client.create_chat_completion(
                 messages=messages,
-                temperature=self.config.temperature,
+                temperature=temperature,
                 frequency_penalty=0.0,
                 presence_penalty=0.0,
                 max_tokens=max_tokens,
-                response_format={"type": "json_object"},
+                response_format=self._response_format(response_schema),
                 timeout=self.config.timeout_seconds,
             )
             content = self._extract_content(raw)
@@ -312,11 +509,11 @@ class RuntimePrivateMindModelAdapter:
             return self._provider_client
         return None
 
-    def _llama_server_chat_json(self, messages: list[dict[str, str]], *, max_tokens: int) -> PrivateMindModelResult:
+    def _llama_server_chat_json(self, messages: list[dict[str, str]], *, max_tokens: int, temperature: float) -> PrivateMindModelResult:
         payload = {
             "model": self._llama_model(),
             "messages": messages,
-            "temperature": self.config.temperature,
+            "temperature": temperature,
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         }
@@ -385,19 +582,123 @@ class RuntimePrivateMindModelAdapter:
         text = str(content or "").strip()
         if not text:
             return {}
-        try:
-            parsed = json.loads(text)
-            return parsed if isinstance(parsed, dict) else {}
-        except Exception:
-            pass
-        match = re.search(r"\{.*\}", text, flags=re.S)
-        if match:
-            try:
-                parsed = json.loads(match.group(0))
-                return parsed if isinstance(parsed, dict) else {}
-            except Exception:
-                return {}
+        for candidate in self._json_candidates(text):
+            parsed = self._loads_json_object(candidate)
+            if parsed:
+                return parsed
         return {}
+
+    def _json_candidates(self, text: str) -> tuple[str, ...]:
+        stripped = str(text or "").strip()
+        if not stripped:
+            return ()
+        candidates: list[str] = [stripped]
+        unfenced = self._strip_markdown_fences(stripped)
+        if unfenced and unfenced not in candidates:
+            candidates.append(unfenced)
+
+        balanced = self._extract_first_json_object(unfenced or stripped)
+        if balanced and balanced not in candidates:
+            candidates.append(balanced)
+
+        repaired = self._extract_repairable_json_object(unfenced or stripped)
+        if repaired and repaired not in candidates:
+            candidates.append(repaired)
+        return tuple(candidates)
+
+    def _strip_markdown_fences(self, text: str) -> str:
+        cleaned = str(text or "").strip()
+        cleaned = re.sub(r"```(?:json|JSON)?\s*", "", cleaned)
+        cleaned = cleaned.replace("```", "")
+        return cleaned.strip()
+
+    def _extract_first_json_object(self, text: str) -> str:
+        start = str(text or "").find("{")
+        if start < 0:
+            return ""
+        depth = 0
+        in_string = False
+        escaped = False
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : idx + 1]
+        return ""
+
+    def _extract_repairable_json_object(self, text: str) -> str:
+        start = str(text or "").find("{")
+        if start < 0:
+            return ""
+        candidate = text[start:].strip()
+        candidate = re.sub(r"\s*```.*$", "", candidate, flags=re.S).strip()
+        balance = self._json_object_balance(candidate)
+        if balance > 0:
+            candidate += "}" * balance
+        return candidate
+
+    def _json_object_balance(self, text: str) -> int:
+        depth = 0
+        in_string = False
+        escaped = False
+        for ch in str(text or ""):
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth = max(0, depth - 1)
+        return depth
+
+    def _loads_json_object(self, candidate: str) -> dict[str, Any]:
+        raw = str(candidate or "").strip()
+        if not raw:
+            return {}
+        variants = (raw, self._repair_common_json_noise(raw))
+        for item in variants:
+            try:
+                parsed = json.loads(item)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict):
+                return parsed
+        for item in (raw, self._repair_common_json_noise(raw)):
+            try:
+                parsed = literal_eval(item)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict):
+                return parsed
+        return {}
+
+    def _repair_common_json_noise(self, text: str) -> str:
+        repaired = str(text or "").strip()
+        repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+        repaired = re.sub(r"\bNone\b", "null", repaired)
+        repaired = re.sub(r"\bTrue\b", "true", repaired)
+        repaired = re.sub(r"\bFalse\b", "false", repaired)
+        return repaired
 
     def _safe_raw(self, raw: Any) -> dict[str, Any]:
         if isinstance(raw, Mapping):

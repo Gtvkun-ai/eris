@@ -88,7 +88,7 @@ from runtime.frame_builder import FrameBuilderMixin
 from runtime.guard_violations import GuardViolation
 from runtime.outcome_observer import OutcomeObserver
 from runtime.post_generation_filters import PostGenerationFiltersMixin
-from runtime.private_mind_loop import PrivateMindLoop
+from runtime.private_mind_daemon import PrivateMindDaemon
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
 from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
@@ -399,19 +399,21 @@ class RuntimeCoordinator(
         self.last_signal_snapshot: SignalSnapshot | None = None
         self.last_signal_diff = None
         self.last_observer_frame: ObserverFrame | None = None
-        # PrivateMindLoop: 5 phase private cognition. Nó không nói trực tiếp;
-        # nó chỉ giữ concern, synthesize phán quyết và bơm bias/surface impulse đã lọc.
-        self.private_mind_surface_queue: list[object] = []
-        self.private_mind_loop = PrivateMindLoop.from_runtime(
+        # PrivateMindDaemon: owner vòng đời private cognition. Loop chỉ xử lý một tick;
+        # daemon giữ queue/outcome/digest để concern thật sự có đời sống qua thời gian.
+        self.private_mind_daemon = PrivateMindDaemon.from_runtime(
             runtime_owner=self,
             llm_service=llm_service,
             logger=self.logger,
         )
+        self.private_mind_loop = getattr(self.private_mind_daemon, "loop", None)
+        self.private_mind_surface_queue: list[object] = getattr(self.private_mind_daemon, "surface_queue", []) if self.private_mind_daemon is not None else []
         self.private_mind_speech_bias: dict[str, object] = {}
         self.private_mind_inquiry_plan: list[dict[str, object]] = []
         self.private_mind_active_state: dict[str, object] = {}
         self.private_mind_thought_pressure = 0.0
         self.private_mind_digest: dict[str, object] = {}
+        self.private_mind_daemon_digest: dict[str, object] = {}
         self.last_semantic_scene_note: SemanticSceneNote | None = None
         self._state_lock = threading.RLock()
 
@@ -788,8 +790,9 @@ class RuntimeCoordinator(
         Nếu nó tự nói public thì lại quay về trò nhật ký nội tâm cầm loa.
         """
 
+        daemon = getattr(self, "private_mind_daemon", None)
         loop = getattr(self, "private_mind_loop", None)
-        if loop is None:
+        if daemon is None and loop is None:
             return
         try:
             state_committer = getattr(self, "state_committer", None)
@@ -799,6 +802,30 @@ class RuntimeCoordinator(
                     state_committer = getter()
                 except Exception:
                     state_committer = None
+            # Ưu tiên daemon vì nó giữ lifecycle/outcome/queue. Fallback sang loop
+            # cũ để không làm gãy môi trường dev đang import PrivateMindLoop trực tiếp.
+            if daemon is not None and callable(getattr(daemon, "tick", None)):
+                tick = daemon.tick(
+                    user_text=user_text,
+                    channel=channel or "autonomous",
+                    snapshot=signal_snapshot,
+                    observer_frame=observer_frame,
+                    wake_decision=wake_decision,
+                    memory_core=getattr(self, "memory_core", None),
+                    state_committer=state_committer,
+                    session_turn_ledger=getattr(self, "session_turn_ledger", None),
+                    internal_agenda=getattr(self, "internal_agenda", None),
+                    thought_stream=getattr(self, "thought_stream", None),
+                    runtime_owner=self,
+                )
+                digest_fn = getattr(daemon, "digest", None)
+                if callable(digest_fn):
+                    self.private_mind_digest = digest_fn(surface_queue=getattr(daemon, "surface_queue", None))
+                elif tick is not None and callable(getattr(tick, "to_dict", None)):
+                    self.private_mind_digest = tick.to_dict()
+                self.private_mind_surface_queue = getattr(daemon, "surface_queue", getattr(self, "private_mind_surface_queue", []))
+                return
+
             result = loop.tick(
                 user_text=user_text,
                 channel=channel or "autonomous",
@@ -827,6 +854,13 @@ class RuntimeCoordinator(
     def _drain_private_mind_surface_impulses(self, *, limit: int = 4) -> tuple[object, ...]:
         """Lấy impulse đã được SurfaceValve lọc để đưa vào SurfaceArbiter."""
 
+        daemon = getattr(self, "private_mind_daemon", None)
+        drain = getattr(daemon, "drain_surface_impulses", None) if daemon is not None else None
+        if callable(drain):
+            try:
+                return tuple(drain(limit=limit) or ())
+            except Exception:
+                pass
         queue = getattr(self, "private_mind_surface_queue", None)
         if not isinstance(queue, list) or not queue:
             return ()
@@ -4892,7 +4926,11 @@ class RuntimeCoordinator(
         if now < self.vision_disabled_until:
             self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
             return self.vision_facts
-        if self.vision_last_capture_at and (now - self.vision_last_capture_at) < self.vision_interval_sec:
+        if (
+            not force_refresh
+            and self.vision_last_capture_at
+            and (now - self.vision_last_capture_at) < self.vision_interval_sec
+        ):
             self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
             return self.vision_facts
 

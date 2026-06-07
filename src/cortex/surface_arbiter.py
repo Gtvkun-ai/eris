@@ -111,6 +111,15 @@ class SurfaceDecision:
         }
 
 
+@dataclass(slots=True)
+class SurfaceGateEvaluation:
+    mode: str
+    blocked_reason: str = ""
+    gate_notes: tuple[str, ...] = ()
+    score: float = 0.0
+    override: bool = False
+
+
 class SurfaceArbiter:
     """Arbitrate and generate low-level utterances.
 
@@ -131,6 +140,7 @@ class SurfaceArbiter:
         self.silent_cycles = 0
         self.last_surface_time = 0.0
         self.last_decision = SurfaceDecision(reason="not_started")
+        self.last_surface_decision_ledger = ""
         self._last_family_at: dict[str, float] = {}
         self._body_only_streak = 0
 
@@ -200,6 +210,14 @@ class SurfaceArbiter:
         "low_claim_presence",
         "low_claim_reengagement",
     )
+    _ANCHOR_TOKEN_RE = re.compile(
+        r"\b(?:memory_id|event_id|vision_fact_id)\s*[:=]\s*[a-z0-9][a-z0-9_.:/-]{2,}",
+        re.I,
+    )
+    _LEGACY_ANCHOR_RE = re.compile(
+        r"\b(?:memory\.ev\.[a-z0-9_.:-]+|memory_activation:[a-z0-9_.:-]+|runtime_event[:=][a-z0-9_.:-]+|vision_fact[:=][^\s|;]{4,})",
+        re.I,
+    )
 
     def arbitrate(
         self,
@@ -225,6 +243,13 @@ class SurfaceArbiter:
         winner, suppressed = self._score_and_select_winner(impulses)
         if winner is None:
             self.silent_cycles += 1
+            ledger = self._decision_ledger(
+                winner=None,
+                candidates=impulses,
+                suppressed=(),
+                mode="reject",
+                result="no_winner_impulse",
+            )
             decision = SurfaceDecision(
                 body_only=False,
                 should_speak=False,
@@ -233,8 +258,9 @@ class SurfaceArbiter:
                 source="surface_arbiter",
                 generation_mode="reject",
                 reason="no_winner_impulse",
-                debug_trace="surface_arbiter; reason=no_winner_impulse",
+                debug_trace=ledger,
             )
+            self.last_surface_decision_ledger = ledger
             self.last_decision = decision
             return decision
 
@@ -247,6 +273,7 @@ class SurfaceArbiter:
         hard_body_only = forced_body_only_reason in {
             "forced_body_only:timer_not_motive",
             "forced_body_only:presence_missing_evidence",
+            "forced_body_only:persona_anchor_missing",
         }
         if forced_body_only_reason and (not forced_surface or hard_body_only):
             # Micro/presence thiếu anchor không được gọi LLM để rồi trả rỗng.
@@ -274,11 +301,39 @@ class SurfaceArbiter:
             self.last_decision = decision
             return decision
 
+        gate_eval = self._evaluate_soft_surface_gates(
+            winner,
+            snapshot=snapshot,
+            frame=cognitive_frame,
+            force_llm=force_llm,
+        )
+        if gate_eval.blocked_reason:
+            self._mark_attempt(winner, result=gate_eval.blocked_reason, body_only=False)
+            self._note_non_speech(body_only=False)
+            decision = SurfaceDecision(
+                body_only=False,
+                should_speak=False,
+                parse_mode="surface_soft_gate_reject",
+                intent=surface_kind,
+                source="surface_arbiter",
+                generation_mode="reject",
+                confidence=winner.confidence,
+                kind=winner.kind,
+                body_action=winner.body_action,
+                focus_family=winner.focus_family,
+                reason=gate_eval.blocked_reason,
+                debug_trace=self._trace(winner, suppressed, "reject", gate_eval.blocked_reason, gate_eval=gate_eval),
+                impulse=winner,
+                suppressed=suppressed,
+            )
+            self.last_decision = decision
+            return decision
+
         ego_gate_reason = self._ego_gate_reason(
             winner,
             snapshot=snapshot,
             frame=cognitive_frame,
-            force_llm=force_llm or self.silent_cycles >= self.policy.config.force_llm_after_silent,
+            force_llm=True,
         )
         if ego_gate_reason:
             self._mark_attempt(winner, result="ego_reject", body_only=False)
@@ -302,7 +357,7 @@ class SurfaceArbiter:
             self.last_decision = decision
             return decision
 
-        rate_limit_reason = self._rate_limit_reason(winner, force_llm=force_llm)
+        rate_limit_reason = self._rate_limit_reason(winner, force_llm=True)
         if rate_limit_reason:
             self._mark_attempt(winner, result="rate_limited", body_only=False)
             self._note_non_speech(body_only=False)
@@ -325,7 +380,7 @@ class SurfaceArbiter:
             self.last_decision = decision
             return decision
 
-        mode = "force_llm" if force_llm else self.policy.decide_generation_mode(winner, self.silent_cycles)
+        mode = gate_eval.mode
         if mode == "reject":
             # Defensive override: micro/re-engagement đã đủ điểm hoặc im quá lâu thì không được
             # rơi về reject/body-only. Policy là cổng điều tiết, không phải máy nghiền ý định nói.
@@ -363,7 +418,7 @@ class SurfaceArbiter:
         if mode in {"force_llm", "normal_llm"}:
             text, trace = self._call_llm_generator(winner, snapshot=snapshot, force_llm=(mode == "force_llm" or force_llm))
             if str(text or "").strip():
-                debug_trace = self._trace(winner, suppressed, mode, str(trace or "llm_ok"))
+                debug_trace = self._trace(winner, suppressed, mode, str(trace or "llm_ok"), gate_eval=gate_eval)
                 self._reset_silence()
                 self._mark_surface(winner)
                 parse_mode = "presence_maintenance" if winner.is_presence else "spontaneous"
@@ -404,7 +459,7 @@ class SurfaceArbiter:
                     body_action=winner.body_action,
                     focus_family=winner.focus_family,
                     reason="llm_declined",
-                    debug_trace=self._trace(winner, suppressed, mode, str(trace or "llm_declined")),
+                    debug_trace=self._trace(winner, suppressed, mode, str(trace or "llm_declined"), gate_eval=gate_eval),
                     impulse=winner,
                     suppressed=suppressed,
                 )
@@ -423,7 +478,7 @@ class SurfaceArbiter:
                 body_action=winner.body_action,
                 focus_family=winner.focus_family,
                 reason="llm_declined",
-                debug_trace=self._trace(winner, suppressed, mode, str(trace or "llm_declined")),
+                debug_trace=self._trace(winner, suppressed, mode, str(trace or "llm_declined"), gate_eval=gate_eval),
                 impulse=winner,
                 suppressed=suppressed,
             )
@@ -444,7 +499,7 @@ class SurfaceArbiter:
             body_action=winner.body_action,
             focus_family=winner.focus_family,
             reason="body_only_by_policy",
-            debug_trace=self._trace(winner, suppressed, mode, "body_only_by_policy"),
+            debug_trace=self._trace(winner, suppressed, mode, "body_only_by_policy", gate_eval=gate_eval),
             impulse=winner,
             suppressed=suppressed,
         )
@@ -972,6 +1027,9 @@ class SurfaceArbiter:
             if forced_reason:
                 body_only.append((effective, item))
                 continue
+            if self._surface_anchor_body_only_reason(item):
+                body_only.append((effective, item))
+                continue
             if item.needs_external_evidence:
                 # Cần evidence ngoài nhưng không có forced-body-only reason rõ ràng thì loại hẳn.
                 # Không để LLM tự tưởng tượng một cái neo màn hình. Máy đã đủ sáng tạo trong việc tự phá rồi.
@@ -1024,6 +1082,32 @@ class SurfaceArbiter:
             "ev.ocr", "screen_fact", "user_chat", "runtime_event",
         )
         return any(marker in text for marker in concrete_markers)
+
+    def _has_specific_surface_anchor_token(self, impulse: SurfaceImpulse) -> bool:
+        haystack = " | ".join(
+            str(item or "")
+            for item in (
+                impulse.topic_seed,
+                impulse.reason,
+                impulse.family,
+                impulse.root_source,
+                *tuple(impulse.evidence or ()),
+            )
+            if str(item or "").strip()
+        )
+        if not haystack.strip():
+            return False
+        return bool(self._ANCHOR_TOKEN_RE.search(haystack) or self._LEGACY_ANCHOR_RE.search(haystack))
+
+    def _surface_anchor_body_only_reason(self, impulse: SurfaceImpulse) -> str:
+        if not impulse.should_surface:
+            return ""
+        kind = str(impulse.kind or impulse.speech_act or "")
+        if self._presence_like(impulse) and kind not in self._SCREEN_ANCHORED_KINDS:
+            return ""
+        if self._has_specific_surface_anchor_token(impulse):
+            return ""
+        return "forced_body_only:persona_anchor_missing"
 
     def _hollow_endogenous_reason(self, impulse: SurfaceImpulse) -> str:
         """Reject endogenous speech that has no semantic payload.
@@ -1095,6 +1179,9 @@ class SurfaceArbiter:
         if not impulse.should_surface:
             return ""
         kind = str(impulse.kind or impulse.speech_act or "")
+        anchor_reason = self._surface_anchor_body_only_reason(impulse)
+        if anchor_reason:
+            return anchor_reason
         if kind in self._SCREEN_ANCHORED_KINDS:
             return ""
         if str(impulse.source or "") == "surface_arbiter" and str(impulse.reason or "").startswith("long_silence_impulse"):
@@ -1249,6 +1336,76 @@ class SurfaceArbiter:
                     return value
         return None
 
+    def _evaluate_soft_surface_gates(
+        self,
+        impulse: SurfaceImpulse,
+        *,
+        snapshot: Any = None,
+        frame: Any = None,
+        force_llm: bool = False,
+    ) -> SurfaceGateEvaluation:
+        base_mode = "force_llm" if force_llm else self.policy.decide_generation_mode(impulse, self.silent_cycles)
+        notes: list[str] = []
+        penalty = 0.0
+        strength = self._soft_gate_strength(impulse)
+
+        ego_reason = self._ego_gate_reason(
+            impulse,
+            snapshot=snapshot,
+            frame=frame,
+            force_llm=force_llm or self.silent_cycles >= self.policy.config.force_llm_after_silent,
+        )
+        if ego_reason:
+            notes.append(ego_reason)
+            penalty += 0.42 if ego_reason in {"ego_gate:mood_blocks_presence", "ego_gate:dignity_distance"} else 0.24
+
+        rate_reason = self._rate_limit_reason(impulse, force_llm=force_llm)
+        if rate_reason:
+            notes.append(rate_reason)
+            penalty += 0.28 if rate_reason.startswith("family_cooldown:") else 0.20
+
+        if base_mode == "reject":
+            notes.append("policy_reject")
+            penalty += 0.22
+
+        score = strength - penalty
+        override = bool(
+            force_llm
+            or self.silent_cycles >= self.policy.config.force_llm_after_silent
+            or strength >= 0.86
+            or (
+                _clamp01(getattr(impulse, "vital_pressure", 0.0)) >= 0.72
+                and impulse.confidence >= self.policy.config.body_only_min_confidence
+            )
+        )
+
+        if base_mode == "reject" and override:
+            base_mode = "force_llm"
+        blocked_reason = ""
+        if notes and score < 0.38 and not override:
+            blocked_reason = "soft_gate_block:" + "|".join(notes[:3])
+        elif base_mode == "reject":
+            blocked_reason = "soft_gate_block:policy_reject"
+        elif notes and override:
+            notes.append("soft_gate_override")
+
+        return SurfaceGateEvaluation(
+            mode=base_mode,
+            blocked_reason=blocked_reason,
+            gate_notes=tuple(notes),
+            score=self._clamp_score(score),
+            override=override and not blocked_reason,
+        )
+
+    def _soft_gate_strength(self, impulse: SurfaceImpulse) -> float:
+        effective = self._effective_score(impulse)
+        vital = _clamp01(getattr(impulse, "vital_pressure", 0.0))
+        anchor = 0.12 if self._has_specific_surface_anchor_token(impulse) else 0.0
+        internal_anchor = 0.06 if self._has_public_internal_anchor(impulse) else 0.0
+        pressure = _clamp01(getattr(impulse, "pressure", 0.0))
+        confidence = _clamp01(getattr(impulse, "confidence", 0.0))
+        return self._clamp_score(effective * 0.54 + confidence * 0.20 + pressure * 0.12 + vital * 0.14 + anchor + internal_anchor)
+
     def _ego_gate_reason(self, impulse: SurfaceImpulse, *, snapshot: Any = None, frame: Any = None, force_llm: bool = False) -> str:
         """Ego-gate for low-level surface.
 
@@ -1298,10 +1455,11 @@ class SurfaceArbiter:
         now = time.time()
         min_interval = float(getattr(self.policy.config, "min_surface_interval_seconds", 0.0) or 0.0)
         vital = _clamp01(getattr(impulse, "vital_pressure", 0.0))
+        reasons: list[str] = []
         if self.last_surface_time > 0 and min_interval > 0 and now - self.last_surface_time < min_interval:
             # Không rate-limit long-silence/vital force path; còn lại thì chặn để tránh lải nhải.
             if self.silent_cycles < self.policy.config.force_llm_after_silent and vital < 0.66:
-                return f"surface_interval_cooldown:{now - self.last_surface_time:.1f}/{min_interval:.1f}s"
+                reasons.append(f"surface_interval_cooldown:{now - self.last_surface_time:.1f}/{min_interval:.1f}s")
         family_cooldown = float(getattr(self.policy.config, "family_cooldown_seconds", 0.0) or 0.0)
         family = self._family_id(impulse)
         if "private_mind_continuity_filler" in family:
@@ -1309,7 +1467,9 @@ class SurfaceArbiter:
         last_family = float(self._last_family_at.get(family, 0.0) or 0.0)
         if family and last_family > 0 and family_cooldown > 0 and now - last_family < family_cooldown:
             if self.silent_cycles < self.policy.config.force_llm_after_silent and vital < 0.66:
-                return f"family_cooldown:{family}:{now - last_family:.1f}/{family_cooldown:.1f}s"
+                reasons.append(f"family_cooldown:{family}:{now - last_family:.1f}/{family_cooldown:.1f}s")
+        if reasons:
+            return "|".join(reasons)
         if self._body_only_streak >= self.policy.config.max_body_only_streak:
             # Body-only quá nhiều thì không tiếp tục nhúc nhích giả vờ sống.
             # Không trả rate-limit nữa, vì rate-limit sẽ chặn luôn vòng force LLM.
@@ -1376,14 +1536,30 @@ class SurfaceArbiter:
         self.silent_cycles = 0
         self.last_surface_time = time.time()
 
-    def _trace(self, winner: SurfaceImpulse, suppressed: tuple[SurfaceImpulse, ...], mode: str, result: str) -> str:
+    def _trace(
+        self,
+        winner: SurfaceImpulse,
+        suppressed: tuple[SurfaceImpulse, ...],
+        mode: str,
+        result: str,
+        gate_eval: SurfaceGateEvaluation | None = None,
+    ) -> str:
         candidate_items = (winner, *suppressed[:5])
         candidate_note = " | ".join(
             f"{item.kind}:raw={item.score:.2f},eff={self._effective_score(item):.2f}"
             + (f"[{self._candidate_notes(item)}]" if self._candidate_notes(item) else "")
             for item in candidate_items
         )
-        return (
+        ledger = self._decision_ledger(
+            winner=winner,
+            candidates=candidate_items,
+            suppressed=suppressed,
+            mode=mode,
+            result=result,
+            gate_eval=gate_eval,
+        )
+        self.last_surface_decision_ledger = ledger
+        trace = (
             "[surface_arbiter_arbitration]"
             f" winner={winner.kind}"
             f"; source={winner.source}"
@@ -1400,6 +1576,64 @@ class SurfaceArbiter:
             f"; result={result}"
             f"; candidates={candidate_note}"
         )
+        if gate_eval is not None:
+            trace += (
+                f"; soft_gate_score={gate_eval.score:.2f}"
+                f"; soft_gate_override={str(gate_eval.override).lower()}"
+                f"; soft_gate_notes={','.join(gate_eval.gate_notes) or 'none'}"
+            )
+        return trace + "\n" + ledger
+
+    def _decision_ledger(
+        self,
+        *,
+        winner: SurfaceImpulse | None,
+        candidates: tuple[SurfaceImpulse, ...],
+        suppressed: tuple[SurfaceImpulse, ...],
+        mode: str,
+        result: str,
+        gate_eval: SurfaceGateEvaluation | None = None,
+    ) -> str:
+        entries: list[str] = []
+        seen: set[int] = set()
+        for item in tuple(candidates or ()):
+            item_id = id(item)
+            if item_id in seen:
+                continue
+            seen.add(item_id)
+            if winner is not None and item is winner:
+                gate = result
+                if gate_eval is not None and gate_eval.gate_notes:
+                    gate += "|soft=" + ",".join(gate_eval.gate_notes[:4])
+            else:
+                gate = self._ledger_gate_reason(item, winner=winner)
+            entries.append(
+                f"{item.kind}/{item.source}:score={item.score:.2f},eff={self._effective_score(item):.2f},gate={gate}"
+            )
+        ledger = (
+            "[surface_decision_ledger]"
+            f" winner={(winner.kind if winner is not None else 'none')}"
+            f"; mode={mode}"
+            f"; result={result}"
+            f"; in={' || '.join(entries) if entries else 'none'}"
+        )
+        self.last_surface_decision_ledger = ledger
+        return ledger
+
+    def _ledger_gate_reason(self, impulse: SurfaceImpulse, *, winner: SurfaceImpulse | None) -> str:
+        hollow = self._hollow_endogenous_reason(impulse)
+        if hollow:
+            return hollow
+        forced = self._forced_body_only_reason(impulse)
+        if forced:
+            return forced
+        if self._surface_anchor_body_only_reason(impulse):
+            return "forced_body_only:persona_anchor_missing"
+        if impulse.needs_external_evidence:
+            return "needs_external_evidence"
+        if winner is not None:
+            return f"suppressed_by:{winner.kind}"
+        return "filtered_or_below_threshold"
 
     @staticmethod
     def _priority(kind: str, source: str) -> float:

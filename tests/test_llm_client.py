@@ -7,7 +7,7 @@ import requests
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from llm.client import LlamaServerClient
+from llm.client import GeminiClient, LlamaServerClient
 
 
 class _FakeResponse:
@@ -94,6 +94,37 @@ class LlamaServerClientTests(unittest.TestCase):
                 )
 
         self.assertIn("unsupported request", str(ctx.exception))
+
+
+class GeminiClientTests(unittest.TestCase):
+    def test_json_object_response_format_maps_to_gemini_schema_payload(self):
+        calls = []
+
+        def fake_post(url, *, headers, json, timeout):
+            calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+            return _FakeResponse(payload={"candidates": [{"content": {"parts": [{"text": '{"ok":true}'}]}}]})
+
+        schema = {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+        }
+        with patch("llm.client.requests.post", side_effect=fake_post):
+            client = GeminiClient("https://generativelanguage.googleapis.com/v1beta", "test-key", "gemini-2.5-flash")
+            response = client.create_chat_completion(
+                messages=[{"role": "system", "content": "Return JSON"}, {"role": "user", "content": "hi"}],
+                temperature=0.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=32,
+                response_format={"type": "json_object", "schema": schema},
+            )
+
+        self.assertIn("candidates", response)
+        generation_config = calls[0]["json"]["generationConfig"]
+        self.assertEqual(generation_config["responseMimeType"], "application/json")
+        self.assertEqual(generation_config["responseSchema"], schema)
+        self.assertEqual(generation_config["thinkingConfig"], {"thinkingBudget": 0})
 
 
 if __name__ == "__main__":
