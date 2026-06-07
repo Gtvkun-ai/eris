@@ -33,6 +33,7 @@ from cortex.private_mind import (
     SurfaceValve,
 )
 from cortex.private_mind.contracts import SurfaceCandidate, to_plain
+from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
 from eris_secrets import apply_secrets_to_environ
 from runtime.private_mind_model_adapter import RuntimePrivateMindModelAdapter
 
@@ -137,6 +138,7 @@ class PrivateMindLoop:
                 "api_degraded": bool(api_status.get("api_degraded", False)),
                 "api_invalid_json": bool(api_status.get("api_invalid_json", False)),
                 "api_last_error": str(api_status.get("last_error", "") or ""),
+                "api_degraded_cause": str(api_status.get("api_degraded_cause", "") or ""),
             },
         )
         fragments = self.evaluator_pipeline.evaluate(dossier)
@@ -280,7 +282,7 @@ class PrivateMindLoop:
             "speech_silence_reason": {},
             "debug_api": debug_api,
         }
-        return {
+        digest = {
             "last_tick_at": round(float(self.last_tick_at or 0.0), 3),
             "current": current,
             "retained": retained,
@@ -290,6 +292,8 @@ class PrivateMindLoop:
             **menu,
             "debug": to_plain(getattr(result, "debug", {}) if result is not None else {}),
         }
+        digest["inner_diary"] = InnerDiaryRenderer().render(digest)
+        return digest
 
     def drain_surface_impulses(self, queue: list[Any], *, limit: int = 4) -> tuple[Any, ...]:
         items: list[Any] = []
@@ -300,16 +304,18 @@ class PrivateMindLoop:
     def _model_api_status(self) -> dict[str, Any]:
         status_fn = getattr(self.model_adapter, "debug_status", None)
         if not callable(status_fn):
-            return {"api_degraded": False, "api_invalid_json": False, "last_error": ""}
+            return {"api_degraded": False, "api_invalid_json": False, "last_error": "", "api_degraded_cause": ""}
         try:
             status = status_fn()
         except Exception:
-            return {"api_degraded": True, "api_invalid_json": False, "last_error": "debug_status_failed"}
+            return {"api_degraded": True, "api_invalid_json": False, "last_error": "debug_status_failed", "api_degraded_cause": ""}
         last_error = str(status.get("last_error", "") or "") if isinstance(status, Mapping) else ""
+        degraded_cause = str(status.get("degraded_cause", "") or "") if isinstance(status, Mapping) else ""
         return {
             "api_degraded": bool(last_error),
             "api_invalid_json": "invalid_json" in last_error,
             "last_error": last_error,
+            "api_degraded_cause": degraded_cause,
         }
 
     def _resolve_concern_path(self) -> str | None:

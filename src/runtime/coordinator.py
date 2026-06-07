@@ -1281,6 +1281,7 @@ class RuntimeCoordinator(
         return {
             "last_tick_at": digest.get("last_tick_at", 0.0),
             "current": self._compact_private_mind_debug_value(digest.get("current", {}), depth=0),
+            "inner_diary": self._compact_private_mind_debug_value(digest.get("inner_diary", {}), depth=0),
             "menu": compact_menu,
         }
 
@@ -4502,7 +4503,7 @@ class RuntimeCoordinator(
         flag = os.environ.get("ERIS_VISION_FACTS", "1").strip().lower()
         enabled = flag not in {"0", "false", "no", "off"}
 
-        interval_raw = os.environ.get("ERIS_VISION_FACTS_INTERVAL", "60").strip()
+        interval_raw = os.environ.get("ERIS_VISION_FACTS_INTERVAL", "10").strip()
         max_items_raw = os.environ.get("ERIS_VISION_FACTS_MAX", "3").strip()
         max_len_raw = os.environ.get("ERIS_VISION_FACTS_MAX_LEN", "120").strip()
 
@@ -4825,14 +4826,11 @@ class RuntimeCoordinator(
         cleaned: tuple[str, ...] = ()
         compressor = getattr(self, "vision_semantic_compressor", None)
         can_use_compressor = callable(getattr(compressor, "compress", None))
-        compressor_enabled = bool(getattr(getattr(compressor, "config", None), "enabled", False))
-        use_compressor = can_use_compressor and (
-            force_refresh
-            or channel in {"chat", "force_speak"}
-            or self._should_use_vision_compressor(observer_frame=observer_frame, force_refresh=False)
-        )
 
-        if use_compressor:
+        # Single vision path: luôn dùng VisionSemanticCompressor (Ollama/Moondream).
+        # Bỏ nhánh llm_service.generate_screen_facts — vision model nhẹ nên không cần
+        # phân biệt "khi nào mới gọi compressor"; cứ có ảnh là compress luôn.
+        if can_use_compressor:
             try:
                 signal_snapshot = None
                 if snapshot is not None:
@@ -4864,23 +4862,13 @@ class RuntimeCoordinator(
                 self._note_vision_failure("compressor", exc)
                 return self.vision_facts
         else:
-            if can_use_compressor and compressor_enabled:
-                self.logger.info(
-                    "[vision_facts] source=cached reason=compressor_policy_skip channel=%s trace=%s",
-                    channel,
-                    self.vision_last_trace or "<empty>",
-                )
-                return self.vision_facts
-            try:
-                mode = "chat_requested" if channel == "chat" else "ambient"
-                facts, trace = self.llm_service.generate_screen_facts(
-                    screen_image_data_uri=data_uri,
-                    mode=mode,
-                )
-                cleaned = self._sanitize_screen_facts(facts)
-            except Exception as exc:
-                self._note_vision_failure("vlm", exc)
-                return self.vision_facts
+            # Compressor chưa init (ERIS_VISION_COMPRESSOR=0 hoặc Ollama chưa sẵn sàng):
+            # trả cache, không gọi llm_service nữa.
+            self.logger.info(
+                "[vision_facts] source=cached reason=no_compressor channel=%s",
+                channel,
+            )
+            return self.vision_facts
 
         self.vision_failure_count = 0
         self.vision_disabled_until = 0.0
@@ -4896,8 +4884,7 @@ class RuntimeCoordinator(
         self.vision_facts = cleaned
         self.vision_last_trace = trace or ""
         self.logger.info(
-            "[vision_facts] source=%s channel=%s count=%d novelty=%s trace=%s fact=%s",
-            "compressor" if note is not None else "llm_service",
+            "[vision_facts] source=compressor channel=%s count=%d novelty=%s trace=%s fact=%s",
             channel,
             len(cleaned),
             self.vision_facts_novelty_hint,

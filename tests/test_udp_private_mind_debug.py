@@ -20,6 +20,11 @@ def test_large_udp_payload_preserves_compact_private_mind_digest() -> None:
         "private_mind_digest": {
             "last_tick_at": 123.0,
             "current": {"dominant_judgment": "private cognition is active", "confidence": 0.69},
+            "inner_diary": {
+                "title": "Inner Diary",
+                "text": "Hien tai:\nprivate cognition is active",
+                "sections": [{"title": "Hien tai", "lines": [huge]}],
+            },
             "menu": {
                 "current_thought": {"dominant_judgment": "private cognition is active", "confidence": 0.69},
                 "temporary_thoughts": {"fragments": [{"claim": huge, "source": "intent_evaluator"}]},
@@ -35,5 +40,7 @@ def test_large_udp_payload_preserves_compact_private_mind_digest() -> None:
     outbound = json.loads(sent[0])
     assert outbound["udp_debug_truncated"] is True
     assert outbound["private_mind_digest"]["current"]["dominant_judgment"] == "private cognition is active"
+    assert outbound["private_mind_digest"]["inner_diary"]["title"] == "Inner Diary"
+    assert "private cognition is active" in outbound["private_mind_digest"]["inner_diary"]["text"]
     assert outbound["private_mind_digest"]["menu"]["debug_api"]["last_error"] == "invalid_json"
     assert outbound["emotion_debug"]["private_mind"]["udp_debug_truncated"] is True

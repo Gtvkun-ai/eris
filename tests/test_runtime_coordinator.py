@@ -1103,7 +1103,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 salience=0.92,
                 possible_error=0.95,
                 confidence=0.86,
-                source="qwen4b_vision",
+                source="moondream",
             ),
             should_compress=True,
         )
@@ -1125,7 +1125,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(compressor.compress_calls, 1)
         self.assertEqual(coordinator.llm_service.screen_fact_calls, 0)
         self.assertIn("Terminal shows a Python traceback", facts[0])
-        self.assertEqual(coordinator.vision_last_trace, "qwen4b_vision:test_failure_loop")
+        self.assertEqual(coordinator.vision_last_trace, "moondream:test_failure_loop")
 
     def test_chat_screen_request_refreshes_screen_facts_via_vision_compressor(self):
         coordinator = self._make_coordinator(
@@ -1141,7 +1141,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 salience=0.82,
                 possible_error=0.74,
                 confidence=0.79,
-                source="qwen4b_vision",
+                source="moondream",
             ),
             should_compress=False,
         )
@@ -1156,7 +1156,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(compressor.compress_calls, 1)
         self.assertTrue(coordinator.vision_facts)
         self.assertIn("main.py", coordinator.vision_facts[0].lower())
-        self.assertEqual(coordinator.vision_last_trace, "qwen4b_vision:code_workspace")
+        self.assertEqual(coordinator.vision_last_trace, "moondream:code_workspace")
 
     def test_vision_soft_queue_failures_use_short_backoff(self):
         coordinator = self._make_coordinator()
@@ -1183,7 +1183,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 salience=0.92,
                 possible_error=0.95,
                 confidence=0.86,
-                source="qwen4b_vision",
+                source="moondream",
             ),
             should_compress=True,
         )

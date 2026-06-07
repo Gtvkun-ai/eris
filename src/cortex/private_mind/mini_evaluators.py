@@ -307,12 +307,13 @@ class MiniEvaluatorPipeline:
         )
 
     def evaluate(self, dossier: EvidenceDossier) -> tuple[ThoughtFragment, ...]:
-        fragments: list[ThoughtFragment] = []
-        for evaluator in self.evaluators:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _run(evaluator: BaseMiniEvaluator) -> ThoughtFragment:
             try:
-                fragment = evaluator.evaluate(dossier)
+                return evaluator.evaluate(dossier)
             except Exception as exc:
-                fragment = ThoughtFragment(
+                return ThoughtFragment(
                     source=getattr(evaluator, "name", evaluator.__class__.__name__),
                     claim=f"Evaluator failed safely: {type(exc).__name__}",
                     confidence=0.2,
@@ -320,7 +321,16 @@ class MiniEvaluatorPipeline:
                     evidence_ids=dossier.evidence_ids[:8],
                     metadata={"error": str(exc)},
                 )
-            if fragment.claim and fragment.score >= 0.24:
-                fragments.append(fragment)
+
+        fragments: list[ThoughtFragment] = []
+        # Chạy song song 4 evaluator — mỗi cái có thể gọi API độc lập.
+        # max_workers=4 vì đúng 4 evaluator; thread overhead nhỏ so với I/O wait.
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(_run, ev): ev for ev in self.evaluators}
+            for future in as_completed(futures):
+                fragment = future.result()
+                if fragment.claim and fragment.score >= 0.24:
+                    fragments.append(fragment)
+
         # Sort để synthesizer nhìn mảnh mạnh trước. Thứ tự cũng là một loại bias.
         return tuple(sorted(fragments, key=lambda f: f.score, reverse=True)[:8])

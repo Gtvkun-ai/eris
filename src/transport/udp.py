@@ -27,6 +27,7 @@ def _compact_private_mind_for_udp_overflow(value):
     return {
         "last_tick_at": value.get("last_tick_at", 0.0),
         "current": _compact_debug_value(value.get("current", {}), depth=0),
+        "inner_diary": _compact_debug_value(value.get("inner_diary", {}), depth=0),
         "menu": compact_menu,
         "udp_debug_truncated": True,
     }

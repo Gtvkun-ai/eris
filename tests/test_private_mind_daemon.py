@@ -73,7 +73,10 @@ def test_private_mind_daemon_ticks_and_owns_surface_queue() -> None:
     # Chỉ SurfaceValve được quyền đẩy seed ra queue. Raw judgment.surface_candidate
     # không được StateMutationBus ném thẳng vào, kẻo private chain đội lốt public.
     assert len(daemon.surface_queue) <= 1
-    assert daemon.digest()["daemon"]["surface_queue_size"] == len(daemon.surface_queue)
+    digest = daemon.digest()
+    assert digest["daemon"]["surface_queue_size"] == len(daemon.surface_queue)
+    assert digest["inner_diary"]["title"] == "Inner Diary"
+    assert isinstance(digest["inner_diary"]["text"], str)
 
 
 def test_evidence_dossier_contains_private_runtime_and_thought_substrate() -> None:

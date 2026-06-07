@@ -1,6 +1,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from runtime.private_mind_model_adapter import PrivateMindModelAdapterConfig, RuntimePrivateMindModelAdapter
@@ -84,7 +86,12 @@ def test_private_mind_json_retry_repairs_invalid_first_response() -> None:
 
     assert result.ok is True
     assert result.parsed["claim"] == "ok"
-    assert [call["temperature"] for call in service.calls] == [0.15, 0.0]
+    # Gemma nhỏ hay lặp/recitation ở temperature thấp: lần đầu dùng nhiệt mặc định,
+    # lần retry phải NÓNG hơn (không phải 0.0) để phá vòng lặp.
+    temps = [call["temperature"] for call in service.calls]
+    assert len(temps) == 2
+    assert temps[0] == pytest.approx(0.5)
+    assert temps[1] > temps[0]
     assert service.calls[1]["messages"][0]["content"].startswith("Return only one JSON object. No markdown. No prose. No code fence.")
     assert "Here is prose" in service.calls[1]["messages"][-1]["content"]
 
@@ -96,6 +103,34 @@ def test_private_mind_response_schema_is_only_attached_for_gemini() -> None:
 
     assert gemini._response_format(schema)["schema"] == schema
     assert llama._response_format(schema) == {"type": "json_object"}
+
+
+def test_private_mind_salvages_truncated_repetition_loop() -> None:
+    # Gemma nhỏ hay lặp vô hạn ở free-text cuối rồi bị cắt vì MAX_TOKENS.
+    # Nhờ propertyOrdering, các field rẻ đứng trước và phải cứu được.
+    looped = "highly context-less " * 60
+    truncated = (
+        '{"confidence": 0.7, "pressure": 0.5, "evidence_ids": [], '
+        '"dominant_judgment": "User dislikes the API quality. ' + looped
+    )
+    adapter = _adapter()
+    parsed = adapter._parse_json(truncated)
+
+    assert parsed["confidence"] == 0.7
+    assert parsed["pressure"] == 0.5
+    assert parsed["dominant_judgment"].startswith("User dislikes the API quality.")
+    # Cụm lặp phải bị gom lại, không còn dài vô tận.
+    assert parsed["dominant_judgment"].count("context-less") <= 3
+
+
+def test_private_mind_salvages_truncated_dangling_key() -> None:
+    # Trường hợp bị cắt ngay sau "key": (chưa kịp ra value).
+    truncated = '{"confidence": 0.8, "pressure": 0.4, "evidence_ids": [], "dominant_judgment":'
+    adapter = _adapter()
+    parsed = adapter._parse_json(truncated)
+
+    assert parsed["confidence"] == 0.8
+    assert parsed["pressure"] == 0.4
 
 
 def test_private_mind_json_cooldown_after_three_invalid_results() -> None:

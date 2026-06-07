@@ -134,7 +134,7 @@ class VisionCompressorConfig:
         not in {"0", "false", "no", "off", ""}
     )
     model: str = field(
-        default_factory=lambda: os.getenv("ERIS_VISION_COMPRESSOR_MODEL", "qwen3.5-4b-vision").strip()
+        default_factory=lambda: os.getenv("ERIS_VISION_COMPRESSOR_MODEL", "moondream").strip()
     )
     keep_alive: str | int | None = field(
         default_factory=lambda: _parse_keep_alive(os.getenv("ERIS_VISION_KEEP_ALIVE", "0"))
@@ -469,7 +469,7 @@ class VisionSemanticCompressor:
             possible_error=possible_error,
             should_interrupt_user=should_interrupt,
             confidence=confidence,
-            source="qwen4b_vision",
+            source=self._source_label(),
             evidence=evidence[:10],
             debug={"raw": dict(raw_debug or {}), "observer_used": observer_frame is not None},
         )
@@ -660,6 +660,11 @@ class VisionSemanticCompressor:
         text = re.sub(r"[^a-z0-9_\-]+", "_", text)
         text = re.sub(r"_+", "_", text).strip("_")
         return compact_text(text or "unknown", 80)
+
+    def _source_label(self) -> str:
+        """Trả source label từ model name, dùng cho SemanticSceneNote.source."""
+        model = str(self.config.model or "").strip().lower().split(":")[0]
+        return model or "vision_model"
 
     @staticmethod
     def _make_default_client() -> Any | None:
