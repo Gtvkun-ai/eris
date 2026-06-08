@@ -27,9 +27,42 @@ def _compact_private_mind_for_udp_overflow(value):
     return {
         "last_tick_at": value.get("last_tick_at", 0.0),
         "current": _compact_debug_value(value.get("current", {}), depth=0),
-        "inner_diary": _compact_debug_value(value.get("inner_diary", {}), depth=0),
+        "inner_diary": _compact_inner_diary(value.get("inner_diary", {})),
         "menu": compact_menu,
         "udp_debug_truncated": True,
+    }
+
+
+def _compact_inner_diary(diary):
+    """Compact inner_diary giữ nguyên sections/items để C# có thể parse đúng."""
+    if not isinstance(diary, dict):
+        return {}
+    sections = diary.get("sections")
+    compact_sections = []
+    if isinstance(sections, list):
+        for sec in sections[:6]:
+            if not isinstance(sec, dict):
+                continue
+            title = str(sec.get("title", ""))[:120]
+            items = sec.get("items")
+            compact_items = []
+            if isinstance(items, list):
+                for item in items[:6]:
+                    if not isinstance(item, dict):
+                        continue
+                    text = str(item.get("text", "") or "")
+                    badge = str(item.get("badge", "") or "")
+                    if text:
+                        compact_items.append({
+                            "text": text[:200],
+                            "badge": badge[:60],
+                        })
+            if title and compact_items:
+                compact_sections.append({"title": title, "items": compact_items})
+    return {
+        "title": str(diary.get("title", ""))[:80],
+        "text": str(diary.get("text", "") or "")[:800],
+        "sections": compact_sections,
     }
 
 

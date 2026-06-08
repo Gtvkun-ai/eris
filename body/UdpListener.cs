@@ -1,4 +1,4 @@
-using Godot;
+﻿using Godot;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,6 +16,18 @@ public partial class UdpListener : Node2D
 		public Control FillClip { get; init; }
 		public TextureRect Fill { get; init; }
 		public Label Percent { get; init; }
+	}
+
+	private sealed class PrivateMindDiaryItem
+	{
+		public string Text { get; init; } = "";
+		public string Badge { get; init; } = "";
+	}
+
+	private sealed class PrivateMindDiarySection
+	{
+		public string Title { get; init; } = "";
+		public List<PrivateMindDiaryItem> Items { get; init; } = new();
 	}
 
 	private PacketPeerUdp _udp = new PacketPeerUdp();
@@ -62,7 +74,7 @@ public partial class UdpListener : Node2D
 	private float _gravity = 980f; // Gia tốc trọng trường tiêu chuẩn
 	private float _velocityY = 0f;
 	private bool _isFalling = false;
-	private Vector2 _spriteHalfSize; // Láº¥y tá»« CollisionShape2D trong _Ready()
+	private Vector2 _spriteHalfSize; // Lấy từ CollisionShape2D trong _Ready()
 	// Climb
 	private enum ClimbPhase { None, GoingToWall, Up, Top, TopHold, Down }
 	private ClimbPhase _climbPhase = ClimbPhase.None;
@@ -85,17 +97,36 @@ public partial class UdpListener : Node2D
 	private RichTextLabel _emotionText;
 	private Panel _privateMindPanel;
 	private RichTextLabel _privateMindText;
+	private VBoxContainer _privateMindSectionList;
 	private Label _emotionSummaryLabel;
 	private Label _emotionHintLabel;
 	private readonly List<EmotionRowView> _emotionRows = new();
 	private Texture2D _emotionFillTexture;
 	private Texture2D _emotionTrackTexture;
+
+	// Casual mode UI
+	private bool _isCasualMode = false;
+	private Label _casualNarrativeLabel;
+	private Control _moodDotCanvas;
+	private Control _casualContentRoot;  // container cho toàn bộ casual nodes — xoá 1 node là xong
+	internal float _moodDotValence;
+	internal float _moodDotArousal;
+	private readonly List<(Control FillClip, Control Fill, Label WordLabel)> _casualBars = new();
 	private Texture2D _switchOnTexture;
 	private Texture2D _switchOffTexture;
 	private Texture2D _chatFrameTexture;
 	private Texture2D _chatSubmitTexture;
 	private Texture2D _chatCloseTexture;
+	private Texture2D _privateMindFrameTexture;
+	private Texture2D _privateMindScrollCapTexture;
+	private Texture2D _privateMindScrollTrackTexture;
+	private Texture2D _privateMindScrollFillTexture;
 	private TextureRect _switchTexture;
+	private ScrollContainer _privateMindScrollContainer;
+	private TextureRect _privateMindFrameRect;
+	private TextureRect _privateMindScrollCapRect;
+	private TextureRect _privateMindScrollTrackRect;
+	private TextureRect _privateMindScrollFillRect;
 	private OptionButton _modeDropdown;
 	private bool _emotionSwitchEnabled = true;
 	private LineEdit _chatInput;
@@ -109,7 +140,7 @@ public partial class UdpListener : Node2D
 	private readonly Random _rng = new Random();
 	private EmotionDebug _latestEmotionDebug;
 	private string _latestPrivateMindDebugJson = "";
-	private Control _bubble;
+	private const string PrivateMindStatePath = "user://inner_diary_state.json";	private Control _bubble;
 	private bool _grabModeArmed = false;
 	private bool _isDraggingCharacter = false;
 	private Vector2 _dragOffset = Vector2.Zero;
@@ -309,7 +340,6 @@ public partial class UdpListener : Node2D
 
 	public override void _Process(double delta)
 	{
-		//Nếu đang kéo nhân vật bằng chuột, nhân vật theo chuột.
 		float d = (float)delta;
 		Vector2 pos = _body.Position;
 		Vector2 screenSize = GetViewportRect().Size;
@@ -326,6 +356,11 @@ public partial class UdpListener : Node2D
 		}
 		_motion.ApplyVisualState(_monika, _bubble, _body.Position, screenSize);
 		ClampBubbleToScreen();
+		if (_privateMindPanel != null && _privateMindPanel.Visible)
+		{
+			UpdatePrivateMindDecorLayout();
+			UpdatePrivateMindScrollDecor();
+		}
 
 		if (_udp.GetAvailablePacketCount() > 0)
 		{
@@ -565,7 +600,7 @@ public partial class UdpListener : Node2D
 		_privateMindPanel.Size = PrivateMindPanelMinSize;
 		Vector2 screenSize = GetViewportRect().Size;
 		_privateMindPanel.Position = new Vector2(
-			Mathf.Max(0f, screenSize.X - PrivateMindPanelMinSize.X - 28f),
+			Mathf.Max(0f, (screenSize.X - PrivateMindPanelMinSize.X) * 0.5f),
 			Mathf.Max(0f, (screenSize.Y - PrivateMindPanelMinSize.Y) * 0.5f));
 		RefreshPrivateMindPanel();
 	}
@@ -879,6 +914,7 @@ public partial class UdpListener : Node2D
 			return;
 
 		_emotionPanel.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
+		_emotionPanel.ClipContents = true;
 		foreach (Node child in _emotionPanel.GetChildren())
 		{
 			_emotionPanel.RemoveChild(child);
@@ -890,6 +926,13 @@ public partial class UdpListener : Node2D
 		_switchOnTexture = GD.Load<Texture2D>("res://asset/Resource/on.png");
 		_switchOffTexture = GD.Load<Texture2D>("res://asset/Resource/off.png");
 
+		_emotionRows.Clear();
+		_casualBars.Clear();
+		_casualNarrativeLabel = null;
+		_moodDotCanvas = null;
+		_emotionSummaryLabel = null;
+		_emotionHintLabel = null;
+
 		var background = new TextureRect
 		{
 			Texture = GD.Load<Texture2D>("res://asset/Resource/ui clear.png"),
@@ -900,30 +943,8 @@ public partial class UdpListener : Node2D
 		background.SetAnchorsPreset(Control.LayoutPreset.FullRect);
 		_emotionPanel.AddChild(background);
 
-		var left = new VBoxContainer
-		{
-			Position = new Vector2(50f, 148f),
-			Size = new Vector2(470f, 286f),
-			CustomMinimumSize = new Vector2(470f, 286f),
-		};
-		left.AddThemeConstantOverride("separation", 2);
-		_emotionPanel.AddChild(left);
-
-		_emotionRows.Clear();
-		AddEmotionRow(left, "Binh tinh", "Trang thai thu gian, on dinh.", 0.72f, "res://asset/Monika/affection1.png");
-		AddEmotionRow(left, "Kich thich", "Trang thai hung phan, phan khich.", 0.45f, "res://asset/Monika/affection2.png");
-		AddEmotionRow(left, "Mood", "Tam trang hien tai.", 0.68f, "res://asset/Monika/affection3.png");
-		AddEmotionRow(left, "Cam xuc tich cuc", "Nhung cam xuc tich cuc trong ban.", 0.85f, "res://asset/Monika/affection4.png");
-
-		_emotionSummaryLabel = CreateUiLabel("", 1, Colors.Transparent);
-		_emotionSummaryLabel.Visible = false;
-		_emotionPanel.AddChild(_emotionSummaryLabel);
-		_emotionHintLabel = CreateUiLabel("Nhung con so chi mang tinh tham khao.", 12, new Color(0.48f, 0.25f, 0.34f));
-		_emotionHintLabel.Position = new Vector2(62f, 445f);
-		_emotionHintLabel.Size = new Vector2(250f, 24f);
-		_emotionPanel.AddChild(_emotionHintLabel);
-
-		var windowControls = CreateWindowControlCapsule();
+		// Shared: window controls + right-side DEBUG panel
+		var windowControls = CreateWindowControlCapsule(() => _emotionPanel.Visible = false, CloseEmotionPanel);
 		windowControls.Position = new Vector2(635f, 20f);
 		_emotionPanel.AddChild(windowControls);
 
@@ -950,6 +971,275 @@ public partial class UdpListener : Node2D
 		_switchTexture.GuiInput += OnEmotionSwitchGuiInput;
 		_emotionPanel.AddChild(_switchTexture);
 
+		// Build left-side content theo mode hiện tại
+		if (_isCasualMode)
+			BuildCasualContent();
+		else
+			BuildDevContent();
+	}
+
+	// ── Dev mode content ──────────────────────────────────────────────────────
+
+	private void BuildDevContent()
+	{
+		var left = new VBoxContainer
+		{
+			Position = new Vector2(50f, 148f),
+			Size = new Vector2(470f, 286f),
+			CustomMinimumSize = new Vector2(470f, 286f),
+		};
+		left.AddThemeConstantOverride("separation", 2);
+		_emotionPanel.AddChild(left);
+
+		string[] portraits = {
+			"res://asset/Monika/affection1.png",
+			"res://asset/Monika/affection2.png",
+			"res://asset/Monika/affection3.png",
+			"res://asset/Monika/affection4.png",
+		};
+		for (int i = 0; i < EmotionPanelSlots.Length && i < portraits.Length; i++)
+			AddEmotionRow(left, EmotionPanelSlots[i].Title, EmotionPanelSlots[i].Note, 0f, portraits[i]);
+
+		_emotionSummaryLabel = CreateUiLabel("", 1, Colors.Transparent);
+		_emotionSummaryLabel.Visible = false;
+		_emotionPanel.AddChild(_emotionSummaryLabel);
+
+		_emotionHintLabel = CreateUiLabel("Những con số chỉ mang tính tham khảo.", 12, new Color(0.48f, 0.25f, 0.34f));
+		_emotionHintLabel.Position = new Vector2(62f, 445f);
+		_emotionHintLabel.Size = new Vector2(460f, 24f);
+		_emotionPanel.AddChild(_emotionHintLabel);
+	}
+
+	// ── Casual mode content ───────────────────────────────────────────────────
+
+	// Casual mode constants
+	private static readonly Color CasualBarFill  = new(0.97f, 0.55f, 0.72f);
+	private static readonly Color CasualBarTrack = new(1.00f, 0.88f, 0.93f);
+	private static readonly Color CasualBarWord  = new(0.80f, 0.18f, 0.45f);
+
+	private static readonly (string Icon, string Name, string Key1, string Key2, string Key3, string[] Levels)[] CasualBarDefs =
+	{
+		("♡", "Gắn bó",    "attachment", "tenderness",  "warmth",
+			new[] { "xa lắm", "hơi xa", "vừa đủ", "gần", "rất gần" }),
+		("~", "Nhịp điệu", "emotional_stability", "", "",
+			new[] { "dao động", "hơi bất ổn", "ổn", "khá vững", "rất vững" }),
+		("✦", "Muốn nói",  "silence_pressure", "social_pressure", "",
+			new[] { "im lặng", "ít muốn nói", "muốn nói", "đang hứng", "rất hứng" }),
+	};
+
+	private void BuildCasualContent()
+	{
+		// Root container
+		var root = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
+		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		_emotionPanel.AddChild(root);
+		_casualContentRoot = root;
+
+		// ── Layout (panel 760×506, header ~108px, bottom decoration ~32px) ───
+		// Safe zone: x=46..610, y=108..474
+		// Dọc: narrative(42px) → grid(240px) → bars(3×44px=132px) → hint(18px)
+		// Total: 42+8+240+8+132+8+18 = 456px → fit trong 366px safe
+		// Điều chỉnh: narrative(40), grid(220), bars(120), hint(18) = 398px → ok
+
+		const float SafeX  = 46f;
+		const float SafeW  = 440f;  // grid width — chừa khoảng trước divider DEBUG (~x=520)
+		const float StartY = 108f;
+
+		// ── Narrative ─────────────────────────────────────────────────────────
+		var narrativeHeader = CreateUiLabel("♡  Hôm nay mình...", 13, new Color(0.62f, 0.14f, 0.38f));
+		narrativeHeader.Position     = new Vector2(SafeX, StartY);
+		narrativeHeader.Size         = new Vector2(SafeW, 18f);
+		narrativeHeader.AutowrapMode = TextServer.AutowrapMode.Off;
+		narrativeHeader.ClipText     = true;
+		root.AddChild(narrativeHeader);
+
+		_casualNarrativeLabel             = CreateUiLabel("\"...\"", 17, new Color(0.88f, 0.24f, 0.52f));
+		_casualNarrativeLabel.Position    = new Vector2(SafeX, StartY + 20f);
+		_casualNarrativeLabel.Size        = new Vector2(SafeW, 22f);
+		_casualNarrativeLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_casualNarrativeLabel.ClipText    = true;
+		root.AddChild(_casualNarrativeLabel);
+
+		// ── Grid card ─────────────────────────────────────────────────────────
+		const float GridY    = StartY + 46f;  // 154
+		const float GridW    = SafeW;          // 440
+		const float GridH    = 184f;           // thấp hơn để chừa chỗ cho bars
+		const float CardPad  = 22f;
+		const float CanvasW  = GridW - CardPad * 2f;  // 396
+		const float CanvasH  = GridH - CardPad * 2f;  // 140
+
+		// Card background
+		var cardBg = new Panel
+		{
+			Position    = new Vector2(SafeX, GridY),
+			Size        = new Vector2(GridW, GridH),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		cardBg.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor     = new Color(1f, 0.970f, 0.985f, 0.92f),
+			BorderColor = new Color(0.96f, 0.78f, 0.87f, 0.85f),
+			BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
+			CornerRadiusTopLeft = 20, CornerRadiusTopRight = 20,
+			CornerRadiusBottomLeft = 20, CornerRadiusBottomRight = 20,
+		});
+		root.AddChild(cardBg);
+
+		// ♡ decorations ở 4 góc trong card
+		float[] cornerXs = { SafeX + 6f,  SafeX + GridW - 20f };
+		float[] cornerYs = { GridY + 4f,  GridY + GridH - 22f  };
+		foreach (float cx in cornerXs)
+			foreach (float cy in cornerYs)
+			{
+				var heart = CreateUiLabel("♡", 13, new Color(0.97f, 0.72f, 0.82f));
+				heart.Position    = new Vector2(cx, cy);
+				heart.MouseFilter = Control.MouseFilterEnum.Ignore;
+				root.AddChild(heart);
+			}
+
+		// Canvas mood dot
+		var canvas = new _MoodDotCanvas
+		{
+			Position = new Vector2(SafeX + CardPad, GridY + CardPad),
+			Size     = new Vector2(CanvasW, CanvasH),
+		};
+		canvas.SetOwnerListener(this, CanvasW, CanvasH);
+		root.AddChild(canvas);
+		_moodDotCanvas = canvas;
+
+		// Axis labels với arrows — căn giữa theo canvas
+		float axCx = SafeX + CardPad + CanvasW * 0.5f;
+		float axCy = GridY + CardPad + CanvasH * 0.5f;
+		// Top
+		AxisLabel(root, "↑ kích thích", axCx - 36f, GridY + 4f,           11);
+		// Bottom
+		AxisLabel(root, "calm ✦",        axCx - 20f, GridY + GridH - 16f,  11);
+		// Left
+		AxisLabel(root, "vui ←",          SafeX + 8f, axCy - 9f,           11);
+		// Right
+		AxisLabel(root, "→ khó chịu",     SafeX + GridW - 84f, axCy - 9f,  11);
+
+		// ── 3 bars dưới grid ─────────────────────────────────────────────────
+		const float BarsY0  = GridY + GridH + 8f;
+		const float BarsGap = 34f;
+		const float BarIconX = SafeX;
+		const float BarNameX = SafeX + 26f;
+		const float BarTrackX = SafeX + 108f;
+		const float BarTrackW = 200f;
+		const float BarWordX  = BarTrackX + BarTrackW + 10f;
+
+		_casualBars.Clear();
+		for (int i = 0; i < CasualBarDefs.Length; i++)
+		{
+			var (icon, name, k1, k2, k3, levels) = CasualBarDefs[i];
+			CasualBar(root, icon, name, levels,
+				BarIconX, BarNameX, BarTrackX, BarTrackW, BarWordX,
+				BarsY0 + i * BarsGap,
+				out var fillClip, out var fill, out var wordLabel);
+			_casualBars.Add((fillClip, fill, wordLabel));
+		}
+
+		// ── Hint ──────────────────────────────────────────────────────────────
+		_emotionHintLabel             = CreateUiLabel("", 11, new Color(0.62f, 0.32f, 0.44f));
+		_emotionHintLabel.Position    = new Vector2(SafeX, BarsY0 + CasualBarDefs.Length * BarsGap + 4f);
+		_emotionHintLabel.Size        = new Vector2(SafeW, 18f);
+		_emotionHintLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		root.AddChild(_emotionHintLabel);
+	}
+
+	private void AxisLabel(Control parent, string text, float x, float y, int fontSize)
+	{
+		var lbl = CreateUiLabel(text, fontSize, new Color(0.68f, 0.36f, 0.52f));
+		lbl.Position    = new Vector2(x, y);
+		lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
+		parent.AddChild(lbl);
+	}
+
+	// Bar: icon  name  [ ████░░░ ]  "word"
+	// Track dùng dashes, fill dùng blocks — như design target
+	private void CasualBar(Control parent,
+		string icon, string name, string[] levels,
+		float iconX, float nameX, float trackX, float trackW, float wordX,
+		float y,
+		out Control fillClip, out Control fill, out Label wordLabel)
+	{
+		const float BarH   = 14f;
+		const float LabelH = 20f;
+		float midY = y + (LabelH - BarH) * 0.5f;
+
+		// Icon
+		var iconLbl = CreateUiLabel(icon, 15, new Color(0.93f, 0.36f, 0.62f));
+		iconLbl.Position    = new Vector2(iconX, y);
+		iconLbl.Size        = new Vector2(22f, LabelH);
+		iconLbl.MouseFilter = Control.MouseFilterEnum.Ignore;
+		parent.AddChild(iconLbl);
+
+		// Name
+		var nameLbl = CreateUiLabel(name, 14, new Color(0.38f, 0.08f, 0.24f));
+		nameLbl.Position     = new Vector2(nameX, y);
+		nameLbl.Size         = new Vector2(trackX - nameX - 4f, LabelH);
+		nameLbl.AutowrapMode = TextServer.AutowrapMode.Off;
+		parent.AddChild(nameLbl);
+
+		// "[" bracket
+		var bracketL = CreateUiLabel("[", 13, new Color(0.80f, 0.48f, 0.62f));
+		bracketL.Position    = new Vector2(trackX - 12f, midY - 1f);
+		bracketL.Size        = new Vector2(12f, LabelH);
+		bracketL.MouseFilter = Control.MouseFilterEnum.Ignore;
+		parent.AddChild(bracketL);
+
+		// Track background (dashed feel — dùng StyleBoxFlat với thưa)
+		var track = new Panel
+		{
+			Position    = new Vector2(trackX, midY),
+			Size        = new Vector2(trackW, BarH),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		track.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = CasualBarTrack,
+			CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6,
+			CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6,
+		});
+		parent.AddChild(track);
+
+		// Fill
+		var fClip = new Panel
+		{
+			Position    = new Vector2(trackX, midY),
+			Size        = new Vector2(0f, BarH),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		fClip.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = CasualBarFill,
+			CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6,
+			CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6,
+		});
+		parent.AddChild(fClip);
+
+		// "]" bracket
+		var bracketR = CreateUiLabel("]", 13, new Color(0.80f, 0.48f, 0.62f));
+		bracketR.Position    = new Vector2(trackX + trackW, midY - 1f);
+		bracketR.Size        = new Vector2(12f, LabelH);
+		bracketR.MouseFilter = Control.MouseFilterEnum.Ignore;
+		parent.AddChild(bracketR);
+
+		// Word label
+		wordLabel          = CreateUiLabel("―", 14, CasualBarWord);
+		wordLabel.Position = new Vector2(wordX + 4f, y);
+		wordLabel.Size     = new Vector2(100f, LabelH);
+		parent.AddChild(wordLabel);
+
+		fillClip = fClip;
+		fill     = fClip;
+	}
+
+	/// <summary>Chuyển 0..1 thành từ trạng thái (5 cấp).</summary>
+	private static string ValueToWord(float v, string[] levels)
+	{
+		int idx = Mathf.Clamp(Mathf.RoundToInt(v * (levels.Length - 1)), 0, levels.Length - 1);
+		return $"\"{levels[idx]}\"";
 	}
 
 	private void BuildPrivateMindPanelUi()
@@ -957,71 +1247,111 @@ public partial class UdpListener : Node2D
 		if (_privateMindPanel == null)
 			return;
 
-		// Màu nền tối để chữ sáng dễ đọc hơn so với nền trắng cũ.
+		_privateMindFrameTexture ??= GD.Load<Texture2D>("res://asset/Resource/InnerDiaryKhung.png");
+		_privateMindScrollCapTexture ??= GD.Load<Texture2D>("res://asset/Resource/topcap.png");
+		_privateMindScrollTrackTexture ??= GD.Load<Texture2D>("res://asset/Resource/scrolltrack.png");
+		_privateMindScrollFillTexture ??= GD.Load<Texture2D>("res://asset/Resource/scrollfill.png");
+
 		var panelStyle = new StyleBoxFlat
 		{
-			BgColor = new Color(0.102f, 0.086f, 0.141f, 0.97f),       // #1a1624
-			BorderColor = new Color(0.44f, 0.33f, 0.64f, 0.80f),      // tím vừa
-			BorderWidthLeft = 2,
-			BorderWidthTop = 2,
-			BorderWidthRight = 2,
-			BorderWidthBottom = 2,
-			CornerRadiusTopLeft = 10,
-			CornerRadiusTopRight = 10,
-			CornerRadiusBottomRight = 10,
-			CornerRadiusBottomLeft = 10,
-			ContentMarginLeft = 14,
-			ContentMarginTop = 12,
-			ContentMarginRight = 14,
-			ContentMarginBottom = 12,
+			BgColor = new Color(1f, 1f, 1f, 0f),
+			BorderColor = new Color(1f, 1f, 1f, 0f),
+			ContentMarginLeft = 0,
+			ContentMarginTop = 0,
+			ContentMarginRight = 0,
+			ContentMarginBottom = 0,
 		};
 		_privateMindPanel.AddThemeStyleboxOverride("panel", panelStyle);
 
+		// Layer 1: khung ảnh nền
+		var frameLayer = new TextureRect
+		{
+			Texture = _privateMindFrameTexture,
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.Scale,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		frameLayer.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		_privateMindPanel.AddChild(frameLayer);
+		_privateMindFrameRect = frameLayer;
+
+		// Layer 2: nội dung scroll
 		var root = new VBoxContainer();
 		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-		root.OffsetLeft = 18f;
-		root.OffsetTop = 16f;
-		root.OffsetRight = -18f;
-		root.OffsetBottom = -16f;
-		root.AddThemeConstantOverride("separation", 10);
+		root.OffsetLeft = 64f;
+		root.OffsetTop = 104f;
+		root.OffsetRight = -64f;
+		root.OffsetBottom = -40f;
+		root.AddThemeConstantOverride("separation", 22);
 		_privateMindPanel.AddChild(root);
-
-		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 34f) };
-		root.AddChild(header);
-
-		// Tiêu đề sáng trên nền tối.
-		var title = CreateUiLabel("✦ Inner Diary", 20, new Color(0.769f, 0.659f, 0.941f)); // #c4a8f0
-		title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		header.AddChild(title);
-
-		var close = new Button
-		{
-			Text = "×",
-			CustomMinimumSize = new Vector2(34f, 30f),
-			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
-		};
-		close.Pressed += ClosePrivateMindPanel;
-		header.AddChild(close);
 
 		var scroll = new ScrollContainer
 		{
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+			ClipContents = true,
 		};
+		scroll.AddThemeConstantOverride("v_scrollbar_separation", 0);
 		root.AddChild(scroll);
+		_privateMindScrollContainer = scroll;
+
+		_privateMindSectionList = new VBoxContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+			Alignment = BoxContainer.AlignmentMode.Center,
+		};
+		_privateMindSectionList.AddThemeConstantOverride("separation", 18);
+		scroll.AddChild(_privateMindSectionList);
 
 		_privateMindText = new RichTextLabel
 		{
 			BbcodeEnabled = true,
 			FitContent = true,
 			ScrollActive = false,
-			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+			Visible = false,
 		};
 		_privateMindText.AddThemeFontSizeOverride("normal_font_size", 14);
-		// Màu chữ mặc định sáng cho nền tối.
-		_privateMindText.AddThemeColorOverride("default_color", new Color(0.910f, 0.878f, 0.941f)); // #e8e0f0
-		scroll.AddChild(_privateMindText);
+		root.AddChild(_privateMindText);
+
+		// Layer 3: decoration overlay (scroll track + thumb + close button) — nằm trên cùng
+		var decorationLayer = new Control
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		decorationLayer.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		_privateMindPanel.AddChild(decorationLayer);
+
+		// Scroll track (toàn bộ chiều dài rail)
+		_privateMindScrollTrackRect = CreateDecorTextureRect(_privateMindScrollTrackTexture, new Vector2(28f, 200f));
+		decorationLayer.AddChild(_privateMindScrollTrackRect);
+
+		// Scroll fill / thumb (di chuyển theo tỉ lệ)
+		_privateMindScrollFillRect = CreateDecorTextureRect(_privateMindScrollFillTexture, new Vector2(28f, 60f));
+		decorationLayer.AddChild(_privateMindScrollFillRect);
+
+		// Giữ topcap nếu cần làm mũ đầu thumb
+		_privateMindScrollCapRect = CreateDecorTextureRect(_privateMindScrollCapTexture, new Vector2(28f, 24f));
+		decorationLayer.AddChild(_privateMindScrollCapRect);
+
+		// Capsule điều khiển cửa sổ (— / x) — đồng bộ với Emotion panel
+		var windowControls = CreateWindowControlCapsule(
+			() => _privateMindPanel.Visible = false,
+			ClosePrivateMindPanel);
+		windowControls.Position = new Vector2(PrivateMindPanelMinSize.X - 94f - 31f, 20f);
+		_privateMindPanel.AddChild(windowControls);
+
+		ApplyHiddenScrollBarTheme(scroll.GetVScrollBar());
+
+		// Kết nối sự kiện scroll để cập nhật vị trí thumb
+		scroll.GetVScrollBar().ValueChanged += _ => UpdatePrivateMindScrollDecor();
+
+		// Đọc lại trạng thái inner diary đã lưu để hiển thị liên tục giữa các phiên
+		if (string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson))
+			LoadPrivateMindState();
+
+		UpdatePrivateMindDecorLayout();
+		UpdatePrivateMindScrollDecor();
 		RefreshPrivateMindPanel();
 	}
 
@@ -1031,6 +1361,135 @@ public partial class UdpListener : Node2D
 		label.AddThemeFontSizeOverride("font_size", fontSize);
 		label.AddThemeColorOverride("font_color", color);
 		return label;
+	}
+
+	private TextureRect CreateDecorTextureRect(Texture2D texture, Vector2 size)
+	{
+		return new TextureRect
+		{
+			Texture = texture,
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.Scale,
+			CustomMinimumSize = size,
+			Size = size,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+	}
+
+	private Button CreateTransparentHotspotButton(Rect2 rect, Action onPressed)
+	{
+		var button = new Button
+		{
+			Flat = true,
+			Text = "",
+			FocusMode = Control.FocusModeEnum.None,
+			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+			MouseFilter = Control.MouseFilterEnum.Stop,
+			Position = rect.Position,
+			Size = rect.Size,
+			CustomMinimumSize = rect.Size,
+			Modulate = new Color(1f, 1f, 1f, 0.01f),
+		};
+		var hidden = new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 1f, 1f, 0f),
+			BorderColor = new Color(1f, 1f, 1f, 0f),
+		};
+		button.AddThemeStyleboxOverride("normal", hidden);
+		button.AddThemeStyleboxOverride("hover", hidden);
+		button.AddThemeStyleboxOverride("pressed", hidden);
+		button.AddThemeStyleboxOverride("focus", hidden);
+		button.Pressed += onPressed;
+		return button;
+	}
+
+	private void ApplyHiddenScrollBarTheme(VScrollBar scrollBar)
+	{
+		if (scrollBar == null)
+			return;
+
+		scrollBar.CustomMinimumSize = new Vector2(0f, 0f);
+		scrollBar.Modulate = new Color(1f, 1f, 1f, 0.01f);
+
+		var hidden = new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 1f, 1f, 0f),
+			BorderColor = new Color(1f, 1f, 1f, 0f),
+		};
+		scrollBar.AddThemeStyleboxOverride("scroll", hidden);
+		scrollBar.AddThemeStyleboxOverride("scroll_focus", hidden);
+		scrollBar.AddThemeStyleboxOverride("grabber", hidden);
+		scrollBar.AddThemeStyleboxOverride("grabber_highlight", hidden);
+		scrollBar.AddThemeStyleboxOverride("grabber_pressed", hidden);
+	}
+
+	private void UpdatePrivateMindDecorLayout()
+	{
+		if (_privateMindPanel == null)
+			return;
+
+		Vector2 size = _privateMindPanel.Size;
+
+		if (_privateMindFrameRect != null)
+			_privateMindFrameRect.Size = size;
+	}
+
+	private void UpdatePrivateMindScrollDecor()
+	{
+		if (_privateMindScrollContainer == null || _privateMindPanel == null)
+			return;
+
+		VScrollBar scrollBar = _privateMindScrollContainer.GetVScrollBar();
+		if (scrollBar == null)
+			return;
+
+		// Vùng track scroll: sát mép phải của panel, từ dưới header xuống đáy
+		float barWidth = 10f;
+		float trackX = _privateMindPanel.Size.X - 26f;
+		float trackTop = 118f;
+		float trackBottom = _privateMindPanel.Size.Y - 54f;
+		float trackHeight = Mathf.Max(40f, trackBottom - trackTop);
+
+		// Vẽ track (background rail)
+		if (_privateMindScrollTrackRect != null)
+		{
+			_privateMindScrollTrackRect.Position = new Vector2(trackX, trackTop);
+			_privateMindScrollTrackRect.Size = new Vector2(barWidth, trackHeight);
+			// Hiển thị track chỉ khi có nội dung để scroll
+			_privateMindScrollTrackRect.Visible = scrollBar.MaxValue > scrollBar.Page + 0.5;
+		}
+
+		// Thumb fill — chiều cao tỉ lệ theo page/max
+		float thumbMinHeight = 44f;
+		float thumbMaxHeight = Mathf.Min(trackHeight, 130f);
+		float thumbHeight = thumbMinHeight;
+		double maxVal = scrollBar.MaxValue;
+		if (maxVal > 0.001 && scrollBar.Page > 0)
+		{
+			float ratio = Mathf.Clamp((float)(scrollBar.Page / maxVal), 0.1f, 1f);
+			thumbHeight = Mathf.Clamp(trackHeight * ratio, thumbMinHeight, thumbMaxHeight);
+		}
+
+		// Vị trí thumb theo tỉ lệ cuộn
+		float scrollRange = Mathf.Max(0f, (float)(scrollBar.MaxValue - scrollBar.Page));
+		float ratio2 = scrollRange > 0.001f ? Mathf.Clamp((float)(scrollBar.Value / scrollRange), 0f, 1f) : 0f;
+		float thumbY = trackTop + ratio2 * Mathf.Max(0f, trackHeight - thumbHeight);
+
+		if (_privateMindScrollFillRect != null)
+		{
+			_privateMindScrollFillRect.Position = new Vector2(trackX, thumbY);
+			_privateMindScrollFillRect.Size = new Vector2(barWidth, thumbHeight);
+			_privateMindScrollFillRect.Visible = _privateMindScrollTrackRect?.Visible ?? false;
+		}
+
+		// Cap (mũ đầu thumb) — hơi rộng hơn thân, canh giữa cho giống nút tròn
+		if (_privateMindScrollCapRect != null)
+		{
+			float capWidth = barWidth + 6f;
+			_privateMindScrollCapRect.Position = new Vector2(trackX - 3f, thumbY - 3f);
+			_privateMindScrollCapRect.Size = new Vector2(capWidth, capWidth);
+			_privateMindScrollCapRect.Visible = _privateMindScrollFillRect?.Visible ?? false;
+		}
 	}
 
 	private TextureButton CreateTextureButton(string path, Action onPressed, Vector2 size)
@@ -1047,7 +1506,7 @@ public partial class UdpListener : Node2D
 		return button;
 	}
 
-	private Control CreateWindowControlCapsule()
+	private Control CreateWindowControlCapsule(Action onMinimize, Action onClose)
 	{
 		var capsule = new PanelContainer
 		{
@@ -1081,8 +1540,8 @@ public partial class UdpListener : Node2D
 		row.AddThemeConstantOverride("separation", 6);
 		capsule.AddChild(row);
 
-		var minimizeButton = CreateWindowControlButton("─", () => _emotionPanel.Visible = false, 34f, 16);
-		var closeButton = CreateWindowControlButton("✕", CloseEmotionPanel, 34f, 14);
+		var minimizeButton = CreateWindowControlButton("-", onMinimize, 34f, 16);
+		var closeButton = CreateWindowControlButton("x", onClose, 34f, 14);
 		row.AddChild(minimizeButton);
 		row.AddChild(closeButton);
 		return capsule;
@@ -1346,7 +1805,58 @@ public partial class UdpListener : Node2D
 		if (_modeDropdown == null)
 			return;
 
-		_modeDropdown.Text = index == 0 ? "Dev" : "Casual";
+		bool wantCasual = index == 1;
+		_modeDropdown.Text = wantCasual ? "Casual" : "Dev";
+		if (_isCasualMode != wantCasual)
+		{
+			_isCasualMode = wantCasual;
+			RebuildEmotionPanelContent();
+			if (_latestEmotionDebug != null)
+				RefreshEmotionPanel();
+		}
+	}
+
+	/// <summary>Xoá và dựng lại phần content bên trái panel theo mode hiện tại.</summary>
+	private void RebuildEmotionPanelContent()
+	{
+		if (_emotionPanel == null)
+			return;
+
+		void RemoveAndFree(Node n)
+		{
+			if (n != null && IsInstanceValid(n))
+			{
+				n.GetParent()?.RemoveChild(n);
+				n.QueueFree();
+			}
+		}
+
+		// Dev content: rows trong VBoxContainer
+		foreach (var row in _emotionRows) RemoveAndFree(row.Row);
+		_emotionRows.Clear();
+		RemoveAndFree(_emotionSummaryLabel); _emotionSummaryLabel = null;
+		RemoveAndFree(_emotionHintLabel);    _emotionHintLabel = null;
+		// Tìm VBoxContainer left của dev mode
+		foreach (Node child in _emotionPanel.GetChildren())
+		{
+			if (child is VBoxContainer vbox && vbox.Position.Y > 100f && vbox.Position.Y < 200f)
+			{
+				RemoveAndFree(vbox);
+				break;
+			}
+		}
+
+		// Casual content: toàn bộ nằm trong _casualContentRoot
+		RemoveAndFree(_casualContentRoot);
+		_casualContentRoot       = null;
+		_casualNarrativeLabel    = null;
+		_moodDotCanvas           = null;
+		_casualBars.Clear();
+
+		if (_isCasualMode)
+			BuildCasualContent();
+		else
+			BuildDevContent();
 	}
 
 	private void BeginDrag(Vector2 mousePosition)
@@ -1355,7 +1865,7 @@ public partial class UdpListener : Node2D
 		_bodyAutonomy?.RecordUserInteraction();
 		_grabModeArmed = false;
 		_isDraggingCharacter = true;
-		_dragOffset = _body.GlobalPosition - mousePosition; //Lưu khoảng cách giữa chuột và body để kéo không bị giật.
+		_dragOffset = _body.GlobalPosition - mousePosition; // Lưu khoảng cách giữa chuột và body để kéo không bị giật.
 		_previousDragMousePos = mousePosition;
 		_lastDragMousePos = mousePosition;
 		_previousDragSampleAt = GetRuntimeSeconds();
@@ -1470,7 +1980,7 @@ public partial class UdpListener : Node2D
 		_bodyAutonomy?.RecordUserInteraction();
 		_chatInput.Text = "";
 		_chatInput.GrabFocus();
-		//JsonSerializer.Serialize(msg) để escape chuỗi. Không tự nối raw string ngu ngốc
+		// JsonSerializer.Serialize(msg) để escape chuỗi. Không tự nối raw string ngu ngốc
 		string payload = $"{{\"type\":\"chat\",\"message\":{JsonSerializer.Serialize(msg)}}}";
 		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
 		ApplyTypewriterEffect($"[Chủ nhân]: {msg}");
@@ -1758,9 +2268,14 @@ public partial class UdpListener : Node2D
 		}
 		if (payload.HasPrivateMindDebug)
 		{
-			_latestPrivateMindDebugJson = payload.PrivateMindDebugJson;
-			if (_privateMindPanel != null && _privateMindPanel.Visible)
-				RefreshPrivateMindPanel();
+			// Chỉ nhận digest có nội dung thật; digest rỗng bị bỏ qua để giữ liên tục
+			if (PrivateMindDigestHasContent(payload.PrivateMindDebugJson))
+			{
+				_latestPrivateMindDebugJson = payload.PrivateMindDebugJson;
+				SavePrivateMindState();
+				if (_privateMindPanel != null && _privateMindPanel.Visible)
+					RefreshPrivateMindPanel();
+			}
 		}
 		if (payload.HasBodyBias)
 			_bodyAutonomy?.ApplyCognitionBias(payload.BodyBias);
@@ -1786,6 +2301,19 @@ public partial class UdpListener : Node2D
 
 	private void RefreshEmotionPanel()
 	{
+		// Casual mode: dùng riêng
+		if (_isCasualMode)
+		{
+			if (_latestEmotionDebug == null || _latestEmotionDebug.Items == null || _latestEmotionDebug.Items.Count == 0)
+				return;
+			var byKeyCasual = new Dictionary<string, EmotionDebugItem>(_latestEmotionDebug.Items.Count, StringComparer.Ordinal);
+			foreach (var item in _latestEmotionDebug.Items)
+				byKeyCasual[item.Key] = item;
+			RefreshCasualMode(byKeyCasual, _latestEmotionDebug);
+			return;
+		}
+
+		// Dev mode rows
 		if (_emotionRows.Count > 0)
 		{
 			RefreshEmotionPanelRows();
@@ -1849,32 +2377,695 @@ public partial class UdpListener : Node2D
 		_emotionText.Text = sb.ToString();
 	}
 
-	private void RefreshPrivateMindPanel()
+	private static bool PrivateMindDigestHasContent(string json)
 	{
-		if (_privateMindText == null)
-			return;
-		if (string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson))
-		{
-			_privateMindText.Text = "[color=#a090b8][i]Chưa có dữ liệu.[/i][/color]";
-			return;
-		}
-
+		if (string.IsNullOrWhiteSpace(json))
+			return false;
 		try
 		{
-			using var doc = JsonDocument.Parse(_latestPrivateMindDebugJson);
-			_privateMindText.Text = RenderDiary(doc.RootElement);
+			using JsonDocument doc = JsonDocument.Parse(json);
+			JsonElement root = doc.RootElement;
+			JsonElement menu = root;
+			if (root.ValueKind == JsonValueKind.Object
+				&& root.TryGetProperty("menu", out var m) && m.ValueKind == JsonValueKind.Object)
+				menu = m;
+			return ExtractCurrentThought(menu, root).Count > 0
+				|| ExtractFutureThought(menu, root).Count > 0
+				|| ExtractConcerns(menu).Count > 0
+				|| ExtractFragments(menu, root).Count > 0
+				|| ExtractSurface(menu, root).Count > 0;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private void SavePrivateMindState()
+	{
+		if (string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson))
+			return;
+		try
+		{
+			using var file = Godot.FileAccess.Open(PrivateMindStatePath, Godot.FileAccess.ModeFlags.Write);
+			if (file != null)
+				file.StoreString(_latestPrivateMindDebugJson);
 		}
 		catch (Exception ex)
 		{
-			_privateMindText.Text =
-				$"[color=#ff6666]Lỗi đọc dữ liệu:[/color] {EscapeBbcode(ex.Message)}";
+			GD.PrintErr($"[PrivateMind] Save state failed: {ex.Message}");
 		}
+	}
+
+	private void LoadPrivateMindState()
+	{
+		try
+		{
+			if (!Godot.FileAccess.FileExists(PrivateMindStatePath))
+				return;
+			using var file = Godot.FileAccess.Open(PrivateMindStatePath, Godot.FileAccess.ModeFlags.Read);
+			if (file == null)
+				return;
+			string content = file.GetAsText();
+			if (!string.IsNullOrWhiteSpace(content) && PrivateMindDigestHasContent(content))
+				_latestPrivateMindDebugJson = content;
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[PrivateMind] Load state failed: {ex.Message}");
+		}
+	}
+
+	private void RefreshPrivateMindPanel()
+	{
+		if (_privateMindSectionList == null || _privateMindText == null)
+			return;
+		foreach (Node child in _privateMindSectionList.GetChildren())
+		{
+			_privateMindSectionList.RemoveChild(child);
+			child.QueueFree();
+		}
+
+		JsonElement root = default;
+		JsonElement menu = default;
+		bool hasData = false;
+		JsonDocument doc = null;
+		if (!string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson))
+		{
+			try
+			{
+				doc = JsonDocument.Parse(_latestPrivateMindDebugJson);
+				root = doc.RootElement;
+				menu = root;
+				if (root.ValueKind == JsonValueKind.Object
+					&& root.TryGetProperty("menu", out var menuEl) && menuEl.ValueKind == JsonValueKind.Object)
+					menu = menuEl;
+				hasData = true;
+			}
+			catch (Exception ex)
+			{
+				GD.PrintErr($"[PrivateMind] Parse error: {ex.Message}");
+			}
+		}
+
+		// Luôn dựng đủ 5 khung cố định, mỗi khung tự điền dữ liệu nếu có
+		var slots = new List<PrivateMindDiarySection>
+		{
+			BuildDiarySlot("Suy nghĩ hiện tại", hasData ? ExtractCurrentThought(menu, root) : null),
+			BuildDiarySlot("Suy nghĩ tương lai", hasData ? ExtractFutureThought(menu, root) : null),
+			BuildDiarySlot("Đang bận tâm", hasData ? ExtractConcerns(menu) : null),
+			BuildDiarySlot("Phân tích gần đây", hasData ? ExtractFragments(menu, root) : null),
+			BuildDiarySlot("Muốn nói", hasData ? ExtractSurface(menu, root) : null),
+		};
+
+		foreach (PrivateMindDiarySection slot in slots)
+			_privateMindSectionList.AddChild(BuildPrivateMindSectionCard(slot));
+
+		_privateMindText.Text = hasData ? RenderDiary(root) : "[i]Chưa có dữ liệu.[/i]";
+		doc?.Dispose();
+	}
+
+	private static PrivateMindDiarySection BuildDiarySlot(string title, List<PrivateMindDiaryItem> items)
+	{
+		if (items == null || items.Count == 0)
+			items = new List<PrivateMindDiaryItem> { new() { Text = "(chưa có)", Badge = "" } };
+		return new PrivateMindDiarySection { Title = title, Items = items };
+	}
+
+	private static List<PrivateMindDiaryItem> ExtractCurrentThought(JsonElement menu, JsonElement root)
+	{
+		var items = new List<PrivateMindDiaryItem>();
+		JsonElement current = default;
+		bool has = false;
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("current_thought", out current) && current.ValueKind == JsonValueKind.Object)
+			has = true;
+		else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("current", out current) && current.ValueKind == JsonValueKind.Object)
+			has = true;
+		if (has)
+		{
+			string dominant = DiaryStr(current, "dominant_judgment", 220);
+			if (!string.IsNullOrWhiteSpace(dominant))
+				items.Add(new PrivateMindDiaryItem { Text = dominant, Badge = "" });
+		}
+		return items;
+	}
+
+	private static List<PrivateMindDiaryItem> ExtractFutureThought(JsonElement menu, JsonElement root)
+	{
+		var items = new List<PrivateMindDiaryItem>();
+		JsonElement fb = default;
+		bool has = false;
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("future_bias", out fb) && fb.ValueKind == JsonValueKind.Object)
+			has = true;
+		else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("future_bias", out fb) && fb.ValueKind == JsonValueKind.Object)
+			has = true;
+		if (!has)
+			return items;
+
+		if (fb.TryGetProperty("inquiry_plan", out var plan) && plan.ValueKind == JsonValueKind.Array)
+		{
+			foreach (var it in plan.EnumerateArray())
+			{
+				string text = "";
+				if (it.ValueKind == JsonValueKind.String)
+					text = it.GetString() ?? "";
+				else if (it.ValueKind == JsonValueKind.Object)
+					text = FirstStr(it, "question", "text", "topic", "theme");
+				text = CompactText(text, 160);
+				if (!string.IsNullOrWhiteSpace(text))
+					items.Add(new PrivateMindDiaryItem { Text = text, Badge = "" });
+				if (items.Count >= 3)
+					break;
+			}
+		}
+
+		if (items.Count == 0 && fb.TryGetProperty("speech_bias", out var sb) && sb.ValueKind == JsonValueKind.Object)
+		{
+			string val = FirstStr(sb, "intent", "next_move", "stance", "tone");
+			val = CompactText(val, 160);
+			if (!string.IsNullOrWhiteSpace(val))
+				items.Add(new PrivateMindDiaryItem { Text = val, Badge = "" });
+		}
+		return items;
+	}
+
+	private static List<PrivateMindDiaryItem> ExtractConcerns(JsonElement menu)
+	{
+		var items = new List<PrivateMindDiaryItem>();
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("open_concerns", out var concerns) && concerns.ValueKind == JsonValueKind.Array)
+		{
+			foreach (var c in concerns.EnumerateArray())
+			{
+				if (c.ValueKind != JsonValueKind.Object)
+					continue;
+				string theme = DiaryStr(c, "theme", 180);
+				if (string.IsNullOrWhiteSpace(theme))
+					continue;
+				string badge = "";
+				if (c.TryGetProperty("pressure", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetDouble(out double pressure))
+					badge = $"ap luc {pressure:0.##}";
+				items.Add(new PrivateMindDiaryItem { Text = theme, Badge = badge });
+				if (items.Count >= 4)
+					break;
+			}
+		}
+		return items;
+	}
+
+	private static List<PrivateMindDiaryItem> ExtractFragments(JsonElement menu, JsonElement root)
+	{
+		var items = new List<PrivateMindDiaryItem>();
+		JsonElement fragments = default;
+		bool has = false;
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("temporary_thoughts", out var tmp)
+			&& tmp.ValueKind == JsonValueKind.Object && tmp.TryGetProperty("fragments", out fragments) && fragments.ValueKind == JsonValueKind.Array)
+			has = true;
+		else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("temporary", out var tmpRoot) && tmpRoot.ValueKind == JsonValueKind.Object
+			&& tmpRoot.TryGetProperty("fragments", out fragments) && fragments.ValueKind == JsonValueKind.Array)
+			has = true;
+		if (!has)
+			return items;
+
+		foreach (var f in fragments.EnumerateArray())
+		{
+			if (f.ValueKind != JsonValueKind.Object)
+				continue;
+			string claim = DiaryStr(f, "claim", 220);
+			if (string.IsNullOrWhiteSpace(claim))
+				continue;
+			string badge = "";
+			if (f.TryGetProperty("score", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetDouble(out double score))
+				badge = $"score {score:0.##}";
+			items.Add(new PrivateMindDiaryItem { Text = claim, Badge = badge });
+			if (items.Count >= 4)
+				break;
+		}
+		return items;
+	}
+
+	private static List<PrivateMindDiaryItem> ExtractSurface(JsonElement menu, JsonElement root)
+	{
+		var items = new List<PrivateMindDiaryItem>();
+		JsonElement queue = default;
+		bool has = false;
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("surface_queue", out queue) && queue.ValueKind == JsonValueKind.Array)
+			has = true;
+		else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("surface_queue", out queue) && queue.ValueKind == JsonValueKind.Array)
+			has = true;
+		if (!has)
+			return items;
+
+		foreach (var q in queue.EnumerateArray())
+		{
+			string text = "";
+			if (q.ValueKind == JsonValueKind.String)
+				text = q.GetString() ?? "";
+			else if (q.ValueKind == JsonValueKind.Object)
+				text = FirstStr(q, "topic_seed", "text", "claim");
+			text = CompactText(text, 160);
+			if (!string.IsNullOrWhiteSpace(text))
+				items.Add(new PrivateMindDiaryItem { Text = text, Badge = "" });
+			if (items.Count >= 3)
+				break;
+		}
+		return items;
+	}
+
+	private static string FirstStr(JsonElement obj, params string[] keys)
+	{
+		if (obj.ValueKind != JsonValueKind.Object)
+			return "";
+		foreach (string key in keys)
+		{
+			if (obj.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
+			{
+				string s = v.GetString() ?? "";
+				if (!string.IsNullOrWhiteSpace(s))
+					return s;
+			}
+		}
+		return "";
+	}
+
+	private static IEnumerable<string> GetJsonKeys(JsonElement el)
+	{
+		if (el.ValueKind != JsonValueKind.Object)
+			return Array.Empty<string>();
+		var keys = new List<string>();
+		foreach (var prop in el.EnumerateObject())
+			keys.Add(prop.Name);
+		return keys;
+	}
+
+	private static string ExtractAnyMeaningfulText(JsonElement root)
+	{
+		// Thử lấy dominant_judgment từ current
+		if (root.TryGetProperty("current", out var cur) && cur.ValueKind == JsonValueKind.Object
+			&& cur.TryGetProperty("dominant_judgment", out var dj) && dj.ValueKind == JsonValueKind.String)
+		{
+			string t = dj.GetString() ?? "";
+			if (!string.IsNullOrWhiteSpace(t)) return t;
+		}
+		// Thử inner_diary.text
+		if (root.TryGetProperty("inner_diary", out var diary) && diary.ValueKind == JsonValueKind.Object
+			&& diary.TryGetProperty("text", out var txt) && txt.ValueKind == JsonValueKind.String)
+		{
+			string t = txt.GetString() ?? "";
+			if (!string.IsNullOrWhiteSpace(t)) return t.Length > 300 ? t[..300] + "..." : t;
+		}
+		return "";
 	}
 
 	/// <summary>
 	/// Render private mind digest thành diary tiếng Việt dễ đọc.
 	/// Ưu tiên inner_diary.sections nếu có; nếu không, tự dựng từ current/concerns/fragments.
 	/// </summary>
+	private PanelContainer BuildPrivateMindPlaceholderCard(string message)
+	{
+		var card = new PanelContainer();
+		card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.965f, 0.985f, 0.95f),
+			BorderColor = new Color(0.98f, 0.80f, 0.88f, 0.95f),
+			BorderWidthLeft = 2,
+			BorderWidthTop = 2,
+			BorderWidthRight = 2,
+			BorderWidthBottom = 2,
+			CornerRadiusTopLeft = 22,
+			CornerRadiusTopRight = 22,
+			CornerRadiusBottomRight = 22,
+			CornerRadiusBottomLeft = 22,
+			ContentMarginLeft = 24,
+			ContentMarginTop = 20,
+			ContentMarginRight = 24,
+			ContentMarginBottom = 20,
+		});
+
+		var text = new Label
+		{
+			Text = message,
+			AutowrapMode = TextServer.AutowrapMode.WordSmart,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		text.AddThemeFontSizeOverride("font_size", 17);
+		text.AddThemeColorOverride("font_color", new Color(0.58f, 0.20f, 0.38f));
+		card.AddChild(text);
+		return card;
+	}
+
+	private PanelContainer BuildPrivateMindSectionCard(PrivateMindDiarySection section)
+	{
+		var card = new PanelContainer();
+		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.972f, 0.986f, 0.96f),
+			BorderColor = new Color(0.98f, 0.80f, 0.88f, 0.95f),
+			BorderWidthLeft = 2,
+			BorderWidthTop = 2,
+			BorderWidthRight = 2,
+			BorderWidthBottom = 2,
+			CornerRadiusTopLeft = 24,
+			CornerRadiusTopRight = 24,
+			CornerRadiusBottomRight = 24,
+			CornerRadiusBottomLeft = 24,
+		});
+
+		var content = new VBoxContainer();
+		content.AddThemeConstantOverride("separation", 0);
+		card.AddChild(content);
+
+		var headerBg = new PanelContainer();
+		headerBg.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		headerBg.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.935f, 0.965f, 0.62f),
+			CornerRadiusTopLeft = 22,
+			CornerRadiusTopRight = 22,
+			ContentMarginLeft = 18,
+			ContentMarginTop = 14,
+			ContentMarginRight = 18,
+			ContentMarginBottom = 12,
+		});
+		content.AddChild(headerBg);
+
+		var headerRow = new HBoxContainer();
+		headerRow.AddThemeConstantOverride("separation", 12);
+		headerBg.AddChild(headerRow);
+
+		var iconChip = new PanelContainer { CustomMinimumSize = new Vector2(40f, 40f) };
+		iconChip.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.975f, 0.99f, 1f),
+			BorderColor = new Color(0.98f, 0.80f, 0.88f, 0.95f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 12,
+			CornerRadiusTopRight = 12,
+			CornerRadiusBottomRight = 12,
+			CornerRadiusBottomLeft = 12,
+			ContentMarginLeft = 8,
+			ContentMarginTop = 4,
+			ContentMarginRight = 8,
+			ContentMarginBottom = 4,
+		});
+		headerRow.AddChild(iconChip);
+
+		var icon = CreateUiLabel("<3", 18, new Color(0.93f, 0.36f, 0.62f));
+		icon.HorizontalAlignment = HorizontalAlignment.Center;
+		icon.VerticalAlignment = VerticalAlignment.Center;
+		iconChip.AddChild(icon);
+
+		var title = CreateUiLabel(section.Title, 20, new Color(0.63f, 0.10f, 0.39f));
+		title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		headerRow.AddChild(title);
+
+		var bodyWrap = new MarginContainer();
+		bodyWrap.AddThemeConstantOverride("margin_left", 24);
+		bodyWrap.AddThemeConstantOverride("margin_top", 18);
+		bodyWrap.AddThemeConstantOverride("margin_right", 24);
+		bodyWrap.AddThemeConstantOverride("margin_bottom", 20);
+		content.AddChild(bodyWrap);
+
+		var rows = new VBoxContainer();
+		rows.AddThemeConstantOverride("separation", 18);
+		bodyWrap.AddChild(rows);
+
+		foreach (PrivateMindDiaryItem item in section.Items)
+		{
+			var row = new HBoxContainer();
+			row.AddThemeConstantOverride("separation", 12);
+			row.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+			rows.AddChild(row);
+
+			var bullet = CreateUiLabel("*", 22, new Color(0.98f, 0.54f, 0.76f));
+			bullet.CustomMinimumSize = new Vector2(18f, 0f);
+			row.AddChild(bullet);
+
+			var line = new Label
+			{
+				Text = item.Text,
+				AutowrapMode = TextServer.AutowrapMode.WordSmart,
+				SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			};
+			line.AddThemeFontSizeOverride("font_size", 18);
+			line.AddThemeColorOverride("font_color", new Color(0.46f, 0.12f, 0.29f));
+			row.AddChild(line);
+
+			if (!string.IsNullOrWhiteSpace(item.Badge))
+				row.AddChild(BuildPrivateMindBadge(item.Badge));
+		}
+
+		return card;
+	}
+
+	private Control BuildPrivateMindBadge(string text)
+	{
+		var pill = new PanelContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd,
+			CustomMinimumSize = new Vector2(0f, 38f),
+		};
+		pill.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.90f, 0.95f, 0.92f),
+			CornerRadiusTopLeft = 18,
+			CornerRadiusTopRight = 18,
+			CornerRadiusBottomRight = 18,
+			CornerRadiusBottomLeft = 18,
+			ContentMarginLeft = 16,
+			ContentMarginTop = 8,
+			ContentMarginRight = 16,
+			ContentMarginBottom = 8,
+		});
+
+		var label = CreateUiLabel($"({text})", 15, new Color(0.97f, 0.32f, 0.67f));
+		pill.AddChild(label);
+		return pill;
+	}
+
+	private static List<PrivateMindDiarySection> BuildPrivateMindDiarySections(JsonElement root)
+	{
+		List<PrivateMindDiarySection> sections = TryReadDiarySections(root);
+		if (sections.Count > 0)
+			return sections;
+		return BuildPrivateMindDiarySectionsFromRaw(root);
+	}
+
+	private static List<PrivateMindDiarySection> TryReadDiarySections(JsonElement root)
+	{
+		var sections = new List<PrivateMindDiarySection>();
+		JsonElement diaryEl = default;
+		bool found = false;
+		if (root.ValueKind == JsonValueKind.Object)
+		{
+			if (root.TryGetProperty("inner_diary", out diaryEl) && diaryEl.ValueKind == JsonValueKind.Object)
+				found = true;
+			else if (root.TryGetProperty("menu", out var menuEl) && menuEl.ValueKind == JsonValueKind.Object
+			         && menuEl.TryGetProperty("inner_diary", out diaryEl) && diaryEl.ValueKind == JsonValueKind.Object)
+				found = true;
+		}
+		if (!found || !diaryEl.TryGetProperty("sections", out var sectionsEl) || sectionsEl.ValueKind != JsonValueKind.Array)
+			return sections;
+
+		foreach (var sectionEl in sectionsEl.EnumerateArray())
+		{
+			if (sectionEl.ValueKind != JsonValueKind.Object)
+				continue;
+
+			string title = sectionEl.TryGetProperty("title", out var titleEl) ? titleEl.GetString() ?? "" : "";
+			if (string.IsNullOrWhiteSpace(title))
+				continue;
+
+			var items = new List<PrivateMindDiaryItem>();
+			if (sectionEl.TryGetProperty("items", out var itemsEl) && itemsEl.ValueKind == JsonValueKind.Array)
+			{
+				foreach (var itemEl in itemsEl.EnumerateArray())
+				{
+					if (itemEl.ValueKind != JsonValueKind.Object)
+						continue;
+					string text = itemEl.TryGetProperty("text", out var itemTextEl) ? itemTextEl.GetString() ?? "" : "";
+					string badge = itemEl.TryGetProperty("badge", out var badgeEl) ? badgeEl.GetString() ?? "" : "";
+					if (!string.IsNullOrWhiteSpace(text))
+						items.Add(new PrivateMindDiaryItem { Text = text, Badge = badge });
+				}
+			}
+
+			if (items.Count == 0 && sectionEl.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
+			{
+				foreach (var lineEl in linesEl.EnumerateArray())
+				{
+					string line = lineEl.GetString() ?? "";
+					if (string.IsNullOrWhiteSpace(line))
+						continue;
+					string text = line.StartsWith("- ", StringComparison.Ordinal) ? line[2..] : line;
+					items.Add(new PrivateMindDiaryItem { Text = text, Badge = "" });
+				}
+			}
+
+			if (items.Count > 0)
+				sections.Add(new PrivateMindDiarySection { Title = title, Items = items });
+		}
+
+		if (sections.Count == 0 && diaryEl.TryGetProperty("text", out var textEl) && textEl.ValueKind == JsonValueKind.String)
+			sections = ParseDiarySectionsFromText(textEl.GetString() ?? "");
+
+		return sections;
+	}
+
+	private static List<PrivateMindDiarySection> BuildPrivateMindDiarySectionsFromRaw(JsonElement root)
+	{
+		var sections = new List<PrivateMindDiarySection>();
+		if (root.ValueKind != JsonValueKind.Object)
+			return sections;
+
+		JsonElement menu = root;
+		if (root.TryGetProperty("menu", out var menuEl) && menuEl.ValueKind == JsonValueKind.Object)
+			menu = menuEl;
+
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("open_concerns", out var concerns) && concerns.ValueKind == JsonValueKind.Array)
+		{
+			var items = new List<PrivateMindDiaryItem>();
+			foreach (var c in concerns.EnumerateArray())
+			{
+				if (c.ValueKind != JsonValueKind.Object)
+					continue;
+				string theme = DiaryStr(c, "theme", 180);
+				if (string.IsNullOrWhiteSpace(theme))
+					continue;
+				string badge = "";
+				if (c.TryGetProperty("pressure", out var pressureEl) && pressureEl.ValueKind == JsonValueKind.Number && pressureEl.TryGetDouble(out double pressure))
+					badge = $"ap luc {pressure:0.##}";
+				items.Add(new PrivateMindDiaryItem { Text = theme, Badge = badge });
+				if (items.Count >= 4)
+					break;
+			}
+			if (items.Count > 0)
+				sections.Add(new PrivateMindDiarySection { Title = "Dang ban tam", Items = items });
+		}
+
+		JsonElement fragments = default;
+		bool hasFragments = false;
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("temporary_thoughts", out var tmp)
+		    && tmp.ValueKind == JsonValueKind.Object && tmp.TryGetProperty("fragments", out fragments)
+		    && fragments.ValueKind == JsonValueKind.Array)
+			hasFragments = true;
+		else if (root.TryGetProperty("temporary", out var tmpRoot) && tmpRoot.ValueKind == JsonValueKind.Object
+		         && tmpRoot.TryGetProperty("fragments", out fragments) && fragments.ValueKind == JsonValueKind.Array)
+			hasFragments = true;
+
+		if (hasFragments)
+		{
+			var items = new List<PrivateMindDiaryItem>();
+			foreach (var f in fragments.EnumerateArray())
+			{
+				if (f.ValueKind != JsonValueKind.Object)
+					continue;
+				string claim = DiaryStr(f, "claim", 220);
+				if (string.IsNullOrWhiteSpace(claim))
+					continue;
+				string badge = "";
+				if (f.TryGetProperty("score", out var scoreEl) && scoreEl.ValueKind == JsonValueKind.Number && scoreEl.TryGetDouble(out double score))
+					badge = $"score {score:0.##}";
+				items.Add(new PrivateMindDiaryItem { Text = claim, Badge = badge });
+				if (items.Count >= 4)
+					break;
+			}
+			if (items.Count > 0)
+				sections.Add(new PrivateMindDiarySection { Title = "Phan tich gan day", Items = items });
+		}
+
+		if (sections.Count == 0)
+		{
+			JsonElement current = default;
+			bool hasCurrent = false;
+			if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("current_thought", out current) && current.ValueKind == JsonValueKind.Object)
+				hasCurrent = true;
+			else if (root.TryGetProperty("current", out current) && current.ValueKind == JsonValueKind.Object)
+				hasCurrent = true;
+
+			if (hasCurrent)
+			{
+				string dominant = DiaryStr(current, "dominant_judgment", 220);
+				if (!string.IsNullOrWhiteSpace(dominant))
+				{
+					sections.Add(new PrivateMindDiarySection
+					{
+						Title = "Dang nghi",
+						Items = new List<PrivateMindDiaryItem> { new() { Text = dominant, Badge = "" } },
+					});
+				}
+			}
+		}
+
+		return sections;
+	}
+
+	private static List<PrivateMindDiarySection> ParseDiarySectionsFromText(string raw)
+	{
+		var sections = new List<PrivateMindDiarySection>();
+		if (string.IsNullOrWhiteSpace(raw))
+			return sections;
+
+		string currentTitle = "";
+		var currentItems = new List<PrivateMindDiaryItem>();
+		foreach (string piece in raw.Split('\n'))
+		{
+			string line = (piece ?? "").Trim();
+			if (string.IsNullOrWhiteSpace(line))
+				continue;
+
+			if (line.EndsWith(":", StringComparison.Ordinal))
+			{
+				if (!string.IsNullOrWhiteSpace(currentTitle) && currentItems.Count > 0)
+					sections.Add(new PrivateMindDiarySection { Title = currentTitle, Items = new List<PrivateMindDiaryItem>(currentItems) });
+
+				currentTitle = line[..^1].Trim();
+				currentItems.Clear();
+				continue;
+			}
+
+			string text = line.StartsWith("- ", StringComparison.Ordinal) ? line[2..].Trim() : line;
+			if (string.IsNullOrWhiteSpace(text))
+				continue;
+
+			currentItems.Add(new PrivateMindDiaryItem { Text = text, Badge = "" });
+		}
+
+		if (!string.IsNullOrWhiteSpace(currentTitle) && currentItems.Count > 0)
+			sections.Add(new PrivateMindDiarySection { Title = currentTitle, Items = currentItems });
+
+		return sections;
+	}
+
+	private static List<PrivateMindDiarySection> ParseDiarySectionsFromRenderedText(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw))
+			return new List<PrivateMindDiarySection>();
+
+		var plain = new StringBuilder(raw.Length);
+		bool insideTag = false;
+		foreach (char ch in raw)
+		{
+			if (ch == '[')
+			{
+				insideTag = true;
+				continue;
+			}
+			if (insideTag)
+			{
+				if (ch == ']')
+					insideTag = false;
+				continue;
+			}
+			plain.Append(ch);
+		}
+
+		return ParseDiarySectionsFromText(plain.ToString());
+	}
+
 	private static string RenderDiary(JsonElement root)
 	{
 		if (root.ValueKind != JsonValueKind.Object)
@@ -1922,7 +3113,7 @@ public partial class UdpListener : Node2D
 				return sb.ToString();
 		}
 
-		// Fallback: tự dựng diary từ dữ liệu thô — tiếng Việt, không dump JSON
+		// Fallback: tự dựng diary từ dữ liệu thô - tiếng Việt, không dump JSON
 		return RenderDiaryFromRaw(root);
 	}
 
@@ -2121,7 +3312,7 @@ public partial class UdpListener : Node2D
 				}
 			}
 
-			// Nếu không có line nào thực sự — digest chưa đủ data (synthesis đang fail).
+			// Nếu không có line nào thực sự thì digest chưa đủ data (synthesis đang fail).
 			// Trả false để fallback raw JSON thay vì hiện panel trống chỉ có tiêu đề.
 			if (totalLines == 0)
 				return false;
@@ -2130,7 +3321,7 @@ public partial class UdpListener : Node2D
 			return true;
 		}
 
-		// Có inner_diary nhưng chỉ có text thuần — render text đó.
+		// Có inner_diary nhưng chỉ có text thuần - render text đó.
 		if (diaryEl.TryGetProperty("text", out var textEl) && textEl.ValueKind == JsonValueKind.String)
 		{
 			string raw = textEl.GetString() ?? "";
@@ -2252,6 +3443,53 @@ public partial class UdpListener : Node2D
 		return clean.Substring(0, Math.Max(0, limit - 3)).TrimEnd() + "...";
 	}
 
+	// Định nghĩa 4 thanh cố định cho panel cảm xúc.
+	// Mỗi thanh tổng hợp từ một hoặc nhiều key trong emotion_debug.items,
+	// ánh xạ trực tiếp tới ngữ nghĩa mà user nhìn thấy.
+	private readonly struct EmotionPanelSlot
+	{
+		public readonly string Title;
+		public readonly string Note;
+		// Các key đóng góp + trọng số (tổng trọng số nên = 1.0).
+		// Nếu key không có trong payload, bỏ qua (không ảnh hưởng normalize).
+		public readonly (string Key, float Weight, bool Invert)[] Sources;
+
+		public EmotionPanelSlot(string title, string note, params (string Key, float Weight, bool Invert)[] sources)
+		{
+			Title = title;
+			Note = note;
+			Sources = sources;
+		}
+	}
+
+	private static readonly EmotionPanelSlot[] EmotionPanelSlots =
+	{
+		// Bình tĩnh = arousal thấp + overload thấp + irritation thấp
+		new("Bình tĩnh", "Arousal thấp, không quá tải, không khó chịu.",
+			("calm_aroused",   0.45f, true),   // arousal cao → bình tĩnh thấp
+			("overload",       0.30f, true),   // overload cao → bình tĩnh thấp
+			("irritation",     0.25f, true)),  // irritation cao → bình tĩnh thấp
+
+		// Kích thích = arousal + curiosity + thought_stream_pressure
+		new("Kích thích", "Hưng phấn, phấn khích, dòng suy nghĩ đang tăng.",
+			("calm_aroused",            0.55f, false),
+			("curiosity",               0.25f, false),
+			("thought_stream_pressure", 0.20f, false)),
+
+		// Mood = stability cao + inertia thấp, lệch theo valence
+		new("Mood", "Ổn định tâm trạng, quán tính mood, hướng valence.",
+			("emotional_stability", 0.50f, false),
+			("mood_inertia",        0.30f, true),   // inertia cao = mood kém ổn
+			("calm_aroused",        0.20f, true)),  // arousal cao cũng kéo mood
+
+		// Cảm xúc tích cực = valence gốc + warmth + tenderness + attachment + intimacy
+		new("Cảm xúc tích cực", "Ấm áp, gắn bó, dịu dàng, thân mật.",
+			("warmth",      0.28f, false),
+			("tenderness",  0.26f, false),
+			("attachment",  0.26f, false),
+			("intimacy",    0.20f, false)),
+	};
+
 	private void RefreshEmotionPanelRows()
 	{
 		if (_emotionSummaryLabel == null)
@@ -2259,42 +3497,104 @@ public partial class UdpListener : Node2D
 
 		if (_latestEmotionDebug == null || _latestEmotionDebug.Items == null || _latestEmotionDebug.Items.Count == 0)
 		{
-			_emotionSummaryLabel.Text = "Cam xuc";
+			_emotionSummaryLabel.Text = "Cảm xúc";
 			if (_emotionHintLabel != null)
-				_emotionHintLabel.Text = "Chua co frame cam xuc.";
+				_emotionHintLabel.Text = "Chưa có frame cảm xúc.";
 			return;
 		}
 
-		string summary = string.IsNullOrWhiteSpace(_latestEmotionDebug.SummaryValue) ? "unknown" : _latestEmotionDebug.SummaryValue;
-		_emotionSummaryLabel.Text = string.IsNullOrWhiteSpace(summary) || summary == "unknown"
-			? "Cam xuc"
-			: $"Cam xuc - {summary}";
-		if (_emotionHintLabel != null)
-			_emotionHintLabel.Text = _latestEmotionDebug.HasSummaryValence
-				? $"Valence tong: {_latestEmotionDebug.SummaryValence:0.00}"
-				: "Nhung con so chi mang tinh tham khao.";
-
-		var numericItems = new List<EmotionDebugItem>();
+		// Build lookup: key → item (O(n) một lần, dùng lại cho 4 slot)
+		var byKey = new Dictionary<string, EmotionDebugItem>(_latestEmotionDebug.Items.Count, StringComparer.Ordinal);
 		foreach (var item in _latestEmotionDebug.Items)
-		{
-			if (item.HasNumericValue)
-				numericItems.Add(item);
-		}
+			byKey[item.Key] = item;
 
-		for (int i = 0; i < _emotionRows.Count; i++)
+		// Summary label — dùng valence để tô màu ngữ cảnh
+		string summaryMood = string.IsNullOrWhiteSpace(_latestEmotionDebug.SummaryValue) ? "unknown" : _latestEmotionDebug.SummaryValue;
+		string summaryState = string.IsNullOrWhiteSpace(_latestEmotionDebug.SummaryState) ? "" : _latestEmotionDebug.SummaryState;
+		string summaryDisplay = summaryMood switch
 		{
-			if (i >= numericItems.Count)
-			{
-				_emotionRows[i].Row.Visible = false;
-				continue;
-			}
+			"vui"        => "vui",
+			"kho_chiu"   => "khó chịu",
+			"trung_tinh" => "trung tính",
+			_            => summaryMood,
+		};
+		_emotionSummaryLabel.Text = string.IsNullOrWhiteSpace(summaryDisplay) || summaryDisplay == "unknown"
+			? "Cảm xúc"
+			: $"Cảm xúc — {summaryDisplay}";
 
-			var item = numericItems[i];
+		// Hint line: romcom-style summary
+		if (_emotionHintLabel != null)
+			_emotionHintLabel.Text = BuildRomcomHint(byKey, _latestEmotionDebug);
+
+		// Render 4 slot cố định
+		for (int i = 0; i < _emotionRows.Count && i < EmotionPanelSlots.Length; i++)
+		{
+			var slot = EmotionPanelSlots[i];
+			float value = ComputeSlotValue(slot, byKey);
 			_emotionRows[i].Row.Visible = true;
-			string title = string.IsNullOrWhiteSpace(item.Label) ? item.Key : item.Label;
-			string note = string.IsNullOrWhiteSpace(item.Note) ? GroupTitle(item.Group) : item.Note;
-			UpdateEmotionRow(_emotionRows[i], title, note, item.NumericValue);
+			UpdateEmotionRow(_emotionRows[i], slot.Title, slot.Note, value);
 		}
+	}
+
+	/// <summary>
+	/// Tính giá trị tổng hợp cho một slot bằng weighted average
+	/// trên các key thực sự có mặt trong payload (normalize động).
+	/// </summary>
+	private static float ComputeSlotValue(in EmotionPanelSlot slot, Dictionary<string, EmotionDebugItem> byKey)
+	{
+		float weightedSum = 0f;
+		float totalWeight = 0f;
+		foreach (var (key, weight, invert) in slot.Sources)
+		{
+			if (!byKey.TryGetValue(key, out var item) || !item.HasNumericValue)
+				continue;
+			float v = invert ? 1f - item.NumericValue : item.NumericValue;
+			weightedSum += v * weight;
+			totalWeight += weight;
+		}
+		if (totalWeight <= 0f)
+			return 0f;
+		// Normalize lại theo trọng số thực tế có mặt
+		return Mathf.Clamp(weightedSum / totalWeight, 0f, 1f);
+	}
+
+	/// <summary>
+	/// Tạo một dòng hint ngắn kiểu romcom từ trạng thái hiện tại,
+	/// ví dụ: "Hôm nay ổn, hơi rung động, muốn gần vừa đủ, vẫn giữ nhịp."
+	/// </summary>
+	private static string BuildRomcomHint(Dictionary<string, EmotionDebugItem> byKey, EmotionDebug debug)
+	{
+		float GetVal(string key) => byKey.TryGetValue(key, out var it) && it.HasNumericValue ? it.NumericValue : 0f;
+
+		float arousal    = GetVal("calm_aroused");
+		float stability  = GetVal("emotional_stability");
+		float attachment = GetVal("attachment");
+		float tenderness = GetVal("tenderness");
+		float warmth     = GetVal("warmth");
+		float distance   = GetVal("distance");
+		float irritation = GetVal("irritation");
+		float intimacy   = GetVal("intimacy");
+
+		// Trạng thái nền
+		string mood = (arousal < 0.30f && irritation < 0.25f) ? "ổn" :
+		              (irritation >= 0.50f)                   ? "hơi căng" :
+		              (arousal >= 0.65f)                      ? "đang hứng" : "bình thường";
+
+		// Rung động / cảm xúc tích cực
+		float warmCore = (warmth + tenderness + attachment) / 3f;
+		string feel = warmCore >= 0.65f ? "rung động nhiều" :
+		              warmCore >= 0.40f ? "hơi rung động"   :
+		              warmCore >= 0.20f ? "dịu vừa"         : "phẳng lặng";
+
+		// Khoảng cách xã hội
+		string proximity = (intimacy >= 0.55f && distance <= 0.45f) ? "muốn gần" :
+		                   (distance >= 0.65f)                       ? "giữ khoảng cách" : "vừa đủ";
+
+		// Ổn định nhịp
+		string rhythm = stability >= 0.70f ? "giữ nhịp rất đẹp" :
+		                stability >= 0.45f ? "nhịp ổn"          : "nhịp hơi dao động";
+
+		return $"{mood}, {feel}, {proximity}, {rhythm}.";
 	}
 
 	private static string BuildMeter(float value)
@@ -2330,7 +3630,7 @@ public partial class UdpListener : Node2D
 	private void ApplyAnimationCommand(string animation, int direction, string nextAnimation)
 	{
 		_nextAction = nextAnimation;
-		// Chuẩn hoá alias trước (walk -> stand_walk, v.v.)
+		// Chuẩn hóa alias trước (walk -> stand_walk, v.v.)
 		if (_animAliases.TryGetValue(animation, out var mapped))
 		{
 			GD.Print($"[Anim] Alias '{animation}' -> '{mapped}'");
@@ -2340,7 +3640,7 @@ public partial class UdpListener : Node2D
 		// Kiểm tra animation có hợp lệ không
 		if (!_validAnimations.Contains(animation))
 		{
-			// Nếu có direction → người dùng muốn đi → fallback về stand_walk
+			// Nếu có direction thì người dùng muốn đi, fallback về stand_walk
 			string fallback = (direction == 1 || direction == -1) ? "stand_walk" : "stand";
 			GD.PrintErr($"[Anim] Animation không hợp lệ: '{animation}', fallback về '{fallback}'.");
 			animation = fallback;
@@ -2666,4 +3966,145 @@ public partial class UdpListener : Node2D
 	{
 		// Không còn nút điều khiển service trên UI.
 	}
+
+	// ── Casual mode refresh ───────────────────────────────────────────────────
+
+	private void RefreshCasualMode(Dictionary<string, EmotionDebugItem> byKey, EmotionDebug debug)
+	{
+		float GetVal(string key) => byKey.TryGetValue(key, out var it) && it.HasNumericValue ? it.NumericValue : 0f;
+
+		// Narrative label
+		if (_casualNarrativeLabel != null)
+			_casualNarrativeLabel.Text = $"\"{BuildRomcomCore(byKey)}\"";
+
+		// Circumplex dot: valence từ summary, arousal từ calm_aroused
+		//   valence: positive=vui (trái), negative=khó chịu (phải) → map sang -1..1
+		float rawValence = debug.HasSummaryValence ? Mathf.Clamp(debug.SummaryValence, -1f, 1f) : 0f;
+		float rawArousal = GetVal("calm_aroused") * 2f - 1f; // 0..1 → -1..1 (1=kích thích cao)
+		_moodDotValence = rawValence;
+		_moodDotArousal = rawArousal;
+		_moodDotCanvas?.QueueRedraw();
+
+		// 3 casual bars
+		if (_casualBars.Count >= 3)
+		{
+			// Bar 0: Gắn bó
+			float bond = (GetVal("attachment") + GetVal("tenderness") + GetVal("warmth")) / 3f;
+			UpdateCasualBar(0, bond, CasualBarDefs[0].Levels);
+			// Bar 1: Nhịp điệu (stability, invert mood_inertia)
+			float rhythm = GetVal("emotional_stability") * 0.6f + (1f - GetVal("mood_inertia")) * 0.4f;
+			UpdateCasualBar(1, Mathf.Clamp(rhythm, 0f, 1f), CasualBarDefs[1].Levels);
+			// Bar 2: Muốn nói
+			float speech = Mathf.Clamp((GetVal("silence_pressure") + GetVal("social_pressure")) * 0.5f, 0f, 1f);
+			UpdateCasualBar(2, speech, CasualBarDefs[2].Levels);
+		}
+
+		// Hint = valence + state
+		if (_emotionHintLabel != null && debug.HasSummaryValence)
+			_emotionHintLabel.Text = $"valence {debug.SummaryValence:+0.00;-0.00}  ·  {debug.SummaryState}";
+	}
+
+	private void UpdateCasualBar(int idx, float value, string[] levels)
+	{
+		const float BarW = 200f; // khớp với BarTrackW trong BuildCasualContent
+		var (fillClip, _, wordLabel) = _casualBars[idx];
+		float w = Mathf.Clamp(value, 0f, 1f) * BarW;
+		fillClip.Size = new Vector2(w, fillClip.Size.Y);
+		if (fillClip is Panel p)
+			p.CustomMinimumSize = new Vector2(w, p.CustomMinimumSize.Y);
+		wordLabel.Text = ValueToWord(value, levels);
+	}
+
+	/// <summary>Phiên bản rút gọn của BuildRomcomHint — chỉ lấy core phrase.</summary>
+	private static string BuildRomcomCore(Dictionary<string, EmotionDebugItem> byKey)
+	{
+		float GetVal(string key) => byKey.TryGetValue(key, out var it) && it.HasNumericValue ? it.NumericValue : 0f;
+		float arousal    = GetVal("calm_aroused");
+		float irritation = GetVal("irritation");
+		float warmCore   = (GetVal("warmth") + GetVal("tenderness") + GetVal("attachment")) / 3f;
+		float intimacy   = GetVal("intimacy");
+		float distance   = GetVal("distance");
+
+		string mood = arousal < 0.30f && irritation < 0.25f ? "ổn, bình tĩnh" :
+		              irritation >= 0.55f                   ? "hơi bồn chồn"   :
+		              arousal >= 0.65f                      ? "đang hứng khởi" : "bình thường";
+
+		string feel = warmCore >= 0.60f ? "rung động" :
+		              warmCore >= 0.35f ? "ấm áp vừa" : "khá phẳng";
+
+		string prox = intimacy >= 0.55f && distance <= 0.45f ? "muốn gần" :
+		              distance >= 0.65f                       ? "giữ khoảng cách" : "vừa đủ";
+
+		return $"{mood}, {feel}, {prox}";
+	}
 }
+
+/// <summary>
+/// Control vẽ 2D circumplex grid + mood dot.
+/// valence: -1=vui(trái) … +1=khó chịu(phải)
+/// arousal: +1=kích thích(trên) … -1=calm(dưới)
+/// </summary>
+public sealed partial class _MoodDotCanvas : Control
+{
+	private UdpListener _owner;
+	private float _w = 200f, _h = 160f;
+
+	public void SetOwnerListener(UdpListener owner, float w, float h)
+	{
+		_owner = owner;
+		_w = w; _h = h;
+	}
+	// backward compat
+	public void SetOwnerListener(UdpListener owner, float size = 200f)
+		=> SetOwnerListener(owner, size, size);
+
+	public override void _Draw()
+	{
+		float w  = _w > 0 ? _w : Size.X;
+		float h  = _h > 0 ? _h : Size.Y;
+		float cx = w * 0.5f;
+		float cy = h * 0.5f;
+		// Radius độc lập theo 2 trục
+		float rx = w * 0.46f;
+		float ry = h * 0.46f;
+
+		var gridColor = new Color(0.94f, 0.76f, 0.86f, 0.45f);
+		var axisColor = new Color(0.90f, 0.62f, 0.76f, 0.80f);
+		var dotColor  = new Color(0.97f, 0.38f, 0.64f, 1.00f);
+		var dotGlow   = new Color(0.97f, 0.38f, 0.64f, 0.18f);
+
+		// Dashed grid
+		const float dash = 5f, gap = 5f;
+		for (float x = 0f; x <= w; x += dash + gap)
+			DrawLine(new Vector2(x, cy), new Vector2(Mathf.Min(x + dash, w), cy), gridColor, 1f);
+		for (float y = 0f; y <= h; y += dash + gap)
+			DrawLine(new Vector2(cx, y), new Vector2(cx, Mathf.Min(y + dash, h)), gridColor, 1f);
+
+		float aw = 5f;
+		// Trục dọc với mũi tên 2 đầu
+		DrawLine(new Vector2(cx, h), new Vector2(cx, 0f), axisColor, 1.5f);
+		DrawLine(new Vector2(cx, 0f),   new Vector2(cx - aw, aw * 1.5f), axisColor, 1.5f);
+		DrawLine(new Vector2(cx, 0f),   new Vector2(cx + aw, aw * 1.5f), axisColor, 1.5f);
+		DrawLine(new Vector2(cx, h),    new Vector2(cx - aw, h - aw * 1.5f), axisColor, 1.5f);
+		DrawLine(new Vector2(cx, h),    new Vector2(cx + aw, h - aw * 1.5f), axisColor, 1.5f);
+		// Trục ngang với mũi tên 2 đầu
+		DrawLine(new Vector2(0f, cy), new Vector2(w, cy), axisColor, 1.5f);
+		DrawLine(new Vector2(w, cy),  new Vector2(w - aw * 1.5f, cy - aw), axisColor, 1.5f);
+		DrawLine(new Vector2(w, cy),  new Vector2(w - aw * 1.5f, cy + aw), axisColor, 1.5f);
+		DrawLine(new Vector2(0f, cy), new Vector2(aw * 1.5f, cy - aw), axisColor, 1.5f);
+		DrawLine(new Vector2(0f, cy), new Vector2(aw * 1.5f, cy + aw), axisColor, 1.5f);
+
+		if (_owner == null) return;
+
+		float dotX = cx + _owner._moodDotValence * rx * 0.88f;
+		float dotY = cy - _owner._moodDotArousal * ry * 0.88f;
+
+		// Glow + dot + rim
+		DrawCircle(new Vector2(dotX, dotY), 16f, dotGlow);
+		DrawCircle(new Vector2(dotX, dotY),  8f, dotColor);
+		DrawArc(new Vector2(dotX, dotY), 8f, 0f, Mathf.Tau, 28, Colors.White with { A = 0.5f }, 1.5f);
+		// Highlight nhỏ
+		DrawCircle(new Vector2(dotX - 2.5f, dotY - 2.5f), 2.5f, Colors.White with { A = 0.6f });
+	}
+}
+

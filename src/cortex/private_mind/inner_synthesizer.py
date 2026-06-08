@@ -49,7 +49,10 @@ class GemmaInnerSynthesizer:
         strong = tuple(f for f in fragments if f.claim and f.score >= 0.32)
         if not strong:
             return None
-        return self._try_model(dossier, strong)
+        model_judgment = self._try_model(dossier, strong)
+        if model_judgment is not None:
+            return model_judgment
+        return self._fallback(dossier, strong)
 
     def _try_model(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> InternalJudgment | None:
         if self.model_adapter is None or len(fragments) < self.min_fragments_for_model:
@@ -77,10 +80,58 @@ class GemmaInnerSynthesizer:
             judgment.evidence_ids = tuple(eid for eid in judgment.evidence_ids if eid in allowed) or dossier.evidence_ids[:12]
             for mutation in judgment.state_mutations:
                 mutation.evidence_ids = tuple(eid for eid in mutation.evidence_ids if eid in allowed) or judgment.evidence_ids[:8]
+        # Req 5.7: SurfaceCandidate sinh ra từ judgment phải mang nguyên intent của judgment.
+        if judgment.surface_candidate is not None:
+            judgment.surface_candidate.intent = judgment.intent
         return judgment
 
-    def _fallback(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> InternalJudgment | None:
-        return None
+    def _fallback(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> InternalJudgment:
+        fragments = tuple(sorted(fragments, key=lambda f: f.score, reverse=True))[:8]
+        evidence_ids = tuple(dict.fromkeys(eid for f in fragments for eid in f.evidence_ids))[:32] or dossier.evidence_ids[:16]
+        top = fragments[0]
+        ranked = self._rank_hypotheses(fragments, evidence_ids)
+        rejected = self._rejected_hypotheses(fragments, evidence_ids)
+        open_questions = tuple(dict.fromkeys(q for q in (f.suggested_question for f in fragments) if q))[:8]
+        mutations = self._collect_mutations(fragments, evidence_ids)
+        confidence = clamp01(sum(f.confidence for f in fragments) / max(1, len(fragments)) + 0.08)
+        pressure = clamp01(max(f.pressure for f in fragments) + min(0.10, len(fragments) * 0.018))
+        dominant = compact_text(
+            f"{top.claim} Strongest synthesis: private cognition must persist concerns and mutate future behavior before any surface speech is considered.",
+            700,
+        )
+        concern_update = {
+            "theme": top.metadata.get("theme") or top.claim,
+            "evidence_ids": list(evidence_ids),
+            "open_questions": list(open_questions),
+            "pressure": pressure,
+            "uncertainty": clamp01(1.0 - confidence),
+            "status": "open",
+            "future_biases": list(dict.fromkeys(b for f in fragments for b in tuple(f.metadata.get("future_biases") or ())))[:8],
+            "metadata": {"fragment_ids": [f.id for f in fragments], "synthesizer": "deterministic_fallback"},
+        }
+        # Deterministic-fallback candidate cố ý để intent ở mặc định (unset), để
+        # valve áp default theo anchor (Req 2.5). Không ép "speculative" tại đây.
+        surface = self._surface_candidate_if_useful(dossier, fragments, confidence=confidence, pressure=pressure, evidence_ids=evidence_ids)
+        judgment = InternalJudgment(
+            dominant_judgment=dominant,
+            ranked_hypotheses=ranked,
+            rejected_hypotheses=rejected,
+            open_questions=open_questions,
+            private_concern_update=concern_update,
+            state_mutations=mutations,
+            surface_candidate=surface,
+            confidence=confidence,
+            pressure=pressure,
+            evidence_ids=evidence_ids,
+            source="deterministic_inner_synthesizer",
+            metadata={"fragment_count": len(fragments), "model_used": False},
+        )
+        # Req 5.7: candidate dựng từ judgment mang nguyên intent của judgment.
+        # Fallback judgment giữ intent mặc định ("sincere"); valve sẽ tinh chỉnh
+        # theo anchor sau, nên ở đây chỉ copy chứ không override bằng giá trị khác.
+        if judgment.surface_candidate is not None:
+            judgment.surface_candidate.intent = judgment.intent
+        return judgment
 
     def _rank_hypotheses(self, fragments: tuple[ThoughtFragment, ...], evidence_ids: tuple[str, ...]) -> tuple[RankedHypothesis, ...]:
         candidates: list[RankedHypothesis] = []

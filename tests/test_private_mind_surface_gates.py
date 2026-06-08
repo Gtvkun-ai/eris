@@ -131,3 +131,74 @@ def test_deterministic_synthesizer_marks_fallback_candidate_with_metrics():
     assert judgment.surface_candidate is not None
     assert judgment.surface_candidate.metadata["source"] == "fallback"
     assert judgment.surface_candidate.metadata["repetition"] == 0.88
+
+
+def test_to_surface_impulse_copies_stance_and_intent_unchanged():
+    # Req 5.11: stance + intent đi qua SurfaceValve không đổi.
+    candidate = SurfaceCandidate(
+        kind="private_mind_surface",
+        topic_seed="Ngài đang mở screen_fact về kiến trúc.",
+        usefulness=0.80,
+        confidence=0.80,
+        interrupt_cost=0.20,
+        evidence_ids=("screen_fact.window.title",),
+        metadata={"public_anchor_count": 1},
+        epistemic_stance="grounded",
+        intent="sincere",
+    )
+
+    impulse = SurfaceValve().to_surface_impulse(candidate)
+
+    assert impulse is not None
+    assert impulse.epistemic_stance == "grounded"
+    assert impulse.intent == "sincere"
+
+
+def test_to_surface_impulse_grounded_includes_public_anchor_references():
+    # Req 4.6: anchor references của claim grounded phải có trên impulse evidence,
+    # gồm cả refs khai báo trong metadata.
+    candidate = SurfaceCandidate(
+        kind="private_mind_surface",
+        topic_seed="Ngài vừa nhắc tới điều này trong user_chat.",
+        usefulness=0.80,
+        confidence=0.80,
+        interrupt_cost=0.20,
+        evidence_ids=("user_chat.turn.42",),
+        metadata={
+            "public_anchor_count": 2,
+            "public_anchor_refs": ["screen_fact.window.title", "user_chat.turn.42"],
+        },
+        epistemic_stance="grounded",
+        intent="sincere",
+    )
+
+    impulse = SurfaceValve().to_surface_impulse(candidate)
+
+    assert impulse is not None
+    assert "user_chat.turn.42" in impulse.evidence
+    # Anchor ref chỉ có trong metadata cũng được surface, không trùng lặp.
+    assert "screen_fact.window.title" in impulse.evidence
+    assert impulse.evidence.count("user_chat.turn.42") == 1
+
+
+def test_to_surface_impulse_ungrounded_aware_reflects_intent_in_contract():
+    # Req 4.5: llm_contract của ungrounded_aware phản ánh mục đích có chủ đích.
+    candidate = SurfaceCandidate(
+        kind="private_mind_surface",
+        topic_seed="Có lẽ ngài đang trốn việc, chỉ là đoán thôi nha.",
+        usefulness=0.80,
+        confidence=0.80,
+        interrupt_cost=0.20,
+        evidence_ids=("dossier.runtime.state",),
+        metadata={"public_anchor_count": 0, "epistemic_deliberate_ungrounded": True},
+        epistemic_stance="ungrounded_aware",
+        intent="teasing",
+    )
+
+    impulse = SurfaceValve().to_surface_impulse(candidate)
+
+    assert impulse is not None
+    assert impulse.epistemic_stance == "ungrounded_aware"
+    assert impulse.intent == "teasing"
+    assert "intent=teasing" in impulse.llm_contract
+    assert "not a grounded assertion" in impulse.llm_contract

@@ -442,6 +442,35 @@ class SurfaceSeedCompiler:
                             raw=project,
                         ),
                     )
+
+        # PrivateAnchor là nguồn mới: 5 neo riêng được compact trong digest.
+        # Compiler chỉ lấy last_note đã public-safe, không bê cả câu hỏi/stance dài ra prompt.
+        anchors = current.get("anchors") if isinstance(current, Mapping) else None
+        if isinstance(anchors, list) and anchors:
+            anchor = next((item for item in anchors if isinstance(item, Mapping) and self._clean(item.get("last_note") or "")), None)
+            if anchor:
+                text = self._clean(anchor.get("last_note") or anchor.get("title") or "")
+                permission = self._clamp(anchor.get("surface_permission", 0.0))
+                pressure = self._clamp(anchor.get("pressure", 0.0))
+                continuity = self._clamp(anchor.get("continuity", 0.0))
+                if text and permission >= 0.35 and self._candidate_text_public(text):
+                    return (
+                        _SeedCandidate(
+                            topic_seed=text,
+                            public_seed=text,
+                            evidence=(str(anchor.get("id") or "private_life_anchor"),),
+                            confidence=max(0.40, min(0.78, 0.34 + continuity * 0.34)),
+                            pressure=max(0.34, pressure),
+                            root_source="private_life",
+                            impulse_kind="private_anchor_surface",
+                            action_opportunity="surface a private anchor residue very lightly",
+                            llm_contract="PrivateLife anchor seed: no raw state, no screen claim, no consciousness claim, one short line only.",
+                            public_anchor=True,
+                            missing_screen=True,
+                            reason="private_life_anchor_digest",
+                            raw=anchor,
+                        ),
+                    )
         return ()
 
     def _from_private_bias(

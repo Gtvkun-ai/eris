@@ -14,7 +14,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from . import epistemic
 from .contracts import InternalJudgment, SurfaceCandidate, clamp01, compact_text
+from .epistemic import classify_epistemic_stance, resolve_intent
 
 
 _INTERNAL_MARKERS = (
@@ -47,6 +49,23 @@ class SurfaceValve:
         if judgment is None or judgment.surface_candidate is None:
             return None
         candidate = judgment.surface_candidate
+
+        # Epistemic self-awareness (Req 1): phân loại stance + intent TRƯỚC mọi
+        # routing/threshold để public path luôn mang một stance non-null (Property 1).
+        has_anchor = self._has_public_anchor(candidate)
+        declared = candidate.intent or judgment.intent
+        intent = resolve_intent(declared, has_anchor=has_anchor)
+        stance = classify_epistemic_stance(has_anchor=has_anchor, intent=intent)
+        candidate = self._stamp_epistemic(candidate, stance=stance, intent=intent)
+
+        # Bất biến trung tâm (Req 3): confabulation không bao giờ nổi lên public
+        # một cách im lặng. ungrounded_blind bị giữ lại khỏi surface_arbiter (không
+        # phát public impulse) nhưng KHÔNG bị vứt — nó được route về body_only để
+        # cognition không bao giờ cắt về 0. Chạy TRƯỚC public-surface gate nên ta
+        # không bao giờ trả về None ở nhánh này (Req 3.1/3.7/3.8).
+        if stance == "ungrounded_blind":
+            return self._withhold_to_body_only(candidate, judgment=judgment)
+
         candidate = self._apply_public_surface_gate(candidate, judgment=judgment)
         if candidate is None:
             return None
@@ -61,6 +80,9 @@ class SurfaceValve:
             seed = self._safe_seed_from_judgment(judgment)
             if not seed:
                 return None
+            # Giữ epistemic_stance + intent khi viết lại candidate (Property 1 /
+            # Req 1.8): nhánh rewrite này tạo SurfaceCandidate mới nên phải copy
+            # tường minh hai field tự-tri, nếu không stance/intent sẽ bị rớt.
             candidate = SurfaceCandidate(
                 kind=candidate.kind,
                 topic_seed=seed,
@@ -71,8 +93,22 @@ class SurfaceValve:
                 reason="private_mind_filtered_seed",
                 channel=candidate.channel,
                 metadata={**candidate.metadata, "surface_valve_rewritten": True},
+                epistemic_stance=candidate.epistemic_stance,
+                intent=candidate.intent,
             )
-        return candidate if candidate.allowed else None
+        if not candidate.allowed:
+            return None
+        # Req 4.4: một claim ungrounded_aware ĐƯỢC PHÉP nổi lên (qua gate +
+        # thresholds) mang cờ metadata `epistemic_deliberate_ungrounded=True`,
+        # đánh dấu đây là biểu đạt không-grounded có chủ đích (teasing/playful/
+        # speculative) chứ không phải confabulation. grounded không gắn cờ này
+        # và không bao giờ nhận epistemic block reason (Req 4.2).
+        if candidate.epistemic_stance == "ungrounded_aware":
+            candidate = self._copy_candidate(
+                candidate,
+                metadata={**candidate.metadata, "epistemic_deliberate_ungrounded": True},
+            )
+        return candidate
 
     def to_surface_impulse(self, candidate: SurfaceCandidate | None) -> Any | None:
         """Chuyển SurfaceCandidate sang SurfaceImpulse nếu module tồn tại."""
@@ -94,6 +130,39 @@ class SurfaceValve:
                 from ..surface_arbiter import SurfaceImpulse  # type: ignore
             except Exception:
                 return candidate
+
+        # Req 5.11 / Property 1: stance + intent đi qua SurfaceValve KHÔNG đổi.
+        stance = candidate.epistemic_stance
+        intent = candidate.intent
+
+        # Req 4.6: với một claim `grounded`, mọi Public_Anchor reference của claim
+        # phải có mặt trên evidence của SurfaceImpulse. evidence_ids đã mang sẵn
+        # các anchor; ở đây ta thu thêm các anchor marker còn nằm trong metadata
+        # (vd public_anchor_refs/public_anchors) để không rớt reference nào.
+        evidence = tuple(candidate.evidence_ids)
+        if stance == "grounded":
+            evidence = self._merge_public_anchor_refs(candidate, evidence, metadata)
+
+        # Req 4.5: với `ungrounded_aware`, làm rõ trong llm_contract rằng đây là
+        # biểu đạt không-grounded CÓ CHỦ ĐÍCH (teasing/playful/speculative) mang
+        # intent đã khai báo, để downstream speech tôn trọng mục đích thay vì
+        # nói như một khẳng định grounded. Các stance khác giữ contract cũ.
+        if stance == "ungrounded_aware":
+            llm_contract = (
+                "Deliberate ungrounded/speculative expression carrying intent="
+                f"{intent}; this is not a grounded assertion. Speak it as a "
+                "playful/teasing/speculative riff, not as verified fact, and do "
+                "not expose raw private judgment or JSON."
+            )
+        elif has_public_anchor:
+            llm_contract = (
+                "Do not expose raw private judgment or JSON; use only this public-safe topic seed."
+            )
+        else:
+            llm_contract = (
+                "No public speech: private mind lacks a fresh public anchor; body-only at most."
+            )
+
         return SurfaceImpulse(
             kind=candidate.kind,
             source="private_mind",
@@ -103,7 +172,7 @@ class SurfaceValve:
             topic_seed=candidate.topic_seed,
             speech_act="technical_diagnosis",
             family=family,
-            evidence=tuple(candidate.evidence_ids),
+            evidence=evidence,
             reason=candidate.reason,
             focus_family="architecture",
             body_action="hold_focus" if has_public_anchor else "quiet_observe",
@@ -112,13 +181,44 @@ class SurfaceValve:
             should_surface=True,
             needs_external_evidence=not has_public_anchor,
             root_source="private_mind_loop",
-            llm_contract=(
-                "Do not expose raw private judgment or JSON; use only this public-safe topic seed."
-                if has_public_anchor
-                else "No public speech: private mind lacks a fresh public anchor; body-only at most."
-            ),
+            llm_contract=llm_contract,
+            epistemic_stance=stance,
+            intent=intent,
             raw=candidate.to_dict(),
         )
+
+    def _merge_public_anchor_refs(
+        self,
+        candidate: SurfaceCandidate,
+        evidence: tuple[Any, ...],
+        metadata: dict[str, Any],
+    ) -> tuple[Any, ...]:
+        """Req 4.6 — đảm bảo mọi Public_Anchor reference của một claim grounded
+        có mặt trên evidence của SurfaceImpulse.
+
+        evidence_ids thường đã chứa các anchor; hàm này bổ sung các reference
+        khai báo trong metadata (`public_anchor_refs` / `public_anchors`) mà
+        chưa có trong evidence, giữ nguyên thứ tự và không trùng lặp.
+        """
+        merged = list(evidence)
+        seen = {str(item) for item in merged}
+        for key in ("public_anchor_refs", "public_anchors"):
+            raw_refs = metadata.get(key)
+            if not raw_refs:
+                continue
+            if isinstance(raw_refs, (str, bytes)):
+                raw_refs = [raw_refs]
+            try:
+                iterator = list(raw_refs)
+            except TypeError:
+                continue
+            for ref in iterator:
+                if ref is None:
+                    continue
+                if str(ref) not in seen:
+                    merged.append(ref)
+                    seen.add(str(ref))
+        return tuple(merged)
 
     def _apply_public_surface_gate(self, candidate: SurfaceCandidate, *, judgment: InternalJudgment) -> SurfaceCandidate | None:
         metadata = dict(getattr(candidate, "metadata", {}) or {})
@@ -208,6 +308,51 @@ class SurfaceValve:
         if "metadata" in updates:
             data["metadata"] = dict(updates["metadata"] or {})
         return SurfaceCandidate.from_mapping(data)
+
+    def _stamp_epistemic(self, candidate: SurfaceCandidate, *, stance: str, intent: str) -> SurfaceCandidate:
+        """Trả về bản sao của candidate đã gắn epistemic_stance + intent.
+
+        Dùng `_copy_candidate` (to_dict -> from_mapping) nên hai field này
+        round-trip qua contract layer và sống sót qua các bước routing sau (Property 1).
+        """
+        return self._copy_candidate(candidate, epistemic_stance=stance, intent=intent)
+
+    def _withhold_to_body_only(self, candidate: SurfaceCandidate, *, judgment: InternalJudgment) -> SurfaceCandidate:
+        """Req 3 — giữ lại confabulation khỏi public speech nhưng KHÔNG vứt bỏ.
+
+        Đặt `channel="body_only"` để claim tiếp tục sống như bodily presence
+        (cognition không bao giờ cắt về 0, Req 3.7/3.8). Ghi lại lý do block và
+        giữ stance + reason trên metadata để mọi claim bị chặn vẫn auditable
+        (Req 3.6), KHÔNG bao giờ trả về None (Req 3.1).
+
+        Lý do block:
+        - `epistemic_self_knowledge_failure` khi stance đến từ một intent không
+          xác định được (Self_Knowledge_Failure phòng thủ, Req 3.4/3.5). Sau
+          `resolve_intent`, intent luôn hợp lệ nên nhánh này chỉ là phòng thủ;
+        - `epistemic_confabulation_blocked` cho ungrounded_blind thông thường
+          (sincere + không có anchor, Req 3.2).
+        """
+        metadata = dict(getattr(candidate, "metadata", {}) or {})
+        stance = candidate.epistemic_stance or "ungrounded_blind"
+        # Self_Knowledge_Failure: intent không thể xác định (out-of-set / vắng).
+        self_knowledge_failure = epistemic.normalize_intent(candidate.intent) is None
+        reason = (
+            epistemic.SELF_KNOWLEDGE_FAILURE
+            if self_knowledge_failure
+            else epistemic.CONFABULATION_BLOCKED
+        )
+        return self._copy_candidate(
+            candidate,
+            channel="body_only",
+            reason=reason,
+            metadata={
+                **metadata,
+                "epistemic_stance": stance,
+                "epistemic_block_reason": reason,
+                "public_surface_allowed": False,
+                "surface_valve_body_only": True,
+            },
+        )
 
     def _safe_seed_from_judgment(self, judgment: InternalJudgment) -> str:
         for hyp in judgment.ranked_hypotheses:

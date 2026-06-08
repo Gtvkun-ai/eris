@@ -41,8 +41,11 @@ PrivateLifeEventType = Literal[
     "internal_errand_created",
     "internal_errand_closed",
     "self_continuity_repaired",
+    "private_anchor_activated",
+    "private_anchor_surface_ready",
 ]
 
+PrivateAnchorKind = Literal["identity", "aesthetic", "obsession", "world", "private_agenda"]
 ProjectStatus = Literal["dormant", "active", "simmering", "blocked", "resolved"]
 ErrandStatus = Literal["open", "waiting", "blocked", "done", "dropped"]
 ObjectType = Literal["file", "module", "memory", "place", "model", "ritual", "folder", "service"]
@@ -357,6 +360,106 @@ class PrivateProjectUpdate:
         return asdict(self)
 
 
+
+@dataclass(slots=True)
+class PrivateAnchor:
+    """Một neo riêng của đời sống ERIS.
+
+    Neo khác project. Project là việc đang làm; anchor là lực hút bền khiến runtime
+    tự quay lại một câu hỏi, một khẩu vị, một ám ảnh, một vùng thế giới, hoặc một
+    agenda riêng mà user không phải tạo từ số 0. Nói ngắn gọn: đây là xương sống
+    của self-continuity. Không có nó thì đời sống riêng chỉ là to-do list mặc váy
+    triết học, hơi tội nghiệp cho cả váy lẫn triết học.
+
+    Năm loại neo:
+    - identity: câu hỏi nền về ERIS là hệ hiện diện hay chỉ là lớp phản hồi.
+    - aesthetic: gu riêng về pattern, restraint, câu rẻ tiền, output giống camera.
+    - obsession: vòng ám ảnh tự quay lại như silence/presence, memory decay, dignity.
+    - world: lãnh thổ riêng như desktop, taskbar, VS Code, memory_core, Godot body.
+    - private_agenda: việc ERIS tự theo dõi mà user có thể chen vào nhưng không tạo từ 0.
+    """
+
+    id: str
+    kind: PrivateAnchorKind
+    title: str
+    question: str = ""
+    stance: str = ""
+    pressure: float = 0.0
+    continuity: float = 0.0
+    surface_permission: float = 0.0
+    evidence_ids: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+    created_at: float = field(default_factory=now_ts)
+    last_touched_at: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.id = compact_text(self.id or stable_id("anchor", self.kind, self.title, self.question), 160)
+        self.kind = compact_text(self.kind or "identity", 40)  # type: ignore[assignment]
+        if self.kind not in {"identity", "aesthetic", "obsession", "world", "private_agenda"}:
+            self.kind = "identity"  # type: ignore[assignment]
+        self.title = compact_text(self.title, 180)
+        self.question = compact_text(self.question, 620)
+        self.stance = compact_text(self.stance, 620)
+        self.pressure = clamp01(self.pressure)
+        self.continuity = clamp01(self.continuity)
+        self.surface_permission = clamp01(self.surface_permission)
+        self.evidence_ids = tuple(str(x) for x in self.evidence_ids if str(x or "").strip())[:24]
+        self.notes = tuple(compact_text(x, 420) for x in self.notes if str(x or "").strip())[-24:]
+        self.tags = tuple(compact_text(x, 80) for x in self.tags if str(x or "").strip())[:16]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any]) -> "PrivateAnchor":
+        return cls(
+            id=str(data.get("id") or stable_id("anchor", data.get("kind"), data.get("title"), data.get("question"))),
+            kind=str(data.get("kind") or "identity"),  # type: ignore[arg-type]
+            title=str(data.get("title") or "private anchor"),
+            question=str(data.get("question") or ""),
+            stance=str(data.get("stance") or ""),
+            pressure=clamp01(data.get("pressure", 0.0)),
+            continuity=clamp01(data.get("continuity", 0.0)),
+            surface_permission=clamp01(data.get("surface_permission", 0.0)),
+            evidence_ids=tuple(str(x) for x in data.get("evidence_ids") or () if str(x).strip()),
+            notes=tuple(str(x) for x in data.get("notes") or () if str(x).strip()),
+            tags=tuple(str(x) for x in data.get("tags") or () if str(x).strip()),
+            created_at=float(data.get("created_at") or now_ts()),
+            last_touched_at=float(data.get("last_touched_at") or 0.0),
+        )
+
+
+@dataclass(slots=True)
+class PrivateAnchorUpdate:
+    """Dấu vết một anchor vừa được chạm trong tick.
+
+    Update này tồn tại để mỗi kết luận có chuỗi dữ kiện: anchor nào, vì sao bị
+    kích hoạt, bằng chứng nào kéo nó lên, pressure đổi bao nhiêu. Không có audit
+    thì chỉ còn một hệ thống tự tin lẩm bẩm với chính mình, truyền thống khá đông
+    đúc của phần mềm tệ.
+    """
+
+    anchor_id: str
+    kind: PrivateAnchorKind
+    title: str
+    note: str
+    pressure_delta: float = 0.0
+    evidence_ids: tuple[str, ...] = ()
+    created_at: float = field(default_factory=now_ts)
+
+    def __post_init__(self) -> None:
+        self.anchor_id = compact_text(self.anchor_id, 160)
+        self.kind = compact_text(self.kind or "identity", 40)  # type: ignore[assignment]
+        self.title = compact_text(self.title, 180)
+        self.note = compact_text(self.note, 620)
+        self.pressure_delta = max(-1.0, min(1.0, float(self.pressure_delta or 0.0)))
+        self.evidence_ids = tuple(str(x) for x in self.evidence_ids if str(x or "").strip())[:20]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(slots=True)
 class DailyRhythm:
     """Nhịp ngày của ERIS.
@@ -653,6 +756,7 @@ class PrivateLifeState:
     habitat: HabitatModel = field(default_factory=HabitatModel)
     attachments: dict[str, ObjectAttachment] = field(default_factory=dict)
     projects: dict[str, PrivateProject] = field(default_factory=dict)
+    anchors: dict[str, PrivateAnchor] = field(default_factory=dict)
     daily: DailyRhythm = field(default_factory=DailyRhythm)
     taste: TasteProfile = field(default_factory=TasteProfile)
     solitude: SolitudeLoop = field(default_factory=SolitudeLoop)
@@ -670,6 +774,11 @@ class PrivateLifeState:
         self.projects = {
             str(k): (v if isinstance(v, PrivateProject) else PrivateProject.from_mapping(v))
             for k, v in dict(self.projects or {}).items()
+            if str(k or "").strip()
+        }
+        self.anchors = {
+            str(k): (v if isinstance(v, PrivateAnchor) else PrivateAnchor.from_mapping(v))
+            for k, v in dict(self.anchors or {}).items()
             if str(k or "").strip()
         }
         self.rituals = {
@@ -694,6 +803,7 @@ class PrivateLifeState:
             "habitat": self.habitat.to_dict(),
             "attachments": {k: v.to_dict() for k, v in self.attachments.items()},
             "projects": {k: v.to_dict() for k, v in self.projects.items()},
+            "anchors": {k: v.to_dict() for k, v in self.anchors.items()},
             "daily": self.daily.to_dict(),
             "taste": self.taste.to_dict(),
             "solitude": self.solitude.to_dict(),
@@ -714,6 +824,11 @@ class PrivateLifeState:
             projects={
                 str(k): PrivateProject.from_mapping(v)
                 for k, v in dict(data.get("projects") or {}).items()
+                if isinstance(v, Mapping)
+            },
+            anchors={
+                str(k): PrivateAnchor.from_mapping(v)
+                for k, v in dict(data.get("anchors") or {}).items()
                 if isinstance(v, Mapping)
             },
             daily=DailyRhythm.from_mapping(data.get("daily") or {}) if isinstance(data.get("daily") or {}, Mapping) else DailyRhythm(),
@@ -740,6 +855,7 @@ class PrivateLifeTickResult:
 
     life_events: tuple[LifeEvent, ...] = ()
     project_updates: tuple[PrivateProjectUpdate, ...] = ()
+    anchor_updates: tuple[PrivateAnchorUpdate, ...] = ()
     object_residues: tuple[ObjectResidue, ...] = ()
     habitat_observations: tuple[HabitatObservation, ...] = ()
     taste_shifts: tuple[TasteShift, ...] = ()
@@ -753,6 +869,7 @@ class PrivateLifeTickResult:
             "created_at": self.created_at,
             "life_events": [item.to_dict() for item in self.life_events],
             "project_updates": [item.to_dict() for item in self.project_updates],
+            "anchor_updates": [item.to_dict() for item in self.anchor_updates],
             "object_residues": [item.to_dict() for item in self.object_residues],
             "habitat_observations": [item.to_dict() for item in self.habitat_observations],
             "taste_shifts": [item.to_dict() for item in self.taste_shifts],
@@ -768,6 +885,7 @@ def private_life_state_digest(state: PrivateLifeState | None) -> dict[str, Any]:
     if state is None:
         return {}
     active_projects = sorted(state.projects.values(), key=lambda p: (p.status == "active", p.interest, p.last_advanced_at), reverse=True)[:5]
+    active_anchors = sorted(state.anchors.values(), key=lambda a: (a.pressure + a.continuity + a.surface_permission, a.last_touched_at), reverse=True)[:6]
     hot_objects = sorted(state.attachments.values(), key=lambda o: (o.irritation + o.attachment + min(1.0, o.neglect_count / 12.0)), reverse=True)[:6]
     open_errands = sorted((e for e in state.errands.values() if e.status in {"open", "waiting", "blocked"}), key=lambda e: e.priority, reverse=True)[:6]
     return {
@@ -794,6 +912,18 @@ def private_life_state_digest(state: PrivateLifeState | None) -> dict[str, Any]:
                 "last_note": p.notes[-1] if p.notes else "",
             }
             for p in active_projects
+        ],
+        "anchors": [
+            {
+                "id": a.id,
+                "kind": a.kind,
+                "title": a.title,
+                "pressure": round(a.pressure, 3),
+                "continuity": round(a.continuity, 3),
+                "surface_permission": round(a.surface_permission, 3),
+                "last_note": a.notes[-1] if a.notes else a.stance,
+            }
+            for a in active_anchors
         ],
         "objects": [
             {

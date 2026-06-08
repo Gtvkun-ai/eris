@@ -26,6 +26,32 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Iterable, Literal, Mapping
 
 
+_VALID_INTENTS = ("sincere", "playful", "teasing", "speculative")
+_VALID_STANCES = ("grounded", "ungrounded_aware", "ungrounded_blind")
+
+
+def normalize_stance(value: Any) -> str | None:
+    """Chuẩn hoá epistemic_stance.
+
+    Trả về một stance hợp lệ trong {grounded, ungrounded_aware, ungrounded_blind},
+    hoặc None nếu vắng/ngoài tập (Req 5.1/5.9). None là giá trị dành riêng để
+    Epistemic_Classifier gán sau.
+    """
+    v = str(value or "").strip().lower()
+    return v if v in _VALID_STANCES else None
+
+
+def normalize_intent_field(value: Any) -> str:
+    """Chuẩn hoá intent ở tầng contract.
+
+    Trả về một intent hợp lệ trong {sincere, playful, teasing, speculative},
+    hoặc `sincere` nếu vắng/ngoài tập (Req 5.2/5.8). Việc default kiểu Cartesian
+    (`speculative` khi không có anchor) được áp dụng sau, tại valve.
+    """
+    v = str(value or "").strip().lower()
+    return v if v in _VALID_INTENTS else "sincere"
+
+
 ConcernStatus = Literal["open", "watching", "blocked", "resolved", "rejected", "stale"]
 MutationOperation = Literal["set", "prefer", "suppress", "increase", "decrease", "append", "merge", "decay"]
 MutationTarget = Literal[
@@ -385,6 +411,8 @@ class SurfaceCandidate:
     created_at: float = field(default_factory=now_ts)
     id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    epistemic_stance: str | None = None
+    intent: str = "sincere"
 
     def __post_init__(self) -> None:
         self.kind = compact_text(self.kind or "private_mind_surface", 80)
@@ -395,6 +423,8 @@ class SurfaceCandidate:
         self.evidence_ids = tuple(str(x) for x in self.evidence_ids if str(x or "").strip())[:24]
         self.reason = compact_text(self.reason, 260)
         self.metadata = dict(self.metadata or {})
+        self.epistemic_stance = normalize_stance(self.epistemic_stance)
+        self.intent = normalize_intent_field(self.intent)
         if not self.id:
             self.id = stable_id("surf", self.kind, self.topic_seed, *self.evidence_ids)
 
@@ -415,6 +445,8 @@ class SurfaceCandidate:
             "channel": self.channel,
             "created_at": self.created_at,
             "metadata": to_plain(self.metadata),
+            "epistemic_stance": self.epistemic_stance,
+            "intent": self.intent,
         }
 
     @classmethod
@@ -431,6 +463,8 @@ class SurfaceCandidate:
             channel=str(data.get("channel") or "surface_arbiter"),  # type: ignore[arg-type]
             created_at=float(data.get("created_at") or now_ts()),
             metadata=dict(data.get("metadata") or {}),
+            epistemic_stance=normalize_stance(data.get("epistemic_stance")),
+            intent=normalize_intent_field(data.get("intent")),
         )
 
 
@@ -451,6 +485,8 @@ class InternalJudgment:
     source: str = "inner_synthesizer"
     created_at: float = field(default_factory=now_ts)
     metadata: dict[str, Any] = field(default_factory=dict)
+    epistemic_stance: str | None = None
+    intent: str = "sincere"
 
     def __post_init__(self) -> None:
         self.dominant_judgment = compact_text(self.dominant_judgment, 700)
@@ -475,6 +511,8 @@ class InternalJudgment:
         self.evidence_ids = tuple(str(x) for x in self.evidence_ids if str(x or "").strip())[:48]
         self.source = compact_text(self.source, 80)
         self.metadata = dict(self.metadata or {})
+        self.epistemic_stance = normalize_stance(self.epistemic_stance)
+        self.intent = normalize_intent_field(self.intent)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -491,6 +529,8 @@ class InternalJudgment:
             "source": self.source,
             "created_at": self.created_at,
             "metadata": to_plain(self.metadata),
+            "epistemic_stance": self.epistemic_stance,
+            "intent": self.intent,
         }
 
     @classmethod
@@ -510,6 +550,8 @@ class InternalJudgment:
             source=str(data.get("source") or "inner_synthesizer"),
             created_at=float(data.get("created_at") or now_ts()),
             metadata=dict(data.get("metadata") or {}),
+            epistemic_stance=normalize_stance(data.get("epistemic_stance")),
+            intent=normalize_intent_field(data.get("intent")),
         )
 
 

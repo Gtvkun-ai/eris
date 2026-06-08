@@ -43,6 +43,8 @@ class SurfaceImpulse:
     llm_contract: str = ""
     emotional_anchor: str = ""
     conflict: str = ""
+    epistemic_stance: str | None = None
+    intent: str = "sincere"
     raw: Any = None
 
     def to_context(self) -> dict[str, object]:
@@ -70,6 +72,8 @@ class SurfaceImpulse:
             "llm_contract": self.llm_contract,
             "emotional_anchor": self.emotional_anchor,
             "conflict": self.conflict,
+            "epistemic_stance": self.epistemic_stance,
+            "intent": self.intent,
         }
 
 

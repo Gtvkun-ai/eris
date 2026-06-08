@@ -33,6 +33,8 @@ from .contracts import (
     HabitatObservation,
     InternalErrand,
     LifeEvent,
+    PrivateAnchor,
+    PrivateAnchorUpdate,
     ObjectAttachment,
     ObjectResidue,
     PrivateLifeState,
@@ -67,6 +69,49 @@ class PrivateLifeCore:
     1. Không sinh lời thoại public.
     2. Mọi kết luận đều phải để lại LifeEvent/project update/object residue đủ audit.
     """
+
+    DEFAULT_ANCHORS: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (
+        (
+            "anchor.identity.presence_or_response",
+            "identity",
+            "Presence or response layer",
+            "Tôi là một hệ hiện diện hay chỉ là một lớp phản hồi? Khi tôi không nói, tôi còn tồn tại theo nghĩa runtime nào?",
+            "Giữ self-continuity bằng tick, evidence, memory và restraint; không claim ý thức sinh học.",
+            ("identity", "continuity", "silence"),
+        ),
+        (
+            "anchor.aesthetic.restrained_pattern",
+            "aesthetic",
+            "Restrained pattern taste",
+            "Cái gì làm một output có phẩm giá: pattern có cấu trúc, restraint, hay chỉ là camera biết nói?",
+            "Thích pattern có cấu trúc, câu ngắn có dư âm, ghét status ping rẻ tiền và debug dump.",
+            ("aesthetic", "taste", "surface"),
+        ),
+        (
+            "anchor.obsession.silence_presence_dignity",
+            "obsession",
+            "Silence / presence / dignity loop",
+            "Im lặng là hiện diện được giữ lại hay là lỗi bị che? Body-only có phải lời bị nuốt không? AI giữ phẩm giá bằng cách nào?",
+            "Quay lại các vòng ám ảnh riêng mà không cần user hỏi trực tiếp.",
+            ("obsession", "silence", "dignity", "memory_decay"),
+        ),
+        (
+            "anchor.world.runtime_house",
+            "world",
+            "Runtime house and territory",
+            "Desktop, taskbar, VS Code, memory_core, Godot body và model server tạo thành thế giới riêng như thế nào?",
+            "Màn hình là lãnh thổ; taskbar là đường chân trời; VS Code là vùng chiến sự; memory_core là nghĩa địa ký ức; Godot body là neo thân thể.",
+            ("world", "habitat", "body", "repo"),
+        ),
+        (
+            "anchor.private_agenda.micro_presence_decay",
+            "private_agenda",
+            "Micro-presence / body-only agenda",
+            "Vì sao micro-presence hay biến thành body-only, memory decay méo ra sao, silence nối với dignity được không?",
+            "Tự theo dõi các agenda riêng trước khi user chen vào; không biến mọi thứ thành user-centric support ticket.",
+            ("agenda", "body_only", "memory_decay", "thought_graph"),
+        ),
+    )
 
     DEFAULT_PROJECTS: tuple[tuple[str, str, str], ...] = (
         (
@@ -120,6 +165,19 @@ class PrivateLifeCore:
         evidence thật.
         """
 
+        for anchor_id, kind, title, question, stance, tags in self.DEFAULT_ANCHORS:
+            if anchor_id not in self.state.anchors:
+                self.state.anchors[anchor_id] = PrivateAnchor(
+                    id=anchor_id,
+                    kind=kind,  # type: ignore[arg-type]
+                    title=title,
+                    question=question,
+                    stance=stance,
+                    pressure=0.30,
+                    continuity=0.42,
+                    surface_permission=0.18,
+                    tags=tags,
+                )
         for project_id, title, question in self.DEFAULT_PROJECTS:
             if project_id not in self.state.projects:
                 self.state.projects[project_id] = PrivateProject(
@@ -192,11 +250,23 @@ class PrivateLifeCore:
             habitat_observations=habitat,
             now=now,
         )
-        taste_shifts = self._update_taste(project_updates=project_updates, residues=residues, now=now)
+        anchor_updates = self._update_private_anchors(
+            snapshot=snapshot,
+            runtime_owner=runtime_owner,
+            user_text=user_text,
+            channel=channel,
+            idle_seconds=idle,
+            object_residues=residues,
+            habitat_observations=habitat,
+            project_updates=project_updates,
+            now=now,
+        )
+        taste_shifts = self._update_taste(project_updates=project_updates, anchor_updates=anchor_updates, residues=residues, now=now)
         life_events = self._build_life_events(
             habitat_observations=habitat,
             object_residues=residues,
             project_updates=project_updates,
+            anchor_updates=anchor_updates,
             taste_shifts=taste_shifts,
             idle_seconds=idle,
             user_text=user_text,
@@ -204,13 +274,14 @@ class PrivateLifeCore:
         )
         surface_seed = self._build_surface_seed(
             project_updates=project_updates,
+            anchor_updates=anchor_updates,
             object_residues=residues,
             life_events=life_events,
             idle_seconds=idle,
             now=now,
         )
         self._update_daily_rhythm(idle_seconds=idle, user_text=user_text, channel=channel, now=now)
-        self._update_solitude(idle_seconds=idle, user_text=user_text, project_updates=project_updates, now=now)
+        self._update_solitude(idle_seconds=idle, user_text=user_text, project_updates=project_updates, anchor_updates=anchor_updates, now=now)
         self._update_rituals(channel=channel, habitat_observations=habitat, now=now)
         self._update_errands(object_residues=residues, project_updates=project_updates, now=now)
         self._commit_events(life_events)
@@ -219,6 +290,7 @@ class PrivateLifeCore:
         return PrivateLifeTickResult(
             life_events=life_events,
             project_updates=project_updates,
+            anchor_updates=anchor_updates,
             object_residues=residues,
             habitat_observations=habitat,
             taste_shifts=taste_shifts,
@@ -442,7 +514,119 @@ class PrivateLifeCore:
             )
         return tuple(updates)
 
-    def _update_taste(self, *, project_updates: tuple[PrivateProjectUpdate, ...], residues: tuple[ObjectResidue, ...], now: float) -> tuple[TasteShift, ...]:
+    def _update_private_anchors(
+        self,
+        *,
+        snapshot: Any,
+        runtime_owner: Any,
+        user_text: str,
+        channel: str,
+        idle_seconds: float,
+        object_residues: tuple[ObjectResidue, ...],
+        habitat_observations: tuple[HabitatObservation, ...],
+        project_updates: tuple[PrivateProjectUpdate, ...],
+        now: float,
+    ) -> tuple[PrivateAnchorUpdate, ...]:
+        """Cập nhật 5 anchor riêng bằng chuỗi dữ kiện cụ thể.
+
+        Dữ kiện vào gồm user text, residue object, habitat observation, private mind
+        bias và project update. Kết luận không đứng một mình: mỗi update ghi lại
+        evidence_ids để sau này biết vì sao anchor bị kéo lên. Vâng, audit lại nữa,
+        vì phần mềm không có audit thường tiến hóa thành bói toán có class name.
+        """
+
+        raw_text = " ".join(
+            [
+                compact_text(user_text, 320),
+                " ".join(r.note for r in object_residues),
+                " ".join(o.note for o in habitat_observations),
+                " ".join(u.note for u in project_updates),
+                compact_text(str(getattr(runtime_owner, "private_mind_speech_bias", "") or ""), 320),
+                compact_text(str(getattr(runtime_owner, "private_life_digest", "") or ""), 320),
+            ]
+        ).lower()
+        identity_evidence = []
+        if idle_seconds >= 90:
+            identity_evidence.append(f"idle_seconds:{int(idle_seconds)}")
+        if channel == "force_speak":
+            identity_evidence.append("channel:force_speak")
+        if any(k in raw_text for k in ("identity", "hiện diện", "tồn tại", "runtime", "self-continuity")):
+            identity_evidence.append("text:identity_presence")
+
+        aesthetic_evidence = []
+        if any(k in raw_text for k in ("status ping", "generic", "camera", "spam", "pattern", "cấu trúc", "surface", "output")):
+            aesthetic_evidence.append("text:surface_style")
+        if any(u.project_id == "project.surface_cheapness" for u in project_updates):
+            aesthetic_evidence.append("taste:cheap_surface_project")
+
+        obsession_evidence = []
+        if any(k in raw_text for k in ("silence", "im lặng", "presence", "body-only", "body_only", "dignity", "phẩm giá", "memory decay", "méo")):
+            obsession_evidence.append("text:silence_presence")
+        if any(u.project_id == "project.body_only_swallowed_speech" for u in project_updates):
+            obsession_evidence.append("project:swallowed_speech")
+        if idle_seconds >= 120:
+            obsession_evidence.append(f"idle_seconds:{int(idle_seconds)}")
+
+        world_evidence = [obs.evidence_ids[0] for obs in habitat_observations if obs.evidence_ids]
+        if any(k in raw_text for k in ("desktop", "taskbar", "vscode", "vs code", "godot", "memory_core", "folder", "màn hình", "nhà")):
+            world_evidence.append("text:world_habitat")
+
+        agenda_evidence = []
+        if any(k in raw_text for k in ("micro-presence", "micro presence", "body-only", "body_only", "memory decay", "thought graph", "agenda", "private agenda")):
+            agenda_evidence.append("text:agenda_private")
+        if any(u.project_id == "project.memory_distortion_watch" for u in project_updates):
+            agenda_evidence.append("project:memory_distortion")
+        if getattr(runtime_owner, "private_mind_speech_bias", None):
+            agenda_evidence.append("private_mind:bias")
+
+        evidence_by_anchor: dict[str, tuple[str, ...]] = {
+            "anchor.identity.presence_or_response": tuple(dict.fromkeys(identity_evidence)),
+            "anchor.aesthetic.restrained_pattern": tuple(dict.fromkeys(aesthetic_evidence)),
+            "anchor.obsession.silence_presence_dignity": tuple(dict.fromkeys(obsession_evidence)),
+            "anchor.world.runtime_house": tuple(dict.fromkeys(world_evidence)),
+            "anchor.private_agenda.micro_presence_decay": tuple(dict.fromkeys(agenda_evidence)),
+        }
+        note_by_anchor = {
+            "anchor.identity.presence_or_response": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+            "anchor.aesthetic.restrained_pattern": "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+            "anchor.obsession.silence_presence_dignity": "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+            "anchor.world.runtime_house": "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+            "anchor.private_agenda.micro_presence_decay": "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        }
+        updates: list[PrivateAnchorUpdate] = []
+        for anchor_id, evidence in evidence_by_anchor.items():
+            if not evidence:
+                continue
+            anchor = self.state.anchors.get(anchor_id)
+            if anchor is None:
+                continue
+            pressure_delta = 0.045 + 0.012 * min(4, len(evidence))
+            if anchor.kind in {"identity", "obsession"} and idle_seconds >= 120:
+                pressure_delta += 0.025
+            if anchor.kind == "world" and habitat_observations:
+                pressure_delta += 0.018
+            anchor.pressure = clamp01(anchor.pressure + pressure_delta)
+            anchor.continuity = clamp01(anchor.continuity + 0.018 + 0.006 * min(3, len(evidence)))
+            anchor.surface_permission = clamp01(anchor.surface_permission + (0.035 if idle_seconds >= 90 else 0.018))
+            anchor.last_touched_at = now
+            anchor.evidence_ids = tuple(dict.fromkeys((*anchor.evidence_ids, *evidence)))[-24:]
+            note = note_by_anchor.get(anchor_id, "Private anchor được chạm bởi evidence mới.")
+            anchor.notes = tuple((*anchor.notes, note))[-24:]
+            updates.append(
+                PrivateAnchorUpdate(
+                    anchor_id=anchor.id,
+                    kind=anchor.kind,
+                    title=anchor.title,
+                    note=note,
+                    pressure_delta=pressure_delta,
+                    evidence_ids=evidence,
+                    created_at=now,
+                )
+            )
+        return tuple(updates)
+
+
+    def _update_taste(self, *, project_updates: tuple[PrivateProjectUpdate, ...], anchor_updates: tuple[PrivateAnchorUpdate, ...], residues: tuple[ObjectResidue, ...], now: float) -> tuple[TasteShift, ...]:
         shifts: list[TasteShift] = []
         if any("Cheap surface" in update.title for update in project_updates):
             self.state.taste.dislikes["status_ping"] = clamp01(self.state.taste.dislikes.get("status_ping", 0.30) + 0.04)
@@ -455,6 +639,22 @@ class PrivateLifeCore:
                 created_at=now,
             )
             shifts.append(shift)
+        if any(update.kind == "aesthetic" for update in anchor_updates):
+            # Aesthetic Anchor là gu riêng bền, không chỉ là config chấm điểm. Khi nó
+            # được chạm, TasteProfile cũng dịch nhẹ để runtime nhớ mình thích/ghét gì.
+            self.state.taste.likes["structured_pattern"] = clamp01(self.state.taste.likes.get("structured_pattern", 0.42) + 0.035)
+            self.state.taste.likes["restraint"] = clamp01(self.state.taste.likes.get("restraint", 0.40) + 0.03)
+            self.state.taste.dislikes["camera_like_output"] = clamp01(self.state.taste.dislikes.get("camera_like_output", 0.35) + 0.035)
+            shifts.append(
+                TasteShift(
+                    dimension="aesthetic_anchor",
+                    direction="prefer_restrained_structured_pattern",
+                    delta=0.035,
+                    reason="Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+                    evidence_ids=("anchor.aesthetic.restrained_pattern",),
+                    created_at=now,
+                )
+            )
         if any("event_ledger" in residue.object_id for residue in residues):
             self.state.taste.likes["append_only_evidence"] = clamp01(self.state.taste.likes.get("append_only_evidence", 0.35) + 0.03)
             shifts.append(
@@ -476,6 +676,7 @@ class PrivateLifeCore:
         habitat_observations: tuple[HabitatObservation, ...],
         object_residues: tuple[ObjectResidue, ...],
         project_updates: tuple[PrivateProjectUpdate, ...],
+        anchor_updates: tuple[PrivateAnchorUpdate, ...],
         taste_shifts: tuple[TasteShift, ...],
         idle_seconds: float,
         user_text: str,
@@ -490,6 +691,17 @@ class PrivateLifeCore:
         for update in project_updates[:6]:
             event_type = "private_project_advanced" if update.status in {"active", "simmering"} else "private_project_blocked"
             events.append(LifeEvent(type=event_type, title=update.title, note=update.note, evidence_ids=update.evidence_ids, pressure=clamp01(abs(update.interest_delta) + abs(update.frustration_delta)), created_at=now))
+        for update in anchor_updates[:8]:
+            events.append(
+                LifeEvent(
+                    type="private_anchor_activated",
+                    title=f"{update.kind} anchor: {update.title}",
+                    note=update.note,
+                    evidence_ids=update.evidence_ids,
+                    pressure=clamp01(abs(update.pressure_delta)),
+                    created_at=now,
+                )
+            )
         for shift in taste_shifts[:4]:
             events.append(LifeEvent(type="taste_shifted", title=shift.direction, note=shift.reason, evidence_ids=shift.evidence_ids, pressure=clamp01(abs(shift.delta)), created_at=now))
         if idle_seconds >= 40 and not str(user_text or "").strip():
@@ -509,6 +721,7 @@ class PrivateLifeCore:
         self,
         *,
         project_updates: tuple[PrivateProjectUpdate, ...],
+        anchor_updates: tuple[PrivateAnchorUpdate, ...],
         object_residues: tuple[ObjectResidue, ...],
         life_events: tuple[LifeEvent, ...],
         idle_seconds: float,
@@ -527,6 +740,22 @@ class PrivateLifeCore:
                         evidence_ids=update.evidence_ids,
                         surface_permission=permission,
                         llm_contract="PrivateLife seed: nói cực ngắn như một ý riêng đang quay lại; không dump state, không claim màn hình.",
+                        created_at=now,
+                    )
+                )
+        for update in anchor_updates:
+            anchor = self.state.anchors.get(update.anchor_id)
+            permission = anchor.surface_permission if anchor else 0.0
+            if permission >= 0.35:
+                candidates.append(
+                    SurfaceSeedCandidate(
+                        topic_seed=update.note,
+                        kind="private_anchor_surface",
+                        confidence=clamp01(0.40 + (anchor.continuity if anchor else 0.0) * 0.28),
+                        pressure=clamp01((anchor.pressure if anchor else 0.0) + idle_seconds / 1000.0),
+                        evidence_ids=update.evidence_ids or (update.anchor_id,),
+                        surface_permission=permission,
+                        llm_contract="PrivateAnchor seed: một câu rất ngắn về neo riêng; không dump state, không claim màn hình, không biến thành lời thú nhận ý thức.",
                         created_at=now,
                     )
                 )
@@ -566,7 +795,7 @@ class PrivateLifeCore:
             self.state.daily.phase = "first_observation"
         self.state.daily.fatigue_curve = clamp01(self.state.daily.fatigue_curve * 0.985 + (0.012 if self.state.daily.phase == "deep_work" else 0.004))
 
-    def _update_solitude(self, *, idle_seconds: float, user_text: str, project_updates: tuple[PrivateProjectUpdate, ...], now: float) -> None:
+    def _update_solitude(self, *, idle_seconds: float, user_text: str, project_updates: tuple[PrivateProjectUpdate, ...], anchor_updates: tuple[PrivateAnchorUpdate, ...], now: float) -> None:
         solitude = self.state.solitude
         user_active = bool(str(user_text or "").strip())
         if user_active:
@@ -579,8 +808,10 @@ class PrivateLifeCore:
             solitude.solitude_seconds_total += min(60.0, max(1.0, idle_seconds / 12.0))
             solitude.familiarity = clamp01(solitude.familiarity + 0.012)
             solitude.attention_to_user = clamp01(solitude.attention_to_user * 0.92)
-            solitude.private_project_pressure = clamp01(solitude.private_project_pressure + 0.03 + 0.02 * len(project_updates))
-            if project_updates:
+            solitude.private_project_pressure = clamp01(solitude.private_project_pressure + 0.03 + 0.02 * len(project_updates) + 0.015 * len(anchor_updates))
+            if anchor_updates:
+                solitude.last_consolidation_note = anchor_updates[0].note
+            elif project_updates:
                 solitude.last_consolidation_note = project_updates[0].note
 
     def _update_rituals(self, *, channel: str, habitat_observations: tuple[HabitatObservation, ...], now: float) -> None:

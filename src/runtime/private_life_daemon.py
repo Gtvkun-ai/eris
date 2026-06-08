@@ -188,6 +188,7 @@ class PrivateLifeDaemon:
             "menu": {
                 "habitat": state_digest.get("habitat", {}),
                 "projects": state_digest.get("projects", []),
+                "anchors": state_digest.get("anchors", []),
                 "objects": state_digest.get("objects", []),
                 "errands": state_digest.get("errands", []),
                 "solitude": state_digest.get("solitude", {}),
