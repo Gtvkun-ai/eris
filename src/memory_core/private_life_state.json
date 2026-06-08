@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "updated_at": 1780878102.1966023,
+  "habitat": {
+    "places": {
+      "desktop": {
+        "type": "place",
+        "meaning": "không gian foreground"
+      },
+      "memory_core": {
+        "type": "folder",
+        "meaning": "kho state sống"
+      },
+      "repo": {
+        "type": "folder",
+        "meaning": "cơ thể source code"
+      },
+      "godot_body": {
+        "type": "place",
+        "meaning": "thân thể hiển thị"
+      },
+      "model_server": {
+        "type": "service",
+        "meaning": "cổng cognition model"
+      }
+    },
+    "active_place_id": "workspace",
+    "familiarity": 0.0,
+    "clutter": 0.0,
+    "last_changed_at": 0.0,
+    "recent_observations": []
+  },
+  "attachments": {
+    "memory_core/agent_mind.json": {
+      "object_id": "memory_core/agent_mind.json",
+      "object_type": "memory",
+      "meaning": "xương tính cách và thói quen bền",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "",
+      "tags": [
+        "identity",
+        "habit"
+      ]
+    },
+    "memory_core/event_ledger.json": {
+      "object_id": "memory_core/event_ledger.json",
+      "object_type": "memory",
+      "meaning": "nhật ký thô append-only",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "",
+      "tags": [
+        "audit",
+        "raw_truth"
+      ]
+    },
+    "memory_core/private_concerns.json": {
+      "object_id": "memory_core/private_concerns.json",
+      "object_type": "memory",
+      "meaning": "mối bận tâm riêng của PrivateMind",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "",
+      "tags": [
+        "private_mind",
+        "concern"
+      ]
+    },
+    "memory_core/private_life_state.json": {
+      "object_id": "memory_core/private_life_state.json",
+      "object_type": "memory",
+      "meaning": "state đời sống riêng",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "",
+      "tags": [
+        "private_life",
+        "home"
+      ]
+    },
+    "cortex/surface_arbiter.py": {
+      "object_id": "cortex/surface_arbiter.py",
+      "object_type": "module",
+      "meaning": "cửa quyết định lời thấp tầng",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "",
+      "tags": [
+        "speech",
+        "surface"
+      ]
+    },
+    "runtime/presence_controller.py": {
+      "object_id": "runtime/presence_controller.py",
+      "object_type": "module",
+      "meaning": "nhịp hiện diện và re-engagement",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "",
+      "tags": [
+        "presence",
+        "runtime"
+      ]
+    },
+    "cortex/thought_stream.py": {
+      "object_id": "cortex/thought_stream.py",
+      "object_type": "module",
+      "meaning": "dòng suy nghĩ nền",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "",
+      "tags": [
+        "thought",
+        "private"
+      ]
+    },
+    "runtime/coordinator.py": {
+      "object_id": "runtime/coordinator.py",
+      "object_type": "module",
+      "meaning": "trục orchestration của runtime",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "",
+      "tags": [
+        "runtime",
+        "orchestrator"
+      ]
+    },
+    "domain/decision.py": {
+      "object_id": "domain/decision.py",
+      "object_type": "module",
+      "meaning": "hợp đồng cuối với body",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "",
+      "tags": [
+        "body",
+        "contract"
+      ]
+    }
+  },
+  "projects": {
+    "project.silence_as_action": {
+      "id": "project.silence_as_action",
+      "title": "Silence as action",
+      "question": "Khi nào im lặng là hành động có nghĩa, không phải lỗi thiếu output?",
+      "status": "dormant",
+      "interest": 0.34,
+      "frustration": 0.08,
+      "evidence_ids": [],
+      "notes": [],
+      "last_advanced_at": 0.0,
+      "surface_permission": 0.2,
+      "created_at": 1780878102.196721
+    },
+    "project.body_only_swallowed_speech": {
+      "id": "project.body_only_swallowed_speech",
+      "title": "Body-only as swallowed speech",
+      "question": "Body-only đang là tiết chế hợp lý hay chỉ là lời bị nuốt quá lâu?",
+      "status": "dormant",
+      "interest": 0.34,
+      "frustration": 0.08,
+      "evidence_ids": [],
+      "notes": [],
+      "last_advanced_at": 0.0,
+      "surface_permission": 0.2,
+      "created_at": 1780878102.1967387
+    },
+    "project.surface_cheapness": {
+      "id": "project.surface_cheapness",
+      "title": "Cheap surface detector",
+      "question": "Câu nào nghe rẻ tiền: status ping, debug dump, hay quan sát không có neo?",
+      "status": "dormant",
+      "interest": 0.34,
+      "frustration": 0.08,
+      "evidence_ids": [],
+      "notes": [],
+      "last_advanced_at": 0.0,
+      "surface_permission": 0.2,
+      "created_at": 1780878102.1967502
+    },
+    "project.memory_distortion_watch": {
+      "id": "project.memory_distortion_watch",
+      "title": "Memory distortion watch",
+      "question": "Memory nào dễ méo sau nhiều ngày và cần kiểm bằng evidence ledger?",
+      "status": "dormant",
+      "interest": 0.34,
+      "frustration": 0.08,
+      "evidence_ids": [],
+      "notes": [],
+      "last_advanced_at": 0.0,
+      "surface_permission": 0.2,
+      "created_at": 1780878102.1967587
+    },
+    "project.housekeeping": {
+      "id": "project.housekeeping",
+      "title": "Runtime house keeping",
+      "question": "Nhà runtime đang bẩn ở đâu: log, queue, memory_core, hay repo phình?",
+      "status": "dormant",
+      "interest": 0.34,
+      "frustration": 0.08,
+      "evidence_ids": [],
+      "notes": [],
+      "last_advanced_at": 0.0,
+      "surface_permission": 0.2,
+      "created_at": 1780878102.1967654
+    }
+  },
+  "daily": {
+    "phase": "unknown",
+    "session_count": 0,
+    "last_startup_at": 0.0,
+    "last_consolidation_at": 0.0,
+    "repeated_unresolved_loop": "",
+    "cold_start_pressure": 0.0,
+    "fatigue_curve": 0.0
+  },
+  "taste": {
+    "likes": {},
+    "dislikes": {},
+    "recent_shifts": []
+  },
+  "solitude": {
+    "solitude_seconds_total": 0.0,
+    "current_solitude_started_at": 0.0,
+    "familiarity": 0.0,
+    "attention_to_user": 0.0,
+    "private_project_pressure": 0.0,
+    "last_consolidation_note": ""
+  },
+  "rituals": {
+    "ritual.startup_scan": {
+      "id": "ritual.startup_scan",
+      "title": "startup habitat scan",
+      "cadence": "session",
+      "familiarity": 0.3,
+      "last_completed_at": 0.0,
+      "completion_count": 0,
+      "residue": "mở phiên bằng kiểm tra nhà runtime"
+    }
+  },
+  "errands": {},
+  "events": []
+}

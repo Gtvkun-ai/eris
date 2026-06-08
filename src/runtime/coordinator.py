@@ -89,6 +89,7 @@ from runtime.guard_violations import GuardViolation
 from runtime.outcome_observer import OutcomeObserver
 from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.private_mind_daemon import PrivateMindDaemon
+from runtime.private_life_daemon import PrivateLifeDaemon
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
 from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
@@ -414,6 +415,15 @@ class RuntimeCoordinator(
         self.private_mind_thought_pressure = 0.0
         self.private_mind_digest: dict[str, object] = {}
         self.private_mind_daemon_digest: dict[str, object] = {}
+        # PrivateLifeDaemon: đời sống riêng không xoay quanh user. Nó theo dõi habitat,
+        # object attachments, project riêng, nhịp ngày, solitude và việc vặt nội bộ.
+        self.private_life_daemon = PrivateLifeDaemon.from_runtime(
+            runtime_owner=self,
+            logger=self.logger,
+        )
+        self.private_life_core = getattr(self.private_life_daemon, "core", None)
+        self.private_life_surface_queue: list[object] = getattr(self.private_life_daemon, "surface_queue", []) if self.private_life_daemon is not None else []
+        self.private_life_digest: dict[str, object] = {}
         self.last_semantic_scene_note: SemanticSceneNote | None = None
         self._state_lock = threading.RLock()
 
@@ -769,6 +779,13 @@ class RuntimeCoordinator(
                 channel=channel,
                 user_text=user_text,
             )
+            self._update_private_life_state(
+                signal_snapshot=signal_snapshot,
+                observer_frame=observer_frame,
+                wake_decision=result.wake_decision,
+                channel=channel,
+                user_text=user_text,
+            )
         except Exception as exc:
             self.logger.warning("3-tier autonomy update error: %s", exc)
 
@@ -868,6 +885,74 @@ class RuntimeCoordinator(
         while queue and len(items) < max(1, int(limit or 4)):
             items.append(queue.pop(0))
         return tuple(items)
+
+    def _update_private_life_state(
+        self,
+        *,
+        signal_snapshot,
+        observer_frame=None,
+        wake_decision=None,
+        channel: str = "",
+        user_text: str = "",
+    ) -> None:
+        """Chạy PrivateLifeCore trên tick nền.
+
+        PrivateLife không trả Decision. Nó chỉ cập nhật đời sống riêng: habitat,
+        object attachments, private projects, solitude, taste, errands, life events.
+        Surface seed nếu có vẫn phải đi qua SurfaceArbiter. Đời sống riêng không
+        được cầm loa nhảy thẳng ra UI, dù nghe rất kịch tính.
+        """
+
+        daemon = getattr(self, "private_life_daemon", None)
+        if daemon is None:
+            return
+        try:
+            recent_events = tuple(getattr(signal_snapshot, "recent_events", ()) or ()) if signal_snapshot is not None else ()
+            tick = daemon.tick(
+                snapshot=signal_snapshot,
+                runtime_owner=self,
+                user_text=user_text,
+                channel=channel or "autonomous",
+                recent_events=recent_events,
+            )
+            digest_fn = getattr(daemon, "digest", None)
+            if callable(digest_fn):
+                self.private_life_digest = digest_fn(surface_queue=getattr(daemon, "surface_queue", None))
+            elif tick is not None and callable(getattr(tick, "to_dict", None)):
+                self.private_life_digest = tick.to_dict()
+            self.private_life_core = getattr(daemon, "core", getattr(self, "private_life_core", None))
+            self.private_life_surface_queue = getattr(daemon, "surface_queue", getattr(self, "private_life_surface_queue", []))
+        except Exception as exc:
+            try:
+                self.logger.warning("PrivateLife tick error: %s", exc)
+            except Exception:
+                pass
+
+    def _drain_private_life_surface_impulses(self, *, limit: int = 4) -> tuple[object, ...]:
+        """Lấy impulse đã lọc từ PrivateLife để đưa vào SurfaceArbiter."""
+
+        daemon = getattr(self, "private_life_daemon", None)
+        drain = getattr(daemon, "drain_surface_impulses", None) if daemon is not None else None
+        if callable(drain):
+            try:
+                return tuple(drain(limit=limit) or ())
+            except Exception:
+                pass
+        queue = getattr(self, "private_life_surface_queue", None)
+        if not isinstance(queue, list) or not queue:
+            return ()
+        items: list[object] = []
+        while queue and len(items) < max(1, int(limit or 4)):
+            items.append(queue.pop(0))
+        return tuple(items)
+
+    def _private_life_digest_for_payload(self) -> dict[str, object]:
+        """Digest gọn cho debug UI/body payload."""
+
+        digest = getattr(self, "private_life_digest", None)
+        if not isinstance(digest, dict):
+            return {}
+        return self._compact_private_mind_debug_value(digest, depth=0) if callable(getattr(self, "_compact_private_mind_debug_value", None)) else digest
 
     def _daydream_packets_from_runtime(self, *, limit: int = 20) -> tuple[DaydreamPacket, ...]:
         packets: list[DaydreamPacket] = []
@@ -1216,9 +1301,14 @@ class RuntimeCoordinator(
         private_digest = self._private_mind_digest_for_payload()
         if private_digest:
             self.private_mind_digest = private_digest
+        private_life_digest = self._private_life_digest_for_payload()
+        if private_life_digest:
+            self.private_life_digest = private_life_digest
         payload["emotion_debug"] = self._build_emotion_debug_payload()
         if isinstance(private_digest, dict) and private_digest:
             payload["private_mind_digest"] = private_digest
+        if isinstance(private_life_digest, dict) and private_life_digest:
+            payload["private_life_digest"] = private_life_digest
         self._record_public_turn(decision, payload=payload, channel=channel)
         self.transport.send_json(payload)
         if bool(payload.get("should_speak")) and str(payload.get("text", "") or "").strip() and self.subconscious_runtime_enabled:
@@ -1508,6 +1598,7 @@ class RuntimeCoordinator(
                 "state": str(value(self_state, "state_label", "") or value(state, "last_self_state_label", "") or ""),
             },
             "private_mind": getattr(self, "private_mind_digest", {}) or {},
+            "private_life": getattr(self, "private_life_digest", {}) or {},
             "items": {
                 "calm_aroused": metric("binh tinh <-> kich thich", value(appraisal, "arousal", value(state, "arousal", 0.0)), group="core"),
                 "emotional_stability": metric("on dinh cam xuc", stability, group="core"),

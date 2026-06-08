@@ -1855,52 +1855,208 @@ public partial class UdpListener : Node2D
 			return;
 		if (string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson))
 		{
-			_privateMindText.Text = "[color=#a090b8][i]Chua co private mind digest tu UDP.[/i][/color]";
+			_privateMindText.Text = "[color=#a090b8][i]Chưa có dữ liệu.[/i][/color]";
 			return;
 		}
 
 		try
 		{
 			using var doc = JsonDocument.Parse(_latestPrivateMindDebugJson);
-			JsonElement root = doc.RootElement;
-
-			// Ưu tiên inner_diary.sections do InnerDiaryRenderer tạo ra —
-			// view dễ đọc bằng tiếng Việt thay vì đổ raw JSON.
-			if (TryRenderInnerDiary(root, out string diaryText))
-			{
-				_privateMindText.Text = diaryText;
-				return;
-			}
-
-			// Fallback: đổ raw JSON theo kiểu cũ nếu chưa có inner_diary.
-			JsonElement menu = root;
-			if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("menu", out var menuRoot) && menuRoot.ValueKind == JsonValueKind.Object)
-				menu = menuRoot;
-
-			var sb = new StringBuilder();
-			sb.Append("[color=#c4a8f0][b]Private Mind[/b][/color]  [color=#6a5a80][i](raw — chua co inner_diary)[/i][/color]\n");
-			AppendPrivateMindSection(sb, menu, "snapshot_current",    "1. Snapshot hien tai");
-			AppendPrivateMindSection(sb, menu, "current_thought",     "2. Suy nghi hien tai");
-			AppendPrivateMindSection(sb, menu, "retained_thoughts",   "3. Suy nghi giu lai");
-			AppendPrivateMindSection(sb, menu, "pulled_thoughts",     "4. Suy nghi keo ve");
-			AppendPrivateMindSection(sb, menu, "temporary_thoughts",  "5. Suy nghi tam thoi");
-			AppendPrivateMindSection(sb, menu, "open_concerns",       "6. Concern dang mo");
-			AppendPrivateMindSection(sb, menu, "evidence_dossier",    "7. Evidence Dossier");
-			AppendPrivateMindSection(sb, menu, "mini_evaluators",     "8. Mini Evaluators");
-			AppendPrivateMindSection(sb, menu, "inner_judgment",      "9. Inner Judgment");
-			AppendPrivateMindSection(sb, menu, "state_mutations",     "10. State Mutations");
-			AppendPrivateMindSection(sb, menu, "future_bias",         "11. Future Bias");
-			AppendPrivateMindSection(sb, menu, "surface_queue",       "12. Surface Queue");
-			AppendPrivateMindSection(sb, menu, "speech_silence_reason","13. Vi sao noi / vi sao im");
-			AppendPrivateMindSection(sb, menu, "debug_api",           "14. Debug API / Cost / loi");
-			_privateMindText.Text = sb.ToString();
+			_privateMindText.Text = RenderDiary(doc.RootElement);
 		}
 		catch (Exception ex)
 		{
 			_privateMindText.Text =
-				$"[color=#ff6666]Private mind JSON loi:[/color] {EscapeBbcode(ex.Message)}\n\n" +
-				$"[color=#a090b8]{EscapeBbcode(CompactText(_latestPrivateMindDebugJson, 4000))}[/color]";
+				$"[color=#ff6666]Lỗi đọc dữ liệu:[/color] {EscapeBbcode(ex.Message)}";
 		}
+	}
+
+	/// <summary>
+	/// Render private mind digest thành diary tiếng Việt dễ đọc.
+	/// Ưu tiên inner_diary.sections nếu có; nếu không, tự dựng từ current/concerns/fragments.
+	/// </summary>
+	private static string RenderDiary(JsonElement root)
+	{
+		if (root.ValueKind != JsonValueKind.Object)
+			return "[color=#a090b8][i]Không có dữ liệu.[/i][/color]";
+
+		var sb = new StringBuilder();
+
+		// Thử dùng inner_diary.sections trước (đường ưu tiên)
+		JsonElement diaryEl = default;
+		bool hasDiary = false;
+		if (root.TryGetProperty("inner_diary", out diaryEl) && diaryEl.ValueKind == JsonValueKind.Object)
+			hasDiary = true;
+		else if (root.TryGetProperty("menu", out var menuEl) && menuEl.ValueKind == JsonValueKind.Object
+		         && menuEl.TryGetProperty("inner_diary", out diaryEl) && diaryEl.ValueKind == JsonValueKind.Object)
+			hasDiary = true;
+
+		if (hasDiary && diaryEl.TryGetProperty("sections", out var sectionsEl) && sectionsEl.ValueKind == JsonValueKind.Array)
+		{
+			int rendered = 0;
+			foreach (var sec in sectionsEl.EnumerateArray())
+			{
+				if (sec.ValueKind != JsonValueKind.Object) continue;
+				string title = sec.TryGetProperty("title", out var tEl) ? tEl.GetString() ?? "" : "";
+				if (!sec.TryGetProperty("lines", out var linesEl) || linesEl.ValueKind != JsonValueKind.Array)
+					continue;
+				var lines = new List<string>();
+				foreach (var l in linesEl.EnumerateArray())
+				{
+					string s = l.GetString() ?? "";
+					if (!string.IsNullOrWhiteSpace(s)) lines.Add(s);
+				}
+				if (lines.Count == 0) continue;
+				if (rendered > 0) sb.Append('\n');
+				sb.Append("[color=#88aaff][b]").Append(EscapeBbcode(title)).Append("[/b][/color]\n");
+				foreach (string line in lines)
+				{
+					if (line.StartsWith("- ", StringComparison.Ordinal))
+						sb.Append("[color=#a090b8]·[/color] ").Append(EscapeBbcode(line[2..])).Append('\n');
+					else
+						sb.Append(EscapeBbcode(line)).Append('\n');
+				}
+				rendered++;
+			}
+			if (rendered > 0)
+				return sb.ToString();
+		}
+
+		// Fallback: tự dựng diary từ dữ liệu thô — tiếng Việt, không dump JSON
+		return RenderDiaryFromRaw(root);
+	}
+
+	private static string RenderDiaryFromRaw(JsonElement root)
+	{
+		var sb = new StringBuilder();
+
+		// Tìm menu (hoặc dùng root trực tiếp)
+		JsonElement menu = root;
+		if (root.TryGetProperty("menu", out var menuEl) && menuEl.ValueKind == JsonValueKind.Object)
+			menu = menuEl;
+
+		// --- Suy nghĩ hiện tại ---
+		JsonElement current = default;
+		bool hasCurrent = false;
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("current_thought", out current) && current.ValueKind == JsonValueKind.Object)
+			hasCurrent = true;
+		else if (root.TryGetProperty("current", out current) && current.ValueKind == JsonValueKind.Object)
+			hasCurrent = true;
+
+		if (hasCurrent)
+		{
+			string judgment = DiaryStr(current, "dominant_judgment", 300);
+			string confidence = DiaryNum(current, "confidence");
+			string pressure = DiaryNum(current, "pressure");
+			if (!string.IsNullOrWhiteSpace(judgment))
+			{
+				sb.Append("[color=#88aaff][b]Suy nghĩ hiện tại[/b][/color]\n");
+				sb.Append(EscapeBbcode(judgment)).Append('\n');
+				sb.Append("[color=#6a5a80]Độ chắc: ").Append(confidence)
+				  .Append("  |  Áp lực: ").Append(pressure).Append("[/color]\n");
+			}
+		}
+
+		// --- Điều đang bận tâm ---
+		JsonElement concerns = default;
+		bool hasConcerns = false;
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("open_concerns", out concerns) && concerns.ValueKind == JsonValueKind.Array)
+			hasConcerns = true;
+		else if (root.TryGetProperty("retained", out var retained) && retained.ValueKind == JsonValueKind.Object
+		         && retained.TryGetProperty("concerns", out concerns) && concerns.ValueKind == JsonValueKind.Array)
+			hasConcerns = true;
+
+		if (hasConcerns)
+		{
+			int count = 0;
+			var concernLines = new List<string>();
+			foreach (var c in concerns.EnumerateArray())
+			{
+				if (c.ValueKind != JsonValueKind.Object) continue;
+				string theme = DiaryStr(c, "theme", 160);
+				if (string.IsNullOrWhiteSpace(theme)) continue;
+				string pressure = DiaryNum(c, "pressure");
+				string status = DiaryStr(c, "status", 30);
+				concernLines.Add($"{theme}  [color=#6a5a80](áp lực {pressure})[/color]");
+				if (++count >= 4) break;
+			}
+			if (concernLines.Count > 0)
+			{
+				if (sb.Length > 0) sb.Append('\n');
+				sb.Append("[color=#88aaff][b]Đang bận tâm[/b][/color]\n");
+				foreach (var l in concernLines)
+					sb.Append("[color=#a090b8]·[/color] ").Append(l).Append('\n');
+			}
+		}
+
+		// --- Mảnh suy nghĩ từ evaluators ---
+		JsonElement fragments = default;
+		bool hasFragments = false;
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("temporary_thoughts", out var tmp)
+		    && tmp.ValueKind == JsonValueKind.Object && tmp.TryGetProperty("fragments", out fragments)
+		    && fragments.ValueKind == JsonValueKind.Array)
+			hasFragments = true;
+		else if (root.TryGetProperty("temporary", out var tmpR) && tmpR.ValueKind == JsonValueKind.Object
+		         && tmpR.TryGetProperty("fragments", out fragments) && fragments.ValueKind == JsonValueKind.Array)
+			hasFragments = true;
+
+		if (hasFragments)
+		{
+			int count = 0;
+			var fragLines = new List<string>();
+			foreach (var f in fragments.EnumerateArray())
+			{
+				if (f.ValueKind != JsonValueKind.Object) continue;
+				string claim = DiaryStr(f, "claim", 200);
+				if (string.IsNullOrWhiteSpace(claim)) continue;
+				string score = DiaryNum(f, "score");
+				fragLines.Add($"{claim}  [color=#6a5a80](score {score})[/color]");
+				if (++count >= 4) break;
+			}
+			if (fragLines.Count > 0)
+			{
+				if (sb.Length > 0) sb.Append('\n');
+				sb.Append("[color=#88aaff][b]Phân tích gần đây[/b][/color]\n");
+				foreach (var l in fragLines)
+					sb.Append("[color=#a090b8]·[/color] ").Append(l).Append('\n');
+			}
+		}
+
+		// --- API status nếu có lỗi ---
+		JsonElement debugApi = default;
+		if (menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("debug_api", out debugApi)
+		    && debugApi.ValueKind == JsonValueKind.Object)
+		{
+			string lastError = DiaryStr(debugApi, "last_error", 120);
+			if (!string.IsNullOrWhiteSpace(lastError) && lastError != "none" && lastError != "null")
+			{
+				if (sb.Length > 0) sb.Append('\n');
+				sb.Append("[color=#ff8866][b]API:[/b] ").Append(EscapeBbcode(lastError)).Append("[/color]\n");
+			}
+		}
+
+		return sb.Length > 0
+			? sb.ToString()
+			: "[color=#a090b8][i]Chưa có đủ dữ liệu.[/i][/color]";
+	}
+
+	private static string DiaryStr(JsonElement el, string key, int limit)
+	{
+		if (el.ValueKind != JsonValueKind.Object) return "";
+		if (!el.TryGetProperty(key, out var v)) return "";
+		string raw = v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : v.GetRawText();
+		return CompactText(raw, limit);
+	}
+
+	private static string DiaryNum(JsonElement el, string key)
+	{
+		if (el.ValueKind != JsonValueKind.Object) return "—";
+		if (!el.TryGetProperty(key, out var v)) return "—";
+		if (v.ValueKind == JsonValueKind.Number)
+		{
+			if (v.TryGetDouble(out double d)) return d.ToString("0.##");
+		}
+		return v.GetRawText();
 	}
 
 	/// <summary>
@@ -1929,32 +2085,48 @@ public partial class UdpListener : Node2D
 		if (diaryEl.TryGetProperty("sections", out var sectionsEl) && sectionsEl.ValueKind == JsonValueKind.Array)
 		{
 			var sb = new StringBuilder();
-			sb.Append("[color=#c4a8f0][b]✦ Inner Diary[/b][/color]\n");
+			int totalLines = 0;
 
 			foreach (var sectionEl in sectionsEl.EnumerateArray())
 			{
 				if (sectionEl.ValueKind != JsonValueKind.Object) continue;
 				string sectionTitle = sectionEl.TryGetProperty("title", out var tEl) ? tEl.GetString() ?? "" : "";
-				sb.Append("\n[color=#88aaff][b]");
-				sb.Append(EscapeBbcode(sectionTitle));
-				sb.Append("[/b][/color]\n");
 
+				// Đếm lines thực có trong section này trước khi render tiêu đề,
+				// tránh render tiêu đề rỗng lơ lửng khi data chưa về.
+				var sectionLines = new List<string>();
 				if (sectionEl.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
 				{
 					foreach (var lineEl in linesEl.EnumerateArray())
 					{
 						string line = lineEl.GetString() ?? "";
-						if (string.IsNullOrWhiteSpace(line)) continue;
-						// Dòng bắt đầu bằng "- " → dấu bullet có màu mờ hơn
-						if (line.StartsWith("- ", StringComparison.Ordinal))
-							sb.Append("[color=#a090b8]•[/color] ").Append(EscapeBbcode(line[2..])).Append('\n');
-						else
-							sb.Append(EscapeBbcode(line)).Append('\n');
+						if (!string.IsNullOrWhiteSpace(line))
+							sectionLines.Add(line);
 					}
+				}
+
+				if (sectionLines.Count == 0) continue; // bỏ qua section rỗng
+
+				sb.Append("\n[color=#88aaff][b]");
+				sb.Append(EscapeBbcode(sectionTitle));
+				sb.Append("[/b][/color]\n");
+
+				foreach (string line in sectionLines)
+				{
+					if (line.StartsWith("- ", StringComparison.Ordinal))
+						sb.Append("[color=#a090b8]•[/color] ").Append(EscapeBbcode(line[2..])).Append('\n');
+					else
+						sb.Append(EscapeBbcode(line)).Append('\n');
+					totalLines++;
 				}
 			}
 
-			bbcode = sb.ToString();
+			// Nếu không có line nào thực sự — digest chưa đủ data (synthesis đang fail).
+			// Trả false để fallback raw JSON thay vì hiện panel trống chỉ có tiêu đề.
+			if (totalLines == 0)
+				return false;
+
+			bbcode = sb.ToString().TrimStart('\n');
 			return true;
 		}
 
@@ -1965,7 +2137,6 @@ public partial class UdpListener : Node2D
 			if (!string.IsNullOrWhiteSpace(raw))
 			{
 				var sb = new StringBuilder();
-				sb.Append("[color=#c4a8f0][b]✦ Inner Diary[/b][/color]\n\n");
 				foreach (var line in raw.Split('\n'))
 				{
 					if (line.EndsWith(":", StringComparison.Ordinal))

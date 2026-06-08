@@ -18,15 +18,14 @@ Giới hạn trung thực:
 
 # 0A. Git delta gần đây
 
-Khoảng thay đổi đã soi trực tiếp hiện tại: từ `2026-06-04` đến `2026-06-06`, chuỗi commit cần coi là còn nóng giờ kéo từ `fdfe52c`, `c268eab`, `aa9af6f`, `04bd5f6`, `5f812fc`, `553985e`, `eff0420`, `e8d3511`, `104c45b` lên tiếp `9bbdcd2`, `637e7fc`.
+Khoảng thay đổi đã soi trực tiếp hiện tại: từ `2026-06-04` đến `2026-06-07`, chuỗi commit nóng kéo từ `fdfe52c`, `c268eab`, `aa9af6f`, `04bd5f6`, `5f812fc`, `553985e`, `eff0420`, `e8d3511`, `104c45b`, `9bbdcd2`, `637e7fc`, `f8555c6`, `86d3fcf`, `3782f41` lên tới `8e915de`.
 
 Trạng thái sync với remote lúc rà tài liệu:
-- `git fetch origin` chạy sạch.
-- `git rev-parse HEAD` = `git rev-parse origin/main` = `637e7fcd1b875df054af8f02e558f007a0310b5f`.
+- `git rev-parse HEAD` = `git rev-parse origin/main` = `8e915dec2dc87346cf7545bad5424c6060bae17d`.
 - `git rev-list --left-right --count HEAD...origin/main` trả `0  0`.
-- `git status --short` lúc rà lại sau `3782f41` hiện sạch.
-- nghĩa là hiện **không có commit nào bị thiếu do chưa pull** trong snapshot đang rà; cái thiếu còn lại là bản source-map này chưa bám hết từng file bằng audit tuyệt đối.
-- **CẬP NHẬT 2026-06-07 audit**: worktree KHÔNG CÒN SẠCH. 13 file modified + 1 untracked (`inner_diary_renderer.py`). Xem section 0E cho chi tiết dirty state.
+- `git status --short` hiện có local patch: `body/UdpListener.cs`, `memory_core/active_state_snapshot.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl`, `src/cortex/private_mind/inner_synthesizer.py`, `src/cortex/private_mind/mini_evaluators.py`, `src/runtime/private_mind_loop.py`, `src/runtime/private_mind_model_adapter.py`, và `tongquat.md`.
+- nghĩa là hiện **không có commit nào bị thiếu do chưa pull**, nhưng workspace không sạch vì có patch local chưa commit sau `8e915de`.
+- **CẬP NHẬT 2026-06-07 audit**: các dòng cũ nói worktree có 13 modified + 1 untracked (`inner_diary_renderer.py`) đã lạc hậu. Những thay đổi đó đã được commit ở `8e915de`; dirty state hiện tại là một cụm khác, tập trung vào adapter pool / synthesis cooldown / per-evaluator dossier slicers, cộng runtime data sống.
 
 Lịch sử `git pull` còn thấy trực tiếp trong reflog gần đây:
 - tổng cộng `6` entry có chữ `pull`.
@@ -58,6 +57,7 @@ Nhìn theo `git show --stat` và history từng file, mấy cụm thay đổi đ
 - `637e7fc`: là đợt chạm file rất lớn sau snapshot cũ, đáng chú ý nhất là `coordinator.py` `+623` dòng, thêm mới `src/cortex/subconscious/model_synthesizer.py` `+412` dòng, cùng các thay đổi tiếp ở `process_manager.py` và `executor.py`.
 - `f8555c6` (`2026-06-07 00:39:48 +0700`): mốc private mind base đầu tiên. Theo lịch sử từng file, commit này lần đầu/đợt chính chạm `src/runtime/private_mind_loop.py`, `src/cortex/private_mind/evidence_dossier.py`, `src/cortex/private_mind/state_mutation_bus.py`, `src/runtime/private_mind_model_adapter.py`, `body/UdpDecisionParser.cs`, `src/transport/udp.py`; riêng `src/runtime/cognitive_frame_recorder.py` có lịch sử dài hơn từ `afec1a5`, `8a6a329`, `440e71a`, `b303cb8`, `dc51d80`, `6b06e3f`, `e69eccd`, rồi tới `f8555c6`.
 - `3782f41` (`2026-06-07 16:00:34 +0700`): mốc tracked mới hơn cho private mind daemon/surface seed. Commit này add `src/runtime/private_mind_daemon.py`, `src/cortex/surface_seed_compiler.py`, `tests/test_private_mind_daemon.py`, `tests/test_private_mind_model_adapter.py`, `tests/test_surface_seed_compiler.py`, `tests/test_udp_private_mind_debug.py`, đồng thời sửa `src/runtime/coordinator.py`, `src/runtime/presence_controller.py`, `src/runtime/private_mind_loop.py`, `src/runtime/private_mind_model_adapter.py`, `src/transport/udp.py`, `src/cortex/private_mind/evidence_dossier.py`, `src/cortex/private_mind/state_mutation_bus.py`, và `tests/test_presence_controller_memory_surface.py`.
+- `8e915de` (`2026-06-07 19:24:33 +0700`): mốc tracked mới nhất cho private-mind API resilience và Inner Diary UI. Commit này add `src/cortex/private_mind/inner_diary_renderer.py`, `.kiro/specs/private-mind-api-resilience/*`, `tests/test_unit_resilience.py`, `tests/test_integration_loop_resilience.py`, các test PBT transient, và tracked luôn delta trước đó ở `body/UdpListener.cs`, `src/runtime/private_mind_model_adapter.py`, `src/runtime/private_mind_loop.py`, `src/runtime/coordinator.py`, `src/transport/udp.py`.
 
 AUDIT 2026-06-07 theo từng file đang mở/local:
 - `src/runtime/private_mind_daemon.py`: **THIẾU TRONG DOC CŨ / ĐÃ TRACKED Ở `3782f41`**. Source hiện đổi owner lifecycle sang `PrivateMindDaemon`, còn `PrivateMindLoop` chỉ là loop tick bên trong. Nếu tài liệu vẫn ghi file này untracked thì chính tài liệu đã lạc hậu.
@@ -69,21 +69,29 @@ AUDIT 2026-06-07 theo từng file đang mở/local:
 - `src/cortex/private_mind/state_mutation_bus.py`: **DOC CẦN CHÍNH XÁC HƠN**. Bus vẫn hỗ trợ mutation target `surface_candidate_queue`, nhưng không còn tự enqueue `judgment.surface_candidate` mặc định ở cuối `apply()`. Candidate public phải đi qua `SurfaceValve`/loop/daemon trước.
 - `src/runtime/private_mind_loop.py`: **DOC ĐÚNG HƯỚNG NHƯNG THIẾU DAEMON CONTEXT**. Loop vẫn build dossier, chạy evaluator, synthesize, apply mutation và valve surface; nhưng lifecycle queue/outcome/digest bền hơn đang do daemon ôm.
 - `src/runtime/private_mind_model_adapter.py`: **DOC CẦN CHỈ RÕ FAILURE MODE HIỆN TẠI**. Khi log có nhiều `[PrivateMind API] ... error=invalid_json`, lỗi chính là output API không parse được JSON, không phải crash loop. Adapter trả `None`, evaluator/synthesizer rule fallback tiếp tục tạo fragment/judgment.
-- `src/memory_core/private_concerns.json`: **FILE LOCAL/UNTRACKED, PATH DỄ GÂY NHẦM**. Source default trong `private_mind_loop._resolve_concern_path()` vẫn là `Path(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core")) / "private_concerns.json"`, tức mặc định `memory_core/private_concerns.json`. File đang mở ở `src/memory_core/private_concerns.json` chỉ đúng nếu env `ERIS_MEMORY_CORE_DIR=src/memory_core` hoặc có copy local riêng.
+- `src/runtime/private_mind_model_adapter.py`: **DOC CẦN BỔ SUNG SAU `8e915de`**. Adapter hiện không chỉ vá `invalid_json`; nó còn phân loại lỗi transport transient, retry/backoff, transient cooldown/circuit-breaker, fast-fail khi cooldown, và expose `degraded_cause`/`transient_streak`/`transient_cooldown_until` trong `debug_status()`.
+- `src/cortex/private_mind/inner_diary_renderer.py`: **ĐÃ TRACKED Ở `8e915de`**. Không còn là file local/untracked; đây là renderer private debug biến `private_mind_digest` thành `inner_diary.sections/text` cho UI Godot đọc.
+- `body/UdpListener.cs`: **DOC CŨ THIẾU SAU `8e915de`**. Source hiện có context button `Private Mind`, panel `PrivateMindPanel`, render `inner_diary` thành BBCode nếu digest có `inner_diary`, và fallback raw JSON theo menu private-mind cũ.
+- `src/memory_core/private_concerns.json`: **PATH DỄ GÂY NHẦM**. Source default trong `private_mind_loop._resolve_concern_path()` vẫn là `Path(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core")) / "private_concerns.json"`, tức mặc định `memory_core/private_concerns.json`. `src/memory_core/private_concerns.json` chỉ đúng nếu env `ERIS_MEMORY_CORE_DIR=src/memory_core` hoặc có copy local riêng.
 - `tests/test_private_mind_daemon.py`: **THIẾU TRONG DOC CŨ / ĐÃ TRACKED Ở `3782f41`**. Test này khóa daemon sở hữu queue, outcome feedback cập nhật concern lifecycle, và dossier có thought/runtime/surface queue anchors.
+- `tests/test_unit_resilience.py`, `tests/test_integration_loop_resilience.py`, `tests/test_pbt_*_transient.py`: **THIẾU TRONG DOC CŨ / ĐÃ TRACKED Ở `8e915de`**. Đây là cụm test khóa bug condition transient transport cho PrivateMind API: HTTP 5xx/429/timeout phải retry/cooldown/fast-fail có phân loại, còn JSON hợp lệ/invalid_json/fixed-config path phải giữ nguyên.
+- `src/runtime/private_mind_model_adapter.py` LOCAL PATCH SAU `8e915de`: **DOC CẦN GHI RÕ CHƯA COMMIT**. Source workspace hiện thêm `PrivateMindAdapterPool`, tách adapter riêng cho 4 fragment evaluator và 1 synthesis adapter; thêm `synthesis_invalid_json_streak` / `synthesis_json_cooldown_until`; thêm per-evaluator dossier slicers; judgment prompt dùng slim dossier/fragment và payload cap; `debug_status()` aggregate status pool.
+- `src/cortex/private_mind/mini_evaluators.py`, `src/cortex/private_mind/inner_synthesizer.py`, `src/runtime/private_mind_loop.py` LOCAL PATCH SAU `8e915de`: mini evaluators dùng `fragment_adapter(evaluator_name)`, synthesizer dùng `synthesis_adapter`, loop build `PrivateMindAdapterPool.from_env()` thay vì một `RuntimePrivateMindModelAdapter` đơn.
+- `memory_core/active_state_snapshot.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl` LOCAL PATCH SAU `8e915de`: runtime data/state sống đang đổi; không gộp các dòng này vào lịch sử source code. Khi audit source-map, chỉ nhắc chúng như dữ liệu runtime hiện tại.
 
 Tình trạng worktree lúc cập nhật tài liệu này:
-- AUDIT 2026-06-07 sau `3782f41`: `git status --short` hiện sạch tại thời điểm rà lại tài liệu. Các file từng được ghi là untracked (`src/cortex/surface_seed_compiler.py`, `src/runtime/private_mind_daemon.py`, `tests/test_private_mind_daemon.py`, `tests/test_private_mind_model_adapter.py`, `tests/test_surface_seed_compiler.py`, `tests/test_udp_private_mind_debug.py`) nay đã nằm trong lịch sử commit.
-- Nếu gặp dòng cũ trong tài liệu nói các file trên là `UNTRACKED CURRENT WORKSPACE`, đánh dấu dòng đó là lạc hậu và sửa về `tracked at 3782f41`.
-- Vì worktree hiện sạch, các dòng gắn "source local" trong revision này nên hiểu là source workspace hiện tại đã tracked, không còn là patch nổi ngoài lịch sử git.
-- các file runtime data như `memory_core/active_state_snapshot.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl` vẫn là state sống; lần này chúng không còn là drift local mà là một phần snapshot hiện tại của workspace.
+- AUDIT 2026-06-07 sau `8e915de`: các file từng được ghi là untracked/dirty (`src/cortex/private_mind/inner_diary_renderer.py`, `body/UdpListener.cs`, `src/transport/udp.py`, các test private-mind) nay đã nằm trong lịch sử commit.
+- Worktree hiện vẫn dirty, nhưng là dirty state mới: `body/UdpListener.cs`, `memory_core/active_state_snapshot.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl`, `inner_synthesizer.py`, `mini_evaluators.py`, `private_mind_loop.py`, `private_mind_model_adapter.py`, và `tongquat.md`.
+- Nếu gặp dòng cũ trong tài liệu nói các file trên là `UNTRACKED CURRENT WORKSPACE` hoặc `WORKTREE DIRTY`, đánh dấu dòng đó là lạc hậu và sửa về `tracked at 8e915de` nếu liên quan Inner Diary/resilience, hoặc `tracked at 3782f41` nếu liên quan daemon/surface seed.
+- Các dòng gắn "LOCAL PATCH SAU `8e915de`" là source workspace hiện tại chưa commit; không gộp nhầm vào tracked history.
+- các file runtime data như `memory_core/active_state_snapshot.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl` vẫn là state sống. Hiện chúng đang dirty sau `8e915de`; dùng để hiểu snapshot runtime hiện tại, không dùng để kết luận thay đổi source/API.
 
 ---
 
 # 0C. Audit drift của chính `tongquat.md`
 
 Mục này chủ ý chỉ ra chỗ tài liệu đang sai, thiếu, hoặc lạc nhịp so với source thật:
-- `src/runtime/coordinator.py`: tài liệu cũ ghi khoảng `6,088` dòng; file hiện là khoảng `6,862` dòng. Quan trọng hơn, section này chưa ghi rõ mốc `637e7fc` là một lần phình lớn `+623` dòng, cộng `3782f41` và dirty state tiếp tục nâng lên.
+- `src/runtime/coordinator.py`: tài liệu cũ ghi khoảng `6,088`/`6,862` dòng theo snapshot khác; file hiện là khoảng `6,848` dòng ở `8e915de`. Quan trọng hơn, section này cần ghi rõ mốc `637e7fc` là một lần phình lớn `+623` dòng, `3782f41` nâng sang daemon/surface seed, và `8e915de` chạm tiếp resilience/loop path.
 - `src/cortex/surface_arbiter.py`: tài liệu có bám `blind_frustration`, nhưng chưa ghi patch `9bbdcd2` cho đường `subconscious_report` / `surface_seed` Phase 0.
 - `src/llm/process_manager.py`: có section riêng nhưng thiếu lịch sử chạm file gần nhất và thiếu nhấn mạnh nhánh phát hiện `n_ctx` của server đang sống + best-effort kill đúng `llama-server` trên port local.
 - `src/cortex/subconscious/model_synthesizer.py`: đang mở trong IDE và vừa được thêm mới ở `637e7fc`, nhưng bản tài liệu cũ gần như chưa có mục riêng. Đây là thiếu thật chứ không phải thiếu chi tiết nhỏ.
@@ -93,9 +101,11 @@ Mục này chủ ý chỉ ra chỗ tài liệu đang sai, thiếu, hoặc lạc 
 - `body/UdpDecisionParser.cs`: **DOC THIẾU SAU `f8555c6`**. File đã nhận `private_mind_digest` top-level hoặc `emotion_debug.private_mind` và lưu raw JSON vào `PrivateMindDebugJson`; nếu tài liệu chỉ nói parser đọc `emotion_debug` chung thì thiếu debug path private mind ở Godot.
 - `src/transport/udp.py`: **DOC GHI CHƯA CHÍNH XÁC** nếu nói payload private debug bị strip ngay. Source hiện compact `private_mind_digest` trước khi gửi khi vượt `MAX_UDP_PAYLOAD_BYTES=60000`, chỉ rơi về payload tối thiểu khi vẫn quá lớn.
 - `tests/test_udp_private_mind_debug.py`: **THIẾU TRONG DOC CŨ / ĐÃ TRACKED Ở `3782f41`**. Test này khóa behavior compact private mind UDP overflow, nên nó là bằng chứng source hiện tại đã ưu tiên giữ debug digest bản gọn thay vì xóa sạch.
-- `src/cortex/private_mind/inner_diary_renderer.py`: **FILE MỚI UNTRACKED HIỆN TẠI**. ~135 dòng, class `InnerDiaryRenderer` render private_mind_digest thành structured debug text. Nếu commit, cần mục doc riêng.
-- `body/UdpListener.cs`: **WORKTREE DIRTY +119/-23**. Nếu delta liên quan InnerDiary panel / private mind debug UI thì doc section body cần bổ sung mô tả panel mới. Tổng file hiện `2,241` dòng.
+- `src/cortex/private_mind/inner_diary_renderer.py`: **ĐÃ TRACKED Ở `8e915de`, DOC CŨ NÓI UNTRACKED LÀ SAI**. File hiện khoảng `119` dòng, class `InnerDiaryRenderer` render `private_mind_digest` thành structured debug text/sections.
+- `body/UdpListener.cs`: **ĐÃ TRACKED Ở `8e915de`, DOC CŨ NÓI WORKTREE DIRTY KIỂU CŨ LÀ SAI**. File hiện `2,239` dòng, có Private Mind panel/Inner Diary renderer path, và đang có local UI title patch `-2` dòng sau `8e915de`.
 - `src/cortex/surface_arbiter.py`: **SỐ DÒNG SAI** — doc ghi `1,268`, thực tế `1,557`. Tracked history có thêm `86d3fcf` chưa ghi.
+- `tests/test_semantic_claim_entailment.py`: **KHÔNG LẠC HẬU Ở `8e915de`**. File đang mở trong IDE thuộc cụm semantic memory entailment; history gần nhất là `a9e6c58`, không bị đợt private-mind resilience chạm. Nếu doc cần nói về file này, trọng tâm đúng là chống preference-location bị dùng để trả lời hometown/current-location.
+- LOCAL PATCH SAU `8e915de`: `private_mind_model_adapter.py` đã tăng lên khoảng `1,115` dòng và thêm `PrivateMindAdapterPool` + per-evaluator dossier slicers; các section chỉ nói một adapter dùng chung hoặc gửi nguyên dossier cho mọi evaluator đã lạc hậu so với workspace hiện tại.
 
 ---
 
@@ -105,22 +115,39 @@ Mục này là checklist nhanh cho các file đang sai/thiếu/lạc hậu so v�
 
 | File | Tracked history gần nhất | Doc drift / cần sửa trong doc |
 | --- | --- | --- |
-| `src/runtime/coordinator.py` | Chuỗi nóng `fdfe52c -> aa9af6f -> 04bd5f6 -> 5f812fc -> 553985e -> eff0420 -> 637e7fc -> f8555c6 -> 3782f41`; riêng `637e7fc` phình lớn runtime/subconscious, `f8555c6` thêm private mind base, `3782f41` nâng sang daemon/surface seed tracked. | Doc nào nói coordinator chỉ giữ `PrivateMindLoop` là lạc hậu. Source hiện dùng `PrivateMindDaemon.from_runtime()`, giữ `private_mind_loop = daemon.loop`, tick daemon trước, và drain qua `daemon.drain_surface_impulses()` trước fallback queue cũ. |
+| `src/runtime/coordinator.py` | Chuỗi nóng `fdfe52c -> aa9af6f -> 04bd5f6 -> 5f812fc -> 553985e -> eff0420 -> 637e7fc -> f8555c6 -> 3782f41 -> 8e915de`; riêng `637e7fc` phình lớn runtime/subconscious, `f8555c6` thêm private mind base, `3782f41` nâng sang daemon/surface seed tracked, `8e915de` chạm tiếp private resilience state. | Doc nào nói coordinator chỉ giữ `PrivateMindLoop` là lạc hậu. Source hiện dùng `PrivateMindDaemon.from_runtime()`, giữ `private_mind_loop = daemon.loop`, tick daemon trước, và drain qua `daemon.drain_surface_impulses()` trước fallback queue cũ. |
 | `src/runtime/presence_controller.py` | Chuỗi tracked dày từ `fdfe52c` đến `104c45b`, rồi `f8555c6`, mới nhất `3782f41`; đây là file surface/wake nóng nhất sau các pull 2026-06-05/06. | Source hiện thêm `SurfaceSeedCompiler`; `_build_surface_arbiter_result()` compile seed public-safe, enrich cue, và thêm impulse `source="surface_seed_compiler"`. Doc chỉ nói endogenous/private impulses là thiếu. |
 | `src/cortex/surface_seed_compiler.py` | Added ở `3782f41`. | Cần doc như compiler seed public-safe giữa presence cue và arbiter; guard raw private/debug/timer-only; output `CompiledSurfaceSeed`/`SurfaceImpulse`. Dòng nào còn ghi "chưa tracked/untracked" là sai. |
 | `src/runtime/private_mind_daemon.py` | Added ở `3782f41`. | Owner lifecycle private mind: queue/outcome/digest/tick counters; không tự mở thread; loop chỉ còn xử lý một tick. Dòng nào còn ghi "file mới local chưa tracked" là sai. |
-| `src/runtime/private_mind_loop.py` | Added ở `f8555c6`, sửa tiếp ở `3782f41`. | Loop vẫn build dossier/evaluator/synthesizer/mutation/valve, nhưng lifecycle bền nằm ở daemon. Doc coi loop là owner duy nhất là sai. |
-| `src/runtime/cognitive_frame_recorder.py` | Lịch sử dài `afec1a5 -> 8a6a329 -> 440e71a -> b303cb8 -> dc51d80 -> 6b06e3f -> e69eccd -> f8555c6`. | Source hiện `_feed_private_mind_outcome()` ưu tiên `private_mind_daemon.record_outcome(outcome, frame=frame)`, fallback loop/store chỉ là tương thích cũ. |
+| `src/runtime/private_mind_loop.py` | Added ở `f8555c6`, sửa tiếp ở `3782f41` và `8e915de`. | Loop vẫn build dossier/evaluator/synthesizer/mutation/valve, nhưng lifecycle bền nằm ở daemon. Sau `8e915de`, cần soi thêm degraded/transient API status khi model adapter rơi về fallback. |
+| `src/runtime/cognitive_frame_recorder.py` | Lịch sử dài `afec1a5 -> 8a6a329 -> 440e71a -> b303cb8 -> dc51d80 -> 6b06e3f -> e69eccd -> f8555c6 -> 3782f41`. | Source hiện `_feed_private_mind_outcome()` ưu tiên `private_mind_daemon.record_outcome(outcome, frame=frame)`, fallback loop/store chỉ là tương thích cũ. |
 | `src/cortex/private_mind/evidence_dossier.py` | Added ở `f8555c6`, sửa tiếp ở `3782f41`. | Dossier nhận thêm `thought_stream`, `surface_candidate_queue`, `runtime_owner`; runtime state có `thought_stream/private_runtime/surface_queue`; metrics thêm `runtime_anchor_count`, `memory_hit_count`, `repair_failure_count`, `concern_count`, `dossier_thickness`. |
 | `src/cortex/private_mind/state_mutation_bus.py` | Added ở `f8555c6`, sửa tiếp ở `3782f41`. | Bus không tự enqueue `judgment.surface_candidate` ở cuối `apply()` nữa. Candidate public phải qua `SurfaceValve`/loop/daemon; doc cũ nói auto-enqueue là sai. |
-| `src/runtime/private_mind_model_adapter.py` | Added ở `f8555c6`, sửa parser ở `3782f41`. | Source hiện parser JSON khỏe hơn: code fence, balanced object, repair object cụt, trailing comma/None/True/False, `ast.literal_eval`. Doc chỉ nói `json.loads` rồi fail là lạc hậu. |
-| `src/transport/udp.py` | File có từ `287f857`, sửa `7112553`, chạm private mind ở `f8555c6`, compact debug ở `3782f41`. | Source hiện compact `private_mind_digest` khi payload > `60000` bytes và mirror vào `emotion_debug.private_mind`; chỉ fallback payload tối thiểu nếu compact vẫn quá lớn. Không nói "strip ngay". |
+| `src/runtime/private_mind_model_adapter.py` | Added ở `f8555c6`, sửa parser ở `3782f41`, vá resilience transient ở `8e915de`. | Source hiện parser JSON khỏe hơn và có transient retry/backoff/cooldown. Doc chỉ nói `json.loads` rồi fail, hoặc chỉ nói `invalid_json`, là lạc hậu. |
+| `src/runtime/private_mind_model_adapter.py` LOCAL PATCH | Chưa commit sau `8e915de`; diff hiện khoảng `+346/-1` trong cụm private-mind. | Thêm `PrivateMindAdapterPool`, adapter riêng cho fragment roles và synthesis, synthesis-specific invalid JSON cooldown, per-evaluator dossier slicers (`intent`, `memory_resonance`, `risk`, `future_bias`), slim dossier/fragment cho judgment prompt, hard cap payload khoảng `6000` chars, và pool-level `debug_status()`. |
+| `src/cortex/private_mind/mini_evaluators.py` LOCAL PATCH | Chưa commit sau `8e915de`; diff nhỏ. | `_from_model_or_none()` nếu nhận pool thì gọi `fragment_adapter(evaluator_name)` để streak/cooldown độc lập theo evaluator. |
+| `src/cortex/private_mind/inner_synthesizer.py` LOCAL PATCH | Chưa commit sau `8e915de`; diff nhỏ. | `_try_model()` nếu nhận pool thì dùng `synthesis_adapter` riêng để fragment success không reset synthesis streak. |
+| `src/runtime/private_mind_loop.py` LOCAL PATCH | Chưa commit sau `8e915de`; diff nhỏ. | `from_runtime()` dùng `PrivateMindAdapterPool.from_env()` thay vì `RuntimePrivateMindModelAdapter.from_env()`. |
+| `memory_core/active_state_snapshot.json`, `memory_core/event_ledger.json`, `memory_core/semantic_memory.json`, `ni_drift_samples.jsonl` LOCAL PATCH | Chưa commit sau `8e915de`; runtime data/state sống. | Không phải source behavior. Ghi nhận dirty state để tránh tưởng `git status` chỉ còn code/doc; không dùng các file này làm bằng chứng lịch sử API/source. |
+| `src/transport/udp.py` | File có từ `287f857`, sửa `7112553`, chạm private mind ở `f8555c6`, compact debug ở `3782f41`, chạm lại `8e915de`. | Source hiện compact `private_mind_digest` khi payload > `60000` bytes và mirror vào `emotion_debug.private_mind`; chỉ fallback payload tối thiểu nếu compact vẫn quá lớn. Không nói "strip ngay". |
+| `body/MotionController.cs` | Added lớn ở `cdf3618`, tách controller ở `763d203`, tune tiếp throw/cling/climb-target ở `27d4d09`. | Doc nào còn mô tả motion nằm hết trong `UdpListener.cs` là lạc hậu. Source hiện gom state machine đi bộ/rơi/leo/ném vào `MotionController`, kể cả `cling:<chance>` và `IsBusy`/`IsTopPerched`/`IsThrown`. |
+| `body/LocalBodyAutonomy.cs` | Added ở `763d203`, tune tiếp ở `27d4d09`. | Không còn là idle random đơn giản. Source hiện có `BodyBias`, need/tension model, cooldown theo action, `ObserveCode`/`ClimbWall`/`DropFromCeiling`, và gate `CanInterruptPose()`. |
+| `body/ErisProcessManager.cs` | Added ở `763d203`, sửa tiếp ở `6658301`. | Doc chỉ nói start/stop process là thiếu. Source hiện load `config/secrets.json`, inject `ERIS_REMOTE_*`/`GEMINI_API_KEY`, probe `llama-server` reachability, và chỉ boot `vision.py` khi local server thật sự sẵn nếu lane local cần nó. |
+| `body/BodyAudioController.cs` | Added ở `763d203`. | File này đã tách khỏi `UdpListener.cs`; doc nào còn nói audio loop/sound map nằm trực tiếp trong listener là cũ. Source hiện chỉ loop lại cho một nhóm animation (`stand_walk`, `sleep`, `hop`, `climb`). |
 | `body/UdpDecisionParser.cs` | `763d203`, `afec1a5`, `de630ba`, gần nhất `f8555c6`. | Parser đọc `private_mind_digest` top-level hoặc `emotion_debug.private_mind` vào `PrivateMindDebugJson`/`HasPrivateMindDebug`. Doc chỉ nói emotion debug chung là thiếu Godot debug path. |
+| `body/UdpListener.cs` | Chạm nhiều từ cuối 2026-05; private debug ở `f8555c6`, Inner Diary panel tracked ở `8e915de`. | Source hiện có context menu `Private Mind`, panel `PrivateMindPanel`, `RefreshPrivateMindPanel()`, `TryRenderInnerDiary()`, và fallback raw JSON. Doc cũ chỉ nói emotion panel/chat/UDP là thiếu. |
+| `body/UdpListener.cs` LOCAL PATCH | Chưa commit sau `8e915de`; diff hiện `-2` dòng. | `TryRenderInnerDiary()` bỏ append header `✦ Inner Diary` trong cả path `sections` và `text`, tức panel có thể tránh lặp tiêu đề nếu UI/header đã có title riêng. |
+| `src/cortex/private_mind/inner_diary_renderer.py` | Added ở `8e915de`. | Renderer private debug tạo `inner_diary` từ digest; không tạo public speech, không invent ngoài digest. Dòng nào còn ghi untracked là sai. |
+| `.kiro/specs/private-mind-api-resilience/*` | Added ở `8e915de`. | Spec bugfix/design/tasks cho transient transport resilience. Không phải runtime code, nhưng là nguồn giải thích bug condition/PBT trong đợt vá mới. |
 | `tests/test_surface_seed_compiler.py` | Added ở `3782f41`. | Test khóa compiler: memory/thought/private-safe seed, raw private reject, invalid JSON reject, timer-only reject. |
 | `tests/test_presence_controller_memory_surface.py` | Added ở `5f812fc`, sửa compiler integration ở `3782f41`. | Doc test cần ghi thêm case `_build_surface_arbiter_result()` đưa thought seed public-safe vào arbiter. |
 | `tests/test_private_mind_daemon.py` | Added ở `3782f41`. | Test khóa daemon owner queue/outcome/dossier anchors. |
 | `tests/test_private_mind_model_adapter.py` | Added ở `3782f41`. | Test khóa parser/adapter private mind API. Cần bổ sung mục riêng nếu tiếp tục mở rộng test map. |
 | `tests/test_udp_private_mind_debug.py` | Added ở `3782f41`. | Test khóa UDP compact digest overflow; là bằng chứng payload debug không bị xóa sạch ngay. |
+| `tests/test_unit_resilience.py` | Added ở `8e915de`. | Test unit cho `_classify_transport_exception`, transient cooldown/fast-fail, và `debug_status()` giữ field cũ + thêm degraded cause. |
+| `tests/test_integration_loop_resilience.py` | Added ở `8e915de`. | Test integration cho `private_mind_loop.tick()` khi provider 503 lặp, cooldown fast-fail, phục hồi sau cooldown, phân biệt transient với invalid_json. |
+| `tests/test_pbt_bug_condition_transient.py`, `tests/test_pbt_preservation_transient.py`, `tests/test_pbt_reset_transient.py` | Added ở `8e915de`. | PBT khóa bug condition transient và preservation: transient được retry/cooldown, còn JSON hợp lệ/invalid_json/fixed-config không bị đổi behavior. |
+| `tests/test_semantic_claim_entailment.py` | Added/sửa ở `17ffc4d -> a9e6c58`, không chạm ở `8e915de`. | File đang mở trong IDE vẫn đúng mục tiêu: preference_location không entail hometown/current_location; living_location và hometown là predicate riêng; answer policy chỉ trả lời khi exact entailment. |
 
 ---
 
@@ -130,105 +157,113 @@ Mục này ghi thẳng chỗ nào doc đang sai/thiếu/lạc hậu **ngay trong
 
 ## Trạng thái worktree lúc audit:
 ```
-git status --short (2026-06-07):
- M body/UdpListener.cs              (+119/-23 so với HEAD)
+git status --short (2026-06-07, HEAD 8e915de):
+ M body/UdpListener.cs
  M memory_core/active_state_snapshot.json
  M memory_core/event_ledger.json
  M memory_core/semantic_memory.json
  M ni_drift_samples.jsonl
- M src/runtime/coordinator.py       (+1 so với HEAD)
- M src/runtime/private_mind_loop.py (+5/-1 so với HEAD)
- M src/runtime/private_mind_model_adapter.py (+220/-113 so với HEAD)
- M src/transport/udp.py             (+1 so với HEAD)
- M tests/test_private_mind_daemon.py
- M tests/test_private_mind_model_adapter.py
- M tests/test_udp_private_mind_debug.py
+ M src/cortex/private_mind/inner_synthesizer.py
+ M src/cortex/private_mind/mini_evaluators.py
+ M src/runtime/private_mind_loop.py
+ M src/runtime/private_mind_model_adapter.py
  M tongquat.md
-?? src/cortex/private_mind/inner_diary_renderer.py   <-- FILE MỚI CHƯA TRACKED
 ```
+
+Kết luận: `HEAD` đã sync `origin/main` ở `8e915de`, nhưng worktree hiện **không sạch** vì có patch local mới sau `8e915de`. Toàn bộ cụm dirty/untracked cũ (`inner_diary_renderer.py`, `body/UdpListener.cs`, UDP debug tests...) đã được commit; dirty hiện tại là cụm adapter pool / synthesis cooldown / per-evaluator slicers, cộng runtime data sống.
 
 ## Các điểm doc SAI / THIẾU / LẠC HẬU cụ thể:
 
-### 1. `src/runtime/coordinator.py` — số dòng trong doc SAI
-- **Doc ghi (0B)**: `khoảng 6,681 dòng`.
-- **Thực tế workspace**: `6,862 dòng`.
-- **Nguyên nhân**: phình qua `3782f41` và dirty state. Doc ghi tại snapshot cũ hơn.
+### 1. Section 0A/0E cũ nói worktree dirty kiểu cũ — SAI MỘT NỬA
+- **Doc cũ ghi**: 13 modified + 1 untracked, `inner_diary_renderer.py` chưa tracked.
+- **Thực tế workspace**: `inner_diary_renderer.py` và `body/UdpListener.cs` đã tracked ở `8e915de`; nhưng hiện vẫn có 4 file source private-mind modified sau `8e915de`.
+- **Sửa**: đổi các dòng đó sang `tracked at 8e915de` cho Inner Diary/UI, và ghi riêng local patch adapter pool hiện tại.
 
-### 2. `src/runtime/presence_controller.py` — số dòng trong doc SAI
-- **Doc ghi (0B)**: `khoảng 2,432 dòng`.
-- **Thực tế workspace**: `2,683 dòng`.
-- **Nguyên nhân**: `SurfaceSeedCompiler` integration ở `3782f41` thêm ~250 dòng.
+### 2. `src/runtime/coordinator.py` — số dòng cũ không còn khớp
+- **Doc từng ghi**: `6,681` hoặc `6,862` tùy snapshot.
+- **Thực tế workspace**: `6,848` dòng.
+- **Nguyên nhân**: `8e915de` chỉnh tiếp sau dirty snapshot; không nên lấy số dirty cũ làm hiện tại.
 
-### 3. `src/cortex/surface_arbiter.py` — số dòng trong doc SAI
-- **Doc ghi (0B)**: `khoảng 1,268 dòng`.
-- **Thực tế workspace**: `1,557 dòng`.
-- **Nguyên nhân**: phình qua `9bbdcd2 -> 86d3fcf -> f8555c6 -> 3782f41`.
+### 3. `src/runtime/presence_controller.py` — số dòng hiện tại
+- **Thực tế workspace**: `2,683` dòng.
+- Mô tả SurfaceSeedCompiler integration vẫn đúng; không thấy commit `8e915de` chạm file này.
 
-### 4. `src/llm/process_manager.py` — số dòng trong doc SAI
-- **Doc ghi (0B)**: `khoảng 459 dòng`.
-- **Thực tế workspace**: `534 dòng`.
-- **Nguyên nhân**: `f8555c6` + `637e7fc` thêm n_ctx reuse / private mind path.
+### 4. `src/cortex/surface_arbiter.py` — số dòng hiện tại và history thiếu mốc
+- **Thực tế workspace**: `1,557` dòng.
+- History có mốc `86d3fcf` giữa `f8555c6` và `3782f41`; dòng nào chỉ ghi tới `9bbdcd2` là thiếu.
 
-### 5. `src/cortex/private_mind/inner_diary_renderer.py` — FILE MỚI DOC THIẾU HOÀN TOÀN
-- Chưa tracked (untracked trong git).
-- ~135 dòng. Class `InnerDiaryRenderer`: render `private_mind_digest` thành structured debug panel tiếng Việt (sections: Hiện tại / Vì sao / Giả thuyết / Bận tâm / Ảnh hưởng / Bề mặt).
-- **Cần**: commit + thêm mục trong section cortex/private_mind. Nếu `body/UdpListener.cs` dirty +119 là để hiện panel này, đây là nửa còn thiếu.
+### 5. `src/llm/process_manager.py` — số dòng hiện tại
+- **Thực tế workspace**: `534` dòng.
+- Ghi `459` là snapshot cũ.
 
-### 6. `body/UdpListener.cs` — worktree dirty lớn, doc không mention
-- Dirty +119/-23 dòng so HEAD.
-- Workspace hiện `2,241 dòng`.
-- Doc section body có mô tả nhưng bảng 0D thiếu dòng riêng. **Cần thêm nếu dirty liên quan private mind debug UI panel**.
+### 6. `src/cortex/private_mind/inner_diary_renderer.py` — doc cũ nói untracked là SAI
+- Đã tracked ở `8e915de`.
+- File hiện khoảng `119` dòng.
+- Class `InnerDiaryRenderer` render `private_mind_digest` thành `inner_diary` debug view: Hiện tại / Vì sao / Giả thuyết / Bận tâm còn mở / Ảnh hưởng tiếp theo / Bề mặt.
 
-### 7. `src/runtime/private_mind_model_adapter.py` — dirty +220/-113, doc có section nhưng chưa ghi mốc worktree
-- Đây là vòng vá tiếp cho responseSchema/parser/retry mà doc section đã mô tả root cause. Nếu patch thay đổi behavior (schema phẳng hơn, retry nhiệt cao hơn, salvage truncated JSON), section hiện vẫn đúng hướng nhưng nên ghi "worktree có patch chưa commit thêm ~107 dòng net".
+### 7. `body/UdpListener.cs` — doc cũ thiếu Inner Diary panel
+- Đã tracked ở `8e915de`; không còn là dirty delta.
+- Workspace hiện `2,239` dòng.
+- Source có `PrivateMindPanel`, context button `Private Mind`, `RefreshPrivateMindPanel()`, `TryRenderInnerDiary()`, và fallback raw private-mind JSON.
 
-### 8. Section 0A ghi worktree "sạch" — LẠC HẬU
-- Doc nói: "`git status --short` hiện sạch tại thời điểm rà lại tài liệu".
-- Thực tế: 13 modified + 1 untracked.
-- **Sửa**: câu đó chỉ đúng cho snapshot tại moment commit `3782f41`. Worktree hiện dirty.
+### 8. `src/runtime/private_mind_model_adapter.py` — doc cũ thiếu transient resilience
+- Transient resilience đã tracked ở `8e915de`, nhưng workspace hiện còn local patch mới chưa commit.
+- Workspace hiện `1,115` dòng.
+- Source hiện phân loại lỗi transport transient (`HTTP 5xx`, `429`, timeout/connection), retry/backoff có giới hạn, transient cooldown/circuit-breaker, fast-fail khi cooldown active, và `debug_status()` có `degraded_cause`, `transient_streak`, `transient_cooldown_until`.
+- LOCAL PATCH hiện thêm `PrivateMindAdapterPool`, tách 4 fragment adapters và 1 synthesis adapter; synthesis có cooldown/streak riêng để fragment success không reset lỗi synthesis; `_fragment_messages()` dùng dossier slice riêng cho từng evaluator thay vì gửi nguyên dossier; judgment prompt dùng slim dossier/fragment và cap khoảng `6000` chars.
 
-### 9. `src/runtime/cognitive_frame_recorder.py` — bảng 0D thiếu mốc `3782f41`
-- Doc ghi history tới `f8555c6`. Git log confirm `3782f41` cũng chạm file này.
-- **Sửa**: bổ sung `3782f41` cuối chuỗi.
+### 9. `.kiro/specs/private-mind-api-resilience/*` và test PBT — doc cũ thiếu
+- Added ở `8e915de`.
+- Đây là tài liệu bugfix/design/tasks và coverage phương pháp bug condition cho lỗi transport transient, khác với lỗi `invalid_json` đã vá trước đó.
 
-### 10. `src/cortex/speech_core.py` — thiếu trong bảng 0D
-- History: `afec1a5 -> ... -> fd7b903 -> 04bd5f6 -> 5f812fc -> f8555c6`.
-- File nóng nhất speech debug. Bảng 0D hiện không có dòng riêng. **Cần thêm.**
+### 10. `src/cortex/private_mind/mini_evaluators.py`, `inner_synthesizer.py`, `private_mind_loop.py` — local patch mới
+- `mini_evaluators.py` hiện khoảng `301` dòng; `_from_model_or_none()` nhận pool và gọi `fragment_adapter(evaluator_name)`.
+- `inner_synthesizer.py` hiện khoảng `250` dòng; `_try_model()` nhận pool và dùng `synthesis_adapter`.
+- `private_mind_loop.py` hiện khoảng `322` dòng; `from_runtime()` dùng `PrivateMindAdapterPool.from_env()`.
+- Các thay đổi này chưa có commit hash riêng; đừng ghi chúng là tracked ở `8e915de`.
 
-### 11. `src/cortex/subconscious/model_synthesizer.py` — thiếu trong bảng 0D
-- History: chỉ 1 commit `637e7fc`. Section mô tả đã có (section 10) nhưng bảng 0D thiếu dòng.
-- **Cần thêm** vào bảng 0D.
+### 11. `body/UdpListener.cs` — local patch UI nhỏ sau `8e915de`
+- File hiện khoảng `2,239` dòng, dirty `-2` dòng so với HEAD.
+- Patch bỏ dòng header `✦ Inner Diary` trong `TryRenderInnerDiary()` khi render `sections` hoặc `text`.
+- Đây không đổi đường UDP/private digest, chỉ đổi cách panel BBCode hiển thị title.
 
-### 12. `src/cortex/surface_arbiter.py` — doc section đúng nhưng thiếu mốc `86d3fcf`
-- Git log: `3782f41 -> 86d3fcf -> f8555c6 -> 9bbdcd2 -> 104c45b -> e8d3511 -> ...`
-- Section ghi `9bbdcd2` là đúng, nhưng thiếu `86d3fcf 2026-06-07 01:18:51` (commit giữa `f8555c6` và `3782f41`).
-- **Sửa**: ghi thêm mốc `86d3fcf` vào tracked history.
+### 12. Runtime data dirty — không phải source behavior
+- `memory_core/active_state_snapshot.json` hiện khoảng `394` dòng và dirty.
+- `memory_core/event_ledger.json` hiện khoảng `6,583` dòng và dirty.
+- `memory_core/semantic_memory.json` hiện khoảng `134` dòng và dirty.
+- `ni_drift_samples.jsonl` hiện khoảng `425` dòng và dirty.
+- Các file này là state/data sống; dùng để hiểu snapshot runtime, không dùng để gán lịch sử cập nhật source.
+
+### 13. `tests/test_semantic_claim_entailment.py` — đang đúng, không bị đợt mới chạm
+- History gần nhất: `17ffc4d -> a9e6c58`.
+- File hiện `57` dòng.
+- Mục đích đúng: `preference_location` không entail `hometown`/`current_location`; `living_location` và `hometown` là predicate riêng; `SemanticAnswerPolicy` chỉ trả lời khi exact entailment.
 
 ---
 
 # 0B. Repo snapshot hiện tại
 
 Snapshot thô để khỏi phải đoán “repo giờ to đến đâu”:
-- tổng source code đã đếm: khoảng `125,358` dòng trong `251` file code (`.py` + `.cs`).
-- riêng Python: `121,201` dòng trong `245` file.
-- riêng C#: `4,157` dòng trong `6` file.
-- **DRIFT NOTE 2026-06-07**: các con số trên tính tại snapshot `3782f41`. Worktree hiện dirty thêm ~256 dòng Python, ~119 dòng C# so HEAD; tổng thật sẽ cao hơn vài trăm dòng.
+- tổng source code đã đếm: khoảng `129,467` dòng trong `317` file code (`.py` + `.cs` và phần mở rộng source phổ biến; repo hiện thực tế chỉ có `.py` + `.cs` trong nhóm này).
+- riêng Python: `125,346` dòng trong `311` file.
+- riêng C#: `4,121` dòng trong `6` file.
+- **DRIFT NOTE 2026-06-07**: các con số này tính trên workspace hiện tại sau local patch private-mind, không chỉ riêng tracked `HEAD 8e915de`. Nếu tài liệu còn ghi `125,358` dòng / `251` file hoặc C# `4,157` dòng thì đó là số snapshot cũ.
 
 Phân theo vùng chính:
-- `src/`: `183` file code, khoảng `91,710` dòng.
-- `tests/`: `50` file code, khoảng `11,526` dòng.
-- `body/`: `13` file tổng, riêng code khoảng `3,734` dòng.
+- `src/`: `229` file code, khoảng `105,565` dòng.
+- `tests/`: `70` file code, khoảng `15,286` dòng.
+- `body/`: `6` file code C#, khoảng `4,121` dòng.
 - `scripts/`: `11` file, khoảng `4,408` dòng.
 - `memory_core/`: `10` file dữ liệu/state, khoảng `5,299` dòng JSON.
 - `config/`: `5` file, khoảng `126` dòng.
 
 Các cụm Python lớn nhất hiện tại:
-- `src/cortex/`: `60` file, khoảng `39,808` dòng.
-- `src/runtime/`: `37` file, khoảng `28,140` dòng.
+- `src/cortex/`: `100` file, khoảng `49,783` dòng.
+- `src/runtime/`: `43` file, khoảng `31,733` dòng.
 - `src/memory/`: `57` file, khoảng `13,541` dòng.
 
 Hot files đã soi trực tiếp trong workspace (UPDATED audit 2026-06-07):
-- `src/runtime/coordinator.py`: khoảng `6,862` dòng (doc cũ ghi `6,681`; phình thêm qua `3782f41` + dirty).
+- `src/runtime/coordinator.py`: khoảng `6,848` dòng (doc cũ ghi `6,681`/`6,862`; `8e915de` đã tracked delta mới).
 - `src/runtime/presence_controller.py`: khoảng `2,683` dòng (doc cũ ghi `2,432`; SurfaceSeedCompiler integration).
 - `src/cortex/surface_arbiter.py`: khoảng `1,557` dòng (doc cũ ghi `1,268`; phình qua `9bbdcd2` -> `3782f41`).
 - `src/cortex/surface_seed_compiler.py`: khoảng `524` dòng (file mới tracked `3782f41`).
@@ -237,7 +272,12 @@ Hot files đã soi trực tiếp trong workspace (UPDATED audit 2026-06-07):
 - `src/cortex/subconscious/model_synthesizer.py`: khoảng `374` dòng, là Lane 3 private synthesis mới thêm ở `637e7fc`.
 - `src/actions/executor.py`: khoảng `607` dòng, không còn là action stub nhỏ mà là desktop/API executor thực thụ.
 - `src/runtime/private_mind_daemon.py`: khoảng `303` dòng (file mới tracked `3782f41`, lifecycle owner).
-- `src/runtime/private_mind_loop.py`: khoảng `319` dòng (tracked `f8555c6`, dirty +5/-1).
+- `src/runtime/private_mind_loop.py`: khoảng `322` dòng (tracked `f8555c6`, sửa tiếp `3782f41` và `8e915de`).
+- `src/runtime/private_mind_model_adapter.py`: khoảng `1,115` dòng (tracked `f8555c6`, parser/schema ở `3782f41`, transient resilience ở `8e915de`, local adapter-pool/slicer patch sau `8e915de`).
+- `src/cortex/private_mind/mini_evaluators.py`: khoảng `301` dòng (local patch sau `8e915de` cho `fragment_adapter(evaluator_name)`).
+- `src/cortex/private_mind/inner_synthesizer.py`: khoảng `250` dòng (local patch sau `8e915de` cho `synthesis_adapter`).
+- `src/cortex/private_mind/inner_diary_renderer.py`: khoảng `119` dòng (file mới tracked `8e915de`, debug renderer cho `private_mind_digest`).
+- `body/UdpListener.cs`: khoảng `2,239` dòng (tracked Inner Diary/Private Mind panel ở `8e915de`, local UI title patch `-2` dòng sau đó).
 
 ---
 
@@ -382,6 +422,7 @@ Owns:
 - UDP receive decision port 4242.
 - UDP send event/chat port 4243.
 - chat panel, bubble, context menu.
+- emotion debug panel và private mind / Inner Diary panel.
 - connect process manager, parser, motion, audio, local autonomy.
 Reads:
 - payload decision từ Python.
@@ -395,10 +436,17 @@ Calls:
 - `MotionController`
 - `LocalBodyAutonomy`
 - `BodyAudioController`
+Current code specifics:
+- Tracked history gần: `8e915de` -> `f8555c6` -> `a9e6c58` -> `c7f5b29` -> `8a6f9a1` -> `2797a19` -> `de630ba` -> `763d203`.
+- AUDIT 2026-06-07: `8e915de` tracked Private Mind context button và `PrivateMindPanel`.
+- `RefreshPrivateMindPanel()` ưu tiên render `inner_diary.sections`/`inner_diary.text` do `InnerDiaryRenderer` tạo ra; nếu không có thì fallback hiển thị raw private-mind menu JSON.
+- `ParseAndApply()` giữ `payload.PrivateMindDebugJson` khi parser thấy `private_mind_digest` hoặc `emotion_debug.private_mind`, rồi refresh panel nếu đang mở.
+- DOC DRIFT 2026-06-08: section này không nên viết như thể `UdpListener` đã "sạch" sau khi tách helper. Source hiện vẫn còn một cụm state/hàm legacy trong chính file này (`_moveSpeed`, `_moveDir`, climb fields, `ApplyAnimationCommand()`, `StartClimb()`, process/log helper wrappers) dù đường chạy chính đã đi qua `MotionController`, `ErisProcessManager`, `BodyAudioController`.
 Debug khi:
 - body không nhận text: kiểm tra bind 4242, payload JSON, `should_speak`.
 - chat không sang Python: kiểm tra send 4243, event shape.
 - body override sai: kiểm tra explicit motion vs body_bias.
+- private mind panel trống: kiểm tra `HasPrivateMindDebug`, `_latestPrivateMindDebugJson`, digest có `inner_diary` hay chỉ có `menu`.
 Status: ACTIVE GOD OBJECT.
 Risk:
 - vẫn quá dày: UI + UDP + process + state body.
@@ -413,6 +461,7 @@ Normalizes:
 - animation alias: walk/run -> stand_walk, wave -> stand.
 - body_bias, emotion_debug, motion fields.
 Current code specifics:
+- Tracked history gần: `f8555c6` -> `de630ba` -> `afec1a5` -> `763d203`.
 - AUDIT 2026-06-07: `f8555c6` là mốc tracked thêm private mind debug cho parser này cùng `src/transport/udp.py`; source hiện parse thêm private mind debug.
 - `TryReadPrivateMindDebugJson()` nhận `private_mind_digest` ở top-level hoặc fallback `emotion_debug.private_mind`, rồi giữ raw JSON trong `PrivateMindDebugJson`.
 - Nếu parse JSON hỏng nhưng raw là plain text, parser vẫn surface raw text; nếu raw giống JSON/code fence lỗi thì fallback `"Loi duong truyen tin hieu."`.
@@ -432,12 +481,20 @@ Injects env:
 - PYTHONUTF8, PYTHONIOENCODING, PYTHONUNBUFFERED.
 - LLAMA_SERVER_*, GGUF_MODEL_PATH, ERIS_N_CTX.
 - remote API vars, GEMINI_API_KEY.
+Current code specifics:
+- Tracked history gần: `6658301` -> `763d203`.
+- `LoadProjectSecretsEnvironment()` đọc `config/secrets.json` và merge cả root keys lẫn các section `api_keys`, `env`, `secrets`.
+- `StartVision()` chỉ ép boot `llama-server` khi `EnableLocalStyleRewrite` hoặc `EnableLocalVisionInput` cần lane local; nếu server local đã reachable thì không spawn trùng.
+- `BuildLlamaArguments()` tự thêm `--mmproj`, `--mmproj-offload`, `--cache-ram 1024` theo config hiện tại nếu extra args chưa override.
 Debug khi:
 - vision.py không boot.
 - llama-server không mở.
 - stdout/stderr mất traceback.
 Status: ACTIVE.
 Risk: secret/env handling cần sạch trước public.
+DOC DRIFT 2026-06-08:
+- Nếu doc cũ chỉ nói file này "bật/tắt process", mô tả đó thiếu phần config bridge giữa Godot và Python/runtime env.
+- Trong `UdpListener.cs` vẫn còn vài wrapper như `BuildServiceConfig()`/`StartVisionProcess()`, nên ownership runtime process hiện là "manager + wrapper", chưa phải tách sạch hoàn toàn.
 
 ## `body/LocalBodyAutonomy.cs`
 Role: autonomy cục bộ của thân thể.
@@ -448,15 +505,22 @@ Writes:
 - BodyAutonomyDecision / MotionCommand local.
 Behavior:
 - ReturnToAnchor, ReadQuietly, ObserveCode, ClimbWall, DropFromCeiling, Withdraw, DormantSit, QuietObserve.
+Current code specifics:
+- Tracked history gần: `27d4d09` -> `763d203`.
+- `BodyBias.TryFromJson()` đọc cả shape top-level lẫn nested `body_bias`, normalize `focus_kind` (`coding`/`documentation`/`ide` -> `code`) và `preferred_anchor`.
+- `TryUpdate()` là tick thưa 5-10 giây, không phải chạy quyết định mỗi frame; nó gate bằng `context.MotionBusy` và `CanInterruptPose()`.
+- Score hiện dùng need/tension + cooldown thật sự, không còn kiểu random walk đơn giản.
 Debug khi:
 - body đi lại vô lý.
 - body spam climb/drop.
 - body không phản ứng body_bias.
 Status: ACTIVE.
+DOC DRIFT 2026-06-08: section nào còn mô tả idle move là xác suất thuần hoặc chỉ "đi lại nhẹ khi rảnh" là thiếu nhiều so với source hiện tại.
 
 ## `body/MotionController.cs`
 Role: physics/movement body.
 Reads: MotionCommand.
+Tracked history gần: `27d4d09` -> `763d203` -> `cdf3618`.
 Owns:
 - gravity, velocity X/Y, facing, sprite+bubble flip.
 - state machine leo tường: `GoingToWall -> Up -> Top -> TopHold -> Down`.
@@ -466,16 +530,22 @@ Owns:
 Notes:
 - `TargetX` là tỷ lệ 0..1 theo bề ngang màn hình, được resolve sang absolute X trong `ResolveAbsoluteTargetX`.
 - `NotifyAnimationFinished()` dùng `bounce_action` để tiếp tục walk sau animation va tường.
+- `throw` và `drop` không còn cùng một path: `throw` giữ `ImpulseX/ImpulseY` và encode chance bám tường qua `cling:<chance>` trong `BounceAction`; `drop` chỉ tạo fall nhẹ từ perch/climb state.
 Debug khi:
 - body mắc tường, không rơi, không quay mặt, ném sai impulse.
 - leo lên trần nhưng không giữ `TopHold` hoặc xuống tường sai phía.
 - payload `throw` có `clingChance` nhưng không bám tường khi va chạm.
 Status: ACTIVE VERIFIED_IN_WORKSPACE.
+DOC DRIFT 2026-06-08: tài liệu cũ nào còn gộp throw/climb cling vào `UdpListener` hoặc không nhắc `MotionCommand` là contract riêng thì đã lạc hậu.
 
 ## `body/BodyAudioController.cs`
 Role: audio theo animation.
 Reads: animation name, sound map.
 Writes: AudioStreamPlayer.
+Current code specifics:
+- Tracked history gần: `763d203`.
+- `Attach()` nhận `Func<string>` để biết action hiện tại, rồi chỉ loop lại âm thanh sau `Finished` cho nhóm `stand_walk`, `sleep`, `hop`, `climb`.
+- Mapping hiện có cặp riêng cho `climb_top`, `air_swing_l`, `air_swing_r`; doc cũ chỉ nói sound theo animation chung chung là chưa đủ khi debug motion-air/climb.
 Debug khi: âm thanh loop sai, sound không phát.
 Status: ACTIVE.
 
@@ -756,7 +826,7 @@ Contract:
 - khi API fail hoặc JSON invalid, trả `None` để rule fallback chạy tiếp.
 - `debug_status()` gom calls/latency/token usage best-effort, chưa tính cost thật.
 Current code specifics:
-- history tracked: `private_mind_model_adapter.py` mới xuất hiện ở `f8555c6` (`2026-06-07 00:39:48 +0700`) cùng private mind base.
+- history tracked: `private_mind_model_adapter.py` mới xuất hiện ở `f8555c6` (`2026-06-07 00:39:48 +0700`) cùng private mind base; `3782f41` vá parser/schema; `8e915de` vá transient transport resilience.
 - source hiện đã nới parser JSON: `_json_candidates()` bóc code fence, lấy object cân bằng đầu tiên, thử repair object cụt bằng cách bù `}`, rồi `_loads_json_object()` thử `json.loads`, repair noise `None/True/False`/trailing comma, và cuối cùng `ast.literal_eval`.
 - Vì vậy nếu debug thấy API trả JSON hơi bẩn nhưng vẫn có fragment/judgment, đó là behavior mới đúng; nếu vẫn fail thì xem `debug_api.last_error`/`raw` đã bị `_safe_raw()` bỏ prompt/messages chưa.
 Runtime finding 2026-06-07:
@@ -777,10 +847,26 @@ Runtime resolution 2026-06-07 (đã vá):
   - `max_tokens_fragment` 420 -> 700; `max_tokens_judgment` 900 -> 640 (giảm wall-clock, tránh ReadTimeout 28s).
   - Thêm lưới an toàn parser `_salvage_truncated_json()`/`_collapse_repetition()`: gom cụm lặp, đóng chuỗi/ngoặc hở để vẫn cứu được field đã hoàn tất khi output bị cụt.
 - Đã verify end-to-end: cả 4 fragment lẫn judgment trả JSON parse được; tests `tests/test_private_mind_model_adapter.py` (10) + daemon + udp debug pass.
+Runtime resilience update 2026-06-07 (`8e915de`):
+- Lỗi mới được phân biệt với `invalid_json`: transient transport gồm HTTP `5xx`, `429`, `ReadTimeout`/`ConnectTimeout`/`Timeout`/`ConnectionError`.
+- Adapter hiện có `_classify_transport_exception`, `error_kind`, retry/backoff có giới hạn, `_transient_streak`, `_transient_cooldown_until`, `_transient_cooldown_active()`, `_maybe_enter_transient_cooldown()`.
+- Khi transient cooldown active, `_tracked_chat_json()` fast-fail `error="transient_cooldown"` để loop rơi về deterministic fallback ngay, không tiếp tục chờ network mỗi tick.
+- `debug_status()` có `degraded_cause`, `transient_streak`, `transient_cooldown_until` và vẫn giữ field cũ như `api_degraded`, `invalid_json_streak`, `json_cooldown_until`, `usage`.
+- Spec nguồn nằm ở `.kiro/specs/private-mind-api-resilience/`; coverage chính nằm ở `tests/test_unit_resilience.py`, `tests/test_integration_loop_resilience.py`, `tests/test_pbt_bug_condition_transient.py`, `tests/test_pbt_preservation_transient.py`, `tests/test_pbt_reset_transient.py`.
+LOCAL PATCH sau `8e915de`:
+- Workspace hiện thêm `PrivateMindAdapterPool`: một adapter riêng cho từng fragment evaluator (`intent_evaluator`, `memory_resonance_evaluator`, `risk_and_permission_evaluator`, `future_bias_evaluator`) và một adapter riêng cho synthesis.
+- `PrivateMindLoop.from_runtime()` hiện dùng `PrivateMindAdapterPool.from_env()`; `mini_evaluators._from_model_or_none()` gọi `fragment_adapter(evaluator_name)`; `GemmaInnerSynthesizer._try_model()` gọi `synthesis_adapter`.
+- Adapter thêm `synthesis_invalid_json_streak` và `synthesis_json_cooldown_until`; mục tiêu là fragment success không reset lỗi JSON của synthesis.
+- Fragment prompt không còn gửi nguyên `dossier.to_dict()` cho mọi evaluator. `_fragment_messages()` chọn slice riêng: `_slice_for_intent()`, `_slice_for_memory_resonance()`, `_slice_for_risk()`, `_slice_for_future_bias()`.
+- Judgment prompt được slim bằng `_slim_dossier()` và `_slim_fragment()`, hard cap user payload khoảng `6000` chars để giảm timeout/JSON cụt.
+- `debug_status()` của pool aggregate status theo `synthesis` và `fragments`; dòng nào chỉ đọc flat status của một adapter đơn sẽ thiếu state pool.
 Debug khi:
 - muốn biết API có thật sự được gọi không: đọc `debug_api` trong `private_mind_digest`.
 - provider có key nhưng vẫn fail: kiểm tra secret loader/env/base URL/model.
 - thấy `invalid_json` lặp nhưng `fragments=4 ... judgment=yes`: sửa prompt/response_format/parser hoặc provider, đừng coi đó là lỗi ngừng private mind.
+- thấy `degraded_cause=transient`: kiểm tra provider HTTP 5xx/429/timeout, retry/cooldown config, và thời điểm `transient_cooldown_until`.
+- thấy chỉ synthesis cooldown còn fragment vẫn chạy: kiểm tra `debug_api.pool`, `debug_api.synthesis.synthesis_invalid_json_streak`, và từng `debug_api.fragments.*`.
+- thấy evaluator model thiếu evidence/memory/permission context: kiểm tra slice tương ứng trước khi đổ lỗi cho prompt tổng, vì mỗi evaluator giờ chỉ nhận phần dossier của nó.
 Status: ACTIVE OPTIONAL API ADAPTER.
 
 ## `src/runtime/thought_model_adapter.py`
@@ -1889,6 +1975,21 @@ Debug khi:
 - file nào đó import sâu quá nhiều class private thay vì qua package API.
 Status: ACTIVE PACKAGE FACADE.
 
+## `src/cortex/private_mind/inner_diary_renderer.py`
+Role: renderer debug/private cho `private_mind_digest`.
+AUDIT 2026-06-07:
+- **ADDED Ở `8e915de`.**
+- Doc cũ nói file này untracked/local là sai; file này hiện đã tracked ở `8e915de` và không nằm trong dirty patch hiện tại.
+Behavior:
+- `InnerDiaryRenderer.render(digest)` đọc `menu.current_thought`, `temporary_thoughts`, `retained_thoughts`, `inner_judgment`, `state_mutations`, `future_bias`, `speech_silence_reason`, `surface_queue`.
+- Trả dict `mode="debug_private"`, `title="Inner Diary"`, `text`, và `sections`.
+- Sections chính: `Hiện tại`, `Vì sao`, `Giả thuyết`, `Bận tâm còn mở`, `Ảnh hưởng tiếp theo`, `Bề mặt`.
+- Đây là view debug/private; không tạo public speech, không expose raw prompt, không bịa thought ngoài digest.
+Debug khi:
+- Godot Private Mind panel chỉ hiện raw JSON thay vì diary: kiểm tra payload có `inner_diary` ở root hoặc trong `menu`.
+- diary thiếu section: soi digest nguồn có field tương ứng không, không sửa renderer để invent dữ liệu.
+Status: ACTIVE TRACKED PRIVATE DEBUG RENDERER.
+
 ## `src/cortex/private_mind/contracts.py`
 Role: data contracts cho private cognition.
 Objects:
@@ -2404,6 +2505,15 @@ Status: CRITICAL.
 
 ## `tests/test_semantic_claim_entailment.py`
 Role: claim-query entailment.
+AUDIT 2026-06-07:
+- File hiện `57` dòng; history gần nhất `17ffc4d -> a9e6c58`, không bị `8e915de` chạm.
+Covers:
+- `tôi thích Hà Tĩnh` tạo `preference_location`, không được answer cho `quê tôi ở đâu` hoặc `tôi đang ở đâu`.
+- `living_location` và `hometown` là predicate riêng, không entail chéo.
+- `MemoryCommitPolicy` lưu `metadata.semantic_claim`, và `SemanticAnswerPolicy` chỉ trả lời khi exact entailment.
+Debug khi:
+- ERIS lấy memory sở thích địa điểm để bịa quê/current location.
+- retrieval semantic có item đúng chữ nhưng sai predicate vẫn được dùng để trả lời.
 Status: CRITICAL for memory correctness.
 
 ## `tests/test_se_lens.py`, `tests/test_attention_salience.py`, `tests/test_background_observer.py`
@@ -2450,6 +2560,46 @@ Debug khi:
 - private mind API trả text có JSON hợp lệ bên trong nhưng evaluator rơi về rule fallback.
 - `debug_api.last_error=invalid_json` xuất hiện dù raw response chỉ bẩn nhẹ.
 Status: ACTIVE TRACKED REGRESSION.
+
+## `tests/test_unit_resilience.py`
+Role: unit tests cho PrivateMind API transient resilience.
+AUDIT 2026-06-07:
+- **ADDED Ở `8e915de`**, đi cùng patch tracked `src/runtime/private_mind_model_adapter.py`.
+Covers:
+- `_classify_transport_exception()` phân biệt `transient` với `fixed_config`.
+- transient cooldown threshold/timing.
+- `_tracked_chat_json()` fast-fail khi cooldown active và không gọi client.
+- `debug_status()` có field mới `degraded_cause`, `transient_streak`, `transient_cooldown_until` và giữ field legacy.
+Debug khi:
+- HTTP 500/503/429/timeout vẫn spam network mỗi tick.
+- `api_degraded` true nhưng không biết là `invalid_json` hay `transient`.
+Status: ACTIVE TRACKED RESILIENCE REGRESSION.
+
+## `tests/test_integration_loop_resilience.py`
+Role: integration tests cho `private_mind_loop.tick()` khi provider transient-fail.
+AUDIT 2026-06-07:
+- **ADDED Ở `8e915de`.**
+Covers:
+- loop không crash khi adapter lặp HTTP 503.
+- sau ngưỡng circuit-breaker, tick sau fast-fail thay vì chờ network.
+- cooldown hết hạn thì adapter thử gọi lại và có thể phục hồi.
+- debug status phân biệt `transient` với `invalid_json`.
+Debug khi:
+- private mind có deterministic fallback nhưng bị hiểu nhầm là model API vẫn ổn.
+- transient cooldown active mà loop vẫn treo lâu.
+Status: ACTIVE TRACKED RESILIENCE REGRESSION.
+
+## `tests/test_pbt_bug_condition_transient.py`, `tests/test_pbt_preservation_transient.py`, `tests/test_pbt_reset_transient.py`
+Role: property-based tests cho bug condition transient và preservation.
+AUDIT 2026-06-07:
+- **ADDED Ở `8e915de`.**
+Covers:
+- mọi transient transport error trong bug condition phải retry/cooldown/fast-fail đúng property.
+- JSON hợp lệ, `invalid_json`, fixed-config, và đường non-transient phải giữ behavior cũ.
+- success sau transient reset degraded/cooldown state đúng.
+Debug khi:
+- vá resilience làm hỏng đường `invalid_json` cũ hoặc retry cả lỗi cấu hình cố định.
+Status: ACTIVE TRACKED PBT RESILIENCE.
 
 ## `tests/test_udp_private_mind_debug.py`
 Role: regression cho payload debug private mind qua UDP khi quá lớn.
@@ -2781,4 +2931,4 @@ Check:
 - trạng thái active/legacy/generated.
 - test coverage map.
 
-Bản `tongquat.md` này là bước chuyển từ “tổng quan kiến trúc” sang “bản đồ debug”. Ở revision hiện tại, nó đã bám đúng việc `HEAD` đang có thêm mốc `3782f41` cho private mind daemon/surface seed và worktree sạch tại thời điểm rà lại; nhưng nó vẫn cần một lần audit bằng source thật để thành file-to-file hoàn chỉnh tuyệt đối.
+Bản `tongquat.md` này là bước chuyển từ “tổng quan kiến trúc” sang “bản đồ debug”. Ở revision hiện tại, nó đã bám đúng việc `HEAD` đang ở `8e915de`: private mind daemon/surface seed đã tracked từ `3782f41`, Inner Diary UI và PrivateMind API transient resilience đã tracked ở `8e915de`. Workspace hiện còn local patch chưa commit cho adapter pool / synthesis cooldown, nên các dòng có marker `LOCAL PATCH sau 8e915de` phải được coi là source hiện tại nhưng chưa phải tracked history.

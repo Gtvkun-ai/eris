@@ -88,6 +88,7 @@ class SurfaceSeedCompiler:
         internal_state: Any = None,
         thought_stream: Any = None,
         private_mind_digest: Any = None,
+        private_life_digest: Any = None,
         private_mind_speech_bias: Any = None,
         private_mind_thought_pressure: float = 0.0,
         active_memory_resonance: Any = None,
@@ -105,6 +106,7 @@ class SurfaceSeedCompiler:
                 private_mind_digest=private_mind_digest,
             )
         )
+        candidates.extend(self._from_private_life_digest(private_life_digest))
 
         safe = [candidate for candidate in candidates if self._candidate_allowed(candidate)]
         if not safe:
@@ -163,6 +165,26 @@ class SurfaceSeedCompiler:
                             public_anchor=True,
                             missing_screen=True,
                             reason="surface_valve_approved_private_impulse",
+                            raw=impulse,
+                        )
+                    )
+            elif source == "private_life":
+                text = self._clean(getattr(impulse, "topic_seed", ""))
+                if text:
+                    out.append(
+                        _SeedCandidate(
+                            topic_seed=text,
+                            public_seed=text,
+                            evidence=self._evidence_tuple(getattr(impulse, "evidence", ())),
+                            confidence=self._clamp(getattr(impulse, "confidence", 0.0)),
+                            pressure=self._clamp(getattr(impulse, "pressure", 0.0)),
+                            root_source="private_life",
+                            impulse_kind=str(getattr(impulse, "kind", "") or "private_life_surface"),
+                            action_opportunity=str(getattr(impulse, "action_opportunity", "") or "one low-claim private-life line"),
+                            llm_contract=str(getattr(impulse, "llm_contract", "") or "PrivateLife seed only; no raw state dump, no screen claim."),
+                            public_anchor=True,
+                            missing_screen=True,
+                            reason="private_life_surface_impulse",
                             raw=impulse,
                         )
                     )
@@ -360,6 +382,68 @@ class SurfaceSeedCompiler:
             ),
         )
 
+    def _from_private_life_digest(self, private_life_digest: Any) -> tuple[_SeedCandidate, ...]:
+        """Lấy seed từ PrivateLife digest đã compact.
+
+        Digest chỉ được dùng như nguồn seed public-safe, không phải prompt dump. Nếu
+        không có `surface_seed` hoặc project/object cụ thể thì bỏ qua. Một đời sống
+        riêng mà surface bằng JSON menu thì chỉ là debug panel biết nói, nghe buồn.
+        """
+
+        if not isinstance(private_life_digest, Mapping):
+            return ()
+        last_tick = private_life_digest.get("last_tick") if isinstance(private_life_digest.get("last_tick"), Mapping) else {}
+        core_result = last_tick.get("core_result") if isinstance(last_tick, Mapping) and isinstance(last_tick.get("core_result"), Mapping) else {}
+        surface_seed = core_result.get("surface_seed") if isinstance(core_result, Mapping) and isinstance(core_result.get("surface_seed"), Mapping) else None
+        if isinstance(surface_seed, Mapping):
+            text = self._clean(surface_seed.get("topic_seed") or "")
+            if text and self._candidate_text_public(text):
+                return (
+                    _SeedCandidate(
+                        topic_seed=text,
+                        public_seed=text,
+                        evidence=self._evidence_tuple(surface_seed.get("evidence_ids") or ()),
+                        confidence=self._clamp(surface_seed.get("confidence", 0.0)),
+                        pressure=self._clamp(surface_seed.get("pressure", 0.0)),
+                        root_source="private_life",
+                        impulse_kind=str(surface_seed.get("kind") or "private_life_surface"),
+                        action_opportunity="one low-claim private-life line; do not expose runtime state",
+                        llm_contract=str(surface_seed.get("llm_contract") or "PrivateLife seed only; no raw state dump."),
+                        public_anchor=True,
+                        missing_screen=True,
+                        reason="private_life_digest_surface_seed",
+                        raw=surface_seed,
+                    ),
+                )
+
+        current = private_life_digest.get("current") if isinstance(private_life_digest.get("current"), Mapping) else {}
+        projects = current.get("projects") if isinstance(current, Mapping) else None
+        if isinstance(projects, list) and projects:
+            project = next((item for item in projects if isinstance(item, Mapping) and self._clean(item.get("last_note") or "")), None)
+            if project:
+                text = self._clean(project.get("last_note") or project.get("title") or "")
+                permission = self._clamp(project.get("surface_permission", 0.0))
+                interest = self._clamp(project.get("interest", 0.0))
+                if text and permission >= 0.35 and self._candidate_text_public(text):
+                    return (
+                        _SeedCandidate(
+                            topic_seed=text,
+                            public_seed=text,
+                            evidence=(str(project.get("id") or "private_life_project"),),
+                            confidence=max(0.38, min(0.76, 0.36 + interest * 0.34)),
+                            pressure=max(0.32, self._clamp(project.get("frustration", 0.0))),
+                            root_source="private_life",
+                            impulse_kind="private_life_surface",
+                            action_opportunity="surface a private project residue very lightly",
+                            llm_contract="PrivateLife project seed: no raw state, no screen claim, one short line only.",
+                            public_anchor=True,
+                            missing_screen=True,
+                            reason="private_life_project_digest",
+                            raw=project,
+                        ),
+                    )
+        return ()
+
     def _from_private_bias(
         self,
         *,
@@ -422,6 +506,19 @@ class SurfaceSeedCompiler:
                 "public_anchor": candidate.public_anchor,
             },
         )
+
+    def _candidate_text_public(self, text: str) -> bool:
+        cleaned = self._clean(text)
+        if not cleaned:
+            return False
+        lowered = cleaned.lower()
+        if any(marker in lowered for marker in _PRIVATE_MARKERS):
+            return False
+        if _JSONISH_RE.search(cleaned):
+            return False
+        if _GENERIC_TIMER_RE.match(cleaned):
+            return False
+        return True
 
     def _candidate_allowed(self, candidate: _SeedCandidate) -> bool:
         if not candidate.topic_seed or not candidate.public_seed:

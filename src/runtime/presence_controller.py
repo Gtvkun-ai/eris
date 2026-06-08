@@ -2115,10 +2115,19 @@ class PresenceControllerMixin:
                 private_mind_impulses = tuple(private_drain() or ())
             except Exception:
                 private_mind_impulses = ()
+        private_life_impulses: tuple[object, ...] = ()
+        private_life_drain = getattr(self, "_drain_private_life_surface_impulses", None)
+        if callable(private_life_drain):
+            try:
+                private_life_impulses = tuple(private_life_drain(limit=4) or ())
+            except TypeError:
+                private_life_impulses = tuple(private_life_drain() or ())
+            except Exception:
+                private_life_impulses = ()
         original_extra_impulses = tuple(extra_impulses or ())
         all_extra_impulses = tuple(
             item
-            for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *original_extra_impulses)
+            for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *private_life_impulses, *original_extra_impulses)
             if item is not None
         )
         current_context_surface, fresh_screen_evidence = self._surface_refresh_vision_once_if_needed(
@@ -2139,6 +2148,7 @@ class PresenceControllerMixin:
             ),
             thought_stream=getattr(self, "thought_stream", None),
             private_mind_digest=getattr(self, "private_mind_digest", None),
+            private_life_digest=getattr(self, "private_life_digest", None),
             private_mind_speech_bias=getattr(self, "private_mind_speech_bias", None),
             private_mind_thought_pressure=float(getattr(self, "private_mind_thought_pressure", 0.0) or 0.0),
             active_memory_resonance=getattr(self, "active_memory_resonance", None),
@@ -2195,7 +2205,7 @@ class PresenceControllerMixin:
             presence_cue=cue,
             extra_impulses=tuple(
                 item
-                for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *compiled_impulses, *original_extra_impulses)
+                for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *private_life_impulses, *compiled_impulses, *original_extra_impulses)
                 if item is not None
             ),
             surface_kind=surface_kind,

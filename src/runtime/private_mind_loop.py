@@ -35,7 +35,7 @@ from cortex.private_mind import (
 from cortex.private_mind.contracts import SurfaceCandidate, to_plain
 from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
 from eris_secrets import apply_secrets_to_environ
-from runtime.private_mind_model_adapter import RuntimePrivateMindModelAdapter
+from runtime.private_mind_model_adapter import PrivateMindAdapterPool, RuntimePrivateMindModelAdapter
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -89,7 +89,7 @@ class PrivateMindLoop:
         config = PrivateMindLoopConfig()
         if not config.enabled:
             return None
-        model_adapter = RuntimePrivateMindModelAdapter.from_env(llm_service=llm_service, logger=logger)
+        model_adapter = PrivateMindAdapterPool.from_env(llm_service=llm_service, logger=logger)
         return cls(config=config, model_adapter=model_adapter, logger=logger)
 
     def tick(

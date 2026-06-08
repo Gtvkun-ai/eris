@@ -109,7 +109,7 @@ class PrivateMindModelAdapterConfig:
     # rồi trả output cụt/rỗng -> invalid_json. Để mặc định ấm hơn để phá vòng lặp.
     temperature: float = field(default_factory=lambda: _as_float(os.getenv("ERIS_PRIVATE_MIND_TEMPERATURE", "0.5"), 0.5))
     max_tokens_fragment: int = field(default_factory=lambda: max(128, int(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_TOKENS", "700") or 700)))
-    max_tokens_judgment: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_PRIVATE_MIND_JUDGMENT_TOKENS", "640") or 640)))
+    max_tokens_judgment: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_PRIVATE_MIND_JUDGMENT_TOKENS", "900") or 900)))
     transient_max_retries: int = field(default_factory=lambda: max(0, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_RETRIES", "2") or 2)))
     transient_backoff_base: float = field(default_factory=lambda: max(0.1, _as_float(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_BACKOFF", "0.5"), 0.5)))
     transient_cooldown_threshold: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_THRESHOLD", "3") or 3)))
@@ -149,6 +149,42 @@ class RuntimePrivateMindModelAdapter:
         self._transient_streak = 0
         self._transient_cooldown_until = 0.0
         self._last_error_kind = ""
+        # Synthesis-specific streak: fragment success không reset streak này.
+        self._synthesis_invalid_json_streak = 0
+        self._synthesis_json_cooldown_until = 0.0
+        # Fallback key rotation
+        self._fallback_keys: list[str] = self._load_fallback_keys()
+        self._current_key_index: int = 0  # 0 = key chính, 1+ = fallback keys
+
+    def _load_fallback_keys(self) -> list[str]:
+        """Đọc danh sách fallback keys từ secrets.json."""
+        from eris_secrets import _load_secrets
+        payload = _load_secrets()
+        raw = payload.get("api_keys", {}).get("ERIS_PRIVATE_MIND_FALLBACK_API_KEYS")
+        if isinstance(raw, list):
+            return [str(k).strip() for k in raw if str(k).strip()]
+        if isinstance(raw, str) and raw.strip():
+            return [k.strip() for k in raw.split(",") if k.strip()]
+        return []
+
+    def _current_api_key(self) -> str:
+        """Trả API key hiện tại theo vị trí rotation."""
+        if self._current_key_index == 0:
+            return self.config.api_key or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+        idx = self._current_key_index - 1
+        if idx < len(self._fallback_keys):
+            return self._fallback_keys[idx]
+        return self.config.api_key or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+
+    def _rotate_to_next_key(self) -> bool:
+        """Rotate sang key tiếp theo. Trả True nếu còn key, False nếu hết."""
+        next_idx = self._current_key_index + 1
+        if next_idx <= len(self._fallback_keys):
+            self._current_key_index = next_idx
+            self._provider_client = None  # force rebuild với key mới
+            self._log("warning", "[PrivateMind API] rotating to fallback key index=%d", self._current_key_index)
+            return True
+        return False
 
     @classmethod
     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "RuntimePrivateMindModelAdapter | None":
@@ -189,15 +225,34 @@ class RuntimePrivateMindModelAdapter:
 
     def synthesize_judgment(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> Mapping[str, Any] | None:
         messages = self._judgment_messages(dossier, fragments)
+        # Kiểm tra synthesis-specific cooldown trước khi gọi
+        if self._synthesis_json_cooldown_active():
+            self._log("warning", "[PrivateMind API] synthesis skipped: synthesis_json_cooldown active")
+            return None
         result = self._tracked_chat_json(
             messages,
             max_tokens=self.config.max_tokens_judgment,
             response_schema=self._judgment_response_schema(),
         )
         if not result.ok:
-            if result.error not in {"invalid_json_cooldown", "transient_cooldown"}:
+            if result.error == "invalid_json":
+                self._synthesis_invalid_json_streak += 1
+                # Log content_preview để debug: RECITATION/empty/truncated
+                content_preview = (result.content or "")[:300].replace("\n", " ").strip()
+                self._log(
+                    "warning",
+                    "[PrivateMind API] synthesis failed error=%s streak=%d content_preview=%r",
+                    result.error,
+                    self._synthesis_invalid_json_streak,
+                    content_preview,
+                )
+                self._maybe_enter_synthesis_json_cooldown()
+            elif result.error not in {"invalid_json_cooldown", "transient_cooldown"}:
                 self._log("warning", "[PrivateMind API] synthesis failed error=%s", result.error)
             return None
+        # Reset synthesis streak on success
+        self._synthesis_invalid_json_streak = 0
+        self._synthesis_json_cooldown_until = 0.0
         parsed = dict(result.parsed)
         parsed.setdefault("provider", self.config.provider)
         parsed.setdefault("model", self.config.model)
@@ -212,6 +267,112 @@ class RuntimePrivateMindModelAdapter:
                 "reason": "model_inner_synthesizer_seed",
             }
         return parsed
+
+    # ------------------------------------------------------------------
+    # Dossier slicers — mỗi evaluator chỉ nhận phần nó cần
+    # ------------------------------------------------------------------
+
+    def _slice_for_intent(self, dossier: EvidenceDossier) -> dict[str, Any]:
+        """intent_evaluator: user turns + goal. Không cần memory hay concerns."""
+        turns = []
+        for turn in list(dossier.recent_user_turns)[-4:]:
+            turns.append({
+                "text": compact_text(str(turn.get("text") or ""), 200),
+                "intent": compact_text(str(turn.get("intent") or ""), 60),
+                "channel": compact_text(str(turn.get("channel") or ""), 32),
+            })
+        return {
+            "active_goal": compact_text(dossier.active_goal, 160),
+            "current_task": compact_text(dossier.current_task, 120),
+            "recent_turns": turns,
+            "evidence_ids": list(dossier.evidence_ids[:16]),
+        }
+
+    def _slice_for_memory_resonance(self, dossier: EvidenceDossier) -> dict[str, Any]:
+        """memory_resonance_evaluator: memory hits + repair failures + concerns."""
+        slim_hits = []
+        for hit in list(dossier.memory_hits)[:6]:
+            slim_hits.append({
+                "text": compact_text(str(hit.get("text") or hit.get("summary") or ""), 180),
+                "evidence_id": str(hit.get("evidence_id") or ""),
+            })
+        slim_repairs = []
+        for r in list(dossier.prior_repair_failures)[:4]:
+            slim_repairs.append({
+                "summary": compact_text(str(r.get("summary") or ""), 120),
+            })
+        slim_concerns = []
+        for c in list(dossier.concern_snapshots)[:4]:
+            if not isinstance(c, dict):
+                continue
+            slim_concerns.append({
+                "theme": compact_text(str(c.get("theme") or ""), 120),
+                "recurrence": int(c.get("recurrence", 1)),
+                "pressure": round(float(c.get("pressure", 0.0)), 3),
+            })
+        return {
+            "memory_hits": slim_hits,
+            "prior_repair_failures": slim_repairs,
+            "concerns": slim_concerns,
+            "evidence_ids": list(dossier.evidence_ids[:16]),
+        }
+
+    def _slice_for_risk(self, dossier: EvidenceDossier) -> dict[str, Any]:
+        """risk_and_permission_evaluator: surface outcome + runtime flags + evidence ids."""
+        surface = {
+            k: compact_text(str(v), 120) if isinstance(v, str) else v
+            for k, v in (dossier.surface_outcome or {}).items()
+            if k in {"kind", "text", "parse_mode", "should_speak", "privacy_level"}
+        }
+        # Chỉ lấy runtime_state key liên quan đến permission/privacy
+        runtime = dossier.runtime_state if isinstance(dossier.runtime_state, dict) else {}
+        slim_runtime = {
+            k: to_plain(runtime[k])
+            for k in ("channel", "privacy_level", "api_cost_budget", "permission_flags")
+            if k in runtime
+        }
+        return {
+            "surface_outcome": surface,
+            "runtime_flags": slim_runtime,
+            "evidence_ids": list(dossier.evidence_ids[:16]),
+        }
+
+    def _slice_for_future_bias(self, dossier: EvidenceDossier) -> dict[str, Any]:
+        """future_bias_evaluator: concerns nặng nhất + current_task + 1 user turn."""
+        concerns_sorted = sorted(
+            [c for c in list(dossier.concern_snapshots or ()) if isinstance(c, dict)],
+            key=lambda c: float(c.get("pressure", 0.0)),
+            reverse=True,
+        )
+        slim_concerns = []
+        for c in concerns_sorted[:4]:
+            slim_concerns.append({
+                "theme": compact_text(str(c.get("theme") or ""), 120),
+                "pressure": round(float(c.get("pressure", 0.0)), 3),
+                "recurrence": int(c.get("recurrence", 1)),
+                "status": str(c.get("status") or "open"),
+            })
+        last_turn = {}
+        if dossier.recent_user_turns:
+            t = dossier.recent_user_turns[-1]
+            last_turn = {
+                "text": compact_text(str(t.get("text") or ""), 160),
+                "intent": compact_text(str(t.get("intent") or ""), 60),
+            }
+        return {
+            "current_task": compact_text(dossier.current_task, 120),
+            "active_goal": compact_text(dossier.active_goal, 120),
+            "top_concerns": slim_concerns,
+            "last_turn": last_turn,
+            "evidence_ids": list(dossier.evidence_ids[:16]),
+        }
+
+    _DOSSIER_SLICERS = {
+        "intent_evaluator": "_slice_for_intent",
+        "memory_resonance_evaluator": "_slice_for_memory_resonance",
+        "risk_and_permission_evaluator": "_slice_for_risk",
+        "future_bias_evaluator": "_slice_for_future_bias",
+    }
 
     def _fragment_messages(self, evaluator_name: str, dossier: EvidenceDossier) -> list[dict[str, str]]:
         evaluator_contract = {
@@ -229,18 +390,78 @@ class RuntimePrivateMindModelAdapter:
             "suggested_question": "private open question",
             "theme": "short private theme label",
         }
+        # Lấy đúng slice cho evaluator này; fallback về slim dossier nếu không có slicer
+        slicer_name = self._DOSSIER_SLICERS.get(evaluator_name)
+        if slicer_name:
+            slicer = getattr(self, slicer_name)
+            evidence_slice = slicer(dossier)
+        else:
+            evidence_slice = self._slim_dossier(dossier)
+        user_content = json.dumps(to_plain(evidence_slice), ensure_ascii=False)
         return [
             {
                 "role": "system",
                 "content": (
                     "You are a private evaluator inside ERIS. Return exactly one compact JSON object. "
                     "Do not write public speech. Do not expose chain-of-thought. Do not repeat words. "
-                    "Keep every string under 240 characters. Use only evidence_ids from dossier. "
+                    "Write all string values in Vietnamese (vi-VN). Keep every string under 200 characters. "
+                    "Use only evidence_ids from the provided slice. "
                     f"Evaluator task: {evaluator_contract}. Required schema: {json.dumps(schema, ensure_ascii=False)}"
                 ),
             },
-            {"role": "user", "content": json.dumps(dossier.to_dict(), ensure_ascii=False)[:12000]},
+            {"role": "user", "content": user_content},
         ]
+
+    def _slim_dossier(self, dossier: EvidenceDossier) -> dict[str, Any]:
+        """Chắt lọc dossier xuống những gì synthesizer thực sự cần.
+
+        Bỏ runtime_state (lớn, ít signal), memory_hits (đã được fragment tiêu hóa),
+        prior_repair_failures, evidence_index đầy đủ. Chỉ giữ signal cốt lõi.
+        """
+        # Lấy tối đa 3 user turns gần nhất, mỗi turn chỉ giữ text + intent
+        slim_turns = []
+        for turn in list(dossier.recent_user_turns)[-3:]:
+            slim_turns.append({
+                "text": compact_text(str(turn.get("text") or ""), 180),
+                "intent": compact_text(str(turn.get("intent") or ""), 60),
+            })
+        # Concern snapshots: chỉ lấy 3 concern nặng nhất, bỏ hypotheses/metadata
+        slim_concerns = []
+        concerns_sorted = sorted(
+            list(dossier.concern_snapshots or ()),
+            key=lambda c: float(c.get("pressure", 0.0) if isinstance(c, dict) else 0.0),
+            reverse=True,
+        )
+        for c in concerns_sorted[:3]:
+            if not isinstance(c, dict):
+                continue
+            slim_concerns.append({
+                "theme": compact_text(str(c.get("theme") or ""), 120),
+                "pressure": round(float(c.get("pressure", 0.0)), 3),
+                "recurrence": int(c.get("recurrence", 1)),
+            })
+        return {
+            "active_goal": compact_text(dossier.active_goal, 160),
+            "current_task": compact_text(dossier.current_task, 160),
+            "recent_turns": slim_turns,
+            "concerns": slim_concerns,
+            "surface_outcome": {
+                k: compact_text(str(v), 120) if isinstance(v, str) else v
+                for k, v in (dossier.surface_outcome or {}).items()
+                if k in {"kind", "text", "parse_mode", "should_speak"}
+            },
+        }
+
+    def _slim_fragment(self, f: ThoughtFragment) -> dict[str, Any]:
+        """Fragment tối giản: chỉ claim + score + evidence_ids, bỏ hypotheses/metadata."""
+        return {
+            "source": f.source,
+            "claim": compact_text(f.claim, 240),
+            "confidence": round(f.confidence, 3),
+            "pressure": round(f.pressure, 3),
+            "evidence_ids": list(f.evidence_ids[:8]),
+            "suggested_question": compact_text(f.suggested_question, 160),
+        }
 
     def _judgment_messages(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> list[dict[str, str]]:
         schema = {
@@ -248,26 +469,36 @@ class RuntimePrivateMindModelAdapter:
             "confidence": 0.0,
             "pressure": 0.0,
             "evidence_ids": [],
-            "open_questions": ["..."],
+            "open_questions": ["max 2 items, each under 80 chars"],
             "state_mutations": [{"target": "speech_bias", "operation": "prefer", "value": "...", "reason": "..."}],
             "surface_topic_seed": "optional public-safe topic seed or empty string",
         }
         payload = {
-            "dossier": dossier.to_dict(),
-            "fragments": [f.to_dict() for f in fragments],
+            "dossier": self._slim_dossier(dossier),
+            "fragments": [self._slim_fragment(f) for f in fragments],
         }
+        user_content = json.dumps(to_plain(payload), ensure_ascii=False)
+        # Hard cap 6000 chars — đủ cho model nhỏ thở, không mất signal cốt lõi.
+        # Truncate ở boundary an toàn: tìm dấu "}" cuối trong giới hạn.
+        cap = 6000
+        if len(user_content) > cap:
+            truncated = user_content[:cap]
+            last_brace = truncated.rfind("}")
+            user_content = (truncated[:last_brace + 1] if last_brace > 0 else truncated) + "}"
         return [
             {
                 "role": "system",
                 "content": (
                     "You are GemmaInnerSynthesizer, a private judge inside ERIS. Return exactly one compact JSON object. "
                     "You are not a dialogue writer. Do not reveal private chain. Do not repeat words. "
-                    "Keep every string under 320 characters. State mutations must affect future behavior. "
+                    "Write all string values in Vietnamese (vi-VN). Keep every string under 200 characters. "
+                    "Keep open_questions to at most 2 items, each under 80 characters. "
+                    "State mutations must affect future behavior. "
                     "surface_topic_seed may be empty; if present it must be a public-safe topic seed only. "
                     f"Required schema: {json.dumps(schema, ensure_ascii=False)}"
                 ),
             },
-            {"role": "user", "content": json.dumps(to_plain(payload), ensure_ascii=False)[:18000]},
+            {"role": "user", "content": user_content},
         ]
 
     def _fragment_response_schema(self, evaluator_name: str) -> dict[str, Any]:
@@ -350,6 +581,8 @@ class RuntimePrivateMindModelAdapter:
             "last_error": self._last_error,
             "invalid_json_streak": self._invalid_json_streak,
             "json_cooldown_until": round(float(self._json_cooldown_until or 0.0), 3),
+            "synthesis_invalid_json_streak": self._synthesis_invalid_json_streak,
+            "synthesis_json_cooldown_until": round(float(self._synthesis_json_cooldown_until or 0.0), 3),
             "degraded_cause": degraded_cause,
             "transient_streak": self._transient_streak,
             "transient_cooldown_until": round(float(self._transient_cooldown_until or 0.0), 3),
@@ -427,6 +660,26 @@ class RuntimePrivateMindModelAdapter:
             self._invalid_json_streak,
         )
 
+    def _synthesis_json_cooldown_active(self) -> bool:
+        return bool(self._synthesis_json_cooldown_until and time.time() < self._synthesis_json_cooldown_until)
+
+    def _maybe_enter_synthesis_json_cooldown(self) -> None:
+        """Vào cooldown riêng cho synthesis khi streak >= 3.
+
+        Fragment success không reset streak này nên nó accumulate đúng.
+        Cooldown 180s — dài hơn global json cooldown vì synthesis payload lớn hơn.
+        """
+        if self._synthesis_invalid_json_streak < 3 or self._synthesis_json_cooldown_active():
+            return
+        cooldown_seconds = 180.0
+        self._synthesis_json_cooldown_until = time.time() + cooldown_seconds
+        self._log(
+            "warning",
+            "[PrivateMind API] synthesis invalid_json cooldown active seconds=%d streak=%d",
+            int(cooldown_seconds),
+            self._synthesis_invalid_json_streak,
+        )
+
     def _transient_cooldown_active(self) -> bool:
         return bool(self._transient_cooldown_until and time.time() < self._transient_cooldown_until)
 
@@ -484,18 +737,27 @@ class RuntimePrivateMindModelAdapter:
         temperature: float,
         response_schema: dict[str, Any] | None = None,
     ) -> PrivateMindModelResult:
-        """Gọi _chat_json_once, thử lại có giới hạn + backoff nếu gặp transient error."""
+        """Gọi _chat_json_once, thử lại có giới hạn + backoff nếu gặp transient error.
+        Nếu lỗi là 429 (quota) thì thử rotate sang fallback key trước khi backoff.
+        """
         result = self._chat_json_once(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
         if result.error_kind != "transient":
             return result
-        # Retry với backoff tăng dần (transient_backoff_base * 2^attempt), cận trên 4s
+
         for attempt in range(self.config.transient_max_retries):
-            backoff = min(self.config.transient_backoff_base * (2 ** attempt), 4.0)
-            time.sleep(backoff)
-            retry = self._chat_json_once(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
+            # 429 quota → thử rotate key ngay, không cần backoff dài
+            error_str = str(result.error or "")
+            is_quota = "429" in error_str or "quota" in error_str.lower() or "rate" in error_str.lower()
+            if is_quota and self._rotate_to_next_key():
+                retry = self._chat_json_once(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
+            else:
+                backoff = min(self.config.transient_backoff_base * (2 ** attempt), 4.0)
+                time.sleep(backoff)
+                retry = self._chat_json_once(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
+
             if retry.error_kind != "transient":
                 return retry
-            result = retry  # giữ lỗi transient gần nhất
+            result = retry
         return result
 
     def _chat_json_once(
@@ -594,14 +856,14 @@ class RuntimePrivateMindModelAdapter:
         provider = str(self.config.provider or "").strip().lower()
         timeout = int(max(4.0, float(self.config.timeout_seconds or 28.0)))
         if provider == "gemini":
-            api_key = self.config.api_key or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+            api_key = self._current_api_key()
             if not api_key:
                 return None
             base_url = self.config.base_url or os.getenv("ERIS_REMOTE_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
             self._provider_client = GeminiClient(base_url=base_url, api_key=api_key, model_name=self.config.model, timeout=timeout)
             return self._provider_client
         if provider in {"openai", "openai_compatible", "compatible", "remote"}:
-            api_key = self.config.api_key or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+            api_key = self._current_api_key()
             if not api_key:
                 return None
             base_url = self.config.base_url or os.getenv("ERIS_REMOTE_BASE_URL", "https://api.openai.com/v1")
@@ -876,3 +1138,118 @@ class RuntimePrivateMindModelAdapter:
         fn = getattr(self.logger, level, None) if self.logger is not None else None
         if callable(fn):
             fn(msg, *args)
+
+
+# ---------------------------------------------------------------------------
+# PrivateMindAdapterPool — N adapter instance độc lập, mỗi cái 1 streak riêng
+# ---------------------------------------------------------------------------
+
+_EVALUATOR_ROLES = (
+    "intent_evaluator",
+    "memory_resonance_evaluator",
+    "risk_and_permission_evaluator",
+    "future_bias_evaluator",
+)
+
+
+class PrivateMindAdapterPool:
+    """Pool adapter cho private mind.
+
+    Thay vì một instance dùng chung cho tất cả, mỗi vai trò có adapter riêng:
+    - 4 adapter cho 4 fragment evaluator (chạy song song, streak độc lập)
+    - 1 adapter dành riêng cho synthesis (payload nhỏ hơn, có thể cooldown riêng)
+
+    Khi synthesis bị cooldown vì invalid_json thì 4 fragment evaluator vẫn chạy
+    bình thường và ngược lại. Không còn một điểm hỏng làm câm toàn bộ pipeline.
+    """
+
+    def __init__(
+        self,
+        *,
+        config: PrivateMindModelAdapterConfig | None = None,
+        llm_service: Any = None,
+        logger: Any = None,
+    ) -> None:
+        self._config = config or PrivateMindModelAdapterConfig()
+        self._llm_service = llm_service
+        self._logger = logger
+        # Tạo một adapter per evaluator role + một cho synthesis
+        self._fragment_adapters: dict[str, RuntimePrivateMindModelAdapter] = {
+            role: RuntimePrivateMindModelAdapter(config=self._config, llm_service=llm_service, logger=logger)
+            for role in _EVALUATOR_ROLES
+        }
+        self._synthesis_adapter = RuntimePrivateMindModelAdapter(
+            config=self._config, llm_service=llm_service, logger=logger
+        )
+
+    @classmethod
+    def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "PrivateMindAdapterPool | None":
+        apply_secrets_to_environ()
+        config = PrivateMindModelAdapterConfig()
+        if not config.enabled:
+            return None
+        pool = cls(config=config, llm_service=llm_service, logger=logger)
+        fn = getattr(logger, "info", None)
+        if callable(fn):
+            fn(
+                "[PrivateMind API] ready provider=%s model=%s pool=fragment×%d+synthesis×1",
+                config.provider,
+                config.model,
+                len(_EVALUATOR_ROLES),
+            )
+        return pool
+
+    def fragment_adapter(self, evaluator_name: str) -> RuntimePrivateMindModelAdapter:
+        """Trả adapter riêng cho evaluator_name; fallback về adapter đầu tiên nếu không tìm thấy."""
+        return self._fragment_adapters.get(evaluator_name, next(iter(self._fragment_adapters.values())))
+
+    @property
+    def synthesis_adapter(self) -> RuntimePrivateMindModelAdapter:
+        return self._synthesis_adapter
+
+    # --- Delegate interface giống RuntimePrivateMindModelAdapter ---
+    # để code dùng pool như một adapter bình thường vẫn hoạt động.
+
+    def evaluate_fragment(self, evaluator_name: str, dossier: EvidenceDossier) -> Any:
+        return self.fragment_adapter(evaluator_name).evaluate_fragment(evaluator_name, dossier)
+
+    def synthesize_judgment(self, dossier: EvidenceDossier, fragments: Any) -> Any:
+        return self._synthesis_adapter.synthesize_judgment(dossier, fragments)
+
+    def debug_status(self) -> dict[str, Any]:
+        """Aggregate status của tất cả adapter trong pool."""
+        fragment_statuses = {
+            role: adapter.debug_status()
+            for role, adapter in self._fragment_adapters.items()
+        }
+        synthesis_status = self._synthesis_adapter.debug_status()
+        # Tổng hợp calls/tokens
+        total_calls = synthesis_status.get("calls", 0) + sum(
+            s.get("calls", 0) for s in fragment_statuses.values()
+        )
+        total_tokens = synthesis_status.get("usage", {}).get("total_tokens", 0) + sum(
+            s.get("usage", {}).get("total_tokens", 0) for s in fragment_statuses.values()
+        )
+        return {
+            "pool": True,
+            "enabled": synthesis_status.get("enabled", False),
+            "provider": synthesis_status.get("provider", ""),
+            "model": synthesis_status.get("model", ""),
+            "api_key_configured": synthesis_status.get("api_key_configured", False),
+            "api_degraded": synthesis_status.get("api_degraded", False) or any(
+                s.get("api_degraded", False) for s in fragment_statuses.values()
+            ),
+            "degraded_cause": synthesis_status.get("degraded_cause", ""),
+            "calls": total_calls,
+            "last_error": synthesis_status.get("last_error", ""),
+            "invalid_json_streak": synthesis_status.get("invalid_json_streak", 0),
+            "synthesis_invalid_json_streak": synthesis_status.get("synthesis_invalid_json_streak", 0),
+            "synthesis_json_cooldown_until": synthesis_status.get("synthesis_json_cooldown_until", 0.0),
+            "synthesis": synthesis_status,
+            "fragments": fragment_statuses,
+            "usage": {
+                "total_tokens": total_tokens,
+                "cost_known": False,
+                "estimated_cost_usd": None,
+            },
+        }

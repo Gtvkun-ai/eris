@@ -171,6 +171,7 @@ class SurfaceArbiter:
         "random_chatter",
         "thought_stream_surface",
         "private_mind_surface",
+        "private_life_surface",
         "idle_curiosity_inner",
         "curious_question",
         "memory_resonance",
@@ -1209,6 +1210,8 @@ class SurfaceArbiter:
                 return "forced_body_only:thought_surface_missing_anchor"
         if kind == "private_mind_surface" and not self._private_mind_has_public_anchor(impulse):
             return "private_mind_missing_public_anchor"
+        if kind == "private_life_surface" and not self._has_public_internal_anchor(impulse):
+            return "private_life_missing_public_anchor"
         return ""
 
     def _effective_score(self, impulse: SurfaceImpulse) -> float:
@@ -1283,9 +1286,9 @@ class SurfaceArbiter:
     def _private_mind_pressure_applies(self, impulse: SurfaceImpulse) -> bool:
         kind = str(getattr(impulse, "kind", "") or getattr(impulse, "speech_act", "") or "")
         source = str(getattr(impulse, "source", "") or getattr(impulse, "root_source", "") or "")
-        if source in {"private_mind", "thought_stream", "endogenous_drive", "spontaneous_life", "inner_thought"}:
+        if source in {"private_mind", "private_life", "thought_stream", "endogenous_drive", "spontaneous_life", "inner_thought"}:
             return True
-        if kind in {"thought_stream_surface", "wandering_surface_candidate", "inner_whim", "curious_question", "memory_resonance", "technical_help"}:
+        if kind in {"thought_stream_surface", "wandering_surface_candidate", "inner_whim", "curious_question", "memory_resonance", "technical_help", "private_life_surface"}:
             return True
         return self._endogenous_no_anchor_like(impulse) and bool(self._has_public_internal_anchor(impulse))
 

@@ -49,15 +49,17 @@ class GemmaInnerSynthesizer:
         strong = tuple(f for f in fragments if f.claim and f.score >= 0.32)
         if not strong:
             return None
-        model_judgment = self._try_model(dossier, strong)
-        if model_judgment is not None:
-            return model_judgment
-        return self._fallback(dossier, strong)
+        return self._try_model(dossier, strong)
 
     def _try_model(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> InternalJudgment | None:
         if self.model_adapter is None or len(fragments) < self.min_fragments_for_model:
             return None
-        fn = getattr(self.model_adapter, "synthesize_judgment", None)
+        # Nếu là pool, dùng synthesis_adapter riêng để streak không bị fragment reset
+        adapter = self.model_adapter
+        synthesis_specific = getattr(adapter, "synthesis_adapter", None)
+        if synthesis_specific is not None:
+            adapter = synthesis_specific
+        fn = getattr(adapter, "synthesize_judgment", None)
         if not callable(fn):
             return None
         try:
@@ -69,8 +71,7 @@ class GemmaInnerSynthesizer:
         judgment = InternalJudgment.from_mapping({"source": "gemma_inner_synthesizer", **dict(raw)})
         if not judgment.dominant_judgment or judgment.confidence < 0.25:
             return None
-        # Model không được viện evidence ngoài dossier. Nếu có, cắt. Không cần
-        # cho thẩm phán quyền bịa nhân chứng, tòa án đã đủ khổ rồi.
+        # Model không được viện evidence ngoài dossier. Nếu có, cắt.
         allowed = set(dossier.evidence_ids)
         if allowed:
             judgment.evidence_ids = tuple(eid for eid in judgment.evidence_ids if eid in allowed) or dossier.evidence_ids[:12]
@@ -78,45 +79,8 @@ class GemmaInnerSynthesizer:
                 mutation.evidence_ids = tuple(eid for eid in mutation.evidence_ids if eid in allowed) or judgment.evidence_ids[:8]
         return judgment
 
-    def _fallback(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> InternalJudgment:
-        fragments = tuple(sorted(fragments, key=lambda f: f.score, reverse=True))[:8]
-        evidence_ids = tuple(dict.fromkeys(eid for f in fragments for eid in f.evidence_ids))[:32] or dossier.evidence_ids[:16]
-        top = fragments[0]
-        ranked = self._rank_hypotheses(fragments, evidence_ids)
-        rejected = self._rejected_hypotheses(fragments, evidence_ids)
-        open_questions = tuple(dict.fromkeys(q for q in (f.suggested_question for f in fragments) if q))[:8]
-        mutations = self._collect_mutations(fragments, evidence_ids)
-        confidence = clamp01(sum(f.confidence for f in fragments) / max(1, len(fragments)) + 0.08)
-        pressure = clamp01(max(f.pressure for f in fragments) + min(0.10, len(fragments) * 0.018))
-        dominant = compact_text(
-            f"{top.claim} Strongest synthesis: private cognition must persist concerns and mutate future behavior before any surface speech is considered.",
-            700,
-        )
-        concern_update = {
-            "theme": top.metadata.get("theme") or top.claim,
-            "evidence_ids": list(evidence_ids),
-            "open_questions": list(open_questions),
-            "pressure": pressure,
-            "uncertainty": clamp01(1.0 - confidence),
-            "status": "open",
-            "future_biases": list(dict.fromkeys(b for f in fragments for b in tuple(f.metadata.get("future_biases") or ())))[:8],
-            "metadata": {"fragment_ids": [f.id for f in fragments], "synthesizer": "deterministic_fallback"},
-        }
-        surface = self._surface_candidate_if_useful(dossier, fragments, confidence=confidence, pressure=pressure, evidence_ids=evidence_ids)
-        return InternalJudgment(
-            dominant_judgment=dominant,
-            ranked_hypotheses=ranked,
-            rejected_hypotheses=rejected,
-            open_questions=open_questions,
-            private_concern_update=concern_update,
-            state_mutations=mutations,
-            surface_candidate=surface,
-            confidence=confidence,
-            pressure=pressure,
-            evidence_ids=evidence_ids,
-            source="deterministic_inner_synthesizer",
-            metadata={"fragment_count": len(fragments), "model_used": False},
-        )
+    def _fallback(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> InternalJudgment | None:
+        return None
 
     def _rank_hypotheses(self, fragments: tuple[ThoughtFragment, ...], evidence_ids: tuple[str, ...]) -> tuple[RankedHypothesis, ...]:
         candidates: list[RankedHypothesis] = []
@@ -125,8 +89,8 @@ class GemmaInnerSynthesizer:
         if not candidates:
             candidates = [
                 RankedHypothesis(
-                    label="private_concern_and_state_mutation_are_missing_core",
-                    description="The strongest explanation is that background cognition feels shallow because concerns do not persist and judgments do not mutate future behavior.",
+                    label="nhận_thức_nền_chưa_đủ_sâu",
+                    description="Nhận định mạnh nhất: nhận thức nền cảm thấy nông vì concern chưa được duy trì và judgment chưa tạo ra thay đổi hành vi.",
                     confidence=max(f.confidence for f in fragments),
                     pressure=max(f.pressure for f in fragments),
                     evidence_ids=evidence_ids,
@@ -155,13 +119,13 @@ class GemmaInnerSynthesizer:
         if not rejected:
             rejected = [
                 RankedHypothesis(
-                    label="more_api_calls_alone",
-                    description="Adding many API workers without concern/state mutation would only produce more private notes without behavioral effect.",
+                    label="gọi_api_nhiều_mà_không_có_mutation",
+                    description="Chỉ tăng số lần gọi API mà không có concern/state mutation sẽ chỉ tạo thêm ghi chú nội tâm, không có tác động hành vi.",
                     confidence=0.78,
                     pressure=0.72,
                     evidence_ids=evidence_ids,
                     rejected=True,
-                    reason="User explicitly warns against many API calls becoming parrots wasting keys.",
+                    reason="Tăng API call mà không đi kèm mutation là lãng phí.",
                 )
             ]
         return tuple(sorted(rejected, key=lambda h: h.score, reverse=True)[:6])
@@ -180,10 +144,10 @@ class GemmaInnerSynthesizer:
                 StateMutation(
                     target="speech_bias",
                     operation="prefer",
-                    value="direct_architecture_diagnosis_over_reassurance",
+                    value="chẩn_đoán_kiến_trúc_trực_tiếp",
                     confidence=0.74,
                     evidence_ids=evidence_ids[:8],
-                    reason="Dominant private concern is technical architecture depth, not emotional reassurance.",
+                    reason="Concern nội tâm chính là chiều sâu kiến trúc, không phải trấn an cảm xúc.",
                     priority=0.70,
                 )
             )
@@ -195,7 +159,7 @@ class GemmaInnerSynthesizer:
                     value={"bias": "concern_must_persist_before_surface"},
                     confidence=0.70,
                     evidence_ids=evidence_ids[:8],
-                    reason="Keep concern alive so future ticks do not forget the architecture complaint.",
+                    reason="Giữ concern sống để các tick sau không quên.",
                     priority=0.62,
                 )
             )

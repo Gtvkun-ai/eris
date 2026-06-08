@@ -1,26 +1,4 @@
 {
   "version": 1,
-  "items": [
-    {
-      "id": "rel_3e341b08d7e8",
-      "pattern": "relationship_reflection",
-      "claim": "style_preference: Ngài thích giọng lạnh nhẹ và có kiểm soát.",
-      "confidence": 0.64,
-      "trust_delta": 0.0,
-      "distance_delta": 0.0,
-      "rupture_weight": 0.0,
-      "repair_weight": 0.0,
-      "evidence_ids": [
-        "percept:user_message:18:29:0"
-      ],
-      "observations": 1,
-      "first_seen_at": "2026-06-05T18:29:35+0700",
-      "updated_at": "2026-06-05T18:29:35+0700",
-      "decay_policy": "slow",
-      "surface_policy": "internal_bias",
-      "metadata": {
-        "reason": "derive relational_memory from cognitive frame reflection"
-      }
-    }
-  ]
+  "items": []
 }
