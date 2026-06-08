@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
@@ -43,19 +42,8 @@ public partial class UdpListener : Node2D
 
 	[Export] public string PythonExecutable = "python";
 	[Export] public string VisionScriptPath = "src/vision.py";
-	[Export] public string LlamaServerPath = "lib/llama-b8466-bin-win-cuda-12.4-x64/llama-server.exe";
-	[Export] public string ModelPath = "src/model.gguf";
-	[Export] public bool EnableLocalVisionInput = true;
-	[Export] public string MmprojPath = "src/mmproj-F16.gguf";
 	[Export] public bool AutoStartVision = true;
-	[Export] public bool AutoPreloadLlamaServer = false;
-	[Export] public int LlamaServerPort = 8080;
-	[Export] public string LlamaServerNgl = "all";
-	[Export] public int LlamaServerCtx = 8192;
-	[Export] public bool LlamaServerFlashAttn = true;
-	[Export(PropertyHint.MultilineText)] public string LlamaServerExtraArgs = "";
 	[Export] public bool EnableRemoteCognitionApi = true;
-	[Export] public bool EnableLocalStyleRewrite = false;
 	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "";
 	[Export] public string RemoteApiProvider = "gemini";
 	[Export] public string RemoteApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
@@ -315,8 +303,6 @@ public partial class UdpListener : Node2D
 
 		_monika.AnimationFinished += OnBounceAnimationFinished;
 		GD.Print($"[Ready] Đang lắng nghe UDP cổng 4242. HalfSize={_spriteHalfSize}");
-		if (AutoPreloadLlamaServer)
-			StartLlamaServerProcess();
 		if (AutoStartVision)
 			StartVisionProcess();
 	}
@@ -339,7 +325,6 @@ public partial class UdpListener : Node2D
 	public override void _ExitTree()
 	{
 		StopVisionProcess();
-		StopLlamaServerProcess();
 		_udp.Close();
 		_chatSend.Close();
 	}
@@ -4067,44 +4052,6 @@ public partial class UdpListener : Node2D
 		_processes?.ToggleVision(BuildServiceConfig());
 	}
 
-	private string GetProjectRoot()
-	{
-		return ProjectSettings.GlobalizePath("res://");
-	}
-
-	private string GetLlamaServerFullPath()
-	{
-		return Path.Combine(GetProjectRoot(), LlamaServerPath.Replace('/', Path.DirectorySeparatorChar));
-	}
-
-	private string GetModelFullPath()
-	{
-		return Path.Combine(GetProjectRoot(), ModelPath.Replace('/', Path.DirectorySeparatorChar));
-	}
-
-	private string GetMmprojFullPath()
-	{
-		return Path.Combine(GetProjectRoot(), MmprojPath.Replace('/', Path.DirectorySeparatorChar));
-	}
-
-	private bool IsLlamaServerReachable()
-	{
-		try
-		{
-			using var client = new TcpClient();
-			var result = client.BeginConnect("127.0.0.1", LlamaServerPort, null, null);
-			bool connected = result.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(200));
-			if (!connected)
-				return false;
-			client.EndConnect(result);
-			return true;
-		}
-		catch
-		{
-			return false;
-		}
-	}
-
 	private bool ShouldLogVisionOutput(string line)
 	{
 		if (string.IsNullOrWhiteSpace(line))
@@ -4146,52 +4093,13 @@ public partial class UdpListener : Node2D
 			line.Contains("server is listening", StringComparison.OrdinalIgnoreCase);
 	}
 
-	private bool ShouldLogLlamaOutput(string line)
-	{
-		if (string.IsNullOrWhiteSpace(line))
-			return false;
-
-		return
-			line.Contains("main: model loaded", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("server is listening", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("failed to load model", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("error loading model", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("Traceback", StringComparison.OrdinalIgnoreCase) ||
-			line.Contains("Exception", StringComparison.OrdinalIgnoreCase);
-	}
-
-	private bool StartLlamaServerProcess()
-	{
-		return _processes?.StartLlamaServer(BuildServiceConfig()) ?? false;
-	}
-
-	private void StopLlamaServerProcess()
-	{
-		_processes?.StopLlamaServer();
-	}
-
-	private void ToggleLlamaServerProcess()
-	{
-		_processes?.ToggleLlamaServer(BuildServiceConfig());
-	}
-
 	private ErisServiceConfig BuildServiceConfig()
 	{
 		return new ErisServiceConfig
 		{
 			PythonExecutable = PythonExecutable,
 			VisionScriptPath = VisionScriptPath,
-			LlamaServerPath = LlamaServerPath,
-			ModelPath = ModelPath,
-			MmprojPath = MmprojPath,
-			EnableLocalVisionInput = EnableLocalVisionInput,
-			LlamaServerPort = LlamaServerPort,
-			LlamaServerNgl = LlamaServerNgl,
-			LlamaServerCtx = LlamaServerCtx,
-			LlamaServerFlashAttn = LlamaServerFlashAttn,
-			LlamaServerExtraArgs = LlamaServerExtraArgs,
 			EnableRemoteCognitionApi = EnableRemoteCognitionApi,
-			EnableLocalStyleRewrite = EnableLocalStyleRewrite,
 			DefaultRemoteApiKey = DefaultRemoteApiKey,
 			RemoteApiProvider = RemoteApiProvider,
 			RemoteApiBaseUrl = RemoteApiBaseUrl,
@@ -4450,4 +4358,3 @@ public sealed partial class _MoodDotCanvas : Control
 		DrawString(font, new Vector2(cx - 5f, cy + 22f), "✦", HorizontalAlignment.Left, -1, 10, new Color(0.93f, 0.60f, 0.76f, 0.70f));
 	}
 }
-

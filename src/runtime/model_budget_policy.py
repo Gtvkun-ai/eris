@@ -225,9 +225,6 @@ class ModelBudgetPolicyConfig:
     four_b_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_4B_VRAM_MB", 2200.0))
     vision_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_VISION_VRAM_MB", 1100.0))
     sensory_vram_reservation_mb: float = field(default_factory=lambda: _env_float("ERIS_SENSORY_VRAM_MB", 450.0))
-    force_local_gguf_main: bool = field(default_factory=lambda: _env_flag("ERIS_FORCE_LOCAL_GGUF_MAIN", True))
-    force_local_gguf_priority: int = field(default_factory=lambda: _env_int("ERIS_FORCE_LOCAL_GGUF_PRIORITY", 10000))
-    force_local_gguf_queue_timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_FORCE_LOCAL_GGUF_QUEUE_TIMEOUT", 0.0))
     vision_force_run: bool = field(default_factory=lambda: _env_flag("ERIS_VISION_FORCE_RUN", True))
     vision_force_run_priority: int = field(default_factory=lambda: _env_int("ERIS_VISION_FORCE_RUN_PRIORITY", 5000))
     vision_force_run_queue_timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_VISION_FORCE_RUN_QUEUE_TIMEOUT", 0.0))
@@ -322,12 +319,10 @@ class ModelBudgetPolicy:
         resource_snapshot: ResourceSnapshot | None = None,
         reason: str = "",
         ignore_active_lock: bool = False,
-        force_local_gguf: bool = False,
     ) -> BudgetDecision:
         if not self.config.enabled:
             snapshot = resource_snapshot or self.capture()
             return BudgetDecision("allow", True, tier, "budget_policy_disabled", snapshot, debug={"reason": reason})
-        force_local_gguf = bool(force_local_gguf or self._should_force_local_gguf(tier))
         snapshot = resource_snapshot or self.capture()
         now = time.time()
         cooldown = self._cooldown_for(tier, now)
@@ -350,21 +345,8 @@ class ModelBudgetPolicy:
             "reserved_vram_mb": round(reserved_vram, 2),
             "external_vram_used_mb": round(external_vram_used, 2),
             "external_vram_percent": round(external_vram_percent, 2),
-            "force_local_gguf": bool(force_local_gguf),
             "resource_guard_enabled": bool(getattr(self.config, "resource_guard_enabled", False)),
         }
-
-        if force_local_gguf and self._can_force_local_gguf(tier):
-            return BudgetDecision(
-                verdict="allow",
-                allowed=True,
-                tier=tier,
-                reason="force_local_gguf_main",
-                resource_snapshot=snapshot,
-                hard_veto=False,
-                cooldown_seconds=0.0,
-                debug=debug,
-            )
 
         if not getattr(self.config, "resource_guard_enabled", False):
             return BudgetDecision(
@@ -546,12 +528,7 @@ class ModelBudgetPolicy:
         cancel_event: threading.Event | None = None,
         request_id: str | None = None,
     ) -> InferenceLease:
-        force_local_gguf = self._should_force_local_gguf(tier)
         force_vision = self._should_force_vision(tier)
-        if force_local_gguf:
-            priority = max(int(priority), int(self.config.force_local_gguf_priority))
-            if timeout_seconds is None:
-                timeout_seconds = self.config.force_local_gguf_queue_timeout_seconds
         if force_vision:
             priority = max(int(priority), int(self.config.vision_force_run_priority))
             timeout_seconds = self.config.vision_force_run_queue_timeout_seconds
@@ -563,7 +540,6 @@ class ModelBudgetPolicy:
                 tier,
                 resource_snapshot=resource_snapshot,
                 reason=reason,
-                force_local_gguf=force_local_gguf,
             )
             if not decision.allowed:
                 raise RuntimeError(f"model_budget_veto:{tier}:{decision.reason}")
@@ -582,7 +558,7 @@ class ModelBudgetPolicy:
             return lease
 
         with self._condition:
-            if len(self._queue) >= self.config.max_queue_size and not force_local_gguf and not force_vision:
+            if len(self._queue) >= self.config.max_queue_size and not force_vision:
                 raise RuntimeError(f"model_queue_full:{tier}:{len(self._queue)}")
             self._sequence += 1
             entry = ModelQueueEntry(
@@ -614,7 +590,7 @@ class ModelBudgetPolicy:
                 if self._queue_head_locked() is not entry:
                     self._condition.wait(self._wait_seconds(entry, now))
                     continue
-                if self._has_incompatible_active_lease_locked(tier) and not force_local_gguf:
+                if self._has_incompatible_active_lease_locked(tier):
                     self._condition.wait(self._wait_seconds(entry, now))
                     continue
 
@@ -625,7 +601,6 @@ class ModelBudgetPolicy:
                     resource_snapshot=resource_snapshot,
                     reason=reason,
                     ignore_active_lock=True,
-                    force_local_gguf=force_local_gguf,
                 )
                 entry.last_budget_decision = decision
                 if not decision.allowed:
@@ -762,16 +737,6 @@ class ModelBudgetPolicy:
 
     def _uses_remote_api(self, tier: str) -> bool:
         return tier == "main_cognition" and bool(getattr(self.config, "remote_api_enabled", False))
-
-    def _can_force_local_gguf(self, tier: str) -> bool:
-        return (
-            tier == "main_cognition"
-            and bool(getattr(self.config, "force_local_gguf_main", False))
-            and not self._uses_remote_api(tier)
-        )
-
-    def _should_force_local_gguf(self, tier: str) -> bool:
-        return self._can_force_local_gguf(tier)
 
     def _should_force_vision(self, tier: str) -> bool:
         return tier == "vision_compressor" and bool(getattr(self.config, "vision_force_run", False))

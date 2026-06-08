@@ -20,8 +20,6 @@ import os
 import re
 import socket
 import time
-import urllib.error
-import urllib.request
 import requests
 import requests.exceptions
 from ast import literal_eval
@@ -30,7 +28,7 @@ from typing import Any, Mapping
 
 from cortex.private_mind.contracts import EvidenceDossier, ThoughtFragment, compact_text, to_plain
 from eris_secrets import apply_secrets_to_environ, get_secret
-from llm.client import GeminiClient, LlamaServerClient, OpenAICompatibleClient
+from llm.client import GeminiClient, OpenAICompatibleClient
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -70,21 +68,6 @@ def _classify_transport_exception(exc: Exception) -> str:
         except Exception:
             pass
 
-    # urllib.error.HTTPError (llama_server path)
-    if isinstance(exc, urllib.error.HTTPError):
-        try:
-            status = int(exc.code)
-            if status == 429 or 500 <= status <= 599:
-                return "transient"
-            return "fixed_config"
-        except Exception:
-            pass
-        return "fixed_config"
-
-    # urllib.error.URLError (network unreachable, etc.)
-    if isinstance(exc, urllib.error.URLError):
-        return "transient"
-
     # requests timeout / connection errors
     if isinstance(exc, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
         return "transient"
@@ -99,11 +82,10 @@ def _classify_transport_exception(exc: Exception) -> str:
 @dataclass(slots=True, frozen=True)
 class PrivateMindModelAdapterConfig:
     enabled: bool = field(default_factory=lambda: _env_flag("ERIS_PRIVATE_MIND_API_ENABLED", False))
-    provider: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_PROVIDER", os.getenv("ERIS_DAYDREAM_PROVIDER", "llama_server")) or "llama_server").strip().lower())
+    provider: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_PROVIDER", os.getenv("ERIS_DAYDREAM_PROVIDER", "gemini")) or "gemini").strip().lower())
     model: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_MODEL", os.getenv("ERIS_DAYDREAM_MODEL", "gemma-4-26b-a4b-it")) or "gemma-4-26b-a4b-it").strip())
     base_url: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_BASE_URL", os.getenv("ERIS_REMOTE_BASE_URL", "")) or "").strip())
     api_key: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_API_KEY", "") or "").strip())
-    llama_server_url: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_LLAMA_SERVER_URL", os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080/v1")) or "http://127.0.0.1:8080/v1").strip())
     timeout_seconds: float = field(default_factory=lambda: max(4.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "28"), 28.0)))
     # Nhiệt độ thấp khiến model nhỏ (gemma) dễ lặp từ hoặc dính RECITATION filter,
     # rồi trả output cụt/rỗng -> invalid_json. Để mặc định ấm hơn để phá vòng lặp.
@@ -133,7 +115,6 @@ class RuntimePrivateMindModelAdapter:
         self.config = config or PrivateMindModelAdapterConfig()
         self.llm_service = llm_service
         self.logger = logger
-        self._llama_model_name: str | None = None
         self._provider_client: Any | None = None
         self._calls = 0
         self._ok_calls = 0
@@ -570,7 +551,7 @@ class RuntimePrivateMindModelAdapter:
             "enabled": bool(self.config.enabled),
             "provider": self.config.provider,
             "model": self.config.model,
-            "base_url": self.config.base_url or (self.config.llama_server_url if self.config.provider == "llama_server" else ""),
+            "base_url": self.config.base_url,
             "api_key_configured": api_key_configured,
             "api_degraded": bool(self._last_error or self._json_cooldown_active() or self._transient_cooldown_active()),
             "calls": self._calls,
@@ -783,8 +764,6 @@ class RuntimePrivateMindModelAdapter:
                         continue
                     except Exception as exc:
                         return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}", error_kind=_classify_transport_exception(exc))
-        if self.config.provider == "llama_server":
-            return self._llama_server_chat_json(messages, max_tokens=max_tokens, temperature=temperature)
         if self.config.provider in {"gemini", "openai", "openai_compatible", "compatible", "remote"}:
             return self._provider_chat_json(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
         return PrivateMindModelResult(ok=False, error=f"unsupported_provider:{self.config.provider}", error_kind="fixed_config")
@@ -869,47 +848,7 @@ class RuntimePrivateMindModelAdapter:
             base_url = self.config.base_url or os.getenv("ERIS_REMOTE_BASE_URL", "https://api.openai.com/v1")
             self._provider_client = OpenAICompatibleClient(base_url=base_url, api_key=api_key, model_name=self.config.model, timeout=timeout)
             return self._provider_client
-        if provider == "llama_server":
-            self._provider_client = LlamaServerClient(base_url=self.config.llama_server_url, timeout=timeout)
-            return self._provider_client
         return None
-
-    def _llama_server_chat_json(self, messages: list[dict[str, str]], *, max_tokens: int, temperature: float) -> PrivateMindModelResult:
-        payload = {
-            "model": self._llama_model(),
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "response_format": {"type": "json_object"},
-        }
-        try:
-            raw = self._llama_request("POST", "/chat/completions", payload)
-            content = self._extract_content(raw)
-            parsed = self._parse_json(content)
-            return PrivateMindModelResult(ok=bool(parsed), parsed=parsed, content=content, raw=raw, error="" if parsed else "invalid_json", error_kind="" if parsed else "invalid_json")
-        except Exception as exc:
-            return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}", error_kind=_classify_transport_exception(exc))
-
-    def _llama_model(self) -> str:
-        if self._llama_model_name:
-            return self._llama_model_name
-        try:
-            raw = self._llama_request("GET", "/models", None)
-            data = raw.get("data")
-            if isinstance(data, list) and data and isinstance(data[0], Mapping):
-                self._llama_model_name = str(data[0].get("id") or self.config.model)
-        except Exception:
-            self._llama_model_name = self.config.model
-        return self._llama_model_name or self.config.model
-
-    def _llama_request(self, method: str, path: str, payload: dict[str, Any] | None) -> dict[str, Any]:
-        url = self.config.llama_server_url.rstrip("/") + path
-        data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method=method)
-        with urllib.request.urlopen(req, timeout=self.config.timeout_seconds) as response:  # noqa: S310 - local runtime endpoint by config
-            body = response.read().decode("utf-8", errors="replace")
-        parsed = json.loads(body or "{}")
-        return parsed if isinstance(parsed, dict) else {}
 
     def _extract_content(self, raw: Any) -> str:
         if isinstance(raw, str):

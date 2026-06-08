@@ -683,8 +683,8 @@ class ChatCycleMixin:
                         getattr(exc, "reason", str(exc)),
                     )
             if raw is None:
-                # API remote đã retry hết lượt mà vẫn fail → không route sang llama-server local.
-                # Trả về no_fallback_block để Godot biết rõ lý do thay vì nhận câu ngẫu nhiên từ model local.
+                # API remote da retry het luot ma van fail, nen khong route sang local fallback.
+                # Tra ve no_fallback_block de Godot biet ro ly do.
                 no_fallback_block = True
                 frame.debug_notes.append(f"llm_format_errors={format_errors}; route=no_fallback_block")
                 self.logger.warning(

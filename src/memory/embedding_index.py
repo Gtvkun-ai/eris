@@ -85,7 +85,7 @@ class EmbeddingIndex:
         self.cache_dir = cache_dir or os.getenv(
             "ERIS_EMBEDDING_CACHE_DIR",
             # Mặc định đặt cạnh model.gguf — cùng thư mục src/
-            str(Path(os.getenv("GGUF_MODEL_PATH", "src/model.gguf")).parent / "embedding_model"),
+            str(Path("src") / "embedding_model"),
         )
         self.max_seq_length = max_seq_length
         self._device = device or ("cuda" if self._cuda_available() else "cpu")

@@ -20,7 +20,7 @@ import re
 from typing import Any, Mapping
 
 from eris_secrets import apply_secrets_to_environ, get_agent_profile, get_config, get_secret
-from llm.client import GeminiClient, LlamaServerClient, OpenAICompatibleClient
+from llm.client import GeminiClient, OpenAICompatibleClient
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -237,8 +237,6 @@ class RuntimeSubconsciousModelAdapter:
             return os.getenv("ERIS_REMOTE_MODEL", "").strip() or os.getenv("GEMINI_MODEL", "").strip() or "gemma-4-26b-a4b-it"
         if self.provider in {"openai", "openai_compatible", "compatible", "remote"}:
             return os.getenv("ERIS_REMOTE_MODEL", "").strip() or "gemini-3-flash-preview"
-        if self.provider == "llama_server":
-            return os.getenv("ERIS_LANE3_MODEL", "local-model").strip() or "local-model"
         return model or "lane3-model"
 
     def _resolve_base_url(self) -> str:
@@ -249,8 +247,6 @@ class RuntimeSubconsciousModelAdapter:
             return os.getenv("ERIS_REMOTE_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").strip()
         if self.provider in {"openai", "openai_compatible", "compatible", "remote"}:
             return os.getenv("ERIS_REMOTE_BASE_URL", "https://api-v2.shopaikey.com/v1").strip()
-        if self.provider == "llama_server":
-            return os.getenv("ERIS_LANE3_LLAMA_SERVER_URL", os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080/v1")).strip()
         return base
 
     def _resolve_api_key(self) -> str:
@@ -275,8 +271,6 @@ class RuntimeSubconsciousModelAdapter:
             if not self.api_key:
                 return None
             return OpenAICompatibleClient(base_url=self.base_url, api_key=self.api_key, model_name=self.model, timeout=timeout)
-        if self.provider == "llama_server":
-            return LlamaServerClient(base_url=self.base_url, timeout=timeout)
         return None
 
     def _extract_content(self, raw: Mapping[str, Any]) -> str:

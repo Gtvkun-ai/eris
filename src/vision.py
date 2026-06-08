@@ -10,7 +10,7 @@ from app_logging import configure_logging, get_logger
 from cortex import FeRenderer, NiEngine, TiGovernor
 from domain import Decision
 from llm import LlmService
-from llm.process_manager import LlamaServerProcessManager
+from llm.process_manager import RemoteModelProcessManager
 from memory.memory_cognition import MemoryCognitionCore
 from parser_grounding import DecisionParser
 from runtime.coordinator import RuntimeCoordinator
@@ -25,7 +25,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 
 class AttentionOverseer:
-    def __init__(self, model_path: str, n_ctx: int = 8192, n_gpu_layers: int = -1):
+    def __init__(self, model_path: str = "", n_ctx: int = 8192, n_gpu_layers: int = -1):
         self.logger = get_logger("Vision")
         self.memory_logger = get_logger("Memory")
         self.parse_logger = get_logger("Parse")
@@ -33,18 +33,13 @@ class AttentionOverseer:
         self.loop_logger = get_logger("Loop")
         self.action_logger = get_logger("Action")
 
-        patched_path = model_path.replace(".gguf", "_patched.gguf")
-        if os.path.exists(patched_path):
-            self.logger.info("Phát hiện model đã vá: %s", patched_path)
-            model_path = patched_path
-
         remote_enabled = os.environ.get("ERIS_REMOTE_API_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
         if remote_enabled:
             self.logger.info("Đang dùng remote API làm cognition chính.")
         else:
-            self.logger.info("Đang tải mô hình GGUF làm cognition chính: %s", model_path)
+            self.logger.info("Remote API dang tat; local model runtime da bi go khoi runtime nay.")
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        self.process_manager = LlamaServerProcessManager(
+        self.process_manager = RemoteModelProcessManager(
             logger=self.process_logger,
             project_root=project_root,
         )
@@ -67,7 +62,7 @@ class AttentionOverseer:
             n_gpu_layers=n_gpu_layers,
         )
         if vision_client is not None:
-            self.logger.info("Local GGUF vision facts đã sẵn sàng với mmproj.")
+            self.logger.info("Vision facts client đã sẵn sàng.")
         self.llm_service = LlmService(
             self.llm_client,
             style_client=style_client,
@@ -200,17 +195,11 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         model_path = sys.argv[1]
     else:
-        model_path = os.environ.get(
-            "GGUF_MODEL_PATH",
-            os.path.join(os.path.dirname(__file__), "model.gguf"),
-        )
+        model_path = ""
 
     remote_enabled = os.environ.get("ERIS_REMOTE_API_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
-    style_enabled = os.environ.get("ERIS_LOCAL_STYLE_REWRITE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
-    if not os.path.isfile(model_path) and (not remote_enabled or style_enabled):
-        logger.error("Không tìm thấy file mô hình: %s", model_path)
-        logger.error("Dùng: python vision.py <đường_dẫn_model.gguf>")
-        logger.error("Hoặc: set GGUF_MODEL_PATH=<đường_dẫn_model.gguf>")
+    if not remote_enabled:
+        logger.error("ERIS_REMOTE_API_ENABLED=0 nhưng local model runtime đã bị gỡ khỏi runtime.")
         raise SystemExit(1)
 
     raw_ctx = os.environ.get("ERIS_N_CTX", "").strip()
