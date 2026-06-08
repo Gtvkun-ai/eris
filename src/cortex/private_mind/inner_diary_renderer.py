@@ -28,10 +28,10 @@ def _as_list(value: Any) -> list[Any]:
 
 class InnerDiaryRenderer:
     EMOTION_RING = (
-        ("hưng phấn", "joyful_excited", "top"),
-        ("vui vẻ", "bright_content", "left"),
-        ("bình tĩnh", "calm_centered", "bottom"),
-        ("khó chịu", "tense_irritated", "right"),
+        ("top", "hưng phấn", "joyful_excited"),
+        ("left", "vui vẻ", "bright_content"),
+        ("right", "khó chịu", "tense_irritated"),
+        ("bottom", "bình tĩnh", "calm_centered"),
     )
 
     def _future_thought(self, future_bias: Mapping[str, Any]) -> str:
@@ -85,17 +85,18 @@ class InnerDiaryRenderer:
         if not center:
             center = "Ổn định"
 
+        future_text = self._future_thought(future_bias)
         if any(str(item.get("theme") or "").strip() for item in concern):
             ring_hint = "ít căng thẳng"
         elif surface_queue:
             ring_hint = "có điều muốn nói"
-        elif _future_thought := self._future_thought(future_bias):
-            ring_hint = _future_thought
+        elif future_text:
+            ring_hint = future_text
         else:
             ring_hint = "êm"
 
         quadrant_map: dict[str, dict[str, str]] = {}
-        for label, key, position in self.EMOTION_RING:
+        for position, label, key in self.EMOTION_RING:
             intensity = 0.22
             if key == "calm_centered":
                 intensity = 0.84 if center == "Ổn định" else 0.76
@@ -141,6 +142,8 @@ class InnerDiaryRenderer:
         concerns = _as_list(menu.get("open_concerns") or _as_dict(retained).get("concerns"))
         future_bias = _as_dict(menu.get("future_bias") or digest.get("future_bias"))
 
+        future_text = self._future_thought(future_bias)
+
         sections: list[dict[str, Any]] = []
         emotion_board = self._emotion_board(digest)
         quadrants = emotion_board["quadrants"]
@@ -164,7 +167,6 @@ class InnerDiaryRenderer:
                 "lines": [dominant],
             })
 
-        future_text = self._future_thought(future_bias)
         if future_text:
             sections.append({
                 "title": "Suy nghi tuong lai",

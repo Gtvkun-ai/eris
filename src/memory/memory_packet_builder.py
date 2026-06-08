@@ -92,19 +92,20 @@ class MemoryPacket:
                 used += 1
             if lines:
                 sections.append(f"{name}_memory:\n" + "\n".join(lines))
-        if self.confidence_notes and used < max_lines:
-            sections.append("memory_confidence_notes:\n" + "\n".join(f"- {note}" for note in self.confidence_notes[: max_lines - used]))
+        # confidence_notes cũ quá rào cản — bỏ để LLM không học "memory = thứ cần im lặng"
         if self.activations:
             lines = [
-                "active_memory_resonance: silent cognitive bias only; do not treat it as current screen evidence or current file evidence.",
-                f"- score={self.score:.2f}; dominant_layer={self.dominant_layer or 'none'}; attention_bias={self.attention_bias:.2f}; silence_bias={self.silence_bias:.2f}",
+                # Bỏ "silent cognitive bias only" — memory phải được dùng thật, không phải đứng ngoài cửa.
+                # Chỉ giữ lưu ý đừng dùng làm current screen evidence (đó là lỗi grounding khác).
+                "memory_context: use these as known facts about the user/context. Do not fabricate beyond what is listed. Do not use as current screen or file evidence.",
+                f"- score={self.score:.2f}; dominant_layer={self.dominant_layer or 'none'}",
             ]
             for activation in self.activations[:4]:
                 anchors = ",".join(activation.matched_anchors[:4])
                 anchor_part = f", anchors={anchors}" if anchors else ""
                 lines.append(
-                    f"- {activation.layer}: {activation.text} "
-                    f"(score={activation.score:.2f}, relevance={activation.relevance:.2f}, policy={activation.surface_policy}{anchor_part})"
+                    f"- {activation.layer}: {activation.text}"
+                    f" (score={activation.score:.2f}{anchor_part})"
                 )
             sections.append("\n".join(lines))
         return "\n\n".join(sections)

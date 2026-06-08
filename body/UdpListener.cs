@@ -111,7 +111,14 @@ public partial class UdpListener : Node2D
 	private Control _casualContentRoot;  // container cho toàn bộ casual nodes — xoá 1 node là xong
 	internal float _moodDotValence;
 	internal float _moodDotArousal;
+	internal string _moodStateName = "";   // do AI đặt, ví dụ "calm", "excited"
+	internal string _moodStateDesc = "";   // mô tả phụ từ AI, ví dụ "ít căng thẳng"
 	private readonly List<(Control FillClip, Control Fill, Label WordLabel)> _casualBars = new();
+
+	// Dev mode UI
+	private Control _devContentRoot;
+	private Label _devHeaderLabel;          // valence / arousal / state
+	private VBoxContainer _devItemList;     // container chứa tất cả raw item rows
 	private Texture2D _switchOnTexture;
 	private Texture2D _switchOffTexture;
 	private Texture2D _chatFrameTexture;
@@ -980,34 +987,252 @@ public partial class UdpListener : Node2D
 
 	// ── Dev mode content ──────────────────────────────────────────────────────
 
+	// Màu sắc dev mode — monochrome hơn, hồng nhạt tông lạnh
+	private static readonly Color DevBg        = new(0.98f, 0.96f, 0.975f, 0.96f);
+	private static readonly Color DevBorder     = new(0.90f, 0.76f, 0.84f, 0.80f);
+	private static readonly Color DevGroupFg    = new(0.72f, 0.30f, 0.52f, 1.00f);  // group header
+	private static readonly Color DevKeyFg      = new(0.22f, 0.10f, 0.18f, 0.90f);  // key name
+	private static readonly Color DevValFg      = new(0.55f, 0.15f, 0.35f, 1.00f);  // numeric value
+	private static readonly Color DevNoteFg     = new(0.58f, 0.38f, 0.50f, 0.75f);  // note
+	private static readonly Color DevBarTrack   = new(0.93f, 0.84f, 0.90f, 0.70f);
+	private static readonly Color DevBarFill    = new(0.95f, 0.45f, 0.68f, 0.85f);
+	private static readonly Color DevHeaderFg   = new(0.30f, 0.06f, 0.22f, 0.95f);
+	private static readonly Color DevHintFg     = new(0.50f, 0.24f, 0.38f, 0.75f);
+
+	private const float DevBarW  = 72f;
+	private const float DevBarH  = 7f;
+	private const float DevRowH  = 18f;
+
 	private void BuildDevContent()
 	{
-		var left = new VBoxContainer
+		// ── Root container ────────────────────────────────────────────────
+		var root = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
+		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		_emotionPanel.AddChild(root);
+		_devContentRoot = root;
+
+		const float SafeX  = 46f;
+		const float SafeW  = 440f;
+		const float StartY = 108f;
+
+		// ── Header chip: valence | arousal | state ────────────────────────
+		var headerChip = new Panel
 		{
-			Position = new Vector2(50f, 148f),
-			Size = new Vector2(470f, 286f),
-			CustomMinimumSize = new Vector2(470f, 286f),
+			Position    = new Vector2(SafeX, StartY),
+			Size        = new Vector2(SafeW, 28f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
-		left.AddThemeConstantOverride("separation", 2);
-		_emotionPanel.AddChild(left);
+		headerChip.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor     = new Color(1f, 0.94f, 0.97f, 0.88f),
+			BorderColor = DevBorder,
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 10, CornerRadiusTopRight = 10,
+			CornerRadiusBottomLeft = 10, CornerRadiusBottomRight = 10,
+		});
+		root.AddChild(headerChip);
 
-		string[] portraits = {
-			"res://asset/Monika/affection1.png",
-			"res://asset/Monika/affection2.png",
-			"res://asset/Monika/affection3.png",
-			"res://asset/Monika/affection4.png",
+		_devHeaderLabel             = CreateUiLabel("valence —  |  arousal —  |  state —", 11, DevHeaderFg);
+		_devHeaderLabel.Position    = new Vector2(SafeX + 10f, StartY + 6f);
+		_devHeaderLabel.Size        = new Vector2(SafeW - 12f, 20f);
+		_devHeaderLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_devHeaderLabel.ClipText    = true;
+		root.AddChild(_devHeaderLabel);
+
+		// ── Scroll container cho raw items ────────────────────────────────
+		const float ScrollY = StartY + 34f;
+		const float ScrollH = 302f;   // 474 (safe bottom) - 142 (ScrollY) - 22 (hint) - 8 (padding)
+
+		var scrollBg = new Panel
+		{
+			Position    = new Vector2(SafeX, ScrollY),
+			Size        = new Vector2(SafeW, ScrollH),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
-		for (int i = 0; i < EmotionPanelSlots.Length && i < portraits.Length; i++)
-			AddEmotionRow(left, EmotionPanelSlots[i].Title, EmotionPanelSlots[i].Note, 0f, portraits[i]);
+		scrollBg.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor     = DevBg,
+			BorderColor = DevBorder,
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 14, CornerRadiusTopRight = 14,
+			CornerRadiusBottomLeft = 14, CornerRadiusBottomRight = 14,
+		});
+		root.AddChild(scrollBg);
 
-		_emotionSummaryLabel = CreateUiLabel("", 1, Colors.Transparent);
-		_emotionSummaryLabel.Visible = false;
-		_emotionPanel.AddChild(_emotionSummaryLabel);
+		var scroll = new ScrollContainer
+		{
+			Position = new Vector2(SafeX + 6f, ScrollY + 6f),
+			Size     = new Vector2(SafeW - 12f, ScrollH - 12f),
+		};
+		scroll.AddThemeConstantOverride("v_scrollbar_separation", 0);
+		root.AddChild(scroll);
 
-		_emotionHintLabel = CreateUiLabel("Những con số chỉ mang tính tham khảo.", 12, new Color(0.48f, 0.25f, 0.34f));
-		_emotionHintLabel.Position = new Vector2(62f, 445f);
-		_emotionHintLabel.Size = new Vector2(460f, 24f);
-		_emotionPanel.AddChild(_emotionHintLabel);
+		_devItemList = new VBoxContainer();
+		_devItemList.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		_devItemList.AddThemeConstantOverride("separation", 1);
+		scroll.AddChild(_devItemList);
+
+		// ── Hint ở dưới ───────────────────────────────────────────────────
+		_emotionHintLabel             = CreateUiLabel("", 11, DevHintFg);
+		_emotionHintLabel.Position    = new Vector2(SafeX, ScrollY + ScrollH + 4f);
+		_emotionHintLabel.Size        = new Vector2(SafeW, 18f);
+		_emotionHintLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		root.AddChild(_emotionHintLabel);
+
+		// Placeholder khi chưa có data
+		_devItemList.AddChild(DevPlaceholderLabel("Chưa có dữ liệu emotion_debug."));
+	}
+
+	private Label DevPlaceholderLabel(string text)
+	{
+		var lbl = CreateUiLabel(text, 11, DevNoteFg);
+		lbl.AutowrapMode = TextServer.AutowrapMode.Off;
+		return lbl;
+	}
+
+	/// <summary>Dựng lại toàn bộ raw item list trong dev mode từ _latestEmotionDebug.</summary>
+	private void RefreshDevMode()
+	{
+		if (_devItemList == null || _devHeaderLabel == null)
+			return;
+
+		// Xoá cũ
+		foreach (Node child in _devItemList.GetChildren())
+		{
+			_devItemList.RemoveChild(child);
+			child.QueueFree();
+		}
+
+		if (_latestEmotionDebug == null || _latestEmotionDebug.Items == null || _latestEmotionDebug.Items.Count == 0)
+		{
+			_devHeaderLabel.Text = "valence —  |  arousal —  |  state: chưa có";
+			_devItemList.AddChild(DevPlaceholderLabel("Chưa có dữ liệu emotion_debug."));
+			if (_emotionHintLabel != null) _emotionHintLabel.Text = "";
+			return;
+		}
+
+		var debug = _latestEmotionDebug;
+
+		// Header: valence + arousal raw + state từ AI
+		float rawValence = debug.HasSummaryValence ? debug.SummaryValence : float.NaN;
+		float rawArousal = 0f;
+		foreach (var it in debug.Items)
+			if (it.Key == "calm_aroused" && it.HasNumericValue) { rawArousal = it.NumericValue; break; }
+
+		string valStr   = float.IsNaN(rawValence) ? "—" : $"{rawValence:+0.00;-0.00}";
+		string aroStr   = $"{rawArousal:0.00}";
+		string stateStr = string.IsNullOrWhiteSpace(debug.SummaryState) ? FormatSummaryValue(debug.SummaryValue) : debug.SummaryState;
+		_devHeaderLabel.Text = $"valence {valStr}  |  arousal {aroStr}  |  {stateStr}";
+
+		// Build theo group
+		string currentGroup = null;
+		foreach (var item in debug.Items)
+		{
+			string group = string.IsNullOrWhiteSpace(item.Group) ? "other" : item.Group;
+
+			if (group != currentGroup)
+			{
+				currentGroup = group;
+				// Group header
+				var groupLbl = CreateUiLabel($"── {GroupTitle(group)} ──", 10, DevGroupFg);
+				groupLbl.CustomMinimumSize = new Vector2(0f, 16f);
+				_devItemList.AddChild(groupLbl);
+			}
+
+			// Row: key  [████░]  0.72  note
+			_devItemList.AddChild(BuildDevItemRow(item));
+		}
+
+		// Hint: romcom summary
+		if (_emotionHintLabel != null)
+		{
+			var byKey = new Dictionary<string, EmotionDebugItem>(debug.Items.Count, StringComparer.Ordinal);
+			foreach (var it in debug.Items) byKey[it.Key] = it;
+			_emotionHintLabel.Text = BuildRomcomHint(byKey, debug);
+		}
+	}
+
+	/// <summary>Tạo 1 dòng raw item: label-key  mini-bar  value  note</summary>
+	private Control BuildDevItemRow(EmotionDebugItem item)
+	{
+		var row = new HBoxContainer { CustomMinimumSize = new Vector2(0f, DevRowH) };
+		row.AddThemeConstantOverride("separation", 6);
+
+		// Key/label — 130px cố định, clip
+		string displayKey = string.IsNullOrWhiteSpace(item.Label) ? item.Key : item.Label;
+		var keyLbl = CreateUiLabel(displayKey, 11, DevKeyFg);
+		keyLbl.CustomMinimumSize = new Vector2(130f, DevRowH);
+		keyLbl.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
+		keyLbl.AutowrapMode = TextServer.AutowrapMode.Off;
+		keyLbl.ClipText     = true;
+		row.AddChild(keyLbl);
+
+		if (item.HasNumericValue)
+		{
+			// Mini bar container
+			var barOuter = new Control
+			{
+				CustomMinimumSize = new Vector2(DevBarW, DevRowH),
+				SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+			};
+			row.AddChild(barOuter);
+
+			var track = new Panel
+			{
+				Position = new Vector2(0f, (DevRowH - DevBarH) * 0.5f),
+				Size     = new Vector2(DevBarW, DevBarH),
+				MouseFilter = Control.MouseFilterEnum.Ignore,
+			};
+			track.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+			{
+				BgColor = DevBarTrack,
+				CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4,
+				CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4,
+			});
+			barOuter.AddChild(track);
+
+			float fillW = Mathf.Clamp(item.NumericValue, 0f, 1f) * DevBarW;
+			var fill = new Panel
+			{
+				Position = new Vector2(0f, (DevRowH - DevBarH) * 0.5f),
+				Size     = new Vector2(fillW, DevBarH),
+				MouseFilter = Control.MouseFilterEnum.Ignore,
+			};
+			fill.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+			{
+				BgColor = DevBarFill,
+				CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4,
+				CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4,
+			});
+			barOuter.AddChild(fill);
+
+			// Numeric value
+			var valLbl = CreateUiLabel($"{item.NumericValue:0.00}", 11, DevValFg);
+			valLbl.CustomMinimumSize = new Vector2(34f, DevRowH);
+			valLbl.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
+			row.AddChild(valLbl);
+		}
+		else
+		{
+			// Non-numeric: hiện raw text
+			var valLbl = CreateUiLabel(string.IsNullOrWhiteSpace(item.ValueText) ? "—" : item.ValueText, 11, DevValFg);
+			valLbl.CustomMinimumSize = new Vector2(110f, DevRowH);
+			valLbl.AutowrapMode = TextServer.AutowrapMode.Off;
+			valLbl.ClipText     = true;
+			row.AddChild(valLbl);
+		}
+
+		// Note (mờ, clip)
+		if (!string.IsNullOrWhiteSpace(item.Note))
+		{
+			var noteLbl = CreateUiLabel(item.Note, 10, DevNoteFg);
+			noteLbl.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+			noteLbl.AutowrapMode = TextServer.AutowrapMode.Off;
+			noteLbl.ClipText     = true;
+			row.AddChild(noteLbl);
+		}
+
+		return row;
 	}
 
 	// ── Casual mode content ───────────────────────────────────────────────────
@@ -1063,10 +1288,10 @@ public partial class UdpListener : Node2D
 		// ── Grid card ─────────────────────────────────────────────────────────
 		const float GridY    = StartY + 46f;  // 154
 		const float GridW    = SafeW;          // 440
-		const float GridH    = 184f;           // thấp hơn để chừa chỗ cho bars
-		const float CardPad  = 22f;
-		const float CanvasW  = GridW - CardPad * 2f;  // 396
-		const float CanvasH  = GridH - CardPad * 2f;  // 140
+		const float GridH    = 230f;           // circular wheel card
+		const float CardPad  = 18f;
+		const float CanvasW  = GridW - CardPad * 2f;  // 404
+		const float CanvasH  = GridH - CardPad * 2f;  // 194
 
 		// Card background
 		var cardBg = new Panel
@@ -1107,17 +1332,7 @@ public partial class UdpListener : Node2D
 		root.AddChild(canvas);
 		_moodDotCanvas = canvas;
 
-		// Axis labels với arrows — căn giữa theo canvas
-		float axCx = SafeX + CardPad + CanvasW * 0.5f;
-		float axCy = GridY + CardPad + CanvasH * 0.5f;
-		// Top
-		AxisLabel(root, "↑ kích thích", axCx - 36f, GridY + 4f,           11);
-		// Bottom
-		AxisLabel(root, "calm ✦",        axCx - 20f, GridY + GridH - 16f,  11);
-		// Left
-		AxisLabel(root, "vui ←",          SafeX + 8f, axCy - 9f,           11);
-		// Right
-		AxisLabel(root, "→ khó chịu",     SafeX + GridW - 84f, axCy - 9f,  11);
+		// Axis labels đặt ngoài vòng tròn — canvas tự vẽ từ _Draw()
 
 		// ── 3 bars dưới grid ─────────────────────────────────────────────────
 		const float BarsY0  = GridY + GridH + 8f;
@@ -1233,6 +1448,22 @@ public partial class UdpListener : Node2D
 
 		fillClip = fClip;
 		fill     = fClip;
+	}
+
+	/// <summary>
+	/// Format raw snake_case value từ AI thành readable text.
+	/// Ví dụ: "trung_tinh" → "trung tính", "kho_chiu" → "khó chịu".
+	/// </summary>
+	private static string FormatSummaryValue(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw)) return "";
+		return raw switch
+		{
+			"vui"        => "vui",
+			"kho_chiu"   => "khó chịu",
+			"trung_tinh" => "trung tính",
+			_            => raw.Replace('_', ' '),   // fallback: underscore → space
+		};
 	}
 
 	/// <summary>Chuyển 0..1 thành từ trạng thái (5 cấp).</summary>
@@ -1836,7 +2067,12 @@ public partial class UdpListener : Node2D
 		_emotionRows.Clear();
 		RemoveAndFree(_emotionSummaryLabel); _emotionSummaryLabel = null;
 		RemoveAndFree(_emotionHintLabel);    _emotionHintLabel = null;
-		// Tìm VBoxContainer left của dev mode
+		// Dev mode mới: xoá qua _devContentRoot
+		RemoveAndFree(_devContentRoot);
+		_devContentRoot = null;
+		_devHeaderLabel = null;
+		_devItemList    = null;
+		// Legacy: tìm VBoxContainer cũ nếu vẫn còn
 		foreach (Node child in _emotionPanel.GetChildren())
 		{
 			if (child is VBoxContainer vbox && vbox.Position.Y > 100f && vbox.Position.Y < 200f)
@@ -2313,7 +2549,14 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		// Dev mode rows
+		// Dev mode — dùng raw item list mới
+		if (_devItemList != null)
+		{
+			RefreshDevMode();
+			return;
+		}
+
+		// Fallback: dev mode cũ với EmotionRows (portrait + aggregated bars)
 		if (_emotionRows.Count > 0)
 		{
 			RefreshEmotionPanelRows();
@@ -3511,13 +3754,7 @@ public partial class UdpListener : Node2D
 		// Summary label — dùng valence để tô màu ngữ cảnh
 		string summaryMood = string.IsNullOrWhiteSpace(_latestEmotionDebug.SummaryValue) ? "unknown" : _latestEmotionDebug.SummaryValue;
 		string summaryState = string.IsNullOrWhiteSpace(_latestEmotionDebug.SummaryState) ? "" : _latestEmotionDebug.SummaryState;
-		string summaryDisplay = summaryMood switch
-		{
-			"vui"        => "vui",
-			"kho_chiu"   => "khó chịu",
-			"trung_tinh" => "trung tính",
-			_            => summaryMood,
-		};
+		string summaryDisplay = FormatSummaryValue(summaryMood);
 		_emotionSummaryLabel.Text = string.IsNullOrWhiteSpace(summaryDisplay) || summaryDisplay == "unknown"
 			? "Cảm xúc"
 			: $"Cảm xúc — {summaryDisplay}";
@@ -3983,6 +4220,9 @@ public partial class UdpListener : Node2D
 		float rawArousal = GetVal("calm_aroused") * 2f - 1f; // 0..1 → -1..1 (1=kích thích cao)
 		_moodDotValence = rawValence;
 		_moodDotArousal = rawArousal;
+		// State text do AI gửi về — format snake_case → readable
+		_moodStateName = FormatSummaryValue(debug.SummaryValue);
+		_moodStateDesc = string.IsNullOrWhiteSpace(debug.SummaryState) ? "" : debug.SummaryState;
 		_moodDotCanvas?.QueueRedraw();
 
 		// 3 casual bars
@@ -4040,14 +4280,14 @@ public partial class UdpListener : Node2D
 }
 
 /// <summary>
-/// Control vẽ 2D circumplex grid + mood dot.
-/// valence: -1=vui(trái) … +1=khó chịu(phải)
-/// arousal: +1=kích thích(trên) … -1=calm(dưới)
+/// Control vẽ 2D circumplex wheel — hình tròn gradient + mood dot.
+/// valence: -1=vui vẻ(trái) … +1=khó chịu(phải)
+/// arousal: +1=hưng phấn(trên) … -1=bình tĩnh(dưới)
 /// </summary>
 public sealed partial class _MoodDotCanvas : Control
 {
 	private UdpListener _owner;
-	private float _w = 200f, _h = 160f;
+	private float _w = 260f, _h = 260f;
 
 	public void SetOwnerListener(UdpListener owner, float w, float h)
 	{
@@ -4055,7 +4295,7 @@ public sealed partial class _MoodDotCanvas : Control
 		_w = w; _h = h;
 	}
 	// backward compat
-	public void SetOwnerListener(UdpListener owner, float size = 200f)
+	public void SetOwnerListener(UdpListener owner, float size = 260f)
 		=> SetOwnerListener(owner, size, size);
 
 	public override void _Draw()
@@ -4064,47 +4304,150 @@ public sealed partial class _MoodDotCanvas : Control
 		float h  = _h > 0 ? _h : Size.Y;
 		float cx = w * 0.5f;
 		float cy = h * 0.5f;
-		// Radius độc lập theo 2 trục
-		float rx = w * 0.46f;
-		float ry = h * 0.46f;
+		float r  = Mathf.Min(w, h) * 0.40f;  // radius vòng tròn chính
 
-		var gridColor = new Color(0.94f, 0.76f, 0.86f, 0.45f);
-		var axisColor = new Color(0.90f, 0.62f, 0.76f, 0.80f);
-		var dotColor  = new Color(0.97f, 0.38f, 0.64f, 1.00f);
-		var dotGlow   = new Color(0.97f, 0.38f, 0.64f, 0.18f);
+		var ringColor  = new Color(0.95f, 0.72f, 0.84f, 0.90f);
+		var axisColor  = new Color(0.90f, 0.72f, 0.82f, 0.55f);
+		var tickColor  = new Color(0.93f, 0.60f, 0.76f, 0.80f);
+		var heartColor = new Color(0.97f, 0.72f, 0.82f, 0.90f);
+		var dotColor   = new Color(0.97f, 0.38f, 0.64f, 1.00f);
+		var dotGlow    = new Color(0.97f, 0.38f, 0.64f, 0.20f);
 
-		// Dashed grid
-		const float dash = 5f, gap = 5f;
-		for (float x = 0f; x <= w; x += dash + gap)
-			DrawLine(new Vector2(x, cy), new Vector2(Mathf.Min(x + dash, w), cy), gridColor, 1f);
-		for (float y = 0f; y <= h; y += dash + gap)
-			DrawLine(new Vector2(cx, y), new Vector2(cx, Mathf.Min(y + dash, h)), gridColor, 1f);
+		// ── Gradient fill bên trong vòng tròn (nhiều lớp mờ) ──────────────
+		// Quadrant colors: top-left=vàng ấm, top-right=hồng, bottom-left=xanh nhạt, bottom-right=tím nhạt
+		int gradSteps = 32;
+		for (int i = 0; i < gradSteps; i++)
+		{
+			float t = (float)i / gradSteps;
+			float ri = r * t;
+			float alpha = 0.055f * (1f - t * 0.5f);
+			// Blend giữa vàng (arousal cao, valence dương) và hồng nhạt
+			var fillColor = new Color(1.0f, 0.88f + t * 0.08f, 0.92f - t * 0.10f, alpha * 2.0f);
+			DrawCircle(new Vector2(cx, cy), ri, fillColor);
+		}
 
-		float aw = 5f;
-		// Trục dọc với mũi tên 2 đầu
-		DrawLine(new Vector2(cx, h), new Vector2(cx, 0f), axisColor, 1.5f);
-		DrawLine(new Vector2(cx, 0f),   new Vector2(cx - aw, aw * 1.5f), axisColor, 1.5f);
-		DrawLine(new Vector2(cx, 0f),   new Vector2(cx + aw, aw * 1.5f), axisColor, 1.5f);
-		DrawLine(new Vector2(cx, h),    new Vector2(cx - aw, h - aw * 1.5f), axisColor, 1.5f);
-		DrawLine(new Vector2(cx, h),    new Vector2(cx + aw, h - aw * 1.5f), axisColor, 1.5f);
-		// Trục ngang với mũi tên 2 đầu
-		DrawLine(new Vector2(0f, cy), new Vector2(w, cy), axisColor, 1.5f);
-		DrawLine(new Vector2(w, cy),  new Vector2(w - aw * 1.5f, cy - aw), axisColor, 1.5f);
-		DrawLine(new Vector2(w, cy),  new Vector2(w - aw * 1.5f, cy + aw), axisColor, 1.5f);
-		DrawLine(new Vector2(0f, cy), new Vector2(aw * 1.5f, cy - aw), axisColor, 1.5f);
-		DrawLine(new Vector2(0f, cy), new Vector2(aw * 1.5f, cy + aw), axisColor, 1.5f);
+		// Lớp gradient màu hồng lan toa phía dưới-trái (calm+vui = ấm áp)
+		for (int i = 0; i < 18; i++)
+		{
+			float t = (float)i / 18f;
+			float gx = cx - r * 0.25f;
+			float gy = cy + r * 0.30f;
+			float gr = r * 0.55f * (1f - t);
+			DrawCircle(new Vector2(gx, gy), gr, new Color(1.0f, 0.82f, 0.72f, 0.04f));
+		}
+		// Lớp gradient tím nhạt phía trên-phải (arousal cao + khó chịu)
+		for (int i = 0; i < 14; i++)
+		{
+			float t = (float)i / 14f;
+			float gx = cx + r * 0.30f;
+			float gy = cy - r * 0.25f;
+			float gr = r * 0.50f * (1f - t);
+			DrawCircle(new Vector2(gx, gy), gr, new Color(0.78f, 0.72f, 0.96f, 0.045f));
+		}
+
+		// ── Vòng tròn chính ───────────────────────────────────────────────
+		DrawArc(new Vector2(cx, cy), r, 0f, Mathf.Tau, 64, ringColor, 2f);
+
+		// ── Dashed cross lines bên trong ──────────────────────────────────
+		const float dash = 4f, gap = 5f;
+		// Trục ngang
+		for (float x = cx - r; x < cx + r; x += dash + gap)
+		{
+			float x2 = Mathf.Min(x + dash, cx + r);
+			DrawLine(new Vector2(x, cy), new Vector2(x2, cy), axisColor, 1f);
+		}
+		// Trục dọc
+		for (float y = cy - r; y < cy + r; y += dash + gap)
+		{
+			float y2 = Mathf.Min(y + dash, cy + r);
+			DrawLine(new Vector2(cx, y), new Vector2(cx, y2), axisColor, 1f);
+		}
+
+		// ── Tick marks trên vòng tròn tại 4 hướng ────────────────────────
+		float tickOuter = r + 6f;
+		float tickInner = r - 6f;
+		foreach (float angle in new[] { 0f, Mathf.Pi * 0.5f, Mathf.Pi, Mathf.Pi * 1.5f })
+		{
+			float cos = Mathf.Cos(angle), sin = Mathf.Sin(angle);
+			DrawLine(
+				new Vector2(cx + cos * tickInner, cy + sin * tickInner),
+				new Vector2(cx + cos * tickOuter, cy + sin * tickOuter),
+				tickColor, 2f);
+		}
+
+		// ── Heart icon tại 4 điểm cực (nằm trên vòng tròn) ──────────────
+		// Top (hưng phấn), Bottom (bình tĩnh), Left (vui vẻ), Right (khó chịu)
+		var heartPositions = new (float Angle, string Label, float LabelDx, float LabelDy)[]
+		{
+			(-Mathf.Pi * 0.5f, "hưng phấn", -28f, -26f),
+			( Mathf.Pi * 0.5f, "bình tĩnh", -22f,   8f),
+			( Mathf.Pi,        "vui vẻ",    -50f,  -8f),
+			( 0f,              "khó chịu",   10f,  -8f),
+		};
+		foreach (var (angle, label, ldx, ldy) in heartPositions)
+		{
+			float cos = Mathf.Cos(angle), sin = Mathf.Sin(angle);
+			float hx = cx + cos * (r + 1f);
+			float hy = cy + sin * (r + 1f);
+			// Heart symbol nhỏ tại điểm
+			DrawCircle(new Vector2(hx - 3f, hy - 1.5f), 3.2f, heartColor);
+			DrawCircle(new Vector2(hx + 3f, hy - 1.5f), 3.2f, heartColor);
+			// Triangle phần dưới trái tim
+			DrawColoredPolygon(new Vector2[]
+			{
+				new Vector2(hx - 6f, hy),
+				new Vector2(hx + 6f, hy),
+				new Vector2(hx,      hy + 6f),
+			}, heartColor);
+		}
+
+		// Axis label text vẽ qua DrawString
+		// (Godot DrawString trên Control._Draw cần font — dùng theme default font)
+		var font = ThemeDB.FallbackFont;
+		int fs = 10;
+		var labelCol = new Color(0.50f, 0.22f, 0.38f, 0.92f);
+
+		// ♡ + label bên ngoài vòng tròn
+		DrawString(font, new Vector2(cx - 24f, cy - r - 14f), "♡  hưng phấn",  HorizontalAlignment.Center, -1, fs, labelCol);
+		DrawString(font, new Vector2(cx - 18f, cy + r + 22f), "♡  bình tĩnh",  HorizontalAlignment.Center, -1, fs, labelCol);
+		DrawString(font, new Vector2(cx - r - 64f, cy + 4f),  "♡  vui vẻ",     HorizontalAlignment.Left,   -1, fs, labelCol);
+		DrawString(font, new Vector2(cx + r + 8f,  cy + 4f),  "♡  khó chịu",   HorizontalAlignment.Left,   -1, fs, labelCol);
 
 		if (_owner == null) return;
 
-		float dotX = cx + _owner._moodDotValence * rx * 0.88f;
-		float dotY = cy - _owner._moodDotArousal * ry * 0.88f;
+		// ── Mood dot ──────────────────────────────────────────────────────
+		float dotX = cx + _owner._moodDotValence  * r * 0.82f;
+		float dotY = cy - _owner._moodDotArousal  * r * 0.82f;
 
-		// Glow + dot + rim
-		DrawCircle(new Vector2(dotX, dotY), 16f, dotGlow);
+		// Glow lớn
+		DrawCircle(new Vector2(dotX, dotY), 20f, dotGlow);
+		DrawCircle(new Vector2(dotX, dotY), 10f, dotColor with { A = 0.30f });
+		// Dot chính
 		DrawCircle(new Vector2(dotX, dotY),  8f, dotColor);
-		DrawArc(new Vector2(dotX, dotY), 8f, 0f, Mathf.Tau, 28, Colors.White with { A = 0.5f }, 1.5f);
+		DrawArc(new Vector2(dotX, dotY), 8f, 0f, Mathf.Tau, 32, Colors.White with { A = 0.45f }, 1.5f);
 		// Highlight nhỏ
-		DrawCircle(new Vector2(dotX - 2.5f, dotY - 2.5f), 2.5f, Colors.White with { A = 0.6f });
+		DrawCircle(new Vector2(dotX - 2.5f, dotY - 2.5f), 2.5f, Colors.White with { A = 0.60f });
+
+		// ── State text ở giữa vòng tròn — do AI gửi về ───────────────────
+		string stateName = string.IsNullOrWhiteSpace(_owner._moodStateName) ? "—" : _owner._moodStateName;
+		string subText   = string.IsNullOrWhiteSpace(_owner._moodStateDesc) ? ""  : _owner._moodStateDesc;
+
+		int fsMain = 13;
+		var mainCol = new Color(0.28f, 0.08f, 0.22f, 0.88f);
+		var subCol  = new Color(0.55f, 0.28f, 0.42f, 0.75f);
+
+		// Đo width để căn giữa
+		float mainW = font.GetStringSize(stateName, HorizontalAlignment.Left, -1, fsMain).X;
+		DrawString(font, new Vector2(cx - mainW * 0.5f, cy - 8f), stateName, HorizontalAlignment.Left, -1, fsMain, mainCol);
+
+		if (!string.IsNullOrWhiteSpace(subText))
+		{
+			float subW = font.GetStringSize(subText, HorizontalAlignment.Left, -1, fs).X;
+			DrawString(font, new Vector2(cx - subW * 0.5f, cy + 8f), subText, HorizontalAlignment.Left, -1, fs, subCol);
+		}
+
+		// Nhỏ: dấu ✦ dưới sub text
+		DrawString(font, new Vector2(cx - 5f, cy + 22f), "✦", HorizontalAlignment.Left, -1, 10, new Color(0.93f, 0.60f, 0.76f, 0.70f));
 	}
 }
 

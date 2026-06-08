@@ -311,6 +311,9 @@ class RuntimeCoordinator(
             except Exception as exc:
                 self.logger.warning("Không bọc được memory kernel từ memory core hiện có: %s", exc)
                 self.memory_kernel = None
+        # Inject llm_service để maintenance runner có thể gọi AI curator
+        if self.memory_kernel is not None:
+            self.memory_kernel._llm_service = llm_service
         self.body_running_fn = body_running_fn
         self.action_executor = action_executor
         self.action_router = action_router

@@ -131,6 +131,18 @@ class EventLedger:
         atomic_write_json(self.path, {"version": 1, "records": [item.to_dict() for item in kept]})
 
     def append(self, record: EventLedgerRecord) -> EventLedgerRecord:
+        # Không persist event ephemeral/session_only vào đĩa — đây là log tạm,
+        # không phải ký ức. Lưu xuống file chỉ làm phình ledger vô ích.
+        metadata = record.metadata or {}
+        is_ephemeral = (
+            bool(metadata.get("ephemeral_presence"))
+            or str(metadata.get("decay_policy", "")) == "session_only"
+            or "session_only" in record.tags
+            or "ephemeral_presence" in record.tags
+            or "signal_buffer_only" in record.tags
+        )
+        if is_ephemeral:
+            return record  # Trả record nhưng không ghi đĩa
         records = self.load()
         records.append(record)
         self.save(records)

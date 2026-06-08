@@ -242,6 +242,30 @@ class MemoryScorer:
                     reason="background_bias_without_query",
                     warnings=tuple(warnings),
                 )
+            # Semantic/episodic với fact_key quan trọng vẫn được trả về dưới dạng hot retention
+            # khi không có query, thay vì bị block hoàn toàn. Đây là thứ Eris "biết" về user
+            # ngay cả khi không đang hỏi gì.
+            fact_key = str(getattr(record, "fact_key", "") or getattr(getattr(record, "metadata", {}), "get", lambda k, d="": d)("fact_key", ""))
+            importance = clamp01(getattr(record, "salience", 0.0) or 0.0) or clamp01(
+                (getattr(getattr(record, "metadata", {}), "get", lambda k, d=0.0: d)("importance", 0.0))
+                if isinstance(getattr(record, "metadata", None), dict)
+                else 0.0
+            )
+            if fact_key and importance >= 0.70:
+                hot = clamp01((0.08 + confidence_prior + importance * 0.06) * profile.weight)
+                return MemoryScore(
+                    total=hot,
+                    relevance=0.0,
+                    resonance=hot,
+                    permission=1.0 - privacy_penalty,
+                    surfaceability=hot * 0.5 if profile.can_surface else 0.0,
+                    confidence_prior=confidence_prior,
+                    privacy_penalty=privacy_penalty,
+                    matched_terms=candidate.matched_terms,
+                    matched_anchors=candidate.matched_anchors,
+                    reason="hot_key_fact_no_query",
+                    warnings=tuple(warnings),
+                )
             return MemoryScore(total=0.0, reason="no_query_no_background_for_layer", warnings=tuple(warnings))
 
         if relevance < profile.min_relevance:

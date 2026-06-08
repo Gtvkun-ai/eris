@@ -365,6 +365,32 @@ class EpisodicMemoryStore:
             decay_policy=str(getattr(request, "decay_policy", "normal") or "normal"),
         )
         items = self.load()
+        # Dedup nhẹ: nếu đã có item với summary na ná trong 48h gần nhất thì merge thay vì tạo mới.
+        # Episodic không dedup cứng như semantic vì sự kiện có thể lặp có chủ đích,
+        # nhưng log spam (cùng 1 câu commit lặp lại) thì không cần giữ N bản.
+        now_ts = float(time.time())
+        content_norm = normalize_text(content)
+        for existing in items[-24:]:  # Chỉ xét 24 item gần nhất để tránh O(n²)
+            try:
+                age = now_ts - parse_timestamp(existing.timestamp)
+            except Exception:
+                age = 999999
+            if age > 172800:  # > 48h thì không merge
+                continue
+            sim = weighted_jaccard(
+                weighted_counter(normalized_tokens(content)),
+                weighted_counter(normalized_tokens(existing.summary)),
+            )
+            if sim >= 0.85:
+                # Merge: tăng salience/confidence nhẹ, cập nhật timestamp
+                existing.confidence = clamp01(max(existing.confidence, item.confidence) + 0.02)
+                existing.salience = clamp01(max(existing.salience, item.salience) + 0.01)
+                existing.access_count = int(existing.access_count or 0) + 1
+                for eid in item.evidence_ids:
+                    if eid not in existing.evidence_ids:
+                        existing.evidence_ids.append(eid)
+                self.save(items)
+                return existing
         items.append(item)
         self.save(items)
         return item

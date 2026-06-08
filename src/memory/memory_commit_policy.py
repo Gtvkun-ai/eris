@@ -361,14 +361,24 @@ class MemoryCommitPolicy:
     def _decide_with_semantic_claims(self, raw: str, turn_id: str | None, *, llm_structured: Mapping[str, Any] | None = None) -> list[MemoryCommitDecision]:
         """Chạy pipeline claim/ontology trước các rule legacy.
 
-        Nếu claim rõ và worthiness/retention đồng ý, ta trả MemoryCommitDecision luôn.
-        Nếu claim chỉ là mentioned_location/greeting/question thì không tạo semantic long-term.
+        Nếu claim đến từ AI classification (extraction_method=ai_classification),
+        commit_hint được ưu tiên để route đúng store mà không qua Worthiness/Retention.
+        Nếu claim đến từ predicate cũ, vẫn qua Worthiness/Retention như cũ.
         """
 
         extracted = self.claim_extractor.extract(raw, evidence_ids=_evidence(turn_id), llm_structured=llm_structured)
         out: list[MemoryCommitDecision] = []
         for item in extracted:
             claim = item.claim
+
+            # Path mới: AI đã phân loại xong, dùng commit_hint trực tiếp
+            if item.extraction_method == "ai_classification":
+                decision = self._decision_from_ai_classification(item, claim)
+                if decision is not None and decision.confidence >= max(0.45, self.min_confidence - 0.15):
+                    out.append(decision)
+                continue
+
+            # Path cũ: qua Worthiness/Retention
             worthiness = self.worthiness_policy.decide(claim)
             retention = self.retention_policy.decide(claim, worthiness)
             if not retention.accept:
@@ -377,6 +387,100 @@ class MemoryCommitPolicy:
             if decision is not None and decision.confidence >= self.min_confidence:
                 out.append(decision)
         return out
+
+    def _decision_from_ai_classification(self, extracted: Any, claim: Any) -> "MemoryCommitDecision | None":
+        """Tạo MemoryCommitDecision trực tiếp từ AI classification.
+
+        AI đã quyết định storage_target, importance, decay — không cần qua map cứng.
+        """
+        qualifiers = dict(getattr(claim, "qualifiers", {}) or {})
+        memory_type = str(qualifiers.get("memory_type") or "context")
+        storage_target = str(qualifiers.get("storage_target") or "semantic")
+        importance = float(qualifiers.get("importance") or 0.5)
+        decay_policy = str(qualifiers.get("decay_policy") or "normal")
+        surface_fn = str(qualifiers.get("surface_fn") or "background")
+        fact_key = str(qualifiers.get("fact_key") or "")
+        value = qualifiers.get("value")
+        why = str(qualifiers.get("why") or "")
+
+        # commit_hint → MemoryTarget
+        target_map = {
+            "semantic": MemoryTarget.SEMANTIC,
+            "episodic": MemoryTarget.EPISODIC,
+            "procedural": MemoryTarget.PROCEDURAL,
+            "affective_residue": MemoryTarget.AFFECTIVE if hasattr(MemoryTarget, "AFFECTIVE") else MemoryTarget.SEMANTIC,
+            "relational": MemoryTarget.RELATIONAL if hasattr(MemoryTarget, "RELATIONAL") else MemoryTarget.SEMANTIC,
+            "candidate": MemoryTarget.CANDIDATE,
+        }
+        target = target_map.get(storage_target, MemoryTarget.SEMANTIC)
+
+        # surface_fn → surface_mode
+        from .memory_models import SurfaceMode
+        surface_map = {
+            "can_answer": SurfaceMode.EXACT,
+            "background": SurfaceMode.SEMANTIC,
+            "never": SurfaceMode.UNCERTAIN,
+        }
+        surface_mode = surface_map.get(surface_fn, SurfaceMode.SEMANTIC)
+
+        # decay → DecayPolicy
+        from .memory_models import DecayPolicy
+        decay_obj_map = {
+            "slow": DecayPolicy.STABLE,
+            "normal": DecayPolicy.DECAYING,
+            "fast": DecayPolicy.SHORT,
+            "session_only": DecayPolicy.SESSION,
+            "candidate": DecayPolicy.CANDIDATE,
+        }
+        decay_obj = decay_obj_map.get(decay_policy, DecayPolicy.DECAYING)
+
+        metadata = {
+            "fact_key": fact_key,
+            "value": value if value is not None else claim.object_text,
+            "memory_type": memory_type,
+            "storage_target": storage_target,
+            "importance": importance,
+            "decay": qualifiers.get("decay"),
+            "surface_fn": surface_fn,
+            "why": why,
+            "raw_user_text": claim.evidence_text,
+            "extraction": "ai_classification",
+            "semantic_source": "ai_classification",
+            "source_grounded": True,
+            "predicate": claim.predicate,
+        }
+        if target == MemoryTarget.CANDIDATE:
+            metadata["extraction_status"] = "unresolved"
+            metadata["needs_consolidation"] = True
+
+        # Kind
+        from .memory_models import MemoryKind
+        kind_map = {
+            "fact": MemoryKind.USER_GENERAL_TOPIC,
+            "knowledge": MemoryKind.USER_GENERAL_TOPIC,
+            "convention": MemoryKind.USER_CONVENTION,
+            "feedback": MemoryKind.USER_RESPONSE_STYLE,
+        }
+        kind = kind_map.get(memory_type, MemoryKind.MEMORY_CANDIDATE if target == MemoryTarget.CANDIDATE else MemoryKind.USER_GENERAL_TOPIC)
+        if fact_key == "user.name":
+            kind = MemoryKind.USER_NAME
+        elif fact_key == "user.response_style":
+            kind = MemoryKind.USER_RESPONSE_STYLE
+
+        return MemoryCommitDecision(
+            target=target,
+            kind=kind,
+            claim=claim.object_text or claim_text if (claim_text := str(getattr(claim, "claim_text", "") or "")) else claim.object_text,
+            surface=str(value or claim.object_text),
+            confidence=float(claim.confidence),
+            importance=importance,
+            source=claim.source,
+            permission="user_provided",
+            surface_mode=surface_mode,
+            decay=decay_obj,
+            evidence=list(claim.evidence_ids),
+            metadata=metadata,
+        )
 
     def _decision_from_semantic_claim(self, claim: SemanticClaim, retention: Any) -> MemoryCommitDecision | None:
         target_map = {

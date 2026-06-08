@@ -865,10 +865,10 @@ class PrivateLifeCore:
     def _commit_events(self, events: tuple[LifeEvent, ...]) -> None:
         if not events:
             return
-        seen = {item.id for item in self.state.events[-128:]}
+        seen = {item.id for item in self.state.events[-64:]}
         new_events = [item for item in events if item.id not in seen]
         if new_events:
-            self.state.events = tuple((*self.state.events, *new_events))[-256:]
+            self.state.events = tuple((*self.state.events, *new_events))[-64:]
 
     def digest(self) -> dict[str, Any]:
         """Digest đọc nhanh cho runtime/debug menu."""

@@ -183,7 +183,19 @@ class MemoryCognitionCore:
         self.event_ledger = EventLedger(os.path.join(base_dir, "event_ledger.json"))
         self.active_state = ActiveStateStore(os.path.join(base_dir, "active_state_snapshot.json"))
         self.episodic = EpisodicMemoryStore(os.path.join(base_dir, "episodic_memory.json"))
-        self.semantic = SemanticMemoryStore(os.path.join(base_dir, "semantic_memory.json"))
+        # Build embedding index trước, inject vào semantic store.
+        # Model load lazy — lần đầu recall sẽ trigger download nếu chưa có.
+        # Nếu torch/transformers chưa install hoặc ERIS_EMBEDDING_ENABLED=0 thì trả None,
+        # semantic store gracefully fallback về lexical scoring.
+        try:
+            from .embedding_index import build_embedding_index
+            _embedding_index = build_embedding_index()
+        except Exception:
+            _embedding_index = None
+        self.semantic = SemanticMemoryStore(
+            os.path.join(base_dir, "semantic_memory.json"),
+            embedding_index=_embedding_index,
+        )
         self.relational = RelationalMemoryStore(os.path.join(base_dir, "relational_memory.json"))
         self.affective_residue = AffectiveResidueMemoryStore(os.path.join(base_dir, "affective_residue_memory.json"))
         self.procedural = ProceduralMemoryStore(os.path.join(base_dir, "procedural_memory.json"))

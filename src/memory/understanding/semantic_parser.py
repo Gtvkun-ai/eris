@@ -219,7 +219,9 @@ def _frame_from_mapping(item: Mapping[str, Any], *, fallback_evidence: str) -> M
         stability=str(item.get("stability") or "unknown"),
         evidence_span=str(item.get("evidence_span") or item.get("evidence_text") or fallback_evidence),
         source=str(item.get("source") or "user_text"),
-        slots=dict(item.get("slots") or {}),
+        # Giữ raw dict để ClaimBuilder đọc schema mới (memory_type, storage_target, decay, ...)
+        # khi Gemini dùng AI classification thay vì schema frame cũ.
+        slots={**dict(item.get("slots") or {}), "_raw": dict(item)},
         warnings=tuple(warnings),
     )
 

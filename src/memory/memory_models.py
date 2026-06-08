@@ -11,8 +11,11 @@ class MemoryTarget(str, Enum):
     SEMANTIC = "semantic_memory"
     EPISODIC = "episodic_memory"
     PROCEDURAL = "procedural_memory"
+    AFFECTIVE = "affective_residue_memory"
+    RELATIONAL = "relational_memory"
     CANDIDATE = "memory_candidate"
     EVENT_LEDGER = "event_ledger"
+    REPAIR = "repair_memory"
     REPAIR = "repair_memory"
 
 

@@ -378,6 +378,7 @@ class MemoryKernel:
             self.core,
             ingest_policy=self.digest_policy,
             destructive=self.config.destructive_maintenance,
+            llm_service=getattr(self, "_llm_service", None),
         )
         return runner.run(budget=budget, reason=reason, destructive=destructive)
 

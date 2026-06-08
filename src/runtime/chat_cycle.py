@@ -683,52 +683,21 @@ class ChatCycleMixin:
                         getattr(exc, "reason", str(exc)),
                     )
             if raw is None:
-                if no_fallback_mode_enabled():
-                    no_fallback_block = True
-                    frame.debug_notes.append(f"llm_format_errors={format_errors}; route=no_fallback_block")
-                    self.logger.warning(
-                        "[llm format block] remote retries exhausted under no-fallback mode | errors=%d",
-                        format_errors,
+                # API remote đã retry hết lượt mà vẫn fail → không route sang llama-server local.
+                # Trả về no_fallback_block để Godot biết rõ lý do thay vì nhận câu ngẫu nhiên từ model local.
+                no_fallback_block = True
+                frame.debug_notes.append(f"llm_format_errors={format_errors}; route=no_fallback_block")
+                self.logger.warning(
+                    "[llm format block] remote retries exhausted, no local fallback | errors=%d",
+                    format_errors,
+                )
+                raw = self._build_chat_format_repair_fallback_raw(
+                    FormatViolationException(
+                        "chat_format_contract_exhausted",
+                        channel="chat",
+                        raw_text="",
                     )
-                    raw = self._build_chat_format_repair_fallback_raw(
-                        FormatViolationException(
-                            "chat_format_contract_exhausted_in_no_fallback_mode",
-                            channel="chat",
-                            raw_text=str(raw or ""),
-                        )
-                    )
-                else:
-                    frame.debug_notes.append(f"llm_format_errors={format_errors}; route=local_fallback")
-                    self.logger.warning(
-                        "[llm format retry] remote retries exhausted; routing chat turn to local fallback | errors=%d",
-                        format_errors,
-                    )
-                    try:
-                        raw = self.llm_service.generate_chat_reply(
-                            **chat_generation_kwargs,
-                            format_retry_context=format_retry_context,
-                            last_failure="format_error",
-                            allow_local_fallback=True,
-                            force_local_fallback=True,
-                        )
-                    except FormatViolationException as exc:
-                        format_errors += 1
-                        format_repair_fallback = True
-                        self.last_failure = "format_error"
-                        conversation_report.state.last_failure = ConversationFailure(
-                            type="format_error",
-                            trigger=str(getattr(exc, "reason", "") or exc),
-                            correction_needed="Deterministic chat fallback was used after remote and local JSON failures.",
-                        )
-                        frame.debug_notes.append(
-                            f"llm_format_errors={format_errors}; route=deterministic_fallback; reason={getattr(exc, 'reason', str(exc))}"
-                        )
-                        self.logger.warning(
-                            "[llm format fallback] recovered chat turn after local JSON failure | errors=%d | reason=%s",
-                            format_errors,
-                            getattr(exc, "reason", str(exc)),
-                        )
-                        raw = self._build_chat_format_repair_fallback_raw(exc)
+                )
         finally:
             self._set_background_memory_digest_remote_inflight(False)
         self._log_raw_llm_output("chat", raw)

@@ -3,3 +3,4 @@ Pillow
 psutil
 requests
 uiautomation
+# sentence-transformers==3.4.1  # optional — dùng transformers+torch đã có thay thế

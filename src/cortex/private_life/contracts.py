@@ -793,7 +793,7 @@ class PrivateLifeState:
         }
         self.events = tuple(
             item if isinstance(item, LifeEvent) else LifeEvent.from_mapping(item)  # type: ignore[arg-type]
-            for item in tuple(self.events or ())[-256:]
+            for item in tuple(self.events or ())[-64:]
         )
 
     def to_dict(self) -> dict[str, Any]:

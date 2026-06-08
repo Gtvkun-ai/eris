@@ -101,11 +101,17 @@ class ClaimBuilder:
         return self._dedupe(out)
 
     def build_one(self, frame: MeaningFrame, *, evidence_ids: tuple[str, ...] = (), source: str = "user_text") -> ExtractedClaim | None:
+        # --- Path mới: Gemini đã quyết định classification ---
+        # Nếu frame có memory_type (schema mới), dùng trực tiếp thay vì map cứng.
+        raw = (frame.slots or {}).get("_raw") or {}
+        if isinstance(raw, Mapping) and raw.get("memory_type"):
+            return self._build_from_ai_classification(raw, evidence_ids=evidence_ids)
+
+        # --- Path cũ: map frame_type + relation sang predicate (fallback) ---
         predicate = self._predicate_for_frame(frame)
         if not predicate:
             return None
         if frame.polarity in {"hypothetical", "quoted"}:
-            # Giữ hook cho candidate nếu cần, nhưng không thành semantic claim assertive.
             return None
 
         defaults = dict(PREDICATE_DEFAULTS.get(predicate, {}))
@@ -172,6 +178,105 @@ class ClaimBuilder:
             extraction_method="meaning_frame_builder",
             commit_hint="semantic",
             warnings=frame.warnings,
+        )
+
+    def _build_from_ai_classification(
+        self,
+        raw: Mapping[str, Any],
+        *,
+        evidence_ids: tuple[str, ...] = (),
+    ) -> ExtractedClaim | None:
+        """Build ExtractedClaim từ schema mới của Gemini.
+
+        Gemini quyết định memory_type, storage_target, importance, decay, surface_fn.
+        Không cần map sang predicate cứng.
+        """
+        claim_text = str(raw.get("claim") or "").strip()
+        if not claim_text:
+            return None
+
+        memory_type = str(raw.get("memory_type") or "context")
+        storage_target = str(raw.get("storage_target") or "semantic")
+        importance = float(raw.get("importance") or 0.5)
+        decay = str(raw.get("decay") or "normal")
+        surface_fn = str(raw.get("surface_fn") or "background")
+        fact_key = str(raw.get("fact_key") or "")
+        value = raw.get("value")
+        confidence = float(raw.get("confidence") or 0.65)
+        time_scope = str(raw.get("time_scope") or "stable")
+        subject = str(raw.get("subject") or "user")
+        why = str(raw.get("why") or "")
+
+        # Map storage_target → commit_hint và predicate fallback
+        target_map = {
+            "semantic": "semantic",
+            "episodic": "episodic",
+            "procedural": "procedural",
+            "affective_residue": "affective_residue",
+            "relational": "relational",
+            "candidate": "candidate",
+        }
+        commit_hint = target_map.get(storage_target, "semantic")
+
+        # Map decay string → decay_policy chuẩn
+        decay_map = {
+            "slow": "slow",
+            "normal": "normal",
+            "fast": "fast",
+            "ephemeral": "session_only",
+        }
+        decay_policy = decay_map.get(decay, "normal")
+
+        # Map surface_fn → surface_policy
+        surface_policy_map = {
+            "can_answer": "surface_if_contextual",
+            "background": "silent_bias",
+            "never": "never_direct_claim",
+        }
+        surface_policy = surface_policy_map.get(surface_fn, "silent_bias")
+
+        # Predicate đặc biệt: dùng fact_key nếu có, không thì dùng memory_type
+        predicate = fact_key.replace(".", "_") if fact_key else f"{memory_type}_observed"
+
+        claim = build_claim(
+            subject=subject,
+            predicate=predicate,
+            object_text=claim_text,
+            object_value=value if value is not None else claim_text,
+            object_type=memory_type,
+            assertion="asserted",
+            modality="fact" if memory_type in {"fact", "knowledge"} else
+                     "preference" if memory_type == "convention" else
+                     "feedback" if memory_type == "feedback" else
+                     "observation",
+            temporal=time_scope,  # type: ignore[arg-type]
+            scope="self",  # type: ignore[arg-type]
+            source="user_text",  # type: ignore[arg-type]
+            confidence=min(1.0, max(0.0, confidence)),
+            evidence_text=claim_text,
+            evidence_ids=evidence_ids,
+            valid_until=None,
+            stability="stable" if decay in {"slow"} else "medium" if decay == "normal" else "transient",  # type: ignore[arg-type]
+            qualifiers={
+                "memory_type": memory_type,
+                "storage_target": storage_target,
+                "importance": importance,
+                "decay": decay,
+                "decay_policy": decay_policy,
+                "surface_fn": surface_fn,
+                "surface_policy": surface_policy,
+                "fact_key": fact_key,
+                "value": value,
+                "why": why,
+                "pipeline": "ai_classification",
+            },
+        )
+        return ExtractedClaim(
+            claim=claim,
+            extraction_confidence=confidence,
+            extraction_method="ai_classification",
+            commit_hint=commit_hint,
+            warnings=(),
         )
 
     def _predicate_for_frame(self, frame: MeaningFrame) -> str:

@@ -15,48 +15,70 @@ from memory.understanding.semantic_parser import (
 )
 
 
-_SYSTEM_PROMPT = """Bạn là semantic frame parser cho memory intake ERIS.
-Nhiệm vụ duy nhất: chuyển user_text tự nhiên thành danh sách MeaningFrame JSON.
-Không quyết định lưu memory. Không chọn semantic/episodic/candidate.
-Không giải thích. Không suy diễn ngoài câu chữ.
-Nếu user hỏi lại ký ức phiên như "tôi tên gì", "câu đầu tiên tôi nhắn là gì", hãy tạo frame session_event/asked_about hoặc không tạo frame dài hạn.
-Nếu user muốn ERIS nhớ nhưng câu mơ hồ, tạo frame_type="memory_request", relation="remember_unresolved", target.text là câu gốc hoặc nội dung cần giữ, và slots.candidate_fact_keys nếu đoán được.
-Với fact rõ, relation có thể là relation trừu tượng như "name" hoặc fact_key như "user.name".
+_SYSTEM_PROMPT = """Bạn là memory classification engine cho ERIS.
+Nhiệm vụ: nhận user_text và quyết định nó nên được lưu vào memory như thế nào.
+
+Bạn phải quyết định hoàn toàn — không cần theo schema cứng. Mỗi mảnh thông tin có thể:
+- Là fact ổn định (tên, sinh nhật, quê, sở thích lâu dài)
+- Là sự kiện (chuyện xảy ra, có thời gian, có ngữ cảnh)
+- Là cảm xúc/tâm trạng thoáng qua (buồn hôm nay, mệt, vui vì điều gì)
+- Là kiến thức (dạy ERIS biết điều gì về thế giới, kỹ thuật, khái niệm)
+- Là thực thể (người, vật, địa điểm user đề cập — con mèo hàng xóm, bạn tên X, quán ăn)
+- Là niềm tin/quan điểm (user nghĩ A là đúng, không đồng ý với B)
+- Là mục tiêu (user muốn làm gì, dự định gì)
+- Là phản hồi về ERIS (khen, chê, sửa, hướng dẫn cách phản hồi)
+- Là quy ước (từ giờ X nghĩa là Y, gọi tôi là Z)
+- Là ngữ cảnh thoáng qua (không quan trọng lâu dài)
+
+Với mỗi frame, bạn quyết định:
+- memory_type: loại memory (fact, event, emotion, knowledge, entity, belief, goal, feedback, convention, context)
+- storage_target: nơi lưu (semantic, episodic, procedural, affective_residue, relational, candidate)
+- importance: 0.0-1.0 (fact tên=0.95, cảm xúc thoáng=0.3, kiến thức chung=0.6)
+- decay: slow (năm+) | normal (tháng) | fast (tuần) | ephemeral (ngày/session)
+- surface_fn: can_answer (trả lời trực tiếp khi hỏi) | background (ảnh hưởng context) | never (không surface)
+- fact_key: key ngắn nếu là fact rõ (user.name, user.hometown, ...) hoặc để trống
+
+Quy tắc storage_target:
+- semantic: fact ổn định, kiến thức, niềm tin, thực thể quan trọng
+- episodic: sự kiện cụ thể có thời gian/ngữ cảnh
+- procedural: quy tắc hành vi, convention, cách xử lý
+- affective_residue: cảm xúc, tâm trạng (KHÔNG surface như fact)
+- relational: pattern quan hệ với user, người khác
+- candidate: không chắc chắn, cần xem xét thêm
+
+Không tạo frame cho: câu hỏi recall ("tôi tên gì"), chào hỏi đơn giản, câu vô nghĩa.
 Chỉ trả JSON."""
 
-_USER_PROMPT_TEMPLATE = """Phân tích câu người dùng sau thành meaning frames JSON.
+_USER_PROMPT_TEMPLATE = """Phân tích và phân loại memory cho câu sau.
 
-Schema:
+Output schema:
 {
   "frames": [
     {
-      "frame_type": "identity|location|preference|instruction|feedback|correction|memory_request|project|unknown",
-      "relation": "name|user.name|hometown|user.hometown|living_location|current_location|likes|dislikes|response_style|remember_unresolved|...",
-      "subject": "user|eris|project:ERIS|other",
-      "target": {
-        "text": "...",
-        "kind": "person_name|location|style|project|text|unknown"
-      },
-      "polarity": "asserted|denied|uncertain|hypothetical|quoted",
-      "modality": "fact|preference|desire|belief|instruction|feedback|observation",
-      "time_scope": "current|session|stable|past|future|habitual|unknown",
-      "certainty": 0.0,
-      "evidence_span": "đoạn chữ gốc",
-      "slots": {
-        "candidate_fact_keys": ["user.name"],
-        "domain_guess": "identity|project_logic|style_or_vibe|general_memory_candidate"
-      }
+      "memory_type": "fact|event|emotion|knowledge|entity|belief|goal|feedback|convention|context",
+      "storage_target": "semantic|episodic|procedural|affective_residue|relational|candidate",
+      "subject": "user|eris|world|other:<name>",
+      "claim": "câu tóm tắt ngắn gọn cái cần nhớ (không phải raw text)",
+      "value": "giá trị cốt lõi nếu là fact/entity (tên người, địa điểm, ...) hoặc null",
+      "fact_key": "user.name | user.hometown | ... hoặc '' nếu không có key chuẩn",
+      "importance": 0.0,
+      "decay": "slow|normal|fast|ephemeral",
+      "surface_fn": "can_answer|background|never",
+      "time_scope": "stable|current|past|future|session",
+      "confidence": 0.0,
+      "why": "lý do ngắn — tại sao phân loại thế này"
     }
   ]
 }
 
-
-Ví dụ bắt buộc:
-- user_text: "tôi tên Hòa" -> frames[0]: frame_type="identity", relation="user.name", target.text="Hòa", target.kind="person_name", modality="fact", time_scope="stable", certainty>=0.80.
-- user_text: "gọi tôi là Hòa" -> tương tự user.name, vì đây là preferred name.
-- user_text: "tôi tên gì" -> không tạo identity fact; nếu cần thì frame_type="session_event", relation="asked_about", target.text="user.name".
-- user_text: "nhớ vibe này" -> frame_type="memory_request", relation="remember_unresolved", target.text là câu gốc, slots.domain_guess="style_or_vibe".
-- user_text: "câu đầu tiên tôi nhắn là gì" -> session query, không tạo semantic fact.
+Ví dụ:
+- "tôi tên Hòa" → memory_type=fact, storage_target=semantic, fact_key=user.name, value=Hòa, importance=0.95, decay=slow, surface_fn=can_answer
+- "con mèo nhà hàng xóm tên Miso hay sang ăn trộm đồ" → memory_type=entity, storage_target=episodic, fact_key='', importance=0.45, decay=normal, surface_fn=background
+- "tôi đang buồn vì dự án bị delay" → memory_type=emotion, storage_target=affective_residue, importance=0.35, decay=fast, surface_fn=never
+- "Python là ngôn ngữ lập trình hướng đối tượng" → memory_type=knowledge, storage_target=semantic, importance=0.55, decay=slow, surface_fn=background
+- "từ giờ khi tôi nói 'loi' tức là bug" → memory_type=convention, storage_target=procedural, importance=0.88, decay=slow, surface_fn=background
+- "tôi muốn build game nhập vai năm nay" → memory_type=goal, storage_target=semantic, importance=0.72, decay=normal, surface_fn=background
+- "trả lời ngắn thôi đừng dài dòng" → memory_type=feedback, storage_target=procedural, fact_key=user.response_style, importance=0.85, decay=slow, surface_fn=background
 
 user_text:
 {text}
@@ -326,10 +348,8 @@ class RuntimeSemanticParser:
         client = getattr(service, "client", None)
         if not callable(getattr(client, "create_chat_completion", None)):
             raise RuntimeError("llm_service_client_missing_chat_completion")
-        client_name = type(client).__name__.lower()
-        base_url = str(getattr(client, "base_url", "") or "").lower()
-        if "llama" not in client_name and "127.0.0.1" not in base_url and "localhost" not in base_url:
-            raise RuntimeError("llm_service_client_not_local_llama_server")
+        # Dùng bất kỳ client nào đang được cấu hình — Gemini, OpenAI-compat, hay llama-server.
+        # Guard cũ chỉ cho phép local llama-server, nay bỏ để memory parser dùng API remote.
         response = client.create_chat_completion(
             messages=self._messages(text, context=context),
             temperature=0.0,

@@ -24,7 +24,7 @@ from .contracts import PrivateConcern, ThoughtFragment, compact_text, stable_id,
 
 @dataclass(slots=True)
 class ConcernStoreConfig:
-    max_concerns: int = 96
+    max_concerns: int = 24  # Giảm từ 96 → 24: concern thật không cần nhiều hơn thế
     stale_after_seconds: float = 60.0 * 60.0 * 24.0 * 14.0
     autosave: bool = True
 
@@ -48,6 +48,47 @@ class ConcernStore:
 
     def __len__(self) -> int:
         return len(self._concerns)
+
+    # ------------------------------------------------------------------
+    # Degenerate text guard
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_degenerate_theme(theme: str) -> bool:
+        """Trả True nếu theme là rác do LLM loop hoặc hallucination.
+
+        Các dấu hiệu:
+        - Cùng một token xuất hiện ≥4 lần liên tiếp (ví dụ "lặp lại lặp lại lặp lại lặp")
+        - Có chuỗi repeat kỳ lạ của ký tự không phải tiếng Việt thường (block-block, policy-policy)
+        - Theme dài hơn 500 ký tự (degenerate thường rất dài)
+        - Chứa HTML tags
+        - Chứa version string kiểu [v1.0][v1.1]
+        """
+        if not theme or not theme.strip():
+            return True
+        if len(theme) > 500:
+            return True
+        # HTML tags
+        if "<" in theme and ">" in theme:
+            return True
+        # Version string spam
+        if theme.count("[v") >= 3:
+            return True
+        # Repeated token: split by spaces/dashes, find any token repeated ≥4 times consecutively
+        import re
+        tokens = re.split(r"[\s\-/|]+", theme.lower())
+        if len(tokens) >= 4:
+            for i in range(len(tokens) - 3):
+                if tokens[i] and tokens[i] == tokens[i+1] == tokens[i+2] == tokens[i+3]:
+                    return True
+        # Repeated short phrases (e.g. "rò rỉ rò rỉ rò rỉ")
+        words = theme.split()
+        if len(words) >= 6:
+            for i in range(len(words) - 5):
+                phrase2 = " ".join(words[i:i+2])
+                if phrase2 == " ".join(words[i+2:i+4]) == " ".join(words[i+4:i+6]):
+                    return True
+        return False
 
     def all(self) -> tuple[PrivateConcern, ...]:
         return tuple(sorted(self._concerns.values(), key=lambda c: (c.status != "open", -c.pressure, -c.updated_at)))
@@ -77,6 +118,9 @@ class ConcernStore:
         return self._concerns.get(str(concern_id or ""))
 
     def add_or_update(self, concern: PrivateConcern) -> PrivateConcern:
+        if self._is_degenerate_theme(concern.theme):
+            # Trả concern giả không lưu, không phình store.
+            return concern
         existing = self._concerns.get(concern.id)
         if existing is None:
             self._concerns[concern.id] = concern
@@ -118,9 +162,12 @@ class ConcernStore:
         for fragment in fragments:
             if not fragment.claim or fragment.score < 0.28:
                 continue
+            theme_candidate = self._theme_from_fragment(fragment)
+            if self._is_degenerate_theme(theme_candidate):
+                continue
             concern = self._find_matching_concern(fragment)
             if concern is None:
-                theme = self._theme_from_fragment(fragment)
+                theme = theme_candidate
                 concern = PrivateConcern(
                     id=stable_id("concern", theme),
                     theme=theme,
@@ -369,21 +416,40 @@ class ConcernStore:
 
     def _find_matching_concern(self, fragment: ThoughtFragment) -> PrivateConcern | None:
         f_theme = self._theme_from_fragment(fragment).lower()
-        f_tokens = set(t for t in f_theme.replace("_", " ").split() if len(t) >= 4)
+        # Normalize: loại bỏ noise prefix thường do LLM sinh ra
+        _noise_prefixes = (
+            "người dùng liên tục lặp lại mối lo ngại về ",
+            "người dùng thể hiện sự lo ngại sâu sắc về ",
+            "người dùng thể hiện sự lo ngại sâu sắc và lặp lại về ",
+            "người dùng lặp lại nhiều lần về ",
+            "hệ thống có nguy cơ cao về ",
+        )
+        f_clean = f_theme
+        for prefix in _noise_prefixes:
+            if f_clean.startswith(prefix):
+                f_clean = f_clean[len(prefix):]
+                break
+        f_tokens = set(t for t in f_clean.replace("_", " ").split() if len(t) >= 4)
         best: tuple[float, PrivateConcern] | None = None
         for concern in self._concerns.values():
             if concern.status in {"resolved", "rejected"}:
                 continue
             c_theme = concern.theme.lower()
-            if c_theme == f_theme:
+            c_clean = c_theme
+            for prefix in _noise_prefixes:
+                if c_clean.startswith(prefix):
+                    c_clean = c_clean[len(prefix):]
+                    break
+            if c_clean == f_clean:
                 return concern
-            c_tokens = set(t for t in c_theme.replace("_", " ").split() if len(t) >= 4)
+            c_tokens = set(t for t in c_clean.replace("_", " ").split() if len(t) >= 4)
             overlap = len(f_tokens & c_tokens) / max(1, len(f_tokens | c_tokens))
             evidence_overlap = len(set(fragment.evidence_ids) & set(concern.evidence_ids)) / max(1, len(fragment.evidence_ids))
             score = 0.68 * overlap + 0.32 * evidence_overlap
             if best is None or score > best[0]:
                 best = (score, concern)
-        if best and best[0] >= 0.34:
+        # Hạ threshold từ 0.34 → 0.22 để merge tốt hơn khi text bị paraphrase
+        if best and best[0] >= 0.22:
             return best[1]
         return None
 
