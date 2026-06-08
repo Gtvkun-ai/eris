@@ -34,6 +34,7 @@ from cortex.private_mind import (
 )
 from cortex.private_mind.contracts import SurfaceCandidate, to_plain
 from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
+from cortex.private_mind.inner_diary_writer import InnerDiaryWriter
 from eris_secrets import apply_secrets_to_environ
 from runtime.private_mind_model_adapter import PrivateMindAdapterPool, RuntimePrivateMindModelAdapter
 
@@ -82,6 +83,8 @@ class PrivateMindLoop:
         self.last_tick_at = 0.0
         self.last_result: PrivateMindTickResult | None = None
         self.last_digest: dict[str, Any] = {}
+        # Bộ viết nhật ký giọng Eris (throttle/cache nội bộ). Dùng chung model_adapter.
+        self.diary_writer = InnerDiaryWriter(adapter=model_adapter, logger=logger)
 
     @classmethod
     def from_runtime(cls, *, runtime_owner: Any, llm_service: Any = None, logger: Any = None) -> "PrivateMindLoop | None":
@@ -292,8 +295,18 @@ class PrivateMindLoop:
             **menu,
             "debug": to_plain(getattr(result, "debug", {}) if result is not None else {}),
         }
-        digest["inner_diary"] = InnerDiaryRenderer().render(digest)
+        digest["inner_diary"] = InnerDiaryRenderer().render(digest, voice=self._diary_voice(digest))
         return digest
+
+    def _diary_voice(self, digest: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Lấy bản nhật ký giọng Eris (throttled). Lỗi → None để renderer fallback."""
+        writer = getattr(self, "diary_writer", None)
+        if writer is None:
+            return None
+        try:
+            return writer.maybe_write(digest)
+        except Exception:
+            return None
 
     def drain_surface_impulses(self, queue: list[Any], *, limit: int = 4) -> tuple[Any, ...]:
         items: list[Any] = []

@@ -657,20 +657,20 @@ public partial class UdpListener : Node2D
 		float targetWidth = Mathf.Clamp(viewport.X - 28f, 460f, 880f);
 		float scale = Mathf.Clamp(targetWidth / 880f, 0.7f, 1f);
 		// Keep height stable to avoid squishing the baked-in circular icon in chatframe.png.
-		float targetHeight = 68f;
-		float outerPadding = Mathf.Clamp(8f * scale, 6f, 8f);
+		float targetHeight = 64f;
+		float outerPadding = Mathf.Clamp(7f * scale, 5f, 7f);
 		// Leave room for the decorative "chat" button area baked into the frame texture.
 		float leftInset = Mathf.Clamp(72f * scale, 44f, 72f);
-		float gap = Mathf.Clamp(10f * scale, 8f, 10f);
-		float buttonHeight = Mathf.Clamp(44f * scale, 34f, 44f);
+		float gap = Mathf.Clamp(8f * scale, 6f, 8f);
+		float buttonHeight = Mathf.Clamp(40f * scale, 32f, 40f);
 		// Icon removed from ChatPanel; keep layout compact.
-		float submitWidth = Mathf.Clamp(96f * scale, 72f, 96f);
-		float closeWidth = Mathf.Clamp(46f * scale, 36f, 46f);
-		float fontSize = Mathf.Clamp(Mathf.RoundToInt(17f * scale), 13, 17);
-		float buttonFontSize = Mathf.Clamp(Mathf.RoundToInt(20f * scale), 13, 20);
-		float closeFontSize = Mathf.Clamp(Mathf.RoundToInt(18f * scale), 13, 18);
-		float radius = Mathf.Clamp(Mathf.RoundToInt(13f * scale), 10, 13);
-		float inputPadding = Mathf.Clamp(14f * scale, 10f, 14f);
+		float submitWidth = Mathf.Clamp(88f * scale, 70f, 88f);
+		float closeWidth = Mathf.Clamp(40f * scale, 32f, 40f);
+		float fontSize = Mathf.Clamp(Mathf.RoundToInt(16f * scale), 12, 16);
+		float buttonFontSize = Mathf.Clamp(Mathf.RoundToInt(16f * scale), 12, 16);
+		float closeFontSize = Mathf.Clamp(Mathf.RoundToInt(14f * scale), 12, 14);
+		float radius = Mathf.Clamp(Mathf.RoundToInt(12f * scale), 9, 12);
+		float inputPadding = Mathf.Clamp(12f * scale, 9f, 12f);
 		float borderPadding = Mathf.Clamp(2f * scale, 1f, 2f);
 
 		_chatPanel.CustomMinimumSize = new Vector2(targetWidth, targetHeight);
@@ -768,7 +768,7 @@ public partial class UdpListener : Node2D
 
 		// The button textures use 9-slice margins. When the UI scales down, fixed margins can exceed the
 		// button height (e.g. 20+20 > 34), which causes the submit button to look "broken".
-		float slice = Mathf.Clamp(20f * scale, 12f, 20f);
+		float slice = Mathf.Clamp(12f * scale, 8f, 12f);
 		slice = Mathf.Min(slice, Mathf.Max(1f, size.X * 0.5f - 1f));
 		slice = Mathf.Min(slice, Mathf.Max(1f, size.Y * 0.5f - 1f));
 
@@ -2696,14 +2696,25 @@ public partial class UdpListener : Node2D
 			}
 		}
 
+		// Ưu tiên giọng Eris từ inner_diary.sections (nếu có); thiếu thì fallback extractor thô.
+		var diaryByTitle = new Dictionary<string, List<PrivateMindDiaryItem>>();
+		if (hasData)
+		{
+			foreach (var sec in TryReadDiarySections(root))
+			{
+				if (!string.IsNullOrWhiteSpace(sec.Title))
+					diaryByTitle[sec.Title.Trim()] = sec.Items;
+			}
+		}
+
 		// Luôn dựng đủ 5 khung cố định, mỗi khung tự điền dữ liệu nếu có
 		var slots = new List<PrivateMindDiarySection>
 		{
-			BuildDiarySlot("Suy nghĩ hiện tại", hasData ? ExtractCurrentThought(menu, root) : null),
-			BuildDiarySlot("Suy nghĩ tương lai", hasData ? ExtractFutureThought(menu, root) : null),
-			BuildDiarySlot("Đang bận tâm", hasData ? ExtractConcerns(menu) : null),
-			BuildDiarySlot("Phân tích gần đây", hasData ? ExtractFragments(menu, root) : null),
-			BuildDiarySlot("Muốn nói", hasData ? ExtractSurface(menu, root) : null),
+			BuildDiarySlot("Suy nghĩ hiện tại", PreferDiarySection(diaryByTitle, "Suy nghĩ hiện tại", hasData ? ExtractCurrentThought(menu, root) : null)),
+			BuildDiarySlot("Suy nghĩ tương lai", PreferDiarySection(diaryByTitle, "Suy nghĩ tương lai", hasData ? ExtractFutureThought(menu, root) : null)),
+			BuildDiarySlot("Đang bận tâm", PreferDiarySection(diaryByTitle, "Đang bận tâm", hasData ? ExtractConcerns(menu) : null)),
+			BuildDiarySlot("Phân tích gần đây", PreferDiarySection(diaryByTitle, "Phân tích gần đây", hasData ? ExtractFragments(menu, root) : null)),
+			BuildDiarySlot("Muốn nói", PreferDiarySection(diaryByTitle, "Muốn nói", hasData ? ExtractSurface(menu, root) : null)),
 		};
 
 		foreach (PrivateMindDiarySection slot in slots)
@@ -2718,6 +2729,15 @@ public partial class UdpListener : Node2D
 		if (items == null || items.Count == 0)
 			items = new List<PrivateMindDiaryItem> { new() { Text = "(chưa có)", Badge = "" } };
 		return new PrivateMindDiarySection { Title = title, Items = items };
+	}
+
+	private static List<PrivateMindDiaryItem> PreferDiarySection(
+		Dictionary<string, List<PrivateMindDiaryItem>> diaryByTitle, string title, List<PrivateMindDiaryItem> fallback)
+	{
+		// Có section giọng Eris cho đúng tiêu đề thì dùng nó; không thì về extractor thô.
+		if (diaryByTitle != null && diaryByTitle.TryGetValue(title, out var items) && items != null && items.Count > 0)
+			return items;
+		return fallback;
 	}
 
 	private static List<PrivateMindDiaryItem> ExtractCurrentThought(JsonElement menu, JsonElement root)

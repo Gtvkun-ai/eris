@@ -133,7 +133,7 @@ class InnerDiaryRenderer:
             },
         }
 
-    def render(self, digest: Mapping[str, Any]) -> dict[str, Any]:
+    def render(self, digest: Mapping[str, Any], voice: Mapping[str, Any] | None = None) -> dict[str, Any]:
         menu = _as_dict(digest.get("menu"))
         current = _as_dict(menu.get("current_thought") or digest.get("current"))
         temporary = _as_dict(menu.get("temporary_thoughts") or digest.get("temporary"))
@@ -143,6 +143,10 @@ class InnerDiaryRenderer:
         future_bias = _as_dict(menu.get("future_bias") or digest.get("future_bias"))
 
         future_text = self._future_thought(future_bias)
+        voice = _as_dict(voice)
+
+        def _voice(key: str) -> str:
+            return _short(voice.get(key), 240)
 
         sections: list[dict[str, Any]] = []
         emotion_board = self._emotion_board(digest)
@@ -159,71 +163,92 @@ class InnerDiaryRenderer:
             "lines": [emotion_board["center"]["label"], emotion_board["center"]["subtext"]],
         })
 
-        dominant = _short(current.get("dominant_judgment"), 160)
-        if dominant:
+        # Suy nghĩ hiện tại — ưu tiên giọng Eris, fallback judgment thô.
+        hien_tai = _voice("hien_tai") or _short(current.get("dominant_judgment"), 160)
+        if hien_tai:
             sections.append({
-                "title": "Suy nghi hien tai",
-                "items": [{"text": dominant, "badge": ""}],
-                "lines": [dominant],
+                "title": "Suy nghĩ hiện tại",
+                "items": [{"text": hien_tai, "badge": ""}],
+                "lines": [hien_tai],
             })
 
-        if future_text:
+        # Suy nghĩ tương lai
+        tuong_lai = _voice("tuong_lai") or future_text
+        if tuong_lai:
             sections.append({
-                "title": "Suy nghi tuong lai",
-                "items": [{"text": future_text, "badge": ""}],
-                "lines": [future_text],
+                "title": "Suy nghĩ tương lai",
+                "items": [{"text": tuong_lai, "badge": ""}],
+                "lines": [tuong_lai],
             })
 
-        concern_items: list[dict[str, str]] = []
-        for item in [_as_dict(c) for c in concerns[:3]]:
-            theme = _short(item.get("theme"), 120)
-            if not theme:
-                continue
-            pressure = item.get("pressure")
-            badge = ""
-            try:
-                badge = f"ap luc {float(pressure or 0):.2g}"
-            except Exception:
-                badge = ""
-            concern_items.append({"text": theme, "badge": badge})
-        if concern_items:
+        # Đang bận tâm
+        ban_tam_voice = _voice("ban_tam")
+        if ban_tam_voice:
             sections.append({
-                "title": "Dang ban tam",
-                "items": concern_items,
-                "lines": [f"- {item['text']}" for item in concern_items],
+                "title": "Đang bận tâm",
+                "items": [{"text": ban_tam_voice, "badge": ""}],
+                "lines": [ban_tam_voice],
             })
+        else:
+            concern_items: list[dict[str, str]] = []
+            for item in [_as_dict(c) for c in concerns[:3]]:
+                theme = _short(item.get("theme"), 120)
+                if not theme:
+                    continue
+                pressure = item.get("pressure")
+                try:
+                    badge = f"áp lực {float(pressure or 0):.2g}"
+                except Exception:
+                    badge = ""
+                concern_items.append({"text": theme, "badge": badge})
+            if concern_items:
+                sections.append({
+                    "title": "Đang bận tâm",
+                    "items": concern_items,
+                    "lines": [f"- {item['text']}" for item in concern_items],
+                })
 
-        notice_items: list[dict[str, str]] = []
-        for item in [_as_dict(f) for f in _as_list(temporary.get("fragments"))[:3]]:
-            claim = _short(item.get("claim"), 120)
-            if not claim:
-                continue
-            score = item.get("score")
-            badge = ""
-            try:
-                badge = f"score {float(score or 0):.2f}"
-            except Exception:
-                badge = ""
-            notice_items.append({"text": claim, "badge": badge})
-        if notice_items:
+        # Phân tích gần đây
+        phan_tich_voice = _voice("phan_tich")
+        if phan_tich_voice:
             sections.append({
-                "title": "Phan tich gan day",
-                "items": notice_items,
-                "lines": [f"- {item['text']}" for item in notice_items],
+                "title": "Phân tích gần đây",
+                "items": [{"text": phan_tich_voice, "badge": ""}],
+                "lines": [phan_tich_voice],
             })
+        else:
+            notice_items: list[dict[str, str]] = []
+            for item in [_as_dict(f) for f in _as_list(temporary.get("fragments"))[:3]]:
+                claim = _short(item.get("claim"), 120)
+                if not claim:
+                    continue
+                score = item.get("score")
+                try:
+                    badge = f"score {float(score or 0):.2f}"
+                except Exception:
+                    badge = ""
+                notice_items.append({"text": claim, "badge": badge})
+            if notice_items:
+                sections.append({
+                    "title": "Phân tích gần đây",
+                    "items": notice_items,
+                    "lines": [f"- {item['text']}" for item in notice_items],
+                })
 
-        if surface_queue:
-            seed = _short(
+        # Muốn nói
+        muon_noi = _voice("muon_noi")
+        if not muon_noi and surface_queue:
+            muon_noi = _short(
                 _as_dict(surface_queue[0]).get("topic_seed")
                 or _as_dict(surface_queue[0]).get("text")
                 or "",
                 120,
             )
-            surface_line = seed if seed else "Co dieu muon noi."
+        if muon_noi:
             sections.append({
-                "title": "Muon noi",
-                "items": [{"text": surface_line, "badge": ""}],
-                "lines": [surface_line],
+                "title": "Muốn nói",
+                "items": [{"text": muon_noi, "badge": ""}],
+                "lines": [muon_noi],
             })
 
         text_parts: list[str] = []

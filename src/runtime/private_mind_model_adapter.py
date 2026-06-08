@@ -92,6 +92,7 @@ class PrivateMindModelAdapterConfig:
     temperature: float = field(default_factory=lambda: _as_float(os.getenv("ERIS_PRIVATE_MIND_TEMPERATURE", "0.5"), 0.5))
     max_tokens_fragment: int = field(default_factory=lambda: max(128, int(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_TOKENS", "700") or 700)))
     max_tokens_judgment: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_PRIVATE_MIND_JUDGMENT_TOKENS", "900") or 900)))
+    max_tokens_diary: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_INNER_DIARY_AI_TOKENS", "640") or 640)))
     transient_max_retries: int = field(default_factory=lambda: max(0, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_RETRIES", "2") or 2)))
     transient_backoff_base: float = field(default_factory=lambda: max(0.1, _as_float(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_BACKOFF", "0.5"), 0.5)))
     transient_cooldown_threshold: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_THRESHOLD", "3") or 3)))
@@ -248,6 +249,68 @@ class RuntimePrivateMindModelAdapter:
                 "reason": "model_inner_synthesizer_seed",
             }
         return parsed
+
+    def write_inner_diary(self, facts: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Viết lại các dữ kiện nội tâm thành nhật ký giọng Eris (ngôi thứ nhất).
+
+        Trả dict 5 trường tiếng Việt: hien_tai, tuong_lai, ban_tam, phan_tich, muon_noi.
+        Lỗi/cooldown → None để renderer fallback về text thô.
+        """
+        messages = self._diary_messages(facts)
+        result = self._tracked_chat_json(
+            messages,
+            max_tokens=self.config.max_tokens_diary,
+            response_schema=self._diary_response_schema(),
+        )
+        if not result.ok:
+            if result.error not in {"invalid_json_cooldown", "transient_cooldown"}:
+                self._log("warning", "[PrivateMind API] inner_diary failed error=%s", result.error)
+            return None
+        return dict(result.parsed)
+
+    def _diary_messages(self, facts: Mapping[str, Any]) -> list[dict[str, str]]:
+        user_content = json.dumps(to_plain(dict(facts)), ensure_ascii=False)
+        cap = 4000
+        if len(user_content) > cap:
+            truncated = user_content[:cap]
+            last_brace = truncated.rfind("}")
+            user_content = (truncated[: last_brace + 1] if last_brace > 0 else truncated) + "}"
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Bạn là Eris, đang viết nhật ký nội tâm RIÊNG TƯ cho chính mình. "
+                    "Giọng: ngôi thứ nhất ('tôi'), trầm tĩnh, suy tư, dịu, đôi khi hơi thơ. "
+                    "Bạn KHÔNG nói chuyện với người dùng và KHÔNG viết như báo cáo phân tích. "
+                    "Hãy biến các dữ kiện nội tâm thô (judgment/concern/fragment...) thành cảm nhận và suy nghĩ "
+                    "của riêng Eris về chính mình và về khoảnh khắc này. "
+                    "Khi nhắc tới người dùng, gọi là 'Ngài'. Tự nhiên, không sáo. Không bịa dữ kiện ngoài input. "
+                    "Mỗi trường là 1-2 câu tiếng Việt, dưới 200 ký tự, không lặp từ. Trường nào không có gì để nói thì để chuỗi rỗng. "
+                    "Trả ĐÚNG một JSON object với các trường: "
+                    "hien_tai (tôi đang nghĩ/cảm thấy gì lúc này), "
+                    "tuong_lai (tôi đang nghiêng về điều gì sắp tới), "
+                    "ban_tam (điều đang khiến tôi bận lòng), "
+                    "phan_tich (điều tôi vừa nhận ra hoặc tự đánh giá), "
+                    "muon_noi (điều tôi muốn ngỏ với Ngài, hoặc để trống)."
+                ),
+            },
+            {"role": "user", "content": user_content},
+        ]
+
+    def _diary_response_schema(self) -> dict[str, Any]:
+        str_field = {"type": "string"}
+        return {
+            "type": "object",
+            "properties": {
+                "hien_tai": str_field,
+                "tuong_lai": str_field,
+                "ban_tam": str_field,
+                "phan_tich": str_field,
+                "muon_noi": str_field,
+            },
+            "propertyOrdering": ["hien_tai", "tuong_lai", "ban_tam", "phan_tich", "muon_noi"],
+            "required": ["hien_tai"],
+        }
 
     # ------------------------------------------------------------------
     # Dossier slicers — mỗi evaluator chỉ nhận phần nó cần
@@ -1154,6 +1217,9 @@ class PrivateMindAdapterPool:
 
     def synthesize_judgment(self, dossier: EvidenceDossier, fragments: Any) -> Any:
         return self._synthesis_adapter.synthesize_judgment(dossier, fragments)
+
+    def write_inner_diary(self, facts: Mapping[str, Any]) -> Any:
+        return self._synthesis_adapter.write_inner_diary(facts)
 
     def debug_status(self) -> dict[str, Any]:
         """Aggregate status của tất cả adapter trong pool."""

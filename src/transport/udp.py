@@ -2,7 +2,10 @@ import json
 import socket
 
 
-MAX_UDP_PAYLOAD_BYTES = 60000
+# Trần payload cho một datagram UDP. IPv4 cho tối đa 65507 bytes/datagram; quá
+# ngưỡng đó sendto() của OS sẽ lỗi và KHÔNG gửi được gì. 63000 chừa lề an toàn,
+# vẫn nằm gọn trong buffer nhận mặc định của Godot PacketPeerUdp (65536).
+MAX_UDP_PAYLOAD_BYTES = 63000
 
 
 def _compact_private_mind_for_udp_overflow(value):
@@ -27,7 +30,9 @@ def _compact_private_mind_for_udp_overflow(value):
     return {
         "last_tick_at": value.get("last_tick_at", 0.0),
         "current": _compact_debug_value(value.get("current", {}), depth=0),
-        "inner_diary": _compact_inner_diary(value.get("inner_diary", {})),
+        # Giữ inner_diary NGUYÊN BẢN — nó nhỏ và là thứ quan trọng nhất với UI.
+        # Chỉ nén đống debug nặng trong menu, không đụng nhật ký nội tâm.
+        "inner_diary": value.get("inner_diary") if isinstance(value.get("inner_diary"), dict) else {},
         "menu": compact_menu,
         "udp_debug_truncated": True,
     }
@@ -63,6 +68,57 @@ def _compact_inner_diary(diary):
         "title": str(diary.get("title", ""))[:80],
         "text": str(diary.get("text", "") or "")[:800],
         "sections": compact_sections,
+    }
+
+
+def _slim_private_mind_core(private_mind):
+    """Bản rút gọn cứng của private_mind_digest.
+
+    Chỉ giữ đúng thứ UI cần để vẽ Inner Diary (current_thought / future_bias /
+    open_concerns + inner_diary sections), bỏ các nhánh debug nặng. Dùng làm phao
+    cuối khi bản compact thường vẫn vượt giới hạn payload.
+    """
+    if not isinstance(private_mind, dict):
+        return {}
+    menu = private_mind.get("menu")
+    menu = menu if isinstance(menu, dict) else {}
+    slim_menu = {}
+    for key in ("current_thought", "future_bias", "open_concerns"):
+        if key in menu:
+            slim_menu[key] = _compact_debug_value(menu.get(key), depth=0)
+
+    diary = private_mind.get("inner_diary")
+    slim_diary = {}
+    if isinstance(diary, dict):
+        sections = []
+        raw_sections = diary.get("sections")
+        if isinstance(raw_sections, list):
+            for sec in raw_sections[:4]:
+                if not isinstance(sec, dict):
+                    continue
+                items = []
+                raw_items = sec.get("items")
+                if isinstance(raw_items, list):
+                    for item in raw_items[:3]:
+                        if isinstance(item, dict) and item.get("text"):
+                            items.append({
+                                "text": str(item.get("text", ""))[:120],
+                                "badge": str(item.get("badge", "") or "")[:40],
+                            })
+                if sec.get("title") and items:
+                    sections.append({"title": str(sec.get("title", ""))[:80], "items": items})
+        slim_diary = {
+            "title": str(diary.get("title", ""))[:60],
+            "text": str(diary.get("text", "") or "")[:300],
+            "sections": sections,
+        }
+
+    return {
+        "last_tick_at": private_mind.get("last_tick_at", 0.0),
+        "current": _compact_debug_value(private_mind.get("current", {}), depth=0),
+        "inner_diary": slim_diary,
+        "menu": slim_menu,
+        "udp_debug_truncated": True,
     }
 
 
@@ -114,33 +170,54 @@ class UdpTransport:
 #  cho phép gửi dữ liệu có chứa các ký tự đặc biệt hoặc ngôn ngữ khác một cách chính xác.
     def send_json(self, payload: dict) -> None:
         message = json.dumps(payload, ensure_ascii=False)
-        if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
-            payload = dict(payload)
-            private_mind = _compact_private_mind_for_udp_overflow(payload.get("private_mind_digest"))
+        if len(message.encode("utf-8")) <= MAX_UDP_PAYLOAD_BYTES:
+            self.send_text(message)
+            return
+
+        # Stage 1: nén private_mind_digest + emotion_debug.private_mind, giữ phần còn lại.
+        payload = dict(payload)
+        private_mind = _compact_private_mind_for_udp_overflow(payload.get("private_mind_digest"))
+        if private_mind:
+            payload["private_mind_digest"] = private_mind
+        else:
+            payload.pop("private_mind_digest", None)
+        emotion = payload.get("emotion_debug")
+        if isinstance(emotion, dict):
+            emotion = dict(emotion)
             if private_mind:
-                payload["private_mind_digest"] = private_mind
+                emotion["private_mind"] = private_mind
             else:
-                payload.pop("private_mind_digest", None)
-            emotion = payload.get("emotion_debug")
-            if isinstance(emotion, dict):
-                emotion = dict(emotion)
-                if private_mind:
-                    emotion["private_mind"] = private_mind
-                else:
-                    emotion.pop("private_mind", None)
-                payload["emotion_debug"] = emotion
-            payload["udp_debug_truncated"] = True
-            message = json.dumps(payload, ensure_ascii=False)
-        if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
-            payload = {
-                "text": str(payload.get("text", ""))[:500],
-                "should_speak": bool(payload.get("should_speak", False)),
-                "animation": str(payload.get("animation", "stand") or "stand"),
-                "parse_mode": str(payload.get("parse_mode", "") or ""),
-                "debug_trace": "udp_payload_truncated",
-                "udp_debug_truncated": True,
-            }
-            message = json.dumps(payload, ensure_ascii=False)
+                emotion.pop("private_mind", None)
+            payload["emotion_debug"] = emotion
+        payload["udp_debug_truncated"] = True
+        message = json.dumps(payload, ensure_ascii=False)
+        if len(message.encode("utf-8")) <= MAX_UDP_PAYLOAD_BYTES:
+            self.send_text(message)
+            return
+
+        # Stage 2: payload tối thiểu, NHƯNG giữ private_mind_digest để UI không mất
+        # Inner Diary. Trước đây stage này vứt sạch digest nên panel luôn "(chưa có)".
+        minimal = {
+            "text": str(payload.get("text", ""))[:500],
+            "should_speak": bool(payload.get("should_speak", False)),
+            "animation": str(payload.get("animation", "stand") or "stand"),
+            "parse_mode": str(payload.get("parse_mode", "") or ""),
+            "debug_trace": "udp_payload_truncated",
+            "udp_debug_truncated": True,
+        }
+        if private_mind:
+            minimal["private_mind_digest"] = private_mind
+            message = json.dumps(minimal, ensure_ascii=False)
+            # Stage 3: vẫn quá lớn → rút digest còn lõi inner_diary.
+            if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
+                minimal["private_mind_digest"] = _slim_private_mind_core(private_mind)
+                message = json.dumps(minimal, ensure_ascii=False)
+            # Stage 4: cùng đường → bỏ hẳn để ít nhất còn gửi được text/animation.
+            if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
+                minimal.pop("private_mind_digest", None)
+                message = json.dumps(minimal, ensure_ascii=False)
+        else:
+            message = json.dumps(minimal, ensure_ascii=False)
         self.send_text(message)
 
     def poll_json(self):
