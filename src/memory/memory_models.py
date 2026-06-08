@@ -16,7 +16,6 @@ class MemoryTarget(str, Enum):
     CANDIDATE = "memory_candidate"
     EVENT_LEDGER = "event_ledger"
     REPAIR = "repair_memory"
-    REPAIR = "repair_memory"
 
 
 class SurfaceMode(str, Enum):

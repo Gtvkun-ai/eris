@@ -86,6 +86,7 @@ from runtime.force_speak_surface_policy import ForceSpeakSurfacePolicyMixin
 from runtime.force_speak_cycle import ForceSpeakCycleMixin
 from runtime.frame_builder import FrameBuilderMixin
 from runtime.guard_violations import GuardViolation
+from runtime.inner_diary_persistence import InnerDiaryPersister
 from runtime.outcome_observer import OutcomeObserver
 from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.private_mind_daemon import PrivateMindDaemon
@@ -418,6 +419,8 @@ class RuntimeCoordinator(
         self.private_mind_thought_pressure = 0.0
         self.private_mind_digest: dict[str, object] = {}
         self.private_mind_daemon_digest: dict[str, object] = {}
+        # Ghi inner_diary ra đĩa (có throttle) để trạng thái nội tâm không bốc hơi khi tắt app.
+        self.inner_diary_persister = InnerDiaryPersister(logger=self.logger)
         # PrivateLifeDaemon: đời sống riêng không xoay quanh user. Nó theo dõi habitat,
         # object attachments, project riêng, nhịp ngày, solitude và việc vặt nội bộ.
         self.private_life_daemon = PrivateLifeDaemon.from_runtime(
@@ -844,6 +847,7 @@ class RuntimeCoordinator(
                 elif tick is not None and callable(getattr(tick, "to_dict", None)):
                     self.private_mind_digest = tick.to_dict()
                 self.private_mind_surface_queue = getattr(daemon, "surface_queue", getattr(self, "private_mind_surface_queue", []))
+                self._persist_inner_diary()
                 return
 
             result = loop.tick(
@@ -865,11 +869,25 @@ class RuntimeCoordinator(
                 self.private_mind_digest = digest_fn(surface_queue=getattr(self, "private_mind_surface_queue", None))
             elif result is not None and callable(getattr(result, "to_dict", None)):
                 self.private_mind_digest = result.to_dict()
+            self._persist_inner_diary()
         except Exception as exc:
             try:
                 self.logger.warning("PrivateMind tick error: %s", exc)
             except Exception:
                 pass
+
+    def _persist_inner_diary(self) -> None:
+        """Ghi inner_diary hiện tại ra đĩa (throttled). Không bao giờ ném lỗi."""
+
+        persister = getattr(self, "inner_diary_persister", None)
+        if persister is None:
+            return
+        try:
+            persister.maybe_persist(getattr(self, "private_mind_digest", None))
+        except Exception:
+            # Persistence là tiện ích phụ; nó tuyệt đối không được làm gãy tick.
+            pass
+
 
     def _drain_private_mind_surface_impulses(self, *, limit: int = 4) -> tuple[object, ...]:
         """Lấy impulse đã được SurfaceValve lọc để đưa vào SurfaceArbiter."""

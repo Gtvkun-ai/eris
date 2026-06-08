@@ -84,7 +84,8 @@ class EmbeddingIndex:
         )
         self.cache_dir = cache_dir or os.getenv(
             "ERIS_EMBEDDING_CACHE_DIR",
-            str(Path.home() / ".cache" / "eris" / "embeddings"),
+            # Mặc định đặt cạnh model.gguf — cùng thư mục src/
+            str(Path(os.getenv("GGUF_MODEL_PATH", "src/model.gguf")).parent / "embedding_model"),
         )
         self.max_seq_length = max_seq_length
         self._device = device or ("cuda" if self._cuda_available() else "cpu")
@@ -206,15 +207,22 @@ class EmbeddingIndex:
         from transformers import AutoTokenizer, AutoModel
         t0 = time.time()
         os.makedirs(self.cache_dir, exist_ok=True)
+
+        # Nếu cache_dir chứa config.json thì đó là local model path — load trực tiếp.
+        # Nếu không thì dùng cache_dir làm HuggingFace cache và download.
+        local_model_path = os.path.join(self.cache_dir, "config.json")
+        load_path = self.cache_dir if os.path.isfile(local_model_path) else self.model_name
+        cache_arg = None if os.path.isfile(local_model_path) else self.cache_dir
+
         logger.info(
-            "[EmbeddingIndex] Loading model %s (device=%s, cache=%s)...",
-            self.model_name, self._device, self.cache_dir,
+            "[EmbeddingIndex] Loading model from %s (device=%s)...",
+            load_path, self._device,
         )
         self._tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name, cache_dir=self.cache_dir
+            load_path, cache_dir=cache_arg
         )
         self._model = AutoModel.from_pretrained(
-            self.model_name, cache_dir=self.cache_dir
+            load_path, cache_dir=cache_arg
         )
         self._model.eval()
         if self._device != "cpu":
