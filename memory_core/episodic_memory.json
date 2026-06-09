@@ -1,4 +1,49 @@
 {
   "version": 1,
-  "items": []
+  "items": [
+    {
+      "id": "epi_dbc592415271",
+      "timestamp": "2026-06-08T22:45:55+0700",
+      "frame_id": "",
+      "summary": "bạn có thấy tôi đang mở gì không -> Tôi không thể thấy màn hình của Ngài, trừ khi Ngài cung cấp hình ảnh hoặc dữ liệu cụ thể cho tôi. -> hard_json_repair",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:22:44:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    },
+    {
+      "id": "epi_6f4e1872c8ea",
+      "timestamp": "2026-06-08T22:43:33+0700",
+      "frame_id": "",
+      "summary": "có gì muốn nói không -> Tôi vẫn đang quan sát và chờ đợi các chỉ thị hoặc công việc tiếp theo từ Ngài. -> hard_json_repair",
+      "scene": "store concrete cognitive turn as episodic memory",
+      "user_input": "",
+      "eris_action": "",
+      "outcome": "",
+      "confidence": 0.55,
+      "salience": 0.0,
+      "evidence_ids": [
+        "percept:user_message:22:42:0"
+      ],
+      "tags": [
+        "commit",
+        "episodic_memory"
+      ],
+      "decay_policy": "normal",
+      "access_count": 0,
+      "metadata": {}
+    }
+  ]
 }

@@ -189,7 +189,7 @@ class _DummyMemory:
         return SimpleNamespace(outcome="accepted", target=getattr(request, "target", None))
 
 
-def test_chat_format_violation_after_local_fallback_commits_deterministic_reply():
+def test_chat_format_violation_tries_fallback_api_then_blocks():
     llm = _FormatFailingChatLlmService()
     coordinator = RuntimeCoordinator(
         logger=_DummyLogger(),
@@ -207,11 +207,15 @@ def test_chat_format_violation_after_local_fallback_commits_deterministic_reply(
     coordinator._run_chat_cycle("xin chao", user_timestamp=100.0)
 
     sent = coordinator.transport.sent[-1]
+    # 3 lượt remote (allow_local_fallback=False) + 1 lượt đổi API (allow_local_fallback=True)
     assert llm.chat_calls == 4
-    assert sent["intent"] == "format_repair_fallback"
-    assert sent["parse_mode"] == "format_repair_fallback"
-    assert "lỗi định dạng" in sent["text"]
-    assert "format_violation_recovered" in sent["debug_trace"]
+    # Always-block: cạn mọi đường thì chặn, không bịa câu trấn an.
+    assert sent["intent"] == "no_fallback_block"
+    assert sent["parse_mode"] == "no_fallback_block"
+    assert "chặn lượt" in sent["text"]
+    assert "format_violation_blocked" in sent["debug_trace"]
+    # Lượt đổi API thật sự được gọi với allow_local_fallback=True.
+    assert llm.last_chat_kwargs.get("allow_local_fallback") is True
 def test_chat_format_violation_no_fallback_mode_blocks_instead_of_recovering():
     os.environ["ERIS_NO_FALLBACK_MODE"] = "1"
     try:

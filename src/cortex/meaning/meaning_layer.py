@@ -2,7 +2,7 @@ import re
 import time
 import unicodedata
 
-from .contracts import MeaningLayerResult
+from ..contracts import MeaningLayerResult
 '''
 snapshot / broadcast / internal_state / thought_stream / user_text
         ↓

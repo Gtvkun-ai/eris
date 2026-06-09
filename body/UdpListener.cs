@@ -129,7 +129,17 @@ public partial class UdpListener : Node2D
 	private Tween _textTween;
 	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 262f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
-	private static readonly Vector2 PrivateMindPanelMinSize = new(820f, 560f);
+	private static readonly Vector2 PrivateMindPanelMinSize = new(1040f, 624f);
+
+	// Inner Diary — sidebar (Mood / Concern Stack / Memory Echo)
+	private ProgressBar _diaryValenceBar;
+	private ProgressBar _diaryArousalBar;
+	private Label _diaryValenceLabel;
+	private Label _diaryArousalLabel;
+	private Label _diaryMoodQuoteLabel;
+	private VBoxContainer _diaryConcernList;
+	private Label _diaryMemoryEchoLabel;
+	private Label _diaryMemoryEchoMetaLabel;
 	private const float EmotionBarWidth = 160f;
 	private const float EmotionBarHeight = 26f;
 	private readonly Random _rng = new Random();
@@ -1463,43 +1473,104 @@ public partial class UdpListener : Node2D
 		if (_privateMindPanel == null)
 			return;
 
-		_privateMindFrameTexture ??= GD.Load<Texture2D>("res://asset/Resource/InnerDiaryKhung.png");
 		_privateMindScrollCapTexture ??= GD.Load<Texture2D>("res://asset/Resource/topcap.png");
 		_privateMindScrollTrackTexture ??= GD.Load<Texture2D>("res://asset/Resource/scrolltrack.png");
 		_privateMindScrollFillTexture ??= GD.Load<Texture2D>("res://asset/Resource/scrollfill.png");
 
+		// Khung vẽ bằng StyleBox để co giãn sắc nét ở kích thước lớn (thay cho việc kéo dãn PNG cũ).
 		var panelStyle = new StyleBoxFlat
 		{
-			BgColor = new Color(1f, 1f, 1f, 0f),
-			BorderColor = new Color(1f, 1f, 1f, 0f),
+			BgColor = new Color(1f, 0.965f, 0.982f, 0.99f),
+			BorderColor = new Color(0.96f, 0.72f, 0.82f, 1f),
+			BorderWidthLeft = 3,
+			BorderWidthTop = 3,
+			BorderWidthRight = 3,
+			BorderWidthBottom = 3,
+			CornerRadiusTopLeft = 34,
+			CornerRadiusTopRight = 34,
+			CornerRadiusBottomRight = 34,
+			CornerRadiusBottomLeft = 34,
+			ShadowColor = new Color(0.85f, 0.45f, 0.62f, 0.25f),
+			ShadowSize = 10,
 			ContentMarginLeft = 0,
 			ContentMarginTop = 0,
 			ContentMarginRight = 0,
 			ContentMarginBottom = 0,
 		};
 		_privateMindPanel.AddThemeStyleboxOverride("panel", panelStyle);
+		_privateMindFrameRect = null; // không dùng layer ảnh nữa; khung do StyleBox vẽ
 
-		// Layer 1: khung ảnh nền
-		var frameLayer = new TextureRect
-		{
-			Texture = _privateMindFrameTexture,
-			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-			StretchMode = TextureRect.StretchModeEnum.Scale,
-			MouseFilter = Control.MouseFilterEnum.Ignore,
-		};
-		frameLayer.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-		_privateMindPanel.AddChild(frameLayer);
-		_privateMindFrameRect = frameLayer;
-
-		// Layer 2: nội dung scroll
+		// ── Root layout: header / body (sidebar + cột phải) / footer ──────────
 		var root = new VBoxContainer();
 		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-		root.OffsetLeft = 64f;
-		root.OffsetTop = 104f;
-		root.OffsetRight = -64f;
-		root.OffsetBottom = -40f;
-		root.AddThemeConstantOverride("separation", 22);
+		root.OffsetLeft = 30f;
+		root.OffsetTop = 24f;
+		root.OffsetRight = -30f;
+		root.OffsetBottom = -18f;
+		root.AddThemeConstantOverride("separation", 14);
 		_privateMindPanel.AddChild(root);
+
+		// ── Header: tiêu đề + phụ đề ──────────────────────────────────────────
+		var headerRow = new HBoxContainer();
+		headerRow.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		headerRow.AddThemeConstantOverride("separation", 10);
+		root.AddChild(headerRow);
+
+		var titleCol = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		titleCol.AddThemeConstantOverride("separation", 2);
+		headerRow.AddChild(titleCol);
+
+		var titleLabel = CreateUiLabel("Inner Diary", 30, new Color(0.62f, 0.10f, 0.36f));
+		titleCol.AddChild(titleLabel);
+
+		var subtitleLabel = CreateUiLabel("Chỉ Ngài mới được phép xem.", 13, new Color(0.74f, 0.46f, 0.60f));
+		titleCol.AddChild(subtitleLabel);
+
+		// Khoảng trống đẩy capsule điều khiển về góc phải
+		var headerSpacer = new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		headerRow.AddChild(headerSpacer);
+
+		var windowControls = CreateWindowControlCapsule(
+			() => _privateMindPanel.Visible = false,
+			ClosePrivateMindPanel);
+		windowControls.SizeFlagsVertical = Control.SizeFlags.ShrinkBegin;
+		headerRow.AddChild(windowControls);
+
+		// Đường kẻ mảnh ngăn header
+		var divider = new ColorRect
+		{
+			Color = new Color(0.96f, 0.80f, 0.88f, 0.55f),
+			CustomMinimumSize = new Vector2(0f, 1f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		root.AddChild(divider);
+
+		// ── Body: sidebar trái + cột phải ────────────────────────────────────
+		var body = new HBoxContainer();
+		body.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		body.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+		body.AddThemeConstantOverride("separation", 18);
+		root.AddChild(body);
+
+		var sidebar = new VBoxContainer
+		{
+			CustomMinimumSize = new Vector2(286f, 0f),
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+		};
+		sidebar.AddThemeConstantOverride("separation", 14);
+		body.AddChild(sidebar);
+
+		BuildDiaryMoodCard(sidebar);
+		BuildDiaryConcernCard(sidebar);
+		BuildDiaryMemoryEchoCard(sidebar);
+
+		// Cột phải: scroll chứa các thẻ suy nghĩ
+		var rightCol = new VBoxContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+		};
+		body.AddChild(rightCol);
 
 		var scroll = new ScrollContainer
 		{
@@ -1508,29 +1579,39 @@ public partial class UdpListener : Node2D
 			ClipContents = true,
 		};
 		scroll.AddThemeConstantOverride("v_scrollbar_separation", 0);
-		root.AddChild(scroll);
+		rightCol.AddChild(scroll);
 		_privateMindScrollContainer = scroll;
+
+		// MarginContainer chừa chỗ bên phải cho thanh cuộn tim
+		var scrollPad = new MarginContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		scrollPad.AddThemeConstantOverride("margin_right", 26);
+		scroll.AddChild(scrollPad);
 
 		_privateMindSectionList = new VBoxContainer
 		{
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-			Alignment = BoxContainer.AlignmentMode.Center,
 		};
-		_privateMindSectionList.AddThemeConstantOverride("separation", 18);
-		scroll.AddChild(_privateMindSectionList);
+		_privateMindSectionList.AddThemeConstantOverride("separation", 16);
+		scrollPad.AddChild(_privateMindSectionList);
 
+		// RichTextLabel ẩn — vẫn giữ để tương thích state cũ
 		_privateMindText = new RichTextLabel
 		{
 			BbcodeEnabled = true,
 			FitContent = true,
 			ScrollActive = false,
 			Visible = false,
+			CustomMinimumSize = new Vector2(0f, 0f),
 		};
 		_privateMindText.AddThemeFontSizeOverride("normal_font_size", 14);
-		root.AddChild(_privateMindText);
 
-		// Layer 3: decoration overlay (scroll track + thumb + close button) — nằm trên cùng
+		// ── Footer ───────────────────────────────────────────────────────────
+		var footer = CreateUiLabel("ERIS V3.0   \u00b7   Chỉ dành riêng cho Ngài.", 12, new Color(0.74f, 0.48f, 0.62f));
+		footer.HorizontalAlignment = HorizontalAlignment.Center;
+		footer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		root.AddChild(footer);
+
+		// ── Decoration overlay (thanh cuộn tim) — nằm trên cùng ──────────────
 		var decorationLayer = new Control
 		{
 			MouseFilter = Control.MouseFilterEnum.Ignore,
@@ -1538,31 +1619,18 @@ public partial class UdpListener : Node2D
 		decorationLayer.SetAnchorsPreset(Control.LayoutPreset.FullRect);
 		_privateMindPanel.AddChild(decorationLayer);
 
-		// Scroll track (toàn bộ chiều dài rail)
-		_privateMindScrollTrackRect = CreateDecorTextureRect(_privateMindScrollTrackTexture, new Vector2(28f, 200f));
+		_privateMindScrollTrackRect = CreateDecorTextureRect(_privateMindScrollTrackTexture, new Vector2(14f, 200f));
 		decorationLayer.AddChild(_privateMindScrollTrackRect);
 
-		// Scroll fill / thumb (di chuyển theo tỉ lệ)
-		_privateMindScrollFillRect = CreateDecorTextureRect(_privateMindScrollFillTexture, new Vector2(28f, 60f));
+		_privateMindScrollFillRect = CreateDecorTextureRect(_privateMindScrollFillTexture, new Vector2(14f, 60f));
 		decorationLayer.AddChild(_privateMindScrollFillRect);
 
-		// Giữ topcap nếu cần làm mũ đầu thumb
-		_privateMindScrollCapRect = CreateDecorTextureRect(_privateMindScrollCapTexture, new Vector2(28f, 24f));
+		_privateMindScrollCapRect = CreateDecorTextureRect(_privateMindScrollCapTexture, new Vector2(26f, 24f));
 		decorationLayer.AddChild(_privateMindScrollCapRect);
 
-		// Capsule điều khiển cửa sổ (— / x) — đồng bộ với Emotion panel
-		var windowControls = CreateWindowControlCapsule(
-			() => _privateMindPanel.Visible = false,
-			ClosePrivateMindPanel);
-		windowControls.Position = new Vector2(PrivateMindPanelMinSize.X - 94f - 31f, 20f);
-		_privateMindPanel.AddChild(windowControls);
-
 		ApplyHiddenScrollBarTheme(scroll.GetVScrollBar());
-
-		// Kết nối sự kiện scroll để cập nhật vị trí thumb
 		scroll.GetVScrollBar().ValueChanged += _ => UpdatePrivateMindScrollDecor();
 
-		// Đọc lại trạng thái inner diary đã lưu để hiển thị liên tục giữa các phiên
 		if (string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson))
 			LoadPrivateMindState();
 
@@ -1571,12 +1639,229 @@ public partial class UdpListener : Node2D
 		RefreshPrivateMindPanel();
 	}
 
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Sidebar cards
+	// ─────────────────────────────────────────────────────────────────────────
+
+	private PanelContainer CreateDiarySidebarCard(out VBoxContainer content)
+	{
+		var card = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.974f, 0.987f, 0.97f),
+			BorderColor = new Color(0.97f, 0.82f, 0.89f, 0.95f),
+			BorderWidthLeft = 2,
+			BorderWidthTop = 2,
+			BorderWidthRight = 2,
+			BorderWidthBottom = 2,
+			CornerRadiusTopLeft = 20,
+			CornerRadiusTopRight = 20,
+			CornerRadiusBottomRight = 20,
+			CornerRadiusBottomLeft = 20,
+			ContentMarginLeft = 16,
+			ContentMarginTop = 14,
+			ContentMarginRight = 16,
+			ContentMarginBottom = 14,
+		});
+
+		content = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		content.AddThemeConstantOverride("separation", 10);
+		card.AddChild(content);
+		return card;
+	}
+
+	private void AddDiaryCardHeader(VBoxContainer content, string iconAsset, string title, Color accent)
+	{
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 8);
+		content.AddChild(row);
+
+		var icon = CreateDiaryGlyph(iconAsset, accent, 18f);
+		icon.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+		row.AddChild(icon);
+
+		var label = CreateUiLabel(title, 16, new Color(0.60f, 0.12f, 0.40f));
+		label.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		row.AddChild(label);
+	}
+
+	private ProgressBar CreateDiaryBar(Color fillColor)
+	{
+		var pb = new ProgressBar
+		{
+			MinValue = 0,
+			MaxValue = 100,
+			Value = 0,
+			ShowPercentage = false,
+			CustomMinimumSize = new Vector2(0f, 9f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+		};
+		pb.AddThemeStyleboxOverride("background", new StyleBoxFlat
+		{
+			BgColor = new Color(0.99f, 0.90f, 0.94f, 1f),
+			CornerRadiusTopLeft = 6,
+			CornerRadiusTopRight = 6,
+			CornerRadiusBottomRight = 6,
+			CornerRadiusBottomLeft = 6,
+		});
+		pb.AddThemeStyleboxOverride("fill", new StyleBoxFlat
+		{
+			BgColor = fillColor,
+			CornerRadiusTopLeft = 6,
+			CornerRadiusTopRight = 6,
+			CornerRadiusBottomRight = 6,
+			CornerRadiusBottomLeft = 6,
+		});
+		return pb;
+	}
+
+	private void BuildDiaryMoodCard(VBoxContainer sidebar)
+	{
+		PanelContainer card = CreateDiarySidebarCard(out VBoxContainer content);
+		AddDiaryCardHeader(content, "diary_mood", "Mood", new Color(0.95f, 0.42f, 0.66f));
+
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 12);
+		content.AddChild(row);
+
+		// Avatar tròn — ưu tiên ảnh diary_mood_face.png, nếu chưa có thì vẽ chấm tròn hồng.
+		Control face = CreateDiaryGlyph("diary_mood_face", new Color(0.96f, 0.66f, 0.78f), 58f);
+		row.AddChild(face);
+
+		var bars = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		bars.AddThemeConstantOverride("separation", 8);
+		row.AddChild(bars);
+
+		bars.AddChild(BuildMoodMetric("Valence", new Color(0.95f, 0.40f, 0.62f), out _diaryValenceBar, out _diaryValenceLabel));
+		bars.AddChild(BuildMoodMetric("Arousal", new Color(0.98f, 0.62f, 0.42f), out _diaryArousalBar, out _diaryArousalLabel));
+
+		// Hộp trích dẫn tâm trạng
+		var quoteBox = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		quoteBox.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.945f, 0.965f, 0.95f),
+			CornerRadiusTopLeft = 12,
+			CornerRadiusTopRight = 12,
+			CornerRadiusBottomRight = 12,
+			CornerRadiusBottomLeft = 12,
+			ContentMarginLeft = 12,
+			ContentMarginTop = 8,
+			ContentMarginRight = 12,
+			ContentMarginBottom = 8,
+		});
+		content.AddChild(quoteBox);
+
+		_diaryMoodQuoteLabel = new Label
+		{
+			Text = "\u201c…\u201d",
+			AutowrapMode = TextServer.AutowrapMode.WordSmart,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		_diaryMoodQuoteLabel.AddThemeFontSizeOverride("font_size", 13);
+		_diaryMoodQuoteLabel.AddThemeColorOverride("font_color", new Color(0.62f, 0.34f, 0.48f));
+		quoteBox.AddChild(_diaryMoodQuoteLabel);
+
+		sidebar.AddChild(card);
+	}
+
+	private Control BuildMoodMetric(string name, Color fillColor, out ProgressBar bar, out Label valueLabel)
+	{
+		var col = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		col.AddThemeConstantOverride("separation", 3);
+
+		var labelRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var name1 = CreateUiLabel(name, 12, new Color(0.58f, 0.22f, 0.40f));
+		name1.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		labelRow.AddChild(name1);
+		valueLabel = CreateUiLabel("—", 12, new Color(0.84f, 0.30f, 0.52f));
+		labelRow.AddChild(valueLabel);
+		col.AddChild(labelRow);
+
+		bar = CreateDiaryBar(fillColor);
+		col.AddChild(bar);
+		return col;
+	}
+
+	private void BuildDiaryConcernCard(VBoxContainer sidebar)
+	{
+		PanelContainer card = CreateDiarySidebarCard(out VBoxContainer content);
+		AddDiaryCardHeader(content, "diary_concern", "Concern Stack", new Color(0.97f, 0.46f, 0.66f));
+
+		_diaryConcernList = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		_diaryConcernList.AddThemeConstantOverride("separation", 10);
+		content.AddChild(_diaryConcernList);
+
+		sidebar.AddChild(card);
+	}
+
+	private void BuildDiaryMemoryEchoCard(VBoxContainer sidebar)
+	{
+		PanelContainer card = CreateDiarySidebarCard(out VBoxContainer content);
+		card.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+		AddDiaryCardHeader(content, "diary_memory", "Memory Echo", new Color(0.72f, 0.52f, 0.88f));
+
+		_diaryMemoryEchoLabel = new Label
+		{
+			Text = "\u201cchưa có ký ức nào vọng lại.\u201d",
+			AutowrapMode = TextServer.AutowrapMode.WordSmart,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		_diaryMemoryEchoLabel.AddThemeFontSizeOverride("font_size", 13);
+		_diaryMemoryEchoLabel.AddThemeColorOverride("font_color", new Color(0.55f, 0.30f, 0.45f));
+		content.AddChild(_diaryMemoryEchoLabel);
+
+		_diaryMemoryEchoMetaLabel = CreateUiLabel("", 11, new Color(0.74f, 0.50f, 0.62f));
+		content.AddChild(_diaryMemoryEchoMetaLabel);
+
+		sidebar.AddChild(card);
+	}
+
 	private Label CreateUiLabel(string text, int fontSize, Color color)
 	{
 		var label = new Label { Text = text };
 		label.AddThemeFontSizeOverride("font_size", fontSize);
 		label.AddThemeColorOverride("font_color", color);
 		return label;
+	}
+
+	// Icon nhỏ cho diary: ưu tiên ảnh PNG nếu có (do người dùng cung cấp), nếu chưa
+	// có thì rơi về một chấm tròn màu nhấn — KHÔNG dùng ký tự unicode/emoji vì font
+	// mặc định của Godot không vẽ được (sẽ ra ô vuông tofu).
+	private Control CreateDiaryGlyph(string assetName, Color accent, float boxSize)
+	{
+		string path = $"res://asset/Resource/{assetName}.png";
+		if (ResourceLoader.Exists(path))
+		{
+			var tex = GD.Load<Texture2D>(path);
+			if (tex != null)
+			{
+				return new TextureRect
+				{
+					Texture = tex,
+					ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+					StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+					CustomMinimumSize = new Vector2(boxSize, boxSize),
+					MouseFilter = Control.MouseFilterEnum.Ignore,
+				};
+			}
+		}
+
+		var dot = new PanelContainer { CustomMinimumSize = new Vector2(boxSize, boxSize) };
+		int r = Mathf.RoundToInt(boxSize * 0.32f);
+		dot.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.85f),
+			CornerRadiusTopLeft = r,
+			CornerRadiusTopRight = r,
+			CornerRadiusBottomRight = r,
+			CornerRadiusBottomLeft = r,
+			ContentMarginLeft = 0,
+			ContentMarginTop = 0,
+			ContentMarginRight = 0,
+			ContentMarginBottom = 0,
+		});
+		return dot;
 	}
 
 	private TextureRect CreateDecorTextureRect(Texture2D texture, Vector2 size)
@@ -1659,30 +1944,35 @@ public partial class UdpListener : Node2D
 		if (scrollBar == null)
 			return;
 
-		// Vùng track scroll: sát mép phải của panel, từ dưới header xuống đáy
-		float barWidth = 10f;
-		float trackX = _privateMindPanel.Size.X - 26f;
-		float trackTop = 118f;
-		float trackBottom = _privateMindPanel.Size.Y - 54f;
-		float trackHeight = Mathf.Max(40f, trackBottom - trackTop);
+		// Rail bám đúng mép phải của vùng cuộn (cột phải), không tính theo cả panel
+		// nữa — nhờ vậy nó luôn nằm trong khung dù layout đổi.
+		Vector2 panelOrigin = _privateMindPanel.GlobalPosition;
+		Vector2 scPos = _privateMindScrollContainer.GlobalPosition - panelOrigin;
+		Vector2 scSize = _privateMindScrollContainer.Size;
+
+		float railWidth = 12f;
+		float trackX = scPos.X + scSize.X - railWidth - 6f;
+		float trackTop = scPos.Y + 4f;
+		float trackHeight = Mathf.Max(48f, scSize.Y - 8f);
+
+		bool canScroll = scrollBar.MaxValue > scrollBar.Page + 0.5;
 
 		// Vẽ track (background rail)
 		if (_privateMindScrollTrackRect != null)
 		{
 			_privateMindScrollTrackRect.Position = new Vector2(trackX, trackTop);
-			_privateMindScrollTrackRect.Size = new Vector2(barWidth, trackHeight);
-			// Hiển thị track chỉ khi có nội dung để scroll
-			_privateMindScrollTrackRect.Visible = scrollBar.MaxValue > scrollBar.Page + 0.5;
+			_privateMindScrollTrackRect.Size = new Vector2(railWidth, trackHeight);
+			_privateMindScrollTrackRect.Visible = canScroll;
 		}
 
 		// Thumb fill — chiều cao tỉ lệ theo page/max
-		float thumbMinHeight = 44f;
-		float thumbMaxHeight = Mathf.Min(trackHeight, 130f);
+		float thumbMinHeight = 52f;
+		float thumbMaxHeight = Mathf.Min(trackHeight, 150f);
 		float thumbHeight = thumbMinHeight;
 		double maxVal = scrollBar.MaxValue;
 		if (maxVal > 0.001 && scrollBar.Page > 0)
 		{
-			float ratio = Mathf.Clamp((float)(scrollBar.Page / maxVal), 0.1f, 1f);
+			float ratio = Mathf.Clamp((float)(scrollBar.Page / maxVal), 0.12f, 1f);
 			thumbHeight = Mathf.Clamp(trackHeight * ratio, thumbMinHeight, thumbMaxHeight);
 		}
 
@@ -1691,20 +1981,34 @@ public partial class UdpListener : Node2D
 		float ratio2 = scrollRange > 0.001f ? Mathf.Clamp((float)(scrollBar.Value / scrollRange), 0f, 1f) : 0f;
 		float thumbY = trackTop + ratio2 * Mathf.Max(0f, trackHeight - thumbHeight);
 
+		float thumbWidth = railWidth;
+		float thumbX = trackX + (railWidth - thumbWidth) * 0.5f;
+
 		if (_privateMindScrollFillRect != null)
 		{
-			_privateMindScrollFillRect.Position = new Vector2(trackX, thumbY);
-			_privateMindScrollFillRect.Size = new Vector2(barWidth, thumbHeight);
-			_privateMindScrollFillRect.Visible = _privateMindScrollTrackRect?.Visible ?? false;
+			_privateMindScrollFillRect.Position = new Vector2(thumbX, thumbY);
+			_privateMindScrollFillRect.Size = new Vector2(thumbWidth, thumbHeight);
+			_privateMindScrollFillRect.Visible = canScroll;
 		}
 
-		// Cap (mũ đầu thumb) — hơi rộng hơn thân, canh giữa cho giống nút tròn
+		// Heart cap (mũ đầu thumb) — giữ đúng tỉ lệ thật của ảnh trái tim để không bị
+		// bóp méo, canh giữa theo thân thumb và ngồi ngay đỉnh thumb như một nắp tròn.
 		if (_privateMindScrollCapRect != null)
 		{
-			float capWidth = barWidth + 6f;
-			_privateMindScrollCapRect.Position = new Vector2(trackX - 3f, thumbY - 3f);
-			_privateMindScrollCapRect.Size = new Vector2(capWidth, capWidth);
-			_privateMindScrollCapRect.Visible = _privateMindScrollFillRect?.Visible ?? false;
+			float capWidth = thumbWidth + 12f;
+			float capHeight = capWidth;
+			if (_privateMindScrollCapTexture != null)
+			{
+				Vector2 texSize = _privateMindScrollCapTexture.GetSize();
+				if (texSize.X > 0f && texSize.Y > 0f)
+					capHeight = capWidth * (texSize.Y / texSize.X);
+			}
+
+			float capX = thumbX + (thumbWidth - capWidth) * 0.5f;
+			float capY = thumbY - capHeight * 0.4f;
+			_privateMindScrollCapRect.Position = new Vector2(capX, capY);
+			_privateMindScrollCapRect.Size = new Vector2(capWidth, capHeight);
+			_privateMindScrollCapRect.Visible = canScroll;
 		}
 	}
 
@@ -2720,8 +3024,183 @@ public partial class UdpListener : Node2D
 		foreach (PrivateMindDiarySection slot in slots)
 			_privateMindSectionList.AddChild(BuildPrivateMindSectionCard(slot));
 
+		RefreshDiaryMood();
+		RefreshDiaryConcernStack(menu, hasData);
+		RefreshDiaryMemoryEcho(menu, hasData);
+
 		_privateMindText.Text = hasData ? RenderDiary(root) : "[i]Chưa có dữ liệu.[/i]";
 		doc?.Dispose();
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Sidebar refresh
+	// ─────────────────────────────────────────────────────────────────────────
+
+	private void RefreshDiaryMood()
+	{
+		if (_diaryValenceBar == null || _diaryArousalBar == null)
+			return;
+
+		var debug = _latestEmotionDebug;
+		bool hasMood = debug != null && debug.Items != null && debug.Items.Count > 0;
+
+		float valence = hasMood && debug.HasSummaryValence ? Mathf.Clamp(debug.SummaryValence, -1f, 1f) : 0f;
+		float arousal = 0f;
+		if (hasMood)
+		{
+			foreach (var it in debug.Items)
+			{
+				if (it.Key == "calm_aroused" && it.HasNumericValue) { arousal = Mathf.Clamp(it.NumericValue, 0f, 1f); break; }
+			}
+		}
+
+		float valPct = (valence + 1f) * 50f;   // -1..1 → 0..100
+		float aroPct = arousal * 100f;          // 0..1 → 0..100
+
+		_diaryValenceBar.Value = valPct;
+		_diaryArousalBar.Value = aroPct;
+		if (_diaryValenceLabel != null) _diaryValenceLabel.Text = hasMood ? $"{valPct:0}%" : "—";
+		if (_diaryArousalLabel != null) _diaryArousalLabel.Text = hasMood ? $"{aroPct:0}%" : "—";
+
+		if (_diaryMoodQuoteLabel != null)
+		{
+			string state = hasMood ? FormatSummaryValue(debug.SummaryState) : "";
+			if (string.IsNullOrWhiteSpace(state))
+				state = hasMood ? FormatSummaryValue(debug.SummaryValue) : "";
+			_diaryMoodQuoteLabel.Text = string.IsNullOrWhiteSpace(state) || state == "unknown"
+				? "\u201cđang lặng yên bên Ngài.\u201d"
+				: $"\u201c{state}\u201d";
+		}
+	}
+
+	private void RefreshDiaryConcernStack(JsonElement menu, bool hasData)
+	{
+		if (_diaryConcernList == null)
+			return;
+
+		foreach (Node child in _diaryConcernList.GetChildren())
+		{
+			_diaryConcernList.RemoveChild(child);
+			child.QueueFree();
+		}
+
+		var concerns = hasData ? ExtractConcernBars(menu) : new List<(string, float)>();
+		if (concerns.Count == 0)
+		{
+			var empty = new Label
+			{
+				Text = "(chưa có bận tâm nào)",
+				AutowrapMode = TextServer.AutowrapMode.WordSmart,
+				SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			};
+			empty.AddThemeFontSizeOverride("font_size", 12);
+			empty.AddThemeColorOverride("font_color", new Color(0.72f, 0.48f, 0.60f));
+			_diaryConcernList.AddChild(empty);
+			return;
+		}
+
+		int shown = Mathf.Min(3, concerns.Count);
+		for (int i = 0; i < shown; i++)
+		{
+			(string theme, float pct) = concerns[i];
+			var col = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+			col.AddThemeConstantOverride("separation", 3);
+
+			var labelRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+			var themeLabel = new Label
+			{
+				Text = theme,
+				AutowrapMode = TextServer.AutowrapMode.Off,
+				ClipText = true,
+				SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			};
+			themeLabel.AddThemeFontSizeOverride("font_size", 12);
+			themeLabel.AddThemeColorOverride("font_color", new Color(0.50f, 0.20f, 0.38f));
+			labelRow.AddChild(themeLabel);
+
+			var pctLabel = CreateUiLabel($"{pct:0}%", 12, new Color(0.84f, 0.30f, 0.52f));
+			labelRow.AddChild(pctLabel);
+			col.AddChild(labelRow);
+
+			ProgressBar bar = CreateDiaryBar(new Color(0.97f, 0.46f, 0.66f));
+			bar.Value = pct;
+			col.AddChild(bar);
+
+			_diaryConcernList.AddChild(col);
+		}
+
+		if (concerns.Count > shown)
+		{
+			var more = CreateUiLabel($"+ {concerns.Count - shown} mục khác", 12, new Color(0.70f, 0.46f, 0.60f));
+			_diaryConcernList.AddChild(more);
+		}
+	}
+
+	private static List<(string Theme, float Pct)> ExtractConcernBars(JsonElement menu)
+	{
+		var result = new List<(string, float)>();
+		if (menu.ValueKind == JsonValueKind.Object
+			&& menu.TryGetProperty("open_concerns", out var concerns) && concerns.ValueKind == JsonValueKind.Array)
+		{
+			foreach (var c in concerns.EnumerateArray())
+			{
+				if (c.ValueKind != JsonValueKind.Object)
+					continue;
+				string theme = DiaryStr(c, "theme", 60);
+				if (string.IsNullOrWhiteSpace(theme))
+					continue;
+				float pct = 0f;
+				if (c.TryGetProperty("pressure", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetDouble(out double pressure))
+					pct = Mathf.Clamp((float)pressure, 0f, 1f) * 100f;
+				result.Add((theme, pct));
+			}
+		}
+		return result;
+	}
+
+	private void RefreshDiaryMemoryEcho(JsonElement menu, bool hasData)
+	{
+		if (_diaryMemoryEchoLabel == null)
+			return;
+
+		string quote = "";
+		if (hasData)
+		{
+			JsonElement retained = default;
+			bool has = false;
+			if (menu.ValueKind == JsonValueKind.Object
+				&& menu.TryGetProperty("retained_thoughts", out var rt) && rt.ValueKind == JsonValueKind.Object
+				&& rt.TryGetProperty("items", out retained) && retained.ValueKind == JsonValueKind.Array)
+				has = true;
+			else if (menu.ValueKind == JsonValueKind.Object
+				&& menu.TryGetProperty("retained_thoughts", out retained) && retained.ValueKind == JsonValueKind.Array)
+				has = true;
+
+			if (has)
+			{
+				foreach (var r in retained.EnumerateArray())
+				{
+					if (r.ValueKind == JsonValueKind.String)
+						quote = r.GetString() ?? "";
+					else if (r.ValueKind == JsonValueKind.Object)
+						quote = FirstStr(r, "claim", "text", "thought", "summary");
+					quote = CompactText(quote, 160);
+					if (!string.IsNullOrWhiteSpace(quote))
+						break;
+				}
+			}
+		}
+
+		if (string.IsNullOrWhiteSpace(quote))
+		{
+			_diaryMemoryEchoLabel.Text = "\u201cchưa có ký ức nào vọng lại.\u201d";
+			if (_diaryMemoryEchoMetaLabel != null) _diaryMemoryEchoMetaLabel.Text = "";
+		}
+		else
+		{
+			_diaryMemoryEchoLabel.Text = $"\u201c{quote}\u201d";
+			if (_diaryMemoryEchoMetaLabel != null) _diaryMemoryEchoMetaLabel.Text = "\u2014 vừa nhớ lại";
+		}
 	}
 
 	private static PrivateMindDiarySection BuildDiarySlot(string title, List<PrivateMindDiaryItem> items)
@@ -2963,93 +3442,78 @@ public partial class UdpListener : Node2D
 
 	private PanelContainer BuildPrivateMindSectionCard(PrivateMindDiarySection section)
 	{
+		(string iconAsset, string badgeText, Color accent) = DiarySectionStyle(section.Title);
+
 		var card = new PanelContainer();
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			BgColor = new Color(1f, 0.972f, 0.986f, 0.96f),
-			BorderColor = new Color(0.98f, 0.80f, 0.88f, 0.95f),
+			BgColor = new Color(1f, 0.978f, 0.989f, 0.97f),
+			BorderColor = new Color(0.97f, 0.82f, 0.89f, 0.95f),
 			BorderWidthLeft = 2,
 			BorderWidthTop = 2,
 			BorderWidthRight = 2,
 			BorderWidthBottom = 2,
-			CornerRadiusTopLeft = 24,
-			CornerRadiusTopRight = 24,
-			CornerRadiusBottomRight = 24,
-			CornerRadiusBottomLeft = 24,
-		});
-
-		var content = new VBoxContainer();
-		content.AddThemeConstantOverride("separation", 0);
-		card.AddChild(content);
-
-		var headerBg = new PanelContainer();
-		headerBg.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		headerBg.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-		{
-			BgColor = new Color(1f, 0.935f, 0.965f, 0.62f),
-			CornerRadiusTopLeft = 22,
-			CornerRadiusTopRight = 22,
+			CornerRadiusTopLeft = 20,
+			CornerRadiusTopRight = 20,
+			CornerRadiusBottomRight = 20,
+			CornerRadiusBottomLeft = 20,
 			ContentMarginLeft = 18,
 			ContentMarginTop = 14,
 			ContentMarginRight = 18,
-			ContentMarginBottom = 12,
+			ContentMarginBottom = 16,
 		});
-		content.AddChild(headerBg);
 
-		var headerRow = new HBoxContainer();
-		headerRow.AddThemeConstantOverride("separation", 12);
-		headerBg.AddChild(headerRow);
+		var content = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		content.AddThemeConstantOverride("separation", 10);
+		card.AddChild(content);
 
-		var iconChip = new PanelContainer { CustomMinimumSize = new Vector2(40f, 40f) };
+		// Header: icon tròn + tiêu đề + badge phân loại
+		var headerRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		headerRow.AddThemeConstantOverride("separation", 10);
+		content.AddChild(headerRow);
+
+		var iconChip = new PanelContainer { CustomMinimumSize = new Vector2(34f, 34f) };
 		iconChip.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			BgColor = new Color(1f, 0.975f, 0.99f, 1f),
-			BorderColor = new Color(0.98f, 0.80f, 0.88f, 0.95f),
-			BorderWidthLeft = 1,
-			BorderWidthTop = 1,
-			BorderWidthRight = 1,
-			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 12,
-			CornerRadiusTopRight = 12,
-			CornerRadiusBottomRight = 12,
-			CornerRadiusBottomLeft = 12,
-			ContentMarginLeft = 8,
-			ContentMarginTop = 4,
-			ContentMarginRight = 8,
-			ContentMarginBottom = 4,
+			BgColor = new Color(1f, 0.92f, 0.95f, 1f),
+			CornerRadiusTopLeft = 17,
+			CornerRadiusTopRight = 17,
+			CornerRadiusBottomRight = 17,
+			CornerRadiusBottomLeft = 17,
+			ContentMarginLeft = 6,
+			ContentMarginTop = 6,
+			ContentMarginRight = 6,
+			ContentMarginBottom = 6,
 		});
+		iconChip.AddChild(CreateDiaryGlyph(iconAsset, accent, 22f));
 		headerRow.AddChild(iconChip);
 
-		var icon = CreateUiLabel("<3", 18, new Color(0.93f, 0.36f, 0.62f));
-		icon.HorizontalAlignment = HorizontalAlignment.Center;
-		icon.VerticalAlignment = VerticalAlignment.Center;
-		iconChip.AddChild(icon);
-
-		var title = CreateUiLabel(section.Title, 20, new Color(0.63f, 0.10f, 0.39f));
+		var title = CreateUiLabel(section.Title, 17, new Color(0.55f, 0.16f, 0.36f));
 		title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		title.VerticalAlignment = VerticalAlignment.Center;
 		headerRow.AddChild(title);
 
-		var bodyWrap = new MarginContainer();
-		bodyWrap.AddThemeConstantOverride("margin_left", 24);
-		bodyWrap.AddThemeConstantOverride("margin_top", 18);
-		bodyWrap.AddThemeConstantOverride("margin_right", 24);
-		bodyWrap.AddThemeConstantOverride("margin_bottom", 20);
-		content.AddChild(bodyWrap);
+		if (!string.IsNullOrWhiteSpace(badgeText))
+		{
+			var badge = CreateUiLabel(badgeText, 12, accent);
+			badge.VerticalAlignment = VerticalAlignment.Center;
+			headerRow.AddChild(badge);
+		}
 
-		var rows = new VBoxContainer();
-		rows.AddThemeConstantOverride("separation", 18);
-		bodyWrap.AddChild(rows);
+		// Body: từng dòng item với bullet
+		var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		rows.AddThemeConstantOverride("separation", 8);
+		content.AddChild(rows);
 
 		foreach (PrivateMindDiaryItem item in section.Items)
 		{
-			var row = new HBoxContainer();
-			row.AddThemeConstantOverride("separation", 12);
-			row.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+			var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+			row.AddThemeConstantOverride("separation", 10);
 			rows.AddChild(row);
 
-			var bullet = CreateUiLabel("*", 22, new Color(0.98f, 0.54f, 0.76f));
-			bullet.CustomMinimumSize = new Vector2(18f, 0f);
+			var bullet = CreateUiLabel("*", 16, new Color(0.98f, 0.58f, 0.76f));
+			bullet.CustomMinimumSize = new Vector2(14f, 0f);
 			row.AddChild(bullet);
 
 			var line = new Label
@@ -3058,15 +3522,26 @@ public partial class UdpListener : Node2D
 				AutowrapMode = TextServer.AutowrapMode.WordSmart,
 				SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			};
-			line.AddThemeFontSizeOverride("font_size", 18);
-			line.AddThemeColorOverride("font_color", new Color(0.46f, 0.12f, 0.29f));
+			line.AddThemeFontSizeOverride("font_size", 15);
+			line.AddThemeColorOverride("font_color", new Color(0.44f, 0.20f, 0.34f));
 			row.AddChild(line);
-
-			if (!string.IsNullOrWhiteSpace(item.Badge))
-				row.AddChild(BuildPrivateMindBadge(item.Badge));
 		}
 
 		return card;
+	}
+
+	// Icon asset + badge + màu nhấn cho từng loại section, khớp với mockup.
+	private static (string IconAsset, string Badge, Color Accent) DiarySectionStyle(string title)
+	{
+		switch (title)
+		{
+			case "Suy nghĩ hiện tại": return ("diary_now", "Hiện tại", new Color(0.95f, 0.42f, 0.66f));
+			case "Suy nghĩ tương lai": return ("diary_future", "Dự đoán", new Color(0.66f, 0.50f, 0.92f));
+			case "Đang bận tâm": return ("diary_concern_card", "Ưu tiên cao", new Color(0.95f, 0.46f, 0.42f));
+			case "Phân tích gần đây": return ("diary_analysis", "Phân tích", new Color(0.40f, 0.66f, 0.86f));
+			case "Muốn nói": return ("diary_surface", "Bề mặt", new Color(0.94f, 0.40f, 0.60f));
+			default: return ("diary_now", "", new Color(0.95f, 0.42f, 0.66f));
+		}
 	}
 
 	private Control BuildPrivateMindBadge(string text)

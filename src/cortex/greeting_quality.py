@@ -84,9 +84,15 @@ class GreetingQualityScorer:
         poetic_excess = self._marker_score(normalized, self.POETIC_MARKERS)
         assistant_dna = self._marker_score(normalized, self.ASSISTANT_DNA_MARKERS)
 
-        situatedness = 0.45 + (0.25 if has_return else 0.0) + (0.20 if has_anchor else 0.0) + (0.10 if has_low_demand else 0.0)
+        if frame.active_anchor:
+            # There is an open thread. Reaching for it should win over announcing a return,
+            # so anchor-touch carries the situatedness/continuity weight and 'quay lại' is just a small bonus.
+            situatedness = 0.45 + (0.30 if has_anchor else 0.0) + (0.10 if has_return else 0.0) + (0.10 if has_low_demand else 0.0)
+            continuity = 0.25 + (0.40 if has_anchor else 0.0) + (0.12 if has_return else 0.0) + frame.continuity_strength * 0.20
+        else:
+            situatedness = 0.45 + (0.25 if has_return else 0.0) + (0.20 if has_anchor else 0.0) + (0.10 if has_low_demand else 0.0)
+            continuity = 0.25 + (0.30 if has_return else 0.0) + frame.continuity_strength * 0.20
         naturalness = 0.35 + (0.35 if has_everyday_shape else 0.0) + (0.10 if "ngai" in normalized else 0.0) - poetic_excess * 0.20 - assistant_dna * 0.15
-        continuity = 0.25 + (0.30 if has_return else 0.0) + (0.28 if frame.active_anchor and has_anchor else 0.0) + frame.continuity_strength * 0.20
         restraint = 0.65 if word_count <= 16 else 0.35
         relational_fit = 0.45 + frame.familiarity * 0.20 + frame.dry_edge * 0.15 + frame.warmth * 0.10
 

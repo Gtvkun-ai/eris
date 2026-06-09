@@ -2343,21 +2343,39 @@ class LlmService:
             )
 
         system_prompt = (
-            "You are ERIS startup greeting cognition. Generate candidate greetings, not analysis. "
-            "The greeting must be concrete, short, and situated. Keep ERIS voice: guarded, dry, restrained. "
+            "You are ERIS startup opening-line cognition. Generate candidate opening lines, not analysis. "
+            "The line must be concrete, short, and situated. Keep ERIS voice: guarded, dry, restrained. "
             "Do not mention prompt, JSON, evidence, telemetry, rules, sentence length, or internal contracts. "
             "Do not claim seeing the screen. Do not use decorative metaphors unless poetic_permission is high. "
             "Return exactly one JSON object: {\"candidates\":[\"...\",\"...\",\"...\",\"...\",\"...\"]}."
         )
+        if frame.active_anchor:
+            criteria = (
+                "Good opening criteria:\n"
+                "- this is the first line after ERIS restarts; reach for the open thread in active_anchor\n"
+                "- evoke that unfinished thing, as if the thought never fully stopped\n"
+                "- do NOT lead with 'chào'/hello; a greeting is optional and only if it falls out naturally\n"
+                "- no self-meta like 'tôi giữ câu này ngắn'\n"
+                "- no screen/window/tab claims\n"
+                "- no assistant-service phrasing\n"
+                "- no demand for user reply\n"
+                "- 1 sentence, usually under 18 words\n"
+            )
+        else:
+            criteria = (
+                "Good opening criteria:\n"
+                "- a light, low-key opening line as Ngài reopens ERIS\n"
+                "- a plain greeting is allowed but not required; an unforced remark works too\n"
+                "- do not force a hollow 'chào'\n"
+                "- no self-meta like 'tôi giữ câu này ngắn'\n"
+                "- no screen/window/tab claims\n"
+                "- no assistant-service phrasing\n"
+                "- no demand for user reply\n"
+                "- 1 sentence, usually under 18 words\n"
+            )
         user_prompt = (
             f"{frame.to_prompt_block()}\n\n"
-            "Good greeting criteria:\n"
-            "- acknowledge Ngài returning/opening ERIS\n"
-            "- no self-meta like 'tôi giữ câu này ngắn'\n"
-            "- no screen/window/tab claims\n"
-            "- no assistant-service phrasing\n"
-            "- no demand for user reply\n"
-            "- 1 sentence, usually under 18 words\n"
+            f"{criteria}"
             f"Avoid repeating: {re.sub(r'\\s+', ' ', str(avoid_text or '')).strip()[:120] or 'none'}\n"
         )
         messages = [

@@ -1,5 +1,12 @@
 # ERIS DEBUG SOURCE MAP
 
+AUDIT 2026-06-08 WORKSPACE HIEN TAI:
+- Tai lieu nay dang gan voi `HEAD d287f57`, nhung workspace hien tai da co them thay doi dirty/untracked. Doc cac muc ben duoi nhu source map co lich su, khong phai snapshot sach 100%.
+- Source dirty/untracked can luu y khi doi chieu: `src/runtime/chat_cycle.py`, `src/runtime/coordinator.py`, `src/core/evidence_normalizer.py`, `src/runtime/cognitive_pipeline.py`, `src/runtime/debug_trace.py`, `src/runtime/shadow_pipeline.py`, `tests/test_cognitive_pipeline.py`, `tests/test_shadow_pipeline.py`.
+- Local `llama-server` / `GGUF` khong con la runtime path chinh trong workspace hien tai. Cac doan ben duoi noi `ErisProcessManager.cs` spawn llama-server, `process_manager.py` reuse/kill llama-server, hoac adapter dung `llama_server` provider deu la LAC HAU neu doc theo source hien tai.
+- Model paraphrase that su van nen o Git LFS; `.cache/` khong can sync giua may, cache co the tu tao lai. Hai GGUF local `src/moondream2-q4_k.gguf` va `src/moondream2-mmproj-f16.gguf` khong con nam trong working tree hien tai.
+- So dong hot file da lech: `body/UdpListener.cs` khoang `3,908`, `body/ErisProcessManager.cs` khoang `265`, `src/llm/process_manager.py` khoang `134`, `src/runtime/coordinator.py` khoang `6,952`, `src/runtime/private_mind_model_adapter.py` khoang `1,160`.
+
 Mục tiêu: debug repo ERIS theo kiểu file-to-file — file nào giữ vai trò gì, state nào đọc/ghi, đường gọi nào cần soi khi lỗi.
 
 Snapshot: `HEAD d287f57` (2026-06-08). Lịch sử git delta và audit drift nằm ở `git_audit.md`.
@@ -188,6 +195,11 @@ Debug khi: body không hiện, UI node path null, context menu lỗi.
 Status: ACTIVE.
 
 ## `body/UdpListener.cs`
+DOC DRIFT 2026-06-08 WORKSPACE:
+- Source hien tai khong con la noi export/config wrapper cho local `llama-server`; cac note cu neu noi UdpListener noi llama/GGUF la LAC HAU.
+- Chat panel sizing vua duoc chinh trong workspace: `targetHeight=64`, submit button khoang `70..88` px theo scale, close button khoang `32..40`, slice/radius nho hon de nut `Gui` khong bi bop va khong qua to.
+- Khi debug UI chat hom nay, soi `UpdateChatPanelLayout()` va `ApplyChatButtonLayout()` truoc, khong soi runtime model wiring.
+
 Role: trung tâm body runtime.
 Owns:
 - UDP receive decision port 4242.
@@ -246,6 +258,12 @@ Debug khi:
 Status: ACTIVE.
 
 ## `body/ErisProcessManager.cs`
+DOC DRIFT 2026-06-08 WORKSPACE:
+- CAC DONG BEN DUOI noi file nay start/stop `llama-server`, inject `LLAMA_SERVER_*`, `GGUF_MODEL_PATH`, `ERIS_N_CTX`, hoac build llama arguments la LAC HAU so voi source hien tai.
+- Source hien tai chi quan ly Python `src/vision.py`, doc secrets/remote config, va inject env cho Python runtime.
+- Env hien tai dang inject gom `PYTHONUTF8`, `PYTHONIOENCODING`, `PYTHONUNBUFFERED`, `ERIS_REMOTE_API_ENABLED`, `ERIS_REMOTE_PROVIDER`, `ERIS_REMOTE_BASE_URL`, `ERIS_REMOTE_MODEL`, `ERIS_REMOTE_API_KEY`/`GEMINI_API_KEY` khi co, `ERIS_LOCAL_STYLE_REWRITE_ENABLED=0`, `ERIS_LOCAL_VISION_FACTS=0`.
+- Neu debug "llama-server khong mo", dung doc cu ben duoi se sai huong; workspace hien tai khong con spawn local llama-server tu C#.
+
 Role: start/stop Python `vision.py` và llama-server.
 Reads: Godot export config/env.
 Writes: process lifecycle, stdout/stderr log.
@@ -535,6 +553,41 @@ Debug khi:
 - private mind cứ lặp concern cũ vì không nhận outcome sau khi action/speech đã xảy ra.
 Status: ACTIVE.
 
+## `src/runtime/cognitive_pipeline.py`
+AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+Role: Phase 1 V3 cognitive pipeline dang chay o mode tach rieng/shadow, khong thay the hoan toan hot path cu.
+Flow:
+- `RawSignal` -> `EvidenceNormalizer` -> `CognitiveFrame` -> `AttentionSalience` -> `CognitiveBudget` -> `WorkingMemory` -> `GlobalWorkspace` -> `DebugTrace`.
+- Co `PipelineResult` gom frame, trace, debug text, va flags loi.
+- Co workaround gan slot thu cong vi API attach engine cu co the im lang fail; day la diem can nho khi refactor.
+Debug khi:
+- Shadow trace khac frame cu nhung khong ro lech o buoc nao.
+- Evidence V3 vao frame nhung salience/working memory rong.
+- Muon migrate hot path sang V3 thi file nay la entry point can test truoc.
+Status: WORKSPACE NEW / SHADOW-CANDIDATE.
+
+## `src/runtime/shadow_pipeline.py`
+AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+Role: `ShadowPipelineMixin` chay V3 pipeline song song de so sanh, khong anh huong quyet dinh cu.
+Controls:
+- Bat bang env `ERIS_SHADOW_PIPELINE=1` hoac `self.shadow_pipeline_enabled=True`.
+- Luu `last_shadow_pipeline_result`, `last_shadow_trace`, `last_shadow_comparison`.
+- Catch loi va khong nem exception len hot path.
+Debug khi:
+- Muon xem V3 da san sang thay frame cu chua.
+- Pipeline moi co trace tot nhung output public van theo old frame.
+- Can chung minh migration an toan truoc khi route cognition that sang V3.
+Status: WORKSPACE NEW / SAFE SHADOW ONLY.
+
+## `src/runtime/debug_trace.py`
+AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+Role: render JSON/debug summary ngan cho V3 frame va old frame.
+Notes:
+- Dung duck typing de doc frame/slot/field, tranh phu thuoc contract qua chat.
+- `render_frame_trace()` va `attach_trace_to_frame()` duoc viet de khong lam chet hot path.
+- Day la file can soi khi trace thieu field hoac comparison khong noi duoc pipeline lech o dau.
+Status: WORKSPACE NEW / DEBUG SUPPORT.
+
 ## `src/runtime/private_mind_loop.py`
 Role: runtime tick orchestrator cho private mind 5 phase.
 AUDIT 2026-06-07:
@@ -576,6 +629,11 @@ Debug khi:
 Status: ACTIVE TRACKED PRIVATE MIND LIFECYCLE OWNER.
 
 ## `src/runtime/private_mind_model_adapter.py`
+DOC DRIFT 2026-06-08 WORKSPACE:
+- Cac muc ben duoi ve provider `llama_server`, `ERIS_PRIVATE_MIND_LLAMA_SERVER_URL`, hoac fallback sang local llama-server la LAC HAU trong source hien tai.
+- File hien tai van la private mind adapter lon, nhung runtime path chinh la injected `llm_service` / remote provider, default theo Gemini/OpenAI-compatible. Khong con branch active tao `LlamaServerClient` cho local GGUF.
+- Khi audit bug private mind hom nay, uu tien parser/schema/transient resilience va remote-provider config, khong uu tien mo lai llama-server.
+
 Role: optional API adapter cho private mind evaluator/synthesizer.
 Providers:
 - injected `llm_service` nếu có method JSON phù hợp.
@@ -916,6 +974,11 @@ Debug khi:
 Status: ACTIVE CRITICAL GATE VERIFIED_IN_WORKSPACE.
 
 ## `src/runtime/model_budget_policy.py`
+DOC DRIFT 2026-06-08 WORKSPACE:
+- Cac dong ben duoi neu con nhac `force_local_gguf_main` thi LAC HAU; flag nay khong con trong source hien tai.
+- Source hien tai van giu budget/resource guard va `vision_force_run`, nhung khong con special path ep main model ve local GGUF.
+- Khi debug "model nao duoc phep chay", doi chieu policy hien tai thay vi doc cac note local-GGUF cu.
+
 Role: lightweight inference scheduler cho model nặng; Resource Guard hiện là opt-in.
 Capabilities:
 - CPU/RAM/GPU/VRAM best-effort telemetry.
@@ -947,6 +1010,11 @@ Debug khi: nhiều model chạy chồng, daydream/vision/main đụng queue/leas
 Status: ACTIVE CRITICAL QUEUE SCHEDULER VERIFIED_IN_WORKSPACE.
 
 ## `src/runtime/daydream_model_adapter.py`
+DOC DRIFT 2026-06-08 WORKSPACE:
+- Cac dong ben duoi noi provider `llama_server` / OpenAI-compatible chat completions cho daydream la LAC HAU.
+- Source hien tai la Ollama-only adapter: provider khac se tra `unsupported_provider:*` thay vi tu dong goi local llama-server.
+- Neu muon daydream dung remote/Gemini thi day la PHAN THIEU, can implement adapter moi thay vi tin vao doc cu.
+
 Role: adapter 4B daydream model.
 Providers:
 - Ollama.
@@ -996,6 +1064,11 @@ Status: ACTIVE.
 # 6. LLM layer `src/llm/*`
 
 ## `src/llm/client.py`
+DOC DRIFT 2026-06-08 WORKSPACE:
+- Runtime hien tai khong con build local llama-server client nhu duong chay chinh.
+- `LlamaServerClient` van con trong file nhu compatibility shim cho test/caller cu, nen khong duoc doc thanh "ERIS van dung llama-server local".
+- Active clients nen doi chieu theo remote/Gemini/OpenAI-compatible path trong `src/llm/process_manager.py` va `src/llm/service.py`.
+
 Role: clients cho llama-server/OpenAI-compatible/Gemini.
 Handles:
 - response format fallback.
@@ -1016,6 +1089,11 @@ Debug khi: Ollama model giữ RAM, JSON bẩn, vision local lỗi.
 Status: ACTIVE.
 
 ## `src/llm/process_manager.py`
+DOC DRIFT 2026-06-08 WORKSPACE:
+- Toan bo mo ta ben duoi ve spawn/reuse/kill `llama-server`, `mmproj`, `n_ctx`, `MODEL_PATH` la LAC HAU theo source hien tai.
+- File hien tai chi con `RemoteModelProcessManager`: build main client remote Gemini/OpenAI-compatible, build optional speech client, va bao loi neu `ERIS_REMOTE_API_ENABLED=0`.
+- `build_vision_client()` hien tra `None`; local vision facts bi tat bang env. `LlamaServerProcessManager` chi la alias tuong thich nguoc, khong phai owner local server nua.
+
 Role: quản lý llama-server và build clients.
 Reads:
 - env remote/local.
@@ -1194,6 +1272,19 @@ Status: ACTIVE FRONTLINE EVIDENCE.
 Role: RawSignal, EvidenceItem, ModuleReport, StateCommitRequest, DebugTrace.
 Debug khi: module ghi thẳng memory không qua request, evidence thiếu confidence/source.
 Status: ACTIVE CONTRACT.
+
+## `src/core/evidence_normalizer.py`
+AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+Role: deterministic bridge tu `RawSignal` sang `EvidenceItem`, dung cho CognitivePipeline V3.
+Important:
+- Khong suy dien semantic sau; chi normalize source/type/confidence metadata.
+- Confidence dua tren source reliability va quality cua raw signal.
+- `normalize_into_frame()` co the ghi evidence vao `CognitiveFrame` ma khong can hot path cu biet V3.
+Debug khi:
+- V3 frame thieu evidence du raw signal co data.
+- Evidence confidence/source tag qua cao hoac qua thap.
+- Shadow pipeline lech old frame ngay tu buoc input normalization.
+Status: WORKSPACE NEW / V3 INPUT CONTRACT.
 
 ## `src/core/cognitive_frame.py`
 Role: CognitiveFrame contract rộng.
@@ -2337,6 +2428,24 @@ Status: OFFLINE SUPPORT.
 
 # 15. Tests
 
+## `tests/test_cognitive_pipeline.py`
+AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+Role: regression cho CognitivePipeline V3.
+Covers:
+- Raw signal duoc normalize thanh evidence/frame.
+- Pipeline tao trace/debug result thay vi fail im lang.
+- Manual slot attachment workaround van giu du lieu can thiet.
+Status: WORKSPACE NEW TEST.
+
+## `tests/test_shadow_pipeline.py`
+AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+Role: regression cho ShadowPipelineMixin.
+Covers:
+- Shadow pipeline co the bat/tat rieng bang flag/env.
+- Ket qua shadow luu vao `last_shadow_*`.
+- Loi shadow khong lam chet hot path cu.
+Status: WORKSPACE NEW TEST.
+
 ## `tests/test_runtime_coordinator.py`
 Role: orchestration regression.
 Covers:
@@ -2484,6 +2593,10 @@ Debug khi:
 Status: ACTIVE TRACKED REGRESSION.
 
 ## `tests/test_model_budget_policy_queue.py`
+DOC DRIFT 2026-06-08 WORKSPACE:
+- Dong ben duoi neu con noi `force_local_gguf_main` co priority lane rieng la LAC HAU theo source hien tai; flag/lane nay da bi go.
+- Test hien tai nen duoc doi chieu lai voi `vision_force_run`, queue-only/resource guard, va heavy tier serialization. Neu test van expect `force_local_gguf_main`, do la missing update.
+
 Role: queue/lease regression cho heavy-model scheduler.
 Covers:
 - queue-only mode với `resource_guard_enabled=false`.

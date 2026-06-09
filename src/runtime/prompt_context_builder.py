@@ -415,18 +415,37 @@ class PromptContextBuilderMixin:
 
 
     def _build_session_ritual_ti_context(self, report: SessionRitualReport, snapshot) -> str:
-        seed = str(getattr(report, "greeting_text", "") or "").strip() or "fresh_start"
+        seed = str(getattr(report, "greeting_text", "") or "").strip()
+        has_anchor = bool(seed)
+        seed = seed or "fresh_start"
         focus = self._build_current_focus_context(snapshot)
         evidence = ", ".join(str(item) for item in tuple(getattr(report, "evidence", ()) or ())[:5]) or "none"
+        if has_anchor:
+            # There is a remembered thread. Open by picking it back up, not by greeting.
+            opening_rule = (
+                "Write exactly one short opening line in Vietnamese, addressed to Ngài. "
+                "This is the first thing ERIS says after starting again, so let it reach for the thread "
+                "that was left open instead of announcing a return. "
+                "Do not lead with 'chào' or a hello; a greeting is optional and only fits if it falls out naturally. "
+                "Prefer a line that quietly evokes the unfinished thing above, as if the thought never fully stopped. "
+                "Use the seed only as a memory cue, never as literal wording."
+            )
+        else:
+            # No continuity anchor. A low-key opening line, greeting still not mandatory.
+            opening_rule = (
+                "Write exactly one short opening line in Vietnamese, addressed to Ngài. "
+                "There is nothing concrete left open, so keep it light and low-key. "
+                "A plain greeting is allowed but not required; an unforced opening remark is just as good. "
+                "Do not force a 'chào' if it feels hollow."
+            )
         return (
-            "Mode: session_ritual_startup_greeting. Animation hint: stand.\n"
-            "Action plan: greet the user once because ERIS has just started.\n"
-            f"Ritual seed for continuity, not final wording: {seed}\n"
+            "Mode: session_ritual_startup_opening. Animation hint: stand.\n"
+            "Action plan: say one opening line because ERIS has just started; this need not be a greeting.\n"
+            f"Continuity seed (memory cue, not final wording): {seed}\n"
             f"Ritual evidence: {evidence}\n"
             f"{focus}\n"
-            "Write exactly one short greeting line in Vietnamese, addressed to Ngài. "
-            "Let the LLM choose the wording from current mood/style, relationship memory, and any safe continuity seed. "
-            "This is a greeting, not a report: do not mention telemetry, windows, tabs, idle, CPU, RAM, parse_mode, or session_ritual. "
+            f"{opening_rule} "
+            "This is an opening line, not a report: do not mention telemetry, windows, tabs, idle, CPU, RAM, parse_mode, or session_ritual. "
             "Do not use fixed continuity slogans like 'Tôi vẫn giữ mạch' or 'mạch đã nối lại'."
         )
 

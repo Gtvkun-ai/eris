@@ -197,8 +197,10 @@ class SessionRitualEngine:
                 f"recent_cognition_direction: {report.recent_cognition_direction or 'none'}.",
                 f"self_continuity: {report.self_continuity or 'none'}.",
                 (
-                    "ritual_rule: perform exactly one startup greeting. "
-                    "Use restored continuity only as background material. "
+                    "ritual_rule: say exactly one opening line; a greeting is optional, not mandatory. "
+                    "If there is a rehydrated goal/loop/attractor above, open by reaching for that thread "
+                    "so the line evokes the unfinished thing, instead of announcing a return. "
+                    "Lead with a bare 'chào' only when there is no continuity to lean on. "
                     "avoid phrases like 'tôi vẫn ở đây', 'tôi vẫn giữ mạch', 'mạch đã nối lại'."
                     "Do not over-explain telemetry."
                 ),

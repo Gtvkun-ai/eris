@@ -1,4 +1,121 @@
 {
   "version": 1,
-  "records": []
+  "records": [
+    {
+      "id": "evt_cc7acb98e78f411f",
+      "timestamp": 1780933413.0724306,
+      "iso_timestamp": "2026-06-08T22:43:33+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-2', 'channel': 'chat', 'timestamp': '22:42', 'seen': ['có gì muốn nói không'], 'said': 'Tôi vẫn đang quan sát và chờ đợi các chỉ thị hoặc công việc tiếp theo từ Ngài.', 'outcome': 'hard_json_repair', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.37928738317757005, 'parse_mode': 'hard_json_repair'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:22:42:0"
+      ],
+      "tags": [
+        "commit",
+        "cognitive_frame",
+        "event_ledger",
+        "chat"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger",
+        "decay_policy": "none",
+        "request_tags": [
+          "cognitive_frame",
+          "event_ledger",
+          "chat"
+        ],
+        "ephemeral_presence": false,
+        "source": "CognitiveFrameRecorder",
+        "timestamp": "22:42",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780933413.0721934,
+        "frame_id": null,
+        "raw_content": {
+          "cycle_id": "chat-2",
+          "channel": "chat",
+          "timestamp": "22:42",
+          "seen": [
+            "có gì muốn nói không"
+          ],
+          "said": "Tôi vẫn đang quan sát và chờ đợi các chỉ thị hoặc công việc tiếp theo từ Ngài.",
+          "outcome": "hard_json_repair",
+          "tags": [
+            "chat",
+            "user_requested",
+            "mirror",
+            "user_message"
+          ],
+          "system_action": "",
+          "salience": 0.37928738317757005,
+          "parse_mode": "hard_json_repair"
+        }
+      }
+    },
+    {
+      "id": "evt_d85cff48a7444d4f",
+      "timestamp": 1780933555.2289777,
+      "iso_timestamp": "2026-06-08T22:45:55+0700",
+      "frame_id": "",
+      "source": "state_commit_request",
+      "content": "{'cycle_id': 'chat-3', 'channel': 'chat', 'timestamp': '22:44', 'seen': ['bạn có thấy tôi đang mở gì không'], 'said': 'Tôi không thể thấy màn hình của Ngài, trừ khi Ngài cung cấp hình ảnh hoặc dữ liệu cụ thể cho tôi.', 'outcome': 'hard_json_repair', 'tags': ['chat', 'user_requested', 'mirror', 'user_message'], 'system_action': '', 'salience': 0.39112538940809966, 'parse_mode': 'hard_json_repair'}",
+      "reliability": 1.0,
+      "privacy_level": "normal",
+      "raw": true,
+      "source_signal_id": "",
+      "evidence_ids": [
+        "percept:user_message:22:44:0"
+      ],
+      "tags": [
+        "commit",
+        "cognitive_frame",
+        "event_ledger",
+        "chat"
+      ],
+      "metadata": {
+        "commit_reason": "audit raw cognitive frame outcome",
+        "commit_confidence": 1.0,
+        "commit_target": "event_ledger",
+        "decay_policy": "none",
+        "request_tags": [
+          "cognitive_frame",
+          "event_ledger",
+          "chat"
+        ],
+        "ephemeral_presence": false,
+        "source": "CognitiveFrameRecorder",
+        "timestamp": "22:44",
+        "commit_status": "committed",
+        "validated_by": "StateCommitter",
+        "validated_at": 1780933555.2286222,
+        "frame_id": null,
+        "raw_content": {
+          "cycle_id": "chat-3",
+          "channel": "chat",
+          "timestamp": "22:44",
+          "seen": [
+            "bạn có thấy tôi đang mở gì không"
+          ],
+          "said": "Tôi không thể thấy màn hình của Ngài, trừ khi Ngài cung cấp hình ảnh hoặc dữ liệu cụ thể cho tôi.",
+          "outcome": "hard_json_repair",
+          "tags": [
+            "chat",
+            "user_requested",
+            "mirror",
+            "user_message"
+          ],
+          "system_action": "",
+          "salience": 0.39112538940809966,
+          "parse_mode": "hard_json_repair"
+        }
+      }
+    }
+  ]
 }
