@@ -210,18 +210,19 @@ class ForceSpeakCycleMixin:
             local_fallback = self._local_grounded_micro_presence_text(synthesis)
             if no_fallback_mode_enabled():
                 local_fallback = ""
-            if signal_score >= 0.55:
-                text, source = self._hybrid_micro_presence_text(
-                    kind=synthesis.kind,
-                    snapshot=snapshot,
-                    fallback_text=local_fallback,
-                    seeds=synthesis.seeds,
-                    micro_context=synthesis.context or {},
-                    force_llm=True,
-                    signal_score=signal_score,
-                )
-            else:
-                text, source = local_fallback, "local_low_signal"
+            # force_speak is an explicit user pull for presence; it must never fall
+            # silent just because the ambient signal score is low. Always run the LLM
+            # wording layer (force_llm=True triggers the require_non_empty retry) so a
+            # low-signal click still produces a short line instead of an empty fallback.
+            text, source = self._hybrid_micro_presence_text(
+                kind=synthesis.kind,
+                snapshot=snapshot,
+                fallback_text=local_fallback,
+                seeds=synthesis.seeds,
+                micro_context=synthesis.context or {},
+                force_llm=True,
+                signal_score=max(signal_score, 0.62),
+            )
             decision = Decision(
                 text=text if synthesis.should_verbalize else "",
                 animation=frame.action_plan.animation_hint or "stand",

@@ -6,6 +6,7 @@ AUDIT 2026-06-09 DIRTY WORKSPACE / CHUA COMMIT:
 - Untracked specs moi: `.kiro/specs/autonomous-liveliness-redesign/` va `.kiro/specs/relationship-state-trigger-fix/`. Doc cu khong co hai spec nay nen thieu ca hai huong san pham: autonomous idle phai "song" bang grounded/varied lines, va relationship warmth phai nhan duoc cau am ap tieng Viet tu nhien.
 - Untracked code moi: `src/cortex/banned_filler.py`, `src/runtime/ambient_silence_policy.py`, `src/runtime/liveliness_config.py`, `src/runtime/liveliness_tracker.py`, `src/cortex/private_mind/thought_continuity.py`.
 - Untracked tests moi: `tests/test_banned_filler.py`, `tests/test_liveliness_config.py`, `tests/test_liveliness_grounding.py`, `tests/test_liveliness_muse_and_tracker.py`, `tests/test_liveliness_output_filter.py`, `tests/test_liveliness_properties.py`, `tests/test_liveliness_repeat_guard.py`, `tests/test_relationship_warmth_trigger.py`.
+- Untracked scratch/data moi: `_mem.txt` va `memory_core/` (directory snapshot/rotated state trong worktree hien tai).
 - Untracked diary assets moi: `asset/Resource/diary_analysis.png`, `diary_concern.png`, `diary_concern_card.png`, `diary_future.png`, `diary_memory.png`, `diary_now.png`, `diary_surface.png`, va 9 face mood `diary_face_{calm,mid,hyper}_{neg,neu,pos}.png` kem `.import`.
 - Autonomous liveliness local patch: banned filler single source, liveliness config, grounded seed ranking, short memory seed retention, repeat window >= max idle interval, banned fallback block, muse cooldown exemption, per-cycle `DecisionRecord`. Dang con deferred theo spec: alternative-seed retry sau repeat reject va body-only motion cho no-op ambient branch.
 - Relationship warmth local patch: affect classifier them phrase/prototype `relational_warmth`, relationship dynamics co warmth_gain lam tang trust/attachment_visibility va giam preferred_distance, chat log them `familiarity` + `attachment_vis`.
@@ -14,7 +15,7 @@ AUDIT 2026-06-09 DIRTY WORKSPACE / CHUA COMMIT:
 - Doc nay hien phai doc theo hai lop: `HEAD 9aa149f` la base tracked, con cac muc `DIRTY WORKSPACE` la thay doi do an hien tai chua duoc commit/pull len remote.
 
 AUDIT 2026-06-09 CURRENT HEAD:
-- Tai lieu da duoc recheck voi `HEAD 9aa149f` (2026-06-09); `git status --short` sach tai luc audit. Cac note 2026-06-08 ben duoi chi con la lich su drift, khong phai trang thai workspace hien tai.
+- Tai lieu da duoc recheck voi `HEAD 9aa149f` (2026-06-09); `git status --short` luc nay khong sach: co dirty tracked, deleted state JSON, backup dir, va nhieu untracked file/spec/test/asset moi. Cac note 2026-06-08 ben duoi chi con la lich su drift, khong phai trang thai workspace hien tai.
 - Update history tu `d287f57` -> `9aa149f`: `f5a2b3b` them `git_audit.md`, embedding/paraphrase model asset, `inner_diary_persistence.py`, va xoa dataset train cu; `ae591c4` chuyen process/model sang remote-only main path va sua env; `23a8c01` them `inner_diary_writer.py` + persistence/transport diary; `9aa149f` them Phase 2 Meaning/ToM, V3 cognitive/shadow/debug pipeline, evidence normalizer, va test suite moi.
 - File/state da KHONG con "dirty/untracked": `src/runtime/cognitive_pipeline.py`, `src/runtime/shadow_pipeline.py`, `src/runtime/debug_trace.py`, `src/core/evidence_normalizer.py`, `tests/test_cognitive_pipeline.py`, `tests/test_shadow_pipeline.py`. Neu section nao ben duoi con ghi `WORKSPACE NEW` / `UNTRACKED`, doc la LAC HAU va uu tien note 2026-06-09 nay.
 - Source hien tai co khoang `367` file `.py/.cs` trong cac vung chinh (`src`, `tests`, `body`, `scripts`, `training`): `src=265`, `tests=84`, `body=6`, `scripts=11`, `training=1`. Cac con so `329` file code / `323` Python / `5,854` C# ben duoi la snapshot cu.
@@ -1768,6 +1769,17 @@ Role: anchor/grounding validation cho micro line.
 Debug khi: micro observation nói lệch evidence.
 Status: ACTIVE.
 
+## `src/cortex/banned_filler.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `52` dong.
+Role: shared ban list cho hollow presence lines va stale micro templates.
+Contains:
+- `HOLLOW_PRESENCE_LINES` va `STALE_MICRO_TEMPLATES`.
+- `BANNED_FILLER_LINES` de `llm.service`, `micro_repeat_guard`, `presence_controller` dung chung.
+- helper normalize/quote cho guard and prompt reuse.
+Debug khi:
+- ERIS nhai lai filler rong, status ping vo hon, hoac line micro cu bat dau tro lai sau khi da bi ban.
+Status: UNTRACKED LOCAL GUARD / SHOULD COMMIT WITH LIVELINESS PATCH.
+
 ## `src/cortex/micro_repeat_guard.py`
 Role: semantic family repeat guard cho micro line.
 AUDIT 2026-06-09 DIRTY WORKSPACE:
@@ -2226,6 +2238,19 @@ Debug khi:
 - model synthesis quá tự tin hoặc quên rejected hypotheses/open questions.
 Status: ACTIVE PRIVATE SYNTHESIZER.
 
+## `src/cortex/private_mind/thought_continuity.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `170` dong.
+Role: store mach suy nghi gan day cho private mind, de prompt/model noi tiep y thay vi bullet-board mute.
+Objects:
+- `ThoughtEntry` gom text/theme/status/pressure/confidence/revisit state.
+- `ThoughtContinuityStore` gui recent/unresolved/follow-up prompts, luu vao `memory_core/thought_stream.jsonl` theo env config.
+Uses:
+- `private_mind_loop` inject `recent_thoughts` va `unresolved_threads`.
+- `private_mind_model_adapter` lay `suy_nghi_gan_day` / `mach_dang_do` de fragment/judgment co continuity.
+Debug khi:
+- private mind nghe nhu moi tick doc lai tu dau, khong bam duoc mach suy nghi cu.
+Status: UNTRACKED LOCAL CONTINUITY STORE.
+
 ## `src/cortex/private_mind/concern_store.py`
 Role: persist/open private concerns.
 Storage:
@@ -2618,6 +2643,7 @@ Files đáng chú ý:
 - event_ledger.json.
 - memory_candidate.json.
 - internal_agenda.json.
+- AUDIT 2026-06-09 DIRTY WORKSPACE: `active_state_snapshot.json`, `episodic_memory.json`, `semantic_memory.json`, `event_ledger.json`, `affective_residue_memory.json`, `procedural_memory.json`, `relational_memory.json`, `repair_memory.json` dang bi xoa trong worktree; da co backup snapshot folder `memory_core_backup_20260609_175553/`.
 Debug khi:
 - behavior sai nhưng code có vẻ đúng: kiểm tra data/state tích lũy.
 Rule:
@@ -2933,6 +2959,86 @@ Debug khi:
 - memory residue đúng ra chỉ nên thành low-claim muse nhưng lại im hoàn toàn.
 - affective residue private bị lộ ra presence/surface path.
 Status: ACTIVE TARGETED REGRESSION.
+
+## `tests/test_banned_filler.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `40` dong.
+Role: regression cho banned filler shared list.
+Covers:
+- filler rong/status ping bi `is_banned_filler()` chan.
+- quoted prompt fragment dung chung voi `llm.service`.
+Debug khi:
+- micro/presence fallback bat dau nhai lai cau cu.
+Status: UNTRACKED LOCAL REGRESSION.
+
+## `tests/test_liveliness_config.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `60` dong.
+Role: env/config regression cho `runtime.liveliness_config`.
+Covers:
+- repeat window floor `>= 120`.
+- grounded per hour / alt seed / max line repeat defaults.
+Debug khi:
+- env moi khong doc duoc hoac clamp default sai.
+Status: UNTRACKED LOCAL REGRESSION.
+
+## `tests/test_liveliness_grounding.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `50` dong.
+Role: grounding regression cho liveliness line selection.
+Covers:
+- seed public-safe phai co anchor/evidence.
+- placeholder OCR no longer counts as grounded line.
+Debug khi:
+- line dep nhung khong co neo evidence van duoc dem grounded.
+Status: UNTRACKED LOCAL REGRESSION.
+
+## `tests/test_liveliness_muse_and_tracker.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `70` dong.
+Role: integration cho muse exemption + `LivelinessTracker`.
+Covers:
+- `pattern_muse` duoc exempt khoi ambient silence hold.
+- tracker ghi `DecisionRecord` va metrics distinct/grounded/gap/repeat.
+Debug khi:
+- can doi cac so lieu liveliness thay vi cam giac "co ve song hon".
+Status: UNTRACKED LOCAL REGRESSION.
+
+## `tests/test_liveliness_output_filter.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `52` dong.
+Role: output filter regression cho liveliness/presence line.
+Covers:
+- filler rong/stale template bi drop truoc khi ra public line.
+- line ngan nhung van phai grounded.
+Debug khi:
+- fallback line ra duoc, nhung nghe nhu chua co gi de noi.
+Status: UNTRACKED LOCAL REGRESSION.
+
+## `tests/test_liveliness_properties.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `58` dong.
+Role: property tests cho liveliness invariants.
+Covers:
+- grounded ratio va repeat ceiling.
+- decision retention khong lam tracker phan manh state.
+Debug khi:
+- doi config xong co property nao vo li duoc pass vi fall-through.
+Status: UNTRACKED LOCAL PROPERTY TEST.
+
+## `tests/test_liveliness_repeat_guard.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `48` dong.
+Role: repeat-guard regression cho stale micro lines.
+Covers:
+- `SemanticRepeatGuard` respect liveliness config window/threshold.
+- banned filler ban chung voi repeat guard.
+Debug khi:
+- line lap lai chua den nguong ma da bi chan, hoac da den nguong ma van ra.
+Status: UNTRACKED LOCAL REGRESSION.
+
+## `tests/test_relationship_warmth_trigger.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `62` dong.
+Role: regression cho warmth trigger moi trong `affect_semantics` + `relationship_dynamics`.
+Covers:
+- phrase quan tam/hieu/tran trong duoc nhan warmth.
+- warmth tang attachment_visibility/trust va giam preferred_distance khi khong bi conflict/objectification/correction/rejection decriminate.
+Debug khi:
+- relationship cue qua lanh du mot cau rat ro rang.
+Status: UNTRACKED LOCAL REGRESSION.
 
 ## `tests/test_runtime_coordinator.py`
 Role: regression suite cho wake-gated route và behavior contract cấp runtime.

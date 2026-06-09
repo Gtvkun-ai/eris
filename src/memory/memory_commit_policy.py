@@ -547,7 +547,7 @@ class MemoryCommitPolicy:
 
         claim_text = self._surface_claim_for_semantic_claim(claim)
         kind = self._memory_kind_for_semantic_claim(claim)
-        surface_mode = SurfaceMode.EXACT if claim.predicate in {"name_is", "birth_month_is", "birth_year_is"} else SurfaceMode.SEMANTIC
+        surface_mode = SurfaceMode.EXACT if claim.predicate in {"name_is", "nickname_is", "birth_month_is", "birth_year_is"} else SurfaceMode.SEMANTIC
         decay = self._decay_for_retention(str(retention.decay_policy))
 
         return MemoryCommitDecision(
@@ -569,6 +569,8 @@ class MemoryCommitPolicy:
         obj = claim.object_text
         if claim.predicate == "name_is":
             return f"User's name is {obj}"
+        if claim.predicate == "nickname_is":
+            return f"User's nickname is {obj}"
         if claim.predicate == "birth_month_is":
             return f"User's birth month is {obj}"
         if claim.predicate == "birth_year_is":
@@ -597,6 +599,8 @@ class MemoryCommitPolicy:
     def _memory_kind_for_semantic_claim(self, claim: SemanticClaim) -> MemoryKind:
         if claim.predicate == "name_is":
             return MemoryKind.USER_NAME
+        if claim.predicate == "nickname_is":
+            return getattr(MemoryKind, "USER_NICKNAME", MemoryKind.USER_NAME)
         if claim.predicate == "birth_month_is":
             return MemoryKind.USER_BIRTH_MONTH
         if claim.predicate == "study_field_is":

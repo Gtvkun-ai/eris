@@ -58,6 +58,7 @@ SemanticStatus = Literal["active", "tentative", "contradicted", "rejected", "arc
 CURRENT_FACT_KEYS = frozenset(
     {
         "user.name",
+        "user.nickname",
         "user.birth_month",
         "user.current_location",
         "user.living_location",
@@ -351,6 +352,13 @@ USER_NAME_PATTERNS = (
     r"\bgoi nguoi dung la\b",
 )
 
+USER_NICKNAME_PATTERNS = (
+    r"\bbiet danh\b",
+    r"\bbiet hieu\b",
+    r"\bnickname\b",
+    r"\bten goi\b",
+)
+
 USER_BIRTH_PATTERNS = (
     r"\bthang sinh\b",
     r"\bsinh thang\b",
@@ -565,6 +573,8 @@ class SemanticMemoryItem:
 
         if self.fact_key == "user.name" and value:
             parts.extend((f"ten {value}", f"toi ten la {value}", f"goi toi la {value}"))
+        elif self.fact_key == "user.nickname" and value:
+            parts.extend((f"biet danh {value}", f"biet danh cua toi la {value}", f"nickname {value}", f"ten goi {value}"))
         elif self.fact_key == "user.birth_month" and value:
             parts.extend((f"thang sinh {value}", f"toi sinh thang {value}", f"birth month {value}"))
 
@@ -1030,6 +1040,17 @@ class SemanticMemoryStore:
                     return match.group(1).strip()
             return ""
 
+        if fact_key == "user.nickname":
+            patterns = [
+                r"(?:user s nickname is|users nickname is|user nickname)\s*(?:la|is|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
+                r"(?:biet danh cua nguoi dung|biet danh cua ngai|biet danh cua toi|biet danh toi|biet danh la|biet hieu la|nickname la|ten goi la)\s*(?:la|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, normalized)
+                if match:
+                    return match.group(1).strip()
+            return ""
+
         if fact_key == "user.birth_month":
             match = re.search(r"(?:thang sinh|sinh thang|birth month)\s*(?:la|:)?\s*(\d{1,2}|[a-zA-Z]+)", normalized)
             return match.group(1).strip() if match else ""
@@ -1377,6 +1398,17 @@ class SemanticMemoryStore:
             return cue
 
         # User profile facts.
+        # Biệt danh phải đứng trước "tên": câu "biệt danh tôi là gì" cũng chứa
+        # token gần với name, nhưng nó hỏi nickname, không phải tên thật.
+        if _matches_any(normalized, (r"\bbiet danh\b", r"\bbiet hieu\b", r"\bnickname\b", r"\bten goi\b")):
+            cue.domain = "user"
+            cue.fact_key = "user.nickname"
+            cue.aliases = ["biet danh", "biet hieu", "nickname", "ten goi", "biệt danh"]
+            cue.wants_profile_fact = True
+            cue.strict_domain = True
+            cue.evidence.append("cue:user.nickname")
+            return cue
+
         if _matches_any(normalized, (r"\btoi ten gi\b", r"\bten toi\b", r"\bten cua toi\b", r"\bgoi toi la gi\b", r"\bmy name\b")):
             cue.domain = "user"
             cue.fact_key = "user.name"
@@ -1538,6 +1570,15 @@ class SemanticMemoryStore:
             profile.evidence.append("metadata.domain")
 
         # Reason từ memory_commit_policy thường ổn định hơn claim text.
+        if any(key in reason_norm for key in ("nickname", "biet_danh", "biet danh", "user_nickname")):
+            profile.domain = "user"
+            profile.fact_key = "user.nickname"
+            profile.aliases = ["biệt danh", "biet danh", "nickname", "biệt hiệu", "biet hieu", "tên gọi", "ten goi"]
+            profile.importance = 0.94
+            profile.tags.extend(["user_profile", "nickname"])
+            profile.evidence.append("reason:user_nickname")
+            return profile
+
         if any(key in reason_norm for key in ("user_name", "username", "preferred_name")):
             profile.domain = "user"
             profile.fact_key = "user.name"
@@ -1577,7 +1618,13 @@ class SemanticMemoryStore:
         profile.domain = self._infer_domain(claim, target)
 
         # Claim parser nhẹ.
-        if profile.domain == "user" and _matches_any(normalized, USER_NAME_PATTERNS):
+        if profile.domain == "user" and _matches_any(normalized, USER_NICKNAME_PATTERNS):
+            profile.fact_key = "user.nickname"
+            profile.aliases = ["biệt danh", "biet danh", "nickname", "biệt hiệu", "biet hieu", "tên gọi", "ten goi"]
+            profile.importance = 0.94
+            profile.tags.extend(["user_profile", "nickname"])
+            profile.evidence.append("claim:user.nickname")
+        elif profile.domain == "user" and _matches_any(normalized, USER_NAME_PATTERNS):
             profile.fact_key = "user.name"
             profile.aliases = ["tên", "ten", "name", "preferred name", "gọi", "goi"]
             profile.importance = 0.94

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 import unicodedata
@@ -19,6 +20,18 @@ from runtime.controlled_slippage import (
     apply_slippage_to_personality_lens,
     apply_slippage_to_ti_report,
     resolve_controlled_slippage,
+)
+
+
+# Khi ERIS không sinh được phản hồi đủ chắc, nó vẫn phải nói như ERIS, không
+# như một tờ báo lỗi. Không lộ "lỗi định dạng" / parse_mode ra ngoài (đúng với
+# Data bans trong RUNTIME_RULES_PROMPT). Trung thực ở chỗ thừa nhận chưa đủ chắc
+# để trả lời, nhưng giữ giọng và xoay câu để không thành canned response.
+_FORMAT_REPAIR_FALLBACK_LINES = (
+    "Tôi chưa chốt được câu trả lời cho cái này, và tôi không muốn nói bừa. Ngài nói lại ý chính giúp tôi một chút.",
+    "Cái này tôi chưa nắm đủ chắc để trả cho gọn. Để khỏi đoán mò, Ngài thử hỏi lại theo hướng khác xem.",
+    "Tôi đang hơi kẹt ở câu này, chưa đủ dữ liệu để trả lời cho an toàn. Tôi dừng ở đây thay vì bịa cho có.",
+    "Tôi không muốn đưa Ngài một câu nửa vời. Cho tôi thêm một góc nữa rồi tôi trả lại cho tử tế.",
 )
 
 
@@ -744,7 +757,7 @@ class ChatCycleMixin:
                 reasoning_tags=("format_block",),
             )
         payload = {
-            "text": "Tôi bị lỗi định dạng khi sinh phản hồi. Ý chính: tôi chưa có đủ dữ liệu chắc để trả lời an toàn.",
+            "text": random.choice(_FORMAT_REPAIR_FALLBACK_LINES),
             "intent": "format_repair_fallback",
             "action": "guarded_reply",
             "animation": "stand",

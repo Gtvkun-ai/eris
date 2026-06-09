@@ -274,6 +274,22 @@ def _parse_clause_as_frames(clause: str, surface: Any) -> list[MeaningFrame]:
             polarity="corrected" if is_correction else None,
         ))
 
+    nickname = _extract_identity_nickname(raw)
+    if nickname:
+        # Biệt danh là fact identity riêng, KHÔNG đè tên thật. "tôi tên Hoà" và
+        # "biệt danh của tôi là Gtvkun" phải sống song song trong semantic memory.
+        frames.append(_mk_frame(
+            "identity",
+            "nickname",
+            nickname,
+            "person_name",
+            raw,
+            0.88,
+            "stable",
+            "fact",
+            surface,
+        ))
+
     birth_year = _extract_year(norm)
     if birth_year is not None and _has_self(norm):
         frames.append(_mk_frame("identity", "birth_year", str(birth_year), "year", raw, 0.84, "stable", "fact", surface))
@@ -404,6 +420,34 @@ def _extract_identity_name(raw: str) -> tuple[str, bool] | None:
         return value, False
     return None
 
+def _extract_identity_nickname(raw: str) -> str | None:
+    """Bắt câu khai báo biệt danh/nickname ở tầng MeaningFrame.
+
+    Tách hẳn khỏi `_extract_identity_name`: tên thật và biệt danh là hai fact
+    identity khác nhau. Chỉ nhận các cue chứa "biệt danh"/"biệt hiệu"/"nickname"
+    kèm bộ phân tách ("là"/":") để không nuốt nhầm cả câu.
+    """
+
+    cues = (
+        ("biet danh cua toi la", "nickname"),
+        ("biet hieu cua toi la", "nickname"),
+        ("nickname cua toi la", "nickname"),
+        ("ten goi cua toi la", "nickname"),
+        ("biet danh cua minh la", "nickname"),
+        ("biet danh toi la", "nickname"),
+        ("toi co biet danh la", "nickname"),
+        ("minh co biet danh la", "nickname"),
+        ("biet danh la", "nickname"),
+        ("biet hieu la", "nickname"),
+        ("nickname la", "nickname"),
+        ("my nickname is", "nickname"),
+        ("nickname is", "nickname"),
+    )
+    value = _extract_after(raw, cues)
+    if value and len(value) <= 60:
+        return value
+    return None
+
 def _extract_study_field(raw: str) -> str:
     """Rút ngành/lĩnh vực học từ self-disclosure ngắn.
 
@@ -518,7 +562,7 @@ def _looks_like_feedback(norm: str) -> bool:
 
 def _infer_frame_type(relation: str) -> str:
     r = relation.lower()
-    if r in {"name", "name_is", "birth_year", "birth_year_is", "birth_month", "birth_month_is", "age", "age_observed_is"}:
+    if r in {"name", "name_is", "nickname", "nickname_is", "birth_year", "birth_year_is", "birth_month", "birth_month_is", "age", "age_observed_is"}:
         return "identity"
     if r in {"study_field", "study_field_is", "education_field", "education_field_is"}:
         return "project"

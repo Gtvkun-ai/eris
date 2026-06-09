@@ -51,6 +51,7 @@ class MemoryKind(str, Enum):
     """Nhãn nghĩa cấp cao, tránh để các tầng sau phải đoán từ text thô."""
 
     USER_NAME = "user_identity.name"
+    USER_NICKNAME = "user_identity.nickname"
     USER_BIRTH_MONTH = "user_identity.birth_month"
     USER_STUDY_FIELD = "user_identity.study_field"
     USER_RESPONSE_STYLE = "user_preference.response_style"

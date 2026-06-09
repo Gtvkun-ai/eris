@@ -29,6 +29,8 @@ except Exception:  # pragma: no cover
 RELATION_TO_PREDICATE: dict[tuple[str, str], str] = {
     ("identity", "name"): "name_is",
     ("identity", "name_is"): "name_is",
+    ("identity", "nickname"): "nickname_is",
+    ("identity", "nickname_is"): "nickname_is",
     ("identity", "birth_month"): "birth_month_is",
     ("identity", "birth_month_is"): "birth_month_is",
     ("identity", "birth_year"): "birth_year_is",
@@ -66,6 +68,7 @@ RELATION_TO_PREDICATE: dict[tuple[str, str], str] = {
 
 PREDICATE_DEFAULTS: dict[str, dict[str, Any]] = {
     "name_is": {"object_type": "person_name", "modality": "fact", "temporal": "stable", "stability": "stable", "confidence_floor": 0.80},
+    "nickname_is": {"object_type": "person_name", "modality": "fact", "temporal": "stable", "stability": "stable", "confidence_floor": 0.78},
     "birth_month_is": {"object_type": "month", "modality": "fact", "temporal": "stable", "stability": "stable", "confidence_floor": 0.78},
     "birth_year_is": {"object_type": "year", "modality": "fact", "temporal": "stable", "stability": "stable", "confidence_floor": 0.78},
     "age_observed_is": {"object_type": "age", "modality": "observation", "temporal": "current", "stability": "medium", "valid_seconds": 86400 * 370},

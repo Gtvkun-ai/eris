@@ -216,6 +216,11 @@ class StateCommitServiceMixin:
                 r"user'?s name is\s+(.+?)(?:[.!,;:]|$)",
                 r"ten .* la\s+(.+?)(?:[.!,;:]|$)",
             )
+        elif kind == getattr(MemoryKind, "USER_NICKNAME", None):
+            patterns = (
+                r"user'?s nickname is\s+(.+?)(?:[.!,;:]|$)",
+                r"biet danh .* la\s+(.+?)(?:[.!,;:]|$)",
+            )
         elif kind == MemoryKind.USER_BIRTH_MONTH:
             patterns = (
                 r"birth month is\s+(\d{1,2})",
@@ -248,6 +253,8 @@ class StateCommitServiceMixin:
     def _fact_key_for_memory_kind(kind: MemoryKind) -> str:
         if kind == MemoryKind.USER_NAME:
             return "user.name"
+        if kind == getattr(MemoryKind, "USER_NICKNAME", None):
+            return "user.nickname"
         if kind == MemoryKind.USER_BIRTH_MONTH:
             return "user.birth_month"
         if kind == MemoryKind.USER_RESPONSE_STYLE:

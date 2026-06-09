@@ -43,6 +43,16 @@ _GENERIC_MEMORY_SEED_RE = re.compile(
     re.I,
 )
 
+# Inner Diary section titles produced by InnerDiaryRenderer. The diary voice is
+# Eris's own public-facing reflection, so it is legitimate seed material: it lets
+# "what Eris is thinking" actually drive autonomous speech instead of dead-ending
+# in a read-only UI panel.
+_DIARY_TITLE_TO_KEY = {
+    "muốn nói": "muon_noi",
+    "suy nghĩ tương lai": "tuong_lai",
+    "suy nghĩ hiện tại": "hien_tai",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class CompiledSurfaceSeed:
@@ -113,6 +123,7 @@ class SurfaceSeedCompiler:
         thought_stream: Any = None,
         private_mind_digest: Any = None,
         private_life_digest: Any = None,
+        inner_diary: Any = None,
         private_mind_speech_bias: Any = None,
         private_mind_thought_pressure: float = 0.0,
         active_memory_resonance: Any = None,
@@ -131,6 +142,7 @@ class SurfaceSeedCompiler:
             )
         )
         candidates.extend(self._from_private_life_digest(private_life_digest))
+        candidates.extend(self._from_inner_diary(inner_diary))
 
         safe = [candidate for candidate in candidates if self._candidate_allowed(candidate)]
         if not safe:
@@ -510,9 +522,117 @@ class SurfaceSeedCompiler:
                     )
         return ()
 
+    def _from_inner_diary(self, inner_diary: Any) -> tuple[_SeedCandidate, ...]:
+        """Seed từ Inner Diary — để "thứ Eris đang nghĩ" thực sự lái được lời nói.
+
+        Trước đây diary chỉ chảy một chiều ra UI/đĩa; giọng Eris nội tâm không bao
+        giờ quay lại đường nói. Ở đây ta lấy lại giọng đã được viết public-safe
+        (muốn nói / suy nghĩ tương lai / suy nghĩ hiện tại) làm chất liệu seed, để
+        autonomous bớt phẳng và bớt câm cả tiếng. Vẫn qua cổng public-safety và
+        giới hạn độ dài như mọi seed khác.
+        """
+
+        voice = self._inner_diary_voice(inner_diary)
+        if not voice:
+            return ()
+        # (key, impulse_kind, confidence, pressure, action_opportunity, llm_contract)
+        specs = (
+            (
+                "muon_noi",
+                "inner_whim",
+                0.66,
+                0.56,
+                "voice one thing Eris already wants to say; keep it light, no screen claim",
+                "inner_diary: surface the wants-to-say line as a tiny rooted aside; no raw state.",
+            ),
+            (
+                "tuong_lai",
+                "curious_question",
+                0.62,
+                0.50,
+                "turn a forming inner question into one small real question; no screen claim",
+                "inner_diary: shape the forward thought into one short curious question.",
+            ),
+            (
+                "hien_tai",
+                "light_muse",
+                0.58,
+                0.46,
+                "muse lightly from a current inner thought; no raw judgment, no screen claim",
+                "inner_diary: use the current-thought reflection as seed only, not verbatim.",
+            ),
+        )
+        out: list[_SeedCandidate] = []
+        for key, kind, confidence, pressure, action, contract in specs:
+            text = self._clean(voice.get(key) or "")
+            if not text or not self._candidate_text_public(text):
+                continue
+            if len(text) > self._seed_max_len:
+                text = text[: self._seed_max_len].rstrip()
+            out.append(
+                _SeedCandidate(
+                    topic_seed=text,
+                    public_seed=text,
+                    evidence=(self._anchor_token("inner_diary", f"{key}:{text[:80]}"), f"inner_diary:{key}"),
+                    confidence=self._clamp(confidence),
+                    pressure=self._clamp(pressure),
+                    root_source="inner_diary",
+                    impulse_kind=kind,
+                    action_opportunity=action,
+                    llm_contract=contract,
+                    public_anchor=True,
+                    missing_screen=True,
+                    reason=f"inner_diary:{key}",
+                )
+            )
+        return tuple(out)
+
+    def _inner_diary_voice(self, inner_diary: Any) -> dict[str, str]:
+        """Rút giọng diary thành {muon_noi, tuong_lai, hien_tai}.
+
+        Nhận cả dict giọng thô (đã có sẵn các key) lẫn dict đã render bởi
+        InnerDiaryRenderer (parse theo tiêu đề section). Không có gì hợp lệ → {}.
+        """
+
+        if not isinstance(inner_diary, Mapping):
+            return {}
+        direct = {
+            k: self._clean(inner_diary.get(k) or "")
+            for k in ("muon_noi", "tuong_lai", "hien_tai")
+        }
+        direct = {k: v for k, v in direct.items() if v}
+        if direct:
+            return direct
+        sections = inner_diary.get("sections")
+        if not isinstance(sections, (list, tuple)):
+            return {}
+        out: dict[str, str] = {}
+        for section in sections:
+            if not isinstance(section, Mapping):
+                continue
+            key = _DIARY_TITLE_TO_KEY.get(self._clean(str(section.get("title") or "")).lower())
+            if not key or key in out:
+                continue
+            lines = section.get("lines")
+            joined = ""
+            if isinstance(lines, (list, tuple)) and lines:
+                joined = self._clean(" ".join(str(x) for x in lines if str(x or "").strip()))
+            if not joined:
+                items = section.get("items")
+                if isinstance(items, (list, tuple)):
+                    joined = self._clean(
+                        " ".join(
+                            str(item.get("text") if isinstance(item, Mapping) else item)
+                            for item in items
+                            if (item.get("text") if isinstance(item, Mapping) else item)
+                        )
+                    )
+            if joined:
+                out[key] = joined
+        return out
+
     def _from_private_bias(
         self,
-        *,
         private_mind_speech_bias: Any,
         private_mind_thought_pressure: float,
         private_mind_digest: Any,
@@ -609,6 +729,7 @@ class SurfaceSeedCompiler:
         source_bonus = {
             "vision_fact": 0.20,
             "memory_resonance": 0.12,
+            "inner_diary": 0.12,
             "thought_stream": 0.08,
             "subconscious_synthesizer": 0.06,
             "private_mind_surface": 0.07,

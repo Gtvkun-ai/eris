@@ -3107,7 +3107,12 @@ class RuntimeCoordinator(
         if speech_core.utterance_type in {"inner_whim", "random_chatter", "light_muse", "soft_boundary"}:
             if channel == "force_speak":
                 return "micro_presence"
-            return "social_presence"
+            # soft_boundary không nằm trong SPEECH_INTENTS công khai nên giữ ở
+            # social_presence; còn lại để autonomous giữ đúng bản sắc "nói nhảm /
+            # ngẫu hứng / muse nhẹ" thay vì bị làm phẳng thành social_presence.
+            if speech_core.utterance_type == "soft_boundary":
+                return "social_presence"
+            return speech_core.utterance_type
         if channel == "force_speak":
             return "user_requested"
         return "brief_ack"

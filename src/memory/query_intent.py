@@ -65,6 +65,7 @@ class QueryTargetFrame:
 
 QUERY_TARGETS: dict[str, QueryTargetFrame] = {
     "user_name": QueryTargetFrame("user_name", ("name_is",), "person_name", temporal="stable", fallback_cues=("ten", "name", "goi toi"), base_confidence=0.82),
+    "user_nickname": QueryTargetFrame("user_nickname", ("nickname_is",), "person_name", temporal="stable", fallback_cues=("biet danh", "nickname", "biet hieu", "ten goi"), base_confidence=0.82),
     "user_birth_month": QueryTargetFrame("user_birth_month", ("birth_month_is",), "month", temporal="stable", fallback_cues=("sinh thang", "thang sinh", "birthday month"), base_confidence=0.82),
     "user_birth_year": QueryTargetFrame("user_birth_year", ("birth_year_is",), "year", temporal="stable", fallback_cues=("sinh nam", "nam sinh", "birth year"), base_confidence=0.80),
     "user_hometown": QueryTargetFrame("user_hometown", ("hometown_is",), "location", temporal="stable", fallback_cues=("que", "hometown"), fallback_anti_cues=("dang", "hien tai", "song", "thich"), base_confidence=0.84),

@@ -68,6 +68,21 @@ PREDICATES: dict[str, PredicateSpec] = {
         importance=0.96,
         aliases=("tên", "ten", "name", "preferred name"),
     ),
+    "nickname_is": PredicateSpec(
+        name="nickname_is",
+        object_type="person_name",
+        modality="fact",
+        default_temporal="stable",
+        answer_targets=("user_nickname",),
+        # Chỉ mâu thuẫn với chính nó. Biệt danh KHÔNG được phép contradict tên thật
+        # (name_is) — user có thể có cả tên "Hoà" lẫn biệt danh "Gtvkun" cùng lúc.
+        contradicts=("nickname_is",),
+        fact_key="user.nickname",
+        default_decay="slow",
+        retention_class="long_term",
+        importance=0.94,
+        aliases=("biệt danh", "biet danh", "nickname", "biệt hiệu", "biet hieu", "tên gọi", "ten goi"),
+    ),
     "birth_month_is": PredicateSpec(
         name="birth_month_is",
         object_type="month",

@@ -1334,23 +1334,28 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(guarded.debug_trace, "")
 
     def test_force_speak_low_signal_surfaces_micro_presence_before_directive_llm(self):
-        coordinator = self._make_coordinator()
+        llm_service = _HybridMicroLlmService("Đoạn đó vẫn còn nằm ở đây.")
+        coordinator = self._make_coordinator(llm_service=llm_service)
         coordinator.last_text = "Một câu cũ."
         coordinator.last_autonomous_spoken_at = 1.0
 
         coordinator._handle_incoming({"type": "force_speak"})
 
+        # force_speak is an explicit user pull: it routes to micro_presence (not the
+        # directive LLM), but must still engage the wording layer and speak instead of
+        # falling silent just because the ambient signal score is low.
         self.assertEqual(coordinator.llm_service.directive_calls, 0)
+        self.assertGreaterEqual(llm_service.micro_calls, 1)
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "micro_presence")
         self.assertIn("micro_presence_synthesizer", coordinator.transport.sent[-1]["debug_trace"])
         self.assertIn("kind=", coordinator.transport.sent[-1]["debug_trace"])
-        self.assertEqual(coordinator.transport.sent[-1]["text"], "")
-        self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
-        self.assertEqual(coordinator.last_text, "")
+        self.assertTrue(coordinator.transport.sent[-1]["should_speak"])
+        self.assertEqual(coordinator.transport.sent[-1]["text"], "Đoạn đó vẫn còn nằm ở đây.")
         self.assertGreater(coordinator.last_autonomous_spoken_at, 1.0)
 
     def test_force_speak_without_evidence_passes_neutral_current_focus(self):
-        coordinator = self._make_coordinator()
+        llm_service = _HybridMicroLlmService("Đoạn đó vẫn còn nằm ở đây.")
+        coordinator = self._make_coordinator(llm_service=llm_service)
 
         coordinator._handle_incoming({"type": "force_speak"})
 
@@ -1358,20 +1363,25 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(sent["parse_mode"], "micro_presence")
         self.assertIn("kind=", sent["debug_trace"])
         self.assertIn("focus_kind=general", sent["debug_trace"])
-        self.assertEqual(sent["text"], "")
-        self.assertFalse(sent["should_speak"])
+        # Even without screen evidence, an explicit force_speak click engages the
+        # micro-presence wording layer and speaks rather than staying silent.
+        self.assertGreaterEqual(llm_service.micro_calls, 1)
+        self.assertTrue(sent["should_speak"])
 
-    def test_force_speak_low_signal_uses_local_micro_presence_even_when_llm_enabled(self):
-        llm_service = _HybridMicroLlmService("Khung chat van yen.")
+    def test_force_speak_low_signal_now_uses_llm_micro_presence(self):
+        llm_service = _HybridMicroLlmService("Đoạn đó vẫn còn nằm ở đây.")
         coordinator = self._make_coordinator(llm_service=llm_service)
-        coordinator.micro_presence_llm_probability = 1.0
+        # Ambient probability is zero; only the force_speak force_llm path can
+        # trigger the wording layer here.
+        coordinator.micro_presence_llm_probability = 0.0
 
         coordinator._handle_incoming({"type": "force_speak"})
 
         sent = coordinator.transport.sent[-1]
-        self.assertEqual(llm_service.micro_calls, 0)
+        self.assertEqual(llm_service.micro_calls, 1)
         self.assertEqual(sent["parse_mode"], "micro_presence")
-        self.assertIn("source=local_low_signal", sent["debug_trace"])
+        self.assertIn("source=llm_signal", sent["debug_trace"])
+        self.assertTrue(sent["should_speak"])
 
     def test_local_micro_presence_seeds_pass_diacritic_policy(self):
         coordinator = self._make_coordinator()
@@ -1457,6 +1467,30 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 coordinator._policy_intent_for_speech_core(speech_core, channel="force_speak"),
                 "micro_presence",
             )
+
+    def test_autonomous_endogenous_acts_keep_their_identity(self):
+        # Trên kênh autonomous, nói nhảm/ngẫu hứng/muse nhẹ KHÔNG còn bị làm phẳng
+        # thành social_presence — giữ đúng bản sắc để prompt/style bám theo.
+        coordinator = self._make_coordinator()
+        for utterance_type in ("inner_whim", "random_chatter", "light_muse"):
+            speech_core = SimpleNamespace(
+                utterance_type=utterance_type,
+                should_speak=True,
+            )
+            self.assertEqual(
+                coordinator._speech_intent_from_core(speech_core, channel="autonomous"),
+                utterance_type,
+            )
+            self.assertEqual(
+                coordinator._policy_intent_for_speech_core(speech_core, channel="autonomous"),
+                utterance_type,
+            )
+        # soft_boundary không có intent công khai riêng → vẫn social_presence.
+        soft = SimpleNamespace(utterance_type="soft_boundary", should_speak=True)
+        self.assertEqual(
+            coordinator._speech_intent_from_core(soft, channel="autonomous"),
+            "social_presence",
+        )
 
     def test_force_speak_inner_thought_repairs_generic_meta_ack(self):
         llm_service = _GenericThenSocialLlmService()
@@ -1941,8 +1975,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertIsNotNone(frame.memory_resonance)
             self.assertGreater(frame.memory_resonance.score, 0.0)
             self.assertIn("memory_resonance", frame.to_dict())
-            self.assertIn("active_memory_resonance", coordinator.llm_service.last_chat_kwargs["memory_context"])
-            self.assertIn("not treat it as current screen evidence", coordinator.llm_service.last_chat_kwargs["memory_context"])
+            self.assertIn("memory_context", coordinator.llm_service.last_chat_kwargs["memory_context"])
+            self.assertIn("Do not use as current screen or file evidence", coordinator.llm_service.last_chat_kwargs["memory_context"])
 
     def test_chat_style_preference_records_relationship_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:

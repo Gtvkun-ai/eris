@@ -2,6 +2,7 @@ import os
 
 from eris_secrets import apply_secrets_to_environ, get_provider_profile, get_secret
 from .client import GeminiClient, OpenAICompatibleClient
+from .key_pool import get_key_pool
 
 
 class RemoteModelProcessManager:
@@ -16,10 +17,21 @@ class RemoteModelProcessManager:
         apply_secrets_to_environ()
         provider = os.environ.get("ERIS_REMOTE_PROVIDER", "gemini").strip().lower()
         remote_profile = get_provider_profile(provider, slot="remote_main")
-        api_key = (
-            str(remote_profile.get("api_key") or "").strip()
-            or get_secret("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
-        )
+        if provider in {"openai", "openai_compatible", "compatible", "remote", "groq"}:
+            # Khi chạy Groq/OpenAI-compatible: ưu tiên key Groq + pool Groq riêng
+            # (tách khỏi pool Gemini) để không gửi nhầm key Gemini sang Groq.
+            pool = get_key_pool("groq")
+            pool_key = pool.current_key() if pool is not None else ""
+            api_key = (
+                str(remote_profile.get("api_key") or "").strip()
+                or pool_key
+                or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+            )
+        else:
+            api_key = (
+                str(remote_profile.get("api_key") or "").strip()
+                or get_secret("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+            )
 
         if provider == "gemini":
             base_url = (
@@ -40,7 +52,7 @@ class RemoteModelProcessManager:
                 raise RuntimeError("Remote Gemini dang bat nhung chua co GEMINI_API_KEY hoac ERIS_REMOTE_API_KEY.")
             self.logger.info("Dung Gemini API tai %s voi model %s", base_url, model_name)
             try:
-                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name)
+                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=get_key_pool("gemini"))
             except ValueError as exc:
                 raise RuntimeError(f"Loi API key Gemini: {exc}") from exc
 
@@ -61,6 +73,7 @@ class RemoteModelProcessManager:
                 base_url=base_url,
                 api_key=api_key,
                 model_name=model_name,
+                key_pool=get_key_pool("groq"),
             )
         except ValueError as exc:
             raise RuntimeError(f"Loi API key remote: {exc}") from exc
@@ -107,11 +120,11 @@ class RemoteModelProcessManager:
                 raise RuntimeError("Speech Gemini dang bat nhung chua co ERIS_SPEECH_API_KEY hoac GEMINI_API_KEY.")
             self.logger.info("Dung Gemini speech API tai %s voi model %s", base_url, model_name)
             try:
-                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name)
+                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=get_key_pool("gemini"))
             except ValueError as exc:
                 raise RuntimeError(f"Loi API key speech Gemini: {exc}") from exc
 
-        api_key = api_key or get_secret("OPENAI_SPEECH_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+        api_key = api_key or get_secret("OPENAI_SPEECH_API_KEY", "ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
         base_url = (
             str(profile.get("base_url") or "").strip()
             or os.environ.get("ERIS_SPEECH_BASE_URL", os.environ.get("ERIS_REMOTE_BASE_URL", "https://api.openai.com/v1")).strip()
@@ -126,7 +139,7 @@ class RemoteModelProcessManager:
             raise RuntimeError("Speech API dang bat nhung chua co ERIS_SPEECH_API_KEY.")
         self.logger.info("Dung OpenAI-compatible speech API tai %s voi model %s", base_url, model_name)
         try:
-            return OpenAICompatibleClient(base_url=base_url, api_key=api_key, model_name=model_name)
+            return OpenAICompatibleClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=get_key_pool("groq"))
         except ValueError as exc:
             raise RuntimeError(f"Loi API key speech remote: {exc}") from exc
 

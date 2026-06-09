@@ -100,8 +100,11 @@ class LlamaServerClient:
 
 
 class OpenAICompatibleClient:
-    def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 180):
+    def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 180, key_pool=None):
         self.base_url = base_url.rstrip("/")
+        self.key_pool = key_pool
+        if not (api_key or "").strip() and key_pool is not None:
+            api_key = key_pool.current_key()
         self.api_key = self._normalize_api_key(api_key)
         self.model_name = model_name.strip() or "gpt-5.4-nano"
         self.timeout = timeout
@@ -161,32 +164,54 @@ class OpenAICompatibleClient:
         }
         url = f"{self.base_url}/chat/completions"
 
+        # Có pool: gặp 429 thì xoay key kế và thử lại, tối đa bằng số key trong pool.
+        max_attempts = self.key_pool.size if (self.key_pool is not None and self.key_pool.size > 0) else 1
         last_error = None
-        seen_signatures = set()
-        for candidate in _chat_payload_variants(payload):
-            signature = tuple(sorted(candidate.keys()))
-            if signature in seen_signatures:
-                continue
-            seen_signatures.add(signature)
+        for attempt in range(max(1, max_attempts)):
+            if self.key_pool is not None:
+                pool_key = self.key_pool.current_key()
+                if pool_key:
+                    self.api_key = self._normalize_api_key(pool_key)
+                    headers["Authorization"] = f"Bearer {self.api_key}"
 
-            try:
-                response = requests.post(
-                    url,
-                    headers=headers,
-                    json=candidate,
-                    timeout=self.timeout if timeout is None else timeout,
-                )
-                response.raise_for_status()
-                return response.json()
-            except requests.HTTPError as exc:
-                last_error = _http_error_with_body(exc.response) if exc.response is not None else exc
-                status_code = exc.response.status_code if exc.response is not None else None
-                if status_code is not None and status_code < 500:
+            rate_limited = False
+            seen_signatures = set()
+            for candidate in _chat_payload_variants(payload):
+                signature = tuple(sorted(candidate.keys()))
+                if signature in seen_signatures:
                     continue
-                raise last_error
-            except Exception as exc:
-                last_error = exc
-                raise
+                seen_signatures.add(signature)
+
+                try:
+                    response = requests.post(
+                        url,
+                        headers=headers,
+                        json=candidate,
+                        timeout=self.timeout if timeout is None else timeout,
+                    )
+                    response.raise_for_status()
+                    return response.json()
+                except requests.HTTPError as exc:
+                    last_error = _http_error_with_body(exc.response) if exc.response is not None else exc
+                    status_code = exc.response.status_code if exc.response is not None else None
+                    if status_code == 429:
+                        rate_limited = True
+                        break  # thoát vòng variant để xoay key
+                    if status_code is not None and status_code < 500:
+                        continue  # thử biến thể payload kế (vd bỏ grammar/response_format)
+                    raise last_error
+                except Exception as exc:
+                    last_error = exc
+                    raise
+
+            if (
+                rate_limited
+                and self.key_pool is not None
+                and attempt < max_attempts - 1
+                and self.key_pool.rotate()
+            ):
+                continue
+            break
 
         if last_error is not None:
             raise last_error
@@ -194,8 +219,12 @@ class OpenAICompatibleClient:
 
 
 class GeminiClient:
-    def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 180):
+    def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 180, key_pool=None):
         self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+        self.key_pool = key_pool
+        # Nếu có pool dùng chung mà chưa truyền key cứng thì lấy key hiện tại của pool.
+        if not (api_key or "").strip() and key_pool is not None:
+            api_key = key_pool.current_key()
         self.api_key = self._normalize_api_key(api_key)
         self.model_name = (model_name or "gemma-4-26b-a4b-it").strip()
         self.timeout = timeout
@@ -329,15 +358,34 @@ class GeminiClient:
         if system_instruction:
             payload["systemInstruction"] = {"parts": [self._text_part(system_instruction)]}
 
-        response = requests.post(
-            f"{self.base_url}/models/{self.model_name}:generateContent",
-            headers={
-                "x-goog-api-key": self.api_key,
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=self.timeout if timeout is None else timeout,
-        )
+        # Có pool dùng chung: gặp 429 (hết quota project) thì xoay sang key kế và
+        # thử lại, tối đa bằng số key trong pool. Không pool → đúng một lần như cũ.
+        max_attempts = self.key_pool.size if (self.key_pool is not None and self.key_pool.size > 0) else 1
+        last_response = None
+        for attempt in range(max(1, max_attempts)):
+            if self.key_pool is not None:
+                pool_key = self.key_pool.current_key()
+                if pool_key:
+                    self.api_key = self._normalize_api_key(pool_key)
+            last_response = requests.post(
+                f"{self.base_url}/models/{self.model_name}:generateContent",
+                headers={
+                    "x-goog-api-key": self.api_key,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=self.timeout if timeout is None else timeout,
+            )
+            if (
+                last_response.status_code == 429
+                and self.key_pool is not None
+                and attempt < max_attempts - 1
+                and self.key_pool.rotate()
+            ):
+                continue
+            break
+
+        response = last_response
         try:
             response.raise_for_status()
         except requests.HTTPError:

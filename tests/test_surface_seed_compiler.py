@@ -148,3 +148,69 @@ def test_timer_only_reengagement_does_not_create_speech_seed() -> None:
 
     assert compiled.selected is False
     assert compiled.debug["reason"] in {"no_public_anchor", "timer_only"}
+
+
+def test_inner_diary_voice_drives_autonomous_speech_seed() -> None:
+    # Diary giọng Eris (đã render thành sections) phải quay lại làm nguồn seed.
+    inner_diary = {
+        "sections": [
+            {"title": "Bảng cảm xúc", "lines": ["êm"]},
+            {"title": "Muốn nói", "lines": ["Tôi vẫn muốn kể nốt cái ý hồi nãy."]},
+            {"title": "Suy nghĩ tương lai", "lines": ["Không biết phần kia có nên gỡ ra không."]},
+        ]
+    }
+
+    compiled = SurfaceSeedCompiler().compile(inner_diary=inner_diary, surface_kind="presence_maintenance")
+
+    assert compiled.selected is True
+    assert compiled.root_source == "inner_diary"
+    assert compiled.impulse is not None
+    # muon_noi (inner_whim, conf cao hơn) thắng; tuong_lai làm alt-seed curious.
+    assert compiled.impulse.kind == "inner_whim"
+    assert "Tôi vẫn muốn kể" in compiled.public_seed
+    alt_kinds = {imp.kind for imp in compiled.alternative_impulses}
+    assert "curious_question" in alt_kinds
+
+
+def test_inner_diary_future_thought_becomes_curious_question() -> None:
+    # Chỉ có suy nghĩ tương lai → phát ra curious_question (đường mà
+    # surface_seed_compiler trước đây không bao giờ tạo được).
+    compiled = SurfaceSeedCompiler().compile(
+        inner_diary={"tuong_lai": "Liệu mình có nên hỏi Ngài về cái lỗi đó không."},
+        surface_kind="re_engagement",
+    )
+
+    assert compiled.selected is True
+    assert compiled.root_source == "inner_diary"
+    assert compiled.impulse is not None
+    assert compiled.impulse.kind == "curious_question"
+
+
+def test_inner_diary_outranks_generic_private_life_seed() -> None:
+    private_life_digest = {
+        "current": {
+            "projects": [
+                {"id": "proj-1", "last_note": "đang nghịch một thứ vớ vẩn", "surface_permission": 0.5, "interest": 0.1}
+            ]
+        }
+    }
+
+    compiled = SurfaceSeedCompiler().compile(
+        inner_diary={"muon_noi": "Tôi muốn nói về nhịp gõ phím lúc nãy."},
+        private_life_digest=private_life_digest,
+        surface_kind="presence_maintenance",
+    )
+
+    assert compiled.selected is True
+    assert compiled.root_source == "inner_diary"
+
+
+def test_inner_diary_leaky_text_is_rejected() -> None:
+    # Nội dung lộ JSON/raw state phải bị cổng public-safety chặn.
+    compiled = SurfaceSeedCompiler().compile(
+        inner_diary={"hien_tai": '{"raw_judgment": "user is wrong"}'},
+        surface_kind="presence_maintenance",
+    )
+
+    assert compiled.selected is False
+    assert compiled.impulse is None

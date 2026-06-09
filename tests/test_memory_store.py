@@ -77,7 +77,7 @@ class MemoryCognitionCoreFacadeTests(unittest.TestCase):
             self.assertTrue(packet.relational)
             self.assertGreater(packet.score, 0.0)
             self.assertIn("procedural_memory", context)
-            self.assertIn("active_memory_resonance", context)
+            self.assertIn("memory_context", context)
             self.assertTrue(packet.to_attention_lines())
 
     def test_save_load_preserves_active_internal_state_snapshot(self):
@@ -181,8 +181,11 @@ class MemoryCognitionCoreFacadeTests(unittest.TestCase):
             self.assertGreater(report.score, 0.0)
             self.assertIn(report.dominant_layer, {"procedural", "relational", "relationship"})
             self.assertGreater(report.attention_bias, 0.0)
-            self.assertIn("silent cognitive bias", context)
-            self.assertIn("not treat it as current screen evidence", context)
+            # The renderer intentionally dropped the "silent cognitive bias only"
+            # framing: memory is now injected as known-fact context, while still
+            # being marked as not-current-screen-evidence.
+            self.assertIn("memory_context", context)
+            self.assertIn("Do not use as current screen or file evidence", context)
             self.assertTrue(report.to_attention_lines())
 
     def test_experiential_association_tracks_cognition_tension_and_loops(self):

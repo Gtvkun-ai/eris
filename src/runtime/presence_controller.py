@@ -271,6 +271,19 @@ class PresenceControllerMixin:
             self._low_level_surface_seed_compiler = compiler
         return compiler
 
+    def _inner_diary_for_compile(self):
+        """Lấy inner_diary đã render từ private_mind_digest cho SurfaceSeedCompiler.
+
+        Diary là giọng Eris public-safe; trả về nguyên dict để compiler tự rút
+        muốn nói / suy nghĩ tương lai / suy nghĩ hiện tại. Thiếu thì trả None.
+        """
+        digest = getattr(self, "private_mind_digest", None)
+        if isinstance(digest, dict):
+            diary = digest.get("inner_diary")
+            if isinstance(diary, dict) and diary:
+                return diary
+        return None
+
     def _surface_arbiter(self) -> SurfaceArbiter:
         """Lazy init SurfaceArbiter: một cổng duy nhất cho micro/re-engagement/spontaneous surface."""
         arbiter = getattr(self, "_low_level_surface_arbiter", None)
@@ -2152,6 +2165,7 @@ class PresenceControllerMixin:
             thought_stream=getattr(self, "thought_stream", None),
             private_mind_digest=getattr(self, "private_mind_digest", None),
             private_life_digest=getattr(self, "private_life_digest", None),
+            inner_diary=self._inner_diary_for_compile(),
             private_mind_speech_bias=getattr(self, "private_mind_speech_bias", None),
             private_mind_thought_pressure=float(getattr(self, "private_mind_thought_pressure", 0.0) or 0.0),
             active_memory_resonance=getattr(self, "active_memory_resonance", None),

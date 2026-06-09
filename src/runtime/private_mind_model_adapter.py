@@ -29,6 +29,7 @@ from typing import Any, Mapping
 from cortex.private_mind.contracts import EvidenceDossier, ThoughtFragment, compact_text, to_plain
 from eris_secrets import apply_secrets_to_environ, get_secret
 from llm.client import GeminiClient, OpenAICompatibleClient
+from llm.key_pool import get_key_pool
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -134,39 +135,28 @@ class RuntimePrivateMindModelAdapter:
         # Synthesis-specific streak: fragment success không reset streak này.
         self._synthesis_invalid_json_streak = 0
         self._synthesis_json_cooldown_until = 0.0
-        # Fallback key rotation
-        self._fallback_keys: list[str] = self._load_fallback_keys()
-        self._current_key_index: int = 0  # 0 = key chính, 1+ = fallback keys
-
-    def _load_fallback_keys(self) -> list[str]:
-        """Đọc danh sách fallback keys từ secrets.json."""
-        from eris_secrets import _load_secrets
-        payload = _load_secrets()
-        raw = payload.get("api_keys", {}).get("ERIS_PRIVATE_MIND_FALLBACK_API_KEYS")
-        if isinstance(raw, list):
-            return [str(k).strip() for k in raw if str(k).strip()]
-        if isinstance(raw, str) and raw.strip():
-            return [k.strip() for k in raw.split(",") if k.strip()]
-        return []
+        # Key rotation: pool theo ĐÚNG provider của private_mind (gemini→pool
+        # Gemini, groq→pool Groq), tách bạch để chạy song song với mạch khác.
+        self._key_pool = get_key_pool(self.config.provider)
 
     def _current_api_key(self) -> str:
-        """Trả API key hiện tại theo vị trí rotation."""
-        if self._current_key_index == 0:
-            return self.config.api_key or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
-        idx = self._current_key_index - 1
-        if idx < len(self._fallback_keys):
-            return self._fallback_keys[idx]
-        return self.config.api_key or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+        """Trả API key hiện tại. Ưu tiên config (test), rồi pool chung, rồi env."""
+        pool_key = self._key_pool.current_key() if self._key_pool is not None else ""
+        return (
+            self.config.api_key
+            or pool_key
+            or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+        )
 
     def _rotate_to_next_key(self) -> bool:
-        """Rotate sang key tiếp theo. Trả True nếu còn key, False nếu hết."""
-        next_idx = self._current_key_index + 1
-        if next_idx <= len(self._fallback_keys):
-            self._current_key_index = next_idx
+        """Xoay pool chung sang key kế. Trả True nếu xoay được (pool có >1 key)."""
+        if self._key_pool is None:
+            return False
+        rotated = self._key_pool.rotate()
+        if rotated:
             self._provider_client = None  # force rebuild với key mới
-            self._log("warning", "[PrivateMind API] rotating to fallback key index=%d", self._current_key_index)
-            return True
-        return False
+            self._log("warning", "[PrivateMind API] rotating shared key pool -> index=%d", self._key_pool.index())
+        return rotated
 
     @classmethod
     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "RuntimePrivateMindModelAdapter | None":

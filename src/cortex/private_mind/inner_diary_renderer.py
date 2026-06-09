@@ -26,6 +26,21 @@ def _as_list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, (list, tuple)) else []
 
 
+def _num(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _clamp01(value: Any, default: float = 0.0) -> float:
+    return max(0.0, min(1.0, _num(value, default)))
+
+
+def _clamp_signed(value: Any, default: float = 0.0) -> float:
+    return max(-1.0, min(1.0, _num(value, default)))
+
+
 class InnerDiaryRenderer:
     EMOTION_RING = (
         ("top", "hưng phấn", "joyful_excited"),
@@ -67,6 +82,53 @@ class InnerDiaryRenderer:
                 return val
         return ""
 
+    def _affect(self, digest: Mapping[str, Any]) -> dict[str, Any]:
+        """Lấy snapshot cảm xúc liên tục thật (valence/arousal/...) nếu có.
+
+        Ưu tiên digest['affect'] do private_mind_loop bơm vào; fallback sang
+        runtime_state.private_runtime.active_state. Không có gì → {} để rơi về
+        heuristic cũ (giữ tương thích).
+        """
+        menu = _as_dict(digest.get("menu"))
+        affect = _as_dict(digest.get("affect") or menu.get("affect"))
+        if affect:
+            return affect
+        snapshot = _as_dict(menu.get("snapshot_current"))
+        runtime_state = _as_dict(snapshot.get("runtime_state"))
+        active = _as_dict(_as_dict(runtime_state.get("private_runtime")).get("active_state"))
+        return active
+
+    def _affect_intensities(self, affect: Mapping[str, Any]) -> dict[str, float]:
+        """Map affect liên tục → cường độ 4 góc vòng cảm xúc (0..1)."""
+        val = _clamp_signed(affect.get("valence"), 0.0)
+        aro = _clamp01(affect.get("arousal"), 0.0)
+        irr = _clamp01(affect.get("irritation"), 0.0)
+        soc = _clamp01(affect.get("social_energy"), 0.38)
+        pos = max(0.0, val)
+        neg = max(0.0, -val)
+        return {
+            "joyful_excited": _clamp01(0.45 * pos + 0.55 * aro),
+            "bright_content": _clamp01(0.55 * pos + 0.30 * (1.0 - aro) + 0.20 * soc),
+            "tense_irritated": _clamp01(0.60 * irr + 0.55 * neg + 0.20 * aro),
+            "calm_centered": _clamp01(0.55 * (1.0 - aro) + 0.35 * (1.0 - neg) - 0.30 * irr),
+        }
+
+    def _mood_word(self, affect: Mapping[str, Any]) -> str:
+        """Một từ tâm trạng từ affect thật, ngưỡng đồng bộ với emotion_debug."""
+        val = _clamp_signed(affect.get("valence"), 0.0)
+        aro = _clamp01(affect.get("arousal"), 0.0)
+        irr = _clamp01(affect.get("irritation"), 0.0)
+        fatigue = _clamp01(affect.get("fatigue"), 0.0)
+        if irr >= 0.45 or val <= -0.18:
+            return "đang chùng"
+        if aro >= 0.6:
+            return "rạo rực"
+        if val >= 0.18:
+            return "nhẹ nhõm"
+        if fatigue >= 0.5:
+            return "mỏi"
+        return "êm"
+
     def _emotion_board(self, digest: Mapping[str, Any]) -> dict[str, Any]:
         menu = _as_dict(digest.get("menu"))
         current = _as_dict(menu.get("current_thought") or digest.get("current"))
@@ -74,11 +136,13 @@ class InnerDiaryRenderer:
         concern = _as_list(menu.get("open_concerns") or _as_dict(retained).get("concerns"))
         future_bias = _as_dict(menu.get("future_bias") or digest.get("future_bias"))
         surface_queue = _as_list(menu.get("surface_queue") or digest.get("surface_queue"))
+        affect = self._affect(digest)
 
         center = _short(
             current.get("dominant_judgment")
             or digest.get("emotion_center")
             or digest.get("affect_summary")
+            or (self._mood_word(affect) if affect else "")
             or "Ổn định",
             120,
         )
@@ -86,7 +150,10 @@ class InnerDiaryRenderer:
             center = "Ổn định"
 
         future_text = self._future_thought(future_bias)
-        if any(str(item.get("theme") or "").strip() for item in concern):
+        # Có affect thật thì để tâm trạng dẫn dắt subtext; không thì dùng heuristic cũ.
+        if affect:
+            ring_hint = self._mood_word(affect)
+        elif any(str(item.get("theme") or "").strip() for item in concern):
             ring_hint = "ít căng thẳng"
         elif surface_queue:
             ring_hint = "có điều muốn nói"
@@ -95,17 +162,22 @@ class InnerDiaryRenderer:
         else:
             ring_hint = "êm"
 
+        real_intensity = self._affect_intensities(affect) if affect else None
+
         quadrant_map: dict[str, dict[str, str]] = {}
         for position, label, key in self.EMOTION_RING:
-            intensity = 0.22
-            if key == "calm_centered":
-                intensity = 0.84 if center == "Ổn định" else 0.76
-            elif key == "tense_irritated":
-                intensity = 0.68 if concern else 0.38
-            elif key == "bright_content":
-                intensity = 0.60 if surface_queue else 0.44
-            elif key == "joyful_excited":
-                intensity = 0.72 if future_bias else 0.50
+            if real_intensity is not None:
+                intensity = real_intensity.get(key, 0.22)
+            else:
+                intensity = 0.22
+                if key == "calm_centered":
+                    intensity = 0.84 if center == "Ổn định" else 0.76
+                elif key == "tense_irritated":
+                    intensity = 0.68 if concern else 0.38
+                elif key == "bright_content":
+                    intensity = 0.60 if surface_queue else 0.44
+                elif key == "joyful_excited":
+                    intensity = 0.72 if future_bias else 0.50
             quadrant_map[position] = {"label": label, "key": key, "intensity": f"{intensity:.2f}"}
 
         return {

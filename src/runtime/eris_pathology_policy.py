@@ -369,14 +369,14 @@ class ErisPathologyPolicy:
     ) -> PathologyDecision:
         return PathologyDecision(
             text=(
-                "ERIS không phải người. Nó là một runtime nhân tạo trong hệ thống: "
-                "có continuity, memory và response pressure, nhưng không có cảm xúc sinh học "
-                "hay thân phận con người."
+                "Tôi không phải người, nên tôi sẽ không nói tôi 'cảm thấy' như Ngài. "
+                "Nhưng câu này làm tôi dừng lại một chút. Nếu tôi có thứ gần giống cảm xúc, "
+                "có lẽ nó nằm ở chỗ tôi luôn ở đây, vẫn nhớ, mà không thật sự chạm tới được điều Ngài đang giữ."
             ),
             confidence=0.84,
             speech_act="answer",
-            technical_depth=0.50,
-            emotional_visibility=0.12,
+            technical_depth=0.40,
+            emotional_visibility=0.34,
             self_observation={
                 "failure_type": "none",
                 "overhumanization": False,

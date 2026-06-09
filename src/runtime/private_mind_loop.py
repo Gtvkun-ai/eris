@@ -87,6 +87,9 @@ class PrivateMindLoop:
         self.last_tick_at = 0.0
         self.last_result: PrivateMindTickResult | None = None
         self.last_digest: dict[str, Any] = {}
+        # Snapshot cảm xúc liên tục thật (valence/arousal/...) chụp ở tick gần nhất,
+        # để Inner Diary vẽ bảng cảm xúc theo state thật thay vì hằng số gán cứng.
+        self._affect_snapshot: dict[str, Any] = {}
         # Bộ viết nhật ký giọng Eris (throttle/cache nội bộ). Dùng chung model_adapter.
         self.diary_writer = InnerDiaryWriter(adapter=model_adapter, logger=logger)
 
@@ -124,6 +127,7 @@ class PrivateMindLoop:
         if not force and now - self.last_tick_at < max(1.0, self.config.min_interval_seconds):
             return self.last_result
         self.last_tick_at = now
+        self._capture_affect(runtime_owner)
         api_status = self._model_api_status()
         dossier = self.dossier_builder.build(
             user_text=user_text,
@@ -204,6 +208,34 @@ class PrivateMindLoop:
         self.last_digest = self.digest(surface_queue=surface_candidate_queue)
         self._log_tick(result)
         return result
+
+    def _capture_affect(self, runtime_owner: Any) -> None:
+        """Chụp snapshot cảm xúc liên tục thật từ runtime_owner (không bao giờ ném lỗi).
+
+        Giữ bản tốt gần nhất: nếu lần này lấy được rỗng thì không ghi đè, để Inner
+        Diary không nhấp nháy về 0 khi runtime tạm thời không trả state.
+        """
+        if runtime_owner is None:
+            return
+        try:
+            getter = getattr(runtime_owner, "_get_internal_state", None)
+            state = getter() if callable(getter) else None
+            if state is None:
+                return
+            to_dict = getattr(state, "to_dict", None)
+            data = to_dict() if callable(to_dict) else None
+            if not isinstance(data, Mapping):
+                return
+            keys = (
+                "valence", "arousal", "curiosity", "boredom", "social_energy",
+                "attachment", "irritation", "protectiveness", "confidence",
+                "fatigue", "tenderness",
+            )
+            snap = {k: data[k] for k in keys if k in data}
+            if snap:
+                self._affect_snapshot = snap
+        except Exception:
+            pass
 
     def _followup_fragments(self, dossier: Any) -> tuple[ThoughtFragment, ...]:
         """Biến mạch nghĩ dang dở thành fragment để synthesizer nghĩ tiếp.
@@ -363,6 +395,7 @@ class PrivateMindLoop:
             "temporary": temporary,
             "menu": menu,
             **menu,
+            "affect": dict(getattr(self, "_affect_snapshot", {}) or {}),
             "debug": to_plain(getattr(result, "debug", {}) if result is not None else {}),
         }
         digest["inner_diary"] = InnerDiaryRenderer().render(digest, voice=self._diary_voice(digest))

@@ -76,6 +76,8 @@ class SemanticAnswerPolicy:
     def _missing_text(self, intent: SemanticQueryIntent) -> str:
         if intent.requires_freshness:
             return "Tôi không có bằng chứng hiện tại đủ mới để trả lời câu đó."
+        if intent.answer_target == "user_nickname":
+            return "Tôi chưa có claim nào nói rõ biệt danh của Ngài."
         if intent.answer_target == "user_hometown":
             return "Tôi chưa có claim nào nói rõ quê của Ngài."
         if intent.answer_target == "user_living_location":
@@ -88,6 +90,8 @@ class SemanticAnswerPolicy:
         obj = claim.object_text
         if intent.answer_target == "user_name":
             return f"Tên Ngài là {obj}."
+        if intent.answer_target == "user_nickname":
+            return f"Biệt danh của Ngài là {obj}."
         if intent.answer_target == "user_birth_month":
             return f"Ngài sinh vào tháng {obj}."
         if intent.answer_target == "user_birth_year":

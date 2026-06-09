@@ -1485,7 +1485,9 @@ class PostGenerationFiltersMixin:
         if utterance_type in {"inner_whim", "random_chatter", "light_muse", "soft_boundary"}: # muốn nói những câu nói mang tính bày tỏ sự hiện diện, cảm xúc, hoặc suy nghĩ thoáng qua, không gắn liền với tín hiệu cụ thể nào
             if channel == "force_speak":
                 return "micro_presence"
-            return "social_presence" # promp dùng style thân thiện, bày tỏ sự hiện diện, có thể hơi ngẫu hứng, không cần bám sát tín hiệu cụ thể nào
+            if utterance_type == "soft_boundary": # soft_boundary không có intent công khai riêng → giữ social_presence
+                return "social_presence"
+            return utterance_type # autonomous giữ đúng bản sắc nói nhảm/ngẫu hứng/muse nhẹ thay vì phẳng thành social_presence
         if not hasattr(speech_core, "should_speak"): # nếu không có thông tin về việc có nên nói hay không, thì mặc định là muốn nói nhưng không có tín hiệu rõ ràng, để tránh nói dài dòng không cần thiết
             return utterance_type or "brief_ack" # nếu có kiểu phát ngôn thì dùng, nếu không thì mặc định là kiểu phát ngôn ngắn gọn
         return self._speech_intent_from_core(speech_core, channel=channel)
