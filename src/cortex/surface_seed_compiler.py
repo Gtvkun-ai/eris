@@ -10,6 +10,12 @@ from typing import Any, Mapping
 
 from .surface_arbiter import SurfaceImpulse
 
+try:
+    from runtime.liveliness_config import LivelinessConfig, load_liveliness_config
+except Exception:  # pragma: no cover - allow import in partial test envs
+    LivelinessConfig = None  # type: ignore[assignment]
+    load_liveliness_config = None  # type: ignore[assignment]
+
 
 _SPACE_RE = re.compile(r"\s+")
 _JSONISH_RE = re.compile(r"[\{\}\[\]]")
@@ -52,6 +58,7 @@ class CompiledSurfaceSeed:
     surface_contract_flags: tuple[str, ...] = ()
     debug: dict[str, object] = field(default_factory=dict)
     impulse: SurfaceImpulse | None = None
+    alternative_impulses: tuple[SurfaceImpulse, ...] = ()
 
     @property
     def selected(self) -> bool:
@@ -77,6 +84,23 @@ class _SeedCandidate:
 
 class SurfaceSeedCompiler:
     """Small compiler that turns scattered internal pressure into one public-safe seed."""
+
+    #: Enumerated no-seed reasons (no generic/unspecified failure value allowed).
+    NO_SEED_REASONS = (
+        "no_public_anchor",
+        "private_only",
+        "timer_only",
+        "low_pressure",
+    )
+
+    def __init__(self, *, config: "LivelinessConfig | None" = None) -> None:
+        if config is not None:
+            self._config = config
+        elif load_liveliness_config is not None:
+            self._config = load_liveliness_config()
+        else:  # pragma: no cover - partial env fallback
+            self._config = None
+        self._seed_max_len = int(getattr(self._config, "seed_max_len", 240) or 240)
 
     def compile(
         self,
@@ -117,11 +141,15 @@ class SurfaceSeedCompiler:
                 }
             )
 
-        selected = sorted(safe, key=self._rank_key, reverse=True)[0]
+        ranked = sorted(safe, key=self._rank_key, reverse=True)
+        selected = ranked[0]
         flags = ["allow_no_screen_anchor", "must_not_claim_screen"] if selected.missing_screen else ()
         if str(surface_kind or "") in {"re_engagement", "presence_maintenance"} and selected.missing_screen:
             flags = tuple(dict.fromkeys((*flags, "thin_presence_no_screen")))
         impulse = self._to_impulse(selected, surface_kind=surface_kind)
+        alternative_impulses = tuple(
+            self._to_impulse(candidate, surface_kind=surface_kind) for candidate in ranked[1:]
+        )
         return CompiledSurfaceSeed(
             topic_seed=selected.topic_seed,
             public_seed=selected.public_seed,
@@ -136,10 +164,13 @@ class SurfaceSeedCompiler:
             debug={
                 "reason": "selected",
                 "source": selected.root_source,
+                "selected_source": selected.root_source,
+                "selected_confidence": round(float(selected.confidence), 3),
                 "public_anchor": selected.public_anchor,
                 "candidate_count": len(candidates),
             },
             impulse=impulse,
+            alternative_impulses=alternative_impulses,
         )
 
     def _from_extra_impulses(self, extra_impulses: tuple[object, ...]) -> tuple[_SeedCandidate, ...]:
@@ -258,20 +289,18 @@ class SurfaceSeedCompiler:
         text = self._clean(seed)
         if not text:
             return False
+        # Public-safety gate (Req 1.7): drop anything that leaks private content.
+        if not self._candidate_text_public(text):
+            return False
         lowered = text.lower()
         if _GENERIC_MEMORY_SEED_RE.match(lowered):
             return False
-        words = re.findall(r"[\w']+", lowered, flags=re.UNICODE)
-        if len(words) < 5 and len(text) < 32:
-            return False
-        generic_terms = {"memory", "resonance", "pattern", "remembered", "recalled", "activation"}
-        meaningful = [word for word in words if word not in generic_terms and len(word) > 2]
-        if len(meaningful) < 3:
+        # Retain any non-empty public-safe seed regardless of token length
+        # (Req 1.4), bounded by the configured maximum length.
+        if len(text) > self._seed_max_len:
             return False
         evidence_blob = " ".join(str(item or "") for item in tuple(evidence or ())).lower()
         if not evidence_blob.strip():
-            return False
-        if evidence_blob.startswith("memory_activation:") and len(text) < 48:
             return False
         return True
 
@@ -365,13 +394,21 @@ class SurfaceSeedCompiler:
         cue_conf = self._clamp(getattr(presence_cue, "confidence", 0.0))
         seed = source[0]
         vision_fact_id = self._anchor_token("vision_fact", seed)
+        # Evidence-derived confidence: a fresh, specific, concrete screen fact is
+        # high-signal and must be able to out-rank a generic private-life seed
+        # (which sits around 0.74). Confidence grows with specificity and the
+        # number of corroborating concrete sources, bounded to [0,1].
+        specificity = 0.08 if self._is_specific_vision_fact(seed) else 0.0
+        corroboration = 0.04 * max(0, min(3, len(source) - 1))
+        confidence = self._clamp(max(cue_conf, 0.70) + specificity + corroboration)
+        pressure = self._clamp(max(0.50, cue_conf))
         return (
             _SeedCandidate(
                 topic_seed=seed,
                 public_seed=seed,
                 evidence=tuple(dict.fromkeys((vision_fact_id, *source[:3], "vision_fact")))[:6],
-                confidence=max(0.40, cue_conf, 0.50),
-                pressure=max(0.36, cue_conf),
+                confidence=confidence,
+                pressure=pressure,
                 root_source="vision_fact",
                 impulse_kind="technical_help",
                 action_opportunity="one tiny practical or observational cue rooted in visible evidence",
@@ -562,17 +599,23 @@ class SurfaceSeedCompiler:
             return False
         return True
 
-    def _rank_key(self, candidate: _SeedCandidate) -> tuple[float, float, float]:
+    def _rank_key(self, candidate: _SeedCandidate) -> tuple[float, float, float, float]:
         anchor_bonus = 0.18 if candidate.public_anchor else 0.0
+        # Grounded sources (what the character can actually observe now) should
+        # not sit structurally below a generic private-life seed. Give them a
+        # bonus and a grounded tie-break so an equal-confidence grounded seed
+        # ranks at least as high as private_life.
+        grounded_sources = {"vision_fact", "memory_resonance", "thought_stream"}
         source_bonus = {
-            "memory_resonance": 0.08,
-            "thought_stream": 0.06,
+            "vision_fact": 0.20,
+            "memory_resonance": 0.12,
+            "thought_stream": 0.08,
             "subconscious_synthesizer": 0.06,
             "private_mind_surface": 0.07,
-            "vision_fact": 0.05,
         }.get(candidate.root_source, 0.0)
+        grounded = 1.0 if candidate.root_source in grounded_sources else 0.0
         score = candidate.confidence * 0.52 + candidate.pressure * 0.48 + anchor_bonus + source_bonus
-        return (score, candidate.confidence, candidate.pressure)
+        return (score, grounded, candidate.confidence, candidate.pressure)
 
     def _private_impulse_has_anchor(self, impulse: SurfaceImpulse) -> bool:
         if bool(getattr(impulse, "needs_external_evidence", False)):

@@ -70,7 +70,10 @@ def test_wandering_surface_goes_through_surface_arbiter():
 
     decision = arbiter.arbitrate(cognitive_frame=frame, snapshot=SimpleNamespace(idle_seconds=120.0, focus_kind="idle"), silent_cycles=4)
 
-    assert decision.should_speak is True
+    # New surfacing design: an endogenous wandering thought without a concrete
+    # anchor token (memory_id/event_id/vision_fact_id) is held to body-only by
+    # the persona-anchor gate rather than speaking. It still goes through the
+    # arbiter and is classified as wandering_surface_candidate.
+    assert decision.body_only is True
     assert decision.kind == "wandering_surface_candidate"
-    assert decision.generation_mode in {"normal_llm", "force_llm"}
     assert "tôi đang nghĩ về ngài" not in decision.text.lower()

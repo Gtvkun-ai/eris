@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 from cortex.contracts import CognitiveFrame, CognitiveMemoryUpdate
 from domain import Decision
+from runtime.liveliness_tracker import DecisionRecord, GROUNDED_SOURCES, LivelinessTracker
 
 
 class CognitiveFrameRecorderMixin:
@@ -870,6 +871,61 @@ class CognitiveFrameRecorderMixin:
     # Finalize + StateCommitter
     # ------------------------------------------------------------------
 
+    def _liveliness_tracker(self) -> LivelinessTracker:
+        tracker = getattr(self, "_liveliness_tracker_instance", None)
+        if tracker is None:
+            retention = 100
+            cfg = getattr(self, "_liveliness_config", None)
+            if cfg is not None:
+                retention = int(getattr(cfg, "decision_retention", 100) or 100)
+            tracker = LivelinessTracker(retention=retention)
+            self._liveliness_tracker_instance = tracker
+        return tracker
+
+    def _record_liveliness_decision(self, frame: CognitiveFrame, final_text: str) -> None:
+        """Emit one DecisionRecord per autonomous idle cycle (Req 5.5, 6)."""
+
+        try:
+            if str(getattr(frame, "channel", "") or "") not in {"autonomous", "background"}:
+                return
+            final = getattr(frame, "final_decision", {}) or {}
+            parse_mode = str(final.get("parse_mode", "") if isinstance(final, Mapping) else "")
+            animation = str(final.get("animation", "") if isinstance(final, Mapping) else "")
+            text = (final_text or "").strip()
+
+            seed_source = str(
+                getattr(getattr(frame, "broadcast", None), "label", "") or ""
+            ).strip() or "none"
+            if text:
+                emitted_kind = "grounded_line" if seed_source in GROUNDED_SOURCES else "spoken"
+            elif animation:
+                emitted_kind = "body_only"
+            else:
+                emitted_kind = "silence"
+
+            no_seed_reason = ""
+            if not text and parse_mode in {"no_speech", "ambient_silence"}:
+                no_seed_reason = parse_mode
+
+            record = DecisionRecord(
+                cycle_id=str(getattr(frame, "cycle_id", "") or ""),
+                emitted_kind=emitted_kind,
+                seed_source=seed_source,
+                seed_confidence=float(getattr(getattr(frame, "broadcast", None), "score", 0.0) or 0.0),
+                candidate_count=0,
+                grounding_evidence=(seed_source,) if seed_source != "none" else (),
+                no_seed_reason=no_seed_reason,
+                ambient_suppression=str(getattr(self, "_last_ambient_suppression_reason", "") or ""),
+                text=text,
+                timestamp=float(getattr(frame, "started_at", 0.0) or time.time()),
+            )
+            self._liveliness_tracker().record(record)
+            # Reset the one-shot ambient suppression marker after recording.
+            self._last_ambient_suppression_reason = ""
+        except Exception:
+            # Observability must never break the loop.
+            pass
+
     def _finalize_cognitive_frame(self, frame: CognitiveFrame) -> None:
         final_text = str((getattr(frame, "final_decision", {}) or {}).get("text", "") if isinstance(getattr(frame, "final_decision", {}), dict) else "")
         if final_text.strip():
@@ -877,6 +933,8 @@ class CognitiveFrameRecorderMixin:
             family = str(getattr(getattr(frame, "meaning_layer", None), "semantic_family", "") or "")
             if family:
                 self.recent_meaning_families = (*tuple(getattr(self, "recent_meaning_families", ()) or ()), family)[-8:]
+
+        self._record_liveliness_decision(frame, final_text)
 
         self.last_cognitive_frame = frame
         self.cognitive_frames.append(frame)

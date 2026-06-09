@@ -136,7 +136,9 @@ def _make_loop(adapter) -> PrivateMindLoop:
     )
     concern_store = ConcernStore(path=None)  # in-memory, không ghi file
     dossier_builder = EvidenceDossierBuilder()
-    evaluator_pipeline = MiniEvaluatorPipeline(model_adapter=adapter)
+    # Tắt cổng relevance: test này drive tick lặp lại với cùng dossier để dồn
+    # streak 503 vào adapter — nó kiểm tra circuit breaker của adapter, không phải cổng.
+    evaluator_pipeline = MiniEvaluatorPipeline(model_adapter=adapter, relevance_gate_enabled=False)
     synthesizer = GemmaInnerSynthesizer(model_adapter=adapter, min_fragments_for_model=3)
     mutation_bus = StateMutationBus()
     surface_valve = SurfaceValve()

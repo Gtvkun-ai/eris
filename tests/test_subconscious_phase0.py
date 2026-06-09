@@ -203,6 +203,8 @@ def test_surface_arbiter_can_read_phase0_subconscious_report() -> None:
 
     decision = arbiter.arbitrate(cognitive_frame=frame, silent_cycles=0)
 
-    assert decision.should_speak is True
+    # New surfacing design: a Phase 0 subconscious seed without a concrete anchor
+    # token settles to body-only via the persona-anchor gate. It still goes
+    # through the arbiter and is classified as a thought/memory surface.
+    assert decision.body_only is True
     assert decision.kind in {"thought_stream_surface", "memory_resonance"}
-    assert decision.text == "Tôi giữ lại mảnh này đã."

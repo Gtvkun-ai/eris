@@ -8,6 +8,8 @@ không có fragment từ evaluator đó. Pool API dự phòng lo việc resilien
 
 from __future__ import annotations
 
+import hashlib
+import os
 from typing import Any, Iterable, Mapping, Protocol
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -17,6 +19,22 @@ from .contracts import (
     clamp01,
     compact_text,
 )
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off", "none"}
+
+
+def _relevance_sig(*parts: str) -> str:
+    """Chữ ký gọn cho trạng thái bằng chứng. Dùng để edge-trigger: chỉ nghĩ lại
+    khi bằng chứng đổi, không nghĩ lại đúng cùng một thứ."""
+    raw = "|".join(p for p in parts if p)
+    if not raw:
+        return ""
+    return hashlib.sha1(raw.encode("utf-8", "ignore")).hexdigest()[:16]
 
 
 class MiniEvaluatorModelAdapter(Protocol):
@@ -70,6 +88,10 @@ def _from_model(adapter: Any, evaluator_name: str, dossier: EvidenceDossier) -> 
 
 
 class BaseMiniEvaluator:
+    # Evaluator không khai báo cổng relevance thì luôn chạy (fail-open, an toàn cho
+    # evaluator tùy biến được truyền vào ngoài 4 cái mặc định).
+    supports_relevance_gate = False
+
     def __init__(self, name: str, *, model_adapter: Any = None) -> None:
         self.name = name
         self.model_adapter = model_adapter
@@ -77,29 +99,105 @@ class BaseMiniEvaluator:
     def evaluate(self, dossier: EvidenceDossier) -> ThoughtFragment | None:
         return _from_model(self.model_adapter, self.name, dossier)
 
+    def relevance_signature(self, dossier: EvidenceDossier) -> str | None:
+        """Trả None nếu lúc này KHÔNG có gì đáng để mảnh này nghĩ.
+        Trả chữ ký nếu CÓ — chữ ký đổi khi bằng chứng liên quan đổi."""
+        return None
+
 
 class IntentEvaluator(BaseMiniEvaluator):
+    supports_relevance_gate = True
+
     def __init__(self, *, model_adapter: Any = None) -> None:
         super().__init__("intent_evaluator", model_adapter=model_adapter)
 
+    def relevance_signature(self, dossier: EvidenceDossier) -> str | None:
+        # Đáng nghĩ khi có lời người dùng mới, hoặc có goal/task đang bám.
+        goal = (dossier.active_goal or "").strip()
+        task = (dossier.current_task or "").strip()
+        last_text = last_intent = ""
+        if dossier.recent_user_turns:
+            t = dossier.recent_user_turns[-1]
+            last_text = str(t.get("text") or "").strip()
+            last_intent = str(t.get("intent") or "").strip()
+        if not last_text and not goal and not task:
+            return None
+        return _relevance_sig("intent", last_text[:200], last_intent[:60], goal[:160], task[:120])
+
 
 class MemoryResonanceEvaluator(BaseMiniEvaluator):
+    supports_relevance_gate = True
+
     def __init__(self, *, model_adapter: Any = None) -> None:
         super().__init__("memory_resonance_evaluator", model_adapter=model_adapter)
 
+    def relevance_signature(self, dossier: EvidenceDossier) -> str | None:
+        # Cộng hưởng ký ức chỉ đáng nghĩ khi có ký ức trồi lên hoặc có lỗi cần sửa.
+        hits = list(dossier.memory_hits)[:6]
+        repairs = list(dossier.prior_repair_failures)[:4]
+        if not hits and not repairs:
+            return None
+        hit_ids = ",".join(str(h.get("evidence_id") or h.get("text") or "")[:40] for h in hits)
+        repair_ids = ",".join(str(r.get("summary") or "")[:40] for r in repairs)
+        return _relevance_sig("memory", hit_ids, repair_ids)
+
 
 class RiskAndPermissionEvaluator(BaseMiniEvaluator):
+    supports_relevance_gate = True
+
     def __init__(self, *, model_adapter: Any = None) -> None:
         super().__init__("risk_and_permission_evaluator", model_adapter=model_adapter)
 
+    def relevance_signature(self, dossier: EvidenceDossier) -> str | None:
+        # Chỉ soi rủi ro/quyền khi thật sự có hành động sắp/đã làm hoặc có cờ quyền.
+        surface = dossier.surface_outcome or {}
+        runtime = dossier.runtime_state if isinstance(dossier.runtime_state, dict) else {}
+        perm = runtime.get("permission_flags")
+        has_action = bool(surface.get("kind") or surface.get("text") or surface.get("should_speak"))
+        has_perm = bool(perm) or ("api_cost_budget" in runtime)
+        if not has_action and not has_perm:
+            return None
+        return _relevance_sig(
+            "risk",
+            str(surface.get("kind") or ""),
+            str(surface.get("text") or "")[:120],
+            str(surface.get("should_speak") or ""),
+            str(perm or ""),
+            str(runtime.get("api_cost_budget") or ""),
+        )
+
 
 class FutureBiasEvaluator(BaseMiniEvaluator):
+    supports_relevance_gate = True
+
     def __init__(self, *, model_adapter: Any = None) -> None:
         super().__init__("future_bias_evaluator", model_adapter=model_adapter)
 
+    def relevance_signature(self, dossier: EvidenceDossier) -> str | None:
+        # Chỉ nắn bias tương lai khi có concern đủ áp lực; lọc nhiễu áp lực nhỏ.
+        concerns = [c for c in (dossier.concern_snapshots or ()) if isinstance(c, dict)]
+        meaningful = [c for c in concerns if float(c.get("pressure", 0.0) or 0.0) >= 0.25]
+        if not meaningful:
+            return None
+        meaningful.sort(key=lambda c: float(c.get("pressure", 0.0) or 0.0), reverse=True)
+        parts = []
+        for c in meaningful[:4]:
+            theme = str(c.get("theme") or "")[:60]
+            # Bucket áp lực để dao động nhỏ không sinh chữ ký mới liên tục.
+            bucket = round(float(c.get("pressure", 0.0) or 0.0) * 4) / 4
+            parts.append(f"{theme}:{bucket}")
+        task = (dossier.current_task or "").strip()[:80]
+        return _relevance_sig("future_bias", ",".join(parts), task)
+
 
 class MiniEvaluatorPipeline:
-    def __init__(self, *, model_adapter: Any = None, evaluators: Iterable[BaseMiniEvaluator] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        model_adapter: Any = None,
+        evaluators: Iterable[BaseMiniEvaluator] | None = None,
+        relevance_gate_enabled: bool | None = None,
+    ) -> None:
         self.model_adapter = model_adapter
         self.evaluators = tuple(
             evaluators
@@ -111,8 +209,50 @@ class MiniEvaluatorPipeline:
                 FutureBiasEvaluator(model_adapter=model_adapter),
             )
         )
+        # Cổng relevance: chỉ gọi mảnh nào có bằng chứng đáng nghĩ và vừa đổi.
+        # Tham số tường minh thắng env; mặc định đọc ERIS_PRIVATE_MIND_RELEVANCE_GATE.
+        self.relevance_gate_enabled = (
+            _env_flag("ERIS_PRIVATE_MIND_RELEVANCE_GATE", True)
+            if relevance_gate_enabled is None
+            else bool(relevance_gate_enabled)
+        )
+        self._last_signatures: dict[str, str] = {}
+
+    def _evaluators_to_run(self, dossier: EvidenceDossier) -> tuple[list[BaseMiniEvaluator], dict[str, str]]:
+        """Quyết định mảnh nào đáng gọi lúc này (không tốn API).
+
+        Bỏ qua mảnh khi: không khai báo cổng → luôn chạy; có cổng nhưng không có
+        bằng chứng (None) → im; hoặc bằng chứng trùng đúng lần nghĩ trước → im.
+        """
+        if not self.relevance_gate_enabled:
+            return list(self.evaluators), {}
+        to_run: list[BaseMiniEvaluator] = []
+        fresh_sigs: dict[str, str] = {}
+        for ev in self.evaluators:
+            if not getattr(ev, "supports_relevance_gate", False):
+                to_run.append(ev)
+                continue
+            try:
+                sig = ev.relevance_signature(dossier)
+            except Exception:
+                sig = None
+            if not sig:
+                continue  # không có gì đáng nghĩ cho mảnh này
+            if self._last_signatures.get(ev.name) == sig:
+                continue  # đã nghĩ đúng trạng thái này rồi, khỏi nghĩ lại
+            to_run.append(ev)
+            fresh_sigs[ev.name] = sig
+        return to_run, fresh_sigs
 
     def evaluate(self, dossier: EvidenceDossier) -> tuple[ThoughtFragment, ...]:
+        to_run, fresh_sigs = self._evaluators_to_run(dossier)
+        if not to_run:
+            return ()
+
+        # Ghi nhận chữ ký ngay khi quyết định gọi: một trạng thái bằng chứng chỉ
+        # đáng nghĩ một lần. Lỗi API tạm thời do adapter pool tự throttle/cooldown.
+        self._last_signatures.update(fresh_sigs)
+
         def _run(evaluator: BaseMiniEvaluator) -> ThoughtFragment | None:
             try:
                 return evaluator.evaluate(dossier)
@@ -120,8 +260,8 @@ class MiniEvaluatorPipeline:
                 return None
 
         fragments: list[ThoughtFragment] = []
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = {pool.submit(_run, ev): ev for ev in self.evaluators}
+        with ThreadPoolExecutor(max_workers=max(1, len(to_run))) as pool:
+            futures = {pool.submit(_run, ev): ev for ev in to_run}
             for future in as_completed(futures):
                 result = future.result()
                 if result is not None and result.claim and result.score >= 0.24:

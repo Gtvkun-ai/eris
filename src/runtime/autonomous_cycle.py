@@ -36,6 +36,10 @@ from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from domain import Decision
 from runtime.body_bias import BodyBiasProjector
+from runtime.ambient_silence_policy import (
+    ambient_silence_cooldown_seconds,
+    should_hold_ambient_silence,
+)
 from runtime.presence_controller import SocialPresenceEvent
 from runtime.speech_pipeline import SpeechIntentDecision
 
@@ -703,6 +707,12 @@ class AutonomousCycleMixin:
         if not normalized:
             return True
 
+        # Content-free OCR placeholder from the vision compressor fallback
+        # ("screen context inferred from OCR; focus=unknown; intent=unknown")
+        # carries no real screen content. Drop it so it never leaks as evidence.
+        if "screen context inferred from ocr" in normalized:
+            return True
+
         useful_terms = {
             "build",
             "chat",
@@ -1142,22 +1152,7 @@ class AutonomousCycleMixin:
             reason="Fallback an toàn: chỉ cho phép acknowledgement rất ngắn.",
         )
     def _ambient_silence_cooldown_seconds(self, snapshot, ti_report) -> int:
-        mode = str(getattr(ti_report, "mode", "") or "")
-        kind = str(getattr(snapshot, "active_window_kind", "") or "")
-
-        if mode == "resource_guard":
-            return 0
-        if mode == "pattern_muse":
-            return 150
-        if kind in {"coding", "documentation"}:
-            return 120
-        if kind == "communication":
-            return 105
-        if kind == "entertainment":
-            return 150
-        if mode in {"system_watch", "pattern_watch", "social_watch"}:
-            return 120
-        return 105
+        return ambient_silence_cooldown_seconds(snapshot, ti_report)
     def _should_hold_ambient_silence(
         self,
         *,
@@ -1166,17 +1161,17 @@ class AutonomousCycleMixin:
         speech_intent: str = "",
         now: float | None = None,
     ) -> bool:
-        if speech_intent in {"system_warning", "user_requested"}:
-            return False
-        if not self.last_text or self.last_autonomous_spoken_at <= 0.0:
-            return False
-
-        cooldown = self._ambient_silence_cooldown_seconds(snapshot, ti_report)
-        if cooldown <= 0:
-            return False
-
-        current_time = time.time() if now is None else now
-        return (current_time - self.last_autonomous_spoken_at) < cooldown
+        held, reason = should_hold_ambient_silence(
+            snapshot=snapshot,
+            ti_report=ti_report,
+            last_text=self.last_text,
+            last_autonomous_spoken_at=self.last_autonomous_spoken_at,
+            speech_intent=speech_intent,
+            now=now,
+        )
+        # Stash the structured reason for the per-cycle DecisionRecord.
+        self._last_ambient_suppression_reason = reason if held else ""
+        return held
     def _should_skip_weak_autonomous_speech(
         self,
         *,

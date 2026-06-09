@@ -1,5 +1,57 @@
 # ERIS DEBUG SOURCE MAP
 
+AUDIT 2026-06-09 DIRTY WORKSPACE / CHUA COMMIT:
+- Da chay `git fetch --all --prune`: `main` van ngang `origin/main` (`HEAD 9aa149f`), khong co commit remote moi can pull tai luc audit. "File chua pull" trong dot nay chu yeu la dirty/untracked local workspace, chua phai remote delta.
+- Workspace hien co dirty tracked: `body/UdpListener.cs`, `src/runtime/{autonomous_cycle.py,chat_cycle.py,cognitive_frame_recorder.py,coordinator.py,presence_controller.py,private_mind_loop.py,private_mind_model_adapter.py}`, `src/cortex/{affect_semantics.py,micro_repeat_guard.py,relationship_dynamics.py,surface_seed_compiler.py,vision_semantic_compressor.py}`, `src/cortex/private_mind/{__init__.py,inner_synthesizer.py,mini_evaluators.py}`, `src/llm/service.py`, memory state files, va nhieu test.
+- Untracked specs moi: `.kiro/specs/autonomous-liveliness-redesign/` va `.kiro/specs/relationship-state-trigger-fix/`. Doc cu khong co hai spec nay nen thieu ca hai huong san pham: autonomous idle phai "song" bang grounded/varied lines, va relationship warmth phai nhan duoc cau am ap tieng Viet tu nhien.
+- Untracked code moi: `src/cortex/banned_filler.py`, `src/runtime/ambient_silence_policy.py`, `src/runtime/liveliness_config.py`, `src/runtime/liveliness_tracker.py`, `src/cortex/private_mind/thought_continuity.py`.
+- Untracked tests moi: `tests/test_banned_filler.py`, `tests/test_liveliness_config.py`, `tests/test_liveliness_grounding.py`, `tests/test_liveliness_muse_and_tracker.py`, `tests/test_liveliness_output_filter.py`, `tests/test_liveliness_properties.py`, `tests/test_liveliness_repeat_guard.py`, `tests/test_relationship_warmth_trigger.py`.
+- Untracked diary assets moi: `asset/Resource/diary_analysis.png`, `diary_concern.png`, `diary_concern_card.png`, `diary_future.png`, `diary_memory.png`, `diary_now.png`, `diary_surface.png`, va 9 face mood `diary_face_{calm,mid,hyper}_{neg,neu,pos}.png` kem `.import`.
+- Autonomous liveliness local patch: banned filler single source, liveliness config, grounded seed ranking, short memory seed retention, repeat window >= max idle interval, banned fallback block, muse cooldown exemption, per-cycle `DecisionRecord`. Dang con deferred theo spec: alternative-seed retry sau repeat reject va body-only motion cho no-op ambient branch.
+- Relationship warmth local patch: affect classifier them phrase/prototype `relational_warmth`, relationship dynamics co warmth_gain lam tang trust/attachment_visibility va giam preferred_distance, chat log them `familiarity` + `attachment_vis`.
+- Private mind local patch: mini evaluators co relevance gate/signature de khong goi API lap lai khi evidence khong doi; `ThoughtContinuityStore` moi luu `memory_core/thought_stream.jsonl` va bom recent/unresolved thoughts vao fragment/judgment prompts; synthesizer deteministic weave thanh inner voice nguoi-thu-nhat thay boilerplate.
+- UI diary local patch: `UdpListener.cs` them banner header, mood face 3x3, concern stack expand/collapse, spacing/layout moi. Neu asset PNG chua tracked/commit, Godot panel co the fallback ve glyph/cham hong.
+- Doc nay hien phai doc theo hai lop: `HEAD 9aa149f` la base tracked, con cac muc `DIRTY WORKSPACE` la thay doi do an hien tai chua duoc commit/pull len remote.
+
+AUDIT 2026-06-09 CURRENT HEAD:
+- Tai lieu da duoc recheck voi `HEAD 9aa149f` (2026-06-09); `git status --short` sach tai luc audit. Cac note 2026-06-08 ben duoi chi con la lich su drift, khong phai trang thai workspace hien tai.
+- Update history tu `d287f57` -> `9aa149f`: `f5a2b3b` them `git_audit.md`, embedding/paraphrase model asset, `inner_diary_persistence.py`, va xoa dataset train cu; `ae591c4` chuyen process/model sang remote-only main path va sua env; `23a8c01` them `inner_diary_writer.py` + persistence/transport diary; `9aa149f` them Phase 2 Meaning/ToM, V3 cognitive/shadow/debug pipeline, evidence normalizer, va test suite moi.
+- File/state da KHONG con "dirty/untracked": `src/runtime/cognitive_pipeline.py`, `src/runtime/shadow_pipeline.py`, `src/runtime/debug_trace.py`, `src/core/evidence_normalizer.py`, `tests/test_cognitive_pipeline.py`, `tests/test_shadow_pipeline.py`. Neu section nao ben duoi con ghi `WORKSPACE NEW` / `UNTRACKED`, doc la LAC HAU va uu tien note 2026-06-09 nay.
+- Source hien tai co khoang `367` file `.py/.cs` trong cac vung chinh (`src`, `tests`, `body`, `scripts`, `training`): `src=265`, `tests=84`, `body=6`, `scripts=11`, `training=1`. Cac con so `329` file code / `323` Python / `5,854` C# ben duoi la snapshot cu.
+- Hot LOC recheck nhanh: `body/UdpListener.cs` ~`4,855`, `body/ErisProcessManager.cs` ~`293`, `src/llm/process_manager.py` ~`151`, `src/runtime/cognitive_pipeline.py` ~`294`, `src/runtime/shadow_pipeline.py` ~`256`, `src/runtime/debug_trace.py` ~`304`, `src/core/evidence_normalizer.py` ~`208`, `src/runtime/private_mind_model_adapter.py` ~`1,260`.
+- Model/process path hien tai: C# `ErisProcessManager` chi start Python `src/vision.py` va inject remote env; Python `src/llm/process_manager.py` chi con `RemoteModelProcessManager`, `LlamaServerProcessManager = RemoteModelProcessManager` la alias tuong thich. Moi doan ben duoi noi spawn/reuse/kill local `llama-server`, `GGUF_MODEL_PATH`, `mmproj`, `n_ctx`, hay local vision facts la duong chinh deu LAC HAU.
+- Meaning layer path da doi: `src/cortex/meaning.py` da thanh package `src/cortex/meaning/`, file legacy nam o `src/cortex/meaning/meaning_layer.py`; Phase 2 facade moi la `src/cortex/meaning/pipeline.py` va ToM moi nam o `src/cortex/tom/*`.
+- Training data cu `training/datasets_clean/*` va `training/dataset.jsonl` da bi xoa trong `f5a2b3b`; section nao con coi chung la training data hien tai la SAI, chi nen doc nhu lich su.
+
+PER-FILE UPDATE LEDGER 2026-06-09 (cac file lam doc cu lech):
+- `tongquat.md`: latest `9aa149f`; tai lieu dang duoc audit lai tren HEAD moi.
+- `body/UdpListener.cs`: latest `9aa149f`; UI/body panel da lon hon nhieu, LOC ~`4,855`, doc cu `3,9xx` la cu.
+- `body/ErisProcessManager.cs`: latest `ae591c4`; chi start Python + remote env, khong spawn local llama-server.
+- `src/vision.py`: latest `ae591c4`; boot runtime theo remote/local flags moi, nen doc cu ve local GGUF can doi chieu lai.
+- `src/llm/client.py`: latest `ae591c4`; van co `LlamaServerClient` compatibility, nhung active path la Gemini/OpenAI-compatible.
+- `src/llm/process_manager.py`: latest `ae591c4`; `RemoteModelProcessManager`, speech API path, `build_vision_client() -> None`, alias `LlamaServerProcessManager`.
+- `src/llm/service.py`: latest `9aa149f`; bi anh huong boi client/process remote va chat-format repair tests.
+- `src/runtime/model_budget_policy.py`: latest `ae591c4`; cac note ve `force_local_gguf_main` la cu.
+- `src/runtime/daydream_model_adapter.py`: latest `ae591c4`; khong doc nhu llama-server/OpenAI-compatible local daydream path cu.
+- `src/runtime/private_mind_model_adapter.py`: latest `23a8c01`; LOC ~`1,260`, adapter/resilience/diary context da doi tiep.
+- `src/runtime/private_mind_loop.py`: latest `23a8c01`; inner diary writer/persistence feedback duoc cham tiep.
+- `src/runtime/inner_diary_persistence.py`: latest `f5a2b3b`; file moi tracked cho persistence diary.
+- `src/cortex/private_mind/inner_diary_writer.py`: latest `23a8c01`; file moi tracked, thieu trong doc cu neu chi noi renderer.
+- `src/cortex/private_mind/inner_diary_renderer.py`: latest `23a8c01`; renderer da duoc sua sau `d287f57`.
+- `src/transport/udp.py`: latest `23a8c01`; private/inner diary compact payload da doi tiep.
+- `src/core/evidence_normalizer.py`: latest `9aa149f`; da tracked, khong con workspace-only.
+- `src/runtime/cognitive_pipeline.py`: latest `9aa149f`; da tracked V3 pipeline.
+- `src/runtime/shadow_pipeline.py`: latest `9aa149f`; da tracked shadow mixin.
+- `src/runtime/debug_trace.py`: latest `9aa149f`; da tracked trace renderer.
+- `src/cortex/meaning/meaning_layer.py`: latest `9aa149f`; moved from `src/cortex/meaning.py`.
+- `src/cortex/meaning/pipeline.py`: latest `9aa149f`; Phase2MeaningPipeline moi, ToM-after-Meaning guard.
+- `src/cortex/meaning/*`: latest `9aa149f`; package moi gom ambiguity/config/contracts/debug/intent/read/world/surface policy.
+- `src/cortex/tom/*`: latest `9aa149f`; package Theory of Mind moi.
+- `tests/test_cognitive_pipeline.py`, `tests/test_shadow_pipeline.py`: latest `9aa149f`; da tracked, khong con untracked.
+- `tests/test_phase2_integration.py`, `tests/test_theory_of_mind.py`, `tests/test_world_scene_builder.py`, `tests/test_meaning_hypothesis.py`, `tests/test_pragmatic_intent.py`, `tests/test_overread_brake.py`, `tests/test_sociocultural_context.py`: latest `9aa149f`; coverage moi cho Phase 2 Meaning/ToM.
+- `training/dataset.jsonl`, `training/datasets_clean/*`: deleted in `f5a2b3b`; moi section con ghi ACTIVE TRAINING DATA la sai voi HEAD.
+- `src/paraphrase-multilingual-MiniLM-L12-v2/*`: added in `f5a2b3b`; model asset da nam trong tree qua LFS pointer/asset files, note cu ve `.cache` can doc ky lai.
+
 AUDIT 2026-06-08 WORKSPACE HIEN TAI:
 - Tai lieu nay dang gan voi `HEAD d287f57`, nhung workspace hien tai da co them thay doi dirty/untracked. Doc cac muc ben duoi nhu source map co lich su, khong phai snapshot sach 100%.
 - Source dirty/untracked can luu y khi doi chieu: `src/runtime/chat_cycle.py`, `src/runtime/coordinator.py`, `src/core/evidence_normalizer.py`, `src/runtime/cognitive_pipeline.py`, `src/runtime/debug_trace.py`, `src/runtime/shadow_pipeline.py`, `tests/test_cognitive_pipeline.py`, `tests/test_shadow_pipeline.py`.
@@ -9,7 +61,7 @@ AUDIT 2026-06-08 WORKSPACE HIEN TAI:
 
 Mục tiêu: debug repo ERIS theo kiểu file-to-file — file nào giữ vai trò gì, state nào đọc/ghi, đường gọi nào cần soi khi lỗi.
 
-Snapshot: `HEAD d287f57` (2026-06-08). Lịch sử git delta và audit drift nằm ở `git_audit.md`.
+Snapshot: `HEAD 9aa149f` (2026-06-09). Lich su git delta cu van nam o `git_audit.md`; cac dong gan `HEAD d287f57` la moc lich su, khong phai snapshot hien tai.
 
 Giới hạn trung thực:
 - Bản này chưa phải inventory toàn repo theo kiểu đọc từng dòng tất cả source.
@@ -20,6 +72,10 @@ Giới hạn trung thực:
 ---
 
 # 0B. Repo snapshot hiện tại
+
+AUDIT 2026-06-09 CURRENT HEAD:
+- Cac so ngay duoi day la snapshot cu neu chua duoc chinh tung dong. Recheck nhanh bang `rg --files` cho thay cac vung chinh hien co `367` file `.py/.cs`: `src=265`, `tests=84`, `body=6`, `scripts=11`, `training=1`.
+- `body/UdpListener.cs` da len khoang `4,855` dong; `src/llm/process_manager.py` da rut xuong khoang `151` dong vi local llama-server manager bi go; `src/runtime/private_mind_model_adapter.py` len khoang `1,260` dong.
 
 Snapshot thô để khỏi phải đoán “repo giờ to đến đâu”:
 - tổng source code đã đếm: khoảng `135,525` dòng trong `329` file code (`.py` + `.cs`).
@@ -200,6 +256,12 @@ DOC DRIFT 2026-06-08 WORKSPACE:
 - Chat panel sizing vua duoc chinh trong workspace: `targetHeight=64`, submit button khoang `70..88` px theo scale, close button khoang `32..40`, slice/radius nho hon de nut `Gui` khong bi bop va khong qua to.
 - Khi debug UI chat hom nay, soi `UpdateChatPanelLayout()` va `ApplyChatButtonLayout()` truoc, khong soi runtime model wiring.
 
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File dang dirty local, LOC recheck khoang `4,472` trong working tree hien tai.
+- Inner Diary UI vua co pass moi: `BuildDiaryHeader()` ve banner header bang asset ngang, `DiaryBannerAboveRatio`, mood face 3x3 qua `MoodFaceAsset()`/`UpdateDiaryMoodFace()`, va concern stack co expand/collapse (`_diaryConcernExpanded`, `_diaryConcernToggle`, `RenderDiaryConcernList()`).
+- Sidebar/card spacing va section header layout da doi; footer text cu bi bo khoi root. Neu doc cu chi noi renderer text/section thi thieu UI asset/layout layer moi.
+- Debug UI diary hien nay can soi ca asset PNG trong `asset/Resource/diary_*.png`, khong chi JSON `inner_diary`.
+
 Role: trung tâm body runtime.
 Owns:
 - UDP receive decision port 4242.
@@ -264,21 +326,27 @@ DOC DRIFT 2026-06-08 WORKSPACE:
 - Env hien tai dang inject gom `PYTHONUTF8`, `PYTHONIOENCODING`, `PYTHONUNBUFFERED`, `ERIS_REMOTE_API_ENABLED`, `ERIS_REMOTE_PROVIDER`, `ERIS_REMOTE_BASE_URL`, `ERIS_REMOTE_MODEL`, `ERIS_REMOTE_API_KEY`/`GEMINI_API_KEY` khi co, `ERIS_LOCAL_STYLE_REWRITE_ENABLED=0`, `ERIS_LOCAL_VISION_FACTS=0`.
 - Neu debug "llama-server khong mo", dung doc cu ben duoi se sai huong; workspace hien tai khong con spawn local llama-server tu C#.
 
-Role: start/stop Python `vision.py` và llama-server.
-Reads: Godot export config/env.
+AUDIT 2026-06-09 CURRENT HEAD:
+- Latest file commit: `ae591c4` (2026-06-08). LOC recheck: khoang `293`.
+- Role dung hien tai: start/stop Python `src/vision.py`, merge env/secrets, forward remote cognition config sang Python.
+- KHONG con owner local `llama-server`; khong con `BuildLlamaArguments()`, `LLAMA_SERVER_*`, `GGUF_MODEL_PATH`, `ERIS_N_CTX`, `mmproj`.
+- Neu runtime khong goi duoc model, soi `config/secrets.json`, `.env`, `ERIS_REMOTE_*`, `GEMINI_API_KEY`, va `src/llm/process_manager.py`; dung soi process local llama tu C#.
+
+Role: start/stop Python `vision.py` va inject remote runtime env.
+Reads: Godot export config/env/secrets.
 Writes: process lifecycle, stdout/stderr log.
 Injects env:
 - PYTHONUTF8, PYTHONIOENCODING, PYTHONUNBUFFERED.
-- LLAMA_SERVER_*, GGUF_MODEL_PATH, ERIS_N_CTX.
-- remote API vars, GEMINI_API_KEY.
+- ERIS_REMOTE_API_ENABLED, ERIS_REMOTE_PROVIDER, ERIS_REMOTE_BASE_URL, ERIS_REMOTE_MODEL.
+- ERIS_REMOTE_API_KEY/GEMINI_API_KEY khi co default key.
+- ERIS_LOCAL_STYLE_REWRITE_ENABLED=0, ERIS_LOCAL_VISION_FACTS=0.
 Current code specifics:
-- Tracked history gần: `6658301` -> `763d203`.
-- `LoadProjectSecretsEnvironment()` đọc `config/secrets.json` và merge cả root keys lẫn các section `api_keys`, `env`, `secrets`.
-- `StartVision()` chỉ ép boot `llama-server` khi `EnableLocalStyleRewrite` hoặc `EnableLocalVisionInput` cần lane local; nếu server local đã reachable thì không spawn trùng.
-- `BuildLlamaArguments()` tự thêm `--mmproj`, `--mmproj-offload`, `--cache-ram 1024` theo config hiện tại nếu extra args chưa override.
+- `StartVision()` lap `ProcessStartInfo`, set working dir ve project root, chay Python executable + `src/vision.py`.
+- `RestartVision()` chi stop/start Python; khong restart local model server.
+- Secret merge van doc `config/secrets.json` va sections `api_keys`, `env`, `secrets`.
 Debug khi:
 - vision.py không boot.
-- llama-server không mở.
+- remote env/API key/model config khong vao Python.
 - stdout/stderr mất traceback.
 Status: ACTIVE.
 Risk: secret/env handling cần sạch trước public.
@@ -349,6 +417,19 @@ Role: asset body/UI/Godot metadata.
 Debug khi: sprite mất frame, import lỗi, sound thiếu.
 Status: ASSET.
 
+## `asset/Resource/diary_*.png`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL ASSETS.
+Role: asset UI moi cho Inner Diary panel.
+New assets:
+- banner/card icons: `diary_analysis.png`, `diary_concern.png`, `diary_concern_card.png`, `diary_future.png`, `diary_memory.png`, `diary_now.png`, `diary_surface.png`.
+- mood faces 3x3: `diary_face_calm_neg/neu/pos.png`, `diary_face_mid_neg/neu/pos.png`, `diary_face_hyper_neg/neu/pos.png`.
+- moi PNG co `.import` di kem trong working tree hien tai.
+Used by:
+- `body/UdpListener.cs` `BuildDiaryHeader()`, `BuildDiaryMoodFace()`, `MoodFaceAsset()`, `UpdateDiaryMoodFace()`.
+Debug khi:
+- Diary panel mat icon/face, header bi fallback ve glyph, hoac mood face khong doi theo valence/arousal.
+Status: UNTRACKED LOCAL UI ASSET / SHOULD COMMIT WITH UI PATCH.
+
 ---
 
 # 3. Entrypoint / Runtime spine
@@ -405,6 +486,10 @@ Status: SECURITY SUPPORT.
 
 ## `src/runtime/coordinator.py`
 Role: orchestrator trung tâm.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty. Local patch import shared `ambient_silence_policy`, drop placeholder OCR rong, va xoa legacy `_build_local_presence_maintenance_decision()` / `_build_local_reengagement_decision()` local fallback methods.
+- Wake-gate presence/reengagement local compatibility path khong con dung; body-only parse mode trong tests dang chuyen ve `surface_body_only`.
+- Neu debug route presence cu ma tim `presence_maintenance_body_only` / `re_engagement_body_only`, do la doc/test cu so voi dirty workspace hien tai.
 Owns state:
 - chat history.
 - last response.
@@ -546,15 +631,18 @@ Current code specifics:
 - `_feed_private_mind_outcome()` đẩy outcome/frame vừa finalize ngược vào private mind để nó không chỉ đọc pre-action context mà còn học từ kết quả thật.
 - AUDIT 2026-06-07: source hiện ưu tiên `private_mind_daemon.record_outcome(outcome, frame=frame)`. Chỉ khi daemon không có mới fallback sang `private_mind_loop.concern_store.update_from_outcome()`. Vì vậy debug outcome feedback phải soi daemon trước, không soi loop/store trước.
 - nếu digest chạy được, recorder cập nhật `private_mind_digest` từ daemon hoặc loop và ghi debug note `private_mind_outcome_feedback=...` vào frame.
+- AUDIT 2026-06-09 DIRTY WORKSPACE: file dang dirty, them `_liveliness_tracker()` va `_record_liveliness_decision()` tai chokepoint `_finalize_cognitive_frame()`. Autonomous/background frame gio co the ghi `DecisionRecord` gom cycle/source/confidence/evidence/no_seed_reason/ambient_suppression/text; observability nay khong duoc lam crash loop.
 Debug khi:
 - user correction không đi vào repair memory.
 - frame không ghi outcome.
 - memory_update debug sai.
 - private mind cứ lặp concern cũ vì không nhận outcome sau khi action/speech đã xảy ra.
+- liveliness metric rong du autonomous cycle co final_decision: soi channel frame co phai `autonomous/background` khong va `_liveliness_tracker_instance`.
 Status: ACTIVE.
 
 ## `src/runtime/cognitive_pipeline.py`
 AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked. LOC recheck khoang `294`.
 Role: Phase 1 V3 cognitive pipeline dang chay o mode tach rieng/shadow, khong thay the hoan toan hot path cu.
 Flow:
 - `RawSignal` -> `EvidenceNormalizer` -> `CognitiveFrame` -> `AttentionSalience` -> `CognitiveBudget` -> `WorkingMemory` -> `GlobalWorkspace` -> `DebugTrace`.
@@ -564,10 +652,11 @@ Debug khi:
 - Shadow trace khac frame cu nhung khong ro lech o buoc nao.
 - Evidence V3 vao frame nhung salience/working memory rong.
 - Muon migrate hot path sang V3 thi file nay la entry point can test truoc.
-Status: WORKSPACE NEW / SHADOW-CANDIDATE.
+Status: TRACKED / SHADOW-CANDIDATE / PARTIAL MIGRATION.
 
 ## `src/runtime/shadow_pipeline.py`
 AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked. LOC recheck khoang `256`.
 Role: `ShadowPipelineMixin` chay V3 pipeline song song de so sanh, khong anh huong quyet dinh cu.
 Controls:
 - Bat bang env `ERIS_SHADOW_PIPELINE=1` hoac `self.shadow_pipeline_enabled=True`.
@@ -577,19 +666,25 @@ Debug khi:
 - Muon xem V3 da san sang thay frame cu chua.
 - Pipeline moi co trace tot nhung output public van theo old frame.
 - Can chung minh migration an toan truoc khi route cognition that sang V3.
-Status: WORKSPACE NEW / SAFE SHADOW ONLY.
+Status: TRACKED / SAFE SHADOW ONLY.
 
 ## `src/runtime/debug_trace.py`
 AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked. LOC recheck khoang `304`.
 Role: render JSON/debug summary ngan cho V3 frame va old frame.
 Notes:
 - Dung duck typing de doc frame/slot/field, tranh phu thuoc contract qua chat.
 - `render_frame_trace()` va `attach_trace_to_frame()` duoc viet de khong lam chet hot path.
 - Day la file can soi khi trace thieu field hoac comparison khong noi duoc pipeline lech o dau.
-Status: WORKSPACE NEW / DEBUG SUPPORT.
+Status: TRACKED / DEBUG SUPPORT.
 
 ## `src/runtime/private_mind_loop.py`
 Role: runtime tick orchestrator cho private mind 5 phase.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty.
+- `PrivateMindLoopConfig.min_fragments_for_synthesis` nay doc tu env `ERIS_PRIVATE_MIND_MIN_FRAGMENTS_SYNTH` (default 2).
+- Loop co `ThoughtContinuityStore` moi: `recent_thoughts` + `unresolved_threads` duoc nhung vao dossier metadata, `has_followup_due()` co the sinh fragment follow-up, va `_record_continuity()` luu mach suy nghi vao `memory_core/thought_stream.jsonl`.
+- `PrivateMindLoop` khong con chi la tick evaluator/synthesis/mutation; no giu them dongs suy nghia lien tuc de synthesizer noi tiep, khong bap benh rời rạc.
 AUDIT 2026-06-07:
 - **LẠC HẬU NẾU COI FILE NÀY LÀ OWNER LIFECYCLE DUY NHẤT.** Source hiện đã thêm `src/runtime/private_mind_daemon.py` làm lifecycle owner cho queue/outcome/digest; `PrivateMindLoop` vẫn xử lý một tick evaluator/synthesis/mutation/valve.
 - lịch sử tracked của file bắt đầu ở `f8555c6`; thay đổi daemon companion đã được commit ở `3782f41`, nên dòng nào còn nói daemon là local/untracked đã lạc hậu.
@@ -633,6 +728,12 @@ DOC DRIFT 2026-06-08 WORKSPACE:
 - Cac muc ben duoi ve provider `llama_server`, `ERIS_PRIVATE_MIND_LLAMA_SERVER_URL`, hoac fallback sang local llama-server la LAC HAU trong source hien tai.
 - File hien tai van la private mind adapter lon, nhung runtime path chinh la injected `llm_service` / remote provider, default theo Gemini/OpenAI-compatible. Khong con branch active tao `LlamaServerClient` cho local GGUF.
 - Khi audit bug private mind hom nay, uu tien parser/schema/transient resilience va remote-provider config, khong uu tien mo lai llama-server.
+
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty.
+- Prompt fragment/judgment now explicitly ask for first-person inner voice and can carry `suy_nghi_gan_day` / `mach_dang_do` context from `ThoughtContinuityStore`.
+- `_fragment_messages()` va `_judgment_messages()` khong con noi mot cach cu ky kieu report; chung khuyen model noi nhu mot mach suy nghi lien tuc, noi tiep y vua nghi.
+- Neu private mind van tra bulletin-board style text, thi branch dirty nay chua duoc nhan tren doc cu.
 
 Role: optional API adapter cho private mind evaluator/synthesizer.
 Providers:
@@ -752,6 +853,10 @@ Status: ACTIVE / VERIFY.
 
 ## `src/runtime/presence_controller.py`
 Role: presence maintenance, reengagement, micro-presence synthesis.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty. Local patch import `cortex.banned_filler.is_banned_filler`.
+- `_surface_arbiter_llm_generate()` / sanitizer path block banned filler text bang reason `banned_filler_blocked`.
+- `_local_micro_presence_fallback_text()` khong con append hai stale templates; neu candidate con lai bi banned/duplicate thi tra rong de body-only/silence thay vi noi filler.
 Feeds:
 - presence cue cho `SurfaceArbiter`.
 - body_action/focus_family/evidence/reason.
@@ -936,6 +1041,57 @@ Current code specifics:
 Debug khi: sensory model không trả schema, observer fallback sai, hoặc 0.6B tự cư xử như chat model thay vì gate cảm giác.
 Status: ACTIVE.
 
+## `src/runtime/liveliness_config.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `90` dong.
+Role: config reader cho autonomous-liveliness redesign.
+Env knobs:
+- `ERIS_LIVELINESS_VISION_FRESH_SEC` default `30`.
+- `ERIS_LIVELINESS_SEED_MAX_LEN` default `240`.
+- `ERIS_LIVELINESS_REPEAT_WINDOW_SEC` default `180`, floor bang max idle interval `120`.
+- `ERIS_LIVELINESS_SIM_THRESHOLD_PCT` default `78`.
+- `ERIS_LIVELINESS_MAX_LINE_REPEAT` default `3`.
+- `ERIS_LIVELINESS_MAX_ALT_SEEDS` default `3`.
+- `ERIS_LIVELINESS_MIN_GROUNDED_PER_HR` default `20`.
+- `ERIS_LIVELINESS_SUBINTERVAL_SEC` default `300`.
+- `ERIS_LIVELINESS_MIN_GROUNDED_PCT` default `60`.
+- `ERIS_LIVELINESS_DECISION_RETENTION` default `100`.
+Debug khi: repeat guard/config bi doc sai, env rac lam idle loop crash, hoac liveliness metric lech default.
+Status: UNTRACKED LOCAL CONFIG SUPPORT.
+
+## `src/runtime/ambient_silence_policy.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `58` dong.
+Role: shared ambient silence/muse policy, tach logic lap giua `coordinator.py` va `autonomous_cycle.py`.
+Current code specifics:
+- `ambient_silence_cooldown_seconds()` giu bang cooldown theo mode/focus.
+- `muse_directive_active()` true khi `ti_report.mode == "pattern_muse"`.
+- `should_hold_ambient_silence()` tra `(held, reason)`; `pattern_muse` khong bi giu chi vi cooldown, reason `muse_exempt`.
+Debug khi:
+- `[directive skipped] ambient_silence mode=pattern_muse cooldown=150s` xuat hien du muse dang co seed.
+- coordinator va autonomous_cycle lech nhau ve cooldown.
+Status: UNTRACKED LOCAL POLICY / LIVELINESS REDESIGN.
+
+## `src/runtime/liveliness_tracker.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `84` dong.
+Role: observability ring buffer cho autonomous idle cycles.
+Objects:
+- `DecisionRecord`: cycle_id, emitted_kind, seed_source, seed_confidence, candidate_count, grounding_evidence, no_seed_reason, repeat_rejection, ambient_suppression, text, timestamp.
+- `LivelinessTracker`: retain recent records, query by cycle, compute `window_metrics()`.
+- `LivelinessMetrics`: total/grounded/distinct/proportion/max gap/max repeat.
+Used by:
+- `cognitive_frame_recorder._record_liveliness_decision()` trong dirty workspace.
+Debug khi:
+- can chung minh "song" bang so lieu 60 phut thay vi cam giac: distinct grounded lines, grounded proportion, max gap, repeat count.
+Status: UNTRACKED LOCAL OBSERVABILITY.
+
+## `src/runtime/autonomous_cycle.py`
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty. Local patch import `ambient_silence_policy`, drop placeholder OCR `"screen context inferred from OCR..."`, va delegate `_ambient_silence_cooldown_seconds()` / `_should_hold_ambient_silence()` sang shared policy.
+- `_should_hold_ambient_silence()` gio stash `_last_ambient_suppression_reason` de `DecisionRecord` ghi duoc cooldown/muse reason.
+Debug khi:
+- autonomous line bi chan vi ambient silence nhung khong ro cooldown hay muse exemption.
+- placeholder OCR rong bi tinh nham thanh evidence man hinh.
+Status: ACTIVE DIRTY LOCAL LIVELINESS DRIVER.
+
 ## `src/runtime/contextual_autonomy_loop.py`
 Role: backbone 3-tier autonomy.
 Tick does:
@@ -1094,28 +1250,27 @@ DOC DRIFT 2026-06-08 WORKSPACE:
 - File hien tai chi con `RemoteModelProcessManager`: build main client remote Gemini/OpenAI-compatible, build optional speech client, va bao loi neu `ERIS_REMOTE_API_ENABLED=0`.
 - `build_vision_client()` hien tra `None`; local vision facts bi tat bang env. `LlamaServerProcessManager` chi la alias tuong thich nguoc, khong phai owner local server nua.
 
-Role: quản lý llama-server và build clients.
+AUDIT 2026-06-09 CURRENT HEAD:
+- Latest file commit: `ae591c4` (2026-06-08). LOC recheck: khoang `151`.
+- `RemoteModelProcessManager.build_client()` mac dinh bat remote; neu `ERIS_REMOTE_API_ENABLED=0` thi raise `"Local model runtime da bi go bo..."`.
+- `build_style_client()` uu tien speech API client neu co `ERIS_SPEECH_*`/profile speech, fallback ve main remote client; day la diem moi thieu trong nhieu note cu.
+- `build_vision_client()` tra `None`; neu debug vision facts, dung soi day nhu local model builder nua.
+- `LlamaServerProcessManager = RemoteModelProcessManager` chi de caller cu khong import fail.
+
+Role: build remote Gemini/OpenAI-compatible clients cho cognition/style speech.
 Reads:
-- env remote/local.
-- model/mmproj paths.
+- env remote/speech.
+- provider profiles/secrets.
 Builds:
 - main cognition client.
-- style client.
-- vision client.
+- style/speech client.
+- vision client hien tai: `None`.
 Current code specifics:
-- remote path hiện ưu tiên `ERIS_REMOTE_API_ENABLED`; mặc định provider là Gemini qua `ERIS_REMOTE_PROVIDER=gemini`.
-- remote Gemini mặc định trỏ `https://generativelanguage.googleapis.com/v1beta` và fallback model hiện là `gemma-4-26b-a4b-it` nếu env trống.
-- local path sẽ reuse `llama-server` đang chạy chỉ khi server hiện tại có `n_ctx` đủ; nếu phát hiện `n_ctx` thấp hơn nhu cầu, manager cố thay server cũ thay vì cứ tăng port mãi.
-- `_detect_running_server_n_ctx()` probe `/props` hoặc `/v1/props` để đọc context size của server đang sống.
-- nếu host local đang bị một `llama-server` cũ giữ port, code có best-effort kill theo port nhưng chỉ kill process có tên giống `llama-server`.
-- `_resolve_mmproj_path()` cho phép text-only mode khi không tìm thấy mmproj; `build_vision_client()` chỉ bật khi có cả model và mmproj.
-- `build_style_client()` và `build_vision_client()` cưỡng bức local mode tạm thời bằng cách hạ `ERIS_REMOTE_API_ENABLED=0` quanh lúc build client.
-- history gần đây theo file:
-  `6658301` là một đợt chỉnh nhỏ hơn cho path manager;
-  `5f812fc` sửa tiếp nhẹ;
-  `637e7fc` thêm khoảng `25` dòng hữu ích và là mốc nên xem đầu tiên khi local server reuse / context-size behavior có gì lạ.
-Debug khi: remote/local path sai, llama-server port conflict, context size error.
-Risk: hardcoded default key cần dọn.
+- provider `gemini` doc `GEMINI_API_KEY`/`ERIS_REMOTE_API_KEY`, base URL mac dinh `https://generativelanguage.googleapis.com/v1beta`.
+- provider khac dung OpenAI-compatible client, base URL/model tu profile hoac `ERIS_REMOTE_BASE_URL`/`ERIS_REMOTE_MODEL`.
+- speech API path doc `ERIS_SPEECH_PROVIDER`, `ERIS_SPEECH_SLOT`, `ERIS_SPEECH_API_KEY`, `ERIS_SPEECH_BASE_URL`, `ERIS_SPEECH_MODEL`.
+Debug khi: remote provider/base URL/model/API key sai, speech rewrite dung sai client, caller cu van goi alias `LlamaServerProcessManager`.
+Risk: cac note/test cu co the van mock local llama-server; doi chieu voi alias de tranh ket luan sai.
 Status: ACTIVE.
 
 ## `src/llm/contracts.py`
@@ -1275,6 +1430,7 @@ Status: ACTIVE CONTRACT.
 
 ## `src/core/evidence_normalizer.py`
 AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked. LOC recheck khoang `208`.
 Role: deterministic bridge tu `RawSignal` sang `EvidenceItem`, dung cho CognitivePipeline V3.
 Important:
 - Khong suy dien semantic sau; chi normalize source/type/confidence metadata.
@@ -1284,7 +1440,7 @@ Debug khi:
 - V3 frame thieu evidence du raw signal co data.
 - Evidence confidence/source tag qua cao hoac qua thap.
 - Shadow pipeline lech old frame ngay tu buoc input normalization.
-Status: WORKSPACE NEW / V3 INPUT CONTRACT.
+Status: TRACKED / V3 INPUT CONTRACT.
 
 ## `src/core/cognitive_frame.py`
 Role: CognitiveFrame contract rộng.
@@ -1362,12 +1518,20 @@ Status: ACTIVE.
 
 ## `src/cortex/affect_semantics.py`
 Role: phân tích chat user thành pressure nghĩa.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty theo spec `relationship-state-trigger-fix`.
+- Them phrase natural Vietnamese cho intimacy/attachment nhu `quan trong voi`, `muon hieu`, `hieu duoc em`, `quan tam`, `tran trong em`, `khong muon mat`, `muon gan`, `giu em`.
+- Them prototype `relational_warmth`: khi target `em/cau` di cung verb quan tam/hieu/tran trong va khong bi conflict/objectification/correction/rejection dominate, set floor intimacy ~`0.55`, attachment ~`0.50`, evidence `prototype:relational_warmth`.
+- Neu doc cu noi warmth chi qua keyword lexicon mong va thuong khong cham gate relationship thi da lac hau so voi dirty workspace.
 Axes:
 - technicality, distress, intimacy, attachment, conflict, correction, objectification, playfulness, directive_pressure, ambiguity, answer_need.
 Debug khi: chửi đùa bị hiểu như attack, correction bị bỏ qua, technical request bị emotionalize.
 Status: ACTIVE.
 
-## `src/cortex/meaning.py`
+## `src/cortex/meaning/meaning_layer.py` (legacy `src/cortex/meaning.py`)
+AUDIT 2026-06-09 CURRENT HEAD:
+- `src/cortex/meaning.py` da duoc rename/move thanh `src/cortex/meaning/meaning_layer.py` trong `9aa149f` (`R099`). Heading cu chi dung neu dang doc lich su Git.
+- Package moi `src/cortex/meaning/*` co Phase 2 facade rieng; neu debug Meaning/ToM ordering, soi `src/cortex/meaning/pipeline.py` truoc, khong chi soi legacy `MeaningLayer`.
 Role: biến fact thô thành meaning có thể phản ứng.
 Examples:
 - code_idle_long -> cognitive_stall.
@@ -1389,6 +1553,30 @@ Debug khi:
 - force_speak bị hiểu như thiếu evidence thay vì user gọi hiện diện.
 - idle lâu mà `meaning_shift` không bao giờ mở dù activity thực sự bị kéo dài.
 Status: ACTIVE CRITICAL.
+
+## `src/cortex/meaning/*` Phase 2 package
+AUDIT 2026-06-09 CURRENT HEAD: NEW TRACKED in `9aa149f`.
+Role: Phase 2 meaning stack boc legacy meaning vao contract ro hon va ep thu tu `WorkspaceFrame -> SemanticHypothesis -> MeaningHypothesis -> PragmaticIntent -> TheoryOfMind`.
+Important files:
+- `pipeline.py`: `Phase2MeaningPipeline`, facade chay StageLedger va ToM-after-Meaning guard.
+- `contracts.py`, `config.py`, `taxonomy.py`: contract/config/taxonomy chung.
+- `meaning_hypothesis.py`, `pragmatic_intent.py`, `overread_brake.py`, `read_contract.py`, `sociocultural_context.py`, `world_scene_builder.py`, `world_interpreter.py`, `surface_meaning_policy.py`: cac stage giai nghia va brake overread.
+Debug khi:
+- ToM chay truoc meaning hoac doc raw user text.
+- phase2 trace thieu stage, conclusion, hoac policy surface bi overread.
+Status: TRACKED PHASE2 / PARTIAL INTEGRATION.
+
+## `src/cortex/tom/*`
+AUDIT 2026-06-09 CURRENT HEAD: NEW TRACKED in `9aa149f`.
+Role: Theory of Mind Phase 2; chi suy `MentalStateInference` tu `MeaningHypothesis` + `PragmaticIntent`, khong tu raw text.
+Important files:
+- `theory_of_mind.py`: `TheoryOfMindCore.infer()`, co guard R7.2 bang `StageLedger`; thieu stage prerequisite thi tra empty inference va ghi `ToMOrderingViolation`.
+- `contracts.py`: `MentalStateInference`, `ToMHistory`, `ToMOrderingViolation`.
+- `tom_history_adapter.py`, `mental_state_ranker.py`, `counterfactual_corrector.py`, `tom_debug.py`: history/ranking/counterfactual/debug support.
+Debug khi:
+- ERIS doan tam tri user qua som, qua raw, hoac khong co supporting meaning ids.
+- `tests/test_theory_of_mind.py` fail ve ordering, confidence, hoac counterfactual.
+Status: TRACKED PHASE2 / ToM-AFTER-MEANING CONTRACT.
 
 ## `src/cortex/continuity_threat.py`
 Role: tách “im lâu” khỏi “đứt gãy hiện diện”, rồi biến nó thành continuity pressure có ngữ cảnh.
@@ -1483,6 +1671,11 @@ Status: ACTIVE.
 
 ## `src/cortex/relationship_dynamics.py`
 Role: state quan hệ lâu hơn một turn.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty theo spec `relationship-state-trigger-fix`.
+- Warmth gate section 9 ha tu `0.45` xuong `0.30` nhung van bi chan boi `rupture >= 0.55` hoac `dignity_defense >= 0.55`.
+- Genuine warmth gio tang `attachment_visibility`, tang `trust` theo warmth, va giam `preferred_distance` bang `_nudge()`. Note moi dang co dang `attachment:warmth_gain:<score>`.
+- Neu relationship state van dong bang default khi user noi "em cung quan trong voi toi" / "toi muon hieu duoc em", soi affect prototype truoc roi moi soi relationship engine.
 Tracks:
 - familiarity, trust, rupture, repair, ritual_strength.
 - attachment_visibility, preferred_distance, dignity_defense, technical_respect.
@@ -1577,6 +1770,11 @@ Status: ACTIVE.
 
 ## `src/cortex/micro_repeat_guard.py`
 Role: semantic family repeat guard cho micro line.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty.
+- Import `cortex.banned_filler.BANNED_FILLER_LINES` va `runtime.liveliness_config`.
+- `ambient_presence_status_ping` prototype hop nhat voi banned filler set; exact repeat window va semantic threshold lay tu liveliness config, voi floor repeat window >= 120s.
+- `SemanticRepeatGuard` init chuyen sang config-aware defaults, khong con 90s repeat window mong nhu doc cu.
 Status: ACTIVE.
 
 ## `src/cortex/micro_surface_lint.py`
@@ -1677,6 +1875,12 @@ Status: ACTIVE CRITICAL SURFACE ROUTER VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/surface_seed_compiler.py`
 Role: compiler local gom seed public-safe trước khi vào `SurfaceArbiter`.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty.
+- Import `runtime.liveliness_config`; `CompiledSurfaceSeed` co them `alternative_impulses` de support alt-seed retry follow-up.
+- `NO_SEED_REASONS` la enum goc thay cho failure chung chung.
+- `vision_fact` confidence gio duoc tinh evidence-derived va co sanh ngang/len hon generic private_life; short public-safe memory seeds khong bi chan chi vi ngan.
+- `selected_source`, `selected_confidence`, `candidate_count` co trong debug; no-seed reason khong duoc la string mo hoac chung chung.
 AUDIT 2026-06-07:
 - **ADDED Ở `3782f41`**. Không gán thay đổi này cho `f8555c6`/`9bbdcd2`; các commit đó chỉ chuẩn bị các path liên quan.
 - Được `PresenceControllerMixin._build_surface_arbiter_result()` gọi trước khi arbitrate; nếu compile được seed, cue được enrich evidence/confidence và arbiter nhận thêm `SurfaceImpulse(source="surface_seed_compiler")`.
@@ -1883,6 +2087,10 @@ Status: ACTIVE NEW HOT FILE VERIFIED_IN_WORKSPACE.
 
 ## `src/cortex/private_mind/__init__.py`
 Role: public API nhỏ cho private mind package.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty.
+- Export them `ThoughtContinuityStore` va `ThoughtEntry` tu `thought_continuity.py`.
+- Neu doc cu chi liet ke evaluator/synthesizer/valve ma khong co continuity store, no da lac hau so voi dirty workspace.
 Exports:
 - `EvidenceDossier`, `ThoughtFragment`, `PrivateConcern`, `InternalJudgment`, `StateMutation`, `SurfaceCandidate`, `PrivateMindTickResult`.
 - `ConcernStore`, `EvidenceDossierBuilder`, 4 mini-evaluator, `GemmaInnerSynthesizer`, `StateMutationBus`, `SurfaceValve`.
@@ -1905,6 +2113,28 @@ Debug khi:
 - Godot Private Mind panel chỉ hiện raw JSON thay vì diary: kiểm tra payload có `inner_diary` ở root hoặc trong `menu`.
 - diary thiếu section: soi digest nguồn có field tương ứng không, không sửa renderer để invent dữ liệu.
 Status: ACTIVE TRACKED PRIVATE DEBUG RENDERER.
+
+## `src/cortex/private_mind/inner_diary_writer.py`
+AUDIT 2026-06-09 CURRENT HEAD: NEW TRACKED in `23a8c01`.
+Role: optional model-backed writer tao voice/diary text tu `private_mind_digest`, truoc khi renderer/persistence dung de hien thi/luu.
+Controls:
+- env flags/interval trong file qua `_env_flag()` va `_env_float()`.
+- `maybe_write(digest)` build facts, dedupe bang signature, call adapter, sanitize output.
+Debug khi:
+- digest co data nhung diary voice khong doi.
+- model call fail hoac writer tao output rong/khong sanitize duoc.
+Status: TRACKED PRIVATE DIARY WRITER.
+
+## `src/runtime/inner_diary_persistence.py`
+AUDIT 2026-06-09 CURRENT HEAD: NEW TRACKED in `f5a2b3b`.
+Role: `InnerDiaryPersister` luu diary da render/write ra state file runtime, co throttle va load existing diary.
+Controls:
+- env flag/interval/limit qua `_env_flag()`, `_env_float()`, `_env_int()`.
+- `maybe_persist(digest)` chi ghi khi digest/text du dieu kien va qua interval.
+Debug khi:
+- Godot panel co diary trong payload nhung restart mat state.
+- diary state khong cap nhat vi throttle, disabled env, hoac digest thieu text.
+Status: TRACKED RUNTIME PERSISTENCE.
 
 ## `src/cortex/private_mind/contracts.py`
 Role: data contracts cho private cognition.
@@ -1957,6 +2187,11 @@ Status: ACTIVE EVIDENCE BUILDER.
 
 ## `src/cortex/private_mind/mini_evaluators.py`
 Role: bốn evaluator nhỏ trước synthesis.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty.
+- Evaluators gio co relevance gate/signature: `IntentEvaluator`, `MemoryResonanceEvaluator`, `RiskAndPermissionEvaluator`, `FutureBiasEvaluator` chi goi model khi evidence state dang thay doi va co gi dang de nghi.
+- `MiniEvaluatorPipeline` co `relevance_gate_enabled` (env `ERIS_PRIVATE_MIND_RELEVANCE_GATE`) va chi schedule evaluator co meaningful signature moi; day la de tranh goi API lap lai tren cung state.
+- `BaseMiniEvaluator.supports_relevance_gate = False` giu fail-open cho evaluator custom.
 Evaluators:
 - `IntentEvaluator`.
 - `MemoryResonanceEvaluator`.
@@ -1973,6 +2208,11 @@ Status: ACTIVE PRIVATE EVALUATOR PIPELINE.
 
 ## `src/cortex/private_mind/inner_synthesizer.py`
 Role: tổng hợp fragments thành `InternalJudgment`.
+AUDIT 2026-06-09 DIRTY WORKSPACE:
+- File tracked dang dirty.
+- `GemmaInnerSynthesizer` gio dệt `dominant_judgment` bang `_weave_inner_voice()` thay boilerplate. Claim fragment prompt da nhan gio "tôi..." / inner voice style.
+- Inner voice prompt khuyen noi tiep claim trong mot mach, khong phai public verdict.
+- Neu doc cu chi noi synthesizer may dung motif cứng, day la lac hau so voi patch hien tai.
 Purpose:
 - rank/reject hypotheses.
 - tạo `private_concern_update`.
@@ -2401,8 +2641,11 @@ Debug khi: dataset context sai shape.
 Status: TRAINING SUPPORT.
 
 ## `src/datasets_clean/*`
-Role: cleaned datasets: desktop/persona/fe/se/tools + quarantine.
-Status: TRAINING DATA.
+AUDIT 2026-06-09 CURRENT HEAD:
+- Path nay KHONG ton tai trong source hien tai; dataset clean cu da bi xoa trong `f5a2b3b` cung voi `training/dataset.jsonl` va `training/datasets_clean/*`.
+- Neu can xem dataset cu, dung Git history hoac artifact backup, khong debug theo working tree hien tai.
+Role: cleaned datasets cu: desktop/persona/fe/se/tools + quarantine.
+Status: DELETED / LEGACY TRAINING DATA.
 
 ## `scripts/clean_split_jsonl.py`
 Role: clean/split JSONL.
@@ -2430,21 +2673,23 @@ Status: OFFLINE SUPPORT.
 
 ## `tests/test_cognitive_pipeline.py`
 AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked.
 Role: regression cho CognitivePipeline V3.
 Covers:
 - Raw signal duoc normalize thanh evidence/frame.
 - Pipeline tao trace/debug result thay vi fail im lang.
 - Manual slot attachment workaround van giu du lieu can thiet.
-Status: WORKSPACE NEW TEST.
+Status: TRACKED V3 REGRESSION TEST.
 
 ## `tests/test_shadow_pipeline.py`
 AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
+AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked.
 Role: regression cho ShadowPipelineMixin.
 Covers:
 - Shadow pipeline co the bat/tat rieng bang flag/env.
 - Ket qua shadow luu vao `last_shadow_*`.
 - Loi shadow khong lam chet hot path cu.
-Status: WORKSPACE NEW TEST.
+Status: TRACKED SHADOW REGRESSION TEST.
 
 ## `tests/test_runtime_coordinator.py`
 Role: orchestration regression.

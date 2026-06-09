@@ -28,6 +28,7 @@ from .mini_evaluators import (
 )
 from .state_mutation_bus import StateMutationBus
 from .surface_valve import SurfaceValve
+from .thought_continuity import ThoughtContinuityStore, ThoughtEntry
 
 __all__ = [
     "ConcernStore",
@@ -47,5 +48,7 @@ __all__ = [
     "StateMutationBus",
     "SurfaceCandidate",
     "SurfaceValve",
+    "ThoughtContinuityStore",
+    "ThoughtEntry",
     "ThoughtFragment",
 ]

@@ -71,6 +71,10 @@ from cortex.working_memory import WorkingMemoryEngine
 from domain import Decision
 from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
 from runtime.autonomous_cycle import AutonomousCycleMixin
+from runtime.ambient_silence_policy import (
+    ambient_silence_cooldown_seconds,
+    should_hold_ambient_silence,
+)
 from runtime.body_bias import BodyBiasProjector
 from runtime.contextual_autonomy_loop import ContextualAutonomyLoop
 from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
@@ -4676,6 +4680,12 @@ class RuntimeCoordinator(
         if not normalized:
             return True
 
+        # Content-free OCR placeholder from the vision compressor fallback
+        # ("screen context inferred from OCR; focus=unknown; intent=unknown")
+        # carries no real screen content. Drop it so it never leaks as evidence.
+        if "screen context inferred from ocr" in normalized:
+            return True
+
         useful_terms = {
             "build",
             "chat",
@@ -5278,22 +5288,7 @@ class RuntimeCoordinator(
         )
 
     def _ambient_silence_cooldown_seconds(self, snapshot, ti_report) -> int:
-        mode = str(getattr(ti_report, "mode", "") or "")
-        kind = str(getattr(snapshot, "active_window_kind", "") or "")
-
-        if mode == "resource_guard":
-            return 0
-        if mode == "pattern_muse":
-            return 150
-        if kind in {"coding", "documentation"}:
-            return 120
-        if kind == "communication":
-            return 105
-        if kind == "entertainment":
-            return 150
-        if mode in {"system_watch", "pattern_watch", "social_watch"}:
-            return 120
-        return 105
+        return ambient_silence_cooldown_seconds(snapshot, ti_report)
 
     def _should_hold_ambient_silence(
         self,
@@ -5303,17 +5298,16 @@ class RuntimeCoordinator(
         speech_intent: str = "",
         now: float | None = None,
     ) -> bool:
-        if speech_intent in {"system_warning", "user_requested"}:
-            return False
-        if not self.last_text or self.last_autonomous_spoken_at <= 0.0:
-            return False
-
-        cooldown = self._ambient_silence_cooldown_seconds(snapshot, ti_report)
-        if cooldown <= 0:
-            return False
-
-        current_time = time.time() if now is None else now
-        return (current_time - self.last_autonomous_spoken_at) < cooldown
+        held, reason = should_hold_ambient_silence(
+            snapshot=snapshot,
+            ti_report=ti_report,
+            last_text=self.last_text,
+            last_autonomous_spoken_at=self.last_autonomous_spoken_at,
+            speech_intent=speech_intent,
+            now=now,
+        )
+        self._last_ambient_suppression_reason = reason if held else ""
+        return held
 
     def _should_skip_weak_autonomous_speech(
         self,
@@ -5616,86 +5610,6 @@ class RuntimeCoordinator(
             self._presence_surface_status_label(reengagement_status),
             "no_surface",
             final_rejected_by or "none",
-        )
-
-    def _build_local_presence_maintenance_decision(self, *, snapshot) -> Decision | None:
-        # LEGACY: giữ lại cho tương thích nếu có call-site cũ, nhưng wake gate
-        # mới không dùng đường này nữa. Đường này sinh micro trực tiếp, bỏ qua
-        # phân xử impulse của SurfaceArbiter, nên không còn là luồng chính.
-        cue = self._derive_micro_presence_cue(snapshot=snapshot, reason="wake_gate_presence_maintenance")
-        if not cue.needs_micro_presence:
-            return None
-        text, source = self._generate_micro_presence_from_cue(
-            kind="presence_maintenance",
-            snapshot=snapshot,
-            cue=cue,
-            seeds=cue.evidence,
-        )
-        if not text:
-            return self._body_only_presence_decision(
-                cue,
-                intent="presence_maintenance",
-                parse_mode="presence_maintenance_body_only",
-                source=f"wake_gate_{source}",
-            )
-        return Decision(
-            text=text,
-            animation="read" if cue.focus_family == "code_stalled" else "stand",
-            intent="presence_maintenance",
-            reasoning_tags=("presence_maintenance", "micro_presence", "llm_wording", cue.focus_family, "wake_gate"),
-            should_speak=True,
-            confidence=max(0.38, min(0.62, cue.confidence)),
-            parse_mode="presence_maintenance",
-            debug_trace=(
-                "presence_maintenance_wake_gate"
-                f"; source={source}"
-                f"; focus_family={cue.focus_family}"
-                f"; missing_evidence_ids={cue.missing_evidence_ids}"
-                f"; silent_cycles={self.presence_maintenance_silent_cycles}"
-                f"; threshold={self.presence_maintenance_silent_loop_threshold}"
-            ),
-        )
-
-    def _build_local_reengagement_decision(self, *, snapshot) -> Decision | None:
-        # LEGACY: giữ lại như lưới tương thích. Re-engagement runtime chuẩn phải
-        # đi qua _build_reengagement_decision(frame=...) để SurfaceArbiter chọn
-        # giữa long_silence, presence cue, inner pressure và body-only.
-        try:
-            internal_state = self._get_internal_state()
-        except Exception:
-            internal_state = None
-        cue = self._derive_reengagement_cue(snapshot=snapshot, internal_state=internal_state)
-        if not cue.needs_micro_presence:
-            return None
-        text, source = self._generate_micro_presence_from_cue(
-            kind="re_engagement",
-            snapshot=snapshot,
-            cue=cue,
-            seeds=cue.evidence,
-            force_llm=True,
-        )
-        if not text:
-            return self._body_only_presence_decision(
-                cue,
-                intent="re_engagement",
-                parse_mode="re_engagement_body_only",
-                source=f"wake_gate_{source}",
-            )
-        return Decision(
-            text=text,
-            animation="stand",
-            intent="re_engagement",
-            reasoning_tags=("re_engagement", "long_silence_outreach", "llm_wording", cue.focus_family, "wake_gate"),
-            should_speak=True,
-            confidence=max(0.42, min(0.62, cue.confidence)),
-            parse_mode="re_engagement",
-            debug_trace=(
-                "reengagement_wake_gate"
-                f"; source={source}"
-                f"; focus_family={cue.focus_family}"
-                f"; quiet_cycles={self.reengagement_quiet_cycles}"
-                f"; threshold={self.reengagement_quiet_loop_threshold}"
-            ),
         )
 
     def _build_wake_gate_frame(

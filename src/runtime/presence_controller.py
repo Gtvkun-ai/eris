@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, replace
 
 from cortex.contracts import SessionRitualReport
+from cortex.banned_filler import is_banned_filler
 from cortex.social_presence import SocialPresenceDetector
 from cortex.low_level_speech_policy import LowLevelSpeechPolicy
 from cortex.surface_arbiter import SurfaceArbiter, SurfaceDecision, SurfaceImpulse
@@ -402,6 +403,8 @@ class PresenceControllerMixin:
         )
         if sensor_like and text and self._blind_frustration_blames_user_without_evidence(text, impulse):
             return "", "blind_frustration_blame_blocked"
+        if text and is_banned_filler(text):
+            return "", "banned_filler_blocked"
         return text, source
 
     def _blind_frustration_blames_user_without_evidence(self, text: str, impulse: SurfaceImpulse) -> bool:
@@ -455,13 +458,11 @@ class PresenceControllerMixin:
             candidates.append("Tab YouTube v\u1eabn m\u1edf \u1edf \u0111\u00f3.")
         if "idle_seconds" in haystack or "general_idle" in haystack:
             candidates.append("Nh\u1ecbp n\u00e0y im h\u01a1i l\u00e2u r\u1ed3i.")
-        candidates.extend(
-            (
-                "Kho\u1ea3ng y\u00ean n\u00e0y v\u1eabn gi\u1eef ch\u1ed7.",
-                "Nh\u1ecbp n\u00e0y v\u1eabn y\u00ean th\u00eam ch\u00fat.",
-            )
-        )
+        # Banned stale templates removed: when nothing concrete remains, prefer
+        # silence/body-only over a hollow filler line.
         for candidate in tuple(dict.fromkeys(candidates)):
+            if is_banned_filler(candidate):
+                continue
             safe = self._safe_local_micro_presence_fallback(candidate, kind=kind_name)
             if safe:
                 return safe
@@ -470,12 +471,14 @@ class PresenceControllerMixin:
     def _safe_local_micro_presence_fallback(self, text: str, *, kind: str) -> str:
         if no_fallback_mode_enabled():
             return ""
+        if is_banned_filler(text):
+            return ""
         safe = self._sanitize_micro_presence_llm_text(
             text,
             kind=kind or "micro_presence",
             fallback_text="",
         )
-        if not safe or self._is_near_duplicate_text(safe, self.last_text):
+        if not safe or is_banned_filler(safe) or self._is_near_duplicate_text(safe, self.last_text):
             return ""
         return safe
 

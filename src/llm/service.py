@@ -9,6 +9,7 @@ import time
 import requests
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
+from cortex.banned_filler import HOLLOW_PRESENCE_LINES, STALE_MICRO_TEMPLATES, quoted_fragment
 from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
 from .contracts import (
     AUTONOMOUS_BEHAVIOR_PROMPT,
@@ -2705,8 +2706,8 @@ class LlmService:
             "- No status report, no system narration, no explaining.\n"
             "- Do not invent screen/action facts. No fake certainty.\n"
             "- Do not mention telemetry, evidence, signal, debug, CPU, RAM.\n"
-            "- Avoid hollow presence/status lines like 'Tôi ở đây', 'Tôi đang nghe', 'Tôi vẫn quan sát', 'Tôi vẫn ở đây'.\n"
-            "- Also avoid stale micro templates: 'Mạch này vẫn giữ chỗ', 'Nhịp này im hơi lâu rồi', 'Vẫn đang đợi chút nhé', 'Khoảng yên này vẫn giữ chỗ', 'Nhịp này vẫn yên thêm chút'.\n"
+            f"- Avoid hollow presence/status lines like {quoted_fragment(HOLLOW_PRESENCE_LINES)}.\n"
+            f"- Also avoid stale micro templates: {quoted_fragment(STALE_MICRO_TEMPLATES)}.\n"
             "- Speak once or stay text-empty.\n"
         )
         if is_reengagement:

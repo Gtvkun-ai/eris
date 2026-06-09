@@ -1,0 +1,232 @@
+{
+  "version": 1,
+  "saved_at": 1781001961.459494,
+  "concerns": [
+    {
+      "id": "concern.bd2be53920683e90",
+      "theme": "Người dùng đang thể hiện sự ưu tiên cao cho các công việc về kiến trúc, de lồng ghép lồng ghép lồngng ghép lồng ghép lồng ghép l",
+      "evidence_ids": [
+        "dossier.user.current",
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "dossier.concern.0",
+        "dossier.concern.1",
+        "dossier.concern.2",
+        "ev.test",
+        "dossier.concern.3"
+      ],
+      "open_questions": [
+        "Bạn có thể mô tả chi tiết hơn về các yêu cầu về kiến trúc hệ thống mà bạn đang quan tâm tâm không?",
+        "Làm thế nào để cân bằng giữa việc thực hiện kiến trúc và thiết kế kế hoạch tương lai-phát triển tiếp theo?",
+        "Revise this hypothesis after outcome: user_corrected"
+      ],
+      "hypotheses": [],
+      "pressure": 1.0,
+      "uncertainty": 0.265587843,
+      "recurrence": 7,
+      "status": "open",
+      "last_reviewed_at": 1781001961.4549913,
+      "future_biases": [
+        "lower confidence in this concern's current hypothesis until new evidence supports it"
+      ],
+      "created_at": 1780999376.2948895,
+      "updated_at": 1781001961.4549913,
+      "metadata": {
+        "created_from_fragment": "tf.92aa2da01e8a452b",
+        "fragment_sources": [
+          "future_bias_evaluator",
+          "intent_evaluator",
+          "risk_and_permission_evaluator",
+          "memory_resonance_evaluator"
+        ],
+        "last_outcome_feedback": {
+          "negative": true,
+          "positive": false,
+          "flags": [
+            "user_corrected"
+          ],
+          "action_success": 0.4,
+          "body_match_success": 0.9,
+          "correction_text": "",
+          "at": 1781001790.0950663
+        }
+      }
+    },
+    {
+      "id": "concern.cc9b760f78024276",
+      "theme": "Độ lệch hướng tới tương lai-Kiến trúc",
+      "evidence_ids": [
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "dossier.concern.0",
+        "dossier.concern.1",
+        "dossier.concern.2",
+        "ev.test"
+      ],
+      "open_questions": [
+        "Làm thế nào để cân bằng giữa việc thực hiện kiến trúc và thiết kế kế hoạch tương lai-phát triển tiếp theo?",
+        "Revise this hypothesis after outcome: user_corrected"
+      ],
+      "hypotheses": [],
+      "pressure": 0.9721600000000001,
+      "uncertainty": 0.44,
+      "recurrence": 2,
+      "status": "open",
+      "last_reviewed_at": 1781001790.0950663,
+      "future_biases": [
+        "lower confidence in this concern's current hypothesis until new evidence supports it"
+      ],
+      "created_at": 1780999515.7707787,
+      "updated_at": 1781001790.0950663,
+      "metadata": {
+        "fragment_ids": [
+          "tf.f720500be14d008c"
+        ],
+        "synthesizer": "deterministic_fallback",
+        "last_outcome_feedback": {
+          "negative": true,
+          "positive": false,
+          "flags": [
+            "user_corrected"
+          ],
+          "action_success": 0.4,
+          "body_match_success": 0.9,
+          "correction_text": "",
+          "at": 1781001790.0950663
+        }
+      }
+    },
+    {
+      "id": "concern.2c34b7a0a6d48d94",
+      "theme": "outcome feedback needs hypothesis revision",
+      "evidence_ids": [
+        "ev.test"
+      ],
+      "open_questions": [
+        "Which private hypothesis led to this bad outcome?",
+        "Revise this hypothesis after outcome: negative outcome",
+        "Revise this hypothesis after outcome: user_corrected"
+      ],
+      "hypotheses": [],
+      "pressure": 0.8402609576967045,
+      "uncertainty": 1.0,
+      "recurrence": 31,
+      "status": "open",
+      "last_reviewed_at": 1781001790.0950663,
+      "future_biases": [
+        "revise private hypothesis before repeating this behavior",
+        "lower confidence in this concern's current hypothesis until new evidence supports it"
+      ],
+      "created_at": 1780985876.9671116,
+      "updated_at": 1781001790.0950663,
+      "metadata": {
+        "created_from_outcome": true,
+        "outcome": {
+          "user_accepted": null,
+          "user_corrected": false,
+          "user_ignored": false,
+          "user_laughed": false,
+          "user_confused": false,
+          "user_felt_intruded": null,
+          "relation_improved": null,
+          "relation_ruptured": null,
+          "action_success": 0.5,
+          "body_match_success": 1.0,
+          "evidence": [],
+          "confidence": 0.44,
+          "correction_text": "",
+          "ignored_reason": "",
+          "accepted_reason": "",
+          "rupture_reason": "",
+          "tags": [],
+          "surface_outcome": {
+            "channel": "force_speak",
+            "cycle_id": "force_speak-1",
+            "debug_notes": [],
+            "final_decision": {
+              "intent": "",
+              "action": "",
+              "should_speak": false,
+              "text_preview": ""
+            }
+          }
+        },
+        "last_outcome_feedback": {
+          "negative": true,
+          "positive": false,
+          "flags": [
+            "user_corrected"
+          ],
+          "action_success": 0.4,
+          "body_match_success": 0.9,
+          "correction_text": "",
+          "at": 1781001790.0950663
+        }
+      }
+    },
+    {
+      "id": "concern.5c84f09058ba3d9f",
+      "theme": "User wants architecture work",
+      "evidence_ids": [
+        "dossier.user.current",
+        "dossier.runtime.state",
+        "dossier.concern.0",
+        "dossier.concern.1",
+        "ev.test"
+      ],
+      "open_questions": [
+        "Revise this hypothesis after outcome: user_corrected",
+        "Revise this hypothesis after outcome: negative outcome"
+      ],
+      "hypotheses": [],
+      "pressure": 0.8402609576967045,
+      "uncertainty": 1.0,
+      "recurrence": 36,
+      "status": "open",
+      "last_reviewed_at": 1781001790.0950663,
+      "future_biases": [
+        "lower confidence in this concern's current hypothesis until new evidence supports it"
+      ],
+      "created_at": 1780988156.5283844,
+      "updated_at": 1781001790.0950663,
+      "metadata": {
+        "created_from_fragment": "tf.d9db49350ed175c2",
+        "fragment_sources": [
+          "memory_resonance_evaluator",
+          "intent_evaluator",
+          "risk_and_permission_evaluator",
+          "future_bias_evaluator"
+        ],
+        "last_outcome_feedback": {
+          "negative": true,
+          "positive": false,
+          "flags": [
+            "user_corrected"
+          ],
+          "action_success": 0.4,
+          "body_match_success": 0.9,
+          "correction_text": "",
+          "at": 1781001790.0950663
+        }
+      }
+    },
+    {
+      "id": "concern.d6d807986d0d06ca",
+      "theme": "user_stuck",
+      "evidence_ids": [],
+      "open_questions": [],
+      "hypotheses": [],
+      "pressure": 0.5,
+      "uncertainty": 0.5,
+      "recurrence": 1,
+      "status": "open",
+      "last_reviewed_at": 1781001961.4592674,
+      "future_biases": [],
+      "created_at": 1781001961.4592679,
+      "updated_at": 1781001961.459268,
+      "metadata": {}
+    }
+  ]
+}

@@ -131,13 +131,23 @@ public partial class UdpListener : Node2D
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
 	private static readonly Vector2 PrivateMindPanelMinSize = new(1040f, 624f);
 
+	// Tỉ lệ phần khung banner header nằm TRÊN viền card (nhô ra ngoài). 0.5 = 50/50; >0.5 = nổi hẳn lên.
+	private const float DiaryBannerAboveRatio = 0.6f;
+
 	// Inner Diary — sidebar (Mood / Concern Stack / Memory Echo)
 	private ProgressBar _diaryValenceBar;
 	private ProgressBar _diaryArousalBar;
 	private Label _diaryValenceLabel;
 	private Label _diaryArousalLabel;
 	private Label _diaryMoodQuoteLabel;
+	private TextureRect _diaryMoodFace;     // ảnh mặt động (9 face), null texture = fallback chấm hồng
+	private string _diaryMoodFaceAsset = ""; // asset đang hiển thị, tránh load lại mỗi frame
+	private PanelContainer _diaryMoodFaceBg; // nền chấm hồng, chỉ hiện khi chưa có ảnh face
 	private VBoxContainer _diaryConcernList;
+	private bool _diaryConcernExpanded;
+	private readonly List<(string Theme, float Pct)> _diaryConcernData = new();
+	private const int DiaryConcernCollapsedCount = 2;
+	private Control _diaryConcernToggle; // nút "+ N mục khác" / "Thu gọn"
 	private Label _diaryMemoryEchoLabel;
 	private Label _diaryMemoryEchoMetaLabel;
 	private const float EmotionBarWidth = 160f;
@@ -424,6 +434,19 @@ public partial class UdpListener : Node2D
 			}
 			if (_privateMindPanel != null && _privateMindPanel.Visible && IsMouseOverControl(_privateMindPanel, mouseEvent.Position))
 			{
+				// Click nút "+ mục khác"/"Thu gọn" → đảo trạng thái.
+				if (_diaryConcernToggle != null && IsMouseOverControl(_diaryConcernToggle, mouseEvent.Position))
+				{
+					_diaryConcernExpanded = !_diaryConcernExpanded;
+					RenderDiaryConcernList();
+				}
+				// Bấm ra ngoài danh sách Concern (mà vẫn trong panel) thì thu gọn lại.
+				else if (_diaryConcernExpanded && _diaryConcernList != null
+					&& !IsMouseOverControl(_diaryConcernList, mouseEvent.Position))
+				{
+					_diaryConcernExpanded = false;
+					RenderDiaryConcernList();
+				}
 				GetViewport().SetInputAsHandled();
 				return;
 			}
@@ -1557,7 +1580,7 @@ public partial class UdpListener : Node2D
 			CustomMinimumSize = new Vector2(286f, 0f),
 			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
 		};
-		sidebar.AddThemeConstantOverride("separation", 14);
+		sidebar.AddThemeConstantOverride("separation", 32);
 		body.AddChild(sidebar);
 
 		BuildDiaryMoodCard(sidebar);
@@ -1582,16 +1605,17 @@ public partial class UdpListener : Node2D
 		rightCol.AddChild(scroll);
 		_privateMindScrollContainer = scroll;
 
-		// MarginContainer chừa chỗ bên phải cho thanh cuộn tim
+		// MarginContainer chừa chỗ bên phải cho thanh cuộn tim + lề trên để banner card đầu không bị cắt
 		var scrollPad = new MarginContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		scrollPad.AddThemeConstantOverride("margin_right", 26);
+		scrollPad.AddThemeConstantOverride("margin_top", 42);
 		scroll.AddChild(scrollPad);
 
 		_privateMindSectionList = new VBoxContainer
 		{
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 		};
-		_privateMindSectionList.AddThemeConstantOverride("separation", 16);
+		_privateMindSectionList.AddThemeConstantOverride("separation", 44);
 		scrollPad.AddChild(_privateMindSectionList);
 
 		// RichTextLabel ẩn — vẫn giữ để tương thích state cũ
@@ -1605,11 +1629,6 @@ public partial class UdpListener : Node2D
 		};
 		_privateMindText.AddThemeFontSizeOverride("normal_font_size", 14);
 
-		// ── Footer ───────────────────────────────────────────────────────────
-		var footer = CreateUiLabel("ERIS V3.0   \u00b7   Chỉ dành riêng cho Ngài.", 12, new Color(0.74f, 0.48f, 0.62f));
-		footer.HorizontalAlignment = HorizontalAlignment.Center;
-		footer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		root.AddChild(footer);
 
 		// ── Decoration overlay (thanh cuộn tim) — nằm trên cùng ──────────────
 		var decorationLayer = new Control
@@ -1643,7 +1662,8 @@ public partial class UdpListener : Node2D
 	//  Sidebar cards
 	// ─────────────────────────────────────────────────────────────────────────
 
-	private PanelContainer CreateDiarySidebarCard(out VBoxContainer content)
+	private PanelContainer CreateDiarySidebarCard(out VBoxContainer content, int topMargin = 14)
+
 	{
 		var card = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
@@ -1659,7 +1679,7 @@ public partial class UdpListener : Node2D
 			CornerRadiusBottomRight = 20,
 			CornerRadiusBottomLeft = 20,
 			ContentMarginLeft = 16,
-			ContentMarginTop = 14,
+			ContentMarginTop = topMargin,
 			ContentMarginRight = 16,
 			ContentMarginBottom = 14,
 		});
@@ -1672,17 +1692,101 @@ public partial class UdpListener : Node2D
 
 	private void AddDiaryCardHeader(VBoxContainer content, string iconAsset, string title, Color accent)
 	{
-		var row = new HBoxContainer();
-		row.AddThemeConstantOverride("separation", 8);
-		content.AddChild(row);
+		Control header = BuildDiaryHeader(iconAsset, title, new Color(0.60f, 0.12f, 0.40f), null, accent, 56f, 12);
+		header.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		content.AddChild(header);
+	}
 
-		var icon = CreateDiaryGlyph(iconAsset, accent, 18f);
-		icon.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
-		row.AddChild(icon);
+	// Header diary: nếu asset là khung banner ngang (icon trái + vùng chữ phải) thì vẽ khung
+	// theo đúng tỉ lệ gốc (canh trái, không méo icon) rồi chèn tiêu đề đè lên vùng trống bên phải.
+	// Asset không phải banner (thiếu ảnh / ảnh vuông) thì fallback về glyph nhỏ + label như cũ.
+	private Control BuildDiaryHeader(
+		string asset, string title, Color titleColor, string badge, Color badgeColor,
+		float bannerHeight, int titleFontSize)
+	{
+		Texture2D tex = LoadResourceTexture($"res://asset/Resource/{asset}.png");
+		bool isBanner = tex != null && tex.GetHeight() > 0 && tex.GetWidth() >= tex.GetHeight() * 2;
 
-		var label = CreateUiLabel(title, 16, new Color(0.60f, 0.12f, 0.40f));
-		label.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		row.AddChild(label);
+		if (isBanner)
+		{
+			float aspect = (float)tex.GetWidth() / tex.GetHeight();
+			float bannerWidth = bannerHeight * aspect;
+			// Tỉ lệ phần khung nằm TRÊN viền card (nhô ra ngoài). >0.5 = nổi hẳn lên trên.
+			float above = bannerHeight * DiaryBannerAboveRatio;
+			float below = bannerHeight - above;
+
+			// Control bao ngoài chỉ chiếm phần DƯỚI viền trong layout (= below). Banner vắt lên trên.
+			// Không clip để phần trên banner tràn ra ngoài viền card.
+			var wrap = new Control
+			{
+				CustomMinimumSize = new Vector2(bannerWidth, below),
+				MouseFilter = Control.MouseFilterEnum.Ignore,
+			};
+
+			// Khung: phần trên (above) tràn ra ngoài viền, phần dưới (below) nằm trong card.
+			var banner = new TextureRect
+			{
+				Texture = tex,
+				ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+				StretchMode = TextureRect.StretchModeEnum.Scale,
+				MouseFilter = Control.MouseFilterEnum.Ignore,
+			};
+			banner.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+			banner.OffsetLeft = 0;
+			banner.OffsetRight = bannerWidth;
+			banner.OffsetTop = -above;
+			banner.OffsetBottom = below;
+			wrap.AddChild(banner);
+
+			// Tiêu đề: căn giữa theo chiều dọc của banner, bắt đầu ~50% bề ngang, tràn ra phải.
+			var label = new Label
+			{
+				Text = title,
+				ClipText = false,
+				VerticalAlignment = VerticalAlignment.Center,
+				HorizontalAlignment = HorizontalAlignment.Left,
+				MouseFilter = Control.MouseFilterEnum.Ignore,
+			};
+			label.AddThemeFontSizeOverride("font_size", titleFontSize);
+			label.AddThemeColorOverride("font_color", titleColor);
+			label.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+			label.OffsetLeft = bannerWidth * 0.50f;   // dính ~50% trên khung, nhích sang phải
+			label.OffsetRight = bannerWidth * 2.0f;    // cho tràn ra ngoài về phải, không clip
+			label.OffsetTop = -above;
+			label.OffsetBottom = below;
+			wrap.AddChild(label);
+
+			if (string.IsNullOrWhiteSpace(badge))
+				return wrap;
+
+			// Có badge → khung+chữ bên trái, badge dồn về mép phải (căn theo phần trong card).
+			var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+			row.AddThemeConstantOverride("separation", 8);
+			row.AddChild(wrap);
+			row.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+			var badgeLabel = CreateUiLabel(badge, 12, badgeColor);
+			badgeLabel.VerticalAlignment = VerticalAlignment.Center;
+			row.AddChild(badgeLabel);
+			return row;
+		}
+
+		// Fallback kiểu cũ: glyph nhỏ + tiêu đề (+ badge nếu có).
+		var fallback = new HBoxContainer();
+		fallback.AddThemeConstantOverride("separation", 8);
+		var glyph = CreateDiaryGlyph(asset, badgeColor, 18f);
+		glyph.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+		fallback.AddChild(glyph);
+		var lbl = CreateUiLabel(title, 16, titleColor);
+		lbl.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		lbl.VerticalAlignment = VerticalAlignment.Center;
+		fallback.AddChild(lbl);
+		if (!string.IsNullOrWhiteSpace(badge))
+		{
+			var b = CreateUiLabel(badge, 12, badgeColor);
+			b.VerticalAlignment = VerticalAlignment.Center;
+			fallback.AddChild(b);
+		}
+		return fallback;
 	}
 
 	private ProgressBar CreateDiaryBar(Color fillColor)
@@ -1725,8 +1829,8 @@ public partial class UdpListener : Node2D
 		row.AddThemeConstantOverride("separation", 12);
 		content.AddChild(row);
 
-		// Avatar tròn — ưu tiên ảnh diary_mood_face.png, nếu chưa có thì vẽ chấm tròn hồng.
-		Control face = CreateDiaryGlyph("diary_mood_face", new Color(0.96f, 0.66f, 0.78f), 58f);
+		// Avatar tròn — 9 face theo valence/arousal. Nếu chưa có ảnh thì rơi về chấm tròn hồng.
+		Control face = BuildDiaryMoodFace(72f);
 		row.AddChild(face);
 
 		var bars = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
@@ -1785,7 +1889,7 @@ public partial class UdpListener : Node2D
 
 	private void BuildDiaryConcernCard(VBoxContainer sidebar)
 	{
-		PanelContainer card = CreateDiarySidebarCard(out VBoxContainer content);
+		PanelContainer card = CreateDiarySidebarCard(out VBoxContainer content, 0);
 		AddDiaryCardHeader(content, "diary_concern", "Concern Stack", new Color(0.97f, 0.46f, 0.66f));
 
 		_diaryConcernList = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
@@ -1797,7 +1901,7 @@ public partial class UdpListener : Node2D
 
 	private void BuildDiaryMemoryEchoCard(VBoxContainer sidebar)
 	{
-		PanelContainer card = CreateDiarySidebarCard(out VBoxContainer content);
+		PanelContainer card = CreateDiarySidebarCard(out VBoxContainer content, 0);
 		card.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
 		AddDiaryCardHeader(content, "diary_memory", "Memory Echo", new Color(0.72f, 0.52f, 0.88f));
 
@@ -1862,6 +1966,77 @@ public partial class UdpListener : Node2D
 			ContentMarginBottom = 0,
 		});
 		return dot;
+	}
+
+	// Khung face động cho Mood: nền chấm hồng bo tròn (fallback) + TextureRect đè lên.
+	// Khi có PNG hợp lệ thì set texture, không có thì để null → chỉ thấy chấm hồng.
+	private Control BuildDiaryMoodFace(float boxSize)
+	{
+		int r = Mathf.RoundToInt(boxSize * 0.5f);
+		var bg = new PanelContainer { CustomMinimumSize = new Vector2(boxSize, boxSize) };
+		bg.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(0.96f, 0.66f, 0.78f, 0.85f),
+			CornerRadiusTopLeft = r,
+			CornerRadiusTopRight = r,
+			CornerRadiusBottomRight = r,
+			CornerRadiusBottomLeft = r,
+		});
+
+		_diaryMoodFace = new TextureRect
+		{
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+			CustomMinimumSize = new Vector2(boxSize, boxSize),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		bg.AddChild(_diaryMoodFace);
+		_diaryMoodFaceBg = bg;
+		_diaryMoodFaceAsset = "";
+		return bg;
+	}
+
+	// Chọn 1 trong 9 face theo lưới 3x3 (arousal x valence).
+	//   valence  > +0.2 = pos | < -0.2 = neg | còn lại = neu
+	//   arousal  > 0.66 = hyper | < 0.33 = calm | còn lại = mid
+	// Chưa có dữ liệu mood → dùng "diary_mood_face" (mặt trung tính mặc định).
+	private static string MoodFaceAsset(float valence, float arousal, bool hasMood)
+	{
+		if (!hasMood)
+			return "diary_mood_face";
+		string v = valence > 0.2f ? "pos" : valence < -0.2f ? "neg" : "neu";
+		string a = arousal > 0.66f ? "hyper" : arousal < 0.33f ? "calm" : "mid";
+		return $"diary_face_{a}_{v}";
+	}
+
+	// Đổi texture của face theo cảm xúc. Có fallback chuỗi: face 3x3 → diary_mood_face → chấm hồng.
+	private void UpdateDiaryMoodFace(float valence, float arousal, bool hasMood)
+	{
+		if (_diaryMoodFace == null)
+			return;
+
+		string asset = MoodFaceAsset(valence, arousal, hasMood);
+		if (asset == _diaryMoodFaceAsset)
+			return;
+
+		Texture2D tex = LoadResourceTexture($"res://asset/Resource/{asset}.png");
+		if (tex == null && asset != "diary_mood_face")
+			tex = LoadResourceTexture("res://asset/Resource/diary_mood_face.png");
+
+		_diaryMoodFace.Texture = tex;       // null → chỉ còn chấm hồng nền
+		_diaryMoodFaceAsset = asset;
+		if (_diaryMoodFaceBg != null)
+		{
+			// Có ảnh face → ẩn nền hồng để không tạo viền cứng; thiếu ảnh → giữ chấm hồng.
+			var sb = _diaryMoodFaceBg.GetThemeStylebox("panel") as StyleBoxFlat;
+			if (sb != null)
+				sb.BgColor = new Color(0.96f, 0.66f, 0.78f, tex != null ? 0f : 0.85f);
+		}
+	}
+
+	private static Texture2D LoadResourceTexture(string path)
+	{
+		return ResourceLoader.Exists(path) ? GD.Load<Texture2D>(path) : null;
 	}
 
 	private TextureRect CreateDecorTextureRect(Texture2D texture, Vector2 size)
@@ -3062,6 +3237,8 @@ public partial class UdpListener : Node2D
 		if (_diaryValenceLabel != null) _diaryValenceLabel.Text = hasMood ? $"{valPct:0}%" : "—";
 		if (_diaryArousalLabel != null) _diaryArousalLabel.Text = hasMood ? $"{aroPct:0}%" : "—";
 
+		UpdateDiaryMoodFace(valence, arousal, hasMood);
+
 		if (_diaryMoodQuoteLabel != null)
 		{
 			string state = hasMood ? FormatSummaryValue(debug.SummaryState) : "";
@@ -3078,14 +3255,24 @@ public partial class UdpListener : Node2D
 		if (_diaryConcernList == null)
 			return;
 
+		_diaryConcernData.Clear();
+		_diaryConcernData.AddRange(hasData ? ExtractConcernBars(menu) : new List<(string, float)>());
+		_diaryConcernExpanded = false; // mỗi lần có dữ liệu mới thì thu gọn lại
+		RenderDiaryConcernList();
+	}
+
+	private void RenderDiaryConcernList()
+	{
+		if (_diaryConcernList == null)
+			return;
+
 		foreach (Node child in _diaryConcernList.GetChildren())
 		{
 			_diaryConcernList.RemoveChild(child);
 			child.QueueFree();
 		}
 
-		var concerns = hasData ? ExtractConcernBars(menu) : new List<(string, float)>();
-		if (concerns.Count == 0)
+		if (_diaryConcernData.Count == 0)
 		{
 			var empty = new Label
 			{
@@ -3099,10 +3286,11 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		int shown = Mathf.Min(3, concerns.Count);
+		int total = _diaryConcernData.Count;
+		int shown = _diaryConcernExpanded ? total : Mathf.Min(DiaryConcernCollapsedCount, total);
 		for (int i = 0; i < shown; i++)
 		{
-			(string theme, float pct) = concerns[i];
+			(string theme, float pct) = _diaryConcernData[i];
 			var col = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 			col.AddThemeConstantOverride("separation", 3);
 
@@ -3129,10 +3317,17 @@ public partial class UdpListener : Node2D
 			_diaryConcernList.AddChild(col);
 		}
 
-		if (concerns.Count > shown)
+		// Nút thu/xổ: chỉ hiện khi có nhiều hơn số mục thu gọn. Click xử lý trong _Input.
+		_diaryConcernToggle = null;
+		if (total > DiaryConcernCollapsedCount)
 		{
-			var more = CreateUiLabel($"+ {concerns.Count - shown} mục khác", 12, new Color(0.70f, 0.46f, 0.60f));
-			_diaryConcernList.AddChild(more);
+			var toggle = CreateUiLabel(
+				_diaryConcernExpanded ? "Thu gọn" : $"+ {total - DiaryConcernCollapsedCount} mục khác",
+				12, new Color(0.70f, 0.46f, 0.60f));
+			toggle.MouseDefaultCursorShape = Control.CursorShape.PointingHand;
+			toggle.MouseFilter = Control.MouseFilterEnum.Stop;
+			_diaryConcernList.AddChild(toggle);
+			_diaryConcernToggle = toggle;
 		}
 	}
 
@@ -3459,7 +3654,7 @@ public partial class UdpListener : Node2D
 			CornerRadiusBottomRight = 20,
 			CornerRadiusBottomLeft = 20,
 			ContentMarginLeft = 18,
-			ContentMarginTop = 14,
+			ContentMarginTop = 0,
 			ContentMarginRight = 18,
 			ContentMarginBottom = 16,
 		});
@@ -3468,38 +3663,11 @@ public partial class UdpListener : Node2D
 		content.AddThemeConstantOverride("separation", 10);
 		card.AddChild(content);
 
-		// Header: icon tròn + tiêu đề + badge phân loại
-		var headerRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		headerRow.AddThemeConstantOverride("separation", 10);
-		content.AddChild(headerRow);
-
-		var iconChip = new PanelContainer { CustomMinimumSize = new Vector2(34f, 34f) };
-		iconChip.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-		{
-			BgColor = new Color(1f, 0.92f, 0.95f, 1f),
-			CornerRadiusTopLeft = 17,
-			CornerRadiusTopRight = 17,
-			CornerRadiusBottomRight = 17,
-			CornerRadiusBottomLeft = 17,
-			ContentMarginLeft = 6,
-			ContentMarginTop = 6,
-			ContentMarginRight = 6,
-			ContentMarginBottom = 6,
-		});
-		iconChip.AddChild(CreateDiaryGlyph(iconAsset, accent, 22f));
-		headerRow.AddChild(iconChip);
-
-		var title = CreateUiLabel(section.Title, 17, new Color(0.55f, 0.16f, 0.36f));
-		title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		title.VerticalAlignment = VerticalAlignment.Center;
-		headerRow.AddChild(title);
-
-		if (!string.IsNullOrWhiteSpace(badgeText))
-		{
-			var badge = CreateUiLabel(badgeText, 12, accent);
-			badge.VerticalAlignment = VerticalAlignment.Center;
-			headerRow.AddChild(badge);
-		}
+		// Header: khung banner với tiêu đề chèn lên vùng trống + badge phân loại bên phải.
+		Control header = BuildDiaryHeader(iconAsset, section.Title,
+			new Color(0.55f, 0.16f, 0.36f), badgeText, accent, 64f, 12);
+		header.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		content.AddChild(header);
 
 		// Body: từng dòng item với bullet
 		var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };

@@ -31,8 +31,9 @@ from cortex.private_mind import (
     PrivateMindTickResult,
     StateMutationBus,
     SurfaceValve,
+    ThoughtContinuityStore,
 )
-from cortex.private_mind.contracts import SurfaceCandidate, to_plain
+from cortex.private_mind.contracts import SurfaceCandidate, ThoughtFragment, to_plain
 from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
 from cortex.private_mind.inner_diary_writer import InnerDiaryWriter
 from eris_secrets import apply_secrets_to_environ
@@ -50,7 +51,7 @@ def _env_flag(name: str, default: bool) -> bool:
 class PrivateMindLoopConfig:
     enabled: bool = field(default_factory=lambda: _env_flag("ERIS_PRIVATE_MIND_ENABLED", True))
     min_interval_seconds: float = field(default_factory=lambda: float(os.getenv("ERIS_PRIVATE_MIND_MIN_INTERVAL_SEC", "12") or 12.0))
-    min_fragments_for_synthesis: int = 3
+    min_fragments_for_synthesis: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_MIN_FRAGMENTS_SYNTH", "2") or 2)))
     concern_store_path: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_CONCERNS_PATH", "") or ""))
     log_ticks: bool = field(default_factory=lambda: _env_flag("ERIS_PRIVATE_MIND_LOG_TICKS", True))
 
@@ -68,6 +69,7 @@ class PrivateMindLoop:
         synthesizer: GemmaInnerSynthesizer | None = None,
         mutation_bus: StateMutationBus | None = None,
         surface_valve: SurfaceValve | None = None,
+        continuity_store: ThoughtContinuityStore | None = None,
         model_adapter: Any = None,
         logger: Any = None,
     ) -> None:
@@ -80,6 +82,8 @@ class PrivateMindLoop:
         self.synthesizer = synthesizer or GemmaInnerSynthesizer(model_adapter=model_adapter, min_fragments_for_model=self.config.min_fragments_for_synthesis)
         self.mutation_bus = mutation_bus or StateMutationBus(logger=logger)
         self.surface_valve = surface_valve or SurfaceValve()
+        # Dòng suy nghĩ liên tục: nhớ mạch nghĩ cũ, nối tiếp thay vì nghĩ lại từ đầu.
+        self.continuity = continuity_store or ThoughtContinuityStore.from_env(logger=logger)
         self.last_tick_at = 0.0
         self.last_result: PrivateMindTickResult | None = None
         self.last_digest: dict[str, Any] = {}
@@ -144,11 +148,23 @@ class PrivateMindLoop:
                 "api_degraded_cause": str(api_status.get("api_degraded_cause", "") or ""),
             },
         )
+        # Tính liên tục: nạp mạch nghĩ gần đây + thread dang dở để model nghĩ TIẾP,
+        # không nghĩ lại từ con số không.
+        try:
+            dossier.metadata["recent_thoughts"] = self.continuity.recent_for_prompt()
+            dossier.metadata["unresolved_threads"] = self.continuity.unresolved_for_prompt()
+        except Exception:
+            pass
         fragments = self.evaluator_pipeline.evaluate(dossier)
+        # Nghĩ-bổ-sung cho mạch dang dở: CHỈ khi không có bằng chứng mới nào và có
+        # thread đến hạn khơi lại (cooldown lớn + đủ áp lực). Đây không phải nhịp đồng hồ.
+        if not fragments and self.continuity.has_followup_due():
+            fragments = self._followup_fragments(dossier)
         concerns = self.concern_store.update_from_fragments(fragments)
         judgment = self.synthesizer.synthesize(dossier=dossier, fragments=fragments)
         if judgment is not None:
             self.concern_store.update_from_judgment(judgment.private_concern_update)
+            self._record_continuity(judgment)
         candidate = self.surface_valve.filter(judgment)
         applied = self.mutation_bus.apply(
             judgment,
@@ -188,6 +204,60 @@ class PrivateMindLoop:
         self.last_digest = self.digest(surface_queue=surface_candidate_queue)
         self._log_tick(result)
         return result
+
+    def _followup_fragments(self, dossier: Any) -> tuple[ThoughtFragment, ...]:
+        """Biến mạch nghĩ dang dở thành fragment để synthesizer nghĩ tiếp.
+
+        Hiếm khi chạy (cooldown trong ThoughtContinuityStore). Mỗi thread khơi lại
+        được đánh dấu revisited để không bị khơi lại liên tục.
+        """
+        out: list[ThoughtFragment] = []
+        try:
+            unresolved = self.continuity.unresolved(limit=2)
+        except Exception:
+            return ()
+        for e in unresolved:
+            out.append(
+                ThoughtFragment(
+                    source="self_followup",
+                    claim=e.text,
+                    confidence=max(0.45, e.confidence),
+                    pressure=max(self.continuity.unresolved_min_pressure, e.pressure),
+                    evidence_ids=tuple(dossier.evidence_ids[:6]),
+                    suggested_question="",
+                    metadata={"theme": e.theme, "followup": True},
+                )
+            )
+            self.continuity.mark_revisited(e.theme)
+        return tuple(out)
+
+    def _record_continuity(self, judgment: Any) -> None:
+        """Ghi suy nghĩ vừa sinh vào dòng liên tục (RAM + JSONL)."""
+        try:
+            text = str(getattr(judgment, "dominant_judgment", "") or "").strip()
+            if not text:
+                return
+            concern_update = getattr(judgment, "private_concern_update", {}) or {}
+            theme = str(concern_update.get("theme") or "")
+            status = str(concern_update.get("status") or "open")
+            concern_ids = tuple(
+                str(x) for x in (concern_update.get("evidence_ids") or ())[:6] if str(x).strip()
+            )
+            self.continuity.record_thought(
+                text=text,
+                theme=theme,
+                status=status,
+                pressure=float(getattr(judgment, "pressure", 0.0) or 0.0),
+                confidence=float(getattr(judgment, "confidence", 0.0) or 0.0),
+                concern_ids=concern_ids,
+                source=str(getattr(judgment, "source", "synthesis") or "synthesis"),
+            )
+        except Exception as exc:
+            try:
+                if self.logger is not None:
+                    self.logger.warning("[ThoughtContinuity] record error: %s", exc)
+            except Exception:
+                pass
 
     def digest(self, *, surface_queue: list[Any] | None = None) -> dict[str, Any]:
         """Compact dev payload for private mind state.

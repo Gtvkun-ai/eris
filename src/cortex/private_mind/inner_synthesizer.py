@@ -95,10 +95,7 @@ class GemmaInnerSynthesizer:
         mutations = self._collect_mutations(fragments, evidence_ids)
         confidence = clamp01(sum(f.confidence for f in fragments) / max(1, len(fragments)) + 0.08)
         pressure = clamp01(max(f.pressure for f in fragments) + min(0.10, len(fragments) * 0.018))
-        dominant = compact_text(
-            f"{top.claim} Strongest synthesis: private cognition must persist concerns and mutate future behavior before any surface speech is considered.",
-            700,
-        )
+        dominant = self._weave_inner_voice(fragments)
         concern_update = {
             "theme": top.metadata.get("theme") or top.claim,
             "evidence_ids": list(evidence_ids),
@@ -132,6 +129,31 @@ class GemmaInnerSynthesizer:
         if judgment.surface_candidate is not None:
             judgment.surface_candidate.intent = judgment.intent
         return judgment
+
+    @staticmethod
+    def _weave_inner_voice(fragments: tuple[ThoughtFragment, ...]) -> str:
+        """Dệt các mảnh thành một mạch độc thoại ngôi thứ nhất, không boilerplate.
+
+        Các claim giờ đã ở giọng ngôi thứ nhất (do prompt fragment). Khi có nhiều
+        mảnh, nối 2-3 ý nặng nhất bằng liên từ mềm để nghe như đang nghĩ liên tục.
+        """
+        claims: list[str] = []
+        for f in sorted(fragments, key=lambda x: x.score, reverse=True):
+            c = " ".join(str(f.claim or "").split())
+            if c and c not in claims:
+                claims.append(c)
+            if len(claims) >= 3:
+                break
+        if not claims:
+            return ""
+        if len(claims) == 1:
+            return compact_text(claims[0], 320)
+        connectors = ["", " Mà ", " Với lại "]
+        woven = claims[0]
+        for i, c in enumerate(claims[1:], start=1):
+            joiner = connectors[i] if i < len(connectors) else " Rồi "
+            woven += joiner + c
+        return compact_text(woven, 480)
 
     def _rank_hypotheses(self, fragments: tuple[ThoughtFragment, ...], evidence_ids: tuple[str, ...]) -> tuple[RankedHypothesis, ...]:
         candidates: list[RankedHypothesis] = []

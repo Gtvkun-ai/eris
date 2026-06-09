@@ -405,6 +405,20 @@ class AffectSemanticClassifier:
             WeightedPhrase("rieng tu", 0.14),
             WeightedPhrase("hieu minh", 0.18),
             WeightedPhrase("gan bo", 0.22),
+            # Natural Vietnamese relational warmth (spec: relationship-state-trigger-fix).
+            # Weights kept moderate (~0.18-0.30) so no single phrase alone clears
+            # a downstream gate; warmth must accumulate or hit the prototype.
+            WeightedPhrase("quan trong voi", 0.26),
+            WeightedPhrase("quan trong voi toi", 0.30),
+            WeightedPhrase("muon hieu", 0.22),
+            WeightedPhrase("hieu duoc em", 0.26),
+            WeightedPhrase("hieu em", 0.20),
+            WeightedPhrase("quan tam", 0.20),
+            WeightedPhrase("tran trong em", 0.26),
+            WeightedPhrase("coi trong", 0.22),
+            WeightedPhrase("can em", 0.22),
+            WeightedPhrase("muon o ben", 0.24),
+            WeightedPhrase("o ben em", 0.24),
         ),
         "attachment": (
             WeightedPhrase("dung bo", 0.35),
@@ -417,6 +431,11 @@ class AffectSemanticClassifier:
             WeightedPhrase("ritual", 0.18),
             WeightedPhrase("lau dai", 0.16),
             WeightedPhrase("khong tan ra", 0.22),
+            # Natural Vietnamese attachment expressions (spec: relationship-state-trigger-fix).
+            WeightedPhrase("khong muon mat", 0.28),
+            WeightedPhrase("muon gan", 0.24),
+            WeightedPhrase("giu em", 0.24),
+            WeightedPhrase("luon o day", 0.22),
         ),
         "conflict": (
             WeightedPhrase("sai", 0.26),
@@ -724,6 +743,35 @@ class AffectSemanticClassifier:
             scores["romantic_boundary_probe"] = 0.88
             answer_need = 0.85
             evidence.append("prototype:trong_nhung_khong_yeu")
+
+        # 5b) Positive-warmth prototype (spec: relationship-state-trigger-fix).
+        # Symmetric to the rejection prototypes above, but bounded much lower
+        # (~0.50-0.55, not ~0.9) so genuine warmth is RECOGNIZED yet still earns
+        # relationship state change gradually downstream. When a second-person
+        # relational target (em/cau) co-occurs with a caring/understanding verb,
+        # set bounded floors on intimacy/attachment.
+        relational_target = bool(re.search(r"\b(em|cau)\b", normalized))
+        warmth_verbs = (
+            "quan trong",
+            "muon hieu",
+            "tran trong",
+            "quan tam",
+            "coi trong",
+        )
+        has_warmth_verb = any(verb in normalized for verb in warmth_verbs)
+        # Guard: do NOT fire when conflict/objectification/correction/rejection
+        # dominate the same turn (preserves req 3.3 - no warmth on hostile/
+        # objectifying/correcting turns).
+        warmth_blocked = (
+            scores["conflict"] >= 0.45
+            or scores["objectification"] >= 0.35
+            or scores["correction"] >= 0.45
+            or scores["perceived_rejection"] >= 0.45
+        )
+        if relational_target and has_warmth_verb and not warmth_blocked:
+            scores["intimacy"] = max(scores["intimacy"], 0.55)
+            scores["attachment"] = max(scores["attachment"], 0.50)
+            evidence.append("prototype:relational_warmth")
 
         # 6) Cross-axis correction.
         # Nếu technicality cao, intimacy từ các từ như "yêu" trong "yêu Python" không nên quá mạnh.

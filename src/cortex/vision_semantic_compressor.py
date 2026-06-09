@@ -566,13 +566,18 @@ class VisionSemanticCompressor:
         focus_kind: str,
         intent: str,
     ) -> str:
+        # No signal and no app/window means there is no real screen content to
+        # describe. Returning a placeholder like "screen context inferred from
+        # OCR; focus=unknown; intent=unknown" only manufactures a content-free
+        # "fact" that later leaks as screen evidence. Prefer an empty context so
+        # downstream fact extraction simply skips it.
         if signal_snapshot is None:
-            return f"screen context inferred from OCR; focus={focus_kind}; intent={intent}"
+            return ""
         app = compact_text(str(getattr(signal_snapshot, "active_app", "") or ""), 80)
         win = compact_text(str(getattr(signal_snapshot, "active_window_title", "") or ""), 120)
         if app or win:
             return compact_text(f"{app or 'active app'} | {win or 'active window'} | focus={focus_kind}; intent={intent}", 260)
-        return f"screen context inferred from OCR; focus={focus_kind}; intent={intent}"
+        return ""
 
     # ------------------------------------------------------------------
     # Payload helpers

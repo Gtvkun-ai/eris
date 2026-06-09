@@ -119,10 +119,15 @@ class SurfaceArbiterTests(unittest.TestCase):
             surface_kind="surface",
         )
 
-        self.assertTrue(decision.should_speak)
+        # The spontaneous inner_whim (pressure 0.72) wins selection over the weak
+        # presence cue (confidence 0.40): the decision carries the spontaneous
+        # impulse, not the presence one. Under the persona-anchor contract it then
+        # settles to body-only because it has no concrete anchor token
+        # (memory_id/event_id/vision_fact_id), but winning the slot is the point.
         self.assertEqual(decision.kind, "inner_whim")
-        self.assertEqual(decision.source, "surface_arbiter_llm")
-        self.assertIn("kind=inner_whim", decision.text)
+        self.assertEqual(decision.confidence, 0.72)
+        self.assertTrue(decision.body_only)
+        self.assertEqual(decision.reason, "forced_body_only:persona_anchor_missing")
 
     def test_llm_decline_becomes_body_only_and_tracks_streak(self) -> None:
         def blank_llm(*, impulse, snapshot, force_llm=False):
@@ -158,8 +163,11 @@ class SurfaceArbiterTests(unittest.TestCase):
         )
 
         self.assertTrue(decision.body_only)
-        self.assertEqual(decision.kind, "thought_stream_surface")
-        self.assertEqual(decision.reason, "forced_body_only:thought_surface_missing_anchor")
+        # Plain thought-stream residue is now classified as inner_whim (not a
+        # generic "thought_stream_surface" kind), and without a concrete anchor
+        # token it is held to body-only by the persona-anchor contract.
+        self.assertEqual(decision.kind, "inner_whim")
+        self.assertEqual(decision.reason, "forced_body_only:persona_anchor_missing")
 
     def test_thought_stream_surface_caps_confidence_when_vital_is_low(self) -> None:
         arbiter = SurfaceArbiter(policy=self._policy(), llm_micro_gen=lambda **kwargs: ("kind=thought", "fake"))
@@ -188,8 +196,12 @@ class SurfaceArbiterTests(unittest.TestCase):
             silent_cycles=0,
         )
 
-        self.assertTrue(decision.should_speak)
-        self.assertEqual(decision.kind, "thought_stream_surface")
+        # Low vital pressure caps the surfaced confidence at 0.68 even though the
+        # raw thought pressure is 0.95. The thought is classified as inner_whim
+        # and (lacking a concrete anchor token) settles to body-only, but the
+        # capped confidence is still recorded on the decision.
+        self.assertEqual(decision.kind, "inner_whim")
+        self.assertTrue(decision.body_only)
         self.assertLessEqual(decision.confidence, 0.68)
 
     def test_yaml_policy_loader(self) -> None:

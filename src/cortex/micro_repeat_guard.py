@@ -12,6 +12,12 @@ from .micro_contracts import (
     normalize_text,
     phrase_in_normalized,
 )
+from .banned_filler import BANNED_FILLER_LINES
+
+try:
+    from runtime.liveliness_config import load_liveliness_config
+except Exception:  # pragma: no cover - allow import in partial test envs
+    load_liveliness_config = None  # type: ignore[assignment]
 
 try:  # Optional: semantic guard should degrade, not drag boot down with it.
     from .semantic_encoder import (
@@ -81,14 +87,15 @@ class SemanticRepeatGuard:
     }
 
     SEMANTIC_PROTOTYPES: dict[str, tuple[str, ...]] = {
-        "ambient_presence_status_ping": (
-            "Khoảng yên này vẫn giữ chỗ.",
-            "Nhịp này vẫn yên thêm chút.",
-            "Tôi vẫn ở đây.",
-            "Tôi vẫn đang nghe.",
-            "Im thêm chút cũng được.",
-            "Tôi vẫn đang quan sát thôi.",
-            "Nhịp im này vẫn còn đó.",
+        "ambient_presence_status_ping": tuple(
+            dict.fromkeys(
+                (
+                    *BANNED_FILLER_LINES,
+                    "Im thêm chút cũng được.",
+                    "Tôi vẫn đang quan sát thôi.",
+                    "Nhịp im này vẫn còn đó.",
+                )
+            )
         ),
     }
 
@@ -118,11 +125,30 @@ class SemanticRepeatGuard:
         self,
         *,
         max_items: int = 20,
-        window_seconds: float = 240.0,
-        exact_repeat_seconds: float = 90.0,
+        window_seconds: float | None = None,
+        exact_repeat_seconds: float | None = None,
         semantic_encoder: object | None = None,
-        semantic_threshold: float = 0.78,
+        semantic_threshold: float | None = None,
     ):
+        # Defaults come from LivelinessConfig so the exact-repeat window is at
+        # least the max idle interval (idle cycles are 60-120s apart, so a 90s
+        # window let consecutive repeats slip). Explicit args still override.
+        cfg = None
+        if load_liveliness_config is not None:
+            try:
+                cfg = load_liveliness_config()
+            except Exception:  # pragma: no cover - never break the guard on config
+                cfg = None
+        cfg_repeat_window = float(getattr(cfg, "repeat_window_sec", 180.0) or 180.0)
+        cfg_threshold = float(getattr(cfg, "sim_threshold", 0.78) or 0.78)
+
+        if window_seconds is None:
+            window_seconds = max(240.0, cfg_repeat_window)
+        if exact_repeat_seconds is None:
+            exact_repeat_seconds = cfg_repeat_window
+        if semantic_threshold is None:
+            semantic_threshold = cfg_threshold
+
         self.max_items = max(10, min(40, int(max_items or 20)))
         self.window_seconds = max(90.0, min(600.0, float(window_seconds or 240.0)))
         self.exact_repeat_seconds = max(20.0, min(self.window_seconds, float(exact_repeat_seconds or 90.0)))

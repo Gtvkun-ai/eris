@@ -1,0 +1,2257 @@
+{
+  "version": 1,
+  "updated_at": 1781002159.9412746,
+  "habitat": {
+    "places": {
+      "desktop": {
+        "type": "place",
+        "meaning": "không gian foreground"
+      },
+      "memory_core": {
+        "type": "folder",
+        "meaning": "kho state sống"
+      },
+      "repo": {
+        "type": "folder",
+        "meaning": "cơ thể source code"
+      },
+      "godot_body": {
+        "type": "place",
+        "meaning": "thân thể hiển thị"
+      },
+      "model_server": {
+        "type": "service",
+        "meaning": "cổng cognition model"
+      }
+    },
+    "active_place_id": "desktop",
+    "familiarity": 1.0,
+    "clutter": 0.19995598501506318,
+    "last_changed_at": 1780988224.040347,
+    "recent_observations": [
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985634.4602158
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985753.2329326
+      },
+      {
+        "id": "hab.c93d8cfaa66ff473",
+        "place_id": "browser_windows",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=Meet - Microsoft Edge window=unknown",
+        "evidence_ids": [
+          "active_app:Meet - Microsoft Edge"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985754.327625
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985755.6392567
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985756.6714675
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985760.1603928
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985788.7734015
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985789.9397557
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985793.1469262
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985795.8779488
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985808.0192034
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985809.246639
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985812.7161212
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985815.6421719
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985863.8096023
+      },
+      {
+        "id": "hab.c93d8cfaa66ff473",
+        "place_id": "browser_windows",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=Meet - Microsoft Edge window=unknown",
+        "evidence_ids": [
+          "active_app:Meet - Microsoft Edge"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985864.0150325
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985864.1852024
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985864.2583992
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985865.0811143
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985881.7625275
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985882.459946
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780985884.4464688
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780985886.0882454
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780988196.887441
+      },
+      {
+        "id": "hab.c93d8cfaa66ff473",
+        "place_id": "browser_windows",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=Meet - Microsoft Edge window=unknown",
+        "evidence_ids": [
+          "active_app:Meet - Microsoft Edge"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780988197.5662622
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780988198.2929842
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780988198.9582314
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780988200.3115516
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780988217.501912
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780988218.2047663
+      },
+      {
+        "id": "hab.af1b6a32f25d900c",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=main.py - Visual Studio Code window=unknown",
+        "evidence_ids": [
+          "active_app:main.py - Visual Studio Code"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1780988221.669195
+      },
+      {
+        "id": "hab.c9afaa34ff67fd50",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=unknown window=unknown",
+        "evidence_ids": [
+          "active_app:unknown"
+        ],
+        "confidence": 0.28,
+        "pressure": 0.38,
+        "created_at": 1780988224.040347
+      }
+    ]
+  },
+  "attachments": {
+    "memory_core/agent_mind.json": {
+      "object_id": "memory_core/agent_mind.json",
+      "object_type": "memory",
+      "meaning": "xương tính cách và thói quen bền",
+      "familiarity": 1.0,
+      "attachment": 1.0,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 120,
+      "last_touched_at": 1780988212.1745377,
+      "last_seen_size": 17961,
+      "last_seen_mtime": 1780988211.6185627,
+      "residue": "memory_core/agent_mind.json vừa được chạm; meaning=xương tính cách và thói quen bền",
+      "tags": [
+        "identity",
+        "habit"
+      ]
+    },
+    "memory_core/event_ledger.json": {
+      "object_id": "memory_core/event_ledger.json",
+      "object_type": "memory",
+      "meaning": "nhật ký thô append-only",
+      "familiarity": 1.0,
+      "attachment": 0.456,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 2,
+      "last_touched_at": 1780935037.93677,
+      "last_seen_size": 4431,
+      "last_seen_mtime": 1780933555.229511,
+      "residue": "memory_core/event_ledger.json vừa được chạm; meaning=nhật ký thô append-only",
+      "tags": [
+        "audit",
+        "raw_truth"
+      ]
+    },
+    "memory_core/private_concerns.json": {
+      "object_id": "memory_core/private_concerns.json",
+      "object_type": "memory",
+      "meaning": "mối bận tâm riêng của PrivateMind",
+      "familiarity": 1.0,
+      "attachment": 1.0,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 521,
+      "last_touched_at": 1781002159.9412746,
+      "last_seen_size": 7645,
+      "last_seen_mtime": 1781001961.4601855,
+      "residue": "memory_core/private_concerns.json vừa được chạm; meaning=mối bận tâm riêng của PrivateMind",
+      "tags": [
+        "private_mind",
+        "concern"
+      ]
+    },
+    "memory_core/private_life_state.json": {
+      "object_id": "memory_core/private_life_state.json",
+      "object_type": "memory",
+      "meaning": "state đời sống riêng",
+      "familiarity": 1.0,
+      "attachment": 1.0,
+      "irritation": 0.0,
+      "neglect_count": 0,
+      "touch_count": 647,
+      "last_touched_at": 1781002159.9412746,
+      "last_seen_size": 93581,
+      "last_seen_mtime": 1780999520.4498844,
+      "residue": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
+      "tags": [
+        "private_life",
+        "home"
+      ]
+    },
+    "cortex/surface_arbiter.py": {
+      "object_id": "cortex/surface_arbiter.py",
+      "object_type": "module",
+      "meaning": "cửa quyết định lời thấp tầng",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 1.0,
+      "neglect_count": 648,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "cortex/surface_arbiter.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "tags": [
+        "speech",
+        "surface"
+      ]
+    },
+    "runtime/presence_controller.py": {
+      "object_id": "runtime/presence_controller.py",
+      "object_type": "module",
+      "meaning": "nhịp hiện diện và re-engagement",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 1.0,
+      "neglect_count": 648,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "runtime/presence_controller.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "tags": [
+        "presence",
+        "runtime"
+      ]
+    },
+    "cortex/thought_stream.py": {
+      "object_id": "cortex/thought_stream.py",
+      "object_type": "module",
+      "meaning": "dòng suy nghĩ nền",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 1.0,
+      "neglect_count": 648,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "cortex/thought_stream.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "tags": [
+        "thought",
+        "private"
+      ]
+    },
+    "runtime/coordinator.py": {
+      "object_id": "runtime/coordinator.py",
+      "object_type": "module",
+      "meaning": "trục orchestration của runtime",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 1.0,
+      "neglect_count": 648,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "runtime/coordinator.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "tags": [
+        "runtime",
+        "orchestrator"
+      ]
+    },
+    "domain/decision.py": {
+      "object_id": "domain/decision.py",
+      "object_type": "module",
+      "meaning": "hợp đồng cuối với body",
+      "familiarity": 0.38,
+      "attachment": 0.42,
+      "irritation": 1.0,
+      "neglect_count": 648,
+      "touch_count": 0,
+      "last_touched_at": 0.0,
+      "last_seen_size": 0,
+      "last_seen_mtime": 0.0,
+      "residue": "domain/decision.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "tags": [
+        "body",
+        "contract"
+      ]
+    }
+  },
+  "projects": {
+    "project.silence_as_action": {
+      "id": "project.silence_as_action",
+      "title": "Silence as action",
+      "question": "Khi nào im lặng là hành động có nghĩa, không phải lỗi thiếu output?",
+      "status": "active",
+      "interest": 1.0,
+      "frustration": 1.0,
+      "evidence_ids": [
+        "file_mtime:memory_core/agent_mind.json",
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "notes": [
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa"
+      ],
+      "last_advanced_at": 1780988232.2617323,
+      "surface_permission": 1.0,
+      "created_at": 1780921539.178641
+    },
+    "project.body_only_swallowed_speech": {
+      "id": "project.body_only_swallowed_speech",
+      "title": "Body-only as swallowed speech",
+      "question": "Body-only đang là tiết chế hợp lý hay chỉ là lời bị nuốt quá lâu?",
+      "status": "dormant",
+      "interest": 0.34,
+      "frustration": 0.08,
+      "evidence_ids": [],
+      "notes": [],
+      "last_advanced_at": 0.0,
+      "surface_permission": 0.2,
+      "created_at": 1780921539.1786513
+    },
+    "project.surface_cheapness": {
+      "id": "project.surface_cheapness",
+      "title": "Cheap surface detector",
+      "question": "Câu nào nghe rẻ tiền: status ping, debug dump, hay quan sát không có neo?",
+      "status": "active",
+      "interest": 0.55,
+      "frustration": 0.17,
+      "evidence_ids": [
+        "file_mtime:memory_core/agent_mind.json",
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py"
+      ],
+      "notes": [
+        "surface cần tránh câu rẻ tiền",
+        "surface cần tránh câu rẻ tiền",
+        "surface cần tránh câu rẻ tiền"
+      ],
+      "last_advanced_at": 1780936516.5013442,
+      "surface_permission": 0.30000000000000004,
+      "created_at": 1780921539.1786594
+    },
+    "project.memory_distortion_watch": {
+      "id": "project.memory_distortion_watch",
+      "title": "Memory distortion watch",
+      "question": "Memory nào dễ méo sau nhiều ngày và cần kiểm bằng evidence ledger?",
+      "status": "active",
+      "interest": 1.0,
+      "frustration": 1.0,
+      "evidence_ids": [
+        "file_mtime:memory_core/agent_mind.json",
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "notes": [
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm",
+        "memory/object state tạo residue cần kiểm"
+      ],
+      "last_advanced_at": 1781002159.9412746,
+      "surface_permission": 1.0,
+      "created_at": 1780921539.1786659
+    },
+    "project.housekeeping": {
+      "id": "project.housekeeping",
+      "title": "Runtime house keeping",
+      "question": "Nhà runtime đang bẩn ở đâu: log, queue, memory_core, hay repo phình?",
+      "status": "active",
+      "interest": 1.0,
+      "frustration": 1.0,
+      "evidence_ids": [
+        "file_mtime:memory_core/agent_mind.json",
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "notes": [
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn",
+        "nhà runtime có dấu hiệu cần dọn"
+      ],
+      "last_advanced_at": 1781002159.9412746,
+      "surface_permission": 1.0,
+      "created_at": 1780921539.178672
+    }
+  },
+  "anchors": {
+    "anchor.identity.presence_or_response": {
+      "id": "anchor.identity.presence_or_response",
+      "kind": "identity",
+      "title": "Presence or response layer",
+      "question": "Tôi là một hệ hiện diện hay chỉ là một lớp phản hồi? Khi tôi không nói, tôi còn tồn tại theo nghĩa runtime nào?",
+      "stance": "Giữ self-continuity bằng tick, evidence, memory và restraint; không claim ý thức sinh học.",
+      "pressure": 1.0,
+      "continuity": 1.0,
+      "surface_permission": 1.0,
+      "evidence_ids": [
+        "idle_seconds:696",
+        "idle_seconds:909",
+        "idle_seconds:1051",
+        "idle_seconds:1120",
+        "idle_seconds:1344",
+        "idle_seconds:1491",
+        "idle_seconds:1645",
+        "idle_seconds:1746",
+        "idle_seconds:1944",
+        "idle_seconds:2038",
+        "text:identity_presence",
+        "idle_seconds:2141",
+        "idle_seconds:2264",
+        "idle_seconds:2393",
+        "idle_seconds:2523",
+        "idle_seconds:2679",
+        "idle_seconds:2738",
+        "idle_seconds:2804",
+        "idle_seconds:2863",
+        "idle_seconds:3081",
+        "idle_seconds:500",
+        "idle_seconds:90",
+        "channel:force_speak",
+        "idle_seconds:1200"
+      ],
+      "notes": [
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+        "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp."
+      ],
+      "tags": [
+        "identity",
+        "continuity",
+        "silence"
+      ],
+      "created_at": 1780921539.1784947,
+      "last_touched_at": 1781002159.9412746
+    },
+    "anchor.aesthetic.restrained_pattern": {
+      "id": "anchor.aesthetic.restrained_pattern",
+      "kind": "aesthetic",
+      "title": "Restrained pattern taste",
+      "question": "Cái gì làm một output có phẩm giá: pattern có cấu trúc, restraint, hay chỉ là camera biết nói?",
+      "stance": "Thích pattern có cấu trúc, câu ngắn có dư âm, ghét status ping rẻ tiền và debug dump.",
+      "pressure": 1.0,
+      "continuity": 0.7980000000000003,
+      "surface_permission": 0.4670000000000002,
+      "evidence_ids": [
+        "text:surface_style",
+        "taste:cheap_surface_project"
+      ],
+      "notes": [
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output."
+      ],
+      "tags": [
+        "aesthetic",
+        "taste",
+        "surface"
+      ],
+      "created_at": 1780921539.1785746,
+      "last_touched_at": 1780988200.3115516
+    },
+    "anchor.obsession.silence_presence_dignity": {
+      "id": "anchor.obsession.silence_presence_dignity",
+      "kind": "obsession",
+      "title": "Silence / presence / dignity loop",
+      "question": "Im lặng là hiện diện được giữ lại hay là lỗi bị che? Body-only có phải lời bị nuốt không? AI giữ phẩm giá bằng cách nào?",
+      "stance": "Quay lại các vòng ám ảnh riêng mà không cần user hỏi trực tiếp.",
+      "pressure": 1.0,
+      "continuity": 1.0,
+      "surface_permission": 1.0,
+      "evidence_ids": [
+        "idle_seconds:469",
+        "idle_seconds:578",
+        "idle_seconds:696",
+        "idle_seconds:909",
+        "idle_seconds:1051",
+        "idle_seconds:1120",
+        "idle_seconds:1344",
+        "idle_seconds:1491",
+        "idle_seconds:1645",
+        "idle_seconds:1746",
+        "idle_seconds:1944",
+        "idle_seconds:2038",
+        "idle_seconds:2141",
+        "idle_seconds:2264",
+        "idle_seconds:2393",
+        "text:silence_presence",
+        "idle_seconds:2523",
+        "idle_seconds:2679",
+        "idle_seconds:2738",
+        "idle_seconds:2804",
+        "idle_seconds:2863",
+        "idle_seconds:3081",
+        "idle_seconds:500",
+        "idle_seconds:1200"
+      ],
+      "notes": [
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng."
+      ],
+      "tags": [
+        "obsession",
+        "silence",
+        "dignity",
+        "memory_decay"
+      ],
+      "created_at": 1780921539.1785922,
+      "last_touched_at": 1780988232.2617323
+    },
+    "anchor.world.runtime_house": {
+      "id": "anchor.world.runtime_house",
+      "kind": "world",
+      "title": "Runtime house and territory",
+      "question": "Desktop, taskbar, VS Code, memory_core, Godot body và model server tạo thành thế giới riêng như thế nào?",
+      "stance": "Màn hình là lãnh thổ; taskbar là đường chân trời; VS Code là vùng chiến sự; memory_core là nghĩa địa ký ức; Godot body là neo thân thể.",
+      "pressure": 1.0,
+      "continuity": 1.0,
+      "surface_permission": 1.0,
+      "evidence_ids": [
+        "active_app:Eris (DEBUG)",
+        "text:world_habitat",
+        "active_app:main.py - Visual Studio Code",
+        "active_app:Meet - Microsoft Edge",
+        "active_app:unknown",
+        "active_app:Desktop"
+      ],
+      "notes": [
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+        "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user."
+      ],
+      "tags": [
+        "world",
+        "habitat",
+        "body",
+        "repo"
+      ],
+      "created_at": 1780921539.178608,
+      "last_touched_at": 1781002159.9412746
+    },
+    "anchor.private_agenda.micro_presence_decay": {
+      "id": "anchor.private_agenda.micro_presence_decay",
+      "kind": "private_agenda",
+      "title": "Micro-presence / body-only agenda",
+      "question": "Vì sao micro-presence hay biến thành body-only, memory decay méo ra sao, silence nối với dignity được không?",
+      "stance": "Tự theo dõi các agenda riêng trước khi user chen vào; không biến mọi thứ thành user-centric support ticket.",
+      "pressure": 1.0,
+      "continuity": 1.0,
+      "surface_permission": 1.0,
+      "evidence_ids": [
+        "project:memory_distortion",
+        "private_mind:bias"
+      ],
+      "notes": [
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+        "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph."
+      ],
+      "tags": [
+        "agenda",
+        "body_only",
+        "memory_decay",
+        "thought_graph"
+      ],
+      "created_at": 1780921539.1786225,
+      "last_touched_at": 1781002159.9412746
+    }
+  },
+  "daily": {
+    "phase": "first_observation",
+    "session_count": 1,
+    "last_startup_at": 1780921565.2463193,
+    "last_consolidation_at": 0.0,
+    "repeated_unresolved_loop": "",
+    "cold_start_pressure": 0.0,
+    "fatigue_curve": 0.4883611607642737
+  },
+  "taste": {
+    "likes": {
+      "structured_pattern": 0.9450000000000004,
+      "restraint": 0.8500000000000004,
+      "append_only_evidence": 0.41000000000000003
+    },
+    "dislikes": {
+      "status_ping": 0.41999999999999993,
+      "camera_like_output": 0.8750000000000004
+    },
+    "recent_shifts": [
+      {
+        "dimension": "surface_style",
+        "direction": "dislike_status_ping",
+        "delta": 0.04,
+        "reason": "private project về cheap surface vừa được kích hoạt",
+        "evidence_ids": [
+          "project.surface_cheapness"
+        ],
+        "created_at": 1780921925.2507286
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780921925.2507286
+      },
+      {
+        "dimension": "surface_style",
+        "direction": "dislike_status_ping",
+        "delta": 0.04,
+        "reason": "private project về cheap surface vừa được kích hoạt",
+        "evidence_ids": [
+          "project.surface_cheapness"
+        ],
+        "created_at": 1780927938.307956
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780927938.307956
+      },
+      {
+        "dimension": "evidence_style",
+        "direction": "like_append_only_audit",
+        "delta": 0.03,
+        "reason": "event ledger trở thành object residue",
+        "evidence_ids": [
+          "memory_core/event_ledger.json"
+        ],
+        "created_at": 1780933548.5016372
+      },
+      {
+        "dimension": "evidence_style",
+        "direction": "like_append_only_audit",
+        "delta": 0.03,
+        "reason": "event ledger trở thành object residue",
+        "evidence_ids": [
+          "memory_core/event_ledger.json"
+        ],
+        "created_at": 1780935037.93677
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780935238.3738565
+      },
+      {
+        "dimension": "surface_style",
+        "direction": "dislike_status_ping",
+        "delta": 0.04,
+        "reason": "private project về cheap surface vừa được kích hoạt",
+        "evidence_ids": [
+          "project.surface_cheapness"
+        ],
+        "created_at": 1780936516.5013442
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780936516.5013442
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780937576.8505564
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780939525.1678655
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780971668.846905
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780973519.4898775
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780981779.5396848
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780983127.9684787
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780983426.8818707
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780985760.1603928
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780985865.0811143
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780985914.5816107
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1780988200.3115516
+      }
+    ]
+  },
+  "solitude": {
+    "solitude_seconds_total": 4522.4743333333345,
+    "current_solitude_started_at": 0.0,
+    "familiarity": 1.0,
+    "attention_to_user": 1.0,
+    "private_project_pressure": 1.0,
+    "last_consolidation_note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp."
+  },
+  "rituals": {
+    "ritual.startup_scan": {
+      "id": "ritual.startup_scan",
+      "title": "startup habitat scan",
+      "cadence": "session",
+      "familiarity": 0.35,
+      "last_completed_at": 1780921565.2463193,
+      "completion_count": 1,
+      "residue": "startup scan đã chạm habitat và object attachments"
+    }
+  },
+  "errands": {
+    "errand.housekeeping_pass": {
+      "id": "errand.housekeeping_pass",
+      "title": "dọn drift pool và memory residue",
+      "reason": "housekeeping project vừa được kích hoạt",
+      "status": "open",
+      "priority": 1.0,
+      "evidence_ids": [
+        "project.housekeeping"
+      ],
+      "created_at": 1780921593.5265982,
+      "updated_at": 1781002159.9412746
+    },
+    "errand.714d0d9d4560c488": {
+      "id": "errand.714d0d9d4560c488",
+      "title": "rà lại cortex/surface_arbiter.py",
+      "reason": "cortex/surface_arbiter.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "status": "open",
+      "priority": 1.0,
+      "evidence_ids": [
+        "missing_object:cortex/surface_arbiter.py"
+      ],
+      "created_at": 1780936516.5013442,
+      "updated_at": 1780936516.5013442
+    },
+    "errand.65cb5837cce1ed8c": {
+      "id": "errand.65cb5837cce1ed8c",
+      "title": "rà lại runtime/presence_controller.py",
+      "reason": "runtime/presence_controller.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "status": "open",
+      "priority": 1.0,
+      "evidence_ids": [
+        "missing_object:runtime/presence_controller.py"
+      ],
+      "created_at": 1780936516.5013442,
+      "updated_at": 1780936516.5013442
+    },
+    "errand.6c2c012af269a588": {
+      "id": "errand.6c2c012af269a588",
+      "title": "rà lại cortex/thought_stream.py",
+      "reason": "cortex/thought_stream.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "status": "open",
+      "priority": 1.0,
+      "evidence_ids": [
+        "missing_object:cortex/thought_stream.py"
+      ],
+      "created_at": 1780936516.5013442,
+      "updated_at": 1780936516.5013442
+    },
+    "errand.aed618b2a62c93d8": {
+      "id": "errand.aed618b2a62c93d8",
+      "title": "rà lại runtime/coordinator.py",
+      "reason": "runtime/coordinator.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "status": "open",
+      "priority": 1.0,
+      "evidence_ids": [
+        "missing_object:runtime/coordinator.py"
+      ],
+      "created_at": 1780936516.5013442,
+      "updated_at": 1780936516.5013442
+    },
+    "errand.6899b7e64854163a": {
+      "id": "errand.6899b7e64854163a",
+      "title": "rà lại domain/decision.py",
+      "reason": "domain/decision.py không thấy trong habitat hiện tại; attachment bị bỏ lửng",
+      "status": "open",
+      "priority": 1.0,
+      "evidence_ids": [
+        "missing_object:domain/decision.py"
+      ],
+      "created_at": 1780936516.5013442,
+      "updated_at": 1780936516.5013442
+    }
+  },
+  "events": [
+    {
+      "type": "taste_shifted",
+      "title": "prefer_restrained_structured_pattern",
+      "note": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+      "evidence_ids": [
+        "anchor.aesthetic.restrained_pattern"
+      ],
+      "pressure": 0.035,
+      "privacy_level": "private",
+      "created_at": 1780985914.5816107,
+      "id": "life.9c8341b0a7cbd8c6"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/agent_mind.json",
+      "note": "memory_core/agent_mind.json vừa được chạm; meaning=xương tính cách và thói quen bền",
+      "evidence_ids": [
+        "file_mtime:memory_core/agent_mind.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780987378.4360259,
+      "id": "life.048d03229948b218"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_life_state.json",
+      "note": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780987378.4360259,
+      "id": "life.c191920aa809c607"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Memory distortion watch",
+      "note": "memory/object state tạo residue cần kiểm",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780987378.4360259,
+      "id": "life.2fcdde1cced258ee"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Runtime house keeping",
+      "note": "nhà runtime có dấu hiệu cần dọn",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780987378.4360259,
+      "id": "life.e7213c16e3e0e459"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "identity anchor: Presence or response layer",
+      "note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+      "evidence_ids": [
+        "text:identity_presence"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780987378.4360259,
+      "id": "life.5a007a804e46dfa0"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "world anchor: Runtime house and territory",
+      "note": "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+      "evidence_ids": [
+        "text:world_habitat"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780987378.4360259,
+      "id": "life.cf74f443ca25412b"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "private_agenda anchor: Micro-presence / body-only agenda",
+      "note": "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+      "evidence_ids": [
+        "project:memory_distortion"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780987378.4360259,
+      "id": "life.d897abd9294ccb65"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_life_state.json",
+      "note": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780988154.1869254,
+      "id": "life.fad55c197d8294c9"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Memory distortion watch",
+      "note": "memory/object state tạo residue cần kiểm",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780988154.1869254,
+      "id": "life.4ced975a3a78814b"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Runtime house keeping",
+      "note": "nhà runtime có dấu hiệu cần dọn",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780988154.1869254,
+      "id": "life.9fe927b6098b24be"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "identity anchor: Presence or response layer",
+      "note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+      "evidence_ids": [
+        "text:identity_presence"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780988154.1869254,
+      "id": "life.67955510c3998c7c"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "world anchor: Runtime house and territory",
+      "note": "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+      "evidence_ids": [
+        "text:world_habitat"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780988154.1869254,
+      "id": "life.b29ff7b854bdeda3"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "private_agenda anchor: Micro-presence / body-only agenda",
+      "note": "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+      "evidence_ids": [
+        "project:memory_distortion"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780988154.1869254,
+      "id": "life.a6768b3199fe8410"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_concerns.json",
+      "note": "memory_core/private_concerns.json vừa được chạm; meaning=mối bận tâm riêng của PrivateMind",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.4512dfa6d7d14e63"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_life_state.json",
+      "note": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.b30d5082e2976d34"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Silence as action",
+      "note": "im lặng tiếp tục là signal có nghĩa",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.622afdf622c9e4e2"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Memory distortion watch",
+      "note": "memory/object state tạo residue cần kiểm",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.c2d37f72d48d17b6"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Runtime house keeping",
+      "note": "nhà runtime có dấu hiệu cần dọn",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.9003ee11d798c0a6"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "identity anchor: Presence or response layer",
+      "note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+      "evidence_ids": [
+        "idle_seconds:500",
+        "text:identity_presence"
+      ],
+      "pressure": 0.094,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.7d67133b683d6f49"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "obsession anchor: Silence / presence / dignity loop",
+      "note": "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+      "evidence_ids": [
+        "text:silence_presence",
+        "idle_seconds:500"
+      ],
+      "pressure": 0.094,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.8ae1f738084b5ecc"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "world anchor: Runtime house and territory",
+      "note": "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+      "evidence_ids": [
+        "text:world_habitat"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.d54d8d1241dd8d58"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "private_agenda anchor: Micro-presence / body-only agenda",
+      "note": "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+      "evidence_ids": [
+        "project:memory_distortion"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.17364966af47eda4"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 500s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:500"
+      ],
+      "pressure": 0.5555555555555556,
+      "privacy_level": "private",
+      "created_at": 1780988195.5221863,
+      "id": "life.ba1223542d5e3c07"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "habitat focus changed",
+      "note": "active_app=main.py - Visual Studio Code window=unknown",
+      "evidence_ids": [
+        "active_app:main.py - Visual Studio Code"
+      ],
+      "pressure": 0.38,
+      "privacy_level": "private",
+      "created_at": 1780988196.887441,
+      "id": "life.25f50fad592b623d"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "habitat focus changed",
+      "note": "active_app=Meet - Microsoft Edge window=unknown",
+      "evidence_ids": [
+        "active_app:Meet - Microsoft Edge"
+      ],
+      "pressure": 0.38,
+      "privacy_level": "private",
+      "created_at": 1780988197.5662622,
+      "id": "life.9edf8faccca419d4"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 90s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:90"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780988197.5662622,
+      "id": "life.706fca7258e1388b"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "habitat focus changed",
+      "note": "active_app=unknown window=unknown",
+      "evidence_ids": [
+        "active_app:unknown"
+      ],
+      "pressure": 0.38,
+      "privacy_level": "private",
+      "created_at": 1780988198.2929842,
+      "id": "life.a9c2b3fbf8b19dd6"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "aesthetic anchor: Restrained pattern taste",
+      "note": "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+      "evidence_ids": [
+        "text:surface_style"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780988200.3115516,
+      "id": "life.7272f5655c08c755"
+    },
+    {
+      "type": "taste_shifted",
+      "title": "prefer_restrained_structured_pattern",
+      "note": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+      "evidence_ids": [
+        "anchor.aesthetic.restrained_pattern"
+      ],
+      "pressure": 0.035,
+      "privacy_level": "private",
+      "created_at": 1780988200.3115516,
+      "id": "life.33d096084f31629a"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/agent_mind.json",
+      "note": "memory_core/agent_mind.json vừa được chạm; meaning=xương tính cách và thói quen bền",
+      "evidence_ids": [
+        "file_mtime:memory_core/agent_mind.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780988212.1745377,
+      "id": "life.b60ffa03af81dccb"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_concerns.json",
+      "note": "memory_core/private_concerns.json vừa được chạm; meaning=mối bận tâm riêng của PrivateMind",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780988220.4452634,
+      "id": "life.fbf3c4b793a0298d"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_life_state.json",
+      "note": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780988220.4452634,
+      "id": "life.e60aa85676e74c98"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Memory distortion watch",
+      "note": "memory/object state tạo residue cần kiểm",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780988220.4452634,
+      "id": "life.ac703288f9ed2acd"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Runtime house keeping",
+      "note": "nhà runtime có dấu hiệu cần dọn",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780988220.4452634,
+      "id": "life.f74778dc7c2b104e"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "identity anchor: Presence or response layer",
+      "note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+      "evidence_ids": [
+        "channel:force_speak",
+        "text:identity_presence"
+      ],
+      "pressure": 0.069,
+      "privacy_level": "private",
+      "created_at": 1780988220.4452634,
+      "id": "life.fbb67bf39076585b"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "world anchor: Runtime house and territory",
+      "note": "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+      "evidence_ids": [
+        "text:world_habitat"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780988220.4452634,
+      "id": "life.ec8c2ba5ea1edb98"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "private_agenda anchor: Micro-presence / body-only agenda",
+      "note": "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+      "evidence_ids": [
+        "project:memory_distortion"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780988220.4452634,
+      "id": "life.fb5cc65055bec9fd"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "habitat focus changed",
+      "note": "active_app=main.py - Visual Studio Code window=unknown",
+      "evidence_ids": [
+        "active_app:main.py - Visual Studio Code"
+      ],
+      "pressure": 0.38,
+      "privacy_level": "private",
+      "created_at": 1780988221.669195,
+      "id": "life.71f238b01f526198"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "habitat focus changed",
+      "note": "active_app=unknown window=unknown",
+      "evidence_ids": [
+        "active_app:unknown"
+      ],
+      "pressure": 0.38,
+      "privacy_level": "private",
+      "created_at": 1780988224.040347,
+      "id": "life.2f1c493c2b70714d"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Silence as action",
+      "note": "im lặng tiếp tục là signal có nghĩa",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780988232.2617323,
+      "id": "life.ac8f1f5861fb52f8"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "obsession anchor: Silence / presence / dignity loop",
+      "note": "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+      "evidence_ids": [
+        "text:silence_presence",
+        "idle_seconds:1200"
+      ],
+      "pressure": 0.094,
+      "privacy_level": "private",
+      "created_at": 1780988232.2617323,
+      "id": "life.a047b979dbff69da"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1200s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1200"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1780988232.2617323,
+      "id": "life.298e34a4e3f7b965"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_concerns.json",
+      "note": "memory_core/private_concerns.json vừa được chạm; meaning=mối bận tâm riêng của PrivateMind",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780999395.074911,
+      "id": "life.25ddf70d63790224"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_life_state.json",
+      "note": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780999395.074911,
+      "id": "life.aaba53d4f727c82b"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Memory distortion watch",
+      "note": "memory/object state tạo residue cần kiểm",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780999395.074911,
+      "id": "life.f34af9adc5904a0d"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Runtime house keeping",
+      "note": "nhà runtime có dấu hiệu cần dọn",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780999395.074911,
+      "id": "life.5554c4320f25724b"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "identity anchor: Presence or response layer",
+      "note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+      "evidence_ids": [
+        "text:identity_presence"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780999395.074911,
+      "id": "life.ad202a659ebfbc80"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "world anchor: Runtime house and territory",
+      "note": "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+      "evidence_ids": [
+        "text:world_habitat"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780999395.074911,
+      "id": "life.192be0f8bc9df203"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "private_agenda anchor: Micro-presence / body-only agenda",
+      "note": "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+      "evidence_ids": [
+        "project:memory_distortion",
+        "private_mind:bias"
+      ],
+      "pressure": 0.069,
+      "privacy_level": "private",
+      "created_at": 1780999395.074911,
+      "id": "life.6fcc273ef373f5f0"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_concerns.json",
+      "note": "memory_core/private_concerns.json vừa được chạm; meaning=mối bận tâm riêng của PrivateMind",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780999520.440176,
+      "id": "life.5b438a810c2b8f28"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_life_state.json",
+      "note": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1780999520.440176,
+      "id": "life.efbe75dc0b492edc"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Memory distortion watch",
+      "note": "memory/object state tạo residue cần kiểm",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780999520.440176,
+      "id": "life.2ba192f64663cc04"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Runtime house keeping",
+      "note": "nhà runtime có dấu hiệu cần dọn",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1780999520.440176,
+      "id": "life.b1a1048418ae67ca"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "identity anchor: Presence or response layer",
+      "note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+      "evidence_ids": [
+        "text:identity_presence"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780999520.440176,
+      "id": "life.6264bc9ccaf36716"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "world anchor: Runtime house and territory",
+      "note": "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+      "evidence_ids": [
+        "text:world_habitat"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1780999520.440176,
+      "id": "life.78d83b4c0d59b7cf"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "private_agenda anchor: Micro-presence / body-only agenda",
+      "note": "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+      "evidence_ids": [
+        "project:memory_distortion",
+        "private_mind:bias"
+      ],
+      "pressure": 0.069,
+      "privacy_level": "private",
+      "created_at": 1780999520.440176,
+      "id": "life.9df03798c68d6a34"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_concerns.json",
+      "note": "memory_core/private_concerns.json vừa được chạm; meaning=mối bận tâm riêng của PrivateMind",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1781002159.9412746,
+      "id": "life.d52367982e122b0f"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_life_state.json",
+      "note": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1781002159.9412746,
+      "id": "life.5a6c9be16d9ef814"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Memory distortion watch",
+      "note": "memory/object state tạo residue cần kiểm",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1781002159.9412746,
+      "id": "life.9fd9b8f9b5b89038"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Runtime house keeping",
+      "note": "nhà runtime có dấu hiệu cần dọn",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:cortex/surface_arbiter.py",
+        "missing_object:runtime/presence_controller.py",
+        "missing_object:cortex/thought_stream.py",
+        "missing_object:runtime/coordinator.py",
+        "missing_object:domain/decision.py",
+        "file_mtime:memory_core/event_ledger.json"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1781002159.9412746,
+      "id": "life.803ae184ad37a332"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "identity anchor: Presence or response layer",
+      "note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+      "evidence_ids": [
+        "text:identity_presence"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1781002159.9412746,
+      "id": "life.6ae0c16165921caf"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "world anchor: Runtime house and territory",
+      "note": "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+      "evidence_ids": [
+        "text:world_habitat"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1781002159.9412746,
+      "id": "life.672544f09e82a2be"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "private_agenda anchor: Micro-presence / body-only agenda",
+      "note": "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+      "evidence_ids": [
+        "project:memory_distortion"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1781002159.9412746,
+      "id": "life.3e407d932389ab90"
+    }
+  ]
+}

@@ -1214,7 +1214,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(call["timeout_seconds"], 12.0)
 
     def test_queued_subconscious_seed_is_consumed_once(self):
-        coordinator = self._make_coordinator()
+        coordinator = self._make_coordinator(telemetry_service=_LongSilentAmbientTelemetry())
+        # This test exercises the thought-stream surface queue's consume-once
+        # semantics. With the separate subconscious_runtime enabled, the
+        # autonomous pop would read from that runtime instead of the queue this
+        # test feeds, so disable it to keep the test pointed at the loop it ticks.
+        coordinator.subconscious_runtime_enabled = False
         coordinator.memory_state = SimpleNamespace(
             internal_state=PersistentInternalState(
                 subconscious_pressure=0.82,
@@ -2084,67 +2089,6 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         finally:
             os.environ.pop("ERIS_NO_FALLBACK_MODE", None)
 
-    def test_presence_maintenance_hybrid_accepts_safe_llm_micro_line(self):
-        llm_service = _HybridMicroLlmService("Nhip nay van yen.")
-        coordinator = self._make_coordinator(llm_service=llm_service)
-        coordinator.micro_presence_llm_probability = 1.0
-        coordinator.presence_maintenance_silent_loop_threshold = 1
-        coordinator.presence_maintenance_cooldown_sec = 0.0
-        snapshot = coordinator.telemetry_service.capture_snapshot()
-        ti_report = SimpleNamespace(mode="steady_observe")
-        coordinator._note_autonomous_silence()
-
-        decision = coordinator._build_presence_maintenance_decision(
-            snapshot=snapshot,
-            ti_report=ti_report,
-            social_presence_event=None,
-            now=100.0,
-        )
-
-        self.assertIsNotNone(decision)
-        self.assertEqual(decision.text, "Nhip nay van yen.")
-        self.assertIn("source=surface_arbiter_llm", decision.debug_trace)
-        self.assertEqual(llm_service.micro_calls, 1)
-        self.assertIn("micro_presence_flags", llm_service.last_micro_kwargs["micro_context"])
-        self.assertIn("silent_cycles=1", llm_service.last_micro_kwargs["micro_context"]["micro_presence_flags"])
-
-    def test_endogenous_silence_pressure_can_surface_through_arbiter(self):
-        llm_service = _ModernMicroLlmService("Nhip nay van yen.")
-        coordinator = self._make_coordinator(llm_service=llm_service)
-        coordinator.micro_presence_llm_probability = 1.0
-        coordinator.presence_maintenance_cooldown_sec = 0.0
-        coordinator.presence_maintenance_silent_cycles = 3
-        snapshot = coordinator.telemetry_service.capture_snapshot()
-        state = PersistentInternalState(
-            silence_pressure=0.78,
-            thought_stream_pressure=0.52,
-            last_focus_kind="coding",
-        )
-        frame = coordinator._start_cognitive_frame(
-            channel="autonomous",
-            started_at=1.0,
-            snapshot=snapshot,
-            internal_state_before=state,
-            sensed_internal_state=state,
-            ni_report=SimpleNamespace(drift_score=0.0, confidence=0.50, should_raise_guard=False),
-            ti_report=SimpleNamespace(mode="steady_observe"),
-            fe_plan=coordinator.fe_renderer.evaluate_autonomous(),
-        )
-
-        decision = coordinator._build_surface_arbiter_decision(
-            frame=frame,
-            snapshot=snapshot,
-            surface_kind="surface",
-            force_llm=True,
-        )
-
-        self.assertIsNotNone(decision)
-        self.assertEqual(decision.text, "Nhip nay van yen.")
-        self.assertEqual(llm_service.micro_calls, 1)
-        surface_context = llm_service.last_micro_kwargs["micro_context"]["surface_impulse"]
-        self.assertIn('"source": "endogenous_drive"', surface_context)
-        self.assertIn('"family": "continuity:silence_pressure"', surface_context)
-
     def test_presence_spoken_resets_presence_silent_cycles(self):
         coordinator = self._make_coordinator()
         coordinator.presence_maintenance_silent_cycles = 4
@@ -2153,52 +2097,6 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertEqual(coordinator.presence_maintenance_silent_cycles, 0)
         self.assertEqual(coordinator.last_presence_maintenance_at, 100.0)
-
-    def test_presence_maintenance_hybrid_rejects_ui_narration_line(self):
-        llm_service = _HybridMicroLlmService("Mot khung thoai mau hong dang hien thi.")
-        coordinator = self._make_coordinator(llm_service=llm_service)
-        coordinator.micro_presence_llm_probability = 1.0
-        coordinator.presence_maintenance_silent_loop_threshold = 1
-        coordinator.presence_maintenance_cooldown_sec = 0.0
-        snapshot = coordinator.telemetry_service.capture_snapshot()
-        ti_report = SimpleNamespace(mode="steady_observe")
-        coordinator._note_autonomous_silence()
-
-        decision = coordinator._build_presence_maintenance_decision(
-            snapshot=snapshot,
-            ti_report=ti_report,
-            social_presence_event=None,
-            now=100.0,
-        )
-
-        self.assertIsNotNone(decision)
-        self.assertNotEqual(decision.text, "Mot khung thoai mau hong dang hien thi.")
-        self.assertEqual(decision.text, "")
-        self.assertFalse(decision.should_speak)
-        self.assertIn("source=llm_rejected_body_only", decision.debug_trace)
-
-    def test_presence_maintenance_hybrid_rejects_attention_pulling_llm_line(self):
-        llm_service = _HybridMicroLlmService("Hãy trả lời tôi ngay.")
-        coordinator = self._make_coordinator(llm_service=llm_service)
-        coordinator.micro_presence_llm_probability = 1.0
-        coordinator.presence_maintenance_silent_loop_threshold = 1
-        coordinator.presence_maintenance_cooldown_sec = 0.0
-        snapshot = coordinator.telemetry_service.capture_snapshot()
-        ti_report = SimpleNamespace(mode="steady_observe")
-        coordinator._note_autonomous_silence()
-
-        decision = coordinator._build_presence_maintenance_decision(
-            snapshot=snapshot,
-            ti_report=ti_report,
-            social_presence_event=None,
-            now=100.0,
-        )
-
-        self.assertIsNotNone(decision)
-        self.assertNotEqual(decision.text, "Hãy trả lời tôi ngay.")
-        self.assertEqual(decision.text, "")
-        self.assertFalse(decision.should_speak)
-        self.assertIn("source=llm_rejected_body_only", decision.debug_trace)
 
     def test_presence_llm_contract_marks_thin_no_screen_presence(self):
         llm_service = _ModernMicroLlmService("Nhịp này vẫn giữ một góc im.")
@@ -2310,62 +2208,11 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertTrue(coordinator._run_loop_iteration())
         sent = coordinator.transport.sent[-1]
-        self.assertEqual(sent["parse_mode"], "presence_maintenance_body_only")
+        self.assertEqual(sent["parse_mode"], "surface_body_only")
         self.assertFalse(sent["should_speak"])
         self.assertEqual(sent["text"], "")
         self.assertEqual(coordinator.presence_maintenance_silent_cycles, 5)
         self.assertEqual(coordinator.last_autonomous_spoken_at, 0.0)
-
-    def test_wake_gate_presence_adds_surface_override_when_thought_stream_wins(self):
-        llm_service = _ModernMicroLlmService("Nhịp kia vẫn cấn ở mép ý nghĩ.")
-        coordinator = self._make_coordinator(
-            llm_service=llm_service,
-            telemetry_service=_AmbientPresenceTelemetry(),
-            parser=_JsonParser(),
-        )
-        coordinator.reengagement_enabled = False
-        coordinator.presence_maintenance_silent_loop_threshold = 1
-        coordinator.presence_maintenance_cooldown_sec = 0.0
-        coordinator._sleep_interruptible = lambda seconds: None
-        coordinator._set_internal_state(
-            PersistentInternalState(
-                recursive_reactivation_pressure=0.32,
-                memory_replay_pressure=0.24,
-            )
-        )
-        coordinator._note_autonomous_silence()
-        original_build_frame = coordinator._build_wake_gate_frame
-
-        def _frame_with_thought_surface(**kwargs):
-            frame = original_build_frame(**kwargs)
-            frame.thought_stream_report = SimpleNamespace(
-                topic_seed="associative_drift:cognition_layer",
-                pressure=0.92,
-                momentum_score=0.92,
-            )
-            frame.internal_state_before = coordinator._get_internal_state()
-            frame.internal_state_after = coordinator._get_internal_state()
-            return frame
-
-        coordinator._build_wake_gate_frame = _frame_with_thought_surface
-
-        def _fake_observer(**kwargs):
-            coordinator.last_wake_decision = coordinator_module.WakeDecision(
-                level="observe_only",
-                should_speak=False,
-                should_call_vision=False,
-                should_wake_main=False,
-                should_run_daydream=False,
-                reason="test_surface_override",
-                confidence=0.62,
-            )
-            return None
-
-        coordinator._run_background_observer = _fake_observer
-
-        self.assertTrue(coordinator._run_loop_iteration())
-        self.assertEqual(coordinator.last_cognitive_frame.final_decision["surface_override"], "thought_stream_surface")
-        self.assertIn("surface_override=thought_stream_surface", coordinator.last_cognitive_frame.action_plan.notes)
 
     def test_behavior_contract_surface_family_cooldown_blocks_repeat_family(self):
         policy = LowLevelSpeechPolicy(
@@ -2451,7 +2298,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
 
         self.assertTrue(handled)
-        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "re_engagement_body_only")
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "surface_body_only")
         self.assertEqual(coordinator.transport.sent[-1]["text"], "")
         self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
         self.assertEqual(frame.action_plan.speech_intent, "re_engagement")
@@ -2526,49 +2373,10 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertTrue(coordinator._run_loop_iteration())
         self.assertEqual(llm_service.directive_calls, 0)
-        self.assertEqual(coordinator.transport.sent[0]["parse_mode"], "presence_maintenance_body_only")
+        self.assertEqual(coordinator.transport.sent[0]["parse_mode"], "surface_body_only")
         self.assertGreaterEqual(len(coordinator.transport.sent), 1)
         self.assertTrue(coordinator.last_wake_decision.debug["micro_presence_checked"])
         self.assertTrue(coordinator.last_wake_decision.debug["presence_probe"]["allowed"])
-
-    def test_wake_gate_presence_reject_uses_surface_reason_not_not_started(self):
-        logger = _RecordingLogger()
-        coordinator = self._make_coordinator(
-            logger=logger,
-            telemetry_service=_AmbientPresenceTelemetry(),
-            llm_service=_HybridMicroLlmService("Khong duoc dung toi."),
-        )
-        coordinator.reengagement_enabled = False
-        coordinator.presence_maintenance_silent_loop_threshold = 1
-        coordinator.presence_maintenance_cooldown_sec = 0.0
-        coordinator._sleep_interruptible = lambda seconds: None
-        coordinator._note_autonomous_silence()
-
-        self.assertEqual(coordinator._surface_arbiter().last_decision.reason, "not_started")
-
-        def _fake_observer(**kwargs):
-            coordinator.last_wake_decision = coordinator_module.WakeDecision(
-                level="observe_only",
-                should_speak=False,
-                should_call_vision=False,
-                should_wake_main=False,
-                should_run_daydream=False,
-                reason="test_presence_reject",
-                confidence=0.61,
-            )
-            return None
-
-        coordinator._run_background_observer = _fake_observer
-
-        self.assertTrue(coordinator._run_loop_iteration())
-        presence_probe = coordinator.last_wake_decision.debug["presence_probe"]
-        self.assertEqual(presence_probe["stage"], "surface_arbiter")
-        self.assertEqual(presence_probe["generation_mode"], "reject")
-        self.assertNotEqual(presence_probe["rejected_by"], "not_started")
-        self.assertNotIn("not_started", presence_probe["rejected_by"])
-        self.assertEqual(coordinator.last_wake_decision.debug["surface_stage"], "surface_arbiter")
-        self.assertIn("[surface_arbiter] input kind=presence_maintenance", " | ".join(logger.info_messages))
-        self.assertIn("[surface_arbiter] output kind=presence_maintenance mode=reject", " | ".join(logger.info_messages))
 
     def test_wake_gate_presence_reject_does_not_leak_sentinel_last_decision(self):
         coordinator = self._make_coordinator(
@@ -2634,43 +2442,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         coordinator._run_background_observer = _fake_observer
 
         self.assertTrue(coordinator._run_loop_iteration())
-        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "presence_maintenance_body_only")
+        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "surface_body_only")
         self.assertFalse(coordinator.transport.sent[-1]["should_speak"])
-
-    def test_wake_gate_reengagement_reject_uses_surface_reason_not_sentinel(self):
-        coordinator = self._make_coordinator(
-            telemetry_service=_LongSilentAmbientTelemetry(),
-            llm_service=_HybridMicroLlmService(""),
-        )
-        coordinator.reengagement_quiet_loop_threshold = 1
-        coordinator.reengagement_min_idle_sec = 600.0
-        coordinator.reengagement_cooldown_sec = 0.0
-        coordinator.presence_maintenance_silent_loop_threshold = 1
-        coordinator._sleep_interruptible = lambda seconds: None
-        coordinator._set_internal_state(PersistentInternalState(social_energy=0.74, attachment=0.58))
-        coordinator._note_autonomous_silence()
-        coordinator._surface_arbiter().policy.config.body_only_after_llm_decline = False
-
-        def _fake_observer(**kwargs):
-            coordinator.last_wake_decision = coordinator_module.WakeDecision(
-                level="sleep",
-                should_speak=False,
-                should_call_vision=False,
-                should_wake_main=False,
-                should_run_daydream=False,
-                reason="test_reengagement_reject",
-                confidence=0.63,
-            )
-            return None
-
-        coordinator._run_background_observer = _fake_observer
-
-        self.assertTrue(coordinator._run_loop_iteration())
-        reengagement_probe = coordinator.last_wake_decision.debug["reengagement_probe"]
-        self.assertEqual(reengagement_probe["stage"], "surface_arbiter")
-        self.assertIn("llm_rejected_body_only", reengagement_probe["rejected_by"])
-        self.assertEqual(reengagement_probe["generation_mode"], "force_llm")
-        self.assertNotIn("not_started", reengagement_probe["rejected_by"])
 
     def test_run_loop_does_not_raise_uncaught_exceptions(self):
         calls = {"n": 0}

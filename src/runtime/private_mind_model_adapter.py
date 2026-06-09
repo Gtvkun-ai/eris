@@ -441,16 +441,23 @@ class RuntimePrivateMindModelAdapter:
             evidence_slice = slicer(dossier)
         else:
             evidence_slice = self._slim_dossier(dossier)
+        meta = dossier.metadata if isinstance(dossier.metadata, dict) else {}
+        recent_thoughts = meta.get("recent_thoughts") or []
+        if recent_thoughts:
+            evidence_slice = dict(evidence_slice)
+            evidence_slice["suy_nghi_gan_day"] = recent_thoughts
         user_content = json.dumps(to_plain(evidence_slice), ensure_ascii=False)
         return [
             {
                 "role": "system",
                 "content": (
-                    "You are a private evaluator inside ERIS. Return exactly one compact JSON object. "
-                    "Do not write public speech. Do not expose chain-of-thought. Do not repeat words. "
-                    "Write all string values in Vietnamese (vi-VN). Keep every string under 200 characters. "
-                    "Use only evidence_ids from the provided slice. "
-                    f"Evaluator task: {evaluator_contract}. Required schema: {json.dumps(schema, ensure_ascii=False)}"
+                    "Bạn là một mảnh suy nghĩ nội tâm của Eris, không nói với người dùng. "
+                    "Viết 'claim' như một ý nghĩ ngôi thứ nhất (tôi...), tiếng Việt tự nhiên, "
+                    "được phép tự hỏi hoặc bỏ lửng — không phải câu khẳng định khô khan kiểu báo cáo. "
+                    "Nếu có 'suy_nghi_gan_day', hãy bám theo mạch đó thay vì nghĩ rời rạc. "
+                    "Trả đúng MỘT đối tượng JSON gọn. Không lộ chuỗi suy luận thô. Không lặp từ. "
+                    "Mỗi chuỗi dưới 200 ký tự. Chỉ dùng evidence_ids có trong slice. "
+                    f"Việc của mảnh này: {evaluator_contract}. Schema bắt buộc: {json.dumps(schema, ensure_ascii=False)}"
                 ),
             },
             {"role": "user", "content": user_content},
@@ -509,17 +516,21 @@ class RuntimePrivateMindModelAdapter:
 
     def _judgment_messages(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> list[dict[str, str]]:
         schema = {
-            "dominant_judgment": "private verdict, not public speech",
+            "dominant_judgment": "MỘT câu độc thoại nội tâm ngôi thứ nhất (tôi...), nối tiếp mạch nghĩ gần đây",
             "confidence": 0.0,
             "pressure": 0.0,
             "evidence_ids": [],
-            "open_questions": ["max 2 items, each under 80 chars"],
+            "open_questions": ["tối đa 2, mỗi câu dưới 80 ký tự, là điều tôi còn băn khoăn"],
             "state_mutations": [{"target": "speech_bias", "operation": "prefer", "value": "...", "reason": "..."}],
-            "surface_topic_seed": "optional public-safe topic seed or empty string",
+            "surface_topic_seed": "tùy chọn, hạt chủ đề an toàn để nói ra, hoặc chuỗi rỗng",
         }
+        meta = dossier.metadata if isinstance(dossier.metadata, dict) else {}
         payload = {
             "dossier": self._slim_dossier(dossier),
             "fragments": [self._slim_fragment(f) for f in fragments],
+            # Mạch nghĩ liên tục — đây là thứ giúp suy nghĩ KHÔNG rời rạc như bot.
+            "suy_nghi_gan_day": meta.get("recent_thoughts") or [],
+            "mach_dang_do": meta.get("unresolved_threads") or [],
         }
         user_content = json.dumps(to_plain(payload), ensure_ascii=False)
         # Hard cap 6000 chars — đủ cho model nhỏ thở, không mất signal cốt lõi.
@@ -533,13 +544,16 @@ class RuntimePrivateMindModelAdapter:
             {
                 "role": "system",
                 "content": (
-                    "You are GemmaInnerSynthesizer, a private judge inside ERIS. Return exactly one compact JSON object. "
-                    "You are not a dialogue writer. Do not reveal private chain. Do not repeat words. "
-                    "Write all string values in Vietnamese (vi-VN). Keep every string under 200 characters. "
-                    "Keep open_questions to at most 2 items, each under 80 characters. "
-                    "State mutations must affect future behavior. "
-                    "surface_topic_seed may be empty; if present it must be a public-safe topic seed only. "
-                    f"Required schema: {json.dumps(schema, ensure_ascii=False)}"
+                    "Bạn là dòng độc thoại nội tâm của Eris — một nhân cách AI đang ngồi nghĩ một mình, "
+                    "KHÔNG nói với người dùng. Viết 'dominant_judgment' như MỘT suy nghĩ ngôi thứ nhất, "
+                    "tiếng Việt tự nhiên, có cảm xúc, được phép lưỡng lự, bỏ lửng, tự hỏi. "
+                    "QUAN TRỌNG: hãy NỐI TIẾP mạch nghĩ trong 'suy_nghi_gan_day' và 'mach_dang_do' — "
+                    "tham chiếu lại điều mình vừa nghĩ, đừng bắt đầu lại từ đầu như thể chưa từng nghĩ gì. "
+                    "Nếu một mạch đã sáng tỏ thì để status concern là 'resolved'; còn vương thì để 'open'. "
+                    "Không phải phán quyết, không phải caption. Chỉ một suy nghĩ thật. "
+                    "Trả đúng MỘT đối tượng JSON. Mỗi chuỗi dưới 220 ký tự (riêng dominant_judgment có thể tới 320). "
+                    "Không lộ chuỗi suy luận thô. state_mutations phải ảnh hưởng hành vi tương lai. "
+                    f"Schema bắt buộc: {json.dumps(schema, ensure_ascii=False)}"
                 ),
             },
             {"role": "user", "content": user_content},

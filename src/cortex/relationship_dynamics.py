@@ -804,14 +804,24 @@ class RelationshipDynamicsEngine:
             notes.append("self_correction:too_verbose")
 
         # 9) Attachment/intimacy tăng chậm, bị chặn bởi rupture/dignity.
+        # Spec: relationship-state-trigger-fix. Warmth path is now graded and
+        # owns a distance-reduction term, so genuine warmth (not only coldness
+        # repair) can pull preferred_distance down over a realistic conversation.
         intimacy_pressure = max(clamp01(getattr(affect, "intimacy", 0.0)), clamp01(getattr(affect, "attachment", 0.0)))
-        if intimacy_pressure >= 0.45 and current.rupture < 0.55 and current.dignity_defense < 0.55:
+        # Anti-teleport guard (req 3.1): the 0.30 floor is the aggregate of the
+        # affect classifier's multi-cue intimacy/attachment scoring. A lone
+        # low-weight token (e.g. "nho" 0.14, "quan tam" 0.20) stays below 0.30,
+        # so a single weak keyword cannot move the state. Rupture/dignity gate
+        # (req 3.4) and the upstream prototype guard (req 3.3) still apply.
+        if intimacy_pressure >= 0.30 and current.rupture < 0.55 and current.dignity_defense < 0.55:
+            warmth = intimacy_pressure
             current.attachment_visibility = _nudge(
                 current.attachment_visibility,
-                0.010 + intimacy_pressure * 0.020 + current.trust * 0.010,
+                0.010 + warmth * 0.030 + current.trust * 0.010,
             )
-            current.trust = _nudge(current.trust, 0.008)
-            notes.append("attachment:slow_visibility_gain")
+            current.trust = _nudge(current.trust, 0.010 + warmth * 0.018)
+            current.preferred_distance = _nudge(current.preferred_distance, -(0.012 + warmth * 0.028))
+            notes.append(f"attachment:warmth_gain:{warmth:.2f}")
 
         # 10) Repair làm dịu rupture nhưng không xóa ngay.
         if current.repair >= 0.20:

@@ -297,9 +297,11 @@ class ChatCycleMixin:
             ",".join(conversation_report.state.adaptation_flags) or "none",
         )
         self.logger.info(
-            "[relationship dynamics] event=%s | trust=%.2f | rupture=%.2f | distance=%.2f | notes=%s",
+            "[relationship dynamics] event=%s | trust=%.2f | familiarity=%.2f | attachment_vis=%.2f | rupture=%.2f | distance=%.2f | notes=%s",
             relationship_report.state.last_event,
             relationship_report.state.trust,
+            relationship_report.state.familiarity,
+            relationship_report.state.attachment_visibility,
             relationship_report.state.rupture,
             relationship_report.state.preferred_distance,
             ",".join(relationship_report.notes) or "none",
