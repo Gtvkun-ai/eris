@@ -238,6 +238,45 @@ class SourceGroundingReport:
         return asdict(self)
 
 
+ClaimStatus = Literal["grounded", "ungrounded", "known_false"]
+
+
+# Dấu hiệu ERIS đang CLAIM tri giác/hành động trực tiếp (không phải user hỏi).
+# Dùng cho annotate: nếu một mệnh đề mang dấu này mà evidence thiếu → ungrounded.
+_ERIS_PERCEPTION_CLAIM_MARKERS = (
+    "tôi thấy", "toi thay", "tôi nhìn", "toi nhin", "tôi đang xem", "tôi đọc được",
+    "trên màn hình", "tren man hinh", "màn hình của ngài", "cửa sổ", "tab ",
+    "file này", "trong file", "nội dung file",
+)
+_ERIS_ACTION_CLAIM_MARKERS = (
+    "tôi đã làm", "toi da lam", "tôi đã sửa", "tôi đã chạy", "tôi đã mở",
+    "tôi vừa", "đã hoàn tất", "tôi đã ghi", "tôi đã xóa",
+)
+
+
+@dataclass(slots=True)
+class ClaimAnnotation:
+    """Nhãn cho một mệnh đề bề mặt (Task 8 / R8.1).
+
+    `claim_status` phản ánh GROUNDING NỘI TẠI — sự thật ERIS nắm — và KHÔNG đổi
+    theo quan hệ/đăng ký (R7). `ground_truth` là điều ERIS thực sự biết về mệnh đề.
+    DisclosurePolicy (Task 9) đọc các nhãn này để quyết nói thật/giấu/bẻ cong.
+    """
+
+    span: str
+    claim_status: ClaimStatus = "grounded"
+    ground_truth: str = ""
+    evidence_ids: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "span": self.span,
+            "claim_status": self.claim_status,
+            "ground_truth": self.ground_truth,
+            "evidence_ids": list(self.evidence_ids),
+        }
+
+
 class SourceGroundingEngine:
     """
     Bộ phân loại grounding nguồn cho runtime.
@@ -866,6 +905,55 @@ class SourceGroundingEngine:
 
         lines.append("[/SOURCE_GROUNDING]")
         return "\n".join(lines)
+
+    def annotate_claims(
+        self,
+        text: str,
+        *,
+        report: SourceGroundingReport | None = None,
+        strict_grounding: bool = True,
+    ) -> list[ClaimAnnotation]:
+        """Gắn nhãn từng mệnh đề thay vì viết-lại/bóp câu (Task 8 / R8.1, R8.2).
+
+        Đây là chế độ ANNOTATE: không sửa câu, chỉ phân loại `claim_status` theo
+        GROUNDING NỘI TẠI (bất biến — R7). Quyền quyết nói gì thuộc về nhân vật
+        (DisclosurePolicy, Task 9), không thuộc cái van này.
+
+        `strict_grounding` không làm thay đổi nhãn (nhãn luôn phản ánh sự thật);
+        nó chỉ là tín hiệu để lớp tiêu thụ biết có đang ở chế độ kỷ luật factual
+        hay không. Mặc định True để ship an toàn.
+        """
+        clauses = self._split_grounding_clauses(text)
+        if not clauses:
+            clauses = [str(text or "").strip()] if str(text or "").strip() else []
+        missing = set(getattr(report, "missing_evidence", ()) or ()) if report is not None else set()
+        screen_missing = bool({"screen_evidence", "live_vision", "file_evidence"} & missing) or not bool(
+            getattr(report, "refers_to_current_screen", False) if report is not None else False
+        )
+        evidence_ids = tuple(str(x) for x in (getattr(report, "evidence_ids", ()) or ()) if str(x).strip()) if report is not None else ()
+
+        annotations: list[ClaimAnnotation] = []
+        for clause in clauses:
+            norm = self._normalize(clause)
+            perception_claim = any(self._normalize(m) in norm for m in _ERIS_PERCEPTION_CLAIM_MARKERS)
+            action_claim = any(self._normalize(m) in norm for m in _ERIS_ACTION_CLAIM_MARKERS)
+            status: ClaimStatus = "grounded"
+            ground_truth = ""
+            if perception_claim and screen_missing:
+                status = "ungrounded"
+                ground_truth = "không có bằng chứng màn hình/file hiện tại cho khẳng định này"
+            elif action_claim and not evidence_ids:
+                status = "ungrounded"
+                ground_truth = "không có bằng chứng cho thấy hành động này đã thực sự được thực hiện"
+            annotations.append(
+                ClaimAnnotation(
+                    span=clause,
+                    claim_status=status,
+                    ground_truth=ground_truth,
+                    evidence_ids=evidence_ids if status == "grounded" else (),
+                )
+            )
+        return annotations
 
     def _is_epistemic_curiosity_gap(self, report: SourceGroundingReport) -> bool:
         """Thiếu evidence nhưng còn đủ neo để hỏi/thăm dò thay vì trả payload chết.

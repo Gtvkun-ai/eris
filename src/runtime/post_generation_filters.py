@@ -6,7 +6,7 @@ from dataclasses import replace
 
 from cortex.contracts import AgentSpeechCore
 from domain import Decision
-from guard_config import LOG_ONLY_GUARD_MODE, OFF_GUARD_MODE, get_guard_mode
+from guard_config import LOG_ONLY_GUARD_MODE, OFF_GUARD_MODE, get_guard_mode, guards_warn_only
 from runtime.controlled_slippage import resolve_controlled_slippage
 from runtime.guard_violations import GuardViolation
 
@@ -1200,6 +1200,10 @@ class PostGenerationFiltersMixin:
     ) -> Decision:
         if speech_core is None:
             return decision
+        # anti_mindreading là guard QUAN HỆ/epistemic. warn-only ⇒ chỉ cảnh báo,
+        # để câu đoán-tâm-trí đi qua (đọc người là một phần của persona, không chặn).
+        if guards_warn_only():
+            return self._trace_only_guard(decision, "anti_mindreading=warn_only")
         if "anti_mindreading" not in speech_core.safety_flags and not (
             speech_core.utterance_type in {"relational_checkin", "guarded_reply"}
             and "explicit_emotional_signal" not in speech_core.safety_flags

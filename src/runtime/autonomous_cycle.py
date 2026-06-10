@@ -10,6 +10,8 @@ import traceback
 import unicodedata
 from dataclasses import dataclass, replace
 
+from guard_config import guards_warn_only
+
 from cortex.contracts import (
     AgentSpeechCore,
     AttentionCandidate,
@@ -113,6 +115,8 @@ class AutonomousCycleMixin:
             ),
         )
         memory_context = self._build_memory_context(snapshot, memory_resonance=memory_resonance)
+        # Nối đuôi hội thoại gần nhất (cùng bộ đệm với chat) để autonomous liền mạch.
+        memory_context = self._merge_conversation_context(memory_context)
         internal_state_before = self._get_internal_state()
         ni_report = self.ni_engine.evaluate_autonomous(
             snapshot=snapshot,
@@ -181,6 +185,15 @@ class AutonomousCycleMixin:
             thought_stream_report=thought_stream_report,
             social_presence_event=social_presence_event,
             memory_resonance=memory_resonance,
+        )
+        # V3 shadow + promotion trên path autonomous (observe-only khi ERIS_V3_PROMOTE
+        # tắt; ghi đè frame cũ cho các path đã bật). Không bao giờ làm chết hot path.
+        self._run_shadow_cognitive_pipeline(
+            channel="autonomous",
+            user_text="",
+            snapshot=snapshot,
+            vision_facts=tuple(vision_facts or ()),
+            old_frame=frame,
         )
         memory_context = self._append_working_memory_context(memory_context, frame)
         self.logger.info(
@@ -1182,6 +1195,10 @@ class AutonomousCycleMixin:
         frame: CognitiveFrame,
     ) -> bool:
         if not bool(getattr(speech_core, "should_speak", False)):
+            return False
+        # warn-only: thôi bỏ phát ngôn autonomous "yếu" — để eris được nói cả khi
+        # tín hiệu mỏng (guard quality chỉ cảnh báo, không chặn).
+        if guards_warn_only():
             return False
         if self._concrete_screen_signals(snapshot):
             return False

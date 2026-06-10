@@ -20,15 +20,23 @@ from .concern_store import ConcernStore
 from .evidence_dossier import EvidenceDossierBuilder
 from .inner_synthesizer import GemmaInnerSynthesizer
 from .mini_evaluators import (
+    USER_MODEL_EVALUATOR_NAME,
     FutureBiasEvaluator,
     IntentEvaluator,
     MemoryResonanceEvaluator,
     MiniEvaluatorPipeline,
     RiskAndPermissionEvaluator,
+    UserModelEvaluator,
 )
 from .state_mutation_bus import StateMutationBus
 from .surface_valve import SurfaceValve
 from .thought_continuity import ThoughtContinuityStore, ThoughtEntry
+from .user_model import (
+    UserBelief,
+    UserModelConfig,
+    UserModelStore,
+    default_user_model_path,
+)
 
 __all__ = [
     "ConcernStore",
@@ -51,4 +59,10 @@ __all__ = [
     "ThoughtContinuityStore",
     "ThoughtEntry",
     "ThoughtFragment",
+    "USER_MODEL_EVALUATOR_NAME",
+    "UserBelief",
+    "UserModelConfig",
+    "UserModelEvaluator",
+    "UserModelStore",
+    "default_user_model_path",
 ]

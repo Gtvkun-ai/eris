@@ -755,19 +755,72 @@ class PromptContextBuilderMixin:
             return True
         return False
 
-    def _chat_history_for_llm(self, *, limit: int = 16) -> list[dict]:
-        valid_entries = [
-            {"role": str(item.get("role", "")), "content": str(item.get("content", ""))}
-            for item in self.chat_history
-            if not bool(item.get("invalid")) and str(item.get("role", "")) in {"system", "user", "assistant"}
-        ]
+    def _conversation_ttl_seconds(self) -> float:
+        """TTL của bộ đệm hội thoại hợp nhất.
+
+        Một lượt cũ hơn ngần này (tính từ lúc ghi) bị coi là đã phai và không còn
+        xuất hiện trong prompt. <=0 nghĩa là không phai theo thời gian.
+        """
+        return max(0.0, float(os.getenv("ERIS_CONVERSATION_TTL_SEC", "900") or 0.0))
+
+    def _chat_history_for_llm(self, *, limit: int = 16, fresh_only: bool = False) -> list[dict]:
+        ttl = self._conversation_ttl_seconds() if fresh_only else 0.0
+        now = time.time()
+        valid_entries = []
+        for item in self.chat_history:
+            if bool(item.get("invalid")):
+                continue
+            if str(item.get("role", "")) not in {"system", "user", "assistant"}:
+                continue
+            if ttl > 0.0:
+                ts = float(item.get("ts", 0.0) or 0.0)
+                if ts > 0.0 and (now - ts) > ttl:
+                    continue
+            valid_entries.append(
+                {"role": str(item.get("role", "")), "content": str(item.get("content", ""))}
+            )
         return valid_entries[-limit:]
 
     def _append_chat_history(self, role: str, content: str, *, invalid: bool = False) -> None:
-        entry = {"role": role, "content": content}
+        entry = {"role": role, "content": content, "ts": time.time()}
         if invalid:
             entry["invalid"] = True
         self.chat_history.append(entry)
+        # Cap rộng để autonomous (vốn cũng ghi vào đây) không làm phình vô hạn.
+        if len(self.chat_history) > 64:
+            self.chat_history = self.chat_history[-64:]
+
+    def _build_conversation_context(self, *, limit: int = 6) -> str:
+        """Render đuôi hội thoại gần nhất (còn tươi) thành block prompt.
+
+        Đây là cầu nối liền mạch chat <-> autonomous: cùng một bộ đệm, không recap
+        riêng. Trả "" nếu không còn lượt nào đủ tươi.
+        """
+        turns = self._chat_history_for_llm(limit=limit, fresh_only=True)
+        turns = [t for t in turns if str(t.get("content", "")).strip()]
+        if not turns:
+            return ""
+        # Chỉ surface khi Ngài có tham gia gần đây. Nếu cửa sổ chỉ toàn lời ERIS
+        # tự nói (autonomous độc thoại), đừng coi đó là "hội thoại" để nối tiếp.
+        if not any(t.get("role") == "user" for t in turns):
+            return ""
+        lines = [
+            "RECENT CONVERSATION (Ngài và ERIS vừa trò chuyện; nối mạch tự nhiên "
+            "nếu hợp ngữ cảnh, đừng lặp nguyên văn, đừng bịa thêm):",
+        ]
+        for turn in turns:
+            speaker = "Ngài" if turn.get("role") == "user" else "ERIS"
+            lines.append(f"- {speaker}: {str(turn.get('content', '')).strip()}")
+        return "\n".join(lines)
+
+    def _merge_conversation_context(self, memory_context: str) -> str:
+        """Ghép đuôi hội thoại gần nhất vào memory_context của autonomous."""
+        convo = self._build_conversation_context()
+        if not convo:
+            return memory_context
+        if memory_context and memory_context.strip():
+            return f"{memory_context}\n\n{convo}".strip()
+        return convo
 
     def _user_denies_last_assistant_assumption(self, user_text: str) -> bool:
         normalized = self._normalize_user_message(user_text)

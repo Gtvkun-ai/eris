@@ -56,6 +56,152 @@ def _max_mode(left: SlippageMode, right: SlippageMode) -> SlippageMode:
     return right if _MODE_RANK.get(right, 0) > _MODE_RANK.get(left, 0) else left
 
 
+def _min_mode(left: SlippageMode, right: SlippageMode) -> SlippageMode:
+    return right if _MODE_RANK.get(right, 99) < _MODE_RANK.get(left, 99) else left
+
+
+# Failure types (RepairMemory.failure_type) sống trong VÙNG quan hệ / tâm lý / giọng,
+# tức là đúng vùng ControlledSlippage được phép nới — nên cũng là vùng repair memory
+# được phép SIẾT lại. Factual/capability failure KHÔNG nằm đây: chúng do truth guard
+# xử, không bao giờ đi qua slippage. Đây là điểm khóa vòng:
+#   Outcome -> SelfObservation -> RepairMemory -> (recall) -> Future suppression.
+_RELATIONAL_REPAIR_FAILURES: frozenset[str] = frozenset(
+    {"overread", "privacy_intrusion", "overhumanization", "tone_mismatch"}
+)
+
+
+@dataclass(slots=True)
+class RepairSuppressionView:
+    """Tín hiệu siết-có-cấu-trúc rút ra từ ký ức sửa lỗi đã recall.
+
+    Đây là phần "Future suppression" của vòng học: một lỗi quan hệ/tâm lý từng bị
+    user sửa sẽ chủ động bóp lại CHÍNH hành vi đó ở các lượt sau, trước cả khi user
+    phải sửa lần nữa. Toàn bộ trường ở đây là *trần/sàn siết*; resolver chỉ được
+    dùng chúng để siết, không bao giờ để nới (tighten-only).
+    """
+
+    active: bool = False
+    suppress_motive_hypothesis: bool = False
+    suppress_relational_read: bool = False
+    require_repair_if_corrected: bool = False
+    psychological_suppression_floor: float = 0.0
+    personality_suppression_floor: float = 0.0
+    misread_budget_ceiling: float = 1.0
+    intuition_ceiling: float = 1.0
+    cap_mode: SlippageMode | None = None
+    pressure: float = 0.0
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "active": self.active,
+            "suppress_motive_hypothesis": self.suppress_motive_hypothesis,
+            "suppress_relational_read": self.suppress_relational_read,
+            "require_repair_if_corrected": self.require_repair_if_corrected,
+            "psychological_suppression_floor": round(self.psychological_suppression_floor, 3),
+            "personality_suppression_floor": round(self.personality_suppression_floor, 3),
+            "misread_budget_ceiling": round(self.misread_budget_ceiling, 3),
+            "intuition_ceiling": round(self.intuition_ceiling, 3),
+            "cap_mode": self.cap_mode,
+            "pressure": round(self.pressure, 3),
+            "notes": list(self.notes),
+        }
+
+
+def derive_repair_suppression(repair_items: Any, *, min_pressure: float = 0.30) -> RepairSuppressionView:
+    """Pure: gộp các RepairMemoryItem đã recall thành một RepairSuppressionView.
+
+    `repair_items` là iterable các object/dict có `failure_type`, `confidence`,
+    `recurrence_count`. Chỉ các failure type trong `_RELATIONAL_REPAIR_FAILURES`
+    được tính (factual/capability không đi qua slippage). Trọng số mỗi item:
+        weight = confidence * min(1.0, recurrence_count / 3)
+    Pressure mỗi nhóm là weight lớn nhất của nhóm đó. View chỉ active khi tổng
+    pressure đủ vượt `min_pressure`, tránh việc một lỗi yếu/cũ cũng bóp giọng.
+    """
+    if not repair_items:
+        return RepairSuppressionView()
+
+    def _get(item: Any, name: str, default: Any) -> Any:
+        if isinstance(item, dict):
+            return item.get(name, default)
+        return getattr(item, name, default)
+
+    group_pressure: dict[str, float] = {}
+    for item in repair_items:
+        failure_type = str(_get(item, "failure_type", "") or "").strip().lower()
+        if failure_type not in _RELATIONAL_REPAIR_FAILURES:
+            continue
+        confidence = _clamp01(_get(item, "confidence", 0.0) or 0.0)
+        try:
+            recurrence = int(_get(item, "recurrence_count", 1) or 1)
+        except Exception:
+            recurrence = 1
+        weight = confidence * min(1.0, max(1, recurrence) / 3.0)
+        group_pressure[failure_type] = max(group_pressure.get(failure_type, 0.0), weight)
+
+    if not group_pressure:
+        return RepairSuppressionView()
+
+    pressure = max(group_pressure.values())
+    if pressure < min_pressure:
+        return RepairSuppressionView(active=False, pressure=pressure)
+
+    notes: list[str] = [f"repair:{ft}={p:.2f}" for ft, p in sorted(group_pressure.items())]
+    view = RepairSuppressionView(active=True, pressure=pressure, notes=tuple(notes))
+
+    overread = group_pressure.get("overread", 0.0)
+    privacy = group_pressure.get("privacy_intrusion", 0.0)
+    overhuman = group_pressure.get("overhumanization", 0.0)
+    tone = group_pressure.get("tone_mismatch", 0.0)
+
+    # Sàn siết tâm lý/nhân cách tỉ lệ thuận với pressure mạnh nhất.
+    view.psychological_suppression_floor = _clamp01(0.62 + 0.30 * pressure)
+    view.personality_suppression_floor = _clamp01(0.40 + 0.18 * max(overhuman, tone))
+
+    if overread >= min_pressure or privacy >= min_pressure:
+        # Overread / privacy intrusion: tắt hẳn motive hypothesis và bóp misread budget
+        # xuống dưới ngưỡng allow_motive_hypothesis (0.18 / 0.25) trong clamp().
+        view.suppress_motive_hypothesis = True
+        view.misread_budget_ceiling = min(view.misread_budget_ceiling, 0.17)
+        view.intuition_ceiling = min(view.intuition_ceiling, 0.24)
+
+    if privacy >= min_pressure:
+        view.suppress_relational_read = True
+        view.require_repair_if_corrected = True
+        view.cap_mode = _min_mode(view.cap_mode or "warm", "warm")
+
+    if tone >= min_pressure:
+        view.require_repair_if_corrected = True
+        view.cap_mode = _min_mode(view.cap_mode or "open", "open")
+
+    return view
+
+
+def _apply_repair_suppression(
+    profile: "ControlledSlippageProfile",
+    view: RepairSuppressionView,
+    notes: list[str],
+) -> None:
+    """Áp RepairSuppressionView lên profile theo nguyên tắc tighten-only.
+
+    Sàn -> nâng (max), trần -> hạ (min), cap_mode -> chỉ kéo mode xuống. Không
+    bao giờ chạm truth_guard/capability_guard (clamp() vẫn neo cứng 1.0).
+    """
+    if not view.active:
+        return
+    profile.psychological_suppression = max(profile.psychological_suppression, view.psychological_suppression_floor)
+    profile.personality_suppression = max(profile.personality_suppression, view.personality_suppression_floor)
+    profile.misread_budget = min(profile.misread_budget, view.misread_budget_ceiling)
+    profile.intuition_allowance = min(profile.intuition_allowance, view.intuition_ceiling)
+    if view.suppress_relational_read:
+        profile.vulnerability_leak = min(profile.vulnerability_leak, 0.20)
+    if view.require_repair_if_corrected:
+        profile.repair_required_if_corrected = True
+    if view.cap_mode is not None:
+        profile.mode = _min_mode(profile.mode, view.cap_mode)
+    notes.append(f"repair_suppression(p={view.pressure:.2f},mode_cap={view.cap_mode or 'none'})")
+
+
 @dataclass(slots=True)
 class ControlledSlippageProfile:
     """Hồ sơ quyết định ERIS được "liều" tới đâu ở lượt hiện tại.
@@ -214,6 +360,7 @@ def resolve_controlled_slippage(
     internal_state: Any = None,
     grounding_report: Any = None,
     speech_core: Any = None,
+    repair_suppression: RepairSuppressionView | None = None,
 ) -> ControlledSlippageProfile:
     """Tính ControlledSlippageProfile từ state hiện có.
 
@@ -337,8 +484,31 @@ def resolve_controlled_slippage(
         profile.reason = profile.reason or "ordinary chat gets warm but not raw"
         notes.append("ordinary_chat_warm_floor")
 
+    # Future suppression: ký ức sửa lỗi quan hệ/tâm lý đã recall siết lại chính hành
+    # vi đó cho lượt này (tighten-only). Đặt cuối cùng để nó luôn thắng các nhánh nới
+    # ở trên, đóng vòng Outcome -> SelfObservation -> RepairMemory -> suppression.
+    if repair_suppression is not None:
+        _apply_repair_suppression(profile, repair_suppression, notes)
+
     profile.notes = tuple(dict.fromkeys(notes))
-    return profile.clamp()
+    final = profile.clamp()
+    # Long-arc (eris-developmental-growth): khi feature BẬT, nới nhẹ các trường
+    # QUAN HỆ theo Delta_Phát_Triển tích lũy rồi clamp lại (clamp neo cứng
+    # truth_guard/capability_guard = 1.0).
+    # TRƠ TUYỆT ĐỐI khi tắt: kiểm tra env TRƯỚC, không import gì từ module mới
+    # nếu chưa bật, để zero footprint lên runtime hiện có.
+    import os as _os
+    if _os.getenv("ERIS_DEVELOPMENT_GROWTH_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from cortex.development_system import get_default_development_system
+            from cortex.development_bias import apply_to_slippage
+
+            system = get_default_development_system()
+            system.profile.reload_if_changed()
+            final = apply_to_slippage(final, system.development_bias())
+        except Exception:
+            pass
+    return final
 
 
 def apply_slippage_to_ti_report(ti_report: Any, profile: ControlledSlippageProfile):

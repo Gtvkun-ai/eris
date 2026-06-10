@@ -70,6 +70,7 @@ class EvidenceDossierBuilder:
         surface_outcome: Mapping[str, Any] | None = None,
         active_goal: str = "",
         current_task: str = "",
+        user_model_snapshot: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> EvidenceDossier:
         created_at = time.time()
@@ -116,6 +117,7 @@ class EvidenceDossierBuilder:
             current_task=compact_text(task, 320),
             surface_outcome=dict(surface_outcome or {}),
             concern_snapshots=concerns,
+            user_model_snapshot=dict(user_model_snapshot or {}),
             evidence_index=evidence_index,
             metadata={"channel": channel, **evidence_metrics, **dict(metadata or {})},
         )

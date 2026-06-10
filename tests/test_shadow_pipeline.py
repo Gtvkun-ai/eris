@@ -19,6 +19,7 @@ class _StubCoordinator(ShadowPipelineMixin):
         self.last_shadow_pipeline_result = None
         self.last_shadow_trace = None
         self.last_shadow_comparison = None
+        self.last_v3_promotion = None
 
 
 def _snapshot():
@@ -76,6 +77,66 @@ def test_shadow_never_raises_on_bad_snapshot():
     )
     # có thể chạy được (object() chỉ làm _snap trả default) hoặc None nếu lỗi; cả hai đều không raise
     assert result is None or isinstance(result, PipelineResult)
+
+
+def _old_frame():
+    return SimpleNamespace(
+        cycle_id="old_123",
+        channel="chat",
+        broadcast=SimpleNamespace(content="user hỏi build gì tiếp cho V3", label="user_message"),
+        evidence=[],
+        metadata={},
+        debug_notes=[],
+    )
+
+
+def test_promotion_off_by_default_does_not_touch_old_frame():
+    coord = _StubCoordinator()
+    os.environ.pop("ERIS_V3_PROMOTE", None)
+    old = _old_frame()
+    coord._run_shadow_cognitive_pipeline(
+        channel="chat", user_text="hi", snapshot=_snapshot(), old_frame=old
+    )
+    assert not hasattr(old, "budget_mode") or old.metadata.get("v3_budget_decision") is None
+    assert coord.last_v3_promotion["applied"] == {}
+
+
+def test_promotion_budget_writes_onto_old_frame():
+    coord = _StubCoordinator()
+    coord.v3_promoted_paths = {"budget"}
+    old = _old_frame()
+    coord._run_shadow_cognitive_pipeline(
+        channel="chat", user_text="ERIS build gì tiếp?", snapshot=_snapshot(), old_frame=old
+    )
+    applied = coord.last_v3_promotion["applied"]
+    assert applied.get("budget") in ("fast", "normal", "deep", "reflection")
+    assert old.budget_mode == applied["budget"]
+    assert "v3_budget_decision" in old.metadata
+    assert any("v3_promoted=" in note for note in old.debug_notes)
+
+
+def test_promotion_focus_is_advisory_metadata_only():
+    coord = _StubCoordinator()
+    coord.v3_promoted_paths = {"focus"}
+    old = _old_frame()
+    original_broadcast = old.broadcast
+    coord._run_shadow_cognitive_pipeline(
+        channel="chat", user_text="ERIS build gì tiếp?", snapshot=_snapshot(), old_frame=old
+    )
+    # focus chỉ ghi advisory, không đụng broadcast cũ
+    assert old.broadcast is original_broadcast
+    if "focus" in coord.last_v3_promotion["applied"]:
+        assert old.metadata.get("v3_dominant_focus")
+
+
+def test_promotion_ignores_unknown_paths():
+    coord = _StubCoordinator()
+    coord.v3_promoted_paths = {"garbage_path"}
+    old = _old_frame()
+    coord._run_shadow_cognitive_pipeline(
+        channel="chat", user_text="hi", snapshot=_snapshot(), old_frame=old
+    )
+    assert coord.last_v3_promotion["applied"] == {}
 
 
 def test_shadow_builds_raw_signals_from_inputs():

@@ -99,6 +99,7 @@ class ContextualAutonomyLoop:
         self.config = config or ContextualAutonomyLoopConfig()
         self.logger = logger
         self.last_tick: AutonomyLoopTickResult | None = None
+        self._growth_consolidator = None  # lazy: Tác_Tử_Nền long-arc (eris-developmental-growth)
 
     def tick(
         self,
@@ -167,6 +168,13 @@ class ContextualAutonomyLoop:
                     ttl_seconds=900,
                     payload={"budget": budget.to_dict(), "scheduler_error": str(exc)},
                 )
+
+        # Long-arc growth (eris-developmental-growth): khi feature bật và đang ở
+        # nhịp idle-consolidation, để Tác_Tử_Nền nhìn lại feedback nhiều phiên và
+        # đề xuất nhích persona qua Cổng_Bản_Sắc. Flag tắt-mặc-định + fail-safe:
+        # không bao giờ làm crash loop, không đổi hành vi khi tắt.
+        self._maybe_run_growth_tick(trigger=trigger, wake=wake)
+
         next_heartbeat = self.next_sleep_seconds(wake)
         result = AutonomyLoopTickResult(
             user_context=user_context,
@@ -179,6 +187,40 @@ class ContextualAutonomyLoop:
         )
         self.last_tick = result
         return result
+
+    def _maybe_run_growth_tick(self, *, trigger: bool, wake: "WakeDecision") -> None:
+        """Chạy một lượt long-arc growth nếu feature bật. Bọc try/except để loop
+        không bao giờ chết vì tầng phát triển."""
+        try:
+            from cortex.development_system import development_growth_enabled, get_default_development_system
+
+            if not development_growth_enabled() or not trigger or not wake.should_run_daydream:
+                return
+            from cortex.agent_mind_persistence import get_default_agent_mind_store
+            from cortex.growth_consolidator import GrowthConsolidator
+            from cortex.growth_evidence import observations_from_feedback
+
+            store = get_default_agent_mind_store()
+            store.reload_if_changed()
+            observations, allowed = observations_from_feedback(store.last_feedback_events)
+            if not observations:
+                return
+
+            system = get_default_development_system()
+            system.profile.reload_if_changed()
+            if self._growth_consolidator is None:
+                self._growth_consolidator = GrowthConsolidator()
+            high_risk = wake.level in {"wake_main_cognition", "call_vision_compressor"}
+            system.tick(
+                consolidator=self._growth_consolidator,
+                observations=observations,
+                allowed_evidence_ids=allowed,
+                idle_pressure=1.0,  # đang trong nhánh idle-consolidation
+                budget_allows=True,
+                user_interacting_high_risk=high_risk,
+            )
+        except Exception:
+            pass
 
     def next_sleep_seconds(self, decision: WakeDecision) -> float:
         level = decision.level

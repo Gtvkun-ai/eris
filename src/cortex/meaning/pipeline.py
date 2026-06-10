@@ -91,6 +91,27 @@ _FORBIDDEN_READER_MODULE = "TheoryOfMindCore"
 _TOM_BOLDNESS = 0.5
 
 
+def _resolve_tom_boldness() -> float:
+    """Boldness hiệu dụng: hằng số nền + độ-dám-đọc long-arc (nếu feature bật).
+
+    TRƠ TUYỆT ĐỐI khi tắt: kiểm tra env TRƯỚC, không import gì từ module mới nếu
+    chưa bật. Bọc try/except để không bao giờ làm crash hay đổi hành vi pipeline.
+    """
+    import os as _os
+
+    if _os.getenv("ERIS_DEVELOPMENT_GROWTH_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return _TOM_BOLDNESS
+    try:
+        from ..development_system import get_default_development_system
+        from ..development_bias import effective_tom_boldness
+
+        system = get_default_development_system()
+        system.profile.reload_if_changed()
+        return effective_tom_boldness(_TOM_BOLDNESS, system.development_bias())
+    except Exception:
+        return _TOM_BOLDNESS
+
+
 class Phase2MeaningPipeline:
     """Facade chạy toàn bộ pipeline Phase 2 theo đúng thứ tự bắt buộc.
 
@@ -195,7 +216,9 @@ class Phase2MeaningPipeline:
             history=history,
             # Lever D: dám đọc ở rủi ro thấp. Tự gate theo overread_risk nên cú đọc
             # rủi ro cao vẫn bị thắng; chỉ cú đọc ít rủi ro được phép sống.
-            boldness=_TOM_BOLDNESS,
+            # Long-arc (eris-developmental-growth): khi bật, độ-dám-đọc tích lũy
+            # cộng thêm vào boldness; mặc định tắt nên giữ nguyên hành vi cũ.
+            boldness=_resolve_tom_boldness(),
         )
         stage_debugs.append(sd6)
 

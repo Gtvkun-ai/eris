@@ -19,6 +19,7 @@ from runtime.source_grounding import SourceGroundingEngine
 from runtime.controlled_slippage import (
     apply_slippage_to_personality_lens,
     apply_slippage_to_ti_report,
+    derive_repair_suppression,
     resolve_controlled_slippage,
 )
 
@@ -37,6 +38,7 @@ _FORMAT_REPAIR_FALLBACK_LINES = (
 
 class ChatCycleMixin:
     def _enter_chat_cycle(self) -> None:
+        self._chat_last_activity_at = time.time()
         if not self.chat_mode:
             self.chat_mode = True
             self.chat_ni_state = NiStateMachine()
@@ -46,8 +48,10 @@ class ChatCycleMixin:
             self.logger.info("Entered chat mode; autonomous is paused for user messages.")
 
     def _end_chat_cycle(self) -> None:
+        # Hội thoại là một dòng liên tục: KHÔNG xoá chat_history khi rời chat.
+        # Bộ đệm tự phai theo TTL (ERIS_CONVERSATION_TTL_SEC) lúc render, nên
+        # autonomous vẫn đọc được đuôi hội thoại gần nhất để nối mạch.
         self.chat_mode = False
-        self.chat_history.clear()
         self.last_chat_answer = ""
         self.last_system_action = ""
         self.last_user_signature = ""
@@ -57,7 +61,7 @@ class ChatCycleMixin:
         self.repeated_user_count = 0
         self.chat_ni_state = NiStateMachine()
         self.fe_style_memory = self.fe_renderer.decay_memory(self.fe_style_memory)
-        self.logger.info("Exited chat mode; autonomous can resume.")
+        self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
 
     def _run_chat_cycle(self, user_text: str, *, user_timestamp: float | None = None) -> None:
         cycle_start = time.time() if user_timestamp is None else float(user_timestamp)
@@ -221,6 +225,17 @@ class ChatCycleMixin:
             memory_resonance=memory_resonance,
             affect_signal=affect_signal,
         )
+        # V3 CognitivePipeline chạy shadow trên CÙNG input (observe-only, env-gated
+        # ERIS_SHADOW_PIPELINE). Không đổi quyết định của frame cũ, không ném ra hot
+        # path. Đây là bước tích lũy bằng chứng focus/budget trước khi chuyển tải V3
+        # thành xương sống cho path chat.
+        self._run_shadow_cognitive_pipeline(
+            channel="chat",
+            user_text=user_text,
+            snapshot=snapshot,
+            vision_facts=tuple(getattr(snapshot, "vision_facts", ()) or ()),
+            old_frame=frame,
+        )
         memory_turn_id = f"session_turn:{user_turn.index}"
         # Ném bản phân rã sâu qua background worker. Hot path vẫn commit rule/fact rõ
         # bằng policy rẻ, còn model semantic parser được dùng khi remote API đang pending.
@@ -243,6 +258,7 @@ class ChatCycleMixin:
         )
 
         self.chat_mode = True
+        self._chat_last_activity_at = time.time()
         self.logger.info("Người dùng: %s", user_text)
         self.logger.info(
             "[ni chat] drift=%.2f | level=%s | state=%s | streak=%d",
@@ -324,6 +340,7 @@ class ChatCycleMixin:
         # Ở đây chưa có SourceGrounding cuối cùng, nên đây là profile sớm để lens/Fe/Ti
         # bớt bóp giọng ngay từ planning. Sau khi có grounding + speech_core, profile sẽ được
         # resolve lại một lần nữa để LLM prompt biết rõ thiếu evidence nào.
+        repair_suppression = self._recall_repair_suppression(user_text)
         slippage_profile = resolve_controlled_slippage(
             user_text=user_text,
             channel="chat",
@@ -332,6 +349,7 @@ class ChatCycleMixin:
             conversation_state=conversation_report.state,
             relationship_state=relationship_report.state,
             internal_state=sensed_internal_state,
+            repair_suppression=repair_suppression,
         )
         ti_report = apply_slippage_to_ti_report(ti_report, slippage_profile)
         frame.personality_lens = apply_slippage_to_personality_lens(frame.personality_lens, slippage_profile)
@@ -418,6 +436,7 @@ class ChatCycleMixin:
             internal_state=sensed_internal_state,
             grounding_report=grounding_report,
             speech_core=speech_core,
+            repair_suppression=repair_suppression,
         )
         ti_report = apply_slippage_to_ti_report(ti_report, slippage_profile)
         frame.personality_lens = apply_slippage_to_personality_lens(frame.personality_lens, slippage_profile)
@@ -745,6 +764,32 @@ class ChatCycleMixin:
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return
+
+    def _recall_repair_suppression(self, user_text: str):
+        """Recall ký ức sửa lỗi quan hệ/tâm lý và rút ra tín hiệu siết cho lượt này.
+
+        Đây là cạnh recall đóng vòng Outcome -> SelfObservation -> RepairMemory ->
+        Future suppression: lỗi từng bị user sửa sẽ chủ động bóp lại chính hành vi
+        đó. Hoàn toàn defensive — mọi lỗi đều bị nuốt và trả None, không bao giờ
+        làm chết hot path chat.
+        """
+        try:
+            store = getattr(self.memory_core, "repair", None)
+            if store is None:
+                core = getattr(self.memory_kernel, "core", None)
+                store = getattr(core, "repair", None)
+            recall = getattr(store, "recall", None)
+            if not callable(recall):
+                return None
+            items = recall(user_text or "", limit=8)
+            if not items:
+                return None
+            return derive_repair_suppression(items)
+        except Exception as exc:  # pragma: no cover - recall không bao giờ giết turn
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.debug("[repair suppression] recall lỗi (nuốt): %r", exc)
+            return None
 
     def _build_chat_format_repair_fallback_raw(self, exc: FormatViolationException) -> str:
         reason = str(getattr(exc, "reason", "") or exc)

@@ -406,6 +406,7 @@ class RuntimePrivateMindModelAdapter:
         "memory_resonance_evaluator": "_slice_for_memory_resonance",
         "risk_and_permission_evaluator": "_slice_for_risk",
         "future_bias_evaluator": "_slice_for_future_bias",
+        "user_model_evaluator": "_slice_for_user_model",
     }
 
     def _fragment_messages(self, evaluator_name: str, dossier: EvidenceDossier) -> list[dict[str, str]]:
@@ -414,6 +415,11 @@ class RuntimePrivateMindModelAdapter:
             "memory_resonance_evaluator": "Find recurring user corrections/preferences and memory resonance. No public reply.",
             "risk_and_permission_evaluator": "Find privacy/leak/API-cost/permission risks. No public reply.",
             "future_bias_evaluator": "Propose behavior-bias state mutations. No public reply.",
+            "user_model_evaluator": (
+                "Cập nhật hình dung của Eris về Ngài (người dùng): Ngài là ai, đối xử với Eris ra sao, "
+                "quan tâm/né chủ đề gì, có đáng tin khi làm chỗ dựa không, khuôn rời đi/vắng mặt, cách nói chuyện. "
+                "Trả MỘT niềm tin về Ngài kèm 'facet'. Chỉ rút từ bằng chứng có thật. Không nói với người dùng."
+            ),
         }.get(evaluator_name, "Evaluate private cognition evidence. No public reply.")
         schema = {
             "source": evaluator_name,
@@ -424,6 +430,9 @@ class RuntimePrivateMindModelAdapter:
             "suggested_question": "private open question",
             "theme": "short private theme label",
         }
+        if evaluator_name == "user_model_evaluator":
+            schema["facet"] = "one of: neo_reliability|topic_affinity|treats_eris_as|leaving_pattern|interaction_style|recognition|general"
+            schema["claim"] = "một nhận định ngắn về Ngài (không phải lời thoại)"
         # Lấy đúng slice cho evaluator này; fallback về slim dossier nếu không có slicer
         slicer_name = self._DOSSIER_SLICERS.get(evaluator_name)
         if slicer_name:
@@ -452,6 +461,34 @@ class RuntimePrivateMindModelAdapter:
             },
             {"role": "user", "content": user_content},
         ]
+
+    def _slice_for_user_model(self, dossier: EvidenceDossier) -> dict[str, Any]:
+        """user_model_evaluator: lời người dùng + chân dung Ngài hiện có + nhịp tương tác.
+
+        Cho model thấy nó đã hiểu gì về Ngài (user_model_snapshot) để cập nhật/củng cố
+        thay vì dựng lại từ đầu, đúng tinh thần Mô_Hình_Ngài tích lũy.
+        """
+        turns = []
+        for turn in list(dossier.recent_user_turns)[-5:]:
+            turns.append({
+                "evidence_id": str(turn.get("evidence_id") or ""),
+                "text": compact_text(str(turn.get("text") or ""), 200),
+                "intent": compact_text(str(turn.get("intent") or ""), 60),
+            })
+        runtime = dossier.runtime_state if isinstance(dossier.runtime_state, dict) else {}
+        return {
+            "recent_user_turns": turns,
+            "user_model_so_far": to_plain(dossier.user_model_snapshot or {}),
+            "interaction_signals": {
+                "idle_seconds": runtime.get("idle_seconds", 0.0),
+                "channel": runtime.get("channel", ""),
+                "user_presence": (runtime.get("observer", {}) or {}).get("user_presence", 0.0) if isinstance(runtime.get("observer"), dict) else 0.0,
+            },
+            "facets": [
+                "neo_reliability", "topic_affinity", "treats_eris_as",
+                "leaving_pattern", "interaction_style", "recognition", "general",
+            ],
+        }
 
     def _slim_dossier(self, dossier: EvidenceDossier) -> dict[str, Any]:
         """Chắt lọc dossier xuống những gì synthesizer thực sự cần.
@@ -560,11 +597,13 @@ class RuntimePrivateMindModelAdapter:
                 "evidence_ids": {"type": "array", "items": {"type": "string"}},
                 "suggested_question": {"type": "string"},
                 "theme": {"type": "string"},
+                "facet": {"type": "string"},
             },
             # Bắt model "chốt" các field ngắn/số trước, để free-text (claim) ở cuối.
             # Gemma nhỏ hay lặp vô hạn ở free-text dài; đặt nó cuối giúp các field
             # rẻ hoàn tất trước và parser vẫn cứu được dù claim bị cụt.
-            "propertyOrdering": ["source", "confidence", "pressure", "evidence_ids", "theme", "suggested_question", "claim"],
+            # `facet` là optional, chỉ user_model_evaluator dùng; các evaluator khác bỏ trống.
+            "propertyOrdering": ["source", "confidence", "pressure", "evidence_ids", "theme", "facet", "suggested_question", "claim"],
             "required": ["claim", "confidence", "pressure", "evidence_ids"],
         }
 
@@ -1155,6 +1194,7 @@ _EVALUATOR_ROLES = (
     "memory_resonance_evaluator",
     "risk_and_permission_evaluator",
     "future_bias_evaluator",
+    "user_model_evaluator",
 )
 
 

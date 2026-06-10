@@ -129,6 +129,15 @@ class ForceSpeakCycleMixin:
             force_speak=True,
             memory_resonance=memory_resonance,
         )
+        # V3 shadow + promotion trên path force_speak (observe-only khi ERIS_V3_PROMOTE
+        # tắt; ghi đè frame cũ cho các path đã bật). Không bao giờ làm chết hot path.
+        self._run_shadow_cognitive_pipeline(
+            channel="force_speak",
+            user_text="",
+            snapshot=snapshot,
+            vision_facts=tuple(vision_facts or ()),
+            old_frame=frame,
+        )
         memory_context = self._append_working_memory_context(memory_context, frame)
         speech_core = self._build_speech_core(
             channel="force_speak",

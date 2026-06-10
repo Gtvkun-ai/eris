@@ -126,6 +126,10 @@ public partial class UdpListener : Node2D
 	private bool _emotionSwitchEnabled = true;
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
+	// Tự ẩn khung chat sau khi Ngài ngừng tương tác, để màn hình không bị panel
+	// nằm lì. Khớp với mô hình "recency" ở backend (autonomous tự sống lại).
+	private ulong _chatLastActivityMs = 0;
+	[Export] public float ChatAutoHideSeconds = 20f;
 	private Tween _textTween;
 	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 262f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
@@ -281,6 +285,7 @@ public partial class UdpListener : Node2D
 		_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
 	_contextCloseButton.Pressed += CloseCharacterContextMenu;
 		_chatInput.TextSubmitted += _ => OnSendPressed();
+		_chatInput.TextChanged += _ => MarkChatActivity();
 		_chatSend.ConnectToHost("127.0.0.1", 4243);
 		BuildEmotionPanelUi();
 
@@ -373,6 +378,8 @@ public partial class UdpListener : Node2D
 			UpdatePrivateMindDecorLayout();
 			UpdatePrivateMindScrollDecor();
 		}
+
+		UpdateChatPanelAutoHide();
 
 		if (_udp.GetAvailablePacketCount() > 0)
 		{
@@ -523,6 +530,26 @@ public partial class UdpListener : Node2D
 		}
 	}
 
+	private void MarkChatActivity()
+	{
+		_chatLastActivityMs = Time.GetTicksMsec();
+	}
+
+	private void UpdateChatPanelAutoHide()
+	{
+		if (_chatPanel == null || !_chatPanel.Visible)
+			return;
+		if (ChatAutoHideSeconds <= 0f)
+			return;
+		// Đang soạn dở (còn chữ trong ô) thì giữ panel, đừng nuốt mất câu của Ngài.
+		if (!string.IsNullOrWhiteSpace(_chatInput?.Text))
+			return;
+		ulong idleMs = Time.GetTicksMsec() - _chatLastActivityMs;
+		if (idleMs < (ulong)(ChatAutoHideSeconds * 1000f))
+			return;
+		CloseChatPanel();
+	}
+
 	private void ToggleChatPanel()
 	{
 		CloseCharacterContextMenu();
@@ -531,6 +558,7 @@ public partial class UdpListener : Node2D
 		else
 		{
 			_bodyAutonomy?.RecordUserInteraction();
+			MarkChatActivity();
 			UpdateChatPanelLayout();
 			_chatPanel.Visible = true;
 			_chatInput.GrabFocus();
@@ -552,7 +580,10 @@ public partial class UdpListener : Node2D
 		if (!_chatPanel.Visible)
 			ToggleChatPanel();
 		else
+		{
+			MarkChatActivity();
 			_chatInput.GrabFocus();
+		}
 	}
 
 	private void OnContextTouchPressed()
@@ -2678,7 +2709,11 @@ public partial class UdpListener : Node2D
 		string msg = _chatInput.Text.Trim();
 		if (string.IsNullOrEmpty(msg)) return;
 		_bodyAutonomy?.RecordUserInteraction();
+		MarkChatActivity();
 		_chatInput.Text = "";
+		// Panel cứ để mở cho Ngài chat nhiều lượt liền mạch. Backend không còn bị
+		// "chat_mode" khoá cứng: nó tự nhường lại autonomous theo độ tươi của hội
+		// thoại (ERIS_CHAT_FRESH_SEC), nên panel mở mãi cũng không làm chết autonomous.
 		_chatInput.GrabFocus();
 		// JsonSerializer.Serialize(msg) để escape chuỗi. Không tự nối raw string ngu ngốc
 		string payload = $"{{\"type\":\"chat\",\"message\":{JsonSerializer.Serialize(msg)}}}";

@@ -63,6 +63,121 @@ class ShadowPipelineMixin:
         return pipeline
 
     # ------------------------------------------------------------------
+    # Promotion: V3 thành xương sống cho vài path quan trọng
+    # ------------------------------------------------------------------
+
+    #: Các path V3 có thể nhận làm xương sống. "budget" có consumer thật ở tầng
+    #: memory (MemoryCognitionCore._budget_from_frame) + global_workspace, nên là
+    #: path promote an toàn nhất. "focus"/"evidence" hiện ghi advisory lên frame
+    #: (không ghi đè broadcast cũ) để downstream/prompt có thể đọc khi muốn.
+    _V3_PROMOTABLE_PATHS: frozenset[str] = frozenset({"budget", "focus", "evidence"})
+
+    def _v3_promoted_paths(self) -> frozenset[str]:
+        """Tập path V3 được phép ghi đè frame cũ.
+
+        Nguồn: attr `self.v3_promoted_paths` (set/iterable/str) hoặc env
+        `ERIS_V3_PROMOTE` (danh sách phẩy, hoặc "all"). Rỗng = không promote
+        (shadow thuần). Giá trị lạ bị bỏ qua.
+        """
+        raw = getattr(self, "v3_promoted_paths", None)
+        if raw is None:
+            raw = os.getenv("ERIS_V3_PROMOTE", "")
+        if isinstance(raw, str):
+            tokens = [tok.strip().lower() for tok in raw.split(",") if tok.strip()]
+        else:
+            try:
+                tokens = [str(tok).strip().lower() for tok in raw]
+            except TypeError:
+                return frozenset()
+        if "all" in tokens:
+            return self._V3_PROMOTABLE_PATHS
+        return frozenset(tokens) & self._V3_PROMOTABLE_PATHS
+
+    def _promote_v3_paths(
+        self,
+        result: Optional[PipelineResult],
+        *,
+        old_frame: Any,
+        channel: str,
+    ) -> dict[str, Any]:
+        """Ghi quyết định V3 lên frame cũ cho các path đã bật. Không bao giờ raise.
+
+        Trả dict audit (path -> giá trị đã promote). Lưu trên
+        `self.last_v3_promotion` để test/inspect.
+        """
+        promotion: dict[str, Any] = {"channel": channel, "applied": {}}
+        self.last_v3_promotion = promotion
+        if result is None or old_frame is None:
+            return promotion
+        paths = self._v3_promoted_paths()
+        if not paths:
+            return promotion
+
+        applied = promotion["applied"]
+        trace = getattr(result, "debug_trace", {}) or {}
+
+        if "budget" in paths:
+            mode = str(getattr(result, "budget_mode", "") or "")
+            if mode and mode != "unknown":
+                if self._set_frame_attr(old_frame, "budget_mode", mode):
+                    decision = getattr(result, "budget_decision", None)
+                    self._set_frame_metadata(
+                        old_frame,
+                        "v3_budget_decision",
+                        decision.to_dict() if hasattr(decision, "to_dict") else mode,
+                    )
+                    applied["budget"] = mode
+
+        if "focus" in paths:
+            focus = trace.get("dominant_focus")
+            if focus and self._set_frame_metadata(old_frame, "v3_dominant_focus", focus):
+                applied["focus"] = focus
+
+        if "evidence" in paths:
+            evidence = trace.get("selected_evidence")
+            if evidence and self._set_frame_metadata(old_frame, "v3_selected_evidence", list(evidence)):
+                applied["evidence"] = list(evidence)
+
+        if applied:
+            self._record_frame_note(old_frame, f"v3_promoted={','.join(sorted(applied))}")
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.info("[v3 promotion] channel=%s applied=%s", channel, applied)
+        return promotion
+
+    @staticmethod
+    def _set_frame_attr(frame: Any, name: str, value: Any) -> bool:
+        try:
+            setattr(frame, name, value)
+            return True
+        except Exception:
+            try:
+                frame[name] = value  # type: ignore[index]
+                return True
+            except Exception:
+                return False
+
+    def _set_frame_metadata(self, frame: Any, key: str, value: Any) -> bool:
+        metadata = getattr(frame, "metadata", None)
+        if isinstance(metadata, dict):
+            try:
+                metadata[key] = value
+                return True
+            except Exception:
+                pass
+        return self._set_frame_attr(frame, key, value)
+
+    @staticmethod
+    def _record_frame_note(frame: Any, note: str) -> None:
+        notes = getattr(frame, "debug_notes", None)
+        if isinstance(notes, list):
+            try:
+                notes.append(note)
+                return
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
     # Entrypoint gọi từ chat_cycle / cognitive_cycle
     # ------------------------------------------------------------------
 
@@ -115,6 +230,11 @@ class ShadowPipelineMixin:
             self.last_shadow_trace = shadow_trace
             self.last_shadow_comparison = comparison
             self._log_shadow_comparison(comparison, shadow_trace, old_trace)
+
+            # Promotion: với các path đã bật cờ, V3 trở thành xương sống — quyết định
+            # của nó được ghi đè lên frame cũ. Mặc định TẮT (shadow thuần), nên bước
+            # này an toàn cho tới khi có đủ bằng chứng so trace để bật từng path.
+            self._promote_v3_paths(result, old_frame=old_frame, channel=channel)
             return result
         except Exception as exc:  # shadow không bao giờ được làm chết hot path
             logger = getattr(self, "logger", None)

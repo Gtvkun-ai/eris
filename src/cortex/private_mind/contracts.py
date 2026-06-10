@@ -569,6 +569,7 @@ class EvidenceDossier:
     current_task: str = ""
     surface_outcome: dict[str, Any] = field(default_factory=dict)
     concern_snapshots: tuple[dict[str, Any], ...] = ()
+    user_model_snapshot: dict[str, Any] = field(default_factory=dict)
     evidence_index: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -584,6 +585,7 @@ class EvidenceDossier:
             "current_task": self.current_task,
             "surface_outcome": to_plain(self.surface_outcome),
             "concern_snapshots": to_plain(self.concern_snapshots),
+            "user_model_snapshot": to_plain(self.user_model_snapshot),
             "evidence_index": to_plain(self.evidence_index),
             "metadata": to_plain(self.metadata),
         }

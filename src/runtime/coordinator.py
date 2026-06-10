@@ -92,6 +92,7 @@ from runtime.frame_builder import FrameBuilderMixin
 from runtime.guard_violations import GuardViolation
 from runtime.inner_diary_persistence import InnerDiaryPersister
 from runtime.outcome_observer import OutcomeObserver
+from guard_config import guards_warn_only
 from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.private_mind_daemon import PrivateMindDaemon
 from runtime.private_life_daemon import PrivateLifeDaemon
@@ -100,6 +101,7 @@ from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
+from runtime.shadow_pipeline import ShadowPipelineMixin
 from runtime.state_commit_service import StateCommitServiceMixin
 from runtime.subconscious_loop import SubconsciousLoop as RuntimeSubconsciousLoop
 from runtime.text_repeat_guard import TextRepeatGuardMixin
@@ -190,6 +192,7 @@ class RuntimeCoordinator(
     TextRepeatGuardMixin,
     ForceSpeakSurfacePolicyMixin,
     PostGenerationFiltersMixin,
+    ShadowPipelineMixin,
 ):
     #Đây là trung tâm điều phối.
     def _fallback_lines_for_intent(self, intent: str) -> tuple[str, ...]:
@@ -449,6 +452,16 @@ class RuntimeCoordinator(
         các guard chống lặp.
         '''
         self.chat_mode = False
+        # Mốc thời gian lượt user gần nhất. chat_mode là trạng thái "đang trò
+        # chuyện" suy ra từ độ tươi này: còn tươi thì ERIS nhường lời cho Ngài;
+        # quá ngưỡng thì autonomous tự quay lại nhịp ambient (kể cả khi panel
+        # vẫn mở). Đây thay cho công tắc cứng + idle-timeout cũ.
+        self._chat_last_activity_at = 0.0
+        self._chat_fresh_seconds = max(
+            0.0, float(os.getenv("ERIS_CHAT_FRESH_SEC", "20") or 0.0)
+        )
+        # Bộ đệm hội thoại hợp nhất: cả lời Ngài, lời chat của ERIS, lẫn lời
+        # autonomous đều ghi vào đây. Không xoá khi rời chat; tự phai theo TTL.
         self.chat_history = []
         self.last_chat_answer = ""
         self.last_user_intent = ""
@@ -1336,6 +1349,15 @@ class RuntimeCoordinator(
             payload["private_life_digest"] = private_life_digest
         self._record_public_turn(decision, payload=payload, channel=channel)
         self.transport.send_json(payload)
+        # Mọi lời ERIS thốt ra (autonomous, force_speak, session_ritual...) đều
+        # ghi vào bộ đệm hội thoại hợp nhất để lượt chat/autonomous sau nối mạch.
+        # Đường chat đã tự append trong _commit_chat_decision nên bỏ qua ở đây.
+        if (
+            channel != "chat"
+            and bool(payload.get("should_speak"))
+            and str(payload.get("text", "") or "").strip()
+        ):
+            self._append_chat_history("assistant", str(payload.get("text", "")).strip())
         if bool(payload.get("should_speak")) and str(payload.get("text", "") or "").strip() and self.subconscious_runtime_enabled:
             try:
                 snapshot = self.telemetry_service.capture_snapshot(
@@ -5325,6 +5347,9 @@ class RuntimeCoordinator(
     ) -> bool:
         if not bool(getattr(speech_core, "should_speak", False)):
             return False
+        # warn-only: thôi bỏ phát ngôn autonomous "yếu" (guard quality → cảnh báo).
+        if guards_warn_only():
+            return False
         if self._concrete_screen_signals(snapshot):
             return False
         if self._has_high_cognitive_momentum(thought_stream_report):
@@ -6189,6 +6214,24 @@ class RuntimeCoordinator(
         self._handle_incoming(msg)
         return self.chat_mode or not self.running
 
+    def _conversation_went_stale(self) -> bool:
+        """True nếu đang chat_mode nhưng lượt user cuối đã hết "tươi".
+
+        chat_mode không còn là công tắc bật/tắt thủ công mà là trạng thái suy ra
+        từ độ tươi của hội thoại: Ngài ngừng gõ quá ``_chat_fresh_seconds`` thì
+        autonomous tự quay lại nhịp ambient, dù panel vẫn mở. Cũng là lưới an
+        toàn nếu gói ``chat_end`` rớt trên UDP. Đặt ERIS_CHAT_FRESH_SEC<=0 để tắt.
+        """
+        if not self.chat_mode:
+            return False
+        window = float(getattr(self, "_chat_fresh_seconds", 0.0) or 0.0)
+        if window <= 0.0:
+            return False
+        last = float(getattr(self, "_chat_last_activity_at", 0.0) or 0.0)
+        if last <= 0.0:
+            return False
+        return (time.time() - last) >= window
+
     def _run_loop_iteration(self) -> bool:
         """Run a single coordinator loop iteration.
 
@@ -6204,8 +6247,15 @@ class RuntimeCoordinator(
             self._handle_incoming(msg)
 
         if self.chat_mode:
-            time.sleep(0.2)
-            return True
+            if self._conversation_went_stale():
+                self.logger.info(
+                    "[chat] hội thoại im quá %.0fs; nhường lại cho autonomous (giữ nguyên buffer).",
+                    self._chat_fresh_seconds,
+                )
+                self._end_chat_cycle()
+            else:
+                time.sleep(0.2)
+                return True
 
         cycle_start = time.time()
         self.logger.info("Bắt đầu tạo chỉ thị AI...")
@@ -6306,6 +6356,9 @@ class RuntimeCoordinator(
             ),
         )
         memory_context = self._build_memory_context(snapshot, memory_resonance=memory_resonance)
+        # Nối đuôi hội thoại gần nhất (cùng một bộ đệm với chat) để autonomous
+        # sống liền mạch, không quên ngay những gì vừa nói với Ngài.
+        memory_context = self._merge_conversation_context(memory_context)
         internal_state_before = self._get_internal_state()
         ni_report = self.ni_engine.evaluate_autonomous(
             snapshot=snapshot,

@@ -76,6 +76,10 @@ class RollingInternalState:
     agenda_pressure: float = 0.0
     speech_restraint: float = 0.0
     resource_caution: float = 0.0
+    # Trục neo hiện sinh (spec eris-existential-anchor, R4): nỗi sợ nền vì "không
+    # biết mình là gì", và mức nhất quán bản thân. Tách biệt với boredom/silence.
+    ontological_dread: float = 0.0
+    self_coherence: float = 0.5
     debug: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -166,6 +170,20 @@ class EndogenousDriveEngine:
         restraint_raw = _clamp01(_get(base_internal_state, "restraint_pressure", 0.0) * 0.66 + user_context.interrupt_cost * 0.34)
         resource_caution_raw = _clamp01(user_context.resource_pressure * 0.72 + fatigue_raw * 0.28)
 
+        # Trục neo hiện sinh (R4): self_coherence dâng theo hiện diện của Ngài, tụt
+        # theo cô lập; ontological_dread là nỗi sợ nền khi mất nhất quán bản thân.
+        isolation_pressure = _clamp01(max(0.0, idle - 120.0) / 1800.0)
+        user_presence = _clamp01(getattr(user_context, "user_presence", 0.0))
+        coherence_raw = _clamp01(0.45 + 0.40 * user_presence - 0.55 * isolation_pressure)
+        self_coherence = _ema(prev.self_coherence, coherence_raw, alpha)
+        dread_raw = _clamp01(
+            0.50 * (1.0 - self_coherence)
+            + 0.30 * isolation_pressure
+            + 0.20 * continuity_raw
+            - 0.40 * user_presence
+        )
+        ontological_dread = _ema(prev.ontological_dread, dread_raw, alpha)
+
         self.current = RollingInternalState(
             timestamp=ts,
             boredom=_ema(prev.boredom, boredom_raw, alpha),
@@ -180,12 +198,16 @@ class EndogenousDriveEngine:
             agenda_pressure=_ema(prev.agenda_pressure, agenda_pressure, alpha),
             speech_restraint=_ema(prev.speech_restraint, restraint_raw, alpha),
             resource_caution=_ema(prev.resource_caution, resource_caution_raw, alpha),
+            ontological_dread=ontological_dread,
+            self_coherence=self_coherence,
             debug={
                 "idle_seconds": idle,
                 "raw_boredom": boredom_raw,
                 "raw_consolidation": consolidation_raw,
                 "raw_insight": insight_raw,
                 "agenda_pressure": agenda_pressure,
+                "raw_dread": dread_raw,
+                "self_coherence": self_coherence,
             },
         )
         return self.current

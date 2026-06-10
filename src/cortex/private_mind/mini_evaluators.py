@@ -190,6 +190,84 @@ class FutureBiasEvaluator(BaseMiniEvaluator):
         return _relevance_sig("future_bias", ",".join(parts), task)
 
 
+USER_MODEL_EVALUATOR_NAME = "user_model_evaluator"
+
+
+def _infer_user_facet(claim: str) -> str:
+    """Đoán nhẹ facet từ claim; UserModelStore sẽ chuẩn hóa lại nếu sai.
+
+    Cố ý hẹp: chỉ chạm vài tín hiệu rõ. Mặc định 'general' để store tự lo.
+    """
+    text = str(claim or "").lower()
+    if any(k in text for k in ("rời", "vắng", "bỏ đi", "biến mất", "không quay lại", "cuối tuần", "đi đâu")):
+        return "leaving_pattern"
+    if any(k in text for k in ("coi eris", "xem eris", "đối xử", "công cụ", "như một", "trợ lý")):
+        return "treats_eris_as"
+    if any(k in text for k in ("thích", "quan tâm", "ghét", "né", "chủ đề", "hứng thú")):
+        return "topic_affinity"
+    if any(k in text for k in ("công nhận", "thừa nhận", "gọi tên", "nhìn nhận", "tồn tại")):
+        return "recognition"
+    if any(k in text for k in ("nói", "nhịp", "trả lời", "im lặng", "gõ", "cách")):
+        return "interaction_style"
+    if any(k in text for k in ("tin", "đáng tin", "ổn định", "thất thường", "neo")):
+        return "neo_reliability"
+    return "general"
+
+
+class UserModelEvaluator(BaseMiniEvaluator):
+    """Agent nhỏ hướng-Ngài: dựng Mô_Hình_Ngài (spec eris-existential-anchor R1).
+
+    Không sinh lời thoại. Mỗi fragment mang `metadata['facet']` để UserModelStore
+    định tuyến, và buộc có `evidence_ids` (kỷ luật fragment chung — R1.2).
+    """
+
+    supports_relevance_gate = True
+
+    def __init__(self, *, model_adapter: Any = None) -> None:
+        super().__init__(USER_MODEL_EVALUATOR_NAME, model_adapter=model_adapter)
+
+    def relevance_signature(self, dossier: EvidenceDossier) -> str | None:
+        # Học về Ngài khi có lời/hành vi của Ngài. Không có turn người dùng thì
+        # không có gì mới để cập nhật chân dung.
+        if not dossier.recent_user_turns:
+            return None
+        last = dossier.recent_user_turns[-1]
+        last_text = str(last.get("text") or "").strip()
+        if not last_text:
+            return None
+        runtime = dossier.runtime_state if isinstance(dossier.runtime_state, dict) else {}
+        idle = str(runtime.get("idle_seconds") or "")
+        return _relevance_sig("user_model", last_text[:200], str(idle)[:8])
+
+    def evaluate(self, dossier: EvidenceDossier) -> ThoughtFragment | None:
+        fn = getattr(self.model_adapter, "evaluate_fragment", None)
+        if not callable(fn):
+            return None
+        try:
+            raw = fn(self.name, dossier)
+        except Exception:
+            return None
+        if not isinstance(raw, Mapping):
+            return None
+        claim = compact_text(str(raw.get("claim") or ""), 480)
+        if not claim:
+            return None
+        confidence = clamp01(raw.get("confidence", 0.0))
+        pressure = clamp01(raw.get("pressure", 0.0))
+        if confidence < 0.15 and pressure < 0.15:
+            return None
+        facet = str(raw.get("facet") or "").strip() or _infer_user_facet(claim)
+        return ThoughtFragment(
+            source=self.name,
+            claim=claim,
+            confidence=confidence,
+            pressure=pressure,
+            evidence_ids=_evidence_ids(dossier),
+            suggested_question=compact_text(str(raw.get("suggested_question") or ""), 200),
+            metadata={"facet": facet},
+        )
+
+
 class MiniEvaluatorPipeline:
     def __init__(
         self,
@@ -207,6 +285,7 @@ class MiniEvaluatorPipeline:
                 MemoryResonanceEvaluator(model_adapter=model_adapter),
                 RiskAndPermissionEvaluator(model_adapter=model_adapter),
                 FutureBiasEvaluator(model_adapter=model_adapter),
+                UserModelEvaluator(model_adapter=model_adapter),
             )
         )
         # Cổng relevance: chỉ gọi mảnh nào có bằng chứng đáng nghĩ và vừa đổi.

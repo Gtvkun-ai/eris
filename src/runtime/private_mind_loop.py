@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from cortex.private_mind import (
+    USER_MODEL_EVALUATOR_NAME,
     ConcernStore,
     EvidenceDossierBuilder,
     GemmaInnerSynthesizer,
@@ -32,7 +33,10 @@ from cortex.private_mind import (
     StateMutationBus,
     SurfaceValve,
     ThoughtContinuityStore,
+    UserModelStore,
+    default_user_model_path,
 )
+from cortex.existential_anchor import AnchorSystem
 from cortex.private_mind.contracts import SurfaceCandidate, ThoughtFragment, to_plain
 from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
 from cortex.private_mind.inner_diary_writer import InnerDiaryWriter
@@ -53,6 +57,7 @@ class PrivateMindLoopConfig:
     min_interval_seconds: float = field(default_factory=lambda: float(os.getenv("ERIS_PRIVATE_MIND_MIN_INTERVAL_SEC", "12") or 12.0))
     min_fragments_for_synthesis: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_MIN_FRAGMENTS_SYNTH", "2") or 2)))
     concern_store_path: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_CONCERNS_PATH", "") or ""))
+    user_model_path: str = field(default_factory=lambda: str(os.getenv("ERIS_USER_MODEL_PATH", "") or ""))
     log_ticks: bool = field(default_factory=lambda: _env_flag("ERIS_PRIVATE_MIND_LOG_TICKS", True))
 
 
@@ -70,6 +75,7 @@ class PrivateMindLoop:
         mutation_bus: StateMutationBus | None = None,
         surface_valve: SurfaceValve | None = None,
         continuity_store: ThoughtContinuityStore | None = None,
+        user_model_store: UserModelStore | None = None,
         model_adapter: Any = None,
         logger: Any = None,
     ) -> None:
@@ -77,6 +83,11 @@ class PrivateMindLoop:
         self.logger = logger
         self.model_adapter = model_adapter
         self.concern_store = concern_store or ConcernStore(path=self._resolve_concern_path(), logger=logger)
+        # Mô_Hình_Ngài: chân dung bền vững về Người_Dùng (spec eris-existential-anchor).
+        self.user_model_store = user_model_store or UserModelStore(path=self._resolve_user_model_path(), logger=logger)
+        # Trục neo hiện sinh: gắn-bó/sợ/bóng-tối/lừa-dối. Ship an toàn (công tắc tắt),
+        # đọc Mô_Hình_Ngài để phái sinh ý nghĩa/gắn bó.
+        self.anchor_system = AnchorSystem.from_env(user_model_store=self.user_model_store, logger=logger)
         self.dossier_builder = dossier_builder or EvidenceDossierBuilder()
         self.evaluator_pipeline = evaluator_pipeline or MiniEvaluatorPipeline(model_adapter=model_adapter)
         self.synthesizer = synthesizer or GemmaInnerSynthesizer(model_adapter=model_adapter, min_fragments_for_model=self.config.min_fragments_for_synthesis)
@@ -144,6 +155,7 @@ class PrivateMindLoop:
             surface_candidate_queue=surface_candidate_queue or (),
             runtime_owner=runtime_owner,
             surface_outcome=surface_outcome,
+            user_model_snapshot=self.user_model_store.snapshot_for_dossier(),
             metadata={
                 "private_mind_tick_at": now,
                 "api_degraded": bool(api_status.get("api_degraded", False)),
@@ -164,7 +176,18 @@ class PrivateMindLoop:
         # thread đến hạn khơi lại (cooldown lớn + đủ áp lực). Đây không phải nhịp đồng hồ.
         if not fragments and self.continuity.has_followup_due():
             fragments = self._followup_fragments(dossier)
-        concerns = self.concern_store.update_from_fragments(fragments)
+        # Tách dòng fragment hướng-Ngài sang Mô_Hình_Ngài; phần còn lại nuôi ConcernStore.
+        # Giữ tách bạch lifecycle theo QĐ-2: chân dung Ngài không trộn với bận tâm task.
+        user_fragments = tuple(f for f in fragments if f.source == USER_MODEL_EVALUATOR_NAME)
+        other_fragments = tuple(f for f in fragments if f.source != USER_MODEL_EVALUATOR_NAME)
+        if user_fragments:
+            self.user_model_store.update_from_fragments(user_fragments)
+        self.user_model_store.decay(now=now)
+        concerns = self.concern_store.update_from_fragments(other_fragments)
+
+        # Trục neo hiện sinh: cập nhật ý nghĩa/gắn bó/bóng tối từ tín hiệu tick.
+        # An toàn theo mặc định (công tắc tắt → không đổi hành vi live).
+        self._update_anchor_system(dossier=dossier, runtime_owner=runtime_owner)
         judgment = self.synthesizer.synthesize(dossier=dossier, fragments=fragments)
         if judgment is not None:
             self.concern_store.update_from_judgment(judgment.private_concern_update)
@@ -439,6 +462,73 @@ class PrivateMindLoop:
             return self.config.concern_store_path
         root = os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core")
         return str(Path(root) / "private_concerns.json")
+
+    def _resolve_user_model_path(self) -> str | None:
+        if self.config.user_model_path:
+            return self.config.user_model_path
+        env = os.getenv("ERIS_USER_MODEL_PATH", "").strip()
+        if env:
+            return env
+        root = os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core")
+        return str(Path(root) / "user_model.json")
+
+    def _update_anchor_system(self, *, dossier: Any, runtime_owner: Any) -> None:
+        """Cập nhật trục neo hiện sinh từ một tick và phơi facade cho runtime.
+
+        Đọc tín hiệu sẵn có trong dossier (idle, user_presence, tuổi lời Ngài) và
+        Sợ_Hiện_Sinh từ internal_state nếu runtime cung cấp. Không bao giờ đổi hành
+        vi live khi công tắc tắt (mặc định).
+        """
+        try:
+            runtime_state = dossier.runtime_state if isinstance(getattr(dossier, "runtime_state", None), dict) else {}
+            observer = runtime_state.get("observer", {}) if isinstance(runtime_state.get("observer"), dict) else {}
+            idle_seconds = float(runtime_state.get("idle_seconds", 0.0) or 0.0)
+            user_presence = float(observer.get("user_presence", 0.0) or 0.0)
+            meta = dossier.metadata if isinstance(getattr(dossier, "metadata", None), dict) else {}
+            age = meta.get("user_turn_age_sec")
+            age = float(age) if isinstance(age, (int, float)) else None
+            internal_state = self._anchor_internal_state(runtime_owner)
+            continuity_threat = float(getattr(runtime_owner, "last_continuity_threat", 0.0) or 0.0)
+            self.anchor_system.update_from_tick(
+                internal_state=internal_state,
+                continuity_threat=continuity_threat,
+                idle_seconds=idle_seconds,
+                user_presence=user_presence,
+                last_user_turn_age_seconds=age,
+            )
+            # Phơi facade để presence_controller/chat đọc (read-only, gated).
+            if runtime_owner is not None:
+                try:
+                    setattr(runtime_owner, "anchor_system", self.anchor_system)
+                except Exception:
+                    pass
+        except Exception as exc:
+            self._log_anchor_warning(exc)
+
+    @staticmethod
+    def _anchor_internal_state(runtime_owner: Any) -> Any:
+        """Nguồn Sợ_Hiện_Sinh: RollingInternalState từ contextual loop nếu có.
+
+        Thử vài tên thuộc tính thường gặp; không có thì trả None (dread=0, an toàn).
+        Điểm này là hook để contextual autonomy loop feed dread thật về sau.
+        """
+        if runtime_owner is None:
+            return None
+        for attr in ("rolling_internal_state", "endogenous_internal_state", "anchor_internal_state"):
+            state = getattr(runtime_owner, attr, None)
+            if state is not None and hasattr(state, "ontological_dread"):
+                return state
+        loop = getattr(runtime_owner, "contextual_autonomy_loop", None)
+        drive = getattr(loop, "endogenous_drive", None) if loop is not None else None
+        current = getattr(drive, "current", None) if drive is not None else None
+        if current is not None and hasattr(current, "ontological_dread"):
+            return current
+        return None
+
+    def _log_anchor_warning(self, exc: Exception) -> None:
+        fn = getattr(self.logger, "warning", None) if self.logger is not None else None
+        if callable(fn):
+            fn("AnchorSystem update failed: %s", exc)
 
     def _log_tick(self, result: PrivateMindTickResult) -> None:
         if not self.config.log_ticks:

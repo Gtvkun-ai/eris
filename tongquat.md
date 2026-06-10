@@ -1,21 +1,20 @@
 # ERIS DEBUG SOURCE MAP
 
-AUDIT 2026-06-09 DIRTY WORKSPACE / CHUA COMMIT:
-- Da chay `git fetch --all --prune`: `main` van ngang `origin/main` (`HEAD 9aa149f`), khong co commit remote moi can pull tai luc audit. "File chua pull" trong dot nay chu yeu la dirty/untracked local workspace, chua phai remote delta.
-- Workspace hien co dirty tracked: `body/UdpListener.cs`, `src/runtime/{autonomous_cycle.py,chat_cycle.py,cognitive_frame_recorder.py,coordinator.py,presence_controller.py,private_mind_loop.py,private_mind_model_adapter.py}`, `src/cortex/{affect_semantics.py,micro_repeat_guard.py,relationship_dynamics.py,surface_seed_compiler.py,vision_semantic_compressor.py}`, `src/cortex/private_mind/{__init__.py,inner_synthesizer.py,mini_evaluators.py}`, `src/llm/service.py`, memory state files, va nhieu test.
-- Untracked specs moi: `.kiro/specs/autonomous-liveliness-redesign/` va `.kiro/specs/relationship-state-trigger-fix/`. Doc cu khong co hai spec nay nen thieu ca hai huong san pham: autonomous idle phai "song" bang grounded/varied lines, va relationship warmth phai nhan duoc cau am ap tieng Viet tu nhien.
-- Untracked code moi: `src/cortex/banned_filler.py`, `src/runtime/ambient_silence_policy.py`, `src/runtime/liveliness_config.py`, `src/runtime/liveliness_tracker.py`, `src/cortex/private_mind/thought_continuity.py`.
-- Untracked tests moi: `tests/test_banned_filler.py`, `tests/test_liveliness_config.py`, `tests/test_liveliness_grounding.py`, `tests/test_liveliness_muse_and_tracker.py`, `tests/test_liveliness_output_filter.py`, `tests/test_liveliness_properties.py`, `tests/test_liveliness_repeat_guard.py`, `tests/test_relationship_warmth_trigger.py`.
-- Untracked scratch/data moi: `_mem.txt` va `memory_core/` (directory snapshot/rotated state trong worktree hien tai).
-- Untracked diary assets moi: `asset/Resource/diary_analysis.png`, `diary_concern.png`, `diary_concern_card.png`, `diary_future.png`, `diary_memory.png`, `diary_now.png`, `diary_surface.png`, va 9 face mood `diary_face_{calm,mid,hyper}_{neg,neu,pos}.png` kem `.import`.
-- Autonomous liveliness local patch: banned filler single source, liveliness config, grounded seed ranking, short memory seed retention, repeat window >= max idle interval, banned fallback block, muse cooldown exemption, per-cycle `DecisionRecord`. Dang con deferred theo spec: alternative-seed retry sau repeat reject va body-only motion cho no-op ambient branch.
-- Relationship warmth local patch: affect classifier them phrase/prototype `relational_warmth`, relationship dynamics co warmth_gain lam tang trust/attachment_visibility va giam preferred_distance, chat log them `familiarity` + `attachment_vis`.
-- Private mind local patch: mini evaluators co relevance gate/signature de khong goi API lap lai khi evidence khong doi; `ThoughtContinuityStore` moi luu `memory_core/thought_stream.jsonl` va bom recent/unresolved thoughts vao fragment/judgment prompts; synthesizer deteministic weave thanh inner voice nguoi-thu-nhat thay boilerplate.
-- UI diary local patch: `UdpListener.cs` them banner header, mood face 3x3, concern stack expand/collapse, spacing/layout moi. Neu asset PNG chua tracked/commit, Godot panel co the fallback ve glyph/cham hong.
-- Doc nay hien phai doc theo hai lop: `HEAD 9aa149f` la base tracked, con cac muc `DIRTY WORKSPACE` la thay doi do an hien tai chua duoc commit/pull len remote.
+AUDIT 2026-06-10 CURRENT HEAD:
+- Da chay `git fetch --all --prune`: `main` ngang `origin/main` tai `HEAD 201cd55`; truoc khi sua tai lieu, `git status --short --branch` sach. Sau audit nay, dirty duy nhat du kien la `tongquat.md`.
+- Delta moi tu `9aa149f` -> `201cd55` gom 3 moc: `10baa39` commit hoa autonomous-liveliness / relationship-warmth / diary UI assets / thought continuity; `b16857b` them key-pool, nickname predicate + memory semantic fixes, private diary/seed updates; `201cd55` them spec developmental growth, `src/cortex/disposition.py`, va tune Personality/ToM/source grounding/post filters.
+- Cac file tung ghi `UNTRACKED LOCAL` ngay ben duoi nay da TRACKED: `.kiro/specs/autonomous-liveliness-redesign/`, `.kiro/specs/relationship-state-trigger-fix/`, `asset/Resource/diary_*.png`, `src/cortex/banned_filler.py`, `src/runtime/{ambient_silence_policy.py,liveliness_config.py,liveliness_tracker.py}`, `src/cortex/private_mind/thought_continuity.py`, va bo tests liveliness/warmth.
+- Spec moi `eris-developmental-growth` da tracked o `201cd55`; doc cu chua co nen thieu huong phat trien "felt disposition" / dynamic expression ceiling / ToM boldness.
+- New tracked hot files: `src/cortex/disposition.py` (~189 dong), `src/llm/key_pool.py` (~121 dong), `memory_core/thought_stream.jsonl`, `memory_core/semantic_memory.json.bak`, va backup folder `memory_core_backup_20260609_175553/`.
+- Source size recheck nhanh: khoang `382` file `.py/.cs` trong vung chinh (`src=272`, `tests=92`, `body=6`, con lai scripts/training). Hot LOC: `body/UdpListener.cs` ~`4,472`, `src/llm/process_manager.py` ~`147`, `src/runtime/private_mind_model_adapter.py` ~`1,165`, `src/cortex/private_mind/thought_continuity.py` ~`256`.
+- Cac note `DIRTY WORKSPACE 2026-06-09` ben duoi nen doc nhu lich su ngay truoc commit `10baa39`, khong phai trang thai hien tai.
+
+AUDIT 2026-06-09 HISTORICAL DIRTY WORKSPACE / DA DUOC COMMIT HOA:
+- Muc nay ghi lai trang thai truoc `10baa39`: khi do co dirty/untracked local workspace cho liveliness, relationship warmth, private mind thought continuity, va diary UI assets.
+- Neu section ben duoi con ghi `UNTRACKED LOCAL` cho cac file nay, uu tien note 2026-06-10: chung da tracked trong HEAD 201cd55.
 
 AUDIT 2026-06-09 CURRENT HEAD:
-- Tai lieu da duoc recheck voi `HEAD 9aa149f` (2026-06-09); `git status --short` luc nay khong sach: co dirty tracked, deleted state JSON, backup dir, va nhieu untracked file/spec/test/asset moi. Cac note 2026-06-08 ben duoi chi con la lich su drift, khong phai trang thai workspace hien tai.
+- Tai lieu da duoc recheck voi `HEAD 9aa149f` (2026-06-09); nhung den 2026-06-10 repo da len `HEAD 201cd55` va workspace sach. Block nay la moc lich su trung gian, khong phai snapshot moi nhat.
 - Update history tu `d287f57` -> `9aa149f`: `f5a2b3b` them `git_audit.md`, embedding/paraphrase model asset, `inner_diary_persistence.py`, va xoa dataset train cu; `ae591c4` chuyen process/model sang remote-only main path va sua env; `23a8c01` them `inner_diary_writer.py` + persistence/transport diary; `9aa149f` them Phase 2 Meaning/ToM, V3 cognitive/shadow/debug pipeline, evidence normalizer, va test suite moi.
 - File/state da KHONG con "dirty/untracked": `src/runtime/cognitive_pipeline.py`, `src/runtime/shadow_pipeline.py`, `src/runtime/debug_trace.py`, `src/core/evidence_normalizer.py`, `tests/test_cognitive_pipeline.py`, `tests/test_shadow_pipeline.py`. Neu section nao ben duoi con ghi `WORKSPACE NEW` / `UNTRACKED`, doc la LAC HAU va uu tien note 2026-06-09 nay.
 - Source hien tai co khoang `367` file `.py/.cs` trong cac vung chinh (`src`, `tests`, `body`, `scripts`, `training`): `src=265`, `tests=84`, `body=6`, `scripts=11`, `training=1`. Cac con so `329` file code / `323` Python / `5,854` C# ben duoi la snapshot cu.
@@ -24,7 +23,7 @@ AUDIT 2026-06-09 CURRENT HEAD:
 - Meaning layer path da doi: `src/cortex/meaning.py` da thanh package `src/cortex/meaning/`, file legacy nam o `src/cortex/meaning/meaning_layer.py`; Phase 2 facade moi la `src/cortex/meaning/pipeline.py` va ToM moi nam o `src/cortex/tom/*`.
 - Training data cu `training/datasets_clean/*` va `training/dataset.jsonl` da bi xoa trong `f5a2b3b`; section nao con coi chung la training data hien tai la SAI, chi nen doc nhu lich su.
 
-PER-FILE UPDATE LEDGER 2026-06-09 (cac file lam doc cu lech):
+PER-FILE UPDATE LEDGER 2026-06-09 HISTORICAL (cac file lam doc cu lech tai moc `9aa149f`; xem ledger 2026-06-10 cho latest):
 - `tongquat.md`: latest `9aa149f`; tai lieu dang duoc audit lai tren HEAD moi.
 - `body/UdpListener.cs`: latest `9aa149f`; UI/body panel da lon hon nhieu, LOC ~`4,855`, doc cu `3,9xx` la cu.
 - `body/ErisProcessManager.cs`: latest `ae591c4`; chi start Python + remote env, khong spawn local llama-server.
@@ -53,6 +52,21 @@ PER-FILE UPDATE LEDGER 2026-06-09 (cac file lam doc cu lech):
 - `training/dataset.jsonl`, `training/datasets_clean/*`: deleted in `f5a2b3b`; moi section con ghi ACTIVE TRAINING DATA la sai voi HEAD.
 - `src/paraphrase-multilingual-MiniLM-L12-v2/*`: added in `f5a2b3b`; model asset da nam trong tree qua LFS pointer/asset files, note cu ve `.cache` can doc ky lai.
 
+PER-FILE UPDATE LEDGER 2026-06-10 (moi so voi `9aa149f`):
+- `.kiro/specs/autonomous-liveliness-redesign/*`, `.kiro/specs/relationship-state-trigger-fix/*`: tracked tu `10baa39`, khong con untracked.
+- `.kiro/specs/eris-developmental-growth/*`: tracked tu `201cd55`, spec moi cho disposition/growth.
+- `src/cortex/disposition.py`: added `201cd55`; render state thanh "felt_disposition" bang xu huong hanh vi, khong phai bang so noi tam.
+- `src/cortex/internal_state.py`: `to_prompt_context()` gio dan dau bang `render_felt_disposition()`, con so chi la machine continuity.
+- `src/cortex/personality.py`: dynamic expression ceiling/suppression floor, warmth channel, chat/force_speak an toan co the am hon ma khong thanh overexpose.
+- `src/cortex/meaning/pipeline.py`, `src/cortex/tom/theory_of_mind.py`: ToM co `boldness=0.5` trong risk-thap path; overread risk cao van bi gate.
+- `src/runtime/source_grounding.py`, `src/runtime/post_generation_filters.py`: chinh tiep guard public wording/source grounding theo developmental patch.
+- `src/llm/key_pool.py`: added `b16857b`; pool key rieng cho Gemini/Groq, rotate khi 429, dung chung cho main/speech/private_mind.
+- `src/llm/client.py`, `src/llm/process_manager.py`: client nhan `key_pool`, retry rotate key khi Gemini/OpenAI-compatible bi 429.
+- `src/memory/*` predicate/nickname path: `b16857b` them predicate/query/semantic parser cho nickname/name-like memory, can doc chung voi `tests/test_memory_store.py`.
+- `memory_core/thought_stream.jsonl`: tracked state cho private mind thought continuity; khong con la scratch/untracked.
+- `memory_core/semantic_memory.json.bak`: tracked backup snapshot moi o `201cd55`.
+- `test_out.txt`, `tgt_test.txt`: tracked debug artifacts tu `b16857b`; neu public clean thi can quyet dinh giu/xoa rieng.
+
 AUDIT 2026-06-08 WORKSPACE HIEN TAI:
 - Tai lieu nay dang gan voi `HEAD d287f57`, nhung workspace hien tai da co them thay doi dirty/untracked. Doc cac muc ben duoi nhu source map co lich su, khong phai snapshot sach 100%.
 - Source dirty/untracked can luu y khi doi chieu: `src/runtime/chat_cycle.py`, `src/runtime/coordinator.py`, `src/core/evidence_normalizer.py`, `src/runtime/cognitive_pipeline.py`, `src/runtime/debug_trace.py`, `src/runtime/shadow_pipeline.py`, `tests/test_cognitive_pipeline.py`, `tests/test_shadow_pipeline.py`.
@@ -62,7 +76,7 @@ AUDIT 2026-06-08 WORKSPACE HIEN TAI:
 
 Mục tiêu: debug repo ERIS theo kiểu file-to-file — file nào giữ vai trò gì, state nào đọc/ghi, đường gọi nào cần soi khi lỗi.
 
-Snapshot: `HEAD 9aa149f` (2026-06-09). Lich su git delta cu van nam o `git_audit.md`; cac dong gan `HEAD d287f57` la moc lich su, khong phai snapshot hien tai.
+Snapshot: `HEAD 201cd55` (2026-06-10). Lich su git delta cu van nam o `git_audit.md`; cac dong gan `HEAD d287f57` / `HEAD 9aa149f` la moc lich su, khong phai snapshot hien tai.
 
 Giới hạn trung thực:
 - Bản này chưa phải inventory toàn repo theo kiểu đọc từng dòng tất cả source.
@@ -73,6 +87,11 @@ Giới hạn trung thực:
 ---
 
 # 0B. Repo snapshot hiện tại
+
+AUDIT 2026-06-10 CURRENT HEAD:
+- Recheck nhanh bang `rg --files`: cac vung chinh hien co khoang `382` file `.py/.cs` (`src=272`, `tests=92`, `body=6`, scripts/training con lai). Cac con so `367`/`329` ben duoi la moc cu.
+- Hot LOC recheck: `body/UdpListener.cs` ~`4,472`, `src/llm/process_manager.py` ~`147`, `src/runtime/private_mind_model_adapter.py` ~`1,165`, `src/cortex/disposition.py` ~`189`, `src/llm/key_pool.py` ~`121`, `src/cortex/private_mind/thought_continuity.py` ~`256`.
+- Delta `9aa149f..201cd55` cham khoang `123` path; doc cu 2026-06-09 ve dirty/untracked gio chi la lich su commit hoa.
 
 AUDIT 2026-06-09 CURRENT HEAD:
 - Cac so ngay duoi day la snapshot cu neu chua duoc chinh tung dong. Recheck nhanh bang `rg --files` cho thay cac vung chinh hien co `367` file `.py/.cs`: `src=265`, `tests=84`, `body=6`, `scripts=11`, `training=1`.
@@ -202,6 +221,12 @@ Status: GENERATED ARTIFACT / SHOULD_NOT_DRIVE_ARCHITECTURE.
 Role: artifact runtime/test tạm.
 Status: GENERATED / SHOULD_NOT_COMMIT nếu public sạch.
 
+## `test_out.txt`, `tgt_test.txt`
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED debug artifacts added in `b16857b`.
+Role: captured test/probe output artifacts.
+Debug khi: chi dung de xem lai probe gan nhat neu commit nay co chu dich giu chung.
+Status: TRACKED GENERATED DEBUG ARTIFACT / REVIEW WHETHER SHOULD STAY TRACKED.
+
 ## `focus_context_config.json`
 Role: override phân loại focus context cho Se/Ni, ví dụ YouTube/nhạc/podcast nền không bị hiểu thành distraction.
 Debug khi: ERIS đọc sai active app/activity kind.
@@ -240,6 +265,16 @@ Role: cấu hình/memory mẫu cho Ni drift, goal tracking.
 Debug khi: ERIS nhắc goal sai, coi leisure là lệch goal, hoặc goal không close.
 Status: ACTIVE DATA/CONFIG.
 
+## `.kiro/specs/*`
+AUDIT 2026-06-10 CURRENT HEAD:
+- `autonomous-liveliness-redesign/`: tracked in `10baa39`; spec cho grounded/varied autonomous idle lines, no filler, liveliness metrics.
+- `relationship-state-trigger-fix/`: tracked in `10baa39`; spec bugfix warmth phrase -> affect/relationship state trigger.
+- `eris-developmental-growth/`: tracked in `201cd55`; spec moi cho ERIS developmental growth: felt disposition, warm expression ceiling, ToM boldness, va khong bien private state thanh public confession.
+Debug khi:
+- code da doi theo "song hon/am hon" nhung khong ro requirement goc nam o dau.
+- can phan biet liveliness surface, relationship warmth, va developmental disposition la 3 spec khac nhau.
+Status: TRACKED SPEC DOCS.
+
 ---
 
 # 2. Body Godot / C#
@@ -262,6 +297,8 @@ AUDIT 2026-06-09 DIRTY WORKSPACE:
 - Inner Diary UI vua co pass moi: `BuildDiaryHeader()` ve banner header bang asset ngang, `DiaryBannerAboveRatio`, mood face 3x3 qua `MoodFaceAsset()`/`UpdateDiaryMoodFace()`, va concern stack co expand/collapse (`_diaryConcernExpanded`, `_diaryConcernToggle`, `RenderDiaryConcernList()`).
 - Sidebar/card spacing va section header layout da doi; footer text cu bi bo khoi root. Neu doc cu chi noi renderer text/section thi thieu UI asset/layout layer moi.
 - Debug UI diary hien nay can soi ca asset PNG trong `asset/Resource/diary_*.png`, khong chi JSON `inner_diary`.
+AUDIT 2026-06-10 CURRENT HEAD:
+- Dirty UI diary pass tren da tracked trong `10baa39`; LOC hien khoang `4,472`, khong con la local-only patch.
 
 Role: trung tâm body runtime.
 Owns:
@@ -419,17 +456,17 @@ Debug khi: sprite mất frame, import lỗi, sound thiếu.
 Status: ASSET.
 
 ## `asset/Resource/diary_*.png`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL ASSETS.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED ASSETS, added in `10baa39` (were untracked in 2026-06-09 dirty audit).
 Role: asset UI moi cho Inner Diary panel.
 New assets:
 - banner/card icons: `diary_analysis.png`, `diary_concern.png`, `diary_concern_card.png`, `diary_future.png`, `diary_memory.png`, `diary_now.png`, `diary_surface.png`.
 - mood faces 3x3: `diary_face_calm_neg/neu/pos.png`, `diary_face_mid_neg/neu/pos.png`, `diary_face_hyper_neg/neu/pos.png`.
-- moi PNG co `.import` di kem trong working tree hien tai.
+- moi PNG co `.import` di kem trong tracked tree hien tai.
 Used by:
 - `body/UdpListener.cs` `BuildDiaryHeader()`, `BuildDiaryMoodFace()`, `MoodFaceAsset()`, `UpdateDiaryMoodFace()`.
 Debug khi:
 - Diary panel mat icon/face, header bi fallback ve glyph, hoac mood face khong doi theo valence/arousal.
-Status: UNTRACKED LOCAL UI ASSET / SHOULD COMMIT WITH UI PATCH.
+Status: TRACKED UI ASSET.
 
 ---
 
@@ -581,6 +618,8 @@ Outputs:
 - forbidden_assumptions.
 - epistemic_mode: claim/fallback/probe/hypothesis.
 - memory_answer_allowed.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `201cd55` chinh tiep source grounding cho developmental growth path; khi debug overread phai doc chung voi ToM boldness/personality warmth, khong doc rieng nhu screen guard cu.
 Debug khi:
 - ERIS nói “tôi thấy màn hình” khi không có screenshot.
 - memory giả dạng evidence hiện tại.
@@ -599,6 +638,8 @@ Guards:
 - anti_mindreading_filter.
 Side effect:
 - ghi feedback user vào PersistentAgentMindStore.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `201cd55` chinh wording/guard de developmental warmth/disposition khong leak thanh public self-report hoac mindread.
 Debug khi:
 - output bị rewrite mất hồn.
 - output leak `MemoryPacket(...)` hoặc prompt/debug.
@@ -642,8 +683,8 @@ Debug khi:
 Status: ACTIVE.
 
 ## `src/runtime/cognitive_pipeline.py`
-AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
-AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked. LOC recheck khoang `294`.
+AUDIT 2026-06-08 HISTORICAL: file nay tung workspace-new/untracked.
+AUDIT 2026-06-10 CURRENT HEAD: da TRACKED tu `9aa149f`, khong con local/untracked. LOC recheck khoang `294`.
 Role: Phase 1 V3 cognitive pipeline dang chay o mode tach rieng/shadow, khong thay the hoan toan hot path cu.
 Flow:
 - `RawSignal` -> `EvidenceNormalizer` -> `CognitiveFrame` -> `AttentionSalience` -> `CognitiveBudget` -> `WorkingMemory` -> `GlobalWorkspace` -> `DebugTrace`.
@@ -656,8 +697,8 @@ Debug khi:
 Status: TRACKED / SHADOW-CANDIDATE / PARTIAL MIGRATION.
 
 ## `src/runtime/shadow_pipeline.py`
-AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
-AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked. LOC recheck khoang `256`.
+AUDIT 2026-06-08 HISTORICAL: file nay tung workspace-new/untracked.
+AUDIT 2026-06-10 CURRENT HEAD: da TRACKED tu `9aa149f`, khong con local/untracked. LOC recheck khoang `256`.
 Role: `ShadowPipelineMixin` chay V3 pipeline song song de so sanh, khong anh huong quyet dinh cu.
 Controls:
 - Bat bang env `ERIS_SHADOW_PIPELINE=1` hoac `self.shadow_pipeline_enabled=True`.
@@ -670,8 +711,8 @@ Debug khi:
 Status: TRACKED / SAFE SHADOW ONLY.
 
 ## `src/runtime/debug_trace.py`
-AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
-AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked. LOC recheck khoang `304`.
+AUDIT 2026-06-08 HISTORICAL: file nay tung workspace-new/untracked.
+AUDIT 2026-06-10 CURRENT HEAD: da TRACKED tu `9aa149f`, khong con local/untracked. LOC recheck khoang `304`.
 Role: render JSON/debug summary ngan cho V3 frame va old frame.
 Notes:
 - Dung duck typing de doc frame/slot/field, tranh phu thuoc contract qua chat.
@@ -1043,7 +1084,7 @@ Debug khi: sensory model không trả schema, observer fallback sai, hoặc 0.6B
 Status: ACTIVE.
 
 ## `src/runtime/liveliness_config.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `90` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`, khoang `108` dong.
 Role: config reader cho autonomous-liveliness redesign.
 Env knobs:
 - `ERIS_LIVELINESS_VISION_FRESH_SEC` default `30`.
@@ -1057,10 +1098,10 @@ Env knobs:
 - `ERIS_LIVELINESS_MIN_GROUNDED_PCT` default `60`.
 - `ERIS_LIVELINESS_DECISION_RETENTION` default `100`.
 Debug khi: repeat guard/config bi doc sai, env rac lam idle loop crash, hoac liveliness metric lech default.
-Status: UNTRACKED LOCAL CONFIG SUPPORT.
+Status: TRACKED CONFIG SUPPORT.
 
 ## `src/runtime/ambient_silence_policy.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `58` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`, khoang `74` dong.
 Role: shared ambient silence/muse policy, tach logic lap giua `coordinator.py` va `autonomous_cycle.py`.
 Current code specifics:
 - `ambient_silence_cooldown_seconds()` giu bang cooldown theo mode/focus.
@@ -1069,10 +1110,10 @@ Current code specifics:
 Debug khi:
 - `[directive skipped] ambient_silence mode=pattern_muse cooldown=150s` xuat hien du muse dang co seed.
 - coordinator va autonomous_cycle lech nhau ve cooldown.
-Status: UNTRACKED LOCAL POLICY / LIVELINESS REDESIGN.
+Status: TRACKED POLICY / LIVELINESS REDESIGN.
 
 ## `src/runtime/liveliness_tracker.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `84` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`, khoang `105` dong.
 Role: observability ring buffer cho autonomous idle cycles.
 Objects:
 - `DecisionRecord`: cycle_id, emitted_kind, seed_source, seed_confidence, candidate_count, grounding_evidence, no_seed_reason, repeat_rejection, ambient_suppression, text, timestamp.
@@ -1082,7 +1123,7 @@ Used by:
 - `cognitive_frame_recorder._record_liveliness_decision()` trong dirty workspace.
 Debug khi:
 - can chung minh "song" bang so lieu 60 phut thay vi cam giac: distinct grounded lines, grounded proportion, max gap, repeat count.
-Status: UNTRACKED LOCAL OBSERVABILITY.
+Status: TRACKED OBSERVABILITY.
 
 ## `src/runtime/autonomous_cycle.py`
 AUDIT 2026-06-09 DIRTY WORKSPACE:
@@ -1220,6 +1261,21 @@ Status: ACTIVE.
 
 # 6. LLM layer `src/llm/*`
 
+## `src/llm/key_pool.py`
+AUDIT 2026-06-10 CURRENT HEAD: ADDED in `b16857b`, khoang `121` dong.
+Role: shared API key pool cho Gemini/Groq/OpenAI-compatible lanes.
+Behavior:
+- gom Gemini keys tu secrets (`ERIS_PRIVATE_MIND_API_KEY`, `ERIS_REMOTE_API_KEY`, `GEMINI_API_KEY`, speech/private fallback list).
+- gom Groq keys rieng tu `ERIS_GROQ_API_KEY` / `ERIS_GROQ_FALLBACK_API_KEYS`, bo placeholder.
+- `ApiKeyPool.current_key()` va `rotate()` thread-safe; `get_key_pool(kind)` tach `gemini` va `groq` pool de khong gui nham key sang provider khac.
+Used by:
+- `GeminiClient` va `OpenAICompatibleClient` trong `src/llm/client.py` retry/rotate key khi gap HTTP 429.
+- `RemoteModelProcessManager` build client voi key pool theo provider.
+Debug khi:
+- provider het quota 429 nhung runtime khong rotate key.
+- key Groq/Gemini bi tron sai endpoint.
+Status: TRACKED PROVIDER RESILIENCE / SECRET-SENSITIVE.
+
 ## `src/llm/client.py`
 DOC DRIFT 2026-06-08 WORKSPACE:
 - Runtime hien tai khong con build local llama-server client nhu duong chay chinh.
@@ -1232,6 +1288,8 @@ Handles:
 - grammar unsupported fallback.
 - image payload conversion.
 - HTTP error body.
+Current code specifics:
+- AUDIT 2026-06-10: `GeminiClient` va `OpenAICompatibleClient` nhan optional `key_pool`; gap HTTP `429` thi rotate key va retry trong gioi han size pool.
 Debug khi: provider trả shape lạ, Gemini/OpenAI-compatible không parse được.
 Status: ACTIVE.
 
@@ -1257,6 +1315,9 @@ AUDIT 2026-06-09 CURRENT HEAD:
 - `build_style_client()` uu tien speech API client neu co `ERIS_SPEECH_*`/profile speech, fallback ve main remote client; day la diem moi thieu trong nhieu note cu.
 - `build_vision_client()` tra `None`; neu debug vision facts, dung soi day nhu local model builder nua.
 - `LlamaServerProcessManager = RemoteModelProcessManager` chi de caller cu khong import fail.
+AUDIT 2026-06-10 CURRENT HEAD:
+- Latest relevant commit: `b16857b`; LOC recheck khoang `147`.
+- Build client path co the truyen `key_pool` tu `src/llm/key_pool.py`; Gemini/OpenAI-compatible clients rotate key khi HTTP 429.
 
 Role: build remote Gemini/OpenAI-compatible clients cho cognition/style speech.
 Reads:
@@ -1430,8 +1491,8 @@ Debug khi: module ghi thẳng memory không qua request, evidence thiếu confid
 Status: ACTIVE CONTRACT.
 
 ## `src/core/evidence_normalizer.py`
-AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
-AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked. LOC recheck khoang `208`.
+AUDIT 2026-06-08 HISTORICAL: file nay tung workspace-new/untracked.
+AUDIT 2026-06-10 CURRENT HEAD: da TRACKED tu `9aa149f`, khong con local/untracked. LOC recheck khoang `208`.
 Role: deterministic bridge tu `RawSignal` sang `EvidenceItem`, dung cho CognitivePipeline V3.
 Important:
 - Khong suy dien semantic sau; chi normalize source/type/confidence metadata.
@@ -1557,6 +1618,9 @@ Status: ACTIVE CRITICAL.
 
 ## `src/cortex/meaning/*` Phase 2 package
 AUDIT 2026-06-09 CURRENT HEAD: NEW TRACKED in `9aa149f`.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `pipeline.py` them `_TOM_BOLDNESS = 0.5` va truyen vao `TheoryOfMindCore.infer(...)`.
+- Boldness nay chi mo cho risk-thap; overread brake/counterfactual van giu vai tro chan doc qua tay.
 Role: Phase 2 meaning stack boc legacy meaning vao contract ro hon va ep thu tu `WorkspaceFrame -> SemanticHypothesis -> MeaningHypothesis -> PragmaticIntent -> TheoryOfMind`.
 Important files:
 - `pipeline.py`: `Phase2MeaningPipeline`, facade chay StageLedger va ToM-after-Meaning guard.
@@ -1569,6 +1633,9 @@ Status: TRACKED PHASE2 / PARTIAL INTEGRATION.
 
 ## `src/cortex/tom/*`
 AUDIT 2026-06-09 CURRENT HEAD: NEW TRACKED in `9aa149f`.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `TheoryOfMindCore.infer()` co tham so `boldness`; khi >0, counterfactual doi thu bi ha nhe o inference co `overread_risk` thap.
+- Day la "dam doc khi an toan", khong phai quyen bịa mental state; high-risk inference van bi gate.
 Role: Theory of Mind Phase 2; chi suy `MentalStateInference` tu `MeaningHypothesis` + `PragmaticIntent`, khong tu raw text.
 Important files:
 - `theory_of_mind.py`: `TheoryOfMindCore.infer()`, co guard R7.2 bang `StageLedger`; thieu stage prerequisite thi tra empty inference va ghi `ToMOrderingViolation`.
@@ -1697,6 +1764,21 @@ Avoids false positive:
 Debug khi: user chê lạnh mà ERIS phòng thủ/disclaimer.
 Status: ACTIVE.
 
+## `src/cortex/disposition.py`
+AUDIT 2026-06-10 CURRENT HEAD: ADDED in `201cd55`, khoang `189` dong.
+Role: render private internal state thanh "felt_disposition" cho prompt.
+Purpose:
+- thay bang so noi tam kho doc bang xu huong hanh vi / huong chu y.
+- cho model cam duoc tu the hien tai ma khong narrate raw internal metrics.
+Rules:
+- khong mo them quyen claim man hinh/file/memory.
+- khong dua danh tu/tinh tu cam xuc de model dien; uu tien dong tu va choice-of-silence.
+Used by:
+- `PersistentInternalState.to_prompt_context()` trong `internal_state.py` chen `render_felt_disposition(self)` len truoc `state_continuity`.
+Debug khi:
+- ERIS doc noi tam thanh meta-number, hoac nguoc lai leak private state nhu confession.
+Status: TRACKED DEVELOPMENTAL GROWTH SUPPORT.
+
 ## `src/cortex/personality.py`
 Role: PersonalityLens INFJ-ish pressure, không phải roleplay.
 Outputs:
@@ -1704,6 +1786,10 @@ Outputs:
 Rules:
 - suppression ratio ~70%.
 - identity_reduction -> cool_boundary/dry_low_heat.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `201cd55` them dynamic expression ceiling/suppression floor: chat/force_speak khi warmth cao va threat thap co the mo kenh am hon.
+- `warmth_channel` render warmth bang cu the/chu y/o-lai, khong phai to tinh, chieu chuong, hay than than.
+- identity reduction van siết tran bieu dat xuong, nen "am hon" khong bypass dignity/boundary guard.
 Debug khi: ERIS quá poetic, quá bám, hoặc thành assistant phẳng.
 Status: ACTIVE.
 
@@ -1714,6 +1800,9 @@ Tracks:
 - MentalProcessSystem: curiosity/restraint/tension/continuity/attachment/reflection/social_presence/cognitive_load/background_thought.
 Persists:
 - goal_persistence, conversation_dynamics, relationship_dynamics, action_memory.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `to_prompt_context()` nay dan dau bang `render_felt_disposition(self)` tu `src/cortex/disposition.py`.
+- numeric continuity doi label thanh `state_continuity (machine only, do not narrate)` de giam nguy co model thuat lai bang so.
 Debug khi: continuity mất sau restart hoặc pressure không decay.
 Status: ACTIVE CRITICAL STATE.
 
@@ -1770,7 +1859,7 @@ Debug khi: micro observation nói lệch evidence.
 Status: ACTIVE.
 
 ## `src/cortex/banned_filler.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `52` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`, khoang `78` dong.
 Role: shared ban list cho hollow presence lines va stale micro templates.
 Contains:
 - `HOLLOW_PRESENCE_LINES` va `STALE_MICRO_TEMPLATES`.
@@ -1778,7 +1867,7 @@ Contains:
 - helper normalize/quote cho guard and prompt reuse.
 Debug khi:
 - ERIS nhai lai filler rong, status ping vo hon, hoac line micro cu bat dau tro lai sau khi da bi ban.
-Status: UNTRACKED LOCAL GUARD / SHOULD COMMIT WITH LIVELINESS PATCH.
+Status: TRACKED GUARD / LIVELINESS PATCH.
 
 ## `src/cortex/micro_repeat_guard.py`
 Role: semantic family repeat guard cho micro line.
@@ -2239,7 +2328,7 @@ Debug khi:
 Status: ACTIVE PRIVATE SYNTHESIZER.
 
 ## `src/cortex/private_mind/thought_continuity.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL FILE, khoang `170` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`, khoang `256` dong.
 Role: store mach suy nghi gan day cho private mind, de prompt/model noi tiep y thay vi bullet-board mute.
 Objects:
 - `ThoughtEntry` gom text/theme/status/pressure/confidence/revisit state.
@@ -2249,7 +2338,7 @@ Uses:
 - `private_mind_model_adapter` lay `suy_nghi_gan_day` / `mach_dang_do` de fragment/judgment co continuity.
 Debug khi:
 - private mind nghe nhu moi tick doc lai tu dau, khong bam duoc mach suy nghi cu.
-Status: UNTRACKED LOCAL CONTINUITY STORE.
+Status: TRACKED CONTINUITY STORE.
 
 ## `src/cortex/private_mind/concern_store.py`
 Role: persist/open private concerns.
@@ -2483,6 +2572,8 @@ Status: ACTIVE.
 
 ## `src/memory/semantic_memory.py`
 Role: stable facts with status/confidence/evidence.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `b16857b` chinh semantic memory path cho nickname/name-like facts; doc debug memory identity can doi chieu predicate/fact_key thay vi chi text overlap.
 Debug khi: fact mơ hồ thành active truth.
 Status: ACTIVE.
 
@@ -2526,6 +2617,7 @@ Status: ACTIVE BACKGROUND MAINTENANCE.
 Role: rule extraction from user turn into MemoryCommitDecision.
 Current code specifics:
 - `d287f57` đẩy file này thành intake policy 3 tầng: importance detection -> extraction attempt -> fallback capture.
+- AUDIT 2026-06-10: `b16857b` chinh them name/nickname-like extraction path; can test voi `tests/test_memory_store.py`.
 - không ghi thẳng memory store; nếu câu đáng nhớ nhưng chưa parse đủ thì tạo `CANDIDATE_COMMIT`.
 - đi cùng `ClaimExtractor`, `MemoryWorthinessPolicy`, `MemoryRetentionPolicy`, `predicate_ontology`; không còn là vài regex mỏng cho name/location.
 - vẫn giữ guard cực quan trọng: không commit recall questions như fact.
@@ -2591,6 +2683,8 @@ Files:
 - entity_linker.py.
 - polarity_temporal.py.
 - semantic_parser.py.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `semantic_parser.py` duoc mo rong o `b16857b` cho nickname/name-like memory parse.
 Debug khi: memory intake parse sai subject/target/time/certainty.
 Status: ACTIVE.
 
@@ -2599,10 +2693,13 @@ Role: convert text/MeaningFrame into SemanticClaim/ExtractedClaim with ontology.
 Current code specifics:
 - `ClaimExtractor` giờ là facade mỏng: `SemanticParser/model -> MeaningFrame -> ClaimBuilder -> ExtractedClaim`.
 - `src/memory/claims/claim_builder.py` được mở rộng ở `d287f57`: chính file này mới map `frame_type + relation` hoặc AI-classified frame sang predicate memory chuẩn, để parser/model không có quyền tự áp predicate.
+- AUDIT 2026-06-10: `claim_builder.py` co patch nho cho nickname/name predicate, xem chung voi ontology/query intent.
 Status: ACTIVE.
 
 ## `src/memory/predicate_ontology.py`, `query_intent.py`, `claim_entailment.py`, `semantic_answer_policy.py`
 Role: query-answer ontology for memory facts.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `b16857b` them/chinh predicate/query answer cho nickname/name-like facts; neu ERIS nham "ten" voi "biet danh", soi cum nay truoc khi do loi retrieval.
 Debug khi: overlap text trả lời sai predicate.
 Status: ACTIVE.
 
@@ -2644,6 +2741,10 @@ Files đáng chú ý:
 - memory_candidate.json.
 - internal_agenda.json.
 - AUDIT 2026-06-09 DIRTY WORKSPACE: `active_state_snapshot.json`, `episodic_memory.json`, `semantic_memory.json`, `event_ledger.json`, `affective_residue_memory.json`, `procedural_memory.json`, `relational_memory.json`, `repair_memory.json` dang bi xoa trong worktree; da co backup snapshot folder `memory_core_backup_20260609_175553/`.
+AUDIT 2026-06-10 CURRENT HEAD:
+- Cac delete/backup tren da duoc commit: state cu nam trong `memory_core_backup_20260609_175553/`.
+- `memory_core/thought_stream.jsonl` la tracked state moi cho `ThoughtContinuityStore`.
+- `memory_core/semantic_memory.json.bak` la tracked backup snapshot moi, can phan biet voi store active.
 Debug khi:
 - behavior sai nhưng code có vẻ đúng: kiểm tra data/state tích lũy.
 Rule:
@@ -2654,6 +2755,8 @@ Status: RUNTIME DATA.
 
 ## `memory_core_backup_*/`
 Role: backup memory core.
+AUDIT 2026-06-10 CURRENT HEAD:
+- `memory_core_backup_20260609_175553/` da tracked, gom ca root memory_core cu va `src_memory_core` private_concerns/private_life_state.
 Debug khi: muốn so sánh state trước/sau.
 Status: BACKUP DATA.
 
@@ -2698,8 +2801,8 @@ Status: OFFLINE SUPPORT.
 # 15. Tests
 
 ## `tests/test_cognitive_pipeline.py`
-AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
-AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked.
+AUDIT 2026-06-08 HISTORICAL: file nay tung workspace-new/untracked.
+AUDIT 2026-06-10 CURRENT HEAD: da TRACKED tu `9aa149f`, khong con local/untracked.
 Role: regression cho CognitivePipeline V3.
 Covers:
 - Raw signal duoc normalize thanh evidence/frame.
@@ -2708,8 +2811,8 @@ Covers:
 Status: TRACKED V3 REGRESSION TEST.
 
 ## `tests/test_shadow_pipeline.py`
-AUDIT 2026-06-08 WORKSPACE: NEW / UNTRACKED IN CURRENT WORKSPACE.
-AUDIT 2026-06-09 CURRENT HEAD: da TRACKED o `9aa149f`, khong con la local/untracked.
+AUDIT 2026-06-08 HISTORICAL: file nay tung workspace-new/untracked.
+AUDIT 2026-06-10 CURRENT HEAD: da TRACKED tu `9aa149f`, khong con local/untracked.
 Role: regression cho ShadowPipelineMixin.
 Covers:
 - Shadow pipeline co the bat/tat rieng bang flag/env.
@@ -2961,84 +3064,84 @@ Debug khi:
 Status: ACTIVE TARGETED REGRESSION.
 
 ## `tests/test_banned_filler.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `40` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`.
 Role: regression cho banned filler shared list.
 Covers:
 - filler rong/status ping bi `is_banned_filler()` chan.
 - quoted prompt fragment dung chung voi `llm.service`.
 Debug khi:
 - micro/presence fallback bat dau nhai lai cau cu.
-Status: UNTRACKED LOCAL REGRESSION.
+Status: TRACKED REGRESSION.
 
 ## `tests/test_liveliness_config.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `60` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`.
 Role: env/config regression cho `runtime.liveliness_config`.
 Covers:
 - repeat window floor `>= 120`.
 - grounded per hour / alt seed / max line repeat defaults.
 Debug khi:
 - env moi khong doc duoc hoac clamp default sai.
-Status: UNTRACKED LOCAL REGRESSION.
+Status: TRACKED REGRESSION.
 
 ## `tests/test_liveliness_grounding.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `50` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`.
 Role: grounding regression cho liveliness line selection.
 Covers:
 - seed public-safe phai co anchor/evidence.
 - placeholder OCR no longer counts as grounded line.
 Debug khi:
 - line dep nhung khong co neo evidence van duoc dem grounded.
-Status: UNTRACKED LOCAL REGRESSION.
+Status: TRACKED REGRESSION.
 
 ## `tests/test_liveliness_muse_and_tracker.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `70` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`.
 Role: integration cho muse exemption + `LivelinessTracker`.
 Covers:
 - `pattern_muse` duoc exempt khoi ambient silence hold.
 - tracker ghi `DecisionRecord` va metrics distinct/grounded/gap/repeat.
 Debug khi:
 - can doi cac so lieu liveliness thay vi cam giac "co ve song hon".
-Status: UNTRACKED LOCAL REGRESSION.
+Status: TRACKED REGRESSION.
 
 ## `tests/test_liveliness_output_filter.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `52` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`.
 Role: output filter regression cho liveliness/presence line.
 Covers:
 - filler rong/stale template bi drop truoc khi ra public line.
 - line ngan nhung van phai grounded.
 Debug khi:
 - fallback line ra duoc, nhung nghe nhu chua co gi de noi.
-Status: UNTRACKED LOCAL REGRESSION.
+Status: TRACKED REGRESSION.
 
 ## `tests/test_liveliness_properties.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `58` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`.
 Role: property tests cho liveliness invariants.
 Covers:
 - grounded ratio va repeat ceiling.
 - decision retention khong lam tracker phan manh state.
 Debug khi:
 - doi config xong co property nao vo li duoc pass vi fall-through.
-Status: UNTRACKED LOCAL PROPERTY TEST.
+Status: TRACKED PROPERTY TEST.
 
 ## `tests/test_liveliness_repeat_guard.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `48` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`.
 Role: repeat-guard regression cho stale micro lines.
 Covers:
 - `SemanticRepeatGuard` respect liveliness config window/threshold.
 - banned filler ban chung voi repeat guard.
 Debug khi:
 - line lap lai chua den nguong ma da bi chan, hoac da den nguong ma van ra.
-Status: UNTRACKED LOCAL REGRESSION.
+Status: TRACKED REGRESSION.
 
 ## `tests/test_relationship_warmth_trigger.py`
-AUDIT 2026-06-09 DIRTY WORKSPACE: UNTRACKED LOCAL TEST, khoang `62` dong.
+AUDIT 2026-06-10 CURRENT HEAD: TRACKED in `10baa39`.
 Role: regression cho warmth trigger moi trong `affect_semantics` + `relationship_dynamics`.
 Covers:
 - phrase quan tam/hieu/tran trong duoc nhan warmth.
 - warmth tang attachment_visibility/trust va giam preferred_distance khi khong bi conflict/objectification/correction/rejection decriminate.
 Debug khi:
 - relationship cue qua lanh du mot cau rat ro rang.
-Status: UNTRACKED LOCAL REGRESSION.
+Status: TRACKED REGRESSION.
 
 ## `tests/test_runtime_coordinator.py`
 Role: regression suite cho wake-gated route và behavior contract cấp runtime.
@@ -3301,4 +3404,4 @@ Check:
 - trạng thái active/legacy/generated.
 - test coverage map.
 
-Bản `tongquat.md` này là bước chuyển từ “tổng quan kiến trúc” sang “bản đồ debug”. Ở revision hiện tại, nó cần bám mốc `HEAD d287f57`: private mind daemon/surface seed đã tracked từ `3782f41`, Inner Diary/resilience đã tracked từ `8e915de`, private-life đã được add ở `aa1d303`, epistemic self-awareness + đợt UI follow-up đã tracked ở `0ac74ec`, và memory stack mới đã được add/mở rộng ở `d287f57`. Worktree lúc chốt tài liệu lại đang có dirty state mới ở cụm memory runtime + embedding/cache, nên các dòng cũ gán dirty state cho private-mind/private-life hoặc coi `epistemic` là workspace-only đều phải sửa lại theo tracked history mới và trạng thái worktree recheck cuối.
+Bản `tongquat.md` này là bước chuyển từ “tổng quan kiến trúc” sang “bản đồ debug”. Ở revision hiện tại, nó cần bám mốc `HEAD 201cd55`: private mind daemon/surface seed đã tracked từ `3782f41`, Inner Diary/resilience từ `8e915de` -> `23a8c01`, private-life từ `aa1d303`, epistemic self-awareness từ `0ac74ec`, memory stack mới từ `d287f57`, Phase 2 Meaning/ToM + V3 pipeline từ `9aa149f`, liveliness/warmth/diary assets/thought continuity từ `10baa39`, key pool + nickname memory path từ `b16857b`, và developmental disposition/warmth/ToM-boldness từ `201cd55`. Source tree lúc chốt audit 2026-06-10 sạch sau fetch; dirty hiện tại là bản cập nhật `tongquat.md` này. Các dòng cũ nói dirty/untracked chỉ còn là lịch sử drift.

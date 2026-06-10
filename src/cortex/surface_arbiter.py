@@ -17,6 +17,12 @@ from typing import Any, Callable, Mapping
 from .contracts import SpeechImpulse
 from .low_level_speech_policy import LowLevelSpeechPolicy, _clamp01
 
+try:
+    from guard_config import guards_warn_only
+except Exception:  # pragma: no cover - guard_config luôn có ở runtime
+    def guards_warn_only() -> bool:
+        return False
+
 
 @dataclass(slots=True)
 class SurfaceImpulse:
@@ -1355,6 +1361,7 @@ class SurfaceArbiter:
         notes: list[str] = []
         penalty = 0.0
         strength = self._soft_gate_strength(impulse)
+        warn_only = guards_warn_only()
 
         ego_reason = self._ego_gate_reason(
             impulse,
@@ -1363,8 +1370,11 @@ class SurfaceArbiter:
             force_llm=force_llm or self.silent_cycles >= self.policy.config.force_llm_after_silent,
         )
         if ego_reason:
-            notes.append(ego_reason)
-            penalty += 0.42 if ego_reason in {"ego_gate:mood_blocks_presence", "ego_gate:dignity_distance"} else 0.24
+            # ego_gate là guard QUAN HỆ/GIỌNG. warn-only ⇒ chỉ ghi note, không phạt
+            # (không chặn presence vì mood/distance/trust).
+            notes.append(ego_reason if not warn_only else f"{ego_reason}:warn_only")
+            if not warn_only:
+                penalty += 0.42 if ego_reason in {"ego_gate:mood_blocks_presence", "ego_gate:dignity_distance"} else 0.24
 
         rate_reason = self._rate_limit_reason(impulse, force_llm=force_llm)
         if rate_reason:
