@@ -178,6 +178,10 @@ class SourceGroundingReport:
 
     refers_to_current_screen: bool = False
     screen_reference_strength: float = 0.0
+    # Có ảnh/OCR màn hình tươi tại thời điểm phân tích hay không. Đây là tín hiệu
+    # bằng chứng thuần, độc lập với việc user có nhắc tới màn hình. Guard chống ảo
+    # giác dùng field này để chặn claim "tôi thấy trên màn hình" khi thực ra không có.
+    screen_evidence_present: bool = False
 
     pasted_code_detected: bool = False
     code_language: str = "unknown"
@@ -321,15 +325,15 @@ class SourceGroundingEngine:
         "class nao",
     )
 
-    SCREEN_REFERENCE_MARKERS = (
-        "màn hình", "screen", "trên màn", "đang mở", "đang hiện",
-        "nhìn này", "nhìn cái này", "nhìn màn hình", "xem màn hình",
-        "chỗ này", "cái này", "nút này", "ô này", "lỗi này", "ảnh này",
-        "hình này", "game này", "web này", "tab này", "cửa sổ này",
-        "bấm gì", "click gì", "ấn gì", "nó hiện", "đang bị",
-        "what is on my screen", "this screen", "look at this", "this error",
-        "xem di", "ban xem di", "toi dang code gi", "dang code gi", "doan dang mo",
-        "xem đi", "bạn xem đi", "tôi đang code gì", "đoạn đang mở",
+    # Tham chiếu màn hình TƯỜNG MINH: user trực tiếp nhắc tới màn hình/cửa sổ hoặc
+    # ra lệnh "nhìn/xem". Đây là tín hiệu DUY NHẤT được phép sinh ra câu thú nhận
+    # "tôi chưa thấy màn hình". Nó KHÔNG còn gộp chung với đại từ chỉ định trần.
+    EXPLICIT_SCREEN_REQUEST_MARKERS = (
+        "màn hình", "screen", "trên màn", "cửa sổ này",
+        "nhìn này", "nhìn cái này", "nhìn màn hình", "nhìn vào màn hình",
+        "xem màn hình", "đọc màn hình", "xem đi", "bạn xem đi",
+        "what is on my screen", "this screen", "look at this", "look at my screen",
+        "tôi đang code gì", "đang code gì", "đoạn đang mở",
     )
 
     MEMORY_REFERENCE_MARKERS = (
@@ -343,27 +347,21 @@ class SourceGroundingEngine:
         "latest", "current", "today", "recent", "news", "release",
     )
 
-    DEICTIC_SCREEN_MARKERS = (
+    # Đại từ chỉ định TRẦN. KHÔNG phải tham chiếu màn hình. Chỉ dùng để bind referent
+    # vào ngữ cảnh thị giác KHI đã có ảnh/OCR tươi. Bản thân nó không bao giờ ép màn
+    # hình hay sinh ra câu từ chối — "cái này" trong chat thường trỏ vào điều vừa nói.
+    DEICTIC_REFERENCE_MARKERS = (
         "cái này",
+        "cái đó",
+        "cái kia",
         "chỗ này",
         "nút này",
         "ô này",
         "lỗi này",
         "tab này",
-        "màn này",
         "ảnh này",
         "hình này",
         "đây là gì",
-        "cái kia",
-        "xem di",
-        "ban xem di",
-        "toi dang code gi",
-        "dang code gi",
-        "doan dang mo",
-        "xem đi",
-        "bạn xem đi",
-        "tôi đang code gì",
-        "đoạn đang mở",
     )
 
     CODE_FENCE_RE = re.compile(r"```(?P<lang>[a-zA-Z0-9_+\-#.]*).*?```", re.DOTALL)
@@ -418,7 +416,8 @@ class SourceGroundingEngine:
         asks_about_file = bool(file_mentions or self._has_any(normalized, self.FILE_REFERENCE_MARKERS))
 
         code_info = self._detect_pasted_code(text)
-        refers_to_screen, screen_strength = self._detect_screen_reference(normalized)
+        explicit_screen_request = self._detect_explicit_screen_request(normalized)
+        has_deictic_reference = self._has_deictic_reference(normalized)
 
         memory_ref = self._has_any(normalized, self.MEMORY_REFERENCE_MARKERS)
         # Không coi mọi chữ "hôm nay/hiện tại/bây giờ" là web request.
@@ -436,6 +435,17 @@ class SourceGroundingEngine:
         screen_evidence = self._collect_screen_evidence(frame=frame, screen_facts=screen_facts, runtime_state=runtime_state)
         memory_evidence = self._collect_memory_evidence(frame=frame, memory_packet=memory_packet)
         user_evidence = self._collect_user_text_evidence(frame=frame, user_text=text)
+
+        # Màn hình là referent được gác bằng BẰNG CHỨNG, không phải bằng keyword soup.
+        #  - Có ảnh/OCR tươi  -> màn hình là nguồn khả dụng để bind.
+        #  - User TƯỜNG MINH bảo "nhìn/xem màn hình" -> referent màn hình, kể cả khi
+        #    chưa có ảnh (để còn thú nhận thật là chưa thấy).
+        #  - Đại từ chỉ định trần ("cái này", "lỗi này") CHỈ trỏ màn hình khi đã có ảnh
+        #    tươi. Không có ảnh thì nó trỏ vào ngữ cảnh hội thoại và TUYỆT ĐỐI không tự
+        #    sinh ra câu "thiếu evidence màn hình".
+        has_fresh_vision = bool(screen_evidence["present"])
+        refers_to_screen = bool(explicit_screen_request or (has_deictic_reference and has_fresh_vision))
+        screen_strength = 0.72 if has_fresh_vision else (0.5 if explicit_screen_request else 0.0)
         memory_profile = self._derive_memory_answer_profile(
             normalized=normalized,
             user_text=text,
@@ -573,8 +583,6 @@ class SourceGroundingEngine:
             missing_evidence = [item for item in missing_evidence if item != "file_evidence"]
             notes.append("pasted_code_satisfies_file_content_request")
 
-        deictic = refers_to_screen and self._is_deictic_screen_reference(normalized)
-        has_fresh_vision = bool(screen_evidence["present"])
         has_retrieved_file = bool(file_evidence["present"])
         visible_code = has_fresh_vision
         user_code = bool(code_info["detected"])
@@ -588,9 +596,9 @@ class SourceGroundingEngine:
         confidence_cap_override: float | None = None
         should_preempt = False
 
-        # Nếu user paste code rồi nói "đoạn này/cái này", đó là deictic trỏ vào code vừa paste,
-        # không phải bắt buộc trỏ màn hình. Pasted code phải thắng screen-deictic.
-        if deictic and not user_code:
+        # Referent màn hình được phân giải theo bằng chứng, không phải keyword.
+        # Pasted code luôn thắng: "đoạn này" sau khi paste là trỏ vào code, không phải màn hình.
+        if refers_to_screen and not user_code:
             if has_fresh_vision:
                 primary_source = "live_vision"
                 grounding_source = "live_vision"
@@ -598,7 +606,10 @@ class SourceGroundingEngine:
                 memory_surface_allowed = False
                 memory_answer_allowed = False
                 memory_allowed_layers = ("procedural",)
-            else:
+            elif explicit_screen_request:
+                # Trường hợp DUY NHẤT được preempt: user TƯỜNG MINH bảo nhìn màn hình
+                # nhưng runtime chưa có ảnh/OCR tươi. Đại từ chỉ định trần không bao
+                # giờ rơi vào nhánh này (refers_to_screen=False khi thiếu vision).
                 primary_source = "unknown"
                 grounding_source = "unknown"
                 confidence_cap_override = 0.28
@@ -606,7 +617,7 @@ class SourceGroundingEngine:
                 memory_surface_allowed = False
                 memory_answer_allowed = False
                 memory_allowed_layers = ("procedural",)
-                warnings.append("deictic_screen_query_without_fresh_vision")
+                warnings.append("explicit_screen_request_without_fresh_vision")
         elif (
             asks_about_file
             and self._looks_like_file_content_request(normalized)
@@ -655,7 +666,7 @@ class SourceGroundingEngine:
                 missing_evidence=missing_evidence,
             )
         if should_preempt and not preempt_mode:
-            preempt_mode = "deictic_without_vision" if deictic else "filename_only"
+            preempt_mode = "deictic_without_vision" if refers_to_screen else "filename_only"
 
         report = SourceGroundingReport(
             user_text=text,
@@ -665,6 +676,7 @@ class SourceGroundingEngine:
             file_mentions=file_mentions,
             refers_to_current_screen=refers_to_screen,
             screen_reference_strength=screen_strength,
+            screen_evidence_present=has_fresh_vision,
             pasted_code_detected=bool(code_info["detected"]),
             code_language=str(code_info["language"]),
             code_block_count=int(code_info["block_count"]),
@@ -1341,7 +1353,7 @@ class SourceGroundingEngine:
         concrete_files = [item for item in file_mentions if item and item != "<current_or_uploaded_file>"]
         if concrete_files and "file_evidence" in missing and self._looks_like_file_content_request(normalized):
             return "filename_only"
-        if "screen_evidence" in missing and self._is_deictic_screen_reference(normalized):
+        if "screen_evidence" in missing and self._detect_explicit_screen_request(normalized):
             return "deictic_without_vision"
         return ""
 
@@ -1363,26 +1375,23 @@ class SourceGroundingEngine:
 
         return self._dedupe(mentions)[:10]
 
-    def _detect_screen_reference(self, normalized: str) -> tuple[bool, float]:
-        hits = [marker for marker in self.SCREEN_REFERENCE_MARKERS if self._normalize(marker) in normalized]
-        if not hits:
-            return False, 0.0
+    def _detect_explicit_screen_request(self, normalized: str) -> bool:
+        """True chỉ khi user TƯỜNG MINH nhắc màn hình hoặc ra lệnh nhìn/xem.
 
-        strength = min(1.0, 0.28 + len(hits) * 0.16)
+        Đây là tín hiệu duy nhất được phép dẫn tới câu thú nhận "tôi chưa thấy màn
+        hình". Đại từ chỉ định trần KHÔNG đi qua đây.
+        """
 
-        # "cái này" rất mơ hồ, chỉ cho strength thấp nếu không có marker mạnh khác.
-        weak_only = all(self._normalize(hit) in {"cai nay", "cho nay", "loi nay"} for hit in hits)
-        if weak_only:
-            strength = min(strength, 0.42)
+        return any(self._normalize(marker) in normalized for marker in self.EXPLICIT_SCREEN_REQUEST_MARKERS)
 
-        # File/image markers cũng có thể là uploaded image, nên strength vừa phải.
-        if any(hit in {"ảnh này", "hình này"} for hit in hits):
-            strength = max(strength, 0.50)
+    def _has_deictic_reference(self, normalized: str) -> bool:
+        """True khi có đại từ chỉ định trần ("cái này", "lỗi này"...).
 
-        return True, self._clamp01(strength)
+        Tín hiệu này chỉ dùng để bind referent vào màn hình KHI đã có ảnh/OCR tươi.
+        Không bao giờ tự nó ép màn hình hay sinh ra preempt.
+        """
 
-    def _is_deictic_screen_reference(self, normalized: str) -> bool:
-        return any(self._normalize(marker) in normalized for marker in self.DEICTIC_SCREEN_MARKERS)
+        return any(self._normalize(marker) in normalized for marker in self.DEICTIC_REFERENCE_MARKERS)
 
     def _looks_like_file_content_request(self, normalized: str) -> bool:
         if any(marker in normalized for marker in ("fix bug", "sua ", "sua loi", "implement ", "refactor ")):

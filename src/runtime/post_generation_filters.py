@@ -608,10 +608,35 @@ class PostGenerationFiltersMixin:
         if report is None:
             return decision
         missing = set(getattr(report, "missing_evidence", ()) or ())
+        text = decision.text or ""
+
+        # Guard chống ảo giác màn hình: nếu AI khẳng định "tôi thấy trên màn hình..."
+        # mà runtime KHÔNG có ảnh/OCR tươi, chặn — bất kể user có nhắc màn hình hay
+        # không. Điều kiện là claim của AI + vắng bằng chứng, không phải keyword của user.
+        screen_ungrounded = ("screen_evidence" in missing) or (not bool(getattr(report, "screen_evidence_present", False)))
+        if screen_ungrounded and self._looks_like_screen_grounded_claim(text):
+            return self._repair_guard_violation_decision(
+                decision,
+                GuardViolation(
+                    rule="chat_grounding_guard",
+                    severity="hard",
+                    reason="missing_screen_evidence",
+                    original_text=text,
+                    suggested_action="reroll",
+                    missing_evidence=("screen_evidence",),
+                    trace_marker="chat_grounding_guard; missing_screen_evidence",
+                ),
+                frame=frame,
+                grounding=report,
+                channel="chat",
+                user_text=user_text,
+                parse_mode="source_grounding_guard",
+                allow_reroll=allow_reroll,
+            )
+
         if not missing:
             return decision
 
-        text = decision.text or ""
         if "file_evidence" in missing and self._looks_like_file_grounded_claim(text, report=report):
             return self._repair_guard_violation_decision(
                 decision,
@@ -623,25 +648,6 @@ class PostGenerationFiltersMixin:
                     suggested_action="reroll",
                     missing_evidence=("file_evidence",),
                     trace_marker="chat_grounding_guard; missing_file_evidence",
-                ),
-                frame=frame,
-                grounding=report,
-                channel="chat",
-                user_text=user_text,
-                parse_mode="source_grounding_guard",
-                allow_reroll=allow_reroll,
-            )
-        if "screen_evidence" in missing and self._looks_like_screen_grounded_claim(text):
-            return self._repair_guard_violation_decision(
-                decision,
-                GuardViolation(
-                    rule="chat_grounding_guard",
-                    severity="hard",
-                    reason="missing_screen_evidence",
-                    original_text=text,
-                    suggested_action="reroll",
-                    missing_evidence=("screen_evidence",),
-                    trace_marker="chat_grounding_guard; missing_screen_evidence",
                 ),
                 frame=frame,
                 grounding=report,
@@ -734,8 +740,8 @@ class PostGenerationFiltersMixin:
         probe_markers = ("co ve", "hinh nhu", "toi doan", "co phai", "phai khong", "dung khong", "neu")
         if any(marker in normalized for marker in probe_markers) and self._is_interactive_guess_text(text):
             return False
-        strong_markers = (
-            "toi thay",
+        # Tier 1 — cụm KHÔNG THỂ hiểu khác ngoài màn hình.
+        explicit_screen_markers = (
             "tren man hinh",
             "man hinh dang",
             "toi dang nhin",
@@ -743,12 +749,23 @@ class PostGenerationFiltersMixin:
             "dang hien tren man hinh",
             "cua so dang",
             "tab dang",
-            "dang mo",
-            "dang hien",
             "dang bao loi",
             "traceback",
         )
-        return any(marker in normalized for marker in strong_markers)
+        if any(marker in normalized for marker in explicit_screen_markers):
+            return True
+        # Tier 2 — "tôi thấy / nhìn thấy X" CHỈ là claim màn hình khi X là đối tượng
+        # UI/không gian. "Tôi thấy ý này hay" (toi thay = nghĩ) KHÔNG được tính là
+        # claim màn hình. Đây là chỗ guard cũ hay bóp nhầm câu sống.
+        visual_verbs = ("toi thay", "nhin thay", "toi nhin", "minh thay")
+        ui_objects = (
+            "nut ", "button", "tab ", "cua so", "menu", "icon", "thanh cong cu",
+            "con tro", "popup", "hop thoai", "dialog", "khung ", "dang mo", "dang hien",
+            "o ben phai", "o ben trai", "goc tren", "goc duoi", "phia tren", "phia duoi", "o phia",
+        )
+        if any(v in normalized for v in visual_verbs) and any(o in normalized for o in ui_objects):
+            return True
+        return False
 
     def _looks_like_live_web_claim(self, text: str) -> bool:
         normalized = self._normalize_guard_text(text)

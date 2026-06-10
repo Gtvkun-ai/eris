@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 
 from .action_memory import ActionMemoryState, build_action_family
 from .conversation_dynamics import ConversationDynamicsState
+from .disposition import render_felt_disposition
 from .goal_persistence import GoalPersistenceEngine, GoalPersistenceState
 from .modes import QUIET_MODES
 from .relationship_dynamics import RelationshipDynamicsState
@@ -1180,9 +1181,14 @@ class PersistentInternalState:
         recent_notes = "; ".join(self.recent_notes[-3:]) or "none"
         return "\n".join(
             (
+                # Lever A: dẫn đầu bằng TƯ THẾ bằng lời, không phải bảng số.
+                # Số ở dưới chỉ là continuity cho máy, không phải thứ để model thuật lại.
+                render_felt_disposition(self),
                 "persistent_internal_state: runtime continuity only, not current screen evidence.",
                 (
-                    "continuous_cognition_state: "
+                    # Giữ lại continuity số ở dạng gọn cho hệ deterministic/debug;
+                    # model KHÔNG được đọc nguyên văn các số này thành câu.
+                    "state_continuity (machine only, do not narrate): "
                     f"valence={self.valence:.2f}, arousal={self.arousal:.2f}, "
                     f"curiosity={self.curiosity:.2f}, boredom={self.boredom:.2f}, "
                     f"social_energy={self.social_energy:.2f}, attachment={self.attachment:.2f}, "

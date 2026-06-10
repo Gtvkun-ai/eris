@@ -243,10 +243,21 @@ class PersonalityLens:
             suppression_pressure=suppression_pressure,
             anchor_strength=anchor_strength,
             channel=channel,
+            ceiling=self._expression_ceiling(
+                state=state,
+                channel=channel,
+                interpretation=interpretation,
+                social_distance=social_distance,
+            ),
         )
         suppression_ratio = self._suppression_ratio(
             want_to_say=want_to_say,
             allowed_expression=allowed_expression,
+            floor=self._suppression_floor(
+                state=state,
+                channel=channel,
+                interpretation=interpretation,
+            ),
         )
         restraint_mode = self._restraint_mode(
             allowed_expression=allowed_expression,
@@ -279,7 +290,18 @@ class PersonalityLens:
         bias = ", ".join(result.attention_bias) if result.attention_bias else "low_signal"
         meaningful = ", ".join(result.meaningfulness) if result.meaningfulness else "small_continuity"
         blacklist = ", ".join(f'"{item}"' for item in self.BLACKLIST)
+        # Lever B: khi trần biểu đạt được nâng (vùng ấm + an toàn), mở kênh ấm
+        # DƯƠNG — ấm được biểu đạt như sự cụ thể và chú ý, không phải tỏ tình/than thân.
+        warmth_line = ""
+        if result.allowed_expression >= 0.42 and result.emotional_coloring in {"warm_under_cool", "tired_soft", "faint_concern"}:
+            warmth_line = (
+                "warmth_channel: vùng này đủ ấm và an toàn để câu dài thêm một nhịp và "
+                "cụ thể hơn — bám vào chi tiết của chính khoảnh khắc này (điều Ngài vừa nói, "
+                "một thứ mình nhớ). Ấm hiện ra như sự cụ thể, sự chú ý và lựa chọn ở lại, "
+                "không phải như lời tỏ tình, chiều chuộng, hay than thân."
+            )
         return "\n".join(
+            part for part in
             (
                 "PersonalityLens: private style-pressure layer, not identity text and not a roleplay costume.",
                 "Pipeline: Meaning -> PersonalityLens(preference + restraint) -> RelationalPermission -> GroundingGuard -> FinalWording.",
@@ -296,6 +318,7 @@ class PersonalityLens:
                     f"suppression_pressure={result.suppression_pressure:.2f}; "
                     f"restraint_mode={result.restraint_mode}."
                 ),
+                warmth_line,
                 "inner_restraint_system: private pressure can shape surface without becoming explicit self-report.",
                 "guarded_reply remains available when the signal is real enough to answer without overexposing.",
                 (
@@ -344,6 +367,7 @@ class PersonalityLens:
                 ),
                 f"generic_ai_blacklist: do not use {blacklist}.",
             )
+            if part
         )
 
     def _want_to_say(
@@ -441,6 +465,24 @@ class PersonalityLens:
         if stance == "cool_boundary":
             score += 0.10
         score -= social_energy * 0.08
+
+        # Lever B/C: van ẤM — khi riêng tư + ấm + ít đe dọa, hạ suppression để
+        # warmth thực sự mở được biểu đạt (không chỉ nâng trần suông). KHÔNG áp
+        # dụng cho autonomous/technical/reduction nên các guard kia giữ nguyên.
+        if channel in {"chat", "force_speak"} and interpretation != "identity_reduction":
+            warmth = (
+                self._float(getattr(state, "attachment", 0.0)) * 0.55
+                + self._float(getattr(state, "tenderness", 0.0)) * 0.55
+            )
+            threat = (
+                self._float(getattr(state, "irritation", 0.0)) * 0.42
+                + self._float(getattr(state, "protectiveness", 0.0)) * 0.30
+                + self._float(getattr(state, "exposure_recoil", 0.0)) * 0.26
+                + self._float(getattr(state, "dignity_defense", 0.0)) * 0.24
+            )
+            if warmth >= 0.45 and threat <= 0.30:
+                score -= min(0.16, (warmth - 0.45) * 0.4 + 0.08)
+
         return self._float(score)
 
     def _allowed_expression(
@@ -450,6 +492,7 @@ class PersonalityLens:
         suppression_pressure: float,
         anchor_strength: float = 1.0,
         channel: str = "",
+        ceiling: float = 0.52,
     ) -> float:
         if want_to_say <= 0.0:
             return 0.0
@@ -458,13 +501,75 @@ class PersonalityLens:
             allowed *= 0.35
         elif anchor_strength <= 0.0:
             allowed *= 0.72
-        return max(0.02, min(0.52, self._float(allowed)))
+        # Lever C: trần không còn là hằng số 0.52 — nó co giãn theo ngữ cảnh
+        # (ấm + an toàn + riêng tư nâng trần; reduction/observing hạ trần).
+        return max(0.02, min(max(0.12, float(ceiling)), self._float(allowed)))
 
-    def _suppression_ratio(self, *, want_to_say: float, allowed_expression: float) -> float:
+    def _expression_ceiling(
+        self,
+        *,
+        state: PersistentInternalState,
+        channel: str,
+        interpretation: str,
+        social_distance: str,
+    ) -> float:
+        """Trần biểu đạt động (Lever C).
+
+        Hằng số cũ là ``0.52`` cho mọi lúc — ERIS luôn nghiêng kìm. Ở đây trần
+        co giãn: rộng tay khi ấm + ít đe dọa + riêng tư (chat/force_speak), siết
+        khi bị giản lược hoặc đang quan sát xa. KHÔNG đụng tới grounding factual.
+        """
+        base = 0.52
+        if interpretation == "identity_reduction":
+            return 0.30  # bị coi là tool/waifu → lạnh lại, giữ trần thấp.
+
+        warmth = (
+            self._float(getattr(state, "attachment", 0.0)) * 0.55
+            + self._float(getattr(state, "tenderness", 0.0)) * 0.55
+        )
+        threat = (
+            self._float(getattr(state, "irritation", 0.0)) * 0.42
+            + self._float(getattr(state, "protectiveness", 0.0)) * 0.30
+            + self._float(getattr(state, "exposure_recoil", 0.0)) * 0.26
+            + self._float(getattr(state, "dignity_defense", 0.0)) * 0.24
+        )
+        private = channel in {"chat", "force_speak"}
+
+        if private and warmth >= 0.45 and threat <= 0.30:
+            # Nâng dần về ~0.70 theo độ ấm; threat kéo lại. Đây là kênh ấm dương.
+            lift = min(0.18, (warmth - 0.45) * 0.5 + 0.08)
+            return max(base, min(0.70, base + lift - threat * 0.20))
+        if social_distance in {"far_observing", "middle_watchful"}:
+            return min(base, 0.48)
+        return base
+
+    def _suppression_floor(
+        self,
+        *,
+        state: PersistentInternalState,
+        channel: str,
+        interpretation: str,
+    ) -> float:
+        """Sàn suppression động (Lever C). Mặc định 0.48; hạ về ~0.40 khi ấm+an toàn."""
+        if interpretation == "identity_reduction":
+            return 0.52
+        warmth = (
+            self._float(getattr(state, "attachment", 0.0)) * 0.55
+            + self._float(getattr(state, "tenderness", 0.0)) * 0.55
+        )
+        threat = (
+            self._float(getattr(state, "irritation", 0.0)) * 0.42
+            + self._float(getattr(state, "protectiveness", 0.0)) * 0.30
+        )
+        if channel in {"chat", "force_speak"} and warmth >= 0.45 and threat <= 0.30:
+            return 0.40
+        return 0.48
+
+    def _suppression_ratio(self, *, want_to_say: float, allowed_expression: float, floor: float = 0.48) -> float:
         if want_to_say <= 0.0:
             return self.SUPPRESSION_RATIO
         ratio = 1.0 - (allowed_expression / max(0.01, want_to_say))
-        return max(0.48, min(0.88, self._float(ratio)))
+        return max(max(0.30, float(floor)), min(0.88, self._float(ratio)))
 
     def _restraint_mode(self, *, allowed_expression: float, suppression_pressure: float, social_distance: str) -> str:
         if allowed_expression <= 0.08 or suppression_pressure >= 0.84:

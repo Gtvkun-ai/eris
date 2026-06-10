@@ -85,6 +85,11 @@ __all__ = ["Phase2MeaningPipeline"]
 # đồng mặc định của Phase 2, "TheoryOfMindCore" được phép đọc field này (R8.6).
 _FORBIDDEN_READER_MODULE = "TheoryOfMindCore"
 
+# Lever D: độ "dám đọc" mặc định của ToM trong pipeline. Tự gate theo
+# overread_risk bên trong ToM, nên đây là quyền dám đọc ở vùng rủi ro thấp,
+# không phải quyền overclaim. 0.0 = thủ như cũ; ~0.5 = dám hơn một cách an toàn.
+_TOM_BOLDNESS = 0.5
+
 
 class Phase2MeaningPipeline:
     """Facade chạy toàn bộ pipeline Phase 2 theo đúng thứ tự bắt buộc.
@@ -188,6 +193,9 @@ class Phase2MeaningPipeline:
             ledger=ledger,
             frame_id=frame_id,
             history=history,
+            # Lever D: dám đọc ở rủi ro thấp. Tự gate theo overread_risk nên cú đọc
+            # rủi ro cao vẫn bị thắng; chỉ cú đọc ít rủi ro được phép sống.
+            boldness=_TOM_BOLDNESS,
         )
         stage_debugs.append(sd6)
 

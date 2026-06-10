@@ -151,12 +151,20 @@ class TheoryOfMindCore:
         ledger: StageLedger,
         frame_id: str,
         history: ToMHistory,
+        boldness: float = 0.0,
     ) -> tuple[list[MentalStateInference], StageDebug]:
         """Suy tập ``MentalStateInference`` từ ``meaning``/``intents``.
 
         Xem docstring module cho hợp đồng đầy đủ (R7.1–R7.8). Trả
         ``(inferences, StageDebug)``; ``StageDebug`` là kênh debug tạm cho tới
         khi ``ToMDebug`` (task 17.1) thay thế.
+
+        ``boldness`` (Lever D — "dám đọc ở rủi ro thấp"): 0.0 giữ hành vi thủ cũ.
+        Khi > 0, sức nặng của counterfactual đối thủ bị hạ *tỉ lệ với mức rủi ro
+        đọc-quá thấp* của từng inference, để một cú đọc tự tin và ít rủi ro không
+        bị các diễn giải cạnh tranh dìm xuống ``content`` trung tính. Đây là dám
+        đọc Ngài rồi đi theo cú đọc đó — KHÔNG phải bịa: chỗ rủi ro cao
+        (``overread_risk`` lớn) hầu như không được nới.
         """
 
         notes: list[str] = []
@@ -200,11 +208,13 @@ class TheoryOfMindCore:
         ]
 
         # --- R7.4: hạ confidence theo counterfactual từ intent đối thủ -----
-        corrected = self._apply_counterfactuals(raw_inferences, intent_list)
+        corrected = self._apply_counterfactuals(raw_inferences, intent_list, boldness=boldness)
 
         # --- R7.3: xếp hạng theo confidence đã hiệu chỉnh ------------------
         ranked = self._ranker.rank(corrected)
 
+        if boldness > 0.0:
+            notes.append(f"boldness={float(boldness):.2f} (low-risk reads less damped)")
         notes.append(
             f"derived {len(ranked)} mental-state inference(s) from "
             f"{len(intent_list)} intent(s)"
@@ -286,23 +296,34 @@ class TheoryOfMindCore:
         self,
         inferences: Sequence[MentalStateInference],
         intents: Sequence[PragmaticIntent],
+        *,
+        boldness: float = 0.0,
     ) -> list[MentalStateInference]:
         """Hạ confidence từng inference theo counterfactual từ intent đối thủ.
 
         Với inference thứ ``k`` (dẫn xuất từ intent ``k``), counterfactual là MỌI
         intent ``j ≠ k``: một diễn giải cạnh tranh khả dĩ. ``CounterfactualCorrector``
         hạ confidence khi tồn tại counterfactual ``confidence ≥ threshold`` của nó.
+
+        Lever D: khi ``boldness`` > 0, sức nặng counterfactual bị giảm theo
+        ``damp`` — tỉ lệ với mức rủi ro đọc-quá *thấp* của inference đang xét.
+        Cú đọc ít rủi ro được phép sống; cú đọc nhiều rủi ro gần như không đổi.
         """
 
+        bold = max(0.0, min(1.0, float(boldness)))
         result: list[MentalStateInference] = []
         for k, inference in enumerate(inferences):
+            damp = 1.0
+            if bold > 0.0:
+                low_risk = 1.0 - max(0.0, min(1.0, float(getattr(inference, "overread_risk", 0.0) or 0.0)))
+                damp = max(0.0, 1.0 - bold * low_risk * 0.6)
             counterfactuals = [
                 Counterfactual(
                     explanation=(
                         f"alternative reading: intent '{other.category}' "
                         f"(maps to '{self._map_mental_state(other.category)}')"
                     ),
-                    confidence=other.confidence,
+                    confidence=other.confidence * damp,
                 )
                 for j, other in enumerate(intents)
                 if j != k

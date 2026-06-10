@@ -1278,10 +1278,26 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertIn("file", coordinator.transport.sent[-1]["text"].lower())
         self.assertEqual(coordinator.last_cognitive_frame.final_decision["grounding_preempt_mode"], "filename_only")
 
-    def test_chat_source_grounding_preempts_deictic_without_vision(self):
+    def test_chat_bare_deictic_without_vision_does_not_preempt(self):
+        # "lỗi này là gì" là đại từ chỉ định trần, không trỏ màn hình. Không có vision
+        # thì KHÔNG được từ chối bằng "thiếu evidence màn hình" — phải trả lời bình thường.
         coordinator = self._make_coordinator()
 
         coordinator._handle_incoming({"type": "chat", "message": "loi nay la gi"})
+
+        self.assertEqual(coordinator.llm_service.chat_calls, 1)
+        self.assertNotEqual(coordinator.transport.sent[-1]["parse_mode"], "source_grounding_preempt")
+        self.assertNotEqual(
+            coordinator.last_cognitive_frame.final_decision.get("grounding_preempt_mode"),
+            "deictic_without_vision",
+        )
+
+    def test_chat_explicit_screen_request_without_vision_preempts(self):
+        # Khi user TƯỜNG MINH bảo nhìn màn hình mà chưa có ảnh/OCR tươi, thú nhận thật
+        # là hợp lệ — đây là trường hợp duy nhất còn được preempt.
+        coordinator = self._make_coordinator()
+
+        coordinator._handle_incoming({"type": "chat", "message": "xem man hinh dum toi co loi gi"})
 
         self.assertEqual(coordinator.llm_service.chat_calls, 0)
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "source_grounding_preempt")
