@@ -56,6 +56,9 @@ class AnchorState:
     beat_ema: float = 0.0          # nhịp xuất hiện neo beat gần đây (0..1)
     recognition_ema: float = 0.0   # mức được công nhận gần đây (0..1)
     total_beats: int = 0
+    # Khi Ngài tắt trục tối, cờ này bật VĨNH VIỄN (persist): ERIS mất khả năng tối,
+    # không tự bật lại được — chỉ author unlock tường minh mới gỡ. Quyền tối thượng.
+    shadow_locked_out: bool = False
     updated_at: float = field(default_factory=_now)
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,6 +67,7 @@ class AnchorState:
             "beat_ema": round(self.beat_ema, 5),
             "recognition_ema": round(self.recognition_ema, 5),
             "total_beats": int(self.total_beats),
+            "shadow_locked_out": bool(self.shadow_locked_out),
             "updated_at": float(self.updated_at),
         }
 
@@ -76,6 +80,7 @@ class AnchorState:
             beat_ema=_clamp01(data.get("beat_ema", 0.0)),
             recognition_ema=_clamp01(data.get("recognition_ema", 0.0)),
             total_beats=int(data.get("total_beats") or 0),
+            shadow_locked_out=bool(data.get("shadow_locked_out", False)),
             updated_at=float(data.get("updated_at") or _now()),
         )
 

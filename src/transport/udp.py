@@ -33,6 +33,8 @@ def _compact_private_mind_for_udp_overflow(value):
         # Giữ inner_diary NGUYÊN BẢN — nó nhỏ và là thứ quan trọng nhất với UI.
         # Chỉ nén đống debug nặng trong menu, không đụng nhật ký nội tâm.
         "inner_diary": value.get("inner_diary") if isinstance(value.get("inner_diary"), dict) else {},
+        # Giữ anchor (Mô Hình Ngài / trục neo) NGUYÊN BẢN — nhỏ và là dữ liệu panel cần.
+        "anchor": value.get("anchor") if isinstance(value.get("anchor"), dict) else {},
         "menu": compact_menu,
         "udp_debug_truncated": True,
     }
@@ -117,6 +119,8 @@ def _slim_private_mind_core(private_mind):
         "last_tick_at": private_mind.get("last_tick_at", 0.0),
         "current": _compact_debug_value(private_mind.get("current", {}), depth=0),
         "inner_diary": slim_diary,
+        # Giữ anchor qua cả bản rút gọn cứng nhất để panel Mô Hình Ngài không trống.
+        "anchor": private_mind.get("anchor") if isinstance(private_mind.get("anchor"), dict) else {},
         "menu": slim_menu,
         "udp_debug_truncated": True,
     }

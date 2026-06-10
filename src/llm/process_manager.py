@@ -153,6 +153,60 @@ class RemoteModelProcessManager:
             return self._build_speech_client()
         return None
 
+    def build_format_fallback_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
+        """Build a Groq (OpenAI-compatible) client used to rescue chat/directive
+        decisions when the main provider leaks chain-of-thought or breaks the JSON
+        contract.
+
+        Groq llama models honour `response_format=json_object` and stop the
+        "think out loud then truncate" failure that gemma falls into on emotionally
+        loaded prompts, so they make a reliable format-recovery trier. Returns None
+        when disabled or when no Groq key is configured (caller degrades gracefully).
+        """
+        apply_secrets_to_environ()
+        if not self._env_flag("ERIS_CHAT_FORMAT_FALLBACK_ENABLED", "1"):
+            return None
+
+        provider = os.environ.get(
+            "ERIS_CHAT_FALLBACK_PROVIDER", "openai_compatible"
+        ).strip().lower()
+        slot = os.environ.get("ERIS_CHAT_FALLBACK_SLOT", "remote_main").strip() or "remote_main"
+        profile = get_provider_profile(provider, slot=slot)
+
+        pool = get_key_pool("groq")
+        pool_key = pool.current_key() if pool is not None else ""
+        api_key = (
+            str(profile.get("api_key") or "").strip()
+            or pool_key
+            or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+        )
+        if not api_key:
+            self.logger.info("Chat format fallback (Groq) tat: khong tim thay ERIS_GROQ_API_KEY.")
+            return None
+
+        base_url = (
+            os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
+            or str(profile.get("base_url") or "").strip()
+            or "https://api.groq.com/openai/v1"
+        )
+        model_name = (
+            os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip()
+            or str(profile.get("model") or "").strip()
+            or str(profile.get("model_name") or "").strip()
+            or "llama-3.3-70b-versatile"
+        )
+        self.logger.info("Chat format fallback (Groq) san sang tai %s voi model %s", base_url, model_name)
+        try:
+            return OpenAICompatibleClient(
+                base_url=base_url,
+                api_key=api_key,
+                model_name=model_name,
+                key_pool=pool,
+            )
+        except ValueError as exc:
+            self.logger.warning("Khong dung duoc chat format fallback (Groq): %s", exc)
+            return None
+
     def build_vision_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
         return None
 

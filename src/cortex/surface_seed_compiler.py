@@ -51,6 +51,8 @@ _DIARY_TITLE_TO_KEY = {
     "muốn nói": "muon_noi",
     "suy nghĩ tương lai": "tuong_lai",
     "suy nghĩ hiện tại": "hien_tai",
+    "đang bận tâm": "ban_tam",
+    "phân tích gần đây": "phan_tich",
 }
 
 
@@ -561,6 +563,22 @@ class SurfaceSeedCompiler:
                 "muse lightly from a current inner thought; no raw judgment, no screen claim",
                 "inner_diary: use the current-thought reflection as seed only, not verbatim.",
             ),
+            (
+                "ban_tam",
+                "inner_whim",
+                0.56,
+                0.48,
+                "voice the thing quietly on Eris's mind as a small rooted aside; no raw concern dump",
+                "inner_diary: surface the lingering concern lightly as a stray thought, not a report.",
+            ),
+            (
+                "phan_tich",
+                "random_chatter",
+                0.52,
+                0.42,
+                "make one casual offhand remark about something Eris just noticed; mundane, light",
+                "inner_diary: turn a recent noticing into a casual mundane one-liner, not analysis.",
+            ),
         )
         out: list[_SeedCandidate] = []
         for key, kind, confidence, pressure, action, contract in specs:
@@ -598,7 +616,7 @@ class SurfaceSeedCompiler:
             return {}
         direct = {
             k: self._clean(inner_diary.get(k) or "")
-            for k in ("muon_noi", "tuong_lai", "hien_tai")
+            for k in ("muon_noi", "tuong_lai", "hien_tai", "ban_tam", "phan_tich")
         }
         direct = {k: v for k, v in direct.items() if v}
         if direct:

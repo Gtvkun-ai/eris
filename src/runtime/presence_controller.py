@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from cortex.contracts import SessionRitualReport
 from cortex.banned_filler import is_banned_filler
 from cortex.social_presence import SocialPresenceDetector
-from cortex.low_level_speech_policy import LowLevelSpeechPolicy
+from cortex.low_level_speech_policy import LowLevelSpeechPolicy, LowLevelSpeechPolicyConfig
 from cortex.surface_arbiter import SurfaceArbiter, SurfaceDecision, SurfaceImpulse
 from cortex.surface_seed_compiler import SurfaceSeedCompiler
 from cortex.continuity_threat import evaluate_continuity_threat
@@ -290,12 +290,38 @@ class PresenceControllerMixin:
         arbiter = getattr(self, "_low_level_surface_arbiter", None)
         if arbiter is None:
             arbiter = SurfaceArbiter(
-                policy=LowLevelSpeechPolicy(),
+                policy=LowLevelSpeechPolicy(self._spontaneity_policy_config()),
                 llm_micro_gen=self._surface_arbiter_llm_generate,
                 thought_stream=getattr(self, "thought_stream", None),
             )
             self._low_level_surface_arbiter = arbiter
         return arbiter
+
+    def _spontaneity_policy_config(self) -> LowLevelSpeechPolicyConfig:
+        """Config arbiter có nối núm spontaneity.
+
+        Spontaneity cao ⇒ đưa các impulse 'sống' vào always_llm_kinds (force_llm khi
+        đủ min_confidence) và hạ ngưỡng force theo im lặng. Đây là cổng-thứ-hai: sau
+        khi đã SINH dồi dào candidate, đây mới là chỗ cho chúng thật sự được phát thay
+        vì rơi về body-only. Tần suất vẫn do rate_limit/cooldown khống chế.
+        """
+        base = LowLevelSpeechPolicyConfig.from_env()
+        spont = self._spontaneity_level()
+        if spont <= 0.0:
+            return base
+        alive_kinds = (
+            "scene_curiosity", "curious_question", "idle_curiosity",
+            "inner_whim", "light_muse", "micro_story", "companionship_ping",
+            "random_chatter", "thought_stream_surface", "memory_resonance",
+        )
+        from dataclasses import replace as _dc_replace
+        return _dc_replace(
+            base,
+            always_llm_kinds=tuple(dict.fromkeys((*base.always_llm_kinds, *alive_kinds))),
+            force_llm_after_silent=max(1, int(round(base.force_llm_after_silent - 4 * spont))),
+            presence_force_llm_after_silent=max(1, int(round(base.presence_force_llm_after_silent - 2 * spont))),
+            vital_pressure_force_llm_threshold=max(0.15, base.vital_pressure_force_llm_threshold - 0.30 * spont),
+        )
 
     def _surface_arbiter_llm_generate(self, *, impulse: SurfaceImpulse, snapshot, force_llm: bool = False) -> tuple[str, str]:
         """Adapter để SurfaceArbiter dùng generator micro hiện có, không tự viết fallback."""
@@ -1041,13 +1067,14 @@ class PresenceControllerMixin:
                 getattr(observer, "user_presence", 0.0) if observer is not None else 0.0
             )
             engagement = max(0.0, min(1.0, 0.45 * novelty + 0.30 * curiosity + 0.25 * user_presence))
+            engagement_gate = 0.42 - 0.30 * spont   # spont=1 → 0.12
             vision_facts = tuple(
                 str(fact).strip() for fact in (getattr(snapshot, "vision_facts", ()) or ()) if str(fact).strip()
             )[:3]
             focus_summary = str(
                 getattr(snapshot, "focus_summary", "") or getattr(snapshot, "active_window_kind", "") or ""
             ).strip()
-            if engagement >= 0.42 and (vision_facts or focus_summary):
+            if engagement >= engagement_gate and (vision_facts or focus_summary):
                 if vision_facts:
                     seed = vision_facts[0][:120]
                     anchor = self._surface_anchor_token("scene", f"scene:{seed}")
@@ -1091,6 +1118,102 @@ class PresenceControllerMixin:
                         root_source="curiosity_drive",
                         action_opportunity="one small curious line/question about the live moment",
                         llm_contract=curiosity_contract,
+                    )
+                )
+
+            # --- Khai sinh các impulse 'sống' còn lại (trước đây KHÔNG có nơi sinh) ---
+            anchor_sys = getattr(self, "anchor_system", None)
+            attachment_longarc = (
+                self._surface_float(getattr(anchor_sys, "attachment_longarc", 0.0)) if anchor_sys is not None else 0.0
+            )
+            idle_seconds = self._surface_float(getattr(snapshot, "idle_seconds", 0.0))
+            endo_seed = endogenous_seed if isinstance(endogenous_seed, str) else ""
+
+            # companionship_ping: hiện diện ấm khi Ngài có mặt và đã có chút gắn bó.
+            if user_presence >= (0.55 - 0.35 * spont) and attachment_longarc >= (0.30 - 0.25 * spont):
+                comp_anchor = self._surface_anchor_token("event", f"co_presence:{focus_family}")
+                impulses.append(
+                    SurfaceImpulse(
+                        kind="companionship_ping",
+                        source="endogenous_drive",
+                        confidence=max(0.44, 0.40 + 0.40 * attachment_longarc),
+                        pressure=max(0.38, 0.40 * attachment_longarc + 0.20 * user_presence),
+                        score=max(0.46, 0.46 + 0.30 * attachment_longarc),
+                        topic_seed="co_presence",
+                        speech_act="companionship_ping",
+                        family="companionship:co_presence",
+                        evidence=(comp_anchor, f"user_presence={user_presence:.2f}", f"attachment={attachment_longarc:.2f}"),
+                        reason="warm co-presence driven by presence+attachment, not idle timer",
+                        focus_family=focus_family,
+                        body_action="idle_shift",
+                        missing_evidence_ids=True,
+                        is_presence=True,
+                        should_surface=True,
+                        needs_external_evidence=False,
+                        vital_pressure=attachment_longarc,
+                        is_vital_pressure=attachment_longarc >= 0.55,
+                        root_source="companionship_drive",
+                        action_opportunity="one warm low-pressure co-presence line; no neediness unless shadow",
+                        llm_contract="companionship_ping: câu ấm nhỏ ghi nhận sự cùng-hiện-diện; không phải điểm danh, không bám dính.",
+                    )
+                )
+
+            # micro_story: mẩu nghĩ vu vơ có rễ (seed/focus) khi có chất liệu.
+            story_seed = endo_seed or focus_summary
+            if story_seed and spont >= 0.40 and (boredom_pressure >= 0.20 or curiosity >= 0.30):
+                story_anchor = self._surface_anchor_token("event", f"muse:{story_seed[:80]}")
+                impulses.append(
+                    SurfaceImpulse(
+                        kind="micro_story",
+                        source="endogenous_drive",
+                        confidence=max(0.40, 0.40 + 0.30 * curiosity),
+                        pressure=max(0.36, 0.30 + 0.30 * boredom_pressure),
+                        score=max(0.44, 0.44 + 0.20 * curiosity),
+                        topic_seed=story_seed[:120],
+                        speech_act="micro_story",
+                        family="muse:micro_story",
+                        evidence=(story_anchor, f"seed:{story_seed[:80]}"),
+                        reason="small stray thought from available material (spontaneity)",
+                        focus_family=focus_family,
+                        body_action="look_at_focus",
+                        missing_evidence_ids=True,
+                        is_presence=False,
+                        should_surface=True,
+                        needs_external_evidence=False,
+                        vital_pressure=max(boredom_pressure, curiosity),
+                        is_vital_pressure=False,
+                        root_source="muse_drive",
+                        action_opportunity="one tiny mundane/playful stray thought, not meta explanation",
+                        llm_contract="micro_story: một mẩu nghĩ vu vơ ngắn bám vào seed; không giải thích hệ thống.",
+                    )
+                )
+
+            # idle_curiosity: tò mò nhẹ về khoảng lặng khi Ngài hơi vắng nhưng chưa lâu.
+            if focus_summary and 60.0 <= idle_seconds <= 600.0 and spont >= 0.30:
+                idle_anchor = self._surface_anchor_token("event", f"idle:{focus_summary[:80]}")
+                impulses.append(
+                    SurfaceImpulse(
+                        kind="idle_curiosity",
+                        source="endogenous_drive",
+                        confidence=0.44,
+                        pressure=0.38,
+                        score=0.48,
+                        topic_seed=focus_summary[:120],
+                        speech_act="curious_question",
+                        family="curiosity:idle",
+                        evidence=(idle_anchor, f"idle_seconds={idle_seconds:.0f}"),
+                        reason="gentle curiosity about the quiet moment (moderate idle)",
+                        focus_family=focus_family,
+                        body_action="tilt_head",
+                        missing_evidence_ids=True,
+                        is_presence=False,
+                        should_surface=True,
+                        needs_external_evidence=False,
+                        vital_pressure=0.30,
+                        is_vital_pressure=False,
+                        root_source="idle_curiosity_drive",
+                        action_opportunity="one soft curious line about the pause; no neediness",
+                        llm_contract="idle_curiosity: tò mò dịu về khoảng lặng, áp lực thấp, không điểm danh.",
                     )
                 )
 

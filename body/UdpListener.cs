@@ -131,7 +131,7 @@ public partial class UdpListener : Node2D
 	private ulong _chatLastActivityMs = 0;
 	[Export] public float ChatAutoHideSeconds = 20f;
 	private Tween _textTween;
-	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 262f);
+	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 306f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
 	private static readonly Vector2 PrivateMindPanelMinSize = new(1040f, 624f);
 
@@ -273,6 +273,16 @@ public partial class UdpListener : Node2D
 		};
 		GetNode<Control>("CanvasLayer/Control").AddChild(_privateMindPanel);
 		BuildPrivateMindPanelUi();
+		_anchorPanel = new Panel
+		{
+			Name = "AnchorPanel",
+			Visible = false,
+			CustomMinimumSize = AnchorPanelMinSize,
+			Size = AnchorPanelMinSize,
+			ZIndex = 98,
+		};
+		GetNode<Control>("CanvasLayer/Control").AddChild(_anchorPanel);
+		BuildAnchorPanelUi();
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
 		BuildChatPanelUi();
 	_chatSendButton.Pressed += OnSendPressed;
@@ -283,6 +293,8 @@ public partial class UdpListener : Node2D
 	_contextEmotionButton.Pressed += OnContextEmotionPressed;
 	if (_contextPrivateMindButton != null)
 		_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
+	if (_contextAnchorButton != null)
+		_contextAnchorButton.Pressed += OnContextAnchorPressed;
 	_contextCloseButton.Pressed += CloseCharacterContextMenu;
 		_chatInput.TextSubmitted += _ => OnSendPressed();
 		_chatInput.TextChanged += _ => MarkChatActivity();
@@ -914,6 +926,13 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextPrivateMindButton, Mathf.Max(0, closeIndex));
 			}
+			if (_contextAnchorButton == null)
+			{
+				_contextAnchorButton = new Button { Name = "AnchorButton" };
+				container.AddChild(_contextAnchorButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextAnchorButton, Mathf.Max(0, closeIndex));
+			}
 		}
 
 		ConfigureContextMenuButton(_contextChatButton, "Chat", "res://asset/Resource/chat.png");
@@ -921,6 +940,7 @@ public partial class UdpListener : Node2D
 		ConfigureContextMenuButton(_contextForceSpeakButton, "Noi ngay", "res://asset/Resource/force.png");
 		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Private Mind", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextAnchorButton, "Mo Hinh Ngai", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextCloseButton, "Dong", "res://asset/Resource/exit.png");
 	}
 
@@ -2711,14 +2731,12 @@ public partial class UdpListener : Node2D
 		_bodyAutonomy?.RecordUserInteraction();
 		MarkChatActivity();
 		_chatInput.Text = "";
-		// Panel cứ để mở cho Ngài chat nhiều lượt liền mạch. Backend không còn bị
-		// "chat_mode" khoá cứng: nó tự nhường lại autonomous theo độ tươi của hội
-		// thoại (ERIS_CHAT_FRESH_SEC), nên panel mở mãi cũng không làm chết autonomous.
-		_chatInput.GrabFocus();
 		// JsonSerializer.Serialize(msg) để escape chuỗi. Không tự nối raw string ngu ngốc
 		string payload = $"{{\"type\":\"chat\",\"message\":{JsonSerializer.Serialize(msg)}}}";
 		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
 		ApplyTypewriterEffect($"[Chủ nhân]: {msg}");
+		// Gửi xong là ẩn khung chat + báo chat_end để backend nối lại nhịp autonomous.
+		CloseChatPanel();
 	}
 
 	private void SendChatSignal(string type)
@@ -3010,6 +3028,8 @@ public partial class UdpListener : Node2D
 				SavePrivateMindState();
 				if (_privateMindPanel != null && _privateMindPanel.Visible)
 					RefreshPrivateMindPanel();
+				if (_anchorPanel != null && _anchorPanel.Visible)
+					RefreshAnchorPanel();
 			}
 		}
 		if (payload.HasBodyBias)

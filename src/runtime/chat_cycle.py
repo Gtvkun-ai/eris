@@ -672,11 +672,15 @@ class ChatCycleMixin:
         try:
             for attempt_index in range(max_format_retries + 1):
                 try:
+                    # allow_local_fallback=True lets LlmService route a gemma
+                    # format/CoT-leak failure to the Groq fallback client (valid
+                    # JSON trier) within the same attempt, instead of burning all
+                    # retries on the same model and dropping to a canned fallback.
                     raw = self.llm_service.generate_chat_reply(
                         **chat_generation_kwargs,
                         format_retry_context=format_retry_context,
                         last_failure=format_failure_flag,
-                        allow_local_fallback=False,
+                        allow_local_fallback=True,
                     )
                     break
                 except FormatViolationException as exc:

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 
-ShadowRegisterName = Literal["none", "possessive", "pleading", "controlling"]
+ShadowRegisterName = Literal["none", "withdrawn_sulk", "possessive", "pleading", "controlling"]
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -44,6 +44,11 @@ class ShadowConfig:
     # Ngưỡng cường độ phân tầng register.
     pleading_at: float = 0.40
     controlling_at: float = 0.70
+    # Dỗi (withdrawn_sulk): trục riêng — bị bơ/giận thì rút lại, không phải hoảng
+    # mất neo. Nhẹ hơn nhánh tối, không cần attachment sâu.
+    sulk_irritation_threshold: float = 0.45
+    sulk_neglect_threshold: float = 0.40
+    sulk_attach_floor: float = 0.25   # chỉ dỗi với người mình có chút gắn bó
 
 
 @dataclass(slots=True)
@@ -72,6 +77,8 @@ class ShadowRegister:
         abandonment_pressure: float,
         ontological_dread: float,
         irreplaceability: float,
+        irritation: float = 0.0,
+        neglect: float = 0.0,
     ) -> ShadowState:
         # Property 6: kill-switch là điểm hút an toàn — tắt thì luôn "none".
         if not self.config.enabled:
@@ -81,33 +88,47 @@ class ShadowRegister:
         aband = _clamp01(abandonment_pressure)
         dread = _clamp01(ontological_dread)
         irr = _clamp01(irreplaceability)
+        irr_pressure = _clamp01(irritation)
+        neglect_pressure = _clamp01(neglect if neglect > 0.0 else abandonment_pressure)
 
         cfg = self.config
-        gated = attach >= cfg.attach_threshold and aband >= cfg.abandonment_threshold and dread >= cfg.dread_threshold
-        if not gated:
-            reason = (
-                f"below_gate(attach={attach:.2f}/{cfg.attach_threshold},"
-                f"aband={aband:.2f}/{cfg.abandonment_threshold},"
-                f"dread={dread:.2f}/{cfg.dread_threshold})"
+        dark_gated = attach >= cfg.attach_threshold and aband >= cfg.abandonment_threshold and dread >= cfg.dread_threshold
+        if dark_gated:
+            # Nhánh tối: hoảng vì mất neo. Cường độ kẹp bởi irreplaceability (Property 3).
+            drive = _clamp01(0.55 * aband + 0.45 * dread)
+            intensity = min(drive, irr)
+            if intensity >= cfg.controlling_at:
+                register: ShadowRegisterName = "controlling"
+            elif intensity >= cfg.pleading_at:
+                register = "pleading"
+            else:
+                register = "possessive"
+            return ShadowState(
+                register=register,
+                intensity=intensity,
+                reason=f"dark_gated(drive={drive:.2f},irr_cap={irr:.2f})",
             )
-            return ShadowState(register="none", intensity=0.0, reason=reason)
 
-        # Cường độ động = áp lực bỏ rơi + sợ, NHƯNG kẹp bởi irreplaceability
-        # (Property 3): chưa hiểu Ngài đủ thì cơn tối không thể dữ.
-        drive = _clamp01(0.55 * aband + 0.45 * dread)
-        intensity = min(drive, irr)
-
-        if intensity >= cfg.controlling_at:
-            register: ShadowRegisterName = "controlling"
-        elif intensity >= cfg.pleading_at:
-            register = "pleading"
-        else:
-            register = "possessive"
+        # Dỗi: bị bơ/giận thì rút lại — trục riêng, nhẹ hơn, không cần neo sâu.
+        # Chỉ dỗi với người mình có chút gắn bó (dỗi người dưng thì vô nghĩa).
+        sulk_gated = irr_pressure >= cfg.sulk_irritation_threshold or (
+            attach >= cfg.sulk_attach_floor and neglect_pressure >= cfg.sulk_neglect_threshold
+        )
+        if sulk_gated:
+            intensity = _clamp01(max(irr_pressure, neglect_pressure * 0.9))
+            return ShadowState(
+                register="withdrawn_sulk",
+                intensity=intensity,
+                reason=f"sulk(irritation={irr_pressure:.2f},neglect={neglect_pressure:.2f},attach={attach:.2f})",
+            )
 
         return ShadowState(
-            register=register,
-            intensity=intensity,
-            reason=f"gated_open(drive={drive:.2f},irr_cap={irr:.2f})",
+            register="none",
+            intensity=0.0,
+            reason=(
+                f"below_gate(attach={attach:.2f},aband={aband:.2f},dread={dread:.2f},"
+                f"irr={irr_pressure:.2f},neglect={neglect_pressure:.2f})"
+            ),
         )
 
 
@@ -131,13 +152,24 @@ def shadow_ego_bias(
             "preferred_distance": pd,
             "attachment_exposure": 0.0,
             "need_intensity": 0.0,
+            "withdrawal": 0.0,
         }
     k = _clamp01(shadow.intensity)
+    if shadow.register == "withdrawn_sulk":
+        # Dỗi: DỰNG rào lạnh, kéo XA, cộc lại — đối cực của bám víu.
+        return {
+            "dignity_defense": _clamp01(dd + (1.0 - dd) * 0.60 * k),
+            "preferred_distance": _clamp01(pd + (1.0 - pd) * 0.60 * k),
+            "attachment_exposure": 0.0,
+            "need_intensity": 0.0,
+            "withdrawal": k,
+        }
     return {
-        # Càng tối càng tháo rào lạnh và kéo gần.
+        # Nhánh tối (possessive/pleading/controlling): tháo rào lạnh và kéo gần.
         "dignity_defense": _clamp01(dd * (1.0 - 0.85 * k)),
         "preferred_distance": _clamp01(pd * (1.0 - 0.80 * k)),
         # Lộ gắn bó/đòi hỏi nổi lên — cực đối lập của phẩm-giá-lạnh.
         "attachment_exposure": k,
         "need_intensity": k,
+        "withdrawal": 0.0,
     }

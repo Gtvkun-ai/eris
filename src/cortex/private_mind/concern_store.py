@@ -27,6 +27,12 @@ class ConcernStoreConfig:
     max_concerns: int = 24  # Giảm từ 96 → 24: concern thật không cần nhiều hơn thế
     stale_after_seconds: float = 60.0 * 60.0 * 24.0 * 14.0
     autosave: bool = True
+    # Q1 — vòng đời nguôi: concern đã dịu (watching, áp lực+bất định thấp) đủ lâu
+    # thì tự khép lại, để lại dấu "đã nguôi" cho diary/chat thay vì biến mất câm.
+    settle_window_seconds: float = 60.0 * 30.0          # dịu liên tục 30 phút → khép
+    settle_pressure_max: float = 0.18
+    settle_uncertainty_max: float = 0.32
+    resolved_visible_seconds: float = 60.0 * 60.0 * 24.0  # "đã nguôi" còn nhắc được 1 ngày
 
 
 class ConcernStore:
@@ -348,16 +354,75 @@ class ConcernStore:
             self.save()
         return tuple(reports)
 
-    def mark_resolved(self, concern_id: str, *, reason: str = "") -> bool:
+    def mark_resolved(self, concern_id: str, *, reason: str = "", closure_note: str = "") -> bool:
         concern = self._concerns.get(str(concern_id or ""))
         if concern is None:
             return False
-        concern.status = "resolved"
-        concern.updated_at = time.time()
-        if reason:
-            concern.metadata["resolved_reason"] = compact_text(reason, 240)
+        self._apply_closure(concern, reason=reason, closure_note=closure_note)
         self.save()
         return True
+
+    def _apply_closure(self, concern: PrivateConcern, *, reason: str = "", closure_note: str = "") -> None:
+        """Khép một concern và để lại dấu 'đã nguôi' (Q1)."""
+        now = time.time()
+        concern.status = "resolved"
+        concern.updated_at = now
+        concern.metadata["resolved_at"] = now
+        if reason:
+            concern.metadata["resolved_reason"] = compact_text(reason, 240)
+        concern.metadata["closure_note"] = compact_text(
+            closure_note or "Chuyện này đã nguôi dần trong tôi.", 200
+        )
+
+    def auto_resolve_settled(self, *, now: float | None = None) -> tuple[PrivateConcern, ...]:
+        """Tự khép các concern đã dịu đủ lâu (Q1).
+
+        Đây là đường 'giải quyết xong thì dọn' mà trước đây thiếu: concern ở trạng
+        thái watching với áp lực + bất định thấp, không được khơi lại trong
+        settle_window → tự nguôi, có dấu để eris nhắc 'chuyện đó tôi đã nguôi'.
+        """
+        current = float(now or time.time())
+        cfg = self.config
+        closed: list[PrivateConcern] = []
+        for concern in list(self._concerns.values()):
+            if concern.status not in {"watching", "open"}:
+                continue
+            quiet_for = current - float(concern.last_reviewed_at or concern.updated_at or current)
+            if (
+                concern.status == "watching"
+                and concern.pressure <= cfg.settle_pressure_max
+                and concern.uncertainty <= cfg.settle_uncertainty_max
+                and quiet_for >= cfg.settle_window_seconds
+            ):
+                self._apply_closure(concern, reason="settled_quietly")
+                closed.append(concern)
+        if closed:
+            self.save()
+        return tuple(closed)
+
+    def recently_resolved(self, *, limit: int = 5, now: float | None = None) -> tuple[dict[str, Any], ...]:
+        """Các concern vừa nguôi gần đây — để diary/chat nói 'đã nguôi' (Q1)."""
+        current = float(now or time.time())
+        window = self.config.resolved_visible_seconds
+        items: list[tuple[float, dict[str, Any]]] = []
+        for concern in self._concerns.values():
+            if concern.status != "resolved":
+                continue
+            resolved_at = float(concern.metadata.get("resolved_at", concern.updated_at) or 0.0)
+            if resolved_at <= 0.0 or current - resolved_at > window:
+                continue
+            items.append(
+                (
+                    resolved_at,
+                    {
+                        "theme": concern.theme,
+                        "closure_note": str(concern.metadata.get("closure_note", "") or ""),
+                        "resolved_at": resolved_at,
+                    },
+                )
+            )
+        items.sort(key=lambda pair: pair[0], reverse=True)
+        return tuple(item for _, item in items[: max(0, limit)])
 
     def prune_and_decay(self, *, now: float | None = None) -> None:
         current = float(now or time.time())

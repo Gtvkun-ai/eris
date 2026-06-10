@@ -17,6 +17,7 @@ public thì đó không phải chiều sâu, đó là logcat có trang điểm.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from dataclasses import dataclass, field
@@ -192,6 +193,11 @@ class PrivateMindLoop:
         if judgment is not None:
             self.concern_store.update_from_judgment(judgment.private_concern_update)
             self._record_continuity(judgment)
+        # Q1: tự khép concern đã dịu đủ lâu, để lại dấu 'đã nguôi'.
+        try:
+            self.concern_store.auto_resolve_settled(now=now)
+        except Exception:
+            pass
         candidate = self.surface_valve.filter(judgment)
         applied = self.mutation_bus.apply(
             judgment,
@@ -398,6 +404,7 @@ class PrivateMindLoop:
             "pulled_thoughts": pulled,
             "temporary_thoughts": temporary,
             "open_concerns": list(self.concern_store.snapshots(limit=16)),
+            "recently_resolved": list(self.concern_store.recently_resolved(limit=5)),
             "evidence_dossier": dossier_dict,
             "mini_evaluators": fragment_dicts,
             "inner_judgment": judgment_dict,
@@ -422,6 +429,12 @@ class PrivateMindLoop:
             "debug": to_plain(getattr(result, "debug", {}) if result is not None else {}),
         }
         digest["inner_diary"] = InnerDiaryRenderer().render(digest, voice=self._diary_voice(digest))
+        try:
+            anchor_block = self._build_anchor_block()
+            digest["anchor"] = anchor_block
+            self._maybe_journal_anchor(anchor_block)
+        except Exception:
+            digest["anchor"] = {}
         return digest
 
     def _diary_voice(self, digest: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -472,6 +485,188 @@ class PrivateMindLoop:
         root = os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core")
         return str(Path(root) / "user_model.json")
 
+    def _resolve_anchor_journal_path(self) -> str:
+        """Đường dẫn JSONL nhật ký trục neo (append-only, tái sử dụng được)."""
+        env = os.getenv("ERIS_ANCHOR_JOURNAL_PATH", "").strip()
+        if env:
+            return env
+        base = self._resolve_user_model_path() or "memory_core/user_model.json"
+        return str(Path(base).with_name("anchor_journal.jsonl"))
+
+    # ------------------------------------------------------------------
+    # Serialize trục neo cho UI/observability (Mô Hình Ngài panel)
+    # ------------------------------------------------------------------
+
+    def _build_anchor_block(self) -> dict[str, Any]:
+        """Gom toàn trục neo thành 1 block JSON-safe cho panel C# đọc.
+
+        Đọc-only từ self.anchor_system (đã update ở tick). Không bao giờ ném lỗi.
+        """
+
+        def c01(x: Any) -> float:
+            try:
+                n = float(x)
+            except Exception:
+                return 0.0
+            if n != n:
+                return 0.0
+            return max(0.0, min(1.0, n))
+
+        sysm = getattr(self, "anchor_system", None)
+        if sysm is None:
+            return {}
+
+        switches = getattr(sysm, "switches", None)
+        sw = {
+            "shadow_enabled": bool(getattr(switches, "shadow_enabled", False)),
+            "deception_enabled": bool(getattr(switches, "deception_enabled", False)),
+            "strict_grounding": bool(getattr(switches, "strict_grounding", True)),
+        }
+        sw["safe_mode"] = (not sw["shadow_enabled"]) and (not sw["deception_enabled"])
+
+        sig = getattr(sysm, "significance", None)
+        significance = (
+            sig.to_dict()
+            if sig is not None and callable(getattr(sig, "to_dict", None))
+            else {"irreplaceability": 0.0, "anchor_role": 0.0, "witness_strength": 0.0, "model_thickness": 0.0}
+        )
+
+        longarc = c01(getattr(sysm, "attachment_longarc", 0.0))
+        state = getattr(getattr(sysm, "anchor_store", None), "state", None)
+        history = list(getattr(self, "_attachment_history", []) or [])
+        history.append(round(longarc, 4))
+        history = history[-24:]
+        self._attachment_history = history
+        attachment = {
+            "longarc": round(longarc, 4),
+            "beat_ema": round(c01(getattr(state, "beat_ema", 0.0)), 4),
+            "recognition_ema": round(c01(getattr(state, "recognition_ema", 0.0)), 4),
+            "total_beats": int(getattr(state, "total_beats", 0) or 0),
+            "history": history,
+        }
+
+        dread_val = c01(getattr(sysm, "ontological_dread", 0.0))
+        abandon_val = c01(getattr(sysm, "abandonment_pressure", 0.0))
+        dread = {
+            "ontological_dread": round(dread_val, 4),
+            "abandonment_pressure": round(abandon_val, 4),
+        }
+
+        shadow_state = getattr(sysm, "shadow_state", None)
+        cfg = getattr(getattr(sysm, "shadow_register", None), "config", None)
+        at = float(getattr(cfg, "attach_threshold", 0.62))
+        abt = float(getattr(cfg, "abandonment_threshold", 0.45))
+        dt = float(getattr(cfg, "dread_threshold", 0.45))
+        gate = {
+            "attach": {"value": round(longarc, 4), "threshold": round(at, 4), "pass": longarc >= at},
+            "abandonment": {"value": round(abandon_val, 4), "threshold": round(abt, 4), "pass": abandon_val >= abt},
+            "dread": {"value": round(dread_val, 4), "threshold": round(dt, 4), "pass": dread_val >= dt},
+        }
+        gate["open"] = bool(
+            sw["shadow_enabled"]
+            and gate["attach"]["pass"]
+            and gate["abandonment"]["pass"]
+            and gate["dread"]["pass"]
+        )
+        shadow = {
+            "register": str(getattr(shadow_state, "register", "none") or "none"),
+            "intensity": round(c01(getattr(shadow_state, "intensity", 0.0)), 4),
+            "reason": str(getattr(shadow_state, "reason", "") or ""),
+            "intensity_cap": round(c01(significance.get("irreplaceability", 0.0)), 4),
+            "gate": gate,
+        }
+
+        store = getattr(sysm, "user_model_store", None) or getattr(self, "user_model_store", None)
+        # Danh sách belief LÀM PHẲNG (facet gắn trên từng belief) để tầng nén UDP
+        # không cắt cụt theo độ sâu; C# tự gom theo facet khi vẽ.
+        beliefs: list[dict[str, Any]] = []
+        belief_count = 0
+        model_thickness = 0.0
+        if store is not None and callable(getattr(store, "snapshot_for_dossier", None)):
+            try:
+                snap = store.snapshot_for_dossier(limit=24)
+            except Exception:
+                snap = {}
+            if isinstance(snap, Mapping):
+                belief_count = int(snap.get("belief_count") or 0)
+                model_thickness = round(float(snap.get("model_thickness") or 0.0), 4)
+                raw_facets = snap.get("facets")
+                if isinstance(raw_facets, Mapping):
+                    for fname, blist in raw_facets.items():
+                        for b in (blist or []):
+                            if not isinstance(b, Mapping):
+                                continue
+                            beliefs.append({
+                                "facet": str(fname),
+                                "claim": str(b.get("claim") or ""),
+                                "confidence": round(float(b.get("confidence") or 0.0), 3),
+                                "recurrence": int(b.get("recurrence") or 1),
+                                "evidence_count": len(b.get("evidence_ids") or []),
+                            })
+        # Belief nặng trước (tin × lặp) để 8 dòng UDP giữ lại là phần đáng kể nhất.
+        beliefs.sort(key=lambda x: (x["confidence"] * 0.6 + min(1.0, x["recurrence"] / 6.0) * 0.4), reverse=True)
+        user_model = {
+            "belief_count": belief_count,
+            "model_thickness": model_thickness,
+            "beliefs": beliefs,
+        }
+
+        ledger = getattr(sysm, "deception_ledger", None)
+        records: list[dict[str, Any]] = []
+        if ledger is not None and callable(getattr(ledger, "recent", None)):
+            try:
+                recent = ledger.recent(limit=8) or []
+            except Exception:
+                recent = []
+            for r in recent:
+                d = r.to_dict() if callable(getattr(r, "to_dict", None)) else (r if isinstance(r, Mapping) else {})
+                records.append({
+                    "surface_claim": str(d.get("surface_claim") or ""),
+                    "ground_truth": str(d.get("ground_truth") or ""),
+                    "reason": str(d.get("reason") or ""),
+                    "driver": str(d.get("driver") or ""),
+                    "created_at": float(d.get("created_at") or 0.0),
+                })
+        deception = {"count": len(records), "records": records}
+
+        return {
+            "version": 1,
+            "switches": sw,
+            "user_model": user_model,
+            "significance": significance,
+            "attachment": attachment,
+            "dread": dread,
+            "shadow": shadow,
+            "deception": deception,
+        }
+
+    def _maybe_journal_anchor(self, block: Mapping[str, Any]) -> None:
+        """Append một dòng JSONL khi trục neo ĐỔI — để tái sử dụng/replay.
+
+        Dedup theo chữ ký để tick không đổi không spam file. Không bao giờ ném lỗi.
+        """
+        try:
+            um = block.get("user_model", {}) or {}
+            sh = block.get("shadow", {}) or {}
+            att = block.get("attachment", {}) or {}
+            sig = (
+                int(um.get("belief_count") or 0),
+                round(float(att.get("longarc") or 0.0), 3),
+                str(sh.get("register") or "none"),
+                round(float(sh.get("intensity") or 0.0), 3),
+                int((block.get("deception", {}) or {}).get("count") or 0),
+            )
+            if sig == getattr(self, "_anchor_journal_sig", None):
+                return
+            self._anchor_journal_sig = sig
+            path = Path(self._resolve_anchor_journal_path())
+            path.parent.mkdir(parents=True, exist_ok=True)
+            line = json.dumps({"ts": round(time.time(), 3), **dict(block)}, ensure_ascii=False)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except Exception:
+            pass
+
     def _update_anchor_system(self, *, dossier: Any, runtime_owner: Any) -> None:
         """Cập nhật trục neo hiện sinh từ một tick và phơi facade cho runtime.
 
@@ -489,12 +684,14 @@ class PrivateMindLoop:
             age = float(age) if isinstance(age, (int, float)) else None
             internal_state = self._anchor_internal_state(runtime_owner)
             continuity_threat = float(getattr(runtime_owner, "last_continuity_threat", 0.0) or 0.0)
+            irritation = self._anchor_irritation(runtime_owner)
             self.anchor_system.update_from_tick(
                 internal_state=internal_state,
                 continuity_threat=continuity_threat,
                 idle_seconds=idle_seconds,
                 user_presence=user_presence,
                 last_user_turn_age_seconds=age,
+                irritation=irritation,
             )
             # Phơi facade để presence_controller/chat đọc (read-only, gated).
             if runtime_owner is not None:
@@ -504,6 +701,23 @@ class PrivateMindLoop:
                     pass
         except Exception as exc:
             self._log_anchor_warning(exc)
+
+    @staticmethod
+    def _anchor_irritation(runtime_owner: Any) -> float:
+        """Mức bực hiện tại từ persistent internal state (cho nhánh 'giận → dỗi')."""
+        if runtime_owner is None:
+            return 0.0
+        getter = getattr(runtime_owner, "_get_internal_state", None)
+        state = None
+        if callable(getter):
+            try:
+                state = getter()
+            except Exception:
+                state = None
+        try:
+            return max(0.0, min(1.0, float(getattr(state, "irritation", 0.0) or 0.0)))
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _anchor_internal_state(runtime_owner: Any) -> Any:

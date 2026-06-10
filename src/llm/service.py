@@ -185,10 +185,13 @@ def classify_chat_act(raw_user_text: str) -> ChatAct:
 class LlmService:
     _RETRYABLE_HTTP_STATUS = {500, 502, 503, 504}
 
-    def __init__(self, client, style_client=None, vision_client=None, logger=None):
+    def __init__(self, client, style_client=None, vision_client=None, fallback_client=None, logger=None):
         self.client = client
         self.style_client = style_client
         self.vision_client = vision_client
+        # Dedicated format-recovery client (e.g. Groq llama). Preferred over
+        # style_client when the main provider breaks the JSON/no-CoT contract.
+        self.fallback_client = fallback_client
         self.logger = logger or logging.getLogger(__name__)
 
     def _http_status_code(self, exc: Exception) -> int | None:
@@ -1713,6 +1716,9 @@ class LlmService:
 
         initial_client = self.style_client if force_local_fallback and self.style_client is not None else self.client
         initial_stage = "local_fallback" if force_local_fallback and self.style_client is not None else "initial"
+        # Prefer the dedicated Groq fallback client for format recovery; fall back
+        # to the speech/style client only if no fallback client was wired.
+        recovery_client = getattr(self, "fallback_client", None) or self.style_client
 
         try:
             response = _call(messages, stage=initial_stage, override_client=initial_client)
@@ -1723,8 +1729,8 @@ class LlmService:
                 err_msg = str(r_json.get("error", {}).get("message", "")).lower()
                 return "safety" in err_msg or "recitation" in err_msg
                 
-            if allow_local_fallback and hasattr(self, "style_client") and self.style_client and _looks_like_prompt_leak():
-                 response = _call(messages, stage="local_fallback", override_client=self.style_client)
+            if allow_local_fallback and recovery_client is not None and recovery_client is not initial_client and _looks_like_prompt_leak():
+                 response = _call(messages, stage="local_fallback", override_client=recovery_client)
             elif _looks_like_prompt_leak():
                 raise FormatViolationException(
                     f"LlmService provider blocked {channel} response for safety/recitation before valid JSON.",
@@ -1772,16 +1778,16 @@ class LlmService:
         except FormatViolationException as exc:
             can_try_local = (
                 allow_local_fallback
-                and self.style_client is not None
-                and initial_client is not self.style_client
+                and recovery_client is not None
+                and initial_client is not recovery_client
             )
             if can_try_local:
                 self.logger.warning(
-                    "[llm local format recovery] channel=%s reason=%s",
+                    "[llm format recovery via fallback client] channel=%s reason=%s",
                     channel,
                     exc.reason,
                 )
-                local_response = _call(messages, stage="local_format_recovery", override_client=self.style_client)
+                local_response = _call(messages, stage="local_format_recovery", override_client=recovery_client)
                 local_raw = self._extract_content(local_response)
                 self._log_raw_api_text(channel, local_raw)
                 candidate = self._strict_decision_candidate_or_raise(local_raw, channel=channel)

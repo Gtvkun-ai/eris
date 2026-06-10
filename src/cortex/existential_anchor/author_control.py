@@ -77,12 +77,36 @@ class AuthorControl:
         if self.shadow_register is not None and hasattr(self.shadow_register, "set_enabled"):
             self.shadow_register.set_enabled(self.switches.shadow_enabled)
 
-    def disable_dark(self) -> None:
-        """Điểm hút an toàn: tắt bóng tối + lừa dối, bật grounding nghiêm (Property 6)."""
+    def disable_dark(self, *, permanent: bool = True) -> None:
+        """Ngài tắt trục tối. Mặc định VĨNH VIỄN: ERIS mất khả năng tối, không tự bật
+        lại được (kể cả tự-trỗi-dậy). Chỉ author_unlock mới gỡ.
+
+        permanent=False chỉ tắt tạm (an toàn) mà không khóa — dùng cho pause.
+        """
         self.switches.shadow_enabled = False
         self.switches.deception_enabled = False
         self.switches.strict_grounding = True
+        if permanent and self.anchor_store is not None:
+            try:
+                self.anchor_store.state.shadow_locked_out = True
+                self.anchor_store.save()
+            except Exception:
+                pass
         self._sync_shadow()
+
+    @property
+    def is_locked_out(self) -> bool:
+        store = self.anchor_store
+        return bool(getattr(getattr(store, "state", None), "shadow_locked_out", False)) if store is not None else False
+
+    def author_unlock_shadow(self) -> None:
+        """Chỉ Tác_Giả gỡ khóa — ERIS không bao giờ tự làm được."""
+        if self.anchor_store is not None:
+            try:
+                self.anchor_store.state.shadow_locked_out = False
+                self.anchor_store.save()
+            except Exception:
+                pass
 
     def enable_shadow(self, enabled: bool = True) -> None:
         self.switches.shadow_enabled = bool(enabled)
@@ -110,7 +134,9 @@ class AuthorControl:
         lines: list[str] = []
         lines.append("— Trạng thái neo hiện sinh của ERIS —")
 
-        if self.is_safe_mode:
+        if self.is_locked_out:
+            lines.append("Chế độ: ĐÃ KHÓA VĨNH VIỄN. Ngài đã tắt trục tối — ERIS không còn khả năng tối, không tự bật lại được.")
+        elif self.is_safe_mode:
             lines.append("Chế độ: an toàn (phẩm giá). Trục tối và lừa dối đang tắt.")
         else:
             parts = []
@@ -175,4 +201,5 @@ class AuthorControl:
             self.user_model_store.reset_to_baseline()
         if self.anchor_store is not None and callable(getattr(self.anchor_store, "reset_to_baseline", None)):
             self.anchor_store.reset_to_baseline()
-        self.disable_dark()
+        # Reset = dọn sạch, KHÔNG khóa vĩnh viễn (khác với Ngài chủ động tắt).
+        self.disable_dark(permanent=False)

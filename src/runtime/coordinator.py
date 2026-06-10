@@ -1419,6 +1419,7 @@ class RuntimeCoordinator(
             "last_tick_at": digest.get("last_tick_at", 0.0),
             "current": self._compact_private_mind_debug_value(digest.get("current", {}), depth=0),
             "inner_diary": self._compact_private_mind_debug_value(digest.get("inner_diary", {}), depth=0),
+            "anchor": self._compact_private_mind_debug_value(digest.get("anchor", {}), depth=0),
             "menu": compact_menu,
         }
 
@@ -4552,11 +4553,47 @@ class RuntimeCoordinator(
             self._handle_force_speak_request()
             return
 
+        if msg_type == "anchor_control":
+            self._handle_anchor_control(msg)
+            return
+
         if msg_type == "chat_end":
             self._end_chat_cycle()
             return
         if msg_type:
             self.logger.debug("[incoming] ignored unknown msg_type=%s", msg_type)
+
+    def _handle_anchor_control(self, msg: dict) -> None:
+        """Tác_Giả bật/tắt trục tối từ panel Godot (R5.5, R10.4).
+
+        Gọi thẳng AuthorControl trên anchor_system của private mind loop. Đổi xong
+        thì digest kế tiếp tự phản ánh trạng thái mới (panel đọc switches live).
+        """
+        loop = getattr(self, "private_mind_loop", None)
+        sysm = getattr(loop, "anchor_system", None)
+        author = getattr(sysm, "author", None) if sysm is not None else None
+        if author is None:
+            self.logger.debug("[anchor_control] no anchor_system available")
+            return
+        action = str(msg.get("action") or "").strip()
+        value = bool(msg.get("value", True))
+        try:
+            if action == "shadow":
+                author.enable_shadow(value)
+            elif action == "deception":
+                author.enable_deception(value)
+            elif action == "strict_grounding":
+                author.set_strict_grounding(value)
+            elif action == "safe_mode":
+                author.disable_dark()
+            elif action == "reset_all":
+                author.reset_all()
+            else:
+                self.logger.debug("[anchor_control] unknown action=%s", action)
+                return
+            self.logger.info("[anchor_control] %s -> %s (safe_mode=%s)", action, value, author.is_safe_mode)
+        except Exception as exc:
+            self.logger.warning("[anchor_control] %s failed: %s", action, exc)
 
     def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
         self.fe_style_memory = self.fe_renderer.remember_style(

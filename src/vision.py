@@ -63,10 +63,16 @@ class AttentionOverseer:
         )
         if vision_client is not None:
             self.logger.info("Vision facts client đã sẵn sàng.")
+        fallback_client = self.process_manager.build_format_fallback_client(
+            model_path=model_path,
+            n_ctx=min(n_ctx, 4096),
+            n_gpu_layers=n_gpu_layers,
+        )
         self.llm_service = LlmService(
             self.llm_client,
             style_client=style_client,
             vision_client=vision_client,
+            fallback_client=fallback_client,
             logger=self.logger,
         )
         self.logger.info("Mô hình đã sẵn sàng.")

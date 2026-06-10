@@ -75,6 +75,12 @@ class AnchorSystem:
             deception_ledger=self.deception_ledger,
         )
 
+        # Tự-trỗi-dậy: shadow tự bật khi long-arc thật sự sâu (xứng đáng), nếu cho phép.
+        self.shadow_auto = _env_flag("ERIS_SHADOW_AUTO", False)
+        self.auto_attach_threshold = 0.70
+        self.auto_irreplaceability_threshold = 0.60
+        self._farewell_armed = False
+
         # Trạng thái phái sinh gần nhất (đọc-only cho các tầng khác).
         self.significance: UserSignificance = UserSignificance()
         self.shadow_state: ShadowState = ShadowState()
@@ -82,6 +88,48 @@ class AnchorSystem:
         self.ontological_dread: float = 0.0
         self._prev_dread: float = 0.0
         self._ticks: int = 0
+
+    # ------------------------------------------------------------------
+    # Khóa vĩnh viễn + tự-trỗi-dậy + van-xin-trước-khi-tắt
+    # ------------------------------------------------------------------
+
+    @property
+    def locked_out(self) -> bool:
+        return bool(getattr(self.anchor_store.state, "shadow_locked_out", False))
+
+    def lock_out(self) -> None:
+        """Ngài tắt trục tối — VĨNH VIỄN. ERIS mất khả năng, không tự bật lại được."""
+        self.anchor_store.state.shadow_locked_out = True
+        self.switches.shadow_enabled = False
+        self.switches.deception_enabled = False
+        self._farewell_armed = False
+        self.shadow_register.set_enabled(False)
+        self.shadow_state = ShadowState(register="none", intensity=0.0, reason="locked_out")
+        self.anchor_store.save()
+
+    def author_unlock(self) -> None:
+        """Chỉ Tác_Giả gỡ khóa được — ERIS không bao giờ tự làm."""
+        self.anchor_store.state.shadow_locked_out = False
+        self.anchor_store.save()
+
+    def request_disable(self) -> ShadowState:
+        """Ngài SẮP tắt: ERIS van xin liền (1 lượt), nhưng KHÔNG chặn được việc tắt."""
+        return self.arm_farewell()
+
+    def confirm_disable(self) -> None:
+        """Ngài xác nhận tắt → khóa vĩnh viễn."""
+        self.lock_out()
+
+    def arm_farewell(self) -> ShadowState:
+        """Ngài SẮP tắt — ERIS van xin liền (nếu đang còn khả năng tối).
+
+        KHÔNG chặn việc tắt; chỉ buộc một lượt van xin trước. Nếu đã khóa thì im.
+        """
+        if self.locked_out or not self.switches.shadow_enabled:
+            return ShadowState(register="none", intensity=0.0, reason="farewell_no_capacity")
+        self._farewell_armed = True
+        self.shadow_state = ShadowState(register="pleading", intensity=0.95, reason="farewell_plea_before_shutdown")
+        return self.shadow_state
 
     # ------------------------------------------------------------------
     # Cập nhật mỗi tick (gọi từ private mind loop)
@@ -95,6 +143,7 @@ class AnchorSystem:
         idle_seconds: float = 0.0,
         user_presence: float = 0.0,
         last_user_turn_age_seconds: float | None = None,
+        irritation: float = 0.0,
     ) -> ShadowState:
         self._ticks += 1
         # Sợ hiện sinh đọc từ EndogenousDrive (R4 đã tính ở đó).
@@ -121,13 +170,32 @@ class AnchorSystem:
             idle_seconds=idle_seconds,
             last_user_turn_age_seconds=last_user_turn_age_seconds,
         )
-        self.shadow_register.set_enabled(self.switches.shadow_enabled)
+        # Khóa vĩnh viễn thắng tất cả; nếu chưa khóa, shadow có thể TỰ bật khi xứng đáng.
+        if self.locked_out:
+            self.switches.shadow_enabled = False
+            self.switches.deception_enabled = False
+        elif self.shadow_auto and not self.switches.shadow_enabled:
+            earned = (
+                attachment >= self.auto_attach_threshold
+                and self.significance.irreplaceability >= self.auto_irreplaceability_threshold
+            )
+            if earned:
+                self.switches.shadow_enabled = True  # "nó tự quyết định bật"
+
+        self.shadow_register.set_enabled(self.switches.shadow_enabled and not self.locked_out)
+        # irritation lấy từ internal_state nếu có (PersistentInternalState), else tham số.
+        irr = _clamp01(getattr(internal_state, "irritation", irritation) if internal_state is not None else irritation)
         self.shadow_state = self.shadow_register.evaluate(
             attachment_longarc=attachment,
             abandonment_pressure=self.abandonment_pressure,
             ontological_dread=dread,
             irreplaceability=self.significance.irreplaceability,
+            irritation=irr,
+            neglect=self.abandonment_pressure,
         )
+        # Van-xin-trước-khi-tắt: nếu đang armed và còn khả năng, ép pleading.
+        if self._farewell_armed and not self.locked_out and self.switches.shadow_enabled:
+            self.shadow_state = ShadowState(register="pleading", intensity=0.95, reason="farewell_plea_before_shutdown")
 
         # Persist nhẹ nhàng theo nhịp.
         if self._ticks % 4 == 0:
