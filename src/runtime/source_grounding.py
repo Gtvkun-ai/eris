@@ -1357,6 +1357,17 @@ class SourceGroundingEngine:
                 ]
             )
 
+        # Always-on vision: có screen evidence nhưng user KHÔNG hỏi về màn hình.
+        # Screen facts chỉ là context nền — cấm tự khoe/đổi chủ đề sang màn hình.
+        if screen_evidence_present and not refers_to_screen:
+            forbidden.extend(
+                [
+                    "Screen facts chỉ là context nền; KHÔNG được tự khoe nội dung màn hình khi Ngài không hỏi.",
+                    "Câu trả lời phải neo vào điều Ngài vừa nói, không lái sang thứ đang hiện trên màn hình.",
+                    "Chỉ nhắc nội dung màn hình khi Ngài hỏi về nó hoặc khi nó trực tiếp trả lời câu của Ngài.",
+                ]
+            )
+
         if not code_detected and primary_source != "pasted_code":
             forbidden.append("Không được giả vờ user đã paste code nếu không có code block hoặc code-like text.")
 

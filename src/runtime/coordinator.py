@@ -197,6 +197,10 @@ class RuntimeCoordinator(
     ShadowPipelineMixin,
 ):
     #Đây là trung tâm điều phối.
+    # Giãn cách tối thiểu giữa 2 lần chụp màn hình cho chat. Trong khoảng này, chat
+    # tái dùng vision_facts gần nhất thay vì chụp + nén lại (xem _capture_screen_frame_for_chat).
+    _CHAT_VISION_THROTTLE_SEC = 6.0
+
     def _fallback_lines_for_intent(self, intent: str) -> tuple[str, ...]:
         key = str(intent or "").strip() or "micro_presence"
         return FALLBACK_BY_INTENT.get(key, FALLBACK_BY_INTENT["micro_presence"])
@@ -4517,7 +4521,16 @@ class RuntimeCoordinator(
         )
 
     def _capture_screen_frame_for_chat(self, user_text: str) -> str:
-        if not self._looks_like_screen_vision_request(user_text):
+        # Bỏ cổng keyword: Eris nên "mở mắt" mỗi lượt chat thay vì chờ đúng chữ.
+        # Chỉ chặn bằng throttle thời gian để khỏi chụp + nén mỗi câu một cách phí phạm:
+        # nếu vừa chụp trong _CHAT_VISION_THROTTLE_SEC giây, tái dùng vision_facts gần
+        # nhất (grounding đã có cơ chế reuse facts trong 10s).
+        last_capture = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0)
+        if last_capture and (time.time() - last_capture) < self._CHAT_VISION_THROTTLE_SEC:
+            self.logger.info(
+                "[vision chat] Dùng lại screen facts vừa chụp (%.1fs trước), bỏ qua chụp mới.",
+                time.time() - last_capture,
+            )
             return ""
 
         capture_fn = getattr(self.telemetry_service, "capture_screen_frame_data_uri", None)

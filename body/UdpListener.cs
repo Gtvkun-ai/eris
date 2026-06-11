@@ -133,6 +133,10 @@ public partial class UdpListener : Node2D
 	// nằm lì. Khớp với mô hình "recency" ở backend (autonomous tự sống lại).
 	private ulong _chatLastActivityMs = 0;
 	[Export] public float ChatAutoHideSeconds = 20f;
+	// Bong bóng thoại chỉ hiện khi Eris đang nói; tự ẩn sau khi gõ xong + chừa thời
+	// gian đọc. 0 = không tự ẩn (hiện mãi cho tới câu kế tiếp).
+	[Export] public float BubbleReadSeconds = 20f;
+	private ulong _bubbleHideAtMs = 0;
 	private Tween _textTween;
 	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 348f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
@@ -351,6 +355,8 @@ public partial class UdpListener : Node2D
 		// Trạng thái mặc định khi khởi động
 		_monika.Play("stand");
 		_label.Text = "Chờ lệnh từ AI...";
+		// Khởi động ẩn bong bóng; chỉ hiện khi Eris thực sự nói (xem ApplyTypewriterEffect).
+		_bubble.Visible = false;
 
 		_monika.AnimationFinished += OnBounceAnimationFinished;
 		GD.Print($"[Ready] Đang lắng nghe UDP cổng 4242. HalfSize={_spriteHalfSize}");
@@ -422,14 +428,29 @@ public partial class UdpListener : Node2D
 		if (_body == null)
 			return;
 
-		// Vùng quanh nhân vật (nới thêm cho bong bóng thoại + dễ click).
+		// Vùng quanh nhân vật (nới thêm cho dễ click).
 		float pad = 12f;
 		Vector2 tl = _body.GlobalPosition - _spriteHalfSize - new Vector2(pad, pad);
 		Vector2 size = _spriteHalfSize * 2f + new Vector2(pad * 2f, pad * 2f);
 		var rect = new Rect2(tl, size);
 
-		// Tránh gọi mỗi frame khi nhân vật đứng yên.
-		if (!_passthroughFullCapture && _passthroughLastRect.Position.DistanceTo(rect.Position) < 2f)
+		// Khi bong bóng thoại đang hiện, gộp luôn vùng của nó vào passthrough.
+		// Vừa cho phép click trúng bong bóng, vừa buộc cửa sổ overlay trong suốt
+		// vẽ lại vùng đó ngay (nếu không bong bóng hay bị "kẹt" không hiện cho tới
+		// khi có sự kiện cửa sổ khác như mở context menu).
+		bool bubbleVisible = _bubble != null && _bubble.Visible && _bubble.Size.X > 0f;
+		if (bubbleVisible)
+		{
+			var bubbleRect = new Rect2(_bubble.GlobalPosition, _bubble.Size);
+			rect = rect.Merge(bubbleRect);
+		}
+
+		// Tránh gọi mỗi frame khi nhân vật đứng yên và bong bóng không đổi.
+		bool unchanged =
+			!_passthroughFullCapture
+			&& _passthroughLastRect.Position.DistanceTo(rect.Position) < 2f
+			&& _passthroughLastRect.Size.DistanceTo(rect.Size) < 2f;
+		if (unchanged)
 			return;
 
 		var region = new[]
@@ -479,6 +500,7 @@ public partial class UdpListener : Node2D
 		}
 
 		UpdateChatPanelAutoHide();
+		UpdateBubbleAutoHide();
 
 		if (_udp.GetAvailablePacketCount() > 0)
 		{
@@ -667,6 +689,20 @@ public partial class UdpListener : Node2D
 		if (idleMs < (ulong)(ChatAutoHideSeconds * 1000f))
 			return;
 		CloseChatPanel();
+	}
+
+	// Ẩn bong bóng thoại sau khi đã nói xong + chừa thời gian đọc, để màn hình
+	// không bị khung thoại nằm lì khi Eris im lặng.
+	private void UpdateBubbleAutoHide()
+	{
+		if (_bubble == null || !_bubble.Visible)
+			return;
+		if (_bubbleHideAtMs == 0)
+			return;
+		if (Time.GetTicksMsec() < _bubbleHideAtMs)
+			return;
+		_bubble.Visible = false;
+		_bubbleHideAtMs = 0;
 	}
 
 	private void ToggleChatPanel()
@@ -2907,6 +2943,16 @@ public partial class UdpListener : Node2D
 
 		text ??= "";
 
+		// Câu rỗng = không có gì để đọc → ẩn bong bóng luôn.
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			if (_bubble != null)
+				_bubble.Visible = false;
+			_bubbleHideAtMs = 0;
+			_label.Text = "";
+			return;
+		}
+
 		// Bật cuộn + tự bám đáy để tin nhắn dài không bị tràn khỏi khung bong bóng.
 		// Chữ được nối dần (progressive) thay vì set hết rồi mới hé lộ, nhờ vậy
 		// ScrollFollowing luôn kéo xuống dòng mới nhất đang gõ.
@@ -2916,10 +2962,26 @@ public partial class UdpListener : Node2D
 		_label.VisibleCharacters = -1;
 		_label.Text = "";
 
+		// Hiện bong bóng đúng lúc Eris bắt đầu nói. Việc bật Visible cũng buộc
+		// cửa sổ overlay trong suốt vẽ lại vùng này (nếu không nó hay "kẹt" ẩn).
+		if (_bubble != null)
+			_bubble.Visible = true;
+
 		_textTween = CreateTween();
 
 		float speedPerChar = 0.05f;
 		float totalDuration = Mathf.Max(0.01f, text.Length * speedPerChar);
+
+		// Lên lịch tự ẩn: gõ xong + chừa thời gian đọc (tỉ lệ theo độ dài câu).
+		if (BubbleReadSeconds > 0f)
+		{
+			float readSeconds = Mathf.Max(BubbleReadSeconds, text.Length * 0.06f);
+			_bubbleHideAtMs = Time.GetTicksMsec() + (ulong)((totalDuration + readSeconds) * 1000f);
+		}
+		else
+		{
+			_bubbleHideAtMs = 0; // không tự ẩn
+		}
 
 		// thực thi hiệu ứng gõ chữ
 		_textTween.TweenMethod(Callable.From<int>(count => RevealTypewriterText(text, count)), 0, text.Length, totalDuration);
