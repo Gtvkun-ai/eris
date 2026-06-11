@@ -134,51 +134,104 @@ class ActionRouter:
         if self._starts_with_negation(norm):
             return self._blocked("open_url", "negated")
 
-        pattern = rf"^\s*{self._COMMAND_PREFIX}(?:mo|open|vao|truy cap)\s+{self._URL_TARGET_RE}\s*$"
+        pattern = rf"^\s*{self._COMMAND_PREFIX}(?:mo|open|vao|truy cap|di den|go to)\s+{self._URL_TARGET_RE}\s*$"
         match = re.search(pattern, norm, flags=re.IGNORECASE)
-        if not match:
-            return self._no_candidate("open_url")
+        if match:
+            # Lấy target từ raw để giữ nguyên chữ hoa/path nếu có.
+            raw_match = re.search(self._URL_TARGET_RE, raw, flags=re.IGNORECASE)
+            target = raw_match.group(1).strip() if raw_match else match.group(1).strip()
+            return RouteCandidate("open_url", target, 0.96, ("explicit_url_command",))
 
-        # Lấy target từ raw để giữ nguyên chữ hoa/path nếu có.
-        raw_match = re.search(self._URL_TARGET_RE, raw, flags=re.IGNORECASE)
-        target = raw_match.group(1).strip() if raw_match else match.group(1).strip()
-        return RouteCandidate("open_url", target, 0.96, ("explicit_url_command",))
+        # Người dùng dán nguyên một URL/domain (không kèm động từ) => mở luôn.
+        bare = re.search(rf"^\s*{self._URL_TARGET_RE}\s*$", norm, flags=re.IGNORECASE)
+        if bare:
+            raw_match = re.search(self._URL_TARGET_RE, raw, flags=re.IGNORECASE)
+            target = raw_match.group(1).strip() if raw_match else bare.group(1).strip()
+            return RouteCandidate("open_url", target, 0.9, ("bare_url",))
+
+        return self._no_candidate("open_url")
+
+    # Từ vựng intent cho now-playing. Tách thành nhóm để rule dựa trên ý nghĩa
+    # thay vì khớp nguyên câu. Mỗi nhóm là một "facet" của câu hỏi đang-phát-gì.
+    _NOW_PLAYING_MEDIA = (
+        "nhac",
+        "bai hat",
+        "bai",
+        "ban nhac",
+        "song",
+        "track",
+        "music",
+    )
+    _NOW_PLAYING_CONTEXT = (
+        "dang nghe",
+        "dang phat",
+        "dang mo",
+        "dang choi",
+        "dang bat",
+        "dang chay",
+        "mo o youtube",
+        "mo o spotify",
+        "mo tren youtube",
+        "mo tren spotify",
+        "tren youtube",
+        "tren spotify",
+        "nghe tren",
+        "phat tren",
+        "playing",
+    )
+    _NOW_PLAYING_QUESTION = (
+        "la gi",
+        "ten gi",
+        "ten la gi",
+        "ten bai gi",
+        "bai gi",
+        "nhac gi",
+        "gi vay",
+        "gi the",
+        "gi day",
+        "hay khong",
+        "phai khong",
+        "dung khong",
+    )
 
     def _route_now_playing(self, raw: str, norm: str) -> RouteCandidate:
-        patterns = (
-            r"^\s*(?:dang nghe gi|dang phat bai gi|bai gi dang phat|nhac gi dang phat)\s*\??\s*$",
-            r"^\s*(?:ten bai|ten nhac)\s+(?:dang phat|dang nghe)\s*\??\s*$",
-            r"^\s*(?:youtube|spotify)\s+(?:dang phat|dang nghe)\s+(?:bai gi|nhac gi|gi)\s*\??\s*$",
-            r"^\s*(?:now playing|what'?s playing|what is playing)\s*\??\s*$",
-            r"^\s*(?:ban\s+thay\s+)?ten\s+nhac\s+toi\s+dang\s+nghe\s+la\s+gi\s*\??\s*$",
-            r"^\s*(?:ban\s+thay\s+)?(?:nhac|bai)\s+toi\s+(?:mo|dang mo)\s+o\s+youtube\s+hay\s+khong\s*\??\s*$",
-            r"^\s*(?:ban\s+)?thay\s+(?:nhac|bai)\s+toi\s+(?:mo|dang mo)\s+o\s+youtube\s+hay\s+khong\s*\??\s*$",
-        )
-        if any(re.search(p, norm, flags=re.IGNORECASE) for p in patterns):
-            return RouteCandidate("get_now_playing", "", 0.94, ("explicit_now_playing_question",))
-        if self._looks_like_meta_question(norm) or self._starts_with_negation(norm):
-            return self._blocked("get_now_playing", "meta_or_negated")
+        # English explicit form, không cần thêm facet.
+        if re.search(r"^\s*(?:now playing|what'?s playing|what is playing)\b", norm, flags=re.IGNORECASE):
+            return RouteCandidate("get_now_playing", "", 0.94, ("explicit_now_playing_en",))
+
+        if self._starts_with_negation(norm):
+            return self._blocked("get_now_playing", "negated")
+        # Chỉ chặn meta khi là câu hỏi code/lập trình, KHÔNG chặn chỉ vì có "la gi".
+        if self._now_playing_is_meta(norm):
+            return self._blocked("get_now_playing", "meta_code_question")
+
+        has_media = self._contains_any(norm, self._NOW_PLAYING_MEDIA)
+        has_context = self._contains_any(norm, self._NOW_PLAYING_CONTEXT)
+        has_question = self._contains_any(norm, self._NOW_PLAYING_QUESTION) or raw.strip().endswith("?")
+
+        # Cần đủ 3 facet: đối tượng (nhạc/bài) + ngữ cảnh đang phát + dạng hỏi.
+        # Đây là điều khiến rule tổng quát theo ý chứ không khớp cứng câu chữ.
+        if has_media and has_context and has_question:
+            return RouteCandidate("get_now_playing", "", 0.94, ("now_playing_intent",))
         return self._no_candidate("get_now_playing")
 
     def _route_now_playing_follow_up(self, raw: str, norm: str, *, last_action: str) -> RouteCandidate:
         if last_action != "get_now_playing":
             return self._no_candidate("get_now_playing")
-        if len(norm) > 64:
+        if len(norm) > 80:
             return self._no_candidate("get_now_playing")
         if self._looks_like_correction(norm) or self._starts_with_negation(norm):
             return self._blocked("get_now_playing", "correction_or_negated_followup")
-        if self._looks_like_meta_question(norm):
+        if self._now_playing_is_meta(norm):
             return self._blocked("get_now_playing", "meta_followup")
 
-        # Follow-up phải vẫn nhắc rõ bài/nhạc/song/platform. Pronoun trần như "đó",
-        # "ấy", "kia" không đủ. Bài học đắt giá: đại từ không phải action intent.
-        patterns = (
-            r"^\s*(?:bai|nhac|song)\s+(?:do|ay|kia|nay)\s+(?:la gi|ten gi|ten la gi)\s*\??\s*$",
-            r"^\s*(?:ten|name)\s+(?:bai|nhac|song)\s+(?:do|ay|kia|nay)\s*\??\s*$",
-            r"^\s*(?:tren\s+)?(?:youtube|spotify)\s+(?:ay|do|kia|nay)?\s*\??\s*$",
-            r"^\s*(?:nhac|bai)\s+tren\s+(?:youtube|spotify)\s+(?:ay|do|kia|nay)\s*\??\s*$",
-        )
-        if any(re.search(p, norm, flags=re.IGNORECASE) for p in patterns):
+        # Sau khi vừa trả lời đang-phát-gì, một follow-up ngắn vẫn nhắc tới
+        # bài/nhạc/song hoặc nền tảng (youtube/spotify) thì hiểu là hỏi tiếp về
+        # bài đó. Đại từ trần ("đó/ấy") đứng một mình thì không route, tránh nhầm
+        # câu nói chuyện phiếm.
+        has_media = self._contains_any(norm, self._NOW_PLAYING_MEDIA)
+        has_platform = self._contains_any(norm, ("youtube", "spotify"))
+        if has_media or has_platform:
             return RouteCandidate("get_now_playing", "", 0.86, ("now_playing_followup",))
         return self._no_candidate("get_now_playing")
 
@@ -311,6 +364,9 @@ class ActionRouter:
     def _route_weather(self, raw: str, norm: str) -> RouteCandidate:
         if self._starts_with_negation(norm):
             return self._blocked("get_weather", "negated")
+        # Chặn câu hỏi kiểu "cách làm app thời tiết bằng python" trước khi match.
+        if self._weather_is_meta(norm):
+            return self._blocked("get_weather", "weather_meta_topic")
 
         patterns = (
             rf"^\s*{self._COMMAND_PREFIX}(?:xem|coi|kiem tra)?\s*(?:thoi tiet|weather)\b.*$",
@@ -367,6 +423,40 @@ class ActionRouter:
     def _looks_like_meta_question(cls, norm: str) -> bool:
         padded = cls._pad(norm)
         return any(marker in padded for marker in cls._META_MARKERS)
+
+    @staticmethod
+    def _contains_any(norm: str, needles: tuple[str, ...]) -> bool:
+        """True nếu norm chứa bất kỳ cụm nào. Dùng cho intent dạng facet."""
+
+        return any(needle in norm for needle in needles)
+
+    @classmethod
+    def _now_playing_is_meta(cls, norm: str) -> bool:
+        """Chỉ chặn now-playing khi câu rõ ràng là hỏi code/lập trình.
+
+        Khác với _looks_like_meta_question chung: ở đây KHÔNG coi " la gi" là meta,
+        vì "tên nhạc đang nghe là gì" là câu hỏi now-playing hợp lệ.
+        """
+
+        padded = cls._pad(norm)
+        meta = (
+            " python ",
+            " c# ",
+            " csharp ",
+            " javascript ",
+            " api ",
+            " regex ",
+            " code ",
+            " function ",
+            " ham ",
+            " class ",
+            " method ",
+            " bug ",
+            " debug ",
+            " source ",
+            " thuat toan ",
+        )
+        return any(marker in padded for marker in meta)
 
     @classmethod
     def _looks_like_correction(cls, norm: str) -> bool:

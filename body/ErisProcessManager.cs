@@ -36,21 +36,44 @@ public sealed class ErisProcessManager
 			return;
 		}
 
-		string projectRoot = GetProjectRoot();
-		string visionScriptFullPath = ResolveProjectPath(config.VisionScriptPath);
-		if (!File.Exists(visionScriptFullPath))
+		string baseDir = GetRuntimeBaseDir();
+
+		// Ban export (packaged): uu tien runtime da dong goi bang PyInstaller,
+		// nam o <thu muc chua .exe>/runtime/eris-runtime.exe. Tester khong can Python.
+		string bundledRuntime = Path.Combine(baseDir, "runtime", BundledRuntimeFileName());
+		bool useBundledRuntime = File.Exists(bundledRuntime);
+
+		string fileName;
+		string arguments;
+		if (useBundledRuntime)
 		{
-			GD.PrintErr($"[Vision] Khong tim thay script: {visionScriptFullPath}");
-			return;
+			fileName = bundledRuntime;
+			arguments = "";
+		}
+		else
+		{
+			// Che do dev / chua dong goi: chay truc tiep python src/vision.py.
+			string visionScriptFullPath = Path.Combine(
+				baseDir, (config.VisionScriptPath ?? "").Replace('/', Path.DirectorySeparatorChar));
+			if (!File.Exists(visionScriptFullPath))
+			{
+				GD.PrintErr(
+					$"[Vision] Khong tim thay runtime. Da thu:\n" +
+					$"  - bundled: {bundledRuntime}\n" +
+					$"  - script : {visionScriptFullPath}");
+				return;
+			}
+			fileName = config.PythonExecutable;
+			arguments = $"\"{visionScriptFullPath}\"";
 		}
 
 		try
 		{
 			var startInfo = new ProcessStartInfo
 			{
-				FileName = config.PythonExecutable,
-				Arguments = $"\"{visionScriptFullPath}\"",
-				WorkingDirectory = projectRoot,
+				FileName = fileName,
+				Arguments = arguments,
+				WorkingDirectory = baseDir,
 				UseShellExecute = false,
 				CreateNoWindow = true,
 				RedirectStandardOutput = true,
@@ -58,6 +81,9 @@ public sealed class ErisProcessManager
 				StandardOutputEncoding = Encoding.UTF8,
 				StandardErrorEncoding = Encoding.UTF8,
 			};
+			GD.Print(useBundledRuntime
+				? $"[Vision] Dung runtime dong goi: {bundledRuntime}"
+				: $"[Vision] Dung Python dev: {fileName} {arguments}");
 			PopulateVisionEnvironment(startInfo, config);
 
 			var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
@@ -120,6 +146,9 @@ public sealed class ErisProcessManager
 		startInfo.Environment["PYTHONUTF8"] = "1";
 		startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
 		startInfo.Environment["PYTHONUNBUFFERED"] = "1";
+		// Cho phep Python tim base dir that (canh .exe khi da export) thay vi
+		// suy ra tu __file__ (bi sai trong bundle PyInstaller).
+		startInfo.Environment["ERIS_PROJECT_ROOT"] = GetRuntimeBaseDir();
 		startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = config.EnableRemoteCognitionApi ? "1" : "0";
 		startInfo.Environment["ERIS_REMOTE_PROVIDER"] = config.RemoteApiProvider;
 		startInfo.Environment["ERIS_REMOTE_BASE_URL"] = config.RemoteApiBaseUrl;
@@ -136,7 +165,7 @@ public sealed class ErisProcessManager
 	private Dictionary<string, string> LoadProjectSecretsEnvironment()
 	{
 		var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-		string secretsPath = Path.Combine(GetProjectRoot(), "config", "secrets.json");
+		string secretsPath = Path.Combine(GetRuntimeBaseDir(), "config", "secrets.json");
 		if (!File.Exists(secretsPath))
 			return values;
 
@@ -254,9 +283,27 @@ public sealed class ErisProcessManager
 		return ProjectSettings.GlobalizePath("res://");
 	}
 
+	// Thu muc goc de tim runtime/config:
+	// - Trong editor: dung res:// (project root tren o dia).
+	// - Trong ban export: dung thu muc chua file .exe (vi res:// tro vao .pck).
+	private static string GetRuntimeBaseDir()
+	{
+		if (OS.HasFeature("editor"))
+			return GetProjectRoot();
+
+		string exePath = OS.GetExecutablePath();
+		string exeDir = Path.GetDirectoryName(exePath);
+		return string.IsNullOrWhiteSpace(exeDir) ? GetProjectRoot() : exeDir;
+	}
+
+	private static string BundledRuntimeFileName()
+	{
+		return OS.HasFeature("windows") ? "eris-runtime.exe" : "eris-runtime";
+	}
+
 	private static string ResolveProjectPath(string path)
 	{
-		return Path.Combine(GetProjectRoot(), (path ?? "").Replace('/', Path.DirectorySeparatorChar));
+		return Path.Combine(GetRuntimeBaseDir(), (path ?? "").Replace('/', Path.DirectorySeparatorChar));
 	}
 
 	private static bool ShouldLogVisionOutput(string line)

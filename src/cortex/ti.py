@@ -244,7 +244,14 @@ class TiGovernor:
             target_x_hint=target_x_hint,
         )
 
-    def enforce_decision(self, decision: Decision, report: TiPolicyReport, *, user_hint: str = "") -> Decision:
+    def enforce_decision(
+        self,
+        decision: Decision,
+        report: TiPolicyReport,
+        *,
+        user_hint: str = "",
+        vision_grounded: bool = False,
+    ) -> Decision:
         if self._looks_like_structured_payload_text(decision.text):
             self._merge_debug_trace(decision, "Ti bỏ qua text edit vì phát hiện payload có cấu trúc.")
             self._merge_debug_trace(decision, f"Ti mode={report.mode}")
@@ -255,7 +262,9 @@ class TiGovernor:
             self._merge_debug_trace(decision, f"Ti guard_mode={guard_mode}")
         elif guard_mode == LOG_ONLY_GUARD_MODE:
             self._log_guard_report(self._detect_risks(decision.text), decision=decision)
-            guarded_text = self._apply_ti_guard(decision.text, user_hint=user_hint)
+            guarded_text = self._apply_ti_guard(
+                decision.text, user_hint=user_hint, vision_grounded=vision_grounded
+            )
             if guarded_text != decision.text:
                 decision.text = guarded_text
                 decision.extracted_fact = ""
@@ -265,7 +274,9 @@ class TiGovernor:
             self._log_guard_report(self._detect_risks(decision.text), decision=decision)
             self._merge_debug_trace(decision, f"Ti guard_mode={guard_mode}")
         elif guard_mode == STRICT_GUARD_MODE:
-            guarded_text = self._apply_ti_guard(decision.text, user_hint=user_hint)
+            guarded_text = self._apply_ti_guard(
+                decision.text, user_hint=user_hint, vision_grounded=vision_grounded
+            )
             if guarded_text != decision.text:
                 decision.text = guarded_text
                 decision.extracted_fact = ""
@@ -600,11 +611,14 @@ class TiGovernor:
         )
         return len(field_hits) >= 3
 
-    def _apply_ti_guard(self, text: str, user_hint: str = "") -> str:
+    def _apply_ti_guard(self, text: str, user_hint: str = "", *, vision_grounded: bool = False) -> str:
         if not text:
             return text
 
-        if not self._has_capability_violation(text) and not self._has_perception_violation(text):
+        # Khi đã có ảnh màn hình grounded thật, các câu kiểu "tôi đang nhìn màn hình"
+        # là perception hợp lệ, không phải bịa — không được guard viết lại.
+        perception_violation = (not vision_grounded) and self._has_perception_violation(text)
+        if not self._has_capability_violation(text) and not perception_violation:
             return text
 
         replacement = self._build_soft_redirect(user_hint=user_hint)

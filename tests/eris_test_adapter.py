@@ -151,7 +151,13 @@ class _Ti:
             direction_hint=0,
         )
 
-    def enforce_decision(self, decision: Decision, report: SimpleNamespace, user_hint: str = "") -> Decision:
+    def enforce_decision(
+        self,
+        decision: Decision,
+        report: SimpleNamespace,
+        user_hint: str = "",
+        vision_grounded: bool = False,
+    ) -> Decision:
         return decision
 
 

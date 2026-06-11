@@ -2705,6 +2705,12 @@ class LlmService:
             user_msg += (
                 "- technical_help contract: offer one tiny practical nudge. Useful beats poetic. Do not pretend to solve without evidence.\n"
             )
+        elif impulse_kind in {"private_life_surface", "private_anchor_surface", "private_mind_surface"}:
+            user_msg += (
+                "- private_life contract: use topic_seed/root_source as the root of an inner-life residue surfacing lightly. This is an endogenous inner surface, not a screen observation.\n"
+                "- private_life contract: speak one short Vietnamese inner aside conditioned on ego_surface_state; never dump raw runtime/private state, never claim screen facts, never narrate UI.\n"
+                "- private_life contract: when must_surface=true, do not return empty just because there is no screen evidence; anchor on the seed and state. Return empty only if topic_seed is genuinely absent or safety/permission is violated.\n"
+            )
 
         user_msg += (
             "- Do not copy Legacy fallback; it is present only for compatibility and may be empty.\n"
@@ -2966,11 +2972,13 @@ class LlmService:
                     "type": "text",
                     "text": (
                         f"{user_message}\n\n"
-                        "Ảnh đính kèm là screenshot toàn màn hình hiện tại. "
-                        "Chỉ mô tả những gì nhìn thấy rõ trong ảnh; nếu tab, URL, "
-                        "hay chữ quá nhỏ hoặc bị che thì nói là không đọc rõ. "
-                        "Không suy diễn từ lịch sử hay bộ nhớ. "
-                        "Nếu Ngài đang hỏi trực tiếp về màn hình hoặc debug, không bỏ qua cửa sổ debug/Godot khi nó đang chứa nội dung rõ."
+                        "Ảnh đính kèm là screenshot màn hình hiện tại — dùng làm context nền, "
+                        "KHÔNG cần mô tả hay nhắc đến màn hình trừ khi Ngài hỏi trực tiếp về nó. "
+                        "Nếu câu hỏi là xã giao, cảm xúc, hay chủ đề khác, hãy trả lời đúng chủ đề đó. "
+                        "Chỉ dùng ảnh khi Ngài hỏi về code, lỗi, hay những gì đang hiển thị trên màn hình. "
+                        "QUAN TRỌNG: Nếu trong ảnh có cửa sổ Godot đang chạy chính ERIS (nhân vật chibi, khung hội thoại), "
+                        "đó là giao diện runtime của chính mày — không mô tả nó như thể mày đang nhìn một thứ bên ngoài mình. "
+                        "Không bao giờ nói 'tôi thấy nhân vật của tôi' hay 'tôi thấy cửa sổ Godot đang chạy tôi' — đó là vòng lặp vô nghĩa."
                         f"\nTrong trường debug_trace của JSON, hãy thêm marker: {vision_trace}."
                     ),
                 },

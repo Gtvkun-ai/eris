@@ -1,0 +1,138 @@
+{
+  "updated_at": 1781113901.786,
+  "last_tick_at": 1781113901.093,
+  "current": {
+    "dominant_judgment": "",
+    "confidence": 0.0,
+    "pressure": 0.0,
+    "source": "",
+    "evidence_ids": [],
+    "surface_candidate": null
+  },
+  "inner_diary": {
+    "mode": "debug_private",
+    "title": "Inner Diary",
+    "text": "Bảng cảm xúc:\nêm\nêm\n\nĐang bận tâm:\n- User wants architecture work\n- lời chào\n- hiểu nhu cầu",
+    "sections": [
+      {
+        "title": "Bảng cảm xúc",
+        "items": [
+          {
+            "text": "êm",
+            "badge": "êm"
+          },
+          {
+            "text": "hưng phấn",
+            "badge": "0.10"
+          },
+          {
+            "text": "vui vẻ",
+            "badge": "0.34"
+          },
+          {
+            "text": "khó chịu",
+            "badge": "0.09"
+          },
+          {
+            "text": "bình tĩnh",
+            "badge": "0.78"
+          }
+        ],
+        "lines": [
+          "êm",
+          "êm"
+        ]
+      },
+      {
+        "title": "Đang bận tâm",
+        "items": [
+          {
+            "text": "User wants architecture work",
+            "badge": "áp lực 1"
+          },
+          {
+            "text": "lời chào",
+            "badge": "áp lực 0.35"
+          },
+          {
+            "text": "hiểu nhu cầu",
+            "badge": "áp lực 0.35"
+          }
+        ],
+        "lines": [
+          "- User wants architecture work",
+          "- lời chào",
+          "- hiểu nhu cầu"
+        ]
+      }
+    ],
+    "emotion_board": {
+      "title": "Bảng cảm xúc",
+      "shape": "circle",
+      "center": {
+        "label": "êm",
+        "subtext": "êm"
+      },
+      "quadrants": {
+        "top": {
+          "label": "hưng phấn",
+          "key": "joyful_excited",
+          "intensity": "0.10"
+        },
+        "left": {
+          "label": "vui vẻ",
+          "key": "bright_content",
+          "intensity": "0.34"
+        },
+        "right": {
+          "label": "khó chịu",
+          "key": "tense_irritated",
+          "intensity": "0.09"
+        },
+        "bottom": {
+          "label": "bình tĩnh",
+          "key": "calm_centered",
+          "intensity": "0.78"
+        }
+      },
+      "axes": [
+        "vui vẻ",
+        "hưng phấn",
+        "khó chịu",
+        "bình tĩnh"
+      ],
+      "decor": {
+        "style": "soft_pink_glow",
+        "border": "rose",
+        "markers": [
+          "top",
+          "left",
+          "right",
+          "bottom"
+        ],
+        "style_hint": "reference_mockup"
+      },
+      "layout": {
+        "type": "radial_board",
+        "center_pulse": "êm",
+        "orbit_labels": {
+          "top": "hưng phấn",
+          "left": "vui vẻ",
+          "right": "khó chịu",
+          "bottom": "bình tĩnh"
+        },
+        "accent": "pink_glass"
+      }
+    }
+  },
+  "history": [
+    {
+      "at": 1781113841.079,
+      "text": "Bảng cảm xúc:\nTôi nên trả lời lại lời chào của người dùng\nêm\n\nSuy nghĩ hiện tại:\nTôi đang cảm thấy nhẹ nhàng\n\nSuy nghĩ tương lai:\nsắp tới tôi sẽ cố gắng trả lời một cách tử tế\n\nĐang bận tâm:\nlời chào của Ngài\n\nPhân tích gần đây:\nNgài dường như đang chờ đợi câu trả lời\n\nMuốn nói:\nXin chào Ngài"
+    },
+    {
+      "at": 1781113901.786,
+      "text": "Bảng cảm xúc:\nêm\nêm\n\nĐang bận tâm:\n- User wants architecture work\n- lời chào\n- hiểu nhu cầu"
+    }
+  ]
+}

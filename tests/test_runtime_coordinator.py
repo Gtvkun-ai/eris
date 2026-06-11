@@ -493,7 +493,7 @@ class _DummyTi:
             animation_hint="stand",
         )
 
-    def enforce_decision(self, decision, report, user_hint=""):
+    def enforce_decision(self, decision, report, user_hint="", vision_grounded=False):
         return decision
 
 

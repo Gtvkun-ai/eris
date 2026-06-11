@@ -672,15 +672,14 @@ class ChatCycleMixin:
         try:
             for attempt_index in range(max_format_retries + 1):
                 try:
-                    # allow_local_fallback=True lets LlmService route a gemma
-                    # format/CoT-leak failure to the Groq fallback client (valid
-                    # JSON trier) within the same attempt, instead of burning all
-                    # retries on the same model and dropping to a canned fallback.
+                    # Loop = gemma-only reformatting retries (cheap, same provider).
+                    # Only after gemma fully gives up do we pay for a cross-provider
+                    # switch to Groq (the switch-API attempt below).
                     raw = self.llm_service.generate_chat_reply(
                         **chat_generation_kwargs,
                         format_retry_context=format_retry_context,
                         last_failure=format_failure_flag,
-                        allow_local_fallback=True,
+                        allow_local_fallback=False,
                     )
                     break
                 except FormatViolationException as exc:
@@ -721,21 +720,55 @@ class ChatCycleMixin:
                         getattr(exc, "reason", str(exc)),
                     )
             if raw is None:
-                # API remote da retry het luot ma van fail, nen khong route sang local fallback.
-                # Tra ve no_fallback_block de Godot biet ro ly do.
-                no_fallback_block = True
-                frame.debug_notes.append(f"llm_format_errors={format_errors}; route=no_fallback_block")
-                self.logger.warning(
-                    "[llm format block] remote retries exhausted, no local fallback | errors=%d",
-                    format_errors,
-                )
-                raw = self._build_chat_format_repair_fallback_raw(
-                    FormatViolationException(
-                        "chat_format_contract_exhausted",
-                        channel="chat",
-                        raw_text="",
+                switched_api = False
+                if not no_fallback_mode_enabled():
+                    # Gemma đã cạn lượt với chính nó. Đổi API một lượt cuối: route
+                    # sang Groq llama (bám response_format JSON tốt hơn, không nhả
+                    # bullet analysis) trước khi đành chặn lượt.
+                    switched_api = True
+                    frame.debug_notes.append("llm_format_switch_api=groq_fallback")
+                    self.logger.warning(
+                        "[llm format switch-api] gemma exhausted; trying fallback API (Groq) | errors=%d",
+                        format_errors,
                     )
-                )
+                    try:
+                        raw = self.llm_service.generate_chat_reply(
+                            **chat_generation_kwargs,
+                            format_retry_context=format_retry_context,
+                            last_failure=format_failure_flag,
+                            allow_local_fallback=True,
+                        )
+                    except FormatViolationException as exc:
+                        format_errors += 1
+                        raw = None
+                        frame.debug_notes.append(
+                            f"llm_format_switch_api_failed; errors={format_errors}; reason={getattr(exc, 'reason', str(exc))}"
+                        )
+                        self.logger.warning(
+                            "[llm format switch-api] fallback API also broke format | errors=%d | reason=%s",
+                            format_errors,
+                            getattr(exc, "reason", str(exc)),
+                        )
+                if raw is None:
+                    # Cạn cả gemma lẫn API đổi (hoặc no-fallback mode): chặn lượt,
+                    # không bịa câu trấn an.
+                    no_fallback_block = True
+                    frame.debug_notes.append(
+                        f"llm_format_errors={format_errors}; switch_api={switched_api}; route=no_fallback_block"
+                    )
+                    self.logger.warning(
+                        "[llm format block] all providers exhausted | errors=%d | switch_api=%s",
+                        format_errors,
+                        switched_api,
+                    )
+                    raw = self._build_chat_format_block_raw(
+                        FormatViolationException(
+                            "chat_format_contract_exhausted",
+                            channel="chat",
+                            raw_text="",
+                        ),
+                        switched_api=switched_api,
+                    )
         finally:
             self._set_background_memory_digest_remote_inflight(False)
         self._log_raw_llm_output("chat", raw)
@@ -761,7 +794,7 @@ class ChatCycleMixin:
             decision.parse_mode = "no_fallback_block"
         self._log_decision_stage("chat", "after_parser", decision)
         self._log_decision_stage("chat", "pre_ti", decision)
-        decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
+        decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text, vision_grounded=bool(screen_image_data_uri))
         self._log_decision_stage("chat", "after_ti", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot)
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
@@ -794,6 +827,46 @@ class ChatCycleMixin:
             if logger is not None:
                 logger.debug("[repair suppression] recall lỗi (nuốt): %r", exc)
             return None
+
+    def _build_chat_format_block_raw(self, exc: FormatViolationException, *, switched_api: bool = False) -> str:
+        """Block payload when every provider (gemma retries + Groq switch-API)
+        breaks the format contract. We refuse to fabricate a reassurance line and
+        surface an honest block instead.
+        """
+        reason = str(getattr(exc, "reason", "") or exc)
+        if no_fallback_mode_enabled():
+            return build_no_fallback_payload(
+                channel="chat",
+                reason=reason,
+                should_speak=True,
+                confidence=0.0,
+                reasoning_tags=("format_block",),
+            )
+        payload = {
+            "text": (
+                "Tôi phải chặn lượt này: câu trả lời cứ sai định dạng, và tôi không "
+                "muốn đẩy phần lỗi đó ra cho Ngài."
+            ),
+            "intent": "no_fallback_block",
+            "action": "none",
+            "reasoning_tags": [
+                "format_block",
+                "switch_api_exhausted" if switched_api else "format_error",
+            ],
+            "should_speak": True,
+            "confidence": 0.0,
+            "animation": "stand",
+            "direction": 0,
+            "target_x": -1.0,
+            "bounce_action": "",
+            "extracted_fact": "",
+            "debug_trace": f"format_violation_blocked: {reason[:180]}",
+            "next_animation": "",
+            "system_action": "",
+            "action_input": "",
+            "parse_mode": "no_fallback_block",
+        }
+        return json.dumps(payload, ensure_ascii=False)
 
     def _build_chat_format_repair_fallback_raw(self, exc: FormatViolationException) -> str:
         reason = str(getattr(exc, "reason", "") or exc)
@@ -996,9 +1069,8 @@ class ChatCycleMixin:
             term in normalized for term in visual_objects
         )
     def _capture_screen_frame_for_chat(self, user_text: str) -> str:
-        if not self._looks_like_screen_vision_request(user_text):
-            return ""
-
+        # Bỏ cổng marker: mỗi lượt chat đều chụp + đọc màn hình tươi để ERIS thực sự
+        # "thấy" được ngữ cảnh, thay vì phải đoán keyword mới chịu mở mắt.
         capture_fn = getattr(self.telemetry_service, "capture_screen_frame_data_uri", None)
         if not callable(capture_fn):
             self.logger.info("[vision chat] telemetry service không hỗ trợ chụp màn hình.")

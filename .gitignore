@@ -21,3 +21,27 @@ src/.vision.lock
 long_term_memory.json
 long_term_memory.json.pending-*.json
 .*_memory_layers/
+
+# Test / build / debug artifacts
+pytest-output.txt
+pytest-report.xml
+pytest_runtime_nodes.txt
+test_timing.txt
+test_out.txt
+tgt_test.txt
+reg_out.txt
+shadow_reg.txt
+pbt_*.txt
+@AutomationLog.txt
+_scaffold_*.txt
+import_time.log
+tmp_*
+
+# Source/state snapshots that should not be tracked
+src/src.zip
+memory_core_backup_*/
+
+# PyInstaller build output (bundle nang, khong commit)
+dist/
+build/_work/
+*.spec.bak

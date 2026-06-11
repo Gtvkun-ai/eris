@@ -335,7 +335,7 @@ class PresenceControllerMixin:
         # một kiểu "có ý định giao tiếp" nhưng lại tự tháo dây thanh quản.
         presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence", "re_engagement", "idle_curiosity", "continuity_presence"})
         endogenous_like = bool(
-            impulse.kind in {"inner_whim", "random_chatter", "thought_stream_surface", "curious_question", "light_muse", "memory_resonance"}
+            impulse.kind in {"inner_whim", "random_chatter", "thought_stream_surface", "curious_question", "light_muse", "memory_resonance", "private_life_surface", "private_anchor_surface", "private_mind_surface"}
             or impulse.source in {"endogenous_drive", "thought_stream", "spontaneous_life", "internal_agenda", "inner_thought"}
         )
         sensor_like = bool(impulse.kind == "blind_frustration" or impulse.source == "sensor_visibility")

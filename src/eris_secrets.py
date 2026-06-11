@@ -6,7 +6,20 @@ from typing import Any
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_SECRETS_PATH = _PROJECT_ROOT / "config" / "secrets.json"
+
+
+def _resolve_secrets_path() -> Path:
+    # Ban export (PyInstaller): __file__ nam trong bundle nen parents[1] sai.
+    # C# truyen ERIS_PROJECT_ROOT = thu muc chua .exe; uu tien dung no.
+    env_root = os.environ.get("ERIS_PROJECT_ROOT", "").strip()
+    if env_root:
+        candidate = Path(env_root) / "config" / "secrets.json"
+        if candidate.is_file():
+            return candidate
+    return _PROJECT_ROOT / "config" / "secrets.json"
+
+
+_SECRETS_PATH = _resolve_secrets_path()
 
 
 @lru_cache(maxsize=1)
