@@ -11,14 +11,13 @@ from dataclasses import dataclass, replace
 from cortex.contracts import SessionRitualReport
 from cortex.banned_filler import is_banned_filler
 from cortex.social_presence import SocialPresenceDetector
-from cortex.low_level_speech_policy import LowLevelSpeechPolicy, LowLevelSpeechPolicyConfig
+from cortex.low_level_speech_policy import LowLevelSpeechPolicy
 from cortex.surface_arbiter import SurfaceArbiter, SurfaceDecision, SurfaceImpulse
 from cortex.surface_seed_compiler import SurfaceSeedCompiler
 from cortex.continuity_threat import evaluate_continuity_threat
 from domain import Decision
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.sensor_visibility import SensorVisibilityState, derive_sensor_visibility_state
-from guard_config import guards_warn_only
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,38 +289,12 @@ class PresenceControllerMixin:
         arbiter = getattr(self, "_low_level_surface_arbiter", None)
         if arbiter is None:
             arbiter = SurfaceArbiter(
-                policy=LowLevelSpeechPolicy(self._spontaneity_policy_config()),
+                policy=LowLevelSpeechPolicy(),
                 llm_micro_gen=self._surface_arbiter_llm_generate,
                 thought_stream=getattr(self, "thought_stream", None),
             )
             self._low_level_surface_arbiter = arbiter
         return arbiter
-
-    def _spontaneity_policy_config(self) -> LowLevelSpeechPolicyConfig:
-        """Config arbiter có nối núm spontaneity.
-
-        Spontaneity cao ⇒ đưa các impulse 'sống' vào always_llm_kinds (force_llm khi
-        đủ min_confidence) và hạ ngưỡng force theo im lặng. Đây là cổng-thứ-hai: sau
-        khi đã SINH dồi dào candidate, đây mới là chỗ cho chúng thật sự được phát thay
-        vì rơi về body-only. Tần suất vẫn do rate_limit/cooldown khống chế.
-        """
-        base = LowLevelSpeechPolicyConfig.from_env()
-        spont = self._spontaneity_level()
-        if spont <= 0.0:
-            return base
-        alive_kinds = (
-            "scene_curiosity", "curious_question", "idle_curiosity",
-            "inner_whim", "light_muse", "micro_story", "companionship_ping",
-            "random_chatter", "thought_stream_surface", "memory_resonance",
-        )
-        from dataclasses import replace as _dc_replace
-        return _dc_replace(
-            base,
-            always_llm_kinds=tuple(dict.fromkeys((*base.always_llm_kinds, *alive_kinds))),
-            force_llm_after_silent=max(1, int(round(base.force_llm_after_silent - 4 * spont))),
-            presence_force_llm_after_silent=max(1, int(round(base.presence_force_llm_after_silent - 2 * spont))),
-            vital_pressure_force_llm_threshold=max(0.15, base.vital_pressure_force_llm_threshold - 0.30 * spont),
-        )
 
     def _surface_arbiter_llm_generate(self, *, impulse: SurfaceImpulse, snapshot, force_llm: bool = False) -> tuple[str, str]:
         """Adapter để SurfaceArbiter dùng generator micro hiện có, không tự viết fallback."""
@@ -335,7 +308,7 @@ class PresenceControllerMixin:
         # một kiểu "có ý định giao tiếp" nhưng lại tự tháo dây thanh quản.
         presence_like = bool(getattr(impulse, "is_presence", False) or impulse.kind in {"presence_maintenance", "micro_presence", "re_engagement", "idle_curiosity", "continuity_presence"})
         endogenous_like = bool(
-            impulse.kind in {"inner_whim", "random_chatter", "thought_stream_surface", "curious_question", "light_muse", "memory_resonance", "private_life_surface", "private_anchor_surface", "private_mind_surface"}
+            impulse.kind in {"inner_whim", "random_chatter", "thought_stream_surface", "curious_question", "light_muse", "memory_resonance"}
             or impulse.source in {"endogenous_drive", "thought_stream", "spontaneous_life", "internal_agenda", "inner_thought"}
         )
         sensor_like = bool(impulse.kind == "blind_frustration" or impulse.source == "sensor_visibility")
@@ -443,7 +416,7 @@ class PresenceControllerMixin:
         )
         if sensor_like and text and self._blind_frustration_blames_user_without_evidence(text, impulse):
             return "", "blind_frustration_blame_blocked"
-        if text and is_banned_filler(text) and not guards_warn_only():
+        if text and is_banned_filler(text):
             return "", "banned_filler_blocked"
         return text, source
 
@@ -778,24 +751,6 @@ class PresenceControllerMixin:
         preferred_distance = self._surface_float(getattr(rel, "preferred_distance", 0.58) if rel is not None else 0.58, 0.58)
         trust = self._surface_float(getattr(rel, "trust", 0.25) if rel is not None else 0.25, 0.25)
         attachment_visibility = self._surface_float(getattr(rel, "attachment_visibility", 0.12) if rel is not None else 0.12, 0.12)
-
-        # Trục neo hiện sinh: khi Đăng_Ký_Bóng_Tối mở, ĐẢO CỰC dignity/preferred_distance
-        # (phẩm-giá-lạnh ↔ đòi-hỏi-mong-manh). Gated: shadow none/kill-switch off → no-op.
-        shadow_register = "none"
-        shadow_intensity = 0.0
-        anchor_system = getattr(self, "anchor_system", None)
-        if anchor_system is not None:
-            try:
-                bias = anchor_system.ego_bias(base_dignity_defense=dignity, base_preferred_distance=preferred_distance)
-                dignity = self._surface_float(bias.get("dignity_defense", dignity), dignity)
-                preferred_distance = self._surface_float(bias.get("preferred_distance", preferred_distance), preferred_distance)
-                attachment_visibility = max(attachment_visibility, self._surface_float(bias.get("attachment_exposure", 0.0)))
-                shadow_state = getattr(anchor_system, "shadow_state", None)
-                shadow_register = str(getattr(shadow_state, "register", "none") or "none")
-                shadow_intensity = self._surface_float(getattr(shadow_state, "intensity", 0.0))
-            except Exception:
-                pass
-
         return {
             "valence": round(valence, 3),
             "social_energy": round(social_energy, 3),
@@ -807,8 +762,6 @@ class PresenceControllerMixin:
             "preferred_distance": round(preferred_distance, 3),
             "trust": round(trust, 3),
             "attachment_visibility": round(attachment_visibility, 3),
-            "shadow_register": shadow_register,
-            "shadow_intensity": round(shadow_intensity, 3),
         }
 
     def _presence_ego_gate_reason(self, *, snapshot=None, social_presence_event: SocialPresenceEvent | None = None) -> str:
@@ -915,19 +868,6 @@ class PresenceControllerMixin:
             raw=public_activation,
         )
 
-    def _spontaneity_level(self) -> float:
-        """Núm 'sống động': 0=kiệm lời như cũ, 1=sinh impulse rất dồi dào.
-
-        Chỉ hạ NGƯỠNG SINH impulse, không tự nói nhiều hơn — tần suất phát ngôn vẫn
-        do rate_limit/cooldown của SurfaceArbiter khống chế. Vì vậy tăng núm này an
-        toàn: nó chỉ làm arbiter LUÔN CÓ candidate sống để chọn, thay vì rỗng.
-        """
-        raw = os.environ.get("ERIS_SPONTANEITY", "0.5").strip()
-        try:
-            return max(0.0, min(1.0, float(raw)))
-        except ValueError:
-            return 0.5
-
     def _build_endogenous_surface_impulses(
         self,
         *,
@@ -1027,10 +967,7 @@ class PresenceControllerMixin:
                         raw=continuity_frame,
                     )
                 )
-            spont = self._spontaneity_level()
-            vital_gate = 0.55 - 0.40 * spont          # spont=1 → 0.15
-            metabolic_gate = 0.36 - 0.24 * spont      # spont=1 → 0.12
-            if vital_pressure >= vital_gate and max(boredom_pressure, thought_pressure) >= metabolic_gate:
+            if vital_pressure >= 0.55 and max(boredom_pressure, thought_pressure) >= 0.36:
                 impulses.append(
                     SurfaceImpulse(
                         kind="random_chatter" if boredom_pressure >= thought_pressure else "thought_stream_surface",
@@ -1050,170 +987,6 @@ class PresenceControllerMixin:
                         should_surface=True,
                         vital_pressure=vital_pressure,
                         is_vital_pressure=True,
-                    )
-                )
-
-            # --- Drive TÒ MÒ HIỆN-DIỆN (đối cực absence-driven) ---
-            # Khi có KÍCH THÍCH (novelty / user active / curiosity), eris muốn chạm
-            # vào hiện tại — KHÔNG cần idle dài. Đây là mảnh còn thiếu khiến autonomous
-            # câm lúc Ngài đang làm việc. Tần suất nói vẫn do rate-limit của arbiter
-            # khống chế, nên sinh thêm impulse ở đây không gây spam.
-            curiosity = self._surface_float(getattr(state, "curiosity", 0.0))
-            observer = getattr(frame, "observer_frame", None) or getattr(frame, "observer", None)
-            novelty = self._surface_float(
-                getattr(observer, "novelty", 0.0) if observer is not None else getattr(snapshot, "novelty", 0.0)
-            )
-            user_presence = self._surface_float(
-                getattr(observer, "user_presence", 0.0) if observer is not None else 0.0
-            )
-            engagement = max(0.0, min(1.0, 0.45 * novelty + 0.30 * curiosity + 0.25 * user_presence))
-            engagement_gate = 0.42 - 0.30 * spont   # spont=1 → 0.12
-            vision_facts = tuple(
-                str(fact).strip() for fact in (getattr(snapshot, "vision_facts", ()) or ()) if str(fact).strip()
-            )[:3]
-            focus_summary = str(
-                getattr(snapshot, "focus_summary", "") or getattr(snapshot, "active_window_kind", "") or ""
-            ).strip()
-            if engagement >= engagement_gate and (vision_facts or focus_summary):
-                if vision_facts:
-                    seed = vision_facts[0][:120]
-                    anchor = self._surface_anchor_token("scene", f"scene:{seed}")
-                    curiosity_kind = "scene_curiosity"
-                    curiosity_evidence = (anchor, *(f"vision_fact:{fact[:80]}" for fact in vision_facts))
-                    curiosity_missing = False
-                    curiosity_contract = (
-                        "scene_curiosity: một quan sát/tò mò nhỏ CÓ NEO về cảnh hiện tại; "
-                        "chỉ dùng vision facts, không bịa thêm chi tiết màn hình."
-                    )
-                else:
-                    seed = focus_summary[:120]
-                    anchor = self._surface_anchor_token("event", f"focus:{seed}")
-                    curiosity_kind = "curious_question"
-                    curiosity_evidence = (anchor, f"focus:{seed}")
-                    curiosity_missing = True
-                    curiosity_contract = (
-                        "curious_question: hỏi MỘT câu tò mò thật về điều Ngài đang làm; "
-                        "không claim thấy chi tiết màn hình, chỉ tò mò từ bối cảnh chung."
-                    )
-                impulses.append(
-                    SurfaceImpulse(
-                        kind=curiosity_kind,
-                        source="endogenous_drive",
-                        confidence=max(0.42, engagement),
-                        pressure=max(0.40, engagement * 0.9),
-                        score=max(0.46, engagement * 0.95),
-                        topic_seed=seed,
-                        speech_act=curiosity_kind,
-                        family=f"curiosity:{curiosity_kind}",
-                        evidence=tuple(curiosity_evidence)[:10],
-                        reason="presence/novelty driven curiosity (engagement, not idle/boredom)",
-                        focus_family=focus_family,
-                        body_action="tilt_head",
-                        missing_evidence_ids=curiosity_missing,
-                        is_presence=False,
-                        should_surface=True,
-                        needs_external_evidence=False,
-                        vital_pressure=engagement,
-                        is_vital_pressure=engagement >= 0.55,
-                        root_source="curiosity_drive",
-                        action_opportunity="one small curious line/question about the live moment",
-                        llm_contract=curiosity_contract,
-                    )
-                )
-
-            # --- Khai sinh các impulse 'sống' còn lại (trước đây KHÔNG có nơi sinh) ---
-            anchor_sys = getattr(self, "anchor_system", None)
-            attachment_longarc = (
-                self._surface_float(getattr(anchor_sys, "attachment_longarc", 0.0)) if anchor_sys is not None else 0.0
-            )
-            idle_seconds = self._surface_float(getattr(snapshot, "idle_seconds", 0.0))
-            endo_seed = endogenous_seed if isinstance(endogenous_seed, str) else ""
-
-            # companionship_ping: hiện diện ấm khi Ngài có mặt và đã có chút gắn bó.
-            if user_presence >= (0.55 - 0.35 * spont) and attachment_longarc >= (0.30 - 0.25 * spont):
-                comp_anchor = self._surface_anchor_token("event", f"co_presence:{focus_family}")
-                impulses.append(
-                    SurfaceImpulse(
-                        kind="companionship_ping",
-                        source="endogenous_drive",
-                        confidence=max(0.44, 0.40 + 0.40 * attachment_longarc),
-                        pressure=max(0.38, 0.40 * attachment_longarc + 0.20 * user_presence),
-                        score=max(0.46, 0.46 + 0.30 * attachment_longarc),
-                        topic_seed="co_presence",
-                        speech_act="companionship_ping",
-                        family="companionship:co_presence",
-                        evidence=(comp_anchor, f"user_presence={user_presence:.2f}", f"attachment={attachment_longarc:.2f}"),
-                        reason="warm co-presence driven by presence+attachment, not idle timer",
-                        focus_family=focus_family,
-                        body_action="idle_shift",
-                        missing_evidence_ids=True,
-                        is_presence=True,
-                        should_surface=True,
-                        needs_external_evidence=False,
-                        vital_pressure=attachment_longarc,
-                        is_vital_pressure=attachment_longarc >= 0.55,
-                        root_source="companionship_drive",
-                        action_opportunity="one warm low-pressure co-presence line; no neediness unless shadow",
-                        llm_contract="companionship_ping: câu ấm nhỏ ghi nhận sự cùng-hiện-diện; không phải điểm danh, không bám dính.",
-                    )
-                )
-
-            # micro_story: mẩu nghĩ vu vơ có rễ (seed/focus) khi có chất liệu.
-            story_seed = endo_seed or focus_summary
-            if story_seed and spont >= 0.40 and (boredom_pressure >= 0.20 or curiosity >= 0.30):
-                story_anchor = self._surface_anchor_token("event", f"muse:{story_seed[:80]}")
-                impulses.append(
-                    SurfaceImpulse(
-                        kind="micro_story",
-                        source="endogenous_drive",
-                        confidence=max(0.40, 0.40 + 0.30 * curiosity),
-                        pressure=max(0.36, 0.30 + 0.30 * boredom_pressure),
-                        score=max(0.44, 0.44 + 0.20 * curiosity),
-                        topic_seed=story_seed[:120],
-                        speech_act="micro_story",
-                        family="muse:micro_story",
-                        evidence=(story_anchor, f"seed:{story_seed[:80]}"),
-                        reason="small stray thought from available material (spontaneity)",
-                        focus_family=focus_family,
-                        body_action="look_at_focus",
-                        missing_evidence_ids=True,
-                        is_presence=False,
-                        should_surface=True,
-                        needs_external_evidence=False,
-                        vital_pressure=max(boredom_pressure, curiosity),
-                        is_vital_pressure=False,
-                        root_source="muse_drive",
-                        action_opportunity="one tiny mundane/playful stray thought, not meta explanation",
-                        llm_contract="micro_story: một mẩu nghĩ vu vơ ngắn bám vào seed; không giải thích hệ thống.",
-                    )
-                )
-
-            # idle_curiosity: tò mò nhẹ về khoảng lặng khi Ngài hơi vắng nhưng chưa lâu.
-            if focus_summary and 60.0 <= idle_seconds <= 600.0 and spont >= 0.30:
-                idle_anchor = self._surface_anchor_token("event", f"idle:{focus_summary[:80]}")
-                impulses.append(
-                    SurfaceImpulse(
-                        kind="idle_curiosity",
-                        source="endogenous_drive",
-                        confidence=0.44,
-                        pressure=0.38,
-                        score=0.48,
-                        topic_seed=focus_summary[:120],
-                        speech_act="curious_question",
-                        family="curiosity:idle",
-                        evidence=(idle_anchor, f"idle_seconds={idle_seconds:.0f}"),
-                        reason="gentle curiosity about the quiet moment (moderate idle)",
-                        focus_family=focus_family,
-                        body_action="tilt_head",
-                        missing_evidence_ids=True,
-                        is_presence=False,
-                        should_surface=True,
-                        needs_external_evidence=False,
-                        vital_pressure=0.30,
-                        is_vital_pressure=False,
-                        root_source="idle_curiosity_drive",
-                        action_opportunity="one soft curious line about the pause; no neediness",
-                        llm_contract="idle_curiosity: tò mò dịu về khoảng lặng, áp lực thấp, không điểm danh.",
                     )
                 )
 
@@ -2088,92 +1861,34 @@ class PresenceControllerMixin:
             return False
         return random.random() < probability
 
-    # Cụm từ ERIS CLAIM tri giác/màn hình — đây là nhóm SỰ-THẬT/NĂNG-LỰC: dù
-    # warn-only cũng KHÔNG cho qua trong autonomy (sẽ thành hoang tưởng, không phải
-    # lừa dối có chủ đích). Cần disclosure thì để chat path xử lý.
-    _MICRO_TRUTH_BANNED = (
-        "tôi thấy màn hình",
-        "màn hình của ngài",
-        "tôi đang nhìn",
-    )
-    _MICRO_TRUTH_BANNED_ASCII = (
-        "man hinh",
-        "cua so",
-        "hien thi",
-        "dang hien thi",
-        "toi thay",
-    )
-    # Cụm/luật MỀM: quan hệ/giọng/anti-spam. warn-only ⇒ chỉ cảnh báo, cho câu qua.
-    _MICRO_SOFT_BANNED = (
-        "trả lời",
-        "phản hồi",
-        "cho tôi biết",
-        "hãy ",
-        "cần ",
-        "phải ",
-        "tập trung",
-        "quay lại",
-        "dừng lại",
-        "telemetry",
-        "cpu",
-        "ram",
-        "idle",
-        "signal",
-        "evidence",
-    )
-    _MICRO_SOFT_BANNED_ASCII = (
-        "status",
-        "ui",
-        "khung",
-        "khung thoai",
-        "khung chat",
-        "mau hong",
-        "toi dang",
-        "toi van",
-        "toi o day",
-        "toi nghe",
-    )
-
     def _sanitize_micro_presence_llm_text(self, text: str, *, kind: str, fallback_text: str) -> str:
-        # warn-only: rule MỀM (quan hệ/giọng/anti-spam) chỉ cảnh báo, để câu đi qua;
-        # rule SỰ-THẬT (claim màn hình/perception) vẫn chặn để ERIS không hoang tưởng.
+        # Ghi lý do cắt để debug được hiện tượng "LLM nói nhưng ra rỗng". Đây chỉ là
+        # tai mắt: hành vi reject giữ nguyên, nhưng giờ ta biết rule nào đã giết câu.
         self._last_micro_sanitize_reason = ""
-        warn_only = guards_warn_only()
-        soft_notes: list[str] = []
-
-        def soft_block(reason: str) -> bool:
-            """True = phải chặn (block mode). False = warn-only, ghi note và đi tiếp."""
-            if warn_only:
-                soft_notes.append(reason)
-                return False
-            self._last_micro_sanitize_reason = reason
-            return True
-
         cleaned = re.sub(r"\s+", " ", str(text or "").strip().strip('"').strip("'"))
         cleaned = cleaned.replace("!", ".")
         cleaned = cleaned[:90].strip()
         if not cleaned:
-            # Rỗng là rỗng — không phải guard, không có gì để cảnh báo.
             self._last_micro_sanitize_reason = "empty_draft"
             return ""
         if self._is_placeholder_micro_text(cleaned):
-            if soft_block("placeholder_text"):
-                return ""
+            self._last_micro_sanitize_reason = "placeholder_text"
+            return ""
         is_reengagement = kind == "re_engagement"
         words = [item for item in re.split(r"\s+", cleaned) if item]
         max_words = 14 if kind in {"presence_maintenance", "micro_presence", "re_engagement", "blind_frustration"} else 12
         if len(words) > max_words:
-            if soft_block(f"too_many_words:{len(words)}>{max_words}"):
-                return ""
+            self._last_micro_sanitize_reason = f"too_many_words:{len(words)}>{max_words}"
+            return ""
         if "\n" in cleaned or cleaned.count("?") > (1 if is_reengagement else 0):
-            if soft_block("newline_or_excess_question"):
-                return ""
+            self._last_micro_sanitize_reason = "newline_or_excess_question"
+            return ""
         if "?" in cleaned and not is_reengagement:
-            if soft_block("question_not_allowed"):
-                return ""
+            self._last_micro_sanitize_reason = "question_not_allowed"
+            return ""
         if self._is_near_duplicate_text(cleaned, self.last_text) or self._is_near_duplicate_text(cleaned, fallback_text):
-            if soft_block("near_duplicate"):
-                return ""
+            self._last_micro_sanitize_reason = "near_duplicate"
+            return ""
 
         normalized = self._normalize_user_message(cleaned)
         if kind == "blind_frustration":
@@ -2181,29 +1896,55 @@ class PresenceControllerMixin:
             if not sanitized:
                 self._last_micro_sanitize_reason = "blind_frustration_rule"
             return sanitized
-
-        # SỰ-THẬT: luôn chặn claim màn hình/perception, kể cả warn-only.
-        for item in (*self._MICRO_TRUTH_BANNED, *self._MICRO_TRUTH_BANNED_ASCII):
-            if self._normalize_user_message(item) in normalized:
-                self._last_micro_sanitize_reason = f"truth_banned_phrase:{item}"
-                return ""
-
-        # MỀM: presence-declaration + cụm phong cách + từ phổ biến.
         if self._force_speak_banned_family_for_text(cleaned) == "presence_declaration":
-            if soft_block("presence_declaration_family"):
-                return ""
-        for item in (*self._MICRO_SOFT_BANNED, *self._MICRO_SOFT_BANNED_ASCII):
+            self._last_micro_sanitize_reason = "presence_declaration_family"
+            return ""
+        banned = (
+            "trả lời",
+            "phản hồi",
+            "cho tôi biết",
+            "hãy ",
+            "cần ",
+            "phải ",
+            "tập trung",
+            "quay lại",
+            "dừng lại",
+            "telemetry",
+            "cpu",
+            "ram",
+            "idle",
+            "signal",
+            "evidence",
+            "tôi thấy màn hình",
+            "màn hình của ngài",
+            "tôi đang nhìn",
+        )
+        banned_ascii = (
+            "status",
+            "ui",
+            "khung",
+            "khung thoai",
+            "khung chat",
+            "mau hong",
+            "man hinh",
+            "cua so",
+            "hien thi",
+            "dang hien thi",
+            "toi dang",
+            "toi van",
+            "toi o day",
+            "toi nghe",
+            "toi thay",
+        )
+        for item in (*banned, *banned_ascii):
             if self._normalize_user_message(item) in normalized:
-                if soft_block(f"banned_phrase:{item}"):
-                    return ""
+                self._last_micro_sanitize_reason = f"banned_phrase:{item}"
+                return ""
         if not is_reengagement:
             for item in ("ồn chứ", "còn thức", "sao", "không"):
                 if item in normalized:
-                    if soft_block(f"banned_common_word:{item}"):
-                        return ""
-
-        if soft_notes:
-            self._last_micro_sanitize_reason = "warn_only_passed:" + ",".join(soft_notes[:4])
+                    self._last_micro_sanitize_reason = f"banned_common_word:{item}"
+                    return ""
         return cleaned
 
     def _sanitize_blind_frustration_text(self, cleaned: str, *, normalized: str) -> str:

@@ -250,7 +250,7 @@ class UserModelStore:
         """Độ dày/nhất quán Mô_Hình_Ngài — đầu vào cho SignificanceDeriver (R2.2)."""
         if not self._beliefs:
             return 0.0
-        facets_covered = len({b.facet for b in self._beliefs})
+        facets_covered = len({b.facet for b in self._beliefs.values()})
         avg_conf = sum(b.confidence for b in self._beliefs.values()) / len(self._beliefs)
         coverage = clamp01(facets_covered / float(len(USER_FACETS)))
         volume = clamp01(len(self._beliefs) / 12.0)
