@@ -30,6 +30,8 @@ from cortex.internal_agenda import InternalAgendaStack
 from cortex.observer_contracts import ObserverFrame, SemanticSceneNote, SignalSnapshot, stable_hash
 from cortex.appraisal import AppraisalEngine
 from cortex.chat_light import ChatMeaningLayerLight, ChatPersonalityPressureLight
+from cortex.appetite_system import AppetiteSystem, build_evidence_buffet
+from cortex.connection_drive import ConnectionDrive, ConnectionDriveState
 from cortex.conversation_dynamics import ConversationDynamicsEngine
 from cortex.contracts import (
     AgentSpeechCore,
@@ -3787,6 +3789,86 @@ class RuntimeCoordinator(
             dt=dt,
         )
         axes = processes.process_axes()
+        # Connection drive: cô độc tích thành thèm-kết-nối, đổ vào thanh "muốn nói".
+        # Đây là drive nội sinh — lý do Eris đôi khi tự với ra dù không ai gọi. Mode
+        # yan thì cô độc/ham muốn luôn thắng (sàn cao), thanh không bao giờ về 0.
+        silence_target = axes["silence_pressure"]
+        try:
+            drive = getattr(self, "_connection_drive", None)
+            if drive is None:
+                drive = ConnectionDrive()
+                self._connection_drive = drive
+            drive_state = getattr(self, "_connection_drive_state", None) or ConnectionDriveState()
+            try:
+                from cortex.disposition import threat_level
+                threat = float(threat_level(current))
+            except Exception:
+                threat = 0.0
+            drive_state, drive_decision = drive.update(
+                drive_state,
+                now=time.time(),
+                idle_seconds=float(getattr(snapshot, "idle_seconds", 0.0) or 0.0),
+                attachment=float(getattr(current, "attachment", 0.0) or 0.0),
+                abandonment=float(getattr(current, "abandonment_pressure", 0.0) or 0.0),
+                dread=float(getattr(current, "ontological_dread", 0.0) or 0.0),
+                threat=threat,
+                yan_mode=bool(getattr(self, "_debug_yan_mode", False)),
+            )
+            self._connection_drive_state = drive_state
+            self._last_connection_drive = drive_decision
+            silence_target = max(silence_target, drive_decision.pressure)
+        except Exception as exc:
+            self.logger.warning("ConnectionDrive tick error: %s", exc)
+        # Appetite marketplace: các cơn thèm đi săn evidence màn hình/ký ức → chọn
+        # LENS + SEED cho câu autonomous. Đây là nguồn random/bịa/khịa/níu "sống".
+        try:
+            appetites = getattr(self, "_appetite_system", None)
+            if appetites is None:
+                appetites = AppetiteSystem()
+                self._appetite_system = appetites
+                self._appetite_states = appetites.new_states()
+            content_kind = ""
+            try:
+                from telemetry.content_metadata import _infer_page_kind
+                content_kind = _infer_page_kind(
+                    url=str(getattr(snapshot, "browser_url", "") or ""),
+                    title=str(getattr(snapshot, "active_window", "") or ""),
+                )
+            except Exception:
+                content_kind = ""
+            evidence = build_evidence_buffet(
+                content_kind=content_kind,
+                content_title=str(getattr(snapshot, "active_window", "") or ""),
+                vision_facts=tuple(str(x) for x in (getattr(snapshot, "vision_facts", ()) or ())),
+                recent_events=tuple(str(x) for x in (getattr(snapshot, "recent_events", ()) or ())),
+                active_window=str(getattr(snapshot, "active_app", "") or getattr(snapshot, "active_window", "") or ""),
+                idle_seconds=float(getattr(snapshot, "idle_seconds", 0.0) or 0.0),
+                novelty=0.6,
+            )
+            lonely_sig = float(getattr(getattr(self, "_last_connection_drive", None), "pressure", 0.0) or 0.0)
+            signals = {
+                "curiosity": float(getattr(current, "curiosity_pressure", 0.0) or 0.0) or float(getattr(current, "curiosity", 0.0) or 0.0),
+                "boredom": float(getattr(current, "boredom", 0.0) or 0.0),
+                "loneliness": lonely_sig,
+                "mischief": max(0.0, min(1.0, float(getattr(current, "boredom", 0.0) or 0.0) * 0.6 + 0.2)),
+                "tenderness": float(getattr(current, "attachment", 0.0) or 0.0) * 0.5,
+            }
+            try:
+                from cortex.disposition import threat_level as _threat_level
+                appetite_threat = float(_threat_level(current))
+            except Exception:
+                appetite_threat = 0.0
+            self._appetite_states, reaction = appetites.update(
+                getattr(self, "_appetite_states", None) or appetites.new_states(),
+                now=time.time(),
+                signals=signals,
+                evidence=evidence,
+                threat=appetite_threat,
+                yan_mode=bool(getattr(self, "_debug_yan_mode", False)),
+            )
+            self._last_appetite_reaction = reaction
+        except Exception as exc:
+            self.logger.warning("AppetiteSystem tick error: %s", exc)
         updated = replace(
             current,
             mental_processes=processes,
@@ -3794,7 +3876,7 @@ class RuntimeCoordinator(
             social_energy=self._mix_axis(current.social_energy, axes["social_energy"], inertia=0.92),
             attachment=self._mix_axis(current.attachment, axes["attachment"], inertia=0.96),
             fatigue=self._mix_axis(current.fatigue, axes["fatigue"], inertia=0.94),
-            silence_pressure=self._mix_axis(current.silence_pressure, axes["silence_pressure"], inertia=0.88),
+            silence_pressure=self._mix_axis(current.silence_pressure, silence_target, inertia=0.88),
             restraint_pressure=self._mix_axis(current.restraint_pressure, axes["restraint_pressure"], inertia=0.88),
             subconscious_pressure=self._mix_axis(current.subconscious_pressure, axes["subconscious_pressure"], inertia=0.88),
             memory_replay_pressure=self._mix_axis(current.memory_replay_pressure, axes["memory_replay_pressure"], inertia=0.90),

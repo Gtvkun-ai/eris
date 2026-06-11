@@ -1,0 +1,264 @@
+================================================================================
+ERIS — TỔNG QUÁT KIẾN TRÚC & LUỒNG (tài liệu để debug)
+================================================================================
+Mục đích file này: bản đồ "file-to-file", luồng dữ liệu, và triết lý đồ án để khi
+debug biết NGAY: tín hiệu đi đâu, ai quyết định "nói/câm", state nằm ở file nào,
+và lỗi thường rơi ở khúc nào.
+
+Cập nhật: 2026-06-11. (Đọc kèm README.md cho phần cài đặt/cấu hình key.)
+
+================================================================================
+0. TL;DR — đọc 30 giây
+================================================================================
+- ERIS = desktop companion. 2 nửa nói chuyện qua UDP:
+    BODY  (Godot/C#, thư mục body/)      : vẽ nhân vật, UI, panel, phát animation.
+    CORTEX/RUNTIME (Python, thư mục src/): nhận thức, cảm xúc, trí nhớ, quyết định.
+- Kênh UDP:
+    127.0.0.1:4242  CORTEX -> BODY   (Decision: text, animation, motion, debug)
+    127.0.0.1:4243  BODY  -> CORTEX  (event: chat_start/chat_end, chat text, force_speak, touch)
+- Entry point Python: src/vision.py  (class AttentionOverseer -> RuntimeCoordinator).
+- Bộ não điều phối: src/runtime/coordinator.py (RuntimeCoordinator) — TRUNG TÂM.
+- Body tự spawn vision.py khi chạy (body/ErisProcessManager.cs), inject env + secrets.
+- Cognition gọi LLM remote (Gemini/Groq) qua pool xoay nhiều key.
+
+================================================================================
+1. TRIẾT LÝ ĐỒ ÁN
+================================================================================
+ERIS không phải chatbot "hỏi-đáp". Mục tiêu là một HIỆN DIỆN có đời sống nội tâm:
+- Nó có quyền IM LẶNG. Phần lớn logic là quyết định "lúc nào đáng nói", không phải
+  "trả lời cho xong". Xem các cơ chế: silence_debt, ambient_silence_policy,
+  presence_maintenance, surface_arbiter, micro_policy.
+- Nó có ĐỜI SỐNG NGẦM chạy nền, không xoay quanh user:
+    * thought_stream      : dòng suy nghĩ nền + ThoughtEvaluator (model phán xét thầm).
+    * private_mind_daemon : các "mối bận tâm" (concern) có vòng đời qua thời gian.
+    * private_life_daemon : đời sống riêng (habitat, project riêng, nhịp ngày, solitude).
+    * subconscious        : các lane worker (user_modeler, daydream, belief_mutation...).
+- Nó CÓ TRÍ NHỚ thật, phân tầng (episodic/semantic/relational/procedural/affective),
+  có commit policy, retrieval, consolidation — không chỉ nhồi context.
+- Mọi quyết định để lại VẾT (debug_trace / CognitiveFrame) để truy nguyên "vì sao
+  nó chọn thế". Đây là nguyên tắc thiết kế: bug phải truy được, không đoán.
+- Cognition CHỐNG "câm vì hết quota": pool nhiều key, gặp 429 thì tự xoay key.
+
+Hệ quả khi debug: nếu ERIS "không nói gì", phần lớn KHÔNG phải crash — mà là một
+tầng policy nào đó quyết định im. Phải lần theo debug_trace/parse_mode chứ đừng
+mặc định là lỗi.
+
+================================================================================
+2. KIẾN TRÚC HAI NỬA (BODY vs CORTEX)
+================================================================================
+
+  [Godot 4.6 .NET]                                  [Python runtime]
+  body/*.cs                                          src/*
+  ┌───────────────────────────┐   UDP 4242 (Decision)   ┌────────────────────────┐
+  │ UdpListener (Node2D)       │ <─────────────────────  │ RuntimeCoordinator     │
+  │  - nhận Decision           │                         │  (coordinator.py)      │
+  │  - vẽ text + animation     │   UDP 4243 (event/chat) │                        │
+  │  - panel Emotion/PrivateM. │ ─────────────────────>  │  vòng lặp nhận thức    │
+  │  - spawn vision.py         │                         │                        │
+  └───────────────────────────┘                         └────────────────────────┘
+
+2.1 BODY (body/) — chỉ "thân xác", không suy nghĩ
+- UdpListener.cs            : node chính. _Ready() bind UDP 4242, dựng UI/panel,
+                              spawn vision. _Process() mỗi frame: bước motion, đọc
+                              packet UDP -> ParseAndApply(raw).
+- UdpListener.AnchorPanel.cs: partial class — panel "Mô Hình Ngài"/anchor.
+- UdpDecisionParser.cs      : parse JSON Decision từ cortex thành UdpDecisionPayload
+                              (text, should_speak, animation, motion_intent, target_x,
+                              emotion_debug, private_mind_digest...). Có alias/clamp
+                              tên animation hợp lệ. Strip ```code fence``` của LLM.
+- MotionController.cs       : vật lý/di chuyển nhân vật (walk, climb, jump, gravity).
+- LocalBodyAutonomy.cs      : body tự đi lại vu vơ khi idle (KHÔNG cần cortex).
+- BodyAudioController.cs    : map animation -> file .wav, phát tiếng.
+- ErisProcessManager.cs     : spawn/kill tiến trình vision.py; nạp config/secrets.json
+                              vào env; ưu tiên runtime đóng gói (PyInstaller) nếu có.
+- RunLogger.cs              : ghi log ra logs/eris_run_*.txt.
+- UdpListener.tscn          : scene Godot (main scene).
+
+2.2 CORTEX/RUNTIME (src/) — phần "nghĩ"
+- src/vision.py            : ENTRY POINT. Dựng LlmService, MemoryCognitionCore,
+                              UdpTransport, các engine (Ni/Ti/Fe), rồi RuntimeCoordinator.
+                              Có SingleInstanceLock (.vision.lock) chống chạy 2 lần.
+- src/runtime/coordinator.py: RuntimeCoordinator — orchestrator. Gom hàng chục mixin
+                              (CognitiveCycleMixin, ChatCycleMixin, AutonomousCycleMixin,
+                              SpeechPipelineMixin, PresenceControllerMixin, ...). Quyết
+                              định nói/câm/làm action, dựng Decision, gửi qua transport.
+
+================================================================================
+3. LUỒNG DỮ LIỆU (file-to-file)
+================================================================================
+
+3.1 KHỞI ĐỘNG
+  Godot Run
+   -> UdpListener._Ready()                       (body/UdpListener.cs)
+       -> ErisProcessManager.StartVision()       (body/ErisProcessManager.cs)
+           -> nạp config/secrets.json -> env
+           -> spawn: python src/vision.py
+   -> vision.py __main__
+       -> SingleInstanceLock.acquire()           (src/.vision.lock)
+       -> AttentionOverseer.__init__()
+           -> RemoteModelProcessManager.build_*client()   (src/llm/process_manager.py)
+           -> LlmService(...)                              (src/llm/service.py)
+           -> MemoryCognitionCore(memory_core/).load()     (src/memory/memory_cognition.py)
+           -> UdpTransport(4242 gửi, 4243 nhận)            (src/transport/udp.py)
+           -> RuntimeCoordinator(...)                       (src/runtime/coordinator.py)
+       -> overseer.run_loop() -> coordinator.run_loop()
+
+3.2 LƯỢT CHAT (user gõ trong panel)
+  UdpListener: user gõ -> OnSendPressed -> SendChatSignal(text) qua UDP 4243
+   -> coordinator nhận (transport.poll_json)
+   -> ChatCycleMixin xử lý (runtime/chat_cycle.py):
+        - meaning layer (cortex/meaning, chat_light)
+        - personality lens (cortex/personality)
+        - appraisal/affect (cortex/appraisal.py, affect_semantics.py)
+        - memory recall (memory/* qua memory_recall_adapter)
+        - SpeechPipeline (runtime/speech_pipeline.py) gọi LlmService -> LLM remote
+        - parser (parser_grounding/ + DecisionParser) -> domain/Decision
+        - post-generation filters, repeat guard, surface arbiter
+   -> transport.send_json(Decision) qua UDP 4242
+   -> UdpListener.ParseAndApply -> UdpDecisionParser.Parse -> hiện text + animation.
+
+3.3 VÒNG TỰ CHỦ (autonomous, khi không chat)
+  coordinator.run_loop() lặp:
+   - đọc telemetry (màn hình/hành vi) qua telemetry_service + vision facts
+   - signal_buffer / background_observer -> ObserverFrame
+   - CognitivePipeline (runtime/cognitive_pipeline.py):
+        RawSignal -> EvidenceItem -> CognitiveFrame -> AttentionSalience
+        -> CognitiveBudget (fast/normal/deep/reflection) -> WorkingMemory
+        -> GlobalWorkspace -> DebugTrace
+   - AutonomousWakeGovernor / wake_governor: có "thức dậy nói" không?
+   - nếu nói: dựng Decision -> transport.send_json -> body.
+   - song song: thought_stream, private_mind_daemon, private_life_daemon,
+     subconscious lanes chạy nền, ghi state ra memory_core/.
+
+3.4 CHU KỲ NHẬN THỨC (CognitiveFrame)
+  Mỗi vòng tạo 1 CognitiveFrame (src/core/cognitive_frame.py) = ảnh chụp đầy đủ:
+  evidence đã dùng, slot (salience/working_memory/workspace), budget mode, warnings,
+  debug_trace. Đây là ARTIFACT QUAN TRỌNG NHẤT để debug "vì sao nó chọn vậy".
+
+================================================================================
+4. BẢN ĐỒ THƯ MỤC src/ (vai trò từng nhóm)
+================================================================================
+- src/core/        : nền tảng. cognitive_frame.py (frame), evidence.py / 
+                     evidence_normalizer.py (RawSignal -> EvidenceItem).
+- src/cortex/      : các TẦNG NHẬN THỨC (đông nhất). Vài file chốt:
+     ni.py / ti.py / fe.py          : trục đánh giá Ni/Ti/Fe (định hướng/logic/biểu đạt).
+     meaning/, meaning_layer         : hiểu nghĩa lượt nói.
+     personality.py                  : lăng kính tính cách.
+     appraisal.py, affect_semantics  : cảm xúc/đánh giá tình huống.
+     attention_salience.py           : cái gì đáng chú ý.
+     working_memory.py, global_workspace.py : giữ & broadcast.
+     thought_stream.py               : dòng suy nghĩ nền + đánh giá thầm.
+     subconscious/                   : worker tiềm thức (daydream, belief_mutation...).
+     private_mind/, private_life/     : concern & đời sống riêng.
+     existential_anchor/, tom/        : neo tồn tại & theory-of-mind.
+     speech_core.py, surface_arbiter.py, micro_policy.py : quyết "nói gì/câm".
+     vision_semantic_compressor.py    : nén facts từ vision thành ý ngắn.
+- src/runtime/     : ĐIỀU PHỐI. coordinator.py + các mixin (chat_cycle, autonomous_cycle,
+                     cognitive_cycle, speech_pipeline, presence_controller, force_speak_*,
+                     shadow_pipeline, post_generation_filters...). Cộng các daemon:
+                     private_mind_daemon.py, private_life_daemon.py, subconscious_loop.py.
+                     Policy: model_budget_policy.py, no_fallback_policy.py,
+                     ambient_silence_policy.py, eris_pathology_policy.py.
+- src/memory/      : TRÍ NHỚ. memory_kernel.py (lõi), memory_cognition.py (MemoryCognitionCore),
+                     episodic/semantic/relational/procedural/affective_residue_memory.py,
+                     memory_commit_policy.py, memory_retrieval_engine.py, consolidator,
+                     embedding_index.py (dùng paraphrase-multilingual-MiniLM-L12-v2),
+                     query compiler/executor (truy vấn ký ức bằng IR).
+- src/llm/         : GỌI MODEL. service.py (LlmService), client.py, ollama_client.py,
+                     llamacpp_client.py, key_pool.py (xoay key 429), process_manager.py.
+- src/parser_grounding/ + src/domain/decision.py : parse output LLM -> Decision có grounding.
+- src/actions/     : router.py + executor.py + contracts.py (ERIS làm action trên máy).
+- src/transport/udp.py : UdpTransport. CHÚ Ý: send_json có 4 STAGE nén khi payload
+                     vượt 63000 bytes (giữ inner_diary/anchor cho UI, vứt debug nặng).
+- src/telemetry/   : đọc màn hình/ngữ cảnh máy (mss, uiautomation).
+- src/vision.py    : entry point (mục 3.1).
+
+================================================================================
+5. STATE TRÊN ĐĨA (đọc khi debug "nó nhớ/quên gì")
+================================================================================
+- memory_core/                : state RUNTIME hiện hành (KHÔNG commit git):
+     episodic_memory.json, semantic_memory.json, relational_memory.json,
+     procedural_memory.json, repair_memory.json, affective_residue_memory.json,
+     agent_mind.json, event_ledger.json, inner_diary.json, thought_stream.jsonl,
+     private_concerns.json, private_life_state.json, anchor_state.json,
+     active_state_snapshot.json, user_model.json, memory_candidate.json
+  (.bak = bản sao an toàn; ghi có throttle để không bốc hơi khi tắt app.)
+- memory_core_backup_*/        : snapshot backup theo thời điểm.
+- long_term_memory.json, goal_memory.json, goal_profiles.json : ở root.
+- logs/eris_run_*.txt          : log một lần chạy (RunLogger.cs ghi).
+- config/secrets.json          : KEY API (gitignore). config/secrets.example.json là mẫu.
+- .env / .env.example          : tinh chỉnh qua env (override secrets.json).
+
+================================================================================
+6. CẤU HÌNH QUAN TRỌNG (env / flag)
+================================================================================
+- ERIS_REMOTE_API_ENABLED=1    : bắt buộc bật (local model đã gỡ khỏi runtime).
+- ERIS_N_CTX                   : context length (mặc định 8192).
+- ERIS_CHAT_FRESH_SEC=20       : lượt user còn "tươi" bao lâu thì ERIS nhường lời.
+- ERIS_AUTONOMOUS_SLEEP_SEC    : nhịp ngủ giữa các vòng autonomous.
+- ERIS_NI_META_CRITIC          : bật tầng Ni meta-critic.
+- ERIS_MEMORY_SEMANTIC_PARSER  : bật parser ngữ nghĩa cho background digest.
+- Key pool (secrets.json): ERIS_REMOTE_API_KEY (Gemini chính),
+     ERIS_PRIVATE_MIND_FALLBACK_API_KEYS (mảng Gemini dự phòng),
+     ERIS_GROQ_API_KEY + ERIS_GROQ_FALLBACK_API_KEYS (Groq cho việc cần JSON chuẩn).
+  Giá trị bắt đầu "PASTE_" bị coi là placeholder và bỏ qua.
+
+================================================================================
+7. PLAYBOOK DEBUG (triệu chứng -> nhìn đâu)
+================================================================================
+- "ERIS không nói gì":
+    1) Xem log mạch [LLM]: 429/hết quota? -> thêm key vào pool.
+    2) KHÔNG crash mà vẫn im -> tầng policy quyết im. Soi debug_trace/parse_mode
+       trong Decision: ambient_silence, surface_arbiter, micro_policy, no_fallback.
+    3) parse_mode = format_repair_fallback / service_error / no_fallback_block ->
+       LLM trả sai định dạng hoặc lỗi service (xem _is_nonsemantic_fallback_decision
+       trong coordinator.py).
+- "Body hiện nhưng không phản hồi":
+    -> vision.py chưa chạy, hoặc UDP 4242/4243 bị firewall. Kiểm tra [Vision] trong log.
+       Body tự đi lại được (LocalBodyAutonomy) kể cả khi cortex chết — đừng nhầm là "sống".
+- "Animation sai / nhân vật đứng yên":
+    -> UdpDecisionParser.cs: tên animation không hợp lệ bị fallback 'stand'/'stand_walk'.
+       Xem _validAnimations / _animAliases. LLM hay hallucinate tên -> đã có alias.
+- "Panel Inner Diary trống / private mind '(chưa có)'":
+    -> payload UDP vượt 63000 bytes -> bị nén/cắt. Xem transport/udp.py stage 1-4.
+       (stage cố giữ inner_diary + anchor, nhưng debug nặng có thể bị vứt.)
+- "ModuleNotFoundError khi chạy test/manual":
+    -> chưa set PYTHONPATH=src, hoặc thiếu dep (pip install transformers torch).
+- "Nó nhớ sai / quên":
+    -> mở memory_core/*.json tương ứng; xem memory_commit_policy.py & consolidator.
+- "Chạy 2 vision.py / lock lỗi":
+    -> src/.vision.lock (SingleInstanceLock). Xóa nếu kẹt sau crash.
+- Chạy runtime riêng để xem log cortex (không cần Godot):
+       set PYTHONPATH=src
+       python src\vision.py
+- Chạy test:  python run_tests.py   (hoặc: set PYTHONPATH=src & python -m pytest tests/ -q)
+
+================================================================================
+8. ĐỊNH DẠNG DECISION (JSON cortex -> body, UDP 4242)
+================================================================================
+Các field body đọc (UdpDecisionParser.cs):
+  text                : câu để hiện (rỗng/should_speak=false -> không nói).
+  should_speak        : false -> body không bật bong bóng thoại.
+  animation           : tên animation (đã alias/validate phía body).
+  direction / motion_facing : hướng quay (-1/1).
+  next_animation, bounce_action : chuỗi animation tiếp theo.
+  motion_intent, target_x / motion_target_x : lệnh di chuyển (walk_to, climb_to_top, drop...).
+  body_bias           : thiên hướng cử động.
+  emotion_debug       : dữ liệu panel Emotion (summary + items).
+  private_mind_digest : dữ liệu panel Inner Diary / Mô Hình Ngài (anchor, sections).
+  parse_mode, debug_trace, parser_trace : VẾT để debug vì sao ra Decision này.
+
+Event body -> cortex (UDP 4243): "chat_start", "chat_end", text chat, "force_speak",
+"touch"/tương tác. (Xem SendChatSignal trong UdpListener.cs.)
+
+================================================================================
+9. GHI CHÚ CHO NGƯỜI DEBUG
+================================================================================
+- coordinator.py RẤT lớn vì gom mixin; muốn sửa hành vi 1 mảng, tìm đúng mixin trong
+  src/runtime/*_cycle.py hoặc *_pipeline.py thay vì sửa thẳng coordinator.
+- Comment tiếng Việt rải khắp code là CỐ Ý: chúng giải thích "vì sao", đọc trước khi sửa.
+- Nguyên tắc no-fallback (no_fallback_policy.py): ở chế độ này ERIS thà IM còn hơn
+  nói câu fallback vô nghĩa. Đừng "sửa" bằng cách nhồi fallback lại.
+- Mọi thứ liên quan "đời sống ngầm" chạy theo nhịp riêng (lane next-due random) —
+  test phải tiêm thời gian/seed, đừng phụ thuộc wall-clock.
+================================================================================

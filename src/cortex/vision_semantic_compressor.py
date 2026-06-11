@@ -673,6 +673,11 @@ class VisionSemanticCompressor:
 
     @staticmethod
     def _make_default_client() -> Any | None:
+        try:
+            from llm.local_llama_engine import build_local_or_ollama_client
+            return build_local_or_ollama_client()
+        except Exception:
+            pass
         if OllamaClient is Any:  # type: ignore[comparison-overlap]
             return None
         try:

@@ -57,11 +57,13 @@ class InnerDiaryWriter:
         self,
         *,
         adapter: Any = None,
+        fallback_adapter: Any = None,
         throttle_seconds: float | None = None,
         enabled: bool | None = None,
         logger: Any = None,
     ) -> None:
         self.adapter = adapter
+        self.fallback_adapter = fallback_adapter
         self.enabled = _env_flag("ERIS_INNER_DIARY_AI", True) if enabled is None else bool(enabled)
         self.throttle_seconds = (
             max(15.0, _env_float("ERIS_INNER_DIARY_AI_SEC", 120.0))
@@ -102,15 +104,37 @@ class InnerDiaryWriter:
             voice = write_fn(facts)
         except Exception as exc:
             self._log("warning", "InnerDiaryWriter call failed: %s", exc)
-            return self._cached_voice
+            voice = None
 
         voice = self._sanitize(voice)
         if voice is None:
-            # Lỗi/cooldown từ adapter: giữ bản cũ, throttle đã đặt nên không hammer.
+            # Adapter chính (Gemini) chết/lỗi JSON → thử adapter DỰ PHÒNG (vd qwen
+            # qua aggregator) để diary không câm. Lỗi tiếp thì giữ bản cũ.
+            voice = self._try_fallback(facts)
+        if voice is None:
+            # Hết cả chính lẫn dự phòng: giữ bản cũ, throttle đã đặt nên không hammer.
             return self._cached_voice
 
         self._cached_voice = voice
         self._last_signature = signature
+        return voice
+
+    def _try_fallback(self, facts: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Gọi adapter dự phòng cho diary. Nuốt mọi lỗi, trả None nếu không cứu được."""
+        fb = self.fallback_adapter
+        if fb is None:
+            return None
+        fb_fn = getattr(fb, "write_inner_diary", None)
+        if not callable(fb_fn):
+            return None
+        try:
+            voice = fb_fn(facts)
+        except Exception as exc:
+            self._log("warning", "InnerDiary fallback call failed: %s", exc)
+            return None
+        voice = self._sanitize(voice)
+        if voice is not None:
+            self._log("info", "InnerDiary rescued by fallback adapter")
         return voice
 
     # ----------------------------------------------------------------- internal

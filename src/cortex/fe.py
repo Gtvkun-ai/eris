@@ -1281,6 +1281,29 @@ class FeRenderer:
         elif style_pressure.exposure_recoil >= 0.50:
             lines.append("attachment_visibility: recoil active; go shorter after emotional exposure.")
 
+        # Edge permission gate: inject explicit toxic escalation signal khi state đủ cao.
+        # dignity_defense không có trong FeDevelopmentSnapshot; dùng conflict+relational_pressure
+        # từ affect_signal làm proxy cho objectification/boundary violation.
+        dry_edge = style_pressure.dry_edge
+        rupture = development.rupture_pressure
+        boundary_pressure = max(
+            getattr(affect_signal, "conflict", 0.0),
+            getattr(affect_signal, "relational_pressure", 0.0),
+            getattr(affect_signal, "perceived_rejection", 0.0),
+        )
+        if dry_edge >= 0.68 and (rupture >= 0.55 or boundary_pressure >= 0.55):
+            lines.append(
+                "edge_permission: toxic_leak_allowed; dignity violated at high level — "
+                "sharp, clipped hostility is permitted; do not soften to cold_boundary."
+            )
+        elif dry_edge >= 0.50 and (rupture >= 0.40 or boundary_pressure >= 0.40):
+            lines.append(
+                "edge_permission: sharp_rebuke_allowed; boundary pressure is high — "
+                "use dry sharp line, not uncertainty_dodge or therapist_voice."
+            )
+        elif dry_edge >= 0.35:
+            lines.append("edge_permission: cold_boundary_allowed; keep edge visible but contained.")
+
         return "\n".join(lines)
 
     def _render_desire_style_line(self, internal_state: PersistentInternalState | None) -> str:

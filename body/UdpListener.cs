@@ -53,6 +53,8 @@ public partial class UdpListener : Node2D
 	[Export] public bool KeepWindowAlwaysOnTop = true;
 	[Export] public bool UseBorderlessWindow = true;
 	[Export] public bool UseTransparentWindow = true;
+	[Export] public bool FillScreenOverlay = true;
+	[Export] public bool EnableMousePassthrough = true;
 
 	private float _moveSpeed = 60f;   
 	private float _moveDir = 1f;      
@@ -80,6 +82,7 @@ public partial class UdpListener : Node2D
 	private Button _contextForceSpeakButton;
 	private Button _contextEmotionButton;
 	private Button _contextPrivateMindButton;
+	private Button _contextExitButton;
 	private Button _contextCloseButton;
 	private Panel _emotionPanel;
 	private RichTextLabel _emotionText;
@@ -131,7 +134,7 @@ public partial class UdpListener : Node2D
 	private ulong _chatLastActivityMs = 0;
 	[Export] public float ChatAutoHideSeconds = 20f;
 	private Tween _textTween;
-	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 306f);
+	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 348f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
 	private static readonly Vector2 PrivateMindPanelMinSize = new(1040f, 624f);
 
@@ -162,6 +165,8 @@ public partial class UdpListener : Node2D
 	private const string PrivateMindStatePath = "user://inner_diary_state.json";	private Control _bubble;
 	private bool _grabModeArmed = false;
 	private bool _isDraggingCharacter = false;
+	private Control _draggingPanel = null;
+	private Vector2 _panelDragOffset = Vector2.Zero;
 	private Vector2 _dragOffset = Vector2.Zero;
 	private Vector2 _lastDragMousePos = Vector2.Zero;
 	private Vector2 _previousDragMousePos = Vector2.Zero;
@@ -296,11 +301,19 @@ public partial class UdpListener : Node2D
 		_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
 	if (_contextAnchorButton != null)
 		_contextAnchorButton.Pressed += OnContextAnchorPressed;
+	if (_contextExitButton != null)
+		_contextExitButton.Pressed += OnContextExitPressed;
 	_contextCloseButton.Pressed += CloseCharacterContextMenu;
 		_chatInput.TextSubmitted += _ => OnSendPressed();
 		_chatInput.TextChanged += _ => MarkChatActivity();
 		_chatSend.ConnectToHost("127.0.0.1", 4243);
 		BuildEmotionPanelUi();
+
+		// Cho phép kéo-di-chuyển các panel nổi (kéo từ vùng nền, không đụng nút con).
+		MakePanelDraggable(_emotionPanel);
+		MakePanelDraggable(_privateMindPanel);
+		MakePanelDraggable(_anchorPanel);
+		MakePanelDraggable(_chatPanel);
 
 		var cs  = GetNode<CollisionShape2D>("Monika2/CollisionShape2D");
 
@@ -358,6 +371,77 @@ public partial class UdpListener : Node2D
 			DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.Transparent, true);
 			GetViewport().TransparentBg = true;
 		}
+
+		if (FillScreenOverlay)
+		{
+			// Phủ trọn màn hình vật lý (gồm cả vùng taskbar) để Eris bò khắp nơi,
+			// kết hợp Borderless + AlwaysOnTop nên vẽ đè cả lên taskbar.
+			int screen = DisplayServer.WindowGetCurrentScreen();
+			Vector2I screenPos = DisplayServer.ScreenGetPosition(screen);
+			Vector2I screenSize = DisplayServer.ScreenGetSize(screen);
+			DisplayServer.WindowSetSize(screenSize);
+			DisplayServer.WindowSetPosition(screenPos);
+		}
+
+		// Mặc định cho chuột xuyên qua toàn bộ cửa sổ; mỗi frame sẽ chỉ "mở khoá"
+		// vùng quanh Eris (xem UpdateMousePassthrough) để desktop phía sau vẫn bấm được.
+		if (EnableMousePassthrough)
+			UpdateMousePassthrough();
+	}
+
+	private bool _passthroughFullCapture = true;
+	private Rect2 _passthroughLastRect = new(Vector2.Zero, Vector2.Zero);
+
+	private void UpdateMousePassthrough()
+	{
+		if (!EnableDesktopOverlayWindow || !EnableMousePassthrough)
+			return;
+
+		// Đang mở panel/menu/chat hoặc đang kéo nhân vật → để cả cửa sổ nhận chuột,
+		// nếu không các nút trên panel sẽ bị click xuyên mất.
+		bool uiActive =
+			(_chatPanel?.Visible ?? false)
+			|| (_characterContextMenu?.Visible ?? false)
+			|| (_emotionPanel?.Visible ?? false)
+			|| (_privateMindPanel?.Visible ?? false)
+			|| (_anchorPanel?.Visible ?? false)
+			|| _grabModeArmed
+			|| _isDraggingCharacter;
+
+		if (uiActive)
+		{
+			if (!_passthroughFullCapture)
+			{
+				// Mảng rỗng = tắt passthrough = cả cửa sổ chặn chuột (UI bấm được).
+				DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
+				_passthroughFullCapture = true;
+			}
+			return;
+		}
+
+		if (_body == null)
+			return;
+
+		// Vùng quanh nhân vật (nới thêm cho bong bóng thoại + dễ click).
+		float pad = 12f;
+		Vector2 tl = _body.GlobalPosition - _spriteHalfSize - new Vector2(pad, pad);
+		Vector2 size = _spriteHalfSize * 2f + new Vector2(pad * 2f, pad * 2f);
+		var rect = new Rect2(tl, size);
+
+		// Tránh gọi mỗi frame khi nhân vật đứng yên.
+		if (!_passthroughFullCapture && _passthroughLastRect.Position.DistanceTo(rect.Position) < 2f)
+			return;
+
+		var region = new[]
+		{
+			rect.Position,
+			rect.Position + new Vector2(rect.Size.X, 0f),
+			rect.Position + rect.Size,
+			rect.Position + new Vector2(0f, rect.Size.Y),
+		};
+		DisplayServer.WindowSetMousePassthrough(region);
+		_passthroughFullCapture = false;
+		_passthroughLastRect = rect;
 	}
 
 	public override void _ExitTree()
@@ -387,6 +471,7 @@ public partial class UdpListener : Node2D
 		}
 		_motion.ApplyVisualState(_monika, _bubble, _body.Position, screenSize);
 		ClampBubbleToScreen();
+		UpdateMousePassthrough();
 		if (_privateMindPanel != null && _privateMindPanel.Visible)
 		{
 			UpdatePrivateMindDecorLayout();
@@ -404,6 +489,26 @@ public partial class UdpListener : Node2D
 
 	public override void _Input(InputEvent @event)
 	{
+		// Đang kéo một panel: xử lý di chuyển + thả tại đây để kéo mượt kể cả khi
+		// con trỏ rời khỏi vùng panel (GuiInput không nhận motion khi ra ngoài).
+		if (_draggingPanel != null)
+		{
+			if (@event is InputEventMouseMotion)
+			{
+				UpdatePanelDrag();
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+			if (@event is InputEventMouseButton panelRelease
+				&& panelRelease.ButtonIndex == MouseButton.Left
+				&& !panelRelease.Pressed)
+			{
+				_draggingPanel = null;
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+		}
+
 		if (@event is InputEventMouseMotion mouseMotion && _isDraggingCharacter)
 		{
 			UpdateDrag(mouseMotion.Position);
@@ -624,6 +729,15 @@ public partial class UdpListener : Node2D
 	{
 		_bodyAutonomy?.RecordUserInteraction();
 		TogglePrivateMindPanel();
+	}
+
+	private void OnContextExitPressed()
+	{
+		// Thoát hẳn ERIS: đóng menu, dừng tiến trình con (vision...) rồi tắt app.
+		CloseCharacterContextMenu();
+		GD.Print("[Exit] Người dùng yêu cầu thoát ERIS qua context menu.");
+		StopVisionProcess();
+		GetTree().Quit();
 	}
 
 	private void ToggleEmotionPanel()
@@ -935,6 +1049,13 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextAnchorButton, Mathf.Max(0, closeIndex));
 			}
+			if (_contextExitButton == null)
+			{
+				_contextExitButton = new Button { Name = "ExitButton" };
+				container.AddChild(_contextExitButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextExitButton, Mathf.Max(0, closeIndex));
+			}
 		}
 
 		ConfigureContextMenuButton(_contextChatButton, "Chat", "res://asset/Resource/chat.png");
@@ -943,6 +1064,7 @@ public partial class UdpListener : Node2D
 		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Private Mind", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextAnchorButton, "Mo Hinh Ngai", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextExitButton, "Thoat ERIS", "res://asset/Resource/exit.png");
 		ConfigureContextMenuButton(_contextCloseButton, "Dong", "res://asset/Resource/exit.png");
 	}
 
@@ -2719,6 +2841,36 @@ public partial class UdpListener : Node2D
 		return rect.HasPoint(mousePosition);
 	}
 
+	// Cho phép kéo-di-chuyển một panel: nhấn vào vùng nền (không phải nút con) để bắt đầu kéo.
+	private void MakePanelDraggable(Control panel)
+	{
+		if (panel == null)
+			return;
+		panel.MouseFilter = Control.MouseFilterEnum.Stop;
+		panel.GuiInput += @event => OnPanelGuiInput(panel, @event);
+	}
+
+	private void OnPanelGuiInput(Control panel, InputEvent @event)
+	{
+		if (@event is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && mb.Pressed)
+		{
+			_draggingPanel = panel;
+			_panelDragOffset = panel.GetGlobalMousePosition() - panel.GlobalPosition;
+			panel.AcceptEvent();
+		}
+	}
+
+	private void UpdatePanelDrag()
+	{
+		if (_draggingPanel == null)
+			return;
+		Vector2 target = _draggingPanel.GetGlobalMousePosition() - _panelDragOffset;
+		Vector2 screen = GetViewportRect().Size;
+		target.X = Mathf.Clamp(target.X, 0f, Mathf.Max(0f, screen.X - _draggingPanel.Size.X));
+		target.Y = Mathf.Clamp(target.Y, 0f, Mathf.Max(0f, screen.Y - _draggingPanel.Size.Y));
+		_draggingPanel.GlobalPosition = target;
+	}
+
 	private Vector2 ClampDraggedPosition(Vector2 desiredGlobalPosition, Vector2 screenSize)
 	{
 		return new Vector2(
@@ -2748,21 +2900,43 @@ public partial class UdpListener : Node2D
 	}
 
 	private void ApplyTypewriterEffect(string text){
-		_label.Text = text;
-		_label.VisibleCharacters = 0;
-
 		if (_textTween != null && _textTween.IsValid())
 		{
 			_textTween.Kill();
 		}
 
+		text ??= "";
+
+		// Bật cuộn + tự bám đáy để tin nhắn dài không bị tràn khỏi khung bong bóng.
+		// Chữ được nối dần (progressive) thay vì set hết rồi mới hé lộ, nhờ vậy
+		// ScrollFollowing luôn kéo xuống dòng mới nhất đang gõ.
+		_label.ClipContents = true;
+		_label.ScrollActive = true;
+		_label.ScrollFollowing = true;
+		_label.VisibleCharacters = -1;
+		_label.Text = "";
+
 		_textTween = CreateTween();
 
 		float speedPerChar = 0.05f;
-		float totalDuration = text.Length * speedPerChar;
+		float totalDuration = Mathf.Max(0.01f, text.Length * speedPerChar);
 
 		// thực thi hiệu ứng gõ chữ
-		_textTween.TweenProperty(_label, "visible_characters", text.Length, totalDuration);
+		_textTween.TweenMethod(Callable.From<int>(count => RevealTypewriterText(text, count)), 0, text.Length, totalDuration);
+	}
+
+	private void RevealTypewriterText(string fullText, int count)
+	{
+		if (_label == null)
+			return;
+
+		count = Mathf.Clamp(count, 0, fullText.Length);
+		_label.Text = fullText.Substring(0, count);
+
+		// Ép thanh cuộn bám đáy để dòng vừa gõ luôn nằm trong khung.
+		VScrollBar scrollBar = _label.GetVScrollBar();
+		if (scrollBar != null)
+			scrollBar.Value = scrollBar.MaxValue;
 	}
 	private void UpdateAnimation()
 	{

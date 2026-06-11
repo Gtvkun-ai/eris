@@ -23,7 +23,7 @@ binaries = []
 hiddenimports = []
 
 # Cac package nang/co data runtime: gom het de tranh thieu file luc chay.
-for pkg in ("transformers", "tokenizers", "torch", "safetensors", "huggingface_hub", "regex"):
+for pkg in ("transformers", "tokenizers", "torch", "safetensors", "huggingface_hub", "regex", "llama_cpp"):
     try:
         d, b, h = collect_all(pkg)
         datas += d
@@ -32,10 +32,36 @@ for pkg in ("transformers", "tokenizers", "torch", "safetensors", "huggingface_h
     except Exception:
         pass
 
+# Hidden imports thủ công cho llama_cpp (collect_all đôi khi miss modules động)
+hiddenimports += [
+    "llama_cpp",
+    "llama_cpp.llama",
+    "llama_cpp.llama_cpp",
+    "llama_cpp.llama_chat_format",   # MoondreamChatHandler nằm ở đây
+    "llama_cpp.llama_grammar",
+    "llama_cpp.llama_types",
+    "llama_cpp.llama_tokenizer",
+    "llama_cpp.llama_speculative",
+    "diskcache",
+    "jinja2",
+    "jinja2.ext",
+]
+
 # Embedding model di kem repo (neu co).
 _model_dir = os.path.join(SRC, "paraphrase-multilingual-MiniLM-L12-v2")
 if os.path.isdir(_model_dir):
     datas.append((_model_dir, "paraphrase-multilingual-MiniLM-L12-v2"))
+
+# File gguf cho llama-cpp-python — ship cùng bundle vào _internal/src/
+# Runtime đọc qua ERIS_PROJECT_ROOT + resolve_model_path → sys._MEIPASS/src/
+for gguf_name in (
+    "qwen3-1.7b-q4_k_m.gguf",
+    "moondream2-q4_k.gguf",
+    "moondream2-mmproj-f16.gguf",
+):
+    _gguf = os.path.join(SRC, gguf_name)
+    if os.path.isfile(_gguf):
+        datas.append((_gguf, "src"))
 
 # Cac file config mac dinh (khong phai secrets) de runtime co default hop ly.
 for cfg in ("focus_context_config.json", "goal_profiles.json", "ni_focus_config.json"):

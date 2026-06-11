@@ -59,6 +59,8 @@ public sealed class MotionController
     private string _nextAction = "";
     private string _bounceAction = ""; //animation/phản ứng khi đụng tường
     private float _targetX = float.NaN;
+    private float _clingArmedSeconds; //cửa sổ còn cho phép bám tường sau cú ném
+    private bool _clingAttempted; //đã roll bám cho cú ném hiện tại chưa
 
     private ClimbPhase _climbPhase = ClimbPhase.None;
     private float _climbUpWallX;
@@ -107,12 +109,18 @@ public sealed class MotionController
         _velocityY += _gravity * delta; //tăng vận tốc rơi theo gravity
         pos.X += _velocityX * delta;
         pos.Y += _velocityY * delta; //cộng vận tốc vào vị trí
-        _velocityX = Mathf.MoveToward(_velocityX, 0f, 260f * delta); //giảm dần vận tốc ngang
+
+        bool clingArmed = _clingArmedSeconds > 0f;
+        float airDecay = clingArmed ? 120f : 260f; //đang armed thì giữ đà ngang lâu hơn để với tới tường
+        _velocityX = Mathf.MoveToward(_velocityX, 0f, airDecay * delta); //giảm dần vận tốc ngang
+        if (clingArmed)
+            _clingArmedSeconds = Math.Max(0f, _clingArmedSeconds - delta);
 
         if (pos.Y >= screenSize.Y - _spriteHalfSize.Y)
         {
             pos.Y = screenSize.Y - _spriteHalfSize.Y;
-            _velocityX = Mathf.MoveToward(_velocityX, 0f, 420f * delta);
+            float floorDecay = clingArmed ? 200f : 420f; //tiếp đất sát chân tường vẫn trượt tới được mép
+            _velocityX = Mathf.MoveToward(_velocityX, 0f, floorDecay * delta);
             _velocityY = 0f;
             _isFalling = false;
             if (!_isWalking && _climbPhase == ClimbPhase.None && (_currentAction == "air_swing_l" || _currentAction == "air_swing_r"))
@@ -246,6 +254,8 @@ public sealed class MotionController
                 _velocityX = command.ImpulseX;
                 _velocityY = command.ImpulseY;
                 _bounceAction = BuildClingMarker(command.ClingChance);
+                _clingArmedSeconds = 4f;
+                _clingAttempted = false;
                 _isFalling = true;
                 _playSound?.Invoke(_currentAction);
                 return;
@@ -433,11 +443,17 @@ public sealed class MotionController
         _climbTopTargetX = float.NaN;
         _velocityY = 0f;
         _isFalling = false;
+        _clingArmedSeconds = 0f;
+        _clingAttempted = false;
     }
 
     private void HandleAirborneWallContact(ref Vector2 pos, Vector2 screenSize)
     {
-        if (!_isFalling || Math.Abs(_velocityX) < 40f)
+        float clingChance = ParseClingChance(_bounceAction);
+        bool clingArmed = _clingArmedSeconds > 0f && clingChance > 0f && !_clingAttempted;
+
+        //Trường hợp không phải throw-cling vẫn giữ hành vi cũ: phải đang bay và còn lực ngang.
+        if (!clingArmed && (!_isFalling || Math.Abs(_velocityX) < 40f))
             return;
 
         float rightWall = screenSize.X - _spriteHalfSize.X;
@@ -449,16 +465,20 @@ public sealed class MotionController
 
         pos.X = hitRight ? rightWall : leftWall;
         _facingDir = hitRight ? -1 : 1;
-
-        float clingChance = ParseClingChance(_bounceAction);
         _velocityX = 0f;
-        if (clingChance > 0f && GD.Randf() <= clingChance)
+
+        if (!clingArmed)
+            return;
+
+        //Mỗi cú ném chỉ roll bám đúng một lần, ngay khi chạm được tường.
+        _clingAttempted = true;
+        _clingArmedSeconds = 0f;
+        if (GD.Randf() <= clingChance)
         {
             _nextAction = "climb_top";
             _targetX = hitRight ? 0.90f : 0.10f;
             _bounceAction = "";
             BeginClimb(pos, screenSize);
-            return;
         }
     }
 

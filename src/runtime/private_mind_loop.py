@@ -103,7 +103,10 @@ class PrivateMindLoop:
         # để Inner Diary vẽ bảng cảm xúc theo state thật thay vì hằng số gán cứng.
         self._affect_snapshot: dict[str, Any] = {}
         # Bộ viết nhật ký giọng Eris (throttle/cache nội bộ). Dùng chung model_adapter.
-        self.diary_writer = InnerDiaryWriter(adapter=model_adapter, logger=logger)
+        # Kèm adapter DỰ PHÒNG (vd qwen-plus-character qua aggregator) để diary không
+        # chết khi Gemini lỗi/hết quota. Chưa khai aggregator thì fallback=None (như cũ).
+        diary_fallback = RuntimePrivateMindModelAdapter.diary_fallback_from_env(logger=logger)
+        self.diary_writer = InnerDiaryWriter(adapter=model_adapter, fallback_adapter=diary_fallback, logger=logger)
 
     @classmethod
     def from_runtime(cls, *, runtime_owner: Any, llm_service: Any = None, logger: Any = None) -> "PrivateMindLoop | None":

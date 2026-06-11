@@ -40,7 +40,16 @@ class RuntimeSensoryModelAdapter:
     ) -> None:
         self.config = config or SensoryModelAdapterConfig()
         self.logger = logger
-        self.client = ollama_client if ollama_client is not None else (OllamaClient() if self.config.provider == "ollama" else None)
+        if ollama_client is not None:
+            self.client = ollama_client
+        elif self.config.provider == "ollama":
+            try:
+                from llm.local_llama_engine import build_local_or_ollama_client
+                self.client = build_local_or_ollama_client()
+            except Exception:
+                self.client = OllamaClient()
+        else:
+            self.client = None
 
     @classmethod
     def from_env(cls, *, logger: Any | None = None) -> "RuntimeSensoryModelAdapter | None":

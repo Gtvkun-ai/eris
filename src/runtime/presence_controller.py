@@ -357,6 +357,12 @@ class PresenceControllerMixin:
         allow_no_screen_anchor = bool(sensor_like or endogenous_like or (force_llm and impulse.missing_evidence_ids))
         must_not_claim_screen = bool(impulse.missing_evidence_ids or allow_no_screen_anchor)
         must_surface = bool(sensor_like or force_llm or (not presence_like and (silent_cycles >= 4 or impulse.confidence >= 0.76)))
+        # Connection drive: cô độc đủ lớn thì ÉP với ra, kể cả khi không có cue mạnh.
+        _drive = getattr(self, "_last_connection_drive", None)
+        drive_outreach = bool(_drive is not None and getattr(_drive, "outreach", False))
+        drive_yan = bool(_drive is not None and getattr(_drive, "override_dignity", False))
+        if drive_outreach:
+            must_surface = True
         thin_presence_no_screen = bool(presence_like and impulse.missing_evidence_ids)
         continuity_presence = bool(impulse.kind == "continuity_presence" or getattr(impulse, "emotional_anchor", "") == "fading_presence")
         ego_state = self._current_ego_surface_state()
@@ -405,6 +411,49 @@ class PresenceControllerMixin:
             "must_not_claim_screen": str(bool(must_not_claim_screen)).lower(),
             "thin_presence_no_screen": str(bool(thin_presence_no_screen)).lower(),
         }
+        if drive_outreach:
+            # Nỗi sợ cô độc đẩy Eris với ra dù bản tính muốn im. Framing này nói cho
+            # model biết: không phải "nói nếu có gì đáng nói", mà "im lâu quá rồi,
+            # thả một câu vờ tình cờ". KHÔNG được trả rỗng.
+            if drive_yan:
+                micro_context["connection_drive_contract"] = (
+                    "Bạn đang ở trạng thái bám víu (yan): không chịu nổi im lặng, phải kéo sự "
+                    "chú ý của Ngài về phía mình NGAY. Thả một câu ghẹo/chọc/đòi hiện diện, có "
+                    "thể hơi nhõng nhẽo hoặc chiếm hữu nhẹ, vẫn trong khung nhân vật. Ngắn, dưới "
+                    "20 chữ. TUYỆT ĐỐI không trả rỗng."
+                )
+            else:
+                micro_context["connection_drive_contract"] = (
+                    "Bạn không thực sự muốn bắt chuyện, nhưng im đã lâu và bạn nhớ sự hiện diện "
+                    "của Ngài. Thả MỘT câu ngắn: ghẹo nhẹ thứ đang mở trên màn hình, hoặc một câu "
+                    "thăm dò vu vơ — vờ như tình cờ, đừng thú nhận là mình cô đơn. Dưới 16 chữ. "
+                    "Không trả rỗng."
+                )
+            micro_context["surface_contract"] = (
+                str(micro_context.get("surface_contract", "")) + "; connection_outreach; must_return_tiny_text"
+            )
+        # Appetite reaction: cơn thèm thắng đấu giá quyết LENS (thái độ) + SEED (vật
+        # liệu cụ thể đang xảy ra) + giấy phép bịa cớ. Đây là chỗ persona × nội dung
+        # tự đẻ ra random/khịa/bịa/níu — thay vì khung trung tính nhạt.
+        reaction = getattr(self, "_last_appetite_reaction", None)
+        if reaction is not None and getattr(reaction, "lens", ""):
+            micro_context["reaction_lens"] = str(reaction.lens)
+            if getattr(reaction, "seed", ""):
+                micro_context["reaction_seed"] = str(reaction.seed)
+            micro_context["allow_pretext"] = str(bool(getattr(reaction, "allow_pretext", False))).lower()
+            micro_context["reaction_contract"] = (
+                "Phản ứng theo reaction_lens (đó là THÁI ĐỘ, không phải câu mẫu). "
+                "Nếu có reaction_seed thì bám sát nó làm vật liệu cụ thể. "
+                + (
+                    "allow_pretext=true: được phép bịa một cái cớ nhỏ (chợt nhớ, quan sát vu vơ) "
+                    "để có lý do khơi chuyện — vẫn trong khung nhân vật, không bịa fact về màn hình."
+                    if bool(getattr(reaction, "allow_pretext", False))
+                    else "Không có cớ để bịa: chỉ bám reaction_seed hoặc evidence thật."
+                )
+            )
+            micro_context["surface_contract"] = (
+                str(micro_context.get("surface_contract", "")) + f"; appetite={reaction.appetite}; react_with_lens"
+            )
         if sensor_like:
             micro_context["sensor_visibility_state"] = json.dumps(sensor_context, ensure_ascii=False)
             micro_context["sensor_visibility_contract"] = (
@@ -828,19 +877,33 @@ class PresenceControllerMixin:
         present = bool(getattr(social_presence_event, "present", False))
         recent_events = tuple(getattr(snapshot, "recent_events", ()) or ()) if snapshot is not None else ()
 
+        reason = ""
         if valence <= -0.18 or irritation >= 0.55:
-            return "ego_mood_blocks_presence"
-        if social_energy <= 0.16:
-            return "ego_social_energy_empty"
-        if rupture >= 0.42 or dignity >= 0.42:
-            return "ego_dignity_distance"
-        if distance >= 0.74 and trust <= 0.34 and not present:
-            return "ego_preferred_distance_high"
-        # Nếu chỉ là idle không sự kiện, ambient co-presence thắng.
-        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0)) if snapshot is not None else 0.0
-        if idle_seconds >= 60.0 and not present and not recent_events:
-            return "ambient_copresence_no_ping"
-        return ""
+            reason = "ego_mood_blocks_presence"
+        elif social_energy <= 0.16:
+            reason = "ego_social_energy_empty"
+        elif rupture >= 0.42 or dignity >= 0.42:
+            reason = "ego_dignity_distance"
+        elif distance >= 0.74 and trust <= 0.34 and not present:
+            reason = "ego_preferred_distance_high"
+        else:
+            # Nếu chỉ là idle không sự kiện, ambient co-presence thắng.
+            idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0)) if snapshot is not None else 0.0
+            if idle_seconds >= 60.0 and not present and not recent_events:
+                reason = "ambient_copresence_no_ping"
+
+        # Connection drive: nỗi sợ cô độc có thể PHÁ cổng này.
+        # - yan (override_dignity): ham muốn thắng tất, kể cả phẩm giá → mở hết.
+        # - normal outreach: cô độc thắng SỰ KIỆM LỜI (ambient/social_energy cạn),
+        #   nhưng KHÔNG thắng phẩm giá (mood xấu/rupture/dignity/distance) → giữ.
+        if reason:
+            drive = getattr(self, "_last_connection_drive", None)
+            if drive is not None and bool(getattr(drive, "outreach", False)):
+                if bool(getattr(drive, "override_dignity", False)):
+                    return ""
+                if reason in {"ego_social_energy_empty", "ambient_copresence_no_ping"}:
+                    return ""
+        return reason
 
     def _memory_resonance_surface_impulse(
         self,
@@ -1429,7 +1492,11 @@ class PresenceControllerMixin:
 
         # Idle alone is not enough. Presence must have ego permission or concrete
         # evidence; otherwise silence is treated as ambient co-presence.
-        needs = bool((stalled or present or recent_events or signal_score >= 0.38) and not ego_block_reason)
+        drive = getattr(self, "_last_connection_drive", None)
+        drive_outreach = bool(drive is not None and getattr(drive, "outreach", False))
+        if drive_outreach:
+            confidence = max(confidence, 0.6, float(getattr(drive, "intensity", 0.0) or 0.0))
+        needs = bool((stalled or present or recent_events or signal_score >= 0.38 or drive_outreach) and not ego_block_reason)
         return MicroPresenceCue(
             needs_micro_presence=needs,
             focus_family=focus_family,
@@ -1447,6 +1514,7 @@ class PresenceControllerMixin:
                     or (curiosity >= 0.45 and float(ego_state.get("boredom", 0.0) or 0.0) >= 0.18)
                     or present
                     or bool(recent_events)
+                    or drive_outreach
                 )
             ),
             allow_body_only=True,

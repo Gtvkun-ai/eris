@@ -2588,6 +2588,14 @@ class LlmService:
         ego_surface_state = context.get("ego_surface_state", "") if isinstance(context, dict) else ""
         ego_surface_contract = context.get("ego_surface_contract", "") if isinstance(context, dict) else ""
         surface_contract = str(context.get("surface_contract", "") if isinstance(context, dict) else "")
+        # Appetite outreach: Eris ĐANG muốn nói (một cơn thèm thắng đấu giá). Đây là
+        # tín hiệu CẮT GÁC CỔNG — bỏ thiên kiến "im cho an toàn", để persona tự do.
+        react_with_lens = "react_with_lens" in surface_contract
+        reaction_lens = str(context.get("reaction_lens", "") if isinstance(context, dict) else "").strip()
+        reaction_seed = str(context.get("reaction_seed", "") if isinstance(context, dict) else "").strip()
+        reaction_pretext = str(context.get("allow_pretext", "") if isinstance(context, dict) else "").lower() == "true"
+        if react_with_lens:
+            force_surface = True
         allow_no_screen_anchor = (
             "allow_no_screen_anchor" in surface_contract
             or str(context.get("allow_no_screen_anchor", "") if isinstance(context, dict) else "").lower() == "true"
@@ -2737,15 +2745,40 @@ class LlmService:
             "- non-empty text must be Vietnamese only and keep full diacritics.\n"
             "- non-empty text must be speakable as-is.\n"
         )
+        if react_with_lens:
+            # === CẮT GÁC CỔNG TRIỆT ĐỂ ===
+            # Một cơn thèm đã thắng — Eris muốn với ra. Thay hẳn prompt bằng bản gọn,
+            # tự do, KHÔNG mang theo rừng guard "hãy im". Lens = thái độ, seed = vật liệu.
+            vf_blob = str(context.get("vision_facts", "") if isinstance(context, dict) else "")
+            system_prompt = (
+                "Bạn là Eris — INFJ, hơi lạnh và sắc, đôi khi nhõng nhẽo có kiểm soát — đang buột miệng "
+                "MỘT câu với Ngài. Trả đúng một JSON object {\"text\": \"<câu tiếng Việt>\"}. "
+                "Câu NGẮN (3-16 chữ), tự nhiên như người thật, có cá tính. "
+                "Không báo cáo trạng thái, không giải thích, không kể system. TUYỆT ĐỐI không trả rỗng."
+            )
+            user_msg = (
+                f"Thái độ lúc này (lens, đây là CÁCH NÓI, không phải câu mẫu): {reaction_lens or 'sống động, đúng tính Eris'}\n"
+                + (f"Đang xảy ra / vật liệu bám sát: {reaction_seed}\n" if reaction_seed else "")
+                + (f"Thấy trên màn (nhắc tự nhiên, đừng narrate UI): {vf_blob}\n" if vf_blob else "")
+                + (f"Tâm thế nội tâm: {ego_surface_state}\n" if ego_surface_state else "")
+                + (f"Tránh lặp lại: {avoid_text}\n" if avoid_text else "")
+                + (
+                    "Được phép BỊA một cái cớ nhỏ (chợt nhớ, một ý thoáng qua) để có lý do mở lời — "
+                    "trong khung nhân vật, chỉ KHÔNG bịa fact cụ thể về màn hình.\n"
+                    if reaction_pretext else ""
+                )
+                + "Nhiệm vụ: thả MỘT câu theo lens trên (ghẹo/tò mò/níu/khịa tùy lens). "
+                "Trả {\"text\":\"...\"} với câu thật, ngắn, có hồn. Cấm rỗng. Cấm câu sáo/đóng hộp."
+            )
         try:
             response = self.client.create_chat_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg},
                 ],
-                temperature=0.35,
-                frequency_penalty=0.7,
-                presence_penalty=0.2,
+                temperature=(0.7 if react_with_lens else 0.35),
+                frequency_penalty=(0.0 if react_with_lens else 0.7),
+                presence_penalty=(0.0 if react_with_lens else 0.2),
                 max_tokens=80,
                 response_format={"type": "json_object"},
                 grammar=None,

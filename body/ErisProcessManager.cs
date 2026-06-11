@@ -135,6 +135,15 @@ public sealed class ErisProcessManager
 		StopVision();
 	}
 
+	private static void SetEnvIfAbsent(ProcessStartInfo startInfo, string key, string value)
+	{
+		// secrets.json duoc nap truoc; neu da co gia tri thi GIU, khong de len.
+		if (startInfo.Environment.TryGetValue(key, out var existing) && !string.IsNullOrWhiteSpace(existing))
+			return;
+		if (!string.IsNullOrWhiteSpace(value))
+			startInfo.Environment[key] = value;
+	}
+
 	private void PopulateVisionEnvironment(ProcessStartInfo startInfo, ErisServiceConfig config)
 	{
 		foreach (var secret in LoadProjectSecretsEnvironment())
@@ -150,9 +159,12 @@ public sealed class ErisProcessManager
 		// suy ra tu __file__ (bi sai trong bundle PyInstaller).
 		startInfo.Environment["ERIS_PROJECT_ROOT"] = GetRuntimeBaseDir();
 		startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = config.EnableRemoteCognitionApi ? "1" : "0";
-		startInfo.Environment["ERIS_REMOTE_PROVIDER"] = config.RemoteApiProvider;
-		startInfo.Environment["ERIS_REMOTE_BASE_URL"] = config.RemoteApiBaseUrl;
-		startInfo.Environment["ERIS_REMOTE_MODEL"] = config.RemoteApiModelName;
+		// secrets.json (neu co khai) la NGUON SU THAT cho REMOTE provider/base_url/model.
+		// Chi dung gia tri tu Godot config khi secrets CHUA khai -> tranh de-len cau hinh
+		// Groq trong secrets (vd ERIS_REMOTE_PROVIDER=openai_compatible).
+		SetEnvIfAbsent(startInfo, "ERIS_REMOTE_PROVIDER", config.RemoteApiProvider);
+		SetEnvIfAbsent(startInfo, "ERIS_REMOTE_BASE_URL", config.RemoteApiBaseUrl);
+		SetEnvIfAbsent(startInfo, "ERIS_REMOTE_MODEL", config.RemoteApiModelName);
 		startInfo.Environment["ERIS_LOCAL_STYLE_REWRITE_ENABLED"] = "0";
 		startInfo.Environment["ERIS_LOCAL_VISION_FACTS"] = "0";
 		if (!string.IsNullOrWhiteSpace(config.DefaultRemoteApiKey))

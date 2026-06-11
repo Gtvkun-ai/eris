@@ -33,6 +33,11 @@ class ConcernStoreConfig:
     settle_pressure_max: float = 0.18
     settle_uncertainty_max: float = 0.32
     resolved_visible_seconds: float = 60.0 * 60.0 * 24.0  # "đã nguôi" còn nhắc được 1 ngày
+    # Buông khi nghĩ mãi không ra: concern bị nuôi bằng echo (không evidence mới)
+    # đủ nhiều lần và áp lực đã nguội → Eris thôi đào sâu, khép lại với dấu khác
+    # với "đã nguôi êm". Đây là lối thoát cho rumination, không để nó nằm open lê thê.
+    rumination_burnout_echoes: int = 6
+    rumination_burnout_pressure: float = 0.34
 
 
 class ConcernStore:
@@ -428,6 +433,20 @@ class ConcernStore:
             if concern.status not in {"watching", "open"}:
                 continue
             quiet_for = current - float(concern.last_reviewed_at or concern.updated_at or current)
+            # Buông do rumination: nghĩ lại quá nhiều lần mà không có gì mới, áp lực
+            # đã nguội. Khép với dấu "thôi đào sâu" thay vì "đã nguôi êm".
+            echo_streak = int(concern.metadata.get("echo_streak", 0) or 0)
+            if (
+                echo_streak >= cfg.rumination_burnout_echoes
+                and concern.pressure <= cfg.rumination_burnout_pressure
+            ):
+                self._apply_closure(
+                    concern,
+                    reason="rumination_burnout",
+                    closure_note="Tôi thôi đào sâu chuyện này; nghĩ mãi cũng không tới đâu.",
+                )
+                closed.append(concern)
+                continue
             if (
                 concern.status == "watching"
                 and concern.pressure <= cfg.settle_pressure_max

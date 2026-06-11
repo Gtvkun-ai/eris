@@ -50,6 +50,63 @@ pip install transformers torch
 Mở thư mục dự án bằng **Godot 4.6 .NET**. Lần đầu Godot sẽ tự khôi phục NuGet và
 build assembly `Eris`. Nếu build C# lỗi, kiểm tra .NET SDK đã cài đúng.
 
+### 2.4. Model local (llama-cpp + GPU) — chạy mọi mạch nội bộ offline
+
+ERIS dồn các mạch model nội bộ (private-mind fragment/judgment/diary, background
+observer, vision compressor) qua **llama-cpp-python** đọc thẳng file `.gguf` đặt
+trong `src/` — **không cần Ollama/llama-server ngoài**. Mạch nói chính (main
+cognition) vẫn dùng remote API (Gemini) như cũ.
+
+**Bước 1 — Tải các model gguf vào `src/`** (ngang hàng nhau):
+
+| File trong `src/` | Vai trò | Nguồn (HuggingFace) |
+|---|---|---|
+| `qwen3-1.7b-q4_k_m.gguf` | text: fragment + judgment + observer | `unsloth/Qwen3-1.7B-GGUF` → `Qwen3-1.7B-Q4_K_M.gguf` |
+| `moondream2-q4_k.gguf` | vision (model) | `vikhyatk/moondream2` (gguf) |
+| `moondream2-mmproj-f16.gguf` | vision (mmproj/clip) | `vikhyatk/moondream2` (mmproj) |
+
+```powershell
+# ví dụ tải qwen3 (đổi tên về đúng src/qwen3-1.7b-q4_k_m.gguf)
+curl.exe -L -o src\qwen3-1.7b-q4_k_m.gguf ^
+  https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
+```
+
+**Bước 2 — Cài `llama-cpp-python`.**
+
+- Chỉ CPU (portable, chậm hơn): `pip install llama-cpp-python` (đã nằm trong
+  `requirements.txt`).
+- **GPU NVIDIA (CUDA, khuyên dùng):** cần **CUDA Toolkit** + **Visual Studio
+  Build Tools (workload C++)**, rồi build từ nguồn. Có sẵn script
+  `build_llamacpp_cuda.bat` (chỉnh đường dẫn VS/CUDA cho máy bạn rồi chạy), hoặc
+  thủ công:
+  ```powershell
+  $env:CMAKE_ARGS = "-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=75"  # 75 = GTX 16xx/20xx; sửa theo GPU
+  $env:FORCE_CMAKE = "1"
+  pip install llama-cpp-python==0.3.16 --force-reinstall --no-cache-dir --no-binary llama-cpp-python
+  ```
+  > Build CUDA mất ~10–40 phút (compile kernel). Wheel ra ~100MB (bản CPU ~6MB).
+  > Nếu pip báo lỗi long-path khi giải nén bản mới, dùng `==0.3.16` và đặt
+  > `TMP=C:\t` (thư mục ngắn). Kiểm tra GPU đã bật:
+  > `python -c "import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"` → `True`.
+
+**Bước 3 — Bật trong `.env`** (xem `.env.example`):
+```dotenv
+ERIS_LOCAL_LLM_ENGINE=llamacpp
+ERIS_LLAMACPP_N_GPU_LAYERS=-1          # -1 = đẩy hết layer lên GPU; 0 = CPU
+ERIS_LLAMACPP_TEXT_MODEL=src/qwen3-1.7b-q4_k_m.gguf
+ERIS_LLAMACPP_VISION_MODEL=src/moondream2-q4_k.gguf
+ERIS_LLAMACPP_VISION_MMPROJ=src/moondream2-mmproj-f16.gguf
+ERIS_PRIVATE_MIND_API_ENABLED=1
+ERIS_PRIVATE_MIND_PROVIDER=llamacpp
+ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER=llamacpp
+ERIS_PRIVATE_MIND_FRAGMENT_FREETEXT=1
+```
+Đặt `ERIS_LOCAL_LLM_ENGINE=ollama` (hoặc bỏ trống) để quay về Ollama.
+
+> **VRAM:** GPU 4GB chạy được vì các model nạp/giải phóng theo lịch (vision
+> `unload` sau mỗi lần gọi). Máy yếu/không GPU thì để `ERIS_LLAMACPP_N_GPU_LAYERS=0`
+> (chạy CPU, chậm nhưng vẫn chạy).
+
 ---
 
 ## 3. Cấu hình key (quan trọng)

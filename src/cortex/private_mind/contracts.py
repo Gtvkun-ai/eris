@@ -302,6 +302,7 @@ class PrivateConcern:
             # Có bằng chứng mới thật → mối bận tâm được nuôi chính đáng, cho phép leo.
             self.pressure = clamp01(max(self.pressure * 0.92, fragment.pressure) + min(0.12, 0.018 * self.recurrence))
             self.uncertainty = clamp01(min(self.uncertainty or (1.0 - fragment.confidence), 1.0 - max(fragment.confidence, 0.05)) * 0.97)
+            self.metadata["echo_streak"] = 0
         else:
             # Echo thuần: fragment chỉ vọng lại chính evidence cũ, không có gì mới.
             # Đây chính là nhiên liệu của vòng "áp lực về áp lực" — nghĩ lại nỗi lo
@@ -309,6 +310,8 @@ class PrivateConcern:
             # khuếch đại: pressure nguội dần, độ bất định nhích lên (nghĩ mãi không ra).
             self.pressure = clamp01(self.pressure * 0.90)
             self.uncertainty = clamp01(self.uncertainty + 0.02)
+            # Đếm số lần nghĩ-lại-không-ra-gì-mới, để concern_store biết khi nào nên buông.
+            self.metadata["echo_streak"] = int(self.metadata.get("echo_streak", 0) or 0) + 1
         self.last_reviewed_at = now
         self.updated_at = now
         self.status = "open" if self.status in {"stale", "blocked"} else self.status

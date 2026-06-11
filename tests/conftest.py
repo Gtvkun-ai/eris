@@ -32,3 +32,14 @@ _TESTS_DIR = os.path.abspath(os.path.dirname(__file__))
 
 if _TESTS_DIR not in sys.path:
     sys.path.insert(0, _TESTS_DIR)
+
+# Cô lập test khỏi mạng/model thật: private-mind API (synthesis→Gemini/local) và
+# các mạch LLM nền có thể được bật qua config/secrets.json hoặc .env trong môi
+# trường dev. Trong test, ép TẮT để không gọi mạng (gây treo/flaky) hay nạp model
+# GPU. Dùng gán cứng (không setdefault) để thắng mọi cấu hình môi trường.
+# apply_secrets_to_environ() dùng setdefault nên sẽ tôn trọng các giá trị này.
+os.environ["ERIS_PRIVATE_MIND_API_ENABLED"] = "0"
+os.environ["ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER"] = ""
+os.environ["ERIS_PRIVATE_MIND_FRAGMENT_FREETEXT"] = "0"
+# Không bao giờ dựng engine local (llama-cpp nạp gguf GPU) trong test.
+os.environ["ERIS_LOCAL_LLM_ENGINE"] = "ollama"

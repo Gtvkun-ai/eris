@@ -205,6 +205,57 @@ class InnerDiaryRenderer:
             },
         }
 
+    @staticmethod
+    def _norm_line(text: Any) -> str:
+        return " ".join(str(text or "").split()).casefold()
+
+    @classmethod
+    def _dedupe_sections(cls, sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Bỏ item trùng/chứa nhau giữa các ô (giữ nguyên bảng cảm xúc).
+
+        Đây là lưới an toàn cuối: dù upstream sạch, khi LLM writer chết fallback vẫn
+        có thể đổ cùng một câu vào nhiều ô. Mỗi câu chỉ nên xuất hiện một lần.
+        """
+        seen: list[str] = []
+
+        def is_dup(text: str) -> bool:
+            n = cls._norm_line(text)
+            if not n:
+                return False
+            for s in seen:
+                if n == s or n in s or s in n:
+                    return True
+                nt, st = set(n.split()), set(s.split())
+                if nt and st and (len(nt & st) / len(nt | st)) >= 0.8:
+                    return True
+            return False
+
+        out: list[dict[str, Any]] = []
+        for section in sections:
+            if section.get("title") == "Bảng cảm xúc":
+                out.append(section)
+                continue
+            kept_items: list[dict[str, Any]] = []
+            for item in section.get("items", []):
+                text = str((item or {}).get("text") or "")
+                if not text or is_dup(text):
+                    continue
+                seen.append(cls._norm_line(text))
+                kept_items.append(item)
+            if not kept_items:
+                continue
+            section = dict(section)
+            section["items"] = kept_items
+            section["lines"] = [
+                line for line in section.get("lines", [])
+                if cls._norm_line(line) in {cls._norm_line(i.get("text")) for i in kept_items}
+                or str(line or "").startswith("- ")
+            ]
+            if not section["lines"]:
+                section["lines"] = [str(i.get("text") or "") for i in kept_items]
+            out.append(section)
+        return out
+
     def render(self, digest: Mapping[str, Any], voice: Mapping[str, Any] | None = None) -> dict[str, Any]:
         menu = _as_dict(digest.get("menu"))
         current = _as_dict(menu.get("current_thought") or digest.get("current"))
@@ -213,6 +264,7 @@ class InnerDiaryRenderer:
         surface_queue = _as_list(menu.get("surface_queue") or digest.get("surface_queue"))
         concerns = _as_list(menu.get("open_concerns") or _as_dict(retained).get("concerns"))
         future_bias = _as_dict(menu.get("future_bias") or digest.get("future_bias"))
+        resolved = _as_list(menu.get("recently_resolved") or digest.get("recently_resolved"))
 
         future_text = self._future_thought(future_bias)
         voice = _as_dict(voice)
@@ -322,6 +374,27 @@ class InnerDiaryRenderer:
                 "items": [{"text": muon_noi, "badge": ""}],
                 "lines": [muon_noi],
             })
+
+        # Đã nguôi — chuyện vừa khép lại (settled hoặc thôi đào sâu). Cho diary biết
+        # kể về quá khứ, không chỉ kẹt ở hiện tại. Đây là cái lấp 'Memory Echo' trống.
+        resolved_items: list[dict[str, str]] = []
+        for item in [_as_dict(r) for r in resolved[:3]]:
+            note = _short(item.get("closure_note") or item.get("theme"), 160)
+            if not note:
+                continue
+            theme = _short(item.get("theme"), 80)
+            resolved_items.append({"text": note, "badge": theme if theme and theme not in note else ""})
+        if resolved_items:
+            sections.append({
+                "title": "Đã nguôi",
+                "items": resolved_items,
+                "lines": [item["text"] for item in resolved_items],
+            })
+
+        # Chốt chặn cuối: chống trùng chéo giữa các ô. Khi LLM writer chết và fallback
+        # deterministic đổ cùng một câu vào nhiều ô (đúng kịch bản '1 câu 5 ô' cũ),
+        # bỏ bớt dòng đã xuất hiện ở ô trước — trừ bảng cảm xúc (nhãn cố định).
+        sections = self._dedupe_sections(sections)
 
         text_parts: list[str] = []
         for section in sections:

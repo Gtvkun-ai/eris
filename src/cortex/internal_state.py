@@ -360,7 +360,11 @@ class MentalProcessSystem:
             "attachment": self.attachment.level,
             "social_energy": self.social_presence.level,
             "fatigue": self.cognitive_load.level,
-            "silence_pressure": max(self.social_presence.pressure * 0.36, self.background_thought.pressure * 0.42),
+            "silence_pressure": max(
+                self.social_presence.pressure * 0.58,
+                self.background_thought.pressure * 0.52,
+                self.attachment.pressure * 0.40,
+            ),
             "tenderness": _clamp(self.attachment.level * 0.42 + self.continuity.level * 0.18),
             "protectiveness": _clamp(self.restraint.level * 0.32 + self.tension.level * 0.28),
             "arousal": _clamp(self.tension.level * 0.36 + self.curiosity.level * 0.22 + self.cognitive_load.level * 0.14),

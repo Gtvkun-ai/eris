@@ -1,0 +1,181 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-06-11 15:11:56
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+15:11:56.525 [INFO] [Vision] Dung Python dev: python "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+15:11:56.540 [INFO] [Vision] Da khoi chay vision.py PID=11724
+15:11:57.542 [INFO] [vision.py] [Vision][INFO] Đang dùng remote API làm cognition chính.
+15:11:57.542 [INFO] [vision.py] [LLM][INFO] Dung Gemini API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-26b-a4b-it
+15:11:57.543 [INFO] [vision.py] [LLM][INFO] Dung Gemini speech API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-26b-a4b-it
+15:11:57.543 [INFO] [vision.py] [Vision][INFO] Speech/style client đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+15:11:57.543 [INFO] [vision.py] [LLM][INFO] Chat format fallback (Groq) san sang tai https://api.groq.com/openai/v1 voi model llama-3.3-70b-versatile
+15:11:57.543 [INFO] [vision.py] [Vision][INFO] Mô hình đã sẵn sàng.
+15:12:10.657 [INFO] [vision.py] [Loop][INFO] Model inference scheduler đã bọc llm_service và sensory adapter: main, vision, sensory.
+15:12:10.658 [INFO] [vision.py] [Loop][INFO] [PrivateMind API] ready provider=openai_compatible model=llama-3.3-70b-versatile pool=fragment×5+synthesis×1
+15:12:10.816 [INFO] [vision.py] [Loop][INFO] --- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---
+15:12:11.934 [INFO] [vision.py] [Loop][INFO] [session_ritual raw] {"text": "À. Ngài đây rồi.", "intent": "session_ritual", "action": {"type": "none"}, "reasoning_tags": ["session_ritual", "greeting_cognition"], "should_speak": true, "confidence": 0.76, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "debug_trace": "session_ritual_deterministic; situation=low_evidence_start | low_evidence_no_llm", "next_animation": "", "system_action": "", "action_input": ""}
+15:12:12.091 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent LLM greeting text="À. Ngài đây rồi."
+15:12:12.631 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent greeting
+15:12:12.978 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:12:13.310 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:12:13.310 [INFO] [vision.py] [Loop][INFO] [Observer] action=call_vision_compressor salience=0.93 error=0.00 focus=unknown intent=unknown
+15:12:13.311 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.01 user_presence=0.68 novelty=1.00 repetition=0.00
+15:12:13.428 [INFO] [vision.py] [Loop][INFO] [wake governor] level=call_vision_compressor ext=0.23 internal=0.03 permission=0.81 interrupt=0.19 speech=0.11 wants_vision=True vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+15:12:13.695 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=1
+15:12:14.380 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=2
+15:12:15.299 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=3
+15:12:15.908 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.85 pressure=0.80 surface=yes mutations=1
+15:12:16.141 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=autonomous count=2 novelty=new_screen_fact trace=ocr_only:screen_context fact=focus kind is general
+15:12:16.147 [INFO] [vision.py] [Loop][INFO] [wake route] level=call_vision_compressor reason=wake_governor_vision_only body_update=True sleep=5s
+15:12:16.147 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 3.17s. Nghỉ 5s.
+15:12:21.651 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:12:21.984 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:12:21.984 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:12:21.984 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.01 user_presence=0.58 novelty=0.08 repetition=1.00
+15:12:22.036 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.19 internal=0.05 permission=0.70 interrupt=0.30 speech=0.13 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.08 cycles=1 micro_checked=False reengagement_checked=False
+15:12:22.040 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=False reengagement_allowed=False
+15:12:22.040 [INFO] [vision.py] [Loop][INFO] [presence.micro] stage=pre_gate owner=presence_probe checked=True candidate=True allowed=False rejected_by=presence_blocked_until generation_mode=none
+15:12:22.040 [INFO] [vision.py] [Loop][INFO] [presence.reengagement] stage=pre_gate owner=reengagement_probe checked=True candidate=True allowed=False rejected_by=presence_blocked_until generation_mode=none
+15:12:22.041 [INFO] [vision.py] [Loop][INFO] [presence.surface] stage=pre_gate micro=reject:presence_blocked_until reengagement=reject:presence_blocked_until final=no_surface final_rejected_by=presence_blocked_until
+15:12:22.045 [INFO] [vision.py] [Loop][INFO] [wake route] level=observe_only reason=wake_governor_observe_only body_update=False sleep=15s
+15:12:22.045 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 0.39s. Nghỉ 15s.
+15:12:37.272 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:12:37.600 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:12:37.601 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:12:37.601 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.01 user_presence=0.58 novelty=0.00 repetition=1.00
+15:12:37.665 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.16 internal=0.05 permission=0.62 interrupt=0.38 speech=0.15 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.17 cycles=2 micro_checked=False reengagement_checked=False
+15:12:38.243 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.88 pressure=0.72 surface=no mutations=2
+15:12:38.260 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=False
+15:12:38.268 [INFO] [vision.py] [Loop][INFO] [surface_seed_compiler] kind=presence_maintenance selected=True source=private_life reason=selected confidence=0.74 public_anchor=True
+15:12:38.268 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] input kind=presence_maintenance silent_cycles=3 force_llm=True cue_should_call_llm=True cue_missing_evidence_ids=False
+15:12:40.791 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=initial kind=private_life_surface force=True raw='' sanitized='' reason=empty_draft
+15:15:40.867 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=retry kind=private_life_surface raw='' sanitized='' reason=empty_draft
+15:15:40.868 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] output kind=private_life_surface mode=force_llm should_speak=False body_only=True reason=llm_declined
+15:15:41.710 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-2 | channel=autonomous | broadcast=<none>:0.00 | speech=none/no_speech | appraisal=grounded | action=presence_maintenance/micro_presence | final=<empty> | commits=2/2 rejected=0 errors=0
+15:15:41.716 [INFO] [vision.py] [Loop][INFO] [wake gate reflex] parse_mode=private_life_surface_body_only text=<empty>
+15:15:41.716 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated reflex trong 184.44s. Nghỉ 45s.
+15:16:27.004 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:16:27.339 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:16:27.340 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:16:27.340 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.04 user_presence=0.58 novelty=0.00 repetition=1.00
+15:16:27.447 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.12 internal=0.05 permission=0.57 interrupt=0.43 speech=0.17 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.25 cycles=3 micro_checked=False reengagement_checked=False
+15:16:27.641 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=4
+15:16:28.224 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.88 pressure=0.74 surface=no mutations=2
+15:16:28.255 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=False
+15:16:28.360 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:16:28.360 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:16:28.360 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.04 user_presence=0.58 novelty=0.00 repetition=1.00
+15:16:28.425 [INFO] [vision.py] [Loop][INFO] [wake governor] level=sleep ext=0.10 internal=0.06 permission=0.54 interrupt=0.46 speech=0.18 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.33 cycles=4 micro_checked=False reengagement_checked=False
+15:16:28.472 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=surface count=2 novelty=new_screen_fact trace=ocr_only:screen_context fact=focus kind is general
+15:16:28.472 [INFO] [vision.py] [Loop][INFO] [surface_evidence] current_context=True fresh_after_refresh=True fact_count=2
+15:16:28.474 [INFO] [vision.py] [Loop][INFO] [surface_seed_compiler] kind=presence_maintenance selected=True source=vision_fact reason=selected confidence=0.86 public_anchor=True
+15:16:28.474 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] input kind=presence_maintenance silent_cycles=4 force_llm=True cue_should_call_llm=True cue_missing_evidence_ids=False
+15:16:33.471 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=initial kind=private_life_surface force=True raw='' sanitized='' reason=empty_draft
+15:16:35.984 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=retry kind=private_life_surface raw='' sanitized='' reason=empty_draft
+15:16:35.985 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] output kind=private_life_surface mode=force_llm should_speak=False body_only=True reason=llm_declined
+15:16:36.121 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-3 | channel=autonomous | broadcast=<none>:0.00 | speech=none/no_speech | appraisal=grounded | action=presence_maintenance/micro_presence | final=<empty> | commits=2/2 rejected=0 errors=0
+15:16:36.125 [INFO] [vision.py] [Loop][INFO] [wake gate reflex] parse_mode=private_life_surface_body_only text=<empty>
+15:16:36.125 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated reflex trong 9.12s. Nghỉ 60s.
+15:17:36.592 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:17:36.913 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:17:36.913 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:17:36.913 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.05 user_presence=0.38 novelty=0.08 repetition=1.00
+15:17:36.973 [INFO] [vision.py] [Loop][INFO] [wake governor] level=sleep ext=0.08 internal=0.06 permission=0.57 interrupt=0.43 speech=0.17 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.33 cycles=4 micro_checked=False reengagement_checked=False
+15:17:37.183 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=0
+15:17:37.358 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=1
+15:17:37.562 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] synthesis failed error=HTTPError:429 Client Error: Too Many Requests for url: https://api.groq.com/openai/v1/chat/completions | body: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ktpa6q6xff0vtyzh520k3660` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99535, Requested 2042. Please try again in 22m42.528s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing","type":"tokens","code":"rate_limit_exceeded"}}
+15:17:37.570 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=1.00 pressure=1.00 surface=no mutations=2
+15:17:37.595 [INFO] [vision.py] [Loop][INFO] [presence] wake=sleep source=wake_governor_sleep micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=True
+15:17:37.695 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:17:37.695 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:17:37.695 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.05 user_presence=0.38 novelty=0.00 repetition=1.00
+15:17:37.752 [INFO] [vision.py] [Loop][INFO] [wake governor] level=sleep ext=0.07 internal=0.06 permission=0.58 interrupt=0.42 speech=0.18 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.42 cycles=5 micro_checked=False reengagement_checked=False
+15:17:37.828 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=surface count=2 novelty=new_screen_fact trace=ocr_only:screen_context fact=focus kind is general
+15:17:37.829 [INFO] [vision.py] [Loop][INFO] [surface_evidence] current_context=True fresh_after_refresh=True fact_count=2
+15:17:37.831 [INFO] [vision.py] [Loop][INFO] [surface_seed_compiler] kind=re_engagement selected=True source=vision_fact reason=selected confidence=0.86 public_anchor=True
+15:17:37.831 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] input kind=re_engagement silent_cycles=5 force_llm=True cue_should_call_llm=True cue_missing_evidence_ids=False
+15:17:40.342 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=initial kind=private_life_surface force=True raw='' sanitized='' reason=empty_draft
+15:17:42.765 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=retry kind=private_life_surface raw='' sanitized='' reason=empty_draft
+15:17:42.765 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] output kind=private_life_surface mode=force_llm should_speak=False body_only=True reason=llm_declined
+15:17:42.950 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=2
+15:17:43.143 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=3
+15:17:43.365 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=HTTPError:429 Client Error: Too Many Requests for url: https://api.groq.com/openai/v1/chat/completions | body: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ktpa9h3wekmrsdtdnyrr94e6` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99421, Requested 585. Please try again in 5.184s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing","type":"tokens","code":"rate_limit_exceeded"}}
+15:17:43.488 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-4 | channel=autonomous | broadcast=<none>:0.00 | speech=none/no_speech | appraisal=grounded | action=presence_maintenance/micro_presence | final=<empty> | commits=2/2 rejected=0 errors=0
+15:17:43.493 [INFO] [vision.py] [Loop][INFO] [wake gate reflex] parse_mode=private_life_surface_body_only text=<empty>
+15:17:43.493 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated reflex trong 6.90s. Nghỉ 45s.
+15:18:29.143 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:18:29.378 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:18:29.379 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.01 error=0.00 focus=unknown intent=unknown
+15:18:29.382 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.06 user_presence=0.68 novelty=0.16 repetition=1.00
+15:18:29.543 [INFO] [vision.py] [Loop][INFO] [wake governor] level=sleep ext=0.07 internal=0.06 permission=0.55 interrupt=0.45 speech=0.19 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.42 cycles=5 micro_checked=False reengagement_checked=False
+15:18:30.235 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.88 pressure=0.92 surface=no mutations=2
+15:18:30.260 [INFO] [vision.py] [Loop][INFO] [presence] wake=sleep source=wake_governor_sleep micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=False
+15:18:30.371 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:18:30.371 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:18:30.371 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.06 user_presence=0.68 novelty=0.00 repetition=1.00
+15:18:30.433 [INFO] [vision.py] [Loop][INFO] [wake governor] level=sleep ext=0.06 internal=0.06 permission=0.53 interrupt=0.47 speech=0.22 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.50 cycles=6 micro_checked=False reengagement_checked=False
+15:18:30.502 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=surface count=2 novelty=new_screen_fact trace=ocr_only:screen_context fact=focus kind is general
+15:18:30.502 [INFO] [vision.py] [Loop][INFO] [surface_evidence] current_context=True fresh_after_refresh=True fact_count=2
+15:18:30.506 [INFO] [vision.py] [Loop][INFO] [surface_seed_compiler] kind=presence_maintenance selected=True source=vision_fact reason=selected confidence=0.86 public_anchor=True
+15:18:30.506 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] input kind=presence_maintenance silent_cycles=6 force_llm=True cue_should_call_llm=True cue_missing_evidence_ids=False
+15:18:33.386 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=initial kind=private_life_surface force=True raw='' sanitized='' reason=empty_draft
+15:18:35.868 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=retry kind=private_life_surface raw='' sanitized='' reason=empty_draft
+15:18:35.869 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] output kind=private_life_surface mode=force_llm should_speak=False body_only=True reason=llm_declined
+15:18:36.003 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-5 | channel=autonomous | broadcast=<none>:0.00 | speech=none/no_speech | appraisal=grounded | action=presence_maintenance/micro_presence | final=<empty> | commits=2/2 rejected=0 errors=0
+15:18:36.007 [INFO] [vision.py] [Loop][INFO] [wake gate reflex] parse_mode=private_life_surface_body_only text=<empty>
+15:18:36.007 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated reflex trong 6.86s. Nghỉ 90s.
+15:20:06.377 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:20:06.637 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:20:06.637 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:20:06.637 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.07 user_presence=0.38 novelty=0.08 repetition=1.00
+15:20:06.745 [INFO] [vision.py] [Loop][INFO] [wake governor] level=sleep ext=0.05 internal=0.06 permission=0.56 interrupt=0.44 speech=0.21 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.50 cycles=6 micro_checked=False reengagement_checked=False
+15:20:06.977 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=4
+15:20:07.185 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=0
+15:20:07.365 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] fragment failed evaluator=future_bias_evaluator error=HTTPError:429 Client Error: Too Many Requests for url: https://api.groq.com/openai/v1/chat/completions | body: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01jwk4bv2wecesmrarnt4vwc86` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 98556, Requested 1518. Please try again in 1m3.936s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing","type":"tokens","code":"rate_limit_exceeded"}}
+15:20:07.546 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=1
+15:20:07.722 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] rotating shared key pool -> index=2
+15:20:07.895 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] transient cooldown active seconds=60 streak=3
+15:20:07.895 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] synthesis failed error=HTTPError:429 Client Error: Too Many Requests for url: https://api.groq.com/openai/v1/chat/completions | body: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ktpa860ke09t09zmgt79fymd` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 98768, Requested 2072. Please try again in 12m5.76s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing","type":"tokens","code":"rate_limit_exceeded"}}
+15:20:07.901 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=1.00 pressure=1.00 surface=no mutations=2
+15:20:07.921 [INFO] [vision.py] [Loop][INFO] [presence] wake=sleep source=wake_governor_sleep micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=True
+15:20:08.058 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:20:08.058 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:20:08.058 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.07 user_presence=0.38 novelty=0.00 repetition=1.00
+15:20:08.122 [INFO] [vision.py] [Loop][INFO] [wake governor] level=sleep ext=0.04 internal=0.06 permission=0.58 interrupt=0.42 speech=0.22 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.58 cycles=7 micro_checked=False reengagement_checked=False
+15:20:08.198 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=surface count=2 novelty=new_screen_fact trace=ocr_only:screen_context fact=focus kind is general
+15:20:08.198 [INFO] [vision.py] [Loop][INFO] [surface_evidence] current_context=True fresh_after_refresh=True fact_count=2
+15:20:08.201 [INFO] [vision.py] [Loop][INFO] [surface_seed_compiler] kind=re_engagement selected=True source=vision_fact reason=selected confidence=0.86 public_anchor=True
+15:20:08.201 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] input kind=re_engagement silent_cycles=7 force_llm=True cue_should_call_llm=True cue_missing_evidence_ids=False
+15:20:10.904 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=initial kind=private_life_surface force=True raw='' sanitized='' reason=empty_draft
+15:20:13.576 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=retry kind=private_life_surface raw='' sanitized='' reason=empty_draft
+15:20:13.577 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] output kind=private_life_surface mode=force_llm should_speak=False body_only=True reason=llm_declined
+15:20:13.723 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-6 | channel=autonomous | broadcast=<none>:0.00 | speech=none/no_speech | appraisal=grounded | action=presence_maintenance/micro_presence | final=<empty> | commits=2/2 rejected=0 errors=0
+15:20:13.728 [INFO] [vision.py] [Loop][INFO] [wake gate reflex] parse_mode=private_life_surface_body_only text=<empty>
+15:20:13.729 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated reflex trong 7.35s. Nghỉ 90s.
+15:21:44.130 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:21:44.467 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:21:44.467 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:21:44.468 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.09 user_presence=0.68 novelty=0.08 repetition=1.00
+15:21:44.587 [INFO] [vision.py] [Loop][INFO] [wake governor] level=sleep ext=0.04 internal=0.06 permission=0.55 interrupt=0.45 speech=0.23 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.58 cycles=7 micro_checked=False reengagement_checked=False
+15:21:45.322 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.88 pressure=0.92 surface=no mutations=2
+15:21:45.350 [INFO] [vision.py] [Loop][INFO] [presence] wake=sleep source=wake_governor_sleep micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=False
+15:21:45.464 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:21:45.464 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+15:21:45.464 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.09 user_presence=0.68 novelty=0.00 repetition=1.00
+15:21:45.534 [INFO] [vision.py] [Loop][INFO] [wake governor] level=micro_presence ext=0.04 internal=0.06 permission=0.53 interrupt=0.47 speech=0.25 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.67 cycles=8 micro_checked=False reengagement_checked=False
+15:21:45.594 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=surface count=2 novelty=new_screen_fact trace=ocr_only:screen_context fact=focus kind is general
+15:21:45.594 [INFO] [vision.py] [Loop][INFO] [surface_evidence] current_context=True fresh_after_refresh=True fact_count=2
+15:21:45.596 [INFO] [vision.py] [Loop][INFO] [surface_seed_compiler] kind=presence_maintenance selected=True source=vision_fact reason=selected confidence=0.86 public_anchor=True
+15:21:45.596 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] input kind=presence_maintenance silent_cycles=8 force_llm=True cue_should_call_llm=True cue_missing_evidence_ids=False
+15:21:50.930 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=initial kind=private_life_surface force=True raw='' sanitized='' reason=empty_draft
+15:24:51.023 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=retry kind=private_life_surface raw='' sanitized='' reason=empty_draft
+15:24:51.024 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] output kind=private_life_surface mode=force_llm should_speak=False body_only=True reason=llm_declined
+15:24:51.811 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-7 | channel=autonomous | broadcast=<none>:0.00 | speech=none/no_speech | appraisal=grounded | action=presence_maintenance/micro_presence | final=<empty> | commits=2/2 rejected=0 errors=0
+15:24:51.816 [INFO] [vision.py] [Loop][INFO] [wake gate reflex] parse_mode=private_life_surface_body_only text=<empty>
+15:24:51.816 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated reflex trong 187.69s. Nghỉ 30s.
+15:25:18.614 [INFO] [Vision] Dang dung vision.py PID=11724...
+15:25:18.703 [INFO] [Vision] vision.py da thoat (PID=11724, code=-1).
+15:25:18.704 [INFO] [RunLogger] Ket thuc phien chay.

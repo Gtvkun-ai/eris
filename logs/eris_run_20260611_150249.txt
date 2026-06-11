@@ -1,0 +1,18 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-06-11 15:02:49
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+15:02:49.595 [INFO] [Vision] Dung Python dev: python "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+15:02:49.607 [INFO] [Vision] Da khoi chay vision.py PID=4328
+15:02:50.928 [INFO] [vision.py] [Vision][INFO] Đang dùng remote API làm cognition chính.
+15:02:50.929 [INFO] [vision.py] [LLM][INFO] Dung Gemini API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-26b-a4b-it
+15:02:50.930 [INFO] [vision.py] [LLM][INFO] Dung Gemini speech API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-26b-a4b-it
+15:02:50.930 [INFO] [vision.py] [Vision][INFO] Speech/style client đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+15:02:50.930 [INFO] [vision.py] [LLM][INFO] Chat format fallback (Groq) san sang tai https://api.groq.com/openai/v1 voi model llama-3.3-70b-versatile
+15:02:50.930 [INFO] [vision.py] [Vision][INFO] Mô hình đã sẵn sàng.
+15:02:55.910 [INFO] [Vision] Dang dung vision.py PID=4328...
+15:02:55.971 [INFO] [Vision] vision.py da thoat (PID=4328, code=-1).
+15:02:55.972 [INFO] [RunLogger] Ket thuc phien chay.

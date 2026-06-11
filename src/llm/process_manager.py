@@ -173,29 +173,49 @@ class RemoteModelProcessManager:
         slot = os.environ.get("ERIS_CHAT_FALLBACK_SLOT", "remote_main").strip() or "remote_main"
         profile = get_provider_profile(provider, slot=slot)
 
-        pool = get_key_pool("groq")
-        pool_key = pool.current_key() if pool is not None else ""
-        api_key = (
-            str(profile.get("api_key") or "").strip()
-            or pool_key
-            or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+        # Ưu tiên key RIÊNG cho fallback (vd aggregator OpenAI-compatible: glm-4.5-flash)
+        # để không ép xài key Groq. Nếu KHÔNG khai key riêng thì giữ NGUYÊN hành vi cũ:
+        # xoay groq pool với llama-3.3-70b (không regression khi chưa điền aggregator).
+        dedicated_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY")
+        aggregator_base = (
+            os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
+            or get_secret("ERIS_AGGREGATOR_BASE_URL")
         )
+        # Chỉ đi đường aggregator khi CÓ ĐỦ key + base_url. Thiếu base_url → quay về
+        # Groq llama (tránh gửi tên model lạ như glm lên endpoint Groq gây lỗi).
+        if dedicated_key and aggregator_base:
+            api_key = dedicated_key
+            pool = None  # aggregator dùng 1 key riêng, không xoay groq pool
+            base_url = aggregator_base
+            model_name = (
+                os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip()
+                or "glm-4.5-flash"
+            )
+        else:
+            pool = get_key_pool("groq")
+            pool_key = pool.current_key() if pool is not None else ""
+            api_key = (
+                str(profile.get("api_key") or "").strip()
+                or pool_key
+                or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+            )
+            if not api_key:
+                self.logger.info("Chat format fallback (Groq) tat: khong tim thay ERIS_GROQ_API_KEY.")
+                return None
+            # Khi chưa có key aggregator, BỎ QUA override model/base_url để tránh gửi
+            # tên model lạ (glm) lên endpoint Groq → giữ đúng llama-3.3-70b trên Groq.
+            base_url = str(profile.get("base_url") or "").strip() or "https://api.groq.com/openai/v1"
+            model_name = (
+                str(profile.get("model") or "").strip()
+                or str(profile.get("model_name") or "").strip()
+                or "llama-3.3-70b-versatile"
+            )
+
         if not api_key:
-            self.logger.info("Chat format fallback (Groq) tat: khong tim thay ERIS_GROQ_API_KEY.")
+            self.logger.info("Chat format fallback tat: khong tim thay key.")
             return None
 
-        base_url = (
-            os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
-            or str(profile.get("base_url") or "").strip()
-            or "https://api.groq.com/openai/v1"
-        )
-        model_name = (
-            os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip()
-            or str(profile.get("model") or "").strip()
-            or str(profile.get("model_name") or "").strip()
-            or "llama-3.3-70b-versatile"
-        )
-        self.logger.info("Chat format fallback (Groq) san sang tai %s voi model %s", base_url, model_name)
+        self.logger.info("Chat format fallback san sang tai %s voi model %s", base_url, model_name)
         try:
             return OpenAICompatibleClient(
                 base_url=base_url,
@@ -204,7 +224,7 @@ class RemoteModelProcessManager:
                 key_pool=pool,
             )
         except ValueError as exc:
-            self.logger.warning("Khong dung duoc chat format fallback (Groq): %s", exc)
+            self.logger.warning("Khong dung duoc chat format fallback: %s", exc)
             return None
 
     def build_vision_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):

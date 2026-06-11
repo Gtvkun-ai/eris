@@ -205,7 +205,11 @@ class BackgroundObserver:
             except Exception:
                 self.sensory_adapter = None
         if self.ollama_client is None and self.sensory_adapter is None and self.config.llm_enabled and OllamaClient is not None:
-            self.ollama_client = OllamaClient()
+            try:
+                from llm.local_llama_engine import build_local_or_ollama_client
+                self.ollama_client = build_local_or_ollama_client()
+            except Exception:
+                self.ollama_client = OllamaClient()
         self._last_llm_time: float = 0.0
 
     def observe(

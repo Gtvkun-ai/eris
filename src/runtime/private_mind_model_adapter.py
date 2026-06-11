@@ -23,12 +23,13 @@ import time
 import requests
 import requests.exceptions
 from ast import literal_eval
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from cortex.private_mind.contracts import EvidenceDossier, ThoughtFragment, compact_text, to_plain
 from eris_secrets import apply_secrets_to_environ, get_secret
 from llm.client import GeminiClient, OpenAICompatibleClient
+from llm.llamacpp_client import LlamaCppClient
 from llm.key_pool import get_key_pool
 
 
@@ -98,6 +99,30 @@ class PrivateMindModelAdapterConfig:
     transient_backoff_base: float = field(default_factory=lambda: max(0.1, _as_float(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_BACKOFF", "0.5"), 0.5)))
     transient_cooldown_threshold: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_THRESHOLD", "3") or 3)))
     transient_cooldown_seconds: float = field(default_factory=lambda: max(5.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_COOLDOWN", "60"), 60.0)))
+    # Free-text mode cho fragment: model nhỏ (local) chỉ nhả MỘT câu nghĩ ngắn,
+    # KHÔNG ép JSON-schema. Tránh vòng invalid_json → cooldown làm câm model nhỏ.
+    freetext_fragments: bool = field(default_factory=lambda: _env_flag("ERIS_PRIVATE_MIND_FRAGMENT_FREETEXT", False))
+
+    @classmethod
+    def fragment_overlay_from_env(cls, base: "PrivateMindModelAdapterConfig") -> "PrivateMindModelAdapterConfig":
+        """Config riêng cho fragment: nếu khai ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER thì
+        trỏ fragment sang một provider local (vd Ollama qwen3) + bật free-text;
+        nếu không khai gì thì dùng chung config (giữ hành vi cũ)."""
+        provider = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER", "") or "").strip().lower()
+        if not provider:
+            return base
+        base_url = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_BASE_URL", "") or "").strip()
+        model = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_MODEL", "") or "").strip() or base.model
+        api_key = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_API_KEY", "") or "").strip() or "local-no-key"
+        return replace(
+            base,
+            enabled=True,
+            provider=provider,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            freetext_fragments=_env_flag("ERIS_PRIVATE_MIND_FRAGMENT_FREETEXT", True),
+        )
 
 
 @dataclass(slots=True)
@@ -168,11 +193,45 @@ class RuntimePrivateMindModelAdapter:
         adapter._log("info", "[PrivateMind API] ready provider=%s model=%s", config.provider, config.model)
         return adapter
 
+    @classmethod
+    def diary_fallback_from_env(cls, *, logger: Any = None) -> "RuntimePrivateMindModelAdapter | None":
+        """Adapter DỰ PHÒNG riêng cho Inner Diary.
+
+        Dùng khi provider chính (Gemini gemma) chết / lỗi JSON: diary nhảy sang một
+        model OpenAI-compatible trả phí (vd qwen-plus-character qua aggregator) để
+        không bị câm. Trả None nếu chưa khai đủ (model + base_url + key) → khi đó
+        InnerDiaryWriter chạy y như cũ (không regression).
+        """
+        apply_secrets_to_environ()
+        if not _env_flag("ERIS_INNER_DIARY_FALLBACK", False):
+            return None
+        provider = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_PROVIDER", "openai_compatible") or "openai_compatible").strip().lower()
+        model = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_MODEL", "") or "").strip()
+        base_url = (
+            str(os.getenv("ERIS_INNER_DIARY_FALLBACK_BASE_URL", "") or "").strip()
+            or get_secret("ERIS_AGGREGATOR_BASE_URL")
+        )
+        api_key = get_secret("ERIS_INNER_DIARY_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY")
+        if not (model and base_url and api_key):
+            return None
+        config = PrivateMindModelAdapterConfig(
+            enabled=True,
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+        )
+        adapter = cls(config=config, llm_service=None, logger=logger)
+        adapter._log("info", "[InnerDiary fallback] ready provider=%s model=%s", provider, model)
+        return adapter
+
     @property
     def min_interval_seconds(self) -> float:
         return 0.0
 
     def evaluate_fragment(self, evaluator_name: str, dossier: EvidenceDossier) -> Mapping[str, Any] | None:
+        if getattr(self.config, "freetext_fragments", False):
+            return self._freetext_fragment(evaluator_name, dossier)
         messages = self._fragment_messages(evaluator_name, dossier)
         result = self._tracked_chat_json(
             messages,
@@ -194,6 +253,207 @@ class RuntimePrivateMindModelAdapter:
             metadata.setdefault("theme", theme)
             parsed["metadata"] = metadata
         return parsed
+
+    # ------------------------------------------------------------------
+    # Free-text fragment path (cho model nhỏ local: không ép JSON-schema)
+    # ------------------------------------------------------------------
+
+    def _freetext_fragment(self, evaluator_name: str, dossier: EvidenceDossier) -> Mapping[str, Any] | None:
+        """Sinh MỘT mảnh suy nghĩ ngắn dạng văn xuôi, rồi guard + bọc thành fragment.
+
+        Không parse JSON nên model nhỏ không chết vì format. Output rác bị guard
+        loại → trả None để rule fallback chạy."""
+        messages = self._freetext_fragment_messages(evaluator_name, dossier)
+        result = self._tracked_chat_text(messages, max_tokens=self.config.max_tokens_fragment)
+        if not result.ok:
+            if result.error not in {"invalid_json_cooldown", "transient_cooldown"}:
+                self._log("info", "[PrivateMind local] fragment empty/transient evaluator=%s error=%s", evaluator_name, result.error)
+            return None
+        claim = self._guard_freetext_fragment(result.content)
+        if not claim:
+            self._log("info", "[PrivateMind local] fragment rejected by guard evaluator=%s", evaluator_name)
+            return None
+        return self._wrap_freetext_fragment(evaluator_name, claim, dossier)
+
+    def _freetext_fragment_messages(self, evaluator_name: str, dossier: EvidenceDossier) -> list[dict[str, str]]:
+        focus = {
+            "intent_evaluator": "ý định hiện tại của Ngài hoặc của hệ thống",
+            "memory_resonance_evaluator": "một thói quen hoặc lần sửa lỗi của Ngài đang lặp lại",
+            "risk_and_permission_evaluator": "một rủi ro riêng tư, lộ thông tin hoặc vượt quyền",
+            "future_bias_evaluator": "thiên hướng hành vi sắp tới của tôi",
+            "user_model_evaluator": "điều tôi vừa hiểu thêm về con người Ngài",
+        }.get(evaluator_name, "tình huống nội tâm hiện tại")
+        slicer_name = self._DOSSIER_SLICERS.get(evaluator_name)
+        evidence_slice = getattr(self, slicer_name)(dossier) if slicer_name else self._slim_dossier(dossier)
+        meta = dossier.metadata if isinstance(dossier.metadata, dict) else {}
+        recent_thoughts = meta.get("recent_thoughts") or []
+        if recent_thoughts:
+            evidence_slice = dict(evidence_slice)
+            evidence_slice["suy_nghi_gan_day"] = recent_thoughts
+        user_content = json.dumps(to_plain(evidence_slice), ensure_ascii=False)
+        if len(user_content) > 3000:
+            user_content = user_content[:3000]
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "/no_think\n"
+                    "Bạn là một mảnh suy nghĩ nội tâm thoáng qua của Eris — KHÔNG nói với người dùng. "
+                    f"Dựa trên DỮ KIỆN người dùng đưa, viết MỘT câu NHẬN ĐỊNH cụ thể về: {focus}. "
+                    "Yêu cầu: tiếng Việt, dưới 30 từ, ngôi thứ nhất ('tôi'), gọi người dùng là 'Ngài'. "
+                    "TUYỆT ĐỐI KHÔNG lặp lại đề bài, KHÔNG hỏi ngược, KHÔNG viết câu hỏi, "
+                    "KHÔNG JSON/markdown/giải thích. Chỉ một câu khẳng định rút ra từ dữ kiện. "
+                    "Nếu dữ kiện không đủ để nói gì cụ thể, trả đúng chữ: KHONG."
+                ),
+            },
+            {"role": "user", "content": f"DỮ KIỆN:\n{user_content}"},
+        ]
+
+    def _guard_freetext_fragment(self, content: str) -> str:
+        """Guard local rẻ: làm sạch + loại output rác. Trả claim sạch hoặc '' nếu loại."""
+        text = str(content or "")
+        # qwen3 và các model 'thinking' hay chèn <think>...</think> — bỏ sạch.
+        text = re.sub(r"<think>.*?</think>", " ", text, flags=re.S | re.I)
+        text = re.sub(r"</?think>", " ", text, flags=re.I)
+        # Bỏ rào markdown / fence / nhãn vai.
+        text = self._strip_markdown_fences(text)
+        text = re.sub(r"^\s*(assistant|system|user|eris)\s*[:：]\s*", "", text, flags=re.I)
+        # Gom lặp vô hạn rồi nén khoảng trắng; lấy câu đầu tiên.
+        text = self._collapse_repetition(text)
+        text = " ".join(text.split()).strip().strip('"“”\'`')
+        if not text:
+            return ""
+        # Cắt còn một câu (đến dấu chấm/!/? đầu tiên nếu câu dài).
+        first = re.split(r"(?<=[.!?…])\s+", text, maxsplit=1)[0].strip()
+        if 12 <= len(first) <= 240:
+            text = first
+        text = compact_text(text, 240)
+        low = text.lower()
+        # Sentinel "KHONG" = model tự nhận không đủ dữ kiện để nói → bỏ, để rule fallback.
+        if low.strip(" .!").startswith("khong") and len(text) <= 8:
+            return ""
+        # Câu hỏi = thường là nhại đề bài ("...theo hướng nào?"), không phải nhận định.
+        if text.endswith("?") or text.endswith("？"):
+            return ""
+        # Loại JSON/dump, rò schema/prompt, lời từ chối, thuyết minh meta.
+        leak_markers = (
+            '{', '}', '":', "evidence_id", "schema", "json", "```",
+            "as an ai", "language model", "tôi không thể", "i cannot", "i can't",
+            "system prompt", "dưới đây là", "here is", "here's",
+        )
+        if any(m in low for m in leak_markers):
+            return ""
+        # Phải có chữ thật (không phải toàn ký hiệu/số).
+        if not re.search(r"[a-zA-ZÀ-ỹ]", text):
+            return ""
+        # Một câu nội tâm quá ngắn (<12 ký tự) thường là rác.
+        if len(text) < 12:
+            return ""
+        return text
+
+    def _wrap_freetext_fragment(self, evaluator_name: str, claim: str, dossier: EvidenceDossier) -> dict[str, Any]:
+        evidence_ids = [str(x) for x in (dossier.evidence_ids or ())][:6]
+        fragment: dict[str, Any] = {
+            "source": evaluator_name,
+            "claim": claim,
+            # Free-text là suy nghĩ mềm: confidence vừa phải, để judgment/decay lọc tiếp.
+            "confidence": 0.45,
+            "pressure": 0.3,
+            "evidence_ids": evidence_ids,
+            "suggested_question": "",
+            "provider": self.config.provider,
+            "model": self.config.model,
+            "metadata": {"theme": evaluator_name.replace("_evaluator", ""), "freetext": True},
+        }
+        if evaluator_name == "user_model_evaluator":
+            fragment["metadata"]["facet"] = "general"
+        return fragment
+
+    def _tracked_chat_text(self, messages: list[dict[str, str]], *, max_tokens: int) -> PrivateMindModelResult:
+        """Như _tracked_chat_json nhưng KHÔNG parse JSON: content rỗng/transient = fail."""
+        if self._transient_cooldown_active():
+            self._last_error = "transient_cooldown"
+            self._last_error_kind = "transient"
+            return PrivateMindModelResult(ok=False, error="transient_cooldown", error_kind="transient")
+        started = time.time()
+        result = self._chat_text_with_transient_retry(messages, max_tokens=max_tokens, temperature=max(0.4, self.config.temperature))
+        self._calls += 1
+        self._total_latency_ms += (time.time() - started) * 1000.0
+        self._last_call_at = time.time()
+        if result.ok:
+            self._ok_calls += 1
+            self._last_error = ""
+            self._last_error_kind = ""
+            self._transient_streak = 0
+            self._transient_cooldown_until = 0.0
+        else:
+            self._failed_calls += 1
+            self._last_error = result.error
+            self._last_error_kind = result.error_kind
+            if result.error_kind == "transient":
+                self._transient_streak += 1
+                self._maybe_enter_transient_cooldown()
+        usage = self._extract_usage(result.raw)
+        self._prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
+        self._completion_tokens += int(usage.get("completion_tokens", 0) or 0)
+        self._total_tokens += int(usage.get("total_tokens", 0) or 0)
+        return result
+
+    def _chat_text_with_transient_retry(self, messages: list[dict[str, str]], *, max_tokens: int, temperature: float) -> PrivateMindModelResult:
+        result = self._chat_text_once(messages, max_tokens=max_tokens, temperature=temperature)
+        if result.error_kind != "transient":
+            return result
+        for attempt in range(self.config.transient_max_retries):
+            backoff = min(self.config.transient_backoff_base * (2 ** attempt), 4.0)
+            time.sleep(backoff)
+            retry = self._chat_text_once(messages, max_tokens=max_tokens, temperature=temperature)
+            if retry.error_kind != "transient":
+                return retry
+            result = retry
+        return result
+
+    def _chat_text_once(self, messages: list[dict[str, str]], *, max_tokens: int, temperature: float) -> PrivateMindModelResult:
+        """Gọi model trả văn bản thô (response_format=None → không ép JSON)."""
+        def _wrap(raw: Any) -> PrivateMindModelResult:
+            content = self._extract_content(raw)
+            has_text = bool(str(content or "").strip())
+            return PrivateMindModelResult(
+                ok=has_text,
+                content=content,
+                raw=self._safe_raw(raw),
+                error="" if has_text else "empty",
+                error_kind="" if has_text else "fixed_config",
+            )
+
+        if self.llm_service is not None:
+            for method_name in ("chat_text", "chat", "create_chat_completion"):
+                method = getattr(self.llm_service, method_name, None)
+                if callable(method):
+                    try:
+                        raw = method(messages=messages, temperature=temperature, frequency_penalty=0.0, presence_penalty=0.0, max_tokens=max_tokens, response_format=None)
+                        return _wrap(raw)
+                    except TypeError:
+                        continue
+                    except Exception as exc:
+                        return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}", error_kind=_classify_transport_exception(exc))
+        if self.config.provider in {"gemini", "openai", "openai_compatible", "compatible", "remote", "llamacpp", "llama_cpp", "local_gguf", "gguf"}:
+            client = self._provider_client_or_build()
+            if client is None:
+                return PrivateMindModelResult(ok=False, error=f"missing_provider_client:{self.config.provider}", error_kind="fixed_config")
+            try:
+                raw = client.create_chat_completion(
+                    messages=messages,
+                    temperature=temperature,
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0,
+                    max_tokens=max_tokens,
+                    response_format=None,
+                    timeout=self.config.timeout_seconds,
+                )
+                return _wrap(raw)
+            except Exception as exc:
+                return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}", error_kind=_classify_transport_exception(exc))
+        return PrivateMindModelResult(ok=False, error=f"unsupported_provider:{self.config.provider}", error_kind="fixed_config")
 
     def synthesize_judgment(self, dossier: EvidenceDossier, fragments: tuple[ThoughtFragment, ...]) -> Mapping[str, Any] | None:
         messages = self._judgment_messages(dossier, fragments)
@@ -934,7 +1194,7 @@ class RuntimePrivateMindModelAdapter:
                         continue
                     except Exception as exc:
                         return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}", error_kind=_classify_transport_exception(exc))
-        if self.config.provider in {"gemini", "openai", "openai_compatible", "compatible", "remote"}:
+        if self.config.provider in {"gemini", "openai", "openai_compatible", "compatible", "remote", "llamacpp", "llama_cpp", "local_gguf", "gguf"}:
             return self._provider_chat_json(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
         return PrivateMindModelResult(ok=False, error=f"unsupported_provider:{self.config.provider}", error_kind="fixed_config")
 
@@ -1004,6 +1264,14 @@ class RuntimePrivateMindModelAdapter:
             return self._provider_client
         provider = str(self.config.provider or "").strip().lower()
         timeout = int(max(4.0, float(self.config.timeout_seconds or 28.0)))
+        if provider in {"llamacpp", "llama_cpp", "local_gguf", "gguf"}:
+            # Engine local in-process đọc gguf từ src/. model = đường dẫn .gguf.
+            try:
+                self._provider_client = LlamaCppClient(model_path=self.config.model)
+            except Exception as exc:
+                self._log("warning", "[PrivateMind local] không tạo được LlamaCppClient: %s", exc)
+                return None
+            return self._provider_client
         if provider == "gemini":
             api_key = self._current_api_key()
             if not api_key:
@@ -1283,9 +1551,16 @@ class PrivateMindAdapterPool:
         self._config = config or PrivateMindModelAdapterConfig()
         self._llm_service = llm_service
         self._logger = logger
+        # Fragment có thể chạy trên provider local (vd Ollama qwen3) tách khỏi synthesis.
+        # Nếu không khai ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER thì dùng chung config.
+        fragment_config = PrivateMindModelAdapterConfig.fragment_overlay_from_env(self._config)
+        # Khi fragment có provider local riêng (khác config chung), KHÔNG đưa llm_service
+        # (Gemini) vào — nếu không adapter sẽ ưu tiên llm_service và bắn fragment lên
+        # Gemini thay vì model local. Ngược lại (không tách) thì dùng chung llm_service.
+        fragment_llm_service = None if fragment_config is not self._config else llm_service
         # Tạo một adapter per evaluator role + một cho synthesis
         self._fragment_adapters: dict[str, RuntimePrivateMindModelAdapter] = {
-            role: RuntimePrivateMindModelAdapter(config=self._config, llm_service=llm_service, logger=logger)
+            role: RuntimePrivateMindModelAdapter(config=fragment_config, llm_service=fragment_llm_service, logger=logger)
             for role in _EVALUATOR_ROLES
         }
         self._synthesis_adapter = RuntimePrivateMindModelAdapter(
