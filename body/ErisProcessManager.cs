@@ -1,4 +1,4 @@
-using Godot;
+﻿using Godot;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -32,7 +32,7 @@ public sealed class ErisProcessManager
 	{
 		if (_visionProcess != null && !_visionProcess.HasExited)
 		{
-			GD.Print($"[Vision] Da chay san, PID={_visionProcess.Id}");
+			RunLogger.Log($"[Vision] Da chay san, PID={_visionProcess.Id}");
 			return;
 		}
 
@@ -57,7 +57,7 @@ public sealed class ErisProcessManager
 				baseDir, (config.VisionScriptPath ?? "").Replace('/', Path.DirectorySeparatorChar));
 			if (!File.Exists(visionScriptFullPath))
 			{
-				GD.PrintErr(
+				RunLogger.LogErr(
 					$"[Vision] Khong tim thay runtime. Da thu:\n" +
 					$"  - bundled: {bundledRuntime}\n" +
 					$"  - script : {visionScriptFullPath}");
@@ -81,7 +81,7 @@ public sealed class ErisProcessManager
 				StandardOutputEncoding = Encoding.UTF8,
 				StandardErrorEncoding = Encoding.UTF8,
 			};
-			GD.Print(useBundledRuntime
+			RunLogger.Log(useBundledRuntime
 				? $"[Vision] Dung runtime dong goi: {bundledRuntime}"
 				: $"[Vision] Dung Python dev: {fileName} {arguments}");
 			PopulateVisionEnvironment(startInfo, config);
@@ -90,30 +90,30 @@ public sealed class ErisProcessManager
 			process.OutputDataReceived += (_, e) =>
 			{
 				if (!string.IsNullOrWhiteSpace(e.Data) && ShouldLogVisionOutput(e.Data))
-					GD.Print($"[vision.py] {e.Data.Trim()}");
+					RunLogger.Log($"[vision.py] {e.Data.Trim()}");
 			};
 			process.ErrorDataReceived += (_, e) => HandleVisionStderr(e.Data);
 			process.Exited += (_, _) =>
 			{
-				GD.Print($"[Vision] vision.py da thoat (PID={process.Id}, code={process.ExitCode}).");
+				RunLogger.Log($"[Vision] vision.py da thoat (PID={process.Id}, code={process.ExitCode}).");
 				_onStatusChanged();
 			};
 
 			if (!process.Start())
 			{
-				GD.PrintErr("[Vision] Khong the khoi chay vision.py.");
+				RunLogger.LogErr("[Vision] Khong the khoi chay vision.py.");
 				return;
 			}
 
 			_visionProcess = process;
 			process.BeginOutputReadLine();
 			process.BeginErrorReadLine();
-			GD.Print($"[Vision] Da khoi chay vision.py PID={process.Id}");
+			RunLogger.Log($"[Vision] Da khoi chay vision.py PID={process.Id}");
 			_onStatusChanged();
 		}
 		catch (Exception ex)
 		{
-			GD.PrintErr($"[Vision] Loi khi chay vision.py: {ex.Message}");
+			RunLogger.LogErr($"[Vision] Loi khi chay vision.py: {ex.Message}");
 		}
 	}
 
@@ -185,7 +185,7 @@ public sealed class ErisProcessManager
 		}
 		catch (Exception ex)
 		{
-			GD.PrintErr($"[Secrets] Khong doc duoc config/secrets.json: {ex.Message}");
+			RunLogger.LogErr($"[Secrets] Khong doc duoc config/secrets.json: {ex.Message}");
 		}
 
 		return values;
@@ -220,7 +220,7 @@ public sealed class ErisProcessManager
 			}
 			else
 			{
-				GD.PrintErr($"[vision.py][ERR] {rawLine}");
+				RunLogger.LogErr($"[vision.py][ERR] {rawLine}");
 				bool tracebackTail =
 					rawLine.StartsWith(" ", StringComparison.Ordinal) ||
 					rawLine.StartsWith("\t", StringComparison.Ordinal) ||
@@ -244,10 +244,10 @@ public sealed class ErisProcessManager
 		{
 			if (line.Contains("Traceback", StringComparison.OrdinalIgnoreCase))
 				_visionTracebackActive = true;
-			GD.PrintErr($"[vision.py][ERR] {rawLine}");
+			RunLogger.LogErr($"[vision.py][ERR] {rawLine}");
 		}
 		else if (ShouldLogVisionStderr(line))
-			GD.Print($"[vision.py][stderr] {line}");
+			RunLogger.Log($"[vision.py][stderr] {line}");
 	}
 
 	private void StopProcess(ref Process process, string label, string processName)
@@ -261,14 +261,14 @@ public sealed class ErisProcessManager
 		{
 			if (!process.HasExited)
 			{
-				GD.Print($"[{label}] Dang dung {processName} PID={process.Id}...");
+				RunLogger.Log($"[{label}] Dang dung {processName} PID={process.Id}...");
 				process.Kill(true);
 				process.WaitForExit(3000);
 			}
 		}
 		catch (Exception ex)
 		{
-			GD.PrintErr($"[{label}] Khong the dung {processName} sach se: {ex.Message}");
+			RunLogger.LogErr($"[{label}] Khong the dung {processName} sach se: {ex.Message}");
 		}
 		finally
 		{
@@ -338,3 +338,4 @@ public sealed class ErisProcessManager
 			line.Contains("JSON khong hop le", StringComparison.OrdinalIgnoreCase);
 	}
 }
+

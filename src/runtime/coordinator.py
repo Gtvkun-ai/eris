@@ -94,9 +94,6 @@ from runtime.inner_diary_persistence import InnerDiaryPersister
 from runtime.outcome_observer import OutcomeObserver
 from guard_config import guards_warn_only
 from runtime.post_generation_filters import PostGenerationFiltersMixin
-from runtime.session_turn_ledger import SessionTurnLedger
-from runtime.memory_recall_adapter import MemoryRecallAdapter
-from memory.memory_commit_policy import MemoryCommitPolicy
 from runtime.private_mind_daemon import PrivateMindDaemon
 from runtime.private_life_daemon import PrivateLifeDaemon
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
@@ -263,49 +260,6 @@ class RuntimeCoordinator(
         if getattr(self, "chat_mode", False) and float(quiet_for or 0.0) < float(os.getenv("ERIS_MEMORY_DIGEST_CHAT_IDLE_SEC", "2.0")):
             return False
         return True
-
-    def _enqueue_background_memory_digest(
-        self,
-        text: str,
-        *,
-        turn_id: str = "",
-        source: str = "chat_turn",
-        priority: str = "normal",
-        context: dict | None = None,
-    ) -> bool:
-        """Ném một lượt vào background memory digest worker.
-
-        No-op an toàn khi service chưa khởi tạo (không có semantic parser)."""
-
-        service = getattr(self, "background_memory_digest", None)
-        if service is None:
-            return False
-        try:
-            return bool(
-                service.enqueue_user_turn(
-                    text,
-                    turn_id=turn_id,
-                    source=source,
-                    priority=priority,
-                    context=context,
-                )
-            )
-        except Exception as exc:
-            self.logger.warning("Không enqueue được background memory digest: %s", exc)
-            return False
-
-    def _set_background_memory_digest_remote_inflight(self, value: bool) -> None:
-        """Báo digest worker biết remote API đang chạy để tránh tranh tài nguyên.
-
-        No-op an toàn khi service chưa khởi tạo."""
-
-        service = getattr(self, "background_memory_digest", None)
-        if service is None:
-            return
-        try:
-            service.mark_remote_inflight(bool(value))
-        except Exception as exc:
-            self.logger.warning("Không cập nhật được remote inflight cho digest: %s", exc)
 
     def __init__(
         self,
@@ -1338,42 +1292,6 @@ class RuntimeCoordinator(
     #Kiểm tra memory core có phải dạng structured memory không.
     def _has_structured_memory_store(self) -> bool:
         return callable(getattr(self.memory_core, "commit", None))
-
-    def _ensure_session_turn_ledger(self) -> SessionTurnLedger:
-        """Trả về session_turn_ledger hiện có, hoặc tạo mới nếu chưa có."""
-        ledger = getattr(self, "session_turn_ledger", None)
-        if ledger is None:
-            ledger = SessionTurnLedger()
-            self.session_turn_ledger = ledger
-        return ledger
-
-    def _ensure_memory_commit_policy(self) -> MemoryCommitPolicy:
-        """Trả về memory_commit_policy hiện có, hoặc tạo mới và đồng bộ semantic_parser."""
-        policy = getattr(self, "memory_commit_policy", None)
-        if policy is None:
-            policy = MemoryCommitPolicy(
-                semantic_parser=getattr(self, "memory_semantic_parser", None)
-            )
-            self.memory_commit_policy = policy
-        else:
-            # Đồng bộ semantic_parser nếu vừa được gắn sau khi policy đã tạo.
-            parser = getattr(self, "memory_semantic_parser", None)
-            if parser is not None and policy.semantic_parser is not parser:
-                policy.set_semantic_parser(parser)
-        return policy
-
-    def _ensure_memory_recall_adapter(self) -> MemoryRecallAdapter:
-        """Trả về memory_recall_adapter hiện có, hoặc tạo mới."""
-        adapter = getattr(self, "memory_recall_adapter", None)
-        if adapter is None:
-            adapter = MemoryRecallAdapter(
-                ledger=self._ensure_session_turn_ledger(),
-                memory_core=getattr(self, "memory_core", None),
-                llm_service=getattr(self, "llm_service", None),
-                memory_kernel=getattr(self, "memory_kernel", None),
-            )
-            self.memory_recall_adapter = adapter
-        return adapter
 
     #Đảm bảo memory_state có internal_state.
     def _ensure_internal_state(self) -> None:
@@ -6007,6 +5925,17 @@ class RuntimeCoordinator(
             reengagement_probe=reengagement_status,
             allow_surface=True,
             surface_budget_source=reason,
+        )
+
+        self.logger.info(
+            "[presence] wake=%s source=%s micro_presence=%s reengagement_checked=%s "
+            "presence_allowed=%s reengagement_allowed=%s",
+            wake_decision.level,
+            reason,
+            bool(presence_status.get("candidate", False)),
+            bool(reengagement_status.get("checked", False)),
+            bool(presence_status.get("allowed", False)),
+            bool(reengagement_status.get("allowed", False)),
         )
 
         fe_plan = self._wake_gate_fe_plan(ti_report=ti_report, snapshot=snapshot, internal_state=internal_state)

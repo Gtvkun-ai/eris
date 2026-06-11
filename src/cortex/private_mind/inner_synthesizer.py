@@ -131,17 +131,44 @@ class GemmaInnerSynthesizer:
         return judgment
 
     @staticmethod
-    def _weave_inner_voice(fragments: tuple[ThoughtFragment, ...]) -> str:
+    def _norm_claim(text: str) -> str:
+        return " ".join(str(text or "").split()).casefold()
+
+    @classmethod
+    def _claim_is_redundant(cls, candidate: str, kept: list[str]) -> bool:
+        """True nếu claim mới chỉ là biến thể/đoạn con của claim đã giữ.
+
+        Chặn vòng "X Mà Y" khi Y chứa X (hoặc ngược lại), hoặc trùng phần lớn từ —
+        đây là cách câu nhật ký tự nhân đôi thành 'áp lực ... Mà ... áp lực ...'.
+        """
+        cand = cls._norm_claim(candidate)
+        if not cand:
+            return True
+        for existing in kept:
+            ex = cls._norm_claim(existing)
+            if not ex:
+                continue
+            if cand in ex or ex in cand:
+                return True
+            ct, et = set(cand.split()), set(ex.split())
+            if ct and et and (len(ct & et) / len(ct | et)) >= 0.7:
+                return True
+        return False
+
+    @classmethod
+    def _weave_inner_voice(cls, fragments: tuple[ThoughtFragment, ...]) -> str:
         """Dệt các mảnh thành một mạch độc thoại ngôi thứ nhất, không boilerplate.
 
         Các claim giờ đã ở giọng ngôi thứ nhất (do prompt fragment). Khi có nhiều
         mảnh, nối 2-3 ý nặng nhất bằng liên từ mềm để nghe như đang nghĩ liên tục.
+        Bỏ qua mảnh chỉ vọng lại ý đã có để câu không tự nhân đôi.
         """
         claims: list[str] = []
         for f in sorted(fragments, key=lambda x: x.score, reverse=True):
             c = " ".join(str(f.claim or "").split())
-            if c and c not in claims:
-                claims.append(c)
+            if not c or cls._claim_is_redundant(c, claims):
+                continue
+            claims.append(c)
             if len(claims) >= 3:
                 break
         if not claims:

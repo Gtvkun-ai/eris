@@ -17,6 +17,7 @@ from .contracts import (
     ThoughtFragment,
 )
 from .concern_store import ConcernStore
+from .comfort_appraiser import ComfortAppraisal, ComfortAppraiser
 from .evidence_dossier import EvidenceDossierBuilder
 from .inner_synthesizer import GemmaInnerSynthesizer
 from .mini_evaluators import (
@@ -39,6 +40,8 @@ from .user_model import (
 )
 
 __all__ = [
+    "ComfortAppraisal",
+    "ComfortAppraiser",
     "ConcernStore",
     "EvidenceDossier",
     "EvidenceDossierBuilder",

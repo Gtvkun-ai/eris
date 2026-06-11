@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from cortex.private_mind.contracts import to_plain
+from cortex.private_mind.comfort_appraiser import ComfortAppraiser
 from runtime.private_mind_loop import PrivateMindLoop, PrivateMindLoopConfig
 
 
@@ -103,6 +104,9 @@ class PrivateMindDaemon:
         self.outcome_feedback_reports: list[dict[str, Any]] = []
         self.last_surface_outcome: dict[str, Any] = {}
         self.last_outcome_at = 0.0
+        self._comfort_appraiser = ComfortAppraiser(
+            model_adapter=getattr(loop, "model_adapter", None), logger=logger
+        )
         self._sync_runtime_owner()
 
     @classmethod
@@ -205,6 +209,9 @@ class PrivateMindDaemon:
         self.last_outcome_at = time.time()
         if not callable(updater):
             return ()
+        # Agent nhỏ thẩm định lời dỗ TRƯỚC khi đụng vào concern. Có ego: không phải
+        # cứ "đừng lo" là nguôi. Kết quả tiêm vào outcome dưới dạng payload `comfort`.
+        outcome = self._attach_comfort_appraisal(outcome)
         try:
             reports = tuple(updater(outcome, surface_outcome=surface_outcome) or ())
         except Exception as exc:
@@ -218,6 +225,90 @@ class PrivateMindDaemon:
         self.outcome_feedback_reports = self.outcome_feedback_reports[-max(1, self.config.max_outcome_reports) :]
         self._sync_runtime_owner()
         return tuple(to_plain(r) for r in reports)
+
+    def _attach_comfort_appraisal(self, outcome: Any) -> Any:
+        """Chạy ComfortAppraiser và gắn payload `comfort` vào outcome nếu có ý nghĩa.
+
+        Trả lại outcome (có thể đã chuyển thành dict để mang thêm `comfort`). Không
+        bao giờ ném lỗi — thẩm định nội tâm hỏng thì pipeline vẫn phải sống.
+        """
+        try:
+            feedback_text = self._extract_feedback_text(outcome)
+            if not feedback_text:
+                return outcome
+            # Pre-filter rẻ: không có dấu hiệu dỗ thì khỏi gọi agent nhỏ.
+            soothed_hint = self._extract_flag(outcome, "user_soothed")
+            if not soothed_hint and not self._comfort_appraiser.looks_like_comfort(feedback_text):
+                return outcome
+            store = self.concern_store
+            themes: list[str] = []
+            if store is not None and callable(getattr(store, "open_concerns", None)):
+                themes = [str(getattr(c, "theme", "") or "") for c in store.open_concerns(limit=5)]
+            warmth, threat = self._disposition_warmth_threat()
+            appraisal = self._comfort_appraiser.appraise(
+                user_text=feedback_text,
+                concern_themes=themes,
+                warmth=warmth,
+                threat=threat,
+            )
+            if appraisal.stance not in {"soothed", "hardened"}:
+                return outcome
+            payload = appraisal.to_payload()
+            self._log(
+                "info",
+                "[ComfortAppraiser] stance=%s relief=%.2f on_topic=%.2f substance=%.2f recept=%.2f src=%s",
+                payload["stance"], payload["relief"], payload["on_topic"],
+                payload["substance"], payload["receptiveness"], payload["source"],
+            )
+            return self._inject_comfort(outcome, payload)
+        except Exception as exc:
+            self._log("warning", "[ComfortAppraiser] attach error: %s", exc)
+            return outcome
+
+    @staticmethod
+    def _extract_feedback_text(outcome: Any) -> str:
+        if isinstance(outcome, Mapping):
+            return str(outcome.get("feedback_text") or outcome.get("correction_text") or "").strip()
+        return str(getattr(outcome, "feedback_text", "") or getattr(outcome, "correction_text", "") or "").strip()
+
+    @staticmethod
+    def _extract_flag(outcome: Any, name: str) -> bool:
+        if isinstance(outcome, Mapping):
+            return bool(outcome.get(name))
+        return bool(getattr(outcome, name, False))
+
+    @staticmethod
+    def _inject_comfort(outcome: Any, comfort: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(outcome, Mapping):
+            data = dict(outcome)
+        elif callable(getattr(outcome, "to_dict", None)):
+            try:
+                data = dict(outcome.to_dict())
+            except Exception:
+                data = {}
+        else:
+            data = {}
+        data["comfort"] = comfort
+        return data
+
+    def _disposition_warmth_threat(self) -> tuple[float, float]:
+        """Lấy warmth/threat (ego) của Eris từ internal state qua disposition.
+
+        Thiếu state → trả trung tính nghiêng phòng thủ nhẹ (0.3, 0.3): không quá dễ
+        nguôi khi chưa biết tâm thế.
+        """
+        owner = self.runtime_owner
+        getter = getattr(owner, "_get_internal_state", None) if owner is not None else None
+        if not callable(getter):
+            return 0.3, 0.3
+        try:
+            state = getter()
+            if state is None:
+                return 0.3, 0.3
+            from cortex.disposition import threat_level, warmth_level
+            return float(warmth_level(state)), float(threat_level(state))
+        except Exception:
+            return 0.3, 0.3
 
     def drain_surface_impulses(self, *, limit: int = 4) -> tuple[Any, ...]:
         """Lấy impulse đã lọc để SurfaceArbiter xử lý.

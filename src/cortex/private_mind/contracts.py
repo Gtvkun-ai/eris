@@ -271,11 +271,13 @@ class PrivateConcern:
 
         now = now_ts()
         self.recurrence += 1
+        prev_evidence_count = len(self.evidence_ids)
         merged_evidence = [*self.evidence_ids]
         for eid in fragment.evidence_ids:
             if eid not in merged_evidence:
                 merged_evidence.append(eid)
         self.evidence_ids = tuple(merged_evidence[:64])
+        had_new_evidence = len(self.evidence_ids) > prev_evidence_count
         if fragment.suggested_question and fragment.suggested_question not in self.open_questions:
             self.open_questions = tuple([*self.open_questions, fragment.suggested_question][:12])
         merged_hypotheses = list(self.hypotheses)
@@ -296,8 +298,17 @@ class PrivateConcern:
             else:
                 merged_hypotheses.append(hyp)
         self.hypotheses = tuple(sorted(merged_hypotheses, key=lambda h: h.score, reverse=True)[:12])
-        self.pressure = clamp01(max(self.pressure * 0.92, fragment.pressure) + min(0.12, 0.018 * self.recurrence))
-        self.uncertainty = clamp01(min(self.uncertainty or (1.0 - fragment.confidence), 1.0 - max(fragment.confidence, 0.05)) * 0.97)
+        if had_new_evidence:
+            # Có bằng chứng mới thật → mối bận tâm được nuôi chính đáng, cho phép leo.
+            self.pressure = clamp01(max(self.pressure * 0.92, fragment.pressure) + min(0.12, 0.018 * self.recurrence))
+            self.uncertainty = clamp01(min(self.uncertainty or (1.0 - fragment.confidence), 1.0 - max(fragment.confidence, 0.05)) * 0.97)
+        else:
+            # Echo thuần: fragment chỉ vọng lại chính evidence cũ, không có gì mới.
+            # Đây chính là nhiên liệu của vòng "áp lực về áp lực" — nghĩ lại nỗi lo
+            # rồi tự coi việc nghĩ đó là bằng chứng nỗi lo lớn hơn. Hạ nhiệt thay vì
+            # khuếch đại: pressure nguội dần, độ bất định nhích lên (nghĩ mãi không ra).
+            self.pressure = clamp01(self.pressure * 0.90)
+            self.uncertainty = clamp01(self.uncertainty + 0.02)
         self.last_reviewed_at = now
         self.updated_at = now
         self.status = "open" if self.status in {"stale", "blocked"} else self.status

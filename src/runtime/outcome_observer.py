@@ -35,6 +35,9 @@ class OutcomeReport:
     - user_confused: user có vẻ khó hiểu/lạc nhịp không.
     - user_felt_intruded: user có cảm giác bị xen vào/bị suy diễn/bị xâm phạm không.
       `None` nghĩa là chưa đủ tín hiệu.
+    - user_soothed: user có đang dỗ/trấn an/xoa dịu ERIS không (vd "đừng lo",
+      "không sao đâu", "tôi ở đây"). `None` nghĩa là chưa đủ tín hiệu. Đây là tín
+      hiệu để private mind cho nỗi lo nguôi đi thay vì pegged mãi.
     - relation_improved / relation_ruptured: quan hệ có tốt lên/rạn đi không.
       `None` nghĩa là chưa đủ tín hiệu.
     - action_success: hành động/text/system action có thực thi ổn không.
@@ -48,6 +51,7 @@ class OutcomeReport:
     user_laughed: bool = False
     user_confused: bool = False
     user_felt_intruded: Optional[bool] = None
+    user_soothed: Optional[bool] = None
     relation_improved: Optional[bool] = None
     relation_ruptured: Optional[bool] = None
     action_success: float = 1.0
@@ -57,6 +61,7 @@ class OutcomeReport:
     # Metadata phụ để self_observation phân loại lỗi chính xác hơn.
     confidence: float = 0.5
     correction_text: str = ""
+    feedback_text: str = ""
     ignored_reason: str = ""
     accepted_reason: str = ""
     rupture_reason: str = ""
@@ -136,6 +141,19 @@ class OutcomeObserver:
         "nghe được", "nghe duoc", "ổn rồi", "on roi",
     )
 
+    # User đang dỗ/trấn an/xoa dịu ERIS (chứ không phải đánh giá câu trả lời).
+    # Cố ý tránh các cụm trùng với CORRECTION (vd "không phải") để khỏi bị hiểu nhầm
+    # thành sửa lỗi.
+    COMFORT_PATTERNS = (
+        "đừng lo", "dung lo", "đừng buồn", "dung buon", "đừng căng", "dung cang",
+        "đừng nghĩ nhiều", "dung nghi nhieu", "đừng tự trách", "dung tu trach",
+        "không sao", "khong sao", "không sao đâu", "khong sao dau",
+        "bình tĩnh", "binh tinh", "yên tâm", "yen tam", "ổn mà", "on ma",
+        "tôi ở đây", "toi o day", "có tôi đây", "co toi day", "anh ở đây", "anh o day",
+        "nghỉ đi", "nghi di", "nghỉ ngơi", "nghi ngoi", "thư giãn", "thu gian",
+        "thả lỏng", "tha long", "thôi nào", "thoi nao", "đừng áp lực", "dung ap luc",
+    )
+
     NEGATED_ACCEPTANCE_PATTERNS = (
         "ok nhưng sai", "ok nhung sai", "đúng nhưng", "dung nhung",
         "chuẩn nhưng", "chuan nhung", "hợp lý nhưng", "hop ly nhung",
@@ -199,6 +217,7 @@ class OutcomeObserver:
         user_laughed = False
         user_confused = False
         user_felt_intruded: Optional[bool] = None
+        user_soothed: Optional[bool] = None
         relation_improved: Optional[bool] = None
         relation_ruptured: Optional[bool] = None
         correction_text = ""
@@ -255,6 +274,16 @@ class OutcomeObserver:
             if user_felt_intruded is None and feedback:
                 user_felt_intruded = False
 
+            # Dỗ/trấn an: user đang xoa dịu ERIS. Không tính nếu đang là correction/
+            # intrusion (lúc đó câu nói mang nghĩa khác).
+            soothed = self._has_any(normalized_feedback, self.COMFORT_PATTERNS)
+            if soothed and not user_corrected and not intruded:
+                user_soothed = True
+                evidence.append(f"user_feedback_comfort={feedback[:140]}")
+                tags.append("user_soothed")
+            elif feedback:
+                user_soothed = False
+
         user_ignored = False
         ignored_reason = ""
         if idle_seconds_after_turn is not None:
@@ -286,6 +315,7 @@ class OutcomeObserver:
             user_laughed=user_laughed,
             user_confused=user_confused,
             user_felt_intruded=user_felt_intruded,
+            user_soothed=user_soothed,
             relation_improved=relation_improved,
             relation_ruptured=relation_ruptured,
             action_success=self._clamp01(action_success),
@@ -293,6 +323,7 @@ class OutcomeObserver:
             evidence=evidence[:12],
             confidence=self._clamp01(confidence),
             correction_text=correction_text,
+            feedback_text=feedback[:300],
             ignored_reason=ignored_reason,
             accepted_reason=accepted_reason,
             rupture_reason=rupture_reason,

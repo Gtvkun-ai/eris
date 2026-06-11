@@ -274,9 +274,22 @@ class ConcernStore:
         )
         action_success = score("action_success", 1.0)
         body_success = score("body_match_success", 1.0)
-        negative = bool(negative_flags or action_success < 0.52 or body_success < 0.52)
+        # Quyết định "được dỗ" KHÔNG do store tự đoán. Nó đến từ ComfortAppraiser
+        # (agent nhỏ + gate bằng disposition của Eris) dưới dạng payload `comfort`.
+        # Store chỉ áp con số. Không có payload → không tự nhiên giảm stress.
+        comfort = dict(data.get("comfort") or {}) if isinstance(data.get("comfort"), Mapping) else {}
+        comfort_stance = str(comfort.get("stance") or "").strip().lower()
+        comfort_relief = clamp01(comfort.get("relief", 0.0))
+        soothed = comfort_stance == "soothed" and comfort_relief > 0.0
+        hardened = comfort_stance == "hardened"
+        # action_success/body_success ~0.5 nghĩa là "không rõ", KHÔNG phải thất bại.
+        # Trước đây ngưỡng 0.52 khiến mọi turn trung tính bị tính là negative và bơm
+        # +0.10 pressure mỗi tick — một trong các máy bơm nuôi vòng lặp. Chỉ coi là
+        # negative khi có cờ xấu rõ hoặc success thực sự thấp.
+        clearly_failed = action_success < 0.45 or body_success < 0.45
+        negative = bool(negative_flags or clearly_failed)
         positive = bool(positive_flags and not negative and action_success >= 0.70 and body_success >= 0.70)
-        if not negative and not positive:
+        if not negative and not positive and not soothed and not hardened:
             return ()
 
         correction = compact_text(data.get("correction_text") or data.get("rupture_reason") or data.get("ignored_reason") or "", 260)
@@ -319,6 +332,17 @@ class ConcernStore:
                 bias = "lower confidence in this concern's current hypothesis until new evidence supports it"
                 if bias not in biases:
                     biases.append(bias)
+            elif soothed:
+                # Lời dỗ đã được ComfortAppraiser xác nhận: đúng trọng tâm, có thực
+                # chất, và Eris đang ở thế chịu nhận. Nguôi tỉ lệ với relief.
+                factor = clamp01(1.0 - comfort_relief * 0.7)
+                concern.pressure = clamp01(concern.pressure * factor)
+                concern.uncertainty = clamp01(concern.uncertainty * 0.85)
+                if concern.pressure < 0.18 and concern.uncertainty < 0.28:
+                    concern.status = "watching"
+                bias = "this concern eased because the user's reassurance actually landed"
+                if bias not in biases:
+                    biases.append(bias)
             elif positive:
                 concern.pressure = clamp01(concern.pressure * 0.82)
                 concern.uncertainty = clamp01(concern.uncertainty * 0.88)
@@ -327,12 +351,23 @@ class ConcernStore:
                 bias = "this concern was softened by a positive outcome"
                 if bias not in biases:
                     biases.append(bias)
+            elif hardened:
+                # Bị dỗ bậy, dỗ lệch trọng tâm, hoặc bị dỗ khi đang phòng thủ/ghét.
+                # Eris không nguôi — còn cứng lại. Giữ áp lực, gài bias lạnh/khắt khe.
+                concern.pressure = clamp01(concern.pressure * 1.04)
+                concern.uncertainty = clamp01(concern.uncertainty + 0.03)
+                bias = "user tried to soothe but it missed; keep guard up, answer colder and stricter"
+                if bias not in biases:
+                    biases.append(bias)
             concern.open_questions = tuple(questions[:12])
             concern.future_biases = tuple(biases[:12])
             concern.evidence_ids = tuple(dict.fromkeys((*concern.evidence_ids, *evidence)))[:64]
             concern.metadata["last_outcome_feedback"] = {
                 "negative": negative,
                 "positive": positive,
+                "soothed": soothed,
+                "hardened": hardened,
+                "comfort_stance": comfort_stance,
                 "flags": list(negative_flags or positive_flags),
                 "action_success": round(action_success, 3),
                 "body_match_success": round(body_success, 3),
@@ -345,6 +380,11 @@ class ConcernStore:
                 "concern_id": concern.id,
                 "negative": negative,
                 "positive": positive,
+                "soothed": soothed,
+                "hardened": hardened,
+                # Mức độ "chữa trị": pressure đã nguôi được bao nhiêu trong lần này
+                # (âm nghĩa là cứng thêm vì bị dỗ bậy).
+                "relief": round(before_pressure - concern.pressure, 3),
                 "pressure": [round(before_pressure, 3), round(concern.pressure, 3)],
                 "uncertainty": [round(before_uncertainty, 3), round(concern.uncertainty, 3)],
                 "flags": list(negative_flags or positive_flags),

@@ -30,9 +30,12 @@ def _compact_private_mind_for_udp_overflow(value):
     return {
         "last_tick_at": value.get("last_tick_at", 0.0),
         "current": _compact_debug_value(value.get("current", {}), depth=0),
-        # Giữ inner_diary NGUYÊN BẢN — nó nhỏ và là thứ quan trọng nhất với UI.
-        # Chỉ nén đống debug nặng trong menu, không đụng nhật ký nội tâm.
-        "inner_diary": value.get("inner_diary") if isinstance(value.get("inner_diary"), dict) else {},
+        # inner_diary là thứ quan trọng nhất với UI nên giữ tối đa, nhưng vẫn phải
+        # nén có giới hạn: một section/line nội tâm có thể phình rất to (vd dump thô),
+        # nếu để NGUYÊN BẢN thì stage 1 vượt trần payload và rơi xuống stage rút gọn
+        # cứng — nơi debug_api và emotion_debug.private_mind bị vứt mất. Nén ở đây giữ
+        # được title/text/sections mà vẫn đủ nhỏ để stage 1 thành công.
+        "inner_diary": _compact_inner_diary(value.get("inner_diary")),
         # Giữ anchor (Mô Hình Ngài / trục neo) NGUYÊN BẢN — nhỏ và là dữ liệu panel cần.
         "anchor": value.get("anchor") if isinstance(value.get("anchor"), dict) else {},
         "menu": compact_menu,

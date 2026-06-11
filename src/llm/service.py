@@ -1801,7 +1801,7 @@ class LlmService:
                 )
                 raise FormatViolationException(
                     (
-                        f"LlmService local fallback also returned invalid {channel} JSON. "
+                        f"LlmService local fallback (model.gguf) also returned invalid {channel} JSON. "
                         f"Retry with stricter JSON enforcement. Root cause: {exc.reason}"
                     ),
                     channel=channel,

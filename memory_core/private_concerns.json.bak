@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "saved_at": 1781162844.4032414,
+  "concerns": [
+    {
+      "id": "concern.2b10836bfee95df0",
+      "theme": "Ngài muốn tôi thay đổi suy nghĩ",
+      "evidence_ids": [
+        "dossier.user.current",
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "dossier.concern.0",
+        "ev.test"
+      ],
+      "open_questions": [
+        "Làm thế nào để giảm áp lực tâm lý?",
+        "Revise this hypothesis after outcome: negative outcome",
+        "Revise this hypothesis after outcome: user_corrected"
+      ],
+      "hypotheses": [],
+      "pressure": 0.7,
+      "uncertainty": 1.0,
+      "recurrence": 60,
+      "status": "open",
+      "last_reviewed_at": 1781162842.537767,
+      "future_biases": [
+        "lower confidence in this concern's current hypothesis until new evidence supports it"
+      ],
+      "created_at": 1781159612.3227859,
+      "updated_at": 1781162842.537767,
+      "metadata": {
+        "fragment_ids": [
+          "tf.3b13c0e822f6fbd0"
+        ],
+        "synthesizer": "deterministic_fallback",
+        "last_outcome_feedback": {
+          "negative": true,
+          "positive": false,
+          "soothed": false,
+          "hardened": false,
+          "comfort_stance": "",
+          "flags": [
+            "user_corrected"
+          ],
+          "action_success": 0.4,
+          "body_match_success": 0.9,
+          "correction_text": "",
+          "at": 1781162842.537767
+        }
+      }
+    },
+    {
+      "id": "concern.5c84f09058ba3d9f",
+      "theme": "User wants architecture work",
+      "evidence_ids": [
+        "dossier.user.current",
+        "dossier.runtime.state",
+        "dossier.concern.0",
+        "dossier.concern.1",
+        "dossier.concern.2",
+        "dossier.concern.3",
+        "ev.test"
+      ],
+      "open_questions": [
+        "Revise this hypothesis after outcome: user_corrected",
+        "Revise this hypothesis after outcome: negative outcome"
+      ],
+      "hypotheses": [],
+      "pressure": 0.7,
+      "uncertainty": 0.10000000000000009,
+      "recurrence": 60,
+      "status": "open",
+      "last_reviewed_at": 1781162844.1326354,
+      "future_biases": [
+        "lower confidence in this concern's current hypothesis until new evidence supports it"
+      ],
+      "created_at": 1781161151.781461,
+      "updated_at": 1781162844.1326354,
+      "metadata": {
+        "fragment_ids": [
+          "tf.83339d5f8fac970c",
+          "tf.15fa7abc56a89b08",
+          "tf.584d469debe2899f",
+          "tf.81674b3499484d42",
+          "tf.645c2f2b4995b5ef"
+        ],
+        "synthesizer": "deterministic_fallback",
+        "fragment_sources": [
+          "memory_resonance_evaluator",
+          "risk_and_permission_evaluator",
+          "intent_evaluator",
+          "future_bias_evaluator"
+        ],
+        "last_outcome_feedback": {
+          "negative": true,
+          "positive": false,
+          "soothed": false,
+          "hardened": false,
+          "comfort_stance": "",
+          "flags": [
+            "user_corrected"
+          ],
+          "action_success": 0.4,
+          "body_match_success": 0.9,
+          "correction_text": "",
+          "at": 1781162842.537767
+        }
+      }
+    }
+  ]
+}

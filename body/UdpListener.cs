@@ -239,6 +239,7 @@ public partial class UdpListener : Node2D
 
 	public override void _Ready()
 	{
+		RunLogger.Initialize();
 		ConfigureDesktopOverlayWindow();
 		_udp.Bind(_port);
 		_body   = GetNode<CharacterBody2D>("Monika2");
@@ -364,6 +365,7 @@ public partial class UdpListener : Node2D
 		StopVisionProcess();
 		_udp.Close();
 		_chatSend.Close();
+		RunLogger.Shutdown();
 	}
 
 

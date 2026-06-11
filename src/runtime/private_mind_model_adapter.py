@@ -240,6 +240,59 @@ class RuntimePrivateMindModelAdapter:
             }
         return parsed
 
+    def appraise_comfort(self, user_text: str, concern_themes: list[str]) -> Mapping[str, Any] | None:
+        """Agent nhỏ thẩm định một câu của user có phải lời dỗ thật không.
+
+        Trả dict: is_comfort (bool), on_topic (0..1 chạm đúng concern), substance
+        (0..1 thực chất vs sáo rỗng). Lỗi/cooldown → None để ComfortAppraiser rơi về
+        heuristic. KHÔNG quyết định nguôi hay không — việc gate bằng ego do
+        ComfortAppraiser làm.
+        """
+        messages = self._comfort_messages(user_text, concern_themes)
+        result = self._tracked_chat_json(
+            messages,
+            max_tokens=192,
+            response_schema=self._comfort_response_schema(),
+        )
+        if not result.ok:
+            if result.error not in {"invalid_json_cooldown", "transient_cooldown"}:
+                self._log("warning", "[PrivateMind API] appraise_comfort failed error=%s", result.error)
+            return None
+        return dict(result.parsed)
+
+    def _comfort_messages(self, user_text: str, concern_themes: list[str]) -> list[dict[str, str]]:
+        payload = {
+            "cau_cua_nguoi_dung": compact_text(str(user_text or ""), 600),
+            "dieu_eris_dang_ban_tam": [compact_text(str(t), 120) for t in (concern_themes or [])[:5]],
+        }
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Bạn là bộ thẩm định nội tâm của Eris. Cho một câu người dùng vừa nói và danh sách "
+                    "điều Eris đang bận tâm, hãy đánh giá câu đó như một lời dỗ/trấn an. "
+                    "KHÔNG quyết định Eris có nguôi hay không — chỉ chấm khách quan. "
+                    "Trả ĐÚNG một JSON object: "
+                    "is_comfort (true nếu câu này có ý dỗ/trấn an/an ủi/xoa dịu), "
+                    "on_topic (0..1: câu đó có chạm đúng điều Eris đang bận tâm không, hay lạc đề), "
+                    "substance (0..1: lời dỗ có thực chất, cụ thể, chân thành không; trấn an rỗng/sáo thì thấp)."
+                ),
+            },
+            {"role": "user", "content": json.dumps(to_plain(payload), ensure_ascii=False)},
+        ]
+
+    def _comfort_response_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "is_comfort": {"type": "boolean"},
+                "on_topic": {"type": "number"},
+                "substance": {"type": "number"},
+            },
+            "propertyOrdering": ["is_comfort", "on_topic", "substance"],
+            "required": ["is_comfort"],
+        }
+
     def write_inner_diary(self, facts: Mapping[str, Any]) -> Mapping[str, Any] | None:
         """Viết lại các dữ kiện nội tâm thành nhật ký giọng Eris (ngôi thứ nhất).
 
@@ -832,9 +885,20 @@ class RuntimePrivateMindModelAdapter:
             return result
 
         for attempt in range(self.config.transient_max_retries):
-            # 429 quota → thử rotate key ngay, không cần backoff dài
+            # 429 quota → thử rotate key ngay, không cần backoff dài.
+            # CHÚ Ý: dò theo token chính xác, KHÔNG match "rate" trần — URL endpoint
+            # "generateContent" chứa chuỗi con "rate" và sẽ khiến mọi lỗi 5xx bị nhầm
+            # là quota, dẫn tới rotate key + rebuild client (bỏ qua client đã inject).
             error_str = str(result.error or "")
-            is_quota = "429" in error_str or "quota" in error_str.lower() or "rate" in error_str.lower()
+            error_lower = error_str.lower()
+            is_quota = (
+                "429" in error_str
+                or "quota" in error_lower
+                or "rate limit" in error_lower
+                or "ratelimit" in error_lower
+                or "rate-limit" in error_lower
+                or "too many requests" in error_lower
+            )
             if is_quota and self._rotate_to_next_key():
                 retry = self._chat_json_once(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
             else:

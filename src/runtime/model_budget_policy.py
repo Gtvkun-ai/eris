@@ -228,6 +228,12 @@ class ModelBudgetPolicyConfig:
     vision_force_run: bool = field(default_factory=lambda: _env_flag("ERIS_VISION_FORCE_RUN", True))
     vision_force_run_priority: int = field(default_factory=lambda: _env_int("ERIS_VISION_FORCE_RUN_PRIORITY", 5000))
     vision_force_run_queue_timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_VISION_FORCE_RUN_QUEUE_TIMEOUT", 0.0))
+    # Khi remote API tắt, main_cognition chạy bằng local GGUF — đây là bộ não DUY NHẤT.
+    # Chặn nó vì áp lực tài nguyên/cooldown đồng nghĩa ERIS câm hẳn, nên ép chạy giống
+    # vision_force_run: vẫn tôn trọng hard veto nhiệt độ GPU, nhưng vượt qua soft guard.
+    force_local_gguf_enabled: bool = field(default_factory=lambda: _env_flag("ERIS_FORCE_LOCAL_GGUF", True))
+    force_local_gguf_priority: int = field(default_factory=lambda: _env_int("ERIS_FORCE_LOCAL_GGUF_PRIORITY", 9000))
+    force_local_gguf_queue_timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_FORCE_LOCAL_GGUF_QUEUE_TIMEOUT", 0.0))
 
 
 class ModelBudgetPolicy:
@@ -394,6 +400,28 @@ class ModelBudgetPolicy:
                 debug=debug,
             )
 
+        if self._should_force_local_gguf_main(tier):
+            ignored_reasons = self._resource_block_reasons(
+                tier,
+                snapshot=snapshot,
+                external_vram_percent=external_vram_percent,
+                uses_remote_api=uses_remote_api,
+            )
+            debug["force_local_gguf"] = True
+            debug["ignored_resource_reasons"] = ignored_reasons
+            if cooldown > 0.0:
+                debug["ignored_cooldown_seconds"] = round(cooldown, 2)
+            return BudgetDecision(
+                verdict="allow",
+                allowed=True,
+                tier=tier,
+                reason="force_local_gguf_main",
+                resource_snapshot=snapshot,
+                hard_veto=False,
+                cooldown_seconds=0.0,
+                debug=debug,
+            )
+
         if heavy_tier and cooldown > 0.0:
             return BudgetDecision(
                 verdict="block",
@@ -529,9 +557,13 @@ class ModelBudgetPolicy:
         request_id: str | None = None,
     ) -> InferenceLease:
         force_vision = self._should_force_vision(tier)
+        force_local_main = self._should_force_local_gguf_main(tier)
         if force_vision:
             priority = max(int(priority), int(self.config.vision_force_run_priority))
             timeout_seconds = self.config.vision_force_run_queue_timeout_seconds
+        elif force_local_main:
+            priority = max(int(priority), int(self.config.force_local_gguf_priority))
+            timeout_seconds = self.config.force_local_gguf_queue_timeout_seconds
         timeout = self.config.default_queue_timeout_seconds if timeout_seconds is None else float(timeout_seconds)
         request_id = request_id or f"{tier}:{uuid.uuid4().hex[:12]}"
 
@@ -558,7 +590,7 @@ class ModelBudgetPolicy:
             return lease
 
         with self._condition:
-            if len(self._queue) >= self.config.max_queue_size and not force_vision:
+            if len(self._queue) >= self.config.max_queue_size and not (force_vision or force_local_main):
                 raise RuntimeError(f"model_queue_full:{tier}:{len(self._queue)}")
             self._sequence += 1
             entry = ModelQueueEntry(
@@ -740,6 +772,14 @@ class ModelBudgetPolicy:
 
     def _should_force_vision(self, tier: str) -> bool:
         return tier == "vision_compressor" and bool(getattr(self.config, "vision_force_run", False))
+
+    def _should_force_local_gguf_main(self, tier: str) -> bool:
+        """main_cognition chạy local GGUF (remote API tắt) → ép chạy: nó là não duy nhất."""
+        return (
+            tier == "main_cognition"
+            and not self._uses_remote_api(tier)
+            and bool(getattr(self.config, "force_local_gguf_enabled", False))
+        )
 
     def _estimated_vram_need_mb(self, tier: str) -> float:
         if tier == "main_cognition":

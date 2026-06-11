@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import os
 import random
@@ -30,17 +31,418 @@ from cortex.contracts import (
     TiPolicyReport,
 )
 from cortex.internal_state import PersistentInternalState
+from memory.memory_commit_policy import MemoryCommitPolicy
+from memory.memory_models import MemoryKind
 from cortex.relationship_dynamics import RelationshipTurnEvent
 from core.evidence import EvidenceItem, RawSignal
 from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from domain import Decision
 from runtime.body_bias import BodyBiasProjector
+from runtime.memory_recall_adapter import MemoryRecallAdapter
 from runtime.presence_controller import SocialPresenceEvent
+from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
+from runtime.session_turn_ledger import SessionTurnLedger
 from runtime.speech_pipeline import SpeechIntentDecision
 
 
+
+
+def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
+    """True nếu decision chỉ là fallback kỹ thuật, không phải answer nội dung.
+
+    Chú thích kiến trúc: public_turn có thể ghi để user thấy, nhưng semantic
+    history/TurnGraph không được coi các câu này là bằng chứng hội thoại.
+    """
+
+    intent = str(getattr(decision, "intent", "") or "")
+    parse_mode = str(getattr(decision, "parse_mode", "") or "")
+    debug_trace = str(getattr(decision, "debug_trace", "") or "")
+    text = str(getattr(decision, "text", "") or "").lower()
+    fallback_intents = {"fallback_reply", "format_repair_fallback", "service_error", "no_fallback_block"}
+    fallback_modes = {"format_repair_fallback", "service_error", "no_fallback_block"}
+    if intent in fallback_intents or parse_mode in fallback_modes:
+        return True
+    if "http_5xx_fallback" in debug_trace or "format_violation_recovered" in debug_trace:
+        return True
+    return "lỗi định dạng" in text or "loi dinh dang" in text or "vấn đề đường truyền" in text
+
+
 class StateCommitServiceMixin:
+    def _memory_kernel(self):
+        return getattr(self, "memory_kernel", None)
+
+    def _ensure_session_turn_ledger(self) -> SessionTurnLedger:
+        ledger = getattr(self, "session_turn_ledger", None)
+        if isinstance(ledger, SessionTurnLedger):
+            return ledger
+        ledger = SessionTurnLedger()
+        self.session_turn_ledger = ledger
+        return ledger
+
+    def _ensure_memory_commit_policy(self) -> MemoryCommitPolicy:
+        policy = getattr(self, "memory_commit_policy", None)
+        parser = getattr(self, "memory_semantic_parser", None)
+        if isinstance(policy, MemoryCommitPolicy):
+            if parser is not None and getattr(policy, "semantic_parser", None) is not parser:
+                policy.set_semantic_parser(parser)
+            return policy
+        policy = MemoryCommitPolicy()
+        if parser is not None:
+            policy.set_semantic_parser(parser)
+        self.memory_commit_policy = policy
+        return policy
+
+    def _ensure_memory_fast_commit_policy(self) -> MemoryCommitPolicy:
+        """Policy nóng không gọi model semantic parser.
+
+        Khi background memory digest đang bật, hot path chỉ nên giữ các fact/rule
+        rẻ và rõ. Phần phân rã sâu bằng model.gguf chạy ở worker nền. Nếu không
+        tách đường này, user phải ngồi chờ memory nhai xong rồi mới được nghe câu
+        trả lời, một nghi lễ UX không ai yêu cầu.
+        """
+
+        policy = getattr(self, "memory_fast_commit_policy", None)
+        if isinstance(policy, MemoryCommitPolicy):
+            return policy
+        policy = MemoryCommitPolicy()
+        self.memory_fast_commit_policy = policy
+        return policy
+
+    def _background_memory_digest_enabled(self) -> bool:
+        service = getattr(self, "background_memory_digest", None)
+        return bool(service is not None and getattr(service, "enabled", False))
+
+    def _enqueue_background_memory_digest(self, user_text: str, *, turn_id: str = "", source: str = "chat_turn", priority: str = "normal", context: dict | None = None) -> bool:
+        service = getattr(self, "background_memory_digest", None)
+        if service is None or not bool(getattr(service, "enabled", False)):
+            return False
+        enqueue = getattr(service, "enqueue_user_turn", None)
+        if not callable(enqueue):
+            return False
+        try:
+            return bool(enqueue(user_text, turn_id=turn_id, source=source, priority=priority, context=context))
+        except Exception as exc:
+            self.logger.warning("[memory digest] enqueue failed: %s", exc)
+            return False
+
+    def _set_background_memory_digest_remote_inflight(self, inflight: bool) -> None:
+        service = getattr(self, "background_memory_digest", None)
+        marker = getattr(service, "notify_remote_inflight", None)
+        if callable(marker):
+            try:
+                marker(bool(inflight))
+            except Exception:
+                return
+
+    def _memory_snapshot_for_lookup(self):
+        core = getattr(self, "memory_core", None)
+        loader = getattr(core, "load", None)
+        if callable(loader):
+            try:
+                snapshot = loader()
+            except Exception as exc:
+                self.logger.warning("Memory snapshot load for recall failed: %s", exc)
+            else:
+                if snapshot is not None:
+                    return snapshot
+        return getattr(self, "memory_state", None)
+
+    def _memory_snapshot_items(self, snapshot, collection_name: str) -> tuple[object, ...]:
+        if snapshot is None:
+            return ()
+        if isinstance(snapshot, Mapping):
+            items = snapshot.get(collection_name) or ()
+        else:
+            items = getattr(snapshot, collection_name, ()) or ()
+        if isinstance(items, (list, tuple)):
+            return tuple(items)
+        return (items,)
+
+    @staticmethod
+    def _record_value(record: object, field_name: str, default=None):
+        if isinstance(record, Mapping):
+            return record.get(field_name, default)
+        return getattr(record, field_name, default)
+
+    def _record_metadata(self, record: object) -> dict[str, object]:
+        metadata = self._record_value(record, "metadata", {}) or {}
+        return dict(metadata) if isinstance(metadata, Mapping) else {}
+
+    @staticmethod
+    def _clean_memory_value(value: object) -> str:
+        return str(value or "").strip().strip(" .,:;!?\"'“”")
+
+    def _extract_semantic_value_from_record(self, record: object, kind: MemoryKind) -> str | None:
+        metadata = self._record_metadata(record)
+        fact_key = self._fact_key_for_memory_kind(kind)
+        record_fact_key = str(metadata.get("fact_key") or self._record_value(record, "fact_key", "") or "").strip()
+        if fact_key and record_fact_key and record_fact_key != fact_key:
+            return None
+        for direct_value in (metadata.get("value"), metadata.get("current_value")):
+            if direct_value:
+                return self._clean_memory_value(direct_value)
+
+        raw_content = metadata.get("raw_content")
+        if isinstance(raw_content, Mapping):
+            raw_kind = str(raw_content.get("kind", "") or "").strip()
+            if raw_kind == kind.value:
+                raw_meta = raw_content.get("metadata")
+                if isinstance(raw_meta, Mapping):
+                    value = raw_meta.get("value")
+                    if value:
+                        return self._clean_memory_value(value)
+                value = raw_content.get("value")
+                if value:
+                    return self._clean_memory_value(value)
+
+        direct_kind = str(self._record_value(record, "kind", "") or metadata.get("kind", "") or "").strip()
+        if direct_kind and direct_kind != kind.value:
+            return None
+
+        claim_text = " ".join(
+            str(part or "").strip()
+            for part in (
+                self._record_value(record, "claim", ""),
+                self._record_value(record, "content", ""),
+                self._record_value(record, "surface", ""),
+            )
+            if str(part or "").strip()
+        )
+        lowered = claim_text.lower()
+
+        if kind == MemoryKind.USER_NAME:
+            patterns = (
+                r"user'?s name is\s+(.+?)(?:[.!,;:]|$)",
+                r"ten .* la\s+(.+?)(?:[.!,;:]|$)",
+            )
+        elif kind == getattr(MemoryKind, "USER_NICKNAME", None):
+            patterns = (
+                r"user'?s nickname is\s+(.+?)(?:[.!,;:]|$)",
+                r"biet danh .* la\s+(.+?)(?:[.!,;:]|$)",
+            )
+        elif kind == MemoryKind.USER_BIRTH_MONTH:
+            patterns = (
+                r"birth month is\s+(\d{1,2})",
+                r"thang sinh .* la thang\s+(\d{1,2})",
+            )
+        else:
+            return None
+
+        for pattern in patterns:
+            match = re.search(pattern, lowered, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = self._clean_memory_value(claim_text[match.start(1):match.end(1)])
+            if value:
+                return value
+        return None
+
+    def _semantic_memory_lookup(self, kind: MemoryKind):
+        snapshot = self._memory_snapshot_for_lookup()
+        candidates: list[tuple[tuple[float, float, float, str], str]] = []
+        for record in self._memory_snapshot_items(snapshot, "semantic_memory"):
+            value = self._extract_semantic_value_from_record(record, kind)
+            if value:
+                candidates.append((self._semantic_record_rank(record), value))
+        if candidates:
+            return max(candidates, key=lambda item: item[0])[1]
+        return None
+
+    @staticmethod
+    def _fact_key_for_memory_kind(kind: MemoryKind) -> str:
+        if kind == MemoryKind.USER_NAME:
+            return "user.name"
+        if kind == getattr(MemoryKind, "USER_NICKNAME", None):
+            return "user.nickname"
+        if kind == MemoryKind.USER_BIRTH_MONTH:
+            return "user.birth_month"
+        if kind == MemoryKind.USER_RESPONSE_STYLE:
+            return "user.response_style"
+        return ""
+
+    def _semantic_record_rank(self, record: object) -> tuple[float, float, float, str]:
+        metadata = self._record_metadata(record)
+        status = str(self._record_value(record, "status", "") or metadata.get("status", "") or "").strip()
+        status_rank = {"active": 2.0, "tentative": 1.0}.get(status, 0.5)
+        updated_text = str(
+            self._record_value(record, "updated_at", "")
+            or metadata.get("updated_at", "")
+            or metadata.get("last_accessed_at", "")
+            or ""
+        )
+        updated_rank = 0.0
+        if updated_text:
+            try:
+                updated_rank = time.mktime(time.strptime(updated_text, "%Y-%m-%dT%H:%M:%S%z"))
+            except Exception:
+                updated_rank = 0.0
+        try:
+            confidence = float(self._record_value(record, "confidence", metadata.get("confidence", 0.0)) or 0.0)
+        except Exception:
+            confidence = 0.0
+        return (status_rank, updated_rank, confidence, str(self._record_value(record, "id", "") or ""))
+
+    def _episodic_memory_lookup(self, query: str):
+        recall = getattr(getattr(self, "memory_core", None), "recall", None)
+        if callable(recall):
+            try:
+                packet = recall(query or "")
+            except Exception as exc:
+                self.logger.warning("Episodic recall lookup failed: %s", exc)
+            else:
+                episodic = tuple(getattr(packet, "episodic", ()) or ())
+                if episodic:
+                    return str(episodic[0] or "")
+
+        snapshot = self._memory_snapshot_for_lookup()
+        records = self._memory_snapshot_items(snapshot, "episodic_memory")
+        if not records:
+            return None
+
+        tokens = set(re.findall(r"[a-z0-9]+", str(query or "").lower()))
+        scored: list[tuple[int, str]] = []
+        for record in records:
+            text = " ".join(
+                str(part or "").strip()
+                for part in (
+                    self._record_value(record, "summary", ""),
+                    self._record_value(record, "content", ""),
+                    self._record_value(record, "scene", ""),
+                    self._record_metadata(record).get("gist", ""),
+                )
+                if str(part or "").strip()
+            )
+            if not text:
+                continue
+            if not tokens:
+                scored.append((1, text))
+                continue
+            lowered = text.lower()
+            overlap = sum(1 for token in tokens if token in lowered)
+            if overlap:
+                scored.append((overlap, text))
+
+        if not scored:
+            return None
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return scored[0][1]
+
+    def _ensure_memory_recall_adapter(self) -> MemoryRecallAdapter:
+        adapter = getattr(self, "memory_recall_adapter", None)
+        if isinstance(adapter, MemoryRecallAdapter):
+            adapter.ledger = self._ensure_session_turn_ledger()
+            adapter.memory_core = getattr(self, "memory_core", None)
+            adapter.memory_kernel = self._memory_kernel()
+            adapter.llm_service = getattr(self, "llm_service", None)
+            adapter.semantic_lookup = self._semantic_memory_lookup
+            adapter.episodic_lookup = self._episodic_memory_lookup
+            adapter.compiler = None
+            return adapter
+        adapter = MemoryRecallAdapter(
+            ledger=self._ensure_session_turn_ledger(),
+            memory_core=getattr(self, "memory_core", None),
+            memory_kernel=self._memory_kernel(),
+            llm_service=getattr(self, "llm_service", None),
+            semantic_lookup=self._semantic_memory_lookup,
+            episodic_lookup=self._episodic_memory_lookup,
+        )
+        self.memory_recall_adapter = adapter
+        return adapter
+
+    def _build_memory_recall_decision(self, user_text: str) -> Decision | None:
+        return self._ensure_memory_recall_adapter().try_answer(user_text)
+
+    def _frame_memory_storage_permission(self, frame) -> bool:
+        permission = getattr(frame, "permission", None) or getattr(frame, "permission_report", None)
+        if permission is None:
+            return True
+        if isinstance(permission, Mapping):
+            value = permission.get("memory_storable")
+        else:
+            value = getattr(permission, "memory_storable", None)
+        if value is None:
+            return True
+        return bool(value)
+
+    def _user_turn_memory_evidence_id(self, *, frame=None, turn_id: str | None = None) -> str | None:
+        if turn_id:
+            return str(turn_id)
+        turns = self._ensure_session_turn_ledger().user_turns()
+        if turns:
+            return f"session_turn:{turns[-1].index}"
+        frame_id = str(getattr(frame, "frame_id", "") or getattr(frame, "id", "") or "").strip()
+        if frame_id:
+            return f"frame:{frame_id}"
+        return None
+
+    def _ingest_user_turn_via_memory_kernel(self, frame, user_text: str, *, turn_id: str | None = None) -> bool:
+        kernel = self._memory_kernel()
+        ingest = getattr(kernel, "ingest", None)
+        if not callable(ingest):
+            return False
+
+        evidence_id = self._user_turn_memory_evidence_id(frame=frame, turn_id=turn_id)
+        try:
+            ingest(
+                user_text,
+                evidence_ids=[evidence_id] if evidence_id else None,
+                turn_id=evidence_id,
+                source="chat_turn",
+                mode="fast",
+                allow_candidate=False,
+                storage_permission=self._frame_memory_storage_permission(frame),
+                permission_required=False,
+                context={
+                    "frame_id": str(getattr(frame, "frame_id", "") or getattr(frame, "id", "") or "").strip(),
+                    "channel": str(getattr(frame, "channel", "") or "").strip(),
+                },
+            )
+            return True
+        except Exception as exc:
+            self.logger.warning("MemoryKernel ingest failed on hot path, falling back to commit policy: %s", exc)
+            return False
+
+    def _add_user_turn_memory_commit_requests(self, frame, user_text: str, *, turn_id: str | None = None) -> None:
+        if frame is None:
+            return
+        if self._ingest_user_turn_via_memory_kernel(frame, user_text, turn_id=turn_id):
+            return
+        evidence_id = self._user_turn_memory_evidence_id(frame=frame, turn_id=turn_id)
+        # Nếu worker nền đang bật, hot path dùng policy không model để tránh block trước
+        # remote API. Semantic digestion sâu sẽ chạy song song qua background_memory_digest.
+        policy = self._ensure_memory_fast_commit_policy() if self._background_memory_digest_enabled() else self._ensure_memory_commit_policy()
+        decisions = policy.decide_from_user_turn(user_text, turn_id=evidence_id)
+        if not decisions:
+            return
+        storage_permission = self._frame_memory_storage_permission(frame)
+
+        add_commit_request = getattr(frame, "add_commit_request", None)
+        if callable(add_commit_request):
+            for decision in decisions:
+                request = decision.to_state_commit_request(
+                    storage_permission=storage_permission,
+                    permission_required=False,
+                )
+                try:
+                    add_commit_request(request, actor="memory_commit_policy")
+                except TypeError:
+                    add_commit_request(request)
+            return
+
+        existing = list(getattr(frame, "commit_requests", []) or [])
+        for decision in decisions:
+            existing.append(
+                decision.to_state_commit_request(
+                    storage_permission=storage_permission,
+                    permission_required=False,
+                )
+            )
+        try:
+            frame.commit_requests = existing
+        except Exception:
+            return
+
     def _load_memory_state(self):
         core = getattr(self, "memory_core", None)
         loader = getattr(core, "load", None)
@@ -60,7 +462,7 @@ class StateCommitServiceMixin:
         if isinstance(self.memory_state, dict):
             self.memory_state.setdefault("internal_state", self._load_internal_state_payload())
             return
-        #Náº¿u cÃ³ memory nhÆ°ng chÆ°a cÃ³ internal state:
+        # Nếu có memory nhưng chưa có internal state:
         if getattr(self.memory_state, "internal_state", None) is None:
             self.memory_state.internal_state = PersistentInternalState()
     def _get_internal_state(self) -> PersistentInternalState:
@@ -73,13 +475,13 @@ class StateCommitServiceMixin:
                     return PersistentInternalState()
         if self.memory_state is not None and getattr(self.memory_state, "internal_state", None) is not None:
             return self.memory_state.internal_state
-        #Náº¿u khÃ´ng cÃ³ thÃ¬ táº¡o state táº¡m:
+        # Nếu không có thì tạo state tạm:
         return PersistentInternalState()
     def _set_internal_state(self, state: PersistentInternalState) -> None:
-        #KhÃ´ng cÃ³ memory thÃ¬ khÃ´ng set.
+        # Không có memory thì không set.
         if self.memory_state is None:
             return
-        #DÃ¹ng lock Ä‘á»ƒ trÃ¡nh nhiá»u thread sá»­a state cÃ¹ng lÃºc.
+        # Dùng lock để tránh nhiều thread sửa state cùng lúc.
         with self._state_lock:
             if isinstance(self.memory_state, dict):
                 self.memory_state["internal_state"] = state.to_dict() if callable(getattr(state, "to_dict", None)) else dict(getattr(state, "__dict__", {}) or {})
@@ -99,12 +501,38 @@ class StateCommitServiceMixin:
             except Exception:
                 return {}
         return {}
-    def _send_decision_to_body(self, decision: Decision) -> None:
+    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
+        self._record_public_turn(decision, payload=payload, channel=channel)
         self.transport.send_json(payload)
+    def _record_public_turn(self, decision: Decision, *, payload: dict | None = None, channel: str | None = None):
+        ledger = getattr(self, "public_turn_ledger", None)
+        if ledger is None:
+            ledger = PublicTurnLedger()
+            self.public_turn_ledger = ledger
+
+        text = str((payload or {}).get("text", getattr(decision, "text", "")) or "")
+        should_speak = bool((payload or {}).get("should_speak", getattr(decision, "should_speak", True)))
+        if not should_speak or not text.strip():
+            return None
+
+        frame = getattr(self, "last_cognitive_frame", None)
+        frame_channel = str(getattr(frame, "channel", "") or "")
+        fallback = channel or (normalize_public_turn_channel(frame_channel) if frame_channel else "chat" if getattr(self, "chat_mode", False) else "autonomous")
+        public_channel = infer_public_turn_channel(decision, fallback=fallback)
+        return ledger.append(
+            channel=public_channel,
+            text=text,
+            parse_mode=str((payload or {}).get("parse_mode", getattr(decision, "parse_mode", "")) or ""),
+            visible_to_user=True,
+            can_be_replied_to=True,
+        )
     def _build_body_bias_payload(self) -> dict[str, object]:
-        return self.body_bias_projector.build_payload()
+        frame = getattr(self, "last_cognitive_frame", None)
+        action_plan = getattr(frame, "action_plan", None) if frame is not None else None
+        impulse_hint = getattr(action_plan, "body_bias_hint", {}) if action_plan is not None else {}
+        return self.body_bias_projector.build_payload(impulse_hint=impulse_hint)
     def _body_bias_clamp(value: object) -> float:
         return BodyBiasProjector.clamp(value)
     def _normalize_body_focus_kind(value: str) -> str:
@@ -119,18 +547,37 @@ class StateCommitServiceMixin:
             saver(self.memory_state)
         except Exception as exc:
             self.logger.warning("Memory state save error: %s", exc)
-    def _memory_recall_texts(self, *, snapshot=None) -> list[str]:
-        recall = getattr(getattr(self, "memory_core", None), "recall", None)
-        if callable(recall):
+    def _memory_recall_packet(self, *, snapshot=None, query: str = ""):
+        """Recall structured packet, không flatten quá sớm.
+
+        PDF/Tongquat tách episodic/semantic/procedural vì mỗi layer có quyền surface khác nhau.
+        Flatten tất cả thành list[str] là cách rất nhanh để memory đóng giả evidence hiện tại.
+        """
+        kernel = self._memory_kernel()
+        if kernel is not None and callable(getattr(kernel, "build_packet", None)):
             try:
-                packet = recall(self._memory_query_from_snapshot(snapshot))
-                texts: list[str] = []
-                for name in ("repair", "procedural", "semantic", "relational", "affective_residue", "episodic"):
-                    texts.extend(str(item) for item in getattr(packet, name, ()) or ())
-                return texts
+                return kernel.build_packet(query or self._memory_query_from_snapshot(snapshot))
             except Exception as exc:
-                self.logger.warning("Memory recall error: %s", exc)
-        return list(getattr(self, "long_term_memory", []) or []) 
+                self.logger.warning("Memory kernel packet build error: %s", exc)
+                return None
+        recall = getattr(getattr(self, "memory_core", None), "recall", None)
+        if not callable(recall):
+            return None
+        try:
+            return recall(query or self._memory_query_from_snapshot(snapshot))
+        except Exception as exc:
+            self.logger.warning("Memory recall error: %s", exc)
+            return None
+
+    def _memory_recall_texts(self, *, snapshot=None, layers: tuple[str, ...] | None = None) -> list[str]:
+        packet = self._memory_recall_packet(snapshot=snapshot)
+        if packet is not None:
+            texts: list[str] = []
+            selected_layers = layers or ("repair", "procedural", "semantic", "relational", "affective_residue", "episodic")
+            for name in selected_layers:
+                texts.extend(str(item) for item in getattr(packet, name, ()) or ())
+            return texts
+        return list(getattr(self, "long_term_memory", []) or [])
     def _recall_memory_resonance(
         self,
         *,
@@ -139,15 +586,9 @@ class StateCommitServiceMixin:
         channel: str = "",
         fragments: tuple[str, ...] = (),
     ):
-        recall = getattr(getattr(self, "memory_core", None), "recall", None)
-        if not callable(recall):
-            self.active_memory_resonance = None
-            return None
-        try:
-            query = " ".join(str(item) for item in (channel, user_text, *tuple(fragments or ()), self._memory_query_from_snapshot(snapshot)) if str(item or "").strip())
-            report = recall(query)
-        except Exception as exc:
-            self.logger.warning("Memory resonance activation error: %s", exc)
+        query = " ".join(str(item) for item in (channel, user_text, *tuple(fragments or ()), self._memory_query_from_snapshot(snapshot)) if str(item or "").strip())
+        report = self._memory_recall_packet(snapshot=snapshot, query=query)
+        if report is None:
             self.active_memory_resonance = None
             return None
         self.active_memory_resonance = report
@@ -188,20 +629,45 @@ class StateCommitServiceMixin:
         )
         self.last_chat_answer = decision.text
         self.last_system_action = decision.system_action
-        self._append_chat_history("assistant", decision.text)
+        invalid_for_semantic_history = _is_nonsemantic_fallback_decision(decision)
+        # Fallback/service-error vẫn có thể hiện ra UI, nhưng không được đưa vào
+        # LLM semantic history như một câu trả lời thật. Nếu không, prompt lượt sau
+        # tự nhiễm câu "tôi bị lỗi định dạng" và TurnGraph nối nhầm ANSWERS.
+        self._append_chat_history("assistant", decision.text, invalid=invalid_for_semantic_history)
+        if bool(decision.should_speak) and str(decision.text or "").strip():
+            assistant_meta = {
+                "intent": decision.intent,
+                "parse_mode": decision.parse_mode,
+                "system_action": decision.system_action,
+            }
+            if invalid_for_semantic_history:
+                assistant_meta.update({
+                    "is_service_fallback": True,
+                    "counts_as_answer": False,
+                    "invalid_for_semantic_context": True,
+                })
+            self._ensure_session_turn_ledger().record_assistant(
+                decision.text,
+                meta=assistant_meta,
+            )
         if len(self.chat_history) > 32:
             self.chat_history = self.chat_history[-32:]
 
         self._apply_position_update(decision)
         if frame is not None:
             frame.final_decision = self._decision_to_frame_dict(decision)
+            grounding = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
+            if grounding is not None:
+                frame.final_decision["grounding_source"] = str(getattr(grounding, "grounding_source", "unknown") or "unknown")
+                frame.final_decision["grounding_preempt_mode"] = str(getattr(grounding, "preempt_mode", "") or "")
+                frame.final_decision["grounding_missing_evidence"] = list(getattr(grounding, "missing_evidence", ()) or ())
             self._set_cognitive_memory_update(frame, decision=decision, notes=("chat_commit",))
             self._commit_internal_state_for_frame(frame)
+            self._send_decision_to_body(decision, channel="chat")
             self._finalize_cognitive_frame(frame)
         self.logger.info("ERIS: %s", decision.text)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[chat parser] %s", decision.parser_trace or "<empty>")
-        self._send_decision_to_body(decision)
 
     def _apply_position_update(self, decision: Decision) -> None:
         intent = decision.resolve_motion_intent()
