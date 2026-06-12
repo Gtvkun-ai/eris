@@ -487,7 +487,11 @@ class LlmServiceTests(unittest.TestCase):
 
         self.assertEqual(len(client.calls), 1)
 
-    def test_chat_reply_can_attach_screen_image(self):
+    def test_chat_reply_does_not_attach_raw_image_to_text_only_client(self):
+        # Hành vi mới: model chat chính là text-only (vd Groq llama) nên KHÔNG nhồi ảnh
+        # thô vào message — sẽ bị 400. Nội dung màn hình tới model dưới dạng text
+        # (vision_facts/OCR) qua grounding context. Vì vậy content phải là string,
+        # và screen_image_data_uri không được biến message thành mảng image_url.
         client = _FakeClient(
             [
                 (
@@ -506,10 +510,9 @@ class LlmServiceTests(unittest.TestCase):
         )
 
         content = client.calls[0]["messages"][-1]["content"]
-        self.assertIsInstance(content, list)
-        self.assertEqual(content[0]["type"], "image_url")
-        self.assertEqual(content[0]["image_url"]["url"], "data:image/jpeg;base64,abc")
-        self.assertIn("screenshot", content[1]["text"].lower())
+        self.assertIsInstance(content, str)
+        self.assertNotIn("data:image/jpeg;base64,abc", content)
+        self.assertIn("ban thay man hinh khong", content)
 
     def test_chat_reply_includes_conversation_context_when_present(self):
         client = _FakeClient(

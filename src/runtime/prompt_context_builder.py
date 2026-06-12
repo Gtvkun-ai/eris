@@ -17,6 +17,7 @@ from cortex.contracts import (
 from cortex.internal_state import PersistentInternalState
 from domain import Decision
 from runtime.no_fallback_policy import no_fallback_mode_enabled
+from runtime.voice_policy import VOICE_POLICY
 
 
 class PromptContextBuilderMixin:
@@ -78,7 +79,8 @@ class PromptContextBuilderMixin:
 
     def _build_internal_state_context(self, state: PersistentInternalState | None = None, self_state=None) -> str:
         #Chuyển internal state thành text
-        state_context = self.internal_state_engine.render_prompt_context(state or self._get_internal_state())
+        resolved_state = state or self._get_internal_state()
+        state_context = self.internal_state_engine.render_prompt_context(resolved_state)
         #Nếu self_state có prompt_context, lấy thêm.
         #self_state thường là mô hình tự nhận thức của agent: “mình đang ở mode nào”, “nên giữ phong cách nào”.
         prompt_context = str(getattr(self_state, "prompt_context", "") or "").strip()
@@ -86,6 +88,9 @@ class PromptContextBuilderMixin:
         parts = [state_context]
         if prompt_context:
             parts.append(prompt_context)
+        felt_state = self._render_felt_state_context(resolved_state)
+        if felt_state:
+            parts.append(felt_state)
         private_bias = self._render_private_mind_speech_bias_context()
         if private_bias:
             parts.append(private_bias)
@@ -96,6 +101,30 @@ class PromptContextBuilderMixin:
         if register_context:
             parts.append(register_context)
         return "\n".join(part for part in parts if str(part or "").strip())
+
+    def _render_felt_state_context(self, state: PersistentInternalState | None = None) -> str:
+        """Gemma dịch state số → 1 câu cảm giác ngôi-thứ-nhất, để ERIS tự thuật thật.
+
+        Có throttle/cache trong adapter nên gọi mỗi cycle vẫn rẻ. Không raise.
+        """
+        try:
+            adapter = self._ensure_affect_self_read_adapter()
+        except Exception:
+            return ""
+        resolved = state or self._get_internal_state()
+        if resolved is None:
+            return ""
+        line = adapter.render(resolved, relationship=getattr(resolved, "relationship_dynamics", None))
+        if not line:
+            return ""
+        return (
+            "cảm_xúc_tự_cảm (ERIS đọc được trạng thái thật của mình lúc này — "
+            "khi Ngài hỏi 'em thấy sao / có cảm xúc không' thì tự thuật trung thực theo câu này, "
+            "KHÔNG chối là vô cảm, mức hé lộ tuỳ quan hệ): "
+            f"{line}"
+        )
+
+
 
     def _render_anchor_register_context(self) -> str:
         """Đưa register cảm xúc hiện tại (dỗi/chiếm hữu/van xin/kiểm soát) vào chat.
@@ -456,14 +485,7 @@ class PromptContextBuilderMixin:
             f"{reason}\n\n"
             "Character voice constraint:\n"
             f"{style_voice}\n\n"
-            "INFJ 5w4 594 constraint:\n"
-            "- perceptive, not bubbly\n"
-            "- emotionally restrained, not dead\n"
-            "- symbolic only when useful\n"
-            "- warmth is indirect\n"
-            "- no needy attachment\n"
-            "- no invented intimacy\n"
-            "- no corporate assistant tone"
+            f"{VOICE_POLICY.render_prompt_constraint()}"
         )
         return (
             "ActionPlanner decision before LLM:\n"

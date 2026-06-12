@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import unicodedata
+import os
 from enum import Enum
 
 import time
@@ -11,6 +12,7 @@ import requests
 from actions.contracts import VALID_SYSTEM_ACTIONS
 from cortex.banned_filler import HOLLOW_PRESENCE_LINES, STALE_MICRO_TEMPLATES, quoted_fragment
 from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
+from runtime.voice_policy import VOICE_POLICY, ANTI_DISCLAIMER_FEWSHOT as _VOICE_POLICY_FEWSHOT
 from .contracts import (
     AUTONOMOUS_BEHAVIOR_PROMPT,
     CHAT_RULES_PROMPT,
@@ -71,6 +73,13 @@ CHAT_ACT_CONTRACTS = {
     ),
     ChatAct.NORMAL_CHAT: " Speech act: normal_chat. Reply naturally and stay grounded.",
 }
+
+# Few-shot chống-disclaimer (phần D): dạy model cách ERIS trả lời các câu cảm
+# xúc/quan hệ/định danh mà KHÔNG tụt về giọng trợ lý. Đây là demo phong cách,
+# không phải câu trả lời bắt buộc — cấm copy nguyên văn, chỉ học cách xử lý.
+# Định nghĩa thật sống ở runtime/voice_policy.py (nguồn canonical). Giữ tên cũ làm
+# re-export để mọi importer (vd RelationalVoiceSeedAdapter) phân giải nguyên vẹn.
+ANTI_DISCLAIMER_FEWSHOT = _VOICE_POLICY_FEWSHOT
 
 CHAT_ACT_REPAIR_SIGNALS = {
     ChatAct.INSULT_PROVOCATION: {
@@ -350,6 +359,8 @@ class LlmService:
             "If uncertain, show uncertainty through wording, not generic fallback.",
         ]
         clauses.append(CHAT_ACT_CONTRACTS[act])
+        if act in (ChatAct.NORMAL_CHAT, ChatAct.DIRECT_QUESTION, ChatAct.IDENTITY_REDUCTION):
+            clauses.append(ANTI_DISCLAIMER_FEWSHOT)
         if act == ChatAct.DIRECT_QUESTION or self._looks_like_direct_question(raw_user_text):
             clauses.append("This user turn is a direct question. answer_first is mandatory, but style is still allowed.")
         if self._is_self_identity_question(raw_user_text):
@@ -1748,6 +1759,23 @@ class LlmService:
                 if shrunk == messages:
                     raise
                 response = _call(shrunk, stage="context_shrunk")
+            elif self._http_status_code(exc) == 429:
+                # Rate limit (Groq TPM/TPD hết quota). Thay vì để chat câm, chuyển
+                # sang fallback client (provider khác, vd glm-4.5-flash) nếu có.
+                if recovery_client is not None and recovery_client is not initial_client:
+                    self.logger.warning("[LLM] 429 rate limit on primary; chuyển sang fallback client.")
+                    try:
+                        response = _call(messages, stage="rate_limit_fallback", override_client=recovery_client)
+                    except Exception:
+                        return self._build_service_error_fallback(
+                            channel=channel,
+                            reason="rate_limited",
+                        )
+                else:
+                    return self._build_service_error_fallback(
+                        channel=channel,
+                        reason="rate_limited",
+                    )
             elif self._is_retryable_http_5xx(exc):
                 # Retry once on transient upstream 5xx.
                 time.sleep(0.15)
@@ -1970,6 +1998,9 @@ class LlmService:
 
         missing = ", ".join(str(item) for item in (missing_evidence or ()) if str(item or "").strip())
         source_text_label = "Original blocked text" if original_text else "No public draft existed; generate from guard signal"
+        disclaimer_clause = ""
+        if str(violation_rule or "") == "anti_disclaimer_voice":
+            disclaimer_clause = VOICE_POLICY.render_reroll_clause()
         system_prompt = (
             "You are ERIS' local cognitive steering layer, not a safety boilerplate writer. "
             "A public sentence was stopped or requested by a runtime guard. Rewrite or generate only the public text. "
@@ -1978,6 +2009,7 @@ class LlmService:
             "If evidence is missing, admit the uncertainty or turn the sentence into a small cautious probe. "
             "If the problem is mindreading, use hedge/question form or step back. "
             "If the problem is grounding, remove the unsupported claim. "
+            f"{disclaimer_clause}"
             "Return one JSON object only: {\"text\":\"...\"}."
         )
         user_prompt = (
@@ -2137,7 +2169,17 @@ class LlmService:
         ]
         rejection_high = any(value > 0.65 for value in rejection_values)
         feedback_high = "relational_feedback:" in source and any(value >= 0.35 for value in feedback_values)
-        if not (has_repair_mode and (rejection_high or feedback_high)):
+        # Cờ chống-disclaimer do ConversationDynamics phát ra cũng đủ để bật
+        # contract, kể cả khi người dùng chưa than phiền tường minh. Đây là điểm
+        # khiến ERIS hết tụt về giọng trợ lý ngay từ các lượt "settled" đầu phiên.
+        anti_disclaimer_flags = (
+            "do_not_lead_with_identity_disclaimer",
+            "avoid_over_human_love_claim",
+            "warmth_floor_required",
+            "forbid_defensive_clarification",
+        )
+        flags_present = any(flag in source for flag in anti_disclaimer_flags)
+        if not (flags_present or (has_repair_mode and (rejection_high or feedback_high))):
             return ""
         return (
             "RELATIONAL_REPAIR_CONTRACT:\n"
@@ -2917,6 +2959,18 @@ class LlmService:
         debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
         return cleaned, debug_trace
 
+    def _chat_client_supports_vision(self) -> bool:
+        """Chỉ nhồi ảnh thô vào message chat khi model chat thật sự đa phương thức.
+
+        Model chat chính (vd Groq llama text-only) sẽ trả 400 nếu content là mảng
+        image_url. Ảnh chỉ an toàn khi chat client CHÍNH cũng là vision client, hoặc
+        khi người dùng ép bật qua ERIS_CHAT_VISION_IMAGE=1. Nếu không, nội dung màn
+        hình vẫn tới model dưới dạng OCR vision_facts (text) qua grounding context.
+        """
+        if str(os.getenv("ERIS_CHAT_VISION_IMAGE", "") or "").strip() in {"1", "true", "True"}:
+            return True
+        return self.vision_client is not None and self.client is self.vision_client
+
     def generate_chat_reply(
         self,
         *,
@@ -2997,25 +3051,6 @@ class LlmService:
             )
 
         final_user_content = user_message
-        if screen_image_data_uri:
-            vision_trace = "vision_frame_attached"
-            final_user_content = [
-                {"type": "image_url", "image_url": {"url": screen_image_data_uri}},
-                {
-                    "type": "text",
-                    "text": (
-                        f"{user_message}\n\n"
-                        "Ảnh đính kèm là screenshot màn hình hiện tại — dùng làm context nền, "
-                        "KHÔNG cần mô tả hay nhắc đến màn hình trừ khi Ngài hỏi trực tiếp về nó. "
-                        "Nếu câu hỏi là xã giao, cảm xúc, hay chủ đề khác, hãy trả lời đúng chủ đề đó. "
-                        "Chỉ dùng ảnh khi Ngài hỏi về code, lỗi, hay những gì đang hiển thị trên màn hình. "
-                        "QUAN TRỌNG: Nếu trong ảnh có cửa sổ Godot đang chạy chính ERIS (nhân vật chibi, khung hội thoại), "
-                        "đó là giao diện runtime của chính mày — không mô tả nó như thể mày đang nhìn một thứ bên ngoài mình. "
-                        "Không bao giờ nói 'tôi thấy nhân vật của tôi' hay 'tôi thấy cửa sổ Godot đang chạy tôi' — đó là vòng lặp vô nghĩa."
-                        f"\nTrong trường debug_trace của JSON, hãy thêm marker: {vision_trace}."
-                    ),
-                },
-            ]
 
         messages = [
             {"role": "system", "content": chat_system},

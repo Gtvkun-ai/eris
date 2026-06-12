@@ -182,6 +182,12 @@ class SourceGroundingReport:
     # bằng chứng thuần, độc lập với việc user có nhắc tới màn hình. Guard chống ảo
     # giác dùng field này để chặn claim "tôi thấy trên màn hình" khi thực ra không có.
     screen_evidence_present: bool = False
+    # Tóm tắt văn bản từ vision model (OCR/moondream) — luôn render vào prompt dù
+    # user không hỏi màn hình, để LLM có ngữ cảnh nền mà không cần nhận ảnh thô.
+    screen_facts_preview: list[str] = field(default_factory=list)
+    # True khi facts màn hình là từ lượt TRƯỚC (không chụp tươi lượt này). ERIS vẫn
+    # hiểu nó có màn hình, nhưng phải nói "lúc nãy" thay vì claim "đang hiển thị".
+    screen_facts_are_stale: bool = False
 
     pasted_code_detected: bool = False
     code_language: str = "unknown"
@@ -418,6 +424,7 @@ class SourceGroundingEngine:
         frame: Any = None,
         active_files: Sequence[Any] | None = None,
         screen_facts: Sequence[Any] | None = None,
+        screen_facts_stale: bool = False,
         memory_packet: Any = None,
         runtime_state: Any = None,
         allow_web: bool = False,
@@ -482,9 +489,19 @@ class SourceGroundingEngine:
         #  - Đại từ chỉ định trần ("cái này", "lỗi này") CHỈ trỏ màn hình khi đã có ảnh
         #    tươi. Không có ảnh thì nó trỏ vào ngữ cảnh hội thoại và TUYỆT ĐỐI không tự
         #    sinh ra câu "thiếu evidence màn hình".
-        has_fresh_vision = bool(screen_evidence["present"])
-        refers_to_screen = bool(explicit_screen_request or (has_deictic_reference and has_fresh_vision))
-        screen_strength = 0.72 if has_fresh_vision else (0.5 if explicit_screen_request else 0.0)
+        # Màn hình có ba trạng thái, không còn nhị phân "có/không":
+        #  - fresh: lượt này vừa chụp/đọc màn hình tươi -> được claim như đang nhìn.
+        #  - stale: không chụp tươi lượt này nhưng CÓ facts/màn hình từ lượt trước
+        #    -> ERIS vẫn HIỂU nó có màn hình, chỉ là ảnh cũ; phải nói "lúc nãy" chứ
+        #    không claim "ngay bây giờ". Không bao giờ tự thú "tôi chưa từng thấy".
+        #  - none: không có gì -> mới được phép preempt thú nhận chưa thấy.
+        has_any_screen = bool(screen_evidence["present"])
+        has_fresh_vision = has_any_screen and not bool(screen_facts_stale)
+        has_stale_vision = has_any_screen and bool(screen_facts_stale)
+        refers_to_screen = bool(explicit_screen_request or (has_deictic_reference and has_any_screen))
+        screen_strength = (
+            0.72 if has_fresh_vision else (0.55 if has_stale_vision else (0.5 if explicit_screen_request else 0.0))
+        )
         memory_profile = self._derive_memory_answer_profile(
             normalized=normalized,
             user_text=text,
@@ -645,10 +662,22 @@ class SourceGroundingEngine:
                 memory_surface_allowed = False
                 memory_answer_allowed = False
                 memory_allowed_layers = ("procedural",)
+            elif has_stale_vision:
+                # CÓ màn hình lượt trước nhưng không chụp tươi lượt này. ERIS hiểu nó
+                # có màn hình -> KHÔNG preempt thú nhận "chưa thấy". Dựa vào facts cũ
+                # nhưng cap thấp hơn live và đánh dấu stale để wording nói "lúc nãy".
+                primary_source = "current_screen"
+                grounding_source = "current_screen"
+                confidence_cap_override = 0.62
+                memory_surface_allowed = False
+                memory_answer_allowed = False
+                memory_allowed_layers = ("procedural",)
+                warnings.append("screen_facts_from_previous_turn")
             elif explicit_screen_request:
                 # Trường hợp DUY NHẤT được preempt: user TƯỜNG MINH bảo nhìn màn hình
-                # nhưng runtime chưa có ảnh/OCR tươi. Đại từ chỉ định trần không bao
-                # giờ rơi vào nhánh này (refers_to_screen=False khi thiếu vision).
+                # nhưng runtime KHÔNG có ảnh/OCR tươi LẪN facts lượt trước. Đại từ chỉ
+                # định trần không bao giờ rơi vào nhánh này (refers_to_screen=False khi
+                # thiếu cả vision tươi lẫn cũ).
                 primary_source = "unknown"
                 grounding_source = "unknown"
                 confidence_cap_override = 0.28
@@ -715,7 +744,9 @@ class SourceGroundingEngine:
             file_mentions=file_mentions,
             refers_to_current_screen=refers_to_screen,
             screen_reference_strength=screen_strength,
-            screen_evidence_present=has_fresh_vision,
+            screen_evidence_present=has_any_screen,
+            screen_facts_are_stale=bool(has_stale_vision),
+            screen_facts_preview=[str(p) for p in (screen_evidence.get("preview") or []) if str(p).strip()][:4],
             pasted_code_detected=bool(code_info["detected"]),
             code_language=str(code_info["language"]),
             code_block_count=int(code_info["block_count"]),
@@ -902,6 +933,22 @@ class SourceGroundingEngine:
             lines.append("answer_rules:")
             for rule in report.answer_style_rules[:8]:
                 lines.append(f"- {rule}")
+
+        # Luôn render vision/screen facts vào grounding context — dù user không hỏi
+        # màn hình. Đây là tóm tắt văn bản từ vision model nhỏ (OCR/moondream), KHÔNG
+        # phải ảnh thô. Llama đọc text này để biết ngữ cảnh nền mà không cần nhận ảnh.
+        screen_previews = [str(f).strip() for f in (getattr(report, "screen_facts_preview", None) or []) if str(f).strip()]
+        if screen_previews:
+            if bool(getattr(report, "screen_facts_are_stale", False)):
+                lines.append(
+                    "screen_context (from a PREVIOUS turn — no fresh capture this turn; "
+                    "may be outdated. Refer to it as 'lúc nãy'/'vừa nãy', do NOT claim it is "
+                    "what is on screen right now; do NOT volunteer unless asked):"
+                )
+            else:
+                lines.append("screen_context (vision summary — text only, do NOT describe or volunteer unless asked):")
+            for fact in screen_previews[:4]:
+                lines.append(f"  {fact[:200]}")
 
         lines.append("[/SOURCE_GROUNDING]")
         return "\n".join(lines)

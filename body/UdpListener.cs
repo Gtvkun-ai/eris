@@ -127,6 +127,8 @@ public partial class UdpListener : Node2D
 	private TextureRect _privateMindScrollFillRect;
 	private OptionButton _modeDropdown;
 	private bool _emotionSwitchEnabled = true;
+	private LineEdit _debugCommandInput;   // ô nhập lệnh debug
+	private Label _debugCommandStatus;     // báo lệnh debug vừa gửi
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	// Tự ẩn khung chat sau khi Ngài ngừng tương tác, để màn hình không bị panel
@@ -1207,6 +1209,9 @@ public partial class UdpListener : Node2D
 		_switchTexture.GuiInput += OnEmotionSwitchGuiInput;
 		_emotionPanel.AddChild(_switchTexture);
 
+		// Khung DEBUG: ô nhập lệnh tay (góc dưới phải) — gõ lệnh rồi Enter/Chạy.
+		BuildDebugCommandPanel();
+
 		// Build left-side content theo mode hiện tại
 		if (_isCasualMode)
 			BuildCasualContent();
@@ -1317,6 +1322,182 @@ public partial class UdpListener : Node2D
 		var lbl = CreateUiLabel(text, 11, DevNoteFg);
 		lbl.AutowrapMode = TextServer.AutowrapMode.Off;
 		return lbl;
+	}
+
+	// ── DEBUG: ô nhập lệnh tay (góc dưới phải) ─────────────────────────────────
+	// Gõ lệnh DebugConsole rồi Enter hoặc bấm "Chạy". Cú pháp:
+	//   set <f>=<v> ...  |  buff <f>=<d> ...  |  rel <f>=<v> ...  |  trust <v>
+	//   yan on|off  |  stage <name>  |  mem [ep] <text>  |  show  |  reset [affect|rel|all]
+	//   nối nhiều lệnh bằng ';'  vd: reset all; stage rooted; set tenderness=0.9
+
+	private static readonly Color DbgInk    = new(0.69f, 0.30f, 0.47f);
+	private static readonly Color DbgBtnBg   = new(1.00f, 0.95f, 0.97f);
+	private static readonly Color DbgBtnEdge = new(0.95f, 0.78f, 0.86f);
+	private static readonly Color DbgBtnInk  = new(0.50f, 0.20f, 0.35f);
+
+	private void BuildDebugCommandPanel()
+	{
+		// Cột DEBUG bên phải divider, nằm DƯỚI cụm baked "Switch Case / Hiển thị
+		// gợi ý theo ngữ cảnh" (in trong ảnh nền). Ảnh nền có viền trang trí dày nên
+		// vùng pink dùng được hẹp hơn 760 — phải canh mép phải khung ~x=708 cho khớp
+		// cột dropdown/switch, nếu không khung sẽ lồi ra ngoài viền.
+		const float PanelX = 514f;
+		const float PanelW = 194f;   // ends 708, nằm gọn trong vùng pink
+		const float PanelY = 256f;
+		const float PanelH = 220f;   // ends 476
+
+		// Đường kẻ dọc ngăn cách phần cảm xúc (trái) và DEBUG (phải).
+		var divider = new ColorRect
+		{
+			Color       = new Color(0.93f, 0.80f, 0.87f, 0.55f),
+			Position    = new Vector2(502f, 96f),
+			Size        = new Vector2(1.5f, 392f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		_emotionPanel.AddChild(divider);
+
+		var header = CreateUiLabel("LỆNH DEBUG", 14, DbgInk);
+		header.Position = new Vector2(PanelX + 2f, PanelY - 24f);
+		header.Size     = new Vector2(PanelW, 20f);
+		_emotionPanel.AddChild(header);
+
+		// Khung nền.
+		var card = new Panel
+		{
+			Position    = new Vector2(PanelX, PanelY),
+			Size        = new Vector2(PanelW, PanelH),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor     = new Color(1f, 0.97f, 0.98f, 0.92f),
+			BorderColor = DbgBtnEdge,
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 14, CornerRadiusTopRight = 14,
+			CornerRadiusBottomLeft = 14, CornerRadiusBottomRight = 14,
+		});
+		_emotionPanel.AddChild(card);
+
+		const float Pad = 10f;
+		float innerX = PanelX + Pad;
+		float innerW = PanelW - Pad * 2f;
+
+		// Ô nhập lệnh.
+		_debugCommandInput = new LineEdit
+		{
+			Position           = new Vector2(innerX, PanelY + Pad),
+			Size               = new Vector2(innerW, 30f),
+			PlaceholderText    = "vd: set valence=0.5; rel trust=0.8",
+			ClearButtonEnabled = true,
+		};
+		StyleDebugLineEdit(_debugCommandInput);
+		_debugCommandInput.TextSubmitted += OnDebugCommandSubmitted;
+		_emotionPanel.AddChild(_debugCommandInput);
+
+		// Hàng nút: Chạy + Xem.
+		float btnY = PanelY + Pad + 38f;
+		var runBtn = CreateDebugButton("Chạy", () => RunDebugCommandFromInput());
+		runBtn.Position = new Vector2(innerX, btnY);
+		runBtn.Size     = new Vector2(innerW * 0.62f - 4f, 30f);
+		_emotionPanel.AddChild(runBtn);
+
+		var showBtn = CreateDebugButton("Xem", () => SendDebugCommand("show"));
+		showBtn.Position = new Vector2(innerX + innerW * 0.62f + 4f, btnY);
+		showBtn.Size     = new Vector2(innerW * 0.38f - 4f, 30f);
+		_emotionPanel.AddChild(showBtn);
+
+		// Gợi ý cú pháp (nhiều dòng).
+		var hint = CreateUiLabel(
+			"set/buff/rel <f>=<v> · trust <v>\nyan on|off · stage <name> · reset\nmem [ep] <text> · nối lệnh bằng ';'",
+			9, new Color(0.58f, 0.36f, 0.48f));
+		hint.Position     = new Vector2(innerX, btnY + 38f);
+		hint.Size         = new Vector2(innerW, 50f);
+		hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		_emotionPanel.AddChild(hint);
+
+		// Dòng trạng thái: lệnh vừa gửi.
+		_debugCommandStatus = CreateUiLabel("— gõ lệnh rồi Enter hoặc bấm Chạy —", 9, DbgBtnInk);
+		_debugCommandStatus.Position     = new Vector2(innerX, PanelY + PanelH - 18f);
+		_debugCommandStatus.Size         = new Vector2(innerW, 16f);
+		_debugCommandStatus.AutowrapMode = TextServer.AutowrapMode.Off;
+		_debugCommandStatus.ClipText     = true;
+		_emotionPanel.AddChild(_debugCommandStatus);
+	}
+
+	private void OnDebugCommandSubmitted(string text) => RunDebugCommandFromInput();
+
+	private void RunDebugCommandFromInput()
+	{
+		if (_debugCommandInput == null)
+			return;
+		string cmd = _debugCommandInput.Text.Trim();
+		if (string.IsNullOrEmpty(cmd))
+			return;
+		SendDebugCommand(cmd);
+		_debugCommandInput.Text = "";
+	}
+
+	private void StyleDebugLineEdit(LineEdit edit)
+	{
+		var normal = new StyleBoxFlat
+		{
+			BgColor     = new Color(1f, 0.99f, 0.99f),
+			BorderColor = DbgBtnEdge,
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 10, CornerRadiusTopRight = 10,
+			CornerRadiusBottomLeft = 10, CornerRadiusBottomRight = 10,
+			ContentMarginLeft = 10f, ContentMarginRight = 10f,
+			ContentMarginTop = 4f, ContentMarginBottom = 4f,
+		};
+		var focus = (StyleBoxFlat)normal.Duplicate();
+		focus.BorderColor = new Color(0.92f, 0.62f, 0.76f);
+		focus.BorderWidthLeft = 2; focus.BorderWidthTop = 2; focus.BorderWidthRight = 2; focus.BorderWidthBottom = 2;
+		edit.AddThemeStyleboxOverride("normal", normal);
+		edit.AddThemeStyleboxOverride("focus", focus);
+		edit.AddThemeColorOverride("font_color", new Color(0.30f, 0.12f, 0.22f));
+		edit.AddThemeColorOverride("font_placeholder_color", new Color(0.62f, 0.45f, 0.54f));
+		edit.AddThemeColorOverride("caret_color", DbgInk);
+		edit.AddThemeFontSizeOverride("font_size", 11);
+	}
+
+	private Button CreateDebugButton(string text, Action onPressed)
+	{
+		var btn = new Button
+		{
+			Text                     = text,
+			CustomMinimumSize        = new Vector2(0f, 30f),
+			MouseDefaultCursorShape  = Control.CursorShape.PointingHand,
+			Alignment                = HorizontalAlignment.Center,
+			ClipText                 = true,
+		};
+
+		var normal = new StyleBoxFlat
+		{
+			BgColor     = DbgBtnBg,
+			BorderColor = DbgBtnEdge,
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 10, CornerRadiusTopRight = 10,
+			CornerRadiusBottomLeft = 10, CornerRadiusBottomRight = 10,
+			ContentMarginLeft = 6f, ContentMarginRight = 6f,
+			ContentMarginTop = 4f, ContentMarginBottom = 4f,
+		};
+		var hover = (StyleBoxFlat)normal.Duplicate();
+		hover.BgColor     = new Color(0.99f, 0.90f, 0.94f);
+		hover.BorderColor = new Color(0.92f, 0.62f, 0.76f);
+		var pressed = (StyleBoxFlat)hover.Duplicate();
+		pressed.BgColor = new Color(0.97f, 0.83f, 0.90f);
+
+		btn.AddThemeStyleboxOverride("normal", normal);
+		btn.AddThemeStyleboxOverride("hover", hover);
+		btn.AddThemeStyleboxOverride("pressed", pressed);
+		btn.AddThemeStyleboxOverride("focus", hover);
+		btn.AddThemeColorOverride("font_color", DbgBtnInk);
+		btn.AddThemeColorOverride("font_hover_color", new Color(0.74f, 0.20f, 0.42f));
+		btn.AddThemeColorOverride("font_pressed_color", new Color(0.66f, 0.16f, 0.36f));
+		btn.AddThemeFontSizeOverride("font_size", 12);
+
+		btn.Pressed += onPressed;
+		return btn;
 	}
 
 	/// <summary>Dựng lại toàn bộ raw item list trong dev mode từ _latestEmotionDebug.</summary>
@@ -2873,7 +3054,9 @@ public partial class UdpListener : Node2D
 
 	private static bool IsMouseOverControl(Control control, Vector2 mousePosition)
 	{
-		Rect2 rect = new(control.GlobalPosition, control.Size);
+		// Tính theo Scale để hit-test khớp với vùng vẽ thực (tránh đóng panel nhầm
+		// khi panel được phóng to bằng Scale).
+		Rect2 rect = new(control.GlobalPosition, control.Size * control.Scale);
 		return rect.HasPoint(mousePosition);
 	}
 
@@ -2933,6 +3116,22 @@ public partial class UdpListener : Node2D
 	{
 		string payload = $"{{\"type\":\"{type}\"}}";
 		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
+	}
+
+	// Gửi 1 lệnh debug (scenario preset) xuống cortex (UDP 4243).
+	// DebugConsole bên Python sẽ parse "reset all; stage rooted; set ...; rel ...; mem ...".
+	private void SendDebugCommand(string command)
+	{
+		if (string.IsNullOrWhiteSpace(command))
+			return;
+		// JsonSerializer.Serialize để escape an toàn (lệnh mem có dấu tiếng Việt + khoảng trắng).
+		string payload = $"{{\"type\":\"debug_command\",\"command\":{JsonSerializer.Serialize(command)}}}";
+		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
+		if (_debugCommandStatus != null)
+		{
+			string head = command.Length > 38 ? command.Substring(0, 38) + "…" : command;
+			_debugCommandStatus.Text = "đã gửi: " + head;
+		}
 	}
 
 	private void ApplyTypewriterEffect(string text){

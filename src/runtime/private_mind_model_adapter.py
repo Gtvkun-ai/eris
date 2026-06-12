@@ -88,16 +88,16 @@ class PrivateMindModelAdapterConfig:
     model: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_MODEL", os.getenv("ERIS_DAYDREAM_MODEL", "gemma-4-26b-a4b-it")) or "gemma-4-26b-a4b-it").strip())
     base_url: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_BASE_URL", os.getenv("ERIS_REMOTE_BASE_URL", "")) or "").strip())
     api_key: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_API_KEY", "") or "").strip())
-    timeout_seconds: float = field(default_factory=lambda: max(4.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "28"), 28.0)))
+    timeout_seconds: float = field(default_factory=lambda: max(4.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "12"), 12.0)))
     # Nhiệt độ thấp khiến model nhỏ (gemma) dễ lặp từ hoặc dính RECITATION filter,
     # rồi trả output cụt/rỗng -> invalid_json. Để mặc định ấm hơn để phá vòng lặp.
     temperature: float = field(default_factory=lambda: _as_float(os.getenv("ERIS_PRIVATE_MIND_TEMPERATURE", "0.5"), 0.5))
     max_tokens_fragment: int = field(default_factory=lambda: max(128, int(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_TOKENS", "700") or 700)))
     max_tokens_judgment: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_PRIVATE_MIND_JUDGMENT_TOKENS", "900") or 900)))
     max_tokens_diary: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_INNER_DIARY_AI_TOKENS", "640") or 640)))
-    transient_max_retries: int = field(default_factory=lambda: max(0, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_RETRIES", "2") or 2)))
+    transient_max_retries: int = field(default_factory=lambda: max(0, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_RETRIES", "1") or 1)))
     transient_backoff_base: float = field(default_factory=lambda: max(0.1, _as_float(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_BACKOFF", "0.5"), 0.5)))
-    transient_cooldown_threshold: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_THRESHOLD", "3") or 3)))
+    transient_cooldown_threshold: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_THRESHOLD", "2") or 2)))
     transient_cooldown_seconds: float = field(default_factory=lambda: max(5.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_COOLDOWN", "60"), 60.0)))
     # Free-text mode cho fragment: model nhỏ (local) chỉ nhả MỘT câu nghĩ ngắn,
     # KHÔNG ép JSON-schema. Tránh vòng invalid_json → cooldown làm câm model nhỏ.
@@ -1023,6 +1023,10 @@ class RuntimePrivateMindModelAdapter:
             self._invalid_json_streak = 0
             self._transient_streak = 0
             self._transient_cooldown_until = 0.0
+            # Chokepoint chống degeneration: model nhỏ có thể lặp vô hạn BÊN TRONG một
+            # chuỗi JSON hợp lệ (vd "ban phát ban phát..."), JSON vẫn parse ngon nên text
+            # lặp chui thẳng ra panel. Dọn một lần tại nguồn để mọi consumer đều sạch.
+            result.parsed = self._collapse_repetition_in_obj(result.parsed)
         else:
             self._failed_calls += 1
             self._last_error = result.error
@@ -1425,6 +1429,22 @@ class RuntimePrivateMindModelAdapter:
         if balance > 0:
             frag += "}" * balance
         return frag
+
+    def _collapse_repetition_in_obj(self, obj: Any) -> Any:
+        """Áp _collapse_repetition đệ quy lên mọi chuỗi trong dict/list đã parse.
+
+        Field ngắn/có cấu trúc (source, model, id...) không có cụm lặp >=4 nên không
+        bị đụng; chỉ free-text degenerate mới bị gom. An toàn cho mọi schema.
+        """
+        if isinstance(obj, str):
+            return self._collapse_repetition(obj)
+        if isinstance(obj, Mapping):
+            return {key: self._collapse_repetition_in_obj(value) for key, value in obj.items()}
+        if isinstance(obj, list):
+            return [self._collapse_repetition_in_obj(item) for item in obj]
+        if isinstance(obj, tuple):
+            return tuple(self._collapse_repetition_in_obj(item) for item in obj)
+        return obj
 
     def _collapse_repetition(self, text: str) -> str:
         """Gom các cụm ký tự lặp liên tiếp >=4 lần xuống còn 2 lần.

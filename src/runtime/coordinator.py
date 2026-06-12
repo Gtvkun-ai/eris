@@ -827,75 +827,105 @@ class RuntimeCoordinator(
         channel: str = "",
         user_text: str = "",
     ) -> None:
-        """Chạy private mind 5 phase trên tick nền.
+        """Chạy private mind 5 phase trên thread nền — không bao giờ block main loop.
 
-        Hàm này cố ý không trả Decision. Private mind chỉ được quyền:
-        - cập nhật PrivateConcern;
-        - bơm StateMutation vào bias/agenda;
-        - enqueue SurfaceImpulse đã lọc cho SurfaceArbiter.
-        Nếu nó tự nói public thì lại quay về trò nhật ký nội tâm cầm loa.
+        PrivateMind gọi Gemini remote (timeout 12s + 1 retry = 24s/call, nhiều call/tick).
+        Nếu chạy đồng bộ trên main loop, Gemini lag là chat bị câm. Giải pháp: submit
+        tick vào ThreadPoolExecutor, main loop trả kết quả sau khi Future hoàn tất.
+        Future được poll mỗi lần hàm này được gọi — kết quả available thì apply ngay,
+        chưa xong thì bỏ qua (loop vẫn tiếp tục nhận chat/autonomous).
         """
 
         daemon = getattr(self, "private_mind_daemon", None)
         loop = getattr(self, "private_mind_loop", None)
         if daemon is None and loop is None:
             return
-        try:
-            state_committer = getattr(self, "state_committer", None)
-            getter = getattr(self, "_get_state_committer", None)
-            if state_committer is None and callable(getter):
+
+        # --- Poll kết quả của future đang chạy (nếu có) ---
+        pending: "Future | None" = getattr(self, "_private_mind_future", None)
+        if pending is not None and pending.done():
+            self._private_mind_future = None
+            try:
+                result = pending.result()
+                if result is not None:
+                    self._apply_private_mind_tick_result(result, daemon=daemon)
+            except Exception as exc:
                 try:
-                    state_committer = getter()
+                    self.logger.warning("PrivateMind tick (bg) error: %s", exc)
                 except Exception:
-                    state_committer = None
-            # Ưu tiên daemon vì nó giữ lifecycle/outcome/queue. Fallback sang loop
-            # cũ để không làm gãy môi trường dev đang import PrivateMindLoop trực tiếp.
+                    pass
+
+        # --- Nếu đang có future chạy rồi thì không submit thêm ---
+        if getattr(self, "_private_mind_future", None) is not None:
+            return
+
+        # --- Tạo executor lần đầu ---
+        if not hasattr(self, "_private_mind_executor") or self._private_mind_executor is None:
+            from concurrent.futures import ThreadPoolExecutor
+            self._private_mind_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ERIS-PrivateMind")
+
+        state_committer = getattr(self, "state_committer", None)
+        getter = getattr(self, "_get_state_committer", None)
+        if state_committer is None and callable(getter):
+            try:
+                state_committer = getter()
+            except Exception:
+                state_committer = None
+
+        # Snapshot các args cần thiết trước khi submit để tránh race condition.
+        tick_kwargs = dict(
+            user_text=user_text,
+            channel=channel or "autonomous",
+            snapshot=signal_snapshot,
+            observer_frame=observer_frame,
+            wake_decision=wake_decision,
+            memory_core=getattr(self, "memory_core", None),
+            state_committer=state_committer,
+            session_turn_ledger=getattr(self, "session_turn_ledger", None),
+            internal_agenda=getattr(self, "internal_agenda", None),
+            thought_stream=getattr(self, "thought_stream", None),
+            runtime_owner=self,
+        )
+
+        def _run_tick():
             if daemon is not None and callable(getattr(daemon, "tick", None)):
-                tick = daemon.tick(
-                    user_text=user_text,
-                    channel=channel or "autonomous",
-                    snapshot=signal_snapshot,
-                    observer_frame=observer_frame,
-                    wake_decision=wake_decision,
-                    memory_core=getattr(self, "memory_core", None),
-                    state_committer=state_committer,
-                    session_turn_ledger=getattr(self, "session_turn_ledger", None),
-                    internal_agenda=getattr(self, "internal_agenda", None),
-                    thought_stream=getattr(self, "thought_stream", None),
-                    runtime_owner=self,
-                )
+                return ("daemon", daemon.tick(**tick_kwargs))
+            if loop is not None and callable(getattr(loop, "tick", None)):
+                kw = dict(tick_kwargs)
+                kw["surface_candidate_queue"] = getattr(self, "private_mind_surface_queue", None)
+                return ("loop", loop.tick(**kw))
+            return None
+
+        try:
+            self._private_mind_future = self._private_mind_executor.submit(_run_tick)
+        except Exception as exc:
+            try:
+                self.logger.warning("PrivateMind submit error: %s", exc)
+            except Exception:
+                pass
+
+    def _apply_private_mind_tick_result(self, result, *, daemon) -> None:
+        """Apply kết quả tick PrivateMind sau khi background thread hoàn tất."""
+        kind, tick = result if (isinstance(result, tuple) and len(result) == 2) else ("unknown", None)
+        loop = getattr(self, "private_mind_loop", None)
+        try:
+            if kind == "daemon" and daemon is not None:
                 digest_fn = getattr(daemon, "digest", None)
                 if callable(digest_fn):
                     self.private_mind_digest = digest_fn(surface_queue=getattr(daemon, "surface_queue", None))
                 elif tick is not None and callable(getattr(tick, "to_dict", None)):
                     self.private_mind_digest = tick.to_dict()
                 self.private_mind_surface_queue = getattr(daemon, "surface_queue", getattr(self, "private_mind_surface_queue", []))
-                self._persist_inner_diary()
-                return
-
-            result = loop.tick(
-                user_text=user_text,
-                channel=channel or "autonomous",
-                snapshot=signal_snapshot,
-                observer_frame=observer_frame,
-                wake_decision=wake_decision,
-                memory_core=getattr(self, "memory_core", None),
-                state_committer=state_committer,
-                session_turn_ledger=getattr(self, "session_turn_ledger", None),
-                internal_agenda=getattr(self, "internal_agenda", None),
-                thought_stream=getattr(self, "thought_stream", None),
-                surface_candidate_queue=getattr(self, "private_mind_surface_queue", None),
-                runtime_owner=self,
-            )
-            digest_fn = getattr(loop, "digest", None)
-            if callable(digest_fn):
-                self.private_mind_digest = digest_fn(surface_queue=getattr(self, "private_mind_surface_queue", None))
-            elif result is not None and callable(getattr(result, "to_dict", None)):
-                self.private_mind_digest = result.to_dict()
+            elif kind == "loop" and loop is not None:
+                digest_fn = getattr(loop, "digest", None)
+                if callable(digest_fn):
+                    self.private_mind_digest = digest_fn(surface_queue=getattr(self, "private_mind_surface_queue", None))
+                elif tick is not None and callable(getattr(tick, "to_dict", None)):
+                    self.private_mind_digest = tick.to_dict()
             self._persist_inner_diary()
         except Exception as exc:
             try:
-                self.logger.warning("PrivateMind tick error: %s", exc)
+                self.logger.warning("PrivateMind apply result error: %s", exc)
             except Exception:
                 pass
 
@@ -4652,11 +4682,38 @@ class RuntimeCoordinator(
             self._handle_anchor_control(msg)
             return
 
+        if msg_type == "debug_command":
+            self._handle_debug_command(msg)
+            return
+
         if msg_type == "chat_end":
             self._end_chat_cycle()
             return
         if msg_type:
             self.logger.debug("[incoming] ignored unknown msg_type=%s", msg_type)
+
+    def _handle_debug_command(self, msg: dict) -> None:
+        """Chạy lệnh debug (scenario preset) từ panel DEBUG của Godot.
+
+        Panel gửi ``{"type":"debug_command","command":"reset all; stage rooted; ..."}``.
+        Lệnh đi qua :class:`DebugConsole`, ép thẳng vào state sống của coordinator
+        nên cycle kế tiếp khởi đầu từ trạng thái mới (engine vẫn decay sau đó).
+        """
+        command = str(msg.get("command") or "").strip()
+        if not command:
+            self.logger.debug("[debug_command] lệnh rỗng, bỏ qua")
+            return
+        console = getattr(self, "_debug_console", None)
+        if console is None:
+            from runtime.debug_console import DebugConsole
+
+            console = DebugConsole(self)
+            self._debug_console = console
+        try:
+            result = console.execute(command)
+            self.logger.info("[debug_command] %s -> %s", command, result)
+        except Exception as exc:  # pragma: no cover - debug surface không được crash runtime
+            self.logger.warning("[debug_command] '%s' lỗi: %s", command, exc)
 
     def _handle_anchor_control(self, msg: dict) -> None:
         """Tác_Giả bật/tắt trục tối từ panel Godot (R5.5, R10.4).
@@ -5087,7 +5144,9 @@ class RuntimeCoordinator(
     ) -> tuple[str, ...]:
         if not data_uri:
             self.last_semantic_scene_note = None
-            self.vision_facts = ()
+            # Không xóa vision_facts cũ khi OCR trả về rỗng — facts autonomous
+            # vẫn còn hiệu lực cho tới khi có OCR mới thật sự ghi đè.
+            # self.vision_facts = ()  ← cũ: xóa facts tốt từ autonomous
             self.vision_last_trace = ""
             self.vision_facts_signature = ""
             self.vision_facts_novelty_hint = "none"
@@ -5162,7 +5221,10 @@ class RuntimeCoordinator(
             else ("repeated_screen_fact" if cleaned else "none")
         )
         self.vision_facts_signature = signature
-        self.vision_facts = cleaned
+        # Chỉ ghi đè vision_facts khi có facts mới. Nếu OCR lần này trả rỗng,
+        # giữ nguyên facts cũ (từ lần autonomous OCR trước) thay vì xóa sạch.
+        if cleaned:
+            self.vision_facts = cleaned
         self.vision_last_trace = trace or ""
         self.logger.info(
             "[vision_facts] source=compressor channel=%s count=%d novelty=%s trace=%s fact=%s",

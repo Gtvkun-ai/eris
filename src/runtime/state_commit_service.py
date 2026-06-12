@@ -40,6 +40,8 @@ from cortex.ni import NiStateMachine
 from domain import Decision
 from runtime.body_bias import BodyBiasProjector
 from runtime.memory_recall_adapter import MemoryRecallAdapter
+from runtime.relational_voice_seed_adapter import RelationalVoiceSeedAdapter
+from runtime.affect_self_read import AffectSelfReadAdapter
 from runtime.presence_controller import SocialPresenceEvent
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.session_turn_ledger import SessionTurnLedger
@@ -352,6 +354,32 @@ class StateCommitServiceMixin:
 
     def _build_memory_recall_decision(self, user_text: str) -> Decision | None:
         return self._ensure_memory_recall_adapter().try_answer(user_text)
+
+    def _ensure_relational_voice_seed_adapter(self) -> RelationalVoiceSeedAdapter:
+        adapter = getattr(self, "relational_voice_seed_adapter", None)
+        if isinstance(adapter, RelationalVoiceSeedAdapter):
+            adapter.llm_service = getattr(self, "llm_service", None)
+            adapter.logger = getattr(self, "logger", None)
+            return adapter
+        adapter = RelationalVoiceSeedAdapter(
+            llm_service=getattr(self, "llm_service", None),
+            logger=getattr(self, "logger", None),
+        )
+        self.relational_voice_seed_adapter = adapter
+        return adapter
+
+    def _ensure_affect_self_read_adapter(self) -> AffectSelfReadAdapter:
+        adapter = getattr(self, "affect_self_read_adapter", None)
+        if isinstance(adapter, AffectSelfReadAdapter):
+            adapter.llm_service = getattr(self, "llm_service", None)
+            adapter.logger = getattr(self, "logger", None)
+            return adapter
+        adapter = AffectSelfReadAdapter(
+            llm_service=getattr(self, "llm_service", None),
+            logger=getattr(self, "logger", None),
+        )
+        self.affect_self_read_adapter = adapter
+        return adapter
 
     def _frame_memory_storage_permission(self, frame) -> bool:
         permission = getattr(frame, "permission", None) or getattr(frame, "permission_report", None)

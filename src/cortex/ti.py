@@ -257,6 +257,13 @@ class TiGovernor:
             self._merge_debug_trace(decision, f"Ti mode={report.mode}")
             return decision
 
+        # Direct-action route (get_now_playing, open_url, v.v.) đã được executor
+        # xử lý và điền text kết quả thật. Ti guard không được viết đè vì guard sẽ
+        # nhầm câu kết quả action là "capability claim" và phá hoại câu trả lời.
+        if str(getattr(decision, "parse_mode", "") or "") == "direct_action":
+            self._merge_debug_trace(decision, f"Ti guard_mode=skip_direct_action")
+            return decision
+
         guard_mode = get_guard_mode()
         if guard_mode == OFF_GUARD_MODE:
             self._merge_debug_trace(decision, f"Ti guard_mode={guard_mode}")
@@ -615,8 +622,7 @@ class TiGovernor:
         if not text:
             return text
 
-        # Khi đã có ảnh màn hình grounded thật, các câu kiểu "tôi đang nhìn màn hình"
-        # là perception hợp lệ, không phải bịa — không được guard viết lại.
+        # Khi đã có vision facts grounded thật, perception claim về màn hình là hợp lệ.
         perception_violation = (not vision_grounded) and self._has_perception_violation(text)
         if not self._has_capability_violation(text) and not perception_violation:
             return text

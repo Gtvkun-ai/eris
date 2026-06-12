@@ -63,6 +63,107 @@ class ChatCycleMixin:
         self.fe_style_memory = self.fe_renderer.decay_memory(self.fe_style_memory)
         self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
 
+    def _build_relational_voice_stance(
+        self,
+        user_text: str,
+        *,
+        frame,
+        fe_plan,
+        ti_report,
+        conversation_report,
+        relationship_report,
+    ):
+        """Project the already-computed cognition reports into a CognitionStance.
+
+        Register is derived only from existing cheap signals (ti_report.mode +
+        classify_chat_act + a local code heuristic) — no extra model call.
+        """
+        from runtime.relational_voice_seed_adapter import (
+            CognitionStance,
+            classify_chat_register,
+            detect_relational_act,
+        )
+
+        try:
+            from llm.service import classify_chat_act
+            chat_act_name = classify_chat_act(user_text).value
+        except Exception:
+            chat_act_name = ""
+
+        adapter = self._ensure_relational_voice_seed_adapter()
+        scope = adapter.config.scope
+        ti_mode = str(getattr(ti_report, "mode", "") or "")
+        register = classify_chat_register(user_text, ti_mode=ti_mode, chat_act_name=chat_act_name)
+        act = detect_relational_act(user_text)
+
+        conv_state = getattr(conversation_report, "state", None)
+        rel_state = getattr(relationship_report, "state", None)
+        flags: tuple[str, ...] = ()
+        flag_imperatives: tuple[str, ...] = ()
+        conv_ctx = ""
+        if conv_state is not None:
+            flags = tuple(getattr(conv_state, "adaptation_flags", ()) or ())
+            try:
+                flag_imperatives = tuple(conv_state._flag_imperatives())
+            except Exception:
+                flag_imperatives = ()
+            try:
+                conv_ctx = conv_state.to_prompt_context()
+            except Exception:
+                conv_ctx = ""
+        try:
+            appraisal_ctx = self._build_appraisal_context(frame.appraisal)
+        except Exception:
+            appraisal_ctx = ""
+
+        return CognitionStance(
+            register=register,
+            scope=scope,
+            act=act,
+            fe_tone=str(getattr(fe_plan, "tone_label", "") or ""),
+            fe_intent=str(getattr(fe_plan, "intent_label", "") or ""),
+            appraisal_context=appraisal_ctx,
+            adaptation_flags=flags,
+            flag_imperatives=flag_imperatives,
+            preferred_distance=float(getattr(rel_state, "preferred_distance", 0.0) or 0.0),
+            attachment_visibility=float(getattr(rel_state, "attachment_visibility", 0.0) or 0.0),
+            trust=float(getattr(rel_state, "trust", 0.0) or 0.0),
+            conversation_prompt_context=conv_ctx,
+        )
+
+    def _build_relational_voice_seed_decision(
+        self,
+        user_text: str,
+        *,
+        frame,
+        fe_plan,
+        ti_report,
+        conversation_report,
+        relationship_report,
+    ):
+        # An optional pre-LLM path must never break the chat cycle. Any failure
+        # here falls through to the legacy generate_chat_reply path.
+        try:
+            from runtime.relational_voice_seed_adapter import should_use_voice_seed
+
+            stance = self._build_relational_voice_stance(
+                user_text,
+                frame=frame,
+                fe_plan=fe_plan,
+                ti_report=ti_report,
+                conversation_report=conversation_report,
+                relationship_report=relationship_report,
+            )
+            if not should_use_voice_seed(stance.register, stance.scope, stance.act):
+                return None
+            return self._ensure_relational_voice_seed_adapter().try_answer(user_text, stance=stance)
+        except Exception as exc:
+            try:
+                self.logger.warning("relational_voice_seed hook failed; using legacy path: %s", exc)
+            except Exception:
+                pass
+            return None
+
     def _run_chat_cycle(self, user_text: str, *, user_timestamp: float | None = None) -> None:
         cycle_start = time.time() if user_timestamp is None else float(user_timestamp)
         if not user_text:
@@ -644,6 +745,36 @@ class ChatCycleMixin:
             self._commit_chat_decision(memory_recall_decision, fe_plan, frame=frame)
             self.last_user_text_for_semantics = user_text
             return
+        relational_seed_decision = self._build_relational_voice_seed_decision(
+            user_text,
+            frame=frame,
+            fe_plan=fe_plan,
+            ti_report=ti_report,
+            conversation_report=conversation_report,
+            relationship_report=relationship_report,
+        )
+        if relational_seed_decision is not None:
+            self._set_cognitive_action_plan(
+                frame,
+                should_speak=True,
+                speech_intent="user_requested",
+                speech_act="answer",
+                reason="Relational voice-seed path answered before LLM chat.",
+                snapshot=snapshot,
+                user_text=user_text,
+                concrete_signals=self._concrete_screen_signals(snapshot),
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                notes=("relational_voice_seed",),
+            )
+            relational_seed_decision = self._apply_chat_final_guards(
+                relational_seed_decision,
+                user_text=user_text,
+                frame=frame,
+            )
+            self._commit_chat_decision(relational_seed_decision, fe_plan, frame=frame)
+            self.last_user_text_for_semantics = user_text
+            return
         chat_generation_kwargs = {
             "chat_history": llm_chat_history,
             "user_message": chat_user_message,
@@ -794,7 +925,7 @@ class ChatCycleMixin:
             decision.parse_mode = "no_fallback_block"
         self._log_decision_stage("chat", "after_parser", decision)
         self._log_decision_stage("chat", "pre_ti", decision)
-        decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text, vision_grounded=bool(screen_image_data_uri))
+        decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text, vision_grounded=bool(screen_image_data_uri) or bool(getattr(self, "vision_facts", None)))
         self._log_decision_stage("chat", "after_ti", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot)
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
@@ -1099,9 +1230,14 @@ class ChatCycleMixin:
     
     def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
         facts: list[object] = []
-        last_capture = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0)
-        if last_capture and time.time() - last_capture <= 10.0:
-            facts.extend(tuple(getattr(snapshot, "vision_facts", ()) or ()) or tuple(getattr(self, "vision_facts", ()) or ()))
+        # Luôn dùng vision_facts gần nhất từ coordinator (autonomous OCR đã bắt được)
+        # — không cần kiểm tra window 10s vì facts đó vẫn là thật, chỉ hơi cũ.
+        # Ưu tiên snapshot (mới nhất), fallback về self.vision_facts của coordinator.
+        coordinator_facts = tuple(getattr(self, "vision_facts", ()) or ())
+        snapshot_facts = tuple(getattr(snapshot, "vision_facts", ()) or ())
+        merged = snapshot_facts or coordinator_facts
+        if merged:
+            facts.extend(merged)
         if screen_image_data_uri:
             facts.append(
                 {
@@ -1112,6 +1248,25 @@ class ChatCycleMixin:
                     "tags": ["vision", "screen", "chat"],
                 }
             )
+        elif not merged:
+            # Không chụp tươi lượt này VÀ chưa có facts nào: nếu runtime VẪN có màn hình
+            # (vừa chụp lượt trước, hoặc telemetry chụp được) thì cho ERIS hiểu nó có màn
+            # hình — chỉ là chưa đọc được nội dung lượt này. Tránh thú nhận sai "tôi chưa
+            # từng thấy màn hình". Marker này được coi là stale ở tầng grounding.
+            captured_before = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0) > 0.0
+            can_capture = callable(
+                getattr(getattr(self, "telemetry_service", None), "capture_screen_frame_data_uri", None)
+            )
+            if captured_before or can_capture:
+                facts.append(
+                    {
+                        "id": "screen_prev_turn",
+                        "source": "screen_capture_prev_turn",
+                        "claim": "screen was visible on a previous turn (no fresh capture this turn)",
+                        "confidence": 0.5,
+                        "tags": ["vision", "screen", "stale"],
+                    }
+                )
         return tuple(facts)
 
     def _build_chat_source_grounding_report(
@@ -1134,6 +1289,8 @@ class ChatCycleMixin:
                 snapshot,
                 screen_image_data_uri=screen_image_data_uri,
             ),
+            # Không chụp tươi lượt này -> mọi facts màn hình (nếu có) là từ lượt trước.
+            screen_facts_stale=not bool(screen_image_data_uri),
             memory_packet=memory_resonance,
             runtime_state=snapshot,
             allow_web=False,

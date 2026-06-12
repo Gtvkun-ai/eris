@@ -602,7 +602,7 @@ class AutonomousCycleMixin:
         decision = self.parser.parse(raw)
         self._log_decision_stage("directive", "after_parser", decision)
         self._log_decision_stage("directive", "pre_ti", decision)
-        decision = self.ti_governor.enforce_decision(decision, ti_report)
+        decision = self.ti_governor.enforce_decision(decision, ti_report, vision_grounded=bool(getattr(self, "vision_facts", None)))
         self._log_decision_stage("directive", "after_ti", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot)
         decision = self._apply_post_generation_filters(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import replace
 
 from cortex.contracts import AgentSpeechCore
@@ -9,6 +10,13 @@ from domain import Decision
 from guard_config import LOG_ONLY_GUARD_MODE, OFF_GUARD_MODE, get_guard_mode, guards_warn_only
 from runtime.controlled_slippage import resolve_controlled_slippage
 from runtime.guard_violations import GuardViolation
+from runtime.disclaimer_markers import (
+    CHAT_DISCLAIMER_EMOTION_MARKERS,
+    CHAT_DISCLAIMER_HARD_MARKERS,
+    CHAT_DISCLAIMER_HELPER_MARKERS,
+    is_disclaimer_text,
+    normalize_guard_ascii,
+)
 
 
 class PostGenerationFiltersMixin:
@@ -240,6 +248,8 @@ class PostGenerationFiltersMixin:
             return False
         if violation.rule == "anti_mindreading" and self._contains_mindreading_claim(candidate) and not self._is_interactive_guess_text(candidate):
             return False
+        if violation.rule == "anti_disclaimer_voice" and self._reroll_still_disclaimer(candidate):
+            return False
         return True
 
     def _repair_guard_violation_decision(
@@ -361,6 +371,108 @@ class PostGenerationFiltersMixin:
                 pass
             return ()
 
+    # ------------------------------------------------------------------
+    # Anti-disclaimer voice guard (chat)
+    # ------------------------------------------------------------------
+    # ERIS là một hiện diện có phòng vệ, không phải tổng đài. Model chat từ xa
+    # liên tục tụt về giọng trợ lý ("tôi chỉ cố gắng hỗ trợ và giúp đỡ", "tôi
+    # không có cảm xúc như con người, nhưng tôi có thể hỗ trợ"). Những câu đó
+    # bào mòn persona. Guard không tự viết câu thay thế: nó dựng GuardViolation
+    # có cấu trúc rồi để tầng wording reroll đúng một lần (qua style_client),
+    # nếu vẫn bẩn mới im lặng — im còn đỡ lạc vai hơn là nói giọng helpdesk.
+
+    # Khung "trợ lý hữu ích" — luôn lạc vai với ERIS. (Định nghĩa dùng chung ở
+    # runtime/disclaimer_markers.py để adapter voice-seed tái dùng cùng predicate.)
+    _CHAT_DISCLAIMER_HELPER_MARKERS = CHAT_DISCLAIMER_HELPER_MARKERS
+    # Câu tự nhận là công cụ/AI — cấm cứng, không phụ thuộc cờ.
+    _CHAT_DISCLAIMER_HARD_MARKERS = CHAT_DISCLAIMER_HARD_MARKERS
+    # Phủ nhận cảm xúc kiểu phẳng — chỉ tính vi phạm khi kèm khung helpdesk
+    # hoặc khi cờ quan hệ yêu cầu không dựng rào. ERIS vẫn được thừa nhận mình
+    # không phải người ở dạng mềm.
+    _CHAT_DISCLAIMER_EMOTION_MARKERS = CHAT_DISCLAIMER_EMOTION_MARKERS
+
+    def _normalize_guard_ascii(self, text: str) -> str:
+        return normalize_guard_ascii(text)
+
+    def _reroll_still_disclaimer(self, text: str) -> bool:
+        """Kiểm tra nhanh (flag-agnostic) xem reroll có còn giọng helpdesk không."""
+        return is_disclaimer_text(text)
+
+    def _detect_chat_disclaimer(self, text: str, *, flags: set) -> str:
+        normalized = self._normalize_guard_ascii(text)
+        if not normalized:
+            return ""
+        for marker in self._CHAT_DISCLAIMER_HARD_MARKERS:
+            if marker in normalized:
+                return f"hard_disclaimer:{marker}"
+        for marker in self._CHAT_DISCLAIMER_HELPER_MARKERS:
+            if marker in normalized:
+                return f"helpdesk_framing:{marker}"
+        # Phủ nhận cảm xúc phẳng: chỉ chặn khi kèm khung "nhưng tôi có thể..."
+        # hoặc khi cờ quan hệ đang yêu cầu hạ rào. Dạng mềm vẫn cho qua.
+        emotion_hit = next((m for m in self._CHAT_DISCLAIMER_EMOTION_MARKERS if m in normalized), "")
+        if emotion_hit:
+            wants_warmth = bool(flags & {
+                "warmth_floor_required",
+                "avoid_over_human_love_claim",
+                "do_not_lead_with_identity_disclaimer",
+                "relational_repair",
+            })
+            if wants_warmth or "nhung toi co the" in normalized or "nhung co the" in normalized:
+                return f"flat_emotion_denial:{emotion_hit}"
+        # Câu giới thiệu danh tính chỉ bị chặn khi cờ cấm dẫn dắt bằng nó
+        # (tránh chặn nhầm khi user thật sự hỏi "em là gì").
+        if "do_not_lead_with_identity_disclaimer" in flags:
+            if (
+                normalized.startswith("toi la eris")
+                or "hien dien nho tren desktop" in normalized
+                or "hien dien runtime nho tren desktop" in normalized
+            ):
+                return "identity_disclaimer_lead"
+        return ""
+
+    def _apply_chat_disclaimer_guard(
+        self,
+        decision: Decision,
+        *,
+        flags,
+        user_text: str,
+        frame=None,
+        allow_reroll: bool = True,
+    ) -> Decision:
+        if self._guard_is_off("anti_disclaimer_voice"):
+            return decision
+        text = str(getattr(decision, "text", "") or "")
+        if not text.strip():
+            return decision
+        reason = self._detect_chat_disclaimer(text, flags=set(flags or ()))
+        if not reason:
+            return decision
+        violation = GuardViolation(
+            rule="anti_disclaimer_voice",
+            severity="soft",
+            reason=reason,
+            original_text=text,
+            suggested_action="reroll",
+            trace_marker=f"anti_disclaimer_voice; {reason}",
+            fallback_text="",
+        )
+        grounding = (
+            (getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None))
+            if frame is not None
+            else None
+        )
+        return self._repair_guard_violation_decision(
+            decision,
+            violation,
+            frame=frame,
+            grounding=grounding,
+            channel="chat",
+            user_text=user_text,
+            parse_mode="anti_disclaimer_voice",
+            allow_reroll=allow_reroll,
+        )
+
     def _apply_chat_final_guards(self, decision: Decision, *, user_text: str, frame=None, allow_reroll: bool = True) -> Decision:
         feedback_markers = self._record_agent_mind_feedback_from_user(user_text, frame=frame)
         if feedback_markers:
@@ -374,6 +486,13 @@ class PostGenerationFiltersMixin:
         decision = self._apply_internal_object_surface_guard(decision)
         conversation = getattr(state, "conversation_dynamics", None)
         flags = set(getattr(conversation, "adaptation_flags", ()) or ())
+        decision = self._apply_chat_disclaimer_guard(
+            decision,
+            flags=flags,
+            user_text=user_text,
+            frame=frame,
+            allow_reroll=allow_reroll,
+        )
         last_assistant_text = str(getattr(self, "last_chat_answer", "") or "")
         if (
             ("no_more_clarifying_question" in flags or self._guard_user_explained_reason(user_text))

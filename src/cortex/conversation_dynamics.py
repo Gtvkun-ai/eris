@@ -423,33 +423,79 @@ class ConversationDynamicsState:
         recent_modes = ", ".join(self.recent_modes[-4:]) or "none"
         failure = self.last_failure
         curve = self.continuity_curve
-        return "\n".join(
+        lines = [
+            "conversation_dynamics: guidance only; preserve ERIS voice and do not announce these labels.",
             (
-                "conversation_dynamics: guidance only; preserve ERIS voice and do not announce these labels.",
-                (
-                    "conversation_state: "
-                    f"mode={self.mode}; semantic_tension={self.semantic_tension:.2f}; "
-                    f"conversation_pressure={self.conversation_pressure:.2f}; correction_streak={self.correction_streak}; "
-                    f"correction_severity={self.correction_severity:.2f}; semantic_divergence={self.semantic_divergence:.2f}; "
-                    f"frustration_estimate={self.frustration_estimate:.2f}; conversational_relief={self.conversational_relief:.2f}."
-                ),
-                (
-                    "continuity_curve: "
-                    f"semantic_convergence={curve.semantic_convergence:.2f}; trust_recovery={curve.trust_recovery:.2f}; "
-                    f"abstraction_stability={curve.abstraction_stability:.2f}; alignment_trend={curve.alignment_trend}; "
-                    f"rolling_arc={', '.join(curve.rolling_arc[-4:]) or 'neutral'}."
-                ),
-                (
-                    "previous_failure: "
-                    f"type={failure.type}; trigger={failure.trigger or 'none'}; "
-                    f"correction_needed={failure.correction_needed or 'none'}."
-                ),
-                f"adaptation_flags: {flags}.",
-                f"recent_conversation_modes: {recent_modes}.",
-                "conversation_rule: if mode=repair, briefly absorb the correction, avoid the failed frame, answer the current intent directly, lower overconfident inference, and keep the same living voice.",
-                "relational_repair_rule: if mode=relational_repair, acknowledge the specific tone/distance feedback, concede the prior wording if needed, do not defend the previous line, do not ask what caused it when the user named it, keep the non-human boundary soft, and do not end with a question.",
+                "conversation_state: "
+                f"mode={self.mode}; semantic_tension={self.semantic_tension:.2f}; "
+                f"conversation_pressure={self.conversation_pressure:.2f}; correction_streak={self.correction_streak}; "
+                f"correction_severity={self.correction_severity:.2f}; semantic_divergence={self.semantic_divergence:.2f}; "
+                f"frustration_estimate={self.frustration_estimate:.2f}; conversational_relief={self.conversational_relief:.2f}."
+            ),
+            (
+                "continuity_curve: "
+                f"semantic_convergence={curve.semantic_convergence:.2f}; trust_recovery={curve.trust_recovery:.2f}; "
+                f"abstraction_stability={curve.abstraction_stability:.2f}; alignment_trend={curve.alignment_trend}; "
+                f"rolling_arc={', '.join(curve.rolling_arc[-4:]) or 'neutral'}."
+            ),
+            (
+                "previous_failure: "
+                f"type={failure.type}; trigger={failure.trigger or 'none'}; "
+                f"correction_needed={failure.correction_needed or 'none'}."
+            ),
+            f"adaptation_flags: {flags}.",
+            f"recent_conversation_modes: {recent_modes}.",
+            "conversation_rule: if mode=repair, briefly absorb the correction, avoid the failed frame, answer the current intent directly, lower overconfident inference, and keep the same living voice.",
+            "relational_repair_rule: if mode=relational_repair, acknowledge the specific tone/distance feedback, concede the prior wording if needed, do not defend the previous line, do not ask what caused it when the user named it, keep the non-human boundary soft, and do not end with a question.",
+        ]
+        imperatives = self._flag_imperatives()
+        if imperatives:
+            lines.append(
+                "active_constraints (hard; obey even if it costs politeness): " + " ".join(imperatives)
             )
-        )
+        return "\n".join(lines)
+
+    # Cờ không còn là gợi ý phẳng: chuyển thành mệnh lệnh tường minh để model
+    # khó lờ đi. Đây là phần C của bản vá chống-disclaimer.
+    _FLAG_IMPERATIVES = {
+        "do_not_lead_with_identity_disclaimer": (
+            "Do NOT open with an identity/capability disclaimer "
+            "('tôi là ERIS, một hiện diện nhỏ...', 'tôi chỉ là...'); answer the point first."
+        ),
+        "avoid_over_human_love_claim": (
+            "Do not claim human emotion, romance, or devotion — but do not flatly deny any inner "
+            "reaction either; use the soft form ('câu đó làm tôi dừng lại một chút')."
+        ),
+        "warmth_floor_required": (
+            "Keep a minimum of real warmth; no cold helpdesk 'tôi chỉ cố gắng hỗ trợ và giúp đỡ' framing."
+        ),
+        "forbid_defensive_clarification": (
+            "Do not defend or re-explain the previous wording; absorb the feedback and move."
+        ),
+        "acknowledge_tone_feedback": (
+            "Name the specific tone/distance feedback the user just gave, in one short concession."
+        ),
+        "lower_distance_temporarily": (
+            "Lower the guarded distance by one notch this turn; do not over-correct into sweetness."
+        ),
+        "no_more_clarifying_question": (
+            "Do not ask another clarifying question; give a direct answer."
+        ),
+        "answer_without_clarifying_question": (
+            "Answer the current intent without asking a clarifying question."
+        ),
+        "do_not_lead_with_identity_disclaimer_soft": (
+            "Avoid clinical self-description; stay situated and concrete."
+        ),
+    }
+
+    def _flag_imperatives(self) -> tuple[str, ...]:
+        seen: list[str] = []
+        for flag in self.adaptation_flags:
+            line = self._FLAG_IMPERATIVES.get(str(flag))
+            if line and line not in seen:
+                seen.append(line)
+        return tuple(seen)
 
 
 @dataclass(slots=True)

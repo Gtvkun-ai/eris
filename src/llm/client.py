@@ -1,5 +1,6 @@
 import requests
 import re
+import os
 
 
 def _http_error_with_body(response: requests.Response) -> requests.HTTPError:
@@ -25,7 +26,34 @@ def _chat_payload_variants(payload: dict) -> list[dict]:
         minimal.pop("grammar", None)
         minimal.pop("response_format", None)
         variants.append(minimal)
+    # Một số endpoint không nhận reasoning_effort → biến thể bỏ field này để
+    # vẫn chạy được khi gặp 4xx (vd aggregator OpenAI-compatible thuần).
+    if "reasoning_effort" in payload:
+        for variant in list(variants):
+            without_reasoning = dict(variant)
+            without_reasoning.pop("reasoning_effort", None)
+            variants.append(without_reasoning)
     return variants
+
+
+def _model_supports_reasoning_toggle(model_name: str) -> bool:
+    """Các model có chế độ "thinking" mà Groq cho tắt qua reasoning_effort.
+
+    Chủ yếu Qwen3 và GPT-OSS. Trả về False cho llama/glm/gemma… để KHÔNG gửi
+    field lạ lên endpoint không hỗ trợ.
+    """
+
+    name = (model_name or "").strip().lower()
+    return "qwen3" in name or "qwen-3" in name or "gpt-oss" in name
+
+
+def _resolve_reasoning_effort() -> str:
+    """Mức reasoning cho model có thinking. Mặc định "none" để khỏi đốt token vào
+    khối suy nghĩ (pipeline chỉ cần JSON + giọng, không cần suy luận nhiều bước).
+    Đặt ERIS_REASONING_EFFORT=default/low/medium/high để bật lại khi cần.
+    """
+
+    return (os.environ.get("ERIS_REASONING_EFFORT", "none") or "none").strip().lower()
 
 
 class LlamaServerClient:
@@ -157,6 +185,10 @@ class OpenAICompatibleClient:
             payload["response_format"] = response_format
         if grammar is not None:
             payload["grammar"] = grammar
+        if _model_supports_reasoning_toggle(self.model_name):
+            effort = _resolve_reasoning_effort()
+            if effort and effort != "off":
+                payload["reasoning_effort"] = effort
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
