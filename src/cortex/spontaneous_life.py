@@ -117,6 +117,7 @@ class SpontaneousLifeEngine:
         concrete_signals: tuple[str, ...] = (),
         recent_speech_acts: tuple[str, ...] = (),
         agent_mind: PersistentAgentMindStore | None = None,
+        conversation_context: str = "",
         now: float | None = None,
     ) -> SpeechImpulse:
         now = time.monotonic() if now is None else float(now)
@@ -135,7 +136,12 @@ class SpontaneousLifeEngine:
             recent_speech_acts=tuple(recent_speech_acts or ()),
             agent_mind=agent_mind,
         )
-        candidates = build_default_impulse_candidates(stack, thought_surface=thought_surface)
+        # FIX #4: Truyền conversation_context vào build_default_impulse_candidates.
+        candidates = build_default_impulse_candidates(
+            stack, 
+            thought_surface=thought_surface,
+            conversation_context=conversation_context,
+        )
         report = self._arbitrator.select(candidates)
         selected = report.selected
 

@@ -2782,6 +2782,15 @@ class RuntimeCoordinator(
         screen_comment_allowed = channel == "force_speak"
         if concrete_signals and channel != "force_speak":
             screen_comment_allowed = bool(self._broadcast_screen_winners(frame.broadcast))
+        
+        # FIX #4: Extract conversation context nếu có _build_conversation_context method.
+        conversation_context = ""
+        try:
+            if hasattr(self, "_build_conversation_context"):
+                conversation_context = self._build_conversation_context(limit=6)
+        except Exception:
+            pass
+        
         speech_core = self.speech_core_engine.evaluate(
             channel=channel,
             snapshot=snapshot,
@@ -2808,6 +2817,7 @@ class RuntimeCoordinator(
             personality_lens=getattr(frame, "personality_lens", None),
             agent_mind=getattr(getattr(self, "memory_core", None), "agent_mind", None),
             private_mind_speech_bias=getattr(self, "private_mind_speech_bias", None),
+            conversation_context=conversation_context,
             safe_small_talk_allowed=self._safe_small_talk_budget_allowed(
                 channel=channel,
                 snapshot=snapshot,

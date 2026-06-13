@@ -669,6 +669,16 @@ class RelationshipDynamicsEngine:
 
         # 1) Familiarity / ritual từ repeated_project_context score.
         familiarity_gain = 0.006
+        
+        # FIX #3: Thêm session continuity — tăng familiarity theo số lượt trong session.
+        # Tránh trường hợp trò chuyện cảm xúc thuần không tăng familiarity.
+        # Có trần thấp (0.012 max ở turn 8) và decay nhanh giữa session.
+        if event.turn_index > 0:
+            session_continuity_bonus = min(0.012, (event.turn_index / 8.0) * 0.012)
+            familiarity_gain += session_continuity_bonus
+            if session_continuity_bonus >= 0.006:
+                notes.append(f"session_continuity:turn_{event.turn_index}:{session_continuity_bonus:.3f}")
+        
         if repeated_score > 0.0:
             familiarity_gain += 0.024 * repeated_score
             current.ritual_strength = _nudge(current.ritual_strength, 0.020 * repeated_score)
@@ -808,6 +818,21 @@ class RelationshipDynamicsEngine:
         # owns a distance-reduction term, so genuine warmth (not only coldness
         # repair) can pull preferred_distance down over a realistic conversation.
         intimacy_pressure = max(clamp01(getattr(affect, "intimacy", 0.0)), clamp01(getattr(affect, "attachment", 0.0)))
+        
+        # FIX #2: Relational probe branch — khi user hỏi về khoảng cách/cảm xúc.
+        # Các câu như "em gần hay xa với tôi" hoặc "em có thích tôi không" không
+        # tạo intimacy_pressure >= 0.30, nhưng đó là dấu hiệu user muốn kết nối.
+        # Thêm nhánh nhẹ để nudge distance xuống và attachment_visibility lên.
+        relational_probe_pressure = clamp01(getattr(affect, "relational_pressure", 0.0))
+        attachment_bid = clamp01(getattr(affect, "attachment_bid", 0.0))
+        probe_signal = max(relational_probe_pressure, attachment_bid)
+        
+        if probe_signal >= 0.18 and current.rupture < 0.60:
+            # Nhẹ hơn warmth path, nhưng đủ để không để distance đứng yên.
+            current.attachment_visibility = _nudge(current.attachment_visibility, 0.008 + probe_signal * 0.015)
+            current.preferred_distance = _nudge(current.preferred_distance, -(0.008 + probe_signal * 0.018))
+            notes.append(f"relational_probe:probe_signal:{probe_signal:.2f}")
+        
         # Anti-teleport guard (req 3.1): the 0.30 floor is the aggregate of the
         # affect classifier's multi-cue intimacy/attachment scoring. A lone
         # low-weight token (e.g. "nho" 0.14, "quan tam" 0.20) stays below 0.30,
@@ -830,8 +855,9 @@ class RelationshipDynamicsEngine:
             notes.append("repair:softens_rupture")
 
         # 11) Khoảng cách xã hội có quán tính.
-        closeness_pull = current.trust * 0.010 + current.familiarity * 0.006
-        defense_push = current.exposure_recoil * 0.012 + current.dignity_defense * 0.016 + current.rupture * 0.010
+        # FIX #2b: Giảm hệ số quán tính để warmth/probe thật không bị triệt tiêu ngay.
+        closeness_pull = current.trust * 0.008 + current.familiarity * 0.005
+        defense_push = current.exposure_recoil * 0.010 + current.dignity_defense * 0.014 + current.rupture * 0.008
         current.preferred_distance = _nudge(current.preferred_distance, defense_push - closeness_pull)
 
         # 12) Debug/evidence notes.

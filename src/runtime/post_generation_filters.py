@@ -526,6 +526,9 @@ class PostGenerationFiltersMixin:
     def _protocol_surface_leak_markers(self) -> tuple[str, ...]:
         return (
             "user input:",
+            "user's turn:",
+            "user's input:",
+            "user said:",
             "context:",
             "goal:",
             "eris's current state",
@@ -558,7 +561,7 @@ class PostGenerationFiltersMixin:
         return tuple(dict.fromkeys(hits))
 
     def _protocol_surface_repair_text(self) -> str:
-        return "Xin loi, cau vua roi bi lo prompt noi bo. Toi bo phan do va giu cau tra loi o dang repair an toan."
+        return "Xin lỗi, câu vừa rồi bị lộ prompt nội bộ. Tôi bỏ phần đó và giữ câu trả lời ở dạng repair an toàn."
 
     def _apply_protocol_surface_guard(self, decision: Decision) -> Decision:
         hits = self._detect_protocol_surface_leak(getattr(decision, "text", "") or "")

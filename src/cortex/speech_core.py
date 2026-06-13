@@ -278,6 +278,7 @@ class SpeechCoreEngine:
         spontaneous_impulse: SpeechImpulse | None = None,
         agent_mind: PersistentAgentMindStore | None = None,
         private_mind_speech_bias: Mapping[str, object] | None = None,
+        conversation_context: str = "",
     ) -> AgentSpeechCore:
         channel_name = str(channel or "autonomous")
         private_bias_active = bool(private_mind_speech_bias)
@@ -304,6 +305,7 @@ class SpeechCoreEngine:
         )
 
         if spontaneous_impulse is None:
+            # FIX #4: Truyền conversation_context để impulses có thể tham chiếu hội thoại.
             spontaneous_impulse = self.spontaneous_life_engine.evaluate(
                 channel=channel_name,
                 snapshot=snapshot,
@@ -314,6 +316,7 @@ class SpeechCoreEngine:
                 concrete_signals=tuple(concrete_signals or ()),
                 recent_speech_acts=tuple(getattr(internal_state, "recent_speech_acts", ()) or ()) if internal_state is not None else (),
                 agent_mind=agent_mind,
+                conversation_context=conversation_context,
             )
         spontaneous_ready = self._spontaneous_ready(spontaneous_impulse, channel=channel_name)
 

@@ -151,8 +151,17 @@ def _priority(name: str) -> float:
     }.get(str(name or ""), 0.0)
 
 
-def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface: Any = None) -> tuple[ImpulseCandidate, ...]:
-    """Tạo bộ impulse mặc định cho spontaneous/autonomous path."""
+def build_default_impulse_candidates(
+    stack: AgentStateStack, 
+    *, 
+    thought_surface: Any = None,
+    conversation_context: str = "",
+) -> tuple[ImpulseCandidate, ...]:
+    """Tạo bộ impulse mặc định cho spontaneous/autonomous path.
+    
+    FIX #4: Thêm conversation_context để presence impulses có thể tham chiếu
+    nội dung hội thoại gần đây thay vì chỉ hollow seeds như "quiet_co_presence".
+    """
 
     ev = stack.evidence
     needs = stack.needs
@@ -208,6 +217,21 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
     thought_impulse_kind = _text(getattr(thought_surface, "impulse_kind", "") if thought_surface is not None else "", limit=40)
     thought_public_seed = _text(getattr(thought_surface, "public_seed", "") if thought_surface is not None else "", limit=180)
     rooted_topic = _text(thought_public_seed or thought_source_memory or thought_topic, limit=160)
+    
+    # FIX #4: Trích conversation seed từ conversation_context nếu có.
+    # Ưu tiên conversation gần hơn hollow seeds cho presence impulses.
+    conversation_seed = ""
+    if conversation_context:
+        # Lấy dòng cuối (recent user/ERIS turn) làm seed.
+        lines = [ln.strip() for ln in conversation_context.split('\n') if ln.strip() and not ln.strip().startswith('RECENT CONVERSATION')]
+        if lines:
+            last_line = lines[-1]
+            # Strip speaker prefix ("- Ngài:", "- ERIS:")
+            if ':' in last_line:
+                conversation_seed = last_line.split(':', 1)[1].strip()[:120]
+            else:
+                conversation_seed = last_line[:120]
+    
     rooted_inner = bool(rooted_topic and _has_real_thought_root(rooted_topic, root_source=thought_root_source))
     focus_is_deep_work = ev.focus_kind in {"code", "docs"} or ev.has_tag("technical_scene") or ev.has_tag("docs_scene")
     focus_allows_chatter = bool(aff.random_chatter_allowed and not focus_is_deep_work)
@@ -357,13 +381,15 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
     )
 
     # 5. Companionship ping. Kept weaker because ERIS should not become a notification demon.
+    # FIX #4: Sử dụng conversation_seed nếu có thay vì hollow "quiet_co_presence".
+    companionship_seed = conversation_seed or rooted_topic or "quiet_co_presence"
     candidates.append(
         ImpulseCandidate(
             name="companionship_impulse",
             impulse_type="companionship_ping",
             speech_act="micro_presence",
-            topic_seed="quiet_co_presence",
-            family="companionship:quiet_co_presence",
+            topic_seed=companionship_seed,
+            family=f"companionship:{_family_key(companionship_seed)}",
             base_score=0.025 + vital_pressure * 0.025,
             belief_support=max(0.0, beliefs.confidence("presence.silence_can_decay", 0.0) * 0.04 - ambient_copresence * 0.20 - status_ping_low_value * 0.32),
             need_pressure=social_presence_need * 0.10 + needs.continuity_need * 0.08 + requested_presence * 0.02 + vital_speech_bonus * 0.24,
@@ -371,10 +397,10 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
             trait_bias=traits.bias_for("companionship_impulse"),
             affordance_allowance=0.02 if aff.body_only_allowed and has_scene_or_internal_context else -0.04,
             risk=aff.intrusive_question_risk * 0.12 + needs.rest_need * 0.18 + micro_presence_demote + empty_context_presence_penalty + max(0.0, status_ping_low_value * 0.26 - vital_pressure * 0.05),
-            repetition_penalty=habits.repetition_penalty(action="micro_presence", family="companionship:quiet_co_presence"),
-            habit_bias=habits.semantic_bias(action="micro_presence", impulse_name="companionship_impulse", family="companionship:quiet_co_presence"),
+            repetition_penalty=habits.repetition_penalty(action="micro_presence", family=f"companionship:{_family_key(companionship_seed)}"),
+            habit_bias=habits.semantic_bias(action="micro_presence", impulse_name="companionship_impulse", family=f"companionship:{_family_key(companionship_seed)}"),
             metabolic_adjustment=max(0.0, vital_speech_bonus * 0.18 - empty_context_presence_penalty * 0.35),
-            evidence=("need.relation", "need.continuity", f"metabolic.vital={vital_pressure:.2f}", f"belief.status_ping_low_value={status_ping_low_value:.2f}", "low_claim_presence"),
+            evidence=("need.relation", "need.continuity", f"metabolic.vital={vital_pressure:.2f}", f"belief.status_ping_low_value={status_ping_low_value:.2f}", "conversation_seed" if conversation_seed else "low_claim_presence"),
             reason="Co-presence ping is strongly demoted by the belief that empty status pings have low value.",
         )
     )
@@ -382,8 +408,9 @@ def build_default_impulse_candidates(stack: AgentStateStack, *, thought_surface:
     # 5b. Continuity presence: nói vì prediction-error của hiện diện, không vì timer.
     # Đây là đường thay thế "long_silence -> force_llm". Im lặng chỉ là amplifier;
     # động cơ thật phải là fading_presence + open loop + quan hệ đủ trọng lượng.
-    continuity_family = "continuity_presence:" + _family_key(rooted_topic or scene_anchor or "fading_presence")
-    continuity_seed = rooted_topic or scene_anchor or "fading_presence"
+    # FIX #4: Sử dụng conversation_seed để liên kết với hội thoại gần đây.
+    continuity_seed = conversation_seed or rooted_topic or scene_anchor or "fading_presence"
+    continuity_family = f"continuity_presence:{_family_key(continuity_seed)}"
     candidates.append(
         ImpulseCandidate(
             name="continuity_presence_impulse",

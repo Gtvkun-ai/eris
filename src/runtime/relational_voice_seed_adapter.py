@@ -288,6 +288,16 @@ def derive_direction(act: RelationalAct) -> str:
     return _DIRECTION_BY_ACT.get(act, _DIRECTION_BY_ACT[RelationalAct.NONE])
 
 
+# Regex to strip prompt-framing echoes that the style model occasionally parrots back.
+# Matches prefixes like:  * User's turn: "anh yêu em" (translation)
+#                          * User's input: "text" (A blunt...)
+_ECHO_PREFIX_RE = re.compile(
+    r"^\*?\s*[Uu]ser[\u2019\u2018''`]?s?\s*(?:turn|input|said|message)\s*[:：]"
+    r"\s*(?:[\u201c\u201d\"'][^\u201d\"']*[\u201d\"'])?\s*(?:\([^)]*\))?\s*",
+    re.IGNORECASE,
+)
+
+
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
@@ -483,6 +493,9 @@ class RelationalVoiceSeedAdapter:
             bits.append(f"Relational shape: {stance.act.value} — {derive_direction(stance.act)}")
         if stance.appraisal_context:
             bits.append(f"Appraisal: {stance.appraisal_context[:400]}")
+        # FIX #1: Bơm conversation_prompt_context vào seed-user-prompt để không mù lịch sử.
+        if stance.conversation_prompt_context:
+            bits.append(stance.conversation_prompt_context[:800])
         bits.append("Write ERIS's short opening fragment now.")
         return "\n".join(bits)
 
@@ -491,6 +504,9 @@ class RelationalVoiceSeedAdapter:
         direction = derive_direction(stance.act)
         if direction:
             parts.append(f"Continuation direction: {direction}")
+        # FIX #1: Bơm conversation_prompt_context vào continuer system prompt.
+        if stance.conversation_prompt_context:
+            parts.append(stance.conversation_prompt_context[:800])
         parts.append(
             "You are continuing a line ERIS already began. Add exactly ONE short clause that flows "
             "naturally from the opening. Never restart, never introduce yourself, never use "
@@ -532,6 +548,8 @@ class RelationalVoiceSeedAdapter:
         # Drop wrapping quotes and any accidental JSON braces.
         text = text.strip().strip('"').strip("'").strip()
         text = text.splitlines()[0].strip() if text else ""
+        # Strip any echo of the prompt framing the model parroted back.
+        text = _ECHO_PREFIX_RE.sub("", text).strip().strip('"').strip("'").strip()
         return re.sub(r"\s+", " ", text)
 
     def _first_clause(self, text: str) -> str:
