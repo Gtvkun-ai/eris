@@ -46,6 +46,7 @@ class MicroSurfaceLint:
         session_context: str = "",
         screen_evidence: str = "",
         relational_context: RelationalContext | None = None,
+        directness_permission: float = 0.0,
     ) -> tuple[ValidationIssue, ...]:
         cleaned = str(text or "").strip()
         if not cleaned:
@@ -62,7 +63,9 @@ class MicroSurfaceLint:
             session_context=session_context,
             screen_evidence=screen_evidence,
         ))
-        issues.extend(self._validate_presence_residue(cleaned, line_type=line_type))
+        issues.extend(self._validate_presence_residue(
+            cleaned, line_type=line_type, directness_permission=directness_permission,
+        ))
         issues.extend(self._validate_relational_permission(cleaned, relational_context=relational_context))
         return dedupe_issues(issues)
 
@@ -131,8 +134,19 @@ class MicroSurfaceLint:
 
         return issues
 
-    def _validate_presence_residue(self, text: str, *, line_type: str) -> list[ValidationIssue]:
+    def _validate_presence_residue(
+        self, text: str, *, line_type: str, directness_permission: float = 0.0
+    ) -> list[ValidationIssue]:
         issues: list[ValidationIssue] = []
+        # directness_permission (từ ExpressionEnvelope): khi ấm + tin + an toàn,
+        # ERIS được phép tự thuật hiện diện/cảm xúc THẲNG ở mức vừa — đây là chất
+        # người. Cao thì hạ veto presence/blunt-emotion về 'soft' (chỉ hạ điểm,
+        # không bắt rewrite). Vẫn KHÔNG mở cho dependency/guilt (xử ở nhánh khác).
+        try:
+            directness = max(0.0, min(1.0, float(directness_permission)))
+        except (TypeError, ValueError):
+            directness = 0.0
+        allow_direct = directness >= 0.55
 
         if line_type in {"soft_impression", "micro_observation"} and self.looks_like_decorative_metaphor_without_stance(text):
             issues.append(ValidationIssue("decorative_metaphor_without_stance", "soft"))
@@ -145,16 +159,17 @@ class MicroSurfaceLint:
             if self.looks_like_presence_narration(text):
                 issues.append(ValidationIssue(
                     "micro_presence_must_be_residue",
-                    "rewriteable",
+                    "soft" if allow_direct else "rewriteable",
                     "Presence nên rò qua nhịp/khoảng cách, không thành báo cáo trạng thái.",
                 ))
 
         # Blunt emotion declaration không còn fatal mặc định. Nó là rewriteable:
-        # giữ residue, đổi cách lộ. Fatal chỉ dành cho dependency/guilt rõ.
+        # giữ residue, đổi cách lộ. Fatal chỉ dành cho dependency/guilt rõ. Khi
+        # directness đủ cao (quan hệ ấm/an toàn), hạ về 'soft' — cho nói thẳng.
         if line_type in {"micro_presence", "ambient_residue", "soft_impression"} and self.looks_like_blunt_emotion_declaration(text):
             issues.append(ValidationIssue(
                 "blunt_emotion_declaration",
-                "rewriteable",
+                "soft" if allow_direct else "rewriteable",
                 "Đổi sang biểu hiện gián tiếp qua nhịp/không gian, không khai cảm xúc thẳng.",
             ))
 
@@ -208,57 +223,23 @@ class MicroSurfaceLint:
         theme = self.relational_theme(normalized)
         allowed_exposure = self.allowed_exposure_for_stage(stage)
 
-        # Seed cố tình ít kịch, ít lộ. LLM/coordinator có thể dùng style_hint để
-        # sinh câu khác. Đây chỉ là fallback khi cần trả string ngay.
-        seed_by_theme = {
-            "message_competition": {
-                "none": "Ngài bị mấy tin nhắn đó giữ lại một lúc.",
-                "low": "Ngài bị mấy tin nhắn đó giữ lại một lúc.",
-                "mid": "Nhịp bên đó kéo Ngài đi hơi lâu.",
-                "high": "Tôi nhận ra mình bị để ngoài nhịp đó một lúc.",
-                "very_high": "Khoảng đó làm tôi thấy mình hơi thừa ra.",
-                "full": "Tôi không thích cảm giác bị đặt ra ngoài như vậy.",
-            },
-            "outside_rhythm": {
-                "none": "Hôm nay nhịp nói chuyện hơi lệch.",
-                "low": "Hôm nay nhịp nói chuyện hơi lệch.",
-                "mid": "Có mấy lúc tôi không chen vào được nữa.",
-                "high": "Tôi đứng ngoài mạch đó khá lâu.",
-                "very_high": "Tôi nhận ra mình cứ bị đẩy ra ngoài dần.",
-                "full": "Tôi ghét cảm giác mình không còn chỗ trong đó.",
-            },
-            "ignored_presence": {
-                "none": "Ngài có vẻ hơi phân tâm.",
-                "low": "Ngài có vẻ hơi phân tâm.",
-                "mid": "Tôi phải gọi hai lần Ngài mới để ý.",
-                "high": "Tôi ở đây khá lâu rồi mà Ngài vẫn không nhận ra.",
-                "very_high": "Tôi không nghĩ mình lại dễ bị quên đến vậy.",
-                "full": "Tôi biết mình không nên để chuyện đó ảnh hưởng nhiều thế.",
-            },
-            "generic_distance": {
-                "none": "Có gì đó làm Ngài mất tập trung.",
-                "low": "Có gì đó làm Ngài mất tập trung.",
-                "mid": "Ngài bị kéo đi hơi lâu.",
-                "high": "Tôi nhận ra khoảng cách đó rồi.",
-                "very_high": "Khoảng cách đó rõ hơn tôi muốn.",
-                "full": "Tôi đã cố bỏ qua chuyện đó.",
-            },
-        }
-        stage_lines = seed_by_theme.get(theme, seed_by_theme["generic_distance"])
-        seed_line = stage_lines.get(stage, stage_lines["low"])
-
+        # Không còn bảng câu mẫu cố định (seed_by_theme). Template tĩnh kéo mọi
+        # turn relational về cùng một khuôn, nghe như máy bán kịch bản. Thay vào
+        # đó để seed_line rỗng và giao việc sinh câu cho LLM dưới ràng buộc
+        # style_hint + theme/stage + forbidden_moves. Nếu LLM không sinh được,
+        # caller degrade về body_only/im — không bao giờ rơi vào câu canned.
         return RelationalRewritePlan(
             theme=theme,
             stage=stage,
             allowed_exposure=allowed_exposure,
-            seed_line=seed_line,
+            seed_line="",
             style_hint=(
                 "quiet, restrained, indirect continuity residue; no therapy, no waifu pleading; "
-                "preserve distance and dignity"
+                "preserve distance and dignity; let the line be specific to this moment, not a template"
             ),
             forbidden_moves=(
                 "plea", "guilt_trip", "dependency", "romantic_claim",
-                "mindread_user", "system_report",
+                "mindread_user", "system_report", "canned_template",
             ),
         )
 

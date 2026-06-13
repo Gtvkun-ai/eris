@@ -146,8 +146,42 @@ class TextRepeatGuardMixin:
         family = self._force_speak_banned_family_for_text(text)
         if not family:
             return ""
+        recent = self._recent_spoken_texts(limit=FORCE_SPEAK_RECENT_FAMILY_WINDOW)
         recent_families = {
             self._force_speak_banned_family_for_text(recent_text)
-            for recent_text in self._recent_spoken_texts(limit=FORCE_SPEAK_RECENT_FAMILY_WINDOW)
+            for recent_text in recent
         }
-        return family if family in recent_families else ""
+        if family not in recent_families:
+            return ""
+        # Layer 7 (veto → penalty): family lặp KHÔNG còn là veto cứng. Nếu câu
+        # hiện tại đủ TƯƠI MỚI về nghĩa so với các câu vừa nói (novelty cao), thì
+        # đây là một biến thể sống động trong cùng họ, không phải lặp đơn điệu —
+        # cho phép. Điều này chỉ nới (không bao giờ chặn thêm), giúp ERIS bớt đơ.
+        if self._force_speak_line_is_novel(text, recent):
+            return ""
+        return family
+
+    def _force_speak_line_is_novel(self, text: str, recent: tuple[str, ...]) -> bool:
+        guard = self._get_novelty_guard()
+        if guard is None:
+            return False
+        try:
+            # So với câu gần đây thật sự ĐÃ NÓI (không nạp banned seed, vì ở đây
+            # ta đang đo độ lặp với chính mình, không phải với kho filler tĩnh).
+            score = guard.novelty_score(text, recent_lines=tuple(recent), include_banned_seed=False)
+        except Exception:
+            return False
+        return score >= 0.62
+
+    def _get_novelty_guard(self):
+        guard = getattr(self, "_novelty_guard_cache", None)
+        if guard is not None:
+            return guard
+        try:
+            from cortex.micro_repeat_guard import SemanticRepeatGuard
+
+            guard = SemanticRepeatGuard()
+        except Exception:
+            guard = None
+        self._novelty_guard_cache = guard
+        return guard

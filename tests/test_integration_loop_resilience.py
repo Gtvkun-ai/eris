@@ -41,6 +41,8 @@ from cortex.private_mind import (
     MiniEvaluatorPipeline,
     StateMutationBus,
     SurfaceValve,
+    ThoughtContinuityStore,
+    UserModelStore,
 )
 from cortex.private_mind.contracts import EvidenceDossier
 
@@ -143,6 +145,14 @@ def _make_loop(adapter) -> PrivateMindLoop:
     mutation_bus = StateMutationBus()
     surface_valve = SurfaceValve()
 
+    # Cô lập MỌI persistence khỏi đĩa thật: nếu không, loop dùng
+    # ThoughtContinuityStore.from_env() (ghi/đọc memory_core/thought_stream.jsonl)
+    # và UserModelStore mặc định -> (1) test flaky vì số fragment self_followup phụ
+    # thuộc state cũ trên đĩa, (2) test làm BẨN memory_core/ thật bằng dữ liệu test,
+    # (3) I/O đĩa làm tick chậm. path=None => hoàn toàn in-memory.
+    continuity_store = ThoughtContinuityStore(path=None)
+    user_model_store = UserModelStore(path=None)
+
     loop = PrivateMindLoop(
         config=config,
         concern_store=concern_store,
@@ -151,6 +161,8 @@ def _make_loop(adapter) -> PrivateMindLoop:
         synthesizer=synthesizer,
         mutation_bus=mutation_bus,
         surface_valve=surface_valve,
+        continuity_store=continuity_store,
+        user_model_store=user_model_store,
         model_adapter=adapter,
         logger=None,
     )
@@ -220,11 +232,15 @@ class TestLoopNocrashWith503:
             "Với config.enabled=True và force=True, tick() phải trả PrivateMindTickResult."
         )
 
-    def test_tick_produces_fragments_via_rule_fallback(self):
+    def test_tick_does_not_fabricate_fragments_when_api_fails(self):
         """
         **Validates: Requirements 3.5**
 
-        Khi model adapter fail, rule fallback của các mini-evaluator vẫn tạo fragments.
+        Thiết kế hiện tại của MiniEvaluatorPipeline KHÔNG có rule fallback
+        (xem docstring cortex/private_mind/mini_evaluators.py): khi mọi mini-evaluator
+        gọi API thất bại (503), tick đó không có fragment nào — pipeline KHÔNG bịa
+        fragment bằng rule. Resilience do pool key dự phòng + cooldown lo, không phải
+        bằng cách bịa nội tâm. Loop vẫn phải sống (trả result, không raise).
         """
         fake = FakeClientAlways503()
         adapter = _make_adapter_with_client(fake)
@@ -233,10 +249,10 @@ class TestLoopNocrashWith503:
         result = _tick(loop)
 
         assert result is not None
-        # Rule fallback phải tạo ít nhất 1 fragment
-        assert len(result.fragments) > 0, (
-            f"tick() không tạo fragment nào qua rule fallback khi adapter fail (503). "
-            f"MiniEvaluatorPipeline phải dùng rule fallback để vẫn tạo ThoughtFragment."
+        # Không có rule fallback => không fragment nào được bịa ra khi API chết.
+        assert len(result.fragments) == 0, (
+            f"tick() bịa {len(result.fragments)} fragment khi adapter fail (503). "
+            f"Theo thiết kế no-fallback, API chết phải cho 0 fragment, không fabricate."
         )
 
     def test_tick_last_error_set_after_503(self):

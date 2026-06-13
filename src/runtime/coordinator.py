@@ -26,6 +26,7 @@ from cortex.attention_salience import AttentionSalienceEngine
 from cortex.background_observer import BackgroundObserver, BackgroundObserverConfig
 from cortex.daydream_consolidation import DaydreamConsolidator, DaydreamPacket
 from cortex.endogenous_drive import EndogenousDriveEngine, RollingInternalState
+from cortex.epistemic import EpistemicAgentMindProjection, EpistemicKernel, EpistemicKernelConfig, EpistemicStore, archive_v1_cognition, set_default_kernel
 from cortex.internal_agenda import InternalAgendaStack
 from cortex.observer_contracts import ObserverFrame, SemanticSceneNote, SignalSnapshot, stable_hash
 from cortex.appraisal import AppraisalEngine
@@ -369,6 +370,28 @@ class RuntimeCoordinator(
         self.internal_state_engine = InternalStateEngine()
         self.inner_thought_engine = InnerThoughtEngine()
         self.outcome_observer = OutcomeObserver()
+        epistemic_enabled = str(os.getenv("ERIS_EPISTEMIC_V2_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
+        if epistemic_enabled:
+            epistemic_mode = str(os.getenv("ERIS_EPISTEMIC_V2_MODE", "authoritative") or "authoritative").strip().lower()
+            shadow_mode = epistemic_mode == "shadow"
+            if not os.getenv("PYTEST_CURRENT_TEST"):
+                try:
+                    archive_v1_cognition("memory_core")
+                except Exception as exc:
+                    self.logger.warning("Could not archive V1 cognition state: %s", exc)
+            epistemic_path = ":memory:" if os.getenv("PYTEST_CURRENT_TEST") else None
+            self.epistemic_kernel = EpistemicKernel(
+                EpistemicStore(path=epistemic_path, mode=epistemic_mode),
+                config=EpistemicKernelConfig(shadow_mode=shadow_mode),
+                logger=self.logger,
+            )
+            set_default_kernel(self.epistemic_kernel)
+            self.epistemic_agent_mind = EpistemicAgentMindProjection(self.epistemic_kernel)
+            self.logger.info("Epistemic V2 ready in %s mode; cognitive state writes use V2.", self.epistemic_kernel.store.mode)
+        else:
+            self.epistemic_kernel = None
+            self.epistemic_agent_mind = None
+            set_default_kernel(None)
         self.self_observer = SelfObservationEngine()
         self.self_model_engine = SelfModelEngine()
         self.session_ritual_engine = SessionRitualEngine()
@@ -412,6 +435,7 @@ class RuntimeCoordinator(
             daydream=self.daydream_consolidator,
             budget_policy=self.model_budget_policy,
             wake_governor=self.wake_governor,
+            agent_mind=self.epistemic_agent_mind,
             logger=self.logger,
         )
         self.last_signal_snapshot: SignalSnapshot | None = None
@@ -486,6 +510,7 @@ class RuntimeCoordinator(
         self.autonomous_presence_blocked_until = 0.0
         self.presence_maintenance_silent_cycles = 0
         self.last_presence_maintenance_at = 0.0
+        self.last_ambient_body_only_at = 0.0
         #Các hàm _load... đọc config/env.
         '''
         khi nào ERIS được tự nói để duy trì hiện diện,
@@ -2815,7 +2840,7 @@ class RuntimeCoordinator(
             self_state=frame.self_state,
             meaning_layer=getattr(frame, "meaning_layer", None),
             personality_lens=getattr(frame, "personality_lens", None),
-            agent_mind=getattr(getattr(self, "memory_core", None), "agent_mind", None),
+            agent_mind=getattr(self, "epistemic_agent_mind", None) or getattr(getattr(self, "memory_core", None), "agent_mind", None),
             private_mind_speech_bias=getattr(self, "private_mind_speech_bias", None),
             conversation_context=conversation_context,
             safe_small_talk_allowed=self._safe_small_talk_budget_allowed(
@@ -3642,17 +3667,21 @@ class RuntimeCoordinator(
             except Exception as exc:
                 self.logger.warning("[session_ritual] LLM greeting failed: %s", exc)
                 greeting_source = "fallback_after_llm_error"
+                # Bỏ câu chào canned "Ngài quay lại rồi." — degrade về IM thay vì
+                # template cố định mỗi lần khởi động.
                 decision = Decision(
-                    text="Ngài quay lại rồi.",
+                    text="",
                     animation="stand",
-                    debug_trace="session_ritual_layer",
+                    should_speak=False,
+                    debug_trace="session_ritual_layer; fallback=silent_no_template",
                 )
             if not decision.text.strip():
                 greeting_source = "fallback_after_empty_llm"
                 decision = Decision(
-                    text="Ngài quay lại rồi.",
+                    text="",
                     animation="stand",
-                    debug_trace="session_ritual_layer",
+                    should_speak=False,
+                    debug_trace="session_ritual_layer; fallback=silent_no_template",
                 )
             if decision.text.strip():
                 decision.intent = decision.intent or "session_ritual"
@@ -6921,12 +6950,22 @@ class RuntimeCoordinator(
                     cycle_start=cycle_start,
                 ):
                     return True
+            cooldown = self._ambient_silence_cooldown_seconds(snapshot, ti_report)
+            if self._maybe_emit_ambient_body_only(
+                frame=frame,
+                snapshot=snapshot,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                speech_intent=speech_intent.intent,
+                cooldown=cooldown,
+                cycle_start=cycle_start,
+            ):
+                return True
             elapsed = time.time() - cycle_start
             sleep_duration = self._choose_autonomous_sleep_duration(
                 suppressed=True,
                 ti_mode=ti_report.mode,
             )
-            cooldown = self._ambient_silence_cooldown_seconds(snapshot, ti_report)
             self._set_cognitive_action_plan(
                 frame,
                 should_speak=False,

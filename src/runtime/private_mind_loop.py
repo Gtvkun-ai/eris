@@ -115,6 +115,15 @@ class PrivateMindLoop:
         if not config.enabled:
             return None
         model_adapter = PrivateMindAdapterPool.from_env(llm_service=llm_service, logger=logger)
+        kernel = getattr(runtime_owner, "epistemic_kernel", None)
+        if kernel is not None and getattr(kernel, "authoritative", False):
+            from cortex.epistemic import EpistemicUserModelProjection
+            return cls(
+                config=config,
+                model_adapter=model_adapter,
+                user_model_store=EpistemicUserModelProjection(kernel),
+                logger=logger,
+            )
         return cls(config=config, model_adapter=model_adapter, logger=logger)
 
     def tick(
@@ -144,6 +153,12 @@ class PrivateMindLoop:
         self.last_tick_at = now
         self._capture_affect(runtime_owner)
         api_status = self._model_api_status()
+        epistemic_kernel = getattr(runtime_owner, "epistemic_kernel", None) if runtime_owner is not None else None
+        user_model_snapshot = (
+            epistemic_kernel.user_model_snapshot()
+            if epistemic_kernel is not None
+            else self.user_model_store.snapshot_for_dossier()
+        )
         dossier = self.dossier_builder.build(
             user_text=user_text,
             channel=channel,
@@ -159,7 +174,7 @@ class PrivateMindLoop:
             surface_candidate_queue=surface_candidate_queue or (),
             runtime_owner=runtime_owner,
             surface_outcome=surface_outcome,
-            user_model_snapshot=self.user_model_store.snapshot_for_dossier(),
+            user_model_snapshot=user_model_snapshot,
             metadata={
                 "private_mind_tick_at": now,
                 "api_degraded": bool(api_status.get("api_degraded", False)),
@@ -184,9 +199,14 @@ class PrivateMindLoop:
         # Giữ tách bạch lifecycle theo QĐ-2: chân dung Ngài không trộn với bận tâm task.
         user_fragments = tuple(f for f in fragments if f.source == USER_MODEL_EVALUATOR_NAME)
         other_fragments = tuple(f for f in fragments if f.source != USER_MODEL_EVALUATOR_NAME)
-        if user_fragments:
+        if epistemic_kernel is not None:
+            # V2 is the only writable user-belief authority. Private prose is
+            # retained as a non-storable hypothesis, never as self-evidence.
+            epistemic_kernel.ingest_private_hypotheses(fragments)
+        elif user_fragments:
             self.user_model_store.update_from_fragments(user_fragments)
-        self.user_model_store.decay(now=now)
+        if epistemic_kernel is None:
+            self.user_model_store.decay(now=now)
         concerns = self.concern_store.update_from_fragments(other_fragments)
 
         # Trục neo hiện sinh: cập nhật ý nghĩa/gắn bó/bóng tối từ tín hiệu tick.

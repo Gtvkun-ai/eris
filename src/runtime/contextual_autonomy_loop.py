@@ -87,6 +87,7 @@ class ContextualAutonomyLoop:
         daydream: DaydreamConsolidator | None = None,
         budget_policy: ModelBudgetPolicy | None = None,
         wake_governor: AutonomousWakeGovernor | None = None,
+        agent_mind: Any = None,
         config: ContextualAutonomyLoopConfig | None = None,
         logger: Any = None,
     ) -> None:
@@ -96,6 +97,7 @@ class ContextualAutonomyLoop:
         self.daydream = daydream or DaydreamConsolidator()
         self.budget_policy = budget_policy or ModelBudgetPolicy()
         self.wake_governor = wake_governor or AutonomousWakeGovernor()
+        self.agent_mind = agent_mind
         self.config = config or ContextualAutonomyLoopConfig()
         self.logger = logger
         self.last_tick: AutonomyLoopTickResult | None = None
@@ -200,7 +202,7 @@ class ContextualAutonomyLoop:
             from cortex.growth_consolidator import GrowthConsolidator
             from cortex.growth_evidence import observations_from_feedback
 
-            store = get_default_agent_mind_store()
+            store = self.agent_mind or get_default_agent_mind_store()
             store.reload_if_changed()
             observations, allowed = observations_from_feedback(store.last_feedback_events)
             if not observations:

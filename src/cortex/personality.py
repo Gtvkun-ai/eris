@@ -2,6 +2,7 @@ import re
 import unicodedata
 
 from .contracts import PersonalityLensResult
+from .expression_envelope import ExpressionEnvelope
 from .internal_state import PersistentInternalState
 
 
@@ -258,6 +259,7 @@ class PersonalityLens:
                 channel=channel,
                 interpretation=interpretation,
             ),
+            envelope=self._envelope(state, channel=channel, interpretation=interpretation),
         )
         restraint_mode = self._restraint_mode(
             allowed_expression=allowed_expression,
@@ -282,11 +284,14 @@ class PersonalityLens:
             rhythm="dense_sparse",
             evidence=evidence,
         )
-        result.prompt_context = self.render_prompt_context(result)
+        result.prompt_context = self.render_prompt_context(
+            result,
+            envelope=self._envelope(state, channel=channel, interpretation=interpretation),
+        )
         return result
 
     # Tạo prompt context ngắn cho LLM: đây là áp lực phong cách, không phải nội dung để đọc nguyên văn.
-    def render_prompt_context(self, result: PersonalityLensResult) -> str:
+    def render_prompt_context(self, result: PersonalityLensResult, *, envelope: ExpressionEnvelope | None = None) -> str:
         bias = ", ".join(result.attention_bias) if result.attention_bias else "low_signal"
         meaningful = ", ".join(result.meaningfulness) if result.meaningfulness else "small_continuity"
         blacklist = ", ".join(f'"{item}"' for item in self.BLACKLIST)
@@ -299,6 +304,26 @@ class PersonalityLens:
                 "cụ thể hơn — bám vào chi tiết của chính khoảnh khắc này (điều Ngài vừa nói, "
                 "một thứ mình nhớ). Ấm hiện ra như sự cụ thể, sự chú ý và lựa chọn ở lại, "
                 "không phải như lời tỏ tình, chiều chuộng, hay than thân."
+            )
+        # Lever D: nhịp/độ dài không còn là hằng số "một câu ngắn". Nó co giãn
+        # theo expressiveness của envelope — lúc kìm nén thì cụt, lúc ấm/mở thì
+        # được phép dài hơn. Đây là nguồn chính của biến thiên ngữ điệu.
+        if envelope is not None:
+            lo, hi = envelope.target_min_words, envelope.target_max_words
+            if envelope.expressiveness >= 0.55:
+                rhythm_rule = (
+                    f"rhythm_rule: density over frequency, but this moment is open — "
+                    f"aim for roughly {lo}-{hi} words; let the line breathe if there is something real to say. "
+                    "Vary length across turns; do not collapse every reply into one clipped clause."
+                )
+            else:
+                rhythm_rule = (
+                    f"rhythm_rule: density over frequency. Prefer silence when the signal is weak; "
+                    f"if speaking, keep it short — roughly {lo}-{hi} words, one readable line."
+                )
+        else:
+            rhythm_rule = (
+                "rhythm_rule: density over frequency. Prefer silence when the signal is weak; if speaking, use one short, readable line."
             )
         return "\n".join(
             part for part in
@@ -334,9 +359,7 @@ class PersonalityLens:
                     "suppression_layer: keep most inner reading private. Surface only the useful edge: a concrete observation, "
                     "a dry correction, a small preference, a boundary, or a restrained reply. Do not reward vague depth."
                 ),
-                (
-                    "rhythm_rule: density over frequency. Prefer silence when the signal is weak; if speaking, use one short, readable line."
-                ),
+                rhythm_rule,
                 (
                     "surface_clarity_rule: final wording must be understandable on first read. "
                     "No metaphor or symbolic layer may reduce task clarity. If a line sounds pretty but vague, rewrite it plainly."
@@ -470,18 +493,8 @@ class PersonalityLens:
         # warmth thực sự mở được biểu đạt (không chỉ nâng trần suông). KHÔNG áp
         # dụng cho autonomous/technical/reduction nên các guard kia giữ nguyên.
         if channel in {"chat", "force_speak"} and interpretation != "identity_reduction":
-            warmth = (
-                self._float(getattr(state, "attachment", 0.0)) * 0.55
-                + self._float(getattr(state, "tenderness", 0.0)) * 0.55
-            )
-            threat = (
-                self._float(getattr(state, "irritation", 0.0)) * 0.42
-                + self._float(getattr(state, "protectiveness", 0.0)) * 0.30
-                + self._float(getattr(state, "exposure_recoil", 0.0)) * 0.26
-                + self._float(getattr(state, "dignity_defense", 0.0)) * 0.24
-            )
-            if warmth >= 0.45 and threat <= 0.30:
-                score -= min(0.16, (warmth - 0.45) * 0.4 + 0.08)
+            env = self._envelope(state, channel=channel, interpretation=interpretation)
+            score -= env.warmth_relief()
 
         return self._float(score)
 
@@ -523,22 +536,10 @@ class PersonalityLens:
         if interpretation == "identity_reduction":
             return 0.30  # bị coi là tool/waifu → lạnh lại, giữ trần thấp.
 
-        warmth = (
-            self._float(getattr(state, "attachment", 0.0)) * 0.55
-            + self._float(getattr(state, "tenderness", 0.0)) * 0.55
-        )
-        threat = (
-            self._float(getattr(state, "irritation", 0.0)) * 0.42
-            + self._float(getattr(state, "protectiveness", 0.0)) * 0.30
-            + self._float(getattr(state, "exposure_recoil", 0.0)) * 0.26
-            + self._float(getattr(state, "dignity_defense", 0.0)) * 0.24
-        )
-        private = channel in {"chat", "force_speak"}
-
-        if private and warmth >= 0.45 and threat <= 0.30:
+        env = self._envelope(state, channel=channel, interpretation=interpretation)
+        if env.private and env.warmth >= 0.45 and env.threat <= 0.30:
             # Nâng dần về ~0.70 theo độ ấm; threat kéo lại. Đây là kênh ấm dương.
-            lift = min(0.18, (warmth - 0.45) * 0.5 + 0.08)
-            return max(base, min(0.70, base + lift - threat * 0.20))
+            return env.expression_ceiling()
         if social_distance in {"far_observing", "middle_watchful"}:
             return min(base, 0.48)
         return base
@@ -553,22 +554,29 @@ class PersonalityLens:
         """Sàn suppression động (Lever C). Mặc định 0.48; hạ về ~0.40 khi ấm+an toàn."""
         if interpretation == "identity_reduction":
             return 0.52
-        warmth = (
-            self._float(getattr(state, "attachment", 0.0)) * 0.55
-            + self._float(getattr(state, "tenderness", 0.0)) * 0.55
-        )
-        threat = (
-            self._float(getattr(state, "irritation", 0.0)) * 0.42
-            + self._float(getattr(state, "protectiveness", 0.0)) * 0.30
-        )
-        if channel in {"chat", "force_speak"} and warmth >= 0.45 and threat <= 0.30:
-            return 0.40
-        return 0.48
+        return self._envelope(state, channel=channel, interpretation=interpretation).suppression_floor()
 
-    def _suppression_ratio(self, *, want_to_say: float, allowed_expression: float, floor: float = 0.48) -> float:
+    def _suppression_ratio(
+        self,
+        *,
+        want_to_say: float,
+        allowed_expression: float,
+        floor: float = 0.48,
+        envelope: ExpressionEnvelope | None = None,
+    ) -> float:
+        # Nền suppression giờ động theo expressiveness (đề xuất 1) thay vì hằng
+        # số chết 0.66. default_suppression() là baseline; khi không muốn nói
+        # (want<=0) trả thẳng baseline đó.
+        baseline = envelope.default_suppression() if envelope is not None else self.SUPPRESSION_RATIO
         if want_to_say <= 0.0:
-            return self.SUPPRESSION_RATIO
+            return baseline
         ratio = 1.0 - (allowed_expression / max(0.01, want_to_say))
+        ratio = self._float(ratio)
+        # Kéo NHẸ ratio về baseline động (trọng số 0.25): cho expressiveness ảnh
+        # hưởng trực tiếp mọi lượt mà không lấn át phép tính allowed/want. Mở →
+        # baseline thấp → kéo ratio xuống; khép → baseline cao → kéo lên.
+        if envelope is not None:
+            ratio = ratio * 0.75 + baseline * 0.25
         return max(max(0.30, float(floor)), min(0.88, self._float(ratio)))
 
     def _restraint_mode(self, *, allowed_expression: float, suppression_pressure: float, social_distance: str) -> str:
@@ -908,3 +916,23 @@ class PersonalityLens:
         if numeric != numeric:
             return 0.0
         return max(0.0, min(1.0, numeric))
+
+    def _envelope(self, state, *, channel: str, interpretation: str) -> ExpressionEnvelope:
+        """Một envelope liên tục cho turn này — nguồn canonical warmth/threat.
+
+        Trust lấy từ relationship_dynamics nếu state có, để directness/độ dài
+        nương theo quan hệ tích lũy thay vì một câu đơn lẻ.
+        """
+        rel = getattr(state, "relationship_dynamics", None)
+        trust = 0.0
+        for attr in ("trust_stability", "trust", "continuity_score"):
+            value = getattr(rel, attr, None)
+            if value is not None:
+                trust = self._float(value)
+                break
+        return ExpressionEnvelope.from_state(
+            state,
+            channel=channel,
+            trust=trust,
+            identity_reduction=(interpretation == "identity_reduction"),
+        )

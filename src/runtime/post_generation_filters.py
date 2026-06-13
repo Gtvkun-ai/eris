@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from dataclasses import replace
@@ -357,7 +358,11 @@ class PostGenerationFiltersMixin:
             except Exception:
                 pass
 
-            store = getattr(getattr(self, "memory_core", None), "agent_mind", None) or get_default_agent_mind_store()
+            store = (
+                getattr(self, "epistemic_agent_mind", None)
+                or getattr(getattr(self, "memory_core", None), "agent_mind", None)
+                or get_default_agent_mind_store()
+            )
             markers = store.record_user_feedback(
                 user_text,
                 action_plan=action_plan,
@@ -514,7 +519,8 @@ class PostGenerationFiltersMixin:
             user_text=user_text,
             allow_reroll=allow_reroll,
         )
-        return self._apply_chat_grounding_guard(decision, user_text=user_text, frame=frame, allow_reroll=allow_reroll)
+        decision = self._apply_chat_grounding_guard(decision, user_text=user_text, frame=frame, allow_reroll=allow_reroll)
+        return self._apply_novelty_advisory(decision, channel="chat")
 
     def _append_trace(self, trace: str, marker: str) -> str:
         trace = str(trace or "").strip()
@@ -561,23 +567,28 @@ class PostGenerationFiltersMixin:
         return tuple(dict.fromkeys(hits))
 
     def _protocol_surface_repair_text(self) -> str:
-        return "Xin lỗi, câu vừa rồi bị lộ prompt nội bộ. Tôi bỏ phần đó và giữ câu trả lời ở dạng repair an toàn."
+        # Giữ method cho tương thích, nhưng không còn dùng làm câu nói canned.
+        return ""
 
     def _apply_protocol_surface_guard(self, decision: Decision) -> Decision:
         hits = self._detect_protocol_surface_leak(getattr(decision, "text", "") or "")
         if not hits:
             return decision
+        # Trước đây guard này nói một câu xin lỗi help-desk cố định ("Xin lỗi,
+        # câu vừa rồi bị lộ prompt nội bộ..."), nghe đúng kiểu trợ lý mà cả hệ
+        # thống đang tránh. Giờ chỉ CHẶN phần lộ và degrade về IM — không câu
+        # canned. Phần rò đơn giản không được nói ra ngoài.
         repaired = self._copy_decision_with_text(
             decision,
-            text=self._protocol_surface_repair_text(),
+            text="",
             trace_marker="protocol_surface_guard=" + ",".join(hits),
-            parse_mode="deterministic_repair",
+            parse_mode="surface_leak_blocked_silent",
         )
         repaired.intent = "repair_surface_leak"
         repaired.action = "none"
         repaired.system_action = ""
         repaired.action_input = ""
-        repaired.should_speak = True
+        repaired.should_speak = False
         try:
             repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.40)
         except Exception:
@@ -604,23 +615,26 @@ class PostGenerationFiltersMixin:
         return tuple(dict.fromkeys(hits))
 
     def _internal_object_surface_repair_text(self) -> str:
-        return "Tôi vừa chặn một mảnh dữ liệu nội bộ bị surface nhầm. Phần đó không đủ sạch để nói ra ngoài."
+        # Giữ method cho tương thích, không còn dùng làm câu nói canned.
+        return ""
 
     def _apply_internal_object_surface_guard(self, decision: Decision) -> Decision:
         hits = self._detect_internal_object_surface_leak(getattr(decision, "text", "") or "")
         if not hits:
             return decision
+        # Chặn mảnh dữ liệu nội bộ bị surface nhầm, nhưng KHÔNG nói câu xin lỗi
+        # cố định nữa — degrade về IM. Câu canned help-desk bị loại bỏ.
         repaired = self._copy_decision_with_text(
             decision,
-            text=self._internal_object_surface_repair_text(),
+            text="",
             trace_marker="internal_object_surface_guard=" + ",".join(hits),
-            parse_mode="deterministic_repair",
+            parse_mode="surface_leak_blocked_silent",
         )
         repaired.intent = "repair_surface_leak"
         repaired.action = "none"
         repaired.system_action = ""
         repaired.action_input = ""
-        repaired.should_speak = True
+        repaired.should_speak = False
         try:
             repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.35)
         except Exception:
@@ -1901,13 +1915,92 @@ class PostGenerationFiltersMixin:
             snapshot=snapshot,
             momentum_topic=momentum_topic,
         )
-        return self._apply_repetition_filter(
+        decision = self._apply_repetition_filter(
             decision,
             channel=channel,
             speech_core=speech_core,
             snapshot=snapshot,
             momentum_topic=momentum_topic,
         )
+        return self._apply_novelty_advisory(decision, channel=channel)
+        # NOTE: advisory cũng được gắn ở _apply_chat_final_guards cho nhánh chat,
+        # để cả hai cửa ra đều đi qua một cửa novelty chung.
+
+    def _apply_novelty_advisory(
+        self,
+        decision: Decision,
+        *,
+        channel: str = "",
+    ) -> Decision:
+        """Đề xuất 2: novelty ở cửa ra (post-generation), MẶC ĐỊNH chỉ-log.
+
+        Đo độ tươi mới ngữ nghĩa của câu cuối so với N câu ERIS vừa nói. Đây là
+        nơi bắt sự ĐƠN ĐIỆU mà các guard chuỗi-ký-tự bỏ sót, ngay tại điểm phát.
+
+        Chế độ qua env ``ERIS_NOVELTY_POSTGEN_MODE``:
+          - "log" (MẶC ĐỊNH): chỉ ghi novelty vào debug_trace, KHÔNG đổi decision.
+          - "enforce": nếu novelty < ngưỡng → hạ confidence + đánh dấu; nếu gần
+            như lặp y hệt (rất thấp) thì với kênh KHÔNG phải chat sẽ degrade về
+            body_only (im). Chat không bao giờ bị mute ở đây — câu hỏi trực tiếp
+            vẫn phải được trả lời; chỉ hạ confidence để vòng sau tự điều chỉnh.
+          - "off": tắt hẳn.
+
+        Hot path: chỉ chạy khi có câu nói thật; lỗi gì cũng nuốt, không raise.
+        """
+        mode = str(os.environ.get("ERIS_NOVELTY_POSTGEN_MODE", "log") or "log").strip().lower()
+        if mode == "off":
+            return decision
+        text = str(getattr(decision, "text", "") or "").strip()
+        if not text or not bool(getattr(decision, "should_speak", False)):
+            return decision
+
+        guard = None
+        get_guard = getattr(self, "_get_novelty_guard", None)
+        if callable(get_guard):
+            guard = get_guard()
+        if guard is None:
+            return decision
+
+        try:
+            recent = self._recent_spoken_texts(limit=6)
+        except Exception:
+            recent = ()
+        try:
+            score = guard.novelty_score(text, recent_lines=tuple(recent), include_banned_seed=True)
+        except Exception:
+            return decision
+
+        try:
+            threshold = float(os.environ.get("ERIS_NOVELTY_POSTGEN_THRESHOLD", "0.18") or 0.18)
+        except ValueError:
+            threshold = 0.18
+        threshold = max(0.0, min(0.9, threshold))
+
+        marker = f"novelty_postgen={score:.2f}/{threshold:.2f}/{mode}"
+
+        # Câu đủ tươi → để nguyên, KHÔNG annotate (giữ debug_trace sạch cho line
+        # bình thường; chỉ đánh dấu khi nghi ngờ đơn điệu).
+        if score >= threshold:
+            return decision
+
+        if mode != "enforce":
+            # Log-only: chỉ ghi cờ nghi-ngờ-lặp, không đụng decision.
+            return self._trace_only_guard(decision, marker)
+
+        # enforce + novelty thấp: hạ confidence, đánh dấu.
+        repaired = replace(decision)
+        repaired.debug_trace = self._append_trace(getattr(repaired, "debug_trace", ""), marker + "; stale_penalty")
+        try:
+            repaired.confidence = min(float(getattr(repaired, "confidence", 0.5) or 0.5), 0.40)
+        except Exception:
+            repaired.confidence = 0.40
+        # Gần như lặp y hệt + KHÔNG phải chat → im (để body cử động thay vì nói lại).
+        if score < 0.08 and str(channel or "").strip().lower() != "chat":
+            repaired.text = ""
+            repaired.should_speak = False
+            repaired.parse_mode = "novelty_body_only"
+            repaired.debug_trace = self._append_trace(repaired.debug_trace, "novelty_degrade=body_only")
+        return repaired
 
     def _apply_internal_meaning_label_filter(
         self,

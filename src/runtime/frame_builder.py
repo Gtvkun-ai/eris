@@ -960,7 +960,7 @@ class FrameBuilderMixin:
             self_state=frame.self_state,
             meaning_layer=getattr(frame, "meaning_layer", None),
             personality_lens=getattr(frame, "personality_lens", None),
-            agent_mind=getattr(getattr(self, "memory_core", None), "agent_mind", None),
+            agent_mind=getattr(self, "epistemic_agent_mind", None) or getattr(getattr(self, "memory_core", None), "agent_mind", None),
             safe_small_talk_allowed=self._safe_small_talk_budget_allowed(
                 channel=channel,
                 snapshot=snapshot,
@@ -1115,6 +1115,15 @@ class FrameBuilderMixin:
     ) -> CognitiveFrame:
         if memory_resonance is not None:
             self.active_memory_resonance = memory_resonance
+        kernel = getattr(self, "epistemic_kernel", None)
+        if kernel is not None and getattr(kernel, "authoritative", False) and sensed_internal_state is not None:
+            saved_relationship = kernel.get_projection("relationship").get("state")
+            if saved_relationship:
+                from cortex.relationship_dynamics import RelationshipDynamicsState
+                sensed_internal_state = replace(
+                    sensed_internal_state,
+                    relationship_dynamics=RelationshipDynamicsState.from_dict(saved_relationship),
+                )
         percepts = self._collect_percept_events(
             channel=channel,
             snapshot=snapshot,
@@ -1191,6 +1200,9 @@ class FrameBuilderMixin:
             internal_state_after=sensed_internal_state,
             social_presence_event=social_presence_event or SocialPresenceEvent(present=False),
         )
+        if kernel is not None and getattr(kernel, "authoritative", False):
+            self_state_payload = frame.self_state.to_dict() if callable(getattr(frame.self_state, "to_dict", None)) else {}
+            kernel.set_projection("self_current", self_state_payload, reason=f"frame:{frame.cycle_id}")
         if thought_stream_report is not None:
             frame.thought_stream_report = thought_stream_report
             frame.subconscious_report = thought_stream_report
@@ -1267,6 +1279,13 @@ class FrameBuilderMixin:
             action_memory=getattr(internal_state, "action_memory", None),
             auto_record_local_memory=False,
         )
+        kernel = getattr(self, "epistemic_kernel", None)
+        if kernel is not None:
+            try:
+                from .epistemic_bridge import prepare_authoritative_action
+                prepare_authoritative_action(kernel, frame)
+            except Exception as exc:
+                self.logger.warning("Epistemic V2 action selection failed: %s", exc, exc_info=True)
         self._apply_micro_line_policy_to_action_plan(
             frame,
             vision_fact=str((tuple(concrete_signals or ()) or ("",))[0] or ""),
@@ -1684,17 +1703,20 @@ class FrameBuilderMixin:
             except Exception as exc:
                 self.logger.warning("[session_ritual] LLM greeting failed: %s", exc)
                 greeting_source = "fallback_after_llm_error"
+                # Bỏ câu chào canned — degrade về IM thay vì template cố định.
                 decision = Decision(
-                    text="Ngài quay lại rồi.",
+                    text="",
                     animation="stand",
-                    debug_trace="session_ritual_layer",
+                    should_speak=False,
+                    debug_trace="session_ritual_layer; fallback=silent_no_template",
                 )
             if not decision.text.strip():
                 greeting_source = "fallback_after_empty_llm"
                 decision = Decision(
-                    text="Ngài quay lại rồi.",
+                    text="",
                     animation="stand",
-                    debug_trace="session_ritual_layer",
+                    should_speak=False,
+                    debug_trace="session_ritual_layer; fallback=silent_no_template",
                 )
             if decision.text.strip():
                 decision.intent = decision.intent or "session_ritual"

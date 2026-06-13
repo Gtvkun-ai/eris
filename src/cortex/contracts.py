@@ -1250,6 +1250,9 @@ class CognitiveFrame:
     modality: object | None = None
     outcome: object | None = None
     self_observation: object | None = None
+    # Epistemic V2 episode or its pre-action preparation. Kept as object to avoid a reverse dependency
+    # from the shared cortex contracts into cortex.epistemic.
+    epistemic_episode: object | None = None
     commit_requests: list[object] = field(default_factory=list)
     debug_notes: list[str] = field(default_factory=list)
     memory_update: CognitiveMemoryUpdate = field(default_factory=CognitiveMemoryUpdate)
@@ -1291,6 +1294,7 @@ class CognitiveFrame:
             "modality": _to_plain_contract(self.modality),
             "outcome": _to_plain_contract(self.outcome),
             "self_observation": _to_plain_contract(self.self_observation),
+            "epistemic_episode": _to_plain_contract(self.epistemic_episode),
             "commit_requests": _to_plain_contract(self.commit_requests),
             "debug_notes": list(self.debug_notes),
             "memory_update": self.memory_update.to_dict(),

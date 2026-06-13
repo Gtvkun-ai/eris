@@ -302,13 +302,23 @@ class LowLevelSpeechPolicy:
     def _is_presence_kind(self, kind: str) -> bool:
         return kind in set(self.config.presence_always_llm_kinds)
 
-    def decide_generation_mode(self, impulse, silent_cycles: int) -> str:
+    def decide_generation_mode(self, impulse, silent_cycles: int, *, speak_bias: float = 0.0) -> str:
         if impulse is None or not bool(getattr(impulse, "should_surface", False)):
             return "reject"
 
         confidence = _clamp01(getattr(impulse, "confidence", 0.0))
         kind = str(getattr(impulse, "kind", "") or "").strip()
         vital = _clamp01(getattr(impulse, "vital_pressure", 0.0))
+
+        # speak_bias (signed, từ ExpressionEnvelope): dương → ERIS đang muốn nói
+        # (im lâu + còn năng lượng) nên ta nâng confidence hiệu dụng để hạ ngưỡng;
+        # âm → đang kìm/mệt nên siết lại. Kẹp để không phá thang đo.
+        try:
+            bias = max(-0.15, min(0.20, float(speak_bias)))
+        except (TypeError, ValueError):
+            bias = 0.0
+        if bias:
+            confidence = _clamp01(confidence + bias)
 
         # Presence-like impulses get their own threshold lane.
         # This lets long silence become a tiny speakable line without making

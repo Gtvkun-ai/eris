@@ -1357,7 +1357,22 @@ class SurfaceArbiter:
         frame: Any = None,
         force_llm: bool = False,
     ) -> SurfaceGateEvaluation:
-        base_mode = "force_llm" if force_llm else self.policy.decide_generation_mode(impulse, self.silent_cycles)
+        if force_llm:
+            base_mode = "force_llm"
+        else:
+            speak_bias = 0.0
+            state = self._runtime_internal_state(frame=frame, snapshot=snapshot)
+            if state is not None:
+                try:
+                    from cortex.expression_envelope import ExpressionEnvelope
+
+                    channel = str(getattr(frame, "channel", "") or "autonomous")
+                    speak_bias = ExpressionEnvelope.from_state(state, channel=channel).speak_bias
+                except Exception:
+                    speak_bias = 0.0
+            base_mode = self.policy.decide_generation_mode(
+                impulse, self.silent_cycles, speak_bias=speak_bias
+            )
         notes: list[str] = []
         penalty = 0.0
         strength = self._soft_gate_strength(impulse)

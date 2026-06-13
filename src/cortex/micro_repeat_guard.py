@@ -323,6 +323,87 @@ class SemanticRepeatGuard:
             return semantic
         return "", "unknown", 0.0
 
+    def novelty_score(
+        self,
+        text: str,
+        *,
+        recent_lines: tuple[str, ...] | tuple[tuple[float, str], ...] = (),
+        include_banned_seed: bool = True,
+    ) -> float:
+        """Điểm tươi mới liên tục trong [0,1]: 1 = mới, 0 = trùng đồ cũ/đã nói.
+
+        Đây là phiên bản 'penalty' thay cho veto blocklist: thay vì cấm đúng
+        chuỗi ký tự, ta đo độ GẦN NGHĨA của câu ứng viên với (a) các câu ERIS
+        vừa nói và (b) kho 'stale seed' nạp từ BANNED_FILLER_LINES. Biến thể lách
+        chữ vẫn bị bắt vì gần nghĩa, không cần liệt kê.
+
+        Caller dùng điểm này như một lực phạt mềm trong arbiter, không phải cổng
+        nhị phân. Encoder vắng/fallback → tự hạ về overlap token (vẫn hữu dụng).
+        """
+        candidate = str(text or "").strip()
+        if not candidate:
+            return 1.0
+
+        # Gom corpus tham chiếu: câu gần đây + (tùy chọn) stale seed.
+        references: list[str] = []
+        for item in recent_lines or ():
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                references.append(str(item[1] or ""))
+            else:
+                references.append(str(item or ""))
+        # Câu đã nhớ trong guard cũng là 'đã nói gần đây'.
+        for stored in tuple(self._items):
+            references.append(str(stored[1] or ""))
+        if include_banned_seed:
+            references.extend(BANNED_FILLER_LINES)
+
+        references = [ref for ref in references if ref.strip()]
+        if not references:
+            return 1.0
+
+        best_similarity = self._max_similarity(candidate, references)
+        return max(0.0, min(1.0, 1.0 - best_similarity))
+
+    def _max_similarity(self, candidate: str, references: list[str]) -> float:
+        """Độ tương đồng cao nhất của candidate với tập references."""
+        encoder = self.semantic_encoder
+        # Đường semantic: chỉ tin khi encoder thật (không fallback).
+        if encoder is not None and cosine_similarity is not None:
+            try:
+                encoded = encoder.encode(candidate)  # type: ignore[attr-defined]
+                vector = tuple(getattr(encoded, "vector", ()) or ())
+                health = encoder.health() if callable(getattr(encoder, "health", None)) else None  # type: ignore[attr-defined]
+                is_fallback = bool(getattr(health, "is_fallback", getattr(encoded, "is_fallback", False)))
+                if vector and not is_fallback:
+                    best = 0.0
+                    for ref in references:
+                        ref_vec = tuple(getattr(encoder.encode(ref), "vector", ()) or ())  # type: ignore[attr-defined]
+                        if ref_vec:
+                            best = max(best, float(cosine_similarity(vector, ref_vec)))
+                    return max(0.0, min(1.0, best))
+            except Exception:
+                pass
+        # Fallback từ vựng: Jaccard trên token đã chuẩn hóa + trùng fingerprint.
+        return self._lexical_similarity(candidate, references)
+
+    def _lexical_similarity(self, candidate: str, references: list[str]) -> float:
+        cand_fp = lexical_fingerprint(candidate)
+        cand_tokens = set(self.normalize(candidate).split())
+        if not cand_tokens:
+            return 0.0
+        best = 0.0
+        for ref in references:
+            if cand_fp and lexical_fingerprint(ref) == cand_fp:
+                return 1.0
+            ref_tokens = set(self.normalize(ref).split())
+            if not ref_tokens:
+                continue
+            overlap = len(cand_tokens & ref_tokens)
+            union = len(cand_tokens | ref_tokens)
+            if union:
+                best = max(best, overlap / union)
+        return max(0.0, min(1.0, best))
+
     def _coerce_semantic_encoder(self, encoder: object | None):
         if encoder is not None:
             return encoder

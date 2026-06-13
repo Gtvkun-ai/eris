@@ -409,10 +409,20 @@ class ChatCycleMixin:
             explicit_repeated_project_context=0.58 if self.active_conversational_topic in {"technical_support", "goal_guard"} else None,
             relational_feedback=relational_feedback,
         )
-        relationship_report = self.relationship_dynamics_engine.update(
-            getattr(sensed_internal_state, "relationship_dynamics", None),
-            relationship_event,
-        )
+        epistemic_kernel = getattr(self, "epistemic_kernel", None)
+        if epistemic_kernel is not None and getattr(epistemic_kernel, "authoritative", False):
+            from .epistemic_bridge import update_relationship_projection
+            relationship_report = update_relationship_projection(
+                epistemic_kernel,
+                self.relationship_dynamics_engine,
+                relationship_event,
+                fallback_state=getattr(sensed_internal_state, "relationship_dynamics", None),
+            )
+        else:
+            relationship_report = self.relationship_dynamics_engine.update(
+                getattr(sensed_internal_state, "relationship_dynamics", None),
+                relationship_event,
+            )
         sensed_internal_state = replace(
             sensed_internal_state,
             conversation_dynamics=conversation_report.state,
@@ -1104,7 +1114,14 @@ class ChatCycleMixin:
         if observer is None or not callable(getattr(observer, "observe", None)):
             return
         try:
-            observer.observe(previous, user_feedback_text=user_text, attach_to_frame=True)
+            outcome = observer.observe(previous, user_feedback_text=user_text, attach_to_frame=True)
+            kernel = getattr(self, "epistemic_kernel", None)
+            episode = getattr(previous, "epistemic_episode", None)
+            if kernel is not None and episode is not None:
+                from .epistemic_bridge import feedback_from_outcome
+                updates = kernel.close_episode(feedback_from_outcome(outcome), episode_id=str(getattr(episode, "id", "") or ""))
+                if updates:
+                    previous.debug_notes.append(f"epistemic_v2_learning={len(updates)}")
         except Exception as exc:
             self.logger.warning("Outcome feedback observation failed: %s", exc)
 

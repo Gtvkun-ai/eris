@@ -17,6 +17,7 @@ from cortex.surface_seed_compiler import SurfaceSeedCompiler
 from cortex.continuity_threat import evaluate_continuity_threat
 from domain import Decision
 from runtime.no_fallback_policy import no_fallback_mode_enabled
+from runtime.liveliness_config import LivelinessConfig, load_liveliness_config
 from runtime.sensor_visibility import SensorVisibilityState, derive_sensor_visibility_state
 from guard_config import guards_warn_only
 
@@ -596,6 +597,129 @@ class PresenceControllerMixin:
             debug_trace=surface.debug_trace,
             motion_intent="pose",
         )
+
+    def _get_liveliness_config(self) -> LivelinessConfig:
+        """Lazy-load + cache the liveliness config on the instance.
+
+        Stored under ``_liveliness_config`` so other consumers (e.g.
+        ``cognitive_frame_recorder._liveliness_tracker``) read the real config
+        instead of always falling back to the hardcoded retention default.
+        """
+        cfg = getattr(self, "_liveliness_config", None)
+        if not isinstance(cfg, LivelinessConfig):
+            cfg = load_liveliness_config()
+            self._liveliness_config = cfg
+        return cfg
+
+    def _build_ambient_body_only_decision(self, snapshot) -> Decision | None:
+        """Build a Body_Only_Presence motion for an otherwise-empty idle cycle.
+
+        Task 5.2 / Req 5.4: when the ambient-silence hold would end the cycle with
+        neither speech nor a body action, ERIS still expresses presence non-verbally
+        (a small ``idle_shift`` / ``quiet_observe_scene``) rather than freezing — a
+        frozen sprite reads as dead, a quiet shift reads as alive. No text, no fact
+        claims; this never speaks.
+        """
+        try:
+            has_vision = bool(self._surface_has_fresh_vision_evidence(snapshot))
+        except Exception:
+            has_vision = bool(tuple(getattr(snapshot, "vision_facts", ()) or ()))
+        if has_vision:
+            body_action, animation = "quiet_observe_scene", "read"
+        else:
+            body_action, animation = "idle_shift", "stand"
+        payload = {
+            "type": "MotionCommand",
+            "name": body_action,
+            "reason": "ambient_silence_body_only",
+            "generation_mode": "body_only",
+            "source": "ambient_silence_policy",
+        }
+        return Decision(
+            text="",
+            animation=animation,
+            intent="body_only_presence",
+            action="MotionCommand",
+            action_input=json.dumps(payload, ensure_ascii=False),
+            reasoning_tags=("ambient_silence", "body_only", body_action),
+            should_speak=False,
+            confidence=0.40,
+            parse_mode="ambient_body_only",
+            debug_trace=f"ambient_silence:body_only:{body_action}",
+            motion_intent="pose",
+        )
+
+    def _maybe_emit_ambient_body_only(
+        self,
+        *,
+        frame,
+        snapshot,
+        ti_report,
+        fe_plan,
+        speech_intent: str,
+        cooldown: int,
+        cycle_start: float,
+    ) -> bool:
+        """Emit a throttled Body_Only_Presence on an ambient-silence hold cycle.
+
+        Returns True if a body-only motion was emitted (cycle finalized + slept);
+        False to let the caller fall through to the explicit-silence no-op. Throttled
+        by ``ERIS_LIVELINESS_BODY_ONLY_MIN_GAP_SEC`` so the body is not twitchy: it
+        shifts at most once per gap, true silence in between.
+        """
+        try:
+            gap = float(self._get_liveliness_config().body_only_min_gap_sec)
+        except Exception:
+            gap = 90.0
+        now = time.time()
+        last = float(getattr(self, "last_ambient_body_only_at", 0.0) or 0.0)
+        if gap > 0.0 and last > 0.0 and (now - last) < gap:
+            return False
+        decision = self._build_ambient_body_only_decision(snapshot)
+        if decision is None:
+            return False
+        self.last_ambient_body_only_at = now
+        self._set_cognitive_action_plan(
+            frame,
+            should_speak=False,
+            speech_intent="body_only_presence",
+            reason="Ambient silence held; emitting body-only presence to stay alive.",
+            snapshot=snapshot,
+            concrete_signals=self._concrete_screen_signals(snapshot),
+            ti_report=ti_report,
+            fe_plan=fe_plan,
+            notes=("ambient_silence", "body_only_presence", f"original_intent={speech_intent}"),
+        )
+        self._note_autonomous_presence_action(presence_maintenance=True, now=now)
+        self._apply_position_update(decision)
+        frame.final_decision = self._decision_to_frame_dict(decision)
+        frame.final_decision["reason"] = "ambient_silence_body_only"
+        self._attach_speak_truth_table(
+            frame,
+            decision=decision,
+            wake_decision=getattr(self, "last_wake_decision", None),
+            ambient_hold=True,
+            ambient_reason=f"cooldown={cooldown}s;body_only",
+        )
+        self._set_cognitive_memory_update(frame, decision=decision, notes=("ambient_silence", "body_only"))
+        self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
+        self._finalize_cognitive_frame(frame)
+        self.logger.info(
+            "[ambient_silence body_only] action=%s | mode=%s | cooldown=%ss",
+            decision.animation,
+            getattr(ti_report, "mode", ""),
+            cooldown,
+        )
+        self._send_decision_to_body(decision, channel="autonomous")
+        elapsed = time.time() - cycle_start
+        sleep_duration = self._choose_autonomous_sleep_duration(suppressed=True, ti_mode=ti_report.mode)
+        self.logger.info(
+            "Hoàn tất chu kỳ body-only trong %.2fs. Nghỉ %ss để giữ nhịp hiện diện tự nhiên.",
+            elapsed,
+            sleep_duration,
+        )
+        self._sleep_interruptible(sleep_duration)
+        return True
 
     def _surface_speech_decision(self, surface: SurfaceDecision) -> Decision:
         intent = surface.intent or surface.kind or "surface"
@@ -2576,19 +2700,61 @@ class PresenceControllerMixin:
             bool(getattr(cue, "should_call_llm", False)),
             bool(getattr(cue, "missing_evidence_ids", False)),
         )
-        surface = self._surface_arbiter().arbitrate(
-            snapshot=snapshot,
-            cognitive_frame=frame,
-            presence_cue=cue,
-            extra_impulses=tuple(
-                item
-                for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *private_life_impulses, *compiled_impulses, *original_extra_impulses)
-                if item is not None
-            ),
-            surface_kind=surface_kind,
-            force_llm=force_llm,
-            silent_cycles=self.presence_maintenance_silent_cycles,
+        base_impulses = tuple(
+            item
+            for item in (*endogenous_impulses, sensor_impulse, *private_mind_impulses, *private_life_impulses, *original_extra_impulses)
+            if item is not None
         )
+
+        def _arbitrate_with(seed_impulses: tuple[object, ...]):
+            return self._surface_arbiter().arbitrate(
+                snapshot=snapshot,
+                cognitive_frame=frame,
+                presence_cue=cue,
+                extra_impulses=tuple(item for item in (*base_impulses, *seed_impulses) if item is not None),
+                surface_kind=surface_kind,
+                force_llm=force_llm,
+                silent_cycles=self.presence_maintenance_silent_cycles,
+            )
+
+        surface = _arbitrate_with(compiled_impulses)
+        # Task 5.1 / Req 2.5-2.6: if the winning line repeats what ERIS just said,
+        # try the next-best compiled seed instead of emitting a near-duplicate.
+        # Bounded by ERIS_LIVELINESS_MAX_ALT_SEEDS; the repeat history is only touched
+        # when a line is actually sent, so unsent retries leave it unchanged, and an
+        # exhausted/duplicate winner falls through to the ambient body-only path (5.2).
+        _last_text = str(getattr(self, "last_text", "") or "")
+        _dup_check = getattr(self, "_is_near_duplicate_text", None)
+
+        def _is_dup(text: str) -> bool:
+            if not callable(_dup_check):
+                return False
+            try:
+                return bool(_dup_check(text, _last_text))
+            except Exception:
+                return False
+
+        if (
+            surface.should_speak
+            and surface.text.strip()
+            and _is_dup(surface.text)
+            and compiled_seed.alternative_impulses
+        ):
+            try:
+                max_alt = int(self._get_liveliness_config().max_alt_seeds)
+            except Exception:
+                max_alt = 3
+            for alt_impulse in compiled_seed.alternative_impulses[: max(0, max_alt)]:
+                self.logger.info(
+                    "[surface_arbiter] alt_seed retry source=%s (winner repeated last line)",
+                    str(getattr(alt_impulse, "root_source", "") or getattr(alt_impulse, "kind", "") or ""),
+                )
+                alt_surface = _arbitrate_with((alt_impulse,))
+                if alt_surface.should_speak and alt_surface.text.strip() and not _is_dup(alt_surface.text):
+                    surface = alt_surface
+                    break
+                if alt_surface.body_only and not surface.body_only:
+                    surface = alt_surface
         self.logger.info(
             "[surface_arbiter] output kind=%s mode=%s should_speak=%s body_only=%s reason=%s",
             surface.kind or surface_kind,
@@ -2597,7 +2763,10 @@ class PresenceControllerMixin:
             bool(surface.body_only),
             surface.reason,
         )
-        if surface.should_speak and surface.text.strip():
+        winner_is_duplicate = bool(
+            surface.should_speak and surface.text.strip() and _is_dup(surface.text)
+        )
+        if surface.should_speak and surface.text.strip() and not winner_is_duplicate:
             return SurfaceArbitrationResult(
                 decision=self._surface_speech_decision(surface),
                 surface=surface,
@@ -2608,11 +2777,12 @@ class PresenceControllerMixin:
                 surface=surface,
             )
         self.logger.info(
-            "[surface_arbiter] rejected kind=%s mode=%s reason=%s trace=%s",
+            "[surface_arbiter] rejected kind=%s mode=%s reason=%s trace=%s dup_after_alt=%s",
             surface.kind or surface_kind,
             surface.generation_mode,
             surface.reason,
             surface.debug_trace,
+            winner_is_duplicate,
         )
         return SurfaceArbitrationResult(decision=None, surface=surface)
 

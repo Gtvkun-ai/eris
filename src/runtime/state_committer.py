@@ -398,12 +398,14 @@ class StateCommitter:
         *,
         config: Optional[StateCommitterConfig] = None,
         logger: Optional[logging.Logger] = None,
+        epistemic_kernel: Any = None,
     ) -> None:
         if memory_cognition is None:
             raise ValueError("StateCommitter cần MemoryCognitionCore, không phải None.")
         self.memory_cognition = memory_cognition
         self.config = config or StateCommitterConfig()
         self.logger = logger or logging.getLogger(__name__)
+        self.epistemic_kernel = epistemic_kernel
 
     # ------------------------------------------------------------------
     # Public API
@@ -746,6 +748,23 @@ class StateCommitter:
         """Gọi MemoryCognitionCore.commit(...) với request đã validate."""
 
         request = decision.normalized_request
+        if (
+            decision.final_target == "belief_core"
+            and self.epistemic_kernel is not None
+            and getattr(self.epistemic_kernel, "authoritative", False)
+        ):
+            content = _get(request, "content", {})
+            raw = content if isinstance(content, Mapping) else {"claim": str(content or "")}
+            mutation = type("EpistemicCommitMutation", (), {
+                "id": f"state_commit:{decision.request_index}:{int(time.time() * 1000)}",
+                "value": raw,
+                "reason": decision.reason,
+                "confidence": decision.confidence,
+                "evidence_ids": tuple(decision.evidence_ids),
+            })()
+            decision.commit_result = self.epistemic_kernel.ingest_belief_mutation(mutation)
+            decision.committed = True
+            return
         try:
             result = self._call_memory_commit(request, frame=frame)
         except Exception as exc:  # pragma: no cover - phụ thuộc memory core thật

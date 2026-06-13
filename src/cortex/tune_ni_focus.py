@@ -5,7 +5,22 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from .ni import CHANNEL_WEIGHTS, DEFAULT_FOCUS_BIAS
+from .ni import DEFAULT_FOCUS_BIAS
+
+
+# Prior trung lập cho trọng số kênh, dùng LÀM FALLBACK khi log drift không đủ
+# dữ liệu để học (tương quan rỗng). Bản ni.py mới đã bỏ mô hình chấm điểm cũ nên
+# không còn export CHANNEL_WEIGHTS; tool tuning offline này tự giữ default riêng.
+# Tên kênh khớp OrientationSignal.channels (xem orientation_context.py).
+CHANNEL_WEIGHTS: dict[str, float] = {
+    "intent_confidence": 1.0,
+    "relation_confidence": 1.0,
+    "active_goal_strength": 1.0,
+    "goal_intervention_permission": 1.0,
+    "fragmentation": 1.0,
+    "idle_ambiguity": 1.0,
+    "lexical_fallback": 1.0,
+}
 
 
 @dataclass

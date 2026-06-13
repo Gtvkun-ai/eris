@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
@@ -212,6 +213,7 @@ class SeedPlan:
     direction: str = ""
     ok: bool = True
     debug: str = ""
+    elapsed_ms: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -219,6 +221,7 @@ class ContinuationResult:
     text: str = ""
     ok: bool = True
     reason: str = ""
+    elapsed_ms: int = 0
 
 
 def _env_int(name: str, default: int) -> int:
@@ -324,6 +327,7 @@ class RelationalVoiceSeedAdapter:
             seed = self._clamp_words(plan.seed, self.config.seed_max_words)
 
             if getattr(service, "client", None) is None:
+                self._log_cost("seed_only", plan, None)
                 return self._build_decision(
                     final_text=seed, act=stance.act, mode="seed_only",
                     debug=f"{plan.debug}|cont=no_client",
@@ -331,20 +335,23 @@ class RelationalVoiceSeedAdapter:
 
             cont = self._continue_from_seed(user_text, seed, stance)
             if not cont.ok or not cont.text.strip() or is_disclaimer_text(cont.text):
+                self._log_cost("seed_only", plan, cont)
                 return self._build_decision(
                     final_text=seed, act=stance.act, mode="seed_only",
-                    debug=f"{plan.debug}|cont={cont.reason or 'dirty'}",
+                    debug=f"{plan.debug}|cont={cont.reason or 'dirty'}:{cont.elapsed_ms}ms",
                 )
 
             final = self._join(seed, cont.text)
             if not final.strip():
+                self._log_cost("seed_only", plan, cont)
                 return self._build_decision(
                     final_text=seed, act=stance.act, mode="seed_only",
-                    debug=f"{plan.debug}|cont=empty_join",
+                    debug=f"{plan.debug}|cont=empty_join:{cont.elapsed_ms}ms",
                 )
+            self._log_cost("joined", plan, cont)
             return self._build_decision(
                 final_text=final, act=stance.act, mode="joined",
-                debug=f"{plan.debug}|cont=ok",
+                debug=f"{plan.debug}|cont=ok:{cont.elapsed_ms}ms",
             )
         except Exception as exc:  # never raise into the chat hot path
             self._warn("relational_voice_seed failed; falling through: %s", exc)
@@ -355,6 +362,7 @@ class RelationalVoiceSeedAdapter:
         client = self.llm_service.style_client
         system = self._build_seed_system_prompt(stance)
         user = self._build_seed_user_prompt(user_text, stance)
+        t0 = time.perf_counter()
         try:
             resp = client.create_chat_completion(
                 messages=[
@@ -376,11 +384,18 @@ class RelationalVoiceSeedAdapter:
         except Exception:
             return SeedPlan(ok=False, debug="seed=error")
 
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
         raw = self._extract(resp)
         seed = self._first_line(raw)
         if not seed:
-            return SeedPlan(ok=False, debug="seed=empty")
-        return SeedPlan(seed=seed, direction=derive_direction(stance.act), ok=True, debug="seed=ok")
+            return SeedPlan(ok=False, debug="seed=empty", elapsed_ms=elapsed_ms)
+        return SeedPlan(
+            seed=seed,
+            direction=derive_direction(stance.act),
+            ok=True,
+            debug=f"seed=ok:{elapsed_ms}ms",
+            elapsed_ms=elapsed_ms,
+        )
 
     # --- llama continuer -------------------------------------------------
     def _continue_from_seed(self, user_text: str, seed: str, stance: CognitionStance) -> ContinuationResult:
@@ -393,6 +408,7 @@ class RelationalVoiceSeedAdapter:
             "Do NOT restart with a disclaimer or an offer to help. Keep ERIS voice. "
             "Return only the continuation text, no quotes, no JSON."
         )
+        t0 = time.perf_counter()
         try:
             resp = client.create_chat_completion(
                 messages=[
@@ -414,10 +430,11 @@ class RelationalVoiceSeedAdapter:
         except Exception:
             return ContinuationResult(ok=False, reason="error")
 
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
         text = self._first_line(self._extract(resp))
         if not text:
-            return ContinuationResult(ok=False, reason="empty")
-        return ContinuationResult(text=text, ok=True, reason="ok")
+            return ContinuationResult(ok=False, reason="empty", elapsed_ms=elapsed_ms)
+        return ContinuationResult(text=text, ok=True, reason="ok", elapsed_ms=elapsed_ms)
 
     # --- join ------------------------------------------------------------
     def _join(self, seed: str, continuation: str) -> str:
@@ -575,3 +592,26 @@ class RelationalVoiceSeedAdapter:
                 self.logger.warning(fmt, *args)
             except Exception:
                 pass
+
+    def _log_cost(self, mode: str, plan: "SeedPlan", cont: "Optional[ContinuationResult]") -> None:
+        """Make the voice-seed cost/latency tradeoff explicit (spec Req 9).
+
+        Social-register turns spend two calls (gemma seed + llama continuation); this
+        surfaces per-call latency and the realized mode so the operator can see the
+        cost they are paying instead of guessing.
+        """
+        if self.logger is None:
+            return
+        seed_ms = int(getattr(plan, "elapsed_ms", 0) or 0)
+        cont_ms = int(getattr(cont, "elapsed_ms", 0) or 0) if cont is not None else 0
+        try:
+            self.logger.info(
+                "[voice_seed] mode=%s scope=%s seed=%dms cont=%dms total=%dms",
+                mode,
+                self.config.scope.value,
+                seed_ms,
+                cont_ms,
+                seed_ms + cont_ms,
+            )
+        except Exception:
+            pass

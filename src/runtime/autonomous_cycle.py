@@ -464,12 +464,22 @@ class AutonomousCycleMixin:
                     cycle_start=cycle_start,
                 ):
                     return True
+            cooldown = self._ambient_silence_cooldown_seconds(snapshot, ti_report)
+            if self._maybe_emit_ambient_body_only(
+                frame=frame,
+                snapshot=snapshot,
+                ti_report=ti_report,
+                fe_plan=fe_plan,
+                speech_intent=speech_intent.intent,
+                cooldown=cooldown,
+                cycle_start=cycle_start,
+            ):
+                return True
             elapsed = time.time() - cycle_start
             sleep_duration = self._choose_autonomous_sleep_duration(
                 suppressed=True,
                 ti_mode=ti_report.mode,
             )
-            cooldown = self._ambient_silence_cooldown_seconds(snapshot, ti_report)
             self._set_cognitive_action_plan(
                 frame,
                 should_speak=False,

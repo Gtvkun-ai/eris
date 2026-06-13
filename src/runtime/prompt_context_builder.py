@@ -30,26 +30,22 @@ class PromptContextBuilderMixin:
         self.logger.warning("%s %s", rendered, traceback.format_exc().strip())
 
     def _session_ritual_fallback_decision(self, *, source: str, tone: str = "quiet_background") -> Decision:
-        if no_fallback_mode_enabled():
-            return Decision(
-                text="",
-                animation="stand",
-                intent="no_fallback_block",
-                reasoning_tags=("session_ritual", "no_fallback_mode"),
-                should_speak=False,
-                confidence=0.0,
-                parse_mode="no_fallback_block",
-                debug_trace=f"session_ritual_layer; source={source}; tone={tone}; no_fallback_mode=1",
-            )
+        # Bỏ câu chào canned "Ngài quay lại rồi." — câu cố định mỗi lần khởi động
+        # nghe như macro, không phải một hiện diện. Khi LLM greeting fail/empty,
+        # ERIS degrade về IM (chỉ cử động/đứng) thay vì rơi vào template. Đây là
+        # nguyên tắc chung: fallback → silence/body, không bao giờ → câu canned.
         return Decision(
-            text="Ngài quay lại rồi.",
+            text="",
             animation="stand",
             intent="session_ritual",
-            reasoning_tags=("session_ritual", "startup_greeting", "fallback_greeting"),
-            should_speak=True,
-            confidence=0.64,
-            parse_mode="session_ritual",
-            debug_trace=f"session_ritual_layer; source={source}; tone={tone}",
+            reasoning_tags=("session_ritual", "fallback_silent_no_template"),
+            should_speak=False,
+            confidence=0.0,
+            parse_mode="session_ritual_silent",
+            debug_trace=(
+                f"session_ritual_layer; source={source}; tone={tone}; "
+                f"fallback=silent_no_template; no_fallback_mode={int(no_fallback_mode_enabled())}"
+            ),
         )
 
     def _send_session_ritual_fallback_greeting(

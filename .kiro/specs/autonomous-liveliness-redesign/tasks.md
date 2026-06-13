@@ -73,14 +73,12 @@ Surgical, test-first changes to the existing autonomous idle loop so the charact
   - In `_surface_arbiter_llm_generate`, if the LLM returns a banned line, return `("", "banned_filler_blocked")`.
   - _Requirements: 3.1, 3.2, 3.3_
 
-- [ ] 5.1 Alternative-seed retry on repeat rejection
-  - On a `SemanticRepeatGuard` rejection, request the next-best candidate from the ranked list, up to `ERIS_LIVELINESS_MAX_ALT_SEEDS` (default 3); on exhaustion emit Body_Only_Presence and leave repeat history unchanged.
-  - NOTE: deferred. The autonomous repeat guard runs in `post_generation_filters` (not inline in the surface build), so inline alt-seed retry needs a post-generation restructure. `CompiledSurfaceSeed.alternative_impulses` is already exposed to make this a contained follow-up.
+- [x] 5.1 Alternative-seed retry on repeat rejection
+  - In `presence_controller._build_surface_arbiter_result`, when the winning surface line is a near-duplicate of `last_text`, re-arbitrate with the next compiled `alternative_impulses` (up to `ERIS_LIVELINESS_MAX_ALT_SEEDS`, default 3). First non-duplicate speakable alt wins; on exhaustion the (still-duplicate) winner is treated as rejected and the cycle falls through to the ambient body-only path (5.2). Repeat history is only updated when a line is actually sent, so unsent retries leave it unchanged.
   - _Requirements: 2.5, 2.6_
 
-- [ ] 5.2 Body-only instead of empty no-op
-  - In both `coordinator.py` and `autonomous_cycle.py` no-speech/`ambient_silence` branches, attach a Body_Only_Presence motion (`idle_shift` / `quiet_observe_scene`) whenever a cycle would otherwise end with neither speech nor body action.
-  - NOTE: deferred. The ambient/no-speech branches set `final_decision` without sending a body motion; adding a motion send needs care to avoid side effects in the two drivers.
+- [x] 5.2 Body-only instead of empty no-op
+  - Added `PresenceControllerMixin._build_ambient_body_only_decision` + `_maybe_emit_ambient_body_only`; both `coordinator.py` and `autonomous_cycle.py` ambient-silence branches now attempt a throttled Body_Only_Presence (`quiet_observe_scene` when vision is fresh, else `idle_shift`) before the explicit-silence no-op. Throttled by `ERIS_LIVELINESS_BODY_ONLY_MIN_GAP_SEC` (default 90s) so the body is not twitchy. Tests in `tests/test_liveliness_body_only.py`.
   - _Requirements: 5.4_
 
 - [x] 5.3 Unit tests for output enforcement
@@ -123,10 +121,7 @@ Surgical, test-first changes to the existing autonomous idle loop so the charact
 
 - [x] 9. Run the full suite and clean up
   - Ran the full suite: 844 passed, 17 failed; confirmed via baseline (git stash) that all 17 failures pre-date this work (API/resilience/memory-facade/model-budget/surface domains). 40 new liveliness tests pass. Temp files removed.
-  - _Requirements: all_
-
-- [ ] 9. Run the full suite and clean up
-  - Run the project's test suite, fix regressions in both idle-loop drivers, and remove any temporary scaffolding.
+  - Follow-up (5.1/5.2/observability): body-only + alt-seed landed; new tests `tests/test_liveliness_body_only.py` and `tests/test_inner_life_drives_speech.py` pass; re-ran suite to confirm no new regressions.
   - _Requirements: all_
 
 ## Task Dependency Graph

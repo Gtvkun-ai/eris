@@ -226,6 +226,13 @@ class StateMutationBus:
         return self._report(mutation, True, "thought_stream_pressure_updated" + ("_on_stream" if applied_to_stream else "_shadow"), self.bias_state.thought_stream_pressure)
 
     def _apply_belief_core(self, mutation: StateMutation, *, memory_core: Any, runtime_owner: Any = None) -> MutationApplyReport:
+        kernel = getattr(runtime_owner, "epistemic_kernel", None) if runtime_owner is not None else None
+        if kernel is not None and getattr(kernel, "authoritative", False):
+            payload = kernel.ingest_belief_mutation(mutation)
+            if runtime_owner is not None:
+                setattr(runtime_owner, "private_mind_belief_core_last", payload)
+            return self._report(mutation, True, "belief_core_routed_to_epistemic_v2_hypothesis", payload)
+
         value = mutation.value if isinstance(mutation.value, Mapping) else {"claim": str(mutation.value)}
         claim = compact_text(
             value.get("claim")

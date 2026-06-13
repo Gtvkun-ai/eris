@@ -942,6 +942,7 @@ class CognitiveFrameRecorderMixin:
 
         # Derive request trước, commit sau. Không có đường ghi memory phụ.
         self._observe_outcome_for_frame(frame)
+        self._start_epistemic_episode(frame)
         self._reflect_self_observation_for_frame(frame)
         self._append_self_observation_repair_request(frame)
         self._remember_cognitive_frame(frame)
@@ -966,6 +967,17 @@ class CognitiveFrameRecorderMixin:
             getattr(commit_report, "rejected", 0) if commit_report else 0,
             getattr(commit_report, "errors", 0) if commit_report else 0,
         )
+
+    def _start_epistemic_episode(self, frame: CognitiveFrame) -> Any:
+        kernel = getattr(self, "epistemic_kernel", None)
+        if kernel is None:
+            return None
+        try:
+            from .epistemic_bridge import start_episode
+            return start_episode(kernel, frame)
+        except Exception as exc:
+            self.logger.warning("Epistemic V2 episode failed: %s", exc, exc_info=True)
+            return None
 
     def _observe_outcome_for_frame(self, frame: CognitiveFrame) -> Any:
         observer = self._get_outcome_observer()
@@ -1152,7 +1164,11 @@ class CognitiveFrameRecorderMixin:
                 return None
 
         try:
-            committer = StateCommitter(memory_cognition, logger=self.logger)
+            committer = StateCommitter(
+                memory_cognition,
+                logger=self.logger,
+                epistemic_kernel=getattr(self, "epistemic_kernel", None),
+            )
         except Exception as exc:
             self.logger.warning("Không tạo được StateCommitter: %s", exc)
             return None

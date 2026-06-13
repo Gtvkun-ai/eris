@@ -339,3 +339,57 @@ def test_try_answer_total(seed_b, cont_b):
     d = a.try_answer("em có thích tôi không", stance=_social_stance())
     assert d is None or (d.text and d.text.strip())
     assert seed.calls <= 1 and cont.calls <= 1  # P2
+
+
+# ---------------------------------------------------------------------------
+# Cost / latency observability (roadmap item 5)
+# ---------------------------------------------------------------------------
+
+class _CapturingLogger:
+    def __init__(self):
+        self.infos: list[str] = []
+
+    def info(self, fmt, *args):
+        try:
+            self.infos.append(fmt % args if args else str(fmt))
+        except Exception:
+            self.infos.append(str(fmt))
+
+    def warning(self, *a, **k):
+        pass
+
+
+def test_voice_seed_logs_cost_summary_on_joined_turn() -> None:
+    logger = _CapturingLogger()
+    adapter = RelationalVoiceSeedAdapter(
+        llm_service=_FakeLlmService(
+            style_client=_FakeClient("Tôi quen có Ngài ở đây."),
+            client=_FakeClient("Gọi đó là gì thì tùy Ngài."),
+        ),
+        config=RelationalVoiceSeedConfig(enabled=True, scope=VoiceSeedScope.SOCIAL),
+        logger=logger,
+    )
+    decision = adapter.try_answer("em có thích tôi không", stance=_social_stance())
+    assert decision is not None
+    cost_lines = [line for line in logger.infos if "[voice_seed]" in line]
+    assert cost_lines, "expected a [voice_seed] cost/latency summary line"
+    assert "mode=joined" in cost_lines[-1]
+    assert "scope=social" in cost_lines[-1]
+    # The realized per-call timing is threaded into the decision trace too.
+    assert "cont=ok" in (decision.debug_trace or "")
+
+
+def test_voice_seed_logs_cost_summary_on_seed_only_turn() -> None:
+    logger = _CapturingLogger()
+    adapter = RelationalVoiceSeedAdapter(
+        llm_service=_FakeLlmService(
+            style_client=_FakeClient("Tôi quen có Ngài ở đây."),
+            client=_FakeClient(error=_http_429()),
+        ),
+        config=RelationalVoiceSeedConfig(enabled=True, scope=VoiceSeedScope.SOCIAL),
+        logger=logger,
+    )
+    decision = adapter.try_answer("em có thích tôi không", stance=_social_stance())
+    assert decision is not None
+    cost_lines = [line for line in logger.infos if "[voice_seed]" in line]
+    assert cost_lines and "mode=seed_only" in cost_lines[-1]

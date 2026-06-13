@@ -378,6 +378,15 @@ _DEFAULT_SYSTEM: "DevelopmentSystem | None" = None
 def get_default_development_system(*, memory_dir: str | os.PathLike[str] | None = None) -> "DevelopmentSystem":
     """Trả singleton DevelopmentSystem đặt cùng thư mục memory."""
     global _DEFAULT_SYSTEM
+    try:
+        from .epistemic import epistemic_development_system, get_default_kernel
+        kernel = get_default_kernel()
+        if kernel is not None and getattr(kernel, "authoritative", False):
+            if _DEFAULT_SYSTEM is None or getattr(getattr(_DEFAULT_SYSTEM, "profile", None), "kernel", None) is not kernel:
+                _DEFAULT_SYSTEM = epistemic_development_system(kernel)
+            return _DEFAULT_SYSTEM
+    except Exception:
+        pass
     from .development_profile import default_development_profile_path, development_profile_path_for_memory_core
 
     if memory_dir is not None:

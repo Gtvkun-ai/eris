@@ -81,6 +81,7 @@ class LivelinessConfig:
     subinterval_sec: float = 300.0
     min_grounded_pct: int = 60
     decision_retention: int = 100
+    body_only_min_gap_sec: float = 90.0
 
     @property
     def sim_threshold(self) -> float:
@@ -105,4 +106,7 @@ def load_liveliness_config() -> LivelinessConfig:
         subinterval_sec=_read_float("ERIS_LIVELINESS_SUBINTERVAL_SEC", 300.0, lo=1.0, hi=3600.0),
         min_grounded_pct=_read_int("ERIS_LIVELINESS_MIN_GROUNDED_PCT", 60, lo=0, hi=100),
         decision_retention=_read_int("ERIS_LIVELINESS_DECISION_RETENTION", 100, lo=1, hi=100000),
+        body_only_min_gap_sec=_read_float(
+            "ERIS_LIVELINESS_BODY_ONLY_MIN_GAP_SEC", 90.0, lo=0.0, hi=3600.0
+        ),
     )

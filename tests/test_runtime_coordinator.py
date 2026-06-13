@@ -769,10 +769,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         coordinator._run_chat_cycle("toi ten gi", user_timestamp=100.0)
 
-        sent_text = coordinator.transport.sent[-1]["text"]
-        self.assertNotIn("MemoryPacket(", sent_text)
-        self.assertIn("dữ liệu nội bộ", sent_text)
-        self.assertEqual(coordinator.transport.sent[-1]["intent"], "repair_surface_leak")
+        # Hành vi mới: leak bị CHẶN nhưng ERIS không nói câu xin lỗi help-desk
+        # cố định nữa ("...mảnh dữ liệu nội bộ..."). Nó degrade về im (text rỗng,
+        # không phát ra), phần repr nội bộ tuyệt đối không lọt ra ngoài.
+        sent = coordinator.transport.sent[-1]
+        self.assertNotIn("MemoryPacket(", sent["text"])
+        self.assertEqual(sent["text"], "")
+        self.assertNotIn("dữ liệu nội bộ", sent["text"])
+        self.assertEqual(sent["intent"], "repair_surface_leak")
+        self.assertFalse(sent["should_speak"])
 
     def test_chat_user_turn_fast_ingest_commits_through_memory_kernel(self):
         coordinator = self._make_coordinator(parser=_JsonParser())
@@ -3066,7 +3071,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertIn("resume_goal:implement session ritual layer", coordinator.llm_service.last_directive_kwargs["ti_context"])
             self.assertEqual(coordinator._get_internal_state().session_resume_count, 1)
 
-    def test_session_ritual_empty_llm_still_sends_fallback_greeting(self):
+    def test_session_ritual_empty_llm_stays_silent_no_canned_greeting(self):
+        # Hành vi mới: khi LLM greeting rỗng, ERIS KHÔNG rơi vào câu chào canned
+        # "Ngài quay lại rồi." nữa — nó degrade về IM. Vẫn thử gọi LLM một lần.
         coordinator = self._make_coordinator(
             telemetry_service=_DummyTelemetry(),
             parser=_JsonParser(),
@@ -3077,9 +3084,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertTrue(report.should_greet)
         self.assertEqual(coordinator.llm_service.directive_calls, 1)
-        self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "session_ritual")
-        self.assertEqual(coordinator.transport.sent[-1]["text"], "Ngài quay lại rồi.")
-        self.assertIn("fallback_after_empty_llm", coordinator.transport.sent[-1]["debug_trace"])
+        # Không có turn session_ritual nào được phát ra (im lặng, không template).
+        session_ritual_turns = [
+            sent for sent in coordinator.transport.sent
+            if sent.get("parse_mode") == "session_ritual"
+        ]
+        self.assertEqual(session_ritual_turns, [])
+        self.assertFalse(
+            any(sent.get("text") == "Ngài quay lại rồi." for sent in coordinator.transport.sent)
+        )
 
 
 if __name__ == "__main__":
