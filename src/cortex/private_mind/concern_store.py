@@ -14,12 +14,69 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .contracts import PrivateConcern, ThoughtFragment, compact_text, stable_id, to_plain, clamp01
+
+
+# Tiền tố "văn phong evaluator" hay bám vào theme — tước để so khớp phần lõi.
+_NOISE_PREFIXES = (
+    "người dùng liên tục lặp lại mối lo ngại về ",
+    "người dùng thể hiện sự lo ngại sâu sắc về ",
+    "người dùng thể hiện sự lo ngại sâu sắc và lặp lại về ",
+    "người dùng lặp lại nhiều lần về ",
+    "hệ thống có nguy cơ cao về ",
+)
+
+# Stopword (đã bỏ dấu, thường) gồm đại từ / động từ tri giác / bổ nghĩa / hư từ.
+# Mục tiêu: sau khi lọc chỉ còn các TOKEN KHÁI NIỆM để hai câu paraphrase cùng ý
+# (vd "tôi thấy khoảng cách trong cách nói" vs "tôi tạo khoảng cách vô hình") lộ ra
+# phần lõi trùng nhau, thay vì chìm trong từ đệm ngôi-thứ-nhất.
+_CONCERN_STOPWORDS = frozenset({
+    "toi", "minh", "ban", "ngai", "ho", "nguoi", "dung", "chung", "ta",
+    "cam", "thay", "giac", "nhan", "biet", "nghi",
+    "thuc", "su", "rat", "qua", "lam", "kha", "hoi", "that",
+    "la", "mot", "cac", "nhung", "nay", "do", "kia", "moi", "ca",
+    "duong", "nhu", "dang", "se", "da", "con", "cung", "van", "luon", "hay", "dan",
+    "rang", "khi", "ma", "va", "voi", "trong", "ve", "cua", "cho", "den", "tu", "ra", "vao", "theo",
+    "cach", "kieu", "chi", "co", "khong", "duoc", "bi", "gi", "nao", "the", "hon",
+    "lien", "tuc", "lap", "lai", "nhieu", "lan", "hien", "sau", "sac", "nguy", "cao",
+    "user", "eris", "runtime", "this", "that",
+})
+
+# Ngưỡng overlap-coefficient tối thiểu để coi hai theme là CÙNG mối bận tâm.
+# Đủ thấp để gom các câu paraphrase dài cùng ý (kết nối/khoảng cách/cảm xúc),
+# nhưng vẫn cần ≥2 khái niệm chung nên không gộp bừa hai lo lắng chỉ chạm 1 từ.
+_CONCEPT_MATCH_MIN = 0.34
+
+
+def _ascii_fold(text: str) -> str:
+    """Bỏ dấu tiếng Việt + 'đ'→'d' để token hoá ổn định, không lệ thuộc dấu."""
+    s = (text or "").replace("đ", "d").replace("Đ", "D")
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(ch for ch in nfkd if not unicodedata.combining(ch))
+
+
+def _strip_noise_prefix(theme_lower: str) -> str:
+    for prefix in _NOISE_PREFIXES:
+        if theme_lower.startswith(prefix):
+            return theme_lower[len(prefix):]
+    return theme_lower
+
+
+def _concept_signature(theme_lower: str) -> frozenset[str]:
+    """Tập token KHÁI NIỆM của theme: bỏ dấu, bỏ stopword, giữ token ≥3 ký tự."""
+    folded = _ascii_fold(theme_lower).lower()
+    folded = re.sub(r"[^a-z0-9\s]", " ", folded)
+    return frozenset(
+        tok for tok in folded.split()
+        if len(tok) >= 3 and tok not in _CONCERN_STOPWORDS
+    )
 
 
 @dataclass(slots=True)
@@ -86,7 +143,6 @@ class ConcernStore:
         if theme.count("[v") >= 3:
             return True
         # Repeated token: split by spaces/dashes, find any token repeated ≥4 times consecutively
-        import re
         tokens = re.split(r"[\s\-/|]+", theme.lower())
         if len(tokens) >= 4:
             for i in range(len(tokens) - 3):
@@ -215,6 +271,12 @@ class ConcernStore:
             return None
         concern_id = str(data.get("id") or stable_id("concern", theme))
         concern = self._concerns.get(concern_id)
+        if concern is None:
+            # Theme có thể là paraphrase của một concern đang mở (id khác vì khác
+            # chữ) → gộp vào nó thay vì đẻ bản sao.
+            concern = self._match_theme(
+                theme, tuple(str(x) for x in (data.get("evidence_ids") or ()) if str(x).strip())
+            )
         if concern is None:
             concern = PrivateConcern(
                 id=concern_id,
@@ -539,40 +601,47 @@ class ConcernStore:
             self._log("warning", "ConcernStore save failed: %s", exc)
 
     def _find_matching_concern(self, fragment: ThoughtFragment) -> PrivateConcern | None:
-        f_theme = self._theme_from_fragment(fragment).lower()
-        # Normalize: loại bỏ noise prefix thường do LLM sinh ra
-        _noise_prefixes = (
-            "người dùng liên tục lặp lại mối lo ngại về ",
-            "người dùng thể hiện sự lo ngại sâu sắc về ",
-            "người dùng thể hiện sự lo ngại sâu sắc và lặp lại về ",
-            "người dùng lặp lại nhiều lần về ",
-            "hệ thống có nguy cơ cao về ",
-        )
-        f_clean = f_theme
-        for prefix in _noise_prefixes:
-            if f_clean.startswith(prefix):
-                f_clean = f_clean[len(prefix):]
-                break
-        f_tokens = set(t for t in f_clean.replace("_", " ").split() if len(t) >= 4)
+        return self._match_theme(self._theme_from_fragment(fragment), fragment.evidence_ids)
+
+    def _match_theme(self, theme: str, evidence_ids: tuple[str, ...] = ()) -> PrivateConcern | None:
+        """Tìm concern đang mở khớp với một theme (paraphrase-aware).
+
+        Điểm khớp = max của hai tín hiệu, lấy concern điểm cao nhất ≥ ngưỡng:
+        - concept-overlap: overlap-coefficient trên token khái niệm (mạnh với câu
+          dài diễn đạt khác nhau cùng ý — chính là ca "khoảng cách / kết nối" lặp).
+        - token-Jaccard + evidence-overlap: giữ hành vi cũ cho câu ngắn/định danh.
+        """
+        f_clean = _strip_noise_prefix(str(theme or "").lower())
+        f_sig = _concept_signature(f_clean)
+        f_tokens = {t for t in f_clean.replace("_", " ").split() if len(t) >= 4}
+        ev = set(evidence_ids or ())
+
         best: tuple[float, PrivateConcern] | None = None
         for concern in self._concerns.values():
             if concern.status in {"resolved", "rejected"}:
                 continue
-            c_theme = concern.theme.lower()
-            c_clean = c_theme
-            for prefix in _noise_prefixes:
-                if c_clean.startswith(prefix):
-                    c_clean = c_clean[len(prefix):]
-                    break
+            c_clean = _strip_noise_prefix(concern.theme.lower())
             if c_clean == f_clean:
                 return concern
-            c_tokens = set(t for t in c_clean.replace("_", " ").split() if len(t) >= 4)
-            overlap = len(f_tokens & c_tokens) / max(1, len(f_tokens | c_tokens))
-            evidence_overlap = len(set(fragment.evidence_ids) & set(concern.evidence_ids)) / max(1, len(fragment.evidence_ids))
-            score = 0.68 * overlap + 0.32 * evidence_overlap
+
+            concept = 0.0
+            if f_sig:
+                c_sig = _concept_signature(c_clean)
+                shared = len(f_sig & c_sig)
+                # Cần ≥2 khái niệm chung + tỉ lệ đủ cao để tránh gộp bừa.
+                if shared >= 2 and c_sig:
+                    coeff = shared / min(len(f_sig), len(c_sig))
+                    if coeff >= _CONCEPT_MATCH_MIN:
+                        concept = coeff
+
+            c_tokens = {t for t in c_clean.replace("_", " ").split() if len(t) >= 4}
+            jaccard = len(f_tokens & c_tokens) / max(1, len(f_tokens | c_tokens))
+            evidence_overlap = (len(ev & set(concern.evidence_ids)) / max(1, len(ev))) if ev else 0.0
+            score = max(0.68 * jaccard + 0.32 * evidence_overlap, concept)
+
             if best is None or score > best[0]:
                 best = (score, concern)
-        # Hạ threshold từ 0.34 → 0.22 để merge tốt hơn khi text bị paraphrase
+
         if best and best[0] >= 0.22:
             return best[1]
         return None

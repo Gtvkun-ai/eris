@@ -43,3 +43,8 @@ os.environ["ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER"] = ""
 os.environ["ERIS_PRIVATE_MIND_FRAGMENT_FREETEXT"] = "0"
 # Không bao giờ dựng engine local (llama-cpp nạp gguf GPU) trong test.
 os.environ["ERIS_LOCAL_LLM_ENGINE"] = "ollama"
+
+# Cô lập test khỏi file .env của repo: loader .env mới (eris_secrets.load_env_file)
+# chỉ chạy ở runtime thật. Trong test, tắt để không kéo toggle production (vision
+# facts, observer LLM, llamacpp…) vào làm sai/flaky các assertion.
+os.environ["ERIS_DISABLE_DOTENV"] = "1"

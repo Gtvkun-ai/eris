@@ -85,10 +85,18 @@ def _classify_transport_exception(exc: Exception) -> str:
 class PrivateMindModelAdapterConfig:
     enabled: bool = field(default_factory=lambda: _env_flag("ERIS_PRIVATE_MIND_API_ENABLED", False))
     provider: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_PROVIDER", os.getenv("ERIS_DAYDREAM_PROVIDER", "gemini")) or "gemini").strip().lower())
-    model: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_MODEL", os.getenv("ERIS_DAYDREAM_MODEL", "gemma-4-26b-a4b-it")) or "gemma-4-26b-a4b-it").strip())
+    model: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_MODEL", os.getenv("ERIS_DAYDREAM_MODEL", "gemma-4-31b-it")) or "gemma-4-31b-it").strip())
     base_url: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_BASE_URL", os.getenv("ERIS_REMOTE_BASE_URL", "")) or "").strip())
     api_key: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_API_KEY", "") or "").strip())
     timeout_seconds: float = field(default_factory=lambda: max(4.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "12"), 12.0)))
+    # T1.3: synthesis/judgment nặng hơn fragment → timeout dài hơn (mặc định 20s
+    # hoặc ≥ timeout chung). Fragment vẫn fail-fast bằng timeout_seconds (12s).
+    synthesis_timeout_seconds: float = field(
+        default_factory=lambda: max(
+            _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "12"), 12.0),
+            _as_float(os.getenv("ERIS_PRIVATE_MIND_SYNTHESIS_TIMEOUT", "20"), 20.0),
+        )
+    )
     # Nhiệt độ thấp khiến model nhỏ (gemma) dễ lặp từ hoặc dính RECITATION filter,
     # rồi trả output cụt/rỗng -> invalid_json. Để mặc định ấm hơn để phá vòng lặp.
     temperature: float = field(default_factory=lambda: _as_float(os.getenv("ERIS_PRIVATE_MIND_TEMPERATURE", "0.5"), 0.5))
@@ -113,7 +121,13 @@ class PrivateMindModelAdapterConfig:
             return base
         base_url = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_BASE_URL", "") or "").strip()
         model = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_MODEL", "") or "").strip() or base.model
-        api_key = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_API_KEY", "") or "").strip() or "local-no-key"
+        # Chỉ provider LOCAL mới dùng placeholder "local-no-key". Provider remote
+        # (gemini/openai…) phải để trống → adapter tự lấy key thật từ key-pool/secret;
+        # nếu nhét "local-no-key" lên Gemini sẽ bị 400 API_KEY_INVALID.
+        _is_local = provider in {"llamacpp", "llama_cpp", "local_gguf", "gguf", "ollama"}
+        api_key = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_API_KEY", "") or "").strip()
+        if not api_key and _is_local:
+            api_key = "local-no-key"
         return replace(
             base,
             enabled=True,
@@ -1248,7 +1262,7 @@ class RuntimePrivateMindModelAdapter:
                 presence_penalty=0.0,
                 max_tokens=max_tokens,
                 response_format=self._response_format(response_schema),
-                timeout=self.config.timeout_seconds,
+                timeout=self.config.synthesis_timeout_seconds,
             )
             content = self._extract_content(raw)
             parsed = self._parse_json(content)

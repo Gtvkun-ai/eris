@@ -234,7 +234,7 @@ class RuntimeSubconsciousModelAdapter:
         if model:
             return model
         if self.provider == "gemini":
-            return os.getenv("ERIS_REMOTE_MODEL", "").strip() or os.getenv("GEMINI_MODEL", "").strip() or "gemma-4-26b-a4b-it"
+            return os.getenv("ERIS_REMOTE_MODEL", "").strip() or os.getenv("GEMINI_MODEL", "").strip() or "gemma-4-31b-it"
         if self.provider in {"openai", "openai_compatible", "compatible", "remote"}:
             return os.getenv("ERIS_REMOTE_MODEL", "").strip() or "gemini-3-flash-preview"
         return model or "lane3-model"

@@ -190,6 +190,19 @@ if __name__ == "__main__":
     configure_logging()
     logger = get_logger("Vision")
 
+    # Nạp .env (OS-env > .env > secrets.json) NGAY khi khởi động để mọi toggle/
+    # provider trong .env thực sự có hiệu lực dưới Eris.exe (sửa R3/E7).
+    from eris_secrets import apply_secrets_to_environ, log_config_sources
+
+    apply_secrets_to_environ()
+    log_config_sources(
+        "ERIS_REMOTE_PROVIDER",
+        "ERIS_LOCAL_LLM_ENGINE",
+        "ERIS_PRIVATE_MIND_PROVIDER",
+        "ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER",
+        "ERIS_LLM_PROMPT_HARD_CAP_TOKENS",
+    )
+
     lock_file = os.path.join(os.path.dirname(__file__), ".vision.lock")
     lock = SingleInstanceLock(lock_file)
     try:

@@ -22,6 +22,13 @@ import threading
 from pathlib import Path
 from typing import Any
 
+# Khoá TOÀN CỤC cho mọi inference llama-cpp in-process. llama-cpp-python KHÔNG
+# thread-safe: nếu nhiều luồng (fragment×5 / vision / scheduler) cùng decode trên
+# một hay nhiều Llama instance → heap corruption (0xC0000374) làm sập tiến trình.
+# Khoá này ép mọi nạp model + inference chạy LẦN LƯỢT. RLock để re-entrant
+# (create_chat_completion giữ khoá rồi gọi _llama cũng cần khoá).
+_LLAMA_GLOBAL_LOCK = threading.RLock()
+
 
 def _project_root() -> Path:
     env = os.environ.get("ERIS_PROJECT_ROOT", "").strip()
@@ -82,7 +89,7 @@ class LlamaCppClient:
 
     def _llama(self) -> Any:
         key = (self.model_path, self.n_ctx, self.n_gpu_layers)
-        with LlamaCppClient._lock:
+        with _LLAMA_GLOBAL_LOCK:
             inst = LlamaCppClient._cache.get(key)
             if inst is None:
                 from llama_cpp import Llama  # import trễ: chỉ cần khi thật sự chạy local
@@ -112,7 +119,6 @@ class LlamaCppClient:
         timeout=None,  # llama-cpp chạy in-process, không có timeout mạng — bỏ qua.
         **kwargs: Any,
     ):
-        llama = self._llama()
         call_kwargs: dict[str, Any] = {
             "messages": messages,
             "temperature": float(temperature),
@@ -122,4 +128,7 @@ class LlamaCppClient:
         }
         if isinstance(response_format, dict) and response_format.get("type") == "json_object":
             call_kwargs["response_format"] = {"type": "json_object"}
-        return llama.create_chat_completion(**call_kwargs)
+        # Serialize toàn bộ inference: không bao giờ để 2 luồng decode đồng thời.
+        with _LLAMA_GLOBAL_LOCK:
+            llama = self._llama()
+            return llama.create_chat_completion(**call_kwargs)

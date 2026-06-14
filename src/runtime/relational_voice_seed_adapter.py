@@ -300,6 +300,15 @@ _ECHO_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Seed model đôi khi nhại định nghĩa bản thân thay vì viết câu mở, kiểu:
+#   "ERIS (a desktop presence with memory, ego, non-human but not soulless)..."
+# Đây là lý-lịch, KHÔNG phải lời thoại → loại để rơi xuống đường chat chính.
+_IDENTITY_GLOSS_RE = re.compile(r"^\s*ERIS\s*[\(\[:：\-—]", re.IGNORECASE)
+
+
+def is_identity_gloss(text: str) -> bool:
+    return bool(_IDENTITY_GLOSS_RE.match(str(text or "")))
+
 
 # ---------------------------------------------------------------------------
 # Adapter
@@ -322,7 +331,7 @@ class RelationalVoiceSeedAdapter:
             return None
         try:
             plan = self._plan_seed(user_text, stance)
-            if not plan.ok or not plan.seed.strip() or is_disclaimer_text(plan.seed):
+            if not plan.ok or not plan.seed.strip() or is_disclaimer_text(plan.seed) or is_identity_gloss(plan.seed):
                 return None  # ladder: fall through to legacy path
             seed = self._clamp_words(plan.seed, self.config.seed_max_words)
 

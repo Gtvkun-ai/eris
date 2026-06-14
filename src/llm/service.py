@@ -2495,6 +2495,11 @@ class LlmService:
         ti_hint = self._compress_internal_context(ti_context, kind="ti")
         action_plan_hint = self._extract_action_plan_context(ti_context)
         ni_hint = self._compress_internal_context(ni_context, kind="ni")
+        if self._dds_enabled():
+            _distilled = self._maybe_distill_blocks(
+                {"memory_context": memory_context}, channel="directive"
+            )
+            memory_context = _distilled.get("memory_context", memory_context)
         mode_addendum = self._build_directive_mode_addendum(ti_context)
         intent_guidance = self._build_speech_intent_guidance(speech_intent)
         style_block = self._build_style_block(
@@ -2971,6 +2976,58 @@ class LlmService:
             return True
         return self.vision_client is not None and self.client is self.vision_client
 
+    def _dds_enabled(self) -> bool:
+        """DDS distillation bật/tắt (mặc định bật). Chỉ kích hoạt khi ngữ cảnh nặng."""
+        return (os.environ.get("ERIS_DDS_ENABLED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
+
+    def _dds_distill_client(self):
+        """Chọn client rẻ/nhỏ cho worker distill: ưu tiên style/fallback khác main."""
+        for candidate in (self.style_client, self.fallback_client):
+            if candidate is not None and candidate is not self.client:
+                return candidate
+        return self.style_client or self.fallback_client or self.client
+
+    def _maybe_distill_blocks(self, blocks: dict, *, channel: str) -> dict:
+        """Phase 2/3: khi tổng ngữ cảnh nặng vượt ngưỡng, băm và rút gọn các khối
+        SONG SONG bằng worker nhỏ trước khi đưa vào synthesis. Lỗi → giữ nguyên gốc."""
+        if not self._dds_enabled():
+            return blocks
+        try:
+            from llm.dds import distill_blocks_parallel
+            from llm.token_budget import detect_provider, estimate_tokens, hard_cap_for_provider
+
+            combined = "\n\n".join(str(v or "") for v in blocks.values())
+            est = estimate_tokens([{"role": "user", "content": combined}])
+            provider = detect_provider(getattr(self.client, "base_url", ""), getattr(self.client, "model_name", ""))
+            cap = hard_cap_for_provider(provider)
+            raw_trigger = (os.environ.get("ERIS_DDS_TRIGGER_TOKENS", "") or "").strip()
+            try:
+                trigger = int(raw_trigger) if raw_trigger else int(cap * 0.6)
+            except ValueError:
+                trigger = int(cap * 0.6)
+            if est < trigger:
+                return blocks
+
+            distill_client = self._dds_distill_client()
+            dprovider = detect_provider(
+                getattr(distill_client, "base_url", ""), getattr(distill_client, "model_name", "")
+            )
+            distilled = distill_blocks_parallel(distill_client, blocks, provider=dprovider)
+            after = estimate_tokens(
+                [{"role": "user", "content": "\n\n".join(str(v or "") for v in distilled.values())}]
+            )
+            self.logger.info(
+                "[DDS] distilled context channel=%s est_before=%d est_after=%d trigger=%d",
+                channel,
+                est,
+                after,
+                trigger,
+            )
+            return distilled
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("[DDS] distill skipped: %s", exc)
+            return blocks
+
     def generate_chat_reply(
         self,
         *,
@@ -2994,6 +3051,25 @@ class LlmService:
         last_failure: str = "",
         force_local_fallback: bool = False,
     ):
+        # Phase 2/3 DDS: nếu ngữ cảnh nặng (dễ gây 413), rút gọn các khối lớn song
+        # song bằng worker nhỏ TRƯỚC khi ghép prompt synthesis. Turn nhỏ không bị ảnh hưởng.
+        if self._dds_enabled():
+            _distilled = self._maybe_distill_blocks(
+                {
+                    "memory_context": memory_context,
+                    "conversation_context": conversation_context,
+                    "grounding_context": grounding_context,
+                    "ni_context": ni_context,
+                    "ti_context": ti_context,
+                },
+                channel="chat",
+            )
+            memory_context = _distilled.get("memory_context", memory_context)
+            conversation_context = _distilled.get("conversation_context", conversation_context)
+            grounding_context = _distilled.get("grounding_context", grounding_context)
+            ni_context = _distilled.get("ni_context", ni_context)
+            ti_context = _distilled.get("ti_context", ti_context)
+
         style_block = self._build_style_block(
             fe_context=fe_context,
             appraisal_context=appraisal_context,

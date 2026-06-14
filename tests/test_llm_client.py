@@ -127,5 +127,38 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual(generation_config["thinkingConfig"], {"thinkingBudget": 0})
 
 
+class GemmaPayloadHygieneTests(unittest.TestCase):
+    def _capture_payload(self, model_name, response_format=None):
+        captured = {}
+
+        def fake_post(url, *, headers, json, timeout):
+            captured["json"] = json
+            return _FakeResponse(payload={"candidates": [{"content": {"parts": [{"text": "{}"}]}}]})
+
+        with patch("llm.client.requests.post", side_effect=fake_post):
+            client = GeminiClient("https://generativelanguage.googleapis.com/v1beta", "k", model_name)
+            client.create_chat_completion(
+                messages=[{"role": "system", "content": "S"}, {"role": "user", "content": "hi"}],
+                temperature=0.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=16,
+                response_format=response_format,
+            )
+        return captured["json"]
+
+    def test_gemma_drops_safety_settings_and_structured_output(self):
+        payload = self._capture_payload("gemma-4-26b-a4b-it", response_format={"type": "json_object"})
+        self.assertNotIn("safetySettings", payload)
+        self.assertNotIn("systemInstruction", payload)  # folded into user turn
+        self.assertNotIn("responseMimeType", payload["generationConfig"])
+        self.assertNotIn("responseSchema", payload["generationConfig"])
+
+    def test_real_gemini_keeps_safety_settings(self):
+        payload = self._capture_payload("gemini-2.5-flash", response_format={"type": "json_object"})
+        self.assertIn("safetySettings", payload)
+        self.assertEqual(payload["generationConfig"]["responseMimeType"], "application/json")
+
+
 if __name__ == "__main__":
     unittest.main()

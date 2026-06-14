@@ -46,7 +46,7 @@ class RemoteModelProcessManager:
                 or str(remote_profile.get("model_name") or "").strip()
                 or os.environ.get("ERIS_REMOTE_MODEL", "").strip()
                 or os.environ.get("GEMINI_MODEL", "").strip()
-                or "gemma-4-26b-a4b-it"
+                or "gemma-4-31b-it"
             )
             if not api_key:
                 raise RuntimeError("Remote Gemini dang bat nhung chua co GEMINI_API_KEY hoac ERIS_REMOTE_API_KEY.")
@@ -114,7 +114,7 @@ class RemoteModelProcessManager:
                 or os.environ.get("ERIS_SPEECH_MODEL", "").strip()
                 or os.environ.get("ERIS_REMOTE_MODEL", "").strip()
                 or os.environ.get("GEMINI_MODEL", "").strip()
-                or "gemma-4-26b-a4b-it"
+                or "gemma-4-31b-it"
             )
             if not api_key:
                 raise RuntimeError("Speech Gemini dang bat nhung chua co ERIS_SPEECH_API_KEY hoac GEMINI_API_KEY.")
@@ -133,7 +133,7 @@ class RemoteModelProcessManager:
             str(profile.get("model") or "").strip()
             or str(profile.get("model_name") or "").strip()
             or os.environ.get("ERIS_SPEECH_MODEL", "").strip()
-            or os.environ.get("ERIS_REMOTE_MODEL", "gemma-4-26b-a4b-it").strip()
+            or os.environ.get("ERIS_REMOTE_MODEL", "gemma-4-31b-it").strip()
         )
         if not api_key:
             raise RuntimeError("Speech API dang bat nhung chua co ERIS_SPEECH_API_KEY.")

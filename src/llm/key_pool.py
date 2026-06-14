@@ -17,12 +17,23 @@ Thread-safe. Không bao giờ ném lỗi ra ngoài (đọc secrets hỏng → po
 
 from __future__ import annotations
 
+import logging
+import os
 import threading
+import time
+from contextlib import contextmanager
 from typing import List
+
+_LOGGER = logging.getLogger("LLM")
 
 
 class ApiKeyPool:
-    """Danh sách key + một con trỏ rotation dùng chung."""
+    """Danh sách key + một con trỏ rotation dùng chung, có theo dõi key "chết".
+
+    Mỗi key có thể bị đánh dấu nghỉ (dead) trong N giây khi gặp 429/413/5xx; pool
+    tự bỏ qua key nghỉ khi xoay/đọc, và tự "hồi" sau khi hết cooldown. Nhờ vậy các
+    mạch chạy song song không cùng đập vào một key đã hết quota.
+    """
 
     def __init__(self, keys: List[str]) -> None:
         seen: set[str] = set()
@@ -33,34 +44,96 @@ class ApiKeyPool:
                 seen.add(k)
                 ordered.append(k)
         self._keys = ordered
+        self._dead_until: list[float] = [0.0] * len(ordered)
         self._index = 0
         self._lock = threading.Lock()
+        self._rotations = 0
 
     @property
     def size(self) -> int:
         return len(self._keys)
 
+    def _alive_locked(self, idx: int, now: float) -> bool:
+        return self._dead_until[idx] <= now
+
+    def alive_count(self) -> int:
+        now = time.time()
+        with self._lock:
+            return sum(1 for i in range(len(self._keys)) if self._alive_locked(i, now))
+
+    def _next_alive_locked(self, start: int, now: float) -> int:
+        """Tìm index key sống kế tiếp (gồm cả start). -1 nếu không có key sống."""
+        n = len(self._keys)
+        for offset in range(n):
+            idx = (start + offset) % n
+            if self._alive_locked(idx, now):
+                return idx
+        return -1
+
     def current_key(self) -> str:
+        now = time.time()
         with self._lock:
             if not self._keys:
                 return ""
-            return self._keys[self._index % len(self._keys)]
+            if self._alive_locked(self._index, now):
+                return self._keys[self._index]
+            alive = self._next_alive_locked(self._index, now)
+            if alive >= 0:
+                self._index = alive
+                return self._keys[alive]
+            # Tất cả đang nghỉ → chọn key sắp hồi sớm nhất (least-bad), thử bừa.
+            soonest = min(range(len(self._keys)), key=lambda i: self._dead_until[i])
+            self._index = soonest
+            return self._keys[soonest]
 
     def rotate(self) -> bool:
-        """Xoay sang key kế tiếp (wrap-around).
-
-        Trả True nếu pool có >1 key (tức việc xoay có ý nghĩa). Wrap-around an
-        toàn vì mọi vòng retry gọi rotate() đều có giới hạn số lần.
-        """
+        """Xoay sang key SỐNG kế tiếp. Trả True nếu chuyển được sang index khác."""
+        now = time.time()
         with self._lock:
             if len(self._keys) <= 1:
                 return False
-            self._index = (self._index + 1) % len(self._keys)
+            nxt = self._next_alive_locked((self._index + 1) % len(self._keys), now)
+            if nxt < 0 or nxt == self._index:
+                # Không có key sống khác → vẫn nhích con trỏ để không kẹt.
+                new_index = (self._index + 1) % len(self._keys)
+                if new_index == self._index:
+                    return False
+                self._index = new_index
+                self._rotations += 1
+                return True
+            self._index = nxt
+            self._rotations += 1
             return True
+
+    def mark_dead(self, seconds: float = 60.0) -> None:
+        """Đánh dấu key hiện tại nghỉ trong ``seconds`` giây (429/413/5xx)."""
+        now = time.time()
+        with self._lock:
+            if not self._keys:
+                return
+            self._dead_until[self._index] = now + max(1.0, float(seconds))
+            _LOGGER.warning(
+                "[KEY POOL] mark dead index=%d cooldown=%.0fs alive=%d/%d",
+                self._index,
+                seconds,
+                sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now and i != self._index),
+                len(self._keys),
+            )
 
     def index(self) -> int:
         with self._lock:
             return self._index
+
+    def stats(self) -> dict[str, int]:
+        now = time.time()
+        with self._lock:
+            alive = sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now)
+            return {
+                "size": len(self._keys),
+                "alive": alive,
+                "dead": len(self._keys) - alive,
+                "rotations": self._rotations,
+            }
 
 
 _GROQ_PROVIDERS = {"openai", "openai_compatible", "compatible", "remote", "groq"}
@@ -80,6 +153,18 @@ def _normalize_kind(kind: str) -> str:
 def _is_placeholder(value: str) -> bool:
     v = str(value or "").strip()
     return (not v) or v.upper().startswith("PASTE_")
+
+
+def _split_keys_env(*names: str) -> list[str]:
+    """Tách danh sách key từ env (phân tách bằng dấu phẩy / xuống dòng / ;)."""
+    out: list[str] = []
+    for name in names:
+        raw = os.environ.get(name, "") or ""
+        for chunk in raw.replace("\n", ",").replace(";", ",").split(","):
+            chunk = chunk.strip()
+            if chunk and not _is_placeholder(chunk):
+                out.append(chunk)
+    return out
 
 
 def _collect_gemini_keys() -> list[str]:
@@ -104,6 +189,8 @@ def _collect_gemini_keys() -> list[str]:
                 ordered.extend(str(k) for k in fallbacks if str(k or "").strip())
     except Exception:
         pass
+    # T4.1: thêm key từ env (sau khi .env đã nạp) — hỗ trợ danh sách phân tách.
+    ordered.extend(_split_keys_env("ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS"))
     return ordered
 
 
@@ -125,6 +212,7 @@ def _collect_groq_keys() -> list[str]:
                 ordered.extend(str(k) for k in fallbacks if not _is_placeholder(k))
     except Exception:
         pass
+    ordered.extend(_split_keys_env("ERIS_GROQ_FALLBACK_API_KEYS"))
     return ordered
 
 
@@ -156,3 +244,57 @@ def reset_shared_key_pool() -> None:
     """Chỉ dùng cho test: xóa toàn bộ pool để build lại từ secrets."""
     with _pools_lock:
         _pools.clear()
+
+
+# ── T4.3: Giới hạn đồng thời per-provider ────────────────────────────────────
+# Worker song song (Phase 2 DDS) qua đây để không tự bắn vượt RPM mỗi key.
+_semaphores: dict[str, threading.BoundedSemaphore] = {}
+_sem_lock = threading.Lock()
+
+
+def _max_concurrency(provider: str) -> int:
+    kind = _normalize_kind(provider)
+    specific = os.environ.get(f"ERIS_LLM_{kind.upper()}_MAX_CONCURRENCY", "").strip()
+    generic = os.environ.get("ERIS_LLM_MAX_CONCURRENCY", "").strip()
+    raw = specific or generic
+    try:
+        value = int(raw) if raw else 4
+    except ValueError:
+        value = 4
+    return max(1, value)
+
+
+def _get_semaphore(provider: str) -> threading.BoundedSemaphore:
+    kind = _normalize_kind(provider)
+    sem = _semaphores.get(kind)
+    if sem is not None:
+        return sem
+    with _sem_lock:
+        if kind not in _semaphores:
+            _semaphores[kind] = threading.BoundedSemaphore(_max_concurrency(kind))
+        return _semaphores[kind]
+
+
+@contextmanager
+def concurrency_slot(provider: str = "gemini", *, timeout: float | None = None):
+    """Context manager giới hạn số call đồng thời per-provider.
+
+    Dùng trong worker runner song song. Nếu hết slot trong ``timeout`` giây thì
+    vẫn chạy (best-effort, không chặn cứng) để không treo hot path.
+    """
+    sem = _get_semaphore(provider)
+    acquired = sem.acquire(timeout=timeout) if timeout is not None else sem.acquire()
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                sem.release()
+            except ValueError:
+                pass
+
+
+def reset_concurrency_limits() -> None:
+    """Test/hot-reload: dựng lại semaphore theo env hiện tại."""
+    with _sem_lock:
+        _semaphores.clear()

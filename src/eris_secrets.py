@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -6,6 +7,11 @@ from typing import Any
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_LOGGER = logging.getLogger("Config")
+
+# Theo dõi nguồn thắng của mỗi biến config: "os-env" | ".env" | "secrets".
+_CONFIG_SOURCE: dict[str, str] = {}
+_ENV_FILE_LOADED = False
 
 
 def _resolve_secrets_path() -> Path:
@@ -20,6 +26,90 @@ def _resolve_secrets_path() -> Path:
 
 
 _SECRETS_PATH = _resolve_secrets_path()
+
+
+def _resolve_env_file_path() -> Path:
+    env_root = os.environ.get("ERIS_PROJECT_ROOT", "").strip()
+    if env_root:
+        candidate = Path(env_root) / ".env"
+        if candidate.is_file():
+            return candidate
+    return _PROJECT_ROOT / ".env"
+
+
+def _parse_env_file(text: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.lower().startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key:
+            result[key] = value
+    return result
+
+
+def load_env_file(*, force: bool = False) -> dict[str, str]:
+    """Nạp ``.env`` vào ``os.environ`` với precedence: OS-env > .env > secrets.
+
+    Chỉ set biến CHƯA có trong ``os.environ`` (real OS env luôn thắng). Chạy MỘT
+    lần (idempotent) trừ khi ``force=True``. Bỏ qua khi ``ERIS_DISABLE_DOTENV``
+    bật (dùng để cô lập test). Không bao giờ raise.
+    """
+
+    global _ENV_FILE_LOADED
+    if _ENV_FILE_LOADED and not force:
+        return {}
+    _ENV_FILE_LOADED = True
+
+    if (os.environ.get("ERIS_DISABLE_DOTENV", "") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        return {}
+
+    path = _resolve_env_file_path()
+    if not path.is_file():
+        return {}
+    try:
+        parsed = _parse_env_file(path.read_text(encoding="utf-8"))
+    except OSError:
+        return {}
+
+    applied: dict[str, str] = {}
+    for key, value in parsed.items():
+        if key in os.environ:
+            _CONFIG_SOURCE.setdefault(key, "os-env")
+            continue
+        os.environ[key] = value
+        _CONFIG_SOURCE[key] = ".env"
+        applied[key] = value
+
+    if applied:
+        _LOGGER.info("[CONFIG] loaded %d setting(s) from %s", len(applied), path)
+    return applied
+
+
+def config_source(name: str) -> str:
+    """Nguồn thắng của một biến config: ".env" | "secrets" | "os-env" | "default"."""
+
+    if name in _CONFIG_SOURCE:
+        return _CONFIG_SOURCE[name]
+    if name in os.environ:
+        return "os-env"
+    return "default"
+
+
+def log_config_sources(*names: str) -> None:
+    """Log nguồn thắng của các biến quan trọng để debug R3/E7."""
+
+    for name in names:
+        _LOGGER.info("[CONFIG] %s=%r source=%s", name, os.environ.get(name, ""), config_source(name))
 
 
 @lru_cache(maxsize=1)
@@ -176,6 +266,8 @@ def get_agent_profile(
 
 
 def apply_secrets_to_environ() -> None:
+    # Nạp .env trước (precedence: OS-env > .env > secrets) rồi mới đổ secrets.
+    load_env_file()
     payload = _load_secrets()
     sections: list[dict[str, Any]] = [payload]
     for section_name in ("api_keys", "env", "secrets"):
@@ -189,3 +281,4 @@ def apply_secrets_to_environ() -> None:
                 continue
             if key and value.strip() and not os.environ.get(key):
                 os.environ[key] = value.strip()
+                _CONFIG_SOURCE[key] = "secrets"

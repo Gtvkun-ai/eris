@@ -1,6 +1,11 @@
 import requests
 import re
 import os
+import logging
+
+from llm.token_budget import preflight as _preflight
+
+_LOGGER = logging.getLogger("LLM")
 
 
 def _http_error_with_body(response: requests.Response) -> requests.HTTPError:
@@ -86,6 +91,7 @@ class LlamaServerClient:
         grammar=None,
         timeout=None,
     ):
+        messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         payload = {
             "model": self.model_name,
             "messages": messages,
@@ -173,6 +179,7 @@ class OpenAICompatibleClient:
         grammar=None,
         timeout=None,
     ):
+        messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         payload = {
             "model": self.model_name,
             "messages": messages,
@@ -207,6 +214,7 @@ class OpenAICompatibleClient:
                     headers["Authorization"] = f"Bearer {self.api_key}"
 
             rate_limited = False
+            server_error = False
             seen_signatures = set()
             for candidate in _chat_payload_variants(payload):
                 signature = tuple(sorted(candidate.keys()))
@@ -229,6 +237,9 @@ class OpenAICompatibleClient:
                     if status_code == 429:
                         rate_limited = True
                         break  # thoát vòng variant để xoay key
+                    if status_code in (500, 502, 503, 504):
+                        server_error = True
+                        break  # lỗi tạm thời phía provider → xoay key thử lại
                     if status_code is not None and status_code < 500:
                         continue  # thử biến thể payload kế (vd bỏ grammar/response_format)
                     raise last_error
@@ -237,12 +248,13 @@ class OpenAICompatibleClient:
                     raise
 
             if (
-                rate_limited
+                (rate_limited or server_error)
                 and self.key_pool is not None
                 and attempt < max_attempts - 1
-                and self.key_pool.rotate()
             ):
-                continue
+                self.key_pool.mark_dead(60.0 if rate_limited else 15.0)
+                if self.key_pool.rotate():
+                    continue
             break
 
         if last_error is not None:
@@ -258,7 +270,7 @@ class GeminiClient:
         if not (api_key or "").strip() and key_pool is not None:
             api_key = key_pool.current_key()
         self.api_key = self._normalize_api_key(api_key)
-        self.model_name = (model_name or "gemma-4-26b-a4b-it").strip()
+        self.model_name = (model_name or "gemma-4-31b-it").strip()
         self.timeout = timeout
 
     def _normalize_api_key(self, raw_value: str) -> str:
@@ -340,6 +352,55 @@ class GeminiClient:
             contents.append({"role": "user", "parts": [self._text_part("")]})
         return "\n\n".join(part for part in system_parts if part), contents
 
+    def _is_gemma(self) -> bool:
+        """Gemma trên Gemini API KHÔNG nhận system_instruction và KHÔNG nhận ảnh
+        inline → gửi như vậy là 500. Phát hiện để gập system vào user-turn và
+        tước ảnh (xem Phase 1: request hygiene)."""
+
+        return self.model_name.strip().lower().startswith("gemma")
+
+    @staticmethod
+    def _is_text_part(part: dict) -> bool:
+        return isinstance(part, dict) and "text" in part
+
+    def _apply_gemma_hygiene(
+        self, system_instruction: str, contents: list[dict]
+    ) -> tuple[str, list[dict]]:
+        """Chuẩn hoá payload cho Gemma: bỏ ảnh, gập system vào lượt user đầu tiên.
+
+        - Mọi part không phải text (inlineData/fileData) bị loại; nếu một content
+          mất hết part thì thay bằng ghi chú text để không gửi parts rỗng.
+        - ``system_instruction`` (nếu có) được ghép làm tiền tố text của content
+          user đầu tiên, rồi xoá khỏi field riêng (trả "").
+        """
+
+        cleaned: list[dict] = []
+        dropped_images = False
+        for content in contents:
+            parts = content.get("parts") or []
+            text_parts = [p for p in parts if self._is_text_part(p)]
+            if len(text_parts) != len(parts):
+                dropped_images = True
+            if not text_parts:
+                text_parts = [self._text_part("[ảnh đã được mô tả thành văn bản ở nơi khác]")]
+            cleaned.append({"role": content.get("role", "user"), "parts": text_parts})
+
+        if not cleaned:
+            cleaned.append({"role": "user", "parts": [self._text_part("")]})
+
+        if system_instruction:
+            # Tìm content user đầu tiên để ghép; nếu không có, chèn một content mới.
+            target = next((c for c in cleaned if c.get("role") == "user"), None)
+            prefix = self._text_part(f"[Hướng dẫn hệ thống]\n{system_instruction}\n\n")
+            if target is None:
+                cleaned.insert(0, {"role": "user", "parts": [prefix]})
+            else:
+                target["parts"] = [prefix, *target["parts"]]
+
+        if dropped_images:
+            _LOGGER.debug("[GEMINI HYGIENE] stripped image part(s) for gemma model=%s", self.model_name)
+        return "", cleaned
+
     def create_chat_completion(
         self,
         *,
@@ -352,14 +413,21 @@ class GeminiClient:
         grammar=None,
         timeout=None,
     ):
+        messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         system_instruction, contents = self._convert_messages(messages)
+        is_gemma = self._is_gemma()
+        if is_gemma:
+            system_instruction, contents = self._apply_gemma_hygiene(system_instruction, contents)
         generation_config = {
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
         if self.model_name.startswith("gemini-2.5"):
             generation_config["thinkingConfig"] = {"thinkingBudget": 0}
-        if response_format and response_format.get("type") == "json_object":
+        # Gemma (open model trên Gemini API) KHÔNG hỗ trợ controlled generation
+        # (responseMimeType/responseSchema) — gửi kèm sẽ 400/500. Bỏ cho gemma;
+        # adapter tự salvage JSON từ text thường.
+        if response_format and response_format.get("type") == "json_object" and not is_gemma:
             generation_config["responseMimeType"] = "application/json"
             schema = response_format.get("responseSchema") or response_format.get("schema")
             if isinstance(schema, dict) and schema:
@@ -368,25 +436,16 @@ class GeminiClient:
         payload = {
             "contents": contents,
             "generationConfig": generation_config,
-            "safetySettings": [
-                {
-                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_HARASSMENT",
-                    "threshold": "BLOCK_NONE"
-                }
-            ],
         }
+        # Gemma KHÔNG nhận field safetySettings → kèm vào là 500. Chỉ gửi cho
+        # các model Gemini thật.
+        if not is_gemma:
+            payload["safetySettings"] = [
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            ]
         if system_instruction:
             payload["systemInstruction"] = {"parts": [self._text_part(system_instruction)]}
 
@@ -408,18 +467,47 @@ class GeminiClient:
                 json=payload,
                 timeout=self.timeout if timeout is None else timeout,
             )
+            status = last_response.status_code
             if (
-                last_response.status_code == 429
+                status in (429, 500, 502, 503, 504)
                 and self.key_pool is not None
                 and attempt < max_attempts - 1
-                and self.key_pool.rotate()
             ):
-                continue
+                # 429 = hết quota key (nghỉ lâu); 5xx = lỗi tạm thời (nghỉ ngắn).
+                self.key_pool.mark_dead(60.0 if status == 429 else 15.0)
+                if self.key_pool.rotate():
+                    _LOGGER.warning(
+                        "[GEMINI RETRY] status=%s attempt=%d/%d → rotate key",
+                        status,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    continue
             break
 
         response = last_response
         try:
             response.raise_for_status()
         except requests.HTTPError:
+            self._maybe_dump_4xx(payload, response)
             raise _http_error_with_body(response)
         return response.json()
+
+    def _maybe_dump_4xx(self, payload: dict, response) -> None:
+        """Debug: khi gặp 4xx và bật ERIS_LLM_DEBUG_4XX, ghi payload + body đầy đủ
+        ra file để soi (log C# cắt cụt body). Nuốt mọi lỗi."""
+        try:
+            status = getattr(response, "status_code", 0)
+            if status < 400 or status >= 500:
+                return
+            if (os.environ.get("ERIS_LLM_DEBUG_4XX", "") or "").strip().lower() not in {"1", "true", "yes", "on"}:
+                return
+            import json as _json
+            root = os.environ.get("ERIS_PROJECT_ROOT", "").strip() or os.getcwd()
+            path = os.path.join(root, "_llm_4xx_debug.log")
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(f"\n===== {self.model_name} status={status} =====\n")
+                fh.write("PAYLOAD:\n" + _json.dumps(payload, ensure_ascii=False)[:4000] + "\n")
+                fh.write("BODY:\n" + (response.text or "")[:2000] + "\n")
+        except Exception:
+            pass
