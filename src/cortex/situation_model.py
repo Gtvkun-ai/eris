@@ -378,6 +378,11 @@ class SituationModel:
         self._active_prediction = Prediction()
         self._pe_cache.clear()
 
+    def set_knowledge_provider(self, provider: Any) -> None:
+        """Gắn hook làm giàu dự đoán bằng tri thức đã học (Curiosity Tutor). None ⇒ tắt."""
+
+        self._knowledge_provider = provider
+
     def observe_and_update(self, frame: Any, *, now: Optional[float] = None) -> SituationUpdate:
         """Chạy vòng đời 1 chu kỳ. Tất định, commit-or-rollback."""
 

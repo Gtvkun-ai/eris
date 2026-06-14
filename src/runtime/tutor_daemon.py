@@ -11,6 +11,7 @@ CognitivePipeline/autonomous/chat.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any, Callable, Optional
 
@@ -39,8 +40,13 @@ class TutorStageEmitter:
     def emit(self, episode: TutorEpisode, stage: str) -> None:
         try:
             question_preview = ""
+            question_full = ""
             if episode.question is not None:
-                question_preview = scrub_identity(episode.question.text)[:_QUESTION_PREVIEW_LEN]
+                question_full = scrub_identity(episode.question.text)[:280]
+                question_preview = question_full[:_QUESTION_PREVIEW_LEN]
+            answer_preview = ""
+            if episode.answer is not None and getattr(episode.answer, "text", ""):
+                answer_preview = scrub_identity(episode.answer.text)[:400]
             payload = {
                 "parse_mode": "tutor_event",
                 "should_speak": False,
@@ -49,7 +55,10 @@ class TutorStageEmitter:
                     "episode_id": episode.episode_id,
                     "stage": stage,
                     "question_preview": question_preview,
+                    "question": question_full,
+                    "answer": answer_preview,
                     "claims": int(episode.claims_committed),
+                    "fail_reason": episode.fail_reason or "",
                 },
             }
             if self._logger is not None:
@@ -86,6 +95,8 @@ class TutorDaemon:
         backend: Any,
         digest: Any,
         share_impulse: Any = None,
+        classifier: Any = None,
+        router: Any = None,
         emitter: Optional[TutorStageEmitter] = None,
         risk_guard: Optional[TutorRiskGuard] = None,
         logger: Optional[TutorLogger] = None,
@@ -98,35 +109,76 @@ class TutorDaemon:
         self.backend = backend
         self.digest = digest
         self.share_impulse = share_impulse
+        self.classifier = classifier
+        self.router = router
         self.emitter = emitter or TutorStageEmitter()
         self.risk_guard = risk_guard or TutorRiskGuard(self.config)
         self.logger = logger or TutorLogger()
         self._drive_fn = drive_fn
+        # Serialize episode: KHÔNG mở 2 browser cùng profile cùng lúc (autonomous vs chat).
+        self._run_lock = threading.Lock()
 
     # ------------------------------------------------------------------
 
     def run_once(self, *, idle: bool, now: Optional[float] = None) -> Optional[TutorEpisode]:
         if not self.config.enabled:
             return None
+        # Một episode tại một thời điểm. Bận thì bỏ qua (không xếp hàng chờ browser).
+        if not self._run_lock.acquire(blocking=False):
+            return None
+        try:
+            return self._run_once_locked(idle=idle, now=now)
+        finally:
+            self._run_lock.release()
+
+    def _run_once_locked(self, *, idle: bool, now: Optional[float] = None) -> Optional[TutorEpisode]:
         now = float(now if now is not None else time.time())
         if self.risk_guard.is_paused(now):
             return None
 
         try:
-            gap = self.gate.select(
-                self.collector.drain_candidates(),
-                idle=idle,
-                now=now,
-                drive_level=self._drive_level(),
-            )
+            candidates = self.collector.drain_candidates()
+            # Forced gap (lệnh trực tiếp / "không biết") bỏ qua idle + rate-limit.
+            gap = self.gate.select_forced(candidates) if hasattr(self.gate, "select_forced") else None
+            if gap is None:
+                gap = self.gate.select(
+                    candidates,
+                    idle=idle,
+                    now=now,
+                    drive_level=self._drive_level(),
+                )
         except Exception:
             return None
         if gap is None:
             return None
 
+        # Gap rỗng (không mô tả, không ngữ cảnh) thì không có gì để hỏi —
+        # bỏ qua ngay, KHÔNG bật thẻ "đang nghĩ câu hỏi" rồi hụt. Gap forced
+        # (lệnh trực tiếp) vẫn cho qua vì formulator có fallback.
+        if not getattr(gap, "force", False):
+            if not (str(getattr(gap, "description", "") or "").strip()
+                    or str(getattr(gap, "context", "") or "").strip()):
+                return None
+
         episode = TutorEpisode(gap=gap, started_ts=now)
         self.gate.note_started(now)
         self._emit(episode, "forming")
+
+        # 0. Định tuyến tò mò: skip (đã biết) / ask_user (về Ngài) / ask_gemini (thế giới).
+        action = "ask_gemini"
+        route_reason = ""
+        if self.router is not None:
+            try:
+                action, route_reason = self.router.route(gap)
+            except Exception:
+                action = "ask_gemini"
+                route_reason = ""
+        if action == "skip":
+            # Tách rõ "đã biết rồi" với "vụn vặt không đáng hỏi" để nhãn không đánh lừa.
+            skip_reason = "gate_rejected_known" if route_reason == "already_known" else "gate_rejected_trivial"
+            return self._fail(episode, skip_reason, now)
+        if action == "ask_user":
+            return self._ask_user(episode, gap, now)
 
         # 1. Hình thành câu hỏi (không mở web nếu thất bại).
         try:
@@ -147,28 +199,85 @@ class TutorDaemon:
             reason = getattr(answer, "fail_reason", None) or "empty_answer"
             return self._fail(episode, reason, now)
 
-        # 3. Tiêu hóa thành claim.
-        self._emit(episode, "digesting")
-        try:
-            episode.claims_committed = self.digest.digest(episode)
-        except Exception:
-            episode.claims_committed = 0
+        # 3. Phân loại + định tuyến: durable lưu (embedding); context/banter ephemeral.
+        kind = "durable"
+        if self.classifier is not None:
+            try:
+                kind = self.classifier.classify(
+                    question.text, answer.text,
+                    gap_source=gap.source, kind_hint=getattr(gap, "kind_hint", ""),
+                )
+            except Exception:
+                kind = "durable"
 
-        # 4. Giải quyết gap + khoe (nếu học được).
-        if episode.claims_committed > 0:
+        if kind == "durable":
+            self._emit(episode, "digesting")
+            try:
+                episode.claims_committed = self.digest.digest(episode)
+            except Exception:
+                episode.claims_committed = 0
+            if episode.claims_committed > 0:
+                try:
+                    self.collector.resolve(gap)
+                except Exception:
+                    pass
+                if self.share_impulse is not None:
+                    try:
+                        self.share_impulse.maybe_emit(episode, now=now)
+                    except Exception:
+                        pass
+        else:
+            # context / banter: KHÔNG lưu trí nhớ dài hạn. Đẩy một câu ngắn cho vui/đoán.
             try:
                 self.collector.resolve(gap)
             except Exception:
                 pass
             if self.share_impulse is not None:
                 try:
-                    self.share_impulse.maybe_emit(episode, now=now)
+                    remark = ""
+                    formulator = getattr(self.share_impulse, "_formulator", None)
+                    if formulator is not None and callable(getattr(formulator, "craft_remark", None)):
+                        remark = formulator.craft_remark(episode, kind=kind)
+                    if remark:
+                        self.share_impulse.push_remark(remark, now=now, priority=0.6)
+                        episode.shared = True
                 except Exception:
                     pass
 
         episode.stage = "done"
         episode.ended_ts = float(time.time())
         self._emit(episode, "done")
+        self.logger.log_episode(episode.to_dict())
+        self.risk_guard.note_success(now)
+        return episode
+
+    def _ask_user(self, episode: TutorEpisode, gap: Any, now: float) -> TutorEpisode:
+        """Eris hỏi LẠI Ngài (nói ra) thay vì lén hỏi Gemini. Không mở browser, không tab."""
+
+        question = ""
+        try:
+            formulator = self.formulator
+            if formulator is not None and callable(getattr(formulator, "craft_user_question", None)):
+                question = formulator.craft_user_question(gap)
+        except Exception:
+            question = ""
+        if not question:
+            question = "Ơ, ý Ngài là sao ạ?"
+
+        pushed = False
+        if self.share_impulse is not None:
+            try:
+                # Ưu tiên cao hơn khịa/khoe: đây là câu hỏi cần Ngài trả lời.
+                pushed = bool(self.share_impulse.push_remark(question, now=now, priority=0.9))
+            except Exception:
+                pushed = False
+        try:
+            self.collector.resolve(gap)
+        except Exception:
+            pass
+        episode.shared = pushed
+        episode.stage = "done"
+        episode.ended_ts = float(time.time())
         self.logger.log_episode(episode.to_dict())
         self.risk_guard.note_success(now)
         return episode

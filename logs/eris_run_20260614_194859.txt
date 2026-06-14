@@ -1,0 +1,26 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-06-14 19:48:59
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+19:48:59.896 [INFO] [Vision] Dung Python dev: python "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+19:48:59.915 [INFO] [Vision] Da khoi chay vision.py PID=7032
+19:49:01.417 [INFO] [vision.py] [Vision][INFO] Đang dùng remote API làm cognition chính.
+19:49:01.417 [INFO] [vision.py] [LLM][INFO] Dung OpenAI-compatible API tai https://api.groq.com/openai/v1 voi model qwen/qwen3-32b
+19:49:01.418 [INFO] [vision.py] [LLM][INFO] Dung Gemini speech API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-31b-it
+19:49:01.418 [INFO] [vision.py] [Vision][INFO] Speech/style client đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+19:49:01.418 [INFO] [vision.py] [LLM][INFO] Chat format fallback san sang tai https://api.shopaikey.com/v1 voi model glm-4.5-flash
+19:49:01.418 [INFO] [vision.py] [Vision][INFO] Mô hình đã sẵn sàng.
+19:49:04.751 [INFO] [vision.py] [Loop][INFO] Epistemic V2 ready in authoritative mode; cognitive state writes use V2.
+19:49:04.753 [INFO] [vision.py] [Loop][INFO] Model inference scheduler đã bọc llm_service và sensory adapter: main, vision, sensory.
+19:49:04.754 [INFO] [vision.py] [Loop][INFO] [PrivateMind API] ready provider=gemini model=gemma-4-31b-it pool=fragment×5+synthesis×1
+19:49:04.766 [INFO] [vision.py] [Loop][INFO] [InnerDiary fallback] ready provider=openai_compatible model=qwen-plus-character
+19:49:04.805 [INFO] [vision.py] [Loop][INFO] tutor: Master_Switch BẬT — đang dựng Curiosity Tutor daemon
+19:49:04.805 [INFO] [vision.py] [Loop][INFO] tutor: KnowledgeProvider sẵn sàng (SituationModel sẽ nối khi pipeline dựng)
+19:49:04.835 [INFO] [vision.py] [Loop][INFO] --- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---
+19:49:05.329 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=253 budget=1000000 cap=5200
+19:49:07.338 [INFO] [Vision] Dang dung vision.py PID=7032...
+19:49:07.397 [INFO] [Vision] vision.py da thoat (PID=7032, code=-1).
+19:49:07.398 [INFO] [RunLogger] Ket thuc phien chay.

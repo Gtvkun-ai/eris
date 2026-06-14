@@ -1,0 +1,39 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-06-14 20:45:15
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+20:45:15.748 [INFO] [Vision] Dung Python dev: python "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+20:45:15.767 [INFO] [Vision] Da khoi chay vision.py PID=8056
+20:45:17.163 [INFO] [vision.py] [Vision][INFO] Đang dùng remote API làm cognition chính.
+20:45:17.163 [INFO] [vision.py] [LLM][INFO] Dung OpenAI-compatible API tai https://api.groq.com/openai/v1 voi model qwen/qwen3-32b
+20:45:17.163 [INFO] [vision.py] [LLM][INFO] Dung Gemini speech API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-31b-it
+20:45:17.163 [INFO] [vision.py] [Vision][INFO] Speech/style client đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+20:45:17.164 [INFO] [vision.py] [LLM][INFO] Chat format fallback san sang tai https://api.shopaikey.com/v1 voi model glm-4.5-flash
+20:45:17.164 [INFO] [vision.py] [Vision][INFO] Mô hình đã sẵn sàng.
+20:45:19.590 [INFO] [vision.py] [Loop][INFO] Epistemic V2 ready in authoritative mode; cognitive state writes use V2.
+20:45:19.592 [INFO] [vision.py] [Loop][INFO] Model inference scheduler đã bọc llm_service và sensory adapter: main, vision, sensory.
+20:45:19.592 [INFO] [vision.py] [Loop][INFO] [PrivateMind API] ready provider=gemini model=gemma-4-31b-it pool=fragment×5+synthesis×1
+20:45:19.602 [INFO] [vision.py] [Loop][INFO] [InnerDiary fallback] ready provider=openai_compatible model=qwen-plus-character
+20:45:19.629 [INFO] [vision.py] [Loop][INFO] tutor: Master_Switch BẬT — đang dựng Curiosity Tutor daemon
+20:45:19.629 [INFO] [vision.py] [Loop][INFO] tutor: KnowledgeProvider sẵn sàng (SituationModel sẽ nối khi pipeline dựng)
+20:45:19.664 [INFO] [vision.py] [Loop][INFO] --- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---
+20:45:20.250 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=253 budget=1000000 cap=850000
+20:45:20.986 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] mark dead index=0 cooldown=15s alive=8/9
+20:45:20.986 [INFO] [vision.py] [LLM][WARNING] [GEMINI RETRY] status=500 attempt=1/9 → rotate key
+20:45:21.858 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] mark dead index=1 cooldown=15s alive=7/9
+20:45:21.858 [INFO] [vision.py] [LLM][WARNING] [GEMINI RETRY] status=500 attempt=2/9 → rotate key
+20:45:24.974 [INFO] [vision.py] [Loop][INFO] [session_ritual raw] {"text": "Ngài mở lại rồi à.", "intent": "session_ritual", "action": {"type": "none"}, "reasoning_tags": ["session_ritual", "greeting_cognition"], "should_speak": true, "confidence": 0.76, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "debug_trace": "session_ritual_deterministic; situation=low_evidence_start | low_evidence_no_llm", "next_animation": "", "system_action": "", "action_input": ""}
+20:45:25.103 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent LLM greeting text="Ngài mở lại rồi à."
+20:45:25.502 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent greeting
+20:45:25.800 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+20:45:29.474 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+20:45:29.474 [INFO] [vision.py] [Loop][INFO] [Observer] action=call_vision_compressor salience=0.93 error=0.00 focus=unknown intent=unknown
+20:45:29.475 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.09 user_presence=0.48 novelty=0.75 repetition=0.00
+20:45:29.589 [INFO] [vision.py] [Loop][INFO] [wake governor] level=call_vision_compressor ext=0.22 internal=0.03 permission=0.82 interrupt=0.18 speech=0.10 wants_vision=True vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+20:45:29.615 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_5cc07680', 'stage': 'forming'}
+20:45:34.785 [INFO] [Vision] Dang dung vision.py PID=8056...
+20:45:35.628 [INFO] [Vision] vision.py da thoat (PID=8056, code=-1).
+20:45:35.630 [INFO] [RunLogger] Ket thuc phien chay.

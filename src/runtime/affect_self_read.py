@@ -80,7 +80,9 @@ def _env_float(name: str, default: float) -> float:
 class AffectSelfReadConfig:
     enabled: bool = True
     max_tokens: int = 48
-    timeout_seconds: float = 3.5
+    # 3.5s quá ngắn cho 1 call sinh-văn-bản tới remote Gemini (hay ReadTimeout).
+    # Nâng sàn lên 7s; vẫn fail-mềm về câu cache/fallback nếu vượt.
+    timeout_seconds: float = 7.0
     temperature: float = 0.6
     # Tối thiểu giữa 2 lần gọi gemma (giây), chống recompute dồn khi state dao động.
     min_interval_seconds: float = 8.0
@@ -90,7 +92,7 @@ class AffectSelfReadConfig:
         return cls(
             enabled=_env_flag("ERIS_AFFECT_SELF_READ_ENABLED", True),
             max_tokens=_env_int("ERIS_AFFECT_SELF_READ_MAX_TOKENS", 48),
-            timeout_seconds=_env_float_ms("ERIS_AFFECT_SELF_READ_TIMEOUT_MS", 3.5),
+            timeout_seconds=_env_float_ms("ERIS_AFFECT_SELF_READ_TIMEOUT_MS", 7.0),
             temperature=_env_float("ERIS_AFFECT_SELF_READ_TEMPERATURE", 0.6),
             min_interval_seconds=_env_float("ERIS_AFFECT_SELF_READ_MIN_INTERVAL_SEC", 8.0),
         )

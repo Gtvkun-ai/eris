@@ -192,3 +192,50 @@ python -m pytest tests/ -q
   tự tạo key free riêng.
 - Các file state runtime (`memory_core/`, `long_term_memory.json`, ...) là dữ liệu cá
   nhân của từng lần chạy, không nên commit.
+
+---
+
+## 8. Curiosity Tutor (gia sư web — tùy chọn, mặc định TẮT)
+
+ERIS có thể tự "đi hỏi gia sư" khi gặp lỗ hiểu biết: khi một vi phạm kỳ vọng
+(`SituationModel`) hoặc một tình huống màn hình không phân loại được xuất hiện, ERIS hình
+thành câu hỏi (bằng **local LLM**), **mở một cửa sổ trình duyệt thật** tới
+`gemini.google.com` bằng tài khoản Google đăng nhập sẵn, gõ câu hỏi như người, rồi chưng
+cất câu trả lời thành claim đưa vào trí nhớ ngữ nghĩa. Đôi khi ERIS sẽ tự nhiên "khoe"
+điều vừa học bằng giọng của chính nó (có tiết chế). Toàn bộ chạy ngoài hot path.
+
+> ⚠️ **Rủi ro cần biết.** Tự động hóa tài khoản Google tiêu dùng **vi phạm ToS của
+> Google** và tài khoản **có thể bị khóa**. Cửa sổ Gemini thật có thể **lộ email/tab
+> khác** trên màn hình. Mặc định tính năng **TẮT**; chỉ bật nếu bạn chấp nhận rủi ro này.
+
+### 8.1. Cài Playwright (chỉ khi dùng Tutor)
+```powershell
+pip install playwright
+playwright install chromium
+```
+
+### 8.2. Đăng nhập profile một lần (bằng tay) — BẮT BUỘC
+Đã có sẵn script. Chạy **một lần**:
+```powershell
+python tutor_login.py
+```
+Cửa sổ Chromium mở `gemini.google.com` với profile bền vững
+(`C:\Users\Gtvkun\Documents\eris_tutor_profile`). Đăng nhập Google trong cửa sổ đó, rồi
+quay lại terminal nhấn Enter để lưu phiên. Từ đó ERIS dùng lại phiên này.
+
+> Nếu chưa đăng nhập, lượt hỏi đầu sẽ thấy màn login/captcha → Tutor **tạm ngưng** (không
+> tự vượt) cho tới khi bạn đăng nhập tay; nó không spam tài khoản.
+
+### 8.3. Bật trong `.env`
+```dotenv
+ERIS_TUTOR_ENABLED=1
+ERIS_TUTOR_PROFILE_DIR=C:\eris_tutor_profile
+ERIS_TUTOR_LOCAL_MODEL=qwen3:1.7b
+```
+Các tinh chỉnh khác (nhịp hỏi, trần/giờ, selector, tần suất khoe) xem `.env.example`.
+
+### 8.4. Lưu việc lưu claim
+Mặc định ERIS sẽ **hỏi + diễn cảnh** nhưng **chưa lưu claim** cho tới khi đường commit
+vào trí nhớ được nối (adapter `tutor_ingest_fn`). Đây là bước cố tình để ngỏ vì ghi vào
+trí nhớ dài hạn là thao tác nhạy cảm — gắn một callable `tutor_ingest_fn(text, *, source,
+gap_id, citations) -> int` lên runtime để bật lưu claim.

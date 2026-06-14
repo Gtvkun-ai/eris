@@ -886,8 +886,50 @@ class FrameBuilderMixin:
             personality_lens=personality_lens,
             prev_stance_blend=getattr(internal_state, "last_stance_blend", None) or None,
         )
-    def _build_appraisal_context(self, appraisal: CognitiveAppraisal) -> str:
-        return self.appraisal_engine.render_prompt_context(appraisal)
+    def _build_appraisal_context(self, appraisal: CognitiveAppraisal, *, frame=None) -> str:
+        context = self.appraisal_engine.render_prompt_context(appraisal)
+        advisory = self._tom_advisory_for(frame)
+        if advisory:
+            context = f"{context}\n{advisory}"
+        self._maybe_write_panel_snapshot(appraisal, advisory)
+        return context
+
+    def _maybe_write_panel_snapshot(self, appraisal, advisory) -> None:
+        """Ghi tín hiệu sống ra panel_snapshot.json (flag-gated, throttled, không ném).
+
+        Cũng cache tom advisory để `_build_depth_block` (payload sang body Godot) có
+        dữ liệu — đây là chỗ duy nhất tom_read được tính trên hot path nói.
+        """
+        try:
+            self._last_tom_advisory = advisory or ""
+        except Exception:
+            pass
+        try:
+            from runtime.panel_snapshot import write as _write_snapshot
+
+            _write_snapshot(
+                appraisal=appraisal,
+                expression_gate=getattr(self, "_last_expression_gate", None),
+                tom_read=advisory or "",
+            )
+        except Exception:
+            pass
+
+    def _tom_advisory_for(self, frame) -> str:
+        """Nước 3 — dòng ToM advisory cho prompt. "" khi tắt cờ / không có workspace / lỗi."""
+        if frame is None:
+            return ""
+        try:
+            from cortex.tom_advisor import advise
+
+            line = advise(frame)
+        except Exception:
+            line = ""
+        try:
+            self._last_tom_advisory = line  # cache cho panel depth block
+        except Exception:
+            pass
+        return line
     def _build_inner_thought(
         self,
         *,
@@ -1561,6 +1603,17 @@ class FrameBuilderMixin:
         merged.append(f"expression_gate={want_to_say:.2f}->{allowed_expression:.2f}")
         merged.append(f"suppression_pressure={suppression_pressure:.2f}")
         merged.append("suppression_layer=inner_restraint")
+        # Nước 1 — van bước-cuối: lưu lại expression gate để post-generation
+        # đo "phẳng dưới biểu đạt cao". Chỉ là cache nhẹ, không đổi hành vi cũ.
+        try:
+            self._last_expression_gate = {
+                "want_to_say": want_to_say,
+                "allowed_expression": allowed_expression,
+                "suppression_pressure": suppression_pressure,
+                "stance": stance,
+            }
+        except Exception:
+            pass
         return tuple(dict.fromkeys(str(item) for item in merged if str(item or "").strip()))
     def _merge_subconscious_notes(self, notes: tuple[str, ...], subconscious_report) -> tuple[str, ...]:
         merged = list(notes or ())

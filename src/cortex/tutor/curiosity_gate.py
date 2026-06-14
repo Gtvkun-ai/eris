@@ -76,6 +76,18 @@ class CuriosityGate:
         scored.sort(key=lambda item: (item[0], item[1].updated_ts), reverse=True)
         return scored[0][1]
 
+    def select_forced(self, gaps: list[KnowledgeGap]) -> Optional[KnowledgeGap]:
+        """Chọn gap 'force' (lệnh trực tiếp / 'không biết') — bỏ qua idle + rate-limit.
+
+        Caller vẫn phải tôn trọng risk_guard (captcha/cooldown) trước khi gọi.
+        """
+
+        forced = [g for g in gaps if getattr(g, "force", False) and not g.resolved]
+        if not forced:
+            return None
+        forced.sort(key=lambda g: (self.priority(g, drive_level=1.0), g.updated_ts), reverse=True)
+        return forced[0]
+
     def note_started(self, now: float) -> None:
         self._last_started_ts = now
         self._recent_starts.append(now)

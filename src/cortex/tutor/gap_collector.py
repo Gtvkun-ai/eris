@@ -69,8 +69,40 @@ class GapCollector:
         )
         return gap
 
-    def collect_from_observer(self, frame: Any, *, now: float) -> Optional[KnowledgeGap]:
-        """Từ một ObserverFrame có focus/activity 'unknown' và ambiguity cao."""
+    def collect_from_uncertainty(
+        self,
+        topic: str,
+        *,
+        context: str = "",
+        stake: float = 0.6,
+        now: float = 0.0,
+        kind_hint: str = "durable",
+        force: bool = True,
+    ) -> Optional[KnowledgeGap]:
+        """Lỗ do cognition báo 'không chắc' hoặc lệnh tra cứu trực tiếp từ user."""
+
+        topic = str(topic or "").strip()
+        if not topic:
+            return None
+        return KnowledgeGap(
+            description=topic,
+            context=str(context or ""),
+            source="epistemic_uncertainty",
+            stake_relevance=stake,
+            prediction_error=stake,
+            created_ts=now,
+            updated_ts=now,
+            embedding=self._embed(topic),
+            force=bool(force),
+            kind_hint=str(kind_hint or "durable"),
+        )
+
+    def collect_from_observer(self, frame: Any, *, now: float, screen_context: str = "") -> Optional[KnowledgeGap]:
+        """Từ một ObserverFrame có focus/activity 'unknown' và ambiguity cao.
+
+        `screen_context` là đóng gói nội dung màn hình THẬT (title/app/url/OCR đã cắt) để
+        Gemini có cái mà đoán ngữ cảnh — thay vì hỏi suông "tôi không phân loại được".
+        """
 
         focus = str(getattr(frame, "focus_kind", "") or "")
         activity = str(getattr(frame, "activity_intent", "") or "")
@@ -79,19 +111,27 @@ class GapCollector:
             return None
         if ambiguity < self.config.observer_ambiguity_threshold:
             return None
-        description = "Tôi không phân loại được Ngài đang làm gì trên màn hình"
+        screen_context = str(screen_context or "").strip()
+        if screen_context:
+            description = (
+                f"Người dùng đang xem màn hình nhưng tôi chưa rõ ngữ cảnh. "
+                f"Manh mối: {screen_context}. Đây có thể là hoạt động/nội dung gì?"
+            )
+        else:
+            description = "Tôi không phân loại được Ngài đang làm gì trên màn hình"
         evidence = list(getattr(frame, "evidence", None) or [])
-        context = f"focus={focus} | activity={activity} | ambiguity={ambiguity:.2f} | evidence={evidence[:4]}"
+        context = f"focus={focus} | activity={activity} | ambiguity={ambiguity:.2f} | screen={screen_context[:400]} | evidence={evidence[:4]}"
         gap = KnowledgeGap(
-            description=description,
+            description=description[:500],
             context=context,
             source="observer_unknown",
             stake_relevance=clamp01_local(getattr(frame, "salience", 0.0)),
             prediction_error=clamp01_local(ambiguity),
             created_ts=now,
             updated_ts=now,
-            embedding=self._embed(description + " " + context),
+            embedding=self._embed(description),
         )
+        gap.kind_hint = "context"
         return gap
 
     # ------------------------------------------------------------------

@@ -393,7 +393,7 @@ class SelfModelEngine:
     ) -> str:
         rules = ", ".join(identity_core.rules)
         return "\n".join(
-            (
+            part for part in (
                 (
                     "self_model: private identity-and-continuity bias, not public self-description. "
                     "Use this to shape restraint, preference, boundary, silence, initiative, and wording; do not recite it."
@@ -469,5 +469,23 @@ class SelfModelEngine:
                     "Do not improvise a new persona, do not dump internal architecture, and do not use 'runtime artificial observer' "
                     "unless the user asks technically about architecture."
                 ),
+                # Nước 2 — long-arc self-continuity: chỉ xuất hiện khi growth bật VÀ
+                # đã có thay đổi thật. Tắt/chưa đổi → "" (lọc khỏi join), giữ nguyên cũ.
+                self._development_self_narrative_line(),
             )
+            if part
         )
+
+    @staticmethod
+    def _development_self_narrative_line() -> str:
+        try:
+            from .development_self_narrative import development_self_narrative_line  # type: ignore
+        except Exception:  # pragma: no cover
+            try:
+                from cortex.development_self_narrative import development_self_narrative_line  # type: ignore
+            except Exception:
+                return ""
+        try:
+            return development_self_narrative_line()
+        except Exception:
+            return ""

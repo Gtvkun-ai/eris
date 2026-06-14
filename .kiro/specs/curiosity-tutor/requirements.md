@@ -209,3 +209,45 @@ học được, để thấy nó *sống* và *lớn lên*, chứ không chỉ �
 5. THE Curiosity_Tutor SHALL giới hạn tần suất khoe ở tối đa một số lần mỗi cửa sổ thời gian cấu hình (mặc định không quá 1 lần mỗi 10 phút), để ERIS không biến thành kẻ khoe kiến thức liên tục.
 6. IF không tạo được Learning_Highlight hợp lệ (rỗng/quá dài/lỗi sinh), THEN THE Curiosity_Tutor SHALL bỏ qua việc khoe cho Tutor_Episode đó mà không ảnh hưởng tới việc đã commit claim.
 7. WHILE Master_Switch tắt, THE Curiosity_Tutor SHALL không tạo Share_Impulse nào.
+
+### Requirement 11: Hỏi theo yêu cầu / khi cognition "không chắc"
+
+**User Story:** Là người dùng, tôi muốn khi Eris gặp câu hỏi factual mà nó tự thấy không
+chắc (hoặc tôi bảo tra cứu), nó chủ động đi hỏi anh Gemini thay vì bịa tại chỗ.
+
+#### Acceptance Criteria
+
+1. THE Curiosity_Tutor SHALL phơi một API công khai (ví dụ `request_tutor_lookup(topic, *, context, kind_hint, stake)`) để tầng cognition đẩy một Knowledge_Gap "epistemic_uncertainty".
+2. WHEN một Knowledge_Gap được đánh dấu `force`, THE Curiosity_Gate SHALL chọn nó để chạy ngay, bỏ qua điều kiện idle và rate-limit, nhưng VẪN tôn trọng tạm ngưng của Risk_Guard (captcha/cooldown).
+3. WHEN nhiều Knowledge_Gap `force` cùng tồn tại, THE Curiosity_Gate SHALL chọn cái có điểm ưu tiên cao nhất.
+4. THE Curiosity_Tutor SHALL KHÔNG yêu cầu tín hiệu "không chắc" phải đến từ một nguồn cố định; bất kỳ tầng cognition nào gọi API đều kích hoạt được (seam mở).
+
+### Requirement 12: Phân loại tri thức và định tuyến
+
+**User Story:** Là người phát triển ERIS, tôi muốn câu trả lời gia sư được phân loại để
+định tuyến đúng: kiến thức xịn thì lưu (embedding), đoán ngữ cảnh/chuyện vui thì chỉ nói
+cho vui chứ không nhồi vào trí nhớ dài hạn.
+
+#### Acceptance Criteria
+
+1. WHEN nhận một Tutor_Answer hợp lệ, THE Curiosity_Tutor SHALL phân loại nó thành đúng một KnowledgeKind: `durable`, `context`, hoặc `banter`.
+2. WHERE KnowledgeKind là `durable`, THE Curiosity_Tutor SHALL lưu claim vào trí nhớ ngữ nghĩa (có embedding) qua đường commit hiện có và CÓ THỂ khoe như điều đã học.
+3. WHERE KnowledgeKind là `context` hoặc `banter`, THE Curiosity_Tutor SHALL KHÔNG lưu vào trí nhớ dài hạn; thay vào đó SHALL đẩy một câu ngắn (diễn đạt lại, không nguyên văn) vào dòng suy nghĩ để Eris nói cho vui / khịa hoặc nêu phỏng đoán ngữ cảnh.
+4. WHERE Knowledge_Gap đến từ `observer_unknown`, THE Curiosity_Tutor SHALL mặc định phân loại `context`.
+5. IF không có bộ phân loại được cấp, THEN THE Curiosity_Tutor SHALL mặc định coi là `durable` (giữ hành vi cũ).
+6. THE bộ phân loại SHALL dùng local LLM với heuristic fallback, KHÔNG dùng Tutor_Backend để phân loại.
+
+### Requirement 13: Không hiểu thì TỰ HỌC; chỉ hỏi lại Ngài khi mơ hồ cá nhân
+
+**User Story:** Là người dùng, tôi KHÔNG muốn phải giải thích kiến thức chung cho Eris
+(vd "INTP 538", "Rust"). Nó nên tự tra mà hiểu. Chỉ khi tôi ám chỉ điều riêng tư/mơ hồ
+mà không nguồn ngoài nào biết, nó mới nên hỏi lại tôi.
+
+#### Acceptance Criteria
+
+1. WHEN một tin nhắn chat (≥ 3 từ) khiến cognition không phân loại/không hiểu được (meaning rỗng hoặc intent unknown), THE Curiosity_Tutor SHALL mặc định TỰ HỌC: hỏi Gemini âm thầm ở thread nền (có throttle), KHÔNG bắt user giải thích, và Eris vẫn trả lời tự nhiên lượt đó.
+2. WHERE tin nhắn là một tham chiếu CÁ NHÂN/mơ hồ ngắn mà chỉ Ngài giải đáp được (ví dụ chứa "vụ đó/cái đó/hôm qua/lúc nãy/ý m là sao" và ngắn), THE Curiosity_Tutor SHALL hỏi lại Ngài: câu trả lời lượt đó thành câu hỏi làm rõ ngắn (giọng Eris), KHÔNG mở trình duyệt.
+3. THE nhánh tự-học-Gemini và nhánh hỏi-lại-Ngài SHALL loại trừ nhau cho cùng một tin nhắn.
+4. THE việc hỏi Gemini SHALL chạy nền và KHÔNG chặn câu trả lời chat; tri thức học được commit vào trí nhớ (có embedding) để lần sau hiểu mà không phải hỏi lại.
+5. WHILE Master_Switch tắt, THE hành vi chat SHALL giữ nguyên như trước (không tự học, không clarify).
+

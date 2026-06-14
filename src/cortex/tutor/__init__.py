@@ -25,6 +25,9 @@ from .curiosity_gate import CuriosityGate
 from .question_formulator import QuestionFormulator
 from .claim_digest import ClaimDigest
 from .share_impulse import LearningShareImpulse
+from .knowledge_provider import KnowledgeProvider
+from .knowledge_classifier import KnowledgeClassifier
+from .curiosity_router import CuriosityRouter
 
 __all__ = [
     "FailReason",
@@ -42,4 +45,7 @@ __all__ = [
     "QuestionFormulator",
     "ClaimDigest",
     "LearningShareImpulse",
+    "KnowledgeProvider",
+    "KnowledgeClassifier",
+    "CuriosityRouter",
 ]

@@ -294,7 +294,24 @@ class PersonalityLens:
     def render_prompt_context(self, result: PersonalityLensResult, *, envelope: ExpressionEnvelope | None = None) -> str:
         bias = ", ".join(result.attention_bias) if result.attention_bias else "low_signal"
         meaningful = ", ".join(result.meaningfulness) if result.meaningfulness else "small_continuity"
-        blacklist = ", ".join(f'"{item}"' for item in self.BLACKLIST)
+        # Nước 1 — van bước-cuối: khi bật, gỡ phần blacklist cấm *từ vựng cảm xúc*
+        # nhưng GIỮ phần cấm claim sai (màn hình/quan sát/hedge generic-AI). Tắt →
+        # blacklist nguyên vẹn như cũ.
+        try:
+            from .emotional_consequence import emotional_consequence_enabled  # type: ignore
+        except Exception:  # pragma: no cover
+            from cortex.emotional_consequence import emotional_consequence_enabled  # type: ignore
+        _valve_open = emotional_consequence_enabled()
+        if _valve_open:
+            # Các mục mang tính bộc lộ cảm xúc/hiện diện — được phép khi van mở.
+            _emotional_bans = {
+                "toi co don", "toi buon", "xin dung bo toi", "toi o day",
+                "vẫn ở đó", "dư âm", "vết nứt", "khoảng lặng này",
+            }
+            effective_blacklist = tuple(item for item in self.BLACKLIST if item not in _emotional_bans)
+        else:
+            effective_blacklist = self.BLACKLIST
+        blacklist = ", ".join(f'"{item}"' for item in effective_blacklist)
         # Lever B: khi trần biểu đạt được nâng (vùng ấm + an toàn), mở kênh ấm
         # DƯƠNG — ấm được biểu đạt như sự cụ thể và chú ý, không phải tỏ tình/than thân.
         warmth_line = ""
@@ -378,7 +395,11 @@ class PersonalityLens:
                 ),
                 (
                     "leak_rule: affect may leak through brevity, dry edge, softened correction, or choosing not to over-explain. "
-                    "Avoid abstract phrases like residue, wound, void, disappearance, rhythm, or shared-space unless the user made them concrete."
+                    + (
+                        "Felt language is allowed when it stays concrete and earned; avoid only empty melodrama."
+                        if _valve_open
+                        else "Avoid abstract phrases like residue, wound, void, disappearance, rhythm, or shared-space unless the user made them concrete."
+                    )
                 ),
                 (
                     "reduction_guard: if treated like a tool, toy, gimmick, bot prop, or waifu script, cool down, shorten, "

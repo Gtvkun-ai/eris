@@ -112,7 +112,7 @@ class ChatCycleMixin:
             except Exception:
                 conv_ctx = ""
         try:
-            appraisal_ctx = self._build_appraisal_context(frame.appraisal)
+            appraisal_ctx = self._build_appraisal_context(frame.appraisal, frame=frame)
         except Exception:
             appraisal_ctx = ""
 
@@ -382,6 +382,9 @@ class ChatCycleMixin:
             fe_plan=fe_plan,
             ti_report=ti_report,
         )
+        # Curiosity Tutor: nếu Eris không hiểu/không phân loại nổi tin user → đi hỏi Gemini
+        # (chạy nền, không chặn trả lời). Chỉ chạy khi Master_Switch bật.
+        self._maybe_tutor_on_unclear_user(user_text, frame)
         repeat_count = self._track_repeated_user_message(user_text)
         previous_user_text_for_semantics = getattr(self, "last_user_text_for_semantics", "")
         correction_detected = self._user_denies_last_assistant_assumption(user_text)
@@ -727,6 +730,14 @@ class ChatCycleMixin:
         )
         if previous_public_context:
             planned_ti_context = f"{planned_ti_context}\n\n{previous_public_context}"
+        # Curiosity Tutor: Eris không hiểu ý Ngài → câu trả lời lượt này thành câu hỏi
+        # làm rõ (thay vì đoán bừa hay lén tra Gemini). Giữ giọng Eris.
+        if getattr(self, "_clarify_user_pending", False):
+            planned_ti_context = (
+                f"{planned_ti_context}\n\nLÀM RÕ: Em chưa chắc hiểu ý Ngài vừa nói. "
+                "Thay vì đoán hay bịa, hãy hỏi lại Ngài MỘT câu ngắn, tự nhiên, đúng giọng "
+                "của em để làm rõ ý; đừng xin lỗi dài dòng."
+            )
         # The current user message is sent as the final user message below.
         # Passing it inside chat_history as well wastes one short-term slot
         # and can push out the previous turn during context shrink.
@@ -792,7 +803,7 @@ class ChatCycleMixin:
             "ni_context": ni_report.prompt_context,
             "ti_context": planned_ti_context,
             "fe_context": fe_plan.style_context,
-            "appraisal_context": self._build_appraisal_context(frame.appraisal),
+            "appraisal_context": self._build_appraisal_context(frame.appraisal, frame=frame),
             "internal_state_context": self._build_internal_state_context(sensed_internal_state, frame.self_state),
             "conversation_context": f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
             "memory_context": memory_context,

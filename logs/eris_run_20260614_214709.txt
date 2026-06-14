@@ -1,0 +1,82 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-06-14 21:47:09
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+21:47:10.244 [INFO] [Vision] Dung Python dev: python "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+21:47:10.265 [INFO] [Vision] Da khoi chay vision.py PID=19940
+21:47:11.936 [INFO] [vision.py] [Vision][INFO] Đang dùng remote API làm cognition chính.
+21:47:11.937 [INFO] [vision.py] [LLM][INFO] Dung OpenAI-compatible API tai https://api.groq.com/openai/v1 voi model qwen/qwen3-32b
+21:47:11.938 [INFO] [vision.py] [LLM][INFO] Dung Gemini speech API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-31b-it
+21:47:11.938 [INFO] [vision.py] [Vision][INFO] Speech/style client đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+21:47:11.938 [INFO] [vision.py] [LLM][INFO] Chat format fallback san sang tai https://api.shopaikey.com/v1 voi model glm-4.5-flash
+21:47:11.938 [INFO] [vision.py] [Vision][INFO] Mô hình đã sẵn sàng.
+21:47:14.824 [INFO] [vision.py] [Loop][INFO] [depth] auto-enable cờ chiều-sâu: {'emotional_consequence': True, 'development_growth': True, 'interior_surface': True, 'tom_advisor': True, 'real_embeddings': True, 'private_mind': True}
+21:47:14.851 [INFO] [vision.py] [Loop][INFO] Epistemic V2 ready in authoritative mode; cognitive state writes use V2.
+21:47:14.854 [INFO] [vision.py] [Loop][INFO] Model inference scheduler đã bọc llm_service và sensory adapter: main, vision, sensory.
+21:47:14.854 [INFO] [vision.py] [Loop][INFO] [PrivateMind API] ready provider=gemini model=gemma-4-31b-it pool=fragment×5+synthesis×1
+21:47:14.856 [INFO] [vision.py] [Loop][INFO] [InnerDiary fallback] ready provider=openai_compatible model=qwen-plus-character
+21:47:14.890 [INFO] [vision.py] [Loop][INFO] tutor: Master_Switch BẬT — đang dựng Curiosity Tutor daemon
+21:47:14.891 [INFO] [vision.py] [Loop][INFO] tutor: KnowledgeProvider sẵn sàng (SituationModel sẽ nối khi pipeline dựng)
+21:47:14.926 [INFO] [vision.py] [Loop][INFO] --- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---
+21:47:15.553 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=253 budget=1000000 cap=850000
+21:47:19.687 [INFO] [vision.py] [Loop][INFO] [session_ritual raw] {"text": "À. Ngài đây rồi.", "intent": "session_ritual", "action": {"type": "none"}, "reasoning_tags": ["session_ritual", "greeting_cognition"], "should_speak": true, "confidence": 0.76, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "debug_trace": "session_ritual_deterministic; situation=low_evidence_start | low_evidence_no_llm", "next_animation": "", "system_action": "", "action_input": ""}
+21:47:19.861 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent LLM greeting text="À. Ngài đây rồi."
+21:47:20.362 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent greeting
+21:47:20.941 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+21:47:24.095 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+21:47:24.095 [INFO] [vision.py] [Loop][INFO] [Observer] action=call_vision_compressor salience=0.93 error=0.00 focus=unknown intent=unknown
+21:47:24.096 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.10 user_presence=0.48 novelty=0.75 repetition=0.00
+21:47:24.206 [INFO] [vision.py] [Loop][INFO] [wake governor] level=call_vision_compressor ext=0.22 internal=0.04 permission=0.82 interrupt=0.18 speech=0.10 wants_vision=True vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+21:47:24.229 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_f93cecce', 'stage': 'forming'}
+21:47:37.129 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_f93cecce', 'stage': 'failed'}
+21:47:37.130 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'episode', 'episode_id': 'ep_f93cecce', 'gap_id': 'gap_acce45a8', 'stage': 'failed', 'claims_committed': 0, 'shared': False, 'fail_reason': 'gate_rejected', 'duration_s': 12.9}
+21:47:38.956 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=282 budget=1000000 cap=850000
+21:47:59.088 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=ReadTimeout:HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): Read timed out. (read timeout=20.0)
+21:47:59.089 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=default model=qwen-plus-character est_tokens=282 budget=30000 cap=25500
+21:48:11.127 [INFO] [vision.py] [Loop][INFO] InnerDiary rescued by fallback adapter
+21:48:11.132 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.53 pressure=0.32 surface=no mutations=2
+21:48:20.811 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=autonomous count=3 novelty=new_screen_fact trace=moondream-local:test_failure_loop:affect=frustrating:delta=1 fact=a failing pytest run on the vision loader (affect: frustrating)
+21:48:20.812 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:48:21.232 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous can resume (conversation buffer kept).
+21:48:21.717 [INFO] [vision.py] [Loop][INFO] [ni light] mode=chat | local=0.00 | drift=0.08/thấp | conf=0.45 | reason=claim_guarded|focus_pattern_drift
+21:48:23.201 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+21:48:23.201 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=unknown intent=unknown
+21:48:23.201 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.11 user_presence=0.55 novelty=0.10 repetition=1.00
+21:48:23.297 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.19 internal=0.06 permission=0.87 interrupt=0.13 speech=0.11 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+21:48:24.102 [INFO] [vision.py] [Loop][INFO] [shadow pipeline] budget=normal | v3_focus='em biết gì về intp 538' | old_focus='em biết gì về intp 538' | overlap=1.00 | ev=3 | 711.1ms
+21:48:24.113 [INFO] [vision.py] [Loop][INFO] Người dùng: em biết gì về intp 538
+21:48:24.113 [INFO] [vision.py] [Loop][INFO] [ni chat] drift=0.08 | level=thấp | state=ON_GOAL | streak=1
+21:48:24.113 [INFO] [vision.py] [Loop][INFO] [ti chat] mode=chat_general | reason=Duy trì đối thoại trong giới hạn runtime.
+21:48:24.114 [INFO] [vision.py] [Loop][INFO] [fe chat] mode=grounded | tone=surface=cold_soft; stance=observant_guarded; attachment=guarded; instability=stable | intent=ordinary_dialogue | arc=quiet_observation
+21:48:24.167 [INFO] [vision.py] [Loop][INFO] [conversation dynamics] mode=settled | tension=0.00 | pressure=0.00 | flags=maintain_rhythm
+21:48:24.167 [INFO] [vision.py] [Loop][INFO] [relationship dynamics] event=steady | trust=0.25 | familiarity=0.17 | attachment_vis=0.12 | rupture=0.00 | distance=0.53 | notes=none
+21:48:24.174 [INFO] [vision.py] [Loop][INFO] [controlled slippage] mode=warm | lane=task | intuition=0.12 | misread=0.08 | notes=ordinary_chat_warm_floor
+21:48:24.174 [INFO] [vision.py] [Loop][INFO] [turn semantics/pre-grounding] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | identity=0.00 | correction=0.00
+21:48:24.174 [INFO] [vision.py] [Loop][INFO] [CHAT HISTORY] [{'role': 'assistant', 'content': 'À. Ngài đây rồi.'}, {'role': 'user', 'content': 'em biết gì về intp 538'}]
+21:48:24.175 [INFO] [vision.py] [Loop][INFO] [LAST USER INTENT] ordinary_dialogue
+21:48:24.175 [INFO] [vision.py] [Loop][INFO] [ACTIVE_TOPIC] ordinary_dialogue
+21:48:24.185 [INFO] [vision.py] [Loop][INFO] [vision chat] Dùng lại screen facts vừa chụp (3.4s trước), bỏ qua chụp mới.
+21:48:24.192 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:48:24.193 [INFO] [vision.py] [Loop][INFO] [turn semantics] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | live=0.00 | prior_failure=0.58
+21:48:24.226 [INFO] [vision.py] [Loop][INFO] [LLM CHAT HISTORY] [{'role': 'assistant', 'content': 'À. Ngài đây rồi.'}]
+21:48:24.255 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=253 budget=1000000 cap=850000
+21:48:27.280 [INFO] [vision.py] [Vision][WARNING] [LLM] chat prompt=9870 > cap=5200 (groq) → route sang fallback cap=25500 để giữ trọn ngữ cảnh.
+21:48:27.281 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=oversized_fallback
+21:48:27.282 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=default model=glm-4.5-flash est_tokens=9870 budget=30000 cap=25500
+21:48:30.027 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=http_5xx_retry
+21:48:30.027 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=qwen/qwen3-32b est_tokens=9870 budget=6000 cap=5200
+21:48:30.027 [INFO] [vision.py] [LLM][WARNING] [LLM HARD-CAP] provider=groq est_tokens=9870 > cap=5200 → trimmed to ~5098 tokens
+21:48:31.749 [INFO] [vision.py] [Vision][INFO] [chat raw_api_text] {\n  "text": "INTP 538 là một tổ hợp tính cách và năng lượng tâm lý, với trọng tâm ở tư duy phân tích, độc lập và sự tìm kiếm kiến thức. 538 thường gắn với sự tò mò sâu sắc và khả năng tập trung cao độ. Nếu Ngài đang quan sát hoặc tự hỏi về điều này, tôi có thể hỗ trợ phân tích cụ thể hơn nếu Ngài cung cấp thêm ngữ cảnh.",\n  "system_action": "",\n  "voice_profile": {\n    "distance": 0.25,\n    "warmth": 0.29,\n    "restraint": 0.50,\n    "attachment_visibility": 0.08,\n    "symbolic_bias": 0.03,\n    "exposure_recoil": 0.05,\n    "precision": 0.28,\n    "dry_edge": 0.12,\n    "strangeness": 0.00\n  }\n}
+21:48:31.750 [INFO] [vision.py] [Loop][INFO] [chat raw] {"text": "INTP 538 là một tổ hợp tính cách và năng lượng tâm lý, với trọng tâm ở tư duy phân tích, độc lập và sự tìm kiếm kiến thức. 538 thường gắn với sự tò mò sâu sắc và khả năng tập trung cao độ. Nếu Ngài đang quan sát hoặc tự hỏi về điều này, tôi có thể hỗ trợ phân tích cụ thể hơn nếu Ngài cung cấp thêm ngữ cảnh.", "intent": "", "action": "", "reasoning_tags": [], "should_speak": true, "confidence": 0.0, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "debug_trace": "LlmService sanitized decision-like JSON before parser.", "next_animation": "", "system_action": "", "action_input": ""}
+21:48:31.750 [INFO] [vision.py] [Loop][INFO] [chat pre_parser] raw={"text": "INTP 538 là một tổ hợp tính cách và năng lượng tâm lý, với trọng tâm ở tư duy phân tích, độc lập và sự tìm kiếm kiến thức. 538 thường gắn với sự tò mò sâu sắc và khả năng tập trung cao độ. Nếu Ngài đang quan sát hoặc tự hỏi về điều này, tôi có thể hỗ trợ phân tích cụ thể hơn nếu Ngài cung cấp thêm ngữ cảnh.",...
+21:48:31.775 [INFO] [vision.py] [Loop][INFO] [chat after_parser] text="INTP 538 là một tổ hợp tính cách và năng lượng tâm lý, với trọng tâm ở tư duy phân tích, độc lập và sự tìm kiếm kiến thức. 538 thường gắn với sự tò mò sâu sắc và khả năng tập trung cao độ. Nếu Ngài đang quan sát hoặc tự hỏi về điều này, tôi có thể hỗ trợ phân tích cụ thể hơn nếu Ngài cung cấp thêm ngữ cảnh." | animation=stand | parse_mode=hard_json_repair | trace=LlmService sanitized decision-like JSON before parser. | parser=parse_mode=hard_json_repair | capability_violation=không phát hiện | grounding=không cần viết lại
+21:48:31.775 [INFO] [vision.py] [Loop][INFO] [chat pre_ti] text="INTP 538 là một tổ hợp tính cách và năng lượng tâm lý, với trọng tâm ở tư duy phân tích, độc lập và sự tìm kiếm kiến thức. 538 thường gắn với sự tò mò sâu sắc và khả năng tập trung cao độ. Nếu Ngài đang quan sát hoặc tự hỏi về điều này, tôi có thể hỗ trợ phân tích cụ thể hơn nếu Ngài cung cấp thêm ngữ cảnh." | animation=stand | parse_mode=hard_json_repair | trace=LlmService sanitized decision-like JSON before parser. | parser=parse_mode=hard_json_repair | capability_violation=không phát hiện | grounding=không cần viết lại
+21:48:31.784 [INFO] [vision.py] [Loop][INFO] [chat after_ti] text="INTP 538 là một tổ hợp tính cách và năng lượng tâm lý, với trọng tâm ở tư duy phân tích, độc lập và sự tìm kiếm kiến thức. 538 thường gắn với sự tò mò sâu sắc và khả năng tập trung cao độ. Nếu Ngài đang quan sát hoặc tự hỏi về điều này, tôi có thể hỗ trợ phân tích cụ thể hơn nếu Ngài cung cấp thêm ngữ cảnh." | animation=stand | parse_mode=hard_json_repair | trace=LlmService sanitized decision-like JSON before parser. | Ti guard_mode=log_only | Ti mode=chat_general | parser=parse_mode=hard_json_repair | capability_violation=không phát hiện | grounding=không cần viết lại
+21:48:31.873 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=869 budget=1000000 cap=850000
+21:48:37.963 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=946 budget=1000000 cap=850000
+21:48:42.227 [INFO] [Vision] Dang dung vision.py PID=19940...
+21:48:43.197 [INFO] [Vision] vision.py da thoat (PID=19940, code=-1).
+21:48:43.198 [INFO] [RunLogger] Ket thuc phien chay.

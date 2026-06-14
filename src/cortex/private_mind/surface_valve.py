@@ -11,6 +11,7 @@ nội tâm ra đọc như biên bản tòa. Public chỉ nên thấy một bias/
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -263,6 +264,28 @@ class SurfaceValve:
         if not is_fallback and candidate.channel == "surface_arbiter":
             public_allowed = public_allowed or bool(has_public_anchor and not semantic_family_recently_used)
 
+        # Nước 3 — đường surface KHÔNG-ANCHOR có-cổng: một bận tâm nội tâm áp lực
+        # CAO được phép nổi lên public dù thiếu public anchor — đây là khoảnh khắc
+        # "tôi đã ngồi với điều này", thứ mà gate anchor-bắt-buộc cũ chặn hẳn. Mặc
+        # định TẮT. Van vẫn siết: chỉ qua khi mới, không lặp, không filler, API khỏe.
+        interior_nonanchored = False
+        if not public_allowed and not has_public_anchor:
+            interior_nonanchored = self._interior_nonanchored_allowed(
+                judgment=judgment,
+                novelty=novelty,
+                repetition=repetition,
+                semantic_family=semantic_family,
+                api_degraded=api_degraded,
+                semantic_family_recently_used=semantic_family_recently_used,
+            )
+            public_allowed = public_allowed or interior_nonanchored
+            if interior_nonanchored:
+                try:
+                    from runtime.panel_snapshot import add_signal
+                    add_signal("interior")
+                except Exception:
+                    pass
+
         merged_metadata = {
             **metadata,
             "semantic_family": semantic_family,
@@ -270,6 +293,8 @@ class SurfaceValve:
             "public_surface_allowed": public_allowed,
             "api_degraded": api_degraded,
         }
+        if interior_nonanchored:
+            merged_metadata["interior_nonanchored_surface"] = True
         if public_allowed:
             return self._copy_candidate(candidate, metadata=merged_metadata)
 
@@ -280,6 +305,42 @@ class SurfaceValve:
                 metadata={**merged_metadata, "surface_valve_body_only": True},
             )
         return None
+
+    def _interior_nonanchored_allowed(
+        self,
+        *,
+        judgment: InternalJudgment,
+        novelty: float,
+        repetition: float,
+        semantic_family: str,
+        api_degraded: bool,
+        semantic_family_recently_used: bool,
+    ) -> bool:
+        """Nước 3 — cổng cho bận tâm nội tâm áp lực cao nổi lên KHÔNG cần anchor ngoài.
+
+        Mặc định TẮT (cờ ERIS_INTERIOR_SURFACE_NONANCHORED). Chỉ True khi: cờ bật,
+        API khỏe, family chưa dùng gần đây và không phải filler, câu đủ mới, ít lặp,
+        và áp lực nội tâm vượt ngưỡng cao. Cố ý hiếm: đây là "tôi đã ngồi với điều
+        này", không phải cửa xả độc thoại.
+        """
+        if str(os.getenv("ERIS_INTERIOR_SURFACE_NONANCHORED", "")).strip().lower() not in {"1", "true", "yes", "on"}:
+            try:
+                from .depth_flags import flag_enabled  # type: ignore
+
+                if not flag_enabled("ERIS_INTERIOR_SURFACE_NONANCHORED", default=False):
+                    return False
+            except Exception:
+                return False
+        if api_degraded or semantic_family_recently_used:
+            return False
+        if semantic_family == "private_mind_continuity_filler":
+            return False
+        try:
+            threshold = float(os.getenv("ERIS_INTERIOR_SURFACE_PRESSURE", "0.80") or 0.80)
+        except (TypeError, ValueError):
+            threshold = 0.80
+        pressure = clamp01(getattr(judgment, "pressure", 0.0))
+        return bool(pressure >= threshold and novelty >= 0.40 and repetition <= 0.50)
 
     def _has_public_anchor(self, candidate: SurfaceCandidate) -> bool:
         metadata = dict(getattr(candidate, "metadata", {}) or {})

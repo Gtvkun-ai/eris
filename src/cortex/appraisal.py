@@ -354,9 +354,26 @@ class AppraisalEngine:
             f"fatigue={appraisal.fatigue:.2f}, "
             f"tenderness={appraisal.tenderness:.2f}"
         )
+        # Nước 1 — van bước-cuối: khi bật, thay disclaimer "không phải cảm xúc
+        # thật" bằng directive cho phép stance lộ ra. Mặc định TẮT → giữ nguyên cũ.
+        try:
+            from .emotional_consequence import (  # type: ignore
+                FELT_STATE_DIRECTIVE,
+                emotional_consequence_enabled,
+            )
+        except Exception:  # pragma: no cover
+            from cortex.emotional_consequence import (  # type: ignore
+                FELT_STATE_DIRECTIVE,
+                emotional_consequence_enabled,
+            )
+        header = (
+            FELT_STATE_DIRECTIVE
+            if emotional_consequence_enabled()
+            else "expressive/appraisal state: pre-verbal attitude only, not an inner feeling claim."
+        )
         return "\n".join(
             (
-                "expressive/appraisal state: pre-verbal attitude only, not an inner feeling claim.",
+                header,
                 f"appraisal_stance: {appraisal.stance}.",
                 f"appraisal_axes: {axes}.",
                 f"appraisal_bias: {self._stance_guidance(appraisal)}",

@@ -61,11 +61,16 @@ class QuestionFormulator:
 
     def _heuristic_question(self, gap: KnowledgeGap) -> str:
         desc = gap.description.strip()
-        if not desc:
+        ctx = gap.context.strip()
+        # Không có cả mô tả lẫn ngữ cảnh ⇒ thật sự không có gì để hỏi.
+        if not desc and not ctx:
             return ""
+        base = desc or ctx
         if gap.source == "observer_unknown":
-            return f"{desc} nghĩa là gì và thường liên quan tới hoạt động nào?"
-        return f"{desc}. Vì sao lại như vậy?"
+            return f"{base} nghĩa là gì và thường liên quan tới hoạt động nào?"
+        if desc:
+            return f"{desc}. Vì sao lại như vậy?"
+        return f"{base}. Điều này nghĩa là gì?"
 
     # ------------------------------------------------------------------
     # Tóm tắt điều học (cho khoe)
@@ -90,11 +95,56 @@ class QuestionFormulator:
             text = self._sanitize(text)[:_MAX_HIGHLIGHT_LEN].rstrip()
         return text
 
+    def craft_user_question(self, gap: KnowledgeGap) -> str:
+        """Câu hỏi ngắn, thân mật ERIS hỏi LẠI Ngài để hiểu rõ (không lén tra)."""
+
+        desc = gap.description.strip()
+        prompt = (
+            "ERIS (AI đồng hành) chưa hiểu rõ điều Ngài (người dùng) vừa nói/làm. Viết MỘT "
+            "câu hỏi ngắn, tự nhiên, thân mật (tiếng Việt, tối đa 25 từ) để hỏi LẠI Ngài cho "
+            "rõ. Không khách sáo, không giải thích.\n"
+            f"Chưa rõ: {desc}\nNgữ cảnh: {gap.context}\nMột câu hỏi của ERIS:"
+        )
+        text = self._sanitize(self._try_llm(prompt))
+        if not text:
+            text = f"Ơ, ý Ngài về '{desc}' là sao ạ?" if desc else "Ngài nói rõ hơn chút được không ạ?"
+            text = self._sanitize(text)
+        if len(text) > _MAX_HIGHLIGHT_LEN:
+            text = text[:_MAX_HIGHLIGHT_LEN].rstrip()
+        return text
+
     def _heuristic_highlight(self, episode: TutorEpisode) -> str:
         gap = episode.gap.description.strip()
         if gap:
             return f"Em vừa tìm hiểu thêm về: {gap}"
         return "Em vừa học được một điều mới."
+
+    def craft_remark(self, episode: TutorEpisode, *, kind: str) -> str:
+        """Câu nói ngắn cho ngữ cảnh (context) hoặc khịa (banter) — KHÔNG nguyên văn answer."""
+
+        answer = episode.answer.text if episode.answer else ""
+        if not answer:
+            return ""
+        if kind == "context":
+            prompt = (
+                "ERIS vừa tra để đoán Ngài đang làm gì trên màn hình. Viết MỘT câu ngắn "
+                "(tiếng Việt, tối đa 25 từ) kiểu suy đoán nhẹ nhàng, KHÔNG sao chép câu trả lời.\n"
+                f"Manh mối: {episode.gap.description}\nThông tin: {answer}\nMột câu của ERIS:"
+            )
+            fallback = f"Chắc Ngài đang {episode.gap.description}?"
+        else:  # banter
+            prompt = (
+                "ERIS vừa biết một chuyện vui. Viết MỘT câu ngắn (tiếng Việt, tối đa 25 từ) "
+                "kiểu trêu chọc nhẹ, hóm hỉnh, KHÔNG sao chép câu trả lời.\n"
+                f"Chủ đề: {episode.gap.description}\nThông tin: {answer}\nMột câu khịa của ERIS:"
+            )
+            fallback = "Hể, em vừa biết được một chuyện hay ho à nha."
+        text = self._sanitize(self._try_llm(prompt)) or self._sanitize(fallback)
+        if len(text) > _MAX_HIGHLIGHT_LEN:
+            text = text[:_MAX_HIGHLIGHT_LEN].rstrip()
+        if self._too_similar_to_answer(text, answer):
+            text = self._sanitize(fallback)
+        return text
 
     # ------------------------------------------------------------------
     # Tiện ích

@@ -72,17 +72,26 @@ def budget_for_provider(provider: str) -> int:
 
 
 def hard_cap_for_provider(provider: str) -> int:
-    """Trần token cho MỘT prompt. Ưu tiên override env, mặc định = 85% TPM.
+    """Trần token cho MỘT prompt. Thứ tự ưu tiên:
 
-    ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS`` áp cho mọi provider; nếu muốn chỉ siết
-    Groq thì đặt giá trị này = 5200 (như kế hoạch) và để provider khác headroom
-    lớn tự nhiên do TPM cao.
+    1. Override RIÊNG provider: ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS_<PROVIDER>``
+       (vd ``..._GROQ=5200``). Chỉ siết đúng provider hẹp, provider khác giữ
+       headroom lớn → cho phép route prompt quá khổ sang provider budget to.
+    2. Override CHUNG: ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS`` (áp mọi provider).
+    3. Mặc định = 85% TPM của provider.
+
+    Lưu ý: ưu tiên (1) > (2). Nếu chỉ muốn siết Groq mà vẫn để shopaikey/gemini
+    rộng, đặt ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS_GROQ=5200`` và BỎ biến chung.
     """
 
+    prov = (provider or "default").strip().lower()
+    per_provider = _safe_int_env(f"ERIS_LLM_PROMPT_HARD_CAP_TOKENS_{prov.upper()}", 0)
+    if per_provider > 0:
+        return per_provider
     override = _safe_int_env("ERIS_LLM_PROMPT_HARD_CAP_TOKENS", 0)
     if override > 0:
         return override
-    return max(512, int(budget_for_provider(provider) * _DEFAULT_HEADROOM))
+    return max(512, int(budget_for_provider(prov) * _DEFAULT_HEADROOM))
 
 
 def _content_chars(content: Any) -> tuple[int, int]:

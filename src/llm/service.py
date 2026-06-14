@@ -1681,6 +1681,48 @@ class LlmService:
             )
         return candidate
 
+    def _client_provider_cap(self, client) -> tuple[str, int]:
+        """Trả (provider, hard_cap) cho một client dựa trên base_url/model."""
+        from llm.token_budget import detect_provider, hard_cap_for_provider
+
+        provider = detect_provider(
+            getattr(client, "base_url", ""), getattr(client, "model_name", "")
+        )
+        return provider, hard_cap_for_provider(provider)
+
+    def _route_client_for_size(self, messages, *, primary, channel: str):
+        """Nếu prompt vượt cap của ``primary`` (vd Groq free 6000 TPM) mà có
+        fallback budget lớn ôm trọn được prompt → route sang fallback để KHÔNG bị
+        hard-cap cắt mất nửa ngữ cảnh. Trả ``(client, stage)``. Lỗi → giữ primary."""
+        try:
+            from llm.token_budget import estimate_tokens
+
+            if primary is None:
+                return primary, "initial"
+            est = estimate_tokens(messages)
+            prov, cap = self._client_provider_cap(primary)
+            if est <= cap:
+                return primary, "initial"
+            # primary sẽ bị cắt phũ — ưu tiên fallback_client (vd glm-4.5-flash),
+            # rồi style_client; chỉ chọn cái có cap ôm trọn est.
+            for candidate in (getattr(self, "fallback_client", None), self.style_client):
+                if candidate is None or candidate is primary:
+                    continue
+                _cp, ccap = self._client_provider_cap(candidate)
+                if ccap >= est:
+                    self.logger.warning(
+                        "[LLM] %s prompt=%d > cap=%d (%s) → route sang fallback cap=%d để giữ trọn ngữ cảnh.",
+                        channel,
+                        est,
+                        cap,
+                        prov,
+                        ccap,
+                    )
+                    return candidate, "oversized_fallback"
+            return primary, "initial"
+        except Exception:
+            return primary, "initial"
+
     def _complete_decision(
         self,
         *,
@@ -1727,6 +1769,14 @@ class LlmService:
 
         initial_client = self.style_client if force_local_fallback and self.style_client is not None else self.client
         initial_stage = "local_fallback" if force_local_fallback and self.style_client is not None else "initial"
+        # Route lượt quá khổ (vd Groq free 6000 TPM) sang fallback budget lớn để
+        # khỏi bị hard-cap cắt mất ngữ cảnh. Bỏ qua khi đã ép local fallback.
+        if not force_local_fallback:
+            initial_client, _routed_stage = self._route_client_for_size(
+                messages, primary=initial_client, channel=channel
+            )
+            if _routed_stage != "initial":
+                initial_stage = _routed_stage
         # Prefer the dedicated Groq fallback client for format recovery; fall back
         # to the speech/style client only if no fallback client was wired.
         recovery_client = getattr(self, "fallback_client", None) or self.style_client
@@ -2062,6 +2112,93 @@ class LlmService:
                 exc,
                 self._preview_log_text(original_text, limit=240),
             )
+            return ""
+
+    def rewrite_for_felt_expression(
+        self,
+        *,
+        original_text: str,
+        reason: str,
+        stance: str = "",
+        min_words: int = 0,
+        channel: str = "",
+        user_text: str = "",
+        internal_state_context: str = "",
+        grounding_context: str = "",
+    ) -> str:
+        """Reroll theo chiều MỞ (Nước 1): nở một câu bị bóp phẳng cho stance lộ ra.
+
+        Khác hẳn ``rewrite_guard_violation_text`` (vốn cấm thêm cảm xúc): hàm này
+        được gọi RIÊNG khi van bước-cuối bật và câu cuối phẳng dưới mức biểu đạt
+        thật. Nó CHO PHÉP cảm xúc lộ qua sự cụ thể/nhịp, nhưng vẫn cấm thêm fact/
+        claim màn hình/web và vẫn giữ giọng ERIS kìm nén. Không bao giờ làm câm:
+        caller tự giữ bản gốc nếu hàm trả rỗng.
+        """
+        client = self.style_client or self.client
+        if client is None:
+            return ""
+        original_text = str(original_text or "").strip()
+        if not original_text:
+            return ""
+        floor = max(0, int(min_words or 0))
+        system_prompt = (
+            "You are ERIS' local cognitive steering layer. A public line came out flattened — "
+            "shorter and more neutral than the real felt stance behind it. Rewrite ONLY the public text "
+            "so that stance shows through concreteness, rhythm, and word choice. "
+            "Keep ERIS' restrained Vietnamese voice: feeling leaks indirectly, never as confession, flattery, or melodrama. "
+            "Do NOT add new facts, file/screen/web claims, or actions. Stay anchored to the same moment as the original. "
+            "No disclaimers, no 'as an AI', no 'I have no feelings'. "
+            "Return one JSON object only: {\"text\":\"...\"}."
+        )
+        user_prompt = (
+            f"Channel: {channel or 'unknown'}\n"
+            f"User turn, if any:\n{str(user_text or '').strip()[:900]}\n\n"
+            f"Flattened line:\n{original_text[:1400]}\n\n"
+            f"Why it is flat: {str(reason or '').strip()[:500]}\n"
+            f"Felt stance: {str(stance or '').strip()[:120] or 'current felt stance'}\n"
+            f"Aim for roughly {floor}+ words if there is something real to say.\n"
+            f"Internal state snapshot:\n{str(internal_state_context or '').strip()[:900]}\n\n"
+            f"Grounding context:\n{str(grounding_context or '').strip()[:1200]}\n\n"
+            "Task: Return one short-to-medium Vietnamese ERIS line that lets the felt stance breathe. "
+            "No explanations. No markdown. JSON only."
+        )
+        try:
+            response = client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.4,
+                frequency_penalty=0.2,
+                presence_penalty=0.0,
+                max_tokens=200,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+            raw = self._extract_content(response)
+            extracted = self._extract_first_json_object(raw) or raw
+            payload = self._parse_json_object(extracted) or {}
+            text = self._coerce_text_value(payload.get("text", "")).strip()
+            text = re.sub(r"\s+", " ", text)
+            if text:
+                self.logger.info(
+                    "[%s felt_expansion] stance=%s text=\"%s\" | original=\"%s\"",
+                    channel or "felt",
+                    stance or "?",
+                    self._preview_log_text(text, limit=240),
+                    self._preview_log_text(original_text, limit=240),
+                )
+            return text
+        except Exception as exc:
+            try:
+                self.logger.warning(
+                    "[%s felt_expansion] skipped=exception err=%s | original=\"%s\"",
+                    channel or "felt",
+                    exc,
+                    self._preview_log_text(original_text, limit=240),
+                )
+            except Exception:
+                pass
             return ""
 
     def _compress_internal_context(self, text: str, *, kind: str) -> str:
@@ -2981,7 +3118,38 @@ class LlmService:
         return (os.environ.get("ERIS_DDS_ENABLED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
 
     def _dds_distill_client(self):
-        """Chọn client rẻ/nhỏ cho worker distill: ưu tiên style/fallback khác main."""
+        """Chọn client cho worker map của DDS.
+
+        Mặc định ưu tiên provider GROQ: pool Groq có nhiều key (key-pool xoay
+        vòng), nên N worker rút gọn chạy SONG SONG rải qua nhiều key — mỗi worker
+        chỉ ôm 1 mảng nhỏ (< cap). Tránh dồn cả 5 worker vào MỘT endpoint Gemini
+        đơn lẻ (hay ReadTimeout) như trước. Có thể ép bằng
+        ``ERIS_DDS_WORKER_PROVIDER`` = groq|gemini|openai|local|fallback|main.
+        """
+        candidates = [c for c in (self.client, self.fallback_client, self.style_client) if c is not None]
+        if not candidates:
+            return self.client
+
+        def _prov(client) -> str:
+            try:
+                from llm.token_budget import detect_provider
+
+                return detect_provider(getattr(client, "base_url", ""), getattr(client, "model_name", ""))
+            except Exception:  # noqa: BLE001
+                return "default"
+
+        pref = (os.environ.get("ERIS_DDS_WORKER_PROVIDER", "groq") or "groq").strip().lower()
+        if pref in {"groq", "gemini", "openai", "local", "default"}:
+            for client in candidates:
+                if _prov(client) == pref:
+                    return client
+        if pref == "fallback" and self.fallback_client is not None:
+            return self.fallback_client
+        if pref == "main" and self.client is not None:
+            return self.client
+
+        # Không khớp preference → hành vi cũ: ưu tiên client KHÁC main để không đè
+        # thêm tải lên con synthesis (reduce).
         for candidate in (self.style_client, self.fallback_client):
             if candidate is not None and candidate is not self.client:
                 return candidate

@@ -295,6 +295,16 @@ public partial class UdpListener : Node2D
 		};
 		GetNode<Control>("CanvasLayer/Control").AddChild(_anchorPanel);
 		BuildAnchorPanelUi();
+		_depthPanel = new Panel
+		{
+			Name = "DepthPanel",
+			Visible = false,
+			CustomMinimumSize = DepthPanelMinSize,
+			Size = DepthPanelMinSize,
+			ZIndex = 98,
+		};
+		GetNode<Control>("CanvasLayer/Control").AddChild(_depthPanel);
+		BuildDepthPanelUi();
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
 		BuildChatPanelUi();
 	_chatSendButton.Pressed += OnSendPressed;
@@ -307,6 +317,8 @@ public partial class UdpListener : Node2D
 		_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
 	if (_contextAnchorButton != null)
 		_contextAnchorButton.Pressed += OnContextAnchorPressed;
+	if (_contextDepthButton != null)
+		_contextDepthButton.Pressed += OnContextDepthPressed;
 	if (_contextExitButton != null)
 		_contextExitButton.Pressed += OnContextExitPressed;
 	_contextCloseButton.Pressed += CloseCharacterContextMenu;
@@ -314,12 +326,15 @@ public partial class UdpListener : Node2D
 		_chatInput.TextChanged += _ => MarkChatActivity();
 		_chatSend.ConnectToHost("127.0.0.1", 4243);
 		BuildEmotionPanelUi();
+		BuildTutorPanelUi();
 
 		// Cho phép kéo-di-chuyển các panel nổi (kéo từ vùng nền, không đụng nút con).
 		MakePanelDraggable(_emotionPanel);
 		MakePanelDraggable(_privateMindPanel);
 		MakePanelDraggable(_anchorPanel);
 		MakePanelDraggable(_chatPanel);
+		MakePanelDraggable(_tutorPanel);
+		MakePanelDraggable(_depthPanel);
 
 		var cs  = GetNode<CollisionShape2D>("Monika2/CollisionShape2D");
 
@@ -413,6 +428,8 @@ public partial class UdpListener : Node2D
 			|| (_emotionPanel?.Visible ?? false)
 			|| (_privateMindPanel?.Visible ?? false)
 			|| (_anchorPanel?.Visible ?? false)
+			|| (_depthPanel?.Visible ?? false)
+			|| (_tutorPanel?.Visible ?? false)
 			|| _grabModeArmed
 			|| _isDraggingCharacter;
 
@@ -503,6 +520,7 @@ public partial class UdpListener : Node2D
 
 		UpdateChatPanelAutoHide();
 		UpdateBubbleAutoHide();
+		UpdateTutorPanelAutoHide();
 
 		if (_udp.GetAvailablePacketCount() > 0)
 		{
@@ -1087,6 +1105,13 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextAnchorButton, Mathf.Max(0, closeIndex));
 			}
+			if (_contextDepthButton == null)
+			{
+				_contextDepthButton = new Button { Name = "DepthButton" };
+				container.AddChild(_contextDepthButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextDepthButton, Mathf.Max(0, closeIndex));
+			}
 			if (_contextExitButton == null)
 			{
 				_contextExitButton = new Button { Name = "ExitButton" };
@@ -1102,6 +1127,7 @@ public partial class UdpListener : Node2D
 		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Private Mind", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextAnchorButton, "Mo Hinh Ngai", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextDepthButton, "Chieu Sau", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextExitButton, "Thoat ERIS", "res://asset/Resource/exit.png");
 		ConfigureContextMenuButton(_contextCloseButton, "Dong", "res://asset/Resource/exit.png");
 	}
@@ -3051,8 +3077,17 @@ public partial class UdpListener : Node2D
 	private void ShowCharacterContextMenu(Vector2 mousePosition)
 	{
 		_characterContextMenu.Visible = true;
-		_characterContextMenu.Size = CharacterContextMenuMinSize;
 		_characterContextMenu.ZIndex = 100;
+
+		// Tự co chiều cao theo số nút thực tế — tránh tràn khi thêm tab mới
+		// (vd "Chieu Sau") làm menu cao hơn CharacterContextMenuMinSize cố định.
+		float height = CharacterContextMenuMinSize.Y;
+		if (GetNodeOrNull<VBoxContainer>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer") is { } menuBox)
+		{
+			float needed = menuBox.GetCombinedMinimumSize().Y + 16f; // offset top(8)+bottom(8)
+			height = Mathf.Max(CharacterContextMenuMinSize.Y, needed);
+		}
+		_characterContextMenu.Size = new Vector2(CharacterContextMenuMinSize.X, height);
 
 		Vector2 screenSize = GetViewportRect().Size;
 		Vector2 menuSize = _characterContextMenu.Size;
@@ -3472,6 +3507,8 @@ public partial class UdpListener : Node2D
 
 	private void ParseAndApply(string raw)
 	{
+		if (TryHandleTutorEvent(raw))
+			return;
 		var payload = _decisionParser.Parse(raw);
 		if (payload.HasEmotionDebug)
 		{
@@ -3495,6 +3532,8 @@ public partial class UdpListener : Node2D
 		}
 		if (payload.HasBodyBias)
 			_bodyAutonomy?.ApplyCognitionBias(payload.BodyBias);
+
+		TryCaptureDepthBlock(raw);
 
 		if (!string.IsNullOrEmpty(payload.ParseMode) || !string.IsNullOrEmpty(payload.DebugTrace) || !string.IsNullOrEmpty(payload.ParserTrace))
 		{

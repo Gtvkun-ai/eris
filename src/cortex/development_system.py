@@ -369,7 +369,12 @@ def _parse_steer(text: str) -> tuple[str | None, float]:
 def development_growth_enabled() -> bool:
     """Cờ bật/tắt long-arc. MẶC ĐỊNH TẮT: runtime không đổi hành vi tới khi Ngài
     đặt ERIS_DEVELOPMENT_GROWTH_ENABLED=1. Tránh destabilize companion đang chạy."""
-    return os.getenv("ERIS_DEVELOPMENT_GROWTH_ENABLED", "").strip() in {"1", "true", "yes", "on"}
+    try:
+        from .depth_flags import flag_enabled  # type: ignore
+
+        return flag_enabled("ERIS_DEVELOPMENT_GROWTH_ENABLED", default=False)
+    except Exception:
+        return os.getenv("ERIS_DEVELOPMENT_GROWTH_ENABLED", "").strip() in {"1", "true", "yes", "on"}
 
 
 _DEFAULT_SYSTEM: "DevelopmentSystem | None" = None

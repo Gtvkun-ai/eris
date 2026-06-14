@@ -196,12 +196,40 @@ class GeminiWebBackend:
                 from playwright.sync_api import sync_playwright  # type: ignore
 
                 self._pw = sync_playwright().start()
-                self._ctx = self._pw.chromium.launch_persistent_context(
-                    config.profile_dir,
+                # Chống phát hiện automation: bỏ cờ --enable-automation, tắt
+                # AutomationControlled. Ưu tiên Chrome thật (channel) — Google tin hơn.
+                browser_args = [
+                    "--disable-blink-features=AutomationControlled",
+                    f"--window-position={config.window_x},{config.window_y}",
+                    f"--window-size={config.window_width},{config.window_height}",
+                ]
+                if config.app_mode:
+                    # App window: bỏ thanh địa chỉ/tab cho gọn ("trang trí").
+                    browser_args.append(f"--app={config.nav_url}")
+                launch_kwargs = dict(
                     headless=False,
                     viewport={"width": config.window_width, "height": config.window_height},
+                    ignore_default_args=["--enable-automation"],
+                    args=browser_args,
                 )
-                self._page = self._ctx.new_page()
+                channel = (config.browser_channel or "").strip()
+                try:
+                    if channel:
+                        self._ctx = self._pw.chromium.launch_persistent_context(
+                            config.profile_dir, channel=channel, **launch_kwargs
+                        )
+                    else:
+                        self._ctx = self._pw.chromium.launch_persistent_context(
+                            config.profile_dir, **launch_kwargs
+                        )
+                except Exception:
+                    # Fallback: Chromium bundled nếu Chrome thật không khả dụng.
+                    self._ctx = self._pw.chromium.launch_persistent_context(
+                        config.profile_dir, **launch_kwargs
+                    )
+                # App-mode: dùng page sẵn có (đã mở nav_url) để không tạo tab thừa.
+                pages = list(getattr(self._ctx, "pages", []) or [])
+                self._page = pages[0] if (config.app_mode and pages) else self._ctx.new_page()
                 return self
 
             def __exit__(self, *exc):

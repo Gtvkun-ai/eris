@@ -76,6 +76,26 @@ class LearningShareImpulse:
 
     # ------------------------------------------------------------------
 
+    def push_remark(self, text: str, *, now: float, priority: float = 0.6) -> bool:
+        """Đẩy một câu ngắn (context/banter) vào thought stream. Không lưu trí nhớ.
+
+        Bỏ qua novelty gate (đây không phải tri thức), vẫn tôn trọng enabled + rate-limit.
+        """
+
+        if not self.config.enabled:
+            return False
+        if self._thought_sink is None:
+            return False
+        text = str(text or "").strip()
+        if not text:
+            return False
+        if now - self._last_share_ts < self.config.share_window_s:
+            return False
+        if not self._push(text, priority):
+            return False
+        self._last_share_ts = now
+        return True
+
     def _novelty(self, highlight: str) -> float:
         if self._novelty_fn is None:
             return 1.0  # không có nguồn so sánh ⇒ coi như mới

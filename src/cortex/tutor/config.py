@@ -82,11 +82,16 @@ class TutorConfig:
     type_delay_ms_max: int = 120
     window_width: int = 520
     window_height: int = 720
+    window_x: int = 880
+    window_y: int = 120
+    app_mode: bool = True   # cửa sổ app (ẩn thanh địa chỉ/tab) cho gọn, "trang trí" hơn
     # Selector (chỉnh một chỗ khi Gemini đổi UI)
     sel_input: str = "div[contenteditable='true']"
     sel_send: str = "button[aria-label*='Send'], button[aria-label*='Gửi']"
     sel_response: str = "message-content, .model-response-text"
     sel_login_marker: str = "input[type='password'], #captcha, iframe[src*='recaptcha']"
+    # Chống phát hiện automation (Google chặn "browser may not be secure")
+    browser_channel: str = "chrome"   # "chrome" = Chrome thật; "" = Chromium bundled
     # Risk guard
     max_consecutive_failures: int = 3
     failure_cooldown_s: float = 1800.0
@@ -125,10 +130,14 @@ class TutorConfig:
             type_delay_ms_max=hi,
             window_width=max(200, int(self.window_width)),
             window_height=max(200, int(self.window_height)),
+            window_x=int(self.window_x),
+            window_y=int(self.window_y),
+            app_mode=bool(self.app_mode),
             sel_input=str(self.sel_input or ""),
             sel_send=str(self.sel_send or ""),
             sel_response=str(self.sel_response or ""),
             sel_login_marker=str(self.sel_login_marker or ""),
+            browser_channel=str(self.browser_channel or ""),
             max_consecutive_failures=max(1, int(self.max_consecutive_failures)),
             failure_cooldown_s=max(0.0, float(self.failure_cooldown_s)),
             captcha_pause_s=max(0.0, float(self.captcha_pause_s)),
@@ -155,6 +164,9 @@ class TutorConfig:
             if logger is not None:
                 logger.warn(f"ERIS_TUTOR_ENABLED không hợp lệ ({raw_enabled!r}) → coi như TẮT")
 
+        # LƯU Ý: TutorConfig dùng slots=True nên KHÔNG đọc default qua cls.<field>
+        # (đó là slot descriptor). Dùng một instance default để lấy giá trị thật.
+        d = cls()
         cfg = cls(
             enabled=enabled,
             curiosity_threshold=_env_float("ERIS_TUTOR_CURIOSITY_THRESHOLD", 0.5),
@@ -168,9 +180,14 @@ class TutorConfig:
             answer_stable_window_s=_env_float("ERIS_TUTOR_ANSWER_STABLE_WINDOW", 2.5),
             window_width=_env_int("ERIS_TUTOR_WINDOW_WIDTH", 520),
             window_height=_env_int("ERIS_TUTOR_WINDOW_HEIGHT", 720),
-            sel_input=_env_str("ERIS_TUTOR_SEL_INPUT", cls.sel_input),
-            sel_send=_env_str("ERIS_TUTOR_SEL_SEND", cls.sel_send),
-            sel_response=_env_str("ERIS_TUTOR_SEL_RESPONSE", cls.sel_response),
+            window_x=_env_int("ERIS_TUTOR_WINDOW_X", 880),
+            window_y=_env_int("ERIS_TUTOR_WINDOW_Y", 120),
+            app_mode=_env_bool("ERIS_TUTOR_APP_MODE", True),
+            sel_input=_env_str("ERIS_TUTOR_SEL_INPUT", d.sel_input),
+            sel_send=_env_str("ERIS_TUTOR_SEL_SEND", d.sel_send),
+            sel_response=_env_str("ERIS_TUTOR_SEL_RESPONSE", d.sel_response),
+            sel_login_marker=_env_str("ERIS_TUTOR_SEL_LOGIN_MARKER", d.sel_login_marker),
+            browser_channel=_env_str("ERIS_TUTOR_BROWSER_CHANNEL", d.browser_channel),
             share_window_s=_env_float("ERIS_TUTOR_SHARE_WINDOW", 600.0),
             share_novelty_threshold=_env_float("ERIS_TUTOR_SHARE_NOVELTY", 0.5),
         )

@@ -287,6 +287,18 @@ class RuntimeCoordinator(
     ):
         self.logger = logger
         self.transport = transport
+        # Cờ chiều-sâu (N1–N3) tự BẬT lúc khởi động — không bắt người dùng gạt tay.
+        # Live qua control-file; lựa chọn tắt/bật về sau của người dùng vẫn thắng.
+        try:
+            from cortex.depth_flags import bootstrap_defaults
+
+            states = bootstrap_defaults()
+            self.logger.info("[depth] auto-enable cờ chiều-sâu: %s", states)
+        except Exception as exc:  # pragma: no cover - defensive
+            try:
+                self.logger.warning("[depth] bootstrap_defaults lỗi: %s", exc)
+            except Exception:
+                pass
         self.llm_service = llm_service
         self.parser = parser
         self.telemetry_service = telemetry_service
@@ -468,6 +480,15 @@ class RuntimeCoordinator(
         self.private_life_surface_queue: list[object] = getattr(self.private_life_daemon, "surface_queue", []) if self.private_life_daemon is not None else []
         self.private_life_digest: dict[str, object] = {}
         self.last_semantic_scene_note: SemanticSceneNote | None = None
+        # Curiosity Tutor: daemon tò mò chạy ngoài hot path. Mặc định None (Master_Switch
+        # tắt) ⇒ không tác động gì. Lỗi build không bao giờ giết runtime.
+        self.tutor_daemon = None
+        try:
+            from runtime.tutor_wiring import build_tutor_daemon_from_runtime
+            self.tutor_daemon = build_tutor_daemon_from_runtime(self)
+        except Exception as exc:
+            self.logger.warning("Không dựng được Curiosity Tutor daemon: %s", exc)
+            self.tutor_daemon = None
         self._state_lock = threading.RLock()
 
         '''Các biến này lưu trạng thái hội thoại:
@@ -840,6 +861,13 @@ class RuntimeCoordinator(
                 channel=channel,
                 user_text=user_text,
             )
+            # Curiosity Tutor tick (ngoài hot path; no-op khi Master_Switch tắt).
+            if getattr(self, "tutor_daemon", None) is not None:
+                try:
+                    from runtime.tutor_wiring import tutor_tick
+                    tutor_tick(self, observer_frame=observer_frame, channel=channel or "autonomous", snapshot=signal_snapshot)
+                except Exception as exc:
+                    self.logger.warning("Curiosity Tutor tick error: %s", exc)
         except Exception as exc:
             self.logger.warning("3-tier autonomy update error: %s", exc)
 
@@ -1434,6 +1462,7 @@ class RuntimeCoordinator(
         if private_life_digest:
             self.private_life_digest = private_life_digest
         payload["emotion_debug"] = self._build_emotion_debug_payload()
+        payload["depth"] = self._build_depth_block()
         if isinstance(private_digest, dict) and private_digest:
             payload["private_mind_digest"] = private_digest
         if isinstance(private_life_digest, dict) and private_life_digest:
@@ -2798,8 +2827,13 @@ class RuntimeCoordinator(
             prev_stance_blend=getattr(internal_state, "last_stance_blend", None) or None,
         )
 
-    def _build_appraisal_context(self, appraisal: CognitiveAppraisal) -> str:
-        return self.appraisal_engine.render_prompt_context(appraisal)
+    def _build_appraisal_context(self, appraisal: CognitiveAppraisal, *, frame=None) -> str:
+        context = self.appraisal_engine.render_prompt_context(appraisal)
+        advisory = self._tom_advisory_for(frame)
+        if advisory:
+            context = f"{context}\n{advisory}"
+        self._maybe_write_panel_snapshot(appraisal, advisory)
+        return context
 
     def _build_inner_thought(
         self,
@@ -3567,6 +3601,16 @@ class RuntimeCoordinator(
         merged.append(f"expression_gate={want_to_say:.2f}->{allowed_expression:.2f}")
         merged.append(f"suppression_pressure={suppression_pressure:.2f}")
         merged.append("suppression_layer=inner_restraint")
+        # Nước 1 — van bước-cuối: cache expression gate cho post-generation đo phẳng.
+        try:
+            self._last_expression_gate = {
+                "want_to_say": want_to_say,
+                "allowed_expression": allowed_expression,
+                "suppression_pressure": suppression_pressure,
+                "stance": stance,
+            }
+        except Exception:
+            pass
         return tuple(dict.fromkeys(str(item) for item in merged if str(item or "").strip()))
 
     def _merge_subconscious_notes(self, notes: tuple[str, ...], subconscious_report) -> tuple[str, ...]:
@@ -3830,9 +3874,90 @@ class RuntimeCoordinator(
             self._preview_text(decision.parser_trace),
         )
 
+    def _maybe_tutor_on_unclear_user(self, user_text, frame) -> None:
+        """Khi Eris không hiểu/không phân loại nổi tin user → định tuyến.
+
+        NGUYÊN TẮC: mặc định TỰ HỌC (hỏi Gemini âm thầm) — Ngài KHÔNG phải giải thích
+        kiến thức chung (vd "INTP 538", "Rust", tên phim). Chỉ HỎI LẠI NGÀI khi đó là
+        tham chiếu CÁ NHÂN mơ hồ mà Gemini không thể biết ("vụ đó hôm qua", "ý m là sao").
+
+        - hỏi Gemini: chạy nền, im lặng, có throttle (Eris vẫn trả lời tự nhiên lượt này,
+          học để lần sau hiểu hơn).
+        - hỏi lại Ngài: câu trả lời lượt này thành câu làm rõ ngắn (giọng Eris).
+        No-op khi Master_Switch tắt.
+        """
+
+        self._clarify_user_pending = False
+        daemon = getattr(self, "tutor_daemon", None)
+        if daemon is None:
+            return
+        try:
+            text = str(user_text or "").strip()
+            words = text.split()
+            if len(words) < 3:
+                return
+            meaning = ""
+            ml = getattr(frame, "meaning_layer", None)
+            if ml is not None:
+                meaning = str(getattr(ml, "meaning", "") or "")
+            intent = str(getattr(self, "last_user_intent", "") or "").strip().lower()
+            unclear = (not meaning) or intent in ("", "unknown", "unclear", "other")
+            if not unclear:
+                return
+
+            low = text.lower()
+            # Tham chiếu cá nhân/mơ hồ — chỉ Ngài giải đáp được → hỏi lại Ngài.
+            personal_markers = (
+                "vụ đó", "vụ này", "cái đó", "cái này", "cái kia", "cái nớ", "hôm qua",
+                "lúc nãy", "khi nãy", "hồi nãy", "bữa đó", "như thế", "như vậy",
+                "ý m là sao", "ý mày là sao", "ý em là sao", "ý là sao", "sao cơ", "hả?",
+            )
+            is_personal_ambiguous = (len(words) <= 6 and any(m in low for m in personal_markers))
+
+            if is_personal_ambiguous:
+                # Không hiểu Ngài ám chỉ gì → hỏi lại Ngài ngay trong câu trả lời lượt này.
+                self._clarify_user_pending = True
+                return
+
+            # Mặc định: tự học qua Gemini (âm thầm, throttle). Eris vẫn trả lời tự nhiên.
+            self._fire_tutor_lookup(text, context="Khái niệm trong tin nhắn Eris chưa rõ")
+        except Exception as exc:
+            try:
+                self.logger.warning("Curiosity Tutor on-unclear error: %s", exc)
+            except Exception:
+                pass
+
+    def _fire_tutor_lookup(self, topic: str, *, context: str = "") -> None:
+        """Bắn một lượt hỏi Gemini ở thread nền (có throttle). Không chặn trả lời chat."""
+
+        daemon = getattr(self, "tutor_daemon", None)
+        lookup = getattr(self, "request_tutor_lookup", None)
+        if daemon is None or not callable(lookup):
+            return
+        now = time.time()
+        last = float(getattr(self, "_last_unclear_tutor_ts", 0.0) or 0.0)
+        cooldown = float(getattr(getattr(daemon, "config", None), "min_seconds_between_episodes", 120.0) or 120.0)
+        if now - last < cooldown:
+            return
+        self._last_unclear_tutor_ts = now
+
+        def _bg():
+            try:
+                lookup(topic, context=context, kind_hint="durable", stake=0.7)
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg, name="ERIS-TutorOnUnclear", daemon=True).start()
+
     def stop(self):
         self.running = False
         self._stop_mental_process_loop()
+        tutor_daemon = getattr(self, "tutor_daemon", None)
+        if tutor_daemon is not None:
+            try:
+                tutor_daemon.stop()
+            except Exception as exc:
+                self.logger.warning("Curiosity Tutor stop error: %s", exc)
         if self.subconscious_runtime_enabled:
             try:
                 snapshot = self.telemetry_service.capture_snapshot(
@@ -4765,6 +4890,10 @@ class RuntimeCoordinator(
             self._handle_anchor_control(msg)
             return
 
+        if msg_type == "depth_control":
+            self._handle_depth_control(msg)
+            return
+
         if msg_type == "debug_command":
             self._handle_debug_command(msg)
             return
@@ -4829,6 +4958,117 @@ class RuntimeCoordinator(
             self.logger.info("[anchor_control] %s -> %s (safe_mode=%s)", action, value, author.is_safe_mode)
         except Exception as exc:
             self.logger.warning("[anchor_control] %s failed: %s", action, exc)
+
+    def _handle_depth_control(self, msg: dict) -> None:
+        """Bật/tắt cờ chiều-sâu (N1–N3) từ tab Panel trong context menu Godot.
+
+        Ghi control-file ``memory_core/depth_flags.json`` (qua cortex.depth_flags);
+        các helper cờ đọc file đó mỗi lần gọi nên bật/tắt ăn ngay, không restart.
+        """
+        flag = str(msg.get("flag") or "").strip()
+        value = bool(msg.get("value", True))
+        try:
+            from cortex.depth_flags import KNOWN_FLAGS, set_flags
+
+            if flag not in KNOWN_FLAGS:
+                self.logger.debug("[depth_control] unknown flag=%s", flag)
+                return
+            set_flags({flag: value})
+            self.logger.info("[depth_control] %s -> %s", flag, value)
+        except Exception as exc:
+            self.logger.warning("[depth_control] %s failed: %s", flag, exc)
+
+    def _build_depth_block(self) -> dict[str, object]:
+        """Block 'depth' cho panel Godot: trạng thái cờ + tín hiệu chiều-sâu sống.
+
+        Đọc-only, JSON-safe, không bao giờ ném. Tín hiệu nhanh lấy từ cache đã có
+        (_last_expression_gate, _last_tom_advisory). Phần "giàu" (N2 phát triển, dòng
+        nội tâm, signal log, context) lấy từ ``build_panel_state`` — vốn đọc các file
+        đã persist bởi inner-diary / private-concerns (Gemma đã điền dần theo thời gian).
+        Gọi rất thường xuyên nên cache panel_state ~1s để khỏi đọc đĩa mỗi payload.
+        """
+        try:
+            from cortex.depth_flags import all_states
+
+            flags = all_states()
+        except Exception:
+            flags = {}
+        gate = getattr(self, "_last_expression_gate", None)
+        if not isinstance(gate, dict):
+            gate = {}
+
+        def _f(key: str) -> float:
+            try:
+                return round(float(gate.get(key, 0.0) or 0.0), 2)
+            except (TypeError, ValueError):
+                return 0.0
+
+        block: dict[str, object] = {
+            "flags": flags,
+            "expression": {
+                "want": _f("want_to_say"),
+                "suppress": _f("suppression_pressure"),
+                "allowed": _f("allowed_expression"),
+                "stance": str(gate.get("stance", "") or ""),
+            },
+            "tom_read": str(getattr(self, "_last_tom_advisory", "") or ""),
+        }
+
+        # Phần giàu (panel_state) — cache theo thời gian để không đọc đĩa mỗi payload.
+        try:
+            rich = self._cached_panel_state()
+            if isinstance(rich, dict):
+                for key in ("identity", "affect", "n2", "interiority", "signal_log", "context"):
+                    if key in rich:
+                        block[key] = rich[key]
+                # tom_read giàu (có confidence) thắng chuỗi thô nếu sống.
+                tom = rich.get("tom_read")
+                if isinstance(tom, dict) and tom.get("live"):
+                    block["tom_read_rich"] = tom
+        except Exception:
+            pass
+
+        self._maybe_log_depth_signals(block)
+        return block
+
+    def _cached_panel_state(self, *, ttl_seconds: float = 1.0) -> dict[str, object]:
+        """build_panel_state() có cache ngắn — payload UDP gọi rất dày."""
+        now = time.time()
+        cache = getattr(self, "_panel_state_cache", None)
+        if isinstance(cache, tuple) and (now - cache[0]) < ttl_seconds:
+            return cache[1]
+        try:
+            from runtime.panel_state import build_panel_state
+
+            state = build_panel_state()
+        except Exception:
+            state = {}
+        self._panel_state_cache = (now, state)
+        return state
+
+    def _maybe_log_depth_signals(self, block: dict[str, object], *, throttle_seconds: float = 30.0) -> None:
+        """Append tín hiệu chiều-sâu ra ``logs/depth_signals.jsonl`` để phát triển theo thời gian.
+
+        Throttled, atomic-ish append, không bao giờ ném. Tắt bằng ERIS_DEPTH_LOG=0.
+        """
+        try:
+            if str(os.getenv("ERIS_DEPTH_LOG", "1")).strip().lower() not in {"1", "true", "yes", "on", "y"}:
+                return
+            now = time.time()
+            last = getattr(self, "_depth_log_last_at", 0.0)
+            if (now - float(last or 0.0)) < throttle_seconds:
+                return
+            import json as _json
+
+            log_dir = os.path.join(os.getenv("ERIS_LOG_DIR", "logs"))
+            os.makedirs(log_dir, exist_ok=True)
+            record = {"ts": round(now, 3), **block}
+            line = _json.dumps(record, ensure_ascii=False)
+            with open(os.path.join(log_dir, "depth_signals.jsonl"), "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+            self._depth_log_last_at = now
+        except Exception:
+            pass
 
     def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
         self.fe_style_memory = self.fe_renderer.remember_style(
@@ -7125,7 +7365,7 @@ class RuntimeCoordinator(
                 ni_context="",
                 ti_context=inner_ti_context,
                 fe_context=fe_plan.style_context,
-                appraisal_context=self._build_appraisal_context(frame.appraisal),
+                appraisal_context=self._build_appraisal_context(frame.appraisal, frame=frame),
                 internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
                 memory_context=memory_context,
                 avoid_text=self.last_text,
@@ -7206,7 +7446,7 @@ class RuntimeCoordinator(
             ni_context="",
             ti_context=planned_ti_context,
             fe_context=fe_plan.style_context,
-            appraisal_context=self._build_appraisal_context(frame.appraisal),
+            appraisal_context=self._build_appraisal_context(frame.appraisal, frame=frame),
             internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
             memory_context=memory_context,
             avoid_text=self.last_text,

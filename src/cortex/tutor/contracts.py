@@ -58,9 +58,17 @@ FailReason = Literal[
     "empty_answer",
     "formulation_failed",
     "gate_rejected",
+    "gate_rejected_known",    # router: đã biết rồi (trí nhớ trúng)
+    "gate_rejected_trivial",  # router: vụn vặt, không đáng hỏi
 ]
 
-GapSource = Literal["expectation_violation", "observer_unknown"]
+GapSource = Literal["expectation_violation", "observer_unknown", "epistemic_uncertainty"]
+
+# Phân loại tri thức rút ra từ một lượt hỏi gia sư:
+#   durable  = kiến thức thật, tái dùng được → lưu (embedding) + làm giàu dự đoán
+#   context  = đoán ngữ cảnh user đang làm gì → cập nhật hiểu biết, KHÔNG lưu dài hạn
+#   banter   = chuyện vui/khịa → đẩy xung nói cho vui, KHÔNG lưu
+KnowledgeKind = Literal["durable", "context", "banter"]
 
 
 _MAX_QUESTION_LEN = 400
@@ -90,6 +98,8 @@ class KnowledgeGap:
     resolved: bool = False
     embedding: tuple[float, ...] = ()
     gap_id: str = ""
+    force: bool = False        # lệnh trực tiếp / "không biết" ⇒ bỏ qua idle + rate-limit
+    kind_hint: str = ""        # gợi ý phân loại: durable | context | banter
 
     def __post_init__(self) -> None:
         self.description = str(self.description or "").strip()
@@ -180,6 +190,7 @@ __all__ = [
     "TutorStage",
     "FailReason",
     "GapSource",
+    "KnowledgeKind",
     "KnowledgeGap",
     "TutorQuestion",
     "TutorAnswer",

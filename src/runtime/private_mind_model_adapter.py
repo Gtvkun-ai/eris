@@ -1610,11 +1610,17 @@ class PrivateMindAdapterPool:
         pool = cls(config=config, llm_service=llm_service, logger=logger)
         fn = getattr(logger, "info", None)
         if callable(fn):
+            # Fragment có thể tách provider/model riêng (vd local llamacpp) khỏi
+            # synthesis. In RÕ cả hai để nhìn log là biết vai trò nào chạy ở đâu,
+            # tránh hiểu nhầm "fragment×5" đi cùng provider với synthesis.
+            frag_cfg = PrivateMindModelAdapterConfig.fragment_overlay_from_env(config)
             fn(
-                "[PrivateMind API] ready provider=%s model=%s pool=fragment×%d+synthesis×1",
+                "[PrivateMind API] ready fragment(%s/%s)×%d + synthesis(%s/%s)×1",
+                frag_cfg.provider,
+                frag_cfg.model,
+                len(_EVALUATOR_ROLES),
                 config.provider,
                 config.model,
-                len(_EVALUATOR_ROLES),
             )
         return pool
 

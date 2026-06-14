@@ -520,7 +520,14 @@ class PostGenerationFiltersMixin:
             allow_reroll=allow_reroll,
         )
         decision = self._apply_chat_grounding_guard(decision, user_text=user_text, frame=frame, allow_reroll=allow_reroll)
-        return self._apply_novelty_advisory(decision, channel="chat")
+        decision = self._apply_novelty_advisory(decision, channel="chat")
+        # Nước 1 — van bước-cuối cho nhánh chat (flag-gated; mặc định no-op).
+        return self._apply_emotional_consequence_filter(
+            decision,
+            channel="chat",
+            frame=frame,
+            user_text=user_text,
+        )
 
     def _append_trace(self, trace: str, marker: str) -> str:
         trace = str(trace or "").strip()
@@ -1823,6 +1830,82 @@ class PostGenerationFiltersMixin:
             )
         return self._copy_decision_with_text(decision, text=replacement, trace_marker=marker)
 
+    def _apply_emotional_consequence_filter(
+        self,
+        decision: Decision,
+        *,
+        channel: str,
+        speech_core=None,
+        frame=None,
+        user_text: str = "",
+    ) -> Decision:
+        """Nước 1 — van bước-cuối: nếu câu cuối phẳng dưới mức biểu đạt thật, xin
+        một reroll felt-expansion. MẶC ĐỊNH TẮT (cờ ERIS_EMOTIONAL_CONSEQUENCE).
+
+        Van này chỉ MỞ: nó không bao giờ làm câm hay rút ngắn. Reroll thất bại/
+        không có model/ngắn hơn bản gốc → giữ nguyên bản gốc.
+        """
+        try:
+            from cortex.emotional_consequence import (
+                count_words,
+                emotional_consequence_enabled,
+                felt_expansion_reason,
+                min_words_for_expression,
+                surface_is_flattened,
+            )
+        except Exception:
+            return decision
+        if not emotional_consequence_enabled():
+            return decision
+        if channel not in {"chat", "force_speak"}:
+            return decision
+        if not bool(getattr(decision, "should_speak", False)):
+            return decision
+        text = str(getattr(decision, "text", "") or "").strip()
+        if not text:
+            return decision
+        gate = getattr(self, "_last_expression_gate", None)
+        if not isinstance(gate, dict):
+            return decision
+        try:
+            allowed = float(gate.get("allowed_expression", 0.0) or 0.0)
+            want = float(gate.get("want_to_say", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return decision
+        stance = str(gate.get("stance", "") or "")
+        if not surface_is_flattened(text, allowed_expression=allowed, want_to_say=want):
+            return decision
+        service = getattr(self, "llm_service", None)
+        expand = getattr(service, "rewrite_for_felt_expression", None)
+        if not callable(expand):
+            return self._trace_only_guard(decision, "emotional_consequence=flat_no_service")
+        try:
+            new_text = expand(
+                original_text=text,
+                reason=felt_expansion_reason(stance=stance, allowed_expression=allowed, want_to_say=want),
+                stance=stance,
+                min_words=min_words_for_expression(allowed),
+                channel=channel,
+                user_text=user_text,
+                internal_state_context=self._guard_internal_state_context(),
+            )
+        except Exception:
+            new_text = ""
+        # Chỉ nhận khi reroll DÀI HƠN thật sự (van chỉ mở, không siết).
+        if new_text and count_words(new_text) > count_words(text):
+            try:
+                from runtime.panel_snapshot import add_signal
+                add_signal("expanded")
+            except Exception:
+                pass
+            return self._copy_decision_with_text(
+                decision,
+                text=new_text,
+                trace_marker="emotional_consequence=expanded",
+                parse_mode=getattr(decision, "parse_mode", "") or "emotional_consequence",
+            )
+        return self._trace_only_guard(decision, "emotional_consequence=flat_kept_original")
+
     def _apply_post_generation_filters(
         self,
         decision: Decision,
@@ -1922,7 +2005,14 @@ class PostGenerationFiltersMixin:
             snapshot=snapshot,
             momentum_topic=momentum_topic,
         )
-        return self._apply_novelty_advisory(decision, channel=channel)
+        decision = self._apply_novelty_advisory(decision, channel=channel)
+        # Nước 1 — van bước-cuối chạy CUỐI CÙNG, sau mọi guard clip, để đo câu thật
+        # sự sẽ phát ra. Flag-gated; mặc định no-op.
+        return self._apply_emotional_consequence_filter(
+            decision,
+            channel=channel,
+            speech_core=speech_core,
+        )
         # NOTE: advisory cũng được gắn ở _apply_chat_final_guards cho nhánh chat,
         # để cả hai cửa ra đều đi qua một cửa novelty chung.
 
