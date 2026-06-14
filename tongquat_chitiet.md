@@ -1,12 +1,12 @@
 # ERIS — TỔNG QUÁT CHI TIẾT, BẢN VIẾT LẠI TỪ REPO HIỆN TẠI
 
-> Mục tiêu: tài liệu file-to-file để debug và hiểu runtime ERIS. Bản này được dựng lại từ `src.zip` hiện tại, không dựa vào trí nhớ mơ hồ hay README màu mè. Nếu một file không có trong zip, bản này không khẳng định nó còn tồn tại trong repo hiện tại.
+> Mục tiêu: tài liệu file-to-file để debug và hiểu runtime ERIS. Bản này được dựng lại từ repo thật trên đĩa (`c:\Users\Gtvkun\Documents\GitHub\eris`), không dựa vào trí nhớ mơ hồ hay README màu mè. Phần Python parse từ `src/`, phần body parse từ `body/`.
 
 ## Phạm vi và giới hạn trung thực
 
-- Nguồn đã đọc trực tiếp: `/mnt/data/src.zip` sau khi giải nén vào sandbox.
-- Bản cũ dùng để đối chiếu bố cục: `/mnt/data/tongquat_chitiet.md`.
-- Repo zip hiện tại chứa Python runtime/source, `memory_core` data mẫu, nhưng **không có** thư mục `body/`, `tests/`, Godot scene, C# body hoặc asset. Vì vậy phần Body/Godot/C# bên dưới được phục hồi từ backup cũ và đánh dấu là previous snapshot, chưa phải audit lại từ zip lần này.
+- Nguồn Python: AST parse từ `src/` trong repo thật (`c:\Users\Gtvkun\Documents\GitHub\eris\src`). Bố cục `src/` khớp bảng snapshot bên dưới (`actions/ core/ cortex/ domain/ llm/ memory/ parser_grounding/ runtime/ telemetry/ transport/ vision.py`).
+- Nguồn C# body: đọc trực tiếp 8 file trong `body/` của repo thật và **đã audit lại** (xem ghi chú ở Phần 1).
+- Lưu ý lịch sử: bản doc gốc được sinh từ `src/src.zip` (chỉ chứa phần Python). Vì `body/`, `tests/`, Godot scene nằm **ngang hàng** với `src/` chứ không nằm trong zip, bản cũ tưởng nhầm là chúng "không tồn tại". Thực tế repo thật **có đủ** `body/` (C#), `tests/`, `project.godot`, `body/UdpListener.tscn`, `asset/`, `config/`.
 - Tổng Python đã parse bằng AST: **298 file**, khoảng **138924 LOC**. Các file cache `.pyc` và `.hypothesis` bị bỏ qua.
 - Tài liệu này ưu tiên debug thực dụng: file nào sở hữu state, file nào gọi ai, lỗi nào nên soi ở đâu. Không cố biến mọi module thành tiểu thuyết.
 
@@ -37,11 +37,11 @@
 - `memory_core/user_model.json` — keys=schema_version, updated_at, version, beliefs, history
 
 
-# 1. Body Godot/C# — phục hồi từ `tongquat_chitiet_old_backup.md`
+# 1. Body Godot/C# — ĐÃ AUDIT TỪ `body/` TRONG REPO THẬT
 
-> Ghi chú trung thực: `src.zip` lần này không chứa thư mục `body/`, Godot scene, C# hoặc asset. Phần dưới đây được giữ lại từ bản `tongquat_chitiet` cũ để không mất bản đồ debug phía thân xác. Nó nên được xem là **previous snapshot / legacy body map** cho tới khi Ngài đưa zip repo có cả `body/` để audit lại source C# thật.
+> Ghi chú trung thực: repo thật **có** thư mục `body/` (8 file `.cs` + `UdpListener.tscn`). Đã đọc trực tiếp và đối chiếu chữ ký từng class/method bằng AST C#. Kết quả: mô tả bên dưới **khớp** mã nguồn thật. Kích thước file tại thời điểm audit: `BodyAudioController.cs` 4.5KB, `ErisProcessManager.cs` 11.5KB, `LocalBodyAutonomy.cs` 21.8KB, `MotionController.cs` 21.2KB, `RunLogger.cs` 3.9KB, `UdpDecisionParser.cs` 11.7KB, `UdpListener.AnchorPanel.cs` 37.9KB, `UdpListener.cs` 199.7KB. Không còn là "legacy snapshot" — đây là bản đồ debug C# đã xác minh.
 
-# PHẦN C# / GODOT BODY — PHỤC HỒI TỪ BẢN CŨ  [body/]
+# PHẦN C# / GODOT BODY — ĐÃ XÁC MINH  [body/]
 ================================================================================
 Phía "thân xác". Không suy nghĩ; chỉ vẽ, phát animation/âm thanh, nhận Decision
 qua UDP 4242, gửi event/chat lên runtime qua UDP 4243, và tự đi lại khi rảnh.
@@ -421,7 +421,7 @@ Luồng đúng của ERIS không phải `input -> prompt -> output`. Luồng đ�
 ## Body/motion không đúng
 1. domain/decision.py: motion_intent/motion_target_x/motion_facing được resolve chưa.
 2. transport/udp.py: payload gửi được không.
-3. Lưu ý: zip hiện tại không có body/C# nên phải kiểm tra repo body riêng nếu lỗi nằm ở Godot.
+3. Body/motion: kiểm tra `body/MotionController.cs` (state machine đi/leo/ném) và `body/UdpDecisionParser.cs` (parse `motion_intent`/`motion_target_x`/`motion_facing`). Lỗi visual/animation nằm ở `MotionController.ApplyVisualState` + `body/UdpListener.tscn`.
 
 # 4. Các file trọng yếu cần đọc trước
 

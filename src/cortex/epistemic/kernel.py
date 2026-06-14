@@ -375,6 +375,33 @@ class EpistemicKernel:
         self.store.save()
         return belief
 
+    def record_explicit_user_facts(self, hypothesis_set: Any) -> tuple[Belief, ...]:
+        """Ghi belief NGAY từ những điều user TỰ KHAI trực tiếp (tôi là/thích/muốn...).
+
+        Đây là ground-truth do user cung cấp — KHÔNG phải suy diễn/đoán của ERIS — nên
+        ghi ngay khi quan sát là đúng tri thức luận, và là con đường để bản sắc về user
+        tích lũy qua phiên thay vì luôn "như mới quen" (#4). Vẫn đi qua
+        ``commit_hypothesis`` nên tôn trọng đủ guard provenance: cần evidence độc lập
+        (user_direct) và horizon không phải TURN_STATE. Suy diễn của private-mind KHÔNG
+        đi đường này (chúng không phải direct_assertion), guard chống tự-tin-vào-phỏng-
+        đoán vẫn nguyên vẹn.
+        """
+
+        if not self.authoritative:
+            return ()
+        stored: list[Belief] = []
+        for hypothesis in getattr(hypothesis_set, "hypotheses", ()) or ():
+            if not getattr(hypothesis, "direct_assertion", False):
+                continue
+            if getattr(hypothesis, "subject", "") != "user":
+                continue
+            if self._matching_belief(hypothesis) is not None:
+                continue
+            belief = self.commit_hypothesis(hypothesis)
+            if belief is not None:
+                stored.append(belief)
+        return tuple(stored)
+
     def recall(self, query: str = "", *, scope: str = "", horizon: BeliefHorizon | str | None = None, limit: int = 12) -> tuple[Belief, ...]:
         needle = self._normalize(query)
         horizon_value = BeliefHorizon(horizon) if horizon else None

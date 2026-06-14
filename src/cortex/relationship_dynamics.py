@@ -921,9 +921,22 @@ class RelationshipDynamicsEngine:
         state.dignity_defense = _decay(state.dignity_defense, hours, half_life_hours=42.0)
         state.irritation_memory = _decay(state.irritation_memory, hours, half_life_hours=24.0)
         state.overread_correction = _decay(state.overread_correction, hours, half_life_hours=72.0)
+        # Lòng tin đã xây thì "dính" lâu hơn sự thân quen bề mặt: tính floor từ mức
+        # familiarity/ritual TRƯỚC khi decay, để một mối quan hệ từng sâu vẫn giữ trust
+        # nền cao dù vắng mặt dài (#4: ký ức -> bản sắc).
+        familiarity_before = clamp01(state.familiarity)
+        ritual_before = clamp01(state.ritual_strength)
         state.familiarity = _decay(state.familiarity, hours, half_life_hours=240.0)
         state.ritual_strength = _decay(state.ritual_strength, hours, half_life_hours=336.0)
-        state.trust = 0.25 + _decay(max(0.0, state.trust - 0.25), hours, half_life_hours=240.0)
+        # Trust KHÔNG reset về mức người lạ (0.25) nếu quan hệ đã được xây. Floor "đã
+        # kiếm được" bám theo familiarity + ritual. KHÔNG nâng trust giả tạo khi vắng
+        # mặt; chỉ decay phần NẰM TRÊN floor.
+        earned_floor = min(
+            0.62,
+            0.25 + 0.30 * familiarity_before + 0.10 * ritual_before,
+        )
+        if state.trust > earned_floor:
+            state.trust = earned_floor + _decay(state.trust - earned_floor, hours, half_life_hours=240.0)
 
         if hours >= 24.0 and state.attachment_visibility >= 0.22:
             gap_factor = min(1.0, hours / 168.0)

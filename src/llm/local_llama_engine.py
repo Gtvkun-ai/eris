@@ -39,7 +39,7 @@ except Exception:  # pragma: no cover
         raw: dict = field(default_factory=dict)
         error: str = ""
 
-from llm.llamacpp_client import resolve_model_path
+from llm.llamacpp_client import resolve_model_path, _LLAMA_GLOBAL_LOCK
 
 
 def _env(name: str, default: str = "") -> str:
@@ -82,7 +82,7 @@ class LocalLlamaEngine:
     # ------------------------------------------------------------------
     def _text_llm(self) -> Any:
         key = ("text", self.text_model_path)
-        with LocalLlamaEngine._lock:
+        with _LLAMA_GLOBAL_LOCK:
             inst = LocalLlamaEngine._cache.get(key)
             if inst is None:
                 from llama_cpp import Llama
@@ -98,7 +98,7 @@ class LocalLlamaEngine:
 
     def _vision_llm(self) -> Any:
         key = ("vision", self.vision_model_path)
-        with LocalLlamaEngine._lock:
+        with _LLAMA_GLOBAL_LOCK:
             inst = LocalLlamaEngine._cache.get(key)
             if inst is None:
                 from llama_cpp import Llama
@@ -169,17 +169,17 @@ class LocalLlamaEngine:
         return rf
 
     def _chat_text(self, messages, *, schema, temperature) -> str:
-        llm = self._text_llm()
-        out = llm.create_chat_completion(
-            messages=messages,
-            temperature=float(temperature),
-            max_tokens=int(_env("ERIS_LLAMACPP_MAX_TOKENS", "768") or 768),
-            response_format=self._response_format(schema),
-        )
+        with _LLAMA_GLOBAL_LOCK:
+            llm = self._text_llm()
+            out = llm.create_chat_completion(
+                messages=messages,
+                temperature=float(temperature),
+                max_tokens=int(_env("ERIS_LLAMACPP_MAX_TOKENS", "768") or 768),
+                response_format=self._response_format(schema),
+            )
         return self._extract_content(out)
 
     def _chat_vision(self, messages, images, *, schema, temperature) -> str:
-        llm = self._vision_llm()
         # Gộp text của messages thành một prompt + đính ảnh kiểu OpenAI multimodal.
         prompt_text = self._messages_to_text(messages)
         b64 = self.data_uri_to_base64(images[0]) if images else ""
@@ -193,17 +193,19 @@ class LocalLlamaEngine:
                 ],
             }
         ]
-        out = llm.create_chat_completion(
-            messages=vmsg,
-            temperature=float(temperature),
-            max_tokens=int(_env("ERIS_LLAMACPP_VISION_MAX_TOKENS", "512") or 512),
-            response_format=self._response_format(schema),
-        )
+        with _LLAMA_GLOBAL_LOCK:
+            llm = self._vision_llm()
+            out = llm.create_chat_completion(
+                messages=vmsg,
+                temperature=float(temperature),
+                max_tokens=int(_env("ERIS_LLAMACPP_VISION_MAX_TOKENS", "512") or 512),
+                response_format=self._response_format(schema),
+            )
         return self._extract_content(out)
 
     def unload(self, model: str) -> OllamaResult:
         """Giải phóng model vision khỏi VRAM (text giữ resident)."""
-        with LocalLlamaEngine._lock:
+        with _LLAMA_GLOBAL_LOCK:
             key = ("vision", self.vision_model_path)
             inst = LocalLlamaEngine._cache.pop(key, None)
         if inst is not None:

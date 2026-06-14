@@ -947,12 +947,42 @@ class RuntimeCoordinator(
                     self.private_mind_digest = digest_fn(surface_queue=getattr(self, "private_mind_surface_queue", None))
                 elif tick is not None and callable(getattr(tick, "to_dict", None)):
                     self.private_mind_digest = tick.to_dict()
+            self._sync_private_mind_future_bias()
             self._persist_inner_diary()
         except Exception as exc:
             try:
                 self.logger.warning("PrivateMind apply result error: %s", exc)
             except Exception:
                 pass
+
+    def _sync_private_mind_future_bias(self) -> None:
+        """Đẩy ``future_bias`` từ digest -> các thuộc tính runtime mà tầng wording đọc.
+
+        Trước đây ``_apply_private_mind_tick_result`` chỉ set ``private_mind_digest``,
+        còn ``private_mind_speech_bias`` / ``private_mind_thought_pressure`` /
+        ``private_mind_inquiry_plan`` không bao giờ được đồng bộ — chúng đứng yên ở giá
+        trị khởi tạo ({} và 0.0). Vì renderer ``_render_private_mind_speech_bias_context``
+        đọc đúng ``private_mind_speech_bias`` (rỗng) nên nội tâm của ERIS KHÔNG BAO GIỜ
+        chảy vào câu nói (#3), dù bias đã được dựng sẵn trong ``digest['future_bias']``.
+        Hàm này nối phần đã có sẵn đó vào đúng thuộc tính. Không bao giờ ném lỗi.
+        """
+
+        digest = getattr(self, "private_mind_digest", None)
+        if not isinstance(digest, dict):
+            return
+        future_bias = digest.get("future_bias")
+        if not isinstance(future_bias, dict):
+            return
+        speech_bias = future_bias.get("speech_bias")
+        if isinstance(speech_bias, dict):
+            self.private_mind_speech_bias = speech_bias
+        inquiry_plan = future_bias.get("inquiry_plan")
+        if isinstance(inquiry_plan, list):
+            self.private_mind_inquiry_plan = inquiry_plan
+        try:
+            self.private_mind_thought_pressure = float(future_bias.get("thought_pressure") or 0.0)
+        except (TypeError, ValueError):
+            pass
 
     def _persist_inner_diary(self) -> None:
         """Ghi inner_diary hiện tại ra đĩa (throttled). Không bao giờ ném lỗi."""

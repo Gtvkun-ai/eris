@@ -1271,10 +1271,12 @@ class ChatCycleMixin:
             # hình — chỉ là chưa đọc được nội dung lượt này. Tránh thú nhận sai "tôi chưa
             # từng thấy màn hình". Marker này được coi là stale ở tầng grounding.
             captured_before = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0) > 0.0
-            can_capture = callable(
-                getattr(getattr(self, "telemetry_service", None), "capture_screen_frame_data_uri", None)
-            )
-            if captured_before or can_capture:
+            # "tôi CÓ THỂ nhìn" != "tôi ĐÃ nhìn": chỉ phát marker stale khi ERIS THỰC SỰ
+            # đã chụp frame trước đó. Bỏ điều kiện "telemetry có hàm chụp" (can_capture)
+            # vì nó gần như luôn True và khiến ERIS bịa "màn hình từng hiện lượt trước"
+            # dù chưa hề thấy gì → nói dối tri giác (#2). Khi chưa từng chụp: không phát
+            # marker nào -> grounding để ERIS thú nhận thật rằng nó chưa nhìn màn hình.
+            if captured_before:
                 facts.append(
                     {
                         "id": "screen_prev_turn",

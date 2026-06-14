@@ -65,6 +65,12 @@ def start_episode(kernel: EpistemicKernel, frame: Any) -> CognitiveEpisode:
         )
     except Exception:
         pass
+    # User tự khai trực tiếp -> ghi belief ngay khi mở episode (không chờ acceptance),
+    # để bản sắc về user tích lũy qua phiên (#4). Không bao giờ làm gãy mở episode.
+    try:
+        kernel.record_explicit_user_facts(hypothesis_set)
+    except Exception:
+        pass
     return episode
 
 
