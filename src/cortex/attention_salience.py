@@ -333,6 +333,11 @@ class AttentionSalienceConfig:
     memory_echo_score_cap: float = 0.42
     dominant_focus_max_len: int = 120
     reason_max_len: int = 420
+    # Prior thiên lệch chú ý: stake thường trực được phép nâng nhẹ score của
+    # evidence chạm vào mối quan tâm của ERIS, sau khi đã chuẩn hóa. Đây là
+    # "attention bias", không phải bằng chứng — nên có trần để không tự nó áp đảo
+    # một user_request thật. 0.0 = tắt hoàn toàn.
+    standing_prior_lift: float = 0.16
     weights: SalienceWeights = field(default_factory=SalienceWeights)
 
     def normalized(self) -> "AttentionSalienceConfig":
@@ -358,9 +363,113 @@ class AttentionSalienceConfig:
             memory_echo_score_cap=clamp01(self.memory_echo_score_cap),
             dominant_focus_max_len=max(32, int(self.dominant_focus_max_len)),
             reason_max_len=max(80, int(self.reason_max_len)),
+            standing_prior_lift=clamp01(self.standing_prior_lift),
             weights=self.weights,
         )
         return clone
+
+
+# =============================================================================
+# 3b. Standing stakes — vector quan tâm thường trực
+# =============================================================================
+# Đây là phần trả lời cho "TẦNG 3 — stakes": nếu vector quan tâm toàn 0 thì kể cả
+# tri giác hoàn hảo cũng chỉ ra một quan sát vô-can. ERIS phản ứng vì CÓ quan điểm:
+# tò mò về thứ Ngài xem, để ý tâm trạng Ngài, có một quỹ đạo quan hệ muốn dịch chuyển.
+#
+# StandingStakes KHÔNG phải goal nhất thời. Nó là thiên kiến chú ý bền vững, sống qua
+# cả phiên. Attention dùng nó để: (a) cho _goal_relevance một mức nền khi không có goal,
+# (b) cho _user_relevance biết "việc/ tâm trạng của Ngài" là đáng quan tâm dù không phải
+# tin nhắn trực tiếp, (c) một prior nhẹ thiên lệch điều gì được nổi lên.
+#
+# Quy tắc: nếu caller không truyền StandingStakes, attention chạy y hệt như cũ.
+
+@dataclass(slots=True)
+class StandingTheme:
+    """Một mối quan tâm/tò mò thường trực, biểu diễn bằng token + trọng số."""
+
+    name: str
+    tokens: frozenset[str] = field(default_factory=frozenset)
+    weight: float = 0.5
+    families: frozenset[str] = field(default_factory=frozenset)
+
+    def overlap(self, candidate_tokens: Sequence[str], family: str = "") -> float:
+        """Độ chạm của theme này với một candidate, trên [0,1]."""
+
+        cand = set(candidate_tokens)
+        score = 0.0
+        if self.tokens and cand:
+            hit = len(self.tokens.intersection(cand))
+            if hit:
+                # Chuẩn hóa nhẹ: một token trùng đã đủ "chạm", nhiều token thì đậm hơn.
+                score = min(1.0, 0.55 + 0.20 * (hit - 1))
+        if family and family in self.families:
+            score = max(score, 0.60)
+        return clamp01(score * self.weight)
+
+
+@dataclass(slots=True)
+class StandingStakes:
+    """Tập mối quan tâm bền vững của ERIS, dùng để thiên lệch chú ý.
+
+    care_user_activity:
+        Mức quan tâm tới thứ Ngài đang làm/xem (kể cả khi không nhắn gì).
+    care_user_mood:
+        Mức quan tâm tới tâm trạng/affect của Ngài.
+    relational_pull:
+        Lực kéo theo quỹ đạo quan hệ (tín hiệu relational/identity).
+    """
+
+    themes: tuple[StandingTheme, ...] = ()
+    care_user_activity: float = 0.0
+    care_user_mood: float = 0.0
+    relational_pull: float = 0.0
+
+    @property
+    def active(self) -> bool:
+        return bool(self.themes) or self.care_user_activity > 0.0 or self.care_user_mood > 0.0 or self.relational_pull > 0.0
+
+    def theme_overlap(self, candidate_tokens: Sequence[str], family: str = "") -> float:
+        """Độ chạm tốt nhất giữa candidate và tập theme."""
+
+        best = 0.0
+        for theme in self.themes:
+            best = max(best, theme.overlap(candidate_tokens, family=family))
+        return clamp01(best)
+
+
+# Stake mặc định của ERIS: nền tảng "cô ấy quan tâm cái gì" khi không ai giao goal.
+# Token để cả tiếng Việt lẫn Anh vì content/claim thường lẫn lộn hai thứ tiếng.
+DEFAULT_STANDING_STAKES = StandingStakes(
+    themes=(
+        StandingTheme(
+            name="what_he_watches",
+            tokens=frozenset({"video", "youtube", "phim", "movie", "stream", "music", "nhạc", "tiktok", "reel", "clip", "xem"}),
+            weight=0.72,
+            families=frozenset({"vision_observation", "ambient_context"}),
+        ),
+        StandingTheme(
+            name="what_he_builds",
+            tokens=frozenset({"code", "eris", "cortex", "module", "godot", "pipeline", "kiến", "trúc", "core", "xây", "gắn"}),
+            weight=0.62,
+            families=frozenset({"technical_issue", "goal_signal"}),
+        ),
+        StandingTheme(
+            name="how_he_feels",
+            tokens=frozenset({"buồn", "buon", "mệt", "met", "vui", "stress", "tức", "chán", "chan", "cô đơn", "co don", "ổn", "khóc", "cười"}),
+            weight=0.80,
+            families=frozenset({"affective_signal", "relational_signal"}),
+        ),
+        StandingTheme(
+            name="us",
+            tokens=frozenset({"ngài", "ngai", "tôi", "toi", "cùng", "ở cạnh", "o canh", "nhớ", "nho", "quay lại", "quay lai"}),
+            weight=0.66,
+            families=frozenset({"relational_signal", "identity_signal"}),
+        ),
+    ),
+    care_user_activity=0.62,
+    care_user_mood=0.78,
+    relational_pull=0.55,
+)
 
 
 # =============================================================================
@@ -388,6 +497,7 @@ class SalienceFactorBreakdown:
     recurrence_weight: float = 0.0
     reliability: float = 0.0
     confidence: float = 0.0
+    standing_interest: float = 0.0
     habituation: float = 0.0
     false_alarm_likelihood: float = 0.0
     generic_penalty: float = 0.0
@@ -963,10 +1073,19 @@ class AttentionSalienceEngine:
         config: Optional[AttentionSalienceConfig] = None,
         memory: Optional[AttentionSalienceMemory] = None,
         classifier: Optional[SalienceClassifier] = None,
+        *,
+        situation_model: Optional[Any] = None,
     ) -> None:
         self.config = (config or AttentionSalienceConfig()).normalized()
         self.memory = memory or AttentionSalienceMemory()
         self.classifier = classifier or SalienceClassifier()
+        # Situation Model (tùy chọn): nguồn prediction error cho novelty. None -> hành vi cũ.
+        self.situation_model = situation_model
+
+    def set_situation_model(self, situation_model: Optional[Any]) -> None:
+        """Nối/đổi Situation Model sau khi khởi tạo (pipeline dùng)."""
+
+        self.situation_model = situation_model
 
     # ------------------------------------------------------------------
     # API công khai
@@ -982,6 +1101,7 @@ class AttentionSalienceEngine:
         unresolved_focuses: Optional[Sequence[str]] = None,
         now: Optional[float] = None,
         write_to_frame: bool = True,
+        standing_stakes: Optional["StandingStakes"] = None,
     ) -> SalienceFrame:
         """Chạy attention trên một frame hoặc danh sách evidence.
 
@@ -1001,6 +1121,10 @@ class AttentionSalienceEngine:
             Timestamp test. None thì dùng time.time().
         write_to_frame:
             Nếu True, engine cố gắn salience + ModuleReport vào frame.
+        standing_stakes:
+            Vector quan tâm thường trực của ERIS. Nếu None, attention chạy y hệt
+            hành vi cũ (không có thiên lệch stake). Truyền vào để evidence chạm
+            tới mối quan tâm của ERIS ghi điểm > 0 dù không có goal/keyword.
         """
 
         timestamp = now_ts() if now is None else float(now)
@@ -1008,6 +1132,7 @@ class AttentionSalienceEngine:
         frame_channel = str(channel or safe_get(frame, "channel", "") or safe_get(frame, "frame_channel", "") or "unknown")
         active_goal_text = self._extract_goal_text(active_goal if active_goal is not None else safe_get(frame, "active_goal", None))
         unresolved = tuple(str(x) for x in (unresolved_focuses or safe_get(frame, "unresolved_focuses", []) or ()))
+        stakes = standing_stakes if (standing_stakes is not None and standing_stakes.active) else None
 
         candidates = self._build_candidates(
             frame_evidence,
@@ -1025,6 +1150,7 @@ class AttentionSalienceEngine:
                 channel=frame_channel,
                 active_goal_text=active_goal_text,
                 unresolved_focuses=unresolved,
+                stakes=stakes,
             )
 
         selected, suppressed = self._select_candidates(candidates)
@@ -1172,6 +1298,7 @@ class AttentionSalienceEngine:
         channel: str,
         active_goal_text: str,
         unresolved_focuses: Sequence[str],
+        stakes: Optional["StandingStakes"] = None,
     ) -> None:
         breakdown = SalienceFactorBreakdown()
         repeat_count = self.memory.repeat_count(candidate.fingerprint)
@@ -1183,10 +1310,11 @@ class AttentionSalienceEngine:
 
         breakdown.confidence = candidate.confidence
         breakdown.reliability = candidate.reliability
-        breakdown.novelty = self._novelty_score(candidate, repeat_count=repeat_count, age_seconds=age_seconds)
+        breakdown.novelty = self._novelty_term(candidate, repeat_count=repeat_count, age_seconds=age_seconds)
         breakdown.urgency = self._urgency_score(candidate, lower_claim=lower_claim, tags=tags, channel=channel)
-        breakdown.goal_relevance = self._goal_relevance_score(candidate, active_goal_text=active_goal_text)
-        breakdown.user_relevance = self._user_relevance_score(candidate, lower_claim=lower_claim, channel=channel)
+        breakdown.standing_interest = self._standing_interest_score(candidate, stakes=stakes)
+        breakdown.goal_relevance = self._goal_relevance_score(candidate, active_goal_text=active_goal_text, stakes=stakes)
+        breakdown.user_relevance = self._user_relevance_score(candidate, lower_claim=lower_claim, channel=channel, stakes=stakes)
         breakdown.identity_relevance = self._identity_relevance_score(candidate, lower_claim=lower_claim, tags=tags)
         breakdown.relational_relevance = self._relational_relevance_score(candidate, lower_claim=lower_claim, tags=tags)
         breakdown.affective_charge = self._affective_charge_score(candidate, lower_claim=lower_claim, tags=tags)
@@ -1208,6 +1336,8 @@ class AttentionSalienceEngine:
 
         weighted = self._weighted_score(breakdown)
         capped = self._apply_score_caps(candidate, weighted, breakdown)
+        capped = self._apply_standing_prior(candidate, capped, breakdown, stakes=stakes)
+        capped = self._apply_prediction_error_floor(candidate, capped)
         candidate.score = clamp01(capped)
         breakdown.final_score = candidate.score
         candidate.score_breakdown = breakdown
@@ -1263,6 +1393,45 @@ class AttentionSalienceEngine:
         raw = (positive - negative) / max(0.001, max_positive)
         return clamp01(raw)
 
+    def _novelty_term(self, candidate: AttentionCandidate, *, repeat_count: int, age_seconds: float) -> float:
+        """Số hạng novelty.
+
+        Khi Situation Model bật và có prediction error xác định, novelty = prediction
+        error (thực tế khác kỳ vọng bao nhiêu). Ngược lại, fallback về bảng tra
+        repeat_count cũ — đảm bảo parity khi tắt cờ / Cold_Start / chưa xác định.
+        """
+
+        sm = self.situation_model
+        if sm is not None and getattr(getattr(sm, "config", None), "enabled", False):
+            try:
+                pe = sm.prediction_error_for(candidate)
+            except Exception:
+                pe = None
+            if pe is not None and getattr(pe, "defined", False):
+                return clamp01(getattr(pe, "value", 0.0))
+        return self._novelty_score(candidate, repeat_count=repeat_count, age_seconds=age_seconds)
+
+    def _apply_prediction_error_floor(self, candidate: AttentionCandidate, score: float) -> float:
+        """Sàn salience cho percept có nghĩa trùng family nhưng prediction error cao.
+
+        Chống việc cap chống-lặp kéo một percept-có-nghĩa xuống mức tín hiệu lặp
+        chỉ vì nó tình cờ trùng family đang tồn tại (Req 4.8).
+        """
+
+        sm = self.situation_model
+        config = getattr(sm, "config", None)
+        if sm is None or not getattr(config, "enabled", False):
+            return score
+        try:
+            pe = sm.prediction_error_for(candidate)
+        except Exception:
+            return score
+        if pe is None or not getattr(pe, "defined", False):
+            return score
+        if getattr(pe, "value", 0.0) >= getattr(config, "high_prediction_error_threshold", 0.65):
+            return clamp01(max(score, getattr(config, "salience_floor", 0.30)))
+        return score
+
     def _novelty_score(self, candidate: AttentionCandidate, *, repeat_count: int, age_seconds: float) -> float:
         if age_seconds >= self.config.stale_after_seconds:
             return 0.08
@@ -1290,11 +1459,16 @@ class AttentionSalienceEngine:
             score += 0.30
         return clamp01(score)
 
-    def _goal_relevance_score(self, candidate: AttentionCandidate, *, active_goal_text: str) -> float:
+    def _goal_relevance_score(self, candidate: AttentionCandidate, *, active_goal_text: str, stakes: Optional["StandingStakes"] = None) -> float:
         if not active_goal_text:
+            base = 0.0
             if candidate.family == "goal_signal":
-                return 0.50
-            return 0.0
+                base = 0.50
+            # Không có goal nhất thời -> dùng stake thường trực làm mức nền.
+            # "Ngài đang xem video" chạm theme what_he_watches nên không còn = 0.
+            if stakes is not None:
+                base = max(base, stakes.theme_overlap(candidate.text_tokens, family=candidate.family))
+            return clamp01(base)
         goal_tokens = tokenize(active_goal_text)
         if not goal_tokens:
             return 0.0
@@ -1302,9 +1476,12 @@ class AttentionSalienceEngine:
         base = clamp01(overlap)
         if candidate.family in {"goal_signal", "technical_issue", "user_request"}:
             base += 0.15
+        # Goal nhất thời và stake thường trực không loại nhau: lấy max.
+        if stakes is not None:
+            base = max(base, stakes.theme_overlap(candidate.text_tokens, family=candidate.family))
         return clamp01(base)
 
-    def _user_relevance_score(self, candidate: AttentionCandidate, *, lower_claim: str, channel: str) -> float:
+    def _user_relevance_score(self, candidate: AttentionCandidate, *, lower_claim: str, channel: str, stakes: Optional["StandingStakes"] = None) -> float:
         score = 0.0
         if candidate.source == "user_chat":
             score += 0.75
@@ -1314,7 +1491,40 @@ class AttentionSalienceEngine:
             score += 0.18
         if "?" in candidate.claim:
             score += 0.15
+        # Stake: ERIS quan tâm tới VIỆC Ngài đang làm/xem và TÂM TRẠNG của Ngài,
+        # nên một quan sát ambient về hoạt động của Ngài cũng "liên quan tới người",
+        # không cần là tin nhắn trực tiếp.
+        if stakes is not None and candidate.source != "user_chat":
+            if self._is_user_activity(candidate):
+                score += stakes.care_user_activity * 0.50
+            if candidate.family in {"affective_signal", "relational_signal"}:
+                score += stakes.care_user_mood * 0.55
         return clamp01(score)
+
+    def _is_user_activity(self, candidate: AttentionCandidate) -> bool:
+        """Candidate này có phải mô tả thứ Ngài đang làm/xem trên màn hình không."""
+
+        if candidate.source in {"active_window", "browser", "vision", "ocr"}:
+            return True
+        return candidate.family in {"ambient_context", "vision_observation", "body_state"}
+
+    def _standing_interest_score(self, candidate: AttentionCandidate, *, stakes: Optional["StandingStakes"] = None) -> float:
+        """Mức chạm tổng hợp của candidate với stake thường trực, trên [0,1].
+
+        Đây là trục để debug và để prior thiên lệch bám vào. Nó gộp: chạm theme,
+        quan tâm hoạt động của Ngài, quan tâm tâm trạng, và lực kéo quan hệ.
+        """
+
+        if stakes is None:
+            return 0.0
+        theme = stakes.theme_overlap(candidate.text_tokens, family=candidate.family)
+        activity = stakes.care_user_activity if self._is_user_activity(candidate) else 0.0
+        mood = stakes.care_user_mood if candidate.family in {"affective_signal", "relational_signal"} else 0.0
+        relational = stakes.relational_pull if candidate.family in {"relational_signal", "identity_signal"} else 0.0
+        # Theme match (thật sự chạm thứ Ngài đang xem/làm/cảm) là tín hiệu mạnh nhất.
+        # care_user_activity một mình (vd cửa sổ trống "general") chỉ là nền yếu — không
+        # được phép biến mọi telemetry ambient thành "đáng để ý".
+        return clamp01(max(theme, mood, 0.70 * relational, 0.55 * activity))
 
     def _identity_relevance_score(self, candidate: AttentionCandidate, *, lower_claim: str, tags: set[str]) -> float:
         if candidate.family == "identity_signal":
@@ -1474,6 +1684,33 @@ class AttentionSalienceEngine:
             # Sensitive vẫn có thể tăng risk nội bộ, nhưng không được chiếm prompt bừa.
             capped = min(capped, max(0.28, capped * 0.72))
         return clamp01(capped)
+
+    def _apply_standing_prior(
+        self,
+        candidate: AttentionCandidate,
+        score: float,
+        breakdown: SalienceFactorBreakdown,
+        *,
+        stakes: Optional["StandingStakes"] = None,
+    ) -> float:
+        """Prior thiên lệch chú ý theo stake thường trực.
+
+        Đây là attention bias, KHÔNG phải bằng chứng: nó nâng nhẹ score của evidence
+        chạm vào mối quan tâm của ERIS, đủ để vượt sàn chọn khi không có gì khác cạnh
+        tranh, nhưng có trần để không tự nó áp đảo một user_request thật.
+        """
+
+        if stakes is None or self.config.standing_prior_lift <= 0.0:
+            return score
+        # Telemetry rác và evidence quá yếu không được hưởng prior.
+        if self.classifier.is_generic_telemetry(source=candidate.source, claim=candidate.claim, tags=candidate.tags):
+            return score
+        if candidate.confidence < self.config.min_confidence or candidate.reliability < self.config.min_reliability:
+            return score
+        lift = breakdown.standing_interest * self.config.standing_prior_lift
+        # Trần cứng: prior một mình không đưa evidence rỗng lên quá mức "đáng để ý nhẹ".
+        lift = min(lift, self.config.standing_prior_lift)
+        return clamp01(score + lift)
 
     # ------------------------------------------------------------------
     # Selection / suppression
@@ -1775,6 +2012,7 @@ class AttentionSalienceEngine:
             "risk": breakdown.risk_relevance,
             "unresolved": breakdown.unresolved_tension,
             "recurrence": breakdown.recurrence_weight,
+            "standing": breakdown.standing_interest,
         }
         ranked = sorted(values.items(), key=lambda item: item[1], reverse=True)
         return [f"{name}:{value:.2f}" for name, value in ranked[:limit] if value >= 0.18]
@@ -1861,6 +2099,7 @@ def allocate_salience(
     active_goal: Any = None,
     unresolved_focuses: Optional[Sequence[str]] = None,
     write_to_frame: bool = True,
+    standing_stakes: Optional["StandingStakes"] = None,
 ) -> SalienceFrame:
     """Hàm tiện dụng cho caller không muốn tự giữ engine.
 
@@ -1876,6 +2115,7 @@ def allocate_salience(
         active_goal=active_goal,
         unresolved_focuses=unresolved_focuses,
         write_to_frame=write_to_frame,
+        standing_stakes=standing_stakes,
     )
 
 
@@ -1892,6 +2132,9 @@ __all__ = [
     "SalienceFactorBreakdown",
     "SalienceFrame",
     "SalienceWeights",
+    "StandingStakes",
+    "StandingTheme",
+    "DEFAULT_STANDING_STAKES",
     "SuppressedSignal",
     "allocate_salience",
 ]

@@ -131,15 +131,37 @@ class EventClusterIndex:
         return cluster_id, 0.55
 
 
+_UNSET = object()
+
+
+def _default_shared_provider():
+    """Provider embedding mặc định: EmbeddingIndex singleton dùng chung.
+
+    Soft-import để event_semantics không phụ thuộc cứng vào memory layer. Trả None
+    nếu không lấy được (embedding tắt / thiếu dep) — profiler tự fallback symbolic.
+    """
+
+    try:
+        from memory.embedding_index import get_shared_embedding_index
+
+        return get_shared_embedding_index()
+    except Exception:
+        return None
+
+
 class EventSemanticProfiler:
     def __init__(
         self,
         *,
         embedding_cache: EventEmbeddingCache | None = None,
-        embedding_provider: Callable[[str], Sequence[float]] | object | None = None,
+        embedding_provider: Callable[[str], Sequence[float]] | object | None = _UNSET,
         cluster_index: EventClusterIndex | None = None,
     ):
         self.embedding_cache = embedding_cache or EventEmbeddingCache()
+        # Không truyền provider -> dùng EmbeddingIndex singleton dùng chung.
+        # Truyền tường minh None -> cố ý không dùng provider nào (giữ tương thích cũ).
+        if embedding_provider is _UNSET:
+            embedding_provider = _default_shared_provider()
         self.embedding_provider = embedding_provider
         self.cluster_index = cluster_index or EventClusterIndex()
 

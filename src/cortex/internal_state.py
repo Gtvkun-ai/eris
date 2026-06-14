@@ -36,6 +36,25 @@ def _clean_label(value: object, *, fallback: str = "") -> str:
     return text or fallback
 
 
+def _clean_stance_blend(value: object) -> dict[str, float]:
+    """Làm sạch map stance_blend từ JSON: chỉ giữ key str -> float hữu hạn [0,1]-ish."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key, raw in value.items():
+        name = str(key or "").strip()
+        if not name:
+            continue
+        try:
+            num = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if num != num:  # NaN
+            continue
+        out[name] = num
+    return out
+
+
 def _append_recent(items: tuple[str, ...], value: str, *, limit: int = 8) -> tuple[str, ...]:
     text = _clean_label(value)
     if not text:
@@ -996,6 +1015,8 @@ class PersistentInternalState:
     last_thought_seed: str = ""
     last_self_state_label: str = ""
     last_social_presence_kind: str = ""
+    # affect-attractor-blend: phân bố stance gần nhất, để EMA inertia turn sau.
+    last_stance_blend: dict[str, float] = field(default_factory=dict)
 
     silence_ticks: int = 0
     spoken_ticks: int = 0
@@ -1064,6 +1085,7 @@ class PersistentInternalState:
             "last_focus_kind": self.last_focus_kind,
             "last_ti_mode": self.last_ti_mode,
             "last_stance": self.last_stance,
+            "last_stance_blend": {str(k): round(float(v), 4) for k, v in self.last_stance_blend.items()},
             "last_speech_act": self.last_speech_act,
             "last_utterance_type": self.last_utterance_type,
             "last_inner_intent": self.last_inner_intent,
@@ -1144,6 +1166,7 @@ class PersistentInternalState:
             last_focus_kind=_clean_label(data.get("last_focus_kind")),
             last_ti_mode=_clean_label(data.get("last_ti_mode")),
             last_stance=_clean_label(data.get("last_stance")),
+            last_stance_blend=_clean_stance_blend(data.get("last_stance_blend")),
             last_speech_act=_clean_label(data.get("last_speech_act")),
             last_utterance_type=_clean_label(data.get("last_utterance_type")),
             last_inner_intent=_clean_label(data.get("last_inner_intent")),
@@ -1731,6 +1754,7 @@ class InternalStateEngine:
             last_focus_kind=focus_kind,
             last_ti_mode=ti_mode,
             last_stance=state.last_stance,
+            last_stance_blend=dict(state.last_stance_blend),
             last_speech_act=state.last_speech_act,
             last_utterance_type=state.last_utterance_type,
             last_inner_intent=state.last_inner_intent,
@@ -1784,6 +1808,7 @@ class InternalStateEngine:
         focus_kind = _clean_label(getattr(snapshot, "active_window_kind", ""), fallback=state.last_focus_kind or "unknown")
         ti_mode = _clean_label(getattr(ti_report, "mode", ""), fallback=state.last_ti_mode or "unknown")
         stance = _clean_label(getattr(appraisal, "stance", ""), fallback=state.last_stance or "grounded")
+        stance_blend = _clean_stance_blend(getattr(appraisal, "stance_blend", None)) or dict(state.last_stance_blend)
         speech_act = _clean_label(getattr(action_plan, "speech_act", "") or getattr(speech_core, "utterance_type", ""))
         utterance_type = _clean_label(getattr(speech_core, "utterance_type", ""))
         inner_intent = _clean_label(
@@ -1901,9 +1926,27 @@ class InternalStateEngine:
             outcome="spoken" if was_spoken else "silent",
         )
 
+        # Appraisal đã là f(sự-kiện × stake × kỳ vọng). Cho nó THẬT SỰ dịch chuyển
+        # và LƯU LẠI: valence/tenderness/arousal không còn pass-through đóng băng.
+        # Inertia cao -> nội trạng vẫn chủ đạo (nudge, không giật); tick sau sense_update
+        # sẽ kéo về tín hiệu nền nếu cảnh đã đổi, nên vết cảm xúc để lại rồi phai dần.
+        committed_valence = state.valence
+        committed_tenderness = state.tenderness
+        committed_arousal = state.arousal
+        if appraisal is not None:
+            committed_valence = _clamp_signed(
+                _smooth(state.valence, _clamp_signed(getattr(appraisal, "valence", state.valence)), inertia=0.80)
+            )
+            committed_tenderness = _clamp(
+                _smooth(state.tenderness, _clamp(getattr(appraisal, "tenderness", state.tenderness)), inertia=0.82)
+            )
+            committed_arousal = _clamp(
+                _smooth(state.arousal, _clamp(getattr(appraisal, "arousal", state.arousal)), inertia=0.82)
+            )
+
         return PersistentInternalState(
-            valence=state.valence,
-            arousal=state.arousal,
+            valence=committed_valence,
+            arousal=committed_arousal,
             curiosity=state.curiosity,
             boredom=boredom,
             social_energy=social_energy,
@@ -1912,7 +1955,7 @@ class InternalStateEngine:
             protectiveness=state.protectiveness,
             confidence=state.confidence,
             fatigue=state.fatigue,
-            tenderness=state.tenderness,
+            tenderness=committed_tenderness,
             silence_pressure=silence_pressure,
             social_pressure=pressure_values["social_pressure"],
             curiosity_pressure=pressure_values["curiosity_pressure"],
@@ -1940,6 +1983,7 @@ class InternalStateEngine:
             last_focus_kind=focus_kind,
             last_ti_mode=ti_mode,
             last_stance=stance,
+            last_stance_blend=stance_blend,
             last_speech_act=speech_act,
             last_utterance_type=utterance_type,
             last_inner_intent=inner_intent,

@@ -40,10 +40,35 @@ from core.evidence import ModuleReport, RawSignal
 from core.evidence_normalizer import EvidenceNormalizer, EvidenceNormalizerConfig
 
 from cortex.attention_salience import AttentionSalienceEngine
+from cortex.situation_model import SituationModel
 from cortex.working_memory import WorkingMemoryEngine, WorkingMemoryConfig
 from cortex.global_workspace import GlobalWorkspaceEngine
 from runtime.cognitive_budget import CognitiveBudgetEngine, BudgetDecision
 from runtime.debug_trace import attach_trace_to_frame
+
+
+class _SituationEmbeddingProvider:
+    """Embedding provider lazy cho Situation Model.
+
+    Uỷ thác cho `EmbeddingIndex` singleton dùng chung (MiniLM đa ngôn ngữ) — cùng
+    model với memory store và event semantics, nạp lazy một lần. Mọi lỗi (thiếu
+    torch/transformers, model không tải được, encode lỗi) đều trả `()` để Situation
+    Model tự fallback sang token-overlap thay vì làm vỡ pipeline.
+    """
+
+    def embed(self, text: str):
+        try:
+            from memory.embedding_index import get_shared_embedding_index
+
+            index = get_shared_embedding_index()
+        except Exception:
+            return ()
+        if index is None:
+            return ()
+        try:
+            return index.embed(str(text or ""))
+        except Exception:
+            return ()
 
 
 @dataclass(slots=True)
@@ -83,9 +108,22 @@ class CognitivePipeline:
         budget: Optional[CognitiveBudgetEngine] = None,
         working_memory: Optional[WorkingMemoryEngine] = None,
         workspace: Optional[GlobalWorkspaceEngine] = None,
+        situation_model: Optional[SituationModel] = None,
     ) -> None:
         self.normalizer = normalizer or EvidenceNormalizer(EvidenceNormalizerConfig())
-        self.attention = attention or AttentionSalienceEngine()
+        # Situation Model bền vững (mặc định BẬT qua config), nối sẵn embedding
+        # provider thật để prediction error là khoảng cách ngữ nghĩa, không phải
+        # token-overlap. Provider lazy + an toàn: thiếu model -> fallback degraded.
+        self.situation_model = situation_model or SituationModel(
+            embedding_provider=_SituationEmbeddingProvider(),
+        )
+        self.attention = attention or AttentionSalienceEngine(situation_model=self.situation_model)
+        # Nếu attention được truyền sẵn, vẫn nối Situation Model vào nó.
+        try:
+            if attention is not None and hasattr(self.attention, "set_situation_model"):
+                self.attention.set_situation_model(self.situation_model)
+        except Exception:
+            pass
         self.budget = budget or CognitiveBudgetEngine()
         # Tắt attach của WM: orchestrator tự set slot bằng API core.
         wm_config = WorkingMemoryConfig()
@@ -150,6 +188,16 @@ class CognitivePipeline:
         # --- 0. RawSignal -> EvidenceItem -------------------------------------
         frame.set_status("normalizing", actor="cognitive_pipeline")
         self.normalizer.normalize_into_frame(frame)
+
+        # --- 0b. Situation Model: cập nhật vòng dự đoán -> sai số --------------
+        # Chạy TRƯỚC attention để prediction error sẵn sàng cho việc chấm salience.
+        # Cô lập lỗi: bất kỳ trục trặc nào cũng để attention tự fallback _novelty_score
+        # và chu kỳ vẫn hoàn tất.
+        try:
+            self.situation_model.observe_and_update(frame)
+            frame.metadata["situation"] = self.situation_model.serialize()
+        except Exception as exc:
+            frame.add_warning(f"situation_model failed: {exc!r}", actor="situation_model")
 
         # --- 1. Attention: cái gì đáng chú ý ----------------------------------
         frame.set_status("selecting", actor="cognitive_pipeline")

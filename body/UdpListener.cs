@@ -1426,6 +1426,29 @@ public partial class UdpListener : Node2D
 
 	private void OnDebugCommandSubmitted(string text) => RunDebugCommandFromInput();
 
+	// Đọc debug_command_ack từ gói tin để hiện KẾT QUẢ lệnh debug lên label trạng
+	// thái (không chỉ "đã gửi"). Đây là xác nhận engine đã nhận + parse lệnh.
+	private void TryApplyDebugCommandAck(string raw)
+	{
+		if (_debugCommandStatus == null || string.IsNullOrWhiteSpace(raw) || !raw.Contains("debug_command_ack"))
+			return;
+		try
+		{
+			using JsonDocument doc = JsonDocument.Parse(raw);
+			if (!doc.RootElement.TryGetProperty("debug_command_ack", out var ack) || ack.ValueKind != JsonValueKind.Object)
+				return;
+			string result = ack.TryGetProperty("result", out var r) ? r.GetString() ?? "" : "";
+			if (string.IsNullOrEmpty(result))
+				return;
+			string head = result.Length > 64 ? result.Substring(0, 64) + "…" : result;
+			_debugCommandStatus.Text = "↳ " + head;
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[Debug] ack parse error: {ex.Message}");
+		}
+	}
+
 	private void RunDebugCommandFromInput()
 	{
 		if (_debugCommandInput == null)
@@ -3456,6 +3479,7 @@ public partial class UdpListener : Node2D
 			if (_emotionPanel != null && _emotionPanel.Visible)
 				RefreshEmotionPanel();
 		}
+		TryApplyDebugCommandAck(raw);
 		if (payload.HasPrivateMindDebug)
 		{
 			// Chỉ nhận digest có nội dung thật; digest rỗng bị bỏ qua để giữ liên tục

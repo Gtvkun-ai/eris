@@ -34,6 +34,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Model MiniLM đa ngôn ngữ đi kèm repo: src/paraphrase-multilingual-MiniLM-L12-v2
+# (embedding_index.py nằm ở src/memory/, nên model ở thư mục cha một cấp.)
+_LOCAL_MODEL_DIR = Path(__file__).resolve().parents[1] / "paraphrase-multilingual-MiniLM-L12-v2"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -293,6 +297,41 @@ class EmbeddingIndex:
         except KeyError:
             return None
 
+    # ------------------------------------------------------------------
+    # Provider interface (cho event_semantics / situation_model)
+    # ------------------------------------------------------------------
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        """Embed một text -> vector tuple. Trả () nếu model không sẵn sàng.
+
+        Đây là interface provider dùng chung: EventSemanticProfiler và
+        SituationModel đều có thể nhận trực tiếp EmbeddingIndex làm provider.
+        """
+
+        vectors = self.embed_events([str(text or "")])
+        return vectors[0] if vectors else ()
+
+    def embed_events(self, texts) -> list[tuple[float, ...]]:
+        """Embed nhiều text -> list vector tuple (cùng thứ tự).
+
+        Mọi lỗi (model chưa nạp được, encode lỗi) -> list các tuple rỗng tương
+        ứng, để caller tự graceful degrade thay vì vỡ.
+        """
+
+        items = [str(t or "") for t in (texts or [])]
+        if not items:
+            return []
+        if not self._ensure_loaded():
+            return [() for _ in items]
+        try:
+            matrix = self._encode_with_cache(items)
+            if matrix is None:
+                return [() for _ in items]
+            return [tuple(float(x) for x in row) for row in matrix]
+        except Exception as exc:  # pragma: no cover - đường lỗi phòng vệ
+            logger.warning("EmbeddingIndex.embed_events failed: %s", exc)
+            return [() for _ in items]
+
     @staticmethod
     def _cuda_available() -> bool:
         try:
@@ -333,4 +372,53 @@ def build_embedding_index(
     return EmbeddingIndex(model_name=model_name)
 
 
-__all__ = ["EmbeddingIndex", "build_embedding_index"]
+# ---------------------------------------------------------------------------
+# Shared singleton — một model dùng chung cho memory + event_semantics + situation
+# ---------------------------------------------------------------------------
+
+_SHARED_INDEX: EmbeddingIndex | None = None
+_SHARED_BUILT = False
+
+
+def get_shared_embedding_index() -> EmbeddingIndex | None:
+    """Trả EmbeddingIndex dùng chung toàn tiến trình (build một lần, lazy nạp model).
+
+    Ưu tiên model local trong repo (src/paraphrase-multilingual-MiniLM-L12-v2) để
+    khỏi tải mạng. Trả None nếu embedding bị tắt qua env hoặc thiếu torch/transformers
+    — caller tự graceful degrade.
+
+    Việc tạo object là rẻ; model chỉ thực sự nạp ở lần embed()/search() đầu tiên.
+    Nhờ vậy memory store, event semantics và situation model chia sẻ đúng một model.
+    """
+
+    global _SHARED_INDEX, _SHARED_BUILT
+    if _SHARED_BUILT:
+        return _SHARED_INDEX
+
+    _SHARED_BUILT = True
+    env_enabled = os.getenv("ERIS_EMBEDDING_ENABLED", "1").strip().lower()
+    if env_enabled in {"0", "false", "no", "off"}:
+        _SHARED_INDEX = None
+        return None
+    try:
+        cache_dir = str(_LOCAL_MODEL_DIR) if _LOCAL_MODEL_DIR.is_dir() else None
+        _SHARED_INDEX = EmbeddingIndex(cache_dir=cache_dir)
+    except Exception:
+        _SHARED_INDEX = None
+    return _SHARED_INDEX
+
+
+def reset_shared_embedding_index() -> None:
+    """Xoá singleton (dùng cho test/maintenance)."""
+
+    global _SHARED_INDEX, _SHARED_BUILT
+    _SHARED_INDEX = None
+    _SHARED_BUILT = False
+
+
+__all__ = [
+    "EmbeddingIndex",
+    "build_embedding_index",
+    "get_shared_embedding_index",
+    "reset_shared_embedding_index",
+]

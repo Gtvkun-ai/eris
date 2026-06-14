@@ -502,6 +502,9 @@ class CognitiveAppraisal:
     tenderness: float = 0.0
     summary: str = ""
     evidence: tuple[str, ...] = ()
+    # Phân bố stance mềm (affect-attractor-blend). Rỗng khi đường blend tắt.
+    # `stance` ở trên = argmax của map này để tương thích ngược.
+    stance_blend: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -521,6 +524,7 @@ class CognitiveAppraisal:
             "tenderness": round(float(self.tenderness), 3),
             "summary": self.summary,
             "evidence": list(self.evidence),
+            "stance_blend": {str(k): round(float(v), 4) for k, v in self.stance_blend.items()},
         }
 
 

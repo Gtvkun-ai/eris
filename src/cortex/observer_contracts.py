@@ -349,6 +349,14 @@ class SemanticSceneNote:
     should_interrupt_user: bool = False
     confidence: float = 0.0
 
+    # TẦNG-1: nghĩa + thay đổi là công dân hạng nhất, không chỉ là caption.
+    content_summary: str = ""      # nội dung THẬT là gì (vd: "video u sầu về con mèo già")
+    content_affect: str = ""       # sắc thái nội dung: sad|tense|joyful|neutral|...
+    relation_to_user: str = ""     # cảnh này liên hệ gì với việc người dùng đang làm
+    delta: str = ""                # đổi gì so với scene trước (rỗng nếu không rõ/không đổi)
+    scene_id: str = ""             # id ổn định của scene này
+    prev_scene_id: str = ""        # nối với scene ngay trước để "thay đổi" có chỗ bám
+
     source: Literal["qwen4b_vision", "ocr_only", "unknown"] = "unknown"
     evidence: list[str] = field(default_factory=list)
     debug: dict[str, Any] = field(default_factory=dict)
@@ -361,17 +369,29 @@ class SemanticSceneNote:
         self.confidence = clamp01(self.confidence)
         self.visible_context = compact_text(self.visible_context, 260)
         self.important_text = [compact_text(x, 180) for x in self.important_text[:8]]
+        self.content_summary = compact_text(self.content_summary, 260)
+        self.content_affect = compact_text(self.content_affect, 80)
+        self.relation_to_user = compact_text(self.relation_to_user, 200)
+        self.delta = compact_text(self.delta, 200)
 
     def to_evidence_claim(self) -> str:
         text = "; ".join(self.important_text[:3])
-        return (
-            f"scene={self.visible_context}; "
-            f"family={self.semantic_family}; "
-            f"intent={self.activity_intent}; "
-            f"important_text={text}; "
-            f"salience={self.salience:.2f}; "
-            f"possible_error={self.possible_error:.2f}"
-        )
+        parts = [
+            f"scene={self.content_summary or self.visible_context}",
+            f"family={self.semantic_family}",
+            f"intent={self.activity_intent}",
+        ]
+        if self.content_affect:
+            parts.append(f"affect={self.content_affect}")
+        if self.delta:
+            parts.append(f"delta={self.delta}")
+        if self.relation_to_user:
+            parts.append(f"relation={self.relation_to_user}")
+        if text:
+            parts.append(f"important_text={text}")
+        parts.append(f"salience={self.salience:.2f}")
+        parts.append(f"possible_error={self.possible_error:.2f}")
+        return "; ".join(parts)
 
 
 def clamp01(value: Any, default: float = 0.0) -> float:

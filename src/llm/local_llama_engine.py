@@ -53,6 +53,17 @@ def _n_gpu_layers() -> int:
         return -1
 
 
+def _vision_n_gpu_layers() -> int:
+    """GPU layers cho riêng vision. Mặc định 0 (CPU) để bảo vệ VRAM 4GB."""
+    raw = os.getenv("ERIS_LLAMACPP_VISION_N_GPU_LAYERS")
+    if raw is None or not str(raw).strip():
+        return 0
+    try:
+        return int(raw)
+    except Exception:
+        return 0
+
+
 class LocalLlamaEngine:
     """Engine llama-cpp dùng chung, interface tương thích OllamaClient."""
 
@@ -76,6 +87,12 @@ class LocalLlamaEngine:
         )
         self.n_ctx = int(_env("ERIS_LLAMACPP_N_CTX", "4096") or 4096)
         self.n_gpu_layers = _n_gpu_layers()
+        # Vision GPU layers TÁCH RIÊNG khỏi text. Trên card 4GB, text (qwen3) đã
+        # chiếm phần lớn VRAM; nếu vision cũng đẩy hết layer + clip mmproj f16 lên
+        # GPU thì load vision OOM → "Failed to load model" + lỗi destructor sampler.
+        # Mặc định 0 = vision chạy CPU, để GPU dành cho text. Đặt
+        # ERIS_LLAMACPP_VISION_N_GPU_LAYERS để ép khác.
+        self.vision_n_gpu_layers = _vision_n_gpu_layers()
 
     # ------------------------------------------------------------------
     # Model loading (cached)
@@ -109,7 +126,7 @@ class LocalLlamaEngine:
                     model_path=self.vision_model_path,
                     chat_handler=handler,
                     n_ctx=self.n_ctx,
-                    n_gpu_layers=self.n_gpu_layers,
+                    n_gpu_layers=self.vision_n_gpu_layers,
                     verbose=False,
                 )
                 LocalLlamaEngine._cache[key] = inst
@@ -144,6 +161,49 @@ class LocalLlamaEngine:
         if parsed is None:
             return OllamaResult(ok=False, content=content, error="json_parse_failed")
         return OllamaResult(ok=True, parsed=parsed, content=content)
+
+    def caption_image(
+        self,
+        image: str,
+        *,
+        prompt: str = "Describe what is visible on this screen in concrete detail.",
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        keep_alive: str | int | None = None,
+    ) -> str:
+        """Vision → caption văn bản TỰ DO (không ép JSON).
+
+        moondream là captioner: bắt nó nhả JSON schema thì nó parrot lại mô tả
+        field. Để nó làm đúng việc của nó — tả cảnh — rồi tầng text mới cấu trúc
+        hoá. Trả chuỗi rỗng nếu lỗi (caller tự fallback).
+        """
+        b64 = self.data_uri_to_base64(image)
+        if not b64:
+            return ""
+        data_uri = f"data:image/png;base64,{b64}"
+        vmsg = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+        try:
+            with _LLAMA_GLOBAL_LOCK:
+                llm = self._vision_llm()
+                out = llm.create_chat_completion(
+                    messages=vmsg,
+                    temperature=float(temperature),
+                    max_tokens=int(max_tokens or _env("ERIS_LLAMACPP_VISION_MAX_TOKENS", "512") or 512),
+                )
+            text = self._extract_content(out)
+        finally:
+            # keep_alive == 0 → giải phóng VRAM/RAM vision ngay sau khi tả xong.
+            if str(keep_alive).strip() in {"0", "0s"}:
+                self.unload("vision")
+        return str(text or "").strip()
 
     def generate_json(
         self,

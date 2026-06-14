@@ -884,6 +884,7 @@ class FrameBuilderMixin:
             force_speak=force_speak,
             memory_resonance=getattr(self, "active_memory_resonance", None),
             personality_lens=personality_lens,
+            prev_stance_blend=getattr(internal_state, "last_stance_blend", None) or None,
         )
     def _build_appraisal_context(self, appraisal: CognitiveAppraisal) -> str:
         return self.appraisal_engine.render_prompt_context(appraisal)

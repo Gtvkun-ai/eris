@@ -183,13 +183,13 @@ class MemoryCognitionCore:
         self.event_ledger = EventLedger(os.path.join(base_dir, "event_ledger.json"))
         self.active_state = ActiveStateStore(os.path.join(base_dir, "active_state_snapshot.json"))
         self.episodic = EpisodicMemoryStore(os.path.join(base_dir, "episodic_memory.json"))
-        # Build embedding index trước, inject vào semantic store.
-        # Model load lazy — lần đầu recall sẽ trigger download nếu chưa có.
+        # Dùng EmbeddingIndex singleton dùng chung (memory + event_semantics +
+        # situation_model chia sẻ đúng một model, nạp lazy một lần).
         # Nếu torch/transformers chưa install hoặc ERIS_EMBEDDING_ENABLED=0 thì trả None,
         # semantic store gracefully fallback về lexical scoring.
         try:
-            from .embedding_index import build_embedding_index
-            _embedding_index = build_embedding_index()
+            from .embedding_index import get_shared_embedding_index
+            _embedding_index = get_shared_embedding_index()
         except Exception:
             _embedding_index = None
         self.semantic = SemanticMemoryStore(

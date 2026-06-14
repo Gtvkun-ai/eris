@@ -1,13 +1,68 @@
 import unicodedata
+from dataclasses import dataclass
 
+from .affect_blend import (
+    AffectBlendConfig,
+    DEFAULT_BLEND_CONFIG,
+    StanceBlend,
+    blend_stance,
+    guidance_blend,
+    project_event_affect,
+)
 from .contracts import CognitiveAppraisal
 from .internal_state import PersistentInternalState
+
+
+@dataclass(slots=True)
+class _EventAffect:
+    """Tín hiệu cảm xúc rút từ sự-kiện nổi bật (dominant salient evidence).
+
+    Đây là mảnh còn thiếu để appraisal = f(sự-kiện × stake × kỳ vọng): trước đây
+    appraisal chỉ là hàm của internal_state, nên một cảnh buồn không bao giờ chạm
+    tới valence. Các trục dưới đã được nhân sẵn với stake (mức Eris quan tâm) và
+    surprise (lệch khỏi kỳ vọng) trước khi trả về.
+    """
+
+    valence: float = 0.0      # [-1,1] đã gate theo stake+surprise; âm = cảnh buồn
+    tenderness: float = 0.0   # [0,1] lực kéo dịu dàng/để ý khi Ngài có vẻ không ổn
+    arousal: float = 0.0      # [0,1] mức kích hoạt do sự-kiện
+    label: str = ""
+
+    @property
+    def active(self) -> bool:
+        return abs(self.valence) > 1e-6 or self.tenderness > 1e-6 or self.arousal > 1e-6
+
+
+# Lexicon ở dạng KHÔNG dấu vì _normalize_text() đã bỏ dấu tiếng Việt.
+_EVENT_NEG_TOKENS = (
+    "buon", "met", "chan", "co don", "khoc", "stress", "tuc gian", "tuc", "dau",
+    "that vong", "tuyet vong", "lo lang", "so hai", "kiet suc", "u uat", "nang ne",
+    "sad", "cry", "lonely", "tired", "exhausted", "depress", "grief", "lost", "fail",
+    "hurt", "anxious", "down",
+)
+_EVENT_POS_TOKENS = (
+    "vui", "cuoi", "hao hung", "thang", "phan khich", "hanh phuc", "yeu", "thuong",
+    "chuc mung", "tuyet voi", "nhe nhom", "thoai mai", "happy", "joy", "win", "love",
+    "excited", "glad", "celebrate", "relief",
+)
 
 
 class AppraisalEngine:
     """Builds ERIS' pre-verbal expressive/appraisal state from continuity state."""
 
     state_type = "expressive_appraisal_state"
+
+    def __init__(
+        self,
+        *,
+        blend_config: AffectBlendConfig | None = None,
+        event_encoder=None,
+    ) -> None:
+        # blend_config: bật/tắt + knob (temperature/inertia) cho stance dạng blend.
+        # event_encoder: callable str->vector cho đọc event-affect bằng prototype.
+        #   None -> luôn dùng fallback lexicon xác định (an toàn cho test/môi trường thiếu model).
+        self.blend_config = blend_config or DEFAULT_BLEND_CONFIG
+        self._event_encoder = event_encoder
 
     def evaluate(
         self,
@@ -22,6 +77,9 @@ class AppraisalEngine:
         force_speak: bool = False,
         memory_resonance=None, #ký ức vang vọng
         personality_lens=None, #cách interpret user
+        standing_stakes=None, #stake thường trực: dùng để gate sự-kiện theo mức quan tâm
+        prev_stance_blend: dict | None = None, #stance blend turn trước -> EMA inertia
+        blend_config: AffectBlendConfig | None = None, #override config cho lần gọi này
     ) -> CognitiveAppraisal:
         state = internal_state or PersistentInternalState() 
         drift = self._clamp01(getattr(ni_report, "drift_score", 0.0) or 0.0)
@@ -72,6 +130,15 @@ class AppraisalEngine:
             broadcast_score=broadcast_score,
             ni_guard=bool(getattr(ni_report, "should_raise_guard", False)),
         )
+        # Sự-kiện nổi bật (cảnh Ngài đang xem/làm) được đọc thành tín hiệu cảm xúc,
+        # đã gate theo stake (Eris quan tâm tâm trạng Ngài tới đâu) và surprise
+        # (lệch khỏi kỳ vọng). Đây là phần làm appraisal phản ứng với THẾ GIỚI,
+        # không chỉ với nội trạng của chính mình.
+        event = self._event_affect(
+            broadcast=broadcast,
+            stakes=standing_stakes,
+            state_valence=state_valence,
+        )
         arousal = self._clamp01(
             max(
                 state_arousal,
@@ -81,6 +148,7 @@ class AppraisalEngine:
                 drift * 0.74,
                 0.32 if direct_user else 0.0,
                 state_silence_pressure * 0.42,
+                event.arousal,
             )
         )
         certainty = self._estimate_certainty(
@@ -175,6 +243,7 @@ class AppraisalEngine:
             + (resonance_score * 0.06 if resonance_layer == "emotional_residue" else 0.0)
             + (0.04 if attachment_cue else 0.0)
             + (0.08 if social_scene else 0.0)
+            + event.tenderness * 0.30
             - threat * 0.10
         )
         if resonance_layer == "emotional_residue":
@@ -190,23 +259,47 @@ class AppraisalEngine:
             + warmth * 0.16
             + amusement * 0.14
             + tenderness * 0.14
+            + event.valence * 0.34
             - threat * 0.36
             - fatigue * 0.18,
             minimum=-1.0,
             maximum=1.0,
         )
         #Đây là distilled expressive mode.
-        stance = self._choose_stance(
-            certainty=certainty,
-            threat=threat,
-            protectiveness=protectiveness,
-            jealousy_lite=jealousy_lite,
-            amusement=amusement,
-            fatigue=fatigue,
-            tenderness=tenderness,
-            intimacy=intimacy,
-            broadcast_score=broadcast_score,
-        )
+        cfg = blend_config or self.blend_config
+        stance_blend_map: dict[str, float] = {}
+        if cfg.enabled:
+            # Stance dạng phân bố mềm trên các điểm hút trong không gian affect,
+            # có quán tính (EMA) với stance blend của turn trước.
+            affect_vector = {
+                "valence": valence,
+                "arousal": arousal,
+                "certainty": certainty,
+                "agency": agency,
+                "controllability": controllability,
+                "intimacy": intimacy,
+                "threat": threat,
+                "protectiveness": protectiveness,
+                "jealousy_lite": jealousy_lite,
+                "amusement": amusement,
+                "fatigue": fatigue,
+                "tenderness": tenderness,
+            }
+            blend = blend_stance(affect_vector, prev=prev_stance_blend, config=cfg)
+            stance = blend.top()
+            stance_blend_map = blend.to_dict()
+        else:
+            stance = self._choose_stance(
+                certainty=certainty,
+                threat=threat,
+                protectiveness=protectiveness,
+                jealousy_lite=jealousy_lite,
+                amusement=amusement,
+                fatigue=fatigue,
+                tenderness=tenderness,
+                intimacy=intimacy,
+                broadcast_score=broadcast_score,
+            )
         evidence = (
             f"state_type={self.state_type}",
             f"ni_drift={drift:.2f}",
@@ -218,6 +311,8 @@ class AppraisalEngine:
             f"internal_state_focus={kind or 'unknown'}",
             f"internal_attachment={state_attachment:.2f}",
         )
+        if event.active:
+            evidence = (*evidence, f"event_affect={event.label or 'scene'}:{event.valence:+.2f}")
         summary = (
             f"{self.state_type}; stance={stance}; "
             f"valence={valence:.2f}; arousal={arousal:.2f}; certainty={certainty:.2f}; "
@@ -240,6 +335,7 @@ class AppraisalEngine:
             tenderness=tenderness,
             summary=summary,
             evidence=evidence,
+            stance_blend=stance_blend_map,
         )
 
     #là cầu nối sang LLM
@@ -266,6 +362,87 @@ class AppraisalEngine:
                 f"appraisal_bias: {self._stance_guidance(appraisal)}",
             )
         )
+
+    def _event_affect(self, *, broadcast, stakes, state_valence: float) -> _EventAffect:
+        """Đọc cảm xúc của sự-kiện nổi bật, gate theo stake và surprise.
+
+        - sự-kiện: lấy từ broadcast.content + claim của các item nổi bật.
+        - stake: ``care_user_mood`` quyết định Eris để tâm cảnh này tới đâu.
+        - kỳ vọng: surprise = độ lệch giữa valence cảnh và valence cô đang mang;
+          một cảnh buồn khi đang yên ổn thì chạm mạnh hơn (prediction error).
+
+        Đường chính: chiếu văn bản sự-kiện lên các affect-direction prototype (khi
+        có encoder). Cảnh hỗn hợp cho ra vector pha trộn thay vì triệt tiêu về 0.
+        Không có encoder -> fallback lexicon xác định, bảo toàn mọi hành vi/test cũ.
+        Không có stake hoặc không có nội dung -> trả tín hiệu rỗng.
+        """
+
+        if stakes is None or broadcast is None:
+            return _EventAffect()
+        care = self._clamp01(getattr(stakes, "care_user_mood", 0.0))
+        if care <= 0.0:
+            return _EventAffect()
+        parts = [str(getattr(broadcast, "content", "") or "")]
+        for item in tuple(getattr(broadcast, "items", ()) or ())[:3]:
+            parts.append(str(getattr(item, "claim", "") or ""))
+        raw_text = " ".join(p for p in parts if p).strip()
+        if not raw_text:
+            return _EventAffect()
+
+        # Đường chính: prototype projection (encoder đa ngữ xử lý cả text tiếng Việt).
+        if self._event_encoder is not None:
+            projected = project_event_affect(raw_text, encode=self._event_encoder)
+            if projected is not None:
+                return self._event_affect_from_projection(
+                    projected, state_valence=state_valence, care=care
+                )
+
+        # Fallback xác định: lexicon cũ trên text đã bỏ dấu.
+        return self._event_affect_lexicon(raw_text, state_valence=state_valence, care=care)
+
+    def _event_affect_from_projection(
+        self, projected: dict, *, state_valence: float, care: float
+    ) -> _EventAffect:
+        """Dựng _EventAffect từ vector affect đã chiếu, giữ nguyên Stake_Gate."""
+        raw = self._clamp(projected.get("valence", 0.0), minimum=-1.0, maximum=1.0)
+        proto_tender = self._clamp01(projected.get("tenderness", 0.0))
+        proto_arousal = self._clamp01(projected.get("arousal", 0.0))
+        surprise = min(1.0, abs(raw - state_valence) / 2.0)
+        gate = care * (0.55 + 0.45 * surprise)
+        valence = max(-1.0, min(1.0, raw * gate))
+        tenderness = self._clamp01(proto_tender * gate)
+        arousal = self._clamp01(proto_arousal * gate * 0.6)
+        # Cảnh hỗn hợp: dịu dàng vẫn hiện dù valence không rõ một chiều.
+        mixed = proto_tender > 0.2 and abs(raw) < 0.5
+        label = "scene_mixed" if mixed else ("scene_low" if raw < 0 else "scene_bright")
+        return _EventAffect(valence=valence, tenderness=tenderness, arousal=arousal, label=label)
+
+    def _event_affect_lexicon(
+        self, raw_text: str, *, state_valence: float, care: float
+    ) -> _EventAffect:
+        """Đường dự phòng: đếm token lexicon không dấu (hành vi gốc, xác định)."""
+        text = self._normalize_text(raw_text)
+        if not text:
+            return _EventAffect()
+
+        neg = sum(1 for token in _EVENT_NEG_TOKENS if token in text)
+        pos = sum(1 for token in _EVENT_POS_TOKENS if token in text)
+        if neg == 0 and pos == 0:
+            return _EventAffect()
+
+        # raw valence của cảnh trên [-1,1].
+        raw = (pos - neg) / float(max(1, pos + neg))
+        raw = max(-1.0, min(1.0, raw))
+        # surprise: cảnh lệch khỏi nội trạng hiện tại thì đáng chú ý hơn.
+        surprise = min(1.0, abs(raw - state_valence) / 2.0)
+        gate = care * (0.55 + 0.45 * surprise)
+
+        valence = max(-1.0, min(1.0, raw * gate))
+        # cảnh buồn (raw âm) kéo dịu dàng/để ý lên; cảnh vui không tự nó hạ tenderness.
+        tenderness = self._clamp01(max(0.0, -raw) * gate)
+        arousal = self._clamp01(abs(raw) * gate * 0.6)
+        label = "scene_low" if raw < 0 else "scene_bright"
+        return _EventAffect(valence=valence, tenderness=tenderness, arousal=arousal, label=label)
 
     def _estimate_threat(
         self,
@@ -443,6 +620,12 @@ class AppraisalEngine:
         return "grounded"
 
     def _stance_guidance(self, appraisal: CognitiveAppraisal) -> str:
+        # Khi có stance blend (đường mới): hướng dẫn phản ánh top-k stance pha trộn.
+        if appraisal.stance_blend:
+            return guidance_blend(
+                StanceBlend(weights=dict(appraisal.stance_blend)),
+                config=self.blend_config,
+            )
         stance = appraisal.stance
         if stance == "protective":
             return "speak briefly, concrete first, with guarded care; avoid theatrical alarm."

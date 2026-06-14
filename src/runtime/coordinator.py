@@ -22,7 +22,7 @@ replace: copy dataclass và đổi vài field.
 '''
 from cortex.action_planner import ACTION_SPACE, ActionPlanner
 from cortex.affect_semantics import AffectSemanticClassifier
-from cortex.attention_salience import AttentionSalienceEngine
+from cortex.attention_salience import AttentionSalienceEngine, DEFAULT_STANDING_STAKES
 from cortex.background_observer import BackgroundObserver, BackgroundObserverConfig
 from cortex.daydream_consolidation import DaydreamConsolidator, DaydreamPacket
 from cortex.endogenous_drive import EndogenousDriveEngine, RollingInternalState
@@ -2487,6 +2487,17 @@ class RuntimeCoordinator(
 
         return self._bounded_float(score), ", ".join(reason_parts)
 
+    def _standing_stakes(self):
+        """Vector quan tâm thường trực của ERIS, dùng để thiên lệch chú ý.
+
+        Hiện trả về stake nền (DEFAULT_STANDING_STAKES). Đây là điểm nối để sau này
+        rút stake động từ AppetiteSystem (cơn thèm đang dâng), self_model.true_motivation,
+        và InternalAgendaStack (mối quan tâm đang treo) — biến chúng từ "trơ" thành lực
+        thật sự kéo sự chú ý. Tách thành hàm để Lát 2/3 chỉ phải sửa một chỗ.
+        """
+
+        return DEFAULT_STANDING_STAKES
+
     def _build_attention_candidates(
         self,
         percepts: tuple[PerceptEvent, ...],
@@ -2510,6 +2521,7 @@ class RuntimeCoordinator(
                 active_goal=getattr(self._get_internal_state(), "goal_persistence", None),
                 now=time.time(),
                 write_to_frame=False,
+                standing_stakes=self._standing_stakes(),
             )
         except Exception as exc:
             self.logger.warning("AttentionSalience candidate ranking error: %s", exc)
@@ -2782,6 +2794,8 @@ class RuntimeCoordinator(
             force_speak=force_speak,
             memory_resonance=getattr(self, "active_memory_resonance", None),
             personality_lens=personality_lens,
+            standing_stakes=self._standing_stakes(),
+            prev_stance_blend=getattr(internal_state, "last_stance_blend", None) or None,
         )
 
     def _build_appraisal_context(self, appraisal: CognitiveAppraisal) -> str:
@@ -5157,8 +5171,19 @@ class RuntimeCoordinator(
         if note is None:
             return ()
         items: list[str] = []
+        # Nghĩa của cảnh đi trước caption thô: nội dung là gì, sắc thái, đổi gì.
+        content = str(getattr(note, "content_summary", "") or "").strip()
+        affect = str(getattr(note, "content_affect", "") or "").strip()
+        if content:
+            items.append(f"{content} (affect: {affect})" if affect else content)
+        delta = str(getattr(note, "delta", "") or "").strip()
+        if delta:
+            items.append(f"change: {delta}")
+        relation = str(getattr(note, "relation_to_user", "") or "").strip()
+        if relation:
+            items.append(f"relation: {relation}")
         visible = str(getattr(note, "visible_context", "") or "").strip()
-        if visible:
+        if visible and visible != content:
             items.append(visible)
         for item in list(getattr(note, "important_text", []) or []):
             text = str(item or "").strip()
@@ -5171,7 +5196,13 @@ class RuntimeCoordinator(
             return ""
         source = str(getattr(note, "source", "") or "vision")
         family = str(getattr(note, "semantic_family", "") or "unknown")
-        return f"{source}:{family}"
+        affect = str(getattr(note, "content_affect", "") or "").strip()
+        has_delta = "1" if str(getattr(note, "delta", "") or "").strip() else "0"
+        trace = f"{source}:{family}"
+        if affect:
+            trace += f":affect={affect}"
+        trace += f":delta={has_delta}"
+        return trace
 
     def _should_use_vision_compressor(
         self,

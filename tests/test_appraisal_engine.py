@@ -7,7 +7,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from cortex.appraisal import AppraisalEngine
 from cortex.contracts import CognitiveBroadcast
-from cortex.internal_state import PersistentInternalState
+from cortex.internal_state import InternalStateEngine, PersistentInternalState
+from cortex.attention_salience import DEFAULT_STANDING_STAKES, StandingStakes
 
 
 class AppraisalEngineTests(unittest.TestCase):
@@ -111,6 +112,84 @@ class AppraisalEngineTests(unittest.TestCase):
         self.assertIn("expressive/appraisal state", context)
         self.assertIn("pre-verbal attitude", context)
         self.assertIn("not an inner feeling claim", context)
+
+
+class AppraisalEventCouplingTests(unittest.TestCase):
+    """Lát 2: appraisal = f(sự-kiện × stake × kỳ vọng)."""
+
+    def setUp(self):
+        self.engine = AppraisalEngine()
+
+    def _kwargs(self, broadcast):
+        return dict(
+            internal_state=PersistentInternalState(last_focus_kind="general", valence=0.05),
+            ni_report=SimpleNamespace(drift_score=0.0, confidence=0.6, should_raise_guard=False),
+            ti_report=SimpleNamespace(mode="steady_observe"),
+            fe_plan=SimpleNamespace(
+                intent_label="ordinary_dialogue",
+                session_arc="quiet_observation",
+                warmth_level=0.20,
+                sarcasm_level=0.0,
+            ),
+            broadcast=broadcast,
+            channel="autonomous",
+        )
+
+    def test_sad_scene_with_stakes_lowers_valence_and_raises_tenderness(self):
+        broadcast = CognitiveBroadcast(
+            label="ambient_context",
+            content="Ngài đang xem một video buồn, nhân vật khóc một mình",
+            score=0.40,
+        )
+        without = self.engine.evaluate(**self._kwargs(broadcast))
+        with_stakes = self.engine.evaluate(**self._kwargs(broadcast), standing_stakes=DEFAULT_STANDING_STAKES)
+
+        self.assertLess(with_stakes.valence, without.valence)
+        self.assertGreater(with_stakes.tenderness, without.tenderness)
+        self.assertTrue(any("event_affect" in e for e in with_stakes.evidence))
+
+    def test_neutral_scene_does_not_shift_even_with_stakes(self):
+        broadcast = CognitiveBroadcast(
+            label="ambient_context",
+            content="Visual Studio Code workspace open",
+            score=0.30,
+        )
+        without = self.engine.evaluate(**self._kwargs(broadcast))
+        with_stakes = self.engine.evaluate(**self._kwargs(broadcast), standing_stakes=DEFAULT_STANDING_STAKES)
+
+        self.assertAlmostEqual(with_stakes.valence, without.valence, places=6)
+        self.assertAlmostEqual(with_stakes.tenderness, without.tenderness, places=6)
+
+    def test_no_stakes_keeps_legacy_behavior(self):
+        broadcast = CognitiveBroadcast(
+            label="ambient_context",
+            content="Ngài đang xem một video buồn, nhân vật khóc",
+            score=0.40,
+        )
+        a = self.engine.evaluate(**self._kwargs(broadcast))
+        b = self.engine.evaluate(**self._kwargs(broadcast), standing_stakes=None)
+        self.assertAlmostEqual(a.valence, b.valence, places=6)
+
+
+class AppraisalPersistenceTests(unittest.TestCase):
+    """Lát 3: appraisal dịch chuyển và LƯU LẠI qua commit_turn."""
+
+    def setUp(self):
+        self.engine = InternalStateEngine()
+
+    def test_commit_turn_persists_negative_appraisal_shift(self):
+        state = PersistentInternalState(valence=0.10, tenderness=0.20, arousal=0.20)
+        appraisal = SimpleNamespace(stance="tender_under_cold", valence=-0.50, tenderness=0.70, arousal=0.45)
+        committed = self.engine.commit_turn(state, channel="autonomous", appraisal=appraisal)
+
+        self.assertLess(committed.valence, state.valence)
+        self.assertGreater(committed.tenderness, state.tenderness)
+        self.assertGreater(committed.arousal, state.arousal)
+
+    def test_commit_turn_without_appraisal_keeps_valence(self):
+        state = PersistentInternalState(valence=0.10, tenderness=0.20, arousal=0.20)
+        committed = self.engine.commit_turn(state, channel="autonomous", appraisal=None)
+        self.assertEqual(committed.valence, state.valence)
 
 
 if __name__ == "__main__":
