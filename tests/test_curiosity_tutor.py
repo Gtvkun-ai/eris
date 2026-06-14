@@ -87,9 +87,18 @@ class TestGapCollector(unittest.TestCase):
 
     def test_from_observer_unknown(self):
         gc = GapCollector()
-        gap = gc.collect_from_observer(observer_frame(), now=10.0)
+        # Có manh mối màn hình ⇒ tạo được gap.
+        gap = gc.collect_from_observer(
+            observer_frame(), now=10.0,
+            screen_context="app=Code | cửa sổ=main.py",
+        )
         self.assertIsNotNone(gap)
         self.assertEqual(gap.source, "observer_unknown")
+
+    def test_observer_no_screen_context_skipped(self):
+        # Không có manh mối màn hình (mới mở / nothing changed) ⇒ KHÔNG tạo gap.
+        gc = GapCollector()
+        self.assertIsNone(gc.collect_from_observer(observer_frame(), now=10.0))
 
     def test_observer_low_ambiguity_skipped(self):
         gc = GapCollector()

@@ -248,9 +248,35 @@ public partial class UdpListener : Node2D
 		{ "air_swing_r", new[] { "res://asset/Monika/sound/Cartoon_Aah.wav", "res://asset/Monika/sound/Squeal_Happy.wav" } },
 	};
 
+	// Đổi font cho TOÀN BỘ UI context-menu (chat, mô hình ngài, private mind, emotion,
+	// menu chuột phải, chiều sâu …) bằng cách gắn Theme lên node Control gốc — mọi
+	// panel con kế thừa. CHỈ đổi typeface (DefaultFont), KHÔNG đặt DefaultFontSize để
+	// giữ nguyên cỡ chữ mỗi panel đã canh, tránh vỡ layout. Không bao giờ ném.
+	private void ApplyGlobalUiFontTheme()
+	{
+		try
+		{
+			_depthFontRegular ??= LoadDepthFont("Mali-Regular.ttf");
+			_depthFontBold ??= LoadDepthFont("Mali-SemiBold.ttf") ?? _depthFontRegular;
+			Font def = _depthFontRegular ?? DepthSystemFont();
+
+			var root = GetNodeOrNull<Control>("CanvasLayer/Control");
+			if (root == null)
+				return;
+			var theme = root.Theme ?? new Theme();
+			theme.DefaultFont = def;        // chỉ đổi mặt chữ
+			root.Theme = theme;             // mọi Control con kế thừa
+		}
+		catch (Exception ex)
+		{
+			GD.Print($"[ui font] apply global theme fail: {ex.Message}");
+		}
+	}
+
 	public override void _Ready()
 	{
 		RunLogger.Initialize();
+		ApplyGlobalUiFontTheme();
 		ConfigureDesktopOverlayWindow();
 		_udp.Bind(_port);
 		_body   = GetNode<CharacterBody2D>("Monika2");

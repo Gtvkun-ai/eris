@@ -112,13 +112,15 @@ class GapCollector:
         if ambiguity < self.config.observer_ambiguity_threshold:
             return None
         screen_context = str(screen_context or "").strip()
-        if screen_context:
-            description = (
-                f"Người dùng đang xem màn hình nhưng tôi chưa rõ ngữ cảnh. "
-                f"Manh mối: {screen_context}. Đây có thể là hoạt động/nội dung gì?"
-            )
-        else:
-            description = "Tôi không phân loại được Ngài đang làm gì trên màn hình"
+        if not screen_context:
+            # Chưa có manh mối màn hình (mới mở / "nothing changed") ⇒ KHÔNG tạo gap.
+            # Gap suông "tôi không phân loại được" vừa vô dụng (Gemini đoán gì?), vừa luôn
+            # hash ra cùng một gap_id ⇒ lần nào khởi động cũng đẻ rồi bị skip/biết-rồi.
+            return None
+        description = (
+            f"Người dùng đang xem màn hình nhưng tôi chưa rõ ngữ cảnh. "
+            f"Manh mối: {screen_context}. Đây có thể là hoạt động/nội dung gì?"
+        )
         evidence = list(getattr(frame, "evidence", None) or [])
         context = f"focus={focus} | activity={activity} | ambiguity={ambiguity:.2f} | screen={screen_context[:400]} | evidence={evidence[:4]}"
         gap = KnowledgeGap(

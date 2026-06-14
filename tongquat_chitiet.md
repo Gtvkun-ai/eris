@@ -7,39 +7,54 @@
 - Nguồn Python: AST parse từ `src/` trong repo thật (`c:\Users\Gtvkun\Documents\GitHub\eris\src`). Bố cục `src/` khớp bảng snapshot bên dưới (`actions/ core/ cortex/ domain/ llm/ memory/ parser_grounding/ runtime/ telemetry/ transport/ vision.py`).
 - Nguồn C# body: đọc trực tiếp 8 file trong `body/` của repo thật và **đã audit lại** (xem ghi chú ở Phần 1).
 - Lưu ý lịch sử: bản doc gốc được sinh từ `src/src.zip` (chỉ chứa phần Python). Vì `body/`, `tests/`, Godot scene nằm **ngang hàng** với `src/` chứ không nằm trong zip, bản cũ tưởng nhầm là chúng "không tồn tại". Thực tế repo thật **có đủ** `body/` (C#), `tests/`, `project.godot`, `body/UdpListener.tscn`, `asset/`, `config/`.
-- Tổng Python đã parse bằng AST: **298 file**, khoảng **138924 LOC**. Các file cache `.pyc` và `.hypothesis` bị bỏ qua.
+- Tổng Python đã parse bằng AST: **327 file**, khoảng **131771 LOC**. Các file cache `.pyc`, `__pycache__` và `.hypothesis` bị bỏ qua. (Bản trước: 298 file / ~138924 LOC — repo đã tái cấu trúc: `cortex/` 150→175 file, `runtime/` 56→61, `llm/` 9→12; LOC giảm do dồn/tỉa code chứ không phải xoá tính năng.)
 - Tài liệu này ưu tiên debug thực dụng: file nào sở hữu state, file nào gọi ai, lỗi nào nên soi ở đâu. Không cố biến mọi module thành tiểu thuyết.
 
 ## 0. Snapshot repo
 
 | Gốc | Python files | LOC |
 |---|---:|---:|
-| `actions/` | 4 | 1249 |
-| `core/` | 4 | 2513 |
-| `cortex/` | 150 | 68410 |
-| `domain/` | 2 | 104 |
-| `llm/` | 9 | 4986 |
-| `memory/` | 59 | 17430 |
-| `parser_grounding/` | 3 | 2125 |
-| `runtime/` | 56 | 40400 |
-| `telemetry/` | 4 | 918 |
-| `transport/` | 2 | 253 |
-| `vision.py` | 1 | 240 |
+| `actions/` | 4 | 1108 |
+| `core/` | 4 | 2130 |
+| `cortex/` | 175 | 65799 |
+| `domain/` | 2 | 95 |
+| `llm/` | 12 | 5628 |
+| `memory/` | 59 | 14789 |
+| `parser_grounding/` | 3 | 1926 |
+| `runtime/` | 61 | 39045 |
+| `telemetry/` | 4 | 796 |
+| `transport/` | 2 | 229 |
+| `vision.py` | 1 | 226 |
 
 ### File state/runtime trong `memory_core/`
 
-- `memory_core/anchor_journal.jsonl` — jsonl_lines=201
+> Đã đầy lên đáng kể so với bản trước (chỉ có 7 file). Bây giờ là kho state đầy đủ của runtime.
+
+- `memory_core/active_state_snapshot.json` — keys=version, updated_at, current_goal, current_goal_confidence, session_arc, active_project, active_task, relation_state, affect_state, homeostatic_state, working_threads, open_questions, self_continuity, metadata
+- `memory_core/affective_residue_memory.json` — keys=version, items
+- `memory_core/agent_mind.json` — keys=beliefs, habits, last_feedback_events, preferences, schema_version, updated_at
+- `memory_core/anchor_journal.jsonl` — jsonl_lines=3714
 - `memory_core/anchor_state.json` — keys=schema_version, updated_at, state
+- `memory_core/depth_flags.json` — keys=ERIS_EMOTIONAL_CONSEQUENCE, ERIS_DEVELOPMENT_GROWTH_ENABLED, ERIS_INTERIOR_SURFACE_NONANCHORED, ERIS_TOM_ADVISOR, ERIS_MEANING_REAL_EMBEDDINGS, ERIS_PRIVATE_MIND_API_ENABLED
+- `memory_core/episodic_memory.json` — keys=version, items
+- `memory_core/epistemic_v2.json` — keys=schema_version, mode, created_at, updated_at, legacy_imported, beliefs, episodes, projections, procedural_policies, calibration, pending_hypotheses, learning_log
+- `memory_core/event_ledger.json` — keys=version, records
 - `memory_core/inner_diary.json` — keys=updated_at, last_tick_at, current, inner_diary, history
+- `memory_core/internal_agenda.json` — keys=max_items, items
+- `memory_core/memory_candidate.json` — keys=version, kind, updated_at, items
 - `memory_core/private_concerns.json` — keys=version, saved_at, concerns
 - `memory_core/private_life_state.json` — keys=version, updated_at, habitat, attachments, projects, anchors, daily, taste, solitude, rituals, errands, events
-- `memory_core/thought_stream.jsonl` — jsonl_lines=5
+- `memory_core/procedural_memory.json` — keys=version, items
+- `memory_core/relational_memory.json` — keys=version, items
+- `memory_core/repair_memory.json` — keys=version, items
+- `memory_core/semantic_memory.json` — keys=version, kind, updated_at, items
+- `memory_core/thought_stream.jsonl` — jsonl_lines=9
 - `memory_core/user_model.json` — keys=schema_version, updated_at, version, beliefs, history
 
 
 # 1. Body Godot/C# — ĐÃ AUDIT TỪ `body/` TRONG REPO THẬT
 
-> Ghi chú trung thực: repo thật **có** thư mục `body/` (8 file `.cs` + `UdpListener.tscn`). Đã đọc trực tiếp và đối chiếu chữ ký từng class/method bằng AST C#. Kết quả: mô tả bên dưới **khớp** mã nguồn thật. Kích thước file tại thời điểm audit: `BodyAudioController.cs` 4.5KB, `ErisProcessManager.cs` 11.5KB, `LocalBodyAutonomy.cs` 21.8KB, `MotionController.cs` 21.2KB, `RunLogger.cs` 3.9KB, `UdpDecisionParser.cs` 11.7KB, `UdpListener.AnchorPanel.cs` 37.9KB, `UdpListener.cs` 199.7KB. Không còn là "legacy snapshot" — đây là bản đồ debug C# đã xác minh.
+> Ghi chú trung thực: repo thật **có** thư mục `body/` (**10 file `.cs`** + `UdpListener.tscn`). Đã đọc trực tiếp và đối chiếu chữ ký từng class/method bằng AST C#. Kết quả: mô tả bên dưới **khớp** mã nguồn thật. Kích thước file tại thời điểm audit gần nhất: `BodyAudioController.cs` 4.4KB, `ErisProcessManager.cs` 11.2KB, `LocalBodyAutonomy.cs` 21.3KB, `MotionController.cs` 20.7KB, `RunLogger.cs` 3.8KB, `UdpDecisionParser.cs` 11.5KB, `UdpListener.AnchorPanel.cs` 37.0KB, `UdpListener.DepthPanel.cs` 22.8KB, `UdpListener.TutorPanel.cs` 14.2KB, `UdpListener.cs` 197.5KB. **Hai file partial mới so với bản trước:** `UdpListener.DepthPanel.cs` (tab "Chiều Sâu") và `UdpListener.TutorPanel.cs` (tab "Gia Sư" — Eris hỏi Gemini). Không còn là "legacy snapshot" — đây là bản đồ debug C# đã xác minh.
 
 # PHẦN C# / GODOT BODY — ĐÃ XÁC MINH  [body/]
 ================================================================================
@@ -51,8 +66,9 @@ qua UDP 4242, gửi event/chat lên runtime qua UDP 4243, và tự đi lại khi
 --------------------------------------------------------------------------------
 **Vai trò:** Node chính của scene (`Node2D`, partial class). Bind UDP 4242, dựng
 toàn bộ UI/panel (chat, emotion, private mind, anchor, context menu), spawn
-vision.py, mỗi frame bước motion + đọc packet + áp dụng Decision. Phần "anchor"
-nằm ở file partial `UdpListener.AnchorPanel.cs`.
+vision.py, mỗi frame bước motion + đọc packet + áp dụng Decision. Các phần panel tách
+sang file partial: "anchor" ở `UdpListener.AnchorPanel.cs`, "chiều sâu" ở
+`UdpListener.DepthPanel.cs`, "gia sư" ở `UdpListener.TutorPanel.cs`.
 
 **Class/struct phụ trong file:**
 - `EmotionRowView` : view 1 dòng cảm xúc (Row/Title/Note/FillClip/Fill/Percent).
@@ -104,7 +120,7 @@ nằm ở file partial `UdpListener.AnchorPanel.cs`.
 - `TogglePrivateMindPanel()` / `ShowPrivateMindPanel()` / `ClosePrivateMindPanel()` — vòng đời panel inner diary.
 - `BuildChatPanelUi()` / `UpdateChatPanelLayout()` — dựng/định vị khung chat (texture 9-slice).
 - `ConfigureChatActionButton(...)` — style nút Gửi/X của chat.
-- `BuildCharacterContextMenuUi()` — dựng menu chuột phải (các nút Chat/Touch/ForceSpeak/Emotion/PrivateMind/Anchor/Exit/Close).
+- `BuildCharacterContextMenuUi()` — dựng menu chuột phải (các nút Chat/Touch/ForceSpeak/Emotion/PrivateMind/Anchor "Mô Hình Ngài"/Depth "Chiều Sâu"/Exit/Close).
 - `ShowCharacterContextMenu(pos)` / `CloseCharacterContextMenu()` — hiện/ẩn menu tại vị trí chuột.
 - `BuildEmotionPanelUi()` / `RefreshEmotionPanel()` — dựng & đổ data panel cảm xúc từ `_latestEmotionDebug`.
 - `BuildPrivateMindPanelUi()` / `RefreshPrivateMindPanel()` — dựng & đổ data panel inner diary từ `_latestPrivateMindDebugJson`.
@@ -114,7 +130,8 @@ nằm ở file partial `UdpListener.AnchorPanel.cs`.
 - `SendChatSignal(string)` — gửi 1 signal/text thô lên 4243 (chat_start/chat_end/force_speak/text).
 - `ParseAndApply(string raw)` — gọi `_decisionParser.Parse(raw)`, áp text/should_speak vào
   bong bóng, đẩy MotionCommand vào `_motion`, nạp body_bias vào `_bodyAutonomy`, lưu
-  emotion_debug & private_mind_digest, log debug_trace/parse_mode.
+  emotion_debug & private_mind_digest, bắt block `depth` (`TryCaptureDepthBlock`) và sự
+  kiện `tutor_event` (`TryHandleTutorEvent`), log debug_trace/parse_mode.
 - `UpdateLocalBodyAutonomy(delta)` — gọi `_bodyAutonomy.TryUpdate(...)`; nếu có decision thì
   áp MotionCommand (giữ throttle remote cooldown).
 - `BeginDrag/UpdateDrag/EndDrag/ClampDraggedPosition/IsMouseOverCharacter/IsMouseOverControl`
@@ -170,7 +187,85 @@ attachment+history, dread, shadow+gate, user_model+beliefs, deception records).
 điều khiển trục neo xuống `src/runtime/private_mind_*` qua UDP 4243.
 
 --------------------------------------------------------------------------------
+## body/UdpListener.DepthPanel.cs  (partial class UdpListener)  [MỚI]
+--------------------------------------------------------------------------------
+**Vai trò:** Tab "CHIỀU SÂU" — dashboard nội tâm SỐNG, chỉ-xem (read-only). Nền là
+ảnh scrapbook baked sẵn `asset/Resource/ChieuSauKhung.png` (1040×622), code chỉ thả
+chữ live vào 8 ô đã chừa trống theo toạ độ TỈ LỆ + 1 nút ✕ trong suốt đè lên ✕ vẽ
+sẵn. Sáu cờ chiều-sâu (N1–N3) tự bật lúc khởi động (`coordinator.bootstrap_defaults`);
+panel không toggle cờ. Dùng font Mali nhúng (OFL), fallback SystemFont.
+
+**Field:** `_depthPanel`, `_contextDepthButton`, `_latestDepthJson`; bộ bar
+`_depthWantBar/_depthSuppressBar/_depthAllowBar` (+ value labels); `_depthStanceLabel`,
+`_depthTomLabel`, `_depthHeaderLabel`, `_depthAffectLabel`, `_depthContextLabel`; các
+VBox body `_depthN2Body`, `_depthInteriorityBody`, `_depthLogBody`; `_depthFlagChips`
+(dict chip cờ); `_depthFontRegular/_depthFontBold`. Hằng số toạ độ ô `Slot*` (Rect2 tỉ
+lệ) + palette `Depth*`.
+
+**Các hàm/method (đầy đủ):**
+- `OnContextDepthPressed()` — ghi tương tác user, toggle panel.
+- `ToggleDepthPanel()` / `ShowDepthPanel()` — vòng đời panel (canh giữa màn hình, refresh).
+- `BuildDepthPanelUi()` — dựng nền ảnh (StyleBoxEmpty + TextureRect; thiếu ảnh -> nền
+  hồng phẳng), nút đóng trong suốt, header động, 8 ô card + dải "CỘNG TÁC" (chip cờ pastel).
+- `DepthPillStyle(on)` (static) — style pill cờ bật/tắt.
+- `Mk/MkBold(text,size,color)` — label thường/đậm gắn font Mali.
+- `LoadDepthFont(fileName)` / `ApplyDepthFontTheme()` — nạp font Mali nhúng (resource ->
+  bytes -> SystemFont), gắn theme cho panel.
+- `PlaceBySlot(ctrl, slot)` / `NewSlot(slot)` / `NewCardSlot(slot, heading, icon)` — đặt
+  control theo Rect2 tỉ lệ; card = [icon + tiêu đề] + gạch nhấn + body.
+- `DepthBarRow(parent, label, fill, out valueLabel)` — 1 hàng thanh tiến trình + nhãn giá trị.
+- `DepthLine(text, color, size)` — 1 dòng chữ wrap.
+- `TryCaptureDepthBlock(raw)` — bắt block `depth` trong JSON Decision, lưu `_latestDepthJson`,
+  refresh nếu panel mở.
+- `RefreshDepthPanel()` — parse `_latestDepthJson` block `depth` và đổ vào UI: identity
+  (model/channel/cờ on-total/alive), flags (chip), affect (valence/arousal/stance),
+  expression (want/suppress/allowed + stance), n2 (axes delta + sentence + attachment),
+  interiority (themes + recurrence + pressure), tom_read_rich (text + confidence),
+  signal_log (tối đa 5 dòng), context (tags).
+
+**Liên kết:** Đọc block `depth` trong Decision JSON từ runtime (qua UDP 4242, set ở
+`ParseAndApply`/`_Process`). Cờ chiều-sâu khớp `memory_core/depth_flags.json`. Thuần xem.
+
+--------------------------------------------------------------------------------
+## body/UdpListener.TutorPanel.cs  (partial class UdpListener)  [MỚI]
+--------------------------------------------------------------------------------
+**Vai trò:** Tab "GIA SƯ" — thẻ nhỏ nổi góc phải-trên báo việc Eris đi hỏi trợ lý Gemini.
+Hiển thị tiêu đề + trạng thái động (đang nghĩ/mở/gõ/đọc/ghi nhớ với dấu chấm chạy), câu
+hỏi gõ ra từng chữ (typewriter), rồi câu trả lời khi xong, tự ẩn sau `TutorPanelAutoHideSeconds`.
+Data đến qua UDP 4242 với `parse_mode="tutor_event"`. Thuần trang trí: `MouseFilter=Ignore`
+toàn panel (click xuyên qua) trừ nút ✕ — để user không bấm bậy vào lúc Eris đang hỏi AI.
+
+**Field:** `_tutorPanel`, `_tutorRoot`, `_tutorTitleLabel`, `_tutorStatusLabel`,
+`_tutorHideButton`, `_tutorQuestionLabel`/`_tutorAnswerLabel` (RichTextLabel),
+`_tutorTypeTween`/`_tutorDotsTween`/`_tutorPulseTween`, `_tutorHideAtMs`, `_tutorEpisodeId`;
+palette `Tutor*`; `[Export] TutorPanelAutoHideSeconds = 14f`.
+
+**Các hàm/method (đầy đủ):**
+- `BuildTutorPanelUi()` — dựng panel (style hồng bo góc + shadow), header (tiêu đề + status
+  + nút ✕), divider, 2 RichTextLabel câu hỏi/trả lời; gắn vào `CanvasLayer/Control`.
+- `MakeTutorLabel(...)` / `MakeTutorRich(color)` — label/RichTextLabel chuẩn (mouse-ignore).
+- `TryHandleTutorEvent(raw)` — trả true nếu `raw` là `parse_mode="tutor_event"`; parse block
+  `tutor` (stage/question/answer/claims/fail_reason) rồi gọi `DriveTutorPanel`.
+- `DriveTutorPanel(stage, question, answer, claims, failReason)` — máy trạng thái theo stage:
+  forming/opening/asking/reading/digesting/done/failed (gõ chữ, đổi status, schedule hide).
+- `TutorFailText(reason)` (static) — map mã lỗi -> câu thoại tiếng Việt (captcha_or_expired,
+  timeout, empty_answer, formulation_failed, gate_rejected*, selector_miss, network_error...).
+- `SetTutorQuestion(question)` / `TypeTutorText(label, text)` — đặt/gõ chữ kiểu typewriter
+  qua VisibleCharacters tween.
+- `FitTutorPanelHeight()` — tự dãn chiều cao panel theo nội dung (clamp trong màn hình).
+- `KillTutorTypeTween()` — huỷ tween gõ chữ.
+- `StartTutorDots(baseText)` / `StopTutorDots(finalText)` — animation "đang …" dấu chấm chạy.
+- `StartTutorPulse()` / `StopTutorPulse()` — "thở" mờ-tỏ toàn panel khi đang hỏi Gemini.
+- `HideTutorPanel()` / `ShowTutorPanel()` — vòng đời panel (đặt góc phải-trên).
+- `ScheduleTutorHide()` / `UpdateTutorPanelAutoHide()` — hẹn & thực thi auto-hide mỗi frame.
+- `TutorStr/TutorInt(obj, key)` (static) — đọc JSON an toàn.
+
+**Liên kết:** Nhận `tutor_event` từ runtime (qua UDP 4242, kiểm trong `ParseAndApply`/
+`_Process` trước khi parse Decision thường). Khớp `TutorStageEmitter` phía Python.
+
+--------------------------------------------------------------------------------
 ## body/UdpDecisionParser.cs
+
 --------------------------------------------------------------------------------
 **Vai trò:** Parse chuỗi JSON Decision (từ cortex) thành `UdpDecisionPayload` mà body
 hiểu được. Strip ```code fence```, validate/alias tên animation, suy ra motion_intent.

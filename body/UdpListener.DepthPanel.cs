@@ -261,19 +261,13 @@ public partial class UdpListener : Node2D
 	// mặc định "phèn". Thiếu file -> SystemFont (Quicksand/Segoe UI). Bật antialias.
 	private void ApplyDepthFontTheme()
 	{
-		_depthFontRegular = LoadDepthFont("Mali-Regular.ttf");
-		_depthFontBold = LoadDepthFont("Mali-SemiBold.ttf") ?? _depthFontRegular;
+		_depthFontRegular ??= LoadDepthFont("Mali-Regular.ttf");
+		_depthFontBold ??= LoadDepthFont("Mali-SemiBold.ttf") ?? _depthFontRegular;
 
 		Font defaultFont = _depthFontRegular;
 		if (defaultFont == null)
 		{
-			defaultFont = new SystemFont
-			{
-				FontNames = new[] { "Quicksand", "Comfortaa", "Nunito", "Segoe UI", "Arial" },
-				Antialiasing = TextServer.FontAntialiasing.Gray,
-				SubpixelPositioning = TextServer.SubpixelPositioning.Auto,
-				Hinting = TextServer.Hinting.Light,
-			};
+			defaultFont = DepthSystemFont();
 			_depthFontRegular = defaultFont;
 			_depthFontBold ??= defaultFont;
 		}
@@ -285,6 +279,14 @@ public partial class UdpListener : Node2D
 		};
 		_depthPanel.Theme = theme;
 	}
+
+	private static SystemFont DepthSystemFont() => new()
+	{
+		FontNames = new[] { "Quicksand", "Comfortaa", "Nunito", "Segoe UI", "Arial" },
+		Antialiasing = TextServer.FontAntialiasing.Gray,
+		SubpixelPositioning = TextServer.SubpixelPositioning.Auto,
+		Hinting = TextServer.Hinting.Light,
+	};
 
 	private void PlaceBySlot(Control ctrl, Rect2 slot)
 	{
@@ -427,9 +429,9 @@ public partial class UdpListener : Node2D
 				foreach (var (key, chip) in _depthFlagChips)
 				{
 					bool ison = AnBool(flags, key);
-					string baseLabel = chip.Text.Split(']')[0] + "]";
-					chip.Text = ison ? $"{baseLabel} ✓" : $"{baseLabel} ·";
 					chip.AddThemeColorOverride("font_color", ison ? DepthGreen : DepthDim);
+					if (chip.GetParent() is PanelContainer pill)
+						pill.AddThemeStyleboxOverride("panel", DepthPillStyle(ison));
 				}
 
 			if (_depthAffectLabel != null && d.TryGetProperty("affect", out var af) && af.ValueKind == JsonValueKind.Object)
@@ -451,9 +453,13 @@ public partial class UdpListener : Node2D
 
 			if (d.TryGetProperty("expression", out var ex) && ex.ValueKind == JsonValueKind.Object)
 			{
-				if (_depthWantBar != null) _depthWantBar.Value = AnFloat(ex, "want");
-				if (_depthSuppressBar != null) _depthSuppressBar.Value = AnFloat(ex, "suppress");
-				if (_depthAllowBar != null) _depthAllowBar.Value = AnFloat(ex, "allowed");
+				float wv = AnFloat(ex, "want"), sv = AnFloat(ex, "suppress"), av = AnFloat(ex, "allowed");
+				if (_depthWantBar != null) _depthWantBar.Value = wv;
+				if (_depthSuppressBar != null) _depthSuppressBar.Value = sv;
+				if (_depthAllowBar != null) _depthAllowBar.Value = av;
+				if (_depthWantVal != null) _depthWantVal.Text = $"{wv:0.00}";
+				if (_depthSuppressVal != null) _depthSuppressVal.Text = $"{sv:0.00}";
+				if (_depthAllowVal != null) _depthAllowVal.Text = $"{av:0.00}";
 				if (_depthStanceLabel != null)
 				{
 					string st = AnStr(ex, "stance");
