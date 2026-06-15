@@ -277,17 +277,27 @@ class MiniEvaluatorPipeline:
         relevance_gate_enabled: bool | None = None,
     ) -> None:
         self.model_adapter = model_adapter
-        self.evaluators = tuple(
-            evaluators
-            if evaluators is not None
-            else (
-                IntentEvaluator(model_adapter=model_adapter),
-                MemoryResonanceEvaluator(model_adapter=model_adapter),
-                RiskAndPermissionEvaluator(model_adapter=model_adapter),
-                FutureBiasEvaluator(model_adapter=model_adapter),
-                UserModelEvaluator(model_adapter=model_adapter),
-            )
+        _default_evaluators = (
+            IntentEvaluator(model_adapter=model_adapter),
+            MemoryResonanceEvaluator(model_adapter=model_adapter),
+            RiskAndPermissionEvaluator(model_adapter=model_adapter),
+            FutureBiasEvaluator(model_adapter=model_adapter),
+            UserModelEvaluator(model_adapter=model_adapter),
         )
+        if evaluators is not None:
+            chosen = tuple(evaluators)
+        else:
+            chosen = _default_evaluators
+            # Tốc độ: cho phép giới hạn tập evaluator qua env (giảm số fragment local
+            # /tick → chu kỳ ngắn, ít giữ GPU lock). VD ERIS_PRIVATE_MIND_EVALUATORS=
+            # "intent_evaluator,memory_resonance_evaluator". Để trống = chạy đủ 5.
+            raw = (os.getenv("ERIS_PRIVATE_MIND_EVALUATORS", "") or "").strip()
+            if raw:
+                wanted = {x.strip() for x in raw.split(",") if x.strip()}
+                filtered = tuple(ev for ev in _default_evaluators if getattr(ev, "name", "") in wanted)
+                if filtered:
+                    chosen = filtered
+        self.evaluators = tuple(chosen)
         # Cổng relevance: chỉ gọi mảnh nào có bằng chứng đáng nghĩ và vừa đổi.
         # Tham số tường minh thắng env; mặc định đọc ERIS_PRIVATE_MIND_RELEVANCE_GATE.
         self.relevance_gate_enabled = (

@@ -86,6 +86,12 @@ class LocalLlamaEngine:
             _env("ERIS_LLAMACPP_VISION_MMPROJ") or "src/moondream2-mmproj-f16.gguf"
         )
         self.n_ctx = int(_env("ERIS_LLAMACPP_N_CTX", "4096") or 4096)
+        # Vision dùng n_ctx RIÊNG, nhỏ hơn text: captioner không cần context lớn,
+        # mà KV cache lớn là thứ ăn VRAM nhất. Trên 4GB, giữ vision ctx nhỏ để
+        # qwen3 (text, resident GPU) + moondream (vision, resident GPU) cùng vừa.
+        self.vision_n_ctx = int(
+            _env("ERIS_LLAMACPP_VISION_N_CTX", str(min(self.n_ctx, 2048))) or 2048
+        )
         self.n_gpu_layers = _n_gpu_layers()
         # Vision GPU layers TÁCH RIÊNG khỏi text. Trên card 4GB, text (qwen3) đã
         # chiếm phần lớn VRAM; nếu vision cũng đẩy hết layer + clip mmproj f16 lên
@@ -95,6 +101,32 @@ class LocalLlamaEngine:
         self.vision_n_gpu_layers = _vision_n_gpu_layers()
 
     # ------------------------------------------------------------------
+    # GPU residency queue (card 4GB): chỉ MỘT model nằm GPU tại một thời điểm
+    # ------------------------------------------------------------------
+    @property
+    def _vision_on_gpu(self) -> bool:
+        return int(self.vision_n_gpu_layers or 0) != 0
+
+    def _free_text_vram(self) -> None:
+        """Xả model text khỏi VRAM (cả cache của engine này lẫn LlamaCppClient
+        mà private-mind dùng) để vision có chỗ nạp lên GPU. Text tự nạp lại lazy."""
+        with _LLAMA_GLOBAL_LOCK:
+            for k in [key for key in list(LocalLlamaEngine._cache) if key[0] == "text"]:
+                inst = LocalLlamaEngine._cache.pop(k, None)
+                if inst is not None:
+                    try:
+                        close = getattr(inst, "close", None)
+                        if callable(close):
+                            close()
+                    except Exception:
+                        pass
+        try:
+            from llm.llamacpp_client import LlamaCppClient
+            LlamaCppClient.unload_all()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
     # Model loading (cached)
     # ------------------------------------------------------------------
     def _text_llm(self) -> Any:
@@ -102,6 +134,9 @@ class LocalLlamaEngine:
         with _LLAMA_GLOBAL_LOCK:
             inst = LocalLlamaEngine._cache.get(key)
             if inst is None:
+                # Nếu vision đang chiếm GPU, nhường lại trước khi nạp text.
+                if self._vision_on_gpu:
+                    self.unload("vision")
                 from llama_cpp import Llama
 
                 inst = Llama(
@@ -118,6 +153,9 @@ class LocalLlamaEngine:
         with _LLAMA_GLOBAL_LOCK:
             inst = LocalLlamaEngine._cache.get(key)
             if inst is None:
+                # Vision lên GPU → xả text trước cho đủ VRAM (queue residency).
+                if self._vision_on_gpu:
+                    self._free_text_vram()
                 from llama_cpp import Llama
                 from llama_cpp.llama_chat_format import MoondreamChatHandler
 
@@ -125,7 +163,7 @@ class LocalLlamaEngine:
                 inst = Llama(
                     model_path=self.vision_model_path,
                     chat_handler=handler,
-                    n_ctx=self.n_ctx,
+                    n_ctx=self.vision_n_ctx,
                     n_gpu_layers=self.vision_n_gpu_layers,
                     verbose=False,
                 )
@@ -149,8 +187,8 @@ class LocalLlamaEngine:
         try:
             if images:
                 content = self._chat_vision(messages, images, schema=schema, temperature=temperature)
-                # keep_alive == 0 → giải phóng VRAM vision ngay (4GB chật).
-                if str(keep_alive).strip() in {"0", "0s"}:
+                # keep_alive == 0 (hoặc vision đang ở GPU) → giải phóng VRAM ngay.
+                if str(keep_alive).strip() in {"0", "0s"} or self._vision_on_gpu:
                     self.unload(model)
             else:
                 content = self._chat_text(messages, schema=schema, temperature=temperature)
@@ -200,8 +238,8 @@ class LocalLlamaEngine:
                 )
             text = self._extract_content(out)
         finally:
-            # keep_alive == 0 → giải phóng VRAM/RAM vision ngay sau khi tả xong.
-            if str(keep_alive).strip() in {"0", "0s"}:
+            # keep_alive == 0 (hoặc vision ở GPU) → giải phóng VRAM/RAM vision ngay.
+            if str(keep_alive).strip() in {"0", "0s"} or self._vision_on_gpu:
                 self.unload("vision")
         return str(text or "").strip()
 

@@ -2067,10 +2067,28 @@ class RuntimeCoordinator(
                 texts: list[str] = []
                 for name in ("repair", "procedural", "semantic", "relational", "affective_residue", "episodic"):
                     texts.extend(str(item) for item in getattr(packet, name, ()) or ())
+                # Tri thức đã học từ gia sư (tag 'tutor') được dán nhãn rõ và đưa lên
+                # đầu để LLM thấy điều ERIS đã học — đường học -> hành vi THẬT, không
+                # chỉ nằm trong shadow prediction.
+                learned = self._recall_learned_knowledge(snapshot)
+                if learned:
+                    texts = learned + texts
                 return texts
             except Exception as exc:
                 self.logger.warning("Memory recall error: %s", exc)
         return list(getattr(self, "long_term_memory", []) or []) #nếu không có bộ nhớ cấu trúc hoặc truy vấn lỗi, thì fallback về long_term_memory đã lưu ở coordinator, vốn được cập nhật sau mỗi chu kỳ
+
+    def _recall_learned_knowledge(self, snapshot=None) -> list[str]:
+        """Lấy claim đã học từ gia sư liên quan ngữ cảnh hiện tại, dán nhãn [đã học]."""
+        provider = getattr(self, "tutor_knowledge_provider", None)
+        if provider is None or not callable(getattr(provider, "learned_claims", None)):
+            return []
+        try:
+            query = self._memory_query_from_snapshot(snapshot)
+            claims = provider.learned_claims(query, limit=2)
+        except Exception:
+            return []
+        return [f"[đã học] {c}" for c in claims if str(c or "").strip()]
 
     def _activate_memory_resonance(
         self,
@@ -3888,6 +3906,8 @@ class RuntimeCoordinator(
         """
 
         self._clarify_user_pending = False
+        self._research_pending = False
+        self._research_topic = ""
         daemon = getattr(self, "tutor_daemon", None)
         if daemon is None:
             return
@@ -3902,8 +3922,6 @@ class RuntimeCoordinator(
                 meaning = str(getattr(ml, "meaning", "") or "")
             intent = str(getattr(self, "last_user_intent", "") or "").strip().lower()
             unclear = (not meaning) or intent in ("", "unknown", "unclear", "other")
-            if not unclear:
-                return
 
             low = text.lower()
             # Tham chiếu cá nhân/mơ hồ — chỉ Ngài giải đáp được → hỏi lại Ngài.
@@ -3919,7 +3937,19 @@ class RuntimeCoordinator(
                 self._clarify_user_pending = True
                 return
 
+            # Câu hỏi KIẾN THỨC THẾ GIỚI → 2 nhịp: lượt này nói "đợi em tra chút",
+            # thread nền đi hỏi gia sư Gemini rồi gửi đáp án sau. Chỉ khi có đường
+            # request_tutor_answer (Master_Switch bật) và qua throttle.
+            if self._looks_like_knowledge_question(low) and callable(getattr(self, "request_tutor_answer", None)):
+                if self._research_can_start():
+                    self._research_pending = True
+                    self._research_topic = text
+                    self._fire_research_followup(text, context="Câu hỏi kiến thức Ngài vừa hỏi")
+                    return
+
             # Mặc định: tự học qua Gemini (âm thầm, throttle). Eris vẫn trả lời tự nhiên.
+            if not unclear:
+                return
             self._fire_tutor_lookup(text, context="Khái niệm trong tin nhắn Eris chưa rõ")
         except Exception as exc:
             try:
@@ -3948,6 +3978,84 @@ class RuntimeCoordinator(
                 pass
 
         threading.Thread(target=_bg, name="ERIS-TutorOnUnclear", daemon=True).start()
+
+    # Nhãn câu hỏi kiến thức thế giới — bộ đánh dấu thiên về sự thật/khái niệm, cố ý
+    # KHÔNG bắt câu xã giao ("dạo này thế nào", "khỏe không") hay câu về chính Ngài.
+    _KNOWLEDGE_QUESTION_MARKERS = (
+        "là gì", "là ai", "là con gì", "là cái gì", "là chất gì", "là nước nào",
+        "là bệnh gì", "là môn gì", "là ngôn ngữ gì", "nghĩa là gì", "viết tắt của",
+        "tại sao", "vì sao", "do đâu", "nguyên nhân",
+        "ở đâu", "khi nào", "năm nào", "thế kỷ", "ai phát minh", "ai sáng",
+        "ai là người", "khác nhau", "khác gì", "so với", "có tác dụng gì",
+        "hoạt động như thế nào", "hoạt động ra sao", "định nghĩa",
+    )
+
+    def _looks_like_knowledge_question(self, low: str) -> bool:
+        """True nếu câu trông như hỏi kiến thức thế giới (đáng đi tra gia sư)."""
+
+        low = str(low or "")
+        return any(marker in low for marker in self._KNOWLEDGE_QUESTION_MARKERS)
+
+    def _research_can_start(self) -> bool:
+        """Debounce nhịp tra cứu: không tra khi đang có lượt tra chạy, và cách nhau tối thiểu."""
+
+        if getattr(self, "_research_in_flight", False):
+            return False
+        now = time.time()
+        last = float(getattr(self, "_last_research_ts", 0.0) or 0.0)
+        if now - last < 6.0:
+            return False
+        return True
+
+    def _fire_research_followup(self, topic: str, *, context: str = "") -> None:
+        """Nhịp 2: thread nền đi hỏi gia sư rồi gửi đáp án về (không chặn trả lời lượt này)."""
+
+        answerer = getattr(self, "request_tutor_answer", None)
+        if not callable(answerer):
+            return
+        self._last_research_ts = time.time()
+        self._research_in_flight = True
+
+        def _bg():
+            answer = None
+            try:
+                # Để nhịp 1 ("đợi em tra chút") kịp ra trước câu trả lời.
+                time.sleep(1.5)
+                answer = answerer(topic, context=context)
+            except Exception:
+                answer = None
+            finally:
+                try:
+                    self._deliver_research_followup(topic, answer)
+                except Exception:
+                    pass
+                self._research_in_flight = False
+
+        threading.Thread(target=_bg, name="ERIS-ResearchFollowup", daemon=True).start()
+
+    def _deliver_research_followup(self, topic: str, answer) -> None:
+        """Gửi câu trả lời nhịp 2 ra body bằng giọng Eris (qua đường decision chuẩn)."""
+
+        answer = str(answer or "").strip()
+        if answer:
+            lead = random.choice((
+                "Rồi, em tra xong rồi nha. ",
+                "Đây ạ, em vừa tra được: ",
+                "Em tra ra rồi nè. ",
+            ))
+            text = f"{lead}{answer}"
+        else:
+            text = random.choice((
+                "Em lục một vòng mà chưa ra cái gì chắc chắn về vụ này. Em chưa dám nói bừa đâu.",
+                "Hừm, vụ này em tra chưa tới nơi. Để em đào lại sau rồi nói Ngài nghe.",
+            ))
+        decision = Decision(
+            text=text,
+            animation="",
+            parse_mode="chat",
+            debug_trace="research_followup",
+        )
+        self._send_decision_to_body(decision, channel="chat")
 
     def stop(self):
         self.running = False
@@ -7368,7 +7476,7 @@ class RuntimeCoordinator(
                 appraisal_context=self._build_appraisal_context(frame.appraisal, frame=frame),
                 internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
                 memory_context=memory_context,
-                avoid_text=self.last_text,
+                avoid_text=self._autonomous_avoid_text(),
                 speech_intent=frame.action_plan.speech_intent,
                 vision_trace_marker=vision_marker,
             )
@@ -7449,7 +7557,7 @@ class RuntimeCoordinator(
             appraisal_context=self._build_appraisal_context(frame.appraisal, frame=frame),
             internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
             memory_context=memory_context,
-            avoid_text=self.last_text,
+            avoid_text=self._autonomous_avoid_text(),
             speech_intent=frame.action_plan.speech_intent,
             vision_trace_marker=vision_marker,
         )

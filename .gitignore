@@ -16,6 +16,8 @@ ni_drift_samples.jsonl
 .env
 .env.*
 !.env.example
+!env-examples/
+!env-examples/.env.*.example
 .vision.lock
 src/.vision.lock
 long_term_memory.json

@@ -1,5 +1,6 @@
 import ctypes
 import datetime
+import os
 import threading
 
 import psutil
@@ -14,6 +15,27 @@ except Exception:  # pragma: no cover - fallback nếu chạy file lẻ ngoài p
     ContentMetadataCollector = None  # type: ignore
 
 _com_state = threading.local()
+
+
+def _self_window_titles() -> set[str]:
+    """Tên cửa sổ của chính Eris cần loại khỏi telemetry.
+
+    Cửa sổ overlay của Eris là borderless + transparent + always-on-top phủ toàn
+    màn hình, nên GetForegroundWindow rất hay trả về chính nó. Nếu để nguyên,
+    Eris sẽ "thấy chính mình" và cứ bình luận về việc bị đè màn hình. Cho phép
+    override qua ERIS_SELF_WINDOW_TITLES (ngăn cách bằng dấu phẩy).
+    """
+    raw = os.environ.get("ERIS_SELF_WINDOW_TITLES", "").strip()
+    titles = {"eris"}
+    for part in raw.split(","):
+        cleaned = part.strip().lower()
+        if cleaned:
+            titles.add(cleaned)
+    return titles
+
+
+def _is_self_window(title: str) -> bool:
+    return title.strip().lower() in _self_window_titles()
 
 
 def _ensure_com_initialized() -> None:
@@ -68,7 +90,12 @@ class TelemetryMixin:
         except Exception:
             return {"url": "", "tabs": (), "available": False}
 
-    def _get_all_windows(self) -> list:
+    def _enum_visible_titled_windows(self) -> list:
+        """Trả danh sách title cửa sổ hiển thị theo thứ tự Z (trên xuống dưới).
+
+        EnumWindows trả theo Z-order nên phần tử đầu là cửa sổ nằm trên cùng.
+        Đã loại blacklist hệ thống và cửa sổ của chính Eris.
+        """
         titles = []
         wnd_enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
         blacklist = [
@@ -87,12 +114,41 @@ class TelemetryMixin:
                     buff = ctypes.create_unicode_buffer(length + 1)
                     ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
                     title = buff.value.strip()
-                    if title and title not in blacklist:
+                    if title and title not in blacklist and not _is_self_window(title):
                         titles.append(title)
             return True
 
         ctypes.windll.user32.EnumWindows(wnd_enum_proc(_callback), 0)
         return list(dict.fromkeys(titles))
+
+    def _get_all_windows(self) -> list:
+        return self._enum_visible_titled_windows()
+
+    def _resolve_active_window(self) -> str:
+        """Cửa sổ người dùng thực sự đang nhìn.
+
+        Nếu foreground là chính Eris (hoặc rỗng), bỏ qua nó và lấy cửa sổ thật
+        nằm ngay dưới theo Z-order. Nhờ vậy Eris không còn tự soi gương.
+        """
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            buff = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+            foreground = buff.value.strip()
+        except Exception:
+            return "Không xác định"
+
+        if foreground and not _is_self_window(foreground):
+            return foreground
+
+        # Foreground là chính Eris hoặc không có title → tìm cửa sổ thật dưới nó.
+        try:
+            for title in self._enum_visible_titled_windows():
+                return title
+        except Exception:
+            pass
+        return "Desktop"
 
     def _get_idle_seconds(self) -> float:
         class LASTINPUTINFO(ctypes.Structure):
@@ -107,11 +163,7 @@ class TelemetryMixin:
 
     def capture_raw_telemetry(self, *, mood_score: int, inferred_pos_x: float) -> dict:
         try:
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-            buff = ctypes.create_unicode_buffer(length + 1)
-            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
-            active_window = buff.value.strip() or "Desktop"
+            active_window = self._resolve_active_window()
         except Exception:
             active_window = "Không xác định"
 

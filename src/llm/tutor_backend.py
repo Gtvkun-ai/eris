@@ -257,6 +257,13 @@ class GeminiWebBackend:
                 box = self._page.locator(config.sel_input).first
                 box.click()
                 for ch in text:
+                    if ch == "\r":
+                        continue
+                    if ch == "\n":
+                        # Enter trong ô Gemini = GỬI luôn → câu hỏi nhiều dòng sẽ bị
+                        # cắt và submit dở. Shift+Enter để xuống dòng mà không gửi.
+                        self._page.keyboard.press("Shift+Enter")
+                        continue
                     box.type(ch, delay=random.randint(delay_min_ms, delay_max_ms))
                 time.sleep(random.uniform(0.3, 0.9))
                 try:

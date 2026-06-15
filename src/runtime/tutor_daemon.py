@@ -17,10 +17,10 @@ from typing import Any, Callable, Optional
 
 try:  # pragma: no cover
     from cortex.tutor.config import TutorConfig, TutorLogger, TutorRiskGuard, scrub_identity
-    from cortex.tutor.contracts import TutorEpisode, TutorQuestion
+    from cortex.tutor.contracts import KnowledgeGap, TutorEpisode, TutorQuestion, _MAX_QUESTION_LEN
 except Exception:  # pragma: no cover
     from src.cortex.tutor.config import TutorConfig, TutorLogger, TutorRiskGuard, scrub_identity  # type: ignore
-    from src.cortex.tutor.contracts import TutorEpisode, TutorQuestion  # type: ignore
+    from src.cortex.tutor.contracts import KnowledgeGap, TutorEpisode, TutorQuestion, _MAX_QUESTION_LEN  # type: ignore
 
 
 _QUESTION_PREVIEW_LEN = 120
@@ -42,7 +42,10 @@ class TutorStageEmitter:
             question_preview = ""
             question_full = ""
             if episode.question is not None:
-                question_full = scrub_identity(episode.question.text)[:280]
+                # Hiển thị TRỌN câu hỏi (đúng giới hạn hợp lệ của contract), không
+                # cắt ở 280 — câu formulator cho phép tới ~60 từ nên 280 hay làm
+                # panel hiện câu hỏi cụt giữa chừng, dễ tưởng là "gửi bị ngắt".
+                question_full = scrub_identity(episode.question.text)[:_MAX_QUESTION_LEN]
                 question_preview = question_full[:_QUESTION_PREVIEW_LEN]
             answer_preview = ""
             if episode.answer is not None and getattr(episode.answer, "text", ""):
@@ -250,6 +253,80 @@ class TutorDaemon:
         self.logger.log_episode(episode.to_dict())
         self.risk_guard.note_success(now)
         return episode
+
+    def ask_now(self, topic: str, *, context: str = "", now: Optional[float] = None) -> Optional[str]:
+        """Hỏi gia sư NGAY và TRẢ VỀ nội dung câu trả lời (cho nhịp 2 của chat).
+
+        Khác `run_once`: đây là lúc NGÀI hỏi thẳng một câu kiến thức ⇒ luôn đi
+        ask_gemini (bỏ qua router skip/ask_user) và trả lại text để chat nói ra.
+        Vẫn dưới `_run_lock` (không mở 2 browser cùng lúc), vẫn tôn trọng risk_guard
+        và Master_Switch. Mọi lỗi nuốt sạch → trả None (caller xử lý "tra không ra").
+        """
+
+        if not self.config.enabled:
+            return None
+        topic = str(topic or "").strip()
+        if not topic:
+            return None
+        # Bận (autonomous/episode khác đang mở browser) ⇒ không xếp hàng, trả None.
+        if not self._run_lock.acquire(blocking=False):
+            return None
+        try:
+            now = float(now if now is not None else time.time())
+            if self.risk_guard.is_paused(now):
+                return None
+
+            gap = KnowledgeGap(
+                description=topic,
+                context=str(context or ""),
+                source="epistemic_uncertainty",
+                stake_relevance=0.7,
+                prediction_error=0.7,
+                created_ts=now,
+                updated_ts=now,
+                force=True,
+                kind_hint="durable",
+            )
+            episode = TutorEpisode(gap=gap, started_ts=now)
+            self._emit(episode, "forming")
+
+            # Hình thành câu hỏi; fallback hỏi thẳng topic nếu formulator hụt.
+            try:
+                question = self.formulator.formulate(gap)
+            except Exception:
+                question = None
+            if question is None or not getattr(question, "is_valid", False):
+                question = TutorQuestion(text=topic[:_MAX_QUESTION_LEN], gap_id=gap.gap_id)
+            episode.question = question
+
+            try:
+                answer = self.backend.ask(question, on_stage=lambda s: self._emit(episode, s))
+            except Exception:
+                self._fail(episode, "network_error", now)
+                return None
+            episode.answer = answer
+            if answer is None or not getattr(answer, "ok", False) or not getattr(answer, "text", ""):
+                reason = getattr(answer, "fail_reason", None) or "empty_answer"
+                self._fail(episode, reason, now)
+                return None
+
+            # Học luôn (durable) để lần sau khỏi tra lại. Không thành công cũng không sao.
+            self._emit(episode, "digesting")
+            try:
+                episode.claims_committed = self.digest.digest(episode)
+            except Exception:
+                episode.claims_committed = 0
+
+            episode.stage = "done"
+            episode.ended_ts = float(time.time())
+            self._emit(episode, "done")
+            self.logger.log_episode(episode.to_dict())
+            self.risk_guard.note_success(now)
+            return str(getattr(answer, "text", "") or "").strip() or None
+        except Exception:
+            return None
+        finally:
+            self._run_lock.release()
 
     def _ask_user(self, episode: TutorEpisode, gap: Any, now: float) -> TutorEpisode:
         """Eris hỏi LẠI Ngài (nói ra) thay vì lén hỏi Gemini. Không mở browser, không tab."""

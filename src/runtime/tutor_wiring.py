@@ -47,6 +47,7 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
 
     generate_fn = _build_generate_fn(runtime_owner, logger)
     ingest_fn = _build_ingest_fn(runtime_owner, tutor_logger, logger)
+    distill_fn = _build_distill_fn(runtime_owner, logger)
     thought_sink = _build_thought_sink(runtime_owner, logger)
     drive_fn = _build_drive_fn(runtime_owner)
     already_known_fn = _build_already_known_fn(runtime_owner)
@@ -54,7 +55,7 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
     collector = GapCollector(config)
     formulator = QuestionFormulator(config, generate_fn=generate_fn)
     backend = GeminiWebBackend(config, logger=tutor_logger)
-    digest = ClaimDigest(config, ingest_fn=ingest_fn)
+    digest = ClaimDigest(config, ingest_fn=ingest_fn, distill_fn=distill_fn)
     share = LearningShareImpulse(
         config,
         formulator=formulator,
@@ -100,6 +101,17 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
             return False
 
     runtime_owner.request_tutor_lookup = request_tutor_lookup
+
+    # API "tra rồi TRẢ LỜI ngay": dùng cho nhịp 2 của chat khi Ngài hỏi câu kiến thức
+    # mà Eris chưa biết. Trả về nội dung câu trả lời (str) hoặc None nếu tra không ra.
+    def request_tutor_answer(topic, *, context=""):
+        try:
+            return daemon.ask_now(topic, context=context)
+        except Exception as exc:
+            _warn(logger, f"tutor request_answer lỗi ({exc!r})")
+            return None
+
+    runtime_owner.request_tutor_answer = request_tutor_answer
 
     # Nối KnowledgeProvider (đọc claim đã học) vào SituationModel nếu reachable.
     try:
@@ -220,6 +232,51 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
     return generate_fn
 
 
+def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str], list]]:
+    """Tách câu trả lời gia sư thành các fact ngắn, atomic qua local LLM.
+
+    None ⇒ ClaimDigest tự fallback tách câu bằng heuristic. Lỗi LLM không bao giờ
+    ném vào hot path — trả [] để digest dùng fallback.
+    """
+
+    try:
+        from llm.local_llama_engine import build_local_or_ollama_client
+    except Exception:
+        return None
+
+    import os
+    model = os.getenv("ERIS_TUTOR_LOCAL_MODEL", os.getenv("ERIS_OBSERVER_MODEL", "qwen3:1.7b"))
+
+    def distill_fn(answer_text: str) -> list:
+        text = str(answer_text or "").strip()
+        if not text:
+            return []
+        try:
+            client = build_local_or_ollama_client()
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Bạn tách kiến thức thành các sự thật ngắn, độc lập, không trùng. "
+                        "Trả JSON dạng {\"facts\": [\"...\", ...]} bằng tiếng Việt, mỗi fact một câu "
+                        "tự đứng được, tối đa 5 fact. Bỏ phần khách sáo/giải thích vòng vo."
+                    ),
+                },
+                {"role": "user", "content": f"Tách đoạn sau thành các sự thật atomic:\n{text[:1200]}"},
+            ]
+            res = client.chat_json(model, messages, temperature=0.2)
+            if getattr(res, "ok", False):
+                data = getattr(res, "parsed", {}) or {}
+                facts = data.get("facts") or []
+                if isinstance(facts, (list, tuple)):
+                    return [str(f).strip() for f in facts if str(f or "").strip()][:5]
+        except Exception as exc:
+            _warn(logger, f"tutor distill lỗi ({exc!r})")
+        return []
+
+    return distill_fn
+
+
 def _build_ingest_fn(runtime_owner: Any, tutor_logger: Any, logger: Any) -> Optional[Callable[..., int]]:
     """Đường commit claim vào trí nhớ ngữ nghĩa (có embedding) qua memory core/kernel.
 
@@ -238,27 +295,38 @@ def _build_ingest_fn(runtime_owner: Any, tutor_logger: Any, logger: Any) -> Opti
         _warn(logger, "tutor: không tìm thấy đường commit memory — claim sẽ không được lưu")
         return None
 
-    def ingest_fn(text: str, *, source: str = "tutor", gap_id: str = "", citations=()) -> int:
+    def ingest_fn(text: str, *, source: str = "tutor", gap_id: str = "", citations=(), confidence: float = 0.66) -> int:
         claim = str(text or "").strip()
         if not claim:
             return 0
+        try:
+            conf = float(confidence)
+        except (TypeError, ValueError):
+            conf = 0.66
+        conf = max(0.4, min(0.85, conf))
+        tags = ["tutor", "learned", "curiosity"]
+        if bool(citations):
+            tags.append("cited")
+        if conf < 0.58:
+            tags.append("low_confidence")
         request = {
             "target": "semantic_memory",
             "content": claim[:480],
-            "confidence": 0.66,
+            "confidence": conf,
             "evidence_ids": [gap_id or "tutor"],
             "storage_permission": True,
             "permission_required": False,
             "decay_policy": "normal",
             "reason": "curiosity_tutor",
             "source_module": "curiosity_tutor",
-            "tags": ["tutor", "learned", "curiosity"],
+            "tags": tags,
             "metadata": {
                 "storage_permission": True,
                 "trusted_internal_commit": True,
                 "source": str(source or "tutor"),
                 "gap_id": gap_id,
                 "citations": list(citations or ()),
+                "confidence": conf,
             },
         }
         try:

@@ -2668,17 +2668,32 @@ class LlmService:
                 "The force_speak request is only a trigger, not a topic; do not entertain, explain, or narrate UI."
             )
         allows_muse = "pattern_muse" in lowered_ti
-        avoid_line = re.sub(r"\s+", " ", (avoid_text or "").strip())[:180]
+        # avoid_text giờ có thể là nhiều dòng (lịch sử câu autonomous gần đây).
+        # Tách thành danh sách, khử trùng, cap mỗi dòng để LLM thấy mình vừa nói
+        # những gì và TIẾN TRIỂN sang ý mới thay vì hỏi lại câu cũ.
+        _avoid_candidates: list[str] = []
+        for _ln in str(avoid_text or "").splitlines():
+            _clean = re.sub(r"\s+", " ", _ln).strip()[:110]
+            if _clean and _clean not in _avoid_candidates:
+                _avoid_candidates.append(_clean)
+        _avoid_recent = _avoid_candidates[:6]
+        avoid_line = _avoid_recent[0] if _avoid_recent else ""
+        if len(_avoid_recent) > 1:
+            avoid_block = (
+                "Các câu vừa nói gần đây (ĐỪNG lặp lại ý/câu hỏi cũ, hãy tiến triển sang điều mới):\n"
+                + "\n".join(f"- {ln}" for ln in _avoid_recent)
+                + "\n"
+            )
+        elif avoid_line:
+            avoid_block = f"Câu gần nhất cần tránh lặp lại: {avoid_line}\n"
+        else:
+            avoid_block = ""
         user_msg = (
                 (f"Ghi chú nền: {ni_hint}\n" if ni_hint else "")
                 + (f"Gợi ý điều phối: {ti_hint}\n" if ti_hint else "")
                 + (f"Action plan bắt buộc: {action_plan_hint}\n" if action_plan_hint else "")
                 + f"Speech intent: {intent_guidance}\n"
-                + (
-                    f"Câu gần nhất cần tránh lặp lại: {avoid_line}\n"
-                    if avoid_line
-                    else ""
-                )
+                + avoid_block
                 + f"Speech evidence đã lọc: {telemetry_data}\n"
                 + "Writing principle: Nói như người đang ở gần, không như báo cáo nội tâm. "
                 + "Nếu evidence rõ, dùng chi tiết cụ thể; nếu evidence mỏng, nói một câu đời thường theo nhịp gần nhất. "

@@ -87,6 +87,24 @@ class LlamaCppClient:
         )
         self.chat_format = chat_format or (os.getenv("ERIS_LLAMACPP_CHAT_FORMAT", "").strip() or None)
 
+    @classmethod
+    def unload_all(cls) -> None:
+        """Xả MỌI instance text khỏi VRAM (đóng + xoá cache).
+
+        Dùng cho 'GPU residency queue' trên card 4GB: trước khi vision nạp lên
+        GPU, gọi hàm này để qwen3 nhường chỗ. qwen3 sẽ tự nạp lại (lazy) ở lần
+        inference text kế tiếp. An toàn vì luôn gọi dưới _LLAMA_GLOBAL_LOCK.
+        """
+        with _LLAMA_GLOBAL_LOCK:
+            for inst in list(cls._cache.values()):
+                try:
+                    close = getattr(inst, "close", None)
+                    if callable(close):
+                        close()
+                except Exception:
+                    pass
+            cls._cache.clear()
+
     def _llama(self) -> Any:
         key = (self.model_path, self.n_ctx, self.n_gpu_layers)
         with _LLAMA_GLOBAL_LOCK:

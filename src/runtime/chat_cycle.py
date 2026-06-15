@@ -738,6 +738,15 @@ class ChatCycleMixin:
                 "Thay vì đoán hay bịa, hãy hỏi lại Ngài MỘT câu ngắn, tự nhiên, đúng giọng "
                 "của em để làm rõ ý; đừng xin lỗi dài dòng."
             )
+        # Nhịp 1 của tra cứu: Eris chưa biết câu kiến thức Ngài vừa hỏi → báo "đợi em tra
+        # chút" rồi sẽ trả lời sau (nhịp 2 chạy ở thread nền). TUYỆT ĐỐI không đoán đáp án.
+        if getattr(self, "_research_pending", False):
+            planned_ti_context = (
+                f"{planned_ti_context}\n\nĐANG TRA CỨU: Em chưa chắc câu trả lời cho câu Ngài "
+                "vừa hỏi và KHÔNG được bịa. Hãy nói ngắn gọn, tự nhiên, đúng giọng em rằng em "
+                "chưa chắc nên đang đi tra cứu và sẽ trả lời ngay khi xong. Đừng đưa ra bất kỳ "
+                "đáp án phỏng đoán nào ở câu này."
+            )
         # The current user message is sent as the final user message below.
         # Passing it inside chat_history as well wastes one short-term slot
         # and can push out the previous turn during context shrink.

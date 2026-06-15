@@ -455,7 +455,6 @@ public partial class UdpListener : Node2D
 			|| (_privateMindPanel?.Visible ?? false)
 			|| (_anchorPanel?.Visible ?? false)
 			|| (_depthPanel?.Visible ?? false)
-			|| (_tutorPanel?.Visible ?? false)
 			|| _grabModeArmed
 			|| _isDraggingCharacter;
 

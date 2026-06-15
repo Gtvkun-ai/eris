@@ -55,5 +55,33 @@ class KnowledgeProvider:
             return enriched[:_MAX_PRED_LEN]
         return ""
 
+    def learned_claims(self, query: str, *, limit: int = 3) -> list:
+        """Trả các claim đã học (tag 'tutor') liên quan query, dạng text thô.
+
+        Dùng cho đường ĐƯA TRI THỨC VÀO PROMPT THẬT (không phải shadow prediction):
+        runtime gọi hàm này khi dựng memory_context để LLM thấy điều ERIS đã học.
+        """
+        if self._recall_fn is None:
+            return []
+        q = str(query or "").strip()
+        if not q:
+            return []
+        try:
+            hits = self._recall_fn(q) or []
+        except Exception:
+            return []
+        out: list = []
+        for item in hits:
+            tags = tuple(getattr(item, "tags", ()) or ())
+            if self._only_tutor and "tutor" not in tags:
+                continue
+            claim = str(getattr(item, "claim", "") or "").strip()
+            if not claim:
+                continue
+            out.append(claim)
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
+
 
 __all__ = ["KnowledgeProvider"]

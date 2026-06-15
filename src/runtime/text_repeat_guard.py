@@ -89,6 +89,22 @@ class TextRepeatGuardMixin:
                 break
         return tuple(texts[:limit])
 
+    def _autonomous_avoid_text(self, *, limit: int = 6) -> str:
+        """Gộp các câu autonomous gần đây thành chuỗi nhiều dòng cho prompt.
+
+        Trước đây directive chỉ nhận `avoid_text=self.last_text` (đúng MỘT câu),
+        nên ERIS dễ xoay vòng lại 3-4 câu hỏi cũ mà vẫn "hợp lệ". Đưa cả lịch sử
+        gần nhất vào để LLM biết mình vừa nói gì và tiến triển sang ý mới thay vì
+        hỏi lại. Mỗi dòng một câu; generate_directive sẽ tự render thành danh sách.
+        """
+        try:
+            recent = self._recent_spoken_texts(limit=limit)
+        except Exception:
+            recent = ()
+        if not recent:
+            return str(getattr(self, "last_text", "") or "")
+        return "\n".join(recent)
+
     def _recent_spoken_entries(self, *, limit: int = 20) -> tuple[tuple[float, str], ...]:
         entries: list[tuple[float, str]] = []
 

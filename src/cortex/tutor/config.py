@@ -149,12 +149,15 @@ class TutorConfig:
     def from_env(cls, logger: "Optional[TutorLogger]" = None) -> "TutorConfig":
         """Đọc ERIS_TUTOR_* từ môi trường.
 
-        Master_Switch (`ERIS_TUTOR_ENABLED`) vắng/không hợp lệ ⇒ TẮT + cảnh báo (Req 8.3).
+        Master_Switch (`ERIS_TUTOR_ENABLED`):
+        - VẮNG (không khai báo) ⇒ BẬT (auto chạy) — đây là hành vi mặc định.
+        - "off/false/0/no" ⇒ TẮT (kill switch vẫn còn cho ai muốn tắt hẳn).
+        - giá trị không hợp lệ ⇒ TẮT + cảnh báo (Req 8.3).
         """
 
         raw_enabled = os.environ.get("ERIS_TUTOR_ENABLED")
         if raw_enabled is None:
-            enabled = False
+            enabled = True
         elif raw_enabled.strip().lower() in {"1", "true", "yes", "on"}:
             enabled = True
         elif raw_enabled.strip().lower() in {"0", "false", "no", "off"}:
