@@ -14,7 +14,32 @@ ghi cảnh báo một lần — KHÔNG đoán API rồi ghi rác vào memory.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Optional
+
+
+_GENERIC_TELEMETRY_PREFIXES = (
+    "active window is ",
+    "focus kind is ",
+    "there has been no input for ",
+    "browser target is visible:",
+    "context classification:",
+)
+
+
+def _is_generic_telemetry_line(text: str) -> bool:
+    """True nếu một dòng chỉ là telemetry chung chung, KHÔNG phải nội dung màn hình thật."""
+
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return True
+    if lowered.startswith(_GENERIC_TELEMETRY_PREFIXES):
+        return True
+    if re.fullmatch(r"\d+ browser tabs are visible", lowered):
+        return True
+    if re.fullmatch(r"\d+ windows are open", lowered):
+        return True
+    return False
 
 
 def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
@@ -414,9 +439,12 @@ def _reach_internal_agenda(runtime_owner: Any) -> Optional[Any]:
 
 
 def _screen_context_from_snapshot(snapshot: Any) -> str:
-    """Đóng gói nội dung màn hình thật cho Gemini đoán ngữ cảnh.
+    """Đóng gói nội dung màn hình THẬT cho Gemini đoán ngữ cảnh.
 
-    Lấy app/cửa sổ/đường dẫn + một đoạn OCR (đã cắt). Lọc email để bớt rò định danh.
+    Chỉ trả về context khi có nội dung màn hình thực sự (OCR/đường dẫn/vision facts) —
+    KHÔNG dựng câu hỏi chỉ từ tên app/cửa sổ của một app chạy ngầm đang idle, và KHÔNG
+    nhồi telemetry chung chung (active window is.../focus kind is.../no input...) như thể
+    đó là chữ trên màn hình. Mục tiêu: ưu tiên vision thật thay vì hỏi suông vô nghĩa.
     LƯU Ý RIÊNG TƯ: nội dung màn hình (OCR) sẽ được gửi tới Gemini ở nhánh này.
     """
 
@@ -428,17 +456,36 @@ def _screen_context_from_snapshot(snapshot: Any) -> str:
         def scrub_identity(x):  # type: ignore
             return str(x or "")
 
-    parts = []
     app = str(getattr(snapshot, "active_app", "") or "").strip()
     title = str(getattr(snapshot, "active_window_title", "") or "").strip()
     url = str(getattr(snapshot, "url_or_path_hint", "") or "").strip()
-    ocr = str(getattr(snapshot, "ocr_text", "") or "").strip()
+    ocr_raw = str(getattr(snapshot, "ocr_text", "") or "").strip()
+
+    # Lọc telemetry chung chung khỏi phần OCR: chỉ giữ dòng là nội dung màn hình thật.
+    ocr_lines = [line.strip() for line in ocr_raw.splitlines() if line.strip()]
+    real_ocr_lines = [line for line in ocr_lines if not _is_generic_telemetry_line(line)]
+    ocr = "\n".join(real_ocr_lines).strip()
+
+    vision_facts = [
+        str(item).strip()
+        for item in (getattr(snapshot, "vision_facts", ()) or ())
+        if str(item).strip() and not _is_generic_telemetry_line(str(item))
+    ]
+
+    # Không có nội dung màn hình thật ⇒ không hỏi Gemini, để vision pipeline lo.
+    has_real_content = bool(ocr or url or vision_facts)
+    if not has_real_content:
+        return ""
+
+    parts = []
     if app:
         parts.append(f"app={app}")
     if title:
         parts.append(f"cửa sổ={title}")
     if url:
         parts.append(f"đường dẫn={url}")
+    if vision_facts:
+        parts.append("vision: " + " | ".join(vision_facts[:3])[:300])
     if ocr:
         parts.append(f"chữ trên màn hình: {ocr[:300]}")
     return scrub_identity(" | ".join(parts))[:500]

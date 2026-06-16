@@ -957,6 +957,14 @@ class ChatCycleMixin:
         self._log_decision_stage("chat", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text, vision_grounded=bool(screen_image_data_uri) or bool(getattr(self, "vision_facts", None)))
         self._log_decision_stage("chat", "after_ti", decision)
+        decision = self._maybe_escalate_chat_decision(
+            decision,
+            user_text=user_text,
+            snapshot=snapshot,
+            chat_generation_kwargs=chat_generation_kwargs,
+            ti_report=ti_report,
+        )
+        self._log_decision_stage("chat", "after_escalation", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot)
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
         self._commit_chat_decision(decision, fe_plan, frame=frame)

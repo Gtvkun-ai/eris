@@ -194,14 +194,22 @@ def classify_chat_act(raw_user_text: str) -> ChatAct:
 class LlmService:
     _RETRYABLE_HTTP_STATUS = {500, 502, 503, 504}
 
-    def __init__(self, client, style_client=None, vision_client=None, fallback_client=None, logger=None):
+    def __init__(self, client, style_client=None, vision_client=None, fallback_client=None, escalation_client=None, logger=None):
         self.client = client
         self.style_client = style_client
         self.vision_client = vision_client
         # Dedicated format-recovery client (e.g. Groq llama). Preferred over
         # style_client when the main provider breaks the JSON/no-CoT contract.
         self.fallback_client = fallback_client
+        # Dedicated "strong" client for self-critique escalation (bái sư). When the
+        # cheap draft scores low / cần tool, ta chạy lại lượt trên client này. Để
+        # None thì tự dùng fallback_client (đã là model mạnh hơn trong cấu hình hiện tại).
+        self.escalation_client = escalation_client
         self.logger = logger or logging.getLogger(__name__)
+
+    def _resolve_escalation_client(self):
+        """Client mạnh để bái sư. Ưu tiên escalation_client riêng, rồi fallback, rồi style."""
+        return self.escalation_client or self.fallback_client or self.style_client
 
     def _http_status_code(self, exc: Exception) -> int | None:
         if not isinstance(exc, requests.HTTPError):
@@ -1732,6 +1740,7 @@ class LlmService:
         require_text: bool = True,
         allow_local_fallback: bool = False,
         force_local_fallback: bool = False,
+        escalate: bool = False,
     ) -> str:
         if no_fallback_mode_enabled():
             allow_local_fallback = False
@@ -1769,9 +1778,15 @@ class LlmService:
 
         initial_client = self.style_client if force_local_fallback and self.style_client is not None else self.client
         initial_stage = "local_fallback" if force_local_fallback and self.style_client is not None else "initial"
+        # Bái sư: ép dùng escalation client (model mạnh) cho cả lượt, bỏ qua size-routing
+        # vì client mạnh thường budget lớn.
+        escalation_client = self._resolve_escalation_client() if escalate else None
+        if escalation_client is not None:
+            initial_client = escalation_client
+            initial_stage = "escalation"
         # Route lượt quá khổ (vd Groq free 6000 TPM) sang fallback budget lớn để
-        # khỏi bị hard-cap cắt mất ngữ cảnh. Bỏ qua khi đã ép local fallback.
-        if not force_local_fallback:
+        # khỏi bị hard-cap cắt mất ngữ cảnh. Bỏ qua khi đã ép local fallback / escalate.
+        if not force_local_fallback and escalation_client is None:
             initial_client, _routed_stage = self._route_client_for_size(
                 messages, primary=initial_client, channel=channel
             )
@@ -2615,6 +2630,7 @@ class LlmService:
         vision_trace_marker: str = "",
         request_timeout: float | None = None,
         require_text: bool = True,
+        use_escalation_client: bool = False,
     ):
         if self._is_session_ritual_call(speech_intent=speech_intent, telemetry_data=telemetry_data, ti_context=ti_context):
             return self._generate_session_ritual_greeting(
@@ -2738,6 +2754,7 @@ class LlmService:
             channel="directive",
             request_timeout=request_timeout,
             require_text=require_text,
+            escalate=use_escalation_client,
         )
 
     def generate_micro_presence_line(
@@ -3233,6 +3250,7 @@ class LlmService:
         format_retry_context: str = "",
         last_failure: str = "",
         force_local_fallback: bool = False,
+        use_escalation_client: bool = False,
     ):
         # Phase 2/3 DDS: nếu ngữ cảnh nặng (dễ gây 413), rút gọn các khối lớn song
         # song bằng worker nhỏ TRƯỚC khi ghép prompt synthesis. Turn nhỏ không bị ảnh hưởng.
@@ -3322,6 +3340,7 @@ class LlmService:
             require_text=require_text,
             allow_local_fallback=allow_local_fallback,
             force_local_fallback=force_local_fallback,
+            escalate=use_escalation_client,
         )
         guarded = self._guard_chat_output(raw, raw_user_text=effective_user_text)
 

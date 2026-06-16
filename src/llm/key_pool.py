@@ -137,6 +137,9 @@ class ApiKeyPool:
 
 
 _GROQ_PROVIDERS = {"openai", "openai_compatible", "compatible", "remote", "groq"}
+# QuickRouter (OpenAI-compatible aggregator) có endpoint + họ key RIÊNG. Không dùng
+# chung pool với Groq vì key Groq không chạy được trên QuickRouter và ngược lại.
+_QUICKROUTER_PROVIDERS = {"quickrouter", "quick_router"}
 
 # Mỗi "kind" (gemini / groq) có pool riêng để chạy SONG SONG hai provider:
 # việc khó/cần JSON chuẩn đi Groq, việc nhẹ/cần nhanh đi Gemma. Tách pool để
@@ -147,6 +150,8 @@ _pools_lock = threading.Lock()
 
 def _normalize_kind(kind: str) -> str:
     k = str(kind or "").strip().lower()
+    if k in _QUICKROUTER_PROVIDERS:
+        return "quickrouter"
     return "groq" if k in _GROQ_PROVIDERS else "gemini"
 
 
@@ -216,6 +221,28 @@ def _collect_groq_keys() -> list[str]:
     return ordered
 
 
+def _collect_quickrouter_keys() -> list[str]:
+    """Gom key QuickRouter: ERIS_QUICKROUTER_API_KEY + ERIS_QUICKROUTER_FALLBACK_API_KEYS."""
+    ordered: list[str] = []
+    try:
+        from eris_secrets import _load_secrets, get_secret
+
+        payload = _load_secrets() or {}
+        api_keys = payload.get("api_keys", {}) if isinstance(payload, dict) else {}
+
+        primary = get_secret("ERIS_QUICKROUTER_API_KEY")
+        if not _is_placeholder(primary):
+            ordered.append(primary)
+        if isinstance(api_keys, dict):
+            fallbacks = api_keys.get("ERIS_QUICKROUTER_FALLBACK_API_KEYS")
+            if isinstance(fallbacks, list):
+                ordered.extend(str(k) for k in fallbacks if not _is_placeholder(k))
+    except Exception:
+        pass
+    ordered.extend(_split_keys_env("ERIS_QUICKROUTER_FALLBACK_API_KEYS"))
+    return ordered
+
+
 def get_key_pool(kind: str = "gemini") -> ApiKeyPool:
     """Trả pool singleton theo provider-kind ('gemini' hoặc 'groq').
 
@@ -228,7 +255,12 @@ def get_key_pool(kind: str = "gemini") -> ApiKeyPool:
         return pool
     with _pools_lock:
         if k not in _pools:
-            keys = _collect_groq_keys() if k == "groq" else _collect_gemini_keys()
+            if k == "groq":
+                keys = _collect_groq_keys()
+            elif k == "quickrouter":
+                keys = _collect_quickrouter_keys()
+            else:
+                keys = _collect_gemini_keys()
             _pools[k] = ApiKeyPool(keys)
         return _pools[k]
 

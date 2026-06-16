@@ -1732,7 +1732,7 @@ public partial class UdpListener : Node2D
 			new[] { "xa lắm", "hơi xa", "vừa đủ", "gần", "rất gần" }),
 		("~", "Nhịp điệu", "emotional_stability", "", "",
 			new[] { "dao động", "hơi bất ổn", "ổn", "khá vững", "rất vững" }),
-		("✦", "Muốn nói",  "silence_pressure", "social_pressure", "",
+		("✦", "Muốn nói",  "speech_pressure", "social_pressure", "",
 			new[] { "im lặng", "ít muốn nói", "muốn nói", "đang hứng", "rất hứng" }),
 	};
 
@@ -5385,8 +5385,8 @@ public partial class UdpListener : Node2D
 			// Bar 1: Nhịp điệu (stability, invert mood_inertia)
 			float rhythm = GetVal("emotional_stability") * 0.6f + (1f - GetVal("mood_inertia")) * 0.4f;
 			UpdateCasualBar(1, Mathf.Clamp(rhythm, 0f, 1f), CasualBarDefs[1].Levels);
-			// Bar 2: Muốn nói
-			float speech = Mathf.Clamp((GetVal("silence_pressure") + GetVal("social_pressure")) * 0.5f, 0f, 1f);
+			// Bar 2: Muốn nói (payload gửi silence_pressure dưới key "speech_pressure")
+			float speech = Mathf.Clamp((GetVal("speech_pressure") + GetVal("social_pressure")) * 0.5f, 0f, 1f);
 			UpdateCasualBar(2, speech, CasualBarDefs[2].Levels);
 		}
 

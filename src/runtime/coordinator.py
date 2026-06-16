@@ -69,7 +69,12 @@ from cortex.session_ritual import SessionRitualEngine
 from cortex.speech_core import SpeechCoreEngine
 from cortex.thought_stream import ThoughtStream
 from cortex.user_context_stream import RollingUserContext, UserContextStream
-from cortex.vision_semantic_compressor import VisionCompressorConfig, VisionSemanticCompressor
+from cortex.vision_semantic_compressor import (
+    RemoteCaptionClient,
+    RemoteStructureClient,
+    VisionCompressorConfig,
+    VisionSemanticCompressor,
+)
 from cortex.working_memory import WorkingMemoryEngine
 from domain import Decision
 from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
@@ -105,6 +110,7 @@ from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_chann
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
 from runtime.shadow_pipeline import ShadowPipelineMixin
+from runtime.self_critique import SelfCritiqueEscalationMixin
 from runtime.state_commit_service import StateCommitServiceMixin
 from runtime.subconscious_loop import SubconsciousLoop as RuntimeSubconsciousLoop
 from runtime.text_repeat_guard import TextRepeatGuardMixin
@@ -161,6 +167,34 @@ SUBCONSCIOUS_AUDIT_WORKERS: tuple[str, ...] = ("meta_cognitive_audit",)
 
 
 
+_GENERIC_TELEMETRY_PREFIXES = (
+    "active window is ",
+    "focus kind is ",
+    "there has been no input for ",
+    "browser target is visible:",
+    "context classification:",
+)
+
+
+def _is_generic_telemetry_line(text: str) -> bool:
+    """True nếu một dòng chỉ là telemetry chung chung, KHÔNG phải nội dung màn hình thật.
+
+    Dùng để chặn việc nhồi telemetry (active window is.../focus kind is.../no input...)
+    vào ocr_text rồi gửi cho Gemini như thể đó là chữ trên màn hình.
+    """
+
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return True
+    if lowered.startswith(_GENERIC_TELEMETRY_PREFIXES):
+        return True
+    if re.fullmatch(r"\d+ browser tabs are visible", lowered):
+        return True
+    if re.fullmatch(r"\d+ windows are open", lowered):
+        return True
+    return False
+
+
 def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
     """True nếu decision chỉ là fallback kỹ thuật, không phải answer nội dung.
 
@@ -196,6 +230,7 @@ class RuntimeCoordinator(
     ForceSpeakSurfacePolicyMixin,
     PostGenerationFiltersMixin,
     ShadowPipelineMixin,
+    SelfCritiqueEscalationMixin,
 ):
     #Đây là trung tâm điều phối.
     # Giãn cách tối thiểu giữa 2 lần chụp màn hình cho chat. Trong khoảng này, chat
@@ -421,6 +456,8 @@ class RuntimeCoordinator(
         )
         self.vision_semantic_compressor = VisionSemanticCompressor(
             VisionCompressorConfig(),
+            structure_client=self._build_vision_structure_client(llm_service),
+            caption_client=self._build_vision_caption_client(llm_service),
             logger=self.logger,
         )
         self.internal_agenda = InternalAgendaStack(
@@ -1287,8 +1324,11 @@ class RuntimeCoordinator(
         evidence = [str(item) for item in tuple(getattr(snapshot, "evidence", ()) or ())[:8]]
         facts = [str(item) for item in tuple(vision_facts or getattr(snapshot, "vision_facts", ()) or ())[:6]]
 
-        # OCR text ở phase này dùng vision_facts/evidence ngắn. Khi có OCR thật thì thay bằng OCR diff.
-        visible_text = "\n".join(facts or evidence[:3])
+        # OCR text ở phase này CHỈ dùng vision_facts thật. KHÔNG nhồi telemetry chung chung
+        # (active window is.../focus kind is.../no input...) vào ocr_text — nếu không tutor sẽ
+        # hỏi Gemini những câu vô nghĩa về app chạy ngầm (vd Radmin VPN) thay vì chờ vision thật.
+        real_evidence = [item for item in evidence[:3] if not _is_generic_telemetry_line(item)]
+        visible_text = "\n".join(facts or real_evidence)
         if user_text and channel == "chat":
             recent_events = [*recent_events, "direct_user_chat"]
         if facts:
@@ -5287,6 +5327,49 @@ class RuntimeCoordinator(
         max_items = max(1, min(max_items, 6))
         max_len = max(40, min(max_len, 240))
         return enabled, interval, max_items, max_len
+
+    def _build_vision_caption_client(self, llm_service):
+        """Tầng caption (ảnh → mô tả) chạy REMOTE khi llm_service có vision_client.
+
+        vision_client được dựng ở process_manager.build_vision_client() khi bật
+        ERIS_VISION_API_ENABLED (vd shopaikey grok-3-image). Có nó ⇒ thay moondream
+        local bằng API; không ⇒ trả None ⇒ compressor caption local như cũ.
+        """
+        remote = getattr(llm_service, "vision_client", None)
+        if remote is None or not callable(getattr(remote, "create_chat_completion", None)):
+            return None
+        self.logger.info(
+            "[vision caption] caption stage chạy REMOTE (%s); bỏ moondream local.",
+            getattr(remote, "model_name", "remote"),
+        )
+        return RemoteCaptionClient(remote, logger=self.logger)
+
+    def _build_vision_structure_client(self, llm_service):
+        """Tầng cấu trúc-hoá vision (caption → JSON) chạy REMOTE.
+
+        Ưu tiên fallback_client (glm-4.5-flash trên shopaikey) — ổn định, cùng server
+        với grok, tránh gemma 500. ERIS_VISION_STRUCTURE_REMOTE:
+          0/off       → tắt (structuring local nếu có)
+          gemma/style → dùng style_client (gemma) như cũ
+          1/auto/glm  → dùng fallback_client (glm) [mặc định]
+        """
+        mode = os.environ.get("ERIS_VISION_STRUCTURE_REMOTE", "auto").strip().lower()
+        if mode in {"0", "false", "no", "off"}:
+            return None
+        if mode in {"gemma", "style"}:
+            remote = getattr(llm_service, "style_client", None)
+        else:
+            remote = getattr(llm_service, "fallback_client", None) or getattr(llm_service, "style_client", None)
+        if remote is None or not callable(getattr(remote, "create_chat_completion", None)):
+            self.logger.warning(
+                "[vision structure] bật nhưng không có remote client (fallback/style) — structuring rơi về local."
+            )
+            return None
+        self.logger.info(
+            "[vision structure] tầng-2 cấu trúc-hoá REMOTE qua %s (caption→JSON).",
+            getattr(remote, "model_name", "remote"),
+        )
+        return RemoteStructureClient(remote, logger=self.logger)
 
     def _vision_queue_timeout_seconds(self, channel: str) -> float:
         env_name = "ERIS_VISION_QUEUE_TIMEOUT_CHAT_SEC" if channel == "chat" else "ERIS_VISION_QUEUE_TIMEOUT_SEC"

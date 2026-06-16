@@ -406,6 +406,25 @@ class ForceSpeakCycleMixin:
         self._log_decision_stage("force_speak", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report)
         self._log_decision_stage("force_speak", "after_ti", decision)
+        decision = self._maybe_escalate_directive_decision(
+            decision,
+            channel="force_speak",
+            snapshot=snapshot,
+            ti_report=ti_report,
+            directive_kwargs={
+                "telemetry_data": telemetry_data,
+                "ni_context": "",
+                "ti_context": forced_ti_context,
+                "fe_context": fe_plan.style_context,
+                "appraisal_context": self._build_appraisal_context(frame.appraisal),
+                "internal_state_context": self._build_internal_state_context(sensed_internal_state, frame.self_state),
+                "memory_context": memory_context,
+                "avoid_text": self.last_text,
+                "speech_intent": frame.action_plan.speech_intent,
+                "vision_trace_marker": vision_marker,
+            },
+            vision_grounded=bool(getattr(self, "vision_facts", None)),
+        )
         decision = self._execute_system_action(decision, snapshot=snapshot)
         decision = self._apply_post_generation_filters(
             decision,

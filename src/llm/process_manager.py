@@ -1,7 +1,7 @@
 import os
 
 from eris_secrets import apply_secrets_to_environ, get_provider_profile, get_secret
-from .client import GeminiClient, OpenAICompatibleClient
+from .client import GeminiClient, OpenAICompatibleClient, ChainedFallbackClient
 from .key_pool import get_key_pool
 
 
@@ -18,14 +18,24 @@ class RemoteModelProcessManager:
         provider = os.environ.get("ERIS_REMOTE_PROVIDER", "gemini").strip().lower()
         remote_profile = get_provider_profile(provider, slot="remote_main")
         if provider in {"openai", "openai_compatible", "compatible", "remote", "groq"}:
-            # Khi chạy Groq/OpenAI-compatible: ưu tiên key Groq + pool Groq riêng
-            # (tách khỏi pool Gemini) để không gửi nhầm key Gemini sang Groq.
-            pool = get_key_pool("groq")
+            # Pool theo ĐÚNG họ key của endpoint: QuickRouter có pool riêng (xoay
+            # nhiều ERIS_QUICKROUTER_*), còn lại dùng pool Groq. Tránh gửi nhầm key
+            # Groq sang QuickRouter (và ngược lại) khi client xoay key lúc 429.
+            _prof_base = (
+                str(remote_profile.get("base_url") or "").strip()
+                or os.environ.get("ERIS_REMOTE_BASE_URL", "").strip()
+            )
+            pool_kind = "quickrouter" if "quickrouter" in _prof_base.lower() else "groq"
+            pool = get_key_pool(pool_kind)
             pool_key = pool.current_key() if pool is not None else ""
             api_key = (
                 str(remote_profile.get("api_key") or "").strip()
                 or pool_key
-                or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+                or get_secret(
+                    "ERIS_QUICKROUTER_API_KEY" if pool_kind == "quickrouter" else "ERIS_GROQ_API_KEY",
+                    "ERIS_REMOTE_API_KEY",
+                    "OPENAI_API_KEY",
+                )
             )
         else:
             api_key = (
@@ -73,7 +83,7 @@ class RemoteModelProcessManager:
                 base_url=base_url,
                 api_key=api_key,
                 model_name=model_name,
-                key_pool=get_key_pool("groq"),
+                key_pool=pool,
             )
         except ValueError as exc:
             raise RuntimeError(f"Loi API key remote: {exc}") from exc
@@ -170,65 +180,172 @@ class RemoteModelProcessManager:
         provider = os.environ.get(
             "ERIS_CHAT_FALLBACK_PROVIDER", "openai_compatible"
         ).strip().lower()
-        slot = os.environ.get("ERIS_CHAT_FALLBACK_SLOT", "remote_main").strip() or "remote_main"
-        profile = get_provider_profile(provider, slot=slot)
 
-        # Ưu tiên key RIÊNG cho fallback (vd aggregator OpenAI-compatible: glm-4.5-flash)
-        # để không ép xài key Groq. Nếu KHÔNG khai key riêng thì giữ NGUYÊN hành vi cũ:
-        # xoay groq pool với llama-3.3-70b (không regression khi chưa điền aggregator).
-        dedicated_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY")
-        aggregator_base = (
+        # Opt-in: quay lại MỘT aggregator đơn (vd shopaikey gpt-4o-mini) khi cần,
+        # bằng ERIS_CHAT_FALLBACK_FORCE_AGGREGATOR=1. Mặc định TẮT → đi chuỗi free.
+        if self._env_flag("ERIS_CHAT_FALLBACK_FORCE_AGGREGATOR", "0"):
+            dedicated_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY")
+            base_url = (
+                os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
+                or get_secret("ERIS_AGGREGATOR_BASE_URL")
+            )
+            model_name = os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip() or "gpt-4o-mini"
+            if dedicated_key and base_url:
+                try:
+                    self.logger.info("Chat fallback (aggregator) tai %s model %s", base_url, model_name)
+                    return OpenAICompatibleClient(
+                        base_url=base_url, api_key=dedicated_key, model_name=model_name, key_pool=None
+                    )
+                except ValueError as exc:
+                    self.logger.warning("Khong dung duoc aggregator fallback: %s", exc)
+                    return None
+
+        # ── Chuỗi dự phòng cho chat: QuickRouter (pool nhiều key) → shopaikey (aggregator).
+        # Groq giữ vai DDS worker (map-reduce context nặng), không chen vào mạch chat.
+        # Gemini hoàn toàn rời khỏi chat path → dùng cho speech/style riêng.
+        chain = []
+
+        # Tầng 1: QuickRouter pool phụ (key rotates) — cùng endpoint main nhưng pool riêng
+        qr_pool = get_key_pool("quickrouter")
+        qr_key = qr_pool.current_key() if qr_pool is not None else ""
+        if qr_key:
+            qr_base = os.environ.get("ERIS_FALLBACK_QR_BASE_URL", "").strip() or "https://api.quickrouter.ai/v1"
+            qr_model = os.environ.get("ERIS_FALLBACK_QR_MODEL", "").strip() or "deepseek-chat"
+            try:
+                chain.append(
+                    OpenAICompatibleClient(base_url=qr_base, api_key=qr_key, model_name=qr_model, key_pool=qr_pool)
+                )
+            except ValueError as exc:
+                self.logger.warning("Bo qua tang QuickRouter fallback: %s", exc)
+
+        # Tầng 2: shopaikey aggregator (1 key cứng, model linh hoạt)
+        agg_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY")
+        agg_base = (
             os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
             or get_secret("ERIS_AGGREGATOR_BASE_URL")
         )
-        # Chỉ đi đường aggregator khi CÓ ĐỦ key + base_url. Thiếu base_url → quay về
-        # Groq llama (tránh gửi tên model lạ như glm lên endpoint Groq gây lỗi).
-        if dedicated_key and aggregator_base:
-            api_key = dedicated_key
-            pool = None  # aggregator dùng 1 key riêng, không xoay groq pool
-            base_url = aggregator_base
-            model_name = (
-                os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip()
-                or "glm-4.5-flash"
-            )
-        else:
-            pool = get_key_pool("groq")
-            pool_key = pool.current_key() if pool is not None else ""
-            api_key = (
-                str(profile.get("api_key") or "").strip()
-                or pool_key
-                or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
-            )
-            if not api_key:
-                self.logger.info("Chat format fallback (Groq) tat: khong tim thay ERIS_GROQ_API_KEY.")
-                return None
-            # Khi chưa có key aggregator, BỎ QUA override model/base_url để tránh gửi
-            # tên model lạ (glm) lên endpoint Groq → giữ đúng llama-3.3-70b trên Groq.
-            base_url = str(profile.get("base_url") or "").strip() or "https://api.groq.com/openai/v1"
-            model_name = (
-                str(profile.get("model") or "").strip()
-                or str(profile.get("model_name") or "").strip()
-                or "llama-3.3-70b-versatile"
-            )
+        if agg_key and agg_base:
+            agg_model = os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip() or "gpt-4o-mini"
+            try:
+                chain.append(
+                    OpenAICompatibleClient(base_url=agg_base, api_key=agg_key, model_name=agg_model, key_pool=None)
+                )
+            except ValueError as exc:
+                self.logger.warning("Bo qua tang shopaikey fallback: %s", exc)
 
-        if not api_key:
-            self.logger.info("Chat format fallback tat: khong tim thay key.")
+        if not chain:
+            self.logger.info("Chat fallback tat: khong tim thay key Groq/Gemini.")
+            return None
+        if len(chain) == 1:
+            self.logger.info("Chat fallback 1 tang: %s", getattr(chain[0], "model_name", "?"))
+            return chain[0]
+        self.logger.info(
+            "Chat fallback chain: %s",
+            " -> ".join(str(getattr(c, "model_name", "?")) for c in chain),
+        )
+        return ChainedFallbackClient(chain, logger=self.logger)
+
+    def build_escalation_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
+        """Build a DEDICATED "strong" client cho self-critique escalation (bái sư).
+
+        Khi câu nháp do model rẻ sinh ra bị chấm điểm thấp / cần tool, runtime chạy
+        lại cả lượt trên client này. Chỉ build khi có cấu hình RIÊNG
+        (ERIS_ESCALATION_PROVIDER / ERIS_ESCALATION_MODEL). Nếu không khai, trả None
+        và LlmService tự dùng format-fallback client (đã là model mạnh hơn). Tắt hẳn
+        bằng ERIS_ESCALATION_ENABLED=0.
+        """
+        apply_secrets_to_environ()
+        if not self._env_flag("ERIS_ESCALATION_ENABLED", "1"):
             return None
 
-        self.logger.info("Chat format fallback san sang tai %s voi model %s", base_url, model_name)
+        provider = os.environ.get("ERIS_ESCALATION_PROVIDER", "").strip().lower()
+        model_name = os.environ.get("ERIS_ESCALATION_MODEL", "").strip()
+        base_url = os.environ.get("ERIS_ESCALATION_BASE_URL", "").strip()
+        # Không khai cấu hình riêng -> để None, LlmService reuse fallback client.
+        if not provider and not model_name:
+            return None
+
+        provider = provider or "openai_compatible"
+        api_key = get_secret(
+            "ERIS_ESCALATION_API_KEY",
+            "ERIS_CHAT_FALLBACK_API_KEY",
+            "ERIS_AGGREGATOR_API_KEY",
+        )
+
+        if provider == "gemini":
+            api_key = api_key or get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
+            base_url = base_url or "https://generativelanguage.googleapis.com/v1beta"
+            model_name = model_name or "gemini-2.5-flash"
+            if not api_key:
+                self.logger.info("Escalation client tat: khong tim thay key Gemini.")
+                return None
+            self.logger.info("Escalation client (Gemini) san sang tai %s voi model %s", base_url, model_name)
+            try:
+                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=get_key_pool("gemini"))
+            except ValueError as exc:
+                self.logger.warning("Khong dung duoc escalation client: %s", exc)
+                return None
+
+        api_key = api_key or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+        base_url = base_url or get_secret("ERIS_AGGREGATOR_BASE_URL") or "https://api.groq.com/openai/v1"
+        model_name = model_name or "gpt-4o-mini"
+        if not api_key:
+            self.logger.info("Escalation client tat: khong tim thay key.")
+            return None
+        self.logger.info("Escalation client san sang tai %s voi model %s", base_url, model_name)
         try:
             return OpenAICompatibleClient(
                 base_url=base_url,
                 api_key=api_key,
                 model_name=model_name,
-                key_pool=pool,
+                key_pool=None,
             )
         except ValueError as exc:
-            self.logger.warning("Khong dung duoc chat format fallback: %s", exc)
+            self.logger.warning("Khong dung duoc escalation client: %s", exc)
             return None
 
     def build_vision_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
-        return None
+        """Build client vision REMOTE (OpenAI-compatible, vd shopaikey grok-3-image)
+        thay cho captioner moondream local. Bat bang ERIS_VISION_API_ENABLED=1.
+
+        Key/base_url mac dinh dung aggregator (shopaikey) da co san trong secrets:
+        ERIS_AGGREGATOR_API_KEY + ERIS_AGGREGATOR_BASE_URL. Co the override rieng
+        bang ERIS_VISION_API_KEY / ERIS_VISION_API_BASE_URL / ERIS_VISION_API_MODEL.
+        Tra None khi tat hoac thieu key (caller degrade ve vision local/caption cu).
+        """
+        apply_secrets_to_environ()
+        if not self._env_flag("ERIS_VISION_API_ENABLED", "0"):
+            return None
+
+        api_key = get_secret(
+            "ERIS_VISION_API_KEY",
+            "ERIS_AGGREGATOR_API_KEY",
+            "ERIS_CHAT_FALLBACK_API_KEY",
+            "ERIS_REMOTE_API_KEY",
+        )
+        base_url = (
+            os.environ.get("ERIS_VISION_API_BASE_URL", "").strip()
+            or get_secret("ERIS_AGGREGATOR_BASE_URL")
+            or "https://api.shopaikey.com/v1"
+        )
+        model_name = os.environ.get("ERIS_VISION_API_MODEL", "").strip() or "grok-3-image"
+        if not api_key:
+            self.logger.info(
+                "Vision API tat: khong tim thay key (ERIS_VISION_API_KEY/ERIS_AGGREGATOR_API_KEY)."
+            )
+            return None
+
+        self.logger.info("Dung vision API tai %s voi model %s", base_url, model_name)
+        try:
+            return OpenAICompatibleClient(
+                base_url=base_url,
+                api_key=api_key,
+                model_name=model_name,
+                key_pool=None,
+            )
+        except ValueError as exc:
+            self.logger.warning("Khong dung duoc vision API: %s", exc)
+            return None
 
     def stop(self):
         return None

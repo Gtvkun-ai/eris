@@ -262,6 +262,49 @@ class OpenAICompatibleClient:
         raise RuntimeError("OpenAICompatibleClient khong tao duoc request hop le.")
 
 
+class ChainedFallbackClient:
+    """Gộp nhiều client dự phòng thành MỘT, thử lần lượt cho tới khi có cái chạy.
+
+    Dùng làm ``fallback_client`` của LlmService: khi main (QuickRouter) chết, service
+    gọi client này MỘT lần; bên trong nó thử Groq (pool 8 key) trước, hỏng thì sang
+    Gemini/gemma (pool 7 key). Mỗi sub-client tự xoay key trong pool của nó khi 429,
+    nên đây là tầng "đổi NHÀ CUNG CẤP" sau khi đã vắt cạn pool của nhà trước.
+
+    Giao diện trùng OpenAICompatibleClient/GeminiClient (chỉ cần create_chat_completion)
+    nên không phải đụng vào logic failover của service.
+    """
+
+    def __init__(self, clients, logger=None):
+        self._clients = [c for c in (clients or []) if c is not None]
+        if not self._clients:
+            raise ValueError("ChainedFallbackClient can it nhat mot client.")
+        self._logger = logger or logging.getLogger("LLM")
+        first = self._clients[0]
+        # Mượn thuộc tính của client đầu để log/route (cap token) hoạt động như cũ.
+        self.base_url = getattr(first, "base_url", "")
+        self.model_name = getattr(first, "model_name", "")
+        self.key_pool = getattr(first, "key_pool", None)
+
+    def create_chat_completion(self, **kwargs):
+        last_error: Exception | None = None
+        for idx, client in enumerate(self._clients):
+            try:
+                return client.create_chat_completion(**kwargs)
+            except Exception as exc:  # noqa: BLE001 - thử nhà kế tiếp
+                last_error = exc
+                self._logger.warning(
+                    "[FALLBACK CHAIN] tier %d/%d (%s) loi: %s -> thu tier ke",
+                    idx + 1,
+                    len(self._clients),
+                    getattr(client, "model_name", "?"),
+                    exc,
+                )
+                continue
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("ChainedFallbackClient khong co client kha dung.")
+
+
 class GeminiClient:
     def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 180, key_pool=None):
         self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")

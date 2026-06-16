@@ -68,11 +68,20 @@ class AttentionOverseer:
             n_ctx=min(n_ctx, 4096),
             n_gpu_layers=n_gpu_layers,
         )
+        escalation_client = self.process_manager.build_escalation_client(
+            model_path=model_path,
+            n_ctx=min(n_ctx, 4096),
+            n_gpu_layers=n_gpu_layers,
+        )
+        if escalation_client is not None:
+            provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
+            self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)
         self.llm_service = LlmService(
             self.llm_client,
             style_client=style_client,
             vision_client=vision_client,
             fallback_client=fallback_client,
+            escalation_client=escalation_client,
             logger=self.logger,
         )
         self.logger.info("Mô hình đã sẵn sàng.")

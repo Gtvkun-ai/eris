@@ -595,18 +595,19 @@ class AutonomousCycleMixin:
         if self._process_pending_user_input():
             return self.running
 
-        raw = self.llm_service.generate_directive(
-            telemetry_data=telemetry_data,
-            ni_context="",
-            ti_context=planned_ti_context,
-            fe_context=fe_plan.style_context,
-            appraisal_context=self._build_appraisal_context(frame.appraisal, frame=frame),
-            internal_state_context=self._build_internal_state_context(sensed_internal_state, frame.self_state),
-            memory_context=memory_context,
-            avoid_text=self.last_text,
-            speech_intent=frame.action_plan.speech_intent,
-            vision_trace_marker=vision_marker,
-        )
+        directive_kwargs = {
+            "telemetry_data": telemetry_data,
+            "ni_context": "",
+            "ti_context": planned_ti_context,
+            "fe_context": fe_plan.style_context,
+            "appraisal_context": self._build_appraisal_context(frame.appraisal, frame=frame),
+            "internal_state_context": self._build_internal_state_context(sensed_internal_state, frame.self_state),
+            "memory_context": memory_context,
+            "avoid_text": self.last_text,
+            "speech_intent": frame.action_plan.speech_intent,
+            "vision_trace_marker": vision_marker,
+        }
+        raw = self.llm_service.generate_directive(**directive_kwargs)
         self._log_raw_llm_output("directive", raw)
         self._log_pre_parser("directive", raw)
         decision = self.parser.parse(raw)
@@ -614,6 +615,14 @@ class AutonomousCycleMixin:
         self._log_decision_stage("directive", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report, vision_grounded=bool(getattr(self, "vision_facts", None)))
         self._log_decision_stage("directive", "after_ti", decision)
+        decision = self._maybe_escalate_directive_decision(
+            decision,
+            channel="autonomous",
+            snapshot=snapshot,
+            ti_report=ti_report,
+            directive_kwargs=directive_kwargs,
+            vision_grounded=bool(getattr(self, "vision_facts", None)),
+        )
         decision = self._execute_system_action(decision, snapshot=snapshot)
         decision = self._apply_post_generation_filters(
             decision,

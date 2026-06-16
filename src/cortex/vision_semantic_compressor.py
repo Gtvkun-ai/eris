@@ -57,6 +57,204 @@ except Exception:  # pragma: no cover - cho phép import file khi chưa có llm 
     OllamaResult = Any  # type: ignore
 
 
+class RemoteStructureClient:
+    """Adapter: bọc một remote chat client (có ``create_chat_completion``) để lộ
+    interface ``chat_json`` mà VisionSemanticCompressor cần cho TẦNG cấu trúc-hoá.
+
+    Mục đích: trên máy ít VRAM, moondream caption chạy local còn việc ép JSON đẩy
+    sang remote (vd Gemma qua Gemini API) — khỏi nạp/swap text model local mỗi lượt.
+
+    Gemma KHÔNG nhận responseSchema nên ta vẫn gửi response_format=json_object và
+    tự salvage JSON từ text trả về. Mọi lỗi ⇒ trả OllamaResult(ok=False) để compressor
+    degrade về fallback (giữ caption), không bao giờ raise ra hot path.
+    """
+
+    def __init__(self, client: Any, *, max_tokens: int = 512, logger: Any | None = None) -> None:
+        self._client = client
+        self._max_tokens = max_tokens
+        self._logger = logger
+
+    @staticmethod
+    def _extract_text(response: Any) -> str:
+        try:
+            from llm.dds import extract_text
+            return str(extract_text(response) or "")
+        except Exception:
+            pass
+        # Fallback tối thiểu: OpenAI-shape.
+        if isinstance(response, dict):
+            choices = response.get("choices")
+            if isinstance(choices, list) and choices:
+                msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+                if isinstance(msg, dict):
+                    return str(msg.get("content") or "")
+        return str(response or "")
+
+    @staticmethod
+    def _parse_json_object(text: str) -> dict | None:
+        try:
+            if OllamaClient is not Any and callable(getattr(OllamaClient, "_parse_json_object", None)):
+                return OllamaClient._parse_json_object(text)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        import json as _json
+
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+        try:
+            obj = _json.loads(raw)
+            return obj if isinstance(obj, dict) else None
+        except Exception:
+            start, end = raw.find("{"), raw.rfind("}")
+            if 0 <= start < end:
+                try:
+                    obj = _json.loads(raw[start : end + 1])
+                    return obj if isinstance(obj, dict) else None
+                except Exception:
+                    return None
+        return None
+
+    def chat_json(
+        self,
+        model: str,  # bị bỏ qua: remote client dùng model_name của chính nó
+        messages: list[dict],
+        *,
+        schema: dict | None = None,
+        keep_alive: Any | None = None,  # không áp dụng cho remote
+        temperature: float = 0.0,
+        **_: Any,
+    ) -> Any:
+        response_format: dict[str, Any] = {"type": "json_object"}
+        if isinstance(schema, dict) and schema:
+            response_format["schema"] = schema
+        try:
+            response = self._client.create_chat_completion(
+                messages=messages,
+                temperature=float(temperature),
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=self._max_tokens,
+                response_format=response_format,
+            )
+        except Exception as exc:  # pragma: no cover - lỗi mạng/remote
+            return OllamaResult(ok=False, error=f"{type(exc).__name__}:{exc}")
+
+        content = self._extract_text(response)
+        parsed = self._parse_json_object(content)
+        if parsed is None:
+            return OllamaResult(ok=False, content=content, error="json_parse_failed")
+        return OllamaResult(ok=True, parsed=parsed, content=content)
+
+
+class RemoteCaptionClient:
+    """Adapter: bọc client OpenAI-compatible remote (vd shopaikey grok-3-image) để
+    lộ ``caption_image(image, ...)`` trả caption text — thay cho moondream local.
+
+    Gửi ảnh theo định dạng OpenAI multimodal (image_url data URI). Mọi lỗi ⇒ trả ""
+    để compressor degrade (structuring vẫn chạy từ OCR), không raise ra hot path.
+    """
+
+    def __init__(self, client: Any, *, max_tokens: int = 320, logger: Any | None = None) -> None:
+        self._client = client
+        self._max_tokens = max_tokens
+        self._logger = logger
+        self.model_name = str(getattr(client, "model_name", "") or "vision_api")
+        # Thu nhỏ ảnh trước khi gửi API: full-screen PNG base64 rất to → upload + suy
+        # luận chậm. Hạ về JPEG ≤ max_width giúp cắt độ trễ. 0 = tắt downscale.
+        try:
+            self._max_width = int(os.getenv("ERIS_VISION_API_MAX_WIDTH", "1280") or 1280)
+        except (TypeError, ValueError):
+            self._max_width = 1280
+
+    def _maybe_downscale(self, data_uri: str) -> str:
+        if self._max_width <= 0 or not data_uri.startswith("data:"):
+            return data_uri
+        try:
+            import base64
+            import io
+
+            from PIL import Image
+        except Exception:
+            return data_uri
+        try:
+            b64 = data_uri.split(",", 1)[1]
+            raw = base64.b64decode(b64)
+            im = Image.open(io.BytesIO(raw))
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            w, h = im.size
+            if w > self._max_width:
+                im = im.resize((self._max_width, max(1, int(h * self._max_width / w))), Image.LANCZOS)
+            out = io.BytesIO()
+            im.save(out, format="JPEG", quality=75)
+            return "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode("ascii")
+        except Exception:
+            return data_uri
+
+    @staticmethod
+    def _to_data_uri(image: str) -> str:
+        s = str(image or "").strip()
+        if not s:
+            return ""
+        if s.startswith("data:"):
+            return s
+        return f"data:image/png;base64,{s}"
+
+    @staticmethod
+    def _extract_text(response: Any) -> str:
+        try:
+            from llm.dds import extract_text
+            return str(extract_text(response) or "")
+        except Exception:
+            pass
+        if isinstance(response, dict):
+            choices = response.get("choices")
+            if isinstance(choices, list) and choices:
+                msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+                if isinstance(msg, dict):
+                    return str(msg.get("content") or "")
+        return str(response or "")
+
+    def caption_image(
+        self,
+        image: str,
+        *,
+        prompt: str = "Describe what is visible on this screen in concrete detail.",
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        keep_alive: Any | None = None,  # không áp dụng cho remote
+    ) -> str:
+        data_uri = self._maybe_downscale(self._to_data_uri(image))
+        if not data_uri:
+            return ""
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                ],
+            }
+        ]
+        try:
+            response = self._client.create_chat_completion(
+                messages=messages,
+                temperature=float(temperature),
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=int(max_tokens or self._max_tokens),
+            )
+        except Exception as exc:  # pragma: no cover - lỗi mạng/remote
+            if self._logger is not None and callable(getattr(self._logger, "warning", None)):
+                try:
+                    self._logger.warning("[vision caption remote] lỗi: %s", exc)
+                except Exception:
+                    pass
+            return ""
+        return self._extract_text(response).strip()
+
+
 _ERROR_MARKERS = (
     "traceback",
     "exception",
@@ -186,9 +384,18 @@ class VisionSemanticCompressor:
         config: VisionCompressorConfig | None = None,
         ollama_client: Any | None = None,
         logger: Any | None = None,
+        structure_client: Any | None = None,
+        caption_client: Any | None = None,
     ) -> None:
         self.config = config or VisionCompressorConfig()
         self.client = ollama_client if ollama_client is not None else self._make_default_client()
+        # Client riêng cho TẦNG cấu trúc-hoá (caption → JSON). Khi máy ít VRAM, ta
+        # để moondream caption local nhưng đẩy structuring sang remote (Gemma) để
+        # khỏi nạp/swap text model local mỗi lượt. None ⇒ dùng luôn self.client.
+        self.structure_client = structure_client
+        # Client riêng cho TẦNG caption (ảnh → mô tả). Khi set (vd shopaikey
+        # grok-3-image), caption chạy REMOTE thay cho moondream local. None ⇒ self.client.
+        self.caption_client = caption_client
         self.logger = logger
         # Scene continuity: nhớ scene trước để delta/relation có chỗ bám. "Thay đổi"
         # chỉ phản ứng được nếu có cái trước để so.
@@ -283,9 +490,12 @@ class VisionSemanticCompressor:
                 reason="missing_ollama_client",
             )
 
-        # Client không tách được caption (vd OllamaClient với VLM mạnh): giữ đường
-        # cũ một-phát vision+schema.
-        if not callable(getattr(self.client, "caption_image", None)):
+        # Hai tầng tách vai: caption_client (vd grok-3-image) chỉ TẢ bằng prompt đơn
+        # giản (nó làm tốt), structure_client (vd glm-4.5-flash) lo NÉN caption→JSON.
+        # KHÔNG single-shot: nhồi schema vào VLM vision khiến nó vẹt lại input.
+        caption_client = self.caption_client or self.client
+        caption_backend = "remote" if self.caption_client is not None else "local"
+        if not callable(getattr(caption_client, "caption_image", None)):
             return self._compress_single_shot(
                 image=image,
                 ocr_text=ocr_text,
@@ -294,11 +504,11 @@ class VisionSemanticCompressor:
                 extra_context=extra_context,
             )
 
-        # ── Tầng 1: caption TỰ DO bằng vision model (moondream làm captioner) ──
+        # ── Tầng 1: caption TỰ DO bằng vision model (moondream/local hoặc remote) ──
         caption = ""
         caption_error = ""
         try:
-            caption = self.client.caption_image(
+            caption = caption_client.caption_image(
                 image,
                 prompt=self._caption_prompt(),
                 temperature=max(self.config.temperature, 0.1),
@@ -309,6 +519,10 @@ class VisionSemanticCompressor:
             self._log_warning("Vision caption stage failed: %s", caption_error)
 
         # ── Tầng 2: text model cấu trúc caption + OCR thành SemanticSceneNote ──
+        # Có structure_client (remote, vd Gemma) → cấu trúc-hoá chạy remote, máy
+        # local KHỎI nạp/swap text model. None ⇒ dùng client local như cũ.
+        structure_client = self.structure_client or self.client
+        structure_backend = "remote" if self.structure_client is not None else "local"
         messages = [
             {"role": "system", "content": self._structure_system_prompt()},
             {"role": "user", "content": self._structure_user_prompt(
@@ -319,7 +533,7 @@ class VisionSemanticCompressor:
                 extra_context=extra_context,
             )},
         ]
-        result = self.client.chat_json(
+        result = structure_client.chat_json(
             self._structure_model(),
             messages,
             schema=self._json_schema(),
@@ -349,10 +563,17 @@ class VisionSemanticCompressor:
             caption=caption,
             raw_debug={
                 "model": self._source_label(),
+                "structure_backend": structure_backend,
+                "caption_backend": caption_backend,
                 "vision_caption": compact_text(caption, 400),
                 "caption_error": caption_error,
                 "structure_preview": compact_text(str(getattr(result, "content", "") or ""), 400),
             },
+            source_override=(
+                str(getattr(self.caption_client, "model_name", "") or "")
+                if self.caption_client is not None
+                else ""
+            ),
         )
         return note
 
@@ -606,6 +827,7 @@ class VisionSemanticCompressor:
         signal_snapshot: SignalSnapshot | None,
         caption: str = "",
         raw_debug: Mapping[str, Any] | None = None,
+        source_override: str = "",
     ) -> SemanticSceneNote:
         observer_error = clamp01(getattr(observer_frame, "possible_error", 0.0) if observer_frame else 0.0)
         observer_salience = clamp01(getattr(observer_frame, "salience", 0.0) if observer_frame else 0.0)
@@ -623,7 +845,8 @@ class VisionSemanticCompressor:
         elif not self.config.allow_interrupt:
             should_interrupt = False
 
-        evidence = [f"vision_model:{self.config.model}"]
+        model_label = source_override or self.config.model
+        evidence = [f"vision_model:{model_label}"]
         if observer_frame is not None:
             evidence.extend(str(item) for item in getattr(observer_frame, "evidence", [])[:4])
         if signal_snapshot is not None and getattr(signal_snapshot, "screen_hash", ""):
@@ -660,7 +883,7 @@ class VisionSemanticCompressor:
             content_affect=content_affect,
             relation_to_user=relation_to_user,
             delta=delta,
-            source=self._source_label(),
+            source=source_override or self._source_label(),
             evidence=evidence[:10],
             debug={"raw": dict(raw_debug or {}), "observer_used": observer_frame is not None},
         )
