@@ -16,8 +16,12 @@ import pytest
 
 def _reset_dev_singleton():
     import cortex.development_system as ds
-
     ds._DEFAULT_SYSTEM = None
+    try:
+        import cortex.epistemic.runtime_registry as rr
+        rr._DEFAULT_KERNEL = None
+    except Exception:
+        pass
 
 
 @pytest.fixture

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import time
@@ -61,7 +62,29 @@ class ChatCycleMixin:
         self.repeated_user_count = 0
         self.chat_ni_state = NiStateMachine()
         self.fe_style_memory = self.fe_renderer.decay_memory(self.fe_style_memory)
-        self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
+
+        # Post-chat grace period: autonomous phải đợi trước khi được phép nói.
+        # Tránh "chen ngang" ngay sau khi hội thoại kết thúc — cảm giác đang nói
+        # chuyện xong mà Eris đã bắt đầu lẩm bẩm ngay, rất kỳ.
+        # Mặc định 45s — đủ dài để user "nghỉ" sau chat, ngắn hơn reengagement_cooldown.
+        block_fn = getattr(self, "_block_autonomous_presence_after_public_turn", None)
+        if callable(block_fn):
+            try:
+                raw_grace = str(os.environ.get("ERIS_POST_CHAT_GRACE_SEC", "45") or "45").strip()
+                grace = max(15.0, float(raw_grace) if raw_grace else 45.0)
+                now = time.time()
+                # Dùng max với block hiện tại — nếu block đang cao hơn thì giữ.
+                current_block = float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0)
+                self.autonomous_presence_blocked_until = max(current_block, now + grace)
+                self.logger.info(
+                    "Exited chat mode; autonomous blocked for %.0fs (post-chat grace).",
+                    grace,
+                )
+            except Exception:
+                self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
+        else:
+            self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
+
 
     def _build_relational_voice_stance(
         self,
@@ -805,6 +828,13 @@ class ChatCycleMixin:
             self._commit_chat_decision(relational_seed_decision, fe_plan, frame=frame)
             self.last_user_text_for_semantics = user_text
             return
+        difficulty = self._classify_query_difficulty(user_text)
+        use_escalation = False
+        reasoning_effort = None
+        if difficulty != "none":
+            use_escalation = True
+            reasoning_effort = difficulty
+
         chat_generation_kwargs = {
             "chat_history": llm_chat_history,
             "user_message": chat_user_message,
@@ -813,13 +843,17 @@ class ChatCycleMixin:
             "ti_context": planned_ti_context,
             "fe_context": fe_plan.style_context,
             "appraisal_context": self._build_appraisal_context(frame.appraisal, frame=frame),
-            "internal_state_context": self._build_internal_state_context(sensed_internal_state, frame.self_state),
+            "internal_state_context": self._build_internal_state_context(
+                sensed_internal_state, frame.self_state, user_text=user_text
+            ),
             "conversation_context": f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
             "memory_context": memory_context,
             "grounding_context": grounding_report.prompt_context,
             "screen_image_data_uri": screen_image_data_uri,
             "reply_context": getattr(self, "reply_context", None),
             "defusing_context": getattr(frame.action_plan, "defusing_context", ""),
+            "use_escalation_client": use_escalation,
+            "reasoning_effort": reasoning_effort,
         }
         format_retry_context = ""
         format_failure_flag = ""
@@ -1135,6 +1169,14 @@ class ChatCycleMixin:
         `last_cognitive_frame.outcome` để SelfObservation/RepairMemory có dữ kiện thật hơn.
         Nó không commit trực tiếp; commit vẫn đi qua StateCommitter ở các frame sau.
         """
+        # Báo SnubTracker biết user vừa phản hồi → có thể reset snub counter
+        snub_tracker = getattr(self, "snub_tracker", None)
+        if snub_tracker is not None:
+            try:
+                snub_tracker.on_user_responded(user_text)
+            except Exception:
+                pass
+
         previous = getattr(self, "last_cognitive_frame", None)
         if previous is None:
             return
@@ -1245,8 +1287,37 @@ class ChatCycleMixin:
             term in normalized for term in visual_objects
         )
     def _capture_screen_frame_for_chat(self, user_text: str) -> str:
-        # Bỏ cổng marker: mỗi lượt chat đều chụp + đọc màn hình tươi để ERIS thực sự
-        # "thấy" được ngữ cảnh, thay vì phải đoán keyword mới chịu mở mắt.
+        # Smart gate: ưu tiên vision_facts đã có từ autonomous cycle.
+        # Chỉ chụp màn hình mới khi:
+        #   1. User hỏi trực tiếp về màn hình (keyword marker), HOẶC
+        #   2. Cache autonomous vision đã cũ hơn ERIS_CHAT_VISION_STALE_SEC (mặc định 90s)
+        #
+        # Tránh VLM call nặng mỗi lượt chat — trước đây "bỏ gate" gây mỗi chat
+        # phải OCR lại toàn màn hình, dẫn đến 2 LLM call nối tiếp.
+
+        # Nếu user hỏi về màn hình → luôn chụp mới
+        user_wants_screen = self._looks_like_screen_vision_request(user_text)
+
+        # Kiểm tra cache autonomous còn tươi không
+        stale_threshold = float(
+            (lambda r: max(30.0, float(r)) if r.strip() else 90.0)(
+                str(os.environ.get("ERIS_CHAT_VISION_STALE_SEC", "90") or "90")
+            )
+        )
+        last_capture = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0)
+        cache_age = time.time() - last_capture if last_capture > 0.0 else float("inf")
+        cache_is_fresh = cache_age < stale_threshold
+        has_cached_facts = bool(tuple(getattr(self, "vision_facts", ()) or ()))
+
+        if not user_wants_screen and cache_is_fresh and has_cached_facts:
+            self.logger.debug(
+                "[vision chat] Dùng vision_facts cache (age=%.0fs < stale=%.0fs, %d facts).",
+                cache_age,
+                stale_threshold,
+                len(tuple(getattr(self, "vision_facts", ()) or ())),
+            )
+            return ""  # Không cần data_uri — grounding context sẽ dùng vision_facts có sẵn
+
         capture_fn = getattr(self.telemetry_service, "capture_screen_frame_data_uri", None)
         if not callable(capture_fn):
             self.logger.info("[vision chat] telemetry service không hỗ trợ chụp màn hình.")
@@ -1258,7 +1329,8 @@ class ChatCycleMixin:
             self.logger.warning("[vision chat] không chụp được màn hình: %s", exc)
             return ""
 
-        self.logger.info("[vision chat] Đã đính kèm screenshot toàn màn hình cho lượt chat này.")
+        reason = "user_screen_request" if user_wants_screen else f"cache_stale_{cache_age:.0f}s"
+        self.logger.info("[vision chat] Chụp màn hình mới (%s).", reason)
         snapshot = getattr(self, "_chat_snapshot_for_vision", None)
         if snapshot is not None:
             try:
@@ -1272,6 +1344,7 @@ class ChatCycleMixin:
             except Exception as exc:
                 self.logger.warning("[vision chat] không nén được screenshot: %s", exc)
         return data_uri
+
     
     def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
         facts: list[object] = []

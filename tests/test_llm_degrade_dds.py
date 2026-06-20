@@ -64,12 +64,33 @@ class DDSDistillIntegrationTests(unittest.TestCase):
     def setUp(self):
         self._prev_cap = os.environ.get("ERIS_LLM_PROMPT_HARD_CAP_TOKENS")
         os.environ["ERIS_LLM_PROMPT_HARD_CAP_TOKENS"] = "800"
+        self._prev_groq_cap = os.environ.get("ERIS_LLM_PROMPT_HARD_CAP_TOKENS_GROQ")
+        os.environ.pop("ERIS_LLM_PROMPT_HARD_CAP_TOKENS_GROQ", None)
+        self._prev_trigger = os.environ.get("ERIS_DDS_TRIGGER_TOKENS")
+        os.environ["ERIS_DDS_TRIGGER_TOKENS"] = "500"
+        self._prev_worker = os.environ.get("ERIS_DDS_WORKER_PROVIDER")
+        os.environ["ERIS_DDS_WORKER_PROVIDER"] = "gemini"
 
     def tearDown(self):
         if self._prev_cap is None:
             os.environ.pop("ERIS_LLM_PROMPT_HARD_CAP_TOKENS", None)
         else:
             os.environ["ERIS_LLM_PROMPT_HARD_CAP_TOKENS"] = self._prev_cap
+            
+        if self._prev_groq_cap is None:
+            os.environ.pop("ERIS_LLM_PROMPT_HARD_CAP_TOKENS_GROQ", None)
+        else:
+            os.environ["ERIS_LLM_PROMPT_HARD_CAP_TOKENS_GROQ"] = self._prev_groq_cap
+            
+        if self._prev_trigger is None:
+            os.environ.pop("ERIS_DDS_TRIGGER_TOKENS", None)
+        else:
+            os.environ["ERIS_DDS_TRIGGER_TOKENS"] = self._prev_trigger
+
+        if self._prev_worker is None:
+            os.environ.pop("ERIS_DDS_WORKER_PROVIDER", None)
+        else:
+            os.environ["ERIS_DDS_WORKER_PROVIDER"] = self._prev_worker
 
     def test_oversized_block_is_distilled(self):
         main = _Failing5xxClient()  # provider=groq cho hard-cap nhỏ

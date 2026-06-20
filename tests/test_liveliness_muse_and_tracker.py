@@ -51,7 +51,7 @@ def test_non_muse_quiet_mode_still_held_within_cooldown() -> None:
 
 def test_cooldown_seconds_table() -> None:
     assert ambient_silence_cooldown_seconds(SimpleNamespace(active_window_kind=""), SimpleNamespace(mode="resource_guard")) == 0
-    assert ambient_silence_cooldown_seconds(SimpleNamespace(active_window_kind="coding"), SimpleNamespace(mode="")) == 120
+    assert ambient_silence_cooldown_seconds(SimpleNamespace(active_window_kind="coding"), SimpleNamespace(mode="")) == 60
 
 
 # --- Liveliness tracker (Req 5, 6) ---------------------------------------

@@ -267,7 +267,7 @@ def estimate_token_count(text: Any) -> int:
     """
 
     raw = str(text or "")
-    return max(1, math.ceil(len(raw) / 4))
+    return max(1, math.ceil(len(raw) / 3))
 
 
 # =============================================================================

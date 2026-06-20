@@ -70,45 +70,37 @@ class MemoryPacket:
         return tuple(item.to_attention_line() for item in self.activations[:max_items])
 
     def render_prompt_context(self, *, max_lines: int = 18) -> str:
-        sections: list[str] = []
-        mapping = (
-            ("semantic", self.semantic),
-            ("relational", self.relational),
-            ("repair", self.repair),
-            ("procedural", self.procedural),
-            ("affective_residue", self.affective_residue),
-            ("episodic", self.episodic),
-        )
-        used = 0
-        for name, values in mapping:
-            clean = [compact_text(value, limit=260) for value in values if compact_text(value, limit=260)]
-            if not clean:
-                continue
-            lines: list[str] = []
-            for value in clean:
-                if used >= max_lines:
-                    break
-                lines.append(f"- {value}")
-                used += 1
-            if lines:
-                sections.append(f"{name}_memory:\n" + "\n".join(lines))
-        # confidence_notes cũ quá rào cản — bỏ để LLM không học "memory = thứ cần im lặng"
-        if self.activations:
-            lines = [
-                # Bỏ "silent cognitive bias only" — memory phải được dùng thật, không phải đứng ngoài cửa.
-                # Chỉ giữ lưu ý đừng dùng làm current screen evidence (đó là lỗi grounding khác).
-                "memory_context: use these as known facts about the user/context. Do not fabricate beyond what is listed. Do not use as current screen or file evidence.",
-                f"- score={self.score:.2f}; dominant_layer={self.dominant_layer or 'none'}",
-            ]
-            for activation in self.activations[:4]:
-                anchors = ",".join(activation.matched_anchors[:4])
-                anchor_part = f", anchors={anchors}" if anchors else ""
-                lines.append(
-                    f"- {activation.layer}: {activation.text}"
-                    f" (score={activation.score:.2f}{anchor_part})"
-                )
-            sections.append("\n".join(lines))
-        return "\n\n".join(sections)
+        if not self.activations:
+            return ""
+
+        # Sort activations descending by score
+        sorted_activations = sorted(self.activations, key=lambda a: a.score, reverse=True)
+        
+        # Limit to top 3-5 activations
+        limit = max(3, min(5, len(sorted_activations)))
+        top_activations = sorted_activations[:limit]
+
+        layer_names = {
+            "semantic": "semantic_memory",
+            "relational": "relational_memory",
+            "repair": "repair_memory",
+            "procedural": "procedural_memory",
+            "affective_residue": "affective_residue_memory",
+            "episodic": "episodic_memory",
+        }
+
+        lines = [
+            "memory_context: use these as known facts about the user/context. Do not fabricate beyond what is listed. Do not use as current screen or file evidence.",
+        ]
+        for activation in top_activations:
+            anchors = ",".join(activation.matched_anchors[:4])
+            anchor_part = f", anchors={anchors}" if anchors else ""
+            layer_name = layer_names.get(activation.layer, activation.layer)
+            lines.append(
+                f"- {layer_name}: {activation.text}"
+                f" (score={activation.score:.2f}{anchor_part})"
+            )
+        return "\n".join(lines)
 
 
 class MemoryPacketBuilder:

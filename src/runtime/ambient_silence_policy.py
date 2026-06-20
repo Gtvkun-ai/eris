@@ -26,16 +26,16 @@ def ambient_silence_cooldown_seconds(snapshot, ti_report) -> int:
     if mode == "resource_guard":
         return 0
     if mode == "pattern_muse":
-        return 150
+        return 60
     if kind in {"coding", "documentation"}:
-        return 120
+        return 60   # Eris vẫn nói khi bạn đang code, nhưng ít hơn
     if kind == "communication":
-        return 105
+        return 40
     if kind == "entertainment":
-        return 150
+        return 50
     if mode in {"system_watch", "pattern_watch", "social_watch"}:
-        return 120
-    return 105
+        return 50
+    return 40  # default: nói lại sau 40s
 
 
 def should_hold_ambient_silence(

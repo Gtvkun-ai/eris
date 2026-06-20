@@ -41,6 +41,7 @@ if _TESTS_DIR not in sys.path:
 os.environ["ERIS_PRIVATE_MIND_API_ENABLED"] = "0"
 os.environ["ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER"] = ""
 os.environ["ERIS_PRIVATE_MIND_FRAGMENT_FREETEXT"] = "0"
+os.environ["ERIS_GUARDS_WARN_ONLY"] = "0"
 # Không bao giờ dựng engine local (llama-cpp nạp gguf GPU) trong test.
 os.environ["ERIS_LOCAL_LLM_ENGINE"] = "ollama"
 
@@ -48,3 +49,5 @@ os.environ["ERIS_LOCAL_LLM_ENGINE"] = "ollama"
 # chỉ chạy ở runtime thật. Trong test, tắt để không kéo toggle production (vision
 # facts, observer LLM, llamacpp…) vào làm sai/flaky các assertion.
 os.environ["ERIS_DISABLE_DOTENV"] = "1"
+os.environ["ERIS_DEPTH_AUTO_ENABLE"] = "0"
+os.environ["ERIS_DEPTH_FLAGS_PATH"] = os.path.join(_TESTS_DIR, "non_existent_depth_flags_test_temp.json")

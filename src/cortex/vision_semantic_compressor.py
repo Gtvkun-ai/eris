@@ -693,7 +693,7 @@ class VisionSemanticCompressor:
             "You are ERIS VisionSemanticCompressor (structuring stage).\n"
             "You are given a vision caption and OCR text of the user's screen, plus observer signals "
             "and possibly the PREVIOUS scene.\n"
-            "Compress them into ONE small JSON runtime note that matches the schema.\n"
+            "Compress them into ONE small json runtime note that matches the schema.\n"
             "Describe the world content and its affect honestly: a sad video is sad, a test failure "
             "is an error, a heated chat is tense. That is a fact about the screen, not about the user.\n"
             "Do NOT infer the user's hidden emotions, identity, private intent, or personality.\n"
@@ -709,7 +709,7 @@ class VisionSemanticCompressor:
             "scene or nothing meaningful changed.\n"
             "- semantic_family: short snake_case label for WHAT this scene is "
             "(e.g. test_failure_loop, sad_media, code_editing, docs_reading).\n"
-            "Output JSON only. If evidence is thin, lower confidence.\n"
+            "Output json only. If evidence is thin, lower confidence.\n"
             "Keep should_interrupt_user false unless there is a clear urgent runtime hazard."
         )
 

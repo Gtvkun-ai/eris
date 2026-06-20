@@ -448,6 +448,7 @@ class RuntimeCoordinator(
         self.semantic_repeat_guard = SemanticRepeatGuard()
         self.micro_line_policy = MicroLinePolicy(repeat_guard=self.semantic_repeat_guard)
         self.body_bias_projector = BodyBiasProjector(self._get_internal_state)
+        self._debug_overrides: dict[str, tuple[float, float]] = {}
         self.signal_buffer = SignalBuffer(SignalBufferConfig())
         self.sensory_model_adapter = RuntimeSensoryModelAdapter.from_env(logger=self.logger)
         self.background_observer = BackgroundObserver(
@@ -1465,23 +1466,27 @@ class RuntimeCoordinator(
 
     #Lấy internal state hiện tại.
     def _get_internal_state(self) -> PersistentInternalState:
+        state = None
         if isinstance(self.memory_state, dict):
             payload = self.memory_state.get("internal_state") or self._load_internal_state_payload()
             if isinstance(payload, dict):
                 try:
-                    return PersistentInternalState.from_dict(payload)
+                    state = PersistentInternalState.from_dict(payload)
                 except Exception:
-                    return PersistentInternalState()
-        if self.memory_state is not None and getattr(self.memory_state, "internal_state", None) is not None:
-            return self.memory_state.internal_state
-        #Nếu không có thì tạo state tạm:
-        return PersistentInternalState()
+                    state = PersistentInternalState()
+        if state is None:
+            if self.memory_state is not None and getattr(self.memory_state, "internal_state", None) is not None:
+                state = self.memory_state.internal_state
+            else:
+                state = PersistentInternalState()
+        return self._apply_debug_overrides(state)
 
     #Cập nhật internal state mới vào memory.
     def _set_internal_state(self, state: PersistentInternalState) -> None:
         #Không có memory thì không set.
         if self.memory_state is None:
             return
+        state = self._apply_debug_overrides(state)
         #Dùng lock để tránh nhiều thread sửa state cùng lúc.
         with self._state_lock:
             if isinstance(self.memory_state, dict):
@@ -1508,7 +1513,51 @@ class RuntimeCoordinator(
         if isinstance(private_life_digest, dict) and private_life_digest:
             payload["private_life_digest"] = private_life_digest
         self._record_public_turn(decision, payload=payload, channel=channel)
-        self.transport.send_json(payload)
+        sync_text = os.environ.get("ERIS_TTS_SYNC_TEXT", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+        def send_text_payload():
+            try:
+                self.transport.send_json(payload)
+            except Exception as e:
+                self.logger.warning("Failed to send deferred chat text payload: %s", e)
+
+        # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
+        _tts = getattr(self, "tts_engine", None)
+        has_scheduled_tts = False
+        if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
+            _spoken_text = str(payload.get("text", "") or "").strip()
+            if _spoken_text and sync_text:
+                try:
+                    # Lấy emotion data từ payload emotion_debug hoặc appraisal frame
+                    _ed = payload.get("emotion_debug") or {}
+                    _mood = _ed.get("summary") if isinstance(_ed, dict) else {}
+                    _valence = float((_mood or {}).get("valence", 0.0)) if isinstance(_mood, dict) else 0.0
+                    _frame = getattr(self, "last_cognitive_frame", None)
+                    _appraisal = getattr(_frame, "appraisal", None) if _frame is not None else None
+                    _arousal = float(getattr(_appraisal, "arousal", 0.3))
+                    _stance = str(getattr(_appraisal, "stance", "") or "")
+                    _tts.speak(_spoken_text, valence=_valence, arousal=_arousal, stance=_stance, on_start_play=send_text_payload)
+                    has_scheduled_tts = True
+                except Exception as _tts_exc:
+                    self.logger.debug("[TTS] speak error: %s", _tts_exc)
+                    has_scheduled_tts = False
+
+        if not has_scheduled_tts:
+            if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
+                _spoken_text = str(payload.get("text", "") or "").strip()
+                if _spoken_text:
+                    try:
+                        _ed = payload.get("emotion_debug") or {}
+                        _mood = _ed.get("summary") if isinstance(_ed, dict) else {}
+                        _valence = float((_mood or {}).get("valence", 0.0)) if isinstance(_mood, dict) else 0.0
+                        _frame = getattr(self, "last_cognitive_frame", None)
+                        _appraisal = getattr(_frame, "appraisal", None) if _frame is not None else None
+                        _arousal = float(getattr(_appraisal, "arousal", 0.3))
+                        _stance = str(getattr(_appraisal, "stance", "") or "")
+                        _tts.speak(_spoken_text, valence=_valence, arousal=_arousal, stance=_stance)
+                    except Exception as _tts_exc:
+                        self.logger.debug("[TTS] speak error: %s", _tts_exc)
+            send_text_payload()
         # Mọi lời ERIS thốt ra (autonomous, force_speak, session_ritual...) đều
         # ghi vào bộ đệm hội thoại hợp nhất để lượt chat/autonomous sau nối mạch.
         # Đường chat đã tự append trong _commit_chat_decision nên bỏ qua ở đây.
@@ -1738,6 +1787,7 @@ class RuntimeCoordinator(
         relationship = getattr(state, "relationship_dynamics", None)
         desire = getattr(state, "desire", None)
         style = getattr(self, "fe_style_memory", None)
+        overrides = getattr(self, "_debug_overrides", {})
 
         def clamp01(value: object) -> float:
             try:
@@ -1760,6 +1810,19 @@ class RuntimeCoordinator(
         def value(source: object, name: str, default: object = 0.0) -> object:
             return getattr(source, name, default) if source is not None else default
 
+        def get_val(source: object, name: str, default: object = 0.0, is_rel: bool = False) -> object:
+            ov_key = f"rel_{name}" if is_rel else name
+            if overrides and ov_key in overrides:
+                val = overrides[ov_key]
+                return val[0] if (isinstance(val, tuple) and len(val) == 2) else val
+            if name == "warmth_level" and overrides and "warmth" in overrides:
+                val = overrides["warmth"]
+                return val[0] if (isinstance(val, tuple) and len(val) == 2) else val
+            if name == "sarcasm_level" and overrides and "sarcasm" in overrides:
+                val = overrides["sarcasm"]
+                return val[0] if (isinstance(val, tuple) and len(val) == 2) else val
+            return value(source, name, default)
+
         def metric(label: str, raw: object, *, group: str = "", signed: bool = False, note: str = "") -> dict[str, object]:
             numeric = clamp_signed(raw) if signed else clamp01(raw)
             return {
@@ -1769,30 +1832,30 @@ class RuntimeCoordinator(
                 "note": note,
             }
 
-        valence = clamp_signed(value(appraisal, "valence", value(state, "valence", 0.0)))
+        valence = clamp_signed(get_val(appraisal, "valence", value(state, "valence", 0.0)))
         if valence >= 0.18:
             mood_label = "vui"
-        elif valence <= -0.18 or clamp01(value(state, "irritation", 0.0)) >= 0.45:
+        elif valence <= -0.18 or clamp01(get_val(state, "irritation", 0.0)) >= 0.45:
             mood_label = "kho_chiu"
         else:
             mood_label = "trung_tinh"
 
         overload = clamp01(max(
-            clamp01(value(self_state, "overload", 0.0)),
-            clamp01(value(state, "fatigue", 0.0)),
-            clamp01(value(state, "cognitive_tension", 0.0)),
-            clamp01(value(state, "restraint_pressure", 0.0)) * 0.55,
+            clamp01(get_val(self_state, "overload", 0.0)),
+            clamp01(get_val(state, "fatigue", 0.0)),
+            clamp01(get_val(state, "cognitive_tension", 0.0)),
+            clamp01(get_val(state, "restraint_pressure", 0.0)) * 0.55,
         ))
         stability = clamp01(1.0 - max(
             abs(valence) * 0.50,
-            clamp01(value(appraisal, "arousal", value(state, "arousal", 0.0))),
-            clamp01(value(state, "cognitive_tension", 0.0)),
-            clamp01(value(state, "irritation", 0.0)),
+            clamp01(get_val(appraisal, "arousal", value(state, "arousal", 0.0))),
+            clamp01(get_val(state, "cognitive_tension", 0.0)),
+            clamp01(get_val(state, "irritation", 0.0)),
         ))
         mood_inertia = clamp01(
-            clamp01(value(state, "recursive_reactivation_pressure", 0.0)) * 0.34
-            + clamp01(value(state, "memory_replay_pressure", 0.0)) * 0.28
-            + clamp01(value(state, "thought_stream_pressure", 0.0)) * 0.22
+            clamp01(get_val(state, "recursive_reactivation_pressure", 0.0)) * 0.34
+            + clamp01(get_val(state, "memory_replay_pressure", 0.0)) * 0.28
+            + clamp01(get_val(state, "thought_stream_pressure", 0.0)) * 0.22
             + min(1.0, float(getattr(state, "cycle_count", 0) or 0) / 80.0) * 0.16
         )
         forced_reply = clamp01(min(1.0, float(getattr(state, "force_speak_ticks", 0) or 0) / 6.0))
@@ -1808,43 +1871,43 @@ class RuntimeCoordinator(
             "private_mind": getattr(self, "private_mind_digest", {}) or {},
             "private_life": getattr(self, "private_life_digest", {}) or {},
             "items": {
-                "calm_aroused": metric("binh tinh <-> kich thich", value(appraisal, "arousal", value(state, "arousal", 0.0)), group="core"),
+                "calm_aroused": metric("binh tinh <-> kich thich", get_val(appraisal, "arousal", value(state, "arousal", 0.0)), group="core"),
                 "emotional_stability": metric("on dinh cam xuc", stability, group="core"),
                 "mood_inertia": metric("quan tinh mood", mood_inertia, group="core"),
-                "attachment": metric("muc quan tam/gan bo", value(state, "attachment", 0.0), group="bond"),
-                "tenderness": metric("diu dang", value(appraisal, "tenderness", value(state, "tenderness", 0.0)), group="bond"),
-                "protectiveness": metric("muon bao ve", value(appraisal, "protectiveness", value(state, "protectiveness", 0.0)), group="bond"),
-                "emotional_exposure": metric("lo cam xuc nhieu hay it", value(relationship, "attachment_visibility", 0.0), group="bond"),
-                "irritation": metric("kho chiu", value(state, "irritation", 0.0), group="friction"),
-                "perceived_rejection": metric("cam giac bi tu choi", value(relationship, "rupture", 0.0), group="friction"),
-                "confrontation": metric("xu huong doi dau", max(value(appraisal, "threat", 0.0), value(state, "irritation", 0.0)), group="friction"),
-                "post_exposure_recoil": metric("rut lai sau khi lo cam xuc", value(relationship, "exposure_recoil", 0.0), group="friction"),
-                "curiosity": metric("to mo", max(value(state, "curiosity", 0.0), value(state, "curiosity_pressure", 0.0)), group="attention"),
+                "attachment": metric("muc quan tam/gan bo", get_val(state, "attachment", 0.0), group="bond"),
+                "tenderness": metric("diu dang", get_val(appraisal, "tenderness", value(state, "tenderness", 0.0)), group="bond"),
+                "protectiveness": metric("muon bao ve", get_val(appraisal, "protectiveness", value(state, "protectiveness", 0.0)), group="bond"),
+                "emotional_exposure": metric("lo cam xuc nhieu hay it", get_val(relationship, "attachment_visibility", 0.0, is_rel=True), group="bond"),
+                "irritation": metric("kho chiu", get_val(state, "irritation", 0.0), group="friction"),
+                "perceived_rejection": metric("cam giac bi tu choi", get_val(relationship, "rupture", 0.0, is_rel=True), group="friction"),
+                "confrontation": metric("xu huong doi dau", max(float(get_val(appraisal, "threat", 0.0)), float(get_val(state, "irritation", 0.0))), group="friction"),
+                "post_exposure_recoil": metric("rut lai sau khi lo cam xuc", get_val(relationship, "exposure_recoil", 0.0, is_rel=True), group="friction"),
+                "curiosity": metric("to mo", max(float(get_val(state, "curiosity", 0.0)), float(get_val(state, "curiosity_pressure", 0.0))), group="attention"),
                 "attention_bias": {
                     "label": "thien huong chu y",
                     "value": str(value(meaning, "attention_bias", ()) or value(state, "last_focus_kind", "") or ""),
                     "group": "attention",
                     "note": "",
                 },
-                "association_pressure": metric("lien tuong lan rong", value(state, "association_pressure", 0.0), group="attention"),
-                "thought_stream_pressure": metric("dong suy nghi tang", value(state, "thought_stream_pressure", 0.0), group="attention"),
-                "speech_pressure": metric("ap luc phai noi", value(state, "silence_pressure", 0.0), group="speech"),
-                "social_pressure": metric("ap luc xa hoi", value(state, "social_pressure", 0.0), group="speech"),
+                "association_pressure": metric("lien tuong lan rong", get_val(state, "association_pressure", 0.0), group="attention"),
+                "thought_stream_pressure": metric("dong suy nghi tang", get_val(state, "thought_stream_pressure", 0.0), group="attention"),
+                "speech_pressure": metric("ap luc phai noi", get_val(state, "silence_pressure", 0.0), group="speech"),
+                "social_pressure": metric("ap luc xa hoi", get_val(state, "social_pressure", 0.0), group="speech"),
                 "forced_reply": metric("bi ep phan hoi", forced_reply, group="speech"),
-                "brevity": metric("xu huong noi ngan", value(state, "restraint_pressure", 0.0), group="speech"),
-                "playfulness": metric("muc dua", value(state, "playful_pressure", 0.0), group="tone"),
-                "tease": metric("thich treu", value(style, "sarcasm_level", 0.0), group="tone"),
-                "sarcasm": metric("mia mai", value(style, "sarcasm_level", 0.0), group="tone"),
-                "warmth": metric("do am ap", value(style, "warmth_level", value(appraisal, "tenderness", 0.0)), group="tone"),
-                "distance": metric("giu khoang cach", value(relationship, "preferred_distance", 0.58), group="tone"),
-                "intimacy": metric("muc than mat", value(appraisal, "intimacy", 0.0), group="tone"),
-                "romantic_boundary_probe": metric("do ranh gioi tinh cam", value(desire, "unresolved_residue", 0.0), group="tone"),
-                "restraint": metric("tu kiem che", value(state, "restraint_pressure", 0.0), group="control"),
-                "cognitive_tension": metric("cang thang nhan thuc", value(state, "cognitive_tension", 0.0), group="control"),
-                "repeating_thought": metric("suy nghi lap lai", value(state, "recursive_reactivation_pressure", 0.0), group="control"),
-                "unresolved_prediction": metric("du doan chua giai quyet", value(state, "unresolved_prediction_pressure", 0.0), group="control"),
-                "subconscious_pressure": metric("ap luc tiem thuc", value(state, "subconscious_pressure", 0.0), group="control"),
-                "fatigue": metric("met", value(appraisal, "fatigue", value(state, "fatigue", 0.0)), group="load"),
+                "brevity": metric("xu huong noi ngan", get_val(state, "restraint_pressure", 0.0), group="speech"),
+                "playfulness": metric("muc dua", get_val(state, "playful_pressure", 0.0), group="tone"),
+                "tease": metric("thich treu", get_val(style, "sarcasm_level", 0.0), group="tone"),
+                "sarcasm": metric("mia mai", get_val(style, "sarcasm_level", 0.0), group="tone"),
+                "warmth": metric("do am ap", get_val(style, "warmth_level", value(appraisal, "tenderness", 0.0)), group="tone"),
+                "distance": metric("giu khoang cach", get_val(relationship, "preferred_distance", 0.58, is_rel=True), group="tone"),
+                "intimacy": metric("muc than mat", get_val(appraisal, "intimacy", 0.0), group="tone"),
+                "romantic_boundary_probe": metric("do ranh gioi tinh cam", get_val(desire, "unresolved_residue", 0.0), group="tone"),
+                "restraint": metric("tu kiem che", get_val(state, "restraint_pressure", 0.0), group="control"),
+                "cognitive_tension": metric("cang thang nhan thuc", get_val(state, "cognitive_tension", 0.0), group="control"),
+                "repeating_thought": metric("suy nghi lap lai", get_val(state, "recursive_reactivation_pressure", 0.0), group="control"),
+                "unresolved_prediction": metric("du doan chua giai quyet", get_val(state, "unresolved_prediction_pressure", 0.0), group="control"),
+                "subconscious_pressure": metric("ap luc tiem thuc", get_val(state, "subconscious_pressure", 0.0), group="control"),
+                "fatigue": metric("met", get_val(appraisal, "fatigue", value(state, "fatigue", 0.0)), group="load"),
                 "overload": metric("qua tai", overload, group="load"),
                 "speech_emotional_color": {
                     "label": "mau cam xuc khi noi",

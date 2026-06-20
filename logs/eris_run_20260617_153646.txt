@@ -1,0 +1,109 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-06-17 15:36:46
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+15:36:46.364 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+15:36:46.364 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+15:36:46.376 [INFO] [Vision] Da khoi chay vision.py PID=9268
+15:36:47.570 [INFO] [vision.py] [Vision][INFO] Đang dùng remote API làm cognition chính.
+15:36:47.570 [INFO] [vision.py] [LLM][INFO] Dung OpenAI-compatible API tai https://api.groq.com/openai/v1 voi model qwen/qwen3-32b
+15:36:47.571 [INFO] [vision.py] [LLM][INFO] Dung Gemini speech API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-31b-it
+15:36:47.572 [INFO] [vision.py] [Vision][INFO] Speech/style client đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+15:36:47.572 [INFO] [vision.py] [LLM][INFO] Dung vision API tai https://api.shopaikey.com/v1 voi model gpt-4o-mini
+15:36:47.572 [INFO] [vision.py] [Vision][INFO] Vision facts client đã sẵn sàng.
+15:36:47.572 [INFO] [vision.py] [LLM][INFO] Chat fallback 1 tang: gpt-4o-mini
+15:36:47.572 [INFO] [vision.py] [Vision][INFO] Mô hình đã sẵn sàng.
+15:36:47.707 [INFO] [vision.py] [Loop][INFO] [depth] auto-enable cờ chiều-sâu: {'emotional_consequence': True, 'development_growth': True, 'interior_surface': True, 'tom_advisor': True, 'real_embeddings': True, 'private_mind': True}
+15:36:47.723 [INFO] [vision.py] [Loop][INFO] Epistemic V2 ready in authoritative mode; cognitive state writes use V2.
+15:36:47.724 [INFO] [vision.py] [Loop][INFO] [vision structure] tầng-2 cấu trúc-hoá REMOTE qua gpt-4o-mini (caption→JSON).
+15:36:47.724 [INFO] [vision.py] [Loop][INFO] [vision caption] caption stage chạy REMOTE (gpt-4o-mini); bỏ moondream local.
+15:36:47.725 [INFO] [vision.py] [Loop][INFO] Model inference scheduler đã bọc llm_service và sensory adapter: main, vision, sensory.
+15:36:47.725 [INFO] [vision.py] [Loop][INFO] [PrivateMind API] ready fragment(llamacpp/src/qwen3-1.7b-q4_k_m.gguf)×5 + synthesis(openai_compatible/llama-3.1-8b-instant)×1
+15:36:47.735 [INFO] [vision.py] [Loop][INFO] [InnerDiary fallback] ready provider=openai_compatible model=qwen-plus-character
+15:36:47.766 [INFO] [vision.py] [Loop][INFO] tutor: Master_Switch BẬT — đang dựng Curiosity Tutor daemon
+15:36:47.766 [INFO] [vision.py] [Loop][INFO] tutor: KnowledgeProvider sẵn sàng (SituationModel sẽ nối khi pipeline dựng)
+15:36:49.307 [INFO] [vision.py] [Loop][INFO] --- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---
+15:36:49.741 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=253 budget=1000000 cap=850000
+15:36:50.655 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] mark dead index=0 cooldown=15s alive=8/9
+15:36:50.655 [INFO] [vision.py] [LLM][WARNING] [GEMINI RETRY] status=500 attempt=1/9 → rotate key
+15:36:51.474 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] mark dead index=1 cooldown=15s alive=7/9
+15:36:51.474 [INFO] [vision.py] [LLM][WARNING] [GEMINI RETRY] status=500 attempt=2/9 → rotate key
+15:36:59.586 [INFO] [vision.py] [Loop][WARNING] affect_self_read gemma call failed: HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): Read timed out. (read timeout=8.0)
+15:36:59.658 [INFO] [vision.py] [Loop][INFO] [session_ritual raw] {"text": "Ừm. Lại gặp Ngài.", "intent": "session_ritual", "action": {"type": "none"}, "reasoning_tags": ["session_ritual", "greeting_cognition"], "should_speak": true, "confidence": 0.76, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "debug_trace": "session_ritual_deterministic; situation=low_evidence_start | low_evidence_no_llm", "next_animation": "", "system_action": "", "action_input": ""}
+15:36:59.763 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent LLM greeting text="Ừm. Lại gặp Ngài."
+15:37:00.157 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent greeting
+15:37:00.428 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:37:02.898 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+15:37:02.898 [INFO] [vision.py] [Loop][INFO] [Observer] action=call_vision_compressor salience=0.93 error=0.00 focus=unknown intent=unknown
+15:37:02.898 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.08 user_presence=0.48 novelty=0.75 repetition=0.00
+15:37:02.969 [INFO] [vision.py] [Loop][INFO] [wake governor] level=call_vision_compressor ext=0.22 internal=0.03 permission=0.83 interrupt=0.17 speech=0.10 wants_vision=True vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+15:37:06.286 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=302 budget=6000 cap=5200
+15:37:06.974 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.53 pressure=0.32 surface=no mutations=2
+15:37:08.173 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=default model=gpt-4o-mini est_tokens=592 budget=30000 cap=25500
+15:37:20.418 [INFO] [vision.py] [Loop][WARNING] Vision structuring failed: HTTPError:429 Client Error: Too Many Requests for url: https://api.shopaikey.com/v1/chat/completions | body: {"error":{"message":"Response input messages must contain the word 'json' in some form to use '***.format' of type 'json_object'. (request id: 20260617163717516396323dbTySMdN)","type":"invalid_request_error","param":"input","code":null}}
+15:37:20.419 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=autonomous count=0 novelty=none trace=vision_caption_only:code_workspace:delta=0 fact=<empty>
+15:37:20.419 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+15:37:20.654 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous can resume (conversation buffer kept).
+15:37:20.963 [INFO] [vision.py] [Loop][INFO] [ni light] mode=chat | local=0.00 | drift=0.00/thấp | conf=0.45 | reason=claim_guarded
+15:37:22.133 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+15:37:22.133 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.28 error=0.00 focus=unknown intent=unknown
+15:37:22.133 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.08 user_presence=0.55 novelty=0.40 repetition=1.00
+15:37:22.183 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.26 internal=0.06 permission=0.87 interrupt=0.13 speech=0.14 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+15:37:22.438 [INFO] [vision.py] [Loop][INFO] [shadow pipeline] budget=normal | v3_focus='em gặp tôi hả' | old_focus='em gặp tôi hả' | overlap=1.00 | ev=3 | 200.1ms
+15:37:22.445 [INFO] [vision.py] [Loop][INFO] Người dùng: em gặp tôi hả
+15:37:22.445 [INFO] [vision.py] [Loop][INFO] [ni chat] drift=0.00 | level=thấp | state=ON_GOAL | streak=1
+15:37:22.445 [INFO] [vision.py] [Loop][INFO] [ti chat] mode=chat_general | reason=Duy trì đối thoại trong giới hạn runtime.
+15:37:22.445 [INFO] [vision.py] [Loop][INFO] [fe chat] mode=grounded | tone=surface=cold_soft; stance=observant_guarded; attachment=guarded; instability=stable | intent=ordinary_dialogue | arc=quiet_observation
+15:37:22.459 [INFO] [vision.py] [Loop][INFO] [conversation dynamics] mode=settled | tension=0.00 | pressure=0.00 | flags=maintain_rhythm
+15:37:22.459 [INFO] [vision.py] [Loop][INFO] [relationship dynamics] event=steady | trust=0.25 | familiarity=0.02 | attachment_vis=0.12 | rupture=0.00 | distance=0.57 | notes=none
+15:37:22.462 [INFO] [vision.py] [Loop][INFO] [controlled slippage] mode=warm | lane=task | intuition=0.12 | misread=0.08 | notes=ordinary_chat_warm_floor
+15:37:22.462 [INFO] [vision.py] [Loop][INFO] [turn semantics/pre-grounding] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | identity=0.00 | correction=0.00
+15:37:22.462 [INFO] [vision.py] [Loop][INFO] [CHAT HISTORY] [{'role': 'assistant', 'content': 'Ừm. Lại gặp Ngài.'}, {'role': 'user', 'content': 'em gặp tôi hả'}]
+15:37:22.462 [INFO] [vision.py] [Loop][INFO] [LAST USER INTENT] ordinary_dialogue
+15:37:22.462 [INFO] [vision.py] [Loop][INFO] [ACTIVE_TOPIC] ordinary_dialogue
+15:37:22.466 [INFO] [vision.py] [Loop][INFO] [vision chat] Dùng lại screen facts vừa chụp (2.0s trước), bỏ qua chụp mới.
+15:37:22.471 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+15:37:22.472 [INFO] [vision.py] [Loop][INFO] [turn semantics] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | live=0.00 | prior_failure=0.00
+15:37:22.485 [INFO] [vision.py] [Loop][INFO] [LLM CHAT HISTORY] [{'role': 'assistant', 'content': 'Ừm. Lại gặp Ngài.'}]
+15:37:22.497 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=253 budget=1000000 cap=850000
+15:37:24.262 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.53 pressure=0.32 surface=no mutations=2
+15:37:30.622 [INFO] [vision.py] [Loop][WARNING] affect_self_read gemma call failed: HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): Read timed out. (read timeout=8.0)
+15:37:30.679 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=qwen/qwen3-32b est_tokens=531 budget=6000 cap=5200
+15:37:30.680 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=qwen/qwen3-32b est_tokens=338 budget=6000 cap=5200
+15:37:30.682 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=qwen/qwen3-32b est_tokens=426 budget=6000 cap=5200
+15:37:30.684 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=qwen/qwen3-32b est_tokens=1542 budget=6000 cap=5200
+15:37:31.170 [INFO] [vision.py] [Vision][INFO] [DDS] distilled context channel=chat est_before=2614 est_after=228 trigger=2500
+15:37:31.171 [INFO] [vision.py] [Vision][WARNING] [LLM] chat prompt=7225 > cap=5200 (groq) → route sang fallback cap=25500 để giữ trọn ngữ cảnh.
+15:37:31.171 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=oversized_fallback
+15:37:31.171 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=default model=gpt-4o-mini est_tokens=7225 budget=30000 cap=25500
+15:37:50.155 [INFO] [vision.py] [Loop][INFO] [chat raw] {"text": "Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại.", "intent": "fallback_reply", "action": {"type": "none"}, "reasoning_tags": ["fallback", "chat", "service_error"], "should_speak": true, "confidence": 0.1, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "debug_trace": "rate_limited", "next_animation": "", "system_action": "", "action_input": ""}
+15:37:50.155 [INFO] [vision.py] [Loop][INFO] [chat pre_parser] raw={"text": "Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại.", "intent": "fallback_reply", "action": {"type": "none"}, "reasoning_tags": ["fallback", "chat", "service_error"], "should_speak": true, "confidence": 0.1, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fa...
+15:37:50.165 [INFO] [vision.py] [Loop][INFO] [chat after_parser] text="Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại." | animation=stand | parse_mode=hard_json_repair | trace=rate_limited | parser=parse_mode=hard_json_repair | capability_violation=không phát hiện | grounding=không cần viết lại
+15:37:50.166 [INFO] [vision.py] [Loop][INFO] [chat pre_ti] text="Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại." | animation=stand | parse_mode=hard_json_repair | trace=rate_limited | parser=parse_mode=hard_json_repair | capability_violation=không phát hiện | grounding=không cần viết lại
+15:37:50.170 [INFO] [vision.py] [Loop][INFO] [chat after_ti] text="Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại." | animation=stand | parse_mode=hard_json_repair | trace=rate_limited | Ti guard_mode=log_only | Ti mode=chat_general | parser=parse_mode=hard_json_repair | capability_violation=không phát hiện | grounding=không cần viết lại
+15:37:50.170 [INFO] [vision.py] [Loop][INFO] [chat after_escalation] text="Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại." | animation=stand | parse_mode=hard_json_repair | trace=rate_limited | Ti guard_mode=log_only | Ti mode=chat_general | critique[chat]:q=0.70,tool=0,src=rule | parser=parse_mode=hard_json_repair | capability_violation=không phát hiện | grounding=không cần viết lại
+15:37:50.699 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=chat-1 | channel=chat | broadcast=user_message:0.47 | speech=freeform/mirror | appraisal=soft_uncertain | action=user_requested/mirror | final=Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại. | commits=4/4 rejected=0 errors=0
+15:37:50.699 [INFO] [vision.py] [Loop][INFO] ERIS: Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại.
+15:37:50.699 [INFO] [vision.py] [Loop][INFO] [chat debug] parse_mode=hard_json_repair | trace=rate_limited | Ti guard_mode=log_only | Ti mode=chat_general | critique[chat]:q=0.70,tool=0,src=rule | agent_mind_feedback=epistemic_v2.feedback.success
+15:37:50.699 [INFO] [vision.py] [Loop][INFO] [chat parser] parse_mode=hard_json_repair | capability_violation=không phát hiện | grounding=không cần viết lại
+15:37:50.699 [INFO] [vision.py] [Loop][INFO] [chat] hội thoại im quá 20s; nhường lại cho autonomous (giữ nguyên buffer).
+15:37:50.699 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous can resume (conversation buffer kept).
+15:37:50.699 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:37:51.972 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+15:37:51.972 [INFO] [vision.py] [Loop][INFO] [Observer] action=update_body_bias salience=0.45 error=0.00 focus=code intent=designing
+15:37:51.972 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.08 user_presence=0.48 novelty=0.47 repetition=1.00
+15:37:52.068 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.28 internal=0.08 permission=0.63 interrupt=0.37 speech=0.15 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+15:37:52.101 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=False
+15:37:52.210 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:37:52.210 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=code intent=designing
+15:37:52.210 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.08 user_presence=0.68 novelty=0.00 repetition=1.00
+15:37:52.268 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.24 internal=0.09 permission=0.48 interrupt=0.52 speech=0.17 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.08 cycles=1 micro_checked=False reengagement_checked=False
+15:37:52.320 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=default model=gpt-4o-mini est_tokens=866 budget=30000 cap=25500
+15:37:54.626 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.53 pressure=0.32 surface=no mutations=2
+15:37:56.431 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=default model=gpt-4o-mini est_tokens=649 budget=30000 cap=25500
+15:38:01.636 [INFO] [Vision] Dang dung vision.py PID=9268...
+15:38:01.649 [INFO] [Vision] vision.py da thoat (PID=9268, code=-1).
+15:38:01.659 [INFO] [RunLogger] Ket thuc phien chay.

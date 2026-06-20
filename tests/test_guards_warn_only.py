@@ -73,4 +73,5 @@ def teardown_module(module):
     for key in list(os.environ):
         if key.startswith("ERIS_GUARD"):
             os.environ.pop(key, None)
+    os.environ["ERIS_GUARDS_WARN_ONLY"] = "0"
     importlib.reload(gc)

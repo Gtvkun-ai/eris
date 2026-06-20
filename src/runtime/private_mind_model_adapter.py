@@ -1329,7 +1329,7 @@ class RuntimePrivateMindModelAdapter:
                             texts = [
                                 str(part.get("text") or "")
                                 for part in parts
-                                if isinstance(part, Mapping) and str(part.get("text") or "").strip()
+                                if isinstance(part, Mapping) and str(part.get("text") or "").strip() and not part.get("thought")
                             ]
                             if texts:
                                 return "\n".join(texts)

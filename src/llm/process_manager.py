@@ -18,21 +18,13 @@ class RemoteModelProcessManager:
         provider = os.environ.get("ERIS_REMOTE_PROVIDER", "gemini").strip().lower()
         remote_profile = get_provider_profile(provider, slot="remote_main")
         if provider in {"openai", "openai_compatible", "compatible", "remote", "groq"}:
-            # Pool theo ĐÚNG họ key của endpoint: QuickRouter có pool riêng (xoay
-            # nhiều ERIS_QUICKROUTER_*), còn lại dùng pool Groq. Tránh gửi nhầm key
-            # Groq sang QuickRouter (và ngược lại) khi client xoay key lúc 429.
-            _prof_base = (
-                str(remote_profile.get("base_url") or "").strip()
-                or os.environ.get("ERIS_REMOTE_BASE_URL", "").strip()
-            )
-            pool_kind = "quickrouter" if "quickrouter" in _prof_base.lower() else "groq"
-            pool = get_key_pool(pool_kind)
+            pool = get_key_pool("groq")
             pool_key = pool.current_key() if pool is not None else ""
             api_key = (
                 str(remote_profile.get("api_key") or "").strip()
                 or pool_key
                 or get_secret(
-                    "ERIS_QUICKROUTER_API_KEY" if pool_kind == "quickrouter" else "ERIS_GROQ_API_KEY",
+                    "ERIS_GROQ_API_KEY",
                     "ERIS_REMOTE_API_KEY",
                     "OPENAI_API_KEY",
                 )
@@ -200,38 +192,47 @@ class RemoteModelProcessManager:
                     self.logger.warning("Khong dung duoc aggregator fallback: %s", exc)
                     return None
 
-        # ── Chuỗi dự phòng cho chat: QuickRouter (pool nhiều key) → shopaikey (aggregator).
-        # Groq giữ vai DDS worker (map-reduce context nặng), không chen vào mạch chat.
-        # Gemini hoàn toàn rời khỏi chat path → dùng cho speech/style riêng.
+        # ── Chuỗi dự phòng cho chat: shopaikey aggregator hoặc Groq.
         chain = []
 
-        # Tầng 1: QuickRouter pool phụ (key rotates) — cùng endpoint main nhưng pool riêng
-        qr_pool = get_key_pool("quickrouter")
-        qr_key = qr_pool.current_key() if qr_pool is not None else ""
-        if qr_key:
-            qr_base = os.environ.get("ERIS_FALLBACK_QR_BASE_URL", "").strip() or "https://api.quickrouter.ai/v1"
-            qr_model = os.environ.get("ERIS_FALLBACK_QR_MODEL", "").strip() or "deepseek-chat"
-            try:
-                chain.append(
-                    OpenAICompatibleClient(base_url=qr_base, api_key=qr_key, model_name=qr_model, key_pool=qr_pool)
-                )
-            except ValueError as exc:
-                self.logger.warning("Bo qua tang QuickRouter fallback: %s", exc)
-
-        # Tầng 2: shopaikey aggregator (1 key cứng, model linh hoạt)
-        agg_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY")
         agg_base = (
             os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
             or get_secret("ERIS_AGGREGATOR_BASE_URL")
         )
+        is_groq = "groq" in agg_base.lower()
+        if is_groq:
+            pool = get_key_pool("groq")
+            agg_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY") or (pool.current_key() if pool else "")
+        else:
+            pool = None
+            agg_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY")
+
         if agg_key and agg_base:
             agg_model = os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip() or "gpt-4o-mini"
             try:
                 chain.append(
-                    OpenAICompatibleClient(base_url=agg_base, api_key=agg_key, model_name=agg_model, key_pool=None)
+                    OpenAICompatibleClient(base_url=agg_base, api_key=agg_key, model_name=agg_model, key_pool=pool)
                 )
             except ValueError as exc:
-                self.logger.warning("Bo qua tang shopaikey fallback: %s", exc)
+                self.logger.warning("Bo qua tang fallback: %s", exc)
+
+        gemini_key = (
+            get_secret("GEMINI_API_KEY")
+            or get_secret("ERIS_SPEECH_API_KEY")
+            or get_secret("ERIS_REMOTE_API_KEY")
+        )
+        if gemini_key:
+            try:
+                chain.append(
+                    GeminiClient(
+                        base_url="https://generativelanguage.googleapis.com/v1beta",
+                        api_key=gemini_key,
+                        model_name="gemini-2.5-flash",
+                        key_pool=get_key_pool("gemini"),
+                    )
+                )
+            except Exception as exc:
+                self.logger.warning("Bo qua tang fallback Gemini: %s", exc)
 
         if not chain:
             self.logger.info("Chat fallback tat: khong tim thay key Groq/Gemini.")

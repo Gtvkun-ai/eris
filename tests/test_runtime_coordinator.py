@@ -1130,7 +1130,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(compressor.compress_calls, 1)
         self.assertEqual(coordinator.llm_service.screen_fact_calls, 0)
         self.assertIn("Terminal shows a Python traceback", facts[0])
-        self.assertEqual(coordinator.vision_last_trace, "moondream:test_failure_loop")
+        self.assertEqual(coordinator.vision_last_trace, "moondream:test_failure_loop:delta=0")
 
     def test_chat_screen_request_refreshes_screen_facts_via_vision_compressor(self):
         coordinator = self._make_coordinator(
@@ -1161,7 +1161,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(compressor.compress_calls, 1)
         self.assertTrue(coordinator.vision_facts)
         self.assertIn("main.py", coordinator.vision_facts[0].lower())
-        self.assertEqual(coordinator.vision_last_trace, "moondream:code_workspace")
+        self.assertEqual(coordinator.vision_last_trace, "moondream:code_workspace:delta=0")
 
     def test_vision_soft_queue_failures_use_short_backoff(self):
         coordinator = self._make_coordinator()
@@ -2940,14 +2940,14 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             coordinator._should_hold_ambient_silence(
                 snapshot=snapshot,
                 ti_report=ti_report,
-                now=219.0,
+                now=159.0,
             )
         )
         self.assertFalse(
             coordinator._should_hold_ambient_silence(
                 snapshot=snapshot,
                 ti_report=ti_report,
-                now=221.0,
+                now=161.0,
             )
         )
 

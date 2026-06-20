@@ -131,6 +131,13 @@ class GoalPersistenceState:
 
         Một luồng được nhớ có thể active trong khi hàm này trả False. Đó mới là
         toàn bộ ý chính. Continuity không phải dây xích. Tinh tế đến đáng sợ, đúng.
+
+        Hai đường vào can_intervene:
+        1. Task trực tiếp từ user (CONCRETE_TASK, DEBUG_THREAD, CORRECTION_THREAD):
+           threshold thấp hơn (intervention_permission >= 0.45), vì user đã bày tỏ ý định.
+        2. Luồng nền từ cognitive (runtime_thread, unresolved_thread):
+           threshold cao hơn (intervention_permission >= 0.52), phải tái xuất hiện >= 2 lần
+           và có coherence >= 0.50 để tránh Eris nhắc những chủ đề yếu/ngẫu nhiên.
         """
 
         effective_confidence = self.confidence
@@ -139,17 +146,40 @@ class GoalPersistenceState:
         effective_actionability = self.actionability
         if effective_actionability <= 0.0 and self.status == "active" and self.summary:
             effective_actionability = 0.35
+        if not self.active:
+            return False
+        if effective_confidence < 0.42:
+            return False
+
+        # Đường 1: goal từ user message — threshold thấp, goal_type hẹp
+        direct_user_types = {
+            GoalTextKind.CONCRETE_TASK.value,
+            GoalTextKind.DEBUG_THREAD.value,
+            GoalTextKind.CORRECTION_THREAD.value,
+        }
+        if self.goal_type in direct_user_types:
+            return (
+                self.intervention_permission >= 0.45
+                and effective_actionability >= 0.40
+            )
+
+        # Đường 2: luồng nền từ cognitive_momentum / cognitive_attractor
+        # Phải tái xuất hiện ít nhất 2 lần (recurrence_count >= 2)
+        # để tránh Eris nhảy vào sớm từ 1 thought ngẫu nhiên.
+        cognitive_types = {"runtime_thread", "unresolved_thread"}
+        if self.goal_type in cognitive_types:
+            return (
+                self.intervention_permission >= 0.52
+                and effective_actionability >= 0.42
+                and self.coherence >= 0.50
+                and self.recurrence_count >= 2
+            )
+
+        # Các goal_type khác (DESIGN_DIRECTION, RESEARCH_THREAD, ...): dùng threshold gốc
         return (
-            self.active
-            and self.intervention_permission >= 0.55
+            self.intervention_permission >= 0.55
             and effective_actionability >= 0.45
-            and effective_confidence >= 0.42
-            and self.goal_type
-            in {
-                GoalTextKind.CONCRETE_TASK.value,
-                GoalTextKind.DEBUG_THREAD.value,
-                GoalTextKind.CORRECTION_THREAD.value,
-            }
+            and self.goal_type in direct_user_types
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -397,22 +427,40 @@ class GoalPersistenceEngine:
         if signal.kind in {GoalTextKind.CASUAL.value, GoalTextKind.RECOVERY.value, GoalTextKind.NONE.value}:
             return None
 
+        tension = clamp01(getattr(momentum, "tension", 0.0))
+        # Khi momentum mạnh (score >= 0.76) và có tension thực sự:
+        # nâng intervention_permission để goal này có thể đạt can_intervene=True
+        # sau khi tích lũy đủ recurrence. Cap 0.58 để vẫn cần recurrence >= 2.
+        if score >= 0.76 and tension >= 0.35:
+            max_intervention = 0.58
+            max_actionability = 0.54
+        elif score >= 0.68:
+            max_intervention = 0.44
+            max_actionability = 0.42
+        else:
+            max_intervention = 0.34
+            max_actionability = 0.30
+
         return GoalCandidate(
             summary=topic,
             source="cognitive_momentum",
             goal_type=signal.kind if signal.kind != GoalTextKind.COMMENTARY.value else "runtime_thread",
             intent="runtime_thread",
             strength=clamp01(score * 0.72),
-            urgency=clamp01(getattr(momentum, "tension", 0.0) * 0.55),
+            urgency=clamp01(tension * 0.60),
             confidence=clamp01(max(0.42, signal.confidence, score * 0.66)),
-            actionability=clamp01(max(signal.actionability, 0.26 if anchors else 0.18)),
-            intervention_permission=clamp01(min(0.34, getattr(momentum, "tension", 0.0) * 0.34)),
-            coherence=clamp01(score * 0.70),
+            actionability=clamp01(max(signal.actionability, max_actionability if anchors else max_actionability * 0.60)),
+            intervention_permission=clamp01(min(max_intervention, tension * max_intervention / 0.40)),
+            coherence=clamp01(score * 0.72),
             drift=min(0.30, clamp01(getattr(ni_report, "drift_score", 0.0)) * 0.35),
-            next_hint="keep this unresolved thread available, but do not surface it unless current context invites it",
+            next_hint=(
+                "bring this unresolved thread back naturally when current context reconnects to it"
+                if score >= 0.76 else
+                "keep this unresolved thread available, but do not surface it unless current context invites it"
+            ),
             evidence=("thought_momentum", *tuple(getattr(momentum, "evidence", ()) or ())[:6]),
             anchors=anchors,
-            replace_priority=0.34,
+            replace_priority=0.38 if score >= 0.76 else 0.34,
         )
 
     def _from_thought_attractor(self, thought_stream_report, *, ni_report) -> GoalCandidate | None:
@@ -436,22 +484,39 @@ class GoalPersistenceEngine:
             return None
 
         tension = clamp01(getattr(attractor, "tension", 0.0))
+        # Attractor là vòng lặp nhận thức mạnh hơn momentum đơn thuần.
+        # Khi score >= 0.78 và có tension: nâng caps để sau vài cycle tích lũy
+        # goal có thể đạt can_intervene=True (vẫn cần recurrence >= 2).
+        if score >= 0.78 and tension >= 0.30:
+            max_intervention = 0.64
+            max_actionability = 0.58
+        elif score >= 0.72:
+            max_intervention = 0.50
+            max_actionability = 0.44
+        else:
+            max_intervention = 0.38
+            max_actionability = 0.32
+
         return GoalCandidate(
             summary=topic,
             source="cognitive_attractor",
             goal_type=signal.kind if signal.kind != GoalTextKind.COMMENTARY.value else "unresolved_thread",
             intent="unresolved_thread",
             strength=clamp01(score * 0.76),
-            urgency=clamp01(tension * 0.58),
+            urgency=clamp01(tension * 0.62),
             confidence=clamp01(max(0.45, signal.confidence, score * 0.68)),
-            actionability=clamp01(max(signal.actionability, 0.30 if anchors else 0.18)),
-            intervention_permission=clamp01(min(0.38, tension * 0.38)),
-            coherence=clamp01(score * 0.72),
+            actionability=clamp01(max(signal.actionability, max_actionability if anchors else max_actionability * 0.60)),
+            intervention_permission=clamp01(min(max_intervention, tension * max_intervention / 0.35)),
+            coherence=clamp01(score * 0.74),
             drift=min(0.30, clamp01(getattr(ni_report, "drift_score", 0.0)) * 0.35),
-            next_hint="bias attention toward this unresolved loop only when evidence reconnects to it",
+            next_hint=(
+                "reconnect to this attractor thread naturally when context overlaps — it has looped enough to surface"
+                if score >= 0.78 else
+                "bias attention toward this unresolved loop only when evidence reconnects to it"
+            ),
             evidence=("thought_attractor", *tuple(getattr(attractor, "evidence", ()) or ())[:6]),
             anchors=anchors,
-            replace_priority=0.38,
+            replace_priority=0.42 if score >= 0.78 else 0.38,
         )
 
     def _from_ti_realign(self, ti_report, *, broadcast, snapshot, ni_report) -> GoalCandidate | None:

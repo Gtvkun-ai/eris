@@ -1,0 +1,131 @@
+{
+  "version": 2,
+  "kind": "semantic_memory",
+  "updated_at": "2026-06-18T08:31:02+0700",
+  "items": [
+    {
+      "id": "sem_64c796650ea4",
+      "claim": "ERIS có vấn đề về đường truyền và yêu cầu người dùng nhắn lại.",
+      "domain": "project",
+      "confidence": 0.904,
+      "source": "state_commit",
+      "evidence_ids": [
+        "epi_60944c0dcfd8",
+        "epi_3a8e46f1d036",
+        "epi_2803d07c54e2",
+        "epi_57d4e33e7cd6",
+        "epi_05506d25d56d"
+      ],
+      "observations": 4,
+      "status": "active",
+      "first_seen_at": "2026-06-17T15:47:22+0700",
+      "updated_at": "2026-06-18T08:27:18+0700",
+      "decay_policy": "normal",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "typed_fact",
+        "merged"
+      ],
+      "metadata": {
+        "fact_key": "project.eris",
+        "domain": "project",
+        "importance": 0.765,
+        "source": "ai_curator_distillation",
+        "raw_content": "ERIS có vấn đề về đường truyền và yêu cầu người dùng nhắn lại.",
+        "reason": "episodic_distillation_by_ai_curator",
+        "aliases": [],
+        "fact_profile_evidence": [
+          "metadata.fact_key"
+        ],
+        "embedding_text_hash": "7a2faa8b6b68784f",
+        "embedding_version": 1,
+        "access_count": 47,
+        "last_accessed_at": "2026-06-18T08:31:02+0700",
+        "previous_claims": [
+          "ERIS đang có vấn đề về đường truyền."
+        ],
+        "last_merge_reason": "episodic_distillation_by_ai_curator"
+      }
+    },
+    {
+      "id": "sem_e5989bf4ff61",
+      "claim": "User has a strong and recurring interest in performing architecture work.",
+      "domain": "unknown",
+      "confidence": 0.88,
+      "source": "state_commit",
+      "evidence_ids": [
+        "dossier.user.current",
+        "dossier.runtime.state",
+        "dossier.concern.0",
+        "ev.test"
+      ],
+      "observations": 1,
+      "status": "active",
+      "first_seen_at": "2026-06-17T15:19:13+0700",
+      "updated_at": "2026-06-17T15:19:13+0700",
+      "decay_policy": "slow",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "typed_fact"
+      ],
+      "metadata": {
+        "fact_key": "user_preference_architecture_work",
+        "domain": "user",
+        "importance": 0.748,
+        "source": "ai_curator_concern_bridge",
+        "raw_content": "User has a strong and recurring interest in performing architecture work.",
+        "reason": "concern_bridge_by_ai_curator",
+        "aliases": [],
+        "fact_profile_evidence": [
+          "metadata.fact_key"
+        ],
+        "embedding_text_hash": "984c5836986ed6f3",
+        "embedding_version": 1,
+        "access_count": 3,
+        "last_accessed_at": "2026-06-17T23:24:32+0700"
+      }
+    },
+    {
+      "id": "sem_5daa178698d5",
+      "claim": "ERIS đang có vấn đề về đường truyền.",
+      "domain": "technical",
+      "confidence": 0.65,
+      "source": "state_commit",
+      "evidence_ids": [
+        "epi_2803d07c54e2",
+        "epi_60944c0dcfd8",
+        "epi_3a8e46f1d036"
+      ],
+      "observations": 1,
+      "status": "tentative",
+      "first_seen_at": "2026-06-17T15:53:42+0700",
+      "updated_at": "2026-06-17T15:53:42+0700",
+      "decay_policy": "normal",
+      "contradiction_ids": [],
+      "tags": [
+        "commit",
+        "fact_key_missing_candidate",
+        "legacy_infer_disabled"
+      ],
+      "metadata": {
+        "fact_key": "",
+        "domain": "technical",
+        "importance": 0.5,
+        "source": "ai_curator_distillation",
+        "raw_content": "ERIS đang có vấn đề về đường truyền.",
+        "reason": "episodic_distillation_by_ai_curator",
+        "aliases": [],
+        "fact_profile_evidence": [
+          "metadata.domain",
+          "candidate:missing_fact_key"
+        ],
+        "embedding_text_hash": "6eddc8ee4f289730",
+        "embedding_version": 1,
+        "access_count": 0,
+        "last_accessed_at": ""
+      }
+    }
+  ]
+}

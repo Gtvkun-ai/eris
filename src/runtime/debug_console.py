@@ -19,6 +19,7 @@ Lệnh cố ý đơn giản, tách bằng khoảng trắng. Hỗ trợ tiền t�
 from __future__ import annotations
 
 from typing import Any
+import time
 
 
 # Trường cảm xúc trên PersistentInternalState. valence là signed [-1,1]; còn lại [0,1].
@@ -35,6 +36,23 @@ _AFFECT_FIELDS = {
     "confidence",
     "fatigue",
     "tenderness",
+    "silence_pressure",
+    "social_pressure",
+    "curiosity_pressure",
+    "protective_pressure",
+    "tender_pressure",
+    "playful_pressure",
+    "watchful_pressure",
+    "restraint_pressure",
+    "subconscious_pressure",
+    "memory_replay_pressure",
+    "association_pressure",
+    "thought_stream_pressure",
+    "cognitive_tension",
+    "unresolved_prediction_pressure",
+    "recursive_reactivation_pressure",
+    "warmth",
+    "sarcasm",
 }
 
 # Trường trên RelationshipDynamicsState (tất cả [0,1]).
@@ -68,6 +86,10 @@ _ALIASES = {
     "fam": "familiarity",
     "av": "attachment_visibility",
     "dist": "preferred_distance",
+    "speech_pressure": "silence_pressure",
+    "sarcasm": "sarcasm",
+    "warmth": "warmth",
+    "tease": "sarcasm",
 }
 
 # Preset giai đoạn phát triển: nhảy thẳng tới ngưỡng attachment/continuity mà
@@ -215,11 +237,14 @@ class DebugConsole:
         except ValueError:
             return f"{field}=?({raw_value} không phải số)"
         s = self._state()
+        if not hasattr(self.coord, "_debug_overrides") or self.coord._debug_overrides is None:
+            self.coord._debug_overrides = {}
         if field in _AFFECT_FIELDS:
             signed = field in _AFFECT_SIGNED
             base = float(getattr(s, field, 0.0) or 0.0) if buff else 0.0
             new_val = _clamp(base + num if buff else num, signed)
             setattr(s, field, new_val)
+            self.coord._debug_overrides[field] = (new_val, time.time())
             self._commit(s)
             return f"{field}={round(new_val, 3)}"
         if field in _REL_FIELDS:
@@ -229,6 +254,7 @@ class DebugConsole:
             base = float(getattr(rel, field, 0.0) or 0.0) if buff else 0.0
             new_val = _clamp(base + num if buff else num, False)
             setattr(rel, field, new_val)
+            self.coord._debug_overrides[f"rel_{field}"] = (new_val, time.time())
             self._commit(s)
             return f"rel.{field}={round(new_val, 3)}"
         return f"{field}=?(field lạ)"
@@ -273,12 +299,16 @@ class DebugConsole:
         on = (not args) or args[0].lower() in ("on", "1", "true", "bat", "bật")
         s = self._state()
         rel = getattr(s, "relationship_dynamics", None)
+        if not hasattr(self.coord, "_debug_overrides") or self.coord._debug_overrides is None:
+            self.coord._debug_overrides = {}
         if on:
             for field, value in _YAN_AFFECT.items():
                 setattr(s, field, _clamp(value, field in _AFFECT_SIGNED))
+                self.coord._debug_overrides[field] = (value, time.time())
             if rel is not None:
                 for field, value in _YAN_REL.items():
                     setattr(rel, field, _clamp(value, False))
+                    self.coord._debug_overrides[f"rel_{field}"] = (value, time.time())
             self._commit(s)
             self.coord._debug_yan_mode = True
             self._inject_memory(
@@ -290,9 +320,13 @@ class DebugConsole:
         # off -> về baseline cluster liên quan
         for field, value in {"attachment": 0.30, "protectiveness": 0.16, "tenderness": 0.16, "irritation": 0.10, "arousal": 0.16}.items():
             setattr(s, field, value)
+            if field in self.coord._debug_overrides:
+                del self.coord._debug_overrides[field]
         if rel is not None:
             for field, value in {"trust": 0.25, "attachment_visibility": 0.12, "preferred_distance": 0.58}.items():
                 setattr(rel, field, value)
+                if f"rel_{field}" in self.coord._debug_overrides:
+                    del self.coord._debug_overrides[f"rel_{field}"]
         self._commit(s)
         self.coord._debug_yan_mode = False
         return "yan OFF — cluster gắn bó về baseline"
@@ -320,11 +354,15 @@ class DebugConsole:
             return f"stage lạ: {name} (có: {', '.join(_STAGE_PRESETS)})"
         s = self._state()
         rel = getattr(s, "relationship_dynamics", None)
+        if not hasattr(self.coord, "_debug_overrides") or self.coord._debug_overrides is None:
+            self.coord._debug_overrides = {}
         for field, value in preset.items():
             if field in _AFFECT_FIELDS:
                 setattr(s, field, _clamp(value, field in _AFFECT_SIGNED))
+                self.coord._debug_overrides[field] = (value, time.time())
             elif rel is not None and field in _REL_FIELDS:
                 setattr(rel, field, _clamp(value, False))
+                self.coord._debug_overrides[f"rel_{field}"] = (value, time.time())
         self._commit(s)
         return f"stage '{name}' áp dụng: {', '.join(f'{k}={v}' for k, v in preset.items())}"
 
@@ -340,15 +378,42 @@ class DebugConsole:
         if scope in ("affect", "all"):
             for field in _AFFECT_FIELDS:
                 setattr(s, field, getattr(baseline, field))
+                if hasattr(self.coord, "_debug_overrides") and self.coord._debug_overrides is not None:
+                    if field in self.coord._debug_overrides:
+                        del self.coord._debug_overrides[field]
         if scope in ("rel", "relationship", "all"):
             rel = getattr(s, "relationship_dynamics", None)
             if rel is not None:
                 rel_baseline = RelationshipDynamicsState()
                 for field in _REL_FIELDS:
                     setattr(rel, field, getattr(rel_baseline, field))
+                    if hasattr(self.coord, "_debug_overrides") and self.coord._debug_overrides is not None:
+                        if f"rel_{field}" in self.coord._debug_overrides:
+                            del self.coord._debug_overrides[f"rel_{field}"]
         self._commit(s)
         self.coord._debug_yan_mode = False
         return f"reset {scope} về baseline"
+
+    def _cmd_clear(self, args: list[str]) -> str:
+        if not args:
+            if hasattr(self.coord, "_debug_overrides") and self.coord._debug_overrides is not None:
+                self.coord._debug_overrides.clear()
+            self.coord._debug_yan_mode = False
+            return "đã xóa toàn bộ debug overrides"
+        
+        cleared = []
+        for field in args:
+            field = self._resolve_field(field)
+            if hasattr(self.coord, "_debug_overrides") and self.coord._debug_overrides is not None:
+                if field in self.coord._debug_overrides:
+                    del self.coord._debug_overrides[field]
+                    cleared.append(field)
+                elif f"rel_{field}" in self.coord._debug_overrides:
+                    del self.coord._debug_overrides[f"rel_{field}"]
+                    cleared.append(f"rel_{field}")
+        if cleared:
+            return f"đã xóa override cho: {', '.join(cleared)}"
+        return "không tìm thấy override nào để xóa"
 
     # ── memory injection ────────────────────────────────────────────────────
     def _inject_memory(self, text: str, *, episodic: bool = False, source: str = "debug_console") -> tuple[bool, str]:

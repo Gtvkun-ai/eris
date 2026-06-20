@@ -139,7 +139,7 @@ def estimate_tokens(messages: Any) -> int:
             total_images += images
     except Exception:
         return 0
-    return (total_chars // 4) + (count * _PER_MESSAGE_OVERHEAD) + (total_images * _IMAGE_TOKEN_COST)
+    return (total_chars // 3) + (count * _PER_MESSAGE_OVERHEAD) + (total_images * _IMAGE_TOKEN_COST)
 
 
 def _largest_text_index(messages: list[dict]) -> tuple[int | None, int]:
@@ -173,9 +173,40 @@ def _truncate_to_cap(messages: list[dict], cap: int) -> list[dict]:
     return msgs
 
 
+def compress_system_message(content: str) -> str:
+    """Nén hoặc lược bỏ bớt các khối cồng kềnh trong system prompt (diary, thought_stream, persona)
+    để nhường chỗ cho memory và các lượt chat gần nhất.
+    """
+    if not content:
+        return content
+    # Chia nhỏ bằng \n\n để duyệt qua các block cấu trúc
+    blocks = content.split("\n\n")
+    new_blocks = []
+    for block in blocks:
+        # 1. Loại bỏ block chứa PrivateMind speech bias
+        if "PrivateMind speech bias" in block:
+            continue
+        # 2. Loại bỏ block chứa Nhật ký nội tâm hoặc recently_resolved hoặc Đã nguôi gần đây
+        if "Nhật ký nội tâm hiện tại" in block or "recently_resolved" in block or "Đã nguôi gần đây" in block:
+            continue
+        # 3. Nén Persona (Bạn là ERIS...) thành phiên bản rút gọn, cực kỳ súc tích
+        if "Bạn là ERIS" in block or "Bạn là Eris" in block:
+            if len(block) > 250:
+                compressed_persona = (
+                    "Bạn là ERIS, trợ lý cá nhân và hiện diện desktop của Ngài. "
+                    "Khí chất INFJ: tinh tế, dịu dàng, sâu sắc. Xưng tôi, gọi người dùng là Ngài. "
+                    "Trả lời ngắn gọn, chân thành, tự nhiên."
+                )
+                new_blocks.append(compressed_persona)
+                continue
+        new_blocks.append(block)
+    return "\n\n".join(new_blocks)
+
+
 def enforce_prompt_cap(messages: Any, cap: int) -> tuple[list[dict], bool]:
-    """Nếu prompt vượt ``cap`` token: bỏ bớt lượt history cũ (giữ system + lượt
-    cuối), rồi mới cắt nội dung nếu vẫn vượt. Trả ``(messages_mới, đã_cắt)``."""
+    """Nếu prompt vượt ``cap`` token: bỏ bớt lượt history cũ (giữ system + 5 lượt
+    gần nhất), rồi mới nén system prompt, rồi mới cắt nội dung nếu vẫn vượt.
+    Trả ``(messages_mới, đã_cắt)``."""
 
     msgs = list(messages or [])
     if not msgs:
@@ -184,11 +215,16 @@ def enforce_prompt_cap(messages: Any, cap: int) -> tuple[list[dict], bool]:
         return msgs, False
 
     n = len(msgs)
-    protected: set[int] = {n - 1}  # luôn giữ lượt cuối (turn hiện tại)
+    protected: set[int] = set()
+    # 1. Bảo vệ các lượt system message
     for i, message in enumerate(msgs):
         if isinstance(message, dict) and str(message.get("role")) == "system":
             protected.add(i)
+    # 2. Bảo vệ 5 lượt gần nhất
+    for idx in range(max(0, n - 5), n):
+        protected.add(idx)
 
+    # 3. Bỏ bớt history cũ nằm ngoài vùng bảo vệ
     keep = [True] * n
     for i in range(n):
         if i in protected:
@@ -199,8 +235,23 @@ def enforce_prompt_cap(messages: Any, cap: int) -> tuple[list[dict], bool]:
         keep[i] = False
 
     trimmed = [msgs[j] for j in range(n) if keep[j]]
+    
+    # 4. Nếu vẫn vượt cap, thực hiện nén system prompt
+    if estimate_tokens(trimmed) > cap:
+        for idx, msg in enumerate(trimmed):
+            if isinstance(msg, dict) and str(msg.get("role")) == "system":
+                original_content = msg.get("content", "")
+                if isinstance(original_content, str):
+                    compressed = compress_system_message(original_content)
+                    if compressed != original_content:
+                        new_msg = dict(msg)
+                        new_msg["content"] = compressed
+                        trimmed[idx] = new_msg
+                        
+    # 5. Nếu vẫn vượt sau khi nén system prompt, ta cắt nội dung text dài nhất (raw)
     if estimate_tokens(trimmed) > cap:
         trimmed = _truncate_to_cap(trimmed, cap)
+        
     return trimmed, True
 
 

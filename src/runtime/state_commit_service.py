@@ -493,23 +493,69 @@ class StateCommitServiceMixin:
         # Nếu có memory nhưng chưa có internal state:
         if getattr(self.memory_state, "internal_state", None) is None:
             self.memory_state.internal_state = PersistentInternalState()
+    def _apply_debug_overrides(self, state: PersistentInternalState) -> PersistentInternalState:
+        overrides = getattr(self, "_debug_overrides", None)
+        if not overrides:
+            return state
+
+        # Clean up expired overrides (older than 30 seconds)
+        now = time.time()
+        expired_keys = []
+        for key, val in overrides.items():
+            if isinstance(val, tuple) and len(val) == 2:
+                _, timestamp = val
+                if now - timestamp > 30.0:
+                    expired_keys.append(key)
+        for key in expired_keys:
+            try:
+                del overrides[key]
+            except KeyError:
+                pass
+
+        if not overrides:
+            return state
+
+        from dataclasses import replace, is_dataclass
+        affect_overrides = {}
+        rel_overrides = {}
+        for key, val in overrides.items():
+            actual_val = val[0] if (isinstance(val, tuple) and len(val) == 2) else val
+            if key.startswith("rel_"):
+                rel_overrides[key[4:]] = actual_val
+            else:
+                affect_overrides[key] = actual_val
+
+        if affect_overrides:
+            state = replace(state, **{k: v for k, v in affect_overrides.items() if hasattr(state, k)})
+
+        if rel_overrides and getattr(state, "relationship_dynamics", None) is not None:
+            rel = getattr(state, "relationship_dynamics")
+            if is_dataclass(rel):
+                new_rel = replace(rel, **{k: v for k, v in rel_overrides.items() if hasattr(rel, k)})
+                state = replace(state, relationship_dynamics=new_rel)
+
+        return state
+
     def _get_internal_state(self) -> PersistentInternalState:
+        state = None
         if isinstance(self.memory_state, dict):
             payload = self.memory_state.get("internal_state") or self._load_internal_state_payload()
             if isinstance(payload, dict):
                 try:
-                    return PersistentInternalState.from_dict(payload)
+                    state = PersistentInternalState.from_dict(payload)
                 except Exception:
-                    return PersistentInternalState()
-        if self.memory_state is not None and getattr(self.memory_state, "internal_state", None) is not None:
-            return self.memory_state.internal_state
-        # Nếu không có thì tạo state tạm:
-        return PersistentInternalState()
+                    state = PersistentInternalState()
+        if state is None:
+            if self.memory_state is not None and getattr(self.memory_state, "internal_state", None) is not None:
+                state = self.memory_state.internal_state
+            else:
+                state = PersistentInternalState()
+        return self._apply_debug_overrides(state)
+
     def _set_internal_state(self, state: PersistentInternalState) -> None:
-        # Không có memory thì không set.
         if self.memory_state is None:
             return
-        # Dùng lock để tránh nhiều thread sửa state cùng lúc.
+        state = self._apply_debug_overrides(state)
         with self._state_lock:
             if isinstance(self.memory_state, dict):
                 self.memory_state["internal_state"] = state.to_dict() if callable(getattr(state, "to_dict", None)) else dict(getattr(state, "__dict__", {}) or {})

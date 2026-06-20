@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 import unicodedata
 from dataclasses import dataclass
@@ -22,6 +23,13 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .contracts import PrivateConcern, ThoughtFragment, compact_text, stable_id, to_plain, clamp01
+
+
+def _locked(method):
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 # Tiền tố "văn phong evaluator" hay bám vào theme — tước để so khớp phần lõi.
@@ -111,6 +119,7 @@ class ConcernStore:
         self.config = config or ConcernStoreConfig()
         self.logger = logger
         self._concerns: dict[str, PrivateConcern] = {}
+        self._lock = threading.RLock()
         if self.path:
             self.load()
 
@@ -157,9 +166,11 @@ class ConcernStore:
                     return True
         return False
 
+    @_locked
     def all(self) -> tuple[PrivateConcern, ...]:
         return tuple(sorted(self._concerns.values(), key=lambda c: (c.status != "open", -c.pressure, -c.updated_at)))
 
+    @_locked
     def open_concerns(self, *, limit: int = 12) -> tuple[PrivateConcern, ...]:
         self.prune_and_decay()
         items = [c for c in self._concerns.values() if c.status in {"open", "watching", "blocked"}]
@@ -184,6 +195,7 @@ class ConcernStore:
     def get(self, concern_id: str) -> PrivateConcern | None:
         return self._concerns.get(str(concern_id or ""))
 
+    @_locked
     def add_or_update(self, concern: PrivateConcern) -> PrivateConcern:
         if self._is_degenerate_theme(concern.theme):
             # Trả concern giả không lưu, không phình store.
@@ -224,6 +236,7 @@ class ConcernStore:
         self.save()
         return existing
 
+    @_locked
     def update_from_fragments(self, fragments: Iterable[ThoughtFragment]) -> tuple[PrivateConcern, ...]:
         updated: list[PrivateConcern] = []
         for fragment in fragments:
@@ -263,6 +276,7 @@ class ConcernStore:
             self.save()
         return tuple(updated)
 
+    @_locked
     def update_from_judgment(self, data: Mapping[str, Any] | None) -> PrivateConcern | None:
         if not data:
             return None
@@ -307,6 +321,7 @@ class ConcernStore:
         self.save()
         return concern
 
+    @_locked
     def update_from_outcome(self, outcome: Any, *, surface_outcome: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], ...]:
         data: dict[str, Any]
         if isinstance(outcome, Mapping):
@@ -461,6 +476,7 @@ class ConcernStore:
             self.save()
         return tuple(reports)
 
+    @_locked
     def mark_resolved(self, concern_id: str, *, reason: str = "", closure_note: str = "") -> bool:
         concern = self._concerns.get(str(concern_id or ""))
         if concern is None:
@@ -481,6 +497,7 @@ class ConcernStore:
             closure_note or "Chuyện này đã nguôi dần trong tôi.", 200
         )
 
+    @_locked
     def auto_resolve_settled(self, *, now: float | None = None) -> tuple[PrivateConcern, ...]:
         """Tự khép các concern đã dịu đủ lâu (Q1).
 
@@ -521,6 +538,7 @@ class ConcernStore:
             self.save()
         return tuple(closed)
 
+    @_locked
     def recently_resolved(self, *, limit: int = 5, now: float | None = None) -> tuple[dict[str, Any], ...]:
         """Các concern vừa nguôi gần đây — để diary/chat nói 'đã nguôi' (Q1)."""
         current = float(now or time.time())
@@ -545,6 +563,7 @@ class ConcernStore:
         items.sort(key=lambda pair: pair[0], reverse=True)
         return tuple(item for _, item in items[: max(0, limit)])
 
+    @_locked
     def prune_and_decay(self, *, now: float | None = None) -> None:
         current = float(now or time.time())
         changed = False
@@ -566,6 +585,7 @@ class ConcernStore:
             self._trim()
             self.save()
 
+    @_locked
     def load(self) -> None:
         if self.path is None or not self.path.exists():
             return
@@ -584,6 +604,7 @@ class ConcernStore:
             self._log("warning", "ConcernStore load failed: %s", exc)
             self._concerns = {}
 
+    @_locked
     def save(self) -> None:
         if not (self.path and self.config.autosave):
             return
@@ -596,7 +617,16 @@ class ConcernStore:
             }
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
             tmp.write_text(json.dumps(to_plain(payload), ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(self.path)
+            # On Windows, replacing can raise PermissionError if another thread or process holds a handle.
+            # Retry up to 5 times to prevent WinError 5.
+            for attempt in range(5):
+                try:
+                    tmp.replace(self.path)
+                    break
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.01)
         except Exception as exc:
             self._log("warning", "ConcernStore save failed: %s", exc)
 

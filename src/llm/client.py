@@ -16,6 +16,20 @@ def _http_error_with_body(response: requests.Response) -> requests.HTTPError:
     return requests.HTTPError(message, response=response)
 
 
+def _is_empty_output_error(exc: requests.HTTPError) -> bool:
+    """Detect lỗi Groq 'model output must contain either output text or tool calls'.
+
+    Lỗi này xảy ra khi model thinking (Qwen3/GPT-OSS) với reasoning_effort=none
+    + response_format=json_object tạo ra empty output. Cần retry mà không có
+    response_format hoặc reasoning_effort.
+    """
+    try:
+        body = exc.response.text or ""
+        return "model output" in body and "tool calls" in body
+    except Exception:
+        return False
+
+
 def _chat_payload_variants(payload: dict) -> list[dict]:
     variants = [payload]
     if "grammar" in payload:
@@ -44,21 +58,21 @@ def _chat_payload_variants(payload: dict) -> list[dict]:
 def _model_supports_reasoning_toggle(model_name: str) -> bool:
     """Các model có chế độ "thinking" mà Groq cho tắt qua reasoning_effort.
 
-    Chủ yếu Qwen3 và GPT-OSS. Trả về False cho llama/glm/gemma… để KHÔNG gửi
+    Chủ yếu Qwen3/Qwen và GPT-OSS. Trả về False cho llama/glm/gemma… để KHÔNG gửi
     field lạ lên endpoint không hỗ trợ.
     """
 
     name = (model_name or "").strip().lower()
-    return "qwen3" in name or "qwen-3" in name or "gpt-oss" in name
+    return "qwen" in name or "gpt-oss" in name
 
 
 def _resolve_reasoning_effort() -> str:
-    """Mức reasoning cho model có thinking. Mặc định "none" để khỏi đốt token vào
-    khối suy nghĩ (pipeline chỉ cần JSON + giọng, không cần suy luận nhiều bước).
-    Đặt ERIS_REASONING_EFFORT=default/low/medium/high để bật lại khi cần.
+    """Mức reasoning cho model có thinking. Mặc định "medium" để bật suy nghĩ.
+    Đặt ERIS_REASONING_EFFORT=none/default/low/medium/high để thay đổi khi cần.
     """
 
-    return (os.environ.get("ERIS_REASONING_EFFORT", "none") or "none").strip().lower()
+    return (os.environ.get("ERIS_REASONING_EFFORT", "medium") or "medium").strip().lower()
+
 
 
 class LlamaServerClient:
@@ -90,6 +104,7 @@ class LlamaServerClient:
         response_format=None,
         grammar=None,
         timeout=None,
+        reasoning_effort=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         payload = {
@@ -153,7 +168,7 @@ class OpenAICompatibleClient:
         if quoted:
             candidate = quoted.group(1).strip()
 
-        token_match = re.search(r"\bsk-[A-Za-z0-9._\-]+\b", candidate)
+        token_match = re.search(r"\bg?sk[-_][A-Za-z0-9._\-]+\b", candidate)
         if token_match:
             candidate = token_match.group(0)
 
@@ -178,8 +193,30 @@ class OpenAICompatibleClient:
         response_format=None,
         grammar=None,
         timeout=None,
+        reasoning_effort=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
+        if response_format and response_format.get("type") == "json_object":
+            last_msg_has_json = False
+            if messages:
+                last_msg = messages[-1]
+                content = last_msg.get("content", "")
+                if isinstance(content, str) and "json" in content.lower():
+                    last_msg_has_json = True
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and "json" in part.get("text", "").lower():
+                            last_msg_has_json = True
+                            break
+            if not last_msg_has_json and messages:
+                messages = list(messages)
+                last_msg = dict(messages[-1])
+                if isinstance(last_msg.get("content"), str):
+                    last_msg["content"] = last_msg["content"] + "\n\nReturn the output in json format."
+                elif isinstance(last_msg.get("content"), list):
+                    last_msg["content"] = list(last_msg["content"]) + [{"type": "text", "text": "\n\nReturn the output in json format."}]
+                messages[-1] = last_msg
+
         payload = {
             "model": self.model_name,
             "messages": messages,
@@ -193,8 +230,8 @@ class OpenAICompatibleClient:
         if grammar is not None:
             payload["grammar"] = grammar
         if _model_supports_reasoning_toggle(self.model_name):
-            effort = _resolve_reasoning_effort()
-            if effort and effort != "off":
+            effort = reasoning_effort or _resolve_reasoning_effort()
+            if effort and effort != "off" and effort != "none":
                 payload["reasoning_effort"] = effort
 
         headers = {
@@ -265,7 +302,7 @@ class OpenAICompatibleClient:
 class ChainedFallbackClient:
     """Gộp nhiều client dự phòng thành MỘT, thử lần lượt cho tới khi có cái chạy.
 
-    Dùng làm ``fallback_client`` của LlmService: khi main (QuickRouter) chết, service
+    Dùng làm ``fallback_client`` của LlmService: khi main (OpenRouter) chết, service
     gọi client này MỘT lần; bên trong nó thử Groq (pool 8 key) trước, hỏng thì sang
     Gemini/gemma (pool 7 key). Mỗi sub-client tự xoay key trong pool của nó khi 429,
     nên đây là tầng "đổi NHÀ CUNG CẤP" sau khi đã vắt cạn pool của nhà trước.
@@ -455,6 +492,7 @@ class GeminiClient:
         response_format=None,
         grammar=None,
         timeout=None,
+        reasoning_effort=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         system_instruction, contents = self._convert_messages(messages)
@@ -465,8 +503,13 @@ class GeminiClient:
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
-        if self.model_name.startswith("gemini-2.5"):
-            generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+        effort = reasoning_effort or _resolve_reasoning_effort()
+        if "gemini-2.5" in self.model_name or "thinking" in self.model_name or "gemini-2.0" in self.model_name:
+            if effort == "none" or effort == "off":
+                generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+            else:
+                budget = 2048 if effort == "high" else 1024
+                generation_config["thinkingConfig"] = {"thinkingBudget": budget}
         # Gemma (open model trên Gemini API) KHÔNG hỗ trợ controlled generation
         # (responseMimeType/responseSchema) — gửi kèm sẽ 400/500. Bỏ cho gemma;
         # adapter tự salvage JSON từ text thường.

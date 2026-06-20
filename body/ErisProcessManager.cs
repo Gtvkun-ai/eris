@@ -1,4 +1,4 @@
-﻿using Godot;
+using Godot;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -63,7 +63,7 @@ public sealed class ErisProcessManager
 					$"  - script : {visionScriptFullPath}");
 				return;
 			}
-			fileName = config.PythonExecutable;
+			fileName = ResolvePythonExecutable(config.PythonExecutable, baseDir);
 			arguments = $"\"{visionScriptFullPath}\"";
 		}
 
@@ -308,6 +308,50 @@ public sealed class ErisProcessManager
 		return string.IsNullOrWhiteSpace(exeDir) ? GetProjectRoot() : exeDir;
 	}
 
+	/// <summary>
+	/// Resolve Python executable theo thứ tự ưu tiên:
+	/// 1. Nếu configuredExe là đường dẫn tuyệt đối và tồn tại → dùng thẳng.
+	/// 2. .venv\Scripts\python.exe trong baseDir (venv local của project).
+	/// 3. .venv\Scripts\python.exe trong thư mục gốc project (khi chạy từ editor sub-folder).
+	/// 4. configuredExe gốc (fallback — dùng PATH hệ thống).
+	/// </summary>
+	private static string ResolvePythonExecutable(string configuredExe, string baseDir)
+	{
+		// 1. Đường dẫn tuyệt đối có sẵn
+		if (!string.IsNullOrWhiteSpace(configuredExe)
+			&& Path.IsPathRooted(configuredExe)
+			&& File.Exists(configuredExe))
+		{
+			RunLogger.Log($"[Vision] Python (absolute): {configuredExe}");
+			return configuredExe;
+		}
+
+		// 2. .venv trong baseDir
+		string venvInBase = Path.Combine(baseDir, ".venv", "Scripts", "python.exe");
+		if (File.Exists(venvInBase))
+		{
+			RunLogger.Log($"[Vision] Python (venv baseDir): {venvInBase}");
+			return venvInBase;
+		}
+
+		// 3. .venv trong project root (khi editor chạy từ sub-dir)
+		string projectRoot = GetProjectRoot();
+		if (!string.Equals(projectRoot, baseDir, StringComparison.OrdinalIgnoreCase))
+		{
+			string venvInRoot = Path.Combine(projectRoot, ".venv", "Scripts", "python.exe");
+			if (File.Exists(venvInRoot))
+			{
+				RunLogger.Log($"[Vision] Python (venv projectRoot): {venvInRoot}");
+				return venvInRoot;
+			}
+		}
+
+		// 4. Fallback: dùng nguyên configuredExe (hy vọng có trong PATH)
+		string fallback = string.IsNullOrWhiteSpace(configuredExe) ? "python" : configuredExe;
+		RunLogger.Log($"[Vision] Python (fallback PATH): {fallback}");
+		return fallback;
+	}
+
 	private static string BundledRuntimeFileName()
 	{
 		return OS.HasFeature("windows") ? "eris-runtime.exe" : "eris-runtime";
@@ -331,6 +375,7 @@ public sealed class ErisProcessManager
 			trimmed.Contains("[LLM]", StringComparison.OrdinalIgnoreCase) ||
 			trimmed.Contains("[Vision]", StringComparison.OrdinalIgnoreCase) ||
 			trimmed.Contains("[Chat]", StringComparison.OrdinalIgnoreCase) ||
+			trimmed.Contains("[TTS]", StringComparison.OrdinalIgnoreCase) ||
 			trimmed.Contains("[AI Decision]", StringComparison.OrdinalIgnoreCase) ||
 			trimmed.Contains("[chat raw]", StringComparison.OrdinalIgnoreCase) ||
 			trimmed.Contains("[directive raw]", StringComparison.OrdinalIgnoreCase) ||

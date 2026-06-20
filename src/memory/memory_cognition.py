@@ -371,7 +371,7 @@ class MemoryCognitionCore:
         if not q.include_procedural:
             cue.forbidden_layers = tuple(dict.fromkeys((*cue.forbidden_layers, "procedural")))
 
-        result = self.retrieval_engine.retrieve(cue, quotas=quotas, max_activations=max(6, min(14, q.max_items)))
+        result = self.retrieval_engine.retrieve(cue, quotas=quotas, max_activations=max(3, min(5, q.max_items)))
         packet = self.packet_builder.from_retrieval_result(result, token_budget=q.token_budget)
         return packet
 

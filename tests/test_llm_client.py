@@ -7,7 +7,61 @@ import requests
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from llm.client import GeminiClient, LlamaServerClient
+from llm.client import GeminiClient, LlamaServerClient, OpenAICompatibleClient
+
+
+class OpenAICompatibleClientTests(unittest.TestCase):
+    def test_json_object_response_format_appends_json_instruction_to_last_message(self):
+        calls = []
+
+        def fake_post(url, headers, json, timeout):
+            calls.append(json)
+            return _FakeResponse(payload={"choices": [{"message": {"content": "{}"}}]})
+
+        with patch("llm.client.requests.post", side_effect=fake_post):
+            client = OpenAICompatibleClient("https://api.test.com/v1", "test-key", "gpt-4o-mini")
+            
+            # Case 1: Message does not contain "json"
+            client.create_chat_completion(
+                messages=[{"role": "system", "content": "You are a helper."}, {"role": "user", "content": "Hello world"}],
+                temperature=0.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=32,
+                response_format={"type": "json_object"},
+            )
+            self.assertEqual(len(calls), 1)
+            last_message_content = calls[0]["messages"][-1]["content"]
+            self.assertIn("Return the output in json format.", last_message_content)
+
+            # Case 2: Message already contains "json" (lowercase)
+            calls.clear()
+            client.create_chat_completion(
+                messages=[{"role": "user", "content": "Give me a json string of facts."}],
+                temperature=0.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=32,
+                response_format={"type": "json_object"},
+            )
+            self.assertEqual(len(calls), 1)
+            last_message_content = calls[0]["messages"][-1]["content"]
+            self.assertNotIn("Return the output in json format.", last_message_content)
+
+            # Case 3: Message contains "JSON" (uppercase)
+            calls.clear()
+            client.create_chat_completion(
+                messages=[{"role": "user", "content": "Output in JSON"}],
+                temperature=0.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=32,
+                response_format={"type": "json_object"},
+            )
+            self.assertEqual(len(calls), 1)
+            last_message_content = calls[0]["messages"][-1]["content"]
+            # It should realize it contains JSON case-insensitively, so it should NOT append!
+            self.assertNotIn("Return the output in json format.", last_message_content)
 
 
 class _FakeResponse:
@@ -124,7 +178,22 @@ class GeminiClientTests(unittest.TestCase):
         generation_config = calls[0]["json"]["generationConfig"]
         self.assertEqual(generation_config["responseMimeType"], "application/json")
         self.assertEqual(generation_config["responseSchema"], schema)
-        self.assertEqual(generation_config["thinkingConfig"], {"thinkingBudget": 0})
+        self.assertEqual(generation_config["thinkingConfig"], {"thinkingBudget": 1024})
+
+        # Verify that passing reasoning_effort="none" explicitly sets thinkingBudget to 0
+        calls.clear()
+        with patch("llm.client.requests.post", side_effect=fake_post):
+            client.create_chat_completion(
+                messages=[{"role": "system", "content": "Return JSON"}, {"role": "user", "content": "hi"}],
+                temperature=0.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=32,
+                response_format={"type": "json_object", "schema": schema},
+                reasoning_effort="none",
+            )
+        generation_config_none = calls[0]["json"]["generationConfig"]
+        self.assertEqual(generation_config_none["thinkingConfig"], {"thinkingBudget": 0})
 
 
 class GemmaPayloadHygieneTests(unittest.TestCase):

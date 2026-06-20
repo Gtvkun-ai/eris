@@ -122,8 +122,51 @@ class SelfCritiqueEscalationMixin:
     def _self_critique_enabled(self) -> bool:
         return str(os.environ.get("ERIS_SELF_CRITIQUE_ENABLED", "1")).strip().lower() not in {"0", "false", "off", "no"}
 
-    def _self_critique_llm_enabled(self) -> bool:
-        return str(os.environ.get("ERIS_SELF_CRITIQUE_LLM", "0")).strip().lower() in {"1", "true", "on", "yes"}
+    def _self_critique_llm_enabled(self, user_text: str = "") -> bool:
+        config_enabled = str(os.environ.get("ERIS_SELF_CRITIQUE_LLM", "0")).strip().lower() in {"1", "true", "on", "yes"}
+        if config_enabled:
+            return True
+        if user_text:
+            return self._classify_query_difficulty(user_text) != "none"
+        return False
+
+    def _classify_query_difficulty(self, user_text: str) -> str:
+        """Phan loai do kho cua luot noi dua tren cau cua nguoi dung.
+        - Chua code/cu phap hoac tu khoa phan tich hoac do dai > 120 ky tu -> "high" hoac "medium"
+        - Tan gau don thuan, chao hoi -> "none"
+        """
+        text = str(user_text or "").strip()
+        if not text:
+            return "none"
+
+        normalized = self._sc_normalize(text)
+
+        # 1. Dau hieu code / lap trinh -> high difficulty
+        code_indicators = (
+            "def ", "class ", "import ", "function ", "const ", "let ", "var ",
+            "python", "javascript", "js ", "html", "css", "c++", "c#", "java ",
+            "sql", "git", "bash", "shell", "docker", "api", "json", "code", "hàm",
+            "viết code", "sửa lỗi", "refactor", "bug", "thuật toán", "database",
+            "binary search", "đệ quy", "loop", "vòng lặp", "mảng", "array", "object"
+        )
+        if any(indicator in normalized for indicator in code_indicators) or re.search(r"[{}()\[\]=+\-*/<>:;]{3,}", text):
+            return "high"
+
+        # 2. Dau hieu phan tich / lap luan phuc tap / nhieu buoc -> medium difficulty
+        analysis_indicators = (
+            "phân tích", "so sánh", "giải thích", "vì sao", "tại sao", "chứng minh",
+            "đánh giá", "tối ưu", "cách làm", "hướng dẫn", "bước", "quy trình",
+            "nguyên nhân", "lý do", "kiểm tra lỗi", "debug", "thiết kế", "kiến trúc",
+            "architecture", "explain", "why", "how to", "optimize", "compare", "evaluate"
+        )
+        if any(indicator in normalized for indicator in analysis_indicators):
+            return "medium"
+
+        # 3. Do dai cau dai -> medium difficulty
+        if len(text) > 120:
+            return "medium"
+
+        return "none"
 
     def _escalation_threshold(self) -> float:
         try:
@@ -267,7 +310,7 @@ class SelfCritiqueEscalationMixin:
 
         # 6) (Tuỳ chọn) LLM critic nâng cấp khi bật cờ. Chỉ ghi đè khi nó thấy TỆ HƠN
         # rule, để không bao giờ "tha" cho câu mà rule đã bắt được.
-        if self._self_critique_llm_enabled():
+        if self._self_critique_llm_enabled(user_text):
             llm_result = self._llm_critique_decision(decision, channel=channel, user_text=user_text)
             if llm_result is not None:
                 result.quality = min(result.quality, llm_result.quality)

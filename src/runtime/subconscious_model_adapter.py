@@ -294,7 +294,7 @@ class RuntimeSubconsciousModelAdapter:
                     if isinstance(parts, list):
                         texts = []
                         for part in parts:
-                            if isinstance(part, Mapping) and "text" in part:
+                            if isinstance(part, Mapping) and "text" in part and not part.get("thought"):
                                 texts.append(str(part.get("text") or ""))
                         if texts:
                             return "\n".join(texts)

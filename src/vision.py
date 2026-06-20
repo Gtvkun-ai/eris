@@ -15,6 +15,7 @@ from memory.memory_cognition import MemoryCognitionCore
 from parser_grounding import DecisionParser
 from runtime.coordinator import RuntimeCoordinator
 from runtime.memory_semantic_parser_adapter import build_runtime_memory_semantic_parser
+from runtime.tts_engine import build_tts_engine
 from telemetry import TelemetryService
 from transport import UdpTransport
 
@@ -142,6 +143,10 @@ class AttentionOverseer:
             self.coordinator.memory_state = memory_state
         self.coordinator.long_term_memory = long_term_memory
 
+        # TTS engine — khởi động sau coordinator để biết cờ ERIS_TTS_ENABLED.
+        self.tts_engine = build_tts_engine()
+        self.coordinator.tts_engine = self.tts_engine
+
     def _is_body_running(self) -> bool:
         try:
             result = subprocess.run(
@@ -162,6 +167,8 @@ class AttentionOverseer:
             self.logger.info(reason)
         self.coordinator.stop()
         self.process_manager.stop()
+        if hasattr(self, "tts_engine") and self.tts_engine is not None:
+            self.tts_engine.shutdown()
 
     def run_loop(self):
         self.coordinator.run_loop()

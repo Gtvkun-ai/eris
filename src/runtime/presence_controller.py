@@ -850,6 +850,16 @@ class PresenceControllerMixin:
         elif not presence_maintenance:
             self.reengagement_quiet_cycles = 0
 
+        # Báo SnubTracker biết Eris vừa nói autonomous → bắt đầu đếm giờ
+        snub_tracker = getattr(self, "snub_tracker", None)
+        if snub_tracker is not None:
+            spoken_text = str(getattr(self, "last_text", "") or "").strip()
+            if spoken_text:
+                try:
+                    snub_tracker.on_eris_spoke(spoken_text, channel="autonomous")
+                except Exception:
+                    pass
+
     # cho phép nói chuyện nhỏ an toàn nếu đang ở kênh tự động, không có tín hiệu màn hình cụ thể
     def _safe_small_talk_budget_allowed(self, *, channel: str, snapshot, now: float | None = None) -> bool:
         if str(channel or "") != "autonomous":
@@ -858,18 +868,17 @@ class PresenceControllerMixin:
             return False
         current_time = time.time() if now is None else now
         last_spoken = float(getattr(self, "last_autonomous_spoken_at", 0.0) or 0.0)
-        if last_spoken <= 0.0:
-            return False
-        if current_time - last_spoken < 300.0:
+        # Monika-mode: cho phép nói sau 60s im lặng thay vì 300s
+        if last_spoken > 0.0 and current_time - last_spoken < 60.0:
             return False
         if self.presence_maintenance_silent_cycles < 1:
             return False
         recent = self._recent_spoken_texts(limit=3)
         if sum(1 for line in recent if "?" in str(line or "")) >= 2:
             return False
-        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
         has_window = bool(str(getattr(snapshot, "active_window", "") or getattr(snapshot, "active_app", "") or "").strip())
-        has_presence = idle_seconds >= 60.0 or bool(tuple(getattr(snapshot, "recent_events", ()) or ()))
+        idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
+        has_presence = idle_seconds >= 20.0 or bool(tuple(getattr(snapshot, "recent_events", ()) or ()))
         return bool(has_window or has_presence)
 
     def _surface_float(self, value, default: float = 0.0) -> float:
@@ -2139,12 +2148,104 @@ class PresenceControllerMixin:
             seeds.append("bodily_residue=True")
 
         seeds_tuple = tuple(dict.fromkeys(seed for seed in seeds if str(seed or "").strip()))[:8]
+
+        # === Curiosity Engine ===
+        # Khi seeds chỉ là metadata khô (active_window=..., focus_kind=...) mà không có
+        # thought/social seeds thực sự, Eris hỏi LLM để tự lấy chủ đề — giống Monika
+        # chủ động tìm chuyện thay vì ngồi body-only.
+        has_rich_seed = any(
+            s.startswith(("thought_seed=", "social_presence", "bodily"))
+            for s in seeds_tuple
+        )
+        curiosity_eligible = (
+            not has_rich_seed
+            and idle_seconds >= 30.0
+            and len(seeds_tuple) <= 3
+            and self.presence_maintenance_silent_cycles >= 1
+        )
+        if curiosity_eligible:
+            now_ce = time.time()
+            curiosity_fn = getattr(self.llm_service, "generate_curiosity_seed", None)
+            last_curiosity = float(getattr(self, "_curiosity_seeds_at", 0.0) or 0.0)
+            cached_seeds: tuple[str, ...] = getattr(self, "_curiosity_seeds_cache", ()) or ()
+            # Gọi LLM tối đa mỗi 120s; dùng cache ở giữa
+            if callable(curiosity_fn) and (now_ce - last_curiosity >= 120.0):
+                try:
+                    avoid_texts = tuple(
+                        t for t in self._recent_spoken_texts(limit=5)
+                        if str(t or "").strip()
+                    )
+                    fresh = curiosity_fn(
+                        focus_kind=focus_kind,
+                        active_window=active_window[:80],
+                        idle_seconds=idle_seconds,
+                        avoid_topics=avoid_texts,
+                        user_context=focus_summary[:120],
+                    )
+                    self._curiosity_seeds_at = now_ce
+                    if fresh:
+                        self._curiosity_seeds_cache = fresh
+                        cached_seeds = fresh
+                        self.logger.info(
+                            "[curiosity_engine] Fetched %d seeds: %s",
+                            len(fresh),
+                            " | ".join(fresh[:3]),
+                        )
+                except Exception as exc:
+                    self.logger.debug("[curiosity_engine] failed: %s", exc)
+            elif cached_seeds:
+                self.logger.debug("[curiosity_engine] Reusing %d cached seeds", len(cached_seeds))
+            if cached_seeds:
+                tagged = tuple(f"curiosity_seed={s}" for s in cached_seeds)
+                seeds_tuple = tuple(dict.fromkeys((*seeds_tuple, *tagged)))[:10]
+                kind = "thought_residue"
+
+        # === Snub Engine ===
+        # Kiểm tra xem Eris có đang bị user bơ không (nói nhưng không được trả lời).
+        # Nếu có → inject snub context vào seeds để LLM phản ứng theo tính cách.
+        snub_tracker = getattr(self, "snub_tracker", None)
+        snub_state = None
+        if snub_tracker is not None:
+            try:
+                snub_state = snub_tracker.check_and_update()
+                if snub_state.is_snubbed:
+                    # Tăng irritation vào internal state nếu vừa detect snub mới
+                    if snub_state.irritation_delta > 0.0:
+                        try:
+                            internal_state = self._get_internal_state()
+                            new_irritation = min(1.0, float(getattr(internal_state, "irritation", 0.1) or 0.1) + snub_state.irritation_delta)
+                            from dataclasses import replace as dc_replace
+                            updated_state = dc_replace(internal_state, irritation=new_irritation)
+                            self._set_internal_state(updated_state)
+                            self.logger.debug(
+                                "[snub_engine] irritation %.2f → %.2f",
+                                internal_state.irritation,
+                                new_irritation,
+                            )
+                        except Exception as exc:
+                            self.logger.debug("[snub_engine] irritation update failed: %s", exc)
+                    # Inject snub seed vào seeds_tuple
+                    snub_seed = f"snub_reaction={snub_state.level}:{snub_state.snub_count}"
+                    if snub_state.last_snubbed_text:
+                        snub_seed += f":{snub_state.last_snubbed_text[:60]}"
+                    seeds_tuple = tuple(dict.fromkeys((*seeds_tuple, snub_seed)))[:10]
+                    kind = "thought_residue"
+                    self.logger.info(
+                        "[snub_engine] level=%s count=%d → injecting snub seed",
+                        snub_state.level,
+                        snub_state.snub_count,
+                    )
+            except Exception as exc:
+                self.logger.debug("[snub_engine] failed: %s", exc)
+
         fallback = self._local_micro_presence_fallback_text(
             kind=kind,
             snapshot=snapshot,
             seeds=seeds_tuple,
             focus_family=focus_kind,
         )
+        # Snub context cho LLM — truyền vào context dict để service.py đọc được
+        snub_prompt_hint = snub_state.to_prompt_hint() if snub_state is not None else ""
         return MicroPresenceSynthesis(
             kind=kind,
             seeds=seeds_tuple,
@@ -2153,6 +2254,8 @@ class PresenceControllerMixin:
                 "idle": "long" if idle_seconds >= 240 else "short",
                 "pattern": "repetitive_logs" if any("log" in self._normalize_user_message(item) for item in recent_events) else "",
                 "focus": focus_kind,
+                "snub_hint": snub_prompt_hint,
+                "snub_level": snub_state.level if snub_state is not None else "none",
             },
             fallback_text=fallback,
             should_verbalize=bool(seeds_tuple or fallback),
@@ -2296,12 +2399,13 @@ class PresenceControllerMixin:
         "toi thay",
     )
     # Cụm/luật MỀM: quan hệ/giọng/anti-spam. warn-only ⇒ chỉ cảnh báo, cho câu qua.
+    # Lưu ý: "cần " đã bị bỏ khỏi đây — nó quá rộng và block cả câu quan sát tự nhiên
+    # ("có điều cần kiểm lại"). Rule mệnh lệnh đầu câu được xử lý riêng trong _sanitize.
     _MICRO_SOFT_BANNED = (
         "trả lời",
         "phản hồi",
         "cho tôi biết",
         "hãy ",
-        "cần ",
         "phải ",
         "tập trung",
         "quay lại",
@@ -2388,6 +2492,11 @@ class PresenceControllerMixin:
             if self._normalize_user_message(item) in normalized:
                 if soft_block(f"banned_phrase:{item}"):
                     return ""
+        # "cần" chỉ bị chặn khi đứng đầu câu (mệnh lệnh trực tiếp: "Cần làm X")
+        # — không chặn khi trong mệnh đề con ("có điều cần kiểm tra lại").
+        if re.match(r"^can\b", normalized):
+            if soft_block("imperative_can_head"):
+                return ""
         if not is_reengagement:
             for item in ("ồn chứ", "còn thức", "sao", "không"):
                 if item in normalized:

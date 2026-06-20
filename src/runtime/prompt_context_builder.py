@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 import traceback
@@ -73,29 +74,115 @@ class PromptContextBuilderMixin:
         except ValueError:
             return 8.0
 
-    def _build_internal_state_context(self, state: PersistentInternalState | None = None, self_state=None) -> str:
-        #Chuyển internal state thành text
+    # Từ khoá trigger diary_context — chỉ inject khi user hỏi về nội tâm/cảm xúc.
+    _DIARY_TRIGGER_TOKENS = (
+        # Tiếng Việt
+        "cảm xúc", "nội tâm", "cảm thấy", "tâm sự", "buồn", "mệt", "cô đơn",
+        "lo", "sợ", "nhớ", "thương", "bận tâm", "nỗi lòng", "trạng thái",
+        "đang nghĩ gì", "đang cảm", "tâm trạng", "ổn không", "sao vậy",
+        # English
+        "feel", "feeling", "emotion", "lonely", "sad", "tired", "miss",
+        "how are you", "what's wrong", "worried", "anxious", "inner",
+    )
+
+    def _should_inject_diary(self, user_text: str = "") -> bool:
+        """Gate: chỉ inject diary_context khi user hỏi nội tâm hoặc ERIS đang idle.
+
+        Tránh nhồi ~300 tokens nhật ký vào mọi lượt kỹ thuật/khi user hỏi code.
+        """
+        text = str(user_text or "").lower()
+        if any(tok in text for tok in self._DIARY_TRIGGER_TOKENS):
+            return True
+        # Idle: nếu chat_ticks gần đây = 0 và arousal thấp → ERIS đang nhàn rỗi
+        state = self._get_internal_state()
+        if state is not None:
+            chat_ticks = int(getattr(state, "chat_ticks", 0))
+            arousal = float(getattr(state, "arousal", 0.5))
+            if chat_ticks == 0 and arousal < 0.25:
+                return True
+        return False
+
+    def _build_psych_state_block(
+        self,
+        state,
+        *,
+        felt_state: str = "",
+        private_bias: str = "",
+    ) -> str:
+        """Consolidate felt_state + private_bias thành [PSYCH_STATE] compact (~50 tokens).
+
+        Thay vì inject 2 block riêng (~400 tokens tổng), tổng hợp thành 1 dòng JSON
+        với cùng semantic content, đủ để LLM điều chỉnh tông giọng.
+
+        Format: [PSYCH_STATE: {"felt":"...", "bias":"..."}]
+        """
+        felt = felt_state.strip()
+        bias = private_bias.strip()
+
+        # Extract phần ngắn gọn: felt_state thường dạng "cảm_xúc_tự_cảm ...: <câu>"
+        # Lấy phần sau dấu "): "
+        if felt and "):" in felt:
+            felt = felt.split("):", 1)[-1].strip()
+        elif felt and "): " in felt:
+            felt = felt.split("): ", 1)[-1].strip()
+        # Cap 120 chars
+        if len(felt) > 120:
+            felt = felt[:117] + "..."
+
+        # private_bias thường là JSON dict → giữ nguyên nhưng cap
+        if len(bias) > 150:
+            bias = bias[:147] + "..."
+
+        parts: dict = {}
+        if felt:
+            parts["felt"] = felt
+        if bias:
+            parts["bias"] = bias
+        if not parts:
+            return ""
+
+        return f"[PSYCH_STATE: {json.dumps(parts, ensure_ascii=False, separators=(',', ':'))}]"
+
+    def _build_internal_state_context(
+        self,
+        state: PersistentInternalState | None = None,
+        self_state=None,
+        *,
+        user_text: str = "",
+    ) -> str:
         resolved_state = state or self._get_internal_state()
-        state_context = self.internal_state_engine.render_prompt_context(resolved_state)
-        #Nếu self_state có prompt_context, lấy thêm.
-        #self_state thường là mô hình tự nhận thức của agent: “mình đang ở mode nào”, “nên giữ phong cách nào”.
+        # DYNAMIC_STATE tag (~20 tokens): stance/tension/pacing từ internal state.
+        dynamic_tag = self._build_dynamic_state_tag(resolved_state)
+
         prompt_context = str(getattr(self_state, "prompt_context", "") or "").strip()
-        #Nếu có, nối vào.
-        parts = [state_context]
+        parts = [dynamic_tag] if dynamic_tag else []
         if prompt_context:
             parts.append(prompt_context)
+
+        # PSYCH_STATE block (~50 tokens): consolidate felt_state + private_bias.
+        # Thay vì 2 block riêng (~400 tokens), dùng 1 compact JSON tag.
         felt_state = self._render_felt_state_context(resolved_state)
-        if felt_state:
-            parts.append(felt_state)
         private_bias = self._render_private_mind_speech_bias_context()
-        if private_bias:
-            parts.append(private_bias)
-        diary_context = self._render_inner_diary_context()
-        if diary_context:
-            parts.append(diary_context)
+        psych_block = self._build_psych_state_block(
+            resolved_state,
+            felt_state=felt_state,
+            private_bias=private_bias,
+        )
+        if psych_block:
+            parts.append(psych_block)
+
+        # diary_context: chỉ inject khi trigger (hỏi nội tâm / idle).
+        # Tránh nhồi ~300 tokens nhật ký vào mọi lượt kỹ thuật.
+        if self._should_inject_diary(user_text):
+            diary_context = self._render_inner_diary_context()
+            if diary_context:
+                parts.append(diary_context)
+
+        # register_context: trạng thái dỗi/chiếm hữu → giữ (behavioral gate, nhỏ).
         register_context = self._render_anchor_register_context()
         if register_context:
             parts.append(register_context)
+
         return "\n".join(part for part in parts if str(part or "").strip())
 
     def _render_felt_state_context(self, state: PersistentInternalState | None = None) -> str:
@@ -154,6 +241,68 @@ class PromptContextBuilderMixin:
         if not text:
             return ""
         return f"Trạng thái quan hệ hiện tại (register={register}): {text}"
+
+    def _build_dynamic_state_tag(self, state: PersistentInternalState | None = None) -> str:
+        """Nén toàn bộ tâm lý học thành ~20-token JSON tag.
+
+        Thay thế 300-500 tokens prose persona bằng key-value có cấu trúc:
+        LLM đọc [DYNAMIC_STATE] và tự điều chỉnh tông giọng, không cần
+        prompt giải thích dài dòng về INFJ 5w4.
+
+        Mapping logic:
+          stance  ← trust_score + restraint_pressure
+          tension ← irritation + cognitive_tension
+          pacing  ← chat_ticks + arousal
+        """
+        if state is None:
+            state = self._get_internal_state()
+        if state is None:
+            return ""
+
+        # --- Stance ---
+        rd = getattr(state, "relationship_dynamics", None)
+        trust = float(getattr(rd, "trust_score", 0.5) if rd is not None else 0.5)
+        restraint = float(getattr(state, "restraint_pressure", 0.3))
+        irritation = float(getattr(state, "irritation", 0.0))
+        protectiveness = float(getattr(state, "protectiveness", 0.0))
+        if trust < 0.35 or restraint > 0.65:
+            stance = "distant"
+        elif trust > 0.72 and restraint < 0.35 and irritation < 0.30:
+            stance = "subtle_warmth"
+        else:
+            stance = "neutral"
+
+        # --- Tension ---
+        tension_val = max(
+            float(getattr(state, "irritation", 0.0)),
+            float(getattr(state, "cognitive_tension", 0.0)),
+            float(getattr(state, "protectiveness", 0.0)) * 0.7,
+        )
+        if tension_val > 0.62:
+            tension = "high"
+        elif tension_val > 0.38:
+            tension = "medium"
+        else:
+            tension = "low"
+
+        # --- Pacing ---
+        chat_ticks = int(getattr(state, "chat_ticks", 0))
+        arousal = float(getattr(state, "arousal", 0.2))
+        pacing = "fast" if (chat_ticks >= 4 and arousal > 0.55) else "normal"
+
+        tag: dict = {"stance": stance, "tension": tension, "pacing": pacing}
+
+        # Behavioral hint (optional, capped 1 field để không phình)
+        if pacing == "fast":
+            tag["hint"] = "single_sentence"
+        elif stance == "distant":
+            tag["hint"] = "analytical_only"
+        elif tension == "high":
+            tag["hint"] = "challenge_premise_allowed"
+        elif stance == "subtle_warmth":
+            tag["hint"] = "soft_acknowledge_ok"
+
+        return f"[DYNAMIC_STATE: {json.dumps(tag, ensure_ascii=False, separators=(',', ':'))}]"
 
     def _render_inner_diary_context(self, *, max_lines: int = 8) -> str:
         """Đưa nhật ký nội tâm (diary) vào ngữ cảnh chat.

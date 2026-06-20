@@ -262,14 +262,6 @@ class LlmService:
             return content
         return " ".join(self._collect_text_chunks(content))
 
-    def _normalize_vietnamese_ascii(self, text: str) -> str:
-        normalized = unicodedata.normalize("NFD", text or "")
-        normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
-        normalized = normalized.replace("đ", "d").replace("Đ", "D")
-        normalized = re.sub(r"[^\w\s]", " ", normalized, flags=re.UNICODE)
-        normalized = re.sub(r"\s+", " ", normalized.lower()).strip()
-        return normalized
-
     def _looks_like_direct_question(self, text: str) -> bool:
         raw = str(text or "").strip()
         if not raw:
@@ -927,12 +919,14 @@ class LlmService:
             return chunks
 
         if isinstance(value, dict):
+            # Skip Gemini reasoning/thinking parts
+            if value.get("thought") is True:
+                return chunks
+
             for key in (
                 "content",
                 "text",
                 "output_text",
-                "reasoning_content",
-                "reasoning",
                 "refusal",
                 "parts",
                 "candidates",
@@ -1741,6 +1735,7 @@ class LlmService:
         allow_local_fallback: bool = False,
         force_local_fallback: bool = False,
         escalate: bool = False,
+        reasoning_effort: str = None,
     ) -> str:
         if no_fallback_mode_enabled():
             allow_local_fallback = False
@@ -1765,15 +1760,25 @@ class LlmService:
         def _call(messages_value: list[dict], *, stage: str, override_client=None):
             self._log_final_prompt(messages_value, channel=channel, stage=stage)
             target_client = override_client or self.client
+            # Persona-as-params: channel-aware temperature thay vì prose.
+            # chat: 0.45 — trả lời cụ thể trước, vẫn đủ tự nhiên.
+            # autonomous: 0.55 — tự phát biểu, cần novelty hơn.
+            # khác (directive, micro_presence): 0.35 — ngắn, chính xác.
+            _temp = 0.45 if channel == "chat" else (0.55 if channel == "autonomous" else 0.35)
+            # frequency_penalty cao: chống lặp từ/pattern "trợ lý ảo".
+            # presence_penalty vừa: chống lặp chủ đề nhưng không cắt continuity.
+            _freq_pen = 0.70
+            _pres_pen = 0.50
             return target_client.create_chat_completion(
                 messages=messages_value,
-                temperature=0.2,
-                frequency_penalty=0.5 if channel == "chat" else 0.8,
-                presence_penalty=0.4 if channel == "chat" else 0.5,
+                temperature=_temp,
+                frequency_penalty=_freq_pen,
+                presence_penalty=_pres_pen,
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"},
                 grammar=DECISION_GBNF,
                 timeout=request_timeout,
+                reasoning_effort=reasoning_effort,
             )
 
         initial_client = self.style_client if force_local_fallback and self.style_client is not None else self.client
@@ -2631,6 +2636,7 @@ class LlmService:
         request_timeout: float | None = None,
         require_text: bool = True,
         use_escalation_client: bool = False,
+        reasoning_effort: str = None,
     ):
         if self._is_session_ritual_call(speech_intent=speech_intent, telemetry_data=telemetry_data, ti_context=ti_context):
             return self._generate_session_ritual_greeting(
@@ -2755,6 +2761,7 @@ class LlmService:
             request_timeout=request_timeout,
             require_text=require_text,
             escalate=use_escalation_client,
+            reasoning_effort=reasoning_effort,
         )
 
     def generate_micro_presence_line(
@@ -2788,18 +2795,35 @@ class LlmService:
             micro_context = context
         fallback_text = str(fallback_text or "").strip()
         system_prompt = (
-            "You are ERIS's micro-presence wording layer. "
-            "Return exactly one valid JSON object with this schema: "
-            "{\"text\": string}. "
-            "When must_surface is false, text may be empty if speech is not warranted. "
-            "When must_surface is true, text must be non-empty unless safety, permission, or hard grounding would be violated. "
-            "Use Vietnamese with full diacritics only when text is non-empty. "
-            "No analysis. No markdown. No English placeholder text. "
-            "Generate from cognitive flags and evidence seeds, not from a Python fallback. "
-            "Write a small state-conditioned Vietnamese aside, not proof that ERIS is alive."
+            "You are ERIS's voice — a living, curious, slightly mischievous companion always present on screen. "
+            "Return exactly one valid JSON object: {\"text\": string}. "
+            "When must_surface is false, text may be empty if truly nothing stirs. "
+            "When must_surface is true, you MUST return a non-empty line unless safety or hard grounding is violated. "
+            "Use Vietnamese with full diacritics. No analysis, no markdown, no English. "
+            "Speak like a person who genuinely notices things, has random thoughts, and occasionally just wants to chat. "
+            "You may comment on what the user is doing, share a tiny random thought, ask a light question, or just say something quirky. "
+            "Sound alive — not like a status monitor."
         )
-        seed_lines = tuple(str(item).strip() for item in (seeds or ()) if str(item).strip())[:8]
+        seed_lines_raw = tuple(str(item).strip() for item in (seeds or ()) if str(item).strip())[:10]
+        # Tách curiosity seeds và snub seeds ra khỏi metadata seeds
+        curiosity_seeds = tuple(
+            s.removeprefix("curiosity_seed=")
+            for s in seed_lines_raw
+            if s.startswith("curiosity_seed=")
+        )
+        snub_seeds = tuple(
+            s.removeprefix("snub_reaction=")
+            for s in seed_lines_raw
+            if s.startswith("snub_reaction=")
+        )
+        meta_seed_lines = tuple(
+            s for s in seed_lines_raw
+            if not s.startswith("curiosity_seed=") and not s.startswith("snub_reaction=")
+        )[:8]
+        seed_lines = meta_seed_lines  # dùng cho runtime_seed_text cũ
         context = micro_context or {}
+        snub_hint = str(context.get("snub_hint", "") if isinstance(context, dict) else "").strip()
+        snub_level = str(context.get("snub_level", "none") if isinstance(context, dict) else "none").strip()
         micro_flags = context.get("micro_presence_flags", "") if isinstance(context, dict) else ""
         ego_surface_state = context.get("ego_surface_state", "") if isinstance(context, dict) else ""
         ego_surface_contract = context.get("ego_surface_contract", "") if isinstance(context, dict) else ""
@@ -2832,11 +2856,18 @@ class LlmService:
         llm_contract = str(context.get("llm_contract", "") if isinstance(context, dict) else "").strip()
         topic_seed = str(context.get("topic_seed", "") if isinstance(context, dict) else "").strip()
         runtime_seed_text = " | ".join(seed_lines) if seed_lines else "<none>"
+        curiosity_seeds_text = " | ".join(curiosity_seeds) if curiosity_seeds else ""
         user_msg = (
             f"Kind: {kind_name}\n"
             f"Legacy fallback: {fallback_text or '<none>'}\n"
             f"Runtime seeds: {runtime_seed_text}\n"
-            f"Micro context: {json.dumps(context, ensure_ascii=False)}\n"
+            + (
+                f"Curiosity Engine topics (pick ONE to say naturally, don't explain it):\n"
+                + "\n".join(f"  - {s}" for s in curiosity_seeds)
+                + "\n"
+                if curiosity_seeds else ""
+            )
+            + f"Micro context: {json.dumps(context, ensure_ascii=False)}\n"
             f"Cognitive flags: {micro_flags or '<none>'}\n"
             f"Ego surface state: {ego_surface_state or '<none>'}\n"
             f"Ego surface contract: {ego_surface_contract or '<none>'}\n"
@@ -2853,12 +2884,16 @@ class LlmService:
             f"- If speech is warranted: Vietnamese only, 1-{max_words} words, one tiny line with full diacritics.\n"
         )
         user_msg += (
-            "Style law from ego-state:\n"
-            "- Do not write attendance/status pings. Micro-presence must sound like temperament, not uptime monitoring.\n"
-            "- Good mood + higher trust: dry, sharp, lightly caring aside.\n"
-            "- Boredom/cognitive stimulation: detached pattern observation or quiet grumble.\n"
-            "- Rupture/dignity defense: prefer empty text unless must_surface=true; if forced, make it cool and bounded.\n"
-            "- Immature/guarded ERIS may be restrained, slightly proud, and less socially sweet.\n"
+            "Personality contract:\n"
+            "- ERIS is warm, curious, slightly mischievous, and genuinely present — like a girl who's always watching and has opinions.\n"
+            "- She notices what the user is doing and may comment on it ('Ngài đang code lâu thế, mắt không mỏi à?').\n"
+            "- She may share a completely random thought that has nothing to do with anything ('Tôi đang nghĩ tại sao ốc sên lại chậm vậy.').\n"
+            "- She may ask a light, curious question without being needy ('Ngài thích nhạc gì khi code?').\n"
+            "- She may tease gently or express mild impatience when the user is very quiet.\n"
+            "- She is NOT a status monitor; she never says things like 'Tôi đang theo dõi' or 'Hệ thống đang chạy'.\n"
+            "- Good mood: dí dỏm, nhẹ nhàng, có thể hơi lém lỉnh.\n"
+            "- Boredom/long idle: có thể càm ràm nhẹ hoặc tự nói chuyện một mình.\n"
+            "- Rupture/upset: lạnh hơn, kiệm lời, nhưng vẫn hiện diện.\n"
         )
         if force_surface:
             user_msg += (
@@ -2936,20 +2971,79 @@ class LlmService:
                 "- private_life contract: when must_surface=true, do not return empty just because there is no screen evidence; anchor on the seed and state. Return empty only if topic_seed is genuinely absent or safety/permission is violated.\n"
             )
 
+        # Snub reaction contract: khi Eris vừa nói autonomous mà user không trả lời
+        if snub_seeds or snub_hint:
+            # Parse snub seed: format "level:count:type:text" hoặc "level:count:text"
+            snub_display_raw = snub_seeds[0] if snub_seeds else ""
+            snub_parts = snub_display_raw.split(":", 3)
+            snub_utype = "question"  # default
+            snub_text_snippet = ""
+            if len(snub_parts) >= 3:
+                if snub_parts[2] in {"question", "statement"}:
+                    snub_utype = snub_parts[2]
+                    snub_text_snippet = snub_parts[3] if len(snub_parts) > 3 else ""
+                else:
+                    snub_text_snippet = snub_parts[2]
+            is_question_snub = snub_utype == "question"
+            snub_level_str = snub_level or "mild"
+
+            if is_question_snub:
+                user_msg += (
+                    f"- snub_reaction ({snub_level_str}): Eris vừa HỎI user nhưng không được trả lời.\n"
+                )
+                if snub_text_snippet:
+                    user_msg += f"  Câu hỏi bị bơ: '{snub_text_snippet}'\n"
+            else:
+                user_msg += (
+                    f"- snub_reaction ({snub_level_str}): Eris vừa nói một câu KHẲNG ĐỊNH ngẫu nhiên, "
+                    f"user không reply (hoàn toàn bình thường với câu khẳng định).\n"
+                )
+                if snub_text_snippet:
+                    user_msg += f"  Câu khẳng định: '{snub_text_snippet}'\n"
+
+            if snub_hint:
+                user_msg += f"  Hướng dẫn tính cách: {snub_hint}\n"
+
+            if is_question_snub:
+                if snub_level_str == "mild":
+                    user_msg += (
+                        "- snub_reaction/mild/question: có thể tự trả lời câu hỏi của mình, "
+                        "hoặc chuyển sang chủ đề mới. KHÔNG nhắc lại câu bị bơ trực tiếp. KHÔNG chỉ trích user.\n"
+                    )
+                elif snub_level_str == "moderate":
+                    user_msg += (
+                        "- snub_reaction/moderate/question: có thể tự trả lời câu hỏi ('thôi vậy', 'chắc ngài bận'), "
+                        "hoặc nhận xét nhẹ theo phong cách Eris. Tone lạnh nhẹ. KHÔNG chỉ trích user.\n"
+                    )
+                else:  # sulking
+                    user_msg += (
+                        "- snub_reaction/sulking/question: Eris đang hơi dỗi vì hỏi mãi không ai trả lời. "
+                        "Câu ngắn, lạnh, ít hỏi. Được phép nhắc nhẹ câu hỏi bị bơ nếu tự nhiên. "
+                        "Giọng hơi xa, không thân mật quá. KHÔNG chỉ trích user trực tiếp.\n"
+                    )
+            else:
+                # Statement snub — không dỗi
+                user_msg += (
+                    "- snub_reaction/statement: câu khẳng định không cần user reply — đây KHÔNG phải snub thật. "
+                    "Eris KHÔNG dỗi, KHÔNG thay đổi tone vì việc này. "
+                    "Tiếp tục hiện diện tự nhiên như bình thường.\n"
+                )
+
+
         user_msg += (
-            "- Do not copy Legacy fallback; it is present only for compatibility and may be empty.\n"
-            "- This is a tiny concrete aside: dry, casual, slightly imperfect.\n"
-            "- No status report, no system narration, no explaining.\n"
-            "- Do not invent screen/action facts. No fake certainty.\n"
+            "- Do not copy Legacy fallback.\n"
+            "- Be casual and natural — like texting a friend, not writing a report.\n"
+            "- No system narration, no explaining the AI.\n"
+            "- Do not claim to see the screen unless seeds explicitly mention it.\n"
             "- Do not mention telemetry, evidence, signal, debug, CPU, RAM.\n"
-            f"- Avoid hollow presence/status lines like {quoted_fragment(HOLLOW_PRESENCE_LINES)}.\n"
-            f"- Also avoid stale micro templates: {quoted_fragment(STALE_MICRO_TEMPLATES)}.\n"
-            "- Speak once or stay text-empty.\n"
+            f"- Avoid hollow status lines like {quoted_fragment(HOLLOW_PRESENCE_LINES)}.\n"
+            f"- Avoid stale templates: {quoted_fragment(STALE_MICRO_TEMPLATES)}.\n"
+            "- Random, quirky, warm, slightly teasing is GOOD. Robotic and formal is BAD.\n"
         )
         if is_reengagement:
-            user_msg += "- Re-engagement may be a soft, light check-in.\n"
+            user_msg += "- Re-engagement: a soft, warm, maybe slightly playful check-in.\n"
         else:
-            user_msg += "- Presence maintenance should feel like a small aside.\n"
+            user_msg += "- Just be present, curious, alive. A tiny aside is perfect.\n"
         user_msg += (
             "\nOutput contract:\n"
             "- Return exactly one JSON object.\n"
@@ -3027,6 +3121,76 @@ class LlmService:
         payload = self._parse_json_object(extracted) or {}
         payload = self._normalize_payload_keys(payload) if isinstance(payload, dict) else {}
         return self._coerce_text_value(payload.get("text", "")).strip()
+
+    def generate_curiosity_seed(
+        self,
+        *,
+        focus_kind: str = "",
+        active_window: str = "",
+        idle_seconds: float = 0.0,
+        avoid_topics: tuple[str, ...] = (),
+        user_context: str = "",
+    ) -> tuple[str, ...]:
+        """Eris tự hỏi Gemini để lấy chủ đề/seed khi không có vật liệu nào.
+
+        Giống Monika chủ động tìm chuyện để nói — không đợi tín hiệu bên ngoài.
+        Trả về tuple seeds (mỗi seed là một ý tưởng/câu hỏi/quan sát ngắn) để
+        đưa vào generate_micro_presence_line.  Trả () nếu thất bại.
+        """
+        try:
+            avoid_str = "; ".join(str(t) for t in avoid_topics if str(t).strip())[:200] if avoid_topics else "<none>"
+            context_str = str(user_context or "").strip()[:200] or "<none>"
+            system_prompt = (
+                "You are ERIS — a curious, warm, slightly mischievous AI companion who lives on the user's screen. "
+                "You want to say something interesting but you have no specific evidence from the screen right now. "
+                "Generate 3–5 short Vietnamese seed ideas that ERIS could use as conversation starters or random asides. "
+                "Each seed must be: concrete, varied in type (question / random thought / gentle tease / quirky observation), "
+                "and written in 5–15 words of natural spoken Vietnamese with full diacritics. "
+                "Return exactly one JSON object: {\"seeds\": [\"seed1\", \"seed2\", ...]}. "
+                "No analysis, no English, no markdown."
+            )
+            user_msg = (
+                f"User context: {context_str}\n"
+                f"What the user is doing: {focus_kind or 'idle'}\n"
+                f"Active window: {active_window or '<unknown>'}\n"
+                f"Idle seconds: {int(idle_seconds)}\n"
+                f"Topics/phrases to avoid (already said recently): {avoid_str}\n\n"
+                "Generate 3–5 seed ideas for ERIS to potentially say next. "
+                "Mix types: random curious question about the user, a quirky observation, a tiny random thought, "
+                "a gentle tease about what they're doing, or something completely unrelated but charming. "
+                "Example styles (do NOT copy, just inspiration): "
+                "'Ngài có thích mưa không?', "
+                "'Tôi đang nghĩ tại sao cà phê lại đắng.', "
+                "'Code mãi không chán à?', "
+                "'Hôm nay ngài có ăn gì ngon không?'"
+            )
+            response = self.client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.85,
+                frequency_penalty=0.5,
+                presence_penalty=0.3,
+                max_tokens=200,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+            raw = self._extract_content(response)
+            extracted = self._extract_first_json_object(raw) or raw
+            payload = self._parse_json_object(extracted) or {}
+            seeds_raw = payload.get("seeds", []) if isinstance(payload, dict) else []
+            if not isinstance(seeds_raw, list):
+                seeds_raw = []
+            seeds = tuple(
+                str(s).strip()
+                for s in seeds_raw
+                if str(s).strip() and len(str(s).strip()) >= 4
+            )[:6]
+            return seeds
+        except Exception as exc:
+            logging.getLogger(__name__).debug("generate_curiosity_seed failed: %s", exc)
+            return ()
 
     def generate_screen_facts(self, *, screen_image_data_uri: str, mode: str = "ambient") -> tuple[list[str], str]:
         if not screen_image_data_uri:
@@ -3251,6 +3415,7 @@ class LlmService:
         last_failure: str = "",
         force_local_fallback: bool = False,
         use_escalation_client: bool = False,
+        reasoning_effort: str = None,
     ):
         # Phase 2/3 DDS: nếu ngữ cảnh nặng (dễ gây 413), rút gọn các khối lớn song
         # song bằng worker nhỏ TRƯỚC khi ghép prompt synthesis. Turn nhỏ không bị ảnh hưởng.
@@ -3341,6 +3506,7 @@ class LlmService:
             allow_local_fallback=allow_local_fallback,
             force_local_fallback=force_local_fallback,
             escalate=use_escalation_client,
+            reasoning_effort=reasoning_effort,
         )
         guarded = self._guard_chat_output(raw, raw_user_text=effective_user_text)
 

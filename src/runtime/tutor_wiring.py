@@ -229,14 +229,63 @@ def tutor_tick(runtime_owner: Any, *, observer_frame: Any = None, channel: str =
 # ---------------------------------------------------------------------------
 
 def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str], str]]:
-    """Local LLM text gen qua engine local (JSON wrapper). None ⇒ heuristic fallback."""
+    """Local hoặc Remote LLM text gen để sinh câu hỏi/phân loại. None ⇒ heuristic fallback."""
+
+    import os
+    import json as _json
+    import re
+
+    llm_service = getattr(runtime_owner, "llm_service", None)
+    use_remote = (
+        os.getenv("ERIS_TUTOR_USE_REMOTE_LLM", "0").strip().lower() in {"1", "true", "yes", "on"}
+        or os.getenv("ERIS_TUTOR_LOCAL_MODEL", "").strip().lower() in {"remote", "api", "gemini", "fallback"}
+    )
+
+    if use_remote and llm_service is not None:
+        remote_client = llm_service.fallback_client or llm_service.client
+        if remote_client is not None:
+            def generate_fn(prompt: str) -> str:
+                try:
+                    messages = [
+                        {"role": "system", "content": "Trả về JSON gọn dạng {\"text\": \"...\"} bằng tiếng Việt. Tuyệt đối không thêm lời dẫn hay giải thích ngoài JSON."},
+                        {"role": "user", "content": prompt},
+                    ]
+                    resp = remote_client.create_chat_completion(
+                        messages=messages,
+                        temperature=0.4,
+                        frequency_penalty=0.0,
+                        presence_penalty=0.0,
+                        max_tokens=150,
+                        response_format={"type": "json_object"},
+                        timeout=10,
+                    )
+                    extractor = getattr(llm_service, "_extract_content", None)
+                    content = extractor(resp) if callable(extractor) else ""
+                    if not content and isinstance(resp, dict):
+                        choices = resp.get("choices")
+                        if isinstance(choices, list) and choices:
+                            content = choices[0].get("message", {}).get("content", "")
+                        else:
+                            candidates = resp.get("candidates")
+                            if isinstance(candidates, list) and candidates:
+                                parts = candidates[0].get("content", {}).get("parts", [])
+                                content = "".join(p.get("text", "") for p in parts if "text" in p)
+
+                    content = content.strip()
+                    content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE).strip()
+                    content = re.sub(r"\s*```$", "", content).strip()
+                    data = _json.loads(content)
+                    return str(data.get("text", "") or "").strip()
+                except Exception as exc:
+                    _warn(logger, f"tutor remote generate_fn lỗi ({exc!r})")
+                    return ""
+            return generate_fn
 
     try:
         from llm.local_llama_engine import build_local_or_ollama_client
     except Exception:
         return None
 
-    import os
     model = os.getenv("ERIS_TUTOR_LOCAL_MODEL", os.getenv("ERIS_OBSERVER_MODEL", "qwen3:1.7b"))
 
     def generate_fn(prompt: str) -> str:
@@ -258,18 +307,79 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
 
 
 def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str], list]]:
-    """Tách câu trả lời gia sư thành các fact ngắn, atomic qua local LLM.
+    """Tách câu trả lời gia sư thành các fact ngắn, atomic qua local hoặc remote LLM.
 
     None ⇒ ClaimDigest tự fallback tách câu bằng heuristic. Lỗi LLM không bao giờ
     ném vào hot path — trả [] để digest dùng fallback.
     """
+
+    import os
+    import json as _json
+    import re
+
+    llm_service = getattr(runtime_owner, "llm_service", None)
+    use_remote = (
+        os.getenv("ERIS_TUTOR_USE_REMOTE_LLM", "0").strip().lower() in {"1", "true", "yes", "on"}
+        or os.getenv("ERIS_TUTOR_LOCAL_MODEL", "").strip().lower() in {"remote", "api", "gemini", "fallback"}
+    )
+
+    if use_remote and llm_service is not None:
+        remote_client = llm_service.fallback_client or llm_service.client
+        if remote_client is not None:
+            def distill_fn(answer_text: str) -> list:
+                text = str(answer_text or "").strip()
+                if not text:
+                    return []
+                try:
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Bạn tách kiến thức thành các sự thật ngắn, độc lập, không trùng. "
+                                "Trả JSON dạng {\"facts\": [\"...\", ...]} bằng tiếng Việt, mỗi fact một câu "
+                                "tự đứng được, tối đa 5 fact. Bỏ phần khách sáo/giải thích vòng vo."
+                            ),
+                        },
+                        {"role": "user", "content": f"Tách đoạn sau thành các sự thật atomic:\n{text[:1200]}"},
+                    ]
+                    resp = remote_client.create_chat_completion(
+                        messages=messages,
+                        temperature=0.2,
+                        frequency_penalty=0.0,
+                        presence_penalty=0.0,
+                        max_tokens=300,
+                        response_format={"type": "json_object"},
+                        timeout=10,
+                    )
+                    extractor = getattr(llm_service, "_extract_content", None)
+                    content = extractor(resp) if callable(extractor) else ""
+                    if not content and isinstance(resp, dict):
+                        choices = resp.get("choices")
+                        if isinstance(choices, list) and choices:
+                            content = choices[0].get("message", {}).get("content", "")
+                        else:
+                            candidates = resp.get("candidates")
+                            if isinstance(candidates, list) and candidates:
+                                parts = candidates[0].get("content", {}).get("parts", [])
+                                content = "".join(p.get("text", "") for p in parts if "text" in p)
+
+                    content = content.strip()
+                    content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE).strip()
+                    content = re.sub(r"\s*```$", "", content).strip()
+                    data = _json.loads(content)
+                    facts = data.get("facts") or []
+                    if isinstance(facts, (list, tuple)):
+                        return [str(f).strip() for f in facts if str(f or "").strip()][:5]
+                except Exception as exc:
+                    _warn(logger, f"tutor remote distill lỗi ({exc!r})")
+                return []
+            return distill_fn
 
     try:
         from llm.local_llama_engine import build_local_or_ollama_client
     except Exception:
         return None
 
-    import os
     model = os.getenv("ERIS_TUTOR_LOCAL_MODEL", os.getenv("ERIS_OBSERVER_MODEL", "qwen3:1.7b"))
 
     def distill_fn(answer_text: str) -> list:

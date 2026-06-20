@@ -1822,7 +1822,7 @@ def estimate_tokens(text: str) -> int:
     s = str(text or "")
     if not s:
         return 0
-    return max(1, int(len(s) / 4.2) + s.count("\n") * 2)
+    return max(1, int(len(s) / 3.0) + s.count("\n") * 2)
 
 
 def count_by_kind(items: Sequence[WorkspaceItem]) -> dict[str, int]:

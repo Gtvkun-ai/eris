@@ -74,11 +74,11 @@ class LlmServiceTests(unittest.TestCase):
         call = client.calls[0]
         self.assertEqual(call["max_tokens"], 80)
         self.assertEqual(call["response_format"], {"type": "json_object"})
-        self.assertIn("micro-presence", call["messages"][0]["content"])
-        self.assertIn("small state-conditioned Vietnamese aside", call["messages"][0]["content"])
+        self.assertIn("ERIS's voice", call["messages"][0]["content"])
+        self.assertIn("Vietnamese with full diacritics", call["messages"][0]["content"])
         self.assertIn("1-12 words", call["messages"][1]["content"])
-        self.assertIn("No status report", call["messages"][1]["content"])
-        self.assertIn("Do not invent screen/action facts", call["messages"][1]["content"])
+        self.assertIn("Personality contract", call["messages"][1]["content"])
+        self.assertIn("Do not claim to see the screen", call["messages"][1]["content"])
 
     def test_generate_micro_presence_line_accepts_signal_score_api(self):
         client = _FakeClient(['{"text":"Mạch này vẫn hơi nghẽn."}'])
