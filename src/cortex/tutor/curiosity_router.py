@@ -53,9 +53,17 @@ class CuriosityRouter:
             return ("skip", "already_known")
 
         # 2. Hint tường minh thắng.
+        # Lưu ý lịch sử: kind_hint vốn là durable/context/banter (loại tri thức),
+        # nhưng wiring cũ lại truyền "durable" như thể đó là route. Nếu chỉ so
+        # với _VALID thì hint bị bỏ, route rơi về heuristic/LLM và trông như
+        # "hỏi Gemini tật tật". Ở đây tách route hint và knowledge-kind hint.
         hint = str(getattr(gap, "kind_hint", "") or "").strip().lower()
         if hint in _VALID:
             forced = hint  # type: ignore[assignment]
+        elif hint in {"durable", "context", "banter", "world", "knowledge"}:
+            forced = "ask_gemini"
+        elif hint in {"personal", "user", "clarify"}:
+            forced = "ask_user"
         else:
             forced = None
 

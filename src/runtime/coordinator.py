@@ -4076,15 +4076,19 @@ class RuntimeCoordinator(
 
         def _bg():
             try:
-                lookup(topic, context=context, kind_hint="durable", stake=0.7)
-            except Exception:
-                pass
+                ok = lookup(topic, context=context, kind_hint="ask_gemini", stake=0.7)
+                if not ok:
+                    self.logger.info("[tutor lookup] no_episode topic=%r context=%r", str(topic)[:120], str(context)[:120])
+            except Exception as exc:
+                self.logger.warning("[tutor lookup] background error: %s", exc)
 
         threading.Thread(target=_bg, name="ERIS-TutorOnUnclear", daemon=True).start()
 
     # Nhãn câu hỏi kiến thức thế giới — bộ đánh dấu thiên về sự thật/khái niệm, cố ý
     # KHÔNG bắt câu xã giao ("dạo này thế nào", "khỏe không") hay câu về chính Ngài.
     _KNOWLEDGE_QUESTION_MARKERS = (
+        "hỏi gemini", "hoi gemini", "hỏi sư phụ", "hoi su phu", "nhờ gemini",
+        "nho gemini", "kêu gemini", "keu gemini", "tra gemini",
         "là gì", "là ai", "là con gì", "là cái gì", "là chất gì", "là nước nào",
         "là bệnh gì", "là môn gì", "là ngôn ngữ gì", "nghĩa là gì", "viết tắt của",
         "tại sao", "vì sao", "do đâu", "nguyên nhân",
@@ -4125,13 +4129,16 @@ class RuntimeCoordinator(
                 # Để nhịp 1 ("đợi em tra chút") kịp ra trước câu trả lời.
                 time.sleep(1.5)
                 answer = answerer(topic, context=context)
-            except Exception:
+                if not answer:
+                    self.logger.info("[tutor research] empty_answer topic=%r context=%r", str(topic)[:120], str(context)[:120])
+            except Exception as exc:
+                self.logger.warning("[tutor research] background error: %s", exc)
                 answer = None
             finally:
                 try:
                     self._deliver_research_followup(topic, answer)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.logger.warning("[tutor research] deliver error: %s", exc)
                 self._research_in_flight = False
 
         threading.Thread(target=_bg, name="ERIS-ResearchFollowup", daemon=True).start()
