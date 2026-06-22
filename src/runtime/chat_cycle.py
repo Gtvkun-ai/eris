@@ -609,6 +609,9 @@ class ChatCycleMixin:
             user_text=user_text,
             previous_public_turn=previous_public_turn,
             ti_report=ti_report,
+            grounding_report=grounding_report,
+            frame=frame,
+            speech_core=speech_core,
         )
         if previous_public_repair is not None:
             self._set_cognitive_action_plan(
@@ -1047,8 +1050,7 @@ class ChatCycleMixin:
             )
         payload = {
             "text": (
-                "Tôi phải chặn lượt này: câu trả lời cứ sai định dạng, và tôi không "
-                "muốn đẩy phần lỗi đó ra cho Ngài."
+                "Câu đó bị lệch khỏi đường nói sạch. Tôi chặn lại, không đẩy nó ra cho Ngài."
             ),
             "intent": "no_fallback_block",
             "action": "none",
@@ -1507,22 +1509,57 @@ class ChatCycleMixin:
         )
         return any(marker in normalized for marker in markers)
 
-    def _build_previous_public_turn_repair_decision(self, *, user_text: str, previous_public_turn, ti_report) -> Decision | None:
+    def _build_previous_public_turn_repair_decision(
+        self,
+        *,
+        user_text: str,
+        previous_public_turn,
+        ti_report,
+        grounding_report=None,
+        frame=None,
+        speech_core=None,
+    ) -> Decision | None:
         leak_kind = self._previous_public_turn_has_protocol_leak(previous_public_turn)
-        if not leak_kind:
+        text = ""
+        repair_kind = leak_kind
+        if leak_kind and self._user_is_challenging_previous_public_turn(user_text):
+            if leak_kind == "prompt_leak":
+                text = (
+                    "Có. Câu vừa rồi lỗi thật. Tôi để phần hậu trường lọt ra ngoài "
+                    "thay vì nói một câu bình thường."
+                )
+            else:
+                text = (
+                    "Có. Câu vừa rồi lỗi thật. Nó dính phần hậu trường vào lời nói; "
+                    "đáng lẽ tôi phải nuốt lại trước khi gửi ra ngoài."
+                )
+        elif previous_public_turn is not None:
+            # Misread repair tổng quát: user phủ định câu public trước ("tôi có code đâu",
+            # "hả", "tôi chỉ nghe nhạc...") thì không thả qua LLM hỏi vòng. Sửa frame sai
+            # trước, vì đó là nhịp người hơn: bị bắt lỗi -> nhận lỗi -> bỏ giả định cũ.
+            try:
+                from runtime.banter_arbiter import BanterArbiter
+                arbiter = getattr(self, "_banter_arbiter", None)
+                if not isinstance(arbiter, BanterArbiter):
+                    arbiter = BanterArbiter()
+                    self._banter_arbiter = arbiter
+                banter = arbiter.repair_correction(
+                    user_text=user_text,
+                    previous_text=str(getattr(previous_public_turn, "text", "") or ""),
+                    grounding=grounding_report,
+                    frame=frame,
+                    speech_core=speech_core,
+                )
+                if banter.changed:
+                    text = banter.text
+                    repair_kind = banter.mode
+            except Exception as exc:
+                try:
+                    self.logger.warning("[previous_public_turn_repair] banter repair failed: %s", exc)
+                except Exception:
+                    pass
+        if not text:
             return None
-        if not self._user_is_challenging_previous_public_turn(user_text):
-            return None
-        if leak_kind == "prompt_leak":
-            text = (
-                "Có. Câu vừa rồi lỗi thật. Tôi đã để prompt nội bộ lọt ra ngoài "
-                "thay vì nói một câu chào bình thường; lỗi nằm ở nhánh JSON/parse fallback."
-            )
-        else:
-            text = (
-                "Có. Câu vừa rồi lỗi thật. Nó bị dính metadata JSON vào lời nói; "
-                "parser đáng lẽ phải chặn phần đó trước khi gửi ra ngoài."
-            )
         decision = Decision(
             text=text,
             intent="repair_previous_public_turn",
@@ -1531,7 +1568,7 @@ class ChatCycleMixin:
             should_speak=True,
             confidence=0.86,
             parse_mode="public_turn_repair",
-            debug_trace=f"previous_public_turn_repair;kind={leak_kind};turn_id={getattr(previous_public_turn, 'turn_id', '')}",
+            debug_trace=f"previous_public_turn_repair;kind={repair_kind or 'unknown'};turn_id={getattr(previous_public_turn, 'turn_id', '')}",
         )
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
 

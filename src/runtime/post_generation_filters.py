@@ -520,6 +520,19 @@ class PostGenerationFiltersMixin:
             allow_reroll=allow_reroll,
         )
         decision = self._apply_chat_grounding_guard(decision, user_text=user_text, frame=frame, allow_reroll=allow_reroll)
+        decision = self._apply_utterance_evaluator_filter(
+            decision,
+            channel="chat",
+            frame=frame,
+            user_text=user_text,
+        )
+        decision = self._apply_banter_arbiter(
+            decision,
+            channel="chat",
+            frame=frame,
+            user_text=user_text,
+            previous_text=last_assistant_text,
+        )
         decision = self._apply_novelty_advisory(decision, channel="chat")
         # Nước 1 — van bước-cuối cho nhánh chat (flag-gated; mặc định no-op).
         return self._apply_emotional_consequence_filter(
@@ -818,6 +831,178 @@ class PostGenerationFiltersMixin:
                 parse_mode="source_grounding_guard",
                 allow_reroll=allow_reroll,
             )
+        return decision
+
+    def _apply_banter_arbiter(
+        self,
+        decision: Decision,
+        *,
+        channel: str,
+        frame=None,
+        speech_core: AgentSpeechCore | None = None,
+        user_text: str = "",
+        previous_text: str = "",
+    ) -> Decision:
+        """Cửa duyên cuối: repair/joke nhẹ phải có neo, không được bịa vibe.
+
+        Tầng này cố tình chạy sau grounding/guard: nó không tạo fact mới, chỉ đổi
+        cách nói khi câu cuối đang lộ máy, phủ nhận sai sensor, hoặc user vừa bắt
+        lỗi một overread. Nếu không có evidence đủ sạch, nó trả nguyên decision.
+        """
+        try:
+            from runtime.banter_arbiter import BanterArbiter
+        except Exception:
+            return decision
+        try:
+            grounding = None
+            if frame is not None:
+                grounding = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
+            if grounding is None:
+                grounding = getattr(self, "last_grounding_context", None)
+            if not previous_text:
+                previous_text = str(getattr(self, "last_text", "") or getattr(self, "last_chat_answer", "") or "")
+            arbiter = getattr(self, "_banter_arbiter", None)
+            if not isinstance(arbiter, BanterArbiter):
+                arbiter = BanterArbiter()
+                self._banter_arbiter = arbiter
+            banter = arbiter.arbitrate(
+                decision,
+                channel=channel,
+                user_text=user_text,
+                previous_text=previous_text,
+                grounding=grounding,
+                frame=frame,
+                speech_core=speech_core,
+            )
+            return arbiter.apply(decision, banter)
+        except Exception as exc:
+            try:
+                self.logger.warning("[banter_arbiter] failed: %s", exc)
+            except Exception:
+                pass
+            return decision
+
+    def _apply_utterance_evaluator_filter(
+        self,
+        decision: Decision,
+        *,
+        channel: str,
+        frame=None,
+        speech_core: AgentSpeechCore | None = None,
+        snapshot=None,
+        user_text: str = "",
+    ) -> Decision:
+        """Nghe lại câu nháp trước khi public.
+
+        Đây là khâu "đánh giá câu" mà nguồn sinh còn thiếu: nó không cố viết hay
+        thay model, chỉ hỏi câu có bám evidence không và có nên nói không. Nếu có
+        thể cứu bằng reroll một câu ngắn thì cứu; nếu non-chat mà câu không đủ
+        neo, im tốt hơn.
+        """
+
+        try:
+            from runtime.utterance_evaluator import UtteranceEvaluator, evaluator_enabled
+        except Exception:
+            return decision
+        if not evaluator_enabled():
+            return decision
+        text = str(getattr(decision, "text", "") or "")
+        if not text.strip():
+            return decision
+        grounding = None
+        if frame is not None:
+            grounding = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
+        try:
+            evaluator = getattr(self, "_utterance_evaluator_instance", None)
+            if not isinstance(evaluator, UtteranceEvaluator):
+                evaluator = UtteranceEvaluator()
+                self._utterance_evaluator_instance = evaluator
+            evaluation = evaluator.evaluate(
+                text,
+                channel=channel,
+                user_text=user_text,
+                snapshot=snapshot,
+                frame=frame,
+                speech_core=speech_core,
+                grounding=grounding,
+            )
+        except Exception as exc:
+            try:
+                self.logger.debug("[utterance_evaluator] postgen failed: %s", exc)
+            except Exception:
+                pass
+            return decision
+        if evaluation.ok:
+            return decision
+
+        marker = f"utterance_eval:q={evaluation.quality:.2f}:{evaluation.reason}"
+        decision = self._trace_only_guard(decision, marker)
+
+        if evaluation.verdict == "rewrite":
+            service = getattr(self, "llm_service", None)
+            reroll = getattr(service, "rewrite_guard_violation_text", None)
+            if callable(reroll):
+                try:
+                    rewritten = reroll(
+                        original_text=text,
+                        violation_rule="utterance_evaluator",
+                        violation_reason=evaluation.reason,
+                        missing_evidence=evaluation.missing_evidence,
+                        fallback_text="",
+                        channel=channel,
+                        user_text=user_text,
+                        internal_state_context=self._guard_internal_state_context(),
+                        grounding_context=evaluator.mentor_context(
+                            text=text,
+                            evaluation=evaluation,
+                            channel=channel,
+                            user_text=user_text,
+                            snapshot=snapshot,
+                            frame=frame,
+                            speech_core=speech_core,
+                            grounding=grounding,
+                        ),
+                        arbitration_context=(
+                            "Evaluate the sentence before style. Preserve only claims supported by current evidence. "
+                            "If current evidence conflicts with the draft, obey evidence or step back."
+                        ),
+                    )
+                    if rewritten:
+                        second = evaluator.evaluate(
+                            rewritten,
+                            channel=channel,
+                            user_text=user_text,
+                            snapshot=snapshot,
+                            frame=frame,
+                            speech_core=speech_core,
+                            grounding=grounding,
+                        )
+                        if second.ok:
+                            decision.text = rewritten
+                            decision.debug_trace = self._append_trace(
+                                getattr(decision, "debug_trace", ""),
+                                "utterance_eval_reroll",
+                            )
+                            return decision
+                except Exception as exc:
+                    try:
+                        self.logger.debug("[utterance_evaluator] reroll failed: %s", exc)
+                    except Exception:
+                        pass
+
+        if channel in {"chat"}:
+            # Chat không nên biến mất. Nếu reroll không cứu được, trả một repair cực ngắn
+            # thay vì để câu sai evidence đi tiếp.
+            decision.text = "Câu đó không đủ neo. Tôi rút lại."
+            decision.should_speak = True
+            decision.intent = str(getattr(decision, "intent", "") or "utterance_repair")
+            decision.parse_mode = str(getattr(decision, "parse_mode", "") or "utterance_evaluator")
+            decision.debug_trace = self._append_trace(getattr(decision, "debug_trace", ""), "utterance_eval_chat_repair")
+            return decision
+
+        decision.text = ""
+        decision.should_speak = False
+        decision.debug_trace = self._append_trace(getattr(decision, "debug_trace", ""), "utterance_eval_drop")
         return decision
 
     def _is_repeated_clarifying_question(self, text: str, last_assistant_text: str) -> bool:
@@ -1948,7 +2133,17 @@ class PostGenerationFiltersMixin:
                     )
             except Exception as exc:
                 self.logger.warning("[post_generation log-only] probe failed: %s", exc)
-            return decision
+            decision = self._apply_utterance_evaluator_filter(
+                decision,
+                channel=channel,
+                speech_core=speech_core,
+                snapshot=snapshot,
+            )
+            return self._apply_banter_arbiter(
+                decision,
+                channel=channel,
+                speech_core=speech_core,
+            )
 
         decision = self._apply_protocol_surface_guard(decision)
         decision = self._apply_internal_object_surface_guard(decision)
@@ -2004,6 +2199,17 @@ class PostGenerationFiltersMixin:
             speech_core=speech_core,
             snapshot=snapshot,
             momentum_topic=momentum_topic,
+        )
+        decision = self._apply_utterance_evaluator_filter(
+            decision,
+            channel=channel,
+            speech_core=speech_core,
+            snapshot=snapshot,
+        )
+        decision = self._apply_banter_arbiter(
+            decision,
+            channel=channel,
+            speech_core=speech_core,
         )
         decision = self._apply_novelty_advisory(decision, channel=channel)
         # Nước 1 — van bước-cuối chạy CUỐI CÙNG, sau mọi guard clip, để đo câu thật

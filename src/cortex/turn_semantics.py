@@ -131,12 +131,24 @@ class TurnSemanticsEngine:
 
         reasons: list[str] = []
         if not repeated:
+            # Correction không cần phải là repeat mới đáng được nhận diện. Case log
+            # "tôi có code đâu" là lượt đầu sau câu Eris nói sai; nếu gắn intent=none,
+            # các tầng sau sẽ nói tiếp như chat thường và lớp repair phải gánh quá nhiều.
+            intent: RepeatIntent = "none"
+            action: RepeatAction = "pass_to_llm"
+            confidence = 0.75
+            base_reasons: tuple[str, ...] = ("not_repeated",)
+            if correction_pressure >= 0.50 or prior_failure_pressure >= 0.58:
+                intent = "repair_reframe"
+                action = "repair_ack_then_answer"
+                confidence = max(confidence, correction_pressure, prior_failure_pressure)
+                base_reasons = (*base_reasons, "current_turn_correction")
             report = TurnSemanticsReport(
                 repeated=False,
                 repeat_count=max(1, repeat_count),
-                intent="none",
-                action="pass_to_llm",
-                confidence=0.75,
+                intent=intent,
+                action=action,
+                confidence=confidence,
                 literal_repeat_score=literal_repeat_score,
                 semantic_similarity=semantic_similarity,
                 question_pressure=question_pressure,
@@ -148,7 +160,7 @@ class TurnSemanticsEngine:
                 new_information_pressure=new_information_pressure,
                 fact_disclosure_pressure=fact_disclosure_pressure,
                 spam_pressure=0.0,
-                reasons=("not_repeated",),
+                reasons=base_reasons,
             )
             return self._with_prompt_context(report)
 
@@ -503,10 +515,15 @@ class TurnSemanticsEngine:
             return False
         correction_shapes = (
             "khong phai",
+            "co dau",
+            "co code dau",
+            "toi co code dau",
             "sai roi",
             "chua dung",
             "lech roi",
             "hieu sai",
+            "chi nghe nhac",
+            "chi xem",
             "y toi khac",
             "y toi la",
             "khong dung y",

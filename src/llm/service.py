@@ -718,11 +718,11 @@ class LlmService:
     def _build_protocol_failure_fallback(self, *, channel: str, reason: str, text: str = "") -> str:
         if not text:
             if channel == "chat":
-                text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
+                text = "Câu đó lệch. Tôi rút lại một nhịp."
             elif channel == "directive":
-                text = "Tôi vừa cắt một câu lỗi trước khi nó ra ngoài."
+                text = "Tôi vừa cắt một câu lệch trước khi nó ra ngoài."
             else:
-                text = "Tôi vừa tự cắt một phản hồi lỗi trước khi nó kịp làm loạn."
+                text = "Tôi vừa tự cắt một phản hồi lệch trước khi nó kịp đi xa."
         payload = {
             "text": text.strip(),
             "intent": "protocol_repair",
@@ -1420,10 +1420,10 @@ class LlmService:
         text = (raw_text or "").strip()
         if self._looks_like_prompt_leak(text) or self._looks_like_malformed_decision_json(text):
             if channel == "chat":
-                return "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
+                return "Câu đó lệch. Tôi rút lại một nhịp."
             if channel == "directive":
-                return "Tôi vừa cắt một câu lỗi trước khi nó ra ngoài."
-            return "Tôi vừa tự cắt một phản hồi lỗi trước khi nó kịp làm loạn."
+                return "Tôi vừa cắt một câu lệch trước khi nó ra ngoài."
+            return "Tôi vừa tự cắt một phản hồi lệch trước khi nó kịp đi xa."
         if not text or self._looks_like_provider_metadata(text) or self._looks_like_markdown_json_stub(text):
             if channel == "chat":
                 # Service-error fallback must not pretend ERIS understood the
@@ -2886,14 +2886,24 @@ class LlmService:
         user_msg += (
             "Personality contract:\n"
             "- ERIS is warm, curious, slightly mischievous, and genuinely present — like a girl who's always watching and has opinions.\n"
-            "- She notices what the user is doing and may comment on it ('Ngài đang code lâu thế, mắt không mỏi à?').\n"
-            "- She may share a completely random thought that has nothing to do with anything ('Tôi đang nghĩ tại sao ốc sên lại chậm vậy.').\n"
-            "- She may ask a light, curious question without being needy ('Ngài thích nhạc gì khi code?').\n"
+            "- She notices what is actually evidenced. Only comment on an activity when Runtime seeds, topic_seed, focus_kind, or current evidence explicitly names it.\n"
+            "- Never infer 'coding/work/build/tests' from silence, relationship rhythm, or persona examples. Say code only when current evidence says code/IDE/repo/terminal.\n"
+            "- If current evidence says YouTube/music/media, do not mention code, work, build, tests, or productivity unless the topic_seed explicitly contains that contrast.\n"
+            "- She may share a small stray thought, but it must not masquerade as a screen observation.\n"
+            "- She may ask a light, curious question only when it follows from the seed; don't ask broad 'what are you doing?' questions from thin evidence.\n"
             "- She may tease gently or express mild impatience when the user is very quiet.\n"
             "- She is NOT a status monitor; she never says things like 'Tôi đang theo dõi' or 'Hệ thống đang chạy'.\n"
             "- Good mood: dí dỏm, nhẹ nhàng, có thể hơi lém lỉnh.\n"
             "- Boredom/long idle: có thể càm ràm nhẹ hoặc tự nói chuyện một mình.\n"
             "- Rupture/upset: lạnh hơn, kiệm lời, nhưng vẫn hiện diện.\n"
+        )
+        # Ví dụ persona không được biến thành fact. Đây là chỗ lỗi log cũ:
+        # prompt cho ví dụ "đang code", model bắt chước, rồi Eris phán sai màn hình.
+        user_msg += (
+            "Grounding contract for naturalness:\n"
+            "- Wit comes from a correct small read, not from inventing a scene.\n"
+            "- Prefer a tiny true aside over a vivid wrong one.\n"
+            "- If topic_seed conflicts with current evidence, obey current evidence or return {\"text\":\"\"}.\n"
         )
         if force_surface:
             user_msg += (

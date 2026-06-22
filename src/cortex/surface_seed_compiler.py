@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import re
+import unicodedata
 from typing import Any, Mapping
 
 from .surface_arbiter import SurfaceImpulse
@@ -146,12 +147,23 @@ class SurfaceSeedCompiler:
         candidates.extend(self._from_private_life_digest(private_life_digest))
         candidates.extend(self._from_inner_diary(inner_diary))
 
-        safe = [candidate for candidate in candidates if self._candidate_allowed(candidate)]
+        current_domain = self._current_context_domain(snapshot=snapshot, presence_cue=presence_cue)
+        safe = [
+            candidate
+            for candidate in candidates
+            if self._candidate_allowed(candidate)
+            and self._candidate_context_compatible(
+                candidate,
+                current_domain=current_domain,
+                surface_kind=surface_kind,
+            )
+        ]
         if not safe:
             return CompiledSurfaceSeed(
                 debug={
                     "reason": self._no_seed_reason(candidates),
                     "candidate_count": len(candidates),
+                    "current_domain": current_domain,
                 }
             )
 
@@ -182,6 +194,8 @@ class SurfaceSeedCompiler:
                 "selected_confidence": round(float(selected.confidence), 3),
                 "public_anchor": selected.public_anchor,
                 "candidate_count": len(candidates),
+                "current_domain": current_domain,
+                "selected_domain": self._candidate_domain(selected),
             },
             impulse=impulse,
             alternative_impulses=alternative_impulses,
@@ -737,6 +751,47 @@ class SurfaceSeedCompiler:
             return False
         return True
 
+    def _candidate_context_compatible(
+        self,
+        candidate: _SeedCandidate,
+        *,
+        current_domain: str,
+        surface_kind: str,
+    ) -> bool:
+        """Chặn seed cũ nói như hiện tại khi màn hình đang chứng minh chuyện khác.
+
+        Đây là sửa ở nguồn, không phải filter câu cuối: private-life/memory có thể
+        làm màu giọng, nhưng không được thắng current screen rồi bịa "Ngài đang
+        code" trong lúc fact hiện tại là YouTube/nhạc. Nếu không có current_domain
+        rõ thì giữ hành vi cũ để Eris vẫn có đời sống riêng.
+        """
+
+        if not current_domain:
+            return True
+        if current_domain == "mixed":
+            return True
+        if candidate.root_source == "vision_fact":
+            return True
+        if str(surface_kind or "") not in {"re_engagement", "presence_maintenance", "surface", "micro_presence"}:
+            return True
+        candidate_domain = self._candidate_domain(candidate)
+        if not candidate_domain or candidate_domain in {current_domain, "mixed"}:
+            return True
+        stale_sources = {
+            "private_life",
+            "private_mind_bias",
+            "private_mind_surface",
+            "memory_resonance",
+            "inner_diary",
+            "thought_stream",
+            "daydream",
+            "unresolved_memory",
+            "memory",
+        }
+        if candidate.root_source in stale_sources or candidate.missing_screen:
+            return False
+        return True
+
     def _rank_key(self, candidate: _SeedCandidate) -> tuple[float, float, float, float]:
         anchor_bonus = 0.18 if candidate.public_anchor else 0.0
         # Grounded sources (what the character can actually observe now) should
@@ -755,6 +810,100 @@ class SurfaceSeedCompiler:
         grounded = 1.0 if candidate.root_source in grounded_sources else 0.0
         score = candidate.confidence * 0.52 + candidate.pressure * 0.48 + anchor_bonus + source_bonus
         return (score, grounded, candidate.confidence, candidate.pressure)
+
+    def _candidate_domain(self, candidate: _SeedCandidate) -> str:
+        return self._domain_from_text(
+            " ".join(
+                str(item or "")
+                for item in (
+                    candidate.topic_seed,
+                    candidate.public_seed,
+                    candidate.action_opportunity,
+                    candidate.llm_contract,
+                    *tuple(candidate.evidence or ()),
+                )
+            )
+        )
+
+    def _current_context_domain(self, *, snapshot: Any = None, presence_cue: Any = None) -> str:
+        parts: list[str] = []
+        for owner in (snapshot, presence_cue):
+            if owner is None:
+                continue
+            for attr in (
+                "active_window_kind",
+                "focus_kind_hint",
+                "focus_kind",
+                "focus_summary",
+                "activity_intent",
+                "observer_focus",
+                "intent",
+                "semantic_family",
+            ):
+                value = getattr(owner, attr, "")
+                if value:
+                    parts.append(str(value))
+            for attr in ("vision_facts", "recent_events", "evidence"):
+                value = getattr(owner, attr, ())
+                if isinstance(value, str):
+                    parts.append(value)
+                else:
+                    try:
+                        parts.extend(str(item) for item in tuple(value or ())[:8])
+                    except Exception:
+                        pass
+        return self._domain_from_text(" ".join(parts), current_context=True)
+
+    def _domain_from_text(self, text: str, *, current_context: bool = False) -> str:
+        normalized = self._normalize_domain_text(text)
+        if not normalized:
+            return ""
+        media_markers = (
+            "youtube", "youtu be", "nhac", "music", "playlist", "video",
+            "anime", "thumbnail", "media", "lofi", "song", "mv", "watch",
+            "browsing", "gaming", "stream",
+        )
+        code_markers = (
+            "code", "coding", "vscode", "visual studio code", "ide", "repo",
+            "terminal", "pytest", "unit test", "test failure", "build",
+            "compile", "debug", "bug", "stack trace", "python", "javascript",
+            "typescript", "editor", "src/", "pull request",
+        )
+        media_score = sum(1 for marker in media_markers if marker in normalized)
+        code_score = sum(1 for marker in code_markers if marker in normalized)
+        if current_context:
+            # OCR có thể chứa câu user "code đâu" trên chat trong khi màn hình là YouTube.
+            # Current context cần đa số tín hiệu, không để một chữ "code" kéo lệch domain.
+            if media_score >= max(2, code_score + 1):
+                return "media"
+            if code_score >= max(2, media_score + 1):
+                return "code"
+        if media_score and code_score:
+            if media_score >= code_score + 1:
+                return "media"
+            if code_score >= media_score + 1:
+                return "code"
+            return "mixed"
+        if media_score:
+            return "media"
+        if code_score:
+            return "code"
+        return ""
+
+    @staticmethod
+    def _normalize_domain_text(text: Any) -> str:
+        lowered = str(text or "").lower()
+        try:
+            fixed = lowered.encode("latin1").decode("utf-8")
+            if fixed:
+                lowered = fixed
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+        lowered = unicodedata.normalize("NFD", lowered)
+        lowered = "".join(ch for ch in lowered if unicodedata.category(ch) != "Mn")
+        lowered = lowered.replace("đ", "d")
+        lowered = re.sub(r"[^a-z0-9_./:+\-\s]", " ", lowered)
+        return " ".join(lowered.split())
 
     def _private_impulse_has_anchor(self, impulse: SurfaceImpulse) -> bool:
         if bool(getattr(impulse, "needs_external_evidence", False)):

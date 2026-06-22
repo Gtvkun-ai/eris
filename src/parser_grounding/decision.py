@@ -698,7 +698,7 @@ class ParserGroundingMixin:
     def _non_json_semantic_fallback_payload(self, *, parse_mode: str, raw_text: str, reason: str) -> dict:
         return {
             **self.fallback,
-            "text": "Cau vua roi bi loi format noi bo. Toi bo phan phan tich ky thuat va giu lai cau tra loi an toan.",
+            "text": "Cau do lech. Toi rut lai mot nhip.",
             "debug_trace": self._build_parser_debug_trace(
                 parse_mode=parse_mode,
                 raw_text=raw_text,
@@ -1321,7 +1321,7 @@ class ParserGroundingMixin:
 
         raw_text = self._normalize_salvaged_text(source_text)
         if self._looks_like_prompt_or_contract_leak_text(raw_text) or self._looks_like_non_json_analysis_or_debug_text(raw_text):
-            raw_text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
+            raw_text = "Câu đó lệch. Tôi rút lại một nhịp."
             decision["intent"] = "protocol_repair"
             decision["debug_trace"] = str(decision.get("debug_trace", "") or "") + "; parser_blocked_prompt_leak"
         nested = self._try_extract_nested_decision_from_text(raw_text)
@@ -1330,7 +1330,7 @@ class ParserGroundingMixin:
             decision = {**decision, **nested}
             raw_text = self._normalize_salvaged_text(str(decision.get("text", self.fallback["text"])))
             if self._looks_like_prompt_or_contract_leak_text(raw_text) or self._looks_like_non_json_analysis_or_debug_text(raw_text):
-                raw_text = "Câu vừa rồi của tôi bị lỗi format. Tôi không nên để phần đó lọt ra ngoài."
+                raw_text = "Câu đó lệch. Tôi rút lại một nhịp."
                 decision["intent"] = "protocol_repair"
                 decision["debug_trace"] = str(decision.get("debug_trace", "") or "") + "; parser_blocked_nested_prompt_leak"
 

@@ -38,6 +38,9 @@ class CritiqueResult:
     action_input_hint: str = ""
     reason: str = ""
     source: str = "rule"
+    mentor_wanted: bool = False
+    rewrite_text: str = ""
+    drop: bool = False
 
 
 # ── Tín hiệu user muốn tra/hỏi nguồn ngoài (gián tiếp) ─────────────────────────
@@ -243,6 +246,109 @@ class SelfCritiqueEscalationMixin:
                 critique.reason or "ok",
             )
 
+    def _utterance_evaluator(self):
+        evaluator = getattr(self, "_utterance_evaluator_instance", None)
+        if evaluator is not None:
+            return evaluator
+        try:
+            from runtime.utterance_evaluator import UtteranceEvaluator
+
+            evaluator = UtteranceEvaluator()
+            self._utterance_evaluator_instance = evaluator
+            return evaluator
+        except Exception:
+            return None
+
+    def _sentence_mentor_enabled(self) -> bool:
+        try:
+            from runtime.utterance_evaluator import mentor_enabled
+
+            return mentor_enabled()
+        except Exception:
+            return str(os.environ.get("ERIS_SENTENCE_MENTOR", "1")).strip().lower() not in {"0", "false", "off", "no"}
+
+    def _mentor_critique_decision(
+        self,
+        decision,
+        *,
+        channel: str,
+        user_text: str,
+        mentor_context: str,
+    ) -> CritiqueResult | None:
+        """Gọi escalation/Gemini như một người dạy khâu nghe lại câu.
+
+        Khác với re-run toàn lượt: mentor chỉ chấm câu nháp và, nếu cứu được,
+        trả một câu sửa ngắn. Nó được gọi sau khi local evaluator đã phát hiện
+        vấn đề, nên không tốn call cho mọi câu bình thường.
+        """
+
+        if not self._sentence_mentor_enabled():
+            return None
+        svc = getattr(self, "llm_service", None)
+        if svc is None:
+            return None
+        resolver = getattr(svc, "_resolve_escalation_client", None)
+        client = None
+        if callable(resolver):
+            try:
+                client = resolver()
+            except Exception:
+                client = None
+        client = client or getattr(svc, "style_client", None) or getattr(svc, "client", None)
+        if client is None:
+            return None
+        draft = str(getattr(decision, "text", "") or "").strip()
+        if not draft:
+            return None
+        system_prompt = (
+            "Bạn là 'sư phụ' đánh giá câu nói của ERIS trước khi public. "
+            "Không viết văn dài. Hãy quyết định câu nháp có đáng nói không, có bám evidence không, "
+            "có tự suy diễn hoạt động của người dùng không, và có duyên tối thiểu không. "
+            "Nếu câu sai frame/evidence, sửa thành một câu Việt ngắn hoặc bảo drop. "
+            "Không thêm fact mới. Không nói về JSON/parser/debug. "
+            "Chỉ trả JSON: {\"quality\":0..1,\"verdict\":\"allow|rewrite|drop\","
+            "\"text\":\"câu sửa hoặc rỗng\",\"reason\":\"ngắn\"}."
+        )
+        user_prompt = (
+            f"Channel: {channel}\n"
+            f"User text: {str(user_text or '').strip()[:400]}\n"
+            f"Draft:\n{draft[:700]}\n\n"
+            f"Evaluation context:\n{mentor_context[:1600]}\n\n"
+            "Rubric: đúng frame > có duyên > ngắn. Một câu đúng mà nhạt vẫn hơn một câu vivid nhưng sai."
+        )
+        try:
+            response = client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.15,
+                frequency_penalty=0.1,
+                presence_penalty=0.0,
+                max_tokens=180,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+            raw = svc._extract_content(response) if hasattr(svc, "_extract_content") else str(response)
+            extracted = svc._extract_first_json_object(raw) if hasattr(svc, "_extract_first_json_object") else None
+            payload = json.loads(extracted or re.search(r"\{.*\}", raw, flags=re.DOTALL).group(0))
+            quality = float(payload.get("quality", 0.7))
+            verdict = str(payload.get("verdict", "allow") or "allow").strip().lower()
+            text = str(payload.get("text", "") or "").strip()
+            reason = str(payload.get("reason", "") or "mentor").strip()[:120]
+            return CritiqueResult(
+                quality=max(0.0, min(1.0, quality)),
+                reason=reason,
+                source="mentor",
+                rewrite_text=text if verdict == "rewrite" else "",
+                drop=verdict == "drop",
+            )
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.debug("[sentence_mentor] failed: %s", exc)
+            return None
+
     # ── MẢNH 1: SELF-CRITIQUE ─────────────────────────────────────────────────
     def _critique_decision(
         self,
@@ -261,6 +367,9 @@ class SelfCritiqueEscalationMixin:
         reasons: list[str] = []
         needs_tool = False
         tool_hint = ""
+        mentor_wanted = False
+        mentor_context = ""
+        drop = False
 
         # 1) User nhờ tra/hỏi nguồn ngoài nhưng câu nháp KHÔNG có system_action.
         if not system_action and lowered_user:
@@ -299,6 +408,35 @@ class SelfCritiqueEscalationMixin:
         if needs_tool:
             quality = min(quality, 0.25)
 
+        # 6) Câu có quyền tồn tại không? Đây là rubric "độ người" nằm trước repair:
+        # phát hiện sai frame, đoán hoạt động user, hoặc micro-line nhạt/sáo.
+        evaluator = self._utterance_evaluator()
+        if evaluator is not None:
+            try:
+                evaluation = evaluator.evaluate(
+                    text,
+                    channel=channel,
+                    user_text=user_text,
+                    snapshot=snapshot,
+                    speech_core=getattr(decision, "speech_core", None),
+                )
+                if not evaluation.ok:
+                    quality = min(quality, evaluation.quality)
+                    reasons.append(f"utterance:{evaluation.reason}")
+                    mentor_wanted = bool(evaluation.mentor_wanted)
+                    drop = bool(evaluation.verdict == "drop")
+                    mentor_context = evaluator.mentor_context(
+                        text=text,
+                        evaluation=evaluation,
+                        channel=channel,
+                        user_text=user_text,
+                        snapshot=snapshot,
+                    )
+            except Exception as exc:
+                logger = getattr(self, "logger", None)
+                if logger is not None:
+                    logger.debug("[utterance_evaluator] failed: %s", exc)
+
         result = CritiqueResult(
             quality=quality,
             needs_tool=needs_tool,
@@ -306,9 +444,25 @@ class SelfCritiqueEscalationMixin:
             action_input_hint=(user_text or "").strip()[:160] if needs_tool else "",
             reason="; ".join(reasons) or "ok",
             source="rule",
+            mentor_wanted=mentor_wanted,
+            drop=drop,
         )
 
-        # 6) (Tuỳ chọn) LLM critic nâng cấp khi bật cờ. Chỉ ghi đè khi nó thấy TỆ HƠN
+        if mentor_wanted and mentor_context:
+            mentor = self._mentor_critique_decision(
+                decision,
+                channel=channel,
+                user_text=user_text,
+                mentor_context=mentor_context,
+            )
+            if mentor is not None:
+                result.quality = min(result.quality, mentor.quality)
+                result.reason = f"{result.reason}; mentor:{mentor.reason}"
+                result.source = "rule+mentor"
+                result.rewrite_text = mentor.rewrite_text
+                result.drop = result.drop or mentor.drop
+
+        # 7) (Tuỳ chọn) LLM critic nâng cấp khi bật cờ. Chỉ ghi đè khi nó thấy TỆ HƠN
         # rule, để không bao giờ "tha" cho câu mà rule đã bắt được.
         if self._self_critique_llm_enabled(user_text):
             llm_result = self._llm_critique_decision(decision, channel=channel, user_text=user_text)
@@ -460,6 +614,10 @@ class SelfCritiqueEscalationMixin:
             return decision
 
         self._sc_trace(decision, critique, channel="chat")
+        if critique.rewrite_text:
+            decision.text = critique.rewrite_text.strip()
+            decision.debug_trace = self._sc_join(getattr(decision, "debug_trace", ""), "sentence_mentor_rewrite")
+            return decision
         if not self._should_escalate(critique, channel="chat"):
             return decision
 
@@ -558,6 +716,15 @@ class SelfCritiqueEscalationMixin:
             return decision
 
         self._sc_trace(decision, critique, channel=channel)
+        if critique.drop:
+            decision.text = ""
+            decision.should_speak = False
+            decision.debug_trace = self._sc_join(getattr(decision, "debug_trace", ""), "sentence_evaluator_drop")
+            return decision
+        if critique.rewrite_text:
+            decision.text = critique.rewrite_text.strip()
+            decision.debug_trace = self._sc_join(getattr(decision, "debug_trace", ""), "sentence_mentor_rewrite")
+            return decision
         if not self._should_escalate(critique, channel=channel):
             return decision
 
