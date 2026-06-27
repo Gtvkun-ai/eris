@@ -169,6 +169,8 @@ public partial class UdpListener : Node2D
 	private EmotionDebug _latestEmotionDebug;
 	private string _latestPrivateMindDebugJson = "";
 	private const string PrivateMindStatePath = "user://inner_diary_state.json";	private Control _bubble;
+	private string _latestDepthV2Json = "";
+	private const string DepthV2StatePath = "user://depth_v2_state.json";
 	private bool _grabModeArmed = false;
 	private bool _isDraggingCharacter = false;
 	private Control _draggingPanel = null;
@@ -3559,6 +3561,7 @@ public partial class UdpListener : Node2D
 			_bodyAutonomy?.ApplyCognitionBias(payload.BodyBias);
 
 		TryCaptureDepthBlock(raw);
+		TryCaptureDepthV2Block(raw);
 
 		if (!string.IsNullOrEmpty(payload.ParseMode) || !string.IsNullOrEmpty(payload.DebugTrace) || !string.IsNullOrEmpty(payload.ParserTrace))
 		{

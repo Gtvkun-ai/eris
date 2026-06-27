@@ -1050,7 +1050,7 @@ class ChatCycleMixin:
             )
         payload = {
             "text": (
-                "Câu đó bị lệch khỏi đường nói sạch. Tôi chặn lại, không đẩy nó ra cho Ngài."
+                "Tôi chặn lượt này vì câu vừa rồi lệch khỏi đường nói sạch."
             ),
             "intent": "no_fallback_block",
             "action": "none",

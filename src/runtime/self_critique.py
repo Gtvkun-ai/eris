@@ -628,6 +628,10 @@ class SelfCritiqueEscalationMixin:
             critique.reason,
         )
         escalation_kwargs = dict(chat_generation_kwargs)
+        # chat_cycle đã có thể đặt use_escalation_client trong kwargs gốc.
+        # Khi self-critique tự re-run, bỏ key cũ để không truyền trùng keyword
+        # vào service wrapper (lỗi: got multiple values for keyword argument).
+        escalation_kwargs.pop("use_escalation_client", None)
         if critique.needs_tool:
             escalation_kwargs["ti_context"] = (
                 (escalation_kwargs.get("ti_context", "") or "")
@@ -671,6 +675,7 @@ class SelfCritiqueEscalationMixin:
 
     def _regenerate_chat_after_tool(self, escalation_kwargs: dict, tool_summary: str, *, user_text: str, ti_report):
         kwargs = dict(escalation_kwargs)
+        kwargs.pop("use_escalation_client", None)
         kwargs["grounding_context"] = (
             (kwargs.get("grounding_context", "") or "")
             + "\nTOOL_RESULT (đã tra cứu giúp Ngài; hãy diễn đạt tự nhiên thành câu nói của em, "
@@ -735,6 +740,7 @@ class SelfCritiqueEscalationMixin:
             critique.reason,
         )
         esc_kwargs = dict(directive_kwargs)
+        esc_kwargs.pop("use_escalation_client", None)
         esc_kwargs["ti_context"] = (
             (esc_kwargs.get("ti_context", "") or "")
             + "\nESCALATION: câu nháp trước nhạt hoặc thiếu bám dữ kiện. Nói một câu cụ thể, "
@@ -772,6 +778,7 @@ class SelfCritiqueEscalationMixin:
 
     def _regenerate_directive_after_tool(self, esc_kwargs: dict, tool_summary: str, *, ti_report, vision_grounded: bool):
         kwargs = dict(esc_kwargs)
+        kwargs.pop("use_escalation_client", None)
         kwargs["telemetry_data"] = (kwargs.get("telemetry_data", "") or "") + f"; TOOL_RESULT: {tool_summary}"
         kwargs["ti_context"] = (
             (kwargs.get("ti_context", "") or "")

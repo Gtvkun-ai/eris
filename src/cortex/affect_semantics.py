@@ -655,6 +655,36 @@ class AffectSemanticClassifier:
                     scores[axis] += weight
                     evidence.append(f"{axis}:/{pattern}/")
 
+        meta_challenge = any(
+            marker in normalized
+            for marker in (
+                "hieu sai la sao",
+                "toi da noi gi dau",
+                "toi noi gi dau",
+                "co sua gi dau",
+                "toi sua gi dau",
+            )
+        )
+        replacement_content = any(
+            marker in normalized
+            for marker in (
+                "y toi la",
+                "y minh la",
+                "toi noi la",
+                "toi bao la",
+                "sua lai la",
+                "phai la",
+                "dung ra la",
+            )
+        )
+        if meta_challenge and not replacement_content:
+            # Đây là câu hỏi về frame repair của ERIS, không phải correction thật.
+            # Cap nhẹ để vẫn giữ tín hiệu "cần trả lời", nhưng không đẩy cả turn
+            # sang chế độ absorb-correction.
+            scores["correction"] = min(scores["correction"], 0.18)
+            scores["ambiguity"] = max(scores["ambiguity"], 0.24)
+            evidence.append("adjust:meta_challenge_not_user_correction")
+
         # 3) Context bias từ Ti / active window.
         # Đây là bias nhỏ để không phụ thuộc hoàn toàn vào text.
         ti = (ti_mode or "").strip().lower()

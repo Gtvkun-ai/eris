@@ -1500,6 +1500,8 @@ class RuntimeCoordinator(
     def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
+        raw_private_digest = getattr(self, "private_mind_digest", {}) or {}
+        full_private_digest = dict(raw_private_digest) if isinstance(raw_private_digest, dict) else {}
         private_digest = self._private_mind_digest_for_payload()
         if private_digest:
             self.private_mind_digest = private_digest
@@ -1508,6 +1510,7 @@ class RuntimeCoordinator(
             self.private_life_digest = private_life_digest
         payload["emotion_debug"] = self._build_emotion_debug_payload()
         payload["depth"] = self._build_depth_block()
+        payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
         if isinstance(private_digest, dict) and private_digest:
             payload["private_mind_digest"] = private_digest
         if isinstance(private_life_digest, dict) and private_life_digest:
@@ -5247,6 +5250,57 @@ class RuntimeCoordinator(
             pass
 
         self._maybe_log_depth_signals(block)
+        return block
+
+    def _build_depth_v2_block(self, *, private_mind_digest: dict[str, object] | None = None) -> dict[str, object]:
+        """Compact v2 contract for the replacement depth panel.
+
+        Built from private_mind as the primary source, with lightweight live
+        supplements for expression, tom, flags, and a tiny affect history.
+        """
+        try:
+            from cortex.depth_flags import all_states
+        except Exception:
+            flags = {}
+        else:
+            flags = all_states()
+
+        try:
+            rich = self._cached_panel_state()
+        except Exception:
+            rich = {}
+        identity = rich.get("identity") if isinstance(rich, dict) and isinstance(rich.get("identity"), dict) else {}
+
+        try:
+            from runtime.depth_v2_state import build_depth_v2_state
+
+            block = build_depth_v2_state(
+                private_mind_digest=private_mind_digest if isinstance(private_mind_digest, dict) else {},
+                flags=flags,
+                expression_gate=getattr(self, "_last_expression_gate", None),
+                tom_read=str(getattr(self, "_last_tom_advisory", "") or ""),
+                identity=identity,
+                affect_history=getattr(self, "_depth_v2_affect_history", None),
+            )
+        except Exception:
+            block = {
+                "version": 2,
+                "ts": round(time.time(), 3),
+                "identity": identity,
+                "status": {"headline": "listening", "subtext": "depth_v2 unavailable", "focus_mode": "attentive"},
+                "affect": {"headline": "steady", "subtext": "fallback", "orbit": [], "metrics": {}},
+                "tom": {"live": False, "text": "", "confidence": 0.0},
+                "expression": {"want": 0.0, "suppress": 0.0, "allowed": 0.0, "stance": ""},
+                "priorities": [],
+                "interiority": {"sections": []},
+                "n2": {"live": False, "axes": [], "sentence": "", "attachment": {"live": False, "value": 0.0}},
+                "journal": [],
+                "signal_log": [],
+                "context": {"tags": [], "focus_mode": "attentive"},
+                "flags": flags,
+                "affect_history": list(getattr(self, "_depth_v2_affect_history", []) or []),
+            }
+        self._depth_v2_affect_history = list(block.get("affect_history", []) or [])
         return block
 
     def _cached_panel_state(self, *, ttl_seconds: float = 1.0) -> dict[str, object]:

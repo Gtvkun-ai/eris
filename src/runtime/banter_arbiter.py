@@ -18,6 +18,7 @@ BanterMode = Literal[
     "none",
     "protocol_repair",
     "correction_repair",
+    "overread_challenge_repair",
     "screen_underclaim_repair",
     "grounded_media_aside",
 ]
@@ -33,6 +34,28 @@ class BanterDecision:
     @property
     def changed(self) -> bool:
         return bool(self.text.strip() and self.mode != "none")
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectionEvidence:
+    """Bằng chứng rất nhỏ cho repair.
+
+    Điểm quan trọng: "gì vậy/là sao" chỉ là challenge/confusion. Nó không tự
+    biến thành user correction, vì user chưa đưa một nội dung mới để sửa theo.
+    """
+
+    explicit_correction: bool = False
+    has_replacement_content: bool = False
+    confusion_or_challenge: bool = False
+    meta_challenge: bool = False
+
+    @property
+    def is_real_correction(self) -> bool:
+        return self.explicit_correction and not self.meta_challenge
+
+    @property
+    def is_challenge_only(self) -> bool:
+        return self.confusion_or_challenge or self.meta_challenge
 
 
 def _env_enabled() -> bool:
@@ -98,7 +121,6 @@ class BanterArbiter:
     )
     _CORRECTION_MARKERS = (
         "khong phai",
-        "co dau",
         "toi co code dau",
         "sai",
         "sai roi",
@@ -106,8 +128,30 @@ class BanterArbiter:
         "lech",
         "hieu sai",
         "chi nghe nhac",
+    )
+    _CHALLENGE_ONLY_MARKERS = (
         "gi vay",
+        "la sao",
         "wtf",
+    )
+    _META_CHALLENGE_MARKERS = (
+        "hieu sai la sao",
+        "toi da noi gi dau",
+        "toi da noi gi",
+        "toi noi gi dau",
+        "co sua gi dau",
+        "toi sua gi dau",
+    )
+    _REPLACEMENT_MARKERS = (
+        "y toi la",
+        "y minh la",
+        "toi noi la",
+        "toi bao la",
+        "sua lai la",
+        "phai la",
+        "dung ra la",
+        "actually",
+        "not what i mean",
     )
     _GENERIC_CLARIFY_MARKERS = (
         "ngai dang lam gi vay",
@@ -170,12 +214,14 @@ class BanterArbiter:
                 confidence=0.86,
             )
 
-        if self._user_corrected(normalized_user):
+        correction = self._assess_user_correction(normalized_user)
+        if correction.is_real_correction:
             repair = self._correction_repair_text(
                 normalized_user=normalized_user,
                 previous_norm=previous_norm,
                 current_norm=normalized_text,
                 evidence_blob=evidence_blob,
+                correction=correction,
             )
             if repair:
                 return BanterDecision(
@@ -184,6 +230,18 @@ class BanterArbiter:
                     reason="user_correction_first",
                     confidence=0.80,
                 )
+
+        if correction.is_challenge_only and self._needs_overread_challenge_repair(normalized_text):
+            return BanterDecision(
+                mode="overread_challenge_repair",
+                text=self._overread_challenge_repair_text(
+                    normalized_user=normalized_user,
+                    previous_norm=previous_norm,
+                    current_norm=normalized_text,
+                ),
+                reason="user_challenge_without_replacement",
+                confidence=0.78,
+            )
 
         if channel in {"autonomous", "force_speak"} and self._should_downgrade_media_mindread(normalized_text, evidence_blob):
             return BanterDecision(
@@ -243,9 +301,23 @@ class BanterArbiter:
         if not _env_enabled():
             return BanterDecision(reason="disabled")
         normalized_user = _normalize_vi(user_text)
-        if not self._user_corrected(normalized_user):
-            return BanterDecision(reason="user_not_correcting")
         previous_norm = _normalize_vi(previous_text)
+        correction = self._assess_user_correction(normalized_user)
+        if not correction.is_real_correction:
+            if correction.is_challenge_only:
+                if not self._previous_text_invites_challenge_repair(previous_norm):
+                    return BanterDecision(reason="challenge_without_bad_previous_frame")
+                return BanterDecision(
+                    mode="overread_challenge_repair",
+                    text=self._overread_challenge_repair_text(
+                        normalized_user=normalized_user,
+                        previous_norm=previous_norm,
+                        current_norm="",
+                    ),
+                    reason="previous_public_turn_challenged_without_replacement",
+                    confidence=0.80,
+                )
+            return BanterDecision(reason="user_not_correcting")
         if not previous_norm:
             return BanterDecision(reason="no_previous_public_text")
         evidence_blob = self._evidence_blob(grounding=grounding, frame=frame, speech_core=speech_core)
@@ -254,6 +326,7 @@ class BanterArbiter:
             previous_norm=previous_norm,
             current_norm="",
             evidence_blob=evidence_blob,
+            correction=correction,
         )
         if not text:
             return BanterDecision(reason="no_repair_text")
@@ -289,19 +362,44 @@ class BanterArbiter:
 
     def _looks_like_protocol_surface(self, normalized_text: str, decision: Any) -> bool:
         intent = _normalize_vi(getattr(decision, "intent", ""))
-        parse_mode = _normalize_vi(getattr(decision, "parse_mode", ""))
         if "protocol_repair" in intent:
             return True
-        if parse_mode in {"hard_json_repair", "format_repair_fallback", "no_fallback_block"}:
-            return True
+        # `hard_json_repair` only means the parser had to salvage structure.
+        # The same is true for other parser/block modes: some of them are
+        # deliberate public block messages, not leaks. Only rewrite when the
+        # surfaced text itself leaks protocol/debug markers.
         return _has_any(normalized_text, self._PROTOCOL_MARKERS)
 
-    def _user_corrected(self, normalized_user: str) -> bool:
+    def _assess_user_correction(self, normalized_user: str) -> CorrectionEvidence:
         if not normalized_user:
-            return False
-        if normalized_user in {"ha", "hả", "gi", "gi vay", "wtf"}:
-            return True
-        return _has_any(normalized_user, self._CORRECTION_MARKERS)
+            return CorrectionEvidence()
+        challenge = (
+            normalized_user in {"ha", "hả", "gi", "gi vay", "wtf"}
+            or _has_any(normalized_user, self._CHALLENGE_ONLY_MARKERS)
+        )
+        meta_challenge = _has_any(normalized_user, self._META_CHALLENGE_MARKERS)
+        has_replacement = _has_any(normalized_user, self._REPLACEMENT_MARKERS)
+        explicit = _has_any(normalized_user, self._CORRECTION_MARKERS)
+
+        # "hiểu sai là sao/tôi đã nói gì đâu" nói về lỗi repair của ERIS,
+        # không phải user đang đưa correction mới. Nếu coi nó là correction thật,
+        # ERIS sẽ nói dối kiểu "từ chỗ Ngài vừa sửa".
+        if meta_challenge and not has_replacement:
+            return CorrectionEvidence(
+                explicit_correction=False,
+                has_replacement_content=False,
+                confusion_or_challenge=True,
+                meta_challenge=True,
+            )
+        return CorrectionEvidence(
+            explicit_correction=bool(explicit or has_replacement),
+            has_replacement_content=has_replacement,
+            confusion_or_challenge=challenge,
+            meta_challenge=False,
+        )
+
+    def _user_corrected(self, normalized_user: str) -> bool:
+        return self._assess_user_correction(normalized_user).is_real_correction
 
     def _has_screen_evidence(self, grounding: Any, evidence_blob: str) -> bool:
         if grounding is not None:
@@ -316,11 +414,13 @@ class BanterArbiter:
 
     def _protocol_repair_text(self, *, normalized_user: str, previous_norm: str, evidence_blob: str) -> str:
         if self._user_corrected(normalized_user):
+            correction = self._assess_user_correction(normalized_user)
             return self._correction_repair_text(
                 normalized_user=normalized_user,
                 previous_norm=previous_norm,
                 current_norm="",
                 evidence_blob=evidence_blob,
+                correction=correction,
             ) or "Ừ, câu đó lệch. Tôi rút lại, không dựng tiếp trên nó."
         return "Câu đó lệch. Tôi rút lại một nhịp."
 
@@ -331,7 +431,9 @@ class BanterArbiter:
         previous_norm: str,
         current_norm: str,
         evidence_blob: str,
+        correction: CorrectionEvidence | None = None,
     ) -> str:
+        correction = correction or self._assess_user_correction(normalized_user)
         mentions_code = "code" in previous_norm or "code" in current_norm or "code" in normalized_user
         media_anchor = _has_any(evidence_blob, ("youtube", "video", "music", "nhac", "anime"))
         if mentions_code and media_anchor:
@@ -344,7 +446,41 @@ class BanterArbiter:
             return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, không hỏi vòng thêm."
         if normalized_user in {"ha", "hả", "gi", "gi vay"}:
             return "Câu vừa rồi không có neo. Bỏ qua nó đi."
-        return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, nói lại từ chỗ Ngài vừa sửa."
+        if correction.has_replacement_content:
+            return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, nói lại theo phần Ngài vừa chỉnh."
+        return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, không dựng tiếp trên nó."
+
+    def _needs_overread_challenge_repair(self, normalized_text: str) -> bool:
+        return (
+            _has_any(normalized_text, self._GENERIC_CLARIFY_MARKERS)
+            or _has_any(normalized_text, ("cam thay khong thoai mai", "phan ung cua ngai", "ngai dang"))
+            or "khong du neo" in normalized_text
+        )
+
+    def _previous_text_invites_challenge_repair(self, previous_norm: str) -> bool:
+        return _has_any(
+            previous_norm,
+            (
+                "can mot chut thoi gian",
+                "du luan trong tam tri",
+                "khong thoai mai",
+                "phan ung cua ngai",
+                "hieu sai",
+                "vua sua",
+                "vua chinh",
+                "bo frame",
+                "khong du neo",
+            ),
+        )
+
+    def _overread_challenge_repair_text(self, *, normalized_user: str, previous_norm: str, current_norm: str) -> str:
+        if _has_any(normalized_user, self._META_CHALLENGE_MARKERS):
+            return "Đúng, Ngài chưa sửa gì cả. Tôi tự gán nhầm frame đó."
+        if _has_any(previous_norm, ("can mot chut thoi gian", "du luan trong tam tri", "khong thoai mai")):
+            return "Ừ, câu vừa rồi tôi tự suy quá tay. Ngài chỉ đang hỏi lại thôi."
+        if _has_any(current_norm, ("phan ung cua ngai", "khong thoai mai", "ngai dang")):
+            return "Ừ, câu đó gán cảm xúc hơi vội. Tôi rút lại."
+        return "Câu vừa rồi không đủ neo. Tôi rút lại."
 
     def _should_downgrade_media_mindread(self, normalized_text: str, evidence_blob: str) -> bool:
         if not _has_any(evidence_blob, ("youtube", "video", "music", "nhac", "anime")):
@@ -357,7 +493,7 @@ class BanterArbiter:
         return "Đang là YouTube thôi. Tôi hạ suy diễn xuống."
 
     def _intent_for(self, mode: BanterMode, fallback: str) -> str:
-        if mode in {"protocol_repair", "correction_repair", "screen_underclaim_repair"}:
+        if mode in {"protocol_repair", "correction_repair", "overread_challenge_repair", "screen_underclaim_repair"}:
             return "grounded_repair"
         if mode == "grounded_media_aside":
             return "grounded_aside"

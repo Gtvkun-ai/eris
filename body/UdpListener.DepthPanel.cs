@@ -103,6 +103,9 @@ public partial class UdpListener : Node2D
 		if (_depthPanel == null)
 			return;
 
+		if (string.IsNullOrWhiteSpace(_latestDepthV2Json))
+			LoadDepthV2State();
+
 		ApplyDepthFontTheme();
 
 		// Panel không tự vẽ nền (ảnh lo phần đó). Có ảnh -> StyleBoxEmpty; thiếu ảnh
@@ -133,16 +136,14 @@ public partial class UdpListener : Node2D
 			});
 		}
 
-		// Nút đóng trong suốt đè lên ✕ vẽ sẵn.
-		var close = new Button { Flat = true, Text = "" };
-		PlaceBySlot(close, SlotClose);
-		close.AddThemeStyleboxOverride("normal", new StyleBoxEmpty());
-		close.AddThemeStyleboxOverride("hover", new StyleBoxEmpty());
-		close.AddThemeStyleboxOverride("pressed", new StyleBoxEmpty());
-		close.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
-		close.MouseDefaultCursorShape = Control.CursorShape.PointingHand;
-		close.Pressed += () => _depthPanel.Visible = false;
-		_depthPanel.AddChild(close);
+		// Dùng cụm nút cửa sổ chung để panel sâu có hành vi đóng/thu gọn giống các panel khác.
+		var windowControls = CreateWindowControlCapsule(() => _depthPanel.Visible = false, () => _depthPanel.Visible = false);
+		PlaceBySlot(windowControls, SlotClose);
+		windowControls.OffsetLeft += 2f;
+		windowControls.OffsetTop += 1f;
+		windowControls.OffsetRight -= 2f;
+		windowControls.OffsetBottom -= 1f;
+		_depthPanel.AddChild(windowControls);
 
 		// Phụ đề động ở header (model · cờ · alive), cạnh chữ "CHIỀU SÂU" baked.
 		var headerBox = NewSlot(SlotHeader);
@@ -176,6 +177,7 @@ public partial class UdpListener : Node2D
 
 		var ctxBody = NewCardSlot(SlotContext, "CONTEXT", "diary_memory");
 		_depthContextLabel = Mk("—", 14, DepthInkSoft);
+		_depthContextLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		ctxBody.AddChild(_depthContextLabel);
 
 		// Dải CỘNG TÁC: cờ tự bật, pill pastel read-only.
@@ -403,10 +405,359 @@ public partial class UdpListener : Node2D
 		}
 	}
 
+	private void TryCaptureDepthV2Block(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw))
+			return;
+		try
+		{
+			using var doc = JsonDocument.Parse(raw);
+			var root = doc.RootElement;
+			if (root.ValueKind != JsonValueKind.Object
+				|| !root.TryGetProperty("depth_v2", out var d)
+				|| d.ValueKind != JsonValueKind.Object)
+				return;
+
+			string json = d.GetRawText();
+			if (!DepthV2HasContent(json))
+				return;
+
+			_latestDepthV2Json = json;
+			SaveDepthV2State();
+			if (_depthPanel != null && _depthPanel.Visible)
+				RefreshDepthPanel();
+		}
+		catch (Exception ex)
+		{
+			GD.Print($"[depth_v2] capture fail: {ex.Message}");
+		}
+	}
+
+	private static bool DepthV2HasContent(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw))
+			return false;
+		try
+		{
+			using var doc = JsonDocument.Parse(raw);
+			var root = doc.RootElement;
+			if (root.ValueKind != JsonValueKind.Object)
+				return false;
+			if (root.TryGetProperty("version", out var versionEl) && versionEl.ValueKind == JsonValueKind.Number)
+			{
+				if (versionEl.TryGetInt32(out int version) && version == 2)
+					return true;
+			}
+			if (root.TryGetProperty("interiority", out var interiorityEl) && interiorityEl.ValueKind == JsonValueKind.Object)
+				return true;
+			if (root.TryGetProperty("affect", out var affectEl) && affectEl.ValueKind == JsonValueKind.Object)
+				return true;
+			return root.TryGetProperty("priorities", out var prioritiesEl) && prioritiesEl.ValueKind == JsonValueKind.Array;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private void SaveDepthV2State()
+	{
+		if (string.IsNullOrWhiteSpace(_latestDepthV2Json))
+			return;
+		try
+		{
+			using var file = Godot.FileAccess.Open(DepthV2StatePath, Godot.FileAccess.ModeFlags.Write);
+			if (file != null)
+				file.StoreString(_latestDepthV2Json);
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[depth_v2] Save state failed: {ex.Message}");
+		}
+	}
+
+	private void LoadDepthV2State()
+	{
+		try
+		{
+			if (!Godot.FileAccess.FileExists(DepthV2StatePath))
+				return;
+			using var file = Godot.FileAccess.Open(DepthV2StatePath, Godot.FileAccess.ModeFlags.Read);
+			if (file == null)
+				return;
+			string content = file.GetAsText();
+			if (!string.IsNullOrWhiteSpace(content) && DepthV2HasContent(content))
+				_latestDepthV2Json = content;
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[depth_v2] Load state failed: {ex.Message}");
+		}
+	}
+
+	private void ApplyDepthV2(JsonElement d)
+	{
+		if (_depthHeaderLabel != null && d.TryGetProperty("identity", out var id) && id.ValueKind == JsonValueKind.Object)
+		{
+			string name = AnStr(id, "name", "ERIS");
+			string channel = AnStr(id, "channel", "chat");
+			string tick = id.TryGetProperty("last_tick_at", out var tickEl) && tickEl.ValueKind == JsonValueKind.Number ? $"{AnFloat(id, "last_tick_at"):0.0}s" : "";
+			string headline = "";
+			string focusMode = "";
+			if (d.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object)
+			{
+				headline = AnStr(status, "headline");
+				focusMode = AnStr(status, "focus_mode");
+			}
+			var parts = new List<string> { $"{name} [{channel}]" };
+			if (!string.IsNullOrWhiteSpace(focusMode))
+				parts.Add(focusMode.Replace("_", " "));
+			if (!string.IsNullOrWhiteSpace(headline))
+				parts.Add(headline);
+			if (!string.IsNullOrWhiteSpace(tick))
+				parts.Add($"tick {tick}");
+			_depthHeaderLabel.Text = string.Join(" · ", parts);
+		}
+
+		if (d.TryGetProperty("flags", out var flags) && flags.ValueKind == JsonValueKind.Object)
+		{
+			foreach (var (key, chip) in _depthFlagChips)
+			{
+				bool isOn = AnBool(flags, key);
+				chip.AddThemeColorOverride("font_color", isOn ? DepthGreen : DepthDim);
+				if (chip.GetParent() is PanelContainer pill)
+					pill.AddThemeStyleboxOverride("panel", DepthPillStyle(isOn));
+			}
+		}
+
+		if (_depthAffectLabel != null && d.TryGetProperty("affect", out var affect) && affect.ValueKind == JsonValueKind.Object)
+		{
+			string headline = AnStr(affect, "headline", "steady");
+			string subtext = AnStr(affect, "subtext");
+			float stability = 0f;
+			float positive = 0f;
+			float arousal = 0f;
+			if (affect.TryGetProperty("metrics", out var metrics) && metrics.ValueKind == JsonValueKind.Object)
+			{
+				stability = AnFloat(metrics, "stability");
+				positive = AnFloat(metrics, "positive_bias");
+				arousal = AnFloat(metrics, "arousal");
+			}
+			_depthAffectLabel.Text =
+				$"{headline}\n{subtext}\nstability {(stability * 100f):0}%   ·   positive {(positive * 100f):0}%   ·   arousal {(arousal * 100f):0}%";
+			_depthAffectLabel.AddThemeColorOverride("font_color", DepthBody);
+		}
+
+		if (d.TryGetProperty("expression", out var ex) && ex.ValueKind == JsonValueKind.Object)
+		{
+			float want = AnFloat(ex, "want");
+			float suppress = AnFloat(ex, "suppress");
+			float allowed = AnFloat(ex, "allowed");
+			if (_depthWantBar != null) _depthWantBar.Value = want;
+			if (_depthSuppressBar != null) _depthSuppressBar.Value = suppress;
+			if (_depthAllowBar != null) _depthAllowBar.Value = allowed;
+			if (_depthWantVal != null) _depthWantVal.Text = $"{want:0.00}";
+			if (_depthSuppressVal != null) _depthSuppressVal.Text = $"{suppress:0.00}";
+			if (_depthAllowVal != null) _depthAllowVal.Text = $"{allowed:0.00}";
+			if (_depthStanceLabel != null)
+			{
+				string stance = AnStr(ex, "stance");
+				_depthStanceLabel.Text = "stance: " + (string.IsNullOrWhiteSpace(stance) ? "—" : stance);
+			}
+		}
+
+		if (_depthN2Body != null)
+		{
+			AnchorClear(_depthN2Body);
+			bool any = false;
+			if (d.TryGetProperty("n2", out var n2) && n2.ValueKind == JsonValueKind.Object)
+			{
+				if (n2.TryGetProperty("axes", out var axes) && axes.ValueKind == JsonValueKind.Array)
+				{
+					foreach (var ax in axes.EnumerateArray())
+					{
+						if (ax.ValueKind != JsonValueKind.Object)
+							continue;
+						string label = AnStr(ax, "label");
+						float delta = AnFloat(ax, "delta");
+						if (string.IsNullOrWhiteSpace(label))
+							continue;
+						var c = delta > 0 ? DepthGreen : delta < 0 ? DepthAmber : DepthDim;
+						_depthN2Body.AddChild(DepthLine($"{label}   {delta:+0.00;-0.00}", c, 13));
+						any = true;
+					}
+				}
+				string sentence = AnStr(n2, "sentence");
+				if (!string.IsNullOrWhiteSpace(sentence))
+				{
+					_depthN2Body.AddChild(DepthLine($"\"{sentence}\"", DepthInkSoft, 12));
+					any = true;
+				}
+				if (n2.TryGetProperty("attachment", out var att) && att.ValueKind == JsonValueKind.Object && AnBool(att, "live"))
+				{
+					_depthN2Body.AddChild(DepthLine($"attach  {AnFloat(att, "value"):+0.00;-0.00}", DepthAccent, 12));
+					any = true;
+				}
+			}
+			if (!any)
+				_depthN2Body.AddChild(DepthLine("chưa thấy dịch chuyển dài hạn rõ ràng", DepthDim, 13));
+		}
+
+		if (_depthInteriorityBody != null)
+		{
+			AnchorClear(_depthInteriorityBody);
+			bool any = false;
+			if (d.TryGetProperty("interiority", out var inter) && inter.ValueKind == JsonValueKind.Object
+				&& inter.TryGetProperty("sections", out var sections) && sections.ValueKind == JsonValueKind.Array)
+			{
+				int shown = 0;
+				foreach (var sec in sections.EnumerateArray())
+				{
+					if (shown >= 5 || sec.ValueKind != JsonValueKind.Object)
+						break;
+					string title = AnStr(sec, "title");
+					if (!sec.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+						continue;
+					string firstText = "";
+					string firstBadge = "";
+					foreach (var item in items.EnumerateArray())
+					{
+						if (item.ValueKind != JsonValueKind.Object)
+							continue;
+						firstText = AnStr(item, "text");
+						firstBadge = AnStr(item, "badge");
+						if (!string.IsNullOrWhiteSpace(firstText))
+							break;
+					}
+					if (string.IsNullOrWhiteSpace(firstText))
+						continue;
+					string line = string.IsNullOrWhiteSpace(title) ? firstText : $"{title}: {firstText}";
+					if (!string.IsNullOrWhiteSpace(firstBadge))
+						line += $"  ·  {firstBadge}";
+					_depthInteriorityBody.AddChild(DepthLine(line, shown == 0 ? DepthBody : DepthInkSoft, 12));
+					shown++;
+					any = true;
+				}
+			}
+			if (!any)
+				_depthInteriorityBody.AddChild(DepthLine("chưa có section nội tâm từ depth_v2", DepthDim, 13));
+		}
+
+		if (_depthTomLabel != null && d.TryGetProperty("tom", out var tom) && tom.ValueKind == JsonValueKind.Object)
+		{
+			string text = AnStr(tom, "text");
+			float conf = AnFloat(tom, "confidence");
+			if (string.IsNullOrWhiteSpace(text))
+				_depthTomLabel.Text = "chưa đọc được gì";
+			else
+				_depthTomLabel.Text = conf > 0f ? $"\"{text}\"  (~{conf:0.00})" : text;
+		}
+
+		if (_depthLogBody != null)
+		{
+			AnchorClear(_depthLogBody);
+			bool any = false;
+			if (d.TryGetProperty("journal", out var journal) && journal.ValueKind == JsonValueKind.Array)
+			{
+				int shown = 0;
+				foreach (var entry in journal.EnumerateArray())
+				{
+					if (shown >= 5 || entry.ValueKind != JsonValueKind.Object)
+						break;
+					string time = AnStr(entry, "time");
+					string text = AnStr(entry, "text");
+					if (string.IsNullOrWhiteSpace(text))
+						continue;
+					string prefix = string.IsNullOrWhiteSpace(time) ? "·" : time;
+					_depthLogBody.AddChild(DepthLine($"{prefix}  {text}", DepthInkSoft, 12));
+					shown++;
+					any = true;
+				}
+			}
+			if (!any && d.TryGetProperty("signal_log", out var signalLog) && signalLog.ValueKind == JsonValueKind.Array)
+			{
+				int shown = 0;
+				foreach (var entry in signalLog.EnumerateArray())
+				{
+					if (shown >= 5 || entry.ValueKind != JsonValueKind.Object)
+						break;
+					string time = AnStr(entry, "time");
+					string text = AnStr(entry, "text");
+					if (string.IsNullOrWhiteSpace(text))
+						continue;
+					string prefix = string.IsNullOrWhiteSpace(time) ? "·" : time;
+					_depthLogBody.AddChild(DepthLine($"{prefix}  {text}", DepthInkSoft, 12));
+					shown++;
+					any = true;
+				}
+			}
+			if (!any)
+				_depthLogBody.AddChild(DepthLine("im lặng — chưa có nhật ký depth_v2", DepthDim, 12));
+		}
+
+		if (_depthContextLabel != null)
+		{
+			string focusMode = "";
+			var tags = new List<string>();
+			if (d.TryGetProperty("context", out var ctx) && ctx.ValueKind == JsonValueKind.Object)
+			{
+				focusMode = AnStr(ctx, "focus_mode");
+				if (ctx.TryGetProperty("tags", out var tagArray) && tagArray.ValueKind == JsonValueKind.Array)
+				{
+					foreach (var tag in tagArray.EnumerateArray())
+					{
+						if (tag.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(tag.GetString()))
+							tags.Add(tag.GetString());
+					}
+				}
+			}
+
+			var priorities = new List<string>();
+			if (d.TryGetProperty("priorities", out var prioArray) && prioArray.ValueKind == JsonValueKind.Array)
+			{
+				int shown = 0;
+				foreach (var item in prioArray.EnumerateArray())
+				{
+					if (shown >= 3 || item.ValueKind != JsonValueKind.Object)
+						break;
+					string label = AnStr(item, "label");
+					float score = AnFloat(item, "score");
+					if (string.IsNullOrWhiteSpace(label))
+						continue;
+					priorities.Add($"{label} {(score * 100f):0}%");
+					shown++;
+				}
+			}
+
+			string focusText = string.IsNullOrWhiteSpace(focusMode) ? "focus: attentive" : $"focus: {focusMode}";
+			string priorityText = priorities.Count > 0 ? string.Join("   ·   ", priorities) : "no active priority map";
+			string tagsText = tags.Count > 0 ? string.Join("   ·   ", tags) : "—";
+			_depthContextLabel.Text = $"{focusText}\n{priorityText}\n{tagsText}";
+		}
+	}
+
 	// ── Refresh ────────────────────────────────────────────────────────────
 	private void RefreshDepthPanel()
 	{
-		if (_depthPanel == null || string.IsNullOrWhiteSpace(_latestDepthJson))
+		if (_depthPanel == null)
+			return;
+		if (!string.IsNullOrWhiteSpace(_latestDepthV2Json))
+		{
+			try
+			{
+				using var v2Doc = JsonDocument.Parse(_latestDepthV2Json);
+				if (v2Doc.RootElement.ValueKind == JsonValueKind.Object)
+				{
+					ApplyDepthV2(v2Doc.RootElement);
+					return;
+				}
+			}
+			catch (Exception ex)
+			{
+				GD.Print($"[depth_v2] refresh fail: {ex.Message}");
+			}
+		}
+		if (string.IsNullOrWhiteSpace(_latestDepthJson))
 			return;
 		try
 		{

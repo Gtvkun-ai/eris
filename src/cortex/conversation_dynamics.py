@@ -726,12 +726,44 @@ class ConversationDynamicsEngine:
         if not normalized:
             return CorrectionAssessment()
 
+        replacement_markers = (
+            "y toi la",
+            "y minh la",
+            "toi noi la",
+            "toi bao la",
+            "sua lai la",
+            "phai la",
+            "dung ra la",
+        )
+        meta_challenge_markers = (
+            "hieu sai la sao",
+            "toi da noi gi dau",
+            "toi noi gi dau",
+            "co sua gi dau",
+            "toi sua gi dau",
+        )
+        has_replacement = _contains_any(normalized, replacement_markers)
+        last_assistant_norm = normalize_vietnamese_ascii(last_assistant_text)
+        last_assistant_claimed_repair = _contains_any(
+            last_assistant_norm,
+            ("hieu sai", "vua sua", "vua chinh", "bo frame"),
+        )
+        # Meta-challenge không phải correction thật. Ví dụ:
+        # "hiểu sai là sao, tôi đã nói gì đâu" đang chất vấn câu repair của ERIS,
+        # chưa cung cấp nội dung thay thế để ERIS sửa theo.
+        if (
+            _contains_any(normalized, meta_challenge_markers)
+            and not has_replacement
+            and (last_assistant_claimed_repair or normalized.startswith("hieu sai la sao"))
+        ):
+            return CorrectionAssessment()
+
         strong_markers = (
             "khong phai y toi",
             "khong phai y minh",
             "sai roi",
             "ban hieu sai",
-            "hieu sai",
+            "hieu sai roi",
             "khong dung",
             "chua dung",
             "toi khong noi vay",

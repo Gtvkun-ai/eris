@@ -108,8 +108,45 @@ class ChatMeaningLayerLight:
             0.58 if str(getattr(fe_plan, "intent_label", "") or "") == "technical_support" else 0.0,
         )
         correction = max(affect.correction, 0.76 if _has_any(normalized, self.CORRECTION_TERMS) else 0.0)
+        meta_challenge = _has_any(
+            normalized,
+            (
+                "hieu sai la sao",
+                "toi da noi gi dau",
+                "toi noi gi dau",
+                "co sua gi dau",
+                "toi sua gi dau",
+            ),
+        )
+        replacement_content = _has_any(
+            normalized,
+            (
+                "y toi la",
+                "y minh la",
+                "toi noi la",
+                "toi bao la",
+                "sua lai la",
+                "phai la",
+                "dung ra la",
+            ),
+        )
+        if meta_challenge and not replacement_content:
+            # User đang hỏi vì sao ERIS tự nhận "hiểu sai", chưa hề đưa correction.
+            # Giữ answer-first, nhưng không kích hoạt nhánh absorb-correction.
+            correction = min(correction, 0.18)
         directive = max(affect.directive_pressure, 0.66 if _has_any(normalized, self.DIRECTIVE_TERMS) else 0.0)
-        answer_need = max(affect.answer_need, 0.70 if "?" in str(user_text or "") else 0.0)
+        question_like = "?" in str(user_text or "") or _has_any(
+            normalized,
+            (
+                "la sao",
+                "gi vay",
+                "sao lai",
+                "y la sao",
+                "tai sao",
+                "vi sao",
+            ),
+        )
+        answer_need = max(affect.answer_need, 0.70 if question_like else 0.0)
         ambiguity = affect.ambiguity
 
         if correction >= 0.48:

@@ -48,7 +48,8 @@ def build_no_fallback_payload(
 def _default_no_fallback_text(*, channel: str, reason: str) -> str:
     reason_text = str(reason or "blocked").strip()
     if channel == "chat":
-        return f"Tôi chặn lượt này vì no-fallback mode đang bật: {reason_text}."
+        # Keep the user-facing block clean. The detailed reason stays in debug_trace.
+        return "Tôi chặn lượt này vì no-fallback mode đang bật."
     if channel == "session_ritual":
         return ""
     if channel in {"directive", "autonomous", "force_speak", "presence"}:

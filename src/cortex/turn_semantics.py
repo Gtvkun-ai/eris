@@ -513,6 +513,30 @@ class TurnSemanticsEngine:
     def _contains_soft_correction_shape(self, normalized: str) -> bool:
         if not normalized:
             return False
+        meta_challenge = any(
+            shape in normalized
+            for shape in (
+                "hieu sai la sao",
+                "toi da noi gi dau",
+                "toi noi gi dau",
+                "co sua gi dau",
+                "toi sua gi dau",
+            )
+        )
+        replacement_content = any(
+            shape in normalized
+            for shape in (
+                "y toi la",
+                "y minh la",
+                "toi noi la",
+                "toi bao la",
+                "sua lai la",
+                "phai la",
+                "dung ra la",
+            )
+        )
+        if meta_challenge and not replacement_content:
+            return False
         correction_shapes = (
             "khong phai",
             "co dau",
@@ -521,7 +545,8 @@ class TurnSemanticsEngine:
             "sai roi",
             "chua dung",
             "lech roi",
-            "hieu sai",
+            "ban hieu sai",
+            "hieu sai roi",
             "chi nghe nhac",
             "chi xem",
             "y toi khac",

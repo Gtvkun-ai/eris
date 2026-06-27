@@ -937,6 +937,16 @@ class PostGenerationFiltersMixin:
 
         marker = f"utterance_eval:q={evaluation.quality:.2f}:{evaluation.reason}"
         decision = self._trace_only_guard(decision, marker)
+        protected_intents = {"no_fallback_block", "format_repair_fallback", "protocol_repair"}
+        protected_modes = {"no_fallback_block", "format_repair_fallback"}
+        intent = str(getattr(decision, "intent", "") or "")
+        parse_mode = str(getattr(decision, "parse_mode", "") or "")
+        if intent in protected_intents or parse_mode in protected_modes:
+            decision.debug_trace = self._append_trace(
+                getattr(decision, "debug_trace", ""),
+                "utterance_eval_protected_block",
+            )
+            return decision
 
         if evaluation.verdict == "rewrite":
             service = getattr(self, "llm_service", None)
