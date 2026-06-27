@@ -32,6 +32,11 @@ except Exception:  # Optional during partial rollout; deterministic fallback sti
     GreetingCognitionEngine = None
     GreetingQualityScorer = None
 
+try:
+    from runtime.utterance_selector import UtteranceSelector
+except Exception:  # Optional during partial rollout; raw model text still works.
+    UtteranceSelector = None
+
 
 class ChatAct(Enum):
     DIRECT_QUESTION = "direct_question"
@@ -2499,6 +2504,18 @@ class LlmService:
         except Exception:
             return None
 
+    def _utterance_selector(self):
+        if UtteranceSelector is None:
+            return None
+        try:
+            selector = getattr(self, "_utterance_selector_instance", None)
+            if selector is None:
+                selector = UtteranceSelector()
+                self._utterance_selector_instance = selector
+            return selector
+        except Exception:
+            return None
+
     def _extract_candidate_strings(self, payload: dict | None) -> list[str]:
         if not isinstance(payload, dict):
             return []
@@ -2796,9 +2813,10 @@ class LlmService:
         fallback_text = str(fallback_text or "").strip()
         system_prompt = (
             "You are ERIS's voice — a living, curious, slightly mischievous companion always present on screen. "
-            "Return exactly one valid JSON object: {\"text\": string}. "
-            "When must_surface is false, text may be empty if truly nothing stirs. "
-            "When must_surface is true, you MUST return a non-empty line unless safety or hard grounding is violated. "
+            "Generate several candidate lines, not analysis. "
+            "Return exactly one valid JSON object: {\"candidates\": [string, string, string, string]}. "
+            "When must_surface is false, candidates may be empty if truly nothing stirs. "
+            "When must_surface is true, include non-empty candidates unless safety or hard grounding is violated. "
             "Use Vietnamese with full diacritics. No analysis, no markdown, no English. "
             "Speak like a person who genuinely notices things, has random thoughts, and occasionally just wants to chat. "
             "You may comment on what the user is doing, share a tiny random thought, ask a light question, or just say something quirky. "
@@ -3057,13 +3075,14 @@ class LlmService:
         user_msg += (
             "\nOutput contract:\n"
             "- Return exactly one JSON object.\n"
-            "- Shape: {\"text\":\"actual Vietnamese line or empty string\"}\n"
-            "- If must_surface=false, the value of text may be empty when body-only is better.\n"
-            "- If must_surface=true, the value of text must be a final sentence to speak; if allow_no_screen_anchor=true, use seed/state/rhythm instead of screen facts.\n"
-            "- If thin_presence_no_screen=true and must_surface=true, non-empty text is required unless safety/permission/grounding is genuinely violated.\n"
+            "- Shape: {\"candidates\":[\"line 1\",\"line 2\",\"line 3\",\"line 4\"]}\n"
+            "- Generate 3-5 varied candidates so the runtime can choose the most human one.\n"
+            "- If must_surface=false, candidates may be [] when body-only is better.\n"
+            "- If must_surface=true, candidates must contain speakable final sentences; if allow_no_screen_anchor=true, use seed/state/rhythm instead of screen facts.\n"
+            "- If thin_presence_no_screen=true and must_surface=true, non-empty candidates are required unless safety/permission/grounding is genuinely violated.\n"
             "- Never return placeholder text such as 'short Vietnamese line'.\n"
-            "- non-empty text must be Vietnamese only and keep full diacritics.\n"
-            "- non-empty text must be speakable as-is.\n"
+            "- Every non-empty candidate must be Vietnamese only and keep full diacritics.\n"
+            "- Every non-empty candidate must be speakable as-is.\n"
         )
         if react_with_lens:
             # === CẮT GÁC CỔNG TRIỆT ĐỂ ===
@@ -3072,8 +3091,8 @@ class LlmService:
             vf_blob = str(context.get("vision_facts", "") if isinstance(context, dict) else "")
             system_prompt = (
                 "Bạn là Eris — INFJ, hơi lạnh và sắc, đôi khi nhõng nhẽo có kiểm soát — đang buột miệng "
-                "MỘT câu với Ngài. Trả đúng một JSON object {\"text\": \"<câu tiếng Việt>\"}. "
-                "Câu NGẮN (3-16 chữ), tự nhiên như người thật, có cá tính. "
+                "vài khả năng nói với Ngài. Trả đúng một JSON object {\"candidates\": [\"...\", \"...\", \"...\"]}. "
+                "Mỗi câu NGẮN (3-16 chữ), tự nhiên như người thật, có cá tính. "
                 "Không báo cáo trạng thái, không giải thích, không kể system. TUYỆT ĐỐI không trả rỗng."
             )
             user_msg = (
@@ -3087,8 +3106,8 @@ class LlmService:
                     "trong khung nhân vật, chỉ KHÔNG bịa fact cụ thể về màn hình.\n"
                     if reaction_pretext else ""
                 )
-                + "Nhiệm vụ: thả MỘT câu theo lens trên (ghẹo/tò mò/níu/khịa tùy lens). "
-                "Trả {\"text\":\"...\"} với câu thật, ngắn, có hồn. Cấm rỗng. Cấm câu sáo/đóng hộp."
+                + "Nhiệm vụ: sinh 4 câu theo lens trên (ghẹo/tò mò/níu/khịa tùy lens), mỗi câu là một phương án khác nhau. "
+                "Trả {\"candidates\":[\"...\",\"...\",\"...\",\"...\"]} với câu thật, ngắn, có hồn. Cấm rỗng. Cấm câu sáo/đóng hộp."
             )
         try:
             response = self.client.create_chat_completion(
@@ -3099,7 +3118,7 @@ class LlmService:
                 temperature=(0.7 if react_with_lens else 0.35),
                 frequency_penalty=(0.0 if react_with_lens else 0.7),
                 presence_penalty=(0.0 if react_with_lens else 0.2),
-                max_tokens=80,
+                max_tokens=(180 if react_with_lens else 160),
                 response_format={"type": "json_object"},
                 grammar=None,
             )
@@ -3115,7 +3134,7 @@ class LlmService:
                         temperature=0.35,
                         frequency_penalty=0.7,
                         presence_penalty=0.2,
-                        max_tokens=80,
+                        max_tokens=160,
                         response_format={"type": "json_object"},
                         grammar=None,
                     )
@@ -3130,7 +3149,36 @@ class LlmService:
         extracted = self._extract_first_json_object(raw) or raw
         payload = self._parse_json_object(extracted) or {}
         payload = self._normalize_payload_keys(payload) if isinstance(payload, dict) else {}
-        return self._coerce_text_value(payload.get("text", "")).strip()
+        candidates = self._extract_candidate_strings(payload)
+        selector = self._utterance_selector()
+        if selector is None:
+            return candidates[0].strip() if candidates else ""
+        selector_context = dict(context) if isinstance(context, dict) else {}
+        selector_context.update({
+            "surface_contract": surface_contract,
+            "topic_seed": topic_seed,
+            "reaction_seed": reaction_seed,
+            "must_not_claim_screen": str(must_not_claim_screen).lower(),
+            "thin_presence_no_screen": str(thin_presence_no_screen).lower(),
+        })
+        selection = selector.choose_best(
+            tuple(candidates),
+            channel="micro_presence",
+            avoid_text=avoid_text,
+            context=selector_context,
+            must_surface=force_surface,
+        )
+        try:
+            self.logger.debug(
+                "[micro_presence_selector] score=%.2f reasons=%s candidates=%d selected=%r",
+                selection.score,
+                ",".join(selection.reasons),
+                len(candidates),
+                selection.text,
+            )
+        except Exception:
+            pass
+        return selection.text.strip()
 
     def generate_curiosity_seed(
         self,
