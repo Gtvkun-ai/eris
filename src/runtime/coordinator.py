@@ -109,6 +109,7 @@ from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
+from runtime.stage_contracts import StageFrameBuilder
 from runtime.shadow_pipeline import ShadowPipelineMixin
 from runtime.self_critique import SelfCritiqueEscalationMixin
 from runtime.state_commit_service import StateCommitServiceMixin
@@ -1515,7 +1516,22 @@ class RuntimeCoordinator(
             payload["private_mind_digest"] = private_digest
         if isinstance(private_life_digest, dict) and private_life_digest:
             payload["private_life_digest"] = private_life_digest
-        self._record_public_turn(decision, payload=payload, channel=channel)
+        public_turn = self._record_public_turn(decision, payload=payload, channel=channel)
+        stage_builder = getattr(self, "stage_frame_builder", None)
+        if stage_builder is None:
+            # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để
+            # không làm phình __init__ của coordinator vốn đã rất đông dân.
+            stage_builder = StageFrameBuilder(language_hint=os.environ.get("ERIS_TTS_LANGUAGE", "auto").strip())
+            self.stage_frame_builder = stage_builder
+        stage_frame = stage_builder.build(
+            decision,
+            payload=payload,
+            channel=channel,
+            frame=getattr(self, "last_cognitive_frame", None),
+            turn_id=getattr(public_turn, "turn_id", None),
+            segment_id=0,
+        )
+        payload.update(stage_frame.to_payload_patch())
         sync_text = os.environ.get("ERIS_TTS_SYNC_TEXT", "1").strip().lower() in {"1", "true", "yes", "on"}
 
         def send_text_payload():
@@ -1528,7 +1544,7 @@ class RuntimeCoordinator(
         _tts = getattr(self, "tts_engine", None)
         has_scheduled_tts = False
         if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
-            _spoken_text = str(payload.get("text", "") or "").strip()
+            _spoken_text = str(stage_frame.tts_text or payload.get("text", "") or "").strip()
             if _spoken_text and sync_text:
                 try:
                     # Lấy emotion data từ payload emotion_debug hoặc appraisal frame
@@ -1547,7 +1563,7 @@ class RuntimeCoordinator(
 
         if not has_scheduled_tts:
             if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
-                _spoken_text = str(payload.get("text", "") or "").strip()
+                _spoken_text = str(stage_frame.tts_text or payload.get("text", "") or "").strip()
                 if _spoken_text:
                     try:
                         _ed = payload.get("emotion_debug") or {}

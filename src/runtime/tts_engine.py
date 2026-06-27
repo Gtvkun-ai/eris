@@ -25,6 +25,8 @@ import threading
 import wave
 from typing import Optional
 
+from runtime.speech_localizer import SpeechLocalizer
+
 logger = logging.getLogger("TTS")
 
 # ── Feature flag ──────────────────────────────────────────────────────────────
@@ -367,7 +369,7 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
 # ── Worker thread ─────────────────────────────────────────────────────────────
 
 class _SpeakRequest:
-    __slots__ = ("text", "valence", "arousal", "stance", "on_start_play")
+    __slots__ = ("text", "valence", "arousal", "stance", "on_start_play", "prelocalized")
 
     def __init__(
         self,
@@ -376,12 +378,16 @@ class _SpeakRequest:
         arousal: float = 0.3,
         stance: str = "",
         on_start_play = None,
+        prelocalized: bool = False,
     ):
         self.text = text
         self.valence = valence
         self.arousal = arousal
         self.stance = stance
         self.on_start_play = on_start_play
+        # True khi StageFrame đã chuẩn bị sẵn tts_text theo ngôn ngữ cần đọc.
+        # Khi đó engine không dịch lại, tránh "dịch một câu Nhật sang Nhật" làm mất tự nhiên.
+        self.prelocalized = bool(prelocalized)
 
 
 class _TtsWorker:
@@ -389,6 +395,7 @@ class _TtsWorker:
         self._voice = voice
         self._model = model
         self._language_hint = language_hint
+        self._localizer = SpeechLocalizer()
         self._queue: queue.Queue[Optional[_SpeakRequest]] = queue.Queue(maxsize=1)
         self._stop_event = threading.Event()
         self._current_stop = threading.Event()
@@ -430,10 +437,10 @@ class _TtsWorker:
                 try:
                     audio_tag = _emotion_to_tag(req.valence, req.arousal, req.stance)
                     text_to_speak = req.text
-                    if self._language_hint == "ja":
-                        api_key = _get_api_key()
-                        if api_key:
-                            text_to_speak = _translate_to_japanese(req.text, api_key)
+                    if self._language_hint == "ja" and not req.prelocalized:
+                        # Dịch/style TTS chạy trong worker nền để UI/runtime không bị
+                        # kẹt bởi một call Gemini phụ. Engine vẫn chỉ nhận text sạch.
+                        text_to_speak = self._localizer.localize(req.text, language_hint=self._language_hint)
                     prompt = _build_tts_prompt(text_to_speak, audio_tag, self._language_hint)
 
                     logger.debug(
@@ -517,6 +524,7 @@ class TtsEngine:
         arousal: float = 0.3,
         stance: str = "",
         on_start_play = None,
+        prelocalized: bool = False,
     ) -> None:
         """Phát TTS cho text với cảm xúc cho trước. Non-blocking."""
         if not self._ok or self._worker is None:
@@ -534,7 +542,7 @@ class TtsEngine:
                 except Exception as cb_exc:
                     logger.error("[TTS] Error in fallback on_start_play callback: %s", cb_exc)
             return
-        self._worker.speak(_SpeakRequest(clean, valence, arousal, stance, on_start_play))
+        self._worker.speak(_SpeakRequest(clean, valence, arousal, stance, on_start_play, prelocalized=prelocalized))
 
     def shutdown(self) -> None:
         if self._worker is not None:

@@ -327,7 +327,7 @@ public partial class UdpListener : Node2D
 		{
 			Name = "DepthPanel",
 			Visible = false,
-			CustomMinimumSize = DepthPanelMinSize,
+			CustomMinimumSize = Vector2.Zero,
 			Size = DepthPanelMinSize,
 			ZIndex = 98,
 		};

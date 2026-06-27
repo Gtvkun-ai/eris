@@ -1,71 +1,51 @@
 using Godot;
 using System;
 using System.Text.Json;
-using System.Collections.Generic;
-using VBox = Godot.VBoxContainer;
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Tab "Chiều Sâu" (Depth): dashboard nội tâm SỐNG.
-//  Nền là ảnh khung scrapbook ChieuSauKhung.png (gáy, washi, góc gập, tim, header
-//  "CHIỀU SÂU" đã baked sẵn). Code CHỈ thả chữ live vào 8 ô đã chừa trống + 1 nút
-//  ✕ trong suốt đè lên ✕ vẽ sẵn. Toạ độ ô là TỈ LỆ (constant) nên co giãn được và
-//  dễ tinh chỉnh nếu lệch.
-//
-//  Sáu cờ chiều-sâu (N1–N3) TỰ BẬT lúc khởi động (coordinator.bootstrap_defaults).
-//  Panel CHỈ XEM — không toggle.
-// ─────────────────────────────────────────────────────────────────────────────
 public partial class UdpListener : Node2D
 {
-	// Ảnh khung gốc 1040×622 — panel giữ đúng tỉ lệ này để nền không méo.
-	private static readonly Vector2 DepthPanelMinSize = new(1040f, 622f);
+	private static readonly Vector2 DepthPanelMinSize = new(1497f, 988f);
+	private static readonly Vector2 DepthPanelArtworkSize = new(1497f, 988f);
+	private const float DepthPanelViewportMargin = 32f;
+	private const float DepthPanelMaxScale = 0.70f;
+	private const float DepthPanelInnerContentScale = 0.93f;
 	private const string DepthFramePath = "res://asset/Resource/ChieuSauKhung.png";
+	private const string DepthAffectFramePath = "res://asset/Resource/ChieuSau_CamXuc.png";
+	private const string DepthTomFramePath = "res://asset/Resource/ChieuSau_ThauHieuNgai.png";
+	private const string DepthSelfContinuityFramePath = "res://asset/Resource/ChieuSau_LienTucBanThan.png";
+	private const string DepthCollabFramePath = "res://asset/Resource/ChieuSau_CongTac.png";
+	private const string DepthInteriorityFramePath = "res://asset/Resource/ChieuSau_DongNoiTam.png";
+	private const string DepthPrioritiesFramePath = "res://asset/Resource/ChieuSau_UuTienHienTai.png";
+	private const string DepthSignalLogFramePath = "res://asset/Resource/ChieuSau_NhatKyTinHieu.png";
+	private const string DepthContextFramePath = "res://asset/Resource/ChieuSau_BauKhongKhi.png";
+	private const string DepthEmotionJournalFramePath = "res://asset/Resource/ChieuSau_NhatKyCamXuc.png";
 
 	private Panel _depthPanel;
+	private Control _depthPanelContentRoot;
 	private Button _contextDepthButton;
 
 	private string _latestDepthJson = "";
+	private Font _depthFontRegular;
+	private Font _depthFontBold;
 
-	private ProgressBar _depthWantBar, _depthSuppressBar, _depthAllowBar;
-	private Label _depthWantVal, _depthSuppressVal, _depthAllowVal;
-	private Label _depthStanceLabel, _depthTomLabel, _depthHeaderLabel, _depthAffectLabel, _depthContextLabel;
-	private VBox _depthN2Body, _depthInteriorityBody, _depthLogBody;
-	private readonly Dictionary<string, Label> _depthFlagChips = new();
-	private Font _depthFontRegular, _depthFontBold;
+	private static readonly Rect2 SlotAffect = RectPx(38f, 154f, 423f, 204f);
+	private static readonly Rect2 SlotTom = RectPx(31f, 379f, 434f, 174f);
+	private static readonly Rect2 SlotSelfContinuity = RectPx(37f, 566f, 419f, 187f);
+	private static readonly Rect2 SlotCollab = RectPx(38f, 760f, 377f, 181f);
+	private static readonly Rect2 SlotInteriority = RectPx(489f, 154f, 521f, 591f);
+	private static readonly Rect2 SlotPriorities = RectPx(1022f, 154f, 442f, 303f);
+	private static readonly Rect2 SlotSignalLog = RectPx(1022f, 479f, 442f, 235f);
+	private static readonly Rect2 SlotContext = RectPx(444f, 760f, 564f, 182f);
+	private static readonly Rect2 SlotEmotionJournal = RectPx(1004f, 719f, 459f, 249f);
+	private static readonly Rect2 SlotClose = RectPx(1334f, 40f, 132f, 53f);
 
-	private static readonly (string Key, string Short)[] DepthFlagChips =
-	{
-		("emotional_consequence", "N1"),
-		("development_growth",    "N2"),
-		("interior_surface",      "interiority"),
-		("tom_advisor",           "tom"),
-		("real_embeddings",       "embed"),
-		("private_mind",          "mind"),
-	};
+	private static Rect2 RectPx(float x, float y, float width, float height) =>
+		new(
+			x / DepthPanelArtworkSize.X,
+			y / DepthPanelArtworkSize.Y,
+			width / DepthPanelArtworkSize.X,
+			height / DepthPanelArtworkSize.Y);
 
-	// ── Toạ độ ô theo TỈ LỆ (x0,y0,x1,y1) — đo từ profile khung. Chỉnh ở đây. ──
-	private static readonly Rect2 SlotAffect   = RectLTRB(0.080f, 0.130f, 0.490f, 0.295f);
-	private static readonly Rect2 SlotN1       = RectLTRB(0.080f, 0.320f, 0.490f, 0.565f);
-	private static readonly Rect2 SlotInterior = RectLTRB(0.080f, 0.590f, 0.490f, 0.855f);
-	private static readonly Rect2 SlotTom      = RectLTRB(0.515f, 0.130f, 0.930f, 0.295f);
-	private static readonly Rect2 SlotN2       = RectLTRB(0.515f, 0.320f, 0.930f, 0.565f);
-	private static readonly Rect2 SlotLog      = RectLTRB(0.515f, 0.590f, 0.930f, 0.740f);
-	private static readonly Rect2 SlotContext  = RectLTRB(0.515f, 0.765f, 0.930f, 0.855f);
-	private static readonly Rect2 SlotCollab   = RectLTRB(0.080f, 0.878f, 0.930f, 0.965f);
-	private static readonly Rect2 SlotHeader   = RectLTRB(0.345f, 0.042f, 0.690f, 0.104f);
-	private static readonly Rect2 SlotClose    = RectLTRB(0.870f, 0.030f, 0.960f, 0.115f);
-
-	private static Rect2 RectLTRB(float l, float t, float r, float b) => new(l, t, r - l, b - t);
-
-	// ── Palette (đồng bộ tông hồng của app) ──────────────────────────────────
-	private static readonly Color DepthInk     = new(0.62f, 0.10f, 0.36f);
-	private static readonly Color DepthInkSoft = new(0.74f, 0.42f, 0.56f);
-	private static readonly Color DepthBody    = new(0.40f, 0.10f, 0.26f);
-	private static readonly Color DepthAccent  = new(0.93f, 0.40f, 0.60f);
-	private static readonly Color DepthDim     = new(0.66f, 0.54f, 0.62f);
-	private static readonly Color DepthGreen   = new(0.28f, 0.58f, 0.40f);
-	private static readonly Color DepthAmber   = new(0.82f, 0.50f, 0.16f);
-
-	// ── Vòng đời ────────────────────────────────────────────────────────────
 	private void OnContextDepthPressed()
 	{
 		_bodyAutonomy?.RecordUserInteraction();
@@ -86,18 +66,25 @@ public partial class UdpListener : Node2D
 	{
 		if (_depthPanel == null)
 			return;
+
 		CloseCharacterContextMenu();
 		_depthPanel.Visible = true;
 		_depthPanel.ClipContents = true;
-		_depthPanel.Size = DepthPanelMinSize;
-		Vector2 screenSize = GetViewportRect().Size;
+
+		Vector2 viewportSize = GetViewportRect().Size;
+		float widthScale = Mathf.Max(0.10f, (viewportSize.X - DepthPanelViewportMargin) / DepthPanelArtworkSize.X);
+		float heightScale = Mathf.Max(0.10f, (viewportSize.Y - DepthPanelViewportMargin) / DepthPanelArtworkSize.Y);
+		float scale = Mathf.Clamp(Mathf.Min(widthScale, heightScale), 0.45f, DepthPanelMaxScale);
+
+		_depthPanel.Size = DepthPanelArtworkSize * scale;
 		_depthPanel.Position = new Vector2(
-			Mathf.Max(0f, (screenSize.X - DepthPanelMinSize.X) * 0.5f),
-			Mathf.Max(0f, (screenSize.Y - DepthPanelMinSize.Y) * 0.5f));
+			Mathf.Max(0f, (viewportSize.X - _depthPanel.Size.X) * 0.5f),
+			Mathf.Max(0f, (viewportSize.Y - _depthPanel.Size.Y) * 0.5f));
+		UpdateDepthContentRootTransform();
+
 		RefreshDepthPanel();
 	}
 
-	// ── Dựng khung: ảnh nền + các ô chữ trong suốt ───────────────────────────
 	private void BuildDepthPanelUi()
 	{
 		if (_depthPanel == null)
@@ -106,10 +93,9 @@ public partial class UdpListener : Node2D
 		if (string.IsNullOrWhiteSpace(_latestDepthV2Json))
 			LoadDepthV2State();
 
-		ApplyDepthFontTheme();
+		foreach (Node child in _depthPanel.GetChildren())
+			child.QueueFree();
 
-		// Panel không tự vẽ nền (ảnh lo phần đó). Có ảnh -> StyleBoxEmpty; thiếu ảnh
-		// -> fallback nền hồng phẳng cho khỏi trống trơn.
 		var frameTex = ResourceLoader.Exists(DepthFramePath) ? GD.Load<Texture2D>(DepthFramePath) : null;
 		if (frameTex != null)
 		{
@@ -130,105 +116,103 @@ public partial class UdpListener : Node2D
 			{
 				BgColor = new Color(1f, 0.95f, 0.97f, 0.99f),
 				BorderColor = new Color(0.96f, 0.72f, 0.82f, 1f),
-				BorderWidthLeft = 3, BorderWidthTop = 3, BorderWidthRight = 3, BorderWidthBottom = 3,
-				CornerRadiusTopLeft = 26, CornerRadiusTopRight = 26,
-				CornerRadiusBottomRight = 26, CornerRadiusBottomLeft = 26,
+				BorderWidthLeft = 3,
+				BorderWidthTop = 3,
+				BorderWidthRight = 3,
+				BorderWidthBottom = 3,
+				CornerRadiusTopLeft = 26,
+				CornerRadiusTopRight = 26,
+				CornerRadiusBottomRight = 26,
+				CornerRadiusBottomLeft = 26,
 			});
 		}
 
-		// Dùng cụm nút cửa sổ chung để panel sâu có hành vi đóng/thu gọn giống các panel khác.
-		var windowControls = CreateWindowControlCapsule(() => _depthPanel.Visible = false, () => _depthPanel.Visible = false);
-		PlaceBySlot(windowControls, SlotClose);
-		windowControls.OffsetLeft += 2f;
-		windowControls.OffsetTop += 1f;
-		windowControls.OffsetRight -= 2f;
-		windowControls.OffsetBottom -= 1f;
-		_depthPanel.AddChild(windowControls);
-
-		// Phụ đề động ở header (model · cờ · alive), cạnh chữ "CHIỀU SÂU" baked.
-		var headerBox = NewSlot(SlotHeader);
-		_depthHeaderLabel = Mk("· đang khởi tạo …", 13, DepthInkSoft);
-		_depthHeaderLabel.VerticalAlignment = VerticalAlignment.Center;
-		headerBox.AddChild(_depthHeaderLabel);
-
-		// ── 8 ô nội dung ──────────────────────────────────────────────────────
-		var affectBody = NewCardSlot(SlotAffect, "CẢM XÚC (affect)", "feel");
-		_depthAffectLabel = Mk("—", 14, DepthBody);
-		_depthAffectLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		affectBody.AddChild(_depthAffectLabel);
-
-		var n1Body = NewCardSlot(SlotN1, "GIẰNG CO NỘI TÂM (N1)", "tought");
-		_depthWantBar = DepthBarRow(n1Body, "muốn nói", DepthAccent, out _depthWantVal);
-		_depthSuppressBar = DepthBarRow(n1Body, "kìm nén", DepthAmber, out _depthSuppressVal);
-		_depthAllowBar = DepthBarRow(n1Body, "cho phép", DepthGreen, out _depthAllowVal);
-		_depthStanceLabel = Mk("stance: —", 13, DepthDim);
-		n1Body.AddChild(_depthStanceLabel);
-
-		_depthInteriorityBody = NewCardSlot(SlotInterior, "DÒNG NỘI TÂM (interiority)", "diary_surface");
-
-		var tomBody = NewCardSlot(SlotTom, "THẤU HIỂU NGÀI (tom_read)", "diary_analysis");
-		_depthTomLabel = Mk("chưa đọc được gì", 14, DepthBody);
-		_depthTomLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		tomBody.AddChild(_depthTomLabel);
-
-		_depthN2Body = NewCardSlot(SlotN2, "LIÊN TỤC BẢN THÂN (N2)", "diary_future");
-
-		_depthLogBody = NewCardSlot(SlotLog, "NHẬT KÝ TÍN HIỆU", "diary_now");
-
-		var ctxBody = NewCardSlot(SlotContext, "CONTEXT", "diary_memory");
-		_depthContextLabel = Mk("—", 14, DepthInkSoft);
-		_depthContextLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		ctxBody.AddChild(_depthContextLabel);
-
-		// Dải CỘNG TÁC: cờ tự bật, pill pastel read-only.
-		var collabBody = NewCardSlot(SlotCollab, "CỘNG TÁC  ·  tự bật", "force");
-		var chipRow = new HBoxContainer();
-		chipRow.AddThemeConstantOverride("separation", 10);
-		collabBody.AddChild(chipRow);
-		foreach (var (key, shortLabel) in DepthFlagChips)
+		_depthPanelContentRoot = new Control
 		{
-			var pill = new PanelContainer();
-			pill.AddThemeStyleboxOverride("panel", DepthPillStyle(false));
-			var chip = MkBold(shortLabel, 13, DepthDim);
-			pill.AddChild(chip);
-			_depthFlagChips[key] = chip;
-			chipRow.AddChild(pill);
-		}
+			Name = "DepthPanelContentRoot",
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		_depthPanelContentRoot.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		_depthPanel.AddChild(_depthPanelContentRoot);
+		UpdateDepthContentRootTransform();
+
+		BuildDepthAffectFrame(_depthPanelContentRoot);
+		BuildDepthTomFrame(_depthPanelContentRoot);
+		BuildDepthSelfContinuityFrame(_depthPanelContentRoot);
+		BuildDepthCollabFrame(_depthPanelContentRoot);
+		BuildDepthInteriorityFrame(_depthPanelContentRoot);
+		BuildDepthPrioritiesFrame(_depthPanelContentRoot);
+		BuildDepthSignalLogFrame(_depthPanelContentRoot);
+		BuildDepthContextFrame(_depthPanelContentRoot);
+		BuildDepthEmotionJournalFrame(_depthPanelContentRoot);
+
+		var windowControls = CreateWindowControlCapsule(
+			() => _depthPanel.Visible = false,
+			() => _depthPanel.Visible = false);
+		PlaceBySlot(windowControls, SlotClose);
+		_depthPanel.AddChild(windowControls);
 
 		RefreshDepthPanel();
 	}
 
-	private static StyleBoxFlat DepthPillStyle(bool on)
+	private void AddDepthFrameImage(Control parent, string resourcePath, Rect2 slot)
 	{
-		return new StyleBoxFlat
+		if (parent == null || !ResourceLoader.Exists(resourcePath))
+			return;
+
+		var tex = GD.Load<Texture2D>(resourcePath);
+		if (tex == null)
+			return;
+
+		var frame = new TextureRect
 		{
-			BgColor = on ? new Color(0.84f, 0.95f, 0.87f, 0.95f) : new Color(0.99f, 0.92f, 0.95f, 0.92f),
-			BorderColor = on ? new Color(0.40f, 0.70f, 0.50f, 0.55f) : new Color(0.92f, 0.74f, 0.83f, 0.55f),
-			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 9, CornerRadiusTopRight = 9, CornerRadiusBottomLeft = 9, CornerRadiusBottomRight = 9,
-			ContentMarginLeft = 10, ContentMarginRight = 10, ContentMarginTop = 2, ContentMarginBottom = 2,
+			Texture = tex,
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
+		PlaceBySlot(frame, slot);
+		parent.AddChild(frame);
 	}
 
-	// ── Helper layout ─────────────────────────────────────────────────────────
-	private Label Mk(string text, int fontSize, Color color)
+	private void BuildDepthAffectFrame(Control parent) =>
+		AddDepthFrameImage(parent, DepthAffectFramePath, SlotAffect);
+
+	private void BuildDepthTomFrame(Control parent) =>
+		AddDepthFrameImage(parent, DepthTomFramePath, SlotTom);
+
+	private void BuildDepthSelfContinuityFrame(Control parent) =>
+		AddDepthFrameImage(parent, DepthSelfContinuityFramePath, SlotSelfContinuity);
+
+	private void BuildDepthCollabFrame(Control parent) =>
+		AddDepthFrameImage(parent, DepthCollabFramePath, SlotCollab);
+
+	private void BuildDepthInteriorityFrame(Control parent) =>
+		AddDepthFrameImage(parent, DepthInteriorityFramePath, SlotInteriority);
+
+	private void BuildDepthPrioritiesFrame(Control parent) =>
+		AddDepthFrameImage(parent, DepthPrioritiesFramePath, SlotPriorities);
+
+	private void BuildDepthSignalLogFrame(Control parent) =>
+		AddDepthFrameImage(parent, DepthSignalLogFramePath, SlotSignalLog);
+
+	private void BuildDepthContextFrame(Control parent) =>
+		AddDepthFrameImage(parent, DepthContextFramePath, SlotContext);
+
+	private void BuildDepthEmotionJournalFrame(Control parent) =>
+		AddDepthFrameImage(parent, DepthEmotionJournalFramePath, SlotEmotionJournal);
+
+	private void UpdateDepthContentRootTransform()
 	{
-		var lbl = CreateUiLabel(text, fontSize, color);
-		if (_depthFontRegular != null)
-			lbl.AddThemeFontOverride("font", _depthFontRegular);
-		return lbl;
+		if (_depthPanelContentRoot == null || _depthPanel == null)
+			return;
+
+		_depthPanelContentRoot.Position = Vector2.Zero;
+		_depthPanelContentRoot.Rotation = 0f;
+		_depthPanelContentRoot.Scale = new Vector2(DepthPanelInnerContentScale, DepthPanelInnerContentScale);
+		_depthPanelContentRoot.PivotOffset = _depthPanel.Size * 0.5f;
 	}
 
-	private Label MkBold(string text, int fontSize, Color color)
-	{
-		var lbl = CreateUiLabel(text, fontSize, color);
-		if (_depthFontBold != null)
-			lbl.AddThemeFontOverride("font", _depthFontBold);
-		return lbl;
-	}
-
-	// Nạp font Mali (OFL) đã nhúng. Thử resource đã import -> nạp thẳng bytes ->
-	// null (rơi về SystemFont qua theme). Không bao giờ ném.
 	private Font LoadDepthFont(string fileName)
 	{
 		string res = $"res://asset/Resource/{fileName}";
@@ -236,12 +220,13 @@ public partial class UdpListener : Node2D
 		{
 			if (ResourceLoader.Exists(res))
 			{
-				var f = ResourceLoader.Load<Font>(res);
-				if (f != null)
-					return f;
+				var font = ResourceLoader.Load<Font>(res);
+				if (font != null)
+					return font;
 			}
 		}
 		catch { }
+
 		try
 		{
 			if (FileAccess.FileExists(res))
@@ -249,37 +234,15 @@ public partial class UdpListener : Node2D
 				byte[] bytes = FileAccess.GetFileAsBytes(res);
 				if (bytes != null && bytes.Length > 0)
 				{
-					var ff = new FontFile();
-					ff.Data = bytes;
-					return ff;
+					var fontFile = new FontFile();
+					fontFile.Data = bytes;
+					return fontFile;
 				}
 			}
 		}
 		catch { }
+
 		return null;
-	}
-
-	// Gắn font cho toàn panel: Mali nhúng (nét tròn, hỗ trợ tiếng Việt) thay font
-	// mặc định "phèn". Thiếu file -> SystemFont (Quicksand/Segoe UI). Bật antialias.
-	private void ApplyDepthFontTheme()
-	{
-		_depthFontRegular ??= LoadDepthFont("Mali-Regular.ttf");
-		_depthFontBold ??= LoadDepthFont("Mali-SemiBold.ttf") ?? _depthFontRegular;
-
-		Font defaultFont = _depthFontRegular;
-		if (defaultFont == null)
-		{
-			defaultFont = DepthSystemFont();
-			_depthFontRegular = defaultFont;
-			_depthFontBold ??= defaultFont;
-		}
-
-		var theme = new Theme
-		{
-			DefaultFont = defaultFont,
-			DefaultFontSize = 14,
-		};
-		_depthPanel.Theme = theme;
 	}
 
 	private static SystemFont DepthSystemFont() => new()
@@ -296,105 +259,26 @@ public partial class UdpListener : Node2D
 		ctrl.AnchorTop = slot.Position.Y;
 		ctrl.AnchorRight = slot.Position.X + slot.Size.X;
 		ctrl.AnchorBottom = slot.Position.Y + slot.Size.Y;
-		ctrl.OffsetLeft = 0f; ctrl.OffsetTop = 0f; ctrl.OffsetRight = 0f; ctrl.OffsetBottom = 0f;
+		ctrl.OffsetLeft = 0f;
+		ctrl.OffsetTop = 0f;
+		ctrl.OffsetRight = 0f;
+		ctrl.OffsetBottom = 0f;
 	}
 
-	// Ô trong suốt đặt theo tỉ lệ, có padding nhỏ + clip để chữ không tràn decor.
-	private VBox NewSlot(Rect2 slot)
-	{
-		var box = new VBox { ClipContents = true };
-		PlaceBySlot(box, slot);
-		box.OffsetLeft = 6f; box.OffsetTop = 4f; box.OffsetRight = -6f; box.OffsetBottom = -4f;
-		box.AddThemeConstantOverride("separation", 3);
-		_depthPanel.AddChild(box);
-		return box;
-	}
-
-	// Ô card: [icon + tiêu đề] + gạch nhấn + body. Trả body để nhồi nội dung.
-	private VBox NewCardSlot(Rect2 slot, string heading, string icon = "")
-	{
-		var outer = NewSlot(slot);
-		outer.AddThemeConstantOverride("separation", 4);
-
-		var headRow = new HBoxContainer();
-		headRow.AddThemeConstantOverride("separation", 7);
-		if (!string.IsNullOrEmpty(icon))
-		{
-			var glyph = CreateDiaryGlyph(icon, DepthAccent, 19f);
-			glyph.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
-			headRow.AddChild(glyph);
-		}
-		var headLbl = MkBold(heading, 15, DepthInk);
-		headLbl.VerticalAlignment = VerticalAlignment.Center;
-		headRow.AddChild(headLbl);
-		outer.AddChild(headRow);
-
-		// Gạch nhấn mảnh dưới tiêu đề cho có lớp lang.
-		outer.AddChild(new ColorRect
-		{
-			Color = new Color(DepthAccent.R, DepthAccent.G, DepthAccent.B, 0.30f),
-			CustomMinimumSize = new Vector2(0f, 1f),
-			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-		});
-
-		var body = new VBox { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsVertical = Control.SizeFlags.ExpandFill };
-		body.AddThemeConstantOverride("separation", 5);
-		body.ClipContents = true;
-		outer.AddChild(body);
-		return body;
-	}
-
-	private ProgressBar DepthBarRow(VBox parent, string label, Color fill, out Label valueLabel)
-	{
-		var row = new HBoxContainer();
-		row.AddThemeConstantOverride("separation", 8);
-		var lbl = Mk(label, 14, DepthBody);
-		lbl.CustomMinimumSize = new Vector2(86f, 0f);
-		row.AddChild(lbl);
-		var bar = new ProgressBar
-		{
-			MinValue = 0, MaxValue = 1, Value = 0, ShowPercentage = false,
-			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-			CustomMinimumSize = new Vector2(0f, 13f),
-		};
-		bar.AddThemeStyleboxOverride("background", new StyleBoxFlat
-		{
-			BgColor = new Color(0.97f, 0.86f, 0.91f, 0.85f),
-			CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6,
-		});
-		bar.AddThemeStyleboxOverride("fill", new StyleBoxFlat
-		{
-			BgColor = fill,
-			CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6,
-		});
-		row.AddChild(bar);
-		valueLabel = Mk("0.00", 13, fill);
-		valueLabel.CustomMinimumSize = new Vector2(40f, 0f);
-		valueLabel.HorizontalAlignment = HorizontalAlignment.Right;
-		row.AddChild(valueLabel);
-		parent.AddChild(row);
-		return bar;
-	}
-
-	private Label DepthLine(string text, Color color, int fontSize = 13)
-	{
-		var lbl = Mk(text, fontSize, color);
-		lbl.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		return lbl;
-	}
-
-	// ── Nhận block "depth" ──────────────────────────────────────────────────
 	private void TryCaptureDepthBlock(string raw)
 	{
 		if (string.IsNullOrWhiteSpace(raw))
 			return;
+
 		try
 		{
 			using var doc = JsonDocument.Parse(raw);
 			var root = doc.RootElement;
-			if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("depth", out var d) || d.ValueKind != JsonValueKind.Object)
+			if (root.ValueKind != JsonValueKind.Object
+				|| !root.TryGetProperty("depth", out var d)
+				|| d.ValueKind != JsonValueKind.Object)
 				return;
+
 			_latestDepthJson = raw;
 			if (_depthPanel != null && _depthPanel.Visible)
 				RefreshDepthPanel();
@@ -409,6 +293,7 @@ public partial class UdpListener : Node2D
 	{
 		if (string.IsNullOrWhiteSpace(raw))
 			return;
+
 		try
 		{
 			using var doc = JsonDocument.Parse(raw);
@@ -437,6 +322,7 @@ public partial class UdpListener : Node2D
 	{
 		if (string.IsNullOrWhiteSpace(raw))
 			return false;
+
 		try
 		{
 			using var doc = JsonDocument.Parse(raw);
@@ -464,6 +350,7 @@ public partial class UdpListener : Node2D
 	{
 		if (string.IsNullOrWhiteSpace(_latestDepthV2Json))
 			return;
+
 		try
 		{
 			using var file = Godot.FileAccess.Open(DepthV2StatePath, Godot.FileAccess.ModeFlags.Write);
@@ -482,9 +369,11 @@ public partial class UdpListener : Node2D
 		{
 			if (!Godot.FileAccess.FileExists(DepthV2StatePath))
 				return;
+
 			using var file = Godot.FileAccess.Open(DepthV2StatePath, Godot.FileAccess.ModeFlags.Read);
 			if (file == null)
 				return;
+
 			string content = file.GetAsText();
 			if (!string.IsNullOrWhiteSpace(content) && DepthV2HasContent(content))
 				_latestDepthV2Json = content;
@@ -495,430 +384,11 @@ public partial class UdpListener : Node2D
 		}
 	}
 
-	private void ApplyDepthV2(JsonElement d)
-	{
-		if (_depthHeaderLabel != null && d.TryGetProperty("identity", out var id) && id.ValueKind == JsonValueKind.Object)
-		{
-			string name = AnStr(id, "name", "ERIS");
-			string channel = AnStr(id, "channel", "chat");
-			string tick = id.TryGetProperty("last_tick_at", out var tickEl) && tickEl.ValueKind == JsonValueKind.Number ? $"{AnFloat(id, "last_tick_at"):0.0}s" : "";
-			string headline = "";
-			string focusMode = "";
-			if (d.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object)
-			{
-				headline = AnStr(status, "headline");
-				focusMode = AnStr(status, "focus_mode");
-			}
-			var parts = new List<string> { $"{name} [{channel}]" };
-			if (!string.IsNullOrWhiteSpace(focusMode))
-				parts.Add(focusMode.Replace("_", " "));
-			if (!string.IsNullOrWhiteSpace(headline))
-				parts.Add(headline);
-			if (!string.IsNullOrWhiteSpace(tick))
-				parts.Add($"tick {tick}");
-			_depthHeaderLabel.Text = string.Join(" · ", parts);
-		}
-
-		if (d.TryGetProperty("flags", out var flags) && flags.ValueKind == JsonValueKind.Object)
-		{
-			foreach (var (key, chip) in _depthFlagChips)
-			{
-				bool isOn = AnBool(flags, key);
-				chip.AddThemeColorOverride("font_color", isOn ? DepthGreen : DepthDim);
-				if (chip.GetParent() is PanelContainer pill)
-					pill.AddThemeStyleboxOverride("panel", DepthPillStyle(isOn));
-			}
-		}
-
-		if (_depthAffectLabel != null && d.TryGetProperty("affect", out var affect) && affect.ValueKind == JsonValueKind.Object)
-		{
-			string headline = AnStr(affect, "headline", "steady");
-			string subtext = AnStr(affect, "subtext");
-			float stability = 0f;
-			float positive = 0f;
-			float arousal = 0f;
-			if (affect.TryGetProperty("metrics", out var metrics) && metrics.ValueKind == JsonValueKind.Object)
-			{
-				stability = AnFloat(metrics, "stability");
-				positive = AnFloat(metrics, "positive_bias");
-				arousal = AnFloat(metrics, "arousal");
-			}
-			_depthAffectLabel.Text =
-				$"{headline}\n{subtext}\nstability {(stability * 100f):0}%   ·   positive {(positive * 100f):0}%   ·   arousal {(arousal * 100f):0}%";
-			_depthAffectLabel.AddThemeColorOverride("font_color", DepthBody);
-		}
-
-		if (d.TryGetProperty("expression", out var ex) && ex.ValueKind == JsonValueKind.Object)
-		{
-			float want = AnFloat(ex, "want");
-			float suppress = AnFloat(ex, "suppress");
-			float allowed = AnFloat(ex, "allowed");
-			if (_depthWantBar != null) _depthWantBar.Value = want;
-			if (_depthSuppressBar != null) _depthSuppressBar.Value = suppress;
-			if (_depthAllowBar != null) _depthAllowBar.Value = allowed;
-			if (_depthWantVal != null) _depthWantVal.Text = $"{want:0.00}";
-			if (_depthSuppressVal != null) _depthSuppressVal.Text = $"{suppress:0.00}";
-			if (_depthAllowVal != null) _depthAllowVal.Text = $"{allowed:0.00}";
-			if (_depthStanceLabel != null)
-			{
-				string stance = AnStr(ex, "stance");
-				_depthStanceLabel.Text = "stance: " + (string.IsNullOrWhiteSpace(stance) ? "—" : stance);
-			}
-		}
-
-		if (_depthN2Body != null)
-		{
-			AnchorClear(_depthN2Body);
-			bool any = false;
-			if (d.TryGetProperty("n2", out var n2) && n2.ValueKind == JsonValueKind.Object)
-			{
-				if (n2.TryGetProperty("axes", out var axes) && axes.ValueKind == JsonValueKind.Array)
-				{
-					foreach (var ax in axes.EnumerateArray())
-					{
-						if (ax.ValueKind != JsonValueKind.Object)
-							continue;
-						string label = AnStr(ax, "label");
-						float delta = AnFloat(ax, "delta");
-						if (string.IsNullOrWhiteSpace(label))
-							continue;
-						var c = delta > 0 ? DepthGreen : delta < 0 ? DepthAmber : DepthDim;
-						_depthN2Body.AddChild(DepthLine($"{label}   {delta:+0.00;-0.00}", c, 13));
-						any = true;
-					}
-				}
-				string sentence = AnStr(n2, "sentence");
-				if (!string.IsNullOrWhiteSpace(sentence))
-				{
-					_depthN2Body.AddChild(DepthLine($"\"{sentence}\"", DepthInkSoft, 12));
-					any = true;
-				}
-				if (n2.TryGetProperty("attachment", out var att) && att.ValueKind == JsonValueKind.Object && AnBool(att, "live"))
-				{
-					_depthN2Body.AddChild(DepthLine($"attach  {AnFloat(att, "value"):+0.00;-0.00}", DepthAccent, 12));
-					any = true;
-				}
-			}
-			if (!any)
-				_depthN2Body.AddChild(DepthLine("chưa thấy dịch chuyển dài hạn rõ ràng", DepthDim, 13));
-		}
-
-		if (_depthInteriorityBody != null)
-		{
-			AnchorClear(_depthInteriorityBody);
-			bool any = false;
-			if (d.TryGetProperty("interiority", out var inter) && inter.ValueKind == JsonValueKind.Object
-				&& inter.TryGetProperty("sections", out var sections) && sections.ValueKind == JsonValueKind.Array)
-			{
-				int shown = 0;
-				foreach (var sec in sections.EnumerateArray())
-				{
-					if (shown >= 5 || sec.ValueKind != JsonValueKind.Object)
-						break;
-					string title = AnStr(sec, "title");
-					if (!sec.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
-						continue;
-					string firstText = "";
-					string firstBadge = "";
-					foreach (var item in items.EnumerateArray())
-					{
-						if (item.ValueKind != JsonValueKind.Object)
-							continue;
-						firstText = AnStr(item, "text");
-						firstBadge = AnStr(item, "badge");
-						if (!string.IsNullOrWhiteSpace(firstText))
-							break;
-					}
-					if (string.IsNullOrWhiteSpace(firstText))
-						continue;
-					string line = string.IsNullOrWhiteSpace(title) ? firstText : $"{title}: {firstText}";
-					if (!string.IsNullOrWhiteSpace(firstBadge))
-						line += $"  ·  {firstBadge}";
-					_depthInteriorityBody.AddChild(DepthLine(line, shown == 0 ? DepthBody : DepthInkSoft, 12));
-					shown++;
-					any = true;
-				}
-			}
-			if (!any)
-				_depthInteriorityBody.AddChild(DepthLine("chưa có section nội tâm từ depth_v2", DepthDim, 13));
-		}
-
-		if (_depthTomLabel != null && d.TryGetProperty("tom", out var tom) && tom.ValueKind == JsonValueKind.Object)
-		{
-			string text = AnStr(tom, "text");
-			float conf = AnFloat(tom, "confidence");
-			if (string.IsNullOrWhiteSpace(text))
-				_depthTomLabel.Text = "chưa đọc được gì";
-			else
-				_depthTomLabel.Text = conf > 0f ? $"\"{text}\"  (~{conf:0.00})" : text;
-		}
-
-		if (_depthLogBody != null)
-		{
-			AnchorClear(_depthLogBody);
-			bool any = false;
-			if (d.TryGetProperty("journal", out var journal) && journal.ValueKind == JsonValueKind.Array)
-			{
-				int shown = 0;
-				foreach (var entry in journal.EnumerateArray())
-				{
-					if (shown >= 5 || entry.ValueKind != JsonValueKind.Object)
-						break;
-					string time = AnStr(entry, "time");
-					string text = AnStr(entry, "text");
-					if (string.IsNullOrWhiteSpace(text))
-						continue;
-					string prefix = string.IsNullOrWhiteSpace(time) ? "·" : time;
-					_depthLogBody.AddChild(DepthLine($"{prefix}  {text}", DepthInkSoft, 12));
-					shown++;
-					any = true;
-				}
-			}
-			if (!any && d.TryGetProperty("signal_log", out var signalLog) && signalLog.ValueKind == JsonValueKind.Array)
-			{
-				int shown = 0;
-				foreach (var entry in signalLog.EnumerateArray())
-				{
-					if (shown >= 5 || entry.ValueKind != JsonValueKind.Object)
-						break;
-					string time = AnStr(entry, "time");
-					string text = AnStr(entry, "text");
-					if (string.IsNullOrWhiteSpace(text))
-						continue;
-					string prefix = string.IsNullOrWhiteSpace(time) ? "·" : time;
-					_depthLogBody.AddChild(DepthLine($"{prefix}  {text}", DepthInkSoft, 12));
-					shown++;
-					any = true;
-				}
-			}
-			if (!any)
-				_depthLogBody.AddChild(DepthLine("im lặng — chưa có nhật ký depth_v2", DepthDim, 12));
-		}
-
-		if (_depthContextLabel != null)
-		{
-			string focusMode = "";
-			var tags = new List<string>();
-			if (d.TryGetProperty("context", out var ctx) && ctx.ValueKind == JsonValueKind.Object)
-			{
-				focusMode = AnStr(ctx, "focus_mode");
-				if (ctx.TryGetProperty("tags", out var tagArray) && tagArray.ValueKind == JsonValueKind.Array)
-				{
-					foreach (var tag in tagArray.EnumerateArray())
-					{
-						if (tag.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(tag.GetString()))
-							tags.Add(tag.GetString());
-					}
-				}
-			}
-
-			var priorities = new List<string>();
-			if (d.TryGetProperty("priorities", out var prioArray) && prioArray.ValueKind == JsonValueKind.Array)
-			{
-				int shown = 0;
-				foreach (var item in prioArray.EnumerateArray())
-				{
-					if (shown >= 3 || item.ValueKind != JsonValueKind.Object)
-						break;
-					string label = AnStr(item, "label");
-					float score = AnFloat(item, "score");
-					if (string.IsNullOrWhiteSpace(label))
-						continue;
-					priorities.Add($"{label} {(score * 100f):0}%");
-					shown++;
-				}
-			}
-
-			string focusText = string.IsNullOrWhiteSpace(focusMode) ? "focus: attentive" : $"focus: {focusMode}";
-			string priorityText = priorities.Count > 0 ? string.Join("   ·   ", priorities) : "no active priority map";
-			string tagsText = tags.Count > 0 ? string.Join("   ·   ", tags) : "—";
-			_depthContextLabel.Text = $"{focusText}\n{priorityText}\n{tagsText}";
-		}
-	}
-
-	// ── Refresh ────────────────────────────────────────────────────────────
 	private void RefreshDepthPanel()
 	{
 		if (_depthPanel == null)
 			return;
-		if (!string.IsNullOrWhiteSpace(_latestDepthV2Json))
-		{
-			try
-			{
-				using var v2Doc = JsonDocument.Parse(_latestDepthV2Json);
-				if (v2Doc.RootElement.ValueKind == JsonValueKind.Object)
-				{
-					ApplyDepthV2(v2Doc.RootElement);
-					return;
-				}
-			}
-			catch (Exception ex)
-			{
-				GD.Print($"[depth_v2] refresh fail: {ex.Message}");
-			}
-		}
-		if (string.IsNullOrWhiteSpace(_latestDepthJson))
-			return;
-		try
-		{
-			using var doc = JsonDocument.Parse(_latestDepthJson);
-			var root = doc.RootElement;
-			if (!root.TryGetProperty("depth", out var d) || d.ValueKind != JsonValueKind.Object)
-				return;
 
-			if (_depthHeaderLabel != null && d.TryGetProperty("identity", out var id) && id.ValueKind == JsonValueKind.Object)
-			{
-				string model = AnStr(id, "model", "gemini");
-				string channel = AnStr(id, "channel", "chat");
-				int on = AnInt(id, "flags_on");
-				int total = AnInt(id, "flags_total");
-				bool alive = AnBool(id, "alive");
-				_depthHeaderLabel.Text = $"đang [{channel}] · {model} · {on}/{(total > 0 ? total : 6)} cờ · {(alive ? "alive ✓" : "ngủ")}";
-			}
-
-			if (d.TryGetProperty("flags", out var flags) && flags.ValueKind == JsonValueKind.Object)
-				foreach (var (key, chip) in _depthFlagChips)
-				{
-					bool ison = AnBool(flags, key);
-					chip.AddThemeColorOverride("font_color", ison ? DepthGreen : DepthDim);
-					if (chip.GetParent() is PanelContainer pill)
-						pill.AddThemeStyleboxOverride("panel", DepthPillStyle(ison));
-				}
-
-			if (_depthAffectLabel != null && d.TryGetProperty("affect", out var af) && af.ValueKind == JsonValueKind.Object)
-			{
-				if (AnBool(af, "live"))
-				{
-					float val = AnFloat(af, "valence");
-					float aro = AnFloat(af, "arousal");
-					string st = AnStr(af, "stance");
-					_depthAffectLabel.Text = $"valence {val:+0.00;-0.00}   ·   arousal {aro:0.00}\nstance: {(string.IsNullOrEmpty(st) ? "—" : st)}";
-					_depthAffectLabel.AddThemeColorOverride("font_color", DepthBody);
-				}
-				else
-				{
-					_depthAffectLabel.Text = "chưa có tín hiệu cảm xúc sống";
-					_depthAffectLabel.AddThemeColorOverride("font_color", DepthDim);
-				}
-			}
-
-			if (d.TryGetProperty("expression", out var ex) && ex.ValueKind == JsonValueKind.Object)
-			{
-				float wv = AnFloat(ex, "want"), sv = AnFloat(ex, "suppress"), av = AnFloat(ex, "allowed");
-				if (_depthWantBar != null) _depthWantBar.Value = wv;
-				if (_depthSuppressBar != null) _depthSuppressBar.Value = sv;
-				if (_depthAllowBar != null) _depthAllowBar.Value = av;
-				if (_depthWantVal != null) _depthWantVal.Text = $"{wv:0.00}";
-				if (_depthSuppressVal != null) _depthSuppressVal.Text = $"{sv:0.00}";
-				if (_depthAllowVal != null) _depthAllowVal.Text = $"{av:0.00}";
-				if (_depthStanceLabel != null)
-				{
-					string st = AnStr(ex, "stance");
-					_depthStanceLabel.Text = "stance: " + (string.IsNullOrEmpty(st) ? "—" : st);
-				}
-			}
-
-			if (_depthN2Body != null)
-			{
-				AnchorClear(_depthN2Body);
-				if (d.TryGetProperty("n2", out var n2) && n2.ValueKind == JsonValueKind.Object)
-				{
-					if (n2.TryGetProperty("axes", out var axes) && axes.ValueKind == JsonValueKind.Array)
-						foreach (var ax in axes.EnumerateArray())
-						{
-							if (ax.ValueKind != JsonValueKind.Object)
-								continue;
-							string label = AnStr(ax, "label");
-							float delta = AnFloat(ax, "delta");
-							var c = delta > 0 ? DepthGreen : delta < 0 ? DepthAmber : DepthDim;
-							_depthN2Body.AddChild(DepthLine($"{label}   {delta:+0.00;-0.00}", c, 13));
-						}
-					string sentence = AnStr(n2, "sentence");
-					if (!string.IsNullOrWhiteSpace(sentence))
-						_depthN2Body.AddChild(DepthLine($"\"{sentence}\"", DepthInkSoft, 12));
-					if (n2.TryGetProperty("attachment", out var att) && att.ValueKind == JsonValueKind.Object && AnBool(att, "live"))
-						_depthN2Body.AddChild(DepthLine($"attach  {AnFloat(att, "value"):+0.00;-0.00}", DepthAccent, 12));
-				}
-				if (_depthN2Body.GetChildren().Count == 0)
-					_depthN2Body.AddChild(DepthLine("chưa lệch khỏi lúc mới gặp", DepthDim, 13));
-			}
-
-			if (_depthInteriorityBody != null)
-			{
-				AnchorClear(_depthInteriorityBody);
-				bool any = false;
-				if (d.TryGetProperty("interiority", out var inter) && inter.ValueKind == JsonValueKind.Object
-					&& inter.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
-					foreach (var it in items.EnumerateArray())
-					{
-						if (it.ValueKind != JsonValueKind.Object)
-							continue;
-						string theme = AnStr(it, "theme");
-						if (string.IsNullOrWhiteSpace(theme))
-							continue;
-						int rec = AnInt(it, "recurrence");
-						float pr = AnFloat(it, "pressure");
-						string recTxt = rec > 0 ? $"  x{rec}" : "";
-						_depthInteriorityBody.AddChild(DepthLine($"·  {theme}{recTxt}   ({pr:0.00})", DepthBody, 13));
-						any = true;
-					}
-				if (!any)
-					_depthInteriorityBody.AddChild(DepthLine("chưa có bận tâm nào được ghi", DepthDim, 13));
-			}
-
-			if (_depthTomLabel != null)
-			{
-				string tomText = "";
-				float tomConf = -1f;
-				if (d.TryGetProperty("tom_read_rich", out var tr) && tr.ValueKind == JsonValueKind.Object && AnBool(tr, "live"))
-				{
-					tomText = AnStr(tr, "text");
-					tomConf = AnFloat(tr, "confidence");
-				}
-				if (string.IsNullOrWhiteSpace(tomText))
-					tomText = AnStr(d, "tom_read");
-				if (string.IsNullOrWhiteSpace(tomText))
-					_depthTomLabel.Text = "chưa đọc được gì";
-				else
-					_depthTomLabel.Text = tomConf >= 0f ? $"\"{tomText}\"  (~{tomConf:0.00})" : tomText;
-			}
-
-			if (_depthLogBody != null)
-			{
-				AnchorClear(_depthLogBody);
-				bool any = false;
-				if (d.TryGetProperty("signal_log", out var log) && log.ValueKind == JsonValueKind.Array)
-				{
-					int shown = 0;
-					foreach (var entry in log.EnumerateArray())
-					{
-						if (shown >= 5)
-							break;
-						string line = entry.ValueKind == JsonValueKind.String
-							? entry.GetString()
-							: entry.ValueKind == JsonValueKind.Object ? AnStr(entry, "text") : "";
-						if (string.IsNullOrWhiteSpace(line))
-							continue;
-						_depthLogBody.AddChild(DepthLine($"·  {line}", DepthInkSoft, 12));
-						shown++; any = true;
-					}
-				}
-				if (!any)
-					_depthLogBody.AddChild(DepthLine("im lặng — chưa có tín hiệu nổi", DepthDim, 12));
-			}
-
-			if (_depthContextLabel != null && d.TryGetProperty("context", out var ctx) && ctx.ValueKind == JsonValueKind.Array)
-			{
-				var tags = new List<string>();
-				foreach (var t in ctx.EnumerateArray())
-					if (t.ValueKind == JsonValueKind.String)
-						tags.Add(t.GetString());
-				_depthContextLabel.Text = tags.Count > 0 ? string.Join("   ·   ", tags) : "—";
-			}
-		}
-		catch (Exception ex)
-		{
-			GD.Print($"[depth] refresh fail: {ex.Message}");
-		}
+		// Panel chiều sâu đang ở chế độ khung tĩnh để chờ nối UI mới.
 	}
 }
