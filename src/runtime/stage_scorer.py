@@ -238,6 +238,9 @@ class StageScorer:
         clip_risk = _clamp01((budget_ratio - 0.9) / 1.4)
         tts_fit = self._tts_fit(text, words=words, budget=context.speak_budget_words)
         liveliness = self._liveliness(text, candidate)
+        hook_bonus, hook_tags = self._content_hook_bonus(candidate, context)
+        liveliness = _clamp01(liveliness + hook_bonus)
+        tags.extend(hook_tags)
         scene_fit = self._scene_fit(candidate, context, words=words)
         relation_fit = self._relation_fit(context)
         performance_fit = self._performance_fit(candidate)
@@ -391,6 +394,42 @@ class StageScorer:
         if len(set(normalized.split())) <= 3 and _word_count(text) > 5:
             score -= 0.20
         return _clamp01(score)
+
+    def _content_hook_bonus(self, candidate: CandidateUtterance, context: DirectorContext) -> tuple[float, list[str]]:
+        """Cộng điểm nhẹ nếu candidate bám hook nội dung.
+
+        Hook là mồi, không phải luật cứng. Vì vậy không bám hook chỉ mất cơ hội
+        cộng điểm; không bị reject trừ khi đã vi phạm evidence ở tầng khác.
+        """
+
+        world = context.world_state if isinstance(context.world_state, dict) else {}
+        hook = world.get("content_hook")
+        if not isinstance(hook, Mapping):
+            return 0.0, []
+        text = _normalize(candidate.text)
+        intent = _normalize(candidate.intent)
+        keywords = hook.get("keywords", ()) or ()
+        if isinstance(keywords, str):
+            keyword_list = [keywords]
+        elif isinstance(keywords, (list, tuple)):
+            keyword_list = [str(item or "") for item in keywords]
+        else:
+            keyword_list = []
+        matched = [kw for kw in keyword_list if kw and _normalize(kw) in text]
+        family = str(hook.get("family", "") or "")
+        hook_id = str(hook.get("id", "") or "")
+        bonus = 0.0
+        tags: list[str] = []
+        if matched:
+            bonus += min(0.12, 0.04 + len(matched) * 0.025)
+            tags.append(f"content_hook_match:{hook_id}")
+        if family == "technical" and intent in {"technical_help", "screen_observation", "curious_question"}:
+            bonus += 0.05
+            tags.append("content_hook_family_fit:technical")
+        if family in {"running_bit", "dead_air_recovery"} and intent in {"micro_presence", "random_chatter", "tease"}:
+            bonus += 0.05
+            tags.append(f"content_hook_family_fit:{family}")
+        return _clamp01(bonus), tags
 
     def _scene_fit(self, candidate: CandidateUtterance, context: DirectorContext, *, words: int) -> float:
         scene = context.scene_mode.name

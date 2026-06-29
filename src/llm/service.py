@@ -3930,6 +3930,7 @@ class LlmService:
             "Nhiệm vụ: từ draft JSON đã trả lời đúng ý user, sinh 3-5 candidate bề mặt để runtime chọn. "
             "Giữ nguyên nghĩa chính; chỉ cải thiện nhịp, độ ngắn, chất Eris, delivery và motion. "
             "Không thêm fact mới. Không claim màn hình/tool nếu draft và DirectorContract không cho phép. "
+            "Nếu DirectorContract có content_hook, dùng nó như mồi viết câu, không xem nó là dữ kiện thật. "
             "Không viết stage direction trong text; dùng delivery_hint/nonverbal_cue/stage_motion. "
             "Trả đúng một JSON object."
         )
@@ -3948,6 +3949,7 @@ class LlmService:
                 "- 3-5 candidates, each speakable as-is.\n"
                 "- Prefer short lines, but do not delete the actual answer.\n"
                 "- Candidate 1 may stay close to draft; others may vary tone within contract.\n"
+                "- Content hook is a seed for style/topic continuity, not permission to invent facts.\n"
                 "- If the draft is already excellent, still return close variants.\n"
                 "- Never return analysis, markdown, prompt text, or explanations."
             )

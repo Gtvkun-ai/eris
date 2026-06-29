@@ -16,6 +16,7 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
+from runtime.content_engine import ContentEngine, ContentHook
 from runtime.director_context import DirectorContext
 
 
@@ -41,6 +42,7 @@ class PerformanceContext:
     tts_style: str
     publicity: Publicity
     content_hook_id: str | None = None
+    content_hook: dict[str, Any] | None = None
     body_only_ok: bool = True
     max_words: int = 16
     candidate_count: int = 4
@@ -73,6 +75,9 @@ class DirectorContract:
     max_words: int
     candidate_count: int
     body_only_ok: bool
+    content_hook: dict[str, Any] | None
+    content_seed: dict[str, Any] | None
+    topic_stack: tuple[dict[str, Any], ...]
     evidence: tuple[dict[str, Any], ...]
     allowed_claim_levels: tuple[str, ...]
     forbidden_claims: tuple[str, ...]
@@ -93,6 +98,9 @@ class DirectorContract:
             "max_words": self.max_words,
             "candidate_count": self.candidate_count,
             "body_only_ok": self.body_only_ok,
+            "content_hook": dict(self.content_hook) if isinstance(self.content_hook, dict) else None,
+            "content_seed": dict(self.content_seed) if isinstance(self.content_seed, dict) else None,
+            "topic_stack": list(self.topic_stack),
             "evidence": list(self.evidence),
             "allowed_claim_levels": list(self.allowed_claim_levels),
             "forbidden_claims": list(self.forbidden_claims),
@@ -128,6 +136,9 @@ class PerformanceContextBuilder:
     tự viết "(cười nhẹ)" trong text.
     """
 
+    def __init__(self, *, content_engine: ContentEngine | None = None) -> None:
+        self.content_engine = content_engine or ContentEngine()
+
     def build(
         self,
         director: DirectorContext,
@@ -140,6 +151,7 @@ class PerformanceContextBuilder:
         channel_name = _clean(channel).lower()
         publicity = _publicity_for(director)
         reasons: list[str] = [f"scene={scene}", f"intent={intent or 'unknown'}"]
+        hook = self.content_engine.select_hook(director, payload=payload, channel=channel)
 
         if director.interruption_state == "interrupted" or intent in {"interrupt_repair", "format_repair_fallback"}:
             reasons.append("interrupt_or_repair")
@@ -150,6 +162,8 @@ class PerformanceContextBuilder:
                 stage_motion="listen_snap",
                 tts_style="clipped_clear",
                 publicity=publicity,
+                content_hook_id=hook.id,
+                content_hook=hook.to_payload(),
                 body_only_ok=False,
                 max_words=min(24, max(12, director.speak_budget_words)),
                 candidate_count=3,
@@ -166,6 +180,8 @@ class PerformanceContextBuilder:
                     stage_motion="tilt_head",
                     tts_style="clear_low",
                     publicity=publicity,
+                    content_hook_id=hook.id,
+                    content_hook=hook.to_payload(),
                     body_only_ok=False,
                     max_words=max(24, min(60, director.speak_budget_words)),
                     candidate_count=4,
@@ -179,6 +195,8 @@ class PerformanceContextBuilder:
                 stage_motion="lean_in_small",
                 tts_style="low_warm",
                 publicity=publicity,
+                content_hook_id=hook.id,
+                content_hook=hook.to_payload(),
                 body_only_ok=False,
                 max_words=max(24, min(60, director.speak_budget_words)),
                 candidate_count=4,
@@ -194,6 +212,8 @@ class PerformanceContextBuilder:
                 stage_motion="blink_slow",
                 tts_style="clipped_clear",
                 publicity=publicity,
+                content_hook_id=hook.id,
+                content_hook=hook.to_payload(),
                 body_only_ok=True,
                 max_words=min(18, director.speak_budget_words),
                 candidate_count=3,
@@ -209,6 +229,8 @@ class PerformanceContextBuilder:
                 stage_motion="tilt_head",
                 tts_style="low_warm",
                 publicity=publicity,
+                content_hook_id=hook.id,
+                content_hook=hook.to_payload(),
                 body_only_ok=True,
                 max_words=min(14, director.speak_budget_words),
                 candidate_count=4,
@@ -224,6 +246,8 @@ class PerformanceContextBuilder:
                 stage_motion="open_palm",
                 tts_style="projected_even",
                 publicity=publicity,
+                content_hook_id=hook.id,
+                content_hook=hook.to_payload(),
                 body_only_ok=True,
                 max_words=min(22, director.speak_budget_words),
                 candidate_count=4,
@@ -238,6 +262,8 @@ class PerformanceContextBuilder:
             stage_motion="blink_slow",
             tts_style="low_warm",
             publicity=publicity,
+            content_hook_id=hook.id,
+            content_hook=hook.to_payload(),
             body_only_ok=True,
             max_words=director.speak_budget_words,
             candidate_count=4,
@@ -278,6 +304,21 @@ class DirectorContractBuilder:
             max_words=performance.max_words,
             candidate_count=performance.candidate_count,
             body_only_ok=performance.body_only_ok,
+            content_hook=dict(performance.content_hook) if isinstance(performance.content_hook, dict) else None,
+            content_seed=(
+                dict(performance.content_hook.get("content_seed"))
+                if isinstance(performance.content_hook, dict) and isinstance(performance.content_hook.get("content_seed"), dict)
+                else None
+            ),
+            topic_stack=tuple(
+                dict(item)
+                for item in (
+                    director.world_state.get("topic_stack", ())
+                    if isinstance(director.world_state, dict)
+                    else ()
+                )
+                if isinstance(item, dict)
+            ),
             evidence=tuple(public_evidence),
             allowed_claim_levels=tuple(director.allowed_claim_levels),
             forbidden_claims=tuple(director.forbidden_claims),
@@ -302,6 +343,8 @@ class DirectorContractBuilder:
                     "No stage directions inside text",
                     "Use delivery_hint/nonverbal_cue/stage_motion for performance",
                     "Return empty text only when body_only/suppress is better",
+                    "Use content_hook as a writing seed, not as a fact claim",
+                    "If content_hook.evidence_policy forbids screen claims, obey it strictly",
                 ],
             },
         )

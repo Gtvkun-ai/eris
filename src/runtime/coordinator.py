@@ -107,6 +107,7 @@ from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.private_mind_daemon import PrivateMindDaemon
 from runtime.private_life_daemon import PrivateLifeDaemon
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
+from runtime.content_engine import ContentHarvester
 from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
 from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
@@ -1555,6 +1556,16 @@ class RuntimeCoordinator(
                 channel=channel,
                 user_text=str(payload.get("user_text", "") or ""),
             )
+            harvester = getattr(self, "content_harvester", None)
+            if harvester is None:
+                harvester = ContentHarvester()
+                self.content_harvester = harvester
+            payload["content_seeds"] = harvester.payloads(
+                runtime=self,
+                frame=getattr(self, "last_cognitive_frame", None),
+                payload=payload,
+                channel=channel,
+            )
             performance_builder = getattr(self, "performance_context_builder", None)
             if performance_builder is None:
                 performance_builder = PerformanceContextBuilder()
@@ -1564,6 +1575,11 @@ class RuntimeCoordinator(
                 payload=payload,
                 channel=channel,
             )
+            try:
+                director_context.world_state["content_hook"] = performance_context.content_hook or {}
+                director_context.world_state["topic_stack"] = performance_builder.content_engine.topic_stack_payload()
+            except Exception:
+                pass
             contract_builder = getattr(self, "director_contract_builder", None)
             if contract_builder is None:
                 contract_builder = DirectorContractBuilder()

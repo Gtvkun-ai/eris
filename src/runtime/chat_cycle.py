@@ -1104,6 +1104,7 @@ class ChatCycleMixin:
             return decision
 
         try:
+            from runtime.content_engine import ContentHarvester
             from runtime.director_context import DirectorContextBuilder
             from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
             from runtime.stage_scorer import StageScorer
@@ -1120,6 +1121,16 @@ class ChatCycleMixin:
                 channel="chat",
                 user_text=user_text,
             )
+            harvester = getattr(self, "content_harvester", None)
+            if harvester is None:
+                harvester = ContentHarvester()
+                self.content_harvester = harvester
+            payload["content_seeds"] = harvester.payloads(
+                runtime=self,
+                frame=frame,
+                payload=payload,
+                channel="chat",
+            )
             performance_builder = getattr(self, "performance_context_builder", None)
             if performance_builder is None:
                 performance_builder = PerformanceContextBuilder()
@@ -1129,6 +1140,11 @@ class ChatCycleMixin:
                 payload=payload,
                 channel="chat",
             )
+            try:
+                director_context.world_state["content_hook"] = performance_context.content_hook or {}
+                director_context.world_state["topic_stack"] = performance_builder.content_engine.topic_stack_payload()
+            except Exception:
+                pass
             contract_builder = getattr(self, "director_contract_builder", None)
             if contract_builder is None:
                 contract_builder = DirectorContractBuilder()
