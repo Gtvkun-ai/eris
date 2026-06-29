@@ -503,84 +503,6 @@ def _journal_entries(
     return deduped[:8]
 
 
-def _interiority_feed(
-    *,
-    sections_by_kind: Mapping[str, dict[str, Any]],
-    priorities: list[dict[str, Any]],
-    signal_snapshot: Mapping[str, Any],
-    tom_text: str,
-    now: float,
-) -> list[dict[str, str]]:
-    """Dựng feed ngắn cho khung ``ChieuSau_DongNoiTam``.
-
-    Body/Godot không nên phải hiểu toàn bộ inner_diary phức tạp. Hàm này gom
-    các section lớn thành 4-6 dòng đã có ``kind`` ổn định để body chỉ việc chọn
-    icon và render. Đây là lớp trình diễn, không làm Eris nghĩ thêm và không gọi
-    model.
-    """
-    time_text = time.strftime("%H:%M:%S", time.localtime(now))
-    rows: list[dict[str, str]] = []
-
-    def add(kind: str, text: str, meta: str = "", *, title: str = "", time_value: str = "") -> None:
-        safe_text = _text(text, limit=150)
-        if not safe_text:
-            return
-        key = safe_text.casefold()
-        if any(item.get("_key") == key for item in rows):
-            return
-        rows.append(
-            {
-                "_key": key,
-                "kind": _text(kind, limit=32),
-                "title": _text(title, limit=44),
-                "text": safe_text,
-                "meta": _text(meta, limit=90),
-                "time": _text(time_value, limit=16) or time_text,
-            }
-        )
-
-    # Ưu tiên các section đúng nghĩa "dòng nội tâm": hiện tại, bận tâm, phân
-    # tích, dự định nói. Mỗi section chỉ lấy item đầu để panel gọn, không thành log.
-    for kind, fallback_title in (
-        ("current", "ý nghĩ đang nổi"),
-        ("concern", "đang bận tâm"),
-        ("analysis", "đang phân tích"),
-        ("future", "hướng tiếp theo"),
-        ("surface", "muốn nói ra"),
-        ("settled", "đã nguội"),
-    ):
-        section = _dict(sections_by_kind.get(kind))
-        items = _list(section.get("items"))
-        if not items:
-            continue
-        item = _dict(items[0])
-        title = _text(section.get("title"), limit=44) or fallback_title
-        add(kind, _text(item.get("text"), limit=150), _text(item.get("badge"), limit=90), title=title)
-
-    # Nếu private_mind chưa đủ section, lấy ưu tiên đang thắng làm dòng dự phòng.
-    for raw_priority in priorities[:3]:
-        priority = _dict(raw_priority)
-        key = _text(priority.get("key"), limit=32)
-        reason = _text(priority.get("reason"), limit=150)
-        label = _text(priority.get("label"), limit=44)
-        if not reason:
-            continue
-        add(key or "current", reason, f"ưu tiên: {label}", title=label)
-
-    # ToM và signal chỉ dùng làm fallback cuối. Chúng giúp panel không trống khi
-    # inner diary chưa tick kịp, nhưng không lấn át các thought section thật.
-    if tom_text:
-        add("concern", tom_text, "đọc Ngài gần nhất", title="thấu hiểu Ngài")
-    for raw_signal in _list(_dict(signal_snapshot).get("signal_log"))[:4]:
-        item = _dict(raw_signal)
-        kind = _text(item.get("kind"), limit=32)
-        label = _SIGNAL_TEXT.get(kind, kind.replace("_", " "))
-        add("observe", label, "tín hiệu runtime", title="tín hiệu", time_value=_text(item.get("time"), limit=16))
-
-    # Bỏ khóa dedupe nội bộ trước khi đưa sang JSON.
-    return [{k: v for k, v in item.items() if k != "_key"} for item in rows[:6]]
-
-
 def build_depth_v2_state(
     *,
     private_mind_digest: Mapping[str, Any] | None,
@@ -632,13 +554,6 @@ def build_depth_v2_state(
         "priorities": priorities,
         "interiority": {
             "sections": sections,
-            "feed": _interiority_feed(
-                sections_by_kind=sections_by_kind,
-                priorities=priorities,
-                signal_snapshot=signal_snapshot,
-                tom_text=tom_read,
-                now=ts,
-            ),
             "current": _dict(sections_by_kind.get("current")),
             "future": _dict(sections_by_kind.get("future")),
             "concern": _dict(sections_by_kind.get("concern")),

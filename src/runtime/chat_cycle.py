@@ -205,6 +205,15 @@ class ChatCycleMixin:
             # "diễn" như cười/nổi giận/dỗi. Không đưa field này vào LLM schema;
             # chỉ giữ tạm trong coordinator cho lượt output đang commit.
             self.current_stage_user_text = user_text
+            speech_interrupt_event = None
+            consume_interrupt = getattr(self, "_consume_speech_interrupt_event", None)
+            if callable(consume_interrupt):
+                speech_interrupt_event = consume_interrupt()
+            speech_interrupt_context = (
+                speech_interrupt_event.to_prompt_context()
+                if speech_interrupt_event is not None and callable(getattr(speech_interrupt_event, "to_prompt_context", None))
+                else ""
+            )
             previous_public_turn = self._link_previous_public_turn_for_chat(cycle_start)
             previous_public_context = self._previous_public_turn_context(previous_public_turn)
             return self._run_chat_cycle_inner(
@@ -212,6 +221,8 @@ class ChatCycleMixin:
                 cycle_start=cycle_start,
                 previous_public_context=previous_public_context,
                 previous_public_turn=previous_public_turn,
+                speech_interrupt_context=speech_interrupt_context,
+                speech_interrupt_event=speech_interrupt_event,
             )
         finally:
             self.current_stage_user_text = ""
@@ -224,6 +235,8 @@ class ChatCycleMixin:
         cycle_start: float,
         previous_public_context: str = "",
         previous_public_turn=None,
+        speech_interrupt_context: str = "",
+        speech_interrupt_event=None,
     ) -> None:
         if not self.chat_mode:
             self.chat_ni_state = NiStateMachine() # reset trạng thái Ni khi bắt đầu chat mới, để tránh mang theo drift state từ autonomous mode.
@@ -237,10 +250,13 @@ class ChatCycleMixin:
         # Nếu chờ finalize ngay trong turn trước thì OutcomeObserver chỉ đang đoán trong chân không,
         # mà đoán trong chân không là thú vui nguy hiểm của chatbot.
         self._observe_previous_turn_feedback(user_text)
+        user_turn_meta = {"channel": "chat"}
+        if speech_interrupt_event is not None and callable(getattr(speech_interrupt_event, "to_meta", None)):
+            user_turn_meta["speech_interrupt"] = speech_interrupt_event.to_meta()
         user_turn = self._ensure_session_turn_ledger().record_user(
             user_text,
             timestamp=cycle_start,
-            meta={"channel": "chat"},
+            meta=user_turn_meta,
         )
 
         # PRE-GROUNDING phải chạy TRƯỚC memory recall/resonance.
@@ -762,6 +778,8 @@ class ChatCycleMixin:
         )
         if previous_public_context:
             planned_ti_context = f"{planned_ti_context}\n\n{previous_public_context}"
+        if speech_interrupt_context:
+            planned_ti_context = f"{planned_ti_context}\n\n{speech_interrupt_context}"
         # Curiosity Tutor: Eris không hiểu ý Ngài → câu trả lời lượt này thành câu hỏi
         # làm rõ (thay vì đoán bừa hay lén tra Gemini). Giữ giọng Eris.
         if getattr(self, "_clarify_user_pending", False):

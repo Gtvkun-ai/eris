@@ -640,6 +640,24 @@ class _TtsWorker:
             if old is not None:
                 self._emit(old, "audio_cancelled", reason=reason)
 
+    def cancel_current(self, *, reason: str = "cancelled", only_interruptible: bool = True) -> bool:
+        """Dừng đoạn TTS đang chạy và bỏ các đoạn đang chờ.
+
+        Coordinator gọi hàm này khi user chen vào. Worker vẫn tự emit
+        ``audio_cancelled`` ở vòng phát hiện tại; hàm này chỉ bật cờ dừng thật
+        nhanh, để loa không tiếp tục đọc như máy sau khi lượt đã đổi sang user.
+        """
+        with self._current_lock:
+            current = self._current_req
+            if current is None:
+                self._drain_pending(reason=reason)
+                return False
+            if only_interruptible and not bool(getattr(current, "interruptible", True)):
+                return False
+            self._current_stop.set()
+        self._drain_pending(reason=reason)
+        return True
+
     def _vocal_prefix_wav(self, req: _SpeakRequest, prefix: str, prosody_plan) -> bytes:
         """Lấy/sinh WAV cho prefix nghe được như "Hah... haha.".
 
@@ -900,6 +918,12 @@ class TtsEngine:
         if self._worker is not None:
             self._worker.shutdown()
             self._worker = None
+
+    def cancel_current(self, *, reason: str = "cancelled", only_interruptible: bool = True) -> bool:
+        """Public API để runtime dừng TTS khi user cắt lượt."""
+        if not self._ok or self._worker is None:
+            return False
+        return self._worker.cancel_current(reason=reason, only_interruptible=only_interruptible)
 
 
 def _clean_text(text: str) -> str:

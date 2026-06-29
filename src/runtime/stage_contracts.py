@@ -16,7 +16,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from runtime.body_choreography import BodyChoreographyPlanner
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
 from runtime.stage_performance_planner import PerformanceRequestPlanner
@@ -38,28 +37,22 @@ class StageFrame:
     delivery: dict[str, Any]
     interruptible: bool
     source: str
-    body_timeline: dict[str, Any] | None = None
 
     def to_payload_patch(self) -> dict[str, Any]:
         """Patch gắn vào payload cũ mà không phá Godot/client hiện tại."""
-        stage = {
-            "turn_id": self.turn_id,
-            "segment_id": self.segment_id,
-            "emotion": self.emotion,
-            "motion": self.motion,
-            "actions": list(self.actions),
-            "prosody_style": self.prosody_style,
-            "delivery": self.delivery,
-            "interruptible": self.interruptible,
-            "source": self.source,
-        }
-        if self.body_timeline:
-            # Body 2D không có mặt chi tiết.  Timeline này là "biểu diễn bằng thân":
-            # hop/quay đi/sad/read... theo mốc thời gian để câu nói có nhịp.
-            stage["body_timeline"] = self.body_timeline
         return {
             "display_text": self.display_text,
-            "stage": stage,
+            "stage": {
+                "turn_id": self.turn_id,
+                "segment_id": self.segment_id,
+                "emotion": self.emotion,
+                "motion": self.motion,
+                "actions": list(self.actions),
+                "prosody_style": self.prosody_style,
+                "delivery": self.delivery,
+                "interruptible": self.interruptible,
+                "source": self.source,
+            },
         }
 
 
@@ -152,7 +145,6 @@ class StageFrameBuilder:
         self.transformers = StageTransformerChain()
         self.delivery_planner = SpeechDeliveryPlanner()
         self.performance_planner = PerformanceRequestPlanner()
-        self.body_choreography = BodyChoreographyPlanner()
 
     def build(
         self,
@@ -222,16 +214,8 @@ class StageFrameBuilder:
             style_hint=delivery.voice_style,
             notes_hint=prosody_notes,
         )
-        resolved_turn_id = str(turn_id or uuid.uuid4().hex)
-        body_timeline = self.body_choreography.plan(
-            turn_id=resolved_turn_id,
-            text=tts_text,
-            motion=motion or "none",
-            actions=delivery.pre_speech_actions,
-            delivery=delivery_payload,
-        )
         return StageFrame(
-            turn_id=resolved_turn_id,
+            turn_id=str(turn_id or uuid.uuid4().hex),
             segment_id=int(segment_id),
             display_text=performance.display_text,
             tts_text=tts_text,
@@ -244,7 +228,6 @@ class StageFrameBuilder:
             delivery=delivery_payload,
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",
-            body_timeline=body_timeline.to_payload() if body_timeline is not None else None,
         )
 
 

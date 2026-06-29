@@ -100,6 +100,7 @@ from runtime.force_speak_cycle import ForceSpeakCycleMixin
 from runtime.frame_builder import FrameBuilderMixin
 from runtime.guard_violations import GuardViolation
 from runtime.inner_diary_persistence import InnerDiaryPersister
+from runtime.interrupt_ledger import InterruptLedger
 from runtime.outcome_observer import OutcomeObserver
 from guard_config import guards_warn_only
 from runtime.post_generation_filters import PostGenerationFiltersMixin
@@ -347,6 +348,8 @@ class RuntimeCoordinator(
         self.ti_governor = ti_governor
         self.fe_renderer = fe_renderer
         self.public_turn_ledger = PublicTurnLedger()
+        self.interrupt_ledger = InterruptLedger()
+        self.pending_speech_interrupt_event = None
         self.reply_context = SimpleNamespace(previous_public_turn=None)
         self.memory_core = memory_core
         if memory_semantic_parser is None and str(os.getenv("ERIS_MEMORY_SEMANTIC_PARSER", "")).strip().lower() in {"1", "true", "yes", "on", "y"}:
@@ -1790,6 +1793,11 @@ class RuntimeCoordinator(
 
         if event_type in {"audio_failed", "audio_cancelled"}:
             self.logger.debug("[TTS:event] %s", record)
+        try:
+            ledger = self._ensure_interrupt_ledger()
+            ledger.track_tts_event(event, stage_frame=stage_frame)
+        except Exception as exc:
+            self.logger.debug("[interrupt] track tts event failed: %s", exc)
         if os.environ.get("ERIS_TTS_EVENT_PAYLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}:
             try:
                 self.transport.send_json({"type": "tts_event", **record})
@@ -1864,6 +1872,59 @@ class RuntimeCoordinator(
             self.reply_context = context
         context.previous_public_turn = linked
         return linked
+
+    def _ensure_interrupt_ledger(self) -> InterruptLedger:
+        ledger = getattr(self, "interrupt_ledger", None)
+        if isinstance(ledger, InterruptLedger):
+            return ledger
+        ledger = InterruptLedger()
+        self.interrupt_ledger = ledger
+        return ledger
+
+    def _capture_speech_interrupt_for_user(self, user_text: str, *, timestamp: float | None = None):
+        """Ghi nhận user chen vào khi Eris đang phát TTS.
+
+        Đây là state phiên ngắn hạn. Ta dừng audio ngay để turn-taking có cảm giác
+        thật, nhưng chỉ đưa prompt context nếu ledger xác nhận audio đã thật sự
+        ``audio_start`` và còn phần pending đáng kể.
+        """
+        text = str(user_text or "").strip()
+        if not text:
+            return None
+        event = None
+        try:
+            event = self._ensure_interrupt_ledger().record_user_interrupt(
+                user_text=text,
+                timestamp=time.time() if timestamp is None else float(timestamp),
+            )
+        except Exception as exc:
+            self.logger.debug("[interrupt] record failed: %s", exc)
+
+        # Dù không đủ điều kiện ghi context, user input mới vẫn nên cắt TTS cũ nếu
+        # đoạn đó interruptible. Nếu không, Eris sẽ tiếp tục đọc qua lời Ngài.
+        try:
+            tts = getattr(self, "tts_engine", None)
+            cancel = getattr(tts, "cancel_current", None)
+            if callable(cancel):
+                cancel(reason="user_interrupt", only_interruptible=True)
+        except Exception as exc:
+            self.logger.debug("[interrupt] tts cancel failed: %s", exc)
+
+        if event is not None:
+            self.pending_speech_interrupt_event = event
+            self.logger.info(
+                "[interrupt] user cut speech turn=%s seq=%s spoken=%r pending=%r",
+                event.interrupted_turn_id,
+                event.interrupted_seq,
+                event.spoken_text_so_far,
+                event.pending_text,
+            )
+        return event
+
+    def _consume_speech_interrupt_event(self):
+        event = getattr(self, "pending_speech_interrupt_event", None)
+        self.pending_speech_interrupt_event = None
+        return event
 
     def _previous_public_turn_context(self, public_turn) -> str:
         if public_turn is None:
@@ -5207,9 +5268,12 @@ class RuntimeCoordinator(
             return
 
         if msg_type == "chat":
+            user_text = str(msg.get("message", "") or "").strip()
+            user_timestamp = float(msg.get("timestamp") or time.time())
+            self._capture_speech_interrupt_for_user(user_text, timestamp=user_timestamp)
             self._run_chat_cycle(
-                str(msg.get("message", "") or "").strip(),
-                user_timestamp=float(msg.get("timestamp") or time.time()),
+                user_text,
+                user_timestamp=user_timestamp,
             )
             return
 
