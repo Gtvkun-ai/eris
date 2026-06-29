@@ -67,7 +67,7 @@ class SpeechLocalizer:
         self._cache: dict[tuple[str, str, str], str] = {}
 
     def localize(self, text: str, *, language_hint: str = "auto", prosody_style: str = "") -> str:
-        clean = " ".join(str(text or "").split()).strip()
+        clean = _normalize_transcript(text)
         if not clean:
             return ""
 
@@ -96,22 +96,38 @@ class SpeechLocalizer:
             client = genai.Client(api_key=api_key)
             style_line = _style_line(prosody_style)
             prompt = (
-                "Translate the sentence into natural, gentle, polite Japanese for a soft anime girl "
+                "Translate the transcript into natural, gentle, polite Japanese for a soft anime girl "
                 "desktop companion speaking to her Master/Ngài. Keep the meaning. Do not add stage "
-                "directions, quotes, explanations, romanization, or the original text.\n"
+                "directions, quotes, explanations, romanization, or the original text. Preserve line "
+                "breaks as short breath groups; keep the same line order whenever possible.\n"
                 f"{style_line}\n\n"
-                f"Sentence: {text}"
+                "Transcript:\n"
+                f"{text}"
             )
             response = client.models.generate_content(
                 model=os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "gemini-2.5-flash").strip(),
                 contents=prompt,
             )
-            out = " ".join(str(getattr(response, "text", "") or "").split()).strip()
-            out = out.strip('"').strip("'").strip()
+            out = _clean_translation_output(getattr(response, "text", "") or "")
             return out or text
         except Exception as exc:
             logger.warning("[TTS.Localizer] Dịch sang JP lỗi: %s", exc)
             return text
+
+
+def _normalize_transcript(text: str) -> str:
+    """Giữ line break như nhịp thở, chỉ dọn khoảng trắng nội dòng."""
+    raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [" ".join(line.split()).strip() for line in raw.split("\n")]
+    return "\n".join(line for line in lines if line).strip()
+
+
+def _clean_translation_output(text: str) -> str:
+    """Dọn output dịch nhưng không flatten nhiều dòng thành một dòng."""
+    raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    raw = raw.strip().strip('"').strip("'").strip()
+    lines = [" ".join(line.split()).strip() for line in raw.split("\n")]
+    return "\n".join(line for line in lines if line).strip()
 
 
 def _style_line(style: str) -> str:

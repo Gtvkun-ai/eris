@@ -17,14 +17,32 @@ _LEADING_TAG_RE = re.compile(r"^\s*\[[^\]]+\]\s*")
 
 
 def render_tts_markup(text: str, plan: ProsodyPlan) -> str:
-    clean = " ".join(str(text or "").split()).strip()
-    if not clean:
+    lines = _normalize_lines(text)
+    if not lines:
         return ""
 
-    marked = _apply_pause(clean, plan)
+    # Giữ line break như "beat" diễn xuất. Trước đây ta flatten thành một dòng,
+    # khiến Gemini mất dấu chỗ nào cần nghỉ ngắn/chỗ nào là nhịp châm chọc.
+    marked_lines = [_apply_pause(line, plan) for line in lines]
+    marked = "\n".join(marked_lines).strip()
     if plan.opening_tag and not _LEADING_TAG_RE.match(marked):
         marked = f"{plan.opening_tag} {marked}".strip()
     return marked
+
+
+def _normalize_lines(text: str) -> list[str]:
+    """Chuẩn hoá transcript nhưng không xoá nhịp dòng.
+
+    TTS Gemini hiểu prompt tự nhiên tốt hơn khi transcript có line break rõ.
+    Mỗi dòng nên là một breath group ngắn, không phải đoạn văn dài.
+    """
+    raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    out: list[str] = []
+    for line in raw.split("\n"):
+        clean = " ".join(line.split()).strip()
+        if clean:
+            out.append(clean)
+    return out
 
 
 def _apply_pause(text: str, plan: ProsodyPlan) -> str:

@@ -30,8 +30,9 @@ def _join_tts_segments(frames: list[StageFrame]) -> str:
 
     Không chèn tag vào đây; prosody/markup vẫn thuộc ``tts_engine``. Dấu câu sẵn
     có trong từng segment đủ cho Gemini tạo ngắt nhịp tự nhiên trong cùng audio.
+    Dùng line break thay vì dấu cách để mỗi segment là một breath group ngắn.
     """
-    return " ".join(str(frame.tts_text or "").strip() for frame in frames if str(frame.tts_text or "").strip()).strip()
+    return "\n".join(str(frame.tts_text or "").strip() for frame in frames if str(frame.tts_text or "").strip()).strip()
 
 
 class StageDispatcher:
@@ -89,7 +90,8 @@ class StageDispatcher:
         if len(frame_list) > 1:
             notes = (
                 f"{notes} Read the transcript as one continuous turn with natural short pauses "
-                f"between the {len(frame_list)} sentence segments; do not insert long silence."
+                f"between the {len(frame_list)} sentence segments. Treat line breaks as short speech beats, "
+                "not long silence."
             ).strip()
         inline_frame = replace(base, segment_id=0, tts_text=joined, prosody_notes=notes)
 

@@ -68,6 +68,16 @@ def _language_hint() -> str:
     return os.environ.get("ERIS_TTS_LANGUAGE", "auto").strip()
 
 
+def _quality_mode() -> str:
+    """balanced | high.
+
+    ``high`` không gọi thêm API; nó chỉ đổi prompt/markup để Gemini diễn câu kỹ
+    hơn. Nếu cần latency thấp hơn, set ERIS_TTS_QUALITY=balanced.
+    """
+    value = os.environ.get("ERIS_TTS_QUALITY", "high").strip().lower()
+    return value if value in {"balanced", "high"} else "high"
+
+
 def _queue_size() -> int:
     raw = os.environ.get("ERIS_TTS_QUEUE_SIZE", "4").strip()
     try:
@@ -162,6 +172,7 @@ def _build_tts_prompt(
     *,
     prosody_notes: str = "",
     prelocalized: bool = False,
+    quality_mode: str = "high",
 ) -> str:
     """
     Xây dựng prompt TTS theo format advanced prompting của Gemini.
@@ -196,9 +207,26 @@ def _build_tts_prompt(
 
     # Inject audio tag vào đầu transcript
     tagged_text = f"{audio_tag} {text}".strip() if audio_tag else text
+    quality = str(quality_mode or "high").strip().lower()
+    if quality not in {"balanced", "high"}:
+        quality = "high"
+
     prosody_line = ""
     if prosody_notes:
         prosody_line = f"Line performance: {prosody_notes}\n"
+
+    performance_rules = ""
+    transcript_title = "## TRANSCRIPT"
+    if quality == "high":
+        transcript_title = "## PERFORMANCE SCRIPT"
+        performance_rules = (
+            "Performance rules:\n"
+            "- Bracketed audio tags are acting directions. Never speak the tag text aloud.\n"
+            "- Line breaks are short speech beats, usually under 350ms; avoid long silence between lines.\n"
+            "- For dry teasing or deadpan lines, press the final phrase lightly, as if amused but unimpressed.\n"
+            "- Keep the anime quality understated: close, crisp, and alive, not theatrical or childish.\n"
+            "- Do not read ellipses as words; use them only as tiny pauses.\n\n"
+        )
 
     prompt = (
         "# AUDIO PROFILE: Eris\n"
@@ -210,10 +238,11 @@ def _build_tts_prompt(
         "Style: Soft anime girl voice. Slightly breathy. Youthful but with interior depth.\n"
         "Emotionally nuanced — not flat, not over-the-top. Warmth is subtle, not bubbly.\n"
         "Apply this voice style to whatever language the transcript is in.\n\n"
-        "Pacing: Unhurried. Let silences breathe. Natural pauses.\n\n"
+        "Pacing: Unhurried but responsive. Let tiny silences breathe; do not stall between short lines.\n\n"
+        f"{performance_rules}"
         f"{prosody_line}"
         f"{lang_line}"
-        "## TRANSCRIPT\n"
+        f"{transcript_title}\n"
         f"{tagged_text}\n"
     )
     return prompt
@@ -585,6 +614,7 @@ class _TtsWorker:
                         self._language_hint,
                         prosody_notes=prosody_plan.director_notes,
                         prelocalized=localized or req.prelocalized,
+                        quality_mode=_quality_mode(),
                     )
 
                     logger.debug(
@@ -739,13 +769,19 @@ class TtsEngine:
 
 
 def _clean_text(text: str) -> str:
-    """Bỏ markdown, code fence, URL khỏi text trước khi đọc."""
-    t = text or ""
+    """Bỏ markdown/code/URL trước khi đọc, nhưng giữ line break có chủ ý."""
+    t = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"```.*?```", "", t, flags=re.S)
     t = re.sub(r"\*{1,2}([^*]*)\*{1,2}", r"\1", t)
     t = re.sub(r"_{1,2}([^_]*)_{1,2}", r"\1", t)
     t = re.sub(r"`{1,3}[^`]*`{1,3}", "", t)
     t = re.sub(r"https?://\S+", "", t)
-    t = re.sub(r"\s+", " ", t).strip()
+    # Space ngang thì gọn lại; newline giữ lại để stage/dispatcher truyền nhịp
+    # sang Gemini như các breath group ngắn.
+    t = re.sub(r"[ \t\f\v]+", " ", t)
+    t = re.sub(r" *\n+ *", "\n", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    t = "\n".join(line.strip() for line in t.split("\n")).strip()
     return t
 
 
