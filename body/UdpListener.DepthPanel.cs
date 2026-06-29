@@ -64,6 +64,121 @@ public partial class UdpListener : Node2D
 		public string Accent { get; set; } = "pink";
 	}
 
+	private sealed class DepthContextChipView
+	{
+		public Control Root { get; set; }
+		public Panel IconBg { get; set; }
+		public Label IconLabel { get; set; }
+		public Label TitleLabel { get; set; }
+		public Label MetaLabel { get; set; }
+		public string Key { get; set; } = "";
+	}
+
+	private sealed partial class DepthEmotionSparklineView : Control
+	{
+		private readonly List<float> _values = new();
+
+		public void SetValues(IReadOnlyList<float> values)
+		{
+			_values.Clear();
+			if (values != null)
+			{
+				foreach (float value in values)
+					_values.Add(Mathf.Clamp(value, 0f, 1f));
+			}
+
+			QueueRedraw();
+		}
+
+		public override void _Draw()
+		{
+			Vector2 size = Size;
+			if (size.X <= 2f || size.Y <= 2f)
+				return;
+
+			var gridColor = new Color(0.98f, 0.58f, 0.74f, 0.13f);
+			var midColor = new Color(0.98f, 0.44f, 0.67f, 0.20f);
+			var glowColor = new Color(1f, 0.40f, 0.66f, 0.22f);
+			var lineColor = new Color(0.96f, 0.22f, 0.55f, 0.92f);
+			var pointColor = new Color(1f, 0.50f, 0.70f, 0.95f);
+
+			// Grid mảnh để giữ cảm giác "đồ thị", nhưng alpha thấp để không đè nền PNG.
+			for (int i = 0; i <= 10; i++)
+			{
+				float x = size.X * i / 10f;
+				DrawLine(new Vector2(x, 0f), new Vector2(x, size.Y), gridColor, 1f, true);
+			}
+			for (int i = 0; i <= 4; i++)
+			{
+				float y = size.Y * i / 4f;
+				DrawLine(new Vector2(0f, y), new Vector2(size.X, y), i == 2 ? midColor : gridColor, 1f, true);
+			}
+
+			var points = BuildSmoothPoints(size);
+			if (points.Count < 2)
+				return;
+
+			for (int i = 1; i < points.Count; i++)
+			{
+				DrawLine(points[i - 1], points[i], glowColor, 5f, true);
+				DrawLine(points[i - 1], points[i], lineColor, 1.6f, true);
+			}
+
+			Vector2 last = points[^1];
+			DrawCircle(last, 6.0f, new Color(1f, 0.48f, 0.70f, 0.18f));
+			DrawCircle(last, 3.6f, pointColor);
+			DrawCircle(new Vector2(Mathf.Clamp(last.X + 10f, 0f, size.X), last.Y), 5.0f, new Color(1f, 0.46f, 0.68f, 0.78f));
+		}
+
+		private List<Vector2> BuildSmoothPoints(Vector2 size)
+		{
+			var source = _values.Count >= 2 ? _values : DefaultPreviewValues();
+			var anchors = new List<Vector2>();
+			float step = source.Count <= 1 ? size.X : size.X / (source.Count - 1);
+			for (int i = 0; i < source.Count; i++)
+			{
+				float x = step * i;
+				float y = Mathf.Lerp(size.Y * 0.84f, size.Y * 0.16f, Mathf.Clamp(source[i], 0f, 1f));
+				anchors.Add(new Vector2(x, y));
+			}
+
+			var smooth = new List<Vector2>();
+			for (int i = 0; i < anchors.Count - 1; i++)
+			{
+				Vector2 p0 = anchors[Math.Max(i - 1, 0)];
+				Vector2 p1 = anchors[i];
+				Vector2 p2 = anchors[i + 1];
+				Vector2 p3 = anchors[Math.Min(i + 2, anchors.Count - 1)];
+
+				for (int sample = 0; sample < 6; sample++)
+				{
+					float t = sample / 6f;
+					smooth.Add(CatmullRom(p0, p1, p2, p3, t));
+				}
+			}
+			smooth.Add(anchors[^1]);
+			return smooth;
+		}
+
+		private static Vector2 CatmullRom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t)
+		{
+			float t2 = t * t;
+			float t3 = t2 * t;
+			return (
+				(p1 * 2f)
+				+ (-p0 + p2) * t
+				+ (p0 * 2f - p1 * 5f + p2 * 4f - p3) * t2
+				+ (-p0 + p1 * 3f - p2 * 3f + p3) * t3) * 0.5f;
+		}
+
+		private static List<float> DefaultPreviewValues() => new()
+		{
+			0.54f, 0.57f, 0.51f, 0.60f, 0.52f, 0.56f, 0.49f,
+			0.58f, 0.61f, 0.53f, 0.59f, 0.55f, 0.62f, 0.57f,
+			0.60f, 0.52f, 0.56f, 0.50f, 0.58f,
+		};
+	}
+
 	private static readonly Vector2 DepthPanelMinSize = new(1497f, 988f);
 	private static readonly Vector2 DepthPanelArtworkSize = new(1497f, 988f);
 	private const float DepthPanelViewportMargin = 32f;
@@ -115,6 +230,10 @@ public partial class UdpListener : Node2D
 	private Label _depthAutoSwitchModeLabel;
 	private Label _depthAutoSwitchPolicyLabel;
 	private Label _depthAutoSwitchGlyphLabel;
+	private readonly Dictionary<string, DepthContextChipView> _depthContextChips = new();
+	private DepthEmotionSparklineView _depthEmotionSparkline;
+	private Label _depthEmotionLeftLabel;
+	private Label _depthEmotionRightLabel;
 
 	private string _latestDepthJson = "";
 	private Font _depthFontRegular;
@@ -806,11 +925,250 @@ public partial class UdpListener : Node2D
 		};
 	}
 
-	private void BuildDepthContextFrame(Control parent) =>
-		AddDepthFrameImage(parent, DepthContextFramePath, SlotContext);
+	private void BuildDepthContextFrame(Control parent)
+	{
+		var root = CreateDepthFrameRoot(parent, "DepthContextFrame", SlotContext, DepthContextFramePath);
+		if (root == null)
+			return;
 
-	private void BuildDepthEmotionJournalFrame(Control parent) =>
-		AddDepthFrameImage(parent, DepthEmotionJournalFramePath, SlotEmotionJournal);
+		_depthContextChips.Clear();
+		AddDepthContextChip(root, "quiet", "♪", "Yên tĩnh", "nền thấp", RectLTRB(0.050f, 0.330f, 0.175f, 0.850f));
+		AddDepthContextChip(root, "alone", "●", "Chỉ có Ngài", "phiên riêng", RectLTRB(0.185f, 0.330f, 0.315f, 0.850f));
+		AddDepthContextChip(root, "interrupt", "□", "Không bị", "chen ngang", RectLTRB(0.320f, 0.330f, 0.465f, 0.850f));
+		AddDepthContextChip(root, "time", "☾", "Thời gian", "tối muộn", RectLTRB(0.470f, 0.330f, 0.610f, 0.850f));
+	}
+
+	private void AddDepthContextChip(Control root, string key, string icon, string title, string meta, Rect2 slot)
+	{
+		var item = new Control
+		{
+			Name = $"DepthContextChip_{key}",
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		PlaceBySlot(item, slot);
+		root.AddChild(item);
+
+		var iconBg = new Panel
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		PlaceBySlot(iconBg, RectLTRB(0.320f, 0.000f, 0.680f, 0.370f));
+		item.AddChild(iconBg);
+
+		var iconLabel = CreateDepthTextLabel(icon, 12, new Color(0.96f, 0.28f, 0.56f), bold: true);
+		iconLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		iconLabel.VerticalAlignment = VerticalAlignment.Center;
+		iconLabel.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		iconBg.AddChild(iconLabel);
+
+		var titleLabel = CreateDepthTextLabel(title, 7, new Color(0.72f, 0.24f, 0.46f), bold: true);
+		titleLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		titleLabel.VerticalAlignment = VerticalAlignment.Center;
+		titleLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		titleLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(titleLabel, RectLTRB(0.000f, 0.445f, 1.000f, 0.640f));
+		item.AddChild(titleLabel);
+
+		var metaLabel = CreateDepthTextLabel(meta, 6, new Color(0.58f, 0.30f, 0.44f, 0.82f));
+		metaLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		metaLabel.VerticalAlignment = VerticalAlignment.Center;
+		metaLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		metaLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(metaLabel, RectLTRB(0.000f, 0.640f, 1.000f, 0.875f));
+		item.AddChild(metaLabel);
+
+		var view = new DepthContextChipView
+		{
+			Root = item,
+			IconBg = iconBg,
+			IconLabel = iconLabel,
+			TitleLabel = titleLabel,
+			MetaLabel = metaLabel,
+			Key = key,
+		};
+		_depthContextChips[key] = view;
+		ApplyDepthContextChipStyle(view, active: true);
+	}
+
+	private void ApplyDepthContextDefaults()
+	{
+		ApplyDepthContextContent(new List<string> { DepthContextCurrentTimeTag(), "quiet", "just_you" }, "attentive");
+	}
+
+	private void ApplyDepthV2Context(JsonElement root)
+	{
+		var tags = new List<string>();
+		string focusMode = DepthV2FocusMode(root);
+		if (root.TryGetProperty("context", out var context) && context.ValueKind == JsonValueKind.Object)
+		{
+			focusMode = JsonText(context, "focus_mode", focusMode);
+			if (context.TryGetProperty("tags", out var rawTags) && rawTags.ValueKind == JsonValueKind.Array)
+			{
+				foreach (var raw in rawTags.EnumerateArray())
+				{
+					if (raw.ValueKind != JsonValueKind.String)
+						continue;
+					string tag = NormalizeDepthKind(raw.GetString() ?? "");
+					if (!string.IsNullOrWhiteSpace(tag) && !tags.Contains(tag))
+						tags.Add(tag);
+				}
+			}
+		}
+
+		if (tags.Count == 0)
+			tags.AddRange(new[] { "quiet", "just_you" });
+
+		ApplyDepthContextContent(tags, focusMode);
+	}
+
+	private void ApplyDepthContextContent(List<string> tags, string focusMode)
+	{
+		bool quiet = DepthContextHasTag(tags, "quiet", "silent", "calm", "low_noise", "ambient");
+		bool alone = DepthContextHasTag(tags, "just_you", "alone", "private", "one_on_one", "solo");
+		bool interrupted = DepthContextHasTag(tags, "interrupt", "interrupted", "busy", "crowded", "noisy");
+		string timeLabel = DepthContextTimeLabel(tags);
+
+		ApplyDepthContextChip("quiet", "♪", quiet ? "Yên tĩnh" : "Có nhiễu", quiet ? "nền thấp" : "nền động", quiet);
+		ApplyDepthContextChip("alone", "●", alone ? "Chỉ có Ngài" : "Bối cảnh mở", alone ? "phiên riêng" : "nhiều tín hiệu", alone);
+		ApplyDepthContextChip("interrupt", "□", interrupted ? "Có chen" : "Không bị", interrupted ? "vừa ngắt lời" : "chen ngang", !interrupted);
+		ApplyDepthContextChip("time", DepthContextTimeIcon(timeLabel), "Thời gian", timeLabel, true);
+
+		// Focus mode chưa cần hiện thành dòng riêng; nó chỉ giúp chip yên tĩnh đổi sắc
+		// khi backend báo chế độ rất nhẹ. UI nhỏ nên giữ thông tin cô đọng như ảnh mẫu.
+		if (NormalizeDepthKind(focusMode) == "quiet")
+			ApplyDepthContextChip("quiet", "♪", "Yên tĩnh", "nhịp thấp", true);
+	}
+
+	private void ApplyDepthContextChip(string key, string icon, string title, string meta, bool active)
+	{
+		if (!_depthContextChips.TryGetValue(key, out var chip) || chip == null)
+			return;
+
+		UpdateDepthLabelText(chip.IconLabel, icon);
+		UpdateDepthLabelText(chip.TitleLabel, TrimDepthUiText(title, 16));
+		UpdateDepthLabelText(chip.MetaLabel, TrimDepthUiText(meta, 18));
+		ApplyDepthContextChipStyle(chip, active);
+	}
+
+	private void ApplyDepthContextChipStyle(DepthContextChipView chip, bool active)
+	{
+		if (chip?.IconBg == null)
+			return;
+
+		Color bg = active
+			? new Color(1f, 0.88f, 0.94f, 0.72f)
+			: new Color(0.94f, 0.86f, 0.90f, 0.46f);
+		Color border = active
+			? new Color(0.98f, 0.60f, 0.76f, 0.62f)
+			: new Color(0.78f, 0.64f, 0.70f, 0.34f);
+		Color icon = active
+			? new Color(0.96f, 0.24f, 0.55f, 0.95f)
+			: new Color(0.62f, 0.42f, 0.52f, 0.58f);
+		Color title = active
+			? new Color(0.72f, 0.24f, 0.46f, 0.95f)
+			: new Color(0.58f, 0.38f, 0.48f, 0.62f);
+		Color meta = active
+			? new Color(0.58f, 0.30f, 0.44f, 0.82f)
+			: new Color(0.52f, 0.38f, 0.46f, 0.52f);
+
+		chip.IconBg.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = bg,
+			BorderColor = border,
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 18,
+			CornerRadiusTopRight = 18,
+			CornerRadiusBottomLeft = 18,
+			CornerRadiusBottomRight = 18,
+		});
+		chip.IconLabel?.AddThemeColorOverride("font_color", icon);
+		chip.TitleLabel?.AddThemeColorOverride("font_color", title);
+		chip.MetaLabel?.AddThemeColorOverride("font_color", meta);
+	}
+
+	private static bool DepthContextHasTag(List<string> tags, params string[] candidates)
+	{
+		if (tags == null || candidates == null)
+			return false;
+		foreach (string candidate in candidates)
+		{
+			string normalized = NormalizeDepthKind(candidate);
+			foreach (string tag in tags)
+			{
+				if (NormalizeDepthKind(tag) == normalized)
+					return true;
+			}
+		}
+		return false;
+	}
+
+	private static string DepthContextTimeLabel(List<string> tags)
+	{
+		if (DepthContextHasTag(tags, "late_night"))
+			return "tối muộn";
+		if (DepthContextHasTag(tags, "evening"))
+			return "buổi tối";
+		if (DepthContextHasTag(tags, "afternoon"))
+			return "buổi chiều";
+		if (DepthContextHasTag(tags, "morning"))
+			return "buổi sáng";
+		return "hiện tại";
+	}
+
+	private static string DepthContextCurrentTimeTag()
+	{
+		int hour = DateTime.Now.Hour;
+		if (hour >= 5 && hour < 12)
+			return "morning";
+		if (hour >= 12 && hour < 18)
+			return "afternoon";
+		if (hour >= 18 && hour < 24)
+			return "evening";
+		return "late_night";
+	}
+
+	private static string DepthContextTimeIcon(string timeLabel)
+	{
+		return timeLabel switch
+		{
+			"buổi sáng" => "☼",
+			"buổi chiều" => "◐",
+			"buổi tối" or "tối muộn" => "☾",
+			_ => "•",
+		};
+	}
+
+	private void BuildDepthEmotionJournalFrame(Control parent)
+	{
+		var root = CreateDepthFrameRoot(parent, "DepthEmotionJournalFrame", SlotEmotionJournal, DepthEmotionJournalFramePath);
+		if (root == null)
+			return;
+
+		_depthEmotionSparkline = new DepthEmotionSparklineView
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		PlaceBySlot(_depthEmotionSparkline, RectLTRB(0.055f, 0.305f, 0.945f, 0.655f));
+		root.AddChild(_depthEmotionSparkline);
+
+		_depthEmotionLeftLabel = CreateDepthTextLabel("ổn định", 8, new Color(0.70f, 0.30f, 0.48f), bold: true);
+		_depthEmotionLeftLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_depthEmotionLeftLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		_depthEmotionLeftLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthEmotionLeftLabel, RectLTRB(0.060f, 0.725f, 0.350f, 0.850f));
+		root.AddChild(_depthEmotionLeftLabel);
+
+		_depthEmotionRightLabel = CreateDepthTextLabel("hơi tích cực", 8, new Color(0.72f, 0.20f, 0.46f), bold: true);
+		_depthEmotionRightLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_depthEmotionRightLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		_depthEmotionRightLabel.HorizontalAlignment = HorizontalAlignment.Right;
+		_depthEmotionRightLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthEmotionRightLabel, RectLTRB(0.590f, 0.725f, 0.935f, 0.850f));
+		root.AddChild(_depthEmotionRightLabel);
+	}
 
 	private Control CreateDepthFrameRoot(Control parent, string name, Rect2 slot, string resourcePath)
 	{
@@ -1093,6 +1451,8 @@ public partial class UdpListener : Node2D
 		ApplyDepthInteriorityEmpty("đang sắp xếp suy nghĩ...✦");
 		ApplyDepthPriorityDefaults("attentive");
 		ApplyDepthSignalTimelineEmpty("timeline chờ tín hiệu ✦");
+		ApplyDepthContextDefaults();
+		ApplyDepthEmotionJournalDefaults();
 
 		if (!string.IsNullOrWhiteSpace(_latestDepthV2Json))
 		{
@@ -1102,12 +1462,14 @@ public partial class UdpListener : Node2D
 				if (doc.RootElement.ValueKind == JsonValueKind.Object)
 				{
 					ApplyDepthV2Affect(doc.RootElement);
+					ApplyDepthV2EmotionJournal(doc.RootElement);
 					ApplyDepthV2Tom(doc.RootElement);
 					ApplyDepthV2SelfContinuity(doc.RootElement);
 					ApplyDepthV2AutoSwitch(doc.RootElement);
 					ApplyDepthV2Interiority(doc.RootElement);
 					ApplyDepthV2Priorities(doc.RootElement);
 					ApplyDepthV2SignalTimeline(doc.RootElement);
+					ApplyDepthV2Context(doc.RootElement);
 					return;
 				}
 			}
@@ -1125,6 +1487,7 @@ public partial class UdpListener : Node2D
 				if (doc.RootElement.ValueKind == JsonValueKind.Object)
 				{
 					ApplyLegacyDepthAffect(doc.RootElement);
+					ApplyLegacyDepthEmotionJournal(doc.RootElement);
 					ApplyLegacyDepthTom(doc.RootElement);
 					ApplyLegacyDepthAutoSwitch(doc.RootElement);
 					ApplyLegacyDepthInteriority(doc.RootElement);
@@ -1152,6 +1515,42 @@ public partial class UdpListener : Node2D
 			stability = Mathf.Clamp(JsonFloat(metrics, "stability", 0.72f), 0f, 1f);
 
 		ApplyDepthAffectContent(headline, subtext, stability);
+	}
+
+	private void ApplyDepthV2EmotionJournal(JsonElement root)
+	{
+		var values = new List<float>();
+		float latestValue = 0.58f;
+		float stability = 0.72f;
+
+		if (root.TryGetProperty("affect_history", out var history) && history.ValueKind == JsonValueKind.Array)
+		{
+			foreach (var raw in history.EnumerateArray())
+			{
+				if (raw.ValueKind != JsonValueKind.Object)
+					continue;
+
+				float value = JsonFloat(raw, "value", JsonFloat(raw, "positive_bias", 0.5f));
+				latestValue = Mathf.Clamp(value, 0f, 1f);
+				stability = Mathf.Clamp(JsonFloat(raw, "stability", stability), 0f, 1f);
+				values.Add(latestValue);
+				if (values.Count > 28)
+					values.RemoveAt(0);
+			}
+		}
+
+		if (values.Count < 2
+			&& root.TryGetProperty("affect", out var affect)
+			&& affect.ValueKind == JsonValueKind.Object
+			&& affect.TryGetProperty("metrics", out var metrics)
+			&& metrics.ValueKind == JsonValueKind.Object)
+		{
+			latestValue = Mathf.Clamp(JsonFloat(metrics, "positive_bias", latestValue), 0f, 1f);
+			stability = Mathf.Clamp(JsonFloat(metrics, "stability", stability), 0f, 1f);
+			values = BuildDepthEmotionFallbackValues(latestValue, stability);
+		}
+
+		ApplyDepthEmotionJournalContent(values, stability, latestValue);
 	}
 
 	private void ApplyDepthV2Tom(JsonElement root)
@@ -2100,7 +2499,7 @@ public partial class UdpListener : Node2D
 			};
 		}
 
-		private void ApplyLegacyDepthAffect(JsonElement root)
+	private void ApplyLegacyDepthAffect(JsonElement root)
 	{
 		if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
 			return;
@@ -2119,6 +2518,21 @@ public partial class UdpListener : Node2D
 		ApplyDepthAffectContent(headline, subtext, stability);
 	}
 
+	private void ApplyLegacyDepthEmotionJournal(JsonElement root)
+	{
+		if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
+			return;
+		if (!depth.TryGetProperty("affect", out var affect) || affect.ValueKind != JsonValueKind.Object)
+			return;
+
+		float valence = Mathf.Clamp(JsonFloat(affect, "valence", 0f), -1f, 1f);
+		float arousal = Mathf.Clamp(JsonFloat(affect, "arousal", 0.3f), 0f, 1f);
+		float latestValue = Mathf.Clamp((valence + 1f) * 0.5f, 0f, 1f);
+		float stability = Mathf.Clamp((1f - arousal) * 0.78f, 0f, 1f);
+
+		ApplyDepthEmotionJournalContent(BuildDepthEmotionFallbackValues(latestValue, stability), stability, latestValue);
+	}
+
 	private void ApplyDepthAffectContent(string headline, string subtext, float stability)
 	{
 		string safeHeadline = string.IsNullOrWhiteSpace(headline) ? "Bình tĩnh" : headline.Trim();
@@ -2131,6 +2545,58 @@ public partial class UdpListener : Node2D
 		if (_depthAffectStabilityBar != null)
 			_depthAffectStabilityBar.Value = clampedStability;
 		UpdateDepthLabelText(_depthAffectStabilityPctLabel, $"{Mathf.RoundToInt(clampedStability * 100f)}%");
+	}
+
+	private void ApplyDepthEmotionJournalDefaults()
+	{
+		ApplyDepthEmotionJournalContent(BuildDepthEmotionFallbackValues(0.58f, 0.72f), 0.72f, 0.58f);
+	}
+
+	private void ApplyDepthEmotionJournalContent(List<float> values, float stability, float latestValue)
+	{
+		var safeValues = values == null || values.Count < 2
+			? BuildDepthEmotionFallbackValues(latestValue, stability)
+			: values;
+
+		_depthEmotionSparkline?.SetValues(safeValues);
+		UpdateDepthLabelText(_depthEmotionLeftLabel, DepthEmotionStabilityLabel(stability));
+		UpdateDepthLabelText(_depthEmotionRightLabel, DepthEmotionMoodLabel(latestValue));
+	}
+
+	private static List<float> BuildDepthEmotionFallbackValues(float center, float stability)
+	{
+		float safeCenter = Mathf.Clamp(center, 0.18f, 0.82f);
+		float wave = Mathf.Lerp(0.105f, 0.030f, Mathf.Clamp(stability, 0f, 1f));
+		var values = new List<float>();
+		for (int i = 0; i < 19; i++)
+		{
+			float slow = Mathf.Sin(i * 1.18f) * wave;
+			float quick = Mathf.Sin(i * 2.75f + 0.45f) * wave * 0.42f;
+			values.Add(Mathf.Clamp(safeCenter + slow + quick, 0.06f, 0.94f));
+		}
+		return values;
+	}
+
+	private static string DepthEmotionStabilityLabel(float stability)
+	{
+		float safe = Mathf.Clamp(stability, 0f, 1f);
+		if (safe >= 0.70f)
+			return "ổn định";
+		if (safe >= 0.45f)
+			return "dao động nhẹ";
+		return "nhiễu cảm xúc";
+	}
+
+	private static string DepthEmotionMoodLabel(float latestValue)
+	{
+		float safe = Mathf.Clamp(latestValue, 0f, 1f);
+		if (safe >= 0.62f)
+			return "tích cực";
+		if (safe >= 0.54f)
+			return "hơi tích cực";
+		if (safe <= 0.38f)
+			return "hơi nặng";
+		return "trung tính";
 	}
 
 	private void UpdateDepthLabelText(Label label, string text)

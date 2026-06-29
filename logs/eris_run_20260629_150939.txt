@@ -1,0 +1,96 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-06-29 15:09:39
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+15:09:39.876 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+15:09:39.876 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+15:09:39.891 [INFO] [Vision] Da khoi chay vision.py PID=5364
+15:09:41.476 [INFO] [vision.py] [Vision][INFO] Đang dùng remote API làm cognition chính.
+15:09:41.476 [INFO] [vision.py] [LLM][INFO] Dung OpenAI-compatible API tai https://api.groq.com/openai/v1 voi model llama-3.1-8b-instant
+15:09:41.477 [INFO] [vision.py] [LLM][INFO] Dung Gemini speech API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-31b-it
+15:09:41.477 [INFO] [vision.py] [Vision][INFO] Speech/style client đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+15:09:41.477 [INFO] [vision.py] [LLM][INFO] Dung vision API tai https://api.shopaikey.com/v1 voi model gpt-4o-mini
+15:09:41.477 [INFO] [vision.py] [Vision][INFO] Vision facts client đã sẵn sàng.
+15:09:41.477 [INFO] [vision.py] [LLM][INFO] Chat fallback chain: gpt-4o-mini -> gemini-2.5-flash
+15:09:41.477 [INFO] [vision.py] [LLM][INFO] Escalation client (Gemini) san sang tai https://generativelanguage.googleapis.com/v1beta voi model gemini-2.5-flash
+15:09:41.477 [INFO] [vision.py] [Vision][INFO] Escalation client (bái sư) đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+15:09:41.477 [INFO] [vision.py] [Vision][INFO] Mô hình đã sẵn sàng.
+15:09:41.749 [INFO] [vision.py] [Loop][INFO] [depth] auto-enable cờ chiều-sâu: {'emotional_consequence': True, 'development_growth': True, 'interior_surface': True, 'tom_advisor': True, 'real_embeddings': True, 'private_mind': True}
+15:09:41.829 [INFO] [vision.py] [Loop][INFO] Epistemic V2 ready in authoritative mode; cognitive state writes use V2.
+15:09:41.833 [INFO] [vision.py] [Loop][INFO] [vision structure] tầng-2 cấu trúc-hoá REMOTE qua gpt-4o-mini (caption→JSON).
+15:09:41.833 [INFO] [vision.py] [Loop][INFO] [vision caption] caption stage chạy REMOTE (gpt-4o-mini); bỏ moondream local.
+15:09:41.834 [INFO] [vision.py] [Loop][INFO] Model inference scheduler đã bọc llm_service và sensory adapter: main, vision, sensory.
+15:09:41.835 [INFO] [vision.py] [Loop][INFO] [PrivateMind API] ready fragment(llamacpp/src/qwen3-1.7b-q4_k_m.gguf)×5 + synthesis(openai_compatible/llama-3.1-8b-instant)×1
+15:09:41.840 [INFO] [vision.py] [Loop][INFO] [InnerDiary fallback] ready provider=openai_compatible model=qwen-plus-character
+15:09:41.904 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=469 budget=6000 cap=4800
+15:09:41.916 [INFO] [vision.py] [Loop][INFO] tutor: Master_Switch BẬT — đang dựng Curiosity Tutor daemon
+15:09:41.917 [INFO] [vision.py] [Loop][INFO] tutor: KnowledgeProvider sẵn sàng (SituationModel sẽ nối khi pipeline dựng)
+15:09:42.337 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=491 budget=6000 cap=4800
+15:09:42.826 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=485 budget=6000 cap=4800
+15:09:43.818 [INFO] [vision.py] [TTS][INFO] [TTS] Khởi động. Model=gemini-2.5-flash-preview-tts Voice=Leda Language=ja
+15:09:43.819 [INFO] [vision.py] [Loop][INFO] --- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---
+15:09:44.627 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=335 budget=1000000 cap=850000
+15:09:52.681 [INFO] [vision.py] [Loop][INFO] [session_ritual raw] {"text": "Ngài mở lại rồi à.", "intent": "session_ritual", "action": {"type": "none"}, "reasoning_tags": ["session_ritual", "greeting_cognition"], "should_speak": true, "confidence": 0.76, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "debug_trace": "session_ritual_deterministic; situation=low_evidence_start | low_evidence_no_llm", "next_animation": "", "system_action": "", "action_input": ""}
+15:09:52.780 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent LLM greeting text="Ngài mở lại rồi à."
+15:09:53.308 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent greeting
+15:09:53.602 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:09:58.256 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+15:09:58.256 [INFO] [vision.py] [Loop][INFO] [Observer] action=call_vision_compressor salience=0.93 error=0.00 focus=unknown intent=unknown
+15:09:58.256 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.13 user_presence=0.48 novelty=0.75 repetition=0.00
+15:09:58.378 [INFO] [vision.py] [Loop][INFO] [wake governor] level=call_vision_compressor ext=0.22 internal=0.04 permission=0.82 interrupt=0.18 speech=0.11 wants_vision=True vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+15:10:04.989 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=default model=gpt-4o-mini est_tokens=757 budget=30000 cap=25500
+15:10:07.671 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=autonomous count=1 novelty=new_screen_fact trace=gpt-4o-mini:app_interface:affect=neutral:delta=0 fact=An application interface focused on emotional well-being and tracking. (affect: neutral)
+15:10:07.697 [INFO] [vision.py] [Loop][INFO] [wake route] level=call_vision_compressor reason=wake_governor_vision_only body_update=True sleep=5s
+15:10:07.697 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 14.10s. Nghỉ 5s.
+15:10:10.086 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=395 budget=6000 cap=4800
+15:10:10.635 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.53 pressure=0.32 surface=no mutations=2
+15:10:13.363 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:10:14.432 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+15:10:14.432 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.34 error=0.00 focus=chat intent=communicating
+15:10:14.433 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.14 user_presence=0.48 novelty=0.46 repetition=1.00
+15:10:14.580 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.24 internal=0.07 permission=0.69 interrupt=0.31 speech=0.15 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.08 cycles=1 micro_checked=False reengagement_checked=False
+15:10:14.670 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=False reengagement_allowed=False
+15:10:14.671 [INFO] [vision.py] [Loop][INFO] [presence.micro] stage=pre_gate owner=presence_probe checked=True candidate=True allowed=False rejected_by=presence_blocked_until generation_mode=none
+15:10:14.671 [INFO] [vision.py] [Loop][INFO] [presence.reengagement] stage=pre_gate owner=reengagement_probe checked=True candidate=True allowed=False rejected_by=presence_blocked_until generation_mode=none
+15:10:14.672 [INFO] [vision.py] [Loop][INFO] [presence.surface] stage=pre_gate micro=reject:presence_blocked_until reengagement=reject:presence_blocked_until final=no_surface final_rejected_by=presence_blocked_until
+15:10:14.691 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=0 concerns=0 judgment=no confidence=0.00 pressure=0.00 surface=no mutations=0
+15:10:14.746 [INFO] [vision.py] [Loop][INFO] [wake route] level=observe_only reason=wake_governor_observe_only body_update=False sleep=15s
+15:10:14.747 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 1.38s. Nghỉ 15s.
+15:10:30.090 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:10:30.415 [INFO] [vision.py] [Loop][INFO] [Observer] mode=rule model=disabled
+15:10:30.415 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.00 error=0.00 focus=chat intent=communicating
+15:10:30.419 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.14 user_presence=0.68 novelty=0.08 repetition=1.00
+15:10:30.542 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.20 internal=0.09 permission=0.61 interrupt=0.39 speech=0.17 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.17 cycles=2 micro_checked=False reengagement_checked=False
+15:10:30.597 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=False
+15:10:30.618 [INFO] [vision.py] [Loop][INFO] [surface_seed_compiler] kind=presence_maintenance selected=True source=inner_diary reason=selected confidence=0.66 public_anchor=True
+15:10:30.618 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] input kind=presence_maintenance silent_cycles=3 force_llm=True cue_should_call_llm=True cue_missing_evidence_ids=False
+15:10:30.620 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=3537 budget=6000 cap=4800
+15:10:30.631 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=0 concerns=0 judgment=no confidence=0.00 pressure=0.00 surface=no mutations=0
+15:10:31.299 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=initial kind=private_life_surface force=True raw='Mình đang nghĩ về việc tạo residue cần kiểm, có liên quan gì không?' sanitized='Mình đang nghĩ về việc tạo residue cần kiểm, có liên quan gì không?' reason=warn_only_passed:too_many_words:14>12,newline_or_excess_question,question_not_allowed
+15:10:31.300 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] output kind=private_life_surface mode=force_llm should_speak=True body_only=False reason=private_life_surface_seed
+15:10:31.412 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] state commits rejected=1/3 first=store concrete cognitive turn as episodic memory
+15:10:31.513 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-2 | channel=autonomous | broadcast=<none>:0.00 | speech=none/no_speech | appraisal=grounded | action=no_speech/no_speech | final=Mình đang nghĩ về việc tạo residue cần kiểm, có liên quan gì không? | commits=2/3 rejected=1 errors=0
+15:10:31.882 [INFO] [vision.py] [Loop][INFO] [wake gate reflex] parse_mode=spontaneous text=Mình đang nghĩ về việc tạo residue cần kiểm, có liên quan gì không?
+15:10:31.882 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated reflex trong 1.79s. Nghỉ 40s.
+15:11:12.387 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+15:11:13.350 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+15:11:13.350 [INFO] [vision.py] [Loop][INFO] [Observer] action=observe_only salience=0.40 error=0.00 focus=unknown intent=unknown
+15:11:13.350 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.14 user_presence=0.48 novelty=0.52 repetition=1.00
+15:11:13.499 [INFO] [vision.py] [Loop][INFO] [wake governor] level=observe_only ext=0.24 internal=0.11 permission=0.56 interrupt=0.44 speech=0.15 wants_vision=False vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+15:11:13.531 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=False
+15:11:13.554 [INFO] [vision.py] [Loop][INFO] [surface_seed_compiler] kind=presence_maintenance selected=True source=inner_diary reason=selected confidence=0.66 public_anchor=True
+15:11:13.555 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] input kind=presence_maintenance silent_cycles=1 force_llm=True cue_should_call_llm=True cue_missing_evidence_ids=False
+15:11:13.557 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=3548 budget=6000 cap=4800
+15:11:13.576 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=0 concerns=0 judgment=no confidence=0.00 pressure=0.00 surface=no mutations=0
+15:11:14.264 [INFO] [vision.py] [Loop][INFO] [micro_presence_draft] stage=initial kind=private_life_surface force=True raw='Tạo residue cần kiểm có vẻ là một ý riêng của Ngài.' sanitized='Tạo residue cần kiểm có vẻ là một ý riêng của Ngài.' reason=ok
+15:11:14.265 [INFO] [vision.py] [Loop][INFO] [surface_arbiter] output kind=private_life_surface mode=force_llm should_speak=True body_only=False reason=private_life_surface_seed
+15:11:14.347 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] state commits rejected=1/3 first=store concrete cognitive turn as episodic memory
+15:11:14.445 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-3 | channel=autonomous | broadcast=<none>:0.00 | speech=none/no_speech | appraisal=grounded | action=no_speech/no_speech | final=Tạo residue cần kiểm có vẻ là một ý riêng của Ngài. | commits=2/3 rejected=1 errors=0
+15:11:14.714 [INFO] [vision.py] [Loop][INFO] [wake gate reflex] parse_mode=spontaneous text=Tạo residue cần kiểm có vẻ là một ý riêng của Ngài.
+15:11:14.714 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated reflex trong 2.33s. Nghỉ 30s.
+15:11:18.842 [INFO] [Vision] Dang dung vision.py PID=5364...
+15:11:18.862 [INFO] [Vision] vision.py da thoat (PID=5364, code=-1).
+15:11:18.877 [INFO] [RunLogger] Ket thuc phien chay.
