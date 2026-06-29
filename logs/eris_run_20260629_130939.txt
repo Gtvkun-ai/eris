@@ -1,0 +1,51 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-06-29 13:09:39
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+13:09:39.979 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:09:39.979 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:09:39.993 [INFO] [Vision] Da khoi chay vision.py PID=17852
+13:09:41.805 [INFO] [vision.py] [Vision][INFO] Đang dùng remote API làm cognition chính.
+13:09:41.805 [INFO] [vision.py] [LLM][INFO] Dung OpenAI-compatible API tai https://api.groq.com/openai/v1 voi model llama-3.1-8b-instant
+13:09:41.806 [INFO] [vision.py] [LLM][INFO] Dung Gemini speech API tai https://generativelanguage.googleapis.com/v1beta voi model gemma-4-31b-it
+13:09:41.807 [INFO] [vision.py] [Vision][INFO] Speech/style client đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+13:09:41.807 [INFO] [vision.py] [LLM][INFO] Dung vision API tai https://api.shopaikey.com/v1 voi model gpt-4o-mini
+13:09:41.808 [INFO] [vision.py] [Vision][INFO] Vision facts client đã sẵn sàng.
+13:09:41.808 [INFO] [vision.py] [LLM][INFO] Chat fallback chain: gpt-4o-mini -> gemini-2.5-flash
+13:09:41.809 [INFO] [vision.py] [LLM][INFO] Escalation client (Gemini) san sang tai https://generativelanguage.googleapis.com/v1beta voi model gemini-2.5-flash
+13:09:41.809 [INFO] [vision.py] [Vision][INFO] Escalation client (bái sư) đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+13:09:41.809 [INFO] [vision.py] [Vision][INFO] Mô hình đã sẵn sàng.
+13:09:42.160 [INFO] [vision.py] [Loop][INFO] [depth] auto-enable cờ chiều-sâu: {'emotional_consequence': True, 'development_growth': True, 'interior_surface': True, 'tom_advisor': True, 'real_embeddings': True, 'private_mind': True}
+13:09:42.225 [INFO] [vision.py] [Loop][INFO] Epistemic V2 ready in authoritative mode; cognitive state writes use V2.
+13:09:42.227 [INFO] [vision.py] [Loop][INFO] [vision structure] tầng-2 cấu trúc-hoá REMOTE qua gpt-4o-mini (caption→JSON).
+13:09:42.227 [INFO] [vision.py] [Loop][INFO] [vision caption] caption stage chạy REMOTE (gpt-4o-mini); bỏ moondream local.
+13:09:42.228 [INFO] [vision.py] [Loop][INFO] Model inference scheduler đã bọc llm_service và sensory adapter: main, vision, sensory.
+13:09:42.228 [INFO] [vision.py] [Loop][INFO] [PrivateMind API] ready fragment(llamacpp/src/qwen3-1.7b-q4_k_m.gguf)×5 + synthesis(openai_compatible/llama-3.1-8b-instant)×1
+13:09:42.249 [INFO] [vision.py] [Loop][INFO] [InnerDiary fallback] ready provider=openai_compatible model=qwen-plus-character
+13:09:42.305 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=469 budget=6000 cap=4800
+13:09:42.327 [INFO] [vision.py] [Loop][INFO] tutor: Master_Switch BẬT — đang dựng Curiosity Tutor daemon
+13:09:42.327 [INFO] [vision.py] [Loop][INFO] tutor: KnowledgeProvider sẵn sàng (SituationModel sẽ nối khi pipeline dựng)
+13:09:42.960 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=491 budget=6000 cap=4800
+13:09:43.694 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=485 budget=6000 cap=4800
+13:09:44.130 [INFO] [vision.py] [TTS][INFO] [TTS] Khởi động. Model=gemini-2.5-flash-preview-tts Voice=Leda Language=ja
+13:09:44.130 [INFO] [vision.py] [Loop][INFO] --- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---
+13:09:44.994 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemma-4-31b-it est_tokens=335 budget=1000000 cap=850000
+13:09:52.994 [INFO] [vision.py] [Loop][INFO] [session_ritual raw] {"text": "Ngài đến rồi.", "intent": "session_ritual", "action": {"type": "none"}, "reasoning_tags": ["session_ritual", "greeting_cognition"], "should_speak": true, "confidence": 0.76, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "debug_trace": "session_ritual_deterministic; situation=low_evidence_start | low_evidence_no_llm", "next_animation": "", "system_action": "", "action_input": ""}
+13:09:53.096 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent LLM greeting text="Ngài đến rồi."
+13:09:53.550 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent greeting
+13:09:53.847 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+13:09:54.086 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị rate limit/hết quota (lượt 1/9). Đang xoay key...
+13:09:54.086 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] mark dead index=0 cooldown=60s alive=8/9
+13:09:56.745 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+13:09:56.745 [INFO] [vision.py] [Loop][INFO] [Observer] action=call_vision_compressor salience=0.93 error=0.00 focus=unknown intent=unknown
+13:09:56.745 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.10 user_presence=0.48 novelty=0.75 repetition=0.00
+13:09:56.862 [INFO] [vision.py] [Loop][INFO] [wake governor] level=call_vision_compressor ext=0.22 internal=0.03 permission=0.82 interrupt=0.18 speech=0.10 wants_vision=True vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+13:10:00.957 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=default model=gpt-4o-mini est_tokens=760 budget=30000 cap=25500
+13:10:05.707 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=llama-3.1-8b-instant est_tokens=387 budget=6000 cap=4800
+13:10:06.803 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.53 pressure=0.32 surface=no mutations=2
+13:10:17.021 [INFO] [Vision] Dang dung vision.py PID=17852...
+13:10:17.037 [INFO] [Vision] vision.py da thoat (PID=17852, code=-1).
+13:10:17.052 [INFO] [RunLogger] Ket thuc phien chay.

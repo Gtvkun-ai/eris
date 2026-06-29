@@ -29,6 +29,12 @@ public partial class UdpListener : Node2D
 		public List<PrivateMindDiaryItem> Items { get; init; } = new();
 	}
 
+	private sealed class ScheduledBodyTimelineEvent
+	{
+		public BodyTimelineEvent Event { get; init; }
+		public bool Applied { get; set; }
+	}
+
 	private PacketPeerUdp _udp = new PacketPeerUdp();
 	private int _port = 4242;
 	private AnimatedSprite2D _monika;
@@ -186,6 +192,10 @@ public partial class UdpListener : Node2D
 	private Vector2 _bubbleBasePos; // vị trí gốc của bubble trong không gian local của sprite
 	private float _autonomousMoveCooldown = 0f;
 	private double _lastRemoteMotionAt = 0.0;
+	private readonly List<ScheduledBodyTimelineEvent> _bodyTimelineQueue = new();
+	private ulong _bodyTimelineStartedAtMs = 0;
+	private ulong _bodyTimelineActiveUntilMs = 0;
+	private string _bodyTimelineTurnId = "";
 
 	[Export] public bool EnableAutonomousIdleMovement = true;
 	[Export] public float AutonomousIdleMoveMinSeconds = 5.0f;
@@ -532,6 +542,7 @@ public partial class UdpListener : Node2D
 		}
 		else
 		{
+			UpdateBodyTimeline();
 			_motion.Step(ref pos, screenSize, d);
 			_body.Position = pos;
 			UpdateLocalBodyAutonomy(d);
@@ -3394,9 +3405,89 @@ public partial class UdpListener : Node2D
 			_bubble.GlobalPosition = new Vector2(clampedX, bubbleGlobal.Y);
 	}
 
+	private void ScheduleBodyTimeline(BodyTimeline timeline)
+	{
+		if (timeline == null || !timeline.HasEvents || _motion == null)
+			return;
+
+		_bodyTimelineQueue.Clear();
+		foreach (var item in timeline.Events)
+		{
+			if (item == null)
+				continue;
+			_bodyTimelineQueue.Add(new ScheduledBodyTimelineEvent { Event = item });
+		}
+
+		_bodyTimelineQueue.Sort((a, b) => a.Event.AtMs.CompareTo(b.Event.AtMs));
+		_bodyTimelineStartedAtMs = Time.GetTicksMsec();
+		int durationMs = Math.Max(timeline.DurationMs, 250);
+		foreach (var item in _bodyTimelineQueue)
+			durationMs = Math.Max(durationMs, item.Event.AtMs + Math.Max(120, item.Event.DurationMs));
+
+		// Khi stage đang diễn một act ngắn, tắt idle tự động một nhịp để pose không
+		// bị đè bởi autonomy local.  Đây chỉ là cửa sổ mềm; drag/user motion vẫn chạy.
+		_bodyTimelineActiveUntilMs = _bodyTimelineStartedAtMs + (ulong)Math.Min(durationMs + 350, 30000);
+		_bodyTimelineTurnId = timeline.TurnId ?? "";
+		_lastRemoteMotionAt = GetRuntimeSeconds();
+	}
+
+	private void UpdateBodyTimeline()
+	{
+		if (_bodyTimelineQueue.Count == 0)
+		{
+			if (Time.GetTicksMsec() > _bodyTimelineActiveUntilMs)
+				_bodyTimelineTurnId = "";
+			return;
+		}
+
+		ulong now = Time.GetTicksMsec();
+		ulong elapsed = now >= _bodyTimelineStartedAtMs ? now - _bodyTimelineStartedAtMs : 0;
+		bool allApplied = true;
+		foreach (var item in _bodyTimelineQueue)
+		{
+			if (item.Applied)
+				continue;
+			allApplied = false;
+			if (elapsed < (ulong)Math.Max(0, item.Event.AtMs))
+				continue;
+
+			ApplyBodyTimelineEvent(item.Event);
+			item.Applied = true;
+		}
+
+		if (allApplied || _bodyTimelineQueue.TrueForAll(item => item.Applied))
+			_bodyTimelineQueue.Clear();
+	}
+
+	private bool HasActiveBodyTimeline()
+	{
+		return Time.GetTicksMsec() <= _bodyTimelineActiveUntilMs;
+	}
+
+	private void ApplyBodyTimelineEvent(BodyTimelineEvent item)
+	{
+		if (item == null || _motion == null)
+			return;
+		if (!string.Equals(item.Kind, "motion", StringComparison.OrdinalIgnoreCase))
+			return;
+
+		_motion.ApplyCommand(
+			new MotionCommand(
+				intent: item.Intent,
+				poseAnimation: item.Name,
+				nextAnimation: "",
+				bounceAction: "",
+				facingDir: item.Facing,
+				targetX: item.TargetX),
+			_body.Position,
+			GetViewportRect().Size);
+	}
+
 	private void UpdateLocalBodyAutonomy(float delta)
 	{
 		if (!EnableAutonomousIdleMovement || _bodyAutonomy == null || _motion == null)
+			return;
+		if (HasActiveBodyTimeline())
 			return;
 
 		_bodyAutonomy.TickMinSeconds = AutonomousIdleMoveMinSeconds;
@@ -3572,13 +3663,15 @@ public partial class UdpListener : Node2D
 				GD.Print($"[AI Debug] parser={payload.ParserTrace}");
 		}
 
-		if (payload.HasRemoteMotion)
+		if (payload.HasRemoteMotion || payload.HasBodyTimeline)
 			_lastRemoteMotionAt = GetRuntimeSeconds();
 
 		if (payload.ShouldSpeak && (payload.HasTextField || !payload.ParsedJson) && !string.IsNullOrWhiteSpace(payload.Text))
 			ApplyTypewriterEffect(payload.Text);
 
-		if (payload.HasExplicitMotion)
+		if (payload.HasBodyTimeline)
+			ScheduleBodyTimeline(payload.BodyTimeline);
+		else if (payload.HasExplicitMotion)
 			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
 	}
 

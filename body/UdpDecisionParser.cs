@@ -21,6 +21,8 @@ public sealed class UdpDecisionPayload
 	public bool HasEmotionDebug { get; init; }
 	public string PrivateMindDebugJson { get; init; } = "";
 	public bool HasPrivateMindDebug { get; init; }
+	public BodyTimeline BodyTimeline { get; init; }
+	public bool HasBodyTimeline { get; init; }
 }
 
 public sealed class EmotionDebugItem
@@ -177,6 +179,8 @@ public sealed class UdpDecisionParser
 		bool hasEmotionDebug = false;
 		string privateMindDebugJson = "";
 		bool hasPrivateMindDebug = false;
+		BodyTimeline bodyTimeline = null;
+		bool hasBodyTimeline = false;
 
 		try
 		{
@@ -191,6 +195,8 @@ public sealed class UdpDecisionParser
 				hasEmotionDebug = true;
 			if (TryReadPrivateMindDebugJson(root, out privateMindDebugJson))
 				hasPrivateMindDebug = true;
+			if (BodyTimeline.TryFromJson(root, out bodyTimeline))
+				hasBodyTimeline = true;
 			if (root.TryGetProperty("text", out var t))
 			{
 				text = t.GetString() ?? "";
@@ -271,6 +277,8 @@ public sealed class UdpDecisionParser
 			HasEmotionDebug = hasEmotionDebug,
 			PrivateMindDebugJson = privateMindDebugJson,
 			HasPrivateMindDebug = hasPrivateMindDebug,
+			BodyTimeline = bodyTimeline,
+			HasBodyTimeline = hasBodyTimeline,
 		};
 	}
 
@@ -351,5 +359,175 @@ public sealed class UdpDecisionParser
 		if (!string.IsNullOrWhiteSpace(nextAnimation))
 			return true;
 		return !string.Equals(animation, "stand", StringComparison.Ordinal);
+	}
+}
+
+public sealed class BodyTimelineEvent
+{
+	public int AtMs { get; init; }
+	public string Kind { get; init; } = "motion";
+	public string Name { get; init; } = "stand";
+	public int DurationMs { get; init; }
+	public string Intent { get; init; } = "pose";
+	public int Facing { get; init; }
+	public float TargetX { get; init; } = -1f;
+}
+
+public sealed class BodyTimeline
+{
+	private static readonly Dictionary<string, string> AnimAliases = new()
+	{
+		{ "walk", "stand_walk" },
+		{ "walking", "stand_walk" },
+		{ "run", "stand_walk" },
+		{ "running", "stand_walk" },
+		{ "wave", "stand" },
+		{ "idle", "stand" },
+	};
+
+	private static readonly HashSet<string> ValidAnimations = new()
+	{
+		"stand", "sit_down", "sit", "sit_up", "read", "stand_walk",
+		"piano", "clone", "divine", "hop", "jump", "sleep", "sad",
+		"food", "affection", "climb", "climb_top", "air_swing_l", "air_swing_r",
+		"air", "shime", "idle",
+	};
+
+	public string TurnId { get; init; } = "";
+	public int DurationMs { get; init; }
+	public string Source { get; init; } = "";
+	public List<BodyTimelineEvent> Events { get; init; } = new();
+	public bool HasEvents => Events.Count > 0;
+
+	public static bool TryFromJson(JsonElement root, out BodyTimeline timeline)
+	{
+		timeline = null;
+		if (!TryGetTimelineRoot(root, out var timelineRoot))
+			return false;
+		if (!timelineRoot.TryGetProperty("events", out var eventsRoot) || eventsRoot.ValueKind != JsonValueKind.Array)
+			return false;
+
+		var events = new List<BodyTimelineEvent>();
+		foreach (var item in eventsRoot.EnumerateArray())
+		{
+			if (item.ValueKind != JsonValueKind.Object)
+				continue;
+
+			string name = NormalizeAnimationName(ReadString(item, "name"));
+			if (string.IsNullOrWhiteSpace(name))
+				continue;
+
+			events.Add(new BodyTimelineEvent
+			{
+				AtMs = ClampInt(ReadInt(item, "at_ms", 0), 0, 30000),
+				Kind = NormalizeKind(ReadString(item, "kind")),
+				Name = name,
+				DurationMs = ClampInt(ReadInt(item, "duration_ms", 0), 0, 30000),
+				Intent = NormalizeIntent(ReadString(item, "intent")),
+				Facing = ClampFacing(ReadInt(item, "facing", 0)),
+				TargetX = ClampTarget(ReadFloat(item, "target_x", -1f)),
+			});
+		}
+
+		if (events.Count == 0)
+			return false;
+
+		events.Sort((a, b) => a.AtMs.CompareTo(b.AtMs));
+		int durationMs = ClampInt(ReadInt(timelineRoot, "duration_ms", 0), 0, 30000);
+		if (durationMs <= 0)
+		{
+			foreach (var e in events)
+				durationMs = Math.Max(durationMs, e.AtMs + Math.Max(120, e.DurationMs));
+		}
+
+		timeline = new BodyTimeline
+		{
+			TurnId = ReadString(timelineRoot, "turn_id"),
+			DurationMs = durationMs,
+			Source = ReadString(timelineRoot, "source"),
+			Events = events,
+		};
+		return true;
+	}
+
+	private static bool TryGetTimelineRoot(JsonElement root, out JsonElement timelineRoot)
+	{
+		if (
+			root.TryGetProperty("stage", out var stage)
+			&& stage.ValueKind == JsonValueKind.Object
+			&& stage.TryGetProperty("body_timeline", out timelineRoot)
+			&& timelineRoot.ValueKind == JsonValueKind.Object)
+		{
+			return true;
+		}
+		if (root.TryGetProperty("body_timeline", out timelineRoot) && timelineRoot.ValueKind == JsonValueKind.Object)
+			return true;
+
+		timelineRoot = default;
+		return false;
+	}
+
+	private static string NormalizeAnimationName(string animation)
+	{
+		string value = (animation ?? "").Trim();
+		if (string.IsNullOrEmpty(value))
+			return "";
+		if (AnimAliases.TryGetValue(value, out var mapped))
+			value = mapped;
+		return ValidAnimations.Contains(value) ? value : "stand";
+	}
+
+	private static string NormalizeKind(string kind)
+	{
+		string value = (kind ?? "").Trim().ToLowerInvariant();
+		return value == "motion" ? "motion" : "motion";
+	}
+
+	private static string NormalizeIntent(string intent)
+	{
+		string value = (intent ?? "").Trim().ToLowerInvariant();
+		return value is "pose" or "face" or "walk" or "walk_to" ? value : "pose";
+	}
+
+	private static int ClampFacing(int value)
+	{
+		return value < 0 ? -1 : value > 0 ? 1 : 0;
+	}
+
+	private static float ClampTarget(float value)
+	{
+		if (value < 0f)
+			return -1f;
+		return Mathf.Clamp(value, 0f, 1f);
+	}
+
+	private static int ClampInt(int value, int min, int max)
+	{
+		return Math.Max(min, Math.Min(max, value));
+	}
+
+	private static string ReadString(JsonElement root, string propertyName)
+	{
+		return root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+			? value.GetString() ?? ""
+			: "";
+	}
+
+	private static int ReadInt(JsonElement root, string propertyName, int defaultValue)
+	{
+		if (!root.TryGetProperty(propertyName, out var value))
+			return defaultValue;
+		if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int parsed))
+			return parsed;
+		return defaultValue;
+	}
+
+	private static float ReadFloat(JsonElement root, string propertyName, float defaultValue)
+	{
+		if (!root.TryGetProperty(propertyName, out var value))
+			return defaultValue;
+		if (value.ValueKind == JsonValueKind.Number && value.TryGetSingle(out float parsed))
+			return parsed;
+		return defaultValue;
 	}
 }
