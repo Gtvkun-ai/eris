@@ -25,6 +25,10 @@ def _dispatch_mode() -> str:
     return value if value in {"inline", "queued"} else "inline"
 
 
+def _task_manager_enabled() -> bool:
+    return os.environ.get("ERIS_TTS_TASK_MANAGER", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _join_tts_segments(frames: list[StageFrame]) -> str:
     """Ghép segment thành một transcript liên tục để tránh nhiều call TTS.
 
@@ -66,6 +70,32 @@ class StageDispatcher:
         frame_list = [frame for frame in frames if str(frame.tts_text or "").strip()]
         if not frame_list or tts_engine is None or not getattr(tts_engine, "_ok", False):
             return False
+
+        if _task_manager_enabled():
+            try:
+                manager = getattr(tts_engine, "task_manager", None)
+                if manager is None:
+                    from runtime.stage_audio_bus import StageAudioBus
+                    from runtime.tts_task_manager import TtsTaskManager
+
+                    # Manager sống cùng engine để cancel_current/shutdown có thể
+                    # chạm đúng queue đang phát khi user chen vào.
+                    manager = TtsTaskManager(audio_bus=StageAudioBus())
+                    setattr(tts_engine, "task_manager", manager)
+                scheduled = manager.dispatch_frames(
+                    frame_list,
+                    backend=tts_engine,
+                    valence=valence,
+                    arousal=arousal,
+                    stance=stance,
+                    on_first_start=on_first_start,
+                    on_event=on_event,
+                )
+                if scheduled:
+                    return True
+            except Exception:
+                # Fallback giữ Eris có tiếng nói kể cả khi manager mới lỗi.
+                pass
 
         if _dispatch_mode() == "inline" or len(frame_list) == 1:
             return self._dispatch_inline(

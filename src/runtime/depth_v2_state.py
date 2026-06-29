@@ -93,6 +93,14 @@ def _float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def _bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _clamp01(value: Any, default: float = 0.0) -> float:
     return max(0.0, min(1.0, _float(value, default)))
 
@@ -218,6 +226,75 @@ def _anchor_depth_summary(private_mind_digest: Mapping[str, Any] | None) -> dict
             "safe_mode": bool(switches.get("safe_mode", True)),
             "deception_count": int(_float(deception.get("count"), 0.0)),
         },
+    }
+
+
+def _autoswitch_block(
+    *,
+    flags: Mapping[str, Any] | None,
+    safety: Mapping[str, Any] | None,
+    expression_gate: Mapping[str, Any] | None,
+    tom_text: str,
+) -> dict[str, Any]:
+    """Tóm tắt riêng cho khung ``CÔNG TẮC · TỰ BẬT``.
+
+    Body/Godot chỉ render chip và footer, không tự đoán quá nhiều từ các block
+    khác. Vì vậy Python gửi sẵn nhãn, trạng thái bật/tắt và policy đang thắng.
+    Nếu flag thiếu nhưng tín hiệu live có thật, chip vẫn sáng để panel không bị
+    "ảnh nền có chữ" khi runtime mới khởi động hoặc control-file chưa seed xong.
+    """
+    states = _dict(flags)
+    safety_block = _dict(safety)
+    gate = _dict(expression_gate)
+    n1_live = bool(gate) and max(
+        _clamp01(gate.get("want_to_say"), 0.0),
+        _clamp01(gate.get("suppression_pressure"), 0.0),
+        _clamp01(gate.get("allowed_expression"), 0.0),
+    ) > 0.0
+
+    chip_defs = (
+        ("n1", "N1", "emotional_consequence", n1_live, "pink"),
+        ("n2", "N2", "development_growth", False, "pink"),
+        ("interiority", "interiority", "interior_surface", False, "pink"),
+        ("tom", "tom", "tom_advisor", bool(_text(tom_text)), "pink"),
+        ("embed", "embed", "real_embeddings", False, "mint"),
+        ("mind", "mind", "private_mind", False, "mint"),
+    )
+    chips: list[dict[str, Any]] = []
+    for key, label, flag_key, live_fallback, accent in chip_defs:
+        active = _bool(states.get(flag_key), False) or bool(live_fallback)
+        chips.append(
+            {
+                "key": key,
+                "label": label,
+                "active": active,
+                "source": flag_key,
+                "accent": accent,
+            }
+        )
+
+    active_count = sum(1 for chip in chips if chip["active"])
+    strict = _bool(safety_block.get("strict_grounding"), True)
+    safe = _bool(safety_block.get("safe_mode"), True)
+    shadow = _bool(safety_block.get("shadow_enabled"), False)
+    deception = _bool(safety_block.get("deception_enabled"), False)
+    if strict and safe:
+        policy = "voice_guarded_plus"
+    elif strict:
+        policy = "strict_grounding"
+    elif safe:
+        policy = "safe_mode"
+    elif shadow or deception:
+        policy = "shadow_permitted"
+    else:
+        policy = "expressive"
+
+    return {
+        "mode": "adaptive" if active_count else "quiet",
+        "policy": policy,
+        "active_count": active_count,
+        "total": len(chips),
+        "chips": chips,
     }
 
 
@@ -690,6 +767,7 @@ def build_depth_v2_state(
     signal_snapshot = _signal_snapshot()
     affect_card = _emotion_board(private_mind_digest)
     anchor_depth = _anchor_depth_summary(private_mind_digest)
+    safety_block = _dict(anchor_depth.get("safety"))
     history = _roll_affect_history(affect_history, affect_card=affect_card, now=ts)
     priorities = _derive_priorities(private_mind_digest, tom_text=tom_read, expression_gate=expression_gate)
     dev = _development_summary()
@@ -716,6 +794,12 @@ def build_depth_v2_state(
         # Contract riêng cho khung "Mô Hình Ngài": body đọc trực tiếp block này,
         # không còn phải suy ra độ dày/nghĩa/gắn bó từ một câu tom_read mơ hồ.
         **anchor_depth,
+        "autoswitch": _autoswitch_block(
+            flags=flags,
+            safety=safety_block,
+            expression_gate=expression_gate,
+            tom_text=tom_read,
+        ),
         "expression": {
             "want": round(_clamp01(gate.get("want_to_say"), 0.0), 3),
             "suppress": round(_clamp01(gate.get("suppression_pressure"), 0.0), 3),

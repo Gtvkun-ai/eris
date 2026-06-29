@@ -710,6 +710,61 @@ class _TtsWorker:
             logger.debug("[TTS] Vocal cache synth miss failed: %s", exc)
             return b""
 
+    def synthesize(self, req: _SpeakRequest) -> bytes:
+        """Sinh WAV cho một request nhưng chưa phát ra loa.
+
+        Đây là cửa backend cho ``TtsTaskManager``: nhiều segment có thể synth song
+        song, còn manager chịu trách nhiệm phát theo đúng ``segment_id``. Worker cũ
+        vẫn dùng đường ``speak`` tuần tự để tương thích với code hiện có.
+        """
+
+        audio_tag = _emotion_to_tag(req.valence, req.arousal, req.stance)
+        vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
+        main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
+        prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
+        text_to_speak = main_text_raw
+        localized = bool(req.prelocalized)
+        if self._language_hint == "ja" and not req.prelocalized:
+            # Dịch/style chạy ở backend nhưng trả về WAV thuần. Manager không cần
+            # biết câu đã localize thế nào, chỉ cần audio bytes để xếp hàng phát.
+            text_to_speak = self._localizer.localize(
+                main_text_raw,
+                language_hint=self._language_hint,
+                prosody_style=req.prosody_style,
+            )
+            localized = text_to_speak != main_text_raw
+        prosody_plan = self._prosody.plan(
+            text_to_speak,
+            stance=req.stance,
+            valence=req.valence,
+            arousal=req.arousal,
+            fallback_tag=audio_tag,
+            notes_hint=req.prosody_notes,
+            style_hint=req.prosody_style,
+        )
+        main_wav = b""
+        if str(text_to_speak or "").strip():
+            marked_text = render_tts_markup(text_to_speak, prosody_plan)
+            prompt = _build_tts_prompt(
+                marked_text,
+                "",
+                self._language_hint,
+                prosody_notes=prosody_plan.director_notes,
+                prelocalized=localized or req.prelocalized,
+                quality_mode=_quality_mode(),
+            )
+            main_wav = _synthesize_wav(prompt, self._voice, self._model)
+
+        logger.debug(
+            "[TTS] valence=%.2f arousal=%.2f stance=%r → style=%r tag=%r",
+            req.valence, req.arousal, req.stance, prosody_plan.style, prosody_plan.opening_tag,
+        )
+
+        prefix_wav = b""
+        if prefix_is_separate:
+            prefix_wav = self._vocal_prefix_wav(req, vocal_prefix, prosody_plan)
+        return _concat_wav_bytes(prefix_wav, main_wav) or main_wav or prefix_wav
+
     def _run(self) -> None:
         while not self._stop_event.is_set():
             try:
@@ -915,15 +970,77 @@ class TtsEngine:
         )
 
     def shutdown(self) -> None:
+        manager = getattr(self, "task_manager", None)
+        if manager is not None and callable(getattr(manager, "shutdown", None)):
+            try:
+                manager.shutdown()
+            except Exception as exc:
+                logger.debug("[TTS] task manager shutdown failed: %s", exc)
         if self._worker is not None:
             self._worker.shutdown()
             self._worker = None
 
     def cancel_current(self, *, reason: str = "cancelled", only_interruptible: bool = True) -> bool:
         """Public API để runtime dừng TTS khi user cắt lượt."""
+        manager = getattr(self, "task_manager", None)
+        if manager is not None and callable(getattr(manager, "cancel_current", None)):
+            try:
+                if manager.cancel_current(reason=reason, only_interruptible=only_interruptible):
+                    return True
+            except Exception as exc:
+                logger.debug("[TTS] task manager cancel failed: %s", exc)
         if not self._ok or self._worker is None:
             return False
         return self._worker.cancel_current(reason=reason, only_interruptible=only_interruptible)
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        valence: float = 0.0,
+        arousal: float = 0.3,
+        stance: str = "",
+        prelocalized: bool = False,
+        prosody_style: str = "",
+        prosody_notes: str = "",
+        turn_id: str = "",
+        segment_id: int = 0,
+        interruptible: bool = True,
+        vocal_cache_kind: str = "",
+        vocal_prefix: str = "",
+    ) -> bytes:
+        """Backend API mới: text sạch -> WAV bytes, chưa phát ra loa."""
+        if not self._ok or self._worker is None:
+            raise RuntimeError("tts_disabled")
+        clean = _clean_text(text)
+        if not clean:
+            return b""
+        req = _SpeakRequest(
+            clean,
+            valence,
+            arousal,
+            stance,
+            None,
+            prelocalized=prelocalized,
+            prosody_style=prosody_style,
+            prosody_notes=prosody_notes,
+            turn_id=turn_id,
+            segment_id=segment_id,
+            interruptible=interruptible,
+            vocal_cache_kind=vocal_cache_kind,
+            vocal_prefix=vocal_prefix,
+            on_event=None,
+        )
+        return self._worker.synthesize(req)
+
+    def play_audio(self, wav_bytes: bytes, stop_event: threading.Event) -> None:
+        """Backend API mới: phát WAV bytes, có cờ dừng từ task manager."""
+        if wav_bytes:
+            _play_wav_bytes(wav_bytes, stop_event)
+
+    def cache_signature(self) -> str:
+        """Chữ ký cấu hình TTS để task manager cache đúng voice/model/style."""
+        return f"{_voice()}|{_model()}|{_language_hint()}|{_quality_mode()}"
 
 
 def _clean_text(text: str) -> str:
