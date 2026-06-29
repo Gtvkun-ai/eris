@@ -128,7 +128,7 @@ public partial class UdpListener : Node2D
 	private static readonly Rect2 SlotPriorities = RectPx(1022f, 154f, 442f, 303f);
 	private static readonly Rect2 SlotSignalLog = RectPx(1022f, 479f, 442f, 235f);
 	private static readonly Rect2 SlotContext = RectPx(444f, 760f, 564f, 182f);
-	private static readonly Rect2 SlotEmotionJournal = RectPx(1004f, 719f, 459f, 249f);
+	private static readonly Rect2 SlotEmotionJournal = RectPx(1022f, 719f, 442f, 249f);
 	private static readonly Rect2 SlotClose = RectPx(1334f, 40f, 132f, 53f);
 
 	private static Rect2 RectPx(float x, float y, float width, float height) =>

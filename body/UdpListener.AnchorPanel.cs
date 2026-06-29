@@ -782,10 +782,10 @@ public partial class UdpListener : Node2D
 			d.GateOpen ? AnchorGreen : AnchorPink
 		);
 		condBadge.SetAnchorsPreset(Control.LayoutPreset.BottomWide);
-		condBadge.AnchorLeft = 0.5f;
-		condBadge.AnchorRight = 0.5f;
-		condBadge.AnchorTop = 0.85f;
-		condBadge.AnchorBottom = 0.85f;
+		condBadge.AnchorLeft = 0.69f;
+		condBadge.AnchorRight = 0.69f;
+		condBadge.AnchorTop = 0.90f;
+		condBadge.AnchorBottom = 0.90f;
 		condBadge.OffsetLeft = -80f;
 		condBadge.OffsetRight = 80f;
 		condBadge.OffsetTop = -13f;
