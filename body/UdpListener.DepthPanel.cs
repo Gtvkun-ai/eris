@@ -56,6 +56,14 @@ public partial class UdpListener : Node2D
 		public string Text { get; set; } = "";
 	}
 
+	private sealed class DepthAutoSwitchChipView
+	{
+		public Panel Root { get; set; }
+		public Label Label { get; set; }
+		public string Key { get; set; } = "";
+		public string Accent { get; set; } = "pink";
+	}
+
 	private static readonly Vector2 DepthPanelMinSize = new(1497f, 988f);
 	private static readonly Vector2 DepthPanelArtworkSize = new(1497f, 988f);
 	private const float DepthPanelViewportMargin = 32f;
@@ -103,6 +111,10 @@ public partial class UdpListener : Node2D
 	private Label _depthPriorityFooterGlyphLabel;
 	private readonly List<DepthSignalTimelineRowView> _depthSignalTimelineRows = new();
 	private Label _depthSignalTimelineStatusLabel;
+	private readonly List<DepthAutoSwitchChipView> _depthAutoSwitchChips = new();
+	private Label _depthAutoSwitchModeLabel;
+	private Label _depthAutoSwitchPolicyLabel;
+	private Label _depthAutoSwitchGlyphLabel;
 
 	private string _latestDepthJson = "";
 	private Font _depthFontRegular;
@@ -409,8 +421,87 @@ public partial class UdpListener : Node2D
 		root.AddChild(_depthSelfStanceValueLabel);
 	}
 
-	private void BuildDepthCollabFrame(Control parent) =>
-		AddDepthFrameImage(parent, DepthCollabFramePath, SlotCollab);
+	private void BuildDepthCollabFrame(Control parent)
+	{
+		var root = CreateDepthFrameRoot(parent, "DepthCollabFrame", SlotCollab, DepthCollabFramePath);
+		if (root == null)
+			return;
+
+		_depthAutoSwitchChips.Clear();
+		AddDepthAutoSwitchChip(root, "n1", "N1", "pink", RectLTRB(0.045f, 0.315f, 0.245f, 0.535f));
+		AddDepthAutoSwitchChip(root, "n2", "N2", "pink", RectLTRB(0.285f, 0.315f, 0.485f, 0.535f));
+		AddDepthAutoSwitchChip(root, "interiority", "interiority", "pink", RectLTRB(0.530f, 0.315f, 0.775f, 0.535f));
+		AddDepthAutoSwitchChip(root, "tom", "tom", "pink", RectLTRB(0.815f, 0.315f, 0.970f, 0.535f));
+		AddDepthAutoSwitchChip(root, "embed", "embed", "mint", RectLTRB(0.045f, 0.610f, 0.305f, 0.830f));
+		AddDepthAutoSwitchChip(root, "mind", "mind", "mint", RectLTRB(0.345f, 0.610f, 0.605f, 0.830f));
+
+		var modeTitle = CreateDepthTextLabel("mode:", 8, new Color(0.66f, 0.36f, 0.50f), bold: true);
+		modeTitle.VerticalAlignment = VerticalAlignment.Center;
+		modeTitle.AutowrapMode = TextServer.AutowrapMode.Off;
+		PlaceBySlot(modeTitle, RectLTRB(0.050f, 0.865f, 0.170f, 0.980f));
+		root.AddChild(modeTitle);
+
+		_depthAutoSwitchModeLabel = CreateDepthTextLabel("adaptive", 8, new Color(0.76f, 0.24f, 0.47f), bold: true);
+		_depthAutoSwitchModeLabel.VerticalAlignment = VerticalAlignment.Center;
+		_depthAutoSwitchModeLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_depthAutoSwitchModeLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(_depthAutoSwitchModeLabel, RectLTRB(0.175f, 0.865f, 0.405f, 0.980f));
+		root.AddChild(_depthAutoSwitchModeLabel);
+
+		var dot = CreateDepthTextLabel("•", 8, new Color(0.93f, 0.35f, 0.58f, 0.82f), bold: true);
+		dot.HorizontalAlignment = HorizontalAlignment.Center;
+		dot.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(dot, RectLTRB(0.405f, 0.865f, 0.455f, 0.980f));
+		root.AddChild(dot);
+
+		var policyTitle = CreateDepthTextLabel("policy:", 8, new Color(0.66f, 0.36f, 0.50f), bold: true);
+		policyTitle.VerticalAlignment = VerticalAlignment.Center;
+		policyTitle.AutowrapMode = TextServer.AutowrapMode.Off;
+		PlaceBySlot(policyTitle, RectLTRB(0.455f, 0.865f, 0.595f, 0.980f));
+		root.AddChild(policyTitle);
+
+		_depthAutoSwitchPolicyLabel = CreateDepthTextLabel("voice_guarded_plus", 8, new Color(0.76f, 0.24f, 0.47f), bold: true);
+		_depthAutoSwitchPolicyLabel.VerticalAlignment = VerticalAlignment.Center;
+		_depthAutoSwitchPolicyLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_depthAutoSwitchPolicyLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(_depthAutoSwitchPolicyLabel, RectLTRB(0.600f, 0.865f, 0.890f, 0.980f));
+		root.AddChild(_depthAutoSwitchPolicyLabel);
+
+		_depthAutoSwitchGlyphLabel = CreateDepthTextLabel("✦  ♥", 9, new Color(0.96f, 0.46f, 0.66f, 0.72f), bold: true);
+		_depthAutoSwitchGlyphLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		_depthAutoSwitchGlyphLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthAutoSwitchGlyphLabel, RectLTRB(0.890f, 0.865f, 0.980f, 0.980f));
+		root.AddChild(_depthAutoSwitchGlyphLabel);
+	}
+
+	private void AddDepthAutoSwitchChip(Control root, string key, string labelText, string accent, Rect2 slot)
+	{
+		// Chip tự scale theo PNG card; không phụ thuộc pixel màn hình nên resize vẫn sạch.
+		var chip = new Panel
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		PlaceBySlot(chip, slot);
+		root.AddChild(chip);
+
+		var label = CreateDepthTextLabel(labelText, 9, new Color(0.82f, 0.26f, 0.50f), bold: true);
+		label.HorizontalAlignment = HorizontalAlignment.Center;
+		label.VerticalAlignment = VerticalAlignment.Center;
+		label.AutowrapMode = TextServer.AutowrapMode.Off;
+		label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		label.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		chip.AddChild(label);
+
+		var view = new DepthAutoSwitchChipView
+		{
+			Root = chip,
+			Label = label,
+			Key = key,
+			Accent = accent,
+		};
+		_depthAutoSwitchChips.Add(view);
+		ApplyDepthAutoSwitchChipStyle(view, active: true, accent);
+	}
 
 	private void BuildDepthInteriorityFrame(Control parent)
 	{
@@ -998,6 +1089,7 @@ public partial class UdpListener : Node2D
 			topBelief: "belief: chưa có");
 
 		ApplyDepthSelfContinuityContent(0f, 0f, 0f, "chưa rõ");
+		ApplyDepthAutoSwitchDefaults();
 		ApplyDepthInteriorityEmpty("đang sắp xếp suy nghĩ...✦");
 		ApplyDepthPriorityDefaults("attentive");
 		ApplyDepthSignalTimelineEmpty("timeline chờ tín hiệu ✦");
@@ -1012,6 +1104,7 @@ public partial class UdpListener : Node2D
 					ApplyDepthV2Affect(doc.RootElement);
 					ApplyDepthV2Tom(doc.RootElement);
 					ApplyDepthV2SelfContinuity(doc.RootElement);
+					ApplyDepthV2AutoSwitch(doc.RootElement);
 					ApplyDepthV2Interiority(doc.RootElement);
 					ApplyDepthV2Priorities(doc.RootElement);
 					ApplyDepthV2SignalTimeline(doc.RootElement);
@@ -1033,6 +1126,7 @@ public partial class UdpListener : Node2D
 				{
 					ApplyLegacyDepthAffect(doc.RootElement);
 					ApplyLegacyDepthTom(doc.RootElement);
+					ApplyLegacyDepthAutoSwitch(doc.RootElement);
 					ApplyLegacyDepthInteriority(doc.RootElement);
 					ApplyLegacyDepthPriorities(doc.RootElement);
 					ApplyLegacyDepthSignalTimeline(doc.RootElement);
@@ -1192,6 +1286,169 @@ public partial class UdpListener : Node2D
 		UpdateDepthLabelText(_depthSelfAllowedValueLabel, $"{safeAllowed:0.00}");
 			UpdateDepthLabelText(_depthSelfStanceValueLabel, safeStance);
 		}
+
+	private void ApplyDepthAutoSwitchDefaults()
+	{
+		var activeByKey = new Dictionary<string, bool>
+		{
+			["n1"] = true,
+			["n2"] = true,
+			["interiority"] = true,
+			["tom"] = true,
+			["embed"] = true,
+			["mind"] = true,
+		};
+		ApplyDepthAutoSwitchContent(activeByKey, null, null, "adaptive", "voice_guarded_plus");
+	}
+
+	private void ApplyDepthV2AutoSwitch(JsonElement root)
+	{
+		if (root.TryGetProperty("autoswitch", out var autoswitch) && autoswitch.ValueKind == JsonValueKind.Object)
+		{
+			var activeByKey = new Dictionary<string, bool>();
+			var labelByKey = new Dictionary<string, string>();
+			var accentByKey = new Dictionary<string, string>();
+			if (autoswitch.TryGetProperty("chips", out var chips) && chips.ValueKind == JsonValueKind.Array)
+			{
+				foreach (var raw in chips.EnumerateArray())
+				{
+					if (raw.ValueKind != JsonValueKind.Object)
+						continue;
+					string key = NormalizeDepthKind(JsonText(raw, "key", ""));
+					if (string.IsNullOrWhiteSpace(key))
+						continue;
+					activeByKey[key] = JsonBool(raw, "active", true);
+					labelByKey[key] = JsonText(raw, "label", HumanizeDepthPhrase(key));
+					accentByKey[key] = JsonText(raw, "accent", "pink");
+				}
+			}
+
+			ApplyDepthAutoSwitchContent(
+				activeByKey,
+				labelByKey,
+				accentByKey,
+				JsonText(autoswitch, "mode", "adaptive"),
+				JsonText(autoswitch, "policy", "voice_guarded_plus"));
+			return;
+		}
+
+		if (root.TryGetProperty("flags", out var flags) && flags.ValueKind == JsonValueKind.Object)
+			ApplyDepthAutoSwitchFromFlags(flags, "adaptive", DepthV2SafetyPolicy(root));
+	}
+
+	private void ApplyLegacyDepthAutoSwitch(JsonElement root)
+	{
+		if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
+			return;
+		if (depth.TryGetProperty("flags", out var flags) && flags.ValueKind == JsonValueKind.Object)
+			ApplyDepthAutoSwitchFromFlags(flags, "adaptive", "voice_guarded_plus");
+	}
+
+	private void ApplyDepthAutoSwitchFromFlags(JsonElement flags, string mode, string policy)
+	{
+		// Mapping này bám theo cortex.depth_flags.KNOWN_FLAGS; UI chỉ đổi tên cho đẹp.
+		var activeByKey = new Dictionary<string, bool>
+		{
+			["n1"] = JsonBool(flags, "emotional_consequence", true),
+			["n2"] = JsonBool(flags, "development_growth", true),
+			["interiority"] = JsonBool(flags, "interior_surface", true),
+			["tom"] = JsonBool(flags, "tom_advisor", true),
+			["embed"] = JsonBool(flags, "real_embeddings", true),
+			["mind"] = JsonBool(flags, "private_mind", true),
+		};
+		ApplyDepthAutoSwitchContent(activeByKey, null, null, mode, policy);
+	}
+
+	private void ApplyDepthAutoSwitchContent(
+		Dictionary<string, bool> activeByKey,
+		Dictionary<string, string> labelByKey,
+		Dictionary<string, string> accentByKey,
+		string mode,
+		string policy)
+	{
+		if (_depthAutoSwitchChips == null)
+			return;
+
+		foreach (var chip in _depthAutoSwitchChips)
+		{
+			bool active = activeByKey == null || !activeByKey.TryGetValue(chip.Key, out bool value) ? true : value;
+			string accent = chip.Accent;
+			if (accentByKey != null && accentByKey.TryGetValue(chip.Key, out var dynamicAccent) && !string.IsNullOrWhiteSpace(dynamicAccent))
+				accent = NormalizeDepthKind(dynamicAccent);
+			if (labelByKey != null && labelByKey.TryGetValue(chip.Key, out var dynamicLabel) && !string.IsNullOrWhiteSpace(dynamicLabel))
+				UpdateDepthLabelText(chip.Label, TrimDepthUiText(dynamicLabel, 16));
+			ApplyDepthAutoSwitchChipStyle(chip, active, accent);
+		}
+
+		UpdateDepthLabelText(_depthAutoSwitchModeLabel, string.IsNullOrWhiteSpace(mode) ? "adaptive" : TrimDepthUiText(NormalizeDepthKind(mode), 18));
+		UpdateDepthLabelText(_depthAutoSwitchPolicyLabel, string.IsNullOrWhiteSpace(policy) ? "voice_guarded_plus" : TrimDepthUiText(NormalizeDepthKind(policy), 24));
+		UpdateDepthLabelText(_depthAutoSwitchGlyphLabel, "✦  ♥");
+	}
+
+	private void ApplyDepthAutoSwitchChipStyle(DepthAutoSwitchChipView chip, bool active, string accent)
+	{
+		if (chip == null || chip.Root == null || chip.Label == null)
+			return;
+
+		bool mint = NormalizeDepthKind(accent) == "mint";
+		Color bg;
+		Color border;
+		Color text;
+		if (active && mint)
+		{
+			bg = new Color(0.92f, 0.97f, 0.93f, 0.82f);
+			border = new Color(0.73f, 0.86f, 0.78f, 0.66f);
+			text = new Color(0.40f, 0.58f, 0.55f, 0.96f);
+		}
+		else if (active)
+		{
+			bg = new Color(1.00f, 0.92f, 0.96f, 0.84f);
+			border = new Color(0.97f, 0.66f, 0.79f, 0.74f);
+			text = new Color(0.82f, 0.25f, 0.50f, 0.98f);
+		}
+		else if (mint)
+		{
+			bg = new Color(0.90f, 0.94f, 0.91f, 0.34f);
+			border = new Color(0.72f, 0.82f, 0.76f, 0.28f);
+			text = new Color(0.42f, 0.56f, 0.54f, 0.46f);
+		}
+		else
+		{
+			bg = new Color(1.00f, 0.92f, 0.96f, 0.34f);
+			border = new Color(0.97f, 0.66f, 0.79f, 0.30f);
+			text = new Color(0.82f, 0.25f, 0.50f, 0.48f);
+		}
+
+		chip.Root.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = bg,
+			BorderColor = border,
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 18,
+			CornerRadiusTopRight = 18,
+			CornerRadiusBottomLeft = 18,
+			CornerRadiusBottomRight = 18,
+		});
+		chip.Label.AddThemeColorOverride("font_color", text);
+	}
+
+	private static string DepthV2SafetyPolicy(JsonElement root)
+	{
+		if (!root.TryGetProperty("safety", out var safety) || safety.ValueKind != JsonValueKind.Object)
+			return "voice_guarded_plus";
+		bool strict = JsonBool(safety, "strict_grounding", true);
+		bool safe = JsonBool(safety, "safe_mode", true);
+		if (strict && safe)
+			return "voice_guarded_plus";
+		if (strict)
+			return "strict_grounding";
+		if (safe)
+			return "safe_mode";
+		return "expressive";
+	}
 
 		private void ApplyDepthV2Interiority(JsonElement root)
 		{
