@@ -101,6 +101,8 @@ class ProsodyDirector:
             if _TEASE_RE.search(haystack) and valence >= -0.1:
                 return "dry_tease"
             return "focused"
+        if any(x in haystack for x in ("curious", "curiosity", "tò mò", "to mo")):
+            return "curious_soft"
         if any(x in haystack for x in ("teasing", "playful", "amused", "warm_playful", "playful_aside")):
             return "soft_tease" if valence >= 0.12 else "dry_tease"
         if _TEASE_RE.search(haystack):
@@ -134,6 +136,14 @@ _STYLE_PLANS: dict[str, ProsodyPlan] = {
         opening_tag="[softly, warm]",
         director_notes="Small warmth in the voice, close but not sentimental.",
         localizer_style="warm_soft",
+    ),
+    "curious_soft": ProsodyPlan(
+        style="curious_soft",
+        opening_tag="[softly, curious]",
+        director_notes="A small curious lift. Gentle, not interrogating; keep the line compact.",
+        pause_level="light",
+        emphasis_mode="last_phrase",
+        localizer_style="curious_soft",
     ),
     "soft_tease": ProsodyPlan(
         style="soft_tease",

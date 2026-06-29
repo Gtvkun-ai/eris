@@ -99,6 +99,7 @@ class StageOutputPipeline:
                     segment_id=index,
                     display_text=segment,
                     tts_text=segment,
+                    memory_text=segment,
                     prosody_style=plan.style,
                     prosody_notes=plan.director_notes,
                 )

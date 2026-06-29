@@ -12,12 +12,13 @@ chứ không phải nhét "(cười khẽ)" vào text.
 
 from __future__ import annotations
 
-import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
 from runtime.prosody_director import ProsodyDirector
+from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
+from runtime.stage_transformers import StageTransformerChain
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,10 +27,13 @@ class StageFrame:
     segment_id: int
     display_text: str
     tts_text: str
+    memory_text: str
     emotion: str
     motion: str
+    actions: tuple[str, ...]
     prosody_style: str
     prosody_notes: str
+    delivery: dict[str, Any]
     interruptible: bool
     source: str
 
@@ -42,42 +46,26 @@ class StageFrame:
                 "segment_id": self.segment_id,
                 "emotion": self.emotion,
                 "motion": self.motion,
+                "actions": list(self.actions),
                 "prosody_style": self.prosody_style,
+                "delivery": self.delivery,
                 "interruptible": self.interruptible,
                 "source": self.source,
             },
         }
 
 
-_URL_RE = re.compile(r"https?://\S+")
-_FENCE_RE = re.compile(r"```.*?```", re.S)
-_INLINE_CODE_RE = re.compile(r"`[^`]*`")
-_MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+", re.M)
-_ACTION_PARENS_RE = re.compile(
-    r"^\s*[\(\[]\s*(?:cười|nhíu mắt|thở|im lặng|nghiêng đầu|liếc|nhìn|gật|lắc|smile|laugh|sigh|whisper)[^\)\]]*[\)\]]\s*",
-    re.I,
-)
+_TRANSFORMERS = StageTransformerChain()
 
 
 def clean_display_text(text: str) -> str:
     """Text cho UI: giữ nội dung, chỉ dọn whitespace/markdown thô."""
-    t = str(text or "")
-    t = _FENCE_RE.sub("[code]", t)
-    t = _MARKDOWN_HEADING_RE.sub("", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
+    return _TRANSFORMERS.transform(text).display_text
 
 
 def clean_tts_source(text: str) -> str:
     """Text nguồn cho TTS: không đọc markdown, URL, code, hay tag diễn xuất."""
-    t = clean_display_text(text)
-    t = _ACTION_PARENS_RE.sub("", t)
-    t = _INLINE_CODE_RE.sub("", t)
-    t = _URL_RE.sub("", t)
-    t = re.sub(r"\*{1,2}([^*]*)\*{1,2}", r"\1", t)
-    t = re.sub(r"_{1,2}([^_]*)_{1,2}", r"\1", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
+    return _TRANSFORMERS.transform(text).tts_text
 
 
 def _safe_float(value: object, default: float = 0.0) -> float:
@@ -153,6 +141,8 @@ class StageFrameBuilder:
         self.localizer = localizer
         self.language_hint = language_hint or "auto"
         self.prosody_director = ProsodyDirector()
+        self.transformers = StageTransformerChain()
+        self.delivery_planner = SpeechDeliveryPlanner()
 
     def build(
         self,
@@ -164,8 +154,9 @@ class StageFrameBuilder:
         turn_id: str | None = None,
         segment_id: int = 0,
     ) -> StageFrame:
-        display_text = clean_display_text(str(payload.get("text", getattr(decision, "text", "")) or ""))
-        tts_source = clean_tts_source(display_text)
+        raw_text = str(payload.get("text", getattr(decision, "text", "")) or "")
+        surfaces = self.transformers.transform(raw_text)
+        tts_source = surfaces.tts_text
         if self.localizer is not None and tts_source:
             try:
                 tts_text = str(self.localizer.localize(tts_source, language_hint=self.language_hint) or "").strip()
@@ -175,7 +166,19 @@ class StageFrameBuilder:
             tts_text = tts_source
 
         should_speak = bool(payload.get("should_speak", getattr(decision, "should_speak", True)))
-        emotion = _emotion_from_payload(payload, frame=frame)
+        affect = affect_signals_from(payload, frame=frame)
+        base_emotion = surfaces.marks.emotion_hint or _emotion_from_payload(payload, frame=frame)
+        explicit_motion = _motion_from_decision(decision)
+        delivery = self.delivery_planner.plan(
+            surfaces.display_text or surfaces.tts_text,
+            intent=str(getattr(decision, "intent", "") or ""),
+            explicit_emotion=base_emotion,
+            explicit_motion=surfaces.marks.motion_hint,
+            extracted_actions=surfaces.marks.actions,
+            affect=affect,
+        )
+        emotion = delivery.emotion or base_emotion
+        motion = explicit_motion if explicit_motion and explicit_motion != "none" else delivery.motion
         valence, arousal, stance = _prosody_numbers(payload, frame=frame)
         prosody = self.prosody_director.plan(
             tts_text,
@@ -184,16 +187,21 @@ class StageFrameBuilder:
             stance=stance,
             valence=valence,
             arousal=arousal,
+            style_hint=delivery.voice_style,
+            notes_hint=delivery.prosody_notes,
         )
         return StageFrame(
             turn_id=str(turn_id or uuid.uuid4().hex),
             segment_id=int(segment_id),
-            display_text=display_text,
+            display_text=surfaces.display_text,
             tts_text=tts_text,
+            memory_text=surfaces.memory_text,
             emotion=emotion,
-            motion=_motion_from_decision(decision),
+            motion=motion or "none",
+            actions=delivery.pre_speech_actions,
             prosody_style=prosody.style,
             prosody_notes=prosody.director_notes,
+            delivery=delivery.to_payload(),
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",
         )

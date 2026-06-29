@@ -1518,7 +1518,6 @@ class RuntimeCoordinator(
             payload["private_mind_digest"] = private_digest
         if isinstance(private_life_digest, dict) and private_life_digest:
             payload["private_life_digest"] = private_life_digest
-        public_turn = self._record_public_turn(decision, payload=payload, channel=channel)
         stage_builder = getattr(self, "stage_frame_builder", None)
         if stage_builder is None:
             # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để
@@ -1530,10 +1529,15 @@ class RuntimeCoordinator(
             payload=payload,
             channel=channel,
             frame=getattr(self, "last_cognitive_frame", None),
-            turn_id=getattr(public_turn, "turn_id", None),
+            turn_id=None,
             segment_id=0,
         )
+        # Từ đây trở đi payload public dùng bề mặt đã qua stage transformer:
+        # UI thấy text sạch, TTS đọc text sạch, memory/chat history lưu memory_text.
+        payload["text"] = stage_frame.display_text
+        payload["memory_text"] = stage_frame.memory_text
         payload.update(stage_frame.to_payload_patch())
+        self._record_public_turn(decision, payload=payload, channel=channel)
         stage_output = getattr(self, "stage_output_pipeline", None)
         if stage_output is None:
             stage_output = StageOutputPipeline()
@@ -1541,9 +1545,14 @@ class RuntimeCoordinator(
         stage_frames = stage_output.frames_for_tts(stage_frame)
         if isinstance(payload.get("stage"), dict):
             payload["stage"]["segment_count"] = len(stage_frames)
-        sync_text = os.environ.get("ERIS_TTS_SYNC_TEXT", "1").strip().lower() in {"1", "true", "yes", "on"}
+        sync_text = os.environ.get("ERIS_TTS_SYNC_TEXT", "0").strip().lower() in {"1", "true", "yes", "on"}
+        text_payload_sent = False
 
         def send_text_payload():
+            nonlocal text_payload_sent
+            if text_payload_sent:
+                return
+            text_payload_sent = True
             try:
                 self.transport.send_json(payload)
             except Exception as e:
@@ -1555,6 +1564,10 @@ class RuntimeCoordinator(
         # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
         _tts = getattr(self, "tts_engine", None)
         has_scheduled_tts = False
+        if not sync_text:
+            # UI/chat không nên im vài giây chỉ vì remote TTS đang synthesize.
+            # TTS lifecycle event sẽ báo audio_start/audio_done riêng sau.
+            send_text_payload()
         if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
             if stage_frames and sync_text:
                 try:
@@ -1576,7 +1589,7 @@ class RuntimeCoordinator(
                         valence=_valence,
                         arousal=_arousal,
                         stance=_stance,
-                        on_first_start=send_text_payload,
+                        on_first_start=send_text_payload if sync_text else None,
                         on_event=handle_tts_event,
                     )
                 except Exception as _tts_exc:
@@ -1615,10 +1628,10 @@ class RuntimeCoordinator(
         if (
             channel != "chat"
             and bool(payload.get("should_speak"))
-            and str(payload.get("text", "") or "").strip()
+            and str(payload.get("memory_text", payload.get("text", "")) or "").strip()
         ):
-            self._append_chat_history("assistant", str(payload.get("text", "")).strip())
-        if bool(payload.get("should_speak")) and str(payload.get("text", "") or "").strip() and self.subconscious_runtime_enabled:
+            self._append_chat_history("assistant", str(payload.get("memory_text", payload.get("text", ""))).strip())
+        if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip() and self.subconscious_runtime_enabled:
             try:
                 snapshot = self.telemetry_service.capture_snapshot(
                     mood_score=self.mood_score,
@@ -1629,7 +1642,7 @@ class RuntimeCoordinator(
                     snapshot=snapshot,
                     internal_state=self._get_internal_state(),
                     user_text="",
-                    event_text=str(payload.get("text", "") or ""),
+                    event_text=str(payload.get("memory_text", payload.get("text", "")) or ""),
                     event_strength=0.52,
                     allow_lane5=False,
                     reflection=False,
@@ -1781,19 +1794,24 @@ class RuntimeCoordinator(
             ledger = PublicTurnLedger()
             self.public_turn_ledger = ledger
 
-        text = str((payload or {}).get("text", getattr(decision, "text", "")) or "")
+        text = str((payload or {}).get("memory_text", (payload or {}).get("text", getattr(decision, "text", ""))) or "")
         should_speak = bool((payload or {}).get("should_speak", getattr(decision, "should_speak", True)))
         if not should_speak or not text.strip():
             return None
 
         fallback = channel or self._infer_public_turn_channel_from_runtime(decision)
         public_channel = infer_public_turn_channel(decision, fallback=fallback)
+        stage_payload = (payload or {}).get("stage", {})
+        turn_id = ""
+        if isinstance(stage_payload, dict):
+            turn_id = str(stage_payload.get("turn_id", "") or "")
         return ledger.append(
             channel=public_channel,
             text=text,
             parse_mode=str((payload or {}).get("parse_mode", getattr(decision, "parse_mode", "")) or ""),
             visible_to_user=True,
             can_be_replied_to=True,
+            turn_id=turn_id or None,
         )
 
     def _infer_public_turn_channel_from_runtime(self, decision: Decision) -> str:
