@@ -24,11 +24,11 @@ _TIME_OF_DAY = (
 )
 
 _SIGNAL_TEXT = {
-    "tom_read": "updated user-reading",
-    "expanded": "expanded a thought thread",
-    "interior": "shifted inward",
-    "surface": "prepared a surface line",
-    "private_mind": "private-mind tick landed",
+    "tom_read": "cập nhật cách đọc Ngài.",
+    "expanded": "mở rộng một mạch nghĩ.",
+    "interior": "dịch vào dòng nội tâm.",
+    "surface": "chuẩn bị câu phản hồi.",
+    "private_mind": "private_mind vừa tick.",
 }
 
 _SECTION_ALIASES = {
@@ -503,6 +503,177 @@ def _journal_entries(
     return deduped[:8]
 
 
+def _signal_timeline(
+    *,
+    now: float,
+    sections_by_kind: Mapping[str, dict[str, Any]],
+    priorities: list[dict[str, Any]],
+    affect_card: Mapping[str, Any],
+    signal_snapshot: Mapping[str, Any],
+    tom_text: str,
+) -> list[dict[str, str]]:
+    """Timeline ngắn cho khung ``ChieuSau_NhatKyTinHieu``.
+
+    Đây là nhật ký trình diễn, không phải memory dài hạn. Nó chỉ gom dữ liệu đã
+    có trong lượt hiện tại/panel_snapshot, đóng dấu giờ rõ ràng, rồi gửi body
+    render. Không gọi LLM và không đọc thêm file ngoài snapshot đã cache.
+    """
+    time_text = time.strftime("%H:%M:%S", time.localtime(now))
+    rows: list[dict[str, str]] = []
+
+    def add(kind: str, text: str, *, time_value: str = "") -> None:
+        safe_text = _text(text, limit=96)
+        if not safe_text:
+            return
+        key = safe_text.casefold()
+        if any(item.get("_key") == key for item in rows):
+            return
+        rows.append(
+            {
+                "_key": key,
+                "time": _text(time_value, limit=16) or time_text,
+                "kind": _text(kind, limit=24),
+                "text": safe_text,
+            }
+        )
+
+    current = _dict(sections_by_kind.get("current"))
+    current_items = _list(current.get("items"))
+    if current_items:
+        item = _dict(current_items[0])
+        add("context", _text(item.get("text"), limit=96) or "nhận context mới từ Ngài.")
+        badge = _text(item.get("badge"), limit=70)
+        if badge:
+            add("recurrence", badge)
+    elif tom_text:
+        add("context", "nhận context mới từ Ngài.")
+
+    top_priority = _dict(priorities[0] if priorities else {})
+    if top_priority:
+        key = _text(top_priority.get("key"), limit=32)
+        reason = _text(top_priority.get("reason"), limit=82)
+        if key:
+            add("priority", f"tăng ưu tiên: {key.replace('_', ' ')}.")
+        if reason:
+            add("topic", reason)
+
+    concern = _dict(sections_by_kind.get("concern"))
+    concern_items = _list(concern.get("items"))
+    if concern_items:
+        item = _dict(concern_items[0])
+        add("concern", _text(item.get("text"), limit=96))
+
+    affect_metrics = _dict(affect_card.get("metrics"))
+    headline = _text(affect_card.get("headline"), limit=40)
+    arousal = _clamp01(affect_metrics.get("arousal"), 0.0)
+    if headline:
+        add("affect", f"cảm xúc: {_signal_affect_label(headline)}; arousal {arousal:.2f}.")
+
+    surface = _dict(sections_by_kind.get("surface"))
+    surface_items = _list(surface.get("items"))
+    if surface_items:
+        add("surface", _text(_dict(surface_items[0]).get("text"), limit=96))
+    else:
+        add("surface", "chuẩn bị phản hồi.")
+
+    for raw_signal in _list(_dict(signal_snapshot).get("signal_log"))[:4]:
+        item = _dict(raw_signal)
+        kind = _text(item.get("kind"), limit=32)
+        label = _SIGNAL_TEXT.get(kind, kind.replace("_", " "))
+        add("signal", label, time_value=_text(item.get("time"), limit=16))
+
+    return [{k: v for k, v in item.items() if k != "_key"} for item in rows[:8]]
+
+
+def _signal_affect_label(raw: str) -> str:
+    return {
+        "calm": "bình tĩnh",
+        "steady": "ổn định",
+        "light": "nhẹ",
+        "energized": "tỉnh và nhanh",
+        "tense": "hơi căng",
+        "live affect fallback": "đang đọc trực tiếp",
+    }.get(_text(raw, limit=40).replace("_", " ").casefold(), _text(raw, limit=40))
+
+
+def _interiority_feed(
+    *,
+    sections_by_kind: Mapping[str, dict[str, Any]],
+    priorities: list[dict[str, Any]],
+    signal_snapshot: Mapping[str, Any],
+    tom_text: str,
+    now: float,
+) -> list[dict[str, str]]:
+    """Dựng feed ngắn cho khung ``ChieuSau_DongNoiTam``.
+
+    Body/Godot không nên phải hiểu toàn bộ inner_diary phức tạp. Hàm này gom
+    các section lớn thành 4-6 dòng đã có ``kind`` ổn định để body chỉ việc chọn
+    icon và render. Đây là lớp trình diễn, không làm Eris nghĩ thêm và không gọi
+    model.
+    """
+    time_text = time.strftime("%H:%M:%S", time.localtime(now))
+    rows: list[dict[str, str]] = []
+
+    def add(kind: str, text: str, meta: str = "", *, title: str = "", time_value: str = "") -> None:
+        safe_text = _text(text, limit=150)
+        if not safe_text:
+            return
+        key = safe_text.casefold()
+        if any(item.get("_key") == key for item in rows):
+            return
+        rows.append(
+            {
+                "_key": key,
+                "kind": _text(kind, limit=32),
+                "title": _text(title, limit=44),
+                "text": safe_text,
+                "meta": _text(meta, limit=90),
+                "time": _text(time_value, limit=16) or time_text,
+            }
+        )
+
+    # Ưu tiên các section đúng nghĩa "dòng nội tâm": hiện tại, bận tâm, phân
+    # tích, dự định nói. Mỗi section chỉ lấy item đầu để panel gọn, không thành log.
+    for kind, fallback_title in (
+        ("current", "ý nghĩ đang nổi"),
+        ("concern", "đang bận tâm"),
+        ("analysis", "đang phân tích"),
+        ("future", "hướng tiếp theo"),
+        ("surface", "muốn nói ra"),
+        ("settled", "đã nguội"),
+    ):
+        section = _dict(sections_by_kind.get(kind))
+        items = _list(section.get("items"))
+        if not items:
+            continue
+        item = _dict(items[0])
+        title = _text(section.get("title"), limit=44) or fallback_title
+        add(kind, _text(item.get("text"), limit=150), _text(item.get("badge"), limit=90), title=title)
+
+    # Nếu private_mind chưa đủ section, lấy ưu tiên đang thắng làm dòng dự phòng.
+    for raw_priority in priorities[:3]:
+        priority = _dict(raw_priority)
+        key = _text(priority.get("key"), limit=32)
+        reason = _text(priority.get("reason"), limit=150)
+        label = _text(priority.get("label"), limit=44)
+        if not reason:
+            continue
+        add(key or "current", reason, f"ưu tiên: {label}", title=label)
+
+    # ToM và signal chỉ dùng làm fallback cuối. Chúng giúp panel không trống khi
+    # inner diary chưa tick kịp, nhưng không lấn át các thought section thật.
+    if tom_text:
+        add("concern", tom_text, "đọc Ngài gần nhất", title="thấu hiểu Ngài")
+    for raw_signal in _list(_dict(signal_snapshot).get("signal_log"))[:4]:
+        item = _dict(raw_signal)
+        kind = _text(item.get("kind"), limit=32)
+        label = _SIGNAL_TEXT.get(kind, kind.replace("_", " "))
+        add("observe", label, "tín hiệu runtime", title="tín hiệu", time_value=_text(item.get("time"), limit=16))
+
+    # Bỏ khóa dedupe nội bộ trước khi đưa sang JSON.
+    return [{k: v for k, v in item.items() if k != "_key"} for item in rows[:6]]
+
+
 def build_depth_v2_state(
     *,
     private_mind_digest: Mapping[str, Any] | None,
@@ -554,6 +725,13 @@ def build_depth_v2_state(
         "priorities": priorities,
         "interiority": {
             "sections": sections,
+            "feed": _interiority_feed(
+                sections_by_kind=sections_by_kind,
+                priorities=priorities,
+                signal_snapshot=signal_snapshot,
+                tom_text=tom_read,
+                now=ts,
+            ),
             "current": _dict(sections_by_kind.get("current")),
             "future": _dict(sections_by_kind.get("future")),
             "concern": _dict(sections_by_kind.get("concern")),
@@ -563,6 +741,14 @@ def build_depth_v2_state(
         },
         "n2": dev,
         "journal": _journal_entries(now=ts, sections_by_kind=sections_by_kind, signal_snapshot=signal_snapshot, tom_text=tom_read),
+        "signal_timeline": _signal_timeline(
+            now=ts,
+            sections_by_kind=sections_by_kind,
+            priorities=priorities,
+            affect_card=affect_card,
+            signal_snapshot=signal_snapshot,
+            tom_text=tom_read,
+        ),
         "signal_log": [
             {
                 "time": _text(_dict(item).get("time"), limit=16),

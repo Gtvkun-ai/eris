@@ -41,6 +41,21 @@ public partial class UdpListener : Node2D
 		public float Score { get; set; } = 0f;
 	}
 
+	private sealed class DepthSignalTimelineRowView
+	{
+		public Control Root { get; set; }
+		public Panel Dot { get; set; }
+		public Label TimeLabel { get; set; }
+		public Label TextLabel { get; set; }
+	}
+
+	private sealed class DepthSignalTimelineItem
+	{
+		public string Time { get; set; } = "";
+		public string Kind { get; set; } = "signal";
+		public string Text { get; set; } = "";
+	}
+
 	private static readonly Vector2 DepthPanelMinSize = new(1497f, 988f);
 	private static readonly Vector2 DepthPanelArtworkSize = new(1497f, 988f);
 	private const float DepthPanelViewportMargin = 32f;
@@ -86,6 +101,8 @@ public partial class UdpListener : Node2D
 	private readonly List<DepthPriorityRowView> _depthPriorityRows = new();
 	private Label _depthPriorityFocusModeLabel;
 	private Label _depthPriorityFooterGlyphLabel;
+	private readonly List<DepthSignalTimelineRowView> _depthSignalTimelineRows = new();
+	private Label _depthSignalTimelineStatusLabel;
 
 	private string _latestDepthJson = "";
 	private Font _depthFontRegular;
@@ -408,8 +425,6 @@ public partial class UdpListener : Node2D
 			root.AddChild(row.Root);
 			_depthInteriorityRows.Add(row);
 		}
-
-		// Footer giữ đúng tinh thần asset: panel có nhịp "✦".
 		// Chỉ đổi câu footer theo trạng thái dữ liệu, không biến nó thành log dài.
 		_depthInteriorityFooterLabel = CreateDepthTextLabel("✦", 10, new Color(0.94f, 0.26f, 0.55f), bold: true);
 		_depthInteriorityFooterLabel.HorizontalAlignment = HorizontalAlignment.Center;
@@ -617,8 +632,88 @@ public partial class UdpListener : Node2D
 		};
 	}
 
-	private void BuildDepthSignalLogFrame(Control parent) =>
-		AddDepthFrameImage(parent, DepthSignalLogFramePath, SlotSignalLog);
+	private void BuildDepthSignalLogFrame(Control parent)
+	{
+		var root = CreateDepthFrameRoot(parent, "DepthSignalLogFrame", SlotSignalLog, DepthSignalLogFramePath);
+		if (root == null)
+			return;
+
+		_depthSignalTimelineRows.Clear();
+		for (int i = 0; i < 6; i++)
+		{
+			var row = CreateDepthSignalTimelineRow(i);
+			root.AddChild(row.Root);
+			_depthSignalTimelineRows.Add(row);
+		}
+
+		_depthSignalTimelineStatusLabel = CreateDepthTextLabel("timeline chờ tín hiệu ✦", 8, new Color(0.78f, 0.34f, 0.52f, 0.82f));
+		_depthSignalTimelineStatusLabel.HorizontalAlignment = HorizontalAlignment.Right;
+		_depthSignalTimelineStatusLabel.VerticalAlignment = VerticalAlignment.Center;
+		_depthSignalTimelineStatusLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_depthSignalTimelineStatusLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(_depthSignalTimelineStatusLabel, RectLTRB(0.60f, 0.085f, 0.925f, 0.155f));
+		root.AddChild(_depthSignalTimelineStatusLabel);
+	}
+
+	private DepthSignalTimelineRowView CreateDepthSignalTimelineRow(int index)
+	{
+		// Timeline dùng slot tỉ lệ theo card signal-log. Nếu sau này đổi asset PNG,
+		// chỉ cần chỉnh các số này, parser payload vẫn giữ nguyên.
+		float top = 0.215f + index * 0.112f;
+		float bottom = top + 0.072f;
+
+		var rowRoot = new Control
+		{
+			Name = $"DepthSignalTimelineRow{index + 1}",
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		PlaceBySlot(rowRoot, RectLTRB(0.060f, top, 0.925f, bottom));
+
+		var dot = new Panel
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		dot.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(0.96f, 0.36f, 0.62f, 0.90f),
+			CornerRadiusTopLeft = 4,
+			CornerRadiusTopRight = 4,
+			CornerRadiusBottomLeft = 4,
+			CornerRadiusBottomRight = 4,
+		});
+		PlaceBySlot(dot, RectLTRB(0.000f, 0.36f, 0.020f, 0.64f));
+		rowRoot.AddChild(dot);
+
+		var connector = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
+		connector.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(0.96f, 0.48f, 0.68f, 0.24f),
+		});
+		PlaceBySlot(connector, RectLTRB(0.008f, 0.68f, 0.012f, 1.45f));
+		rowRoot.AddChild(connector);
+
+		var time = CreateDepthTextLabel("", 8, new Color(0.72f, 0.34f, 0.52f, 0.88f));
+		time.AutowrapMode = TextServer.AutowrapMode.Off;
+		time.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		time.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(time, RectLTRB(0.040f, 0.00f, 0.225f, 1.00f));
+		rowRoot.AddChild(time);
+
+		var text = CreateDepthTextLabel("", 9, new Color(0.62f, 0.22f, 0.40f), bold: true);
+		text.AutowrapMode = TextServer.AutowrapMode.Off;
+		text.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		text.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(text, RectLTRB(0.250f, 0.00f, 1.000f, 1.00f));
+		rowRoot.AddChild(text);
+
+		return new DepthSignalTimelineRowView
+		{
+			Root = rowRoot,
+			Dot = dot,
+			TimeLabel = time,
+			TextLabel = text,
+		};
+	}
 
 	private void BuildDepthContextFrame(Control parent) =>
 		AddDepthFrameImage(parent, DepthContextFramePath, SlotContext);
@@ -903,7 +998,9 @@ public partial class UdpListener : Node2D
 			topBelief: "belief: chưa có");
 
 		ApplyDepthSelfContinuityContent(0f, 0f, 0f, "chưa rõ");
+		ApplyDepthInteriorityEmpty("đang sắp xếp suy nghĩ...✦");
 		ApplyDepthPriorityDefaults("attentive");
+		ApplyDepthSignalTimelineEmpty("timeline chờ tín hiệu ✦");
 
 		if (!string.IsNullOrWhiteSpace(_latestDepthV2Json))
 		{
@@ -917,6 +1014,7 @@ public partial class UdpListener : Node2D
 					ApplyDepthV2SelfContinuity(doc.RootElement);
 					ApplyDepthV2Interiority(doc.RootElement);
 					ApplyDepthV2Priorities(doc.RootElement);
+					ApplyDepthV2SignalTimeline(doc.RootElement);
 					return;
 				}
 			}
@@ -937,6 +1035,7 @@ public partial class UdpListener : Node2D
 					ApplyLegacyDepthTom(doc.RootElement);
 					ApplyLegacyDepthInteriority(doc.RootElement);
 					ApplyLegacyDepthPriorities(doc.RootElement);
+					ApplyLegacyDepthSignalTimeline(doc.RootElement);
 				}
 			}
 			catch (Exception ex)
@@ -1617,6 +1716,130 @@ public partial class UdpListener : Node2D
 				"emotional" => new Color(1.00f, 0.62f, 0.42f, 0.94f),
 				"casual" => new Color(0.42f, 0.76f, 0.68f, 0.94f),
 				_ => new Color(0.92f, 0.34f, 0.56f, 0.94f),
+			};
+		}
+
+		private void ApplyDepthV2SignalTimeline(JsonElement root)
+		{
+			var items = new List<DepthSignalTimelineItem>();
+			if (root.TryGetProperty("signal_timeline", out var timeline) && timeline.ValueKind == JsonValueKind.Array)
+				CollectDepthSignalTimeline(timeline, items);
+
+			if (items.Count == 0 && root.TryGetProperty("signal_log", out var signalLog) && signalLog.ValueKind == JsonValueKind.Array)
+				CollectDepthSignalTimeline(signalLog, items);
+
+			if (items.Count == 0 && root.TryGetProperty("journal", out var journal) && journal.ValueKind == JsonValueKind.Array)
+				CollectDepthSignalTimeline(journal, items);
+
+			if (items.Count == 0)
+			{
+				ApplyDepthSignalTimelineEmpty("timeline chờ tín hiệu ✦");
+				return;
+			}
+
+			ApplyDepthSignalTimelineItems(items, $"timeline: {Math.Min(items.Count, _depthSignalTimelineRows.Count)} mốc ✦");
+		}
+
+		private void ApplyLegacyDepthSignalTimeline(JsonElement root)
+		{
+			if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
+				return;
+
+			var items = new List<DepthSignalTimelineItem>();
+			if (depth.TryGetProperty("signal_log", out var signalLog) && signalLog.ValueKind == JsonValueKind.Array)
+				CollectDepthSignalTimeline(signalLog, items);
+			if (items.Count == 0 && depth.TryGetProperty("journal", out var journal) && journal.ValueKind == JsonValueKind.Array)
+				CollectDepthSignalTimeline(journal, items);
+
+			if (items.Count > 0)
+				ApplyDepthSignalTimelineItems(items, "legacy timeline ✦");
+		}
+
+		private void CollectDepthSignalTimeline(JsonElement source, List<DepthSignalTimelineItem> items)
+		{
+			foreach (var raw in source.EnumerateArray())
+			{
+				if (raw.ValueKind != JsonValueKind.Object)
+					continue;
+
+				string text = JsonText(raw, "text", "");
+				if (string.IsNullOrWhiteSpace(text))
+					text = JsonText(raw, "message", "");
+				if (string.IsNullOrWhiteSpace(text))
+					text = JsonText(raw, "kind", "");
+
+				AddDepthSignalTimelineItem(
+					items,
+					time: JsonText(raw, "time", ""),
+					kind: JsonText(raw, "kind", JsonText(raw, "source", "signal")),
+					text: text);
+			}
+		}
+
+		private static void AddDepthSignalTimelineItem(List<DepthSignalTimelineItem> items, string time, string kind, string text)
+		{
+			string safeText = TrimDepthUiText(text, 82);
+			if (string.IsNullOrWhiteSpace(safeText))
+				return;
+			foreach (var item in items)
+			{
+				if (string.Equals(item.Text, safeText, StringComparison.OrdinalIgnoreCase))
+					return;
+			}
+
+			items.Add(new DepthSignalTimelineItem
+			{
+				Time = TrimDepthUiText(time, 16),
+				Kind = NormalizeDepthKind(kind),
+				Text = safeText,
+			});
+		}
+
+		private void ApplyDepthSignalTimelineItems(List<DepthSignalTimelineItem> items, string status)
+		{
+			int visibleCount = Math.Min(items.Count, _depthSignalTimelineRows.Count);
+			for (int i = 0; i < _depthSignalTimelineRows.Count; i++)
+			{
+				var row = _depthSignalTimelineRows[i];
+				bool visible = i < visibleCount;
+				row.Root.Visible = visible;
+				if (!visible)
+					continue;
+
+				var item = items[i];
+				Color color = DepthSignalTimelineColor(item.Kind);
+				row.Dot.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+				{
+					BgColor = color,
+					CornerRadiusTopLeft = 4,
+					CornerRadiusTopRight = 4,
+					CornerRadiusBottomLeft = 4,
+					CornerRadiusBottomRight = 4,
+				});
+				UpdateDepthLabelText(row.TimeLabel, string.IsNullOrWhiteSpace(item.Time) ? "--:--:--" : item.Time);
+				UpdateDepthLabelText(row.TextLabel, TrimDepthUiText(item.Text, 62));
+			}
+
+			UpdateDepthLabelText(_depthSignalTimelineStatusLabel, string.IsNullOrWhiteSpace(status) ? "timeline đã nhận ✦" : status);
+		}
+
+		private void ApplyDepthSignalTimelineEmpty(string status)
+		{
+			foreach (var row in _depthSignalTimelineRows)
+				row.Root.Visible = false;
+			UpdateDepthLabelText(_depthSignalTimelineStatusLabel, status);
+		}
+
+		private static Color DepthSignalTimelineColor(string kind)
+		{
+			return NormalizeDepthKind(kind) switch
+			{
+				"context" or "tom" or "tom_read" => new Color(0.98f, 0.34f, 0.62f, 0.94f),
+				"topic" or "priority" or "technical" => new Color(0.96f, 0.48f, 0.70f, 0.94f),
+				"recurrence" or "concern" => new Color(0.74f, 0.42f, 0.96f, 0.94f),
+				"affect" or "emotion" => new Color(1.00f, 0.58f, 0.42f, 0.94f),
+				"surface" or "signal" => new Color(0.42f, 0.76f, 0.68f, 0.94f),
+				_ => new Color(0.92f, 0.34f, 0.56f, 0.92f),
 			};
 		}
 
