@@ -111,12 +111,14 @@ from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
+from runtime.director_context import DirectorContextBuilder
 from runtime.stage_contracts import StageFrameBuilder
 from runtime.stage_dispatcher import StageDispatcher
 from runtime.stage_event_bus import StageEventBus
 from runtime.stage_output import StageOutputPipeline
 from runtime.stage_protocol import is_stage_inbound_type
 from runtime.stage_protocol_adapter import playback_event, stage_segment_event, stage_state_event
+from runtime.stage_scorer import StageScorer
 from runtime.shadow_pipeline import ShadowPipelineMixin
 from runtime.self_critique import SelfCritiqueEscalationMixin
 from runtime.state_commit_service import StateCommitServiceMixin
@@ -1538,6 +1540,34 @@ class RuntimeCoordinator(
             payload["private_mind_digest"] = private_digest
         if isinstance(private_life_digest, dict) and private_life_digest:
             payload["private_life_digest"] = private_life_digest
+        # Director foundation: gom scene/evidence/budget rồi chấm quyền phát biểu
+        # trước khi dựng StageFrame.  Chat user chỉ được annotate; autonomous có
+        # thể bị kéo về body-only/suppress nếu câu yếu hoặc thiếu evidence.
+        try:
+            director_builder = getattr(self, "director_context_builder", None)
+            if director_builder is None:
+                director_builder = DirectorContextBuilder()
+                self.director_context_builder = director_builder
+            director_context = director_builder.build(
+                payload=payload,
+                frame=getattr(self, "last_cognitive_frame", None),
+                channel=channel,
+                user_text=str(payload.get("user_text", "") or ""),
+            )
+            stage_scorer = getattr(self, "stage_scorer", None)
+            if stage_scorer is None:
+                stage_scorer = StageScorer()
+                self.stage_scorer = stage_scorer
+            stage_score = stage_scorer.score_decision(
+                decision,
+                payload=payload,
+                context=director_context,
+                channel=channel,
+            )
+            payload["director"] = director_context.compact_payload()
+            payload = stage_scorer.apply_to_payload(payload, stage_score, channel=channel)
+        except Exception as exc:
+            self.logger.debug("[director] stage scoring skipped: %s", exc)
         stage_builder = getattr(self, "stage_frame_builder", None)
         if stage_builder is None:
             # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để
