@@ -58,6 +58,46 @@ class CandidateUtterance:
             stage_motion=str(payload.get("stage_motion", getattr(decision, "stage_motion", "")) or ""),
         )
 
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any]) -> "CandidateUtterance":
+        """Nhận candidate từ JSON contract mới.
+
+        LLM có thể trả item dạng string ở giai đoạn chuyển tiếp; caller nên bọc
+        thành {"text": "..."} trước khi gọi hàm này.
+        """
+
+        refs = data.get("evidence_refs", ())
+        if isinstance(refs, str):
+            refs_tuple = (refs,)
+        elif isinstance(refs, (list, tuple)):
+            refs_tuple = tuple(str(item) for item in refs if str(item or "").strip())
+        else:
+            refs_tuple = ()
+        return cls(
+            text=str(data.get("text", "") or ""),
+            should_speak=bool(data.get("should_speak", True)),
+            confidence=_safe_float(data.get("confidence", 0.0), 0.0),
+            intent=str(data.get("intent", "") or ""),
+            delivery_hint=str(data.get("delivery_hint", "") or ""),
+            nonverbal_cue=str(data.get("nonverbal_cue", "") or ""),
+            stage_motion=str(data.get("stage_motion", "") or ""),
+            evidence_refs=refs_tuple,
+            repair_mode=str(data.get("repair_mode", "") or ""),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "should_speak": self.should_speak,
+            "confidence": self.confidence,
+            "intent": self.intent,
+            "delivery_hint": self.delivery_hint,
+            "nonverbal_cue": self.nonverbal_cue,
+            "stage_motion": self.stage_motion,
+            "evidence_refs": list(self.evidence_refs),
+            "repair_mode": self.repair_mode,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class StageScore:
@@ -138,6 +178,49 @@ class StageScorer:
     ) -> StageScore:
         candidate = CandidateUtterance.from_decision_payload(decision, payload)
         return self.score_candidate(candidate, context=context, channel=channel)
+
+    def choose_best_candidate(
+        self,
+        candidates: list[CandidateUtterance],
+        *,
+        context: DirectorContext,
+        channel: str | None = None,
+    ) -> tuple[CandidateUtterance | None, StageScore | None]:
+        """Chọn candidate tốt nhất theo score tách metric.
+
+        Điểm tổng chỉ dùng để xếp hạng. Quyền nói cuối vẫn nằm trong
+        StageScore.decision, nên candidate thắng vẫn có thể là body_only/suppress.
+        """
+
+        best_pair: tuple[CandidateUtterance, StageScore] | None = None
+        best_value = -999.0
+        for candidate in candidates:
+            score = self.score_candidate(candidate, context=context, channel=channel)
+            value = self._ranking_value(candidate, score)
+            if value > best_value:
+                best_value = value
+                best_pair = (candidate, score)
+        if best_pair is None:
+            return None, None
+        return best_pair
+
+    def choose_best_from_payload(
+        self,
+        raw_candidates: object,
+        *,
+        context: DirectorContext,
+        channel: str | None = None,
+    ) -> tuple[CandidateUtterance | None, StageScore | None]:
+        """Parse list candidate mềm để hỗ trợ cả schema cũ và mới."""
+
+        candidates: list[CandidateUtterance] = []
+        if isinstance(raw_candidates, list):
+            for item in raw_candidates:
+                if isinstance(item, str):
+                    candidates.append(CandidateUtterance.from_mapping({"text": item, "confidence": 0.5}))
+                elif isinstance(item, Mapping):
+                    candidates.append(CandidateUtterance.from_mapping(item))
+        return self.choose_best_candidate(candidates, context=context, channel=channel)
 
     def score_candidate(
         self,
@@ -232,6 +315,51 @@ class StageScorer:
             payload.setdefault("stage_motion", "blink_slow")
             payload["parse_mode"] = f"{payload.get('parse_mode', 'json')}:director_body_only"
         return payload
+
+    def apply_candidate_to_payload(
+        self,
+        payload: dict[str, Any],
+        candidate: CandidateUtterance,
+        score: StageScore,
+        *,
+        channel: str | None = None,
+    ) -> dict[str, Any]:
+        """Đổ candidate thắng vào payload Decision cũ.
+
+        Nhờ hàm này, candidate generation có thể được bật từng phần mà không đổi
+        contract UDP/Godot đang dùng.
+        """
+
+        payload["text"] = candidate.text
+        payload["should_speak"] = candidate.should_speak
+        payload["confidence"] = max(_safe_float(payload.get("confidence", 0.0), 0.0), candidate.confidence)
+        payload["intent"] = candidate.intent or str(payload.get("intent", "") or "")
+        payload["delivery_hint"] = candidate.delivery_hint or str(payload.get("delivery_hint", "") or "")
+        payload["nonverbal_cue"] = candidate.nonverbal_cue or str(payload.get("nonverbal_cue", "") or "")
+        payload["stage_motion"] = candidate.stage_motion or str(payload.get("stage_motion", "") or "")
+        payload["selected_candidate"] = candidate.to_payload()
+        return self.apply_to_payload(payload, score, channel=channel)
+
+    def _ranking_value(self, candidate: CandidateUtterance, score: StageScore) -> float:
+        mode_bonus = {
+            "full": 0.18,
+            "short": 0.08,
+            "repair": -0.04,
+            "body_only": -0.10,
+            "suppress": -0.24,
+        }.get(score.decision, 0.0)
+        confidence = _clamp01(candidate.confidence)
+        return (
+            mode_bonus
+            + score.liveliness * 0.26
+            + score.scene_fit * 0.22
+            + score.relation_fit * 0.12
+            + score.performance_fit * 0.18
+            + score.tts_fit * 0.16
+            + confidence * 0.08
+            - score.clip_risk * 0.28
+            + (0.08 if score.evidence_ok else -0.32)
+        )
 
     def _tts_fit(self, text: str, *, words: int, budget: int) -> float:
         if not text:

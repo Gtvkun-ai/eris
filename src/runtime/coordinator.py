@@ -107,6 +107,7 @@ from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.private_mind_daemon import PrivateMindDaemon
 from runtime.private_life_daemon import PrivateLifeDaemon
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
+from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
 from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.source_grounding import SourceGroundingEngine
@@ -1554,6 +1555,27 @@ class RuntimeCoordinator(
                 channel=channel,
                 user_text=str(payload.get("user_text", "") or ""),
             )
+            performance_builder = getattr(self, "performance_context_builder", None)
+            if performance_builder is None:
+                performance_builder = PerformanceContextBuilder()
+                self.performance_context_builder = performance_builder
+            performance_context = performance_builder.build(
+                director_context,
+                payload=payload,
+                channel=channel,
+            )
+            contract_builder = getattr(self, "director_contract_builder", None)
+            if contract_builder is None:
+                contract_builder = DirectorContractBuilder()
+                self.director_contract_builder = contract_builder
+            director_contract = contract_builder.build(director_context, performance_context)
+            payload["performance_context"] = performance_context.to_payload()
+            payload["director_contract"] = director_contract.to_payload()
+            payload["director_contract_prompt"] = director_contract.to_prompt_block()
+            # Nếu Decision chưa khai stage metadata thì dùng contract làm mặc định.
+            # Cognition vẫn quyết nội dung; stage quyết cách biểu diễn.
+            payload["delivery_hint"] = str(payload.get("delivery_hint") or performance_context.delivery_style)
+            payload["stage_motion"] = str(payload.get("stage_motion") or performance_context.stage_motion)
             stage_scorer = getattr(self, "stage_scorer", None)
             if stage_scorer is None:
                 stage_scorer = StageScorer()

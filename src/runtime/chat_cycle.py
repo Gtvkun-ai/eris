@@ -1048,6 +1048,13 @@ class ChatCycleMixin:
                 public_surface="blocked",
                 recoverable=False,
             )
+        decision = self._maybe_apply_director_candidate_rerank(
+            decision,
+            user_text=user_text,
+            frame=frame,
+            chat_generation_kwargs=chat_generation_kwargs,
+            skip=bool(format_repair_fallback or no_fallback_block),
+        )
         self._log_decision_stage("chat", "after_parser", decision)
         self._log_decision_stage("chat", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text, vision_grounded=bool(screen_image_data_uri) or bool(getattr(self, "vision_facts", None)))
@@ -1065,6 +1072,132 @@ class ChatCycleMixin:
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return
+
+    def _maybe_apply_director_candidate_rerank(
+        self,
+        decision: Decision,
+        *,
+        user_text: str,
+        frame,
+        chat_generation_kwargs: dict,
+        skip: bool = False,
+    ) -> Decision:
+        """Sinh candidate bề mặt rồi rerank theo Director/StageScorer.
+
+        Đây là cầu nối M2: LLM draft vẫn trả lời một JSON Decision chuẩn trước,
+        sau đó pass này tạo 3-5 cách nói ngắn hơn/có stage metadata hơn. Nếu có
+        lỗi hoặc candidate yếu, giữ nguyên decision cũ.
+        """
+
+        if skip:
+            return decision
+        if os.environ.get("ERIS_CHAT_DIRECTOR_CANDIDATES", "1").strip().lower() not in {"1", "true", "yes", "on"}:
+            return decision
+        if not bool(getattr(decision, "should_speak", True)) or not str(getattr(decision, "text", "") or "").strip():
+            return decision
+        parse_mode = str(getattr(decision, "parse_mode", "") or "")
+        intent = str(getattr(decision, "intent", "") or "")
+        system_action = str(getattr(decision, "system_action", "") or "").strip()
+        if system_action or intent in {"no_fallback_block", "format_repair_fallback", "service_error"}:
+            return decision
+        if "no_fallback" in parse_mode or "format_repair" in parse_mode:
+            return decision
+
+        try:
+            from runtime.director_context import DirectorContextBuilder
+            from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
+            from runtime.stage_scorer import StageScorer
+
+            payload = decision.to_payload()
+            payload["user_text"] = str(user_text or "")
+            director_builder = getattr(self, "director_context_builder", None)
+            if director_builder is None:
+                director_builder = DirectorContextBuilder()
+                self.director_context_builder = director_builder
+            director_context = director_builder.build(
+                payload=payload,
+                frame=frame,
+                channel="chat",
+                user_text=user_text,
+            )
+            performance_builder = getattr(self, "performance_context_builder", None)
+            if performance_builder is None:
+                performance_builder = PerformanceContextBuilder()
+                self.performance_context_builder = performance_builder
+            performance_context = performance_builder.build(
+                director_context,
+                payload=payload,
+                channel="chat",
+            )
+            contract_builder = getattr(self, "director_contract_builder", None)
+            if contract_builder is None:
+                contract_builder = DirectorContractBuilder()
+                self.director_contract_builder = contract_builder
+            director_contract = contract_builder.build(director_context, performance_context)
+            payload["performance_context"] = performance_context.to_payload()
+            payload["director_contract"] = director_contract.to_payload()
+            payload["delivery_hint"] = str(payload.get("delivery_hint") or performance_context.delivery_style)
+            payload["stage_motion"] = str(payload.get("stage_motion") or performance_context.stage_motion)
+
+            raw_candidates = self.llm_service.generate_director_candidates(
+                draft_payload=payload,
+                user_message=user_text,
+                director_contract_prompt=director_contract.to_prompt_block(),
+                conversation_context=str(chat_generation_kwargs.get("conversation_context", "") or ""),
+                grounding_context=str(chat_generation_kwargs.get("grounding_context", "") or ""),
+                memory_context=str(chat_generation_kwargs.get("memory_context", "") or ""),
+            )
+            if not raw_candidates:
+                return decision
+
+            stage_scorer = getattr(self, "stage_scorer", None)
+            if stage_scorer is None:
+                stage_scorer = StageScorer()
+                self.stage_scorer = stage_scorer
+            best, score = stage_scorer.choose_best_from_payload(
+                raw_candidates,
+                context=director_context,
+                channel="chat",
+            )
+            if best is None or score is None:
+                return decision
+            if score.decision in {"suppress", "body_only"} or not str(best.text or "").strip():
+                return decision
+            selected_payload = stage_scorer.apply_candidate_to_payload(
+                dict(payload),
+                best,
+                score,
+                channel="chat",
+            )
+
+            decision.text = str(selected_payload.get("text", decision.text) or decision.text)
+            decision.should_speak = bool(selected_payload.get("should_speak", decision.should_speak))
+            decision.confidence = max(
+                float(getattr(decision, "confidence", 0.0) or 0.0),
+                float(selected_payload.get("confidence", 0.0) or 0.0),
+            )
+            decision.intent = str(selected_payload.get("intent", decision.intent) or decision.intent)
+            decision.delivery_hint = str(selected_payload.get("delivery_hint", decision.delivery_hint) or "")
+            decision.nonverbal_cue = str(selected_payload.get("nonverbal_cue", decision.nonverbal_cue) or "")
+            decision.stage_motion = str(selected_payload.get("stage_motion", decision.stage_motion) or "")
+            decision.reasoning_tags = tuple(
+                dict.fromkeys((*tuple(getattr(decision, "reasoning_tags", ()) or ()), "director_candidate_rerank"))
+            )
+            decision.parse_mode = f"{parse_mode or 'json'}:director_candidate_rerank"
+            decision.debug_trace = self._join_debug_trace(
+                str(getattr(decision, "debug_trace", "") or ""),
+                f"director_candidate_score={score.decision}:{score.reason}",
+            )
+            self.logger.info(
+                "[director candidate] selected decision=%s reason=%s text=%r",
+                score.decision,
+                score.reason,
+                decision.text,
+            )
+            return decision
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("[director candidate] skipped: %s", exc)
+            return decision
 
     def _recall_repair_suppression(self, user_text: str):
         """Recall ký ức sửa lỗi quan hệ/tâm lý và rút ra tín hiệu siết cho lượt này.

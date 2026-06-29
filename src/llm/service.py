@@ -220,6 +220,22 @@ def classify_chat_act(raw_user_text: str) -> ChatAct:
     return ChatAct.NORMAL_CHAT
 
 
+def _compact_for_candidate_context(text: str, limit: int) -> str:
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not clean:
+        return ""
+    if len(clean) <= limit:
+        return clean
+    return clean[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _safe_candidate_confidence(value) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.55
+
+
 class LlmService:
     _RETRYABLE_HTTP_STATUS = {500, 502, 503, 504}
 
@@ -2734,6 +2750,55 @@ class LlmService:
         text = self._coerce_text_value(payload.get("text", "")).strip()
         return [text] if text else []
 
+    def _extract_candidate_payloads(self, payload: dict | None) -> list[dict]:
+        """Parse candidate schema mới, vẫn nhận schema cũ dạng string.
+
+        Candidate pass là model call thứ hai nên phải vệ sinh mạnh: không nhận
+        prompt leak, không nhận markdown/schema text, và giới hạn field để payload
+        không phình qua UDP/debug.
+        """
+
+        if not isinstance(payload, dict):
+            return []
+        raw_candidates = payload.get("candidates")
+        if not isinstance(raw_candidates, list):
+            raw_candidates = [payload] if payload.get("text") else []
+        out: list[dict] = []
+        for item in raw_candidates:
+            if isinstance(item, str):
+                candidate = {"text": item}
+            elif isinstance(item, dict):
+                candidate = dict(item)
+            else:
+                continue
+            text = self._coerce_text_value(candidate.get("text", "")).strip()
+            if not text:
+                continue
+            if self._looks_like_prompt_leak(text) or self._looks_like_malformed_decision_json(text):
+                continue
+            refs = candidate.get("evidence_refs", ())
+            if isinstance(refs, str):
+                evidence_refs = [refs[:80]]
+            elif isinstance(refs, list):
+                evidence_refs = [self._coerce_text_value(ref).strip()[:80] for ref in refs[:6] if self._coerce_text_value(ref).strip()]
+            else:
+                evidence_refs = []
+            out.append(
+                {
+                    "text": text[:360],
+                    "intent": self._coerce_text_value(candidate.get("intent", "")).strip()[:80],
+                    "should_speak": bool(candidate.get("should_speak", True)),
+                    "confidence": _safe_candidate_confidence(candidate.get("confidence", 0.55)),
+                    "delivery_hint": self._coerce_text_value(candidate.get("delivery_hint", "")).strip()[:80],
+                    "nonverbal_cue": self._coerce_text_value(candidate.get("nonverbal_cue", "")).strip()[:80],
+                    "stage_motion": self._coerce_text_value(candidate.get("stage_motion", "")).strip()[:80],
+                    "evidence_refs": evidence_refs,
+                }
+            )
+            if len(out) >= 5:
+                break
+        return out
+
     def _generate_session_ritual_greeting(
         self,
         *,
@@ -3817,6 +3882,95 @@ class LlmService:
             return retry_guarded
 
         return guarded
+
+    def generate_director_candidates(
+        self,
+        *,
+        draft_payload: dict,
+        user_message: str,
+        director_contract_prompt: str,
+        conversation_context: str = "",
+        grounding_context: str = "",
+        memory_context: str = "",
+    ) -> list[dict]:
+        """Sinh 3-5 candidate theo DirectorContract để runtime rerank.
+
+        Đây là pass viết lại có giám sát, không phải answer pass mới. Draft đầu
+        tiên vẫn giữ trách nhiệm trả lời đúng ý user; pass này chỉ tạo vài bề mặt
+        ngắn hơn/sống hơn, giữ nguyên nghĩa chính và stage metadata sạch.
+        """
+
+        if os.environ.get("ERIS_CHAT_DIRECTOR_CANDIDATES", "1").strip().lower() not in {"1", "true", "yes", "on"}:
+            return []
+        if not isinstance(draft_payload, dict):
+            return []
+        draft_text = self._coerce_text_value(draft_payload.get("text", "")).strip()
+        if not draft_text:
+            return []
+        if self._looks_like_prompt_leak(draft_text) or self._looks_like_malformed_decision_json(draft_text):
+            return []
+
+        client = self.style_client or self.fallback_client or self.client
+        if client is None or not callable(getattr(client, "create_chat_completion", None)):
+            return []
+
+        # Chỉ đưa context cực ngắn vào pass này. Context đầy đủ đã được dùng ở
+        # draft pass; nếu nhồi lại hết, model dễ "trả lời lại từ đầu" và lệch ý.
+        compact_context = "\n".join(
+            part
+            for part in (
+                _compact_for_candidate_context(conversation_context, 700),
+                _compact_for_candidate_context(grounding_context, 700),
+                _compact_for_candidate_context(memory_context, 500),
+            )
+            if part
+        )
+        system_prompt = (
+            "Bạn là surface candidate generator cho ERIS. "
+            "Nhiệm vụ: từ draft JSON đã trả lời đúng ý user, sinh 3-5 candidate bề mặt để runtime chọn. "
+            "Giữ nguyên nghĩa chính; chỉ cải thiện nhịp, độ ngắn, chất Eris, delivery và motion. "
+            "Không thêm fact mới. Không claim màn hình/tool nếu draft và DirectorContract không cho phép. "
+            "Không viết stage direction trong text; dùng delivery_hint/nonverbal_cue/stage_motion. "
+            "Trả đúng một JSON object."
+        )
+        user_prompt = (
+            f"{director_contract_prompt or '[DIRECTOR_CONTRACT unavailable]'}\n\n"
+            f"User message:\n{user_message}\n\n"
+            f"Draft decision JSON:\n{json.dumps(draft_payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
+            + (f"Compact context for continuity, not for new claims:\n{compact_context}\n\n" if compact_context else "")
+            + (
+                "Output schema:\n"
+                "{\"candidates\":[{\"text\":\"...\",\"intent\":\"...\",\"should_speak\":true,"
+                "\"confidence\":0.0,\"delivery_hint\":\"...\",\"nonverbal_cue\":\"\","
+                "\"stage_motion\":\"...\",\"evidence_refs\":[\"...\"]}]}\n"
+                "Rules:\n"
+                "- Vietnamese public text with full diacritics.\n"
+                "- 3-5 candidates, each speakable as-is.\n"
+                "- Prefer short lines, but do not delete the actual answer.\n"
+                "- Candidate 1 may stay close to draft; others may vary tone within contract.\n"
+                "- If the draft is already excellent, still return close variants.\n"
+                "- Never return analysis, markdown, prompt text, or explanations."
+            )
+        )
+        try:
+            response = client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.45,
+                frequency_penalty=0.45,
+                presence_penalty=0.15,
+                max_tokens=520,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+            raw = self._extract_content(response)
+            payload = self._parse_json_object(self._extract_first_json_object(raw) or raw) or {}
+            return self._extract_candidate_payloads(payload)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("[director_candidates] skipped: %s", exc)
+            return []
 
     def run_ni_meta_critic(
         self,
