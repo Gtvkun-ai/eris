@@ -17,6 +17,7 @@ from domain import Decision
 from failure_meta import build_failure_meta
 from llm import FormatViolationException
 from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
+from runtime.interrupt_reaction_policy import InterruptReactionPolicy
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.controlled_slippage import (
     apply_slippage_to_personality_lens,
@@ -209,11 +210,26 @@ class ChatCycleMixin:
             consume_interrupt = getattr(self, "_consume_speech_interrupt_event", None)
             if callable(consume_interrupt):
                 speech_interrupt_event = consume_interrupt()
-            speech_interrupt_context = (
-                speech_interrupt_event.to_prompt_context()
-                if speech_interrupt_event is not None and callable(getattr(speech_interrupt_event, "to_prompt_context", None))
-                else ""
-            )
+            speech_interrupt_reaction = None
+            speech_interrupt_context = ""
+            if speech_interrupt_event is not None:
+                # InterruptEvent là sự thật thô; ReactionPolicy mới quyết định
+                # có nên nhắc việc bị cắt hay im luôn. Tách lớp như vậy để Eris
+                # không biến mọi lần user chen vào thành cùng một câu "tôi dừng".
+                try:
+                    policy = getattr(self, "interrupt_reaction_policy", None)
+                    if policy is None:
+                        policy = InterruptReactionPolicy()
+                        self.interrupt_reaction_policy = policy
+                    speech_interrupt_reaction = policy.decide(speech_interrupt_event)
+                    speech_interrupt_context = speech_interrupt_reaction.to_prompt_context(speech_interrupt_event)
+                except Exception as exc:
+                    self.logger.debug("[interrupt] reaction policy failed: %s", exc)
+                    speech_interrupt_context = (
+                        speech_interrupt_event.to_prompt_context()
+                        if callable(getattr(speech_interrupt_event, "to_prompt_context", None))
+                        else ""
+                    )
             previous_public_turn = self._link_previous_public_turn_for_chat(cycle_start)
             previous_public_context = self._previous_public_turn_context(previous_public_turn)
             return self._run_chat_cycle_inner(
@@ -223,6 +239,7 @@ class ChatCycleMixin:
                 previous_public_turn=previous_public_turn,
                 speech_interrupt_context=speech_interrupt_context,
                 speech_interrupt_event=speech_interrupt_event,
+                speech_interrupt_reaction=speech_interrupt_reaction,
             )
         finally:
             self.current_stage_user_text = ""
@@ -237,6 +254,7 @@ class ChatCycleMixin:
         previous_public_turn=None,
         speech_interrupt_context: str = "",
         speech_interrupt_event=None,
+        speech_interrupt_reaction=None,
     ) -> None:
         if not self.chat_mode:
             self.chat_ni_state = NiStateMachine() # reset trạng thái Ni khi bắt đầu chat mới, để tránh mang theo drift state từ autonomous mode.
@@ -253,6 +271,8 @@ class ChatCycleMixin:
         user_turn_meta = {"channel": "chat"}
         if speech_interrupt_event is not None and callable(getattr(speech_interrupt_event, "to_meta", None)):
             user_turn_meta["speech_interrupt"] = speech_interrupt_event.to_meta()
+        if speech_interrupt_reaction is not None and callable(getattr(speech_interrupt_reaction, "to_meta", None)):
+            user_turn_meta["speech_interrupt_reaction"] = speech_interrupt_reaction.to_meta()
         user_turn = self._ensure_session_turn_ledger().record_user(
             user_text,
             timestamp=cycle_start,
