@@ -27,6 +27,7 @@ class ActiveSpeechSpan:
     interruptible: bool = True
     channel: str = ""
     prosody_style: str = ""
+    pending_after_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +117,7 @@ class InterruptLedger:
         with self._lock:
             if event_type == "audio_start":
                 text = str(getattr(event, "text", "") or getattr(stage_frame, "tts_text", "") or "")
+                turn_segments = getattr(event, "turn_segments", ()) or ()
                 self._active = ActiveSpeechSpan(
                     turn_id=turn_id,
                     segment_id=segment_id,
@@ -124,6 +126,7 @@ class InterruptLedger:
                     interruptible=bool(getattr(stage_frame, "interruptible", True)),
                     channel=_channel_from_stage_frame(stage_frame),
                     prosody_style=str(getattr(stage_frame, "prosody_style", "") or ""),
+                    pending_after_text=_pending_after_segment(turn_segments, turn_id=turn_id, segment_id=segment_id),
                 )
                 return
 
@@ -157,7 +160,8 @@ class InterruptLedger:
             if active is None or not active.interruptible:
                 return None
 
-            spoken, pending, confidence = _estimate_spoken_and_pending(active.text, elapsed=max(0.0, now - active.started_at))
+            spoken, current_pending, confidence = _estimate_spoken_and_pending(active.text, elapsed=max(0.0, now - active.started_at))
+            pending = _join_pending_text(current_pending, active.pending_after_text)
             if len(pending) < threshold:
                 return None
 
@@ -168,7 +172,7 @@ class InterruptLedger:
                 pending_text=pending,
                 user_text=user,
                 timestamp=now,
-                full_text=active.text,
+                full_text=_join_pending_text(active.text, active.pending_after_text),
                 channel=active.channel,
                 confidence=confidence,
             )
@@ -196,6 +200,46 @@ def _channel_from_stage_frame(stage_frame: Any) -> str:
     if source.startswith("decision:"):
         return source.split(":", 1)[1].strip()
     return source
+
+
+def _pending_after_segment(turn_segments: Any, *, turn_id: str, segment_id: int) -> str:
+    """Lấy các segment chưa phát sau segment hiện tại.
+
+    Task manager gửi ``turn_segments`` trong event ``audio_start``. Nhờ vậy khi user
+    cắt ở segment đầu, Eris vẫn biết phần "pending" còn bao gồm các câu sau chứ
+    không chỉ phần đuôi của câu đang phát.
+    """
+
+    if not turn_segments:
+        return ""
+    pieces: list[tuple[int, str]] = []
+    for item in turn_segments:
+        if not isinstance(item, dict):
+            continue
+        item_turn = str(item.get("turn_id", "") or "")
+        if turn_id and item_turn and item_turn != turn_id:
+            continue
+        try:
+            item_segment = int(item.get("segment_id", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if item_segment <= int(segment_id):
+            continue
+        text = _compact(str(item.get("text", "") or ""), limit=1200)
+        if text:
+            pieces.append((item_segment, text))
+    if not pieces:
+        return ""
+    pieces.sort(key=lambda pair: pair[0])
+    return _compact(" ".join(text for _, text in pieces), limit=4000)
+
+
+def _join_pending_text(current_pending: str, pending_after: str) -> str:
+    parts = [
+        _compact(current_pending, limit=4000),
+        _compact(pending_after, limit=4000),
+    ]
+    return _compact(" ".join(part for part in parts if part), limit=5000)
 
 
 def _min_pending_chars() -> int:

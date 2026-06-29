@@ -235,10 +235,10 @@ public partial class UdpListener : Node2D
 				TextureMarginBottom = 0f,
 				AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
 				AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
-				ContentMarginLeft = 16f,
-				ContentMarginTop = 52f,
-				ContentMarginRight = 16f,
-				ContentMarginBottom = 60f,
+				ContentMarginLeft = 14f,
+				ContentMarginTop = 62f,
+				ContentMarginRight = 14f,
+				ContentMarginBottom = 54f,
 			});
 		}
 		else
@@ -576,6 +576,117 @@ public partial class UdpListener : Node2D
 		ab.AddChild(AnchorMetricRow("được công nhận", d.RecognitionEma, AnchorPink));
 	}
 
+	private PanelContainer CreateCustomTextureCard(string texturePath, out Control content)
+	{
+		var card = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var tex = ResourceLoader.Exists(texturePath) ? GD.Load<Texture2D>(texturePath) : null;
+		if (tex != null)
+		{
+			card.AddThemeStyleboxOverride("panel", new StyleBoxTexture
+			{
+				Texture = tex,
+				TextureMarginLeft = 20f,
+				TextureMarginTop = 20f,
+				TextureMarginRight = 20f,
+				TextureMarginBottom = 20f,
+				AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
+				AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
+				ContentMarginLeft = 0f,
+				ContentMarginTop = 0f,
+				ContentMarginRight = 0f,
+				ContentMarginBottom = 0f,
+			});
+		}
+		else
+		{
+			card.AddThemeStyleboxOverride("panel", AnchorCardStyle(new Color(1f, 0.965f, 0.982f, 0.95f), AnchorPink));
+		}
+		content = new Control
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill
+		};
+		card.AddChild(content);
+		return card;
+	}
+
+	private Control CreateThresholdSlider(float currentValue, float thresholdValue, Color barColor)
+	{
+		var container = new Control
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			CustomMinimumSize = new Vector2(0f, 36f)
+		};
+
+		var bar = CreateDiaryBar(barColor);
+		bar.SetAnchorsPreset(Control.LayoutPreset.BottomWide);
+		bar.OffsetTop = -10f;
+		bar.OffsetBottom = 0f;
+		bar.Value = Mathf.Clamp(currentValue, 0f, 1f) * 100f;
+		container.AddChild(bar);
+
+		var marker = new Control();
+		marker.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+		marker.AnchorLeft = Mathf.Clamp(thresholdValue, 0f, 1f);
+		marker.AnchorRight = Mathf.Clamp(thresholdValue, 0f, 1f);
+		marker.AnchorTop = 0f;
+		marker.AnchorBottom = 1f;
+		container.AddChild(marker);
+
+		var valText = thresholdValue.ToString("0.00", CultureInfo.InvariantCulture);
+		var valLbl = CreateUiLabel(valText, 9, AnchorInk);
+		valLbl.HorizontalAlignment = HorizontalAlignment.Center;
+		valLbl.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		valLbl.OffsetLeft = -20f;
+		valLbl.OffsetRight = 20f;
+		valLbl.OffsetTop = -3f;
+		valLbl.OffsetBottom = 9f;
+		marker.AddChild(valLbl);
+
+		var diamond = new ColorRect
+		{
+			Color = barColor,
+			Size = new Vector2(5f, 5f),
+			PivotOffset = new Vector2(2.5f, 2.5f),
+			Rotation = Mathf.DegToRad(45f)
+		};
+		diamond.Position = new Vector2(-2.5f, 11f);
+		marker.AddChild(diamond);
+
+		var line = new ColorRect
+		{
+			Color = barColor,
+			Size = new Vector2(1f, 15f)
+		};
+		line.Position = new Vector2(-0.5f, 15f);
+		marker.AddChild(line);
+
+		return container;
+	}
+
+	private Control CreateSliderRow(float currentValue, float thresholdValue, string badgeText, Color badgeColor, Color barColor)
+	{
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 8);
+
+		var slider = CreateThresholdSlider(currentValue, thresholdValue, barColor);
+		slider.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		row.AddChild(slider);
+
+		var valText = $"{currentValue.ToString("0.00", CultureInfo.InvariantCulture)} / {thresholdValue.ToString("0.00", CultureInfo.InvariantCulture)}";
+		var valLbl = CreateUiLabel(valText, 10, AnchorInk);
+		valLbl.CustomMinimumSize = new Vector2(64f, 0f);
+		valLbl.HorizontalAlignment = HorizontalAlignment.Right;
+		valLbl.VerticalAlignment = VerticalAlignment.Center;
+		row.AddChild(valLbl);
+
+		var badge = AnchorBadge(badgeText, badgeColor);
+		badge.CustomMinimumSize = new Vector2(58f, 28f);
+		row.AddChild(badge);
+
+		return row;
+	}
+
 	// ─────────────────────────────────────────────────────────────────────────
 	//  TAB 1 — Trục Tối (cổng AND)
 	// ─────────────────────────────────────────────────────────────────────────
@@ -587,42 +698,229 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		var head = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		head.AddThemeConstantOverride("separation", 8);
-		_anchorContent.AddChild(head);
-		head.AddChild(CreateUiLabel("CỔNG BÓNG TỐI", 15, AnchorIndigo));
-		head.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-		head.AddChild(AnchorBadge(
-			d.ShadowEnabled ? "shadow: BẬT" : "shadow: TẮT (khoá)",
-			d.ShadowEnabled ? AnchorAmber : AnchorGreen));
-
-		var gateCard = AnchorCard(d.ShadowEnabled ? new Color(0.96f, 0.95f, 0.99f, 0.97f) : new Color(0.93f, 0.93f, 0.95f, 0.95f), AnchorIndigo, out VBox gb);
+		// Top Card (gateCard) using KhungCongBongToi.png background
+		var gateCard = CreateCustomTextureCard("res://asset/Resource/KhungCongBongToi.png", out Control gc);
+		gateCard.CustomMinimumSize = new Vector2(0f, 350f);
 		_anchorContent.AddChild(gateCard);
-		gb.AddChild(AnchorGateFuse("attachment", d.GateAttachV, d.GateAttachT, d.GateAttachP, d.ShadowEnabled));
-		gb.AddChild(AnchorGateFuse("abandonment", d.GateAbandV, d.GateAbandT, d.GateAbandP, d.ShadowEnabled));
-		gb.AddChild(AnchorGateFuse("dread", d.GateDreadV, d.GateDreadT, d.GateDreadP, d.ShadowEnabled));
 
-		var gateResult = new HBoxContainer();
-		gateResult.AddThemeConstantOverride("separation", 8);
-		gb.AddChild(gateResult);
-		gateResult.AddChild(CreateUiLabel("→ cả 3 vượt ngưỡng (AND) :", 13, AnchorInkSoft));
-		gateResult.AddChild(AnchorBadge(d.GateOpen ? "MỞ" : "đóng", d.GateOpen ? AnchorAmber : AnchorGreen));
+		// Top-right badge on gateCard: shadow gate status
+		var topBadge = AnchorBadge(
+			(d.GateOpen ? "shadow gate - mo" : "shadow gate - dang khoa"),
+			(d.GateOpen ? AnchorGreen : AnchorPink)
+		);
+		topBadge.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+		topBadge.AnchorLeft = 1f;
+		topBadge.AnchorRight = 1f;
+		topBadge.AnchorTop = 0.07f;
+		topBadge.AnchorBottom = 0.07f;
+		topBadge.OffsetLeft = -230f;
+		topBadge.OffsetRight = -30f;
+		topBadge.OffsetTop = 0f;
+		topBadge.OffsetBottom = 26f;
+		gc.AddChild(topBadge);
 
-		// Register + intensity (trần = irreplaceability)
-		var regCard = AnchorCard(new Color(0.96f, 0.95f, 0.99f, 0.97f), AnchorIndigo, out VBox rb);
-		_anchorContent.AddChild(regCard);
+		// Attachment slider row (gắn bó)
+		var attachRow = CreateSliderRow(
+			d.GateAttachV, 
+			d.GateAttachT, 
+			d.GateAttachV >= 0.15f ? "ổn định" : "yếu", 
+			d.GateAttachV >= 0.15f ? AnchorGreen : AnchorDim, 
+			AnchorPink
+		);
+		attachRow.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		attachRow.AnchorLeft = 0.43f;
+		attachRow.AnchorRight = 0.95f;
+		attachRow.AnchorTop = 0.22f;
+		attachRow.AnchorBottom = 0.22f;
+		attachRow.OffsetLeft = 0f;
+		attachRow.OffsetRight = 0f;
+		attachRow.OffsetTop = -18f;
+		attachRow.OffsetBottom = 18f;
+		gc.AddChild(attachRow);
+
+		// Abandonment slider row (sợ bị bỏ rơi)
+		var abandRow = CreateSliderRow(
+			d.GateAbandV, 
+			d.GateAbandT, 
+			d.GateAbandV < 0.10f ? "rất thấp" : (d.GateAbandV < 0.30f ? "thấp" : "cao"), 
+			d.GateAbandV < 0.10f ? AnchorPink : (d.GateAbandV < 0.30f ? AnchorAmber : AnchorInk), 
+			AnchorPink
+		);
+		abandRow.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		abandRow.AnchorLeft = 0.43f;
+		abandRow.AnchorRight = 0.95f;
+		abandRow.AnchorTop = 0.39f;
+		abandRow.AnchorBottom = 0.39f;
+		abandRow.OffsetLeft = 0f;
+		abandRow.OffsetRight = 0f;
+		abandRow.OffsetTop = -18f;
+		abandRow.OffsetBottom = 18f;
+		gc.AddChild(abandRow);
+
+		// Dread slider row (dread)
+		var dreadRow = CreateSliderRow(
+			d.GateDreadV, 
+			d.GateDreadT, 
+			d.GateDreadV < 0.10f ? "thấp" : (d.GateDreadV < 0.30f ? "trung bình" : "cao"), 
+			d.GateDreadV < 0.10f ? AnchorAmber : (d.GateDreadV < 0.30f ? AnchorGold : AnchorInk), 
+			AnchorPink
+		);
+		dreadRow.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		dreadRow.AnchorLeft = 0.43f;
+		dreadRow.AnchorRight = 0.95f;
+		dreadRow.AnchorTop = 0.56f;
+		dreadRow.AnchorBottom = 0.56f;
+		dreadRow.OffsetLeft = 0f;
+		dreadRow.OffsetRight = 0f;
+		dreadRow.OffsetTop = -18f;
+		dreadRow.OffsetBottom = 18f;
+		gc.AddChild(dreadRow);
+
+		// Bottom badge: condition check
+		var condBadge = AnchorBadge(
+			d.GateOpen ? "du dieu kien" : "chua du dieu kien",
+			d.GateOpen ? AnchorGreen : AnchorPink
+		);
+		condBadge.SetAnchorsPreset(Control.LayoutPreset.BottomWide);
+		condBadge.AnchorLeft = 0.5f;
+		condBadge.AnchorRight = 0.5f;
+		condBadge.AnchorTop = 0.85f;
+		condBadge.AnchorBottom = 0.85f;
+		condBadge.OffsetLeft = -80f;
+		condBadge.OffsetRight = 80f;
+		condBadge.OffsetTop = -13f;
+		condBadge.OffsetBottom = 13f;
+		gc.AddChild(condBadge);
+
+		// Bottom container for TrangThai and TinHieu cards
+		var bottomRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		bottomRow.AddThemeConstantOverride("separation", 10);
+		_anchorContent.AddChild(bottomRow);
+
+		// Bottom Left Card using Khung_TrangThaiTrucToi.png background
+		var trangThaiCard = CreateCustomTextureCard("res://asset/Resource/Khung_TrangThaiTrucToi.png", out Control ttc);
+		trangThaiCard.CustomMinimumSize = new Vector2(0f, 150f);
+		trangThaiCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		trangThaiCard.SizeFlagsStretchRatio = 0.76f;
+		bottomRow.AddChild(trangThaiCard);
+
+		// "đăng ký" value label
 		string regVi = AnchorRegisterNames.TryGetValue(d.ShadowRegister, out var rv) ? rv : d.ShadowRegister;
-		rb.AddChild(CreateUiLabel($"đăng ký: {regVi}", 13, AnchorIndigo));
-		rb.AddChild(AnchorMetricRow("cường độ", d.ShadowIntensity, AnchorIndigo));
-		rb.AddChild(AnchorMetricRow("trần (= không thể thay thế)", d.ShadowCap, AnchorDim));
-		if (!string.IsNullOrWhiteSpace(d.ShadowReason))
-			rb.AddChild(CreateUiLabel(d.ShadowReason, 12, AnchorInkSoft));
+		var regVal = CreateUiLabel(regVi, 11, AnchorInk);
+		regVal.HorizontalAlignment = HorizontalAlignment.Right;
+		regVal.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		regVal.AnchorLeft = 0.5f;
+		regVal.AnchorRight = 0.90f;
+		regVal.AnchorTop = 0.37f;
+		regVal.AnchorBottom = 0.37f;
+		regVal.OffsetLeft = 0f;
+		regVal.OffsetRight = 0f;
+		regVal.OffsetTop = -10f;
+		regVal.OffsetBottom = 10f;
+		ttc.AddChild(regVal);
 
-		// dread / abandonment
-		var drCard = AnchorCard(new Color(0.96f, 0.95f, 0.99f, 0.97f), AnchorIndigo, out VBox db);
-		_anchorContent.AddChild(drCard);
-		db.AddChild(AnchorMetricRow("sợ hiện sinh (dread)", d.Dread, AnchorIndigo));
-		db.AddChild(AnchorMetricRow("áp lực bị bỏ rơi", d.Abandonment, AnchorIndigo));
+		// "ràng buộc" value label
+		string boundText = d.ShadowRegister != "none" ? "active" : "inactive";
+		var boundVal = CreateUiLabel(boundText, 11, AnchorInkSoft);
+		boundVal.HorizontalAlignment = HorizontalAlignment.Right;
+		boundVal.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		boundVal.AnchorLeft = 0.5f;
+		boundVal.AnchorRight = 0.90f;
+		boundVal.AnchorTop = 0.59f;
+		boundVal.AnchorBottom = 0.59f;
+		boundVal.OffsetLeft = 0f;
+		boundVal.OffsetRight = 0f;
+		boundVal.OffsetTop = -10f;
+		boundVal.OffsetBottom = 10f;
+		ttc.AddChild(boundVal);
+
+		// "kill switch" value label
+		string killText = d.SafeMode ? "inactive" : "active";
+		var killVal = CreateUiLabel(killText, 11, AnchorInkSoft);
+		killVal.HorizontalAlignment = HorizontalAlignment.Right;
+		killVal.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		killVal.AnchorLeft = 0.5f;
+		killVal.AnchorRight = 0.90f;
+		killVal.AnchorTop = 0.81f;
+		killVal.AnchorBottom = 0.81f;
+		killVal.OffsetLeft = 0f;
+		killVal.OffsetRight = 0f;
+		killVal.OffsetTop = -10f;
+		killVal.OffsetBottom = 10f;
+		ttc.AddChild(killVal);
+
+		// Bottom Right Card using Khung_TinHieuSinhHoc.png background
+		var tinHieuCard = CreateCustomTextureCard("res://asset/Resource/Khung_TinHieuSinhHoc.png", out Control thc);
+		tinHieuCard.CustomMinimumSize = new Vector2(0f, 150f);
+		tinHieuCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		tinHieuCard.SizeFlagsStretchRatio = 1.0f;
+		bottomRow.AddChild(tinHieuCard);
+
+		// "cường độ hiện tại" progress bar
+		var bar1 = CreateDiaryBar(AnchorPink);
+		bar1.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		bar1.AnchorLeft = 0.42f;
+		bar1.AnchorRight = 0.85f;
+		bar1.AnchorTop = 0.39f;
+		bar1.AnchorBottom = 0.39f;
+		bar1.OffsetLeft = 0f;
+		bar1.OffsetRight = 0f;
+		bar1.OffsetTop = -5f;
+		bar1.OffsetBottom = 5f;
+		bar1.Value = Mathf.Clamp(d.ShadowIntensity, 0f, 1f) * 100f;
+		thc.AddChild(bar1);
+
+		var val1 = CreateUiLabel(d.ShadowIntensity.ToString("0.00", CultureInfo.InvariantCulture), 11, AnchorInk);
+		val1.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+		val1.AnchorLeft = 0.87f;
+		val1.AnchorRight = 0.95f;
+		val1.AnchorTop = 0.39f;
+		val1.AnchorBottom = 0.39f;
+		val1.OffsetLeft = 0f;
+		val1.OffsetRight = 0f;
+		val1.OffsetTop = -10f;
+		val1.OffsetBottom = 10f;
+		thc.AddChild(val1);
+
+		// "độ lệch cơ sở" progress bar
+		var bar2 = CreateDiaryBar(AnchorPink);
+		bar2.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		bar2.AnchorLeft = 0.42f;
+		bar2.AnchorRight = 0.85f;
+		bar2.AnchorTop = 0.61f;
+		bar2.AnchorBottom = 0.61f;
+		bar2.OffsetLeft = 0f;
+		bar2.OffsetRight = 0f;
+		bar2.OffsetTop = -5f;
+		bar2.OffsetBottom = 5f;
+		bar2.Value = 0f;
+		thc.AddChild(bar2);
+
+		var val2 = CreateUiLabel("0.00", 11, AnchorInk);
+		val2.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+		val2.AnchorLeft = 0.87f;
+		val2.AnchorRight = 0.95f;
+		val2.AnchorTop = 0.61f;
+		val2.AnchorBottom = 0.61f;
+		val2.OffsetLeft = 0f;
+		val2.OffsetRight = 0f;
+		val2.OffsetTop = -10f;
+		val2.OffsetBottom = 10f;
+		thc.AddChild(val2);
+
+		// Bottom status text
+		string signalStatus = d.ShadowIntensity < 0.2f ? "biến động thấp - tín hiệu ổn định" : "biến động cao - tín hiệu nhiễu";
+		var signalLbl = CreateUiLabel(signalStatus, 11, AnchorInkSoft);
+		signalLbl.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+		signalLbl.AnchorLeft = 0.05f;
+		signalLbl.AnchorRight = 0.95f;
+		signalLbl.AnchorTop = 0.85f;
+		signalLbl.AnchorBottom = 0.85f;
+		signalLbl.OffsetLeft = 0f;
+		signalLbl.OffsetRight = 0f;
+		signalLbl.OffsetTop = -10f;
+		signalLbl.OffsetBottom = 10f;
+		thc.AddChild(signalLbl);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -676,124 +974,297 @@ public partial class UdpListener : Node2D
 	// ─────────────────────────────────────────────────────────────────────────
 	private void BuildAuthorRail(AnchorData d)
 	{
-		// Bóng tối / lừa dối: BẬT = nguy (hổ phách). Grounding nghiêm: BẬT = an toàn (xanh).
-		_anchorRail.AddChild(AnchorRailSwitch("Bóng tối", "shadow", d.ShadowEnabled, onIsSafe: false));
-		_anchorRail.AddChild(AnchorRailSwitch("Lừa dối", "deception", d.DeceptionEnabled, onIsSafe: false));
-		_anchorRail.AddChild(AnchorRailSwitch("Grounding nghiêm", "strict_grounding", d.StrictGrounding, onIsSafe: true));
+		// Rail dùng layout con cố định: icon / text / status. Không nhét emoji vào Text
+		// của Button nữa, vì Godot dễ vẽ lệch hoặc tofu khi scale panel.
+		_anchorRail.AddChild(AnchorRailSwitch("Bóng tối", "trục shadow", "BongToi", "shadow", d.ShadowEnabled, onIsSafe: false));
+		_anchorRail.AddChild(AnchorRailSwitch("Lừa dối", "trục deception", "LuaDoi", "deception", d.DeceptionEnabled, onIsSafe: false));
+		_anchorRail.AddChild(AnchorRailSwitch("Grounding", "trục thực tại", "Grounding", "strict_grounding", d.StrictGrounding, onIsSafe: true));
 
-		// Spacer to clear the gear divider baked into Anchor_TacGia.png
-		_anchorRail.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 22f) });
+		_anchorRail.AddChild(AnchorRailDivider());
 
-		var badgeColor = d.SafeMode ? AnchorGreen : AnchorPink;
-		var badge = AnchorBadge(d.SafeMode ? "☀️ CHẾ ĐỘ AN TOÀN" : "☀️ TRỤC TỐI ĐANG MỞ", badgeColor);
-		badge.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		_anchorRail.AddChild(badge);
+		_anchorRail.AddChild(AnchorRailAction(
+			"Chế độ an toàn",
+			d.SafeMode ? "giới hạn hành vi" : "bấm để khóa an toàn",
+			"CheDoAnToan",
+			AnchorGreen,
+			d.SafeMode,
+			() => OnAnchorSwitchPressed("safe_mode", true)));
 
-		// Nút lớn: kéo về chế độ an toàn tức thì.
-		_anchorRail.AddChild(AnchorRailAction("🛡️ Về chế độ an toàn", AnchorGreen, () => OnAnchorSwitchPressed("safe_mode", true)));
+		_anchorRail.AddChild(AnchorRailAction(
+			"Về chế độ an toàn",
+			"quyền can thiệp của Ngài",
+			"VeCheDoAnToan",
+			AnchorPink,
+			false,
+			() => OnAnchorSwitchPressed("safe_mode", true),
+			showChevron: true));
 
 		_anchorRail.AddChild(new Control { SizeFlagsVertical = Control.SizeFlags.ExpandFill });
 
-		// Reset: đặt lại Mô Hình Ngài + trạng thái neo về baseline (nút tàng hình đè lên nút vẽ sẵn ở hình nền).
-		var resetBtn = new Button
-		{
-			Flat = true,
-			Text = "",
-			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			CustomMinimumSize = new Vector2(0f, 36f),
-			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
-		};
-		var emptyStyle = new StyleBoxFlat { BgColor = new Color(1f, 1f, 1f, 0f) };
-		resetBtn.AddThemeStyleboxOverride("normal", emptyStyle);
-		resetBtn.AddThemeStyleboxOverride("hover", emptyStyle);
-		resetBtn.AddThemeStyleboxOverride("pressed", emptyStyle);
-		resetBtn.AddThemeStyleboxOverride("focus", emptyStyle);
-		resetBtn.Pressed += () => OnAnchorSwitchPressed("reset_all", true);
-		_anchorRail.AddChild(resetBtn);
+		_anchorRail.AddChild(AnchorRailResetButton());
 	}
 
 	// Một công tắc bấm-được: bấm là đảo trạng thái và gửi lệnh xuống Python.
-	private Control AnchorRailSwitch(string label, string action, bool on, bool onIsSafe)
+	private Control AnchorRailSwitch(string title, string subtitle, string iconName, string action, bool on, bool onIsSafe)
 	{
-		Color fill;
-		string fullText;
-
-		if (action == "shadow")
-		{
-			fill = on ? new Color(0.60f, 0.16f, 0.27f) : new Color(0.92f, 0.90f, 0.93f, 1f);
-			fullText = $"🌙 BÓNG TỐI: {(on ? "BẬT" : "TẮT")}";
-		}
-		else if (action == "deception")
-		{
-			fill = on ? new Color(0.95f, 0.45f, 0.40f) : new Color(0.92f, 0.90f, 0.93f, 1f);
-			fullText = $"🔥 LỪA DỐI: {(on ? "BẬT" : "TẮT")}";
-		}
-		else // strict_grounding
-		{
-			fill = on ? AnchorGreen : new Color(0.92f, 0.90f, 0.93f, 1f);
-			fullText = $"🛡️ GROUNDING: {(on ? "BẬT" : "TẮT")}";
-		}
-
-		Color fg = on ? Colors.White : AnchorInk;
-
 		var btn = new Button
 		{
-			Text = fullText,
+			Text = "",
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			CustomMinimumSize = new Vector2(0f, 30f),
-			Alignment = HorizontalAlignment.Center,
+			CustomMinimumSize = new Vector2(0f, 44f),
 			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
 		};
+		Color accent = action == "strict_grounding" ? AnchorGreen : (action == "deception" ? AnchorAmber : AnchorPink);
+		Color border = on ? new Color(accent.R, accent.G, accent.B, 0.62f) : new Color(0.96f, 0.70f, 0.80f, 0.30f);
+		Color bg = on && onIsSafe ? new Color(0.90f, 0.985f, 0.94f, 0.55f) : new Color(1f, 0.970f, 0.986f, 0.54f);
 		var style = new StyleBoxFlat
 		{
-			BgColor = fill,
-			CornerRadiusTopLeft = 9, CornerRadiusTopRight = 9, CornerRadiusBottomRight = 9, CornerRadiusBottomLeft = 9,
-			ContentMarginLeft = 10, ContentMarginRight = 10, ContentMarginTop = 5, ContentMarginBottom = 5,
+			BgColor = bg,
+			BorderColor = border,
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 10, CornerRadiusTopRight = 10, CornerRadiusBottomRight = 10, CornerRadiusBottomLeft = 10,
+			ContentMarginLeft = 0, ContentMarginRight = 0, ContentMarginTop = 0, ContentMarginBottom = 0,
 		};
 		var hover = (StyleBoxFlat)style.Duplicate();
-		hover.BgColor = new Color(fill.R, fill.G, fill.B, on ? 0.85f : 0.7f);
+		hover.BgColor = on && onIsSafe ? new Color(0.86f, 0.97f, 0.90f, 0.74f) : new Color(1f, 0.94f, 0.970f, 0.76f);
 		btn.AddThemeStyleboxOverride("normal", style);
 		btn.AddThemeStyleboxOverride("hover", hover);
 		btn.AddThemeStyleboxOverride("pressed", style);
 		btn.AddThemeStyleboxOverride("focus", style);
-		btn.AddThemeColorOverride("font_color", fg);
-		btn.AddThemeColorOverride("font_hover_color", fg);
-		btn.AddThemeColorOverride("font_pressed_color", fg);
-		btn.AddThemeFontSizeOverride("font_size", 12);
+
+		var row = AnchorRailRow(btn);
+		row.AddChild(AnchorIcon(iconName, accent, 26f));
+		var copy = AnchorRailCopy(title, subtitle, on && onIsSafe ? new Color(0.24f, 0.48f, 0.34f) : AnchorInk);
+		row.AddChild(copy);
+		row.AddChild(AnchorStatusDot(on, onIsSafe, accent));
+
 		btn.Pressed += () => OnAnchorSwitchPressed(action, !on);
 		return btn;
 	}
 
-	private Control AnchorRailAction(string label, Color color, Action onPressed)
+	private Control AnchorRailAction(
+		string title,
+		string subtitle,
+		string iconName,
+		Color color,
+		bool active,
+		Action onPressed,
+		bool showChevron = false)
 	{
 		var btn = new Button
 		{
-			Text = label,
+			Text = "",
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			CustomMinimumSize = new Vector2(0f, 30f),
+			CustomMinimumSize = new Vector2(0f, 42f),
 			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
 		};
 		var style = new StyleBoxFlat
 		{
-			BgColor = new Color(color.R, color.G, color.B, 0.16f),
-			BorderColor = new Color(color.R, color.G, color.B, 0.85f),
+			BgColor = active ? new Color(0.90f, 0.985f, 0.94f, 0.55f) : new Color(1f, 0.970f, 0.986f, 0.50f),
+			BorderColor = new Color(color.R, color.G, color.B, active ? 0.62f : 0.28f),
 			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 9, CornerRadiusTopRight = 9, CornerRadiusBottomRight = 9, CornerRadiusBottomLeft = 9,
-			ContentMarginLeft = 8, ContentMarginRight = 8, ContentMarginTop = 5, ContentMarginBottom = 5,
+			CornerRadiusTopLeft = 10, CornerRadiusTopRight = 10, CornerRadiusBottomRight = 10, CornerRadiusBottomLeft = 10,
+			ContentMarginLeft = 0, ContentMarginRight = 0, ContentMarginTop = 0, ContentMarginBottom = 0,
 		};
 		var hover = (StyleBoxFlat)style.Duplicate();
-		hover.BgColor = new Color(color.R, color.G, color.B, 0.3f);
+		hover.BgColor = active ? new Color(0.86f, 0.97f, 0.90f, 0.74f) : new Color(1f, 0.94f, 0.970f, 0.76f);
 		btn.AddThemeStyleboxOverride("normal", style);
 		btn.AddThemeStyleboxOverride("hover", hover);
 		btn.AddThemeStyleboxOverride("pressed", style);
 		btn.AddThemeStyleboxOverride("focus", style);
-		var fg = new Color(color.R * 0.6f, color.G * 0.5f, color.B * 0.5f);
-		btn.AddThemeColorOverride("font_color", fg);
-		btn.AddThemeColorOverride("font_hover_color", fg);
-		btn.AddThemeColorOverride("font_pressed_color", fg);
-		btn.AddThemeFontSizeOverride("font_size", 11);
+
+		var row = AnchorRailRow(btn);
+		row.AddChild(AnchorIcon(iconName, color, 26f));
+		row.AddChild(AnchorRailCopy(title, subtitle, active ? new Color(0.24f, 0.48f, 0.34f) : AnchorInk));
+		row.AddChild(showChevron ? AnchorChevron() : AnchorTinyToggle(active));
+
 		btn.Pressed += () => onPressed();
 		return btn;
+	}
+
+	private HBoxContainer AnchorRailRow(Button owner)
+	{
+		var row = new HBoxContainer
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		row.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		row.OffsetLeft = 10f; row.OffsetRight = -9f; row.OffsetTop = 6f; row.OffsetBottom = -6f;
+		row.AddThemeConstantOverride("separation", 8);
+		owner.AddChild(row);
+		return row;
+	}
+
+	private VBox AnchorRailCopy(string title, string subtitle, Color titleColor)
+	{
+		var copy = new VBox { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddThemeConstantOverride("separation", 0);
+		var titleLabel = CreateUiLabel(title, 11, titleColor);
+		titleLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		titleLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		copy.AddChild(titleLabel);
+		var subtitleLabel = CreateUiLabel(subtitle, 8, AnchorInkSoft);
+		subtitleLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		subtitleLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		copy.AddChild(subtitleLabel);
+		return copy;
+	}
+
+	private Control AnchorRailDivider()
+	{
+		var box = new VBox { CustomMinimumSize = new Vector2(0f, 18f) };
+		box.AddChild(new Control { SizeFlagsVertical = Control.SizeFlags.ExpandFill });
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 5);
+		box.AddChild(row);
+		row.AddChild(AnchorLine());
+		row.AddChild(CreateUiLabel("*", 10, new Color(0.96f, 0.46f, 0.66f, 0.55f)));
+		row.AddChild(AnchorLine());
+		box.AddChild(new Control { SizeFlagsVertical = Control.SizeFlags.ExpandFill });
+		return box;
+	}
+
+	private Control AnchorLine()
+	{
+		return new ColorRect
+		{
+			Color = new Color(0.96f, 0.72f, 0.82f, 0.34f),
+			CustomMinimumSize = new Vector2(0f, 1f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+		};
+	}
+
+	private Control AnchorRailResetButton()
+	{
+		var btn = new Button
+		{
+			Text = "",
+			Flat = true,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			CustomMinimumSize = new Vector2(0f, 42f),
+			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+		};
+		var style = new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 1f, 1f, 0f),
+			BorderWidthLeft = 0, BorderWidthTop = 0, BorderWidthRight = 0, BorderWidthBottom = 0,
+		};
+		var hover = (StyleBoxFlat)style.Duplicate();
+		hover.BgColor = new Color(1f, 0.84f, 0.92f, 0.16f);
+		btn.AddThemeStyleboxOverride("normal", style);
+		btn.AddThemeStyleboxOverride("hover", hover);
+		btn.AddThemeStyleboxOverride("pressed", style);
+		btn.AddThemeStyleboxOverride("focus", style);
+		btn.Pressed += () => OnAnchorSwitchPressed("reset_all", true);
+		return btn;
+	}
+
+	private Control AnchorStatusDot(bool on, bool onIsSafe, Color accent)
+	{
+		var outer = new Panel
+		{
+			CustomMinimumSize = new Vector2(12f, 12f),
+			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		Color color = on ? (onIsSafe ? AnchorGreen : accent) : new Color(0.96f, 0.52f, 0.70f, 0.70f);
+		outer.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(color.R, color.G, color.B, 0.16f),
+			BorderColor = new Color(color.R, color.G, color.B, 0.72f),
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomRight = 6, CornerRadiusBottomLeft = 6,
+		});
+		var dot = new Panel
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+			Position = new Vector2(3.5f, 3.5f),
+			Size = new Vector2(5f, 5f),
+		};
+		dot.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = color,
+			CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomRight = 4, CornerRadiusBottomLeft = 4,
+		});
+		outer.AddChild(dot);
+		return outer;
+	}
+
+	private Control AnchorTinyToggle(bool on)
+	{
+		var rail = new Panel
+		{
+			CustomMinimumSize = new Vector2(28f, 16f),
+			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		rail.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = on ? new Color(0.36f, 0.68f, 0.46f, 0.90f) : new Color(0.86f, 0.78f, 0.84f, 0.70f),
+			CornerRadiusTopLeft = 9, CornerRadiusTopRight = 9, CornerRadiusBottomRight = 9, CornerRadiusBottomLeft = 9,
+		});
+		var knob = new Panel
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+			Position = new Vector2(on ? 14f : 2f, 2f),
+			Size = new Vector2(12f, 12f),
+		};
+		knob.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = Colors.White,
+			CornerRadiusTopLeft = 7, CornerRadiusTopRight = 7, CornerRadiusBottomRight = 7, CornerRadiusBottomLeft = 7,
+		});
+		rail.AddChild(knob);
+		return rail;
+	}
+
+	private Control AnchorChevron()
+	{
+		var chevron = CreateUiLabel(">", 18, AnchorPink);
+		chevron.HorizontalAlignment = HorizontalAlignment.Center;
+		chevron.VerticalAlignment = VerticalAlignment.Center;
+		chevron.CustomMinimumSize = new Vector2(18f, 0f);
+		return chevron;
+	}
+
+	private Control AnchorIcon(string assetName, Color accent, float size)
+	{
+		string path = $"res://asset/icon/{assetName}.png";
+		if (ResourceLoader.Exists(path))
+		{
+			var texture = GD.Load<Texture2D>(path);
+			if (texture != null)
+			{
+				return new TextureRect
+				{
+					Texture = texture,
+					CustomMinimumSize = new Vector2(size, size),
+					ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+					StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+					MouseFilter = Control.MouseFilterEnum.Ignore,
+				};
+			}
+		}
+
+		var fallback = new Panel
+		{
+			CustomMinimumSize = new Vector2(size, size),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		int radius = Mathf.RoundToInt(size * 0.22f);
+		fallback.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.12f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.48f),
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = radius,
+			CornerRadiusTopRight = radius,
+			CornerRadiusBottomRight = radius,
+			CornerRadiusBottomLeft = radius,
+		});
+		return fallback;
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────

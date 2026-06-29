@@ -42,6 +42,20 @@ class TtsSegmentTask:
         return (str(getattr(self.frame, "turn_id", "") or ""), int(self.order))
 
 
+@dataclass(frozen=True, slots=True)
+class TtsDispatchPolicy:
+    """Quyết định một lượt nên prefetch hay gộp inline.
+
+    Remote TTS không miễn phí: câu quá dài hoặc quá nhiều segment mà bắn song song
+    sẽ dễ ăn rate-limit.  Policy này giữ nhịp nhanh cho lượt ngắn, nhưng nhường
+    StageDispatcher fallback inline khi lượt quá dài.
+    """
+
+    strategy: str
+    workers: int
+    reason: str = ""
+
+
 class TtsTaskManager:
     """Queue cấp lượt nói, tách khỏi engine Gemini cụ thể."""
 
@@ -79,12 +93,16 @@ class TtsTaskManager:
         tasks = self._build_tasks(frames, valence=valence, arousal=arousal, stance=stance)
         if not tasks:
             return False
+        policy = _dispatch_policy(tasks)
+        if policy.strategy == "inline":
+            logger.debug("[tts-task-manager] fallback inline: %s", policy.reason)
+            return False
 
         self.cancel_current(reason="replaced", only_interruptible=False)
         cancel_event = threading.Event()
         playback_stop = threading.Event()
-        workers = _prefetch_workers()
-        executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="TTS-Prefetch")
+        executor = ThreadPoolExecutor(max_workers=policy.workers, thread_name_prefix="TTS-Prefetch")
+        turn_segments = _turn_segments(tasks)
 
         with self._lock:
             self._generation += 1
@@ -98,19 +116,51 @@ class TtsTaskManager:
 
         futures: dict[tuple[str, int], Future[bytes]] = {}
         for task in tasks:
-            self.audio_bus.emit_lifecycle("audio_queued", stage_frame=task.frame, text=task.text, callback=on_event)
+            self.audio_bus.emit_lifecycle(
+                "audio_prepare",
+                stage_frame=task.frame,
+                text=task.text,
+                turn_segments=turn_segments,
+                callback=on_event,
+            )
+            self.audio_bus.emit_lifecycle(
+                "audio_queued",
+                stage_frame=task.frame,
+                text=task.text,
+                turn_segments=turn_segments,
+                callback=on_event,
+            )
             futures[task.key] = executor.submit(
                 self._synthesize_task,
                 task,
                 backend=backend,
                 cancel_event=cancel_event,
             )
+            futures[task.key].add_done_callback(
+                self._buffer_ready_callback(
+                    task,
+                    cancel_event=cancel_event,
+                    turn_segments=turn_segments,
+                    on_event=on_event,
+                )
+            )
 
         thread = threading.Thread(
             target=self._playback_loop,
             name="TTS-TaskPlayback",
             daemon=True,
-            args=(generation, tasks, futures, backend, executor, cancel_event, playback_stop, on_first_start, on_event),
+            args=(
+                generation,
+                tasks,
+                futures,
+                turn_segments,
+                backend,
+                executor,
+                cancel_event,
+                playback_stop,
+                on_first_start,
+                on_event,
+            ),
         )
         with self._lock:
             self._playback_thread = thread
@@ -214,6 +264,7 @@ class TtsTaskManager:
         generation: int,
         tasks: list[TtsSegmentTask],
         futures: dict[tuple[str, int], Future[bytes]],
+        turn_segments: tuple[dict[str, object], ...],
         backend: Any,
         executor: ThreadPoolExecutor,
         cancel_event: threading.Event,
@@ -240,6 +291,7 @@ class TtsTaskManager:
                         "audio_failed",
                         stage_frame=task.frame,
                         text=task.text,
+                        turn_segments=turn_segments,
                         error=str(exc),
                         callback=on_event,
                     )
@@ -252,6 +304,7 @@ class TtsTaskManager:
                         "audio_cancelled",
                         stage_frame=task.frame,
                         text=task.text,
+                        turn_segments=turn_segments,
                         reason="empty_audio",
                         callback=on_event,
                     )
@@ -273,18 +326,31 @@ class TtsTaskManager:
                     self._pending_tasks.pop(task.key, None)
                     self._pending_callbacks.pop(task.key, None)
 
-                self.audio_bus.emit_lifecycle("audio_start", stage_frame=task.frame, text=task.text, callback=on_event)
+                self.audio_bus.emit_lifecycle(
+                    "audio_start",
+                    stage_frame=task.frame,
+                    text=task.text,
+                    turn_segments=turn_segments,
+                    callback=on_event,
+                )
                 backend.play_audio(wav_bytes, playback_stop)
                 if playback_stop.is_set() or cancel_event.is_set():
                     self.audio_bus.emit_lifecycle(
                         "audio_cancelled",
                         stage_frame=task.frame,
                         text=task.text,
+                        turn_segments=turn_segments,
                         reason="cancelled_during_playback",
                         callback=on_event,
                     )
                 else:
-                    self.audio_bus.emit_lifecycle("audio_done", stage_frame=task.frame, text=task.text, callback=on_event)
+                    self.audio_bus.emit_lifecycle(
+                        "audio_done",
+                        stage_frame=task.frame,
+                        text=task.text,
+                        turn_segments=turn_segments,
+                        callback=on_event,
+                    )
 
                 with self._lock:
                     if self._current_task is task:
@@ -298,6 +364,7 @@ class TtsTaskManager:
                 "audio_failed",
                 stage_frame=getattr(failed, "frame", None),
                 text=str(getattr(failed, "text", "") or ""),
+                turn_segments=turn_segments,
                 error=str(exc),
                 callback=on_event,
             )
@@ -322,6 +389,35 @@ class TtsTaskManager:
             except TimeoutError:
                 continue
         raise RuntimeError("cancelled_while_waiting_for_synth")
+
+    def _buffer_ready_callback(
+        self,
+        task: TtsSegmentTask,
+        *,
+        cancel_event: threading.Event,
+        turn_segments: tuple[dict[str, object], ...],
+        on_event: Callable[[Any, Any], None] | None,
+    ):
+        """Tạo callback báo audio đã sẵn sàng mà không chặn playback loop."""
+
+        def _callback(future: Future[bytes]) -> None:
+            if cancel_event.is_set() or future.cancelled():
+                return
+            try:
+                wav_bytes = future.result()
+            except Exception:
+                return
+            if not wav_bytes or cancel_event.is_set():
+                return
+            self.audio_bus.emit_lifecycle(
+                "audio_buffer_ready",
+                stage_frame=task.frame,
+                text=task.text,
+                turn_segments=turn_segments,
+                callback=on_event,
+            )
+
+        return _callback
 
     def _cache_key(self, task: TtsSegmentTask, *, backend: Any) -> str:
         signature = ""
@@ -371,6 +467,79 @@ def _prefetch_workers() -> int:
         return 2
 
 
+def _dispatch_policy(tasks: list[TtsSegmentTask]) -> TtsDispatchPolicy:
+    mode = os.environ.get("ERIS_TTS_TASK_STRATEGY", "auto").strip().lower()
+    if mode in {"inline", "join"}:
+        return TtsDispatchPolicy(strategy="inline", workers=1, reason="forced_inline")
+
+    total_chars = sum(len(task.text) for task in tasks)
+    segment_count = len(tasks)
+    max_segments = _max_prefetch_segments()
+    max_chars = _max_prefetch_chars()
+    max_single = _max_prefetch_single_chars()
+    if mode not in {"auto", "prefetch", "parallel", "queued"}:
+        mode = "auto"
+    if mode == "auto":
+        if segment_count > max_segments:
+            return TtsDispatchPolicy(
+                strategy="inline",
+                workers=1,
+                reason=f"segments={segment_count}>{max_segments}",
+            )
+        if total_chars > max_chars:
+            return TtsDispatchPolicy(
+                strategy="inline",
+                workers=1,
+                reason=f"chars={total_chars}>{max_chars}",
+            )
+        if any(len(task.text) > max_single for task in tasks):
+            return TtsDispatchPolicy(
+                strategy="inline",
+                workers=1,
+                reason=f"single_segment>{max_single}",
+            )
+
+    workers = min(_prefetch_workers(), max(1, segment_count))
+    return TtsDispatchPolicy(strategy="prefetch", workers=workers, reason=f"segments={segment_count};chars={total_chars}")
+
+
+def _max_prefetch_segments() -> int:
+    raw = os.environ.get("ERIS_TTS_PREFETCH_MAX_SEGMENTS", "4").strip()
+    try:
+        return max(1, min(12, int(raw)))
+    except ValueError:
+        return 4
+
+
+def _max_prefetch_chars() -> int:
+    raw = os.environ.get("ERIS_TTS_PREFETCH_MAX_CHARS", "620").strip()
+    try:
+        return max(120, min(3000, int(raw)))
+    except ValueError:
+        return 620
+
+
+def _max_prefetch_single_chars() -> int:
+    raw = os.environ.get("ERIS_TTS_PREFETCH_MAX_SINGLE_CHARS", "280").strip()
+    try:
+        return max(80, min(1200, int(raw)))
+    except ValueError:
+        return 280
+
+
+def _turn_segments(tasks: list[TtsSegmentTask]) -> tuple[dict[str, object], ...]:
+    """Metadata nhỏ gửi qua event để interrupt ledger biết phần chưa phát."""
+
+    return tuple(
+        {
+            "turn_id": str(getattr(task.frame, "turn_id", "") or ""),
+            "segment_id": int(task.order),
+            "text": task.text,
+        }
+        for task in tasks
+    )
+
+
 def _audio_cache_size() -> int:
     raw = os.environ.get("ERIS_TTS_TASK_AUDIO_CACHE_SIZE", "24").strip()
     try:
@@ -401,4 +570,4 @@ def _call_once(callback: Callable[[], None] | None) -> None:
         logger.debug("[tts-task-manager] on_first_start failed: %s", exc)
 
 
-__all__ = ["TtsSegmentTask", "TtsTaskManager"]
+__all__ = ["TtsDispatchPolicy", "TtsSegmentTask", "TtsTaskManager"]

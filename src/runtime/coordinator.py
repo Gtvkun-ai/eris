@@ -113,7 +113,10 @@ from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
 from runtime.stage_contracts import StageFrameBuilder
 from runtime.stage_dispatcher import StageDispatcher
+from runtime.stage_event_bus import StageEventBus
 from runtime.stage_output import StageOutputPipeline
+from runtime.stage_protocol import is_stage_inbound_type
+from runtime.stage_protocol_adapter import playback_event, stage_segment_event, stage_state_event
 from runtime.shadow_pipeline import ShadowPipelineMixin
 from runtime.self_critique import SelfCritiqueEscalationMixin
 from runtime.state_commit_service import StateCommitServiceMixin
@@ -351,6 +354,12 @@ class RuntimeCoordinator(
         self.interrupt_ledger = InterruptLedger()
         self.pending_speech_interrupt_event = None
         self.reply_context = SimpleNamespace(previous_public_turn=None)
+        # Protocol sân khấu mới: gửi event typed ra frontend, nhưng không thay
+        # payload legacy. Nếu client cũ không thích message lạ, tắt bằng
+        # ERIS_STAGE_PROTOCOL=0.
+        self.stage_event_bus = StageEventBus(transport=transport, logger=logger)
+        self.avatar_ready = False
+        self.last_stage_inbound_event = None
         self.memory_core = memory_core
         if memory_semantic_parser is None and str(os.getenv("ERIS_MEMORY_SEMANTIC_PARSER", "")).strip().lower() in {"1", "true", "yes", "on", "y"}:
             try:
@@ -1556,14 +1565,32 @@ class RuntimeCoordinator(
         stage_frames = stage_output.frames_for_tts(stage_frame)
         if isinstance(payload.get("stage"), dict):
             payload["stage"]["segment_count"] = len(stage_frames)
+            payload["stage"]["protocol"] = "eris.stage"
+            payload["stage"]["protocol_version"] = 1
         sync_text = os.environ.get("ERIS_TTS_SYNC_TEXT", "0").strip().lower() in {"1", "true", "yes", "on"}
         text_payload_sent = False
+        stage_payload_sent = False
+
+        def send_stage_protocol_segments():
+            nonlocal stage_payload_sent
+            if stage_payload_sent:
+                return
+            stage_payload_sent = True
+            bus = getattr(self, "stage_event_bus", None)
+            if bus is None:
+                return
+            for frame in stage_frames or (stage_frame,):
+                try:
+                    bus.emit(stage_segment_event(frame, segment_count=len(stage_frames) or 1))
+                except Exception as exc:
+                    self.logger.debug("[stage-protocol] stage_segment emit failed: %s", exc)
 
         def send_text_payload():
             nonlocal text_payload_sent
             if text_payload_sent:
                 return
             text_payload_sent = True
+            send_stage_protocol_segments()
             try:
                 self.transport.send_json(payload)
             except Exception as e:
@@ -1798,9 +1825,16 @@ class RuntimeCoordinator(
             ledger.track_tts_event(event, stage_frame=stage_frame)
         except Exception as exc:
             self.logger.debug("[interrupt] track tts event failed: %s", exc)
+        try:
+            bus = getattr(self, "stage_event_bus", None)
+            if bus is not None:
+                bus.emit(playback_event(event, stage_frame=stage_frame))
+        except Exception as exc:
+            self.logger.debug("[stage-protocol] playback event failed: %s", exc)
         if os.environ.get("ERIS_TTS_EVENT_PAYLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}:
             try:
-                self.transport.send_json({"type": "tts_event", **record})
+                legacy_record = {key: value for key, value in record.items() if key != "type"}
+                self.transport.send_json({"type": "tts_event", "event_type": event_type, **legacy_record})
             except Exception as exc:
                 self.logger.debug("[TTS:event] send failed: %s", exc)
 
@@ -5263,6 +5297,10 @@ class RuntimeCoordinator(
 
     def _handle_incoming(self, msg: dict):
         msg_type = msg.get("type", "")
+        if is_stage_inbound_type(msg_type):
+            self._handle_stage_inbound_event(msg)
+            return
+
         if msg_type == "chat_start":
             self._enter_chat_cycle()
             return
@@ -5298,6 +5336,83 @@ class RuntimeCoordinator(
             return
         if msg_type:
             self.logger.debug("[incoming] ignored unknown msg_type=%s", msg_type)
+
+    def _handle_stage_inbound_event(self, msg: dict) -> None:
+        """Nhận event ngược từ frontend/sân khấu.
+
+        Đây là lớp protocol, không thay chat payload cũ. Frontend có thể báo
+        `interrupt` ngay khi mic phát hiện user bắt đầu nói, trước khi STT có text.
+        """
+
+        bus = getattr(self, "stage_event_bus", None)
+        event = None
+        try:
+            event = bus.remember_inbound(msg) if bus is not None else None
+        except Exception as exc:
+            self.logger.debug("[stage-protocol] inbound parse failed: %s", exc)
+        if event is None:
+            return
+        self.last_stage_inbound_event = event.to_meta()
+
+        if event.type == "interrupt":
+            self._handle_stage_interrupt_event(event)
+            return
+
+        if event.type == "avatar_ready":
+            self.avatar_ready = True
+            self._emit_stage_protocol_state("avatar_ready_ack", data=event.to_meta())
+            return
+
+        if event.type in {"audio_playback_started", "audio_playback_done"}:
+            self._track_frontend_audio_event(event)
+            self._emit_stage_protocol_state(f"{event.type}_ack", data=event.to_meta())
+            return
+
+        if event.type == "stage_ack":
+            self._emit_stage_protocol_state("stage_ack_received", data=event.to_meta())
+
+    def _handle_stage_interrupt_event(self, event) -> None:
+        text = str(getattr(event, "message", "") or "").strip()
+        if text:
+            self._capture_speech_interrupt_for_user(text, timestamp=float(getattr(event, "timestamp", time.time()) or time.time()))
+        else:
+            # Voice-start interrupt: chưa có STT text, nhưng sân khấu phải dừng
+            # ngay để Eris không đọc đè lên người dùng.
+            try:
+                tts = getattr(self, "tts_engine", None)
+                cancel = getattr(tts, "cancel_current", None)
+                if callable(cancel):
+                    cancel(reason=str(getattr(event, "reason", "") or "frontend_interrupt"), only_interruptible=True)
+            except Exception as exc:
+                self.logger.debug("[stage-protocol] interrupt cancel failed: %s", exc)
+        self._emit_stage_protocol_state("interrupt_ack", reason=str(getattr(event, "reason", "") or ""), data=event.to_meta())
+
+    def _track_frontend_audio_event(self, event) -> None:
+        """Cho frontend playback event cập nhật ledger nếu frontend là nguồn phát."""
+
+        legacy_type = "audio_start" if event.type == "audio_playback_started" else "audio_done"
+        try:
+            self._ensure_interrupt_ledger().track_tts_event(
+                SimpleNamespace(
+                    type=legacy_type,
+                    turn_id=str(getattr(event, "turn_id", "") or ""),
+                    segment_id=int(getattr(event, "seq", 0) or 0),
+                    text=str(getattr(event, "message", "") or ""),
+                    turn_segments=(),
+                ),
+                stage_frame=None,
+                timestamp=float(getattr(event, "timestamp", time.time()) or time.time()),
+            )
+        except Exception as exc:
+            self.logger.debug("[stage-protocol] frontend audio track failed: %s", exc)
+
+    def _emit_stage_protocol_state(self, event_type: str, *, reason: str = "", data: dict | None = None) -> None:
+        try:
+            bus = getattr(self, "stage_event_bus", None)
+            if bus is not None:
+                bus.emit(stage_state_event(event_type=event_type, reason=reason, data=data or {}))
+        except Exception as exc:
+            self.logger.debug("[stage-protocol] state emit failed: %s", exc)
 
     def _handle_debug_command(self, msg: dict) -> None:
         """Chạy lệnh debug (scenario preset) từ panel DEBUG của Godot.
@@ -5344,7 +5459,10 @@ class RuntimeCoordinator(
             elif action == "strict_grounding":
                 author.set_strict_grounding(value)
             elif action == "safe_mode":
-                author.disable_dark()
+                if value:
+                    author.disable_dark()
+                else:
+                    author.set_strict_grounding(False)
             elif action == "reset_all":
                 author.reset_all()
             else:
