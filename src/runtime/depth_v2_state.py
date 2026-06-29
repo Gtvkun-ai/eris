@@ -152,6 +152,75 @@ def _attachment_summary() -> dict[str, Any]:
     return {"live": isinstance(data, dict), "value": round(value, 3)}
 
 
+def _anchor_depth_summary(private_mind_digest: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Lấy phần Mô_Hình_Ngài/neo từ private_mind digest cho depth_v2.
+
+    Lỗi cũ: depth_v2 có `tom` nhưng không chở `user_model` và `significance`,
+    nên body chỉ biết một câu ToM thoáng qua, không biết "độ dày mô hình",
+    số belief, ý nghĩa, gắn bó dài hạn. Hàm này giữ payload gọn nhưng đủ dữ liệu
+    để panel không phải đoán từ text.
+    """
+    anchor = _dict(_dict(private_mind_digest).get("anchor"))
+    user_model = _dict(anchor.get("user_model"))
+    significance = _dict(anchor.get("significance"))
+    attachment = _dict(anchor.get("attachment"))
+    switches = _dict(anchor.get("switches"))
+    deception = _dict(anchor.get("deception"))
+
+    raw_beliefs = _list(user_model.get("beliefs"))
+    beliefs: list[dict[str, Any]] = []
+    for raw in raw_beliefs[:8]:
+        item = _dict(raw)
+        claim = _text(item.get("claim"), limit=160)
+        if not claim:
+            continue
+        beliefs.append(
+            {
+                "facet": _text(item.get("facet"), limit=40),
+                "claim": claim,
+                "confidence": round(_clamp01(item.get("confidence"), 0.0), 3),
+                "recurrence": int(_float(item.get("recurrence"), 1.0)),
+                "evidence_count": int(_float(item.get("evidence_count"), 0.0)),
+            }
+        )
+
+    belief_count = int(_float(user_model.get("belief_count"), len(beliefs)))
+    model_thickness = _clamp01(
+        user_model.get("model_thickness"),
+        _clamp01(significance.get("model_thickness"), 0.0),
+    )
+    longarc = _clamp01(attachment.get("longarc"), _clamp01(_attachment_summary().get("value"), 0.0))
+
+    return {
+        "user_model": {
+            "live": bool(belief_count or beliefs or model_thickness > 0.0),
+            "belief_count": belief_count,
+            "model_thickness": round(model_thickness, 4),
+            "beliefs": beliefs,
+        },
+        "significance": {
+            "irreplaceability": round(_clamp01(significance.get("irreplaceability"), 0.0), 4),
+            "anchor_role": round(_clamp01(significance.get("anchor_role"), 0.0), 4),
+            "witness_strength": round(_clamp01(significance.get("witness_strength"), 0.0), 4),
+            "model_thickness": round(model_thickness, 4),
+        },
+        "attachment_anchor": {
+            "live": bool(attachment),
+            "longarc": round(longarc, 4),
+            "beat_ema": round(_clamp01(attachment.get("beat_ema"), 0.0), 4),
+            "recognition_ema": round(_clamp01(attachment.get("recognition_ema"), 0.0), 4),
+            "total_beats": int(_float(attachment.get("total_beats"), 0.0)),
+        },
+        "safety": {
+            "shadow_enabled": bool(switches.get("shadow_enabled", False)),
+            "deception_enabled": bool(switches.get("deception_enabled", False)),
+            "strict_grounding": bool(switches.get("strict_grounding", True)),
+            "safe_mode": bool(switches.get("safe_mode", True)),
+            "deception_count": int(_float(deception.get("count"), 0.0)),
+        },
+    }
+
+
 def _signal_snapshot(max_age_s: float = 120.0) -> dict[str, Any]:
     data = _read_json("panel_snapshot.json")
     if not isinstance(data, dict):
@@ -449,6 +518,7 @@ def build_depth_v2_state(
     sections_by_kind = _section_map(sections)
     signal_snapshot = _signal_snapshot()
     affect_card = _emotion_board(private_mind_digest)
+    anchor_depth = _anchor_depth_summary(private_mind_digest)
     history = _roll_affect_history(affect_history, affect_card=affect_card, now=ts)
     priorities = _derive_priorities(private_mind_digest, tom_text=tom_read, expression_gate=expression_gate)
     dev = _development_summary()
@@ -472,6 +542,9 @@ def build_depth_v2_state(
             "text": _text(tom_read, limit=220),
             "confidence": round(_parse_tom_confidence(tom_read), 3),
         },
+        # Contract riêng cho khung "Mô Hình Ngài": body đọc trực tiếp block này,
+        # không còn phải suy ra độ dày/nghĩa/gắn bó từ một câu tom_read mơ hồ.
+        **anchor_depth,
         "expression": {
             "want": round(_clamp01(gate.get("want_to_say"), 0.0), 3),
             "suppress": round(_clamp01(gate.get("suppression_pressure"), 0.0), 3),

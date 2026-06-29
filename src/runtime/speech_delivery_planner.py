@@ -124,6 +124,7 @@ class SpeechDeliveryPlanner:
         text: str,
         *,
         intent: str = "",
+        delivery_hint: str = "",
         explicit_emotion: str = "",
         explicit_motion: str = "",
         extracted_actions: Iterable[str] = (),
@@ -179,6 +180,29 @@ class SpeechDeliveryPlanner:
 
         if signals.restraint >= 0.72 and voice_style in {"soft_tease", "warm_soft", "curious_soft"}:
             notes.append("Restraint is high: reduce brightness and keep pitch narrow.")
+
+        hinted_style = str(delivery_hint or "").strip().lower()
+        if hinted_style in {
+            "neutral",
+            "focused",
+            "warm_soft",
+            "curious_soft",
+            "soft_tease",
+            "dry_tease",
+            "deadpan",
+            "low_quiet",
+        }:
+            # LLM được quyền chọn delivery ở field riêng, nhưng planner vẫn giữ
+            # action/motion và notes từ affect nền để câu không thành diễn quá tay.
+            voice_style = hinted_style
+            if hinted_style in {"dry_tease", "soft_tease"}:
+                emotion = "dry_tease" if hinted_style == "dry_tease" else "mischief_soft"
+            elif hinted_style == "curious_soft":
+                emotion = "curious"
+            elif hinted_style == "deadpan":
+                emotion = "flat_calm"
+            elif hinted_style == "low_quiet":
+                emotion = "quiet_low"
 
         return SpeechDeliveryPlan(
             voice_style=voice_style,

@@ -15,7 +15,7 @@ using VBox = Godot.VBoxContainer;
 // ─────────────────────────────────────────────────────────────────────────────
 public partial class UdpListener : Node2D
 {
-	private static readonly Vector2 AnchorPanelMinSize = new(880f, 500f);
+	private static readonly Vector2 AnchorPanelMinSize = new(940f, 540f);
 
 	private Panel _anchorPanel;
 	private Button _contextAnchorButton;
@@ -314,7 +314,14 @@ public partial class UdpListener : Node2D
 		{
 			doc = JsonDocument.Parse(_latestPrivateMindDebugJson);
 			JsonElement root = doc.RootElement;
-			if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("anchor", out var a) || a.ValueKind != JsonValueKind.Object)
+
+			// Digest có thể tới theo vài hình dạng khác nhau:
+			// - private_mind_digest đã được parser bóc ra: { ..., "anchor": {...} }
+			// - payload thô: { "private_mind_digest": { "anchor": {...} } }
+			// - fallback cũ trong emotion_debug.private_mind.
+			// Trước đây panel chỉ đọc root.anchor, nên chỉ cần tầng parser/cache đổi
+			// hình dạng một chút là "Mô Hình Ngài" trống dù UDP đã có dữ liệu.
+			if (!TrySelectAnchorBlock(root, out var a))
 				return data;
 			data.HasData = true;
 
@@ -394,6 +401,38 @@ public partial class UdpListener : Node2D
 			doc?.Dispose();
 		}
 		return data;
+	}
+
+	private static bool TrySelectAnchorBlock(JsonElement root, out JsonElement anchor)
+	{
+		anchor = default;
+		if (root.ValueKind != JsonValueKind.Object)
+			return false;
+
+		if (root.TryGetProperty("anchor", out anchor) && anchor.ValueKind == JsonValueKind.Object)
+			return true;
+
+		if (root.TryGetProperty("private_mind_digest", out var digest)
+			&& digest.ValueKind == JsonValueKind.Object
+			&& digest.TryGetProperty("anchor", out anchor)
+			&& anchor.ValueKind == JsonValueKind.Object)
+			return true;
+
+		if (root.TryGetProperty("emotion_debug", out var emotion)
+			&& emotion.ValueKind == JsonValueKind.Object
+			&& emotion.TryGetProperty("private_mind", out var privateMind)
+			&& privateMind.ValueKind == JsonValueKind.Object
+			&& privateMind.TryGetProperty("anchor", out anchor)
+			&& anchor.ValueKind == JsonValueKind.Object)
+			return true;
+
+		// Cho phép cache/debug lưu thẳng block anchor, không cần bọc lại.
+		if (root.TryGetProperty("user_model", out var userModel) && userModel.ValueKind == JsonValueKind.Object)
+		{
+			anchor = root;
+			return true;
+		}
+		return false;
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────

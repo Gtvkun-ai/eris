@@ -25,6 +25,10 @@ class Decision:
     motion_intent: str = ""
     motion_target_x: float = -1.0
     motion_facing: int = 0
+    # Gợi ý sân khấu do LLM khai có cấu trúc. Không nhét "(cười khẽ)" vào text.
+    delivery_hint: str = ""    # ví dụ: dry_tease, soft_tease, focused, low_quiet
+    nonverbal_cue: str = ""    # ví dụ: laugh_soft, small_smile, sigh_soft
+    stage_motion: str = ""     # ví dụ: look_away, tilt_head, blink_slow
 
     def resolve_motion_intent(self) -> str:
         intent = (self.motion_intent or "").strip().lower()
@@ -94,4 +98,7 @@ class Decision:
             "motion_intent": self.resolve_motion_intent(),
             "motion_target_x": self.resolve_motion_target_x(),
             "motion_facing": self.resolve_motion_facing(),
+            "delivery_hint": self.delivery_hint,
+            "nonverbal_cue": self.nonverbal_cue,
+            "stage_motion": self.stage_motion,
         }

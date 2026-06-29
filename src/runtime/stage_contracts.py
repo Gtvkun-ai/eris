@@ -167,18 +167,27 @@ class StageFrameBuilder:
 
         should_speak = bool(payload.get("should_speak", getattr(decision, "should_speak", True)))
         affect = affect_signals_from(payload, frame=frame)
+        delivery_hint = str(payload.get("delivery_hint", getattr(decision, "delivery_hint", "")) or "").strip()
+        nonverbal_cue = str(payload.get("nonverbal_cue", getattr(decision, "nonverbal_cue", "")) or "").strip()
+        stage_motion = str(payload.get("stage_motion", getattr(decision, "stage_motion", "")) or "").strip()
         base_emotion = surfaces.marks.emotion_hint or _emotion_from_payload(payload, frame=frame)
         explicit_motion = _motion_from_decision(decision)
+        extracted_actions = tuple(
+            item
+            for item in (*surfaces.marks.actions, nonverbal_cue)
+            if str(item or "").strip()
+        )
         delivery = self.delivery_planner.plan(
             surfaces.display_text or surfaces.tts_text,
             intent=str(getattr(decision, "intent", "") or ""),
+            delivery_hint=delivery_hint,
             explicit_emotion=base_emotion,
-            explicit_motion=surfaces.marks.motion_hint,
-            extracted_actions=surfaces.marks.actions,
+            explicit_motion=stage_motion or surfaces.marks.motion_hint,
+            extracted_actions=extracted_actions,
             affect=affect,
         )
         emotion = delivery.emotion or base_emotion
-        motion = explicit_motion if explicit_motion and explicit_motion != "none" else delivery.motion
+        motion = stage_motion or (explicit_motion if explicit_motion and explicit_motion != "none" else delivery.motion)
         valence, arousal, stance = _prosody_numbers(payload, frame=frame)
         prosody = self.prosody_director.plan(
             tts_text,

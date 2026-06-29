@@ -258,6 +258,9 @@ class LlmService:
             "next_animation": "",
             "system_action": "",
             "action_input": "",
+            "delivery_hint": "",
+            "nonverbal_cue": "",
+            "stage_motion": "",
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -453,6 +456,9 @@ class LlmService:
         payload["next_animation"] = self._coerce_animation_value(payload.get("next_animation"), allow_empty=True)
         payload["system_action"] = ""
         payload["action_input"] = ""
+        payload["delivery_hint"] = self._coerce_text_value(payload.get("delivery_hint", "")).strip()
+        payload["nonverbal_cue"] = self._coerce_text_value(payload.get("nonverbal_cue", "")).strip()
+        payload["stage_motion"] = self._coerce_text_value(payload.get("stage_motion", "")).strip()
 
         if "intent" in payload:
             signal = self._chat_act_repair_signal(act)
@@ -593,6 +599,9 @@ class LlmService:
         payload["debug_trace"] = f"{debug_trace} | {note}" if debug_trace else note
         payload["system_action"] = ""
         payload["action_input"] = ""
+        payload["delivery_hint"] = self._coerce_text_value(payload.get("delivery_hint", "")).strip()
+        payload["nonverbal_cue"] = self._coerce_text_value(payload.get("nonverbal_cue", "")).strip()
+        payload["stage_motion"] = self._coerce_text_value(payload.get("stage_motion", "")).strip()
         return json.dumps(payload, ensure_ascii=False)
 
     def _contextual_service_fallback_text(self, messages: list[dict], *, channel: str) -> str:
@@ -744,6 +753,9 @@ class LlmService:
             "next_animation": "",
             "system_action": "",
             "action_input": "",
+            "delivery_hint": "",
+            "nonverbal_cue": "",
+            "stage_motion": "",
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -781,6 +793,9 @@ class LlmService:
             "next_animation": "",
             "system_action": "",
             "action_input": "",
+            "delivery_hint": "",
+            "nonverbal_cue": "",
+            "stage_motion": "",
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -1069,6 +1084,12 @@ class LlmService:
             return False
         if not self._is_valid_text_field(payload.get("action_input")):
             return False
+        if not self._is_valid_text_field(payload.get("delivery_hint", "")):
+            return False
+        if not self._is_valid_text_field(payload.get("nonverbal_cue", "")):
+            return False
+        if not self._is_valid_text_field(payload.get("stage_motion", "")):
+            return False
         return True
 
     def _is_valid_motion_payload(self, payload: dict | None) -> bool:
@@ -1356,6 +1377,9 @@ class LlmService:
             "next_animation": next_animation,
             "system_action": system_action,
             "action_input": action_input if system_action else "",
+            "delivery_hint": self._coerce_text_value(source.get("delivery_hint", "")),
+            "nonverbal_cue": self._coerce_text_value(source.get("nonverbal_cue", "")),
+            "stage_motion": self._coerce_text_value(source.get("stage_motion", "")),
         }
         return json.dumps(sanitized, ensure_ascii=False)
 
@@ -1481,7 +1505,7 @@ class LlmService:
         if system_action:
             return False
         text = self._coerce_text_value(payload.get("text", "")).strip()
-        inline_metadata = bool(re.search(r'[,\s]["\']?(?:intent|action|reasoning_tags|should_speak|confidence|debug_trace)["\']?\s*:', text))
+        inline_metadata = bool(re.search(r'[,\s]["\']?(?:intent|action|reasoning_tags|should_speak|confidence|debug_trace|delivery_hint|nonverbal_cue|stage_motion)["\']?\s*:', text))
         return (
             not text
             or self._looks_like_provider_metadata(text)
@@ -1601,8 +1625,10 @@ class LlmService:
             "Return exactly one JSON object with fields:\n"
             "text, intent, action, animation, reasoning_tags, should_speak, confidence, "
             "direction, target_x, bounce_action, "
-            "extracted_fact, debug_trace, next_animation, system_action, action_input.\n"
+            "extracted_fact, debug_trace, next_animation, system_action, action_input, "
+            "delivery_hint, nonverbal_cue, stage_motion.\n"
             "action can be an object like {\"type\":\"none\"} or a whitelisted system action request.\n"
+            "Do not put stage directions inside text; use delivery_hint/nonverbal_cue/stage_motion.\n"
             "If the raw answer is plain prose, put it into text and keep other fields safe.\n"
             "Raw assistant answer:\n"
             f"{raw_text}"

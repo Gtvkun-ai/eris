@@ -3679,7 +3679,8 @@ public partial class UdpListener : Node2D
 			if (root.ValueKind == JsonValueKind.Object
 				&& root.TryGetProperty("menu", out var m) && m.ValueKind == JsonValueKind.Object)
 				menu = m;
-			return ExtractCurrentThought(menu, root).Count > 0
+			return PrivateMindAnchorHasContent(root)
+				|| ExtractCurrentThought(menu, root).Count > 0
 				|| ExtractFutureThought(menu, root).Count > 0
 				|| ExtractConcerns(menu).Count > 0
 				|| ExtractFragments(menu, root).Count > 0
@@ -3689,6 +3690,28 @@ public partial class UdpListener : Node2D
 		{
 			return false;
 		}
+	}
+
+	private static bool PrivateMindAnchorHasContent(JsonElement root)
+	{
+		// Anchor/Mô Hình Ngài là dữ liệu panel riêng, không nhất thiết đi kèm
+		// current_thought/open_concerns. Nếu không tính nó là "content", body có thể
+		// bỏ qua digest chỉ đổi trục neo và panel đứng yên dù Python đã gửi đúng.
+		if (root.ValueKind != JsonValueKind.Object)
+			return false;
+		if (!root.TryGetProperty("anchor", out var anchor) || anchor.ValueKind != JsonValueKind.Object)
+			return false;
+		if (anchor.TryGetProperty("user_model", out var userModel) && userModel.ValueKind == JsonValueKind.Object)
+			return true;
+		if (anchor.TryGetProperty("significance", out var significance) && significance.ValueKind == JsonValueKind.Object)
+			return true;
+		if (anchor.TryGetProperty("attachment", out var attachment) && attachment.ValueKind == JsonValueKind.Object)
+			return true;
+		if (anchor.TryGetProperty("switches", out var switches) && switches.ValueKind == JsonValueKind.Object)
+			return true;
+		if (anchor.TryGetProperty("deception", out var deception) && deception.ValueKind == JsonValueKind.Object)
+			return true;
+		return anchor.TryGetProperty("shadow", out var shadow) && shadow.ValueKind == JsonValueKind.Object;
 	}
 
 	private void SavePrivateMindState()

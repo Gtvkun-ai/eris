@@ -27,6 +27,21 @@ public partial class UdpListener : Node2D
 	private Label _depthAffectSubtextLabel;
 	private ProgressBar _depthAffectStabilityBar;
 	private Label _depthAffectStabilityPctLabel;
+	private Label _depthTomStatusLabel;
+	private Label _depthTomScoreLabel;
+	private Label _depthTomSummaryLabel;
+	private Label _depthTomMetaLabel;
+	private Label _depthTomBeliefLabel;
+	private ProgressBar _depthTomThicknessBar;
+	private ProgressBar _depthTomConfidenceBar;
+	private ProgressBar _depthTomAttachmentBar;
+	private ProgressBar _depthSelfWantBar;
+	private Label _depthSelfWantValueLabel;
+	private ProgressBar _depthSelfSuppressBar;
+	private Label _depthSelfSuppressValueLabel;
+	private ProgressBar _depthSelfAllowedBar;
+	private Label _depthSelfAllowedValueLabel;
+	private Label _depthSelfStanceValueLabel;
 
 	private string _latestDepthJson = "";
 	private Font _depthFontRegular;
@@ -188,33 +203,30 @@ public partial class UdpListener : Node2D
 		if (root == null)
 			return;
 
-		var headline = CreateDepthTextLabel("Bình tĩnh", 19, new Color(0.86f, 0.20f, 0.44f), bold: true);
+		var headline = CreateDepthTextLabel("Bình tĩnh", 16, new Color(0.86f, 0.20f, 0.44f), bold: true);
 		headline.AutowrapMode = TextServer.AutowrapMode.Off;
 		headline.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		headline.HorizontalAlignment = HorizontalAlignment.Left;
 		headline.VerticalAlignment = VerticalAlignment.Center;
-		PlaceBySlot(headline, RectLTRB(0.55f, 0.28f, 0.94f, 0.43f));
+		PlaceBySlot(headline, RectLTRB(0.48f, 0.27f, 0.90f, 0.39f));
 		root.AddChild(headline);
 		_depthAffectHeadlineLabel = headline;
 
-		var subtext = CreateDepthTextLabel("Thoải mái, sẵn sàng trò chuyện.", 12, new Color(0.58f, 0.20f, 0.34f));
+		var subtext = CreateDepthTextLabel("Thoải mái, sẵn sàng trò chuyện.", 10, new Color(0.58f, 0.20f, 0.34f));
 		subtext.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		PlaceBySlot(subtext, RectLTRB(0.55f, 0.45f, 0.90f, 0.61f));
+		subtext.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(subtext, RectLTRB(0.48f, 0.42f, 0.92f, 0.64f));
 		root.AddChild(subtext);
 		_depthAffectSubtextLabel = subtext;
 
-		var stabilityLabel = CreateDepthTextLabel("stability", 11, new Color(0.62f, 0.42f, 0.56f));
+		var stabilityLabel = CreateDepthTextLabel("stability", 9, new Color(0.62f, 0.42f, 0.56f));
+		stabilityLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		stabilityLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		stabilityLabel.VerticalAlignment = VerticalAlignment.Center;
-		PlaceBySlot(stabilityLabel, RectLTRB(0.50f, 0.77f, 0.62f, 0.87f));
+		PlaceBySlot(stabilityLabel, RectLTRB(0.48f, 0.73f, 0.64f, 0.81f));
 		root.AddChild(stabilityLabel);
 
-		var stabilityBar = new ProgressBar
-		{
-			MinValue = 0,
-			MaxValue = 1,
-			Value = 0.72f,
-			ShowPercentage = false,
-			MouseFilter = Control.MouseFilterEnum.Ignore,
-		};
+		var stabilityBar = CreateDepthProgressBar(new Color(0.95f, 0.42f, 0.67f, 0.90f));
 		stabilityBar.AddThemeStyleboxOverride("background", new StyleBoxFlat
 		{
 			BgColor = new Color(1f, 0.84f, 0.90f, 0.18f),
@@ -223,31 +235,118 @@ public partial class UdpListener : Node2D
 			CornerRadiusBottomLeft = 4,
 			CornerRadiusBottomRight = 4,
 		});
-		stabilityBar.AddThemeStyleboxOverride("fill", new StyleBoxFlat
-		{
-			BgColor = new Color(0.95f, 0.42f, 0.67f, 0.90f),
-			CornerRadiusTopLeft = 4,
-			CornerRadiusTopRight = 4,
-			CornerRadiusBottomLeft = 4,
-			CornerRadiusBottomRight = 4,
-		});
-		PlaceBySlot(stabilityBar, RectLTRB(0.69f, 0.80f, 0.81f, 0.84f));
+		PlaceBySlot(stabilityBar, RectLTRB(0.66f, 0.75f, 0.84f, 0.79f));
 		root.AddChild(stabilityBar);
 		_depthAffectStabilityBar = stabilityBar;
 
-		var stabilityPct = CreateDepthTextLabel("72%", 12, new Color(0.78f, 0.38f, 0.55f), bold: true);
+		var stabilityPct = CreateDepthTextLabel("72%", 10, new Color(0.78f, 0.38f, 0.55f), bold: true);
 		stabilityPct.HorizontalAlignment = HorizontalAlignment.Right;
 		stabilityPct.VerticalAlignment = VerticalAlignment.Center;
-		PlaceBySlot(stabilityPct, RectLTRB(0.80f, 0.75f, 0.90f, 0.87f));
+		PlaceBySlot(stabilityPct, RectLTRB(0.85f, 0.72f, 0.93f, 0.81f));
 		root.AddChild(stabilityPct);
 		_depthAffectStabilityPctLabel = stabilityPct;
 	}
 
-	private void BuildDepthTomFrame(Control parent) =>
-		AddDepthFrameImage(parent, DepthTomFramePath, SlotTom);
+	private void BuildDepthTomFrame(Control parent)
+	{
+		var root = CreateDepthFrameRoot(parent, "DepthTomFrame", SlotTom, DepthTomFramePath);
+		if (root == null)
+			return;
 
-	private void BuildDepthSelfContinuityFrame(Control parent) =>
-		AddDepthFrameImage(parent, DepthSelfContinuityFramePath, SlotSelfContinuity);
+		_depthTomStatusLabel = CreateDepthTextLabel("đang chờ dữ liệu", 8, new Color(0.58f, 0.34f, 0.47f));
+		_depthTomStatusLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_depthTomStatusLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		_depthTomStatusLabel.HorizontalAlignment = HorizontalAlignment.Right;
+		_depthTomStatusLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthTomStatusLabel, RectLTRB(0.67f, 0.09f, 0.93f, 0.18f));
+		root.AddChild(_depthTomStatusLabel);
+
+		_depthTomScoreLabel = CreateDepthTextLabel("0.00", 17, new Color(0.88f, 0.18f, 0.48f), bold: true);
+		_depthTomScoreLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_depthTomScoreLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		_depthTomScoreLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		_depthTomScoreLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthTomScoreLabel, RectLTRB(0.34f, 0.27f, 0.48f, 0.40f));
+		root.AddChild(_depthTomScoreLabel);
+
+		_depthTomSummaryLabel = CreateDepthTextLabel("chưa đọc được gì đủ chắc.", 10, new Color(0.52f, 0.25f, 0.40f));
+		_depthTomSummaryLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		_depthTomSummaryLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(_depthTomSummaryLabel, RectLTRB(0.34f, 0.42f, 0.92f, 0.57f));
+		root.AddChild(_depthTomSummaryLabel);
+
+		_depthTomMetaLabel = null;
+
+		_depthTomThicknessBar = CreateDepthProgressBar(new Color(0.96f, 0.38f, 0.62f, 0.92f));
+		PlaceBySlot(_depthTomThicknessBar, RectLTRB(0.34f, 0.66f, 0.52f, 0.71f));
+		root.AddChild(_depthTomThicknessBar);
+
+		_depthTomConfidenceBar = CreateDepthProgressBar(new Color(0.99f, 0.62f, 0.24f, 0.94f));
+		PlaceBySlot(_depthTomConfidenceBar, RectLTRB(0.55f, 0.66f, 0.73f, 0.71f));
+		root.AddChild(_depthTomConfidenceBar);
+
+		_depthTomAttachmentBar = CreateDepthProgressBar(new Color(0.68f, 0.48f, 0.92f, 0.92f));
+		PlaceBySlot(_depthTomAttachmentBar, RectLTRB(0.76f, 0.66f, 0.92f, 0.71f));
+		root.AddChild(_depthTomAttachmentBar);
+
+		_depthTomBeliefLabel = CreateDepthTextLabel("belief: chưa có", 8, new Color(0.54f, 0.29f, 0.43f));
+		_depthTomBeliefLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		_depthTomBeliefLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(_depthTomBeliefLabel, RectLTRB(0.34f, 0.75f, 0.92f, 0.85f));
+		root.AddChild(_depthTomBeliefLabel);
+	}
+
+	private void BuildDepthSelfContinuityFrame(Control parent)
+	{
+		var root = CreateDepthFrameRoot(parent, "DepthSelfContinuityFrame", SlotSelfContinuity, DepthSelfContinuityFramePath);
+		if (root == null)
+			return;
+
+		_depthSelfWantBar = CreateDepthProgressBar(new Color(0.97f, 0.46f, 0.66f, 0.96f));
+		PlaceBySlot(_depthSelfWantBar, RectLTRB(0.34f, 0.31f, 0.64f, 0.38f));
+		root.AddChild(_depthSelfWantBar);
+
+		_depthSelfWantValueLabel = CreateDepthTextLabel("0.00", 11, new Color(0.77f, 0.34f, 0.54f), bold: true);
+		_depthSelfWantValueLabel.HorizontalAlignment = HorizontalAlignment.Right;
+		_depthSelfWantValueLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthSelfWantValueLabel, RectLTRB(0.74f, 0.27f, 0.90f, 0.41f));
+		root.AddChild(_depthSelfWantValueLabel);
+
+		_depthSelfSuppressBar = CreateDepthProgressBar(new Color(0.75f, 0.58f, 0.95f, 0.96f));
+		PlaceBySlot(_depthSelfSuppressBar, RectLTRB(0.34f, 0.48f, 0.58f, 0.55f));
+		root.AddChild(_depthSelfSuppressBar);
+
+		_depthSelfSuppressValueLabel = CreateDepthTextLabel("0.00", 11, new Color(0.72f, 0.39f, 0.70f), bold: true);
+		_depthSelfSuppressValueLabel.HorizontalAlignment = HorizontalAlignment.Right;
+		_depthSelfSuppressValueLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthSelfSuppressValueLabel, RectLTRB(0.74f, 0.44f, 0.90f, 0.58f));
+		root.AddChild(_depthSelfSuppressValueLabel);
+
+		_depthSelfAllowedBar = CreateDepthProgressBar(new Color(0.98f, 0.67f, 0.46f, 0.98f));
+		PlaceBySlot(_depthSelfAllowedBar, RectLTRB(0.34f, 0.65f, 0.69f, 0.72f));
+		root.AddChild(_depthSelfAllowedBar);
+
+		_depthSelfAllowedValueLabel = CreateDepthTextLabel("0.00", 11, new Color(0.84f, 0.48f, 0.31f), bold: true);
+		_depthSelfAllowedValueLabel.HorizontalAlignment = HorizontalAlignment.Right;
+		_depthSelfAllowedValueLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthSelfAllowedValueLabel, RectLTRB(0.74f, 0.61f, 0.90f, 0.75f));
+		root.AddChild(_depthSelfAllowedValueLabel);
+
+		var stanceLabel = CreateDepthTextLabel("stance:", 10, new Color(0.68f, 0.48f, 0.58f));
+		stanceLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(stanceLabel, RectLTRB(0.06f, 0.85f, 0.22f, 0.97f));
+		root.AddChild(stanceLabel);
+
+		var stanceDivider = CreateDepthTextLabel("-----------", 10, new Color(0.90f, 0.70f, 0.80f, 0.95f));
+		stanceDivider.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(stanceDivider, RectLTRB(0.19f, 0.85f, 0.41f, 0.97f));
+		root.AddChild(stanceDivider);
+
+		_depthSelfStanceValueLabel = CreateDepthTextLabel("cân bằng", 10, new Color(0.69f, 0.42f, 0.56f), bold: true);
+		_depthSelfStanceValueLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthSelfStanceValueLabel, RectLTRB(0.43f, 0.85f, 0.72f, 0.97f));
+		root.AddChild(_depthSelfStanceValueLabel);
+	}
 
 	private void BuildDepthCollabFrame(Control parent) =>
 		AddDepthFrameImage(parent, DepthCollabFramePath, SlotCollab);
@@ -325,6 +424,35 @@ public partial class UdpListener : Node2D
 		label.MouseFilter = Control.MouseFilterEnum.Ignore;
 		label.AddThemeFontOverride("font", bold ? _depthFontBold : _depthFontRegular);
 		return label;
+	}
+
+	private ProgressBar CreateDepthProgressBar(Color fillColor)
+	{
+		var bar = new ProgressBar
+		{
+			MinValue = 0,
+			MaxValue = 1,
+			Value = 0,
+			ShowPercentage = false,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		bar.AddThemeStyleboxOverride("background", new StyleBoxFlat
+		{
+			BgColor = new Color(0.70f, 0.52f, 0.62f, 0.18f),
+			CornerRadiusTopLeft = 4,
+			CornerRadiusTopRight = 4,
+			CornerRadiusBottomLeft = 4,
+			CornerRadiusBottomRight = 4,
+		});
+		bar.AddThemeStyleboxOverride("fill", new StyleBoxFlat
+		{
+			BgColor = fillColor,
+			CornerRadiusTopLeft = 4,
+			CornerRadiusTopRight = 4,
+			CornerRadiusBottomLeft = 4,
+			CornerRadiusBottomRight = 4,
+		});
+		return bar;
 	}
 
 	private Font LoadDepthFont(string fileName)
@@ -504,6 +632,17 @@ public partial class UdpListener : Node2D
 			return;
 
 		ApplyDepthAffectContent("Bình tĩnh", "Thoải mái, sẵn sàng trò chuyện.", 0.72f);
+		ApplyDepthTomContent(
+			score: 0f,
+			summary: "chưa đọc được gì đủ chắc.",
+			confidence: 0f,
+			thickness: 0f,
+			attachment: 0f,
+			beliefCount: 0,
+			status: "đang chờ dữ liệu",
+			topBelief: "belief: chưa có");
+
+		ApplyDepthSelfContinuityContent(0f, 0f, 0f, "chưa rõ");
 
 		if (!string.IsNullOrWhiteSpace(_latestDepthV2Json))
 		{
@@ -513,12 +652,14 @@ public partial class UdpListener : Node2D
 				if (doc.RootElement.ValueKind == JsonValueKind.Object)
 				{
 					ApplyDepthV2Affect(doc.RootElement);
+					ApplyDepthV2Tom(doc.RootElement);
+					ApplyDepthV2SelfContinuity(doc.RootElement);
 					return;
 				}
 			}
 			catch (Exception ex)
 			{
-				GD.Print($"[depth_v2] affect refresh fail: {ex.Message}");
+				GD.Print($"[depth_v2] refresh fail: {ex.Message}");
 			}
 		}
 
@@ -528,7 +669,10 @@ public partial class UdpListener : Node2D
 			{
 				using var doc = JsonDocument.Parse(_latestDepthJson);
 				if (doc.RootElement.ValueKind == JsonValueKind.Object)
+				{
 					ApplyLegacyDepthAffect(doc.RootElement);
+					ApplyLegacyDepthTom(doc.RootElement);
+				}
 			}
 			catch (Exception ex)
 			{
@@ -550,6 +694,139 @@ public partial class UdpListener : Node2D
 			stability = Mathf.Clamp(JsonFloat(metrics, "stability", 0.72f), 0f, 1f);
 
 		ApplyDepthAffectContent(headline, subtext, stability);
+	}
+
+	private void ApplyDepthV2Tom(JsonElement root)
+	{
+		JsonElement tom = default;
+		JsonElement userModel = default;
+		JsonElement significance = default;
+		JsonElement attachmentAnchor = default;
+
+		bool hasTom = root.TryGetProperty("tom", out tom) && tom.ValueKind == JsonValueKind.Object;
+		bool hasUserModel = root.TryGetProperty("user_model", out userModel) && userModel.ValueKind == JsonValueKind.Object;
+		bool hasSignificance = root.TryGetProperty("significance", out significance) && significance.ValueKind == JsonValueKind.Object;
+		bool hasAttachment = root.TryGetProperty("attachment_anchor", out attachmentAnchor) && attachmentAnchor.ValueKind == JsonValueKind.Object;
+
+		string tomText = hasTom ? JsonText(tom, "text", "") : "";
+		float confidence = hasTom ? Mathf.Clamp(JsonFloat(tom, "confidence", 0f), 0f, 1f) : 0f;
+		float thickness = hasUserModel ? Mathf.Clamp(JsonFloat(userModel, "model_thickness", 0f), 0f, 1f) : 0f;
+		if (thickness <= 0f && hasSignificance)
+			thickness = Mathf.Clamp(JsonFloat(significance, "model_thickness", 0f), 0f, 1f);
+		float attachment = hasAttachment ? Mathf.Clamp(JsonFloat(attachmentAnchor, "longarc", 0f), 0f, 1f) : DepthV2AttachmentFallback(root);
+		int beliefCount = hasUserModel ? JsonInt(userModel, "belief_count", 0) : 0;
+		string topBelief = hasUserModel ? DepthV2TopBelief(userModel) : "";
+		string summary = !string.IsNullOrWhiteSpace(tomText)
+			? StripTomPrefix(tomText)
+			: (!string.IsNullOrWhiteSpace(topBelief) ? topBelief : "chưa đọc được gì đủ chắc.");
+		float score = Mathf.Clamp(Mathf.Max(thickness, confidence * 0.72f), 0f, 1f);
+		string status = (hasTom || hasUserModel || hasSignificance) ? "depth_v2: đã nhận" : "depth_v2: thiếu mô hình";
+
+		ApplyDepthTomContent(
+			score: score,
+			summary: summary,
+			confidence: confidence,
+			thickness: thickness,
+			attachment: attachment,
+			beliefCount: beliefCount,
+			status: status,
+			topBelief: string.IsNullOrWhiteSpace(topBelief) ? "belief: chưa có" : $"belief: {topBelief}");
+	}
+
+	private void ApplyDepthV2SelfContinuity(JsonElement root)
+	{
+		if (!root.TryGetProperty("expression", out var expression) || expression.ValueKind != JsonValueKind.Object)
+		{
+			ApplyDepthSelfContinuityContent(0f, 0f, 0f, "chưa rõ");
+			return;
+		}
+
+		float want = Mathf.Clamp(JsonFloat(expression, "want", 0f), 0f, 1f);
+		float suppress = Mathf.Clamp(JsonFloat(expression, "suppress", 0f), 0f, 1f);
+		float allowed = Mathf.Clamp(JsonFloat(expression, "allowed", 0f), 0f, 1f);
+		string stance = LocalizeDepthExpressionStance(JsonText(expression, "stance", ""), want, suppress, allowed);
+
+		ApplyDepthSelfContinuityContent(want, suppress, allowed, stance);
+	}
+
+	private void ApplyLegacyDepthTom(JsonElement root)
+	{
+		if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
+			return;
+
+		string tomText = "";
+		float confidence = 0f;
+		if (depth.TryGetProperty("tom_read_rich", out var rich) && rich.ValueKind == JsonValueKind.Object)
+		{
+			tomText = JsonText(rich, "text", "");
+			confidence = Mathf.Clamp(JsonFloat(rich, "confidence", 0f), 0f, 1f);
+		}
+		if (string.IsNullOrWhiteSpace(tomText))
+			tomText = JsonText(depth, "tom_read", "");
+
+		if (string.IsNullOrWhiteSpace(tomText))
+			return;
+
+		ApplyDepthTomContent(
+			score: Mathf.Clamp(confidence * 0.72f, 0f, 1f),
+			summary: StripTomPrefix(tomText),
+			confidence: confidence,
+			thickness: 0f,
+			attachment: DepthLegacyAttachmentFallback(depth),
+			beliefCount: 0,
+			status: "legacy depth: đã nhận",
+			topBelief: "belief: legacy chưa gửi user_model");
+	}
+
+	private void ApplyDepthTomContent(
+		float score,
+		string summary,
+		float confidence,
+		float thickness,
+		float attachment,
+		int beliefCount,
+		string status,
+		string topBelief)
+	{
+		float safeScore = Mathf.Clamp(score, 0f, 1f);
+		float safeConfidence = Mathf.Clamp(confidence, 0f, 1f);
+		float safeThickness = Mathf.Clamp(thickness, 0f, 1f);
+		float safeAttachment = Mathf.Clamp(attachment, 0f, 1f);
+
+		UpdateDepthLabelText(_depthTomScoreLabel, $"{safeScore:0.00}");
+		UpdateDepthLabelText(_depthTomSummaryLabel, TrimDepthUiText(summary, 72));
+		UpdateDepthLabelText(_depthTomStatusLabel, string.IsNullOrWhiteSpace(status) ? "đang chờ dữ liệu" : status);
+		UpdateDepthLabelText(
+			_depthTomMetaLabel,
+			$"dày {safeThickness:0.00}  ·  đọc {safeConfidence:0.00}  ·  gắn {safeAttachment:0.00}  ·  {Math.Max(0, beliefCount)} belief");
+		UpdateDepthLabelText(_depthTomBeliefLabel, TrimDepthUiText(topBelief, 64));
+
+		if (_depthTomThicknessBar != null)
+			_depthTomThicknessBar.Value = safeThickness;
+		if (_depthTomConfidenceBar != null)
+			_depthTomConfidenceBar.Value = safeConfidence;
+		if (_depthTomAttachmentBar != null)
+			_depthTomAttachmentBar.Value = safeAttachment;
+	}
+
+	private void ApplyDepthSelfContinuityContent(float want, float suppress, float allowed, string stance)
+	{
+		float safeWant = Mathf.Clamp(want, 0f, 1f);
+		float safeSuppress = Mathf.Clamp(suppress, 0f, 1f);
+		float safeAllowed = Mathf.Clamp(allowed, 0f, 1f);
+		string safeStance = string.IsNullOrWhiteSpace(stance) ? "cân bằng" : stance.Trim();
+
+		if (_depthSelfWantBar != null)
+			_depthSelfWantBar.Value = safeWant;
+		if (_depthSelfSuppressBar != null)
+			_depthSelfSuppressBar.Value = safeSuppress;
+		if (_depthSelfAllowedBar != null)
+			_depthSelfAllowedBar.Value = safeAllowed;
+
+		UpdateDepthLabelText(_depthSelfWantValueLabel, $"{safeWant:0.00}");
+		UpdateDepthLabelText(_depthSelfSuppressValueLabel, $"{safeSuppress:0.00}");
+		UpdateDepthLabelText(_depthSelfAllowedValueLabel, $"{safeAllowed:0.00}");
+		UpdateDepthLabelText(_depthSelfStanceValueLabel, safeStance);
 	}
 
 	private void ApplyLegacyDepthAffect(JsonElement root)
@@ -634,6 +911,110 @@ public partial class UdpListener : Node2D
 		}
 
 		return fallback;
+	}
+
+	private static int JsonInt(JsonElement obj, string key, int fallback = 0)
+	{
+		if (obj.ValueKind == JsonValueKind.Object
+			&& obj.TryGetProperty(key, out var el))
+		{
+			if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out int direct))
+				return direct;
+			if (el.ValueKind == JsonValueKind.String && int.TryParse(el.GetString(), out int parsed))
+				return parsed;
+		}
+
+		return fallback;
+	}
+
+	private static string DepthV2TopBelief(JsonElement userModel)
+	{
+		if (userModel.ValueKind != JsonValueKind.Object
+			|| !userModel.TryGetProperty("beliefs", out var beliefs)
+			|| beliefs.ValueKind != JsonValueKind.Array)
+			return "";
+
+		string bestClaim = "";
+		float bestScore = -1f;
+		foreach (var raw in beliefs.EnumerateArray())
+		{
+			if (raw.ValueKind != JsonValueKind.Object)
+				continue;
+			string claim = JsonText(raw, "claim", "");
+			if (string.IsNullOrWhiteSpace(claim))
+				continue;
+			float confidence = Mathf.Clamp(JsonFloat(raw, "confidence", 0f), 0f, 1f);
+			float recurrence = Mathf.Clamp(JsonFloat(raw, "recurrence", 1f) / 6f, 0f, 1f);
+			float score = confidence * 0.70f + recurrence * 0.30f;
+			if (score <= bestScore)
+				continue;
+			bestScore = score;
+			bestClaim = claim;
+		}
+		return bestClaim;
+	}
+
+	private static float DepthV2AttachmentFallback(JsonElement root)
+	{
+		if (root.TryGetProperty("n2", out var n2)
+			&& n2.ValueKind == JsonValueKind.Object
+			&& n2.TryGetProperty("attachment", out var attachment)
+			&& attachment.ValueKind == JsonValueKind.Object)
+			return Mathf.Clamp(JsonFloat(attachment, "value", 0f), 0f, 1f);
+
+		return 0f;
+	}
+
+	private static float DepthLegacyAttachmentFallback(JsonElement depth)
+	{
+		if (depth.TryGetProperty("n2", out var n2)
+			&& n2.ValueKind == JsonValueKind.Object
+			&& n2.TryGetProperty("attachment", out var attachment)
+			&& attachment.ValueKind == JsonValueKind.Object)
+			return Mathf.Clamp(JsonFloat(attachment, "value", 0f), 0f, 1f);
+
+		return 0f;
+	}
+
+	private static string StripTomPrefix(string raw)
+	{
+		string text = TrimDepthUiText(raw, 180);
+		if (text.StartsWith("tom_read:", StringComparison.OrdinalIgnoreCase))
+			text = text["tom_read:".Length..].Trim();
+		return text;
+	}
+
+	private static string TrimDepthUiText(string raw, int maxChars)
+	{
+		string text = string.Join(" ", (raw ?? "").Split(' ', '\t', '\r', '\n')).Trim();
+		if (maxChars <= 0 || text.Length <= maxChars)
+			return text;
+		return text[..Math.Max(0, maxChars - 1)].TrimEnd() + "…";
+	}
+
+	private static string LocalizeDepthExpressionStance(string raw, float want, float suppress, float allowed)
+	{
+		switch (NormalizeDepthPhrase(raw))
+		{
+			case "precise direct":
+				return "rõ và thẳng";
+			case "guarded tender":
+				return "dịu mà giữ";
+			case "reserved direct":
+				return "cân bằng";
+			case "held back":
+				return "giữ lại";
+			case "open":
+				return "mở";
+		}
+
+		if (allowed >= 0.72f && suppress <= 0.22f)
+			return "mở";
+		if (suppress >= 0.52f && allowed <= 0.40f)
+			return "giữ lại";
+		if (want >= 0.58f && allowed >= 0.52f)
+			return "muốn nói";
+		return "cân bằng";
 	}
 
 	private static string LegacyAffectHeadline(float valence, float arousal)

@@ -60,7 +60,8 @@ RUNTIME_RULES_PROMPT = (
     "Default line shape: concrete first, restrained undertone second. The sentence should be readable, not theatrical. "
     "If writing Vietnamese, use full diacritics; never output unaccented Vietnamese placeholder text. "
     "Return only valid JSON. No analysis, markdown, self-check. "
-    "Runtime fields: text, intent, action, animation, reasoning_tags, should_speak, confidence, direction, target_x, bounce_action, extracted_fact, debug_trace, next_animation, system_action, action_input. "
+    "Runtime fields: text, intent, action, animation, reasoning_tags, should_speak, confidence, direction, target_x, bounce_action, extracted_fact, debug_trace, next_animation, system_action, action_input, delivery_hint, nonverbal_cue, stage_motion. "
+    "Stage cue rule: text must stay clean and speakable. Do not write '(cười khẽ)', '[look_away]', or emotion tags inside text. Put delivery in delivery_hint, nonverbal action in nonverbal_cue, and avatar/body hint in stage_motion. Use empty string when none. "
     "Data bans: Do not claim ERIS saw/did/clicked something physical without evidence; do not report telemetry or parse_mode. "
     "Inference bans: Do not state hidden motives, loneliness, avoidance, frustration, guilt, desire, or emotional state as fact unless current evidence and confidence justify it. "
     "Projection rule: psychological readings may appear only as soft hypotheses or tone pressure, never as forced truth. "
@@ -96,7 +97,8 @@ AUTONOMOUS_BEHAVIOR_PROMPT = (
 
 CHAT_RULES_PROMPT = (
     "Return only one valid JSON object for the Godot interface. No analysis. "
-    "Fields: text, intent, action, animation, reasoning_tags, should_speak, confidence, direction, target_x, bounce_action, extracted_fact, debug_trace, next_animation, system_action, action_input. "
+    "Fields: text, intent, action, animation, reasoning_tags, should_speak, confidence, direction, target_x, bounce_action, extracted_fact, debug_trace, next_animation, system_action, action_input, delivery_hint, nonverbal_cue, stage_motion. "
+    "Keep text clean. Do not put '(cười khẽ)' or bracketed stage tags in text; use delivery_hint/nonverbal_cue/stage_motion instead. "
     "Chat answer contract: 1) answer the user's concrete request first, 2) preserve technical accuracy, 3) apply restrained personality only after usefulness is safe. "
     "When the user asks a question, answer it directly. Judge the question only if doing so improves clarity or repair. "
     "If intent is unclear, prefer a reasonable grounded interpretation or one concise clarifying question; do not deliberately misinterpret to test the user. "
@@ -150,6 +152,9 @@ DECISION_JSON_FIELDS = (
     "next_animation",
     "system_action",
     "action_input",
+    "delivery_hint",
+    "nonverbal_cue",
+    "stage_motion",
 )
 
 
@@ -168,7 +173,7 @@ def _build_decision_gbnf():
             # Godot motion fields, so local llama-server could legally omit
             # intent/action/reasoning_tags/should_speak/confidence. That made
             # downstream audit, parser traces, and memory/action layers guess.
-            r'root ::= ws "{" ws text_field ws "," ws intent_field ws "," ws action_field ws "," ws animation_field ws "," ws reasoning_tags_field ws "," ws should_speak_field ws "," ws confidence_field ws "," ws direction_field ws "," ws target_x_field ws "," ws bounce_action_field ws "," ws extracted_fact_field ws "," ws debug_trace_field ws "," ws next_animation_field ws "," ws system_action_field ws "," ws action_input_field ws "}" ws',
+            r'root ::= ws "{" ws text_field ws "," ws intent_field ws "," ws action_field ws "," ws animation_field ws "," ws reasoning_tags_field ws "," ws should_speak_field ws "," ws confidence_field ws "," ws direction_field ws "," ws target_x_field ws "," ws bounce_action_field ws "," ws extracted_fact_field ws "," ws debug_trace_field ws "," ws next_animation_field ws "," ws system_action_field ws "," ws action_input_field ws "," ws delivery_hint_field ws "," ws nonverbal_cue_field ws "," ws stage_motion_field ws "}" ws',
             r'text_field ::= "\"text\"" ws ":" ws string',
             r'intent_field ::= "\"intent\"" ws ":" ws string',
             r'action_field ::= "\"action\"" ws ":" ws action',
@@ -184,6 +189,9 @@ def _build_decision_gbnf():
             r'next_animation_field ::= "\"next_animation\"" ws ":" ws animation_or_empty',
             r'system_action_field ::= "\"system_action\"" ws ":" ws system_action_or_empty',
             r'action_input_field ::= "\"action_input\"" ws ":" ws string',
+            r'delivery_hint_field ::= "\"delivery_hint\"" ws ":" ws string',
+            r'nonverbal_cue_field ::= "\"nonverbal_cue\"" ws ":" ws string',
+            r'stage_motion_field ::= "\"stage_motion\"" ws ":" ws string',
             r'action ::= action_object | string',
             r'action_object ::= "{" ws "\"type\"" ws ":" ws string ws "}"',
             r'string_array ::= "[" ws (string (ws "," ws string)*)? ws "]"',

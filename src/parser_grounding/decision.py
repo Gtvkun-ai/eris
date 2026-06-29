@@ -330,6 +330,9 @@ class ParserGroundingMixin:
             "motion_intent": "",
             "motion_target_x": structured["target_x"],
             "motion_facing": structured["direction"],
+            "delivery_hint": "",
+            "nonverbal_cue": "",
+            "stage_motion": "",
             "parse_mode": parse_mode,
         }
         for key, default in default_fields.items():
@@ -412,6 +415,9 @@ class ParserGroundingMixin:
             "motion_intent": data.get("motion_intent", ""),
             "motion_target_x": data.get("motion_target_x", target_x),
             "motion_facing": data.get("motion_facing", direction),
+            "delivery_hint": data.get("delivery_hint", ""),
+            "nonverbal_cue": data.get("nonverbal_cue", ""),
+            "stage_motion": data.get("stage_motion", ""),
         }, user_hint=user_hint)
 
     def _try_parse_hard_json_repair(self, text: str, user_hint: str = ""):
@@ -738,6 +744,9 @@ class ParserGroundingMixin:
             "motion_intent",
             "motion_target_x",
             "motion_facing",
+            "delivery_hint",
+            "nonverbal_cue",
+            "stage_motion",
         ]
         field_group = "|".join(re.escape(field) for field in fields)
         pattern = re.compile(
@@ -893,6 +902,104 @@ class ParserGroundingMixin:
         if intent in valid:
             return intent
         return ""
+
+    def _sanitize_stage_token(self, value: object, *, allowed: set[str], aliases: dict[str, str] | None = None) -> str:
+        """Chuẩn hoá field sân khấu do LLM khai.
+
+        Các field này không đi vào text. Nếu model trả "cười khẽ" hoặc
+        "look away", parser đổi thành token ổn định để stage/avatar dùng.
+        """
+        raw = str(value or "").strip().strip('"').strip("'").lower()
+        if not raw:
+            return ""
+        raw = unicodedata.normalize("NFD", raw)
+        raw = "".join(ch for ch in raw if unicodedata.category(ch) != "Mn")
+        raw = raw.replace("-", "_")
+        raw = re.sub(r"[^a-z0-9_\s]+", "", raw)
+        raw = re.sub(r"\s+", "_", raw).strip("_")
+        alias_map = aliases or {}
+        raw = alias_map.get(raw, raw)
+        return raw if raw in allowed else ""
+
+    def _sanitize_delivery_hint(self, value: object) -> str:
+        return self._sanitize_stage_token(
+            value,
+            allowed={
+                "",
+                "neutral",
+                "focused",
+                "warm_soft",
+                "curious_soft",
+                "soft_tease",
+                "dry_tease",
+                "deadpan",
+                "low_quiet",
+            },
+            aliases={
+                "teasing": "soft_tease",
+                "playful": "soft_tease",
+                "dry": "dry_tease",
+                "curious": "curious_soft",
+                "quiet": "low_quiet",
+            },
+        )
+
+    def _sanitize_nonverbal_cue(self, value: object) -> str:
+        return self._sanitize_stage_token(
+            value,
+            allowed={
+                "",
+                "laugh_soft",
+                "small_smile",
+                "sigh_soft",
+                "soft_breath",
+                "tilt_head",
+                "look_away",
+                "look_down",
+                "blink_slow",
+                "nod_small",
+                "shake_head_small",
+            },
+            aliases={
+                "cuoi": "laugh_soft",
+                "cuoi_khe": "laugh_soft",
+                "cuoi_nhe": "laugh_soft",
+                "mim_cuoi": "small_smile",
+                "smile": "small_smile",
+                "laugh": "laugh_soft",
+                "sigh": "sigh_soft",
+                "tho_dai": "sigh_soft",
+                "nghieng_dau": "tilt_head",
+                "nhin_sang_ben": "look_away",
+                "liec": "look_away",
+                "look_away": "look_away",
+                "look_down": "look_down",
+            },
+        )
+
+    def _sanitize_stage_motion(self, value: object) -> str:
+        return self._sanitize_stage_token(
+            value,
+            allowed={
+                "",
+                "none",
+                "look_away",
+                "look_down",
+                "tilt_head",
+                "small_smile",
+                "blink_slow",
+                "lean_in_small",
+                "focus",
+            },
+            aliases={
+                "look_away": "look_away",
+                "look_down": "look_down",
+                "tilt_head": "tilt_head",
+                "nghieng_dau": "tilt_head",
+                "nhin_sang_ben": "look_away",
+                "liec": "look_away",
+            },
+        )
 
     def _infer_motion_intent(
         self,
@@ -1380,6 +1487,9 @@ class ParserGroundingMixin:
             decision.get("motion_facing", direction),
             fallback=direction,
         )
+        delivery_hint = self._sanitize_delivery_hint(decision.get("delivery_hint", ""))
+        nonverbal_cue = self._sanitize_nonverbal_cue(decision.get("nonverbal_cue", ""))
+        stage_motion = self._sanitize_stage_motion(decision.get("stage_motion", ""))
 
         if not motion_intent:
             motion_intent = self._infer_motion_intent(
@@ -1444,6 +1554,9 @@ class ParserGroundingMixin:
             "motion_intent": motion_intent,
             "motion_target_x": motion_target_x,
             "motion_facing": motion_facing,
+            "delivery_hint": delivery_hint,
+            "nonverbal_cue": nonverbal_cue,
+            "stage_motion": stage_motion,
         }
 
     def _infer_structured_action(self, text: str, user_hint: str = ""):
@@ -1609,6 +1722,9 @@ class ParserGroundingMixin:
             "next_animation",
             "system_action",
             "action_input",
+            "delivery_hint",
+            "nonverbal_cue",
+            "stage_motion",
         ]
 
         extracted = {}
@@ -1654,6 +1770,9 @@ class ParserGroundingMixin:
             "parse_mode": "lax_json",
             "system_action": system_action,
             "action_input": action_input,
+            "delivery_hint": extracted.get("delivery_hint", ""),
+            "nonverbal_cue": extracted.get("nonverbal_cue", ""),
+            "stage_motion": extracted.get("stage_motion", ""),
         }, user_hint=user_hint)
 
     def _infer_animation_reason(self, final_animation: str, text: str, user_hint: str = ""):
