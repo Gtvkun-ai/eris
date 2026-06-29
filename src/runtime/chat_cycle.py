@@ -14,6 +14,7 @@ from cortex.relationship_dynamics import RelationshipTurnEvent
 from cortex.relational_feedback import RelationalFeedbackAnalyzer, merge_affect_with_relational_feedback
 from cortex.turn_semantics import TurnSemanticsEngine, TurnSemanticsReport
 from domain import Decision
+from failure_meta import build_failure_meta
 from llm import FormatViolationException
 from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
 from runtime.source_grounding import SourceGroundingEngine
@@ -200,6 +201,10 @@ class ChatCycleMixin:
             user_text = self._merge_rapid_chat_burst(user_text, first_timestamp=cycle_start)
             if not user_text:
                 return
+            # Stage runtime cần biết câu user hiện tại để nhận ra các yêu cầu
+            # "diễn" như cười/nổi giận/dỗi. Không đưa field này vào LLM schema;
+            # chỉ giữ tạm trong coordinator cho lượt output đang commit.
+            self.current_stage_user_text = user_text
             previous_public_turn = self._link_previous_public_turn_for_chat(cycle_start)
             previous_public_context = self._previous_public_turn_context(previous_public_turn)
             return self._run_chat_cycle_inner(
@@ -209,6 +214,7 @@ class ChatCycleMixin:
                 previous_public_turn=previous_public_turn,
             )
         finally:
+            self.current_stage_user_text = ""
             self._chat_processing = False
 
     def _run_chat_cycle_inner(
@@ -979,6 +985,13 @@ class ChatCycleMixin:
             decision.should_speak = True
             decision.confidence = 0.45
             decision.parse_mode = "format_repair_fallback"
+            decision.failure_meta = build_failure_meta(
+                kind="format_violation",
+                stage="chat_cycle_format_recovery",
+                origin="chat_cycle",
+                public_surface="service_fallback",
+                recoverable=True,
+            )
             decision.debug_trace = self._join_debug_trace(
                 decision.debug_trace,
                 "format_violation_recovered",
@@ -990,6 +1003,13 @@ class ChatCycleMixin:
             decision.should_speak = True
             decision.confidence = 0.0
             decision.parse_mode = "no_fallback_block"
+            decision.failure_meta = build_failure_meta(
+                kind="format_violation",
+                stage="chat_cycle_format_block",
+                origin="chat_cycle",
+                public_surface="blocked",
+                recoverable=False,
+            )
         self._log_decision_stage("chat", "after_parser", decision)
         self._log_decision_stage("chat", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text, vision_grounded=bool(screen_image_data_uri) or bool(getattr(self, "vision_facts", None)))
@@ -1070,6 +1090,13 @@ class ChatCycleMixin:
             "system_action": "",
             "action_input": "",
             "parse_mode": "no_fallback_block",
+            "failure_meta": build_failure_meta(
+                kind="format_violation",
+                stage="chat_format_block",
+                origin="chat_cycle",
+                public_surface="blocked",
+                recoverable=False,
+            ),
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -1100,6 +1127,13 @@ class ChatCycleMixin:
             "system_action": "",
             "action_input": "",
             "parse_mode": "format_repair_fallback",
+            "failure_meta": build_failure_meta(
+                kind="format_violation",
+                stage="chat_format_repair",
+                origin="chat_cycle",
+                public_surface="service_fallback",
+                recoverable=True,
+            ),
         }
         return json.dumps(payload, ensure_ascii=False)
 

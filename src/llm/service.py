@@ -1809,17 +1809,6 @@ class LlmService:
                 public_surface="blocked",
                 recoverable=False,
             )
-        if self._looks_like_prompt_leak(raw_text):
-            raise FormatViolationException(
-                f"LlmService blocked prompt/contract leak before parser on {channel}.",
-                channel=channel,
-                raw_text=raw_text,
-                kind="prompt_leak",
-                stage="llm_response_parse",
-                origin="model_output",
-                public_surface="protocol_repair",
-                recoverable=False,
-            )
         if self._looks_like_malformed_decision_json(raw_text):
             salvaged = self._coerce_malformed_decision_payload(raw_text, channel=channel)
             if salvaged:
@@ -1832,6 +1821,17 @@ class LlmService:
                 stage="llm_response_parse",
                 origin="model_output",
                 public_surface="blocked",
+                recoverable=False,
+            )
+        if self._looks_like_prompt_leak(raw_text):
+            raise FormatViolationException(
+                f"LlmService blocked prompt/contract leak before parser on {channel}.",
+                channel=channel,
+                raw_text=raw_text,
+                kind="prompt_leak",
+                stage="llm_response_parse",
+                origin="model_output",
+                public_surface="protocol_repair",
                 recoverable=False,
             )
         if not (raw_text.startswith("{") and raw_text.endswith("}")):
@@ -1996,6 +1996,8 @@ class LlmService:
                 r_json = getattr(exc, "response_json", {}) or {}
                 # Handle dictionary error responses (like Gemini)
                 err_msg = str(r_json.get("error", {}).get("message", "")).lower()
+                if not err_msg:
+                    err_msg = str(exc).lower()
                 return "safety" in err_msg or "recitation" in err_msg
                 
             if allow_local_fallback and recovery_client is not None and recovery_client is not initial_client and _looks_like_prompt_leak():
@@ -2005,6 +2007,11 @@ class LlmService:
                     f"LlmService provider blocked {channel} response for safety/recitation before valid JSON.",
                     channel=channel,
                     raw_text=str(exc),
+                    kind="safety_block",
+                    stage="provider_response",
+                    origin="primary",
+                    public_surface="blocked",
+                    recoverable=False,
                 )
             elif self._is_context_size_error(exc):
                 n_ctx, _n_prompt = self._parse_context_error_stats(exc)
@@ -2015,7 +2022,14 @@ class LlmService:
                     max_tokens=max_tokens,
                 )
                 if shrunk == messages:
-                    raise
+                    return self._build_service_error_fallback(
+                        channel=channel,
+                        reason="context_oversize",
+                        fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
+                        kind="context_oversize",
+                        stage="context_shrunk",
+                        origin="primary",
+                    )
                 response = _call(shrunk, stage="context_shrunk")
             elif self._http_status_code(exc) == 429:
                 # Rate limit (Groq TPM/TPD hết quota). Thay vì để chat câm, chuyển
@@ -2028,11 +2042,17 @@ class LlmService:
                         return self._build_service_error_fallback(
                             channel=channel,
                             reason="rate_limited",
+                            kind="rate_limited",
+                            stage="rate_limit_fallback",
+                            origin="primary",
                         )
                 else:
                     return self._build_service_error_fallback(
                         channel=channel,
                         reason="rate_limited",
+                        kind="rate_limited",
+                        stage="rate_limit_primary",
+                        origin="primary",
                     )
             elif self._is_retryable_http_5xx(exc):
                 # Retry once on transient upstream 5xx.
@@ -2047,6 +2067,9 @@ class LlmService:
                             f"http_5xx_fallback stage=complete_decision channel={channel} status={status}"
                         ),
                         fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
+                        kind=self._classify_http_failure(exc2 if isinstance(exc2, Exception) else exc),
+                        stage="complete_decision",
+                        origin="primary",
                     )
             else:
                 raise
@@ -2055,6 +2078,9 @@ class LlmService:
                 channel=channel,
                 reason=f"exception_fallback stage=complete_decision channel={channel} type={type(exc).__name__}",
                 fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
+                kind=self._classify_http_failure(exc) if isinstance(exc, requests.HTTPError) else "unknown",
+                stage="complete_decision",
+                origin="primary",
             )
 
         raw = self._extract_content(response)
@@ -3361,7 +3387,10 @@ class LlmService:
             )
         except Exception:
             pass
-        return selection.text.strip()
+        selected_text = selection.text.strip()
+        if selected_text:
+            return selected_text
+        return candidates[0].strip() if candidates else ""
 
     def generate_curiosity_seed(
         self,

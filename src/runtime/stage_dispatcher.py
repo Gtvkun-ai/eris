@@ -35,6 +35,22 @@ def _join_tts_segments(frames: list[StageFrame]) -> str:
     return "\n".join(str(frame.tts_text or "").strip() for frame in frames if str(frame.tts_text or "").strip()).strip()
 
 
+def _performance_kwargs(frame: StageFrame) -> dict[str, str]:
+    """Rút metadata vocal cache từ delivery payload nếu có.
+
+    Dispatcher chỉ truyền metadata; TTS engine tự quyết định có dùng cache hay
+    không. Như vậy stage không biết chi tiết file/cache/audio backend.
+    """
+    delivery = frame.delivery if isinstance(frame.delivery, dict) else {}
+    act = delivery.get("performance_act") if isinstance(delivery, dict) else None
+    if not isinstance(act, dict):
+        return {}
+    return {
+        "vocal_cache_kind": str(act.get("kind", "") or ""),
+        "vocal_prefix": str(act.get("audible_prefix", "") or ""),
+    }
+
+
 class StageDispatcher:
     def dispatch_tts(
         self,
@@ -112,6 +128,7 @@ class StageDispatcher:
             interruptible=inline_frame.interruptible,
             replace=True,
             on_event=event_callback,
+            **_performance_kwargs(inline_frame),
         )
         return True
 
@@ -147,6 +164,7 @@ class StageDispatcher:
                 interruptible=frame.interruptible,
                 replace=(index == 0),
                 on_event=event_callback,
+                **_performance_kwargs(frame),
             )
             scheduled = True
         return scheduled

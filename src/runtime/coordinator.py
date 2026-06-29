@@ -77,6 +77,7 @@ from cortex.vision_semantic_compressor import (
 )
 from cortex.working_memory import WorkingMemoryEngine
 from domain import Decision
+from failure_meta import is_technical_failure_meta
 from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
 from runtime.autonomous_cycle import AutonomousCycleMixin
 from runtime.ambient_silence_policy import (
@@ -211,6 +212,8 @@ def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
     text = str(getattr(decision, "text", "") or "").lower()
     fallback_intents = {"fallback_reply", "format_repair_fallback", "service_error", "no_fallback_block"}
     fallback_modes = {"format_repair_fallback", "service_error", "no_fallback_block"}
+    if is_technical_failure_meta(getattr(decision, "failure_meta", None)):
+        return True
     if intent in fallback_intents or parse_mode in fallback_modes:
         return True
     if "http_5xx_fallback" in debug_trace or "format_violation_recovered" in debug_trace:
@@ -1514,6 +1517,11 @@ class RuntimeCoordinator(
         payload["emotion_debug"] = self._build_emotion_debug_payload()
         payload["depth"] = self._build_depth_block()
         payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
+        if str(channel or "").strip().lower() == "chat":
+            # Chỉ dùng nội bộ stage: nhận ra user đang yêu cầu ERIS diễn một hành
+            # vi nghe được như cười, thở dài, giả giận. Không gửi field này cho
+            # model; nó đi sau Decision để tránh phá JSON contract.
+            payload["user_text"] = str(getattr(self, "current_stage_user_text", "") or "")
         if isinstance(private_digest, dict) and private_digest:
             payload["private_mind_digest"] = private_digest
         if isinstance(private_life_digest, dict) and private_life_digest:

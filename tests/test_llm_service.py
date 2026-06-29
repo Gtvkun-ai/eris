@@ -48,11 +48,11 @@ class _SequenceClient:
         return {"choices": [{"message": {"content": item}}]}
 
 
-def _http_error(status_code: int) -> requests.HTTPError:
+def _http_error(status_code: int, body: str = "upstream error") -> requests.HTTPError:
     resp = requests.Response()
     resp.status_code = int(status_code)
     resp.url = "http://example.test/chat/completions"
-    resp._content = b"upstream error"
+    resp._content = body.encode("utf-8")
     return requests.HTTPError(f"{status_code} Server Error", response=resp)
 
 
@@ -72,7 +72,7 @@ class LlmServiceTests(unittest.TestCase):
 
         self.assertEqual(text, "Tôi ở đây.")
         call = client.calls[0]
-        self.assertEqual(call["max_tokens"], 80)
+        self.assertEqual(call["max_tokens"], 160)
         self.assertEqual(call["response_format"], {"type": "json_object"})
         self.assertIn("ERIS's voice", call["messages"][0]["content"])
         self.assertIn("Vietnamese with full diacritics", call["messages"][0]["content"])
@@ -436,8 +436,37 @@ class LlmServiceTests(unittest.TestCase):
 
         payload = json.loads(out)
         self.assertEqual(payload.get("intent"), "fallback_reply")
+        self.assertEqual(payload.get("text"), "")
+        self.assertFalse(payload.get("should_speak"))
+        self.assertEqual(payload.get("parse_mode"), "service_error")
         self.assertIn("http_5xx_fallback", payload.get("debug_trace", ""))
+        self.assertEqual(payload.get("failure_meta", {}).get("kind"), "provider_unavailable")
         self.assertEqual(len(client.calls), 2)
+
+    def test_chat_retry_once_on_provider_unavailable_then_fallback_sets_failure_meta(self):
+        body = '{"error":{"code":"model_not_found","message":"No available channel for model gpt-4o-mini"}}'
+        client = _SequenceClient([_http_error(503, body), _http_error(503, body)])
+        service = LlmService(client)
+
+        out = service.generate_chat_reply(chat_history=[], user_message="xin chao")
+
+        payload = json.loads(out)
+        self.assertEqual(payload.get("intent"), "fallback_reply")
+        self.assertTrue(payload.get("should_speak"))
+        self.assertEqual(payload.get("failure_meta", {}).get("kind"), "provider_unavailable")
+        self.assertEqual(payload.get("failure_meta", {}).get("public_surface"), "service_fallback")
+
+    def test_chat_rate_limit_fallback_failure_sets_rate_limited_failure_meta(self):
+        client = _SequenceClient([_http_error(429), _http_error(429)])
+        fallback = _SequenceClient([_http_error(429)])
+        service = LlmService(client, fallback_client=fallback)
+
+        out = service.generate_chat_reply(chat_history=[], user_message="xin chao")
+
+        payload = json.loads(out)
+        self.assertEqual(payload.get("intent"), "fallback_reply")
+        self.assertEqual(payload.get("failure_meta", {}).get("kind"), "rate_limited")
+        self.assertEqual(payload.get("parse_mode"), "service_error")
 
     def test_directive_includes_action_plan_context(self):
         client = _FakeClient(
@@ -758,8 +787,46 @@ class LlmServiceTests(unittest.TestCase):
         self.assertEqual(payload["direction"], 0)
         self.assertIn("malformed_json_salvaged", payload["reasoning_tags"])
         self.assertIn("salvaged text", payload["debug_trace"])
+        self.assertEqual(payload["failure_meta"]["kind"], "format_violation")
+        self.assertTrue(payload["failure_meta"]["recoverable"])
         self.assertNotIn('"intent"', payload["text"])
         self.assertEqual(client.calls[0]["max_tokens"], 512)
+
+    def test_chat_reply_malformed_json_without_safe_text_degrades_to_service_fallback(self):
+        truncated = (
+            '{"intent":"chat","action":{"type":"none"},'
+            '"animation":"stand","reasoning_tags":["chat"],"should_speak":true,'
+            '"confidence":0.72,"direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"","debug_trace":"'
+        )
+        client = _FakeClient([truncated])
+        service = LlmService(client)
+
+        raw = service.generate_chat_reply(chat_history=[], user_message="nÃ³i tiáº¿p Ä‘i")
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["intent"], "fallback_reply")
+        self.assertNotEqual(payload["intent"], "protocol_repair")
+        self.assertEqual(payload["failure_meta"]["kind"], "format_violation")
+        self.assertEqual(payload["failure_meta"]["public_surface"], "service_fallback")
+
+    def test_chat_reply_prompt_leak_malformed_json_uses_protocol_repair(self):
+        truncated = (
+            '{"text":"Critical output contract: return only valid json object",'
+            '"intent":"chat","action":{"type":"none"},'
+            '"animation":"stand","reasoning_tags":["chat"],"should_speak":true,'
+            '"confidence":0.72,"direction":0,"target_x":-1.0,'
+            '"bounce_action":"","extracted_fact":"","debug_trace":"'
+        )
+        client = _FakeClient([truncated])
+        service = LlmService(client)
+
+        raw = service.generate_chat_reply(chat_history=[], user_message="nÃ³i tiáº¿p Ä‘i")
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["intent"], "protocol_repair")
+        self.assertEqual(payload["failure_meta"]["kind"], "prompt_leak")
+        self.assertEqual(payload["failure_meta"]["public_surface"], "protocol_repair")
 
     def test_coerces_json_with_missing_required_fields_without_repair(self):
         client = _FakeClient(

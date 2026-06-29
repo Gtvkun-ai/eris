@@ -13,7 +13,12 @@ def _http_error_with_body(response: requests.Response) -> requests.HTTPError:
     body = (response.text or "").strip()
     if body:
         message = f"{message} | body: {body[:1200]}"
-    return requests.HTTPError(message, response=response)
+    exc = requests.HTTPError(message, response=response)
+    try:
+        exc.response_json = response.json()
+    except Exception:
+        exc.response_json = {}
+    return exc
 
 
 def _is_empty_output_error(exc: requests.HTTPError) -> bool:

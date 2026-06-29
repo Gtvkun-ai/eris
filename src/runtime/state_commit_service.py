@@ -38,6 +38,7 @@ from core.evidence import EvidenceItem, RawSignal
 from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from domain import Decision
+from failure_meta import is_technical_failure_meta
 from runtime.body_bias import BodyBiasProjector
 from runtime.memory_recall_adapter import MemoryRecallAdapter
 from runtime.relational_voice_seed_adapter import RelationalVoiceSeedAdapter
@@ -63,6 +64,8 @@ def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
     text = str(getattr(decision, "text", "") or "").lower()
     fallback_intents = {"fallback_reply", "format_repair_fallback", "service_error", "no_fallback_block"}
     fallback_modes = {"format_repair_fallback", "service_error", "no_fallback_block"}
+    if is_technical_failure_meta(getattr(decision, "failure_meta", None)):
+        return True
     if intent in fallback_intents or parse_mode in fallback_modes:
         return True
     if "http_5xx_fallback" in debug_trace or "format_violation_recovered" in debug_trace:

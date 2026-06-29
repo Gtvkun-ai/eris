@@ -7,16 +7,27 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from transport.udp import UdpTransport
 
 
-def test_large_udp_payload_preserves_compact_private_mind_digest() -> None:
+def test_large_udp_payload_prioritizes_core_decision_and_failure_meta() -> None:
     sent: list[str] = []
     transport = UdpTransport.__new__(UdpTransport)
     transport.send_text = sent.append
     huge = "x" * 70000
     payload = {
         "text": "",
+        "intent": "fallback_reply",
         "should_speak": False,
         "animation": "stand",
         "parse_mode": "wake_gate:call_vision_compressor",
+        "reasoning_tags": ["fallback", "autonomous", "service_error"],
+        "debug_trace": "provider_unavailable | upstream timeout while building diary",
+        "failure_meta": {
+            "kind": "provider_unavailable",
+            "stage": "complete_decision",
+            "origin": "primary",
+            "public_surface": "silent",
+            "recoverable": False,
+            "transport_truncated": False,
+        },
         "private_mind_digest": {
             "last_tick_at": 123.0,
             "current": {"dominant_judgment": "private cognition is active", "confidence": 0.69},
@@ -39,8 +50,8 @@ def test_large_udp_payload_preserves_compact_private_mind_digest() -> None:
     assert sent
     outbound = json.loads(sent[0])
     assert outbound["udp_debug_truncated"] is True
-    assert outbound["private_mind_digest"]["current"]["dominant_judgment"] == "private cognition is active"
-    assert outbound["private_mind_digest"]["inner_diary"]["title"] == "Inner Diary"
-    assert "private cognition is active" in outbound["private_mind_digest"]["inner_diary"]["text"]
-    assert outbound["private_mind_digest"]["menu"]["debug_api"]["last_error"] == "invalid_json"
-    assert outbound["emotion_debug"]["private_mind"]["udp_debug_truncated"] is True
+    assert outbound["intent"] == "fallback_reply"
+    assert outbound["failure_meta"]["kind"] == "provider_unavailable"
+    assert outbound["failure_meta"]["transport_truncated"] is True
+    assert "private_mind_digest" not in outbound
+    assert "emotion_debug" not in outbound

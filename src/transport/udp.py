@@ -1,6 +1,8 @@
 import json
 import socket
 
+from failure_meta import build_failure_meta, mark_transport_truncated, normalize_failure_meta
+
 
 # Trần payload cho một datagram UDP. IPv4 cho tối đa 65507 bytes/datagram; quá
 # ngưỡng đó sendto() của OS sẽ lỗi và KHÔNG gửi được gì. 63000 chừa lề an toàn,
@@ -154,6 +156,62 @@ def _compact_scalar(value, limit: int):
         return text[: max(0, limit - 3)].rstrip() + "..."
     return text
 
+
+def _compact_reasoning_tags(value):
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, tuple):
+        items = list(value)
+    else:
+        items = []
+    cleaned = []
+    for item in items[:8]:
+        tag = str(item or "").strip()
+        if tag:
+            cleaned.append(tag[:40])
+    return cleaned
+
+
+def _compact_debug_trace(value, *, limit: int = 240) -> str:
+    return _compact_scalar(value, limit) if isinstance(_compact_scalar(value, limit), str) else ""
+
+
+def _core_udp_payload(payload: dict, *, text_limit: int | None = None, debug_limit: int = 240) -> dict:
+    text = str(payload.get("text", "") or "")
+    if text_limit is not None and len(text) > text_limit:
+        text = text[:text_limit]
+    failure_meta = normalize_failure_meta(payload.get("failure_meta"))
+    core = {
+        "text": text,
+        "should_speak": bool(payload.get("should_speak", False)),
+        "intent": str(payload.get("intent", "") or ""),
+        "animation": str(payload.get("animation", "stand") or "stand"),
+        "parse_mode": str(payload.get("parse_mode", "") or ""),
+        "reasoning_tags": _compact_reasoning_tags(payload.get("reasoning_tags", [])),
+        "debug_trace": _compact_debug_trace(payload.get("debug_trace", ""), limit=debug_limit),
+        "udp_debug_truncated": True,
+    }
+    if "direction" in payload:
+        core["direction"] = payload.get("direction", 0)
+    if "target_x" in payload:
+        core["target_x"] = payload.get("target_x", -1.0)
+    if "bounce_action" in payload:
+        core["bounce_action"] = str(payload.get("bounce_action", "") or "")
+    if "next_animation" in payload:
+        core["next_animation"] = str(payload.get("next_animation", "") or "")
+    if failure_meta is None:
+        core["failure_meta"] = build_failure_meta(
+            kind="transport_truncated",
+            stage="udp_send",
+            origin="transport",
+            public_surface="silent" if not core["should_speak"] else "service_fallback",
+            recoverable=False,
+            transport_truncated=True,
+        )
+    else:
+        core["failure_meta"] = mark_transport_truncated(failure_meta)
+    return core
+
 # UdpTransport là một lớp để giao tiếp qua giao thức UDP,
 #  nó cung cấp các phương thức để gửi và nhận dữ liệu dưới dạng văn bản hoặc
 #  JSON. Lớp này sử dụng hai socket riêng biệt: một để gửi dữ liệu đến một địa chỉ và cổng cụ thể,
@@ -181,50 +239,22 @@ class UdpTransport:
             self.send_text(message)
             return
 
-        # Stage 1: nén private_mind_digest + emotion_debug.private_mind, giữ phần còn lại.
         payload = dict(payload)
-        private_mind = _compact_private_mind_for_udp_overflow(payload.get("private_mind_digest"))
-        if private_mind:
-            payload["private_mind_digest"] = private_mind
-        else:
-            payload.pop("private_mind_digest", None)
-        emotion = payload.get("emotion_debug")
-        if isinstance(emotion, dict):
-            emotion = dict(emotion)
-            if private_mind:
-                emotion["private_mind"] = private_mind
-            else:
-                emotion.pop("private_mind", None)
-            payload["emotion_debug"] = emotion
+        payload.pop("private_mind_digest", None)
+        payload.pop("emotion_debug", None)
+        payload["failure_meta"] = mark_transport_truncated(payload.get("failure_meta"))
         payload["udp_debug_truncated"] = True
-        message = json.dumps(payload, ensure_ascii=False)
-        if len(message.encode("utf-8")) <= MAX_UDP_PAYLOAD_BYTES:
-            self.send_text(message)
-            return
+        # Stage 1: giữ lõi decision và failure_meta; bỏ emotion/private_mind trước.
+        for text_limit, debug_limit in ((None, 480), (1200, 320), (500, 240), (220, 120)):
+            minimal = _core_udp_payload(payload, text_limit=text_limit, debug_limit=debug_limit)
+            message = json.dumps(minimal, ensure_ascii=False)
+            if len(message.encode("utf-8")) <= MAX_UDP_PAYLOAD_BYTES:
+                self.send_text(message)
+                return
 
-        # Stage 2: payload tối thiểu, NHƯNG giữ private_mind_digest để UI không mất
-        # Inner Diary. Trước đây stage này vứt sạch digest nên panel luôn "(chưa có)".
-        minimal = {
-            "text": str(payload.get("text", ""))[:500],
-            "should_speak": bool(payload.get("should_speak", False)),
-            "animation": str(payload.get("animation", "stand") or "stand"),
-            "parse_mode": str(payload.get("parse_mode", "") or ""),
-            "debug_trace": "udp_payload_truncated",
-            "udp_debug_truncated": True,
-        }
-        if private_mind:
-            minimal["private_mind_digest"] = private_mind
-            message = json.dumps(minimal, ensure_ascii=False)
-            # Stage 3: vẫn quá lớn → rút digest còn lõi inner_diary.
-            if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
-                minimal["private_mind_digest"] = _slim_private_mind_core(private_mind)
-                message = json.dumps(minimal, ensure_ascii=False)
-            # Stage 4: cùng đường → bỏ hẳn để ít nhất còn gửi được text/animation.
-            if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
-                minimal.pop("private_mind_digest", None)
-                message = json.dumps(minimal, ensure_ascii=False)
-        else:
-            message = json.dumps(minimal, ensure_ascii=False)
+        # Stage 2: đường cùng, cắt text mạnh tay nhưng vẫn giữ failure_meta.
+        minimal = _core_udp_payload(payload, text_limit=80, debug_limit=80)
+        message = json.dumps(minimal, ensure_ascii=False)
         self.send_text(message)
 
     def poll_json(self):

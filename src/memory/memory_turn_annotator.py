@@ -19,6 +19,7 @@ from typing import Any, Optional
 import re
 import unicodedata
 
+from failure_meta import is_technical_failure_meta
 from .memory_turn_graph import (
     FactMention,
     TurnEdge,
@@ -96,6 +97,10 @@ class TurnAnnotator:
                 act = TurnSpeechAct.REPAIR
                 tags.append("repair")
                 conf = 0.78
+            elif is_technical_failure_meta(metadata.get("failure_meta")):
+                act = TurnSpeechAct.FALLBACK
+                tags.append("service_fallback")
+                conf = 0.90
             elif metadata.get("intent") == "fallback_reply" or "van de duong truyen" in norm:
                 act = TurnSpeechAct.FALLBACK
                 tags.append("service_fallback")
@@ -350,6 +355,8 @@ class TurnAnnotator:
 
     def _is_service_fallback(self, norm: str, metadata: dict[str, Any]) -> bool:
         if metadata.get("is_service_fallback") is True:
+            return True
+        if is_technical_failure_meta(metadata.get("failure_meta")):
             return True
         intent = str(metadata.get("intent", "") or "")
         parse_mode = str(metadata.get("parse_mode", "") or "")

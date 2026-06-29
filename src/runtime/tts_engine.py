@@ -30,6 +30,7 @@ from runtime.prosody_director import ProsodyDirector
 from runtime.speech_localizer import SpeechLocalizer
 from runtime.tts_audio_polish import audio_polish_enabled, polish_pcm16_mono
 from runtime.tts_markup import render_tts_markup
+from runtime.vocal_cache import VocalCache, VocalCacheKey, strip_audible_prefix, vocal_cache_enabled
 
 logger = logging.getLogger("TTS")
 
@@ -370,6 +371,46 @@ def _synthesize_wav(prompt: str, voice: str, model: str) -> bytes:
     return buf.getvalue()
 
 
+def _concat_wav_bytes(*items: bytes) -> bytes:
+    """Ghép nhiều WAV PCM cùng format thành một WAV.
+
+    Dùng cho vocal prefix cache: prefix và câu chính được synth riêng, nhưng phát
+    ra như một audio duy nhất để tránh gap do mở playback hai lần.
+    """
+    chunks = [item for item in items if item]
+    if not chunks:
+        return b""
+    if len(chunks) == 1:
+        return chunks[0]
+
+    params = None
+    frames: list[bytes] = []
+    for wav_bytes in chunks:
+        try:
+            with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+                current = wf.getparams()
+                if params is None:
+                    params = current
+                elif (
+                    current.nchannels != params.nchannels
+                    or current.sampwidth != params.sampwidth
+                    or current.framerate != params.framerate
+                ):
+                    return chunks[-1]
+                frames.append(wf.readframes(wf.getnframes()))
+        except Exception:
+            return chunks[-1]
+    if params is None:
+        return b""
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wf:
+        wf.setnchannels(params.nchannels)
+        wf.setsampwidth(params.sampwidth)
+        wf.setframerate(params.framerate)
+        wf.writeframes(b"".join(frames))
+    return out.getvalue()
+
+
 def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event) -> None:
     """Phát WAV bytes qua sounddevice. Fallback → miniaudio stream."""
     try:
@@ -476,6 +517,8 @@ class _SpeakRequest:
         "turn_id",
         "segment_id",
         "interruptible",
+        "vocal_cache_kind",
+        "vocal_prefix",
         "on_event",
     )
 
@@ -492,6 +535,8 @@ class _SpeakRequest:
         turn_id: str = "",
         segment_id: int = 0,
         interruptible: bool = True,
+        vocal_cache_kind: str = "",
+        vocal_prefix: str = "",
         on_event = None,
     ):
         self.text = text
@@ -510,6 +555,8 @@ class _SpeakRequest:
         except (TypeError, ValueError):
             self.segment_id = 0
         self.interruptible = bool(interruptible)
+        self.vocal_cache_kind = str(vocal_cache_kind or "")
+        self.vocal_prefix = str(vocal_prefix or "")
         self.on_event = on_event
 
 
@@ -520,6 +567,7 @@ class _TtsWorker:
         self._language_hint = language_hint
         self._localizer = SpeechLocalizer()
         self._prosody = ProsodyDirector()
+        self._vocal_cache = VocalCache()
         self._queue: queue.Queue[Optional[_SpeakRequest]] = queue.Queue(maxsize=_queue_size())
         self._stop_event = threading.Event()
         self._current_stop = threading.Event()
@@ -592,6 +640,58 @@ class _TtsWorker:
             if old is not None:
                 self._emit(old, "audio_cancelled", reason=reason)
 
+    def _vocal_prefix_wav(self, req: _SpeakRequest, prefix: str, prosody_plan) -> bytes:
+        """Lấy/sinh WAV cho prefix nghe được như "Hah... haha.".
+
+        Prefix cache dùng prompt riêng, rất ngắn. Nếu cache miss thì sinh một lần
+        rồi lưu. Nếu lỗi cache/synth, trả b"" để câu chính vẫn được đọc bình thường.
+        """
+        prefix = str(prefix or "").strip()
+        if not prefix or not vocal_cache_enabled():
+            return b""
+        kind = str(getattr(req, "vocal_cache_kind", "") or "vocal_prefix")
+        key = VocalCacheKey(
+            voice=self._voice,
+            model=self._model,
+            kind=kind,
+            style=req.prosody_style or getattr(prosody_plan, "style", "") or "neutral",
+            text=prefix,
+            language_hint="auto",
+        )
+        cached = self._vocal_cache.get(key)
+        if cached:
+            logger.debug("[TTS] Vocal cache hit kind=%s text=%r", kind, prefix)
+            return cached
+
+        try:
+            prefix_plan = self._prosody.plan(
+                prefix,
+                stance=req.stance,
+                valence=req.valence,
+                arousal=req.arousal,
+                style_hint=req.prosody_style or getattr(prosody_plan, "style", ""),
+                notes_hint=(
+                    "Render only this short nonverbal vocalization. "
+                    "Do not add words before or after it."
+                ),
+            )
+            marked = render_tts_markup(prefix, prefix_plan)
+            prompt = _build_tts_prompt(
+                marked,
+                "",
+                "auto",
+                prosody_notes=prefix_plan.director_notes,
+                prelocalized=True,
+                quality_mode=_quality_mode(),
+            )
+            wav_bytes = _synthesize_wav(prompt, self._voice, self._model)
+            self._vocal_cache.put(key, wav_bytes)
+            logger.debug("[TTS] Vocal cache stored kind=%s text=%r", kind, prefix)
+            return wav_bytes
+        except Exception as exc:
+            logger.debug("[TTS] Vocal cache synth miss failed: %s", exc)
+            return b""
+
     def _run(self) -> None:
         while not self._stop_event.is_set():
             try:
@@ -608,17 +708,20 @@ class _TtsWorker:
             try:
                 try:
                     audio_tag = _emotion_to_tag(req.valence, req.arousal, req.stance)
-                    text_to_speak = req.text
+                    vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
+                    main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
+                    prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
+                    text_to_speak = main_text_raw
                     localized = bool(req.prelocalized)
                     if self._language_hint == "ja" and not req.prelocalized:
                         # Dịch/style TTS chạy trong worker nền để UI/runtime không bị
                         # kẹt bởi một call Gemini phụ. Engine vẫn chỉ nhận text sạch.
                         text_to_speak = self._localizer.localize(
-                            req.text,
+                            main_text_raw,
                             language_hint=self._language_hint,
                             prosody_style=req.prosody_style,
                         )
-                        localized = text_to_speak != req.text
+                        localized = text_to_speak != main_text_raw
                     prosody_plan = self._prosody.plan(
                         text_to_speak,
                         stance=req.stance,
@@ -628,22 +731,28 @@ class _TtsWorker:
                         notes_hint=req.prosody_notes,
                         style_hint=req.prosody_style,
                     )
-                    marked_text = render_tts_markup(text_to_speak, prosody_plan)
-                    prompt = _build_tts_prompt(
-                        marked_text,
-                        "",
-                        self._language_hint,
-                        prosody_notes=prosody_plan.director_notes,
-                        prelocalized=localized or req.prelocalized,
-                        quality_mode=_quality_mode(),
-                    )
+                    main_wav = b""
+                    if str(text_to_speak or "").strip():
+                        marked_text = render_tts_markup(text_to_speak, prosody_plan)
+                        prompt = _build_tts_prompt(
+                            marked_text,
+                            "",
+                            self._language_hint,
+                            prosody_notes=prosody_plan.director_notes,
+                            prelocalized=localized or req.prelocalized,
+                            quality_mode=_quality_mode(),
+                        )
+                        main_wav = _synthesize_wav(prompt, self._voice, self._model)
 
                     logger.debug(
                         "[TTS] valence=%.2f arousal=%.2f stance=%r → style=%r tag=%r",
                         req.valence, req.arousal, req.stance, prosody_plan.style, prosody_plan.opening_tag,
                     )
 
-                    wav_bytes = _synthesize_wav(prompt, self._voice, self._model)
+                    prefix_wav = b""
+                    if prefix_is_separate:
+                        prefix_wav = self._vocal_prefix_wav(req, vocal_prefix, prosody_plan)
+                    wav_bytes = _concat_wav_bytes(prefix_wav, main_wav) or main_wav or prefix_wav
 
                     if self._current_stop.is_set():
                         self._emit(req, "audio_cancelled", reason="cancelled_before_playback")
@@ -736,6 +845,8 @@ class TtsEngine:
         turn_id: str = "",
         segment_id: int = 0,
         interruptible: bool = True,
+        vocal_cache_kind: str = "",
+        vocal_prefix: str = "",
         replace: bool = True,
         on_event = None,
     ) -> None:
@@ -778,6 +889,8 @@ class TtsEngine:
                 turn_id=turn_id,
                 segment_id=segment_id,
                 interruptible=interruptible,
+                vocal_cache_kind=vocal_cache_kind,
+                vocal_prefix=vocal_prefix,
                 on_event=on_event,
             ),
             replace=replace,

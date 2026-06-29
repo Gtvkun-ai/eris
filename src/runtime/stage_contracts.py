@@ -18,6 +18,7 @@ from typing import Any
 
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
+from runtime.stage_performance_planner import PerformanceRequestPlanner
 from runtime.stage_transformers import StageTransformerChain
 
 
@@ -143,6 +144,7 @@ class StageFrameBuilder:
         self.prosody_director = ProsodyDirector()
         self.transformers = StageTransformerChain()
         self.delivery_planner = SpeechDeliveryPlanner()
+        self.performance_planner = PerformanceRequestPlanner()
 
     def build(
         self,
@@ -156,7 +158,21 @@ class StageFrameBuilder:
     ) -> StageFrame:
         raw_text = str(payload.get("text", getattr(decision, "text", "")) or "")
         surfaces = self.transformers.transform(raw_text)
-        tts_source = surfaces.tts_text
+        user_text = str(payload.get("user_text", "") or "")
+        delivery_hint = str(payload.get("delivery_hint", getattr(decision, "delivery_hint", "")) or "").strip()
+        nonverbal_cue = str(payload.get("nonverbal_cue", getattr(decision, "nonverbal_cue", "")) or "").strip()
+        stage_motion = str(payload.get("stage_motion", getattr(decision, "stage_motion", "")) or "").strip()
+        performance = self.performance_planner.apply(
+            surfaces,
+            user_text=user_text,
+            intent=str(getattr(decision, "intent", "") or ""),
+            delivery_hint=delivery_hint,
+            nonverbal_cue=nonverbal_cue,
+            stage_motion=stage_motion,
+            extracted_actions=surfaces.marks.actions,
+        )
+
+        tts_source = performance.tts_text
         if self.localizer is not None and tts_source:
             try:
                 tts_text = str(self.localizer.localize(tts_source, language_hint=self.language_hint) or "").strip()
@@ -167,28 +183,27 @@ class StageFrameBuilder:
 
         should_speak = bool(payload.get("should_speak", getattr(decision, "should_speak", True)))
         affect = affect_signals_from(payload, frame=frame)
-        delivery_hint = str(payload.get("delivery_hint", getattr(decision, "delivery_hint", "")) or "").strip()
-        nonverbal_cue = str(payload.get("nonverbal_cue", getattr(decision, "nonverbal_cue", "")) or "").strip()
-        stage_motion = str(payload.get("stage_motion", getattr(decision, "stage_motion", "")) or "").strip()
         base_emotion = surfaces.marks.emotion_hint or _emotion_from_payload(payload, frame=frame)
         explicit_motion = _motion_from_decision(decision)
-        extracted_actions = tuple(
-            item
-            for item in (*surfaces.marks.actions, nonverbal_cue)
-            if str(item or "").strip()
-        )
         delivery = self.delivery_planner.plan(
-            surfaces.display_text or surfaces.tts_text,
+            performance.display_text or performance.tts_text,
             intent=str(getattr(decision, "intent", "") or ""),
-            delivery_hint=delivery_hint,
+            delivery_hint=performance.delivery_hint,
             explicit_emotion=base_emotion,
-            explicit_motion=stage_motion or surfaces.marks.motion_hint,
-            extracted_actions=extracted_actions,
+            explicit_motion=performance.stage_motion or surfaces.marks.motion_hint,
+            extracted_actions=performance.actions,
             affect=affect,
         )
         emotion = delivery.emotion or base_emotion
-        motion = stage_motion or (explicit_motion if explicit_motion and explicit_motion != "none" else delivery.motion)
+        motion = performance.stage_motion or (explicit_motion if explicit_motion and explicit_motion != "none" else delivery.motion)
         valence, arousal, stance = _prosody_numbers(payload, frame=frame)
+        prosody_notes = delivery.prosody_notes
+        delivery_payload = delivery.to_payload()
+        if performance.performance_act is not None:
+            act_payload = performance.performance_act.to_payload()
+            delivery_payload["performance_act"] = act_payload
+            if performance.performance_act.prosody_note:
+                prosody_notes = f"{prosody_notes} {performance.performance_act.prosody_note}".strip()
         prosody = self.prosody_director.plan(
             tts_text,
             emotion=emotion,
@@ -197,20 +212,20 @@ class StageFrameBuilder:
             valence=valence,
             arousal=arousal,
             style_hint=delivery.voice_style,
-            notes_hint=delivery.prosody_notes,
+            notes_hint=prosody_notes,
         )
         return StageFrame(
             turn_id=str(turn_id or uuid.uuid4().hex),
             segment_id=int(segment_id),
-            display_text=surfaces.display_text,
+            display_text=performance.display_text,
             tts_text=tts_text,
-            memory_text=surfaces.memory_text,
+            memory_text=performance.memory_text,
             emotion=emotion,
             motion=motion or "none",
             actions=delivery.pre_speech_actions,
             prosody_style=prosody.style,
             prosody_notes=prosody.director_notes,
-            delivery=delivery.to_payload(),
+            delivery=delivery_payload,
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",
         )

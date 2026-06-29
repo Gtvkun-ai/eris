@@ -75,6 +75,7 @@ class _JsonParser:
             system_action=data.get("system_action", ""),
             action_input=data.get("action_input", ""),
             parse_mode=data.get("parse_mode", "json"),
+            failure_meta=data.get("failure_meta"),
         )
 
 
@@ -214,6 +215,8 @@ def test_chat_format_violation_tries_fallback_api_then_blocks():
     assert sent["parse_mode"] == "no_fallback_block"
     assert "chặn lượt" in sent["text"]
     assert "format_violation_blocked" in sent["debug_trace"]
+    assert sent["failure_meta"]["kind"] == "format_violation"
+    assert sent["failure_meta"]["public_surface"] == "blocked"
     # Lượt đổi API thật sự được gọi với allow_local_fallback=True.
     assert llm.last_chat_kwargs.get("allow_local_fallback") is True
 def test_chat_format_violation_no_fallback_mode_blocks_instead_of_recovering():

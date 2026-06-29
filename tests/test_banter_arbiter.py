@@ -1,5 +1,6 @@
 import os
 import sys
+import unicodedata
 
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -9,6 +10,13 @@ if SRC_DIR not in sys.path:
 
 from domain import Decision
 from runtime.banter_arbiter import BanterArbiter
+
+
+def _norm(text: str) -> str:
+    lowered = unicodedata.normalize("NFD", text.lower())
+    lowered = "".join(ch for ch in lowered if unicodedata.category(ch) != "Mn")
+    lowered = lowered.replace("đ", "d")
+    return " ".join(lowered.split())
 
 
 def test_hard_json_repair_with_clean_public_text_is_kept():
@@ -41,4 +49,28 @@ def test_protocol_markers_in_public_text_still_trigger_protocol_repair():
 
     assert result.mode == "protocol_repair"
     assert result.reason == "blocked_protocol_surface"
-    assert result.text.startswith("Câu đó lệch.")
+    assert "rut lai" in _norm(result.text)
+
+
+def test_service_fallback_text_is_not_rewritten_into_protocol_repair():
+    arbiter = BanterArbiter()
+    decision = Decision(
+        text="Toi chua chot duoc cau tra loi cho cai nay.",
+        animation="stand",
+        intent="fallback_reply",
+        parse_mode="service_error",
+        failure_meta={
+            "kind": "provider_unavailable",
+            "stage": "complete_decision",
+            "origin": "primary",
+            "public_surface": "service_fallback",
+            "recoverable": False,
+            "transport_truncated": False,
+        },
+    )
+
+    result = arbiter.arbitrate(decision, channel="chat", user_text="xin chao")
+
+    assert result.mode == "none"
+    assert result.reason == "kept"
+    assert result.text == ""
