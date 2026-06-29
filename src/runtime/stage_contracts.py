@@ -17,6 +17,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from runtime.prosody_director import ProsodyDirector
+
 
 @dataclass(frozen=True, slots=True)
 class StageFrame:
@@ -26,6 +28,8 @@ class StageFrame:
     tts_text: str
     emotion: str
     motion: str
+    prosody_style: str
+    prosody_notes: str
     interruptible: bool
     source: str
 
@@ -38,6 +42,7 @@ class StageFrame:
                 "segment_id": self.segment_id,
                 "emotion": self.emotion,
                 "motion": self.motion,
+                "prosody_style": self.prosody_style,
                 "interruptible": self.interruptible,
                 "source": self.source,
             },
@@ -114,6 +119,19 @@ def _emotion_from_payload(payload: dict[str, Any], frame: Any = None) -> str:
     return "neutral"
 
 
+def _prosody_numbers(payload: dict[str, Any], frame: Any = None) -> tuple[float, float, str]:
+    """Trích valence/arousal/stance cho prosody mà không bắt stage biết cognition."""
+    appraisal = getattr(frame, "appraisal", None) if frame is not None else None
+    emotion_debug = payload.get("emotion_debug")
+    mood = {}
+    if isinstance(emotion_debug, dict) and isinstance(emotion_debug.get("summary"), dict):
+        mood = emotion_debug.get("summary") or {}
+    valence = _safe_float(mood.get("valence"), 0.0) if isinstance(mood, dict) else 0.0
+    arousal = _safe_float(getattr(appraisal, "arousal", 0.3), 0.3)
+    stance = str(getattr(appraisal, "stance", "") or "")
+    return valence, arousal, stance
+
+
 def _motion_from_decision(decision: Any) -> str:
     resolver = getattr(decision, "resolve_motion_intent", None)
     if callable(resolver):
@@ -134,6 +152,7 @@ class StageFrameBuilder:
     def __init__(self, *, localizer: Any = None, language_hint: str = "auto") -> None:
         self.localizer = localizer
         self.language_hint = language_hint or "auto"
+        self.prosody_director = ProsodyDirector()
 
     def build(
         self,
@@ -156,13 +175,25 @@ class StageFrameBuilder:
             tts_text = tts_source
 
         should_speak = bool(payload.get("should_speak", getattr(decision, "should_speak", True)))
+        emotion = _emotion_from_payload(payload, frame=frame)
+        valence, arousal, stance = _prosody_numbers(payload, frame=frame)
+        prosody = self.prosody_director.plan(
+            tts_text,
+            emotion=emotion,
+            intent=str(getattr(decision, "intent", "") or ""),
+            stance=stance,
+            valence=valence,
+            arousal=arousal,
+        )
         return StageFrame(
             turn_id=str(turn_id or uuid.uuid4().hex),
             segment_id=int(segment_id),
             display_text=display_text,
             tts_text=tts_text,
-            emotion=_emotion_from_payload(payload, frame=frame),
+            emotion=emotion,
             motion=_motion_from_decision(decision),
+            prosody_style=prosody.style,
+            prosody_notes=prosody.director_notes,
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",
         )

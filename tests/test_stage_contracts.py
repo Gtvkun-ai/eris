@@ -22,7 +22,7 @@ def test_clean_tts_source_removes_stage_tag_and_markdown_noise():
     assert clean_tts_source(raw) == "Ừ, xem ở đi."
 
 
-def test_stage_frame_separates_display_and_tts_text():
+def test_stage_frame_separates_display_tts_and_prosody():
     decision = DummyDecision(text="(nhíu mắt) **Khoan.** Bug này không nằm ở TTS.")
     frame = StageFrameBuilder().build(
         decision,
@@ -35,6 +35,7 @@ def test_stage_frame_separates_display_and_tts_text():
     assert frame.display_text == "(nhíu mắt) **Khoan.** Bug này không nằm ở TTS."
     assert frame.tts_text == "Khoan. Bug này không nằm ở TTS."
     assert frame.motion == "tilt_head"
+    assert frame.prosody_style == "focused"
     assert frame.interruptible is True
 
 
@@ -51,4 +52,5 @@ def test_stage_frame_payload_patch_is_backward_safe():
     assert patch["display_text"] == "Ổn."
     assert patch["stage"]["turn_id"] == "abc"
     assert patch["stage"]["segment_id"] == 0
+    assert "prosody_style" in patch["stage"]
     assert "text" not in patch

@@ -23,11 +23,31 @@ import re
 import struct
 import threading
 import wave
+from dataclasses import dataclass
 from typing import Optional
 
+from runtime.prosody_director import ProsodyDirector
 from runtime.speech_localizer import SpeechLocalizer
+from runtime.tts_markup import render_tts_markup
 
 logger = logging.getLogger("TTS")
+
+
+@dataclass(frozen=True, slots=True)
+class TtsPlaybackEvent:
+    """Lifecycle event của một đoạn TTS.
+
+    Đây là phần "end đúng": caller biết đoạn nào đã được queue, bắt đầu phát,
+    phát xong, bị hủy, hoặc lỗi. UI/interrupt ledger có thể bám vào event này
+    mà không cần đoán từ log hay thread state.
+    """
+
+    type: str
+    turn_id: str = ""
+    segment_id: int = 0
+    text: str = ""
+    reason: str = ""
+    error: str = ""
 
 # ── Feature flag ──────────────────────────────────────────────────────────────
 
@@ -46,6 +66,14 @@ def _model() -> str:
 def _language_hint() -> str:
     # "auto" = detect từ text; "ja" = ép Japanese; "vi" = Vietnamese; v.v.
     return os.environ.get("ERIS_TTS_LANGUAGE", "auto").strip()
+
+
+def _queue_size() -> int:
+    raw = os.environ.get("ERIS_TTS_QUEUE_SIZE", "4").strip()
+    try:
+        return max(1, min(24, int(raw)))
+    except ValueError:
+        return 4
 
 # ── Emotion → Audio Tag mapping ───────────────────────────────────────────────
 # valence: [-1, 1]  arousal: [0, 1]  stance: string từ appraisal
@@ -127,7 +155,14 @@ def _emotion_to_tag(
 
 # ── System prompt cho Gemini TTS (character profile) ─────────────────────────
 
-def _build_tts_prompt(text: str, audio_tag: str, language_hint: str) -> str:
+def _build_tts_prompt(
+    text: str,
+    audio_tag: str,
+    language_hint: str,
+    *,
+    prosody_notes: str = "",
+    prelocalized: bool = False,
+) -> str:
     """
     Xây dựng prompt TTS theo format advanced prompting của Gemini.
 
@@ -143,11 +178,17 @@ def _build_tts_prompt(text: str, audio_tag: str, language_hint: str) -> str:
     lang_line = ""
     if language_hint and language_hint.lower() not in ("auto", ""):
         if language_hint == "ja":
-            lang_line = (
-                "The transcript is in Vietnamese or English. Translate the transcript into natural, "
-                "gentle Japanese first (appropriate for a soft, polite anime girl companion speaking to her Master/Ngài), "
-                "then read the Japanese translation aloud in Japanese. Do not read the original non-Japanese text.\n"
-            )
+            if prelocalized:
+                lang_line = (
+                    "The transcript is already in Japanese. Read it aloud in Japanese. "
+                    "Do not translate it again and do not read any hidden notes.\n"
+                )
+            else:
+                lang_line = (
+                    "The transcript is in Vietnamese or English. Translate the transcript into natural, "
+                    "gentle Japanese first (appropriate for a soft, polite anime girl companion speaking to her Master/Ngài), "
+                    "then read the Japanese translation aloud in Japanese. Do not read the original non-Japanese text.\n"
+                )
         elif language_hint == "vi":
             lang_line = "The transcript is in Vietnamese. Read it in Vietnamese.\n"
         else:
@@ -155,6 +196,9 @@ def _build_tts_prompt(text: str, audio_tag: str, language_hint: str) -> str:
 
     # Inject audio tag vào đầu transcript
     tagged_text = f"{audio_tag} {text}".strip() if audio_tag else text
+    prosody_line = ""
+    if prosody_notes:
+        prosody_line = f"Line performance: {prosody_notes}\n"
 
     prompt = (
         "# AUDIO PROFILE: Eris\n"
@@ -167,6 +211,7 @@ def _build_tts_prompt(text: str, audio_tag: str, language_hint: str) -> str:
         "Emotionally nuanced — not flat, not over-the-top. Warmth is subtle, not bubbly.\n"
         "Apply this voice style to whatever language the transcript is in.\n\n"
         "Pacing: Unhurried. Let silences breathe. Natural pauses.\n\n"
+        f"{prosody_line}"
         f"{lang_line}"
         "## TRANSCRIPT\n"
         f"{tagged_text}\n"
@@ -369,7 +414,20 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
 # ── Worker thread ─────────────────────────────────────────────────────────────
 
 class _SpeakRequest:
-    __slots__ = ("text", "valence", "arousal", "stance", "on_start_play", "prelocalized")
+    __slots__ = (
+        "text",
+        "valence",
+        "arousal",
+        "stance",
+        "on_start_play",
+        "prelocalized",
+        "prosody_style",
+        "prosody_notes",
+        "turn_id",
+        "segment_id",
+        "interruptible",
+        "on_event",
+    )
 
     def __init__(
         self,
@@ -379,6 +437,12 @@ class _SpeakRequest:
         stance: str = "",
         on_start_play = None,
         prelocalized: bool = False,
+        prosody_style: str = "",
+        prosody_notes: str = "",
+        turn_id: str = "",
+        segment_id: int = 0,
+        interruptible: bool = True,
+        on_event = None,
     ):
         self.text = text
         self.valence = valence
@@ -388,6 +452,15 @@ class _SpeakRequest:
         # True khi StageFrame đã chuẩn bị sẵn tts_text theo ngôn ngữ cần đọc.
         # Khi đó engine không dịch lại, tránh "dịch một câu Nhật sang Nhật" làm mất tự nhiên.
         self.prelocalized = bool(prelocalized)
+        self.prosody_style = str(prosody_style or "")
+        self.prosody_notes = str(prosody_notes or "")
+        self.turn_id = str(turn_id or "")
+        try:
+            self.segment_id = int(segment_id)
+        except (TypeError, ValueError):
+            self.segment_id = 0
+        self.interruptible = bool(interruptible)
+        self.on_event = on_event
 
 
 class _TtsWorker:
@@ -396,23 +469,35 @@ class _TtsWorker:
         self._model = model
         self._language_hint = language_hint
         self._localizer = SpeechLocalizer()
-        self._queue: queue.Queue[Optional[_SpeakRequest]] = queue.Queue(maxsize=1)
+        self._prosody = ProsodyDirector()
+        self._queue: queue.Queue[Optional[_SpeakRequest]] = queue.Queue(maxsize=_queue_size())
         self._stop_event = threading.Event()
         self._current_stop = threading.Event()
+        self._current_req: Optional[_SpeakRequest] = None
+        self._current_lock = threading.RLock()
         self._thread = threading.Thread(target=self._run, daemon=True, name="TTS-Worker")
         self._thread.start()
 
-    def speak(self, req: _SpeakRequest) -> None:
-        """Enqueue câu mới. Huỷ câu cũ nếu đang phát."""
-        self._current_stop.set()
-        try:
-            self._queue.get_nowait()
-        except queue.Empty:
-            pass
+    def speak(self, req: _SpeakRequest, *, replace: bool = True) -> None:
+        """Enqueue một đoạn TTS.
+
+        ``replace=True`` giữ hành vi cũ: câu mới cắt câu đang nói. Khi sau này
+        StageDispatcher tách một lượt thành nhiều segment, caller có thể dùng
+        ``replace=False`` để phát tuần tự segment 0, 1, 2.
+        """
+        if replace:
+            self._current_stop.set()
+            self._drain_pending(reason="replaced")
         try:
             self._queue.put_nowait(req)
         except queue.Full:
-            pass
+            self._drop_one_pending(reason="queue_full")
+            try:
+                self._queue.put_nowait(req)
+            except queue.Full:
+                self._emit(req, "audio_failed", reason="queue_full", error="TTS queue is full")
+                return
+        self._emit(req, "audio_queued")
 
     def shutdown(self) -> None:
         self._stop_event.set()
@@ -421,6 +506,41 @@ class _TtsWorker:
             self._queue.put_nowait(None)
         except queue.Full:
             pass
+
+    def _emit(self, req: Optional[_SpeakRequest], event_type: str, *, reason: str = "", error: str = "") -> None:
+        if req is None:
+            return
+        event = TtsPlaybackEvent(
+            type=event_type,
+            turn_id=req.turn_id,
+            segment_id=req.segment_id,
+            text=req.text,
+            reason=reason,
+            error=error,
+        )
+        callback = getattr(req, "on_event", None)
+        if callback is not None:
+            try:
+                callback(event)
+            except Exception as cb_exc:
+                logger.error("[TTS] Error in on_event callback: %s", cb_exc)
+
+    def _drop_one_pending(self, *, reason: str) -> None:
+        try:
+            old = self._queue.get_nowait()
+        except queue.Empty:
+            return
+        if old is not None:
+            self._emit(old, "audio_cancelled", reason=reason)
+
+    def _drain_pending(self, *, reason: str) -> None:
+        while True:
+            try:
+                old = self._queue.get_nowait()
+            except queue.Empty:
+                return
+            if old is not None:
+                self._emit(old, "audio_cancelled", reason=reason)
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -432,34 +552,66 @@ class _TtsWorker:
                 break
 
             self._current_stop.clear()
+            with self._current_lock:
+                self._current_req = req
             callback_called = False
             try:
                 try:
                     audio_tag = _emotion_to_tag(req.valence, req.arousal, req.stance)
                     text_to_speak = req.text
+                    localized = bool(req.prelocalized)
                     if self._language_hint == "ja" and not req.prelocalized:
                         # Dịch/style TTS chạy trong worker nền để UI/runtime không bị
                         # kẹt bởi một call Gemini phụ. Engine vẫn chỉ nhận text sạch.
-                        text_to_speak = self._localizer.localize(req.text, language_hint=self._language_hint)
-                    prompt = _build_tts_prompt(text_to_speak, audio_tag, self._language_hint)
+                        text_to_speak = self._localizer.localize(
+                            req.text,
+                            language_hint=self._language_hint,
+                            prosody_style=req.prosody_style,
+                        )
+                        localized = text_to_speak != req.text
+                    prosody_plan = self._prosody.plan(
+                        text_to_speak,
+                        stance=req.stance,
+                        valence=req.valence,
+                        arousal=req.arousal,
+                        fallback_tag=audio_tag,
+                        notes_hint=req.prosody_notes,
+                        style_hint=req.prosody_style,
+                    )
+                    marked_text = render_tts_markup(text_to_speak, prosody_plan)
+                    prompt = _build_tts_prompt(
+                        marked_text,
+                        "",
+                        self._language_hint,
+                        prosody_notes=prosody_plan.director_notes,
+                        prelocalized=localized or req.prelocalized,
+                    )
 
                     logger.debug(
-                        "[TTS] valence=%.2f arousal=%.2f stance=%r → tag=%r",
-                        req.valence, req.arousal, req.stance, audio_tag,
+                        "[TTS] valence=%.2f arousal=%.2f stance=%r → style=%r tag=%r",
+                        req.valence, req.arousal, req.stance, prosody_plan.style, prosody_plan.opening_tag,
                     )
 
                     wav_bytes = _synthesize_wav(prompt, self._voice, self._model)
 
-                    if not self._current_stop.is_set():
+                    if self._current_stop.is_set():
+                        self._emit(req, "audio_cancelled", reason="cancelled_before_playback")
+                    else:
                         if req.on_start_play is not None:
                             try:
                                 req.on_start_play()
                             except Exception as cb_exc:
                                 logger.error("[TTS] Error in on_start_play callback: %s", cb_exc)
                             callback_called = True
+                        self._emit(req, "audio_start")
                         _play_wav_bytes(wav_bytes, self._current_stop)
+                        if self._current_stop.is_set():
+                            self._emit(req, "audio_cancelled", reason="cancelled_during_playback")
+                        else:
+                            self._emit(req, "audio_done")
 
                 except Exception as exc:
+                    self._emit(req, "audio_failed", error=str(exc))
                     logger.warning("[TTS] Lỗi: %s", exc)
                     # Đánh dấu key hiện tại chết và xoay key trong pool khi gặp 429/RESOURCE_EXHAUSTED
                     try:
@@ -479,6 +631,9 @@ class _TtsWorker:
                         req.on_start_play()
                     except Exception as cb_exc:
                         logger.error("[TTS] Error in fallback on_start_play callback: %s", cb_exc)
+                with self._current_lock:
+                    if self._current_req is req:
+                        self._current_req = None
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -525,9 +680,21 @@ class TtsEngine:
         stance: str = "",
         on_start_play = None,
         prelocalized: bool = False,
+        prosody_style: str = "",
+        prosody_notes: str = "",
+        turn_id: str = "",
+        segment_id: int = 0,
+        interruptible: bool = True,
+        replace: bool = True,
+        on_event = None,
     ) -> None:
         """Phát TTS cho text với cảm xúc cho trước. Non-blocking."""
         if not self._ok or self._worker is None:
+            if on_event is not None:
+                try:
+                    on_event(TtsPlaybackEvent(type="audio_failed", text=str(text or ""), reason="tts_disabled"))
+                except Exception as cb_exc:
+                    logger.error("[TTS] Error in on_event callback: %s", cb_exc)
             if on_start_play is not None:
                 try:
                     on_start_play()
@@ -536,13 +703,34 @@ class TtsEngine:
             return
         clean = _clean_text(text)
         if not clean:
+            if on_event is not None:
+                try:
+                    on_event(TtsPlaybackEvent(type="audio_cancelled", text=str(text or ""), reason="empty_text"))
+                except Exception as cb_exc:
+                    logger.error("[TTS] Error in on_event callback: %s", cb_exc)
             if on_start_play is not None:
                 try:
                     on_start_play()
                 except Exception as cb_exc:
                     logger.error("[TTS] Error in fallback on_start_play callback: %s", cb_exc)
             return
-        self._worker.speak(_SpeakRequest(clean, valence, arousal, stance, on_start_play, prelocalized=prelocalized))
+        self._worker.speak(
+            _SpeakRequest(
+                clean,
+                valence,
+                arousal,
+                stance,
+                on_start_play,
+                prelocalized=prelocalized,
+                prosody_style=prosody_style,
+                prosody_notes=prosody_notes,
+                turn_id=turn_id,
+                segment_id=segment_id,
+                interruptible=interruptible,
+                on_event=on_event,
+            ),
+            replace=replace,
+        )
 
     def shutdown(self) -> None:
         if self._worker is not None:
@@ -564,3 +752,6 @@ def _clean_text(text: str) -> str:
 def build_tts_engine() -> TtsEngine:
     """Entry point — gọi một lần trong vision.py."""
     return TtsEngine()
+
+
+__all__ = ["TtsEngine", "TtsPlaybackEvent", "build_tts_engine"]

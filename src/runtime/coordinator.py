@@ -110,6 +110,8 @@ from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_chann
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
 from runtime.stage_contracts import StageFrameBuilder
+from runtime.stage_dispatcher import StageDispatcher
+from runtime.stage_output import StageOutputPipeline
 from runtime.shadow_pipeline import ShadowPipelineMixin
 from runtime.self_critique import SelfCritiqueEscalationMixin
 from runtime.state_commit_service import StateCommitServiceMixin
@@ -1532,6 +1534,13 @@ class RuntimeCoordinator(
             segment_id=0,
         )
         payload.update(stage_frame.to_payload_patch())
+        stage_output = getattr(self, "stage_output_pipeline", None)
+        if stage_output is None:
+            stage_output = StageOutputPipeline()
+            self.stage_output_pipeline = stage_output
+        stage_frames = stage_output.frames_for_tts(stage_frame)
+        if isinstance(payload.get("stage"), dict):
+            payload["stage"]["segment_count"] = len(stage_frames)
         sync_text = os.environ.get("ERIS_TTS_SYNC_TEXT", "1").strip().lower() in {"1", "true", "yes", "on"}
 
         def send_text_payload():
@@ -1540,12 +1549,14 @@ class RuntimeCoordinator(
             except Exception as e:
                 self.logger.warning("Failed to send deferred chat text payload: %s", e)
 
+        def handle_tts_event(event, event_stage_frame):
+            self._handle_tts_playback_event(event, stage_frame=event_stage_frame)
+
         # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
         _tts = getattr(self, "tts_engine", None)
         has_scheduled_tts = False
         if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
-            _spoken_text = str(stage_frame.tts_text or payload.get("text", "") or "").strip()
-            if _spoken_text and sync_text:
+            if stage_frames and sync_text:
                 try:
                     # Lấy emotion data từ payload emotion_debug hoặc appraisal frame
                     _ed = payload.get("emotion_debug") or {}
@@ -1555,16 +1566,26 @@ class RuntimeCoordinator(
                     _appraisal = getattr(_frame, "appraisal", None) if _frame is not None else None
                     _arousal = float(getattr(_appraisal, "arousal", 0.3))
                     _stance = str(getattr(_appraisal, "stance", "") or "")
-                    _tts.speak(_spoken_text, valence=_valence, arousal=_arousal, stance=_stance, on_start_play=send_text_payload)
-                    has_scheduled_tts = True
+                    dispatcher = getattr(self, "stage_dispatcher", None)
+                    if dispatcher is None:
+                        dispatcher = StageDispatcher()
+                        self.stage_dispatcher = dispatcher
+                    has_scheduled_tts = dispatcher.dispatch_tts(
+                        stage_frames,
+                        tts_engine=_tts,
+                        valence=_valence,
+                        arousal=_arousal,
+                        stance=_stance,
+                        on_first_start=send_text_payload,
+                        on_event=handle_tts_event,
+                    )
                 except Exception as _tts_exc:
                     self.logger.debug("[TTS] speak error: %s", _tts_exc)
                     has_scheduled_tts = False
 
         if not has_scheduled_tts:
             if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
-                _spoken_text = str(stage_frame.tts_text or payload.get("text", "") or "").strip()
-                if _spoken_text:
+                if stage_frames:
                     try:
                         _ed = payload.get("emotion_debug") or {}
                         _mood = _ed.get("summary") if isinstance(_ed, dict) else {}
@@ -1573,7 +1594,18 @@ class RuntimeCoordinator(
                         _appraisal = getattr(_frame, "appraisal", None) if _frame is not None else None
                         _arousal = float(getattr(_appraisal, "arousal", 0.3))
                         _stance = str(getattr(_appraisal, "stance", "") or "")
-                        _tts.speak(_spoken_text, valence=_valence, arousal=_arousal, stance=_stance)
+                        dispatcher = getattr(self, "stage_dispatcher", None)
+                        if dispatcher is None:
+                            dispatcher = StageDispatcher()
+                            self.stage_dispatcher = dispatcher
+                        dispatcher.dispatch_tts(
+                            stage_frames,
+                            tts_engine=_tts,
+                            valence=_valence,
+                            arousal=_arousal,
+                            stance=_stance,
+                            on_event=handle_tts_event,
+                        )
                     except Exception as _tts_exc:
                         self.logger.debug("[TTS] speak error: %s", _tts_exc)
             send_text_payload()
@@ -1706,6 +1738,42 @@ class RuntimeCoordinator(
                 else {}
             ),
         }
+
+    def _handle_tts_playback_event(self, event, *, stage_frame=None) -> None:
+        """Nhận lifecycle event từ TTS worker.
+
+        Mặc định chỉ lưu/log để không phá client Godot cũ. Nếu muốn UI nhận event
+        realtime, bật ``ERIS_TTS_EVENT_PAYLOAD=1``; payload mới có ``type=tts_event``
+        nên client có thể bỏ qua nếu chưa hỗ trợ.
+        """
+        event_type = str(getattr(event, "type", "") or "")
+        record = {
+            "type": event_type,
+            "turn_id": str(getattr(event, "turn_id", "") or getattr(stage_frame, "turn_id", "") or ""),
+            "segment_id": int(getattr(event, "segment_id", getattr(stage_frame, "segment_id", 0)) or 0),
+            "reason": str(getattr(event, "reason", "") or ""),
+            "error": str(getattr(event, "error", "") or ""),
+            "prosody_style": str(getattr(stage_frame, "prosody_style", "") or ""),
+        }
+        self.last_tts_event = record
+        try:
+            events = getattr(self, "tts_event_log", None)
+            if not isinstance(events, list):
+                events = []
+                self.tts_event_log = events
+            events.append(record)
+            if len(events) > 40:
+                del events[:-40]
+        except Exception:
+            pass
+
+        if event_type in {"audio_failed", "audio_cancelled"}:
+            self.logger.debug("[TTS:event] %s", record)
+        if os.environ.get("ERIS_TTS_EVENT_PAYLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            try:
+                self.transport.send_json({"type": "tts_event", **record})
+            except Exception as exc:
+                self.logger.debug("[TTS:event] send failed: %s", exc)
 
     def _record_public_turn(self, decision: Decision, *, payload: dict | None = None, channel: str | None = None):
         ledger = getattr(self, "public_turn_ledger", None)

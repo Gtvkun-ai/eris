@@ -64,9 +64,9 @@ class SpeechLocalizer:
     """
 
     def __init__(self) -> None:
-        self._cache: dict[tuple[str, str], str] = {}
+        self._cache: dict[tuple[str, str, str], str] = {}
 
-    def localize(self, text: str, *, language_hint: str = "auto") -> str:
+    def localize(self, text: str, *, language_hint: str = "auto", prosody_style: str = "") -> str:
         clean = " ".join(str(text or "").split()).strip()
         if not clean:
             return ""
@@ -77,15 +77,16 @@ class SpeechLocalizer:
         if not _enabled() or _already_japanese(clean):
             return clean
 
-        key = (lang, clean)
+        style = str(prosody_style or "").strip().lower()
+        key = (lang, style, clean)
         if key in self._cache:
             return self._cache[key]
 
-        translated = self._translate_to_japanese(clean)
+        translated = self._translate_to_japanese(clean, prosody_style=style)
         self._cache[key] = translated or clean
         return self._cache[key]
 
-    def _translate_to_japanese(self, text: str) -> str:
+    def _translate_to_japanese(self, text: str, *, prosody_style: str = "") -> str:
         api_key = _get_api_key()
         if not api_key:
             return text
@@ -93,10 +94,12 @@ class SpeechLocalizer:
             from google import genai
 
             client = genai.Client(api_key=api_key)
+            style_line = _style_line(prosody_style)
             prompt = (
                 "Translate the sentence into natural, gentle, polite Japanese for a soft anime girl "
                 "desktop companion speaking to her Master/Ngài. Keep the meaning. Do not add stage "
-                "directions, quotes, explanations, romanization, or the original text.\n\n"
+                "directions, quotes, explanations, romanization, or the original text.\n"
+                f"{style_line}\n\n"
                 f"Sentence: {text}"
             )
             response = client.models.generate_content(
@@ -109,6 +112,22 @@ class SpeechLocalizer:
         except Exception as exc:
             logger.warning("[TTS.Localizer] Dịch sang JP lỗi: %s", exc)
             return text
+
+
+def _style_line(style: str) -> str:
+    """Hint dịch tự nhiên theo prosody, không biến nghĩa câu."""
+    style = str(style or "").strip().lower()
+    if style == "dry_tease":
+        return "Style hint: preserve a dry teasing edge; polite, short, slightly unimpressed."
+    if style == "soft_tease":
+        return "Style hint: preserve soft teasing warmth; playful but restrained."
+    if style == "deadpan":
+        return "Style hint: deadpan and concise; polite but a little flat."
+    if style == "focused":
+        return "Style hint: technical and clear; avoid cute filler."
+    if style == "low_quiet":
+        return "Style hint: quiet and understated; avoid dramatic wording."
+    return "Style hint: natural, restrained, and concise."
 
 
 __all__ = ["SpeechLocalizer"]
