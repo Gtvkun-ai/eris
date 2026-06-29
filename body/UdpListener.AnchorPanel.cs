@@ -745,7 +745,7 @@ public partial class UdpListener : Node2D
 	private Control CreateSliderRow(float currentValue, float thresholdValue, string badgeText, Color badgeColor, Color barColor)
 	{
 		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		row.AddThemeConstantOverride("separation", 6);
+		row.AddThemeConstantOverride("separation", 8);
 
 		var slider = CreateThresholdSlider(currentValue, thresholdValue, barColor);
 		slider.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -753,13 +753,13 @@ public partial class UdpListener : Node2D
 
 		var valText = $"{currentValue.ToString("0.00", CultureInfo.InvariantCulture)} / {thresholdValue.ToString("0.00", CultureInfo.InvariantCulture)}";
 		var valLbl = CreateUiLabel(valText, 10, AnchorInk);
-		valLbl.CustomMinimumSize = new Vector2(58f, 0f);
+		valLbl.CustomMinimumSize = new Vector2(64f, 0f);
 		valLbl.HorizontalAlignment = HorizontalAlignment.Right;
 		valLbl.VerticalAlignment = VerticalAlignment.Center;
 		row.AddChild(valLbl);
 
 		var badge = AnchorBadge(badgeText, badgeColor);
-		badge.CustomMinimumSize = new Vector2(54f, 26f);
+		badge.CustomMinimumSize = new Vector2(58f, 28f);
 		row.AddChild(badge);
 
 		return row;
@@ -780,9 +780,6 @@ public partial class UdpListener : Node2D
 		var gateCard = CreateCustomTextureCard("res://asset/Resource/KhungCongBongToi.png", out Control gc);
 		gateCard.CustomMinimumSize = new Vector2(0f, 350f);
 		_anchorContent.AddChild(gateCard);
-		const float gateMetricLeft = 0.47f;
-		const float gateMetricRight = 0.93f;
-		const float gateMetricHalfHeight = 16f;
 
 		// Top-right badge on gateCard: shadow gate status
 		var topBadge = AnchorBadge(
@@ -809,14 +806,14 @@ public partial class UdpListener : Node2D
 			AnchorPink
 		);
 		attachRow.SetAnchorsPreset(Control.LayoutPreset.TopWide);
-		attachRow.AnchorLeft = gateMetricLeft;
-		attachRow.AnchorRight = gateMetricRight;
+		attachRow.AnchorLeft = 0.43f;
+		attachRow.AnchorRight = 0.95f;
 		attachRow.AnchorTop = 0.22f;
 		attachRow.AnchorBottom = 0.22f;
 		attachRow.OffsetLeft = 0f;
 		attachRow.OffsetRight = 0f;
-		attachRow.OffsetTop = -gateMetricHalfHeight;
-		attachRow.OffsetBottom = gateMetricHalfHeight;
+		attachRow.OffsetTop = -18f;
+		attachRow.OffsetBottom = 18f;
 		gc.AddChild(attachRow);
 
 		// Abandonment slider row (sợ bị bỏ rơi)
@@ -828,14 +825,14 @@ public partial class UdpListener : Node2D
 			AnchorPink
 		);
 		abandRow.SetAnchorsPreset(Control.LayoutPreset.TopWide);
-		abandRow.AnchorLeft = gateMetricLeft;
-		abandRow.AnchorRight = gateMetricRight;
+		abandRow.AnchorLeft = 0.43f;
+		abandRow.AnchorRight = 0.95f;
 		abandRow.AnchorTop = 0.39f;
 		abandRow.AnchorBottom = 0.39f;
 		abandRow.OffsetLeft = 0f;
 		abandRow.OffsetRight = 0f;
-		abandRow.OffsetTop = -gateMetricHalfHeight;
-		abandRow.OffsetBottom = gateMetricHalfHeight;
+		abandRow.OffsetTop = -18f;
+		abandRow.OffsetBottom = 18f;
 		gc.AddChild(abandRow);
 
 		// Dread slider row (dread)
@@ -847,14 +844,14 @@ public partial class UdpListener : Node2D
 			AnchorPink
 		);
 		dreadRow.SetAnchorsPreset(Control.LayoutPreset.TopWide);
-		dreadRow.AnchorLeft = gateMetricLeft;
-		dreadRow.AnchorRight = gateMetricRight;
+		dreadRow.AnchorLeft = 0.43f;
+		dreadRow.AnchorRight = 0.95f;
 		dreadRow.AnchorTop = 0.56f;
 		dreadRow.AnchorBottom = 0.56f;
 		dreadRow.OffsetLeft = 0f;
 		dreadRow.OffsetRight = 0f;
-		dreadRow.OffsetTop = -gateMetricHalfHeight;
-		dreadRow.OffsetBottom = gateMetricHalfHeight;
+		dreadRow.OffsetTop = -18f;
+		dreadRow.OffsetBottom = 18f;
 		gc.AddChild(dreadRow);
 
 		// Bottom badge: condition check
@@ -863,12 +860,12 @@ public partial class UdpListener : Node2D
 			d.GateOpen ? AnchorGreen : AnchorPink
 		);
 		condBadge.SetAnchorsPreset(Control.LayoutPreset.BottomWide);
-		condBadge.AnchorLeft = 0.71f;
-		condBadge.AnchorRight = 0.71f;
+		condBadge.AnchorLeft = 0.69f;
+		condBadge.AnchorRight = 0.69f;
 		condBadge.AnchorTop = 0.90f;
 		condBadge.AnchorBottom = 0.90f;
-		condBadge.OffsetLeft = -74f;
-		condBadge.OffsetRight = 74f;
+		condBadge.OffsetLeft = -80f;
+		condBadge.OffsetRight = 80f;
 		condBadge.OffsetTop = -13f;
 		condBadge.OffsetBottom = 13f;
 		gc.AddChild(condBadge);

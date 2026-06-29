@@ -28,6 +28,8 @@ public sealed class ErisProcessManager
 		_onStatusChanged = onStatusChanged ?? (() => { });
 	}
 
+	public bool IsVisionRunning => _visionProcess != null && !_visionProcess.HasExited;
+
 	public void StartVision(ErisServiceConfig config)
 	{
 		if (_visionProcess != null && !_visionProcess.HasExited)
@@ -395,4 +397,3 @@ public sealed class ErisProcessManager
 			line.Contains("JSON khong hop le", StringComparison.OrdinalIgnoreCase);
 	}
 }
-

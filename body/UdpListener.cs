@@ -88,6 +88,7 @@ public partial class UdpListener : Node2D
 	private Button _contextForceSpeakButton;
 	private Button _contextEmotionButton;
 	private Button _contextPrivateMindButton;
+	private Button _contextSettingsButton;
 	private Button _contextExitButton;
 	private Button _contextCloseButton;
 	private Panel _emotionPanel;
@@ -149,6 +150,7 @@ public partial class UdpListener : Node2D
 	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 348f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
 	private static readonly Vector2 PrivateMindPanelMinSize = new(1040f, 624f);
+	private static readonly Vector2 SettingsPanelMinSize = new(1040f, 624f);
 
 	// Tỉ lệ phần khung banner header nằm TRÊN viền card (nhô ra ngoài). 0.5 = 50/50; >0.5 = nổi hẳn lên.
 	private const float DiaryBannerAboveRatio = 0.6f;
@@ -343,6 +345,16 @@ public partial class UdpListener : Node2D
 		};
 		GetNode<Control>("CanvasLayer/Control").AddChild(_depthPanel);
 		BuildDepthPanelUi();
+		_settingsPanel = new Panel
+		{
+			Name = "SettingsPanel",
+			Visible = false,
+			CustomMinimumSize = SettingsPanelMinSize,
+			Size = SettingsPanelMinSize,
+			ZIndex = 98,
+		};
+		GetNode<Control>("CanvasLayer/Control").AddChild(_settingsPanel);
+		BuildSettingsPanelUi();
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
 		BuildChatPanelUi();
 	_chatSendButton.Pressed += OnSendPressed;
@@ -357,6 +369,8 @@ public partial class UdpListener : Node2D
 		_contextAnchorButton.Pressed += OnContextAnchorPressed;
 	if (_contextDepthButton != null)
 		_contextDepthButton.Pressed += OnContextDepthPressed;
+	if (_contextSettingsButton != null)
+		_contextSettingsButton.Pressed += OnContextSettingsPressed;
 	if (_contextExitButton != null)
 		_contextExitButton.Pressed += OnContextExitPressed;
 	_contextCloseButton.Pressed += CloseCharacterContextMenu;
@@ -373,6 +387,7 @@ public partial class UdpListener : Node2D
 		MakePanelDraggable(_chatPanel);
 		MakePanelDraggable(_tutorPanel);
 		MakePanelDraggable(_depthPanel);
+		MakePanelDraggable(_settingsPanel);
 
 		var cs  = GetNode<CollisionShape2D>("Monika2/CollisionShape2D");
 
@@ -467,6 +482,7 @@ public partial class UdpListener : Node2D
 			|| (_privateMindPanel?.Visible ?? false)
 			|| (_anchorPanel?.Visible ?? false)
 			|| (_depthPanel?.Visible ?? false)
+			|| (_settingsPanel?.Visible ?? false)
 			|| _grabModeArmed
 			|| _isDraggingCharacter;
 
@@ -656,6 +672,11 @@ public partial class UdpListener : Node2D
 				GetViewport().SetInputAsHandled();
 				return;
 			}
+			if (_settingsPanel != null && _settingsPanel.Visible && IsMouseOverControl(_settingsPanel, mouseEvent.Position))
+			{
+				GetViewport().SetInputAsHandled();
+				return;
+			}
 
 			if (IsMouseOverCharacter(mouseEvent.Position))
 			{
@@ -678,6 +699,11 @@ public partial class UdpListener : Node2D
 			if (_privateMindPanel != null && _privateMindPanel.Visible)
 			{
 				ClosePrivateMindPanel();
+				GetViewport().SetInputAsHandled();
+			}
+			if (_settingsPanel != null && _settingsPanel.Visible)
+			{
+				CloseSettingsPanel();
 				GetViewport().SetInputAsHandled();
 			}
 
@@ -709,6 +735,15 @@ public partial class UdpListener : Node2D
 		)
 		{
 			ClosePrivateMindPanel();
+		}
+		if (
+			mouseEvent.ButtonIndex == MouseButton.Left
+			&& _settingsPanel != null
+			&& _settingsPanel.Visible
+			&& !IsMouseOverControl(_settingsPanel, mouseEvent.Position)
+		)
+		{
+			CloseSettingsPanel();
 		}
 	}
 
@@ -1150,6 +1185,13 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextDepthButton, Mathf.Max(0, closeIndex));
 			}
+			if (_contextSettingsButton == null)
+			{
+				_contextSettingsButton = new Button { Name = "SettingsButton" };
+				container.AddChild(_contextSettingsButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextSettingsButton, Mathf.Max(0, closeIndex));
+			}
 			if (_contextExitButton == null)
 			{
 				_contextExitButton = new Button { Name = "ExitButton" };
@@ -1166,6 +1208,7 @@ public partial class UdpListener : Node2D
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Private Mind", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextAnchorButton, "Mo Hinh Ngai", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextDepthButton, "Chieu Sau", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextSettingsButton, "Cai dat", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextExitButton, "Thoat ERIS", "res://asset/Resource/exit.png");
 		ConfigureContextMenuButton(_contextCloseButton, "Dong", "res://asset/Resource/exit.png");
 	}
@@ -5471,7 +5514,7 @@ public partial class UdpListener : Node2D
 
 	private void UpdateServiceButtons()
 	{
-		// Không còn nút điều khiển service trên UI.
+		RefreshSettingsPanel();
 	}
 
 	// ── Casual mode refresh ───────────────────────────────────────────────────
