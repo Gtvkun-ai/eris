@@ -25,6 +25,8 @@ public partial class UdpListener : Node2D
 	private VBoxContainer _anchorContent;   // vùng nội dung đổi theo tab
 	private VBoxContainer _anchorRail;       // thanh Tác Giả (cố định)
 	private AnchorData _anchorData = new();  // bản parse gần nhất (dùng cho update lạc quan)
+	private readonly Dictionary<string, AnchorSwitchOverride> _anchorSwitchOverrides = new();
+	private const ulong AnchorSwitchOverrideTtlMs = 60000;
 
 	// Palette: sáng = hồng ấm (thân mật), tối = indigo trầm, dối = hổ phách.
 	private static readonly Color AnchorInk = new(0.62f, 0.10f, 0.36f);
@@ -56,6 +58,13 @@ public partial class UdpListener : Node2D
 		public int BeliefCount;
 		public readonly List<(string Facet, string Claim, float Conf, int Rec, int Ev)> Beliefs = new();
 		public readonly List<(string Surface, string Truth, string Reason, string Driver)> Deceptions = new();
+	}
+
+	private sealed class AnchorSwitchOverride
+	{
+		public bool Value;
+		public ulong StartedAtMs;
+		public string SourceJsonAtStart = "";
 	}
 
 	private static readonly Dictionary<string, string> AnchorFacetNames = new()
@@ -295,6 +304,7 @@ public partial class UdpListener : Node2D
 	private void RefreshAnchorPanel()
 	{
 		_anchorData = ParseAnchorData();
+		ApplyPendingAnchorSwitchOverrides(_anchorData);
 		RenderAnchor();
 	}
 
@@ -328,6 +338,7 @@ public partial class UdpListener : Node2D
 	{
 		_bodyAutonomy?.RecordUserInteraction();
 		SendAnchorControl(action, newValue);
+		RememberAnchorSwitchOverride(action, newValue);
 		// Update lạc quan: phản hồi tức thì; digest thật kế tiếp sẽ xác nhận/ghi đè.
 		switch (action)
 		{
@@ -335,6 +346,7 @@ public partial class UdpListener : Node2D
 			case "deception": _anchorData.DeceptionEnabled = newValue; break;
 			case "strict_grounding": _anchorData.StrictGrounding = newValue; break;
 			case "safe_mode":
+			case "reset_all":
 				_anchorData.ShadowEnabled = false;
 				_anchorData.DeceptionEnabled = false;
 				_anchorData.StrictGrounding = true;
@@ -342,6 +354,72 @@ public partial class UdpListener : Node2D
 		}
 		_anchorData.SafeMode = !_anchorData.ShadowEnabled && !_anchorData.DeceptionEnabled;
 		RenderAnchor();
+	}
+
+	private void RememberAnchorSwitchOverride(string action, bool value)
+	{
+		switch (action)
+		{
+			case "shadow":
+				_anchorSwitchOverrides["shadow"] = NewAnchorSwitchOverride(value);
+				break;
+			case "deception":
+				_anchorSwitchOverrides["deception"] = NewAnchorSwitchOverride(value);
+				break;
+			case "strict_grounding":
+				_anchorSwitchOverrides["strict_grounding"] = NewAnchorSwitchOverride(value);
+				break;
+			case "safe_mode":
+			case "reset_all":
+				// Safe/reset là thao tác gộp: tắt hai trục tối và bật grounding nghiêm.
+				_anchorSwitchOverrides["shadow"] = NewAnchorSwitchOverride(false);
+				_anchorSwitchOverrides["deception"] = NewAnchorSwitchOverride(false);
+				_anchorSwitchOverrides["strict_grounding"] = NewAnchorSwitchOverride(true);
+				break;
+		}
+	}
+
+	private AnchorSwitchOverride NewAnchorSwitchOverride(bool value) => new()
+	{
+		Value = value,
+		StartedAtMs = Time.GetTicksMsec(),
+		SourceJsonAtStart = _latestPrivateMindDebugJson ?? "",
+	};
+
+	private void ApplyPendingAnchorSwitchOverrides(AnchorData data)
+	{
+		if (data == null || _anchorSwitchOverrides.Count == 0)
+			return;
+
+		ApplyAnchorSwitchOverride(data, "shadow", ref data.ShadowEnabled);
+		ApplyAnchorSwitchOverride(data, "deception", ref data.DeceptionEnabled);
+		ApplyAnchorSwitchOverride(data, "strict_grounding", ref data.StrictGrounding);
+		data.SafeMode = !data.ShadowEnabled && !data.DeceptionEnabled;
+	}
+
+	private void ApplyAnchorSwitchOverride(AnchorData data, string key, ref bool target)
+	{
+		if (!_anchorSwitchOverrides.TryGetValue(key, out var pending) || pending == null)
+			return;
+
+		// Khi digest thật đã trùng với lựa chọn vừa bấm, coi như backend đã xác nhận.
+		if (data.HasData && target == pending.Value)
+		{
+			_anchorSwitchOverrides.Remove(key);
+			return;
+		}
+
+		bool digestChanged = !string.Equals(_latestPrivateMindDebugJson ?? "", pending.SourceJsonAtStart, StringComparison.Ordinal);
+		ulong age = Time.GetTicksMsec() - pending.StartedAtMs;
+		if (!digestChanged && age <= AnchorSwitchOverrideTtlMs)
+		{
+			target = pending.Value;
+			return;
+		}
+
+		// Có digest mới nhưng backend vẫn không xác nhận, hoặc quá lâu không có digest:
+		// bỏ trạng thái lạc quan để panel phản ánh sự thật runtime.
+		_anchorSwitchOverrides.Remove(key);
 	}
 
 	private AnchorData ParseAnchorData()
@@ -667,7 +745,7 @@ public partial class UdpListener : Node2D
 	private Control CreateSliderRow(float currentValue, float thresholdValue, string badgeText, Color badgeColor, Color barColor)
 	{
 		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		row.AddThemeConstantOverride("separation", 8);
+		row.AddThemeConstantOverride("separation", 6);
 
 		var slider = CreateThresholdSlider(currentValue, thresholdValue, barColor);
 		slider.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -675,13 +753,13 @@ public partial class UdpListener : Node2D
 
 		var valText = $"{currentValue.ToString("0.00", CultureInfo.InvariantCulture)} / {thresholdValue.ToString("0.00", CultureInfo.InvariantCulture)}";
 		var valLbl = CreateUiLabel(valText, 10, AnchorInk);
-		valLbl.CustomMinimumSize = new Vector2(64f, 0f);
+		valLbl.CustomMinimumSize = new Vector2(58f, 0f);
 		valLbl.HorizontalAlignment = HorizontalAlignment.Right;
 		valLbl.VerticalAlignment = VerticalAlignment.Center;
 		row.AddChild(valLbl);
 
 		var badge = AnchorBadge(badgeText, badgeColor);
-		badge.CustomMinimumSize = new Vector2(58f, 28f);
+		badge.CustomMinimumSize = new Vector2(54f, 26f);
 		row.AddChild(badge);
 
 		return row;
@@ -702,6 +780,9 @@ public partial class UdpListener : Node2D
 		var gateCard = CreateCustomTextureCard("res://asset/Resource/KhungCongBongToi.png", out Control gc);
 		gateCard.CustomMinimumSize = new Vector2(0f, 350f);
 		_anchorContent.AddChild(gateCard);
+		const float gateMetricLeft = 0.47f;
+		const float gateMetricRight = 0.93f;
+		const float gateMetricHalfHeight = 16f;
 
 		// Top-right badge on gateCard: shadow gate status
 		var topBadge = AnchorBadge(
@@ -728,14 +809,14 @@ public partial class UdpListener : Node2D
 			AnchorPink
 		);
 		attachRow.SetAnchorsPreset(Control.LayoutPreset.TopWide);
-		attachRow.AnchorLeft = 0.43f;
-		attachRow.AnchorRight = 0.95f;
+		attachRow.AnchorLeft = gateMetricLeft;
+		attachRow.AnchorRight = gateMetricRight;
 		attachRow.AnchorTop = 0.22f;
 		attachRow.AnchorBottom = 0.22f;
 		attachRow.OffsetLeft = 0f;
 		attachRow.OffsetRight = 0f;
-		attachRow.OffsetTop = -18f;
-		attachRow.OffsetBottom = 18f;
+		attachRow.OffsetTop = -gateMetricHalfHeight;
+		attachRow.OffsetBottom = gateMetricHalfHeight;
 		gc.AddChild(attachRow);
 
 		// Abandonment slider row (sợ bị bỏ rơi)
@@ -747,14 +828,14 @@ public partial class UdpListener : Node2D
 			AnchorPink
 		);
 		abandRow.SetAnchorsPreset(Control.LayoutPreset.TopWide);
-		abandRow.AnchorLeft = 0.43f;
-		abandRow.AnchorRight = 0.95f;
+		abandRow.AnchorLeft = gateMetricLeft;
+		abandRow.AnchorRight = gateMetricRight;
 		abandRow.AnchorTop = 0.39f;
 		abandRow.AnchorBottom = 0.39f;
 		abandRow.OffsetLeft = 0f;
 		abandRow.OffsetRight = 0f;
-		abandRow.OffsetTop = -18f;
-		abandRow.OffsetBottom = 18f;
+		abandRow.OffsetTop = -gateMetricHalfHeight;
+		abandRow.OffsetBottom = gateMetricHalfHeight;
 		gc.AddChild(abandRow);
 
 		// Dread slider row (dread)
@@ -766,14 +847,14 @@ public partial class UdpListener : Node2D
 			AnchorPink
 		);
 		dreadRow.SetAnchorsPreset(Control.LayoutPreset.TopWide);
-		dreadRow.AnchorLeft = 0.43f;
-		dreadRow.AnchorRight = 0.95f;
+		dreadRow.AnchorLeft = gateMetricLeft;
+		dreadRow.AnchorRight = gateMetricRight;
 		dreadRow.AnchorTop = 0.56f;
 		dreadRow.AnchorBottom = 0.56f;
 		dreadRow.OffsetLeft = 0f;
 		dreadRow.OffsetRight = 0f;
-		dreadRow.OffsetTop = -18f;
-		dreadRow.OffsetBottom = 18f;
+		dreadRow.OffsetTop = -gateMetricHalfHeight;
+		dreadRow.OffsetBottom = gateMetricHalfHeight;
 		gc.AddChild(dreadRow);
 
 		// Bottom badge: condition check
@@ -782,12 +863,12 @@ public partial class UdpListener : Node2D
 			d.GateOpen ? AnchorGreen : AnchorPink
 		);
 		condBadge.SetAnchorsPreset(Control.LayoutPreset.BottomWide);
-		condBadge.AnchorLeft = 0.69f;
-		condBadge.AnchorRight = 0.69f;
+		condBadge.AnchorLeft = 0.71f;
+		condBadge.AnchorRight = 0.71f;
 		condBadge.AnchorTop = 0.90f;
 		condBadge.AnchorBottom = 0.90f;
-		condBadge.OffsetLeft = -80f;
-		condBadge.OffsetRight = 80f;
+		condBadge.OffsetLeft = -74f;
+		condBadge.OffsetRight = 74f;
 		condBadge.OffsetTop = -13f;
 		condBadge.OffsetBottom = 13f;
 		gc.AddChild(condBadge);
