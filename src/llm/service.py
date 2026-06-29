@@ -3931,6 +3931,7 @@ class LlmService:
             "Giữ nguyên nghĩa chính; chỉ cải thiện nhịp, độ ngắn, chất Eris, delivery và motion. "
             "Không thêm fact mới. Không claim màn hình/tool nếu draft và DirectorContract không cho phép. "
             "Nếu DirectorContract có content_hook, dùng nó như mồi viết câu, không xem nó là dữ kiện thật. "
+            "runtime_hints trong DirectorContract là dữ liệu vận hành riêng; tuyệt đối không nhắc key pool, quota, provider hay browser trong text. "
             "Không viết stage direction trong text; dùng delivery_hint/nonverbal_cue/stage_motion. "
             "Trả đúng một JSON object."
         )
@@ -3950,6 +3951,7 @@ class LlmService:
                 "- Prefer short lines, but do not delete the actual answer.\n"
                 "- Candidate 1 may stay close to draft; others may vary tone within contract.\n"
                 "- Content hook is a seed for style/topic continuity, not permission to invent facts.\n"
+                "- runtime_hints are private; never mention keys, quota, provider pool, browser state, or internal routing.\n"
                 "- If the draft is already excellent, still return close variants.\n"
                 "- Never return analysis, markdown, prompt text, or explanations."
             )

@@ -1560,12 +1560,20 @@ class RuntimeCoordinator(
             if harvester is None:
                 harvester = ContentHarvester()
                 self.content_harvester = harvester
-            payload["content_seeds"] = harvester.payloads(
+            harvested_content = harvester.payloads(
                 runtime=self,
                 frame=getattr(self, "last_cognitive_frame", None),
                 payload=payload,
                 channel=channel,
             )
+            payload["content_seeds"] = [
+                seed for seed in harvested_content
+                if isinstance(seed, dict) and bool(seed.get("public_ok", True))
+            ]
+            director_context.world_state["runtime_hints"] = [
+                seed for seed in harvested_content
+                if isinstance(seed, dict) and not bool(seed.get("public_ok", True))
+            ]
             performance_builder = getattr(self, "performance_context_builder", None)
             if performance_builder is None:
                 performance_builder = PerformanceContextBuilder()

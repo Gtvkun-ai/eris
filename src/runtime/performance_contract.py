@@ -78,6 +78,7 @@ class DirectorContract:
     content_hook: dict[str, Any] | None
     content_seed: dict[str, Any] | None
     topic_stack: tuple[dict[str, Any], ...]
+    runtime_hints: tuple[dict[str, Any], ...]
     evidence: tuple[dict[str, Any], ...]
     allowed_claim_levels: tuple[str, ...]
     forbidden_claims: tuple[str, ...]
@@ -101,6 +102,7 @@ class DirectorContract:
             "content_hook": dict(self.content_hook) if isinstance(self.content_hook, dict) else None,
             "content_seed": dict(self.content_seed) if isinstance(self.content_seed, dict) else None,
             "topic_stack": list(self.topic_stack),
+            "runtime_hints": list(self.runtime_hints),
             "evidence": list(self.evidence),
             "allowed_claim_levels": list(self.allowed_claim_levels),
             "forbidden_claims": list(self.forbidden_claims),
@@ -319,6 +321,15 @@ class DirectorContractBuilder:
                 )
                 if isinstance(item, dict)
             ),
+            runtime_hints=tuple(
+                dict(item)
+                for item in (
+                    director.world_state.get("runtime_hints", ())
+                    if isinstance(director.world_state, dict)
+                    else ()
+                )
+                if isinstance(item, dict)
+            )[:4],
             evidence=tuple(public_evidence),
             allowed_claim_levels=tuple(director.allowed_claim_levels),
             forbidden_claims=tuple(director.forbidden_claims),
@@ -345,6 +356,7 @@ class DirectorContractBuilder:
                     "Return empty text only when body_only/suppress is better",
                     "Use content_hook as a writing seed, not as a fact claim",
                     "If content_hook.evidence_policy forbids screen claims, obey it strictly",
+                    "runtime_hints are private operational data; never mention keys, quota, provider pool, or browser state in public text",
                 ],
             },
         )

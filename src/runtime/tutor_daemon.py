@@ -120,6 +120,12 @@ class TutorDaemon:
         self._drive_fn = drive_fn
         # Serialize episode: KHÔNG mở 2 browser cùng profile cùng lúc (autonomous vs chat).
         self._run_lock = threading.Lock()
+        # ContentEngine đọc các trường này để tận dụng "sư phụ Gemini" như một
+        # nguồn seed thật, không cần mở browser hay hỏi lại mỗi lượt.
+        self.last_episode: Optional[TutorEpisode] = None
+        self.last_answer_text: str = ""
+        self.last_question_text: str = ""
+        self.last_answer_ts: float = 0.0
 
     # ------------------------------------------------------------------
 
@@ -252,6 +258,7 @@ class TutorDaemon:
         self._emit(episode, "done")
         self.logger.log_episode(episode.to_dict())
         self.risk_guard.note_success(now)
+        self._remember_episode(episode)
         return episode
 
     def ask_now(self, topic: str, *, context: str = "", now: Optional[float] = None) -> Optional[str]:
@@ -322,6 +329,7 @@ class TutorDaemon:
             self._emit(episode, "done")
             self.logger.log_episode(episode.to_dict())
             self.risk_guard.note_success(now)
+            self._remember_episode(episode)
             return str(getattr(answer, "text", "") or "").strip() or None
         except Exception:
             return None
@@ -380,6 +388,53 @@ class TutorDaemon:
     def _emit(self, episode: TutorEpisode, stage: str) -> None:
         episode.stage = stage  # type: ignore[assignment]
         self.emitter.emit(episode, stage)
+
+    def _remember_episode(self, episode: TutorEpisode) -> None:
+        """Giữ lại insight cuối cho ContentHarvester.
+
+        Không lưu raw browser state, không lưu key, chỉ giữ câu hỏi/câu trả lời
+        đã scrub ngắn để lượt diễn sau có thể bám vào tri thức vừa học.
+        """
+
+        try:
+            answer = getattr(episode, "answer", None)
+            question = getattr(episode, "question", None)
+            answer_text = scrub_identity(str(getattr(answer, "text", "") or "")).strip()
+            if not answer_text:
+                return
+            self.last_episode = episode
+            self.last_answer_text = answer_text[:1200]
+            self.last_question_text = scrub_identity(str(getattr(question, "text", "") or "")).strip()[:320]
+            self.last_answer_ts = float(getattr(episode, "ended_ts", 0.0) or time.time())
+        except Exception:
+            pass
+
+    def latest_content_seed(self, *, now: Optional[float] = None) -> Optional[dict[str, object]]:
+        """Payload nhẹ để ContentHarvester biến thành ContentSeed.
+
+        Đây là API nội bộ, cố tình không import ContentSeed để tránh vòng phụ
+        thuộc runtime/tutor_daemon.py -> runtime/content_engine.py.
+        """
+
+        text = scrub_identity(str(self.last_answer_text or "")).strip()
+        if not text:
+            return None
+        now_f = float(now if now is not None else time.time())
+        observed = float(self.last_answer_ts or now_f)
+        age = max(0.0, now_f - observed)
+        question = scrub_identity(str(self.last_question_text or "")).strip()
+        joined = (f"Q: {question} | A: {text}" if question else text)[:900]
+        return {
+            "source": "tutor_gemini",
+            "text": joined,
+            "evidence_level": "tool/tutor",
+            "freshness": max(0.0, 1.0 - age / 7200.0),
+            "confidence": 0.78,
+            "risk": 0.28,
+            "tags": ("tutor", "gemini", "knowledge"),
+            "observed_at": observed,
+            "public_ok": True,
+        }
 
     def _fail(self, episode: TutorEpisode, reason: str, now: float) -> TutorEpisode:
         episode.stage = "failed"

@@ -15,6 +15,7 @@ Nguyên tắc:
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
@@ -39,6 +40,9 @@ class ContentSeed:
     confidence: float
     risk: float = 0.15
     tags: tuple[str, ...] = ()
+    # False nghĩa là seed chỉ dùng cho runtime/điều phối, không được biến thành
+    # câu nói trước Ngài hay audience. Ví dụ: tình trạng key pool, quota, browser.
+    public_ok: bool = True
     observed_at: float = 0.0
 
     def to_payload(self) -> dict[str, Any]:
@@ -157,6 +161,9 @@ class ContentHarvester:
         seeds.extend(self._from_interrupt_ledger(runtime, now=now))
         seeds.extend(self._from_memory_resonance(runtime, frame=frame, now=now))
         seeds.extend(self._from_thought_stream(runtime, frame=frame, now=now))
+        seeds.extend(self._from_tutor_daemon(runtime, now=now))
+        seeds.extend(self._from_key_pool(runtime, now=now))
+        seeds.extend(self._from_tutor_on_demand(runtime, payload=payload, seeds=seeds, now=now))
         return self._rank_unique(seeds)[: max(0, int(limit))]
 
     def payloads(
@@ -329,6 +336,158 @@ class ContentHarvester:
                 confidence=0.46 + min(0.24, tension * 0.24),
                 risk=0.42,
                 tags=("thought_stream", *_tags_for_text(text)),
+                observed_at=now,
+            )
+        ]
+
+    def _from_tutor_daemon(self, runtime: Any, *, now: float) -> list[ContentSeed]:
+        """Lấy insight gần nhất từ sư phụ Gemini nếu daemon đã học được gì.
+
+        Đây là cầu nối thụ động: không mở browser, không tốn quota. Nó chỉ nhặt
+        câu trả lời đã có để ContentEngine có "content thật" ngoài ledger chat.
+        """
+
+        daemon = getattr(runtime, "tutor_daemon", None)
+        if daemon is None:
+            return []
+        payload: Mapping[str, Any] | None = None
+        latest = getattr(daemon, "latest_content_seed", None)
+        if callable(latest):
+            try:
+                raw = latest(now=now)
+                if isinstance(raw, Mapping):
+                    payload = raw
+            except Exception:
+                payload = None
+        if payload is None:
+            answer = _compact(getattr(daemon, "last_answer_text", ""), 260)
+            if not answer:
+                return []
+            payload = {
+                "source": "tutor_gemini",
+                "text": answer,
+                "evidence_level": "tool/tutor",
+                "freshness": 0.62,
+                "confidence": 0.72,
+                "risk": 0.28,
+                "tags": ("tutor", "gemini", "knowledge"),
+                "observed_at": _safe_float(getattr(daemon, "last_answer_ts", now), now),
+                "public_ok": True,
+            }
+        text = _compact(payload.get("text", ""), 300)
+        if not text:
+            return []
+        age = max(0.0, now - _safe_float(payload.get("observed_at"), now))
+        tags_raw = payload.get("tags", ()) or ("tutor", "gemini", "knowledge")
+        if isinstance(tags_raw, str):
+            tags = (tags_raw,)
+        elif isinstance(tags_raw, (list, tuple)):
+            tags = tuple(str(tag or "").strip() for tag in tags_raw if str(tag or "").strip())
+        else:
+            tags = ("tutor", "gemini", "knowledge")
+        return [
+            ContentSeed(
+                id=_clean(payload.get("id")) or _seed_id("tutor_gemini", text),
+                source=_clean(payload.get("source")) or "tutor_gemini",
+                text=text,
+                evidence_level=_clean(payload.get("evidence_level")) or "tool/tutor",
+                freshness=max(0.0, min(1.0, _safe_float(payload.get("freshness"), 0.70) - age / 7200.0)),
+                confidence=max(0.0, min(1.0, _safe_float(payload.get("confidence"), 0.74))),
+                risk=max(0.0, min(1.0, _safe_float(payload.get("risk"), 0.28))),
+                tags=tags,
+                public_ok=bool(payload.get("public_ok", True)),
+                observed_at=now - age,
+            )
+        ]
+
+    def _from_key_pool(self, runtime: Any, *, now: float) -> list[ContentSeed]:
+        """Đưa tình trạng key pool vào runtime hint, tuyệt đối không lộ key.
+
+        Seed này public_ok=False nên DirectorContract có thể dùng để biết sức
+        chứa/tình trạng provider, nhưng candidate generator không được nói nó ra.
+        """
+
+        seeds: list[ContentSeed] = []
+        try:
+            from llm.key_pool import get_key_pool
+        except Exception:
+            try:
+                from src.llm.key_pool import get_key_pool  # type: ignore
+            except Exception:
+                return []
+        for provider in ("gemini", "groq"):
+            try:
+                stats = get_key_pool(provider).stats()
+            except Exception:
+                continue
+            size = int(stats.get("size", 0) or 0)
+            if size <= 0:
+                continue
+            alive = int(stats.get("alive", 0) or 0)
+            dead = int(stats.get("dead", 0) or 0)
+            rotations = int(stats.get("rotations", 0) or 0)
+            text = f"{provider} key pool alive={alive}/{size}, dead={dead}, rotations={rotations}"
+            seeds.append(
+                ContentSeed(
+                    id=_seed_id(f"key_pool:{provider}", text),
+                    source=f"key_pool:{provider}",
+                    text=text,
+                    evidence_level="runtime/private",
+                    freshness=1.0,
+                    confidence=0.95,
+                    risk=0.05,
+                    tags=("runtime_only", "key_pool", provider, "capacity"),
+                    public_ok=False,
+                    observed_at=now,
+                )
+            )
+        return seeds
+
+    def _from_tutor_on_demand(
+        self,
+        runtime: Any,
+        *,
+        payload: Mapping[str, Any],
+        seeds: list[ContentSeed],
+        now: float,
+    ) -> list[ContentSeed]:
+        """Tuỳ chọn: hỏi Gemini khi lượt chat quá mỏng và đã bật cờ rõ ràng.
+
+        Mặc định tắt để không làm hot path bị chậm, không mở browser bất ngờ và
+        không đốt quota. Khi bật ERIS_CONTENT_TUTOR_ON_DEMAND=1, chỉ hỏi nếu
+        chưa có seed công khai đủ mạnh.
+        """
+
+        enabled = os.environ.get("ERIS_CONTENT_TUTOR_ON_DEMAND", "").strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return []
+        if any(seed.public_ok and seed.confidence >= 0.55 and seed.freshness >= 0.35 for seed in seeds):
+            return []
+        daemon = getattr(runtime, "tutor_daemon", None)
+        ask_now = getattr(daemon, "ask_now", None)
+        if daemon is None or not callable(ask_now):
+            return []
+        topic = _compact(payload.get("user_text") or payload.get("text") or payload.get("intent"), 160)
+        if len(topic) < 12:
+            return []
+        try:
+            answer = ask_now(topic, context="ContentEngine on-demand enrichment for Eris performance; answer briefly.", now=now)
+        except Exception:
+            answer = None
+        text = _compact(answer, 300)
+        if not text:
+            return []
+        return [
+            ContentSeed(
+                id=_seed_id("tutor_gemini:on_demand", text),
+                source="tutor_gemini:on_demand",
+                text=text,
+                evidence_level="tool/tutor",
+                freshness=0.95,
+                confidence=0.78,
+                risk=0.30,
+                tags=("tutor", "gemini", "on_demand", *_tags_for_text(text)),
+                public_ok=True,
                 observed_at=now,
             )
         ]
@@ -732,13 +891,14 @@ class ContentEngine:
                     confidence=max(0.0, min(1.0, _safe_float(item.get("confidence"), 0.5))),
                     risk=max(0.0, min(1.0, _safe_float(item.get("risk"), 0.2))),
                     tags=tags or _tags_for_text(text),
+                    public_ok=bool(item.get("public_ok", True)),
                     observed_at=_safe_float(item.get("observed_at"), time.time()),
                 )
             )
         return seeds
 
     def _best_seed(self, seeds: list[ContentSeed]) -> ContentSeed | None:
-        viable = [seed for seed in seeds if seed.text and seed.confidence >= 0.34 and seed.risk <= 0.62]
+        viable = [seed for seed in seeds if seed.public_ok and seed.text and seed.confidence >= 0.34 and seed.risk <= 0.62]
         if not viable:
             return None
         return sorted(
