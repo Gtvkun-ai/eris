@@ -28,6 +28,7 @@ from typing import Optional
 
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_localizer import SpeechLocalizer
+from runtime.tts_audio_polish import audio_polish_enabled, polish_pcm16_mono
 from runtime.tts_markup import render_tts_markup
 
 logger = logging.getLogger("TTS")
@@ -338,6 +339,26 @@ def _synthesize_wav(prompt: str, voice: str, model: str) -> bytes:
         if last_exc:
             raise last_exc
         raise RuntimeError("Không thể tổng hợp giọng nói từ Gemini API.")
+
+    if audio_polish_enabled():
+        try:
+            polished = polish_pcm16_mono(pcm_data, sample_rate=24000)
+            pcm_data = polished.pcm or pcm_data
+            stats = polished.stats
+            if stats.trimmed_head_ms or stats.trimmed_tail_ms or stats.compressed_pause_ms:
+                logger.debug(
+                    "[TTS] Audio polish: %dms → %dms, trim=%d/%dms, compressed_pause=%dms, peak=%d→%d",
+                    stats.original_ms,
+                    stats.polished_ms,
+                    stats.trimmed_head_ms,
+                    stats.trimmed_tail_ms,
+                    stats.compressed_pause_ms,
+                    stats.peak_before,
+                    stats.peak_after,
+                )
+        except Exception as exc:
+            # Hậu xử lý chỉ là lớp polish. Nếu lỗi, dùng PCM gốc để không làm TTS câm.
+            logger.warning("[TTS] Audio polish lỗi, dùng audio gốc: %s", exc)
 
     # Wrap vào WAV để miniaudio hiểu
     buf = io.BytesIO()

@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import Any
 import re
 
+from failure_meta import normalize_failure_meta
+
 
 @dataclass(slots=True)
 class Decision:
@@ -29,6 +31,7 @@ class Decision:
     delivery_hint: str = ""    # ví dụ: dry_tease, soft_tease, focused, low_quiet
     nonverbal_cue: str = ""    # ví dụ: laugh_soft, small_smile, sigh_soft
     stage_motion: str = ""     # ví dụ: look_away, tilt_head, blink_slow
+    failure_meta: dict[str, Any] | None = None
 
     def resolve_motion_intent(self) -> str:
         intent = (self.motion_intent or "").strip().lower()
@@ -78,7 +81,7 @@ class Decision:
 
     def to_payload(self) -> dict:
         text, should_speak = self._payload_text()
-        return {
+        payload = {
             "text": text,
             "intent": self.intent,
             "action": self.action,
@@ -102,3 +105,7 @@ class Decision:
             "nonverbal_cue": self.nonverbal_cue,
             "stage_motion": self.stage_motion,
         }
+        failure_meta = normalize_failure_meta(self.failure_meta)
+        if failure_meta is not None:
+            payload["failure_meta"] = failure_meta
+        return payload

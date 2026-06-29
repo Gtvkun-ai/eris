@@ -3,6 +3,7 @@ import re
 import unicodedata
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
+from failure_meta import normalize_failure_meta
 from guard_config import OFF_GUARD_MODE, STRICT_GUARD_MODE, get_guard_mode
 from llm.contracts import VALID_ANIMATIONS
 from runtime.no_fallback_policy import no_fallback_mode_enabled
@@ -418,6 +419,7 @@ class ParserGroundingMixin:
             "delivery_hint": data.get("delivery_hint", ""),
             "nonverbal_cue": data.get("nonverbal_cue", ""),
             "stage_motion": data.get("stage_motion", ""),
+            "failure_meta": data.get("failure_meta"),
         }, user_hint=user_hint)
 
     def _try_parse_hard_json_repair(self, text: str, user_hint: str = ""):
@@ -1512,6 +1514,7 @@ class ParserGroundingMixin:
         should_speak = self._coerce_bool(decision.get("should_speak", bool(text)), fallback=bool(text))
         confidence = self._coerce_confidence(decision.get("confidence", 0.0))
         parse_mode = str(decision.get("parse_mode", "json")).strip() or "json"
+        failure_meta = normalize_failure_meta(decision.get("failure_meta"))
         guard_mode = get_guard_mode()
         grounded_text, changed = self._ground_text_to_runtime_capabilities(text, user_hint=user_hint)
         if guard_mode == OFF_GUARD_MODE:
@@ -1557,6 +1560,7 @@ class ParserGroundingMixin:
             "delivery_hint": delivery_hint,
             "nonverbal_cue": nonverbal_cue,
             "stage_motion": stage_motion,
+            "failure_meta": failure_meta,
         }
 
     def _infer_structured_action(self, text: str, user_hint: str = ""):

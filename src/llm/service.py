@@ -11,6 +11,7 @@ import requests
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
 from cortex.banned_filler import HOLLOW_PRESENCE_LINES, STALE_MICRO_TEMPLATES, quoted_fragment
+from failure_meta import build_failure_meta, normalize_failure_meta
 from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
 from runtime.voice_policy import VOICE_POLICY, ANTI_DISCLAIMER_FEWSHOT as _VOICE_POLICY_FEWSHOT
 from .contracts import (
@@ -49,11 +50,34 @@ class ChatAct(Enum):
 class FormatViolationException(Exception):
     """Raised when a model response violates the public JSON contract."""
 
-    def __init__(self, reason: str, *, channel: str = "", raw_text: str = ""):
+    def __init__(
+        self,
+        reason: str,
+        *,
+        channel: str = "",
+        raw_text: str = "",
+        kind: str = "format_violation",
+        stage: str = "",
+        origin: str = "",
+        public_surface: str = "blocked",
+        recoverable: bool = False,
+    ):
         super().__init__(reason)
         self.reason = reason
         self.channel = channel
         self.raw_text = str(raw_text or "")
+        self.kind = str(kind or "format_violation")
+        self.stage = str(stage or "")
+        self.origin = str(origin or "")
+        self.public_surface = str(public_surface or "blocked")
+        self.recoverable = bool(recoverable)
+        self.failure_meta = build_failure_meta(
+            kind=self.kind,
+            stage=self.stage,
+            origin=self.origin,
+            public_surface=self.public_surface,
+            recoverable=self.recoverable,
+        )
 
 
 CHAT_ACT_CONTRACTS = {
@@ -232,23 +256,80 @@ class LlmService:
         status = self._http_status_code(exc)
         return status in self._RETRYABLE_HTTP_STATUS
 
-    def _build_service_error_fallback(self, *, channel: str, reason: str, fallback_text: str = "") -> str:
+    def _classify_http_failure(self, exc: Exception) -> str:
+        status = self._http_status_code(exc)
+        raw = str(exc or "").lower()
+        if status == 429 or "rate limit" in raw or "quota" in raw:
+            return "rate_limited"
+        if (
+            status == 503
+            or "model_not_found" in raw
+            or "no available channel" in raw
+            or "proxy_api_error" in raw
+        ):
+            return "provider_unavailable"
+        if self._is_context_size_error(exc):
+            return "context_oversize"
+        return "provider_unavailable" if status in self._RETRYABLE_HTTP_STATUS else "unknown"
+
+    def _failure_meta(
+        self,
+        *,
+        kind: str,
+        stage: str,
+        origin: str,
+        public_surface: str,
+        recoverable: bool,
+        transport_truncated: bool = False,
+    ) -> dict:
+        return build_failure_meta(
+            kind=kind,
+            stage=stage,
+            origin=origin,
+            public_surface=public_surface,
+            recoverable=recoverable,
+            transport_truncated=transport_truncated,
+        )
+
+    def _service_error_origin(self, *, channel: str) -> str:
+        return "chat_service" if channel == "chat" else "runtime_service"
+
+    def _build_service_error_fallback(
+        self,
+        *,
+        channel: str,
+        reason: str,
+        fallback_text: str = "",
+        kind: str = "unknown",
+        stage: str = "service_error",
+        origin: str = "",
+        recoverable: bool = False,
+    ) -> str:
+        should_speak = channel == "chat"
+        public_surface = "service_fallback" if should_speak else "silent"
+        failure_meta = self._failure_meta(
+            kind=kind,
+            stage=stage,
+            origin=origin or self._service_error_origin(channel=channel),
+            public_surface=public_surface,
+            recoverable=recoverable,
+        )
         if no_fallback_mode_enabled():
             return build_no_fallback_payload(
                 channel=channel,
                 reason=reason,
                 text="" if channel != "chat" else "",
-                should_speak=(channel == "chat"),
+                should_speak=should_speak,
                 confidence=0.0,
                 reasoning_tags=("service_block",),
             )
         payload = {
-            "text": self._safe_fallback_text(fallback_text, channel=channel),
+            "text": self._safe_fallback_text(fallback_text, channel=channel) if should_speak else "",
             "intent": "fallback_reply",
             "action": {"type": "none"},
             "reasoning_tags": ["fallback", channel, "service_error"],
-            "should_speak": True,
-            "confidence": 0.1,
+            "should_speak": should_speak,
+            "confidence": 0.1 if should_speak else 0.0,
             "animation": "stand",
             "direction": 0,
             "target_x": -1.0,
@@ -261,6 +342,8 @@ class LlmService:
             "delivery_hint": "",
             "nonverbal_cue": "",
             "stage_motion": "",
+            "parse_mode": "service_error",
+            "failure_meta": failure_meta,
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -729,7 +812,16 @@ class LlmService:
         except Exception:
             return value.replace('\\n', ' ').replace('\\"', '"').strip()
 
-    def _build_protocol_failure_fallback(self, *, channel: str, reason: str, text: str = "") -> str:
+    def _build_protocol_surface_fallback(
+        self,
+        *,
+        channel: str,
+        reason: str,
+        text: str = "",
+        kind: str = "prompt_leak",
+        stage: str = "llm_response_parse",
+        origin: str = "model_output",
+    ) -> str:
         if not text:
             if channel == "chat":
                 text = "Câu đó lệch. Tôi rút lại một nhịp."
@@ -756,6 +848,13 @@ class LlmService:
             "delivery_hint": "",
             "nonverbal_cue": "",
             "stage_motion": "",
+            "failure_meta": self._failure_meta(
+                kind=kind,
+                stage=stage,
+                origin=origin,
+                public_surface="protocol_repair",
+                recoverable=False,
+            ),
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -765,17 +864,32 @@ class LlmService:
         The old path wrapped the whole malformed JSON into `text`, then the
         parser leaked `", "intent": ...` to Godot. This method refuses to
         surface raw schema text. If a clean text field exists, use only that;
-        otherwise return a protocol-repair fallback.
+        otherwise degrade as a format failure unless the raw text itself leaks
+        prompt/contract surface.
         """
         if not self._looks_like_malformed_decision_json(raw_text):
             return ""
         text = self._json_string_field_from_raw(raw_text, "text").strip()
         intent = self._json_string_field_from_raw(raw_text, "intent").strip() or "fallback_reply"
         debug = self._json_string_field_from_raw(raw_text, "debug_trace").strip()
-        if not text or self._looks_like_prompt_leak(text):
-            return self._build_protocol_failure_fallback(
+        if not text:
+            if self._looks_like_prompt_leak(raw_text):
+                return self._build_protocol_surface_fallback(
+                    channel=channel,
+                    reason="LlmService blocked malformed decision JSON with leaked prompt surface.",
+                )
+            return self._build_service_error_fallback(
                 channel=channel,
                 reason="LlmService blocked malformed decision JSON without a safe text field.",
+                kind="format_violation",
+                stage="llm_response_parse",
+                origin="model_output",
+                recoverable=False,
+            )
+        if self._looks_like_prompt_leak(text):
+            return self._build_protocol_surface_fallback(
+                channel=channel,
+                reason="LlmService blocked malformed decision JSON with prompt-leak text field.",
             )
         payload = {
             "text": text,
@@ -796,6 +910,13 @@ class LlmService:
             "delivery_hint": "",
             "nonverbal_cue": "",
             "stage_motion": "",
+            "failure_meta": self._failure_meta(
+                kind="format_violation",
+                stage="llm_response_parse",
+                origin="model_output",
+                public_surface="service_fallback" if channel == "chat" else "silent",
+                recoverable=True,
+            ),
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -1381,6 +1502,9 @@ class LlmService:
             "nonverbal_cue": self._coerce_text_value(source.get("nonverbal_cue", "")),
             "stage_motion": self._coerce_text_value(source.get("stage_motion", "")),
         }
+        failure_meta = normalize_failure_meta(source.get("failure_meta"))
+        if failure_meta is not None:
+            sanitized["failure_meta"] = failure_meta
         return json.dumps(sanitized, ensure_ascii=False)
 
     def _coerce_json_candidate(self, raw_text: str) -> str:
@@ -1586,6 +1710,9 @@ class LlmService:
         return self._build_service_error_fallback(
             channel=channel,
             reason=f"http_5xx_fallback stage=repair_empty_decision_text channel={channel}",
+            kind="provider_unavailable",
+            stage="repair_empty_decision_text",
+            origin="primary",
         )
 
     def _repair_decision_json(self, raw_text: str, *, channel: str) -> str:
@@ -1676,12 +1803,22 @@ class LlmService:
                 f"LlmService received empty {channel} response.",
                 channel=channel,
                 raw_text=raw,
+                kind="format_violation",
+                stage="llm_response_parse",
+                origin="model_output",
+                public_surface="blocked",
+                recoverable=False,
             )
         if self._looks_like_prompt_leak(raw_text):
             raise FormatViolationException(
                 f"LlmService blocked prompt/contract leak before parser on {channel}.",
                 channel=channel,
                 raw_text=raw_text,
+                kind="prompt_leak",
+                stage="llm_response_parse",
+                origin="model_output",
+                public_surface="protocol_repair",
+                recoverable=False,
             )
         if self._looks_like_malformed_decision_json(raw_text):
             salvaged = self._coerce_malformed_decision_payload(raw_text, channel=channel)
@@ -1691,12 +1828,22 @@ class LlmService:
                 f"LlmService blocked malformed decision JSON on {channel}.",
                 channel=channel,
                 raw_text=raw_text,
+                kind="format_violation",
+                stage="llm_response_parse",
+                origin="model_output",
+                public_surface="blocked",
+                recoverable=False,
             )
         if not (raw_text.startswith("{") and raw_text.endswith("}")):
             raise FormatViolationException(
                 f"LlmService blocked non-JSON or JSON-with-prose {channel} response.",
                 channel=channel,
                 raw_text=raw_text,
+                kind="format_violation",
+                stage="llm_response_parse",
+                origin="model_output",
+                public_surface="blocked",
+                recoverable=False,
             )
 
         candidate = self._coerce_json_candidate(raw_text)
@@ -1705,12 +1852,22 @@ class LlmService:
                 f"LlmService could not coerce {channel} response into a decision JSON object.",
                 channel=channel,
                 raw_text=raw_text,
+                kind="format_violation",
+                stage="llm_response_parse",
+                origin="model_output",
+                public_surface="blocked",
+                recoverable=False,
             )
         if self._decision_text_is_invalid(candidate):
             raise FormatViolationException(
                 f"LlmService blocked invalid {channel} decision text.",
                 channel=channel,
                 raw_text=raw_text,
+                kind="format_violation",
+                stage="llm_response_parse",
+                origin="model_output",
+                public_surface="blocked",
+                recoverable=False,
             )
         return candidate
 

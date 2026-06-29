@@ -15,7 +15,8 @@ using VBox = Godot.VBoxContainer;
 // ─────────────────────────────────────────────────────────────────────────────
 public partial class UdpListener : Node2D
 {
-	private static readonly Vector2 AnchorPanelMinSize = new(940f, 540f);
+	private static readonly Vector2 AnchorPanelMinSize = new(1120f, 680f);
+	private const float AnchorPanelViewportMargin = 24f;
 
 	private Panel _anchorPanel;
 	private Button _contextAnchorButton;
@@ -101,11 +102,14 @@ public partial class UdpListener : Node2D
 			return;
 		CloseCharacterContextMenu();
 		_anchorPanel.Visible = true;
-		_anchorPanel.Size = AnchorPanelMinSize;
 		Vector2 screenSize = GetViewportRect().Size;
+		Vector2 targetSize = new(
+			Mathf.Min(AnchorPanelMinSize.X, Mathf.Max(760f, screenSize.X - AnchorPanelViewportMargin)),
+			Mathf.Min(AnchorPanelMinSize.Y, Mathf.Max(500f, screenSize.Y - AnchorPanelViewportMargin)));
+		_anchorPanel.Size = targetSize;
 		_anchorPanel.Position = new Vector2(
-			Mathf.Max(0f, (screenSize.X - AnchorPanelMinSize.X) * 0.5f),
-			Mathf.Max(0f, (screenSize.Y - AnchorPanelMinSize.Y) * 0.5f));
+			Mathf.Max(0f, (screenSize.X - targetSize.X) * 0.5f),
+			Mathf.Max(0f, (screenSize.Y - targetSize.Y) * 0.5f));
 		RefreshAnchorPanel();
 	}
 
@@ -136,8 +140,8 @@ public partial class UdpListener : Node2D
 
 		var root = new VBoxContainer();
 		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-		root.OffsetLeft = 18f; root.OffsetTop = 14f; root.OffsetRight = -18f; root.OffsetBottom = -14f;
-		root.AddThemeConstantOverride("separation", 8);
+		root.OffsetLeft = 20f; root.OffsetTop = 14f; root.OffsetRight = -16f; root.OffsetBottom = -14f;
+		root.AddThemeConstantOverride("separation", 7);
 		_anchorPanel.AddChild(root);
 
 		// Header
@@ -169,7 +173,7 @@ public partial class UdpListener : Node2D
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
 		};
-		body.AddThemeConstantOverride("separation", 10);
+		body.AddThemeConstantOverride("separation", 9);
 		root.AddChild(body);
 
 		var leftCol = new VBoxContainer
@@ -177,7 +181,7 @@ public partial class UdpListener : Node2D
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
 		};
-		leftCol.AddThemeConstantOverride("separation", 8);
+		leftCol.AddThemeConstantOverride("separation", 7);
 		body.AddChild(leftCol);
 
 		// Tab bar
@@ -189,20 +193,19 @@ public partial class UdpListener : Node2D
 		AddAnchorTabButton(tabBar, 1, "Trục Tối");
 		AddAnchorTabButton(tabBar, 2, "Sổ Trung Thực");
 
-		// Content host (scroll)
-		var contentScroll = new ScrollContainer
+		// Content host: cố ý KHÔNG dùng ScrollContainer. Panel này là bảng debug
+		// ngắn, nếu để hiện thanh kéo thì nhìn như UI bị nhồi thiếu chỗ.
+		_anchorContent = new VBoxContainer
 		{
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
 			ClipContents = true,
 		};
-		leftCol.AddChild(contentScroll);
-		_anchorContent = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		_anchorContent.AddThemeConstantOverride("separation", 8);
-		contentScroll.AddChild(_anchorContent);
+		_anchorContent.AddThemeConstantOverride("separation", 7);
+		leftCol.AddChild(_anchorContent);
 
 		// Rail Tác Giả (cố định)
-		var railPanel = new PanelContainer { CustomMinimumSize = new Vector2(168f, 0f) };
+		var railPanel = new PanelContainer { CustomMinimumSize = new Vector2(154f, 0f) };
 		railPanel.AddThemeStyleboxOverride("panel", AnchorCardStyle(new Color(1f, 0.95f, 0.97f, 0.96f), AnchorPink));
 		body.AddChild(railPanel);
 		_anchorRail = new VBoxContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
@@ -446,47 +449,78 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		row.AddThemeConstantOverride("separation", 12);
-		_anchorContent.AddChild(row);
+		var summary = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		summary.AddThemeConstantOverride("separation", 10);
+		_anchorContent.AddChild(summary);
+		summary.AddChild(AnchorScoreTile(
+			"HỒ SƠ",
+			"dữ kiện đã biết",
+			d.ModelThickness,
+			AnchorPink,
+			$"{d.BeliefCount} belief"));
+		summary.AddChild(AnchorScoreTile(
+			"Ý NGHĨA",
+			"vai trò của Ngài",
+			d.Irreplaceability,
+			AnchorGold,
+			$"neo {d.AnchorRole:0.00} · chứng {d.WitnessStrength:0.00}"));
+		summary.AddChild(AnchorScoreTile(
+			"GẮN BÓ",
+			"long-arc",
+			d.AttachLongarc,
+			AnchorPink,
+			$"{d.TotalBeats} nhịp neo"));
 
-		// ── Cột Hồ Sơ Ngài ──
-		var c0 = AnchorColumn("⓪", "HỒ SƠ NGÀI", AnchorPink, 1.5f, out VBox b0);
-		row.AddChild(c0);
-		b0.AddChild(AnchorMetricRow("độ dày mô hình", d.ModelThickness, AnchorPink));
-		b0.AddChild(CreateUiLabel($"{d.BeliefCount} niềm tin về Ngài", 12, AnchorInkSoft));
+		var lower = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		lower.AddThemeConstantOverride("separation", 10);
+		_anchorContent.AddChild(lower);
+
+		var beliefs = AnchorCard(new Color(1f, 0.965f, 0.982f, 0.97f), AnchorPink, out VBox bb);
+		beliefs.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		beliefs.SizeFlagsStretchRatio = 1.45f;
+		lower.AddChild(beliefs);
+		bb.AddChild(AnchorSectionHeader("những điều eris đang tin", $"{d.BeliefCount} mục", AnchorPink));
 		if (d.Beliefs.Count == 0)
-			b0.AddChild(AnchorEmpty("eris chưa học được điều gì chắc về Ngài."));
+		{
+			bb.AddChild(AnchorEmpty("eris chưa học được điều gì chắc về Ngài."));
+		}
 		else
+		{
+			int shown = 0;
 			foreach (var b in d.Beliefs)
-				b0.AddChild(AnchorBeliefCard(b.Facet, b.Claim, b.Conf, b.Rec, b.Ev));
+			{
+				if (shown >= 4)
+					break;
+				bb.AddChild(AnchorBeliefRow(b.Facet, b.Claim, b.Conf, b.Rec, b.Ev));
+				shown++;
+			}
+			if (d.Beliefs.Count > shown)
+				bb.AddChild(CreateUiLabel($"+ {d.Beliefs.Count - shown} belief khác đang được giữ trong store", 11, AnchorInkSoft));
+		}
 
-		row.AddChild(AnchorFlowArrow());
+		var right = new VBoxContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsStretchRatio = 0.92f,
+		};
+		right.AddThemeConstantOverride("separation", 8);
+		lower.AddChild(right);
 
-		// ── Cột Ý Nghĩa ──
-		var c1 = AnchorColumn("①", "Ý NGHĨA", AnchorGold, 1f, out VBox b1);
-		row.AddChild(c1);
-		var bigIrr = CreateUiLabel(d.Irreplaceability.ToString("0.00", CultureInfo.InvariantCulture), 26, AnchorGold);
-		bigIrr.HorizontalAlignment = HorizontalAlignment.Center;
-		b1.AddChild(CreateUiLabel("không thể thay thế", 12, AnchorInkSoft));
-		b1.AddChild(bigIrr);
-		b1.AddChild(AnchorMetricRow("vai trò neo", d.AnchorRole, AnchorGold));
-		b1.AddChild(AnchorMetricRow("nhân chứng", d.WitnessStrength, AnchorGold));
-		b1.AddChild(AnchorRoleChips(d));
+		var meaning = AnchorCard(new Color(1f, 0.965f, 0.94f, 0.97f), AnchorGold, out VBox mb);
+		right.AddChild(meaning);
+		mb.AddChild(AnchorSectionHeader("ý nghĩa", AnchorMeaningLine(d), AnchorGold));
+		mb.AddChild(AnchorMetricRow("không thể thay thế", d.Irreplaceability, AnchorGold));
+		mb.AddChild(AnchorMetricRow("vai trò neo", d.AnchorRole, AnchorGold));
+		mb.AddChild(AnchorMetricRow("nhân chứng", d.WitnessStrength, AnchorGold));
+		mb.AddChild(AnchorRoleChips(d));
 
-		row.AddChild(AnchorFlowArrow());
-
-		// ── Cột Gắn Bó ──
-		var c2 = AnchorColumn("②", "GẮN BÓ (long-arc)", AnchorPink, 1f, out VBox b2);
-		row.AddChild(c2);
-		var bigAtt = CreateUiLabel(d.AttachLongarc.ToString("0.00", CultureInfo.InvariantCulture), 26, AnchorPink);
-		bigAtt.HorizontalAlignment = HorizontalAlignment.Center;
-		b2.AddChild(CreateUiLabel("gắn bó nền (quán tính nhiều phiên)", 12, AnchorInkSoft));
-		b2.AddChild(bigAtt);
-		b2.AddChild(AnchorMetricRow("đều của neo", d.BeatEma, AnchorPink));
-		b2.AddChild(AnchorMetricRow("được công nhận", d.RecognitionEma, AnchorPink));
-		b2.AddChild(CreateUiLabel($"{d.TotalBeats} nhịp neo đã ghi", 12, AnchorInkSoft));
-		b2.AddChild(AnchorSparkline(d.History, AnchorPink));
+		var attach = AnchorCard(new Color(1f, 0.96f, 0.985f, 0.97f), AnchorPink, out VBox ab);
+		right.AddChild(attach);
+		ab.AddChild(AnchorSectionHeader("gắn bó", "quán tính nhiều phiên", AnchorPink));
+		ab.AddChild(AnchorMetricRow("long-arc", d.AttachLongarc, AnchorPink));
+		ab.AddChild(AnchorMetricRow("đều của neo", d.BeatEma, AnchorPink));
+		ab.AddChild(AnchorMetricRow("được công nhận", d.RecognitionEma, AnchorPink));
+		ab.AddChild(AnchorSparkline(d.History, AnchorPink));
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -698,11 +732,11 @@ public partial class UdpListener : Node2D
 		return new StyleBoxFlat
 		{
 			BgColor = bg,
-			BorderColor = new Color(border.R, border.G, border.B, 0.5f),
+			BorderColor = new Color(border.R, border.G, border.B, 0.46f),
 			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 16, CornerRadiusTopRight = 16,
-			CornerRadiusBottomRight = 16, CornerRadiusBottomLeft = 16,
-			ContentMarginLeft = 10, ContentMarginRight = 10, ContentMarginTop = 8, ContentMarginBottom = 8,
+			CornerRadiusTopLeft = 14, CornerRadiusTopRight = 14,
+			CornerRadiusBottomRight = 14, CornerRadiusBottomLeft = 14,
+			ContentMarginLeft = 11, ContentMarginRight = 11, ContentMarginTop = 9, ContentMarginBottom = 9,
 		};
 	}
 
@@ -711,9 +745,83 @@ public partial class UdpListener : Node2D
 		var card = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		card.AddThemeStyleboxOverride("panel", AnchorCardStyle(bg, border));
 		body = new VBox { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		body.AddThemeConstantOverride("separation", 5);
+		body.AddThemeConstantOverride("separation", 4);
 		card.AddChild(body);
 		return card;
+	}
+
+	private PanelContainer AnchorScoreTile(string title, string subtitle, float value, Color accent, string meta)
+	{
+		var tile = AnchorCard(new Color(1f, 0.965f, 0.982f, 0.98f), accent, out VBox body);
+		tile.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		tile.SizeFlagsStretchRatio = 1f;
+		tile.CustomMinimumSize = new Vector2(0f, 92f);
+
+		var top = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		top.AddThemeConstantOverride("separation", 6);
+		top.AddChild(CreateDiaryGlyph("um_tag", accent, 15f));
+		var titleCol = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		titleCol.AddThemeConstantOverride("separation", 0);
+		titleCol.AddChild(CreateUiLabel(title, 12, accent));
+		titleCol.AddChild(CreateUiLabel(subtitle, 10, AnchorInkSoft));
+		top.AddChild(titleCol);
+		body.AddChild(top);
+
+		var number = CreateUiLabel(value.ToString("0.00", CultureInfo.InvariantCulture), 22, accent);
+		number.HorizontalAlignment = HorizontalAlignment.Center;
+		body.AddChild(number);
+		body.AddChild(AnchorThinMeter(value, accent));
+		body.AddChild(CreateUiLabel(meta, 10, AnchorInkSoft));
+		return tile;
+	}
+
+	private Control AnchorSectionHeader(string title, string meta, Color accent)
+	{
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 6);
+		row.AddChild(CreateDiaryGlyph("um_tag", accent, 14f));
+		var titleLabel = CreateUiLabel(title, 12, accent);
+		titleLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		row.AddChild(titleLabel);
+		if (!string.IsNullOrWhiteSpace(meta))
+			row.AddChild(AnchorBadge(meta, accent));
+		return row;
+	}
+
+	private Control AnchorThinMeter(float value, Color color)
+	{
+		var bar = CreateDiaryBar(color);
+		bar.CustomMinimumSize = new Vector2(0f, 7f);
+		bar.Value = Mathf.Clamp(value, 0f, 1f) * 100f;
+		return bar;
+	}
+
+	private PanelContainer AnchorBeliefRow(string facet, string claim, float conf, int rec, int ev)
+	{
+		var card = AnchorCard(new Color(1f, 0.985f, 0.992f, 0.92f), AnchorPink, out VBox body);
+		string facetVi = AnchorFacetNames.TryGetValue(facet, out var fv) ? fv : facet;
+		var top = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		top.AddThemeConstantOverride("separation", 6);
+		top.AddChild(AnchorBadge(facetVi, AnchorPink));
+		var meta = CreateUiLabel($"{conf:0.00} · {rec} lần · {ev} chứng", 10, AnchorInkSoft);
+		meta.HorizontalAlignment = HorizontalAlignment.Right;
+		meta.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		top.AddChild(meta);
+		body.AddChild(top);
+		body.AddChild(AnchorWrap(claim, AnchorInk));
+		body.AddChild(AnchorThinMeter(conf, AnchorPink));
+		return card;
+	}
+
+	private static string AnchorMeaningLine(AnchorData d)
+	{
+		if (d.Irreplaceability >= 0.62f)
+			return "rất khó thay thế";
+		if (d.AnchorRole >= 0.42f || d.WitnessStrength >= 0.42f)
+			return "đang thành neo";
+		if (d.ModelThickness >= 0.35f)
+			return "đã có nét";
+		return "còn mỏng";
 	}
 
 	private PanelContainer AnchorColumn(string tag, string title, Color accent, float ratio, out VBox body)
