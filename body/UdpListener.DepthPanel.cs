@@ -1,9 +1,30 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 
 public partial class UdpListener : Node2D
 {
+	private sealed class DepthInteriorityRowView
+	{
+		public Control Root { get; set; }
+		public Panel IconFallbackBg { get; set; }
+		public TextureRect IconTexture { get; set; }
+		public Label IconFallbackLabel { get; set; }
+		public Label TextLabel { get; set; }
+		public Label MetaLabel { get; set; }
+		public Label TimeLabel { get; set; }
+	}
+
+	private sealed class DepthInteriorityItem
+	{
+		public string Kind { get; set; } = "current";
+		public string Title { get; set; } = "";
+		public string Text { get; set; } = "";
+		public string Meta { get; set; } = "";
+		public string Time { get; set; } = "";
+	}
+
 	private static readonly Vector2 DepthPanelMinSize = new(1497f, 988f);
 	private static readonly Vector2 DepthPanelArtworkSize = new(1497f, 988f);
 	private const float DepthPanelViewportMargin = 32f;
@@ -42,6 +63,10 @@ public partial class UdpListener : Node2D
 	private ProgressBar _depthSelfAllowedBar;
 	private Label _depthSelfAllowedValueLabel;
 	private Label _depthSelfStanceValueLabel;
+	private readonly List<DepthInteriorityRowView> _depthInteriorityRows = new();
+	private readonly Dictionary<string, Texture2D> _depthIconCache = new();
+	private Label _depthInteriorityFooterLabel;
+	private Label _depthInteriorityPageDotLabel;
 
 	private string _latestDepthJson = "";
 	private Font _depthFontRegular;
@@ -351,8 +376,120 @@ public partial class UdpListener : Node2D
 	private void BuildDepthCollabFrame(Control parent) =>
 		AddDepthFrameImage(parent, DepthCollabFramePath, SlotCollab);
 
-	private void BuildDepthInteriorityFrame(Control parent) =>
-		AddDepthFrameImage(parent, DepthInteriorityFramePath, SlotInteriority);
+	private void BuildDepthInteriorityFrame(Control parent)
+	{
+		var root = CreateDepthFrameRoot(parent, "DepthInteriorityFrame", SlotInteriority, DepthInteriorityFramePath);
+		if (root == null)
+			return;
+
+		_depthInteriorityRows.Clear();
+		for (int i = 0; i < 4; i++)
+		{
+			var row = CreateDepthInteriorityRow(i);
+			root.AddChild(row.Root);
+			_depthInteriorityRows.Add(row);
+		}
+
+		// Footer giữ đúng tinh thần asset: panel có nhịp "✦".
+		// Chỉ đổi câu footer theo trạng thái dữ liệu, không biến nó thành log dài.
+		_depthInteriorityFooterLabel = CreateDepthTextLabel("✦", 10, new Color(0.94f, 0.26f, 0.55f), bold: true);
+		_depthInteriorityFooterLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		_depthInteriorityFooterLabel.VerticalAlignment = VerticalAlignment.Center;
+		_depthInteriorityFooterLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_depthInteriorityFooterLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(_depthInteriorityFooterLabel, RectLTRB(0.28f, 0.86f, 0.72f, 0.92f));
+		root.AddChild(_depthInteriorityFooterLabel);
+
+		_depthInteriorityPageDotLabel = CreateDepthTextLabel("•   ◦   ◦", 10, new Color(0.98f, 0.42f, 0.66f, 0.86f), bold: true);
+		_depthInteriorityPageDotLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		_depthInteriorityPageDotLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthInteriorityPageDotLabel, RectLTRB(0.42f, 0.92f, 0.58f, 0.97f));
+		root.AddChild(_depthInteriorityPageDotLabel);
+	}
+
+	private DepthInteriorityRowView CreateDepthInteriorityRow(int index)
+	{
+		// Slot dùng tỉ lệ nội bộ của card Interiority, không theo pixel màn hình.
+		// Nhờ vậy khi DepthPanel scale theo viewport, row và icon vẫn bám khung PNG.
+		float top = 0.145f + index * 0.165f;
+		float bottom = top + 0.135f;
+
+		var rowRoot = new Control
+		{
+			Name = $"DepthInteriorityRow{index + 1}",
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		PlaceBySlot(rowRoot, RectLTRB(0.045f, top, 0.955f, bottom));
+
+		var iconFallbackBg = new Panel
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		iconFallbackBg.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(0.96f, 0.34f, 0.62f, 0.92f),
+			CornerRadiusTopLeft = 18,
+			CornerRadiusTopRight = 18,
+			CornerRadiusBottomLeft = 18,
+			CornerRadiusBottomRight = 18,
+		});
+		PlaceBySlot(iconFallbackBg, RectLTRB(0.015f, 0.15f, 0.105f, 0.85f));
+		rowRoot.AddChild(iconFallbackBg);
+
+		var iconTexture = new TextureRect
+		{
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		PlaceBySlot(iconTexture, RectLTRB(0.010f, 0.08f, 0.112f, 0.92f));
+		rowRoot.AddChild(iconTexture);
+
+		var fallbackLabel = CreateDepthTextLabel("✦", 12, Colors.White, bold: true);
+		fallbackLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		fallbackLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(fallbackLabel, RectLTRB(0.015f, 0.15f, 0.105f, 0.85f));
+		rowRoot.AddChild(fallbackLabel);
+
+		var textLabel = CreateDepthTextLabel("", 11, new Color(0.66f, 0.20f, 0.38f), bold: true);
+		textLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		textLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(textLabel, RectLTRB(0.145f, 0.12f, 0.750f, 0.50f));
+		rowRoot.AddChild(textLabel);
+
+		var metaLabel = CreateDepthTextLabel("", 9, new Color(0.62f, 0.30f, 0.46f));
+		metaLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		metaLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(metaLabel, RectLTRB(0.145f, 0.55f, 0.740f, 0.88f));
+		rowRoot.AddChild(metaLabel);
+
+		var timeLabel = CreateDepthTextLabel("", 8, new Color(0.72f, 0.38f, 0.55f, 0.82f));
+		timeLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		timeLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		timeLabel.HorizontalAlignment = HorizontalAlignment.Right;
+		timeLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(timeLabel, RectLTRB(0.760f, 0.20f, 0.945f, 0.48f));
+		rowRoot.AddChild(timeLabel);
+
+		var divider = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
+		divider.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(0.94f, 0.62f, 0.74f, 0.22f),
+		});
+		PlaceBySlot(divider, RectLTRB(0.135f, 0.98f, 0.950f, 1.00f));
+		rowRoot.AddChild(divider);
+
+		return new DepthInteriorityRowView
+		{
+			Root = rowRoot,
+			IconFallbackBg = iconFallbackBg,
+			IconTexture = iconTexture,
+			IconFallbackLabel = fallbackLabel,
+			TextLabel = textLabel,
+			MetaLabel = metaLabel,
+			TimeLabel = timeLabel,
+		};
+	}
 
 	private void BuildDepthPrioritiesFrame(Control parent) =>
 		AddDepthFrameImage(parent, DepthPrioritiesFramePath, SlotPriorities);
@@ -632,31 +769,33 @@ public partial class UdpListener : Node2D
 			return;
 
 		ApplyDepthAffectContent("Bình tĩnh", "Thoải mái, sẵn sàng trò chuyện.", 0.72f);
-		ApplyDepthTomContent(
-			score: 0f,
-			summary: "chưa đọc được gì đủ chắc.",
+			ApplyDepthTomContent(
+				score: 0f,
+				summary: "chưa đọc được gì đủ chắc.",
 			confidence: 0f,
 			thickness: 0f,
 			attachment: 0f,
 			beliefCount: 0,
 			status: "đang chờ dữ liệu",
-			topBelief: "belief: chưa có");
+				topBelief: "belief: chưa có");
 
-		ApplyDepthSelfContinuityContent(0f, 0f, 0f, "chưa rõ");
+			ApplyDepthSelfContinuityContent(0f, 0f, 0f, "chưa rõ");
+			ApplyDepthInteriorityEmpty("✦");
 
-		if (!string.IsNullOrWhiteSpace(_latestDepthV2Json))
-		{
+			if (!string.IsNullOrWhiteSpace(_latestDepthV2Json))
+			{
 			try
 			{
 				using var doc = JsonDocument.Parse(_latestDepthV2Json);
 				if (doc.RootElement.ValueKind == JsonValueKind.Object)
-				{
-					ApplyDepthV2Affect(doc.RootElement);
-					ApplyDepthV2Tom(doc.RootElement);
-					ApplyDepthV2SelfContinuity(doc.RootElement);
-					return;
+					{
+						ApplyDepthV2Affect(doc.RootElement);
+						ApplyDepthV2Tom(doc.RootElement);
+						ApplyDepthV2SelfContinuity(doc.RootElement);
+						ApplyDepthV2Interiority(doc.RootElement);
+						return;
+					}
 				}
-			}
 			catch (Exception ex)
 			{
 				GD.Print($"[depth_v2] refresh fail: {ex.Message}");
@@ -669,11 +808,12 @@ public partial class UdpListener : Node2D
 			{
 				using var doc = JsonDocument.Parse(_latestDepthJson);
 				if (doc.RootElement.ValueKind == JsonValueKind.Object)
-				{
-					ApplyLegacyDepthAffect(doc.RootElement);
-					ApplyLegacyDepthTom(doc.RootElement);
+					{
+						ApplyLegacyDepthAffect(doc.RootElement);
+						ApplyLegacyDepthTom(doc.RootElement);
+						ApplyLegacyDepthInteriority(doc.RootElement);
+					}
 				}
-			}
 			catch (Exception ex)
 			{
 				GD.Print($"[depth] affect refresh fail: {ex.Message}");
@@ -809,10 +949,10 @@ public partial class UdpListener : Node2D
 			_depthTomAttachmentBar.Value = safeAttachment;
 	}
 
-	private void ApplyDepthSelfContinuityContent(float want, float suppress, float allowed, string stance)
-	{
-		float safeWant = Mathf.Clamp(want, 0f, 1f);
-		float safeSuppress = Mathf.Clamp(suppress, 0f, 1f);
+		private void ApplyDepthSelfContinuityContent(float want, float suppress, float allowed, string stance)
+		{
+			float safeWant = Mathf.Clamp(want, 0f, 1f);
+			float safeSuppress = Mathf.Clamp(suppress, 0f, 1f);
 		float safeAllowed = Mathf.Clamp(allowed, 0f, 1f);
 		string safeStance = string.IsNullOrWhiteSpace(stance) ? "cân bằng" : stance.Trim();
 
@@ -826,10 +966,324 @@ public partial class UdpListener : Node2D
 		UpdateDepthLabelText(_depthSelfWantValueLabel, $"{safeWant:0.00}");
 		UpdateDepthLabelText(_depthSelfSuppressValueLabel, $"{safeSuppress:0.00}");
 		UpdateDepthLabelText(_depthSelfAllowedValueLabel, $"{safeAllowed:0.00}");
-		UpdateDepthLabelText(_depthSelfStanceValueLabel, safeStance);
-	}
+			UpdateDepthLabelText(_depthSelfStanceValueLabel, safeStance);
+		}
 
-	private void ApplyLegacyDepthAffect(JsonElement root)
+		private void ApplyDepthV2Interiority(JsonElement root)
+		{
+			var items = new List<DepthInteriorityItem>();
+
+			if (root.TryGetProperty("interiority", out var interiority) && interiority.ValueKind == JsonValueKind.Object)
+			{
+				// Contract mới: Python gửi sẵn `feed` đã gom gọn. Body chỉ render,
+				// không tự diễn giải sâu để tránh lệch nghĩa giữa backend và UI.
+				if (interiority.TryGetProperty("feed", out var feed) && feed.ValueKind == JsonValueKind.Array)
+					CollectDepthInteriorityFeed(feed, items);
+
+				// Fallback cho payload cũ: chưa có feed thì đọc các section gốc.
+				if (items.Count == 0)
+					CollectDepthInterioritySections(interiority, items);
+			}
+
+			// Fallback cuối: journal có source/text/time, đủ để panel không bị trống.
+			if (items.Count == 0 && root.TryGetProperty("journal", out var journal) && journal.ValueKind == JsonValueKind.Array)
+				CollectDepthInteriorityJournal(journal, items);
+
+			if (items.Count == 0)
+			{
+				ApplyDepthInteriorityEmpty("✦");
+				return;
+			}
+
+			ApplyDepthInteriorityItems(items, $"đã nhận {Math.Min(items.Count, _depthInteriorityRows.Count)} luồng nghĩ ✦");
+		}
+
+		private void ApplyLegacyDepthInteriority(JsonElement root)
+		{
+			if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
+				return;
+
+			var items = new List<DepthInteriorityItem>();
+			if (depth.TryGetProperty("interiority", out var interiority) && interiority.ValueKind == JsonValueKind.Object)
+			{
+				if (interiority.TryGetProperty("items", out var legacyItems) && legacyItems.ValueKind == JsonValueKind.Array)
+				{
+					foreach (var raw in legacyItems.EnumerateArray())
+					{
+						if (raw.ValueKind != JsonValueKind.Object)
+							continue;
+						AddDepthInteriorityItem(
+							items,
+							kind: JsonText(raw, "kind", "current"),
+							title: JsonText(raw, "status", ""),
+							text: JsonText(raw, "theme", ""),
+							meta: $"pressure {JsonFloat(raw, "pressure", 0f):0.00}",
+							time: "");
+					}
+				}
+			}
+
+			if (items.Count > 0)
+				ApplyDepthInteriorityItems(items, "legacy interiority ✦");
+		}
+
+		private void CollectDepthInteriorityFeed(JsonElement feed, List<DepthInteriorityItem> items)
+		{
+			foreach (var raw in feed.EnumerateArray())
+			{
+				if (raw.ValueKind != JsonValueKind.Object)
+					continue;
+				AddDepthInteriorityItem(
+					items,
+					kind: JsonText(raw, "kind", JsonText(raw, "source", "current")),
+					title: JsonText(raw, "title", ""),
+					text: JsonText(raw, "text", ""),
+					meta: JsonText(raw, "meta", ""),
+					time: JsonText(raw, "time", ""));
+			}
+		}
+
+		private void CollectDepthInterioritySections(JsonElement interiority, List<DepthInteriorityItem> items)
+		{
+			foreach (string kind in new[] { "current", "concern", "analysis", "future", "surface", "settled" })
+			{
+				if (!interiority.TryGetProperty(kind, out var section) || section.ValueKind != JsonValueKind.Object)
+					continue;
+				string title = JsonText(section, "title", DepthInteriorityDefaultTitle(kind));
+				if (!section.TryGetProperty("items", out var sectionItems) || sectionItems.ValueKind != JsonValueKind.Array)
+					continue;
+
+				foreach (var rawItem in sectionItems.EnumerateArray())
+				{
+					if (rawItem.ValueKind != JsonValueKind.Object)
+						continue;
+					AddDepthInteriorityItem(
+						items,
+						kind: kind,
+						title: title,
+						text: JsonText(rawItem, "text", ""),
+						meta: JsonText(rawItem, "badge", ""),
+						time: "");
+					break;
+				}
+			}
+		}
+
+		private void CollectDepthInteriorityJournal(JsonElement journal, List<DepthInteriorityItem> items)
+		{
+			foreach (var raw in journal.EnumerateArray())
+			{
+				if (raw.ValueKind != JsonValueKind.Object)
+					continue;
+				AddDepthInteriorityItem(
+					items,
+					kind: JsonText(raw, "source", "observe"),
+					title: DepthInteriorityDefaultTitle(JsonText(raw, "source", "observe")),
+					text: JsonText(raw, "text", ""),
+					meta: "journal",
+					time: JsonText(raw, "time", ""));
+			}
+		}
+
+		private static void AddDepthInteriorityItem(
+			List<DepthInteriorityItem> items,
+			string kind,
+			string title,
+			string text,
+			string meta,
+			string time)
+		{
+			string safeText = TrimDepthUiText(text, 120);
+			if (string.IsNullOrWhiteSpace(safeText))
+				return;
+
+			string safeKind = NormalizeDepthKind(kind);
+			foreach (var item in items)
+			{
+				if (string.Equals(item.Text, safeText, StringComparison.OrdinalIgnoreCase))
+					return;
+			}
+
+			items.Add(new DepthInteriorityItem
+			{
+				Kind = string.IsNullOrWhiteSpace(safeKind) ? "current" : safeKind,
+				Title = TrimDepthUiText(title, 36),
+				Text = safeText,
+				Meta = TrimDepthUiText(meta, 72),
+				Time = TrimDepthUiText(time, 16),
+			});
+		}
+
+		private void ApplyDepthInteriorityItems(List<DepthInteriorityItem> items, string footer)
+		{
+			int visibleCount = Math.Min(items.Count, _depthInteriorityRows.Count);
+			for (int i = 0; i < _depthInteriorityRows.Count; i++)
+			{
+				var row = _depthInteriorityRows[i];
+				bool visible = i < visibleCount;
+				row.Root.Visible = visible;
+				if (!visible)
+					continue;
+
+				var item = items[i];
+				ApplyDepthInteriorityIcon(row, item.Kind);
+				UpdateDepthLabelText(row.TextLabel, TrimDepthUiText(item.Text, 74));
+				UpdateDepthLabelText(row.MetaLabel, DepthInteriorityMetaText(item));
+				UpdateDepthLabelText(row.TimeLabel, item.Time);
+			}
+
+			UpdateDepthLabelText(_depthInteriorityFooterLabel, string.IsNullOrWhiteSpace(footer) ? "✦" : footer);
+			UpdateDepthLabelText(_depthInteriorityPageDotLabel, visibleCount > 0 ? "•   ◦   ◦" : "◦   ◦   ◦");
+		}
+
+		private void ApplyDepthInteriorityEmpty(string footer)
+		{
+			foreach (var row in _depthInteriorityRows)
+				row.Root.Visible = false;
+			UpdateDepthLabelText(_depthInteriorityFooterLabel, footer);
+			UpdateDepthLabelText(_depthInteriorityPageDotLabel, "◦   ◦   ◦");
+		}
+
+		private void ApplyDepthInteriorityIcon(DepthInteriorityRowView row, string kind)
+		{
+			string normalized = NormalizeDepthKind(kind);
+			Texture2D texture = LoadDepthInteriorityIcon(normalized);
+			if (texture != null)
+			{
+				row.IconTexture.Texture = texture;
+				row.IconTexture.Visible = true;
+				row.IconFallbackBg.Visible = false;
+				row.IconFallbackLabel.Visible = false;
+				return;
+			}
+
+			// Nếu asset icon chưa nằm trong project, vẫn hiện một vòng tròn chữ tắt
+			// để UI không chết trắng. Đây chỉ là fallback phát triển.
+			row.IconTexture.Visible = false;
+			row.IconFallbackBg.Visible = true;
+			row.IconFallbackLabel.Visible = true;
+			row.IconFallbackBg.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+			{
+				BgColor = DepthInteriorityFallbackColor(normalized),
+				CornerRadiusTopLeft = 18,
+				CornerRadiusTopRight = 18,
+				CornerRadiusBottomLeft = 18,
+				CornerRadiusBottomRight = 18,
+			});
+			UpdateDepthLabelText(row.IconFallbackLabel, DepthInteriorityFallbackGlyph(normalized));
+		}
+
+		private Texture2D LoadDepthInteriorityIcon(string kind)
+		{
+			string path = DepthInteriorityIconPath(kind);
+			if (string.IsNullOrWhiteSpace(path))
+				return null;
+			if (_depthIconCache.TryGetValue(path, out var cached))
+				return cached;
+
+			Texture2D texture = null;
+			try
+			{
+				if (ResourceLoader.Exists(path))
+					texture = ResourceLoader.Load<Texture2D>(path);
+			}
+			catch
+			{
+				texture = null;
+			}
+
+			_depthIconCache[path] = texture;
+			return texture;
+		}
+
+		private static string DepthInteriorityIconPath(string kind)
+		{
+			return NormalizeDepthKind(kind) switch
+			{
+				"analysis" => "res://asset/icon/icon-analysis.png",
+				"concern" or "tom" => "res://asset/icon/icon-concern.png",
+				"current" or "section" => "res://asset/icon/icon-current.png",
+				"emotion" or "emotional" => "res://asset/icon/icon-emotion.png",
+				"future" or "plan" => "res://asset/icon/icon-future.png",
+				"guard" or "restraint" => "res://asset/icon/icon-guard.png",
+				"memory" or "memory_echo" => "res://asset/icon/icon-memory-echo.png",
+				"observe" or "signal" or "vision" => "res://asset/icon/icon-observe.png",
+				"pending" or "waiting" => "res://asset/icon/icon-pending.png",
+				"settled" => "res://asset/icon/icon-settled.png",
+				"technical" or "tech" or "architecture" or "repair" => "res://asset/icon/icon-tech.png",
+				"uncertain" or "unknown" => "res://asset/icon/icon-uncertain.png",
+				"surface" or "speech" => "res://asset/icon/icon-concern.png",
+				_ => "res://asset/icon/icon-current.png",
+			};
+		}
+
+		private static string DepthInteriorityMetaText(DepthInteriorityItem item)
+		{
+			string title = TrimDepthUiText(item.Title, 30);
+			string meta = TrimDepthUiText(item.Meta, 54);
+			if (string.IsNullOrWhiteSpace(title))
+				return string.IsNullOrWhiteSpace(meta) ? DepthInteriorityDefaultTitle(item.Kind) : $"({meta})";
+			if (string.IsNullOrWhiteSpace(meta))
+				return $"({title})";
+			return $"({title} · {meta})";
+		}
+
+		private static string DepthInteriorityDefaultTitle(string kind)
+		{
+			return NormalizeDepthKind(kind) switch
+			{
+				"analysis" => "đang phân tích",
+				"concern" or "tom" => "đang bận tâm",
+				"current" => "ý nghĩ đang nổi",
+				"emotion" or "emotional" => "cảm xúc nền",
+				"future" or "plan" => "hướng tiếp theo",
+				"guard" or "restraint" => "tự kìm lại",
+				"memory" or "memory_echo" => "ký ức vọng lại",
+				"observe" or "signal" or "vision" => "tín hiệu runtime",
+				"pending" or "waiting" => "đang chờ",
+				"settled" => "đã nguội",
+				"technical" or "tech" or "architecture" or "repair" => "kỹ thuật",
+				"surface" or "speech" => "muốn nói ra",
+				"uncertain" or "unknown" => "chưa chắc",
+				_ => "dòng nội tâm",
+			};
+		}
+
+		private static string DepthInteriorityFallbackGlyph(string kind)
+		{
+			return NormalizeDepthKind(kind) switch
+			{
+				"analysis" => "A",
+				"concern" or "tom" => "C",
+				"emotion" or "emotional" => "H",
+				"future" or "plan" => "F",
+				"guard" or "restraint" => "G",
+				"memory" or "memory_echo" => "M",
+				"observe" or "signal" or "vision" => "O",
+				"pending" or "waiting" => "...",
+				"settled" => "S",
+				"technical" or "tech" or "architecture" or "repair" => "T",
+				"uncertain" or "unknown" => "?",
+				_ => "*",
+			};
+		}
+
+		private static Color DepthInteriorityFallbackColor(string kind)
+		{
+			return NormalizeDepthKind(kind) switch
+			{
+				"analysis" => new Color(0.56f, 0.42f, 0.96f, 0.92f),
+				"concern" or "tom" => new Color(0.72f, 0.42f, 0.96f, 0.92f),
+				"emotion" or "emotional" => new Color(0.98f, 0.36f, 0.58f, 0.94f),
+				"future" or "plan" => new Color(0.98f, 0.60f, 0.28f, 0.92f),
+				"guard" or "restraint" => new Color(0.34f, 0.76f, 0.58f, 0.92f),
+				"memory" or "memory_echo" => new Color(0.28f, 0.70f, 0.88f, 0.92f),
+				"technical" or "tech" or "architecture" or "repair" => new Color(0.64f, 0.50f, 0.96f, 0.92f),
+				_ => new Color(0.96f, 0.34f, 0.62f, 0.92f),
+			};
+		}
+
+		private void ApplyLegacyDepthAffect(JsonElement root)
 	{
 		if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
 			return;
@@ -1052,9 +1506,9 @@ public partial class UdpListener : Node2D
 		};
 	}
 
-	private static string LocalizeDepthAffectSubtext(string raw)
-	{
-		return NormalizeDepthPhrase(raw) switch
+		private static string LocalizeDepthAffectSubtext(string raw)
+		{
+			return NormalizeDepthPhrase(raw) switch
 		{
 			"listening closely" => "Thoải mái, sẵn sàng trò chuyện.",
 			"listening quietly" => "Đang lắng nghe và suy nghĩ cùng Ngài.",
@@ -1064,11 +1518,17 @@ public partial class UdpListener : Node2D
 			"holding a little tension while listening" => "Vẫn đang lắng nghe, nhưng có chút căng nhẹ.",
 			"fallback" => "Đang cập nhật cảm xúc.",
 			_ => HumanizeDepthPhrase(raw),
-		};
-	}
+			};
+		}
 
-	private static string NormalizeDepthPhrase(string raw) =>
-		string.IsNullOrWhiteSpace(raw) ? "" : raw.Trim().Replace("_", " ").ToLowerInvariant();
+		private static string NormalizeDepthKind(string raw) =>
+			// Kind là contract kỹ thuật (`memory_echo`, `technical`, ...), nên giữ
+			// dạng snake_case để map icon ổn định. Khác với phrase UI, chỗ này không
+			// humanize chữ mà chỉ dọn khoảng trắng/dấu gạch.
+			NormalizeDepthPhrase(raw).Replace(" ", "_").Replace("-", "_");
+
+		private static string NormalizeDepthPhrase(string raw) =>
+			string.IsNullOrWhiteSpace(raw) ? "" : raw.Trim().Replace("_", " ").ToLowerInvariant();
 
 	private static string HumanizeDepthPhrase(string raw)
 	{

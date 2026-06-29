@@ -127,16 +127,29 @@ public partial class UdpListener : Node2D
 		if (_anchorPanel == null)
 			return;
 
-		_anchorPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		var bgTex = ResourceLoader.Exists("res://asset/Resource/BG_anchor.png") ? GD.Load<Texture2D>("res://asset/Resource/BG_anchor.png") : null;
+		if (bgTex != null)
 		{
-			BgColor = new Color(1f, 0.965f, 0.982f, 0.99f),
-			BorderColor = new Color(0.96f, 0.72f, 0.82f, 1f),
-			BorderWidthLeft = 3, BorderWidthTop = 3, BorderWidthRight = 3, BorderWidthBottom = 3,
-			CornerRadiusTopLeft = 30, CornerRadiusTopRight = 30,
-			CornerRadiusBottomRight = 30, CornerRadiusBottomLeft = 30,
-			ShadowColor = new Color(0.85f, 0.45f, 0.62f, 0.25f),
-			ShadowSize = 10,
-		});
+			_anchorPanel.AddThemeStyleboxOverride("panel", new StyleBoxTexture
+			{
+				Texture = bgTex,
+				AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
+				AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
+			});
+		}
+		else
+		{
+			_anchorPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+			{
+				BgColor = new Color(1f, 0.965f, 0.982f, 0.99f),
+				BorderColor = new Color(0.96f, 0.72f, 0.82f, 1f),
+				BorderWidthLeft = 3, BorderWidthTop = 3, BorderWidthRight = 3, BorderWidthBottom = 3,
+				CornerRadiusTopLeft = 30, CornerRadiusTopRight = 30,
+				CornerRadiusBottomRight = 30, CornerRadiusBottomLeft = 30,
+				ShadowColor = new Color(0.85f, 0.45f, 0.62f, 0.25f),
+				ShadowSize = 10,
+			});
+		}
 
 		var root = new VBoxContainer();
 		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
