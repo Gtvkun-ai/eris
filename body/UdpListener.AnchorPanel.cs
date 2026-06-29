@@ -222,23 +222,23 @@ public partial class UdpListener : Node2D
 		leftCol.AddChild(_anchorContent);
 
 		// Rail Tác Giả (cố định)
-		var railPanel = new PanelContainer { CustomMinimumSize = new Vector2(154f, 0f) };
+		var railPanel = new PanelContainer { CustomMinimumSize = new Vector2(231f, 0f) };
 		var railTex = ResourceLoader.Exists("res://asset/Resource/Anchor_TacGia.png") ? GD.Load<Texture2D>("res://asset/Resource/Anchor_TacGia.png") : null;
 		if (railTex != null)
 		{
 			railPanel.AddThemeStyleboxOverride("panel", new StyleBoxTexture
 			{
 				Texture = railTex,
-				TextureMarginLeft = 24f,
-				TextureMarginTop = 24f,
-				TextureMarginRight = 24f,
-				TextureMarginBottom = 24f,
+				TextureMarginLeft = 0f,
+				TextureMarginTop = 0f,
+				TextureMarginRight = 0f,
+				TextureMarginBottom = 0f,
 				AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
 				AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
-				ContentMarginLeft = 12f,
-				ContentMarginTop = 44f,
-				ContentMarginRight = 12f,
-				ContentMarginBottom = 48f,
+				ContentMarginLeft = 16f,
+				ContentMarginTop = 52f,
+				ContentMarginRight = 16f,
+				ContentMarginBottom = 60f,
 			});
 		}
 		else
@@ -871,12 +871,12 @@ public partial class UdpListener : Node2D
 		var tile = AnchorTextureCard(
 			texturePath, 
 			out VBox body, 
-			left: 14f, top: 76f, right: 14f, bottom: 8f,
-			texLeft: 32f, texTop: 32f, texRight: 32f, texBottom: 32f
+			left: 14f, top: 92f, right: 14f, bottom: 8f,
+			texLeft: 0f, texTop: 0f, texRight: 0f, texBottom: 0f
 		);
 		tile.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		tile.SizeFlagsStretchRatio = 1f;
-		tile.CustomMinimumSize = new Vector2(0f, 132f);
+		tile.CustomMinimumSize = new Vector2(0f, 148f);
 
 		var number = CreateUiLabel(value.ToString("0.00", CultureInfo.InvariantCulture), 22, accent);
 		number.HorizontalAlignment = HorizontalAlignment.Center;

@@ -25,6 +25,22 @@ public partial class UdpListener : Node2D
 		public string Time { get; set; } = "";
 	}
 
+	private sealed class DepthPriorityRowView
+	{
+		public Control Root { get; set; }
+		public Label IconLabel { get; set; }
+		public Label TitleLabel { get; set; }
+		public List<Panel> Segments { get; set; } = new();
+		public Label PercentLabel { get; set; }
+	}
+
+	private sealed class DepthPriorityItem
+	{
+		public string Key { get; set; } = "casual";
+		public string Label { get; set; } = "Small Talk / Casual";
+		public float Score { get; set; } = 0f;
+	}
+
 	private static readonly Vector2 DepthPanelMinSize = new(1497f, 988f);
 	private static readonly Vector2 DepthPanelArtworkSize = new(1497f, 988f);
 	private const float DepthPanelViewportMargin = 32f;
@@ -67,6 +83,9 @@ public partial class UdpListener : Node2D
 	private readonly Dictionary<string, Texture2D> _depthIconCache = new();
 	private Label _depthInteriorityFooterLabel;
 	private Label _depthInteriorityPageDotLabel;
+	private readonly List<DepthPriorityRowView> _depthPriorityRows = new();
+	private Label _depthPriorityFocusModeLabel;
+	private Label _depthPriorityFooterGlyphLabel;
 
 	private string _latestDepthJson = "";
 	private Font _depthFontRegular;
@@ -491,8 +510,112 @@ public partial class UdpListener : Node2D
 		};
 	}
 
-	private void BuildDepthPrioritiesFrame(Control parent) =>
-		AddDepthFrameImage(parent, DepthPrioritiesFramePath, SlotPriorities);
+	private void BuildDepthPrioritiesFrame(Control parent)
+	{
+		var root = CreateDepthFrameRoot(parent, "DepthPrioritiesFrame", SlotPriorities, DepthPrioritiesFramePath);
+		if (root == null)
+			return;
+
+		_depthPriorityRows.Clear();
+		for (int i = 0; i < 5; i++)
+		{
+			var row = CreateDepthPriorityRow(i);
+			root.AddChild(row.Root);
+			_depthPriorityRows.Add(row);
+		}
+
+		var focusLabel = CreateDepthTextLabel("focus mode:", 9, new Color(0.68f, 0.38f, 0.52f));
+		focusLabel.VerticalAlignment = VerticalAlignment.Center;
+		focusLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		PlaceBySlot(focusLabel, RectLTRB(0.055f, 0.855f, 0.255f, 0.925f));
+		root.AddChild(focusLabel);
+
+		_depthPriorityFocusModeLabel = CreateDepthTextLabel("attentive", 9, new Color(0.78f, 0.24f, 0.48f), bold: true);
+		_depthPriorityFocusModeLabel.VerticalAlignment = VerticalAlignment.Center;
+		_depthPriorityFocusModeLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+		_depthPriorityFocusModeLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(_depthPriorityFocusModeLabel, RectLTRB(0.255f, 0.855f, 0.540f, 0.925f));
+		root.AddChild(_depthPriorityFocusModeLabel);
+
+		_depthPriorityFooterGlyphLabel = CreateDepthTextLabel("✦  ♡  ✦", 12, new Color(0.96f, 0.42f, 0.66f, 0.70f), bold: true);
+		_depthPriorityFooterGlyphLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		_depthPriorityFooterGlyphLabel.VerticalAlignment = VerticalAlignment.Center;
+		PlaceBySlot(_depthPriorityFooterGlyphLabel, RectLTRB(0.48f, 0.850f, 0.72f, 0.935f));
+		root.AddChild(_depthPriorityFooterGlyphLabel);
+	}
+
+	private DepthPriorityRowView CreateDepthPriorityRow(int index)
+	{
+		// Không dùng icon asset: glyph nằm trong Label nên project chưa có icon vẫn chạy.
+		// Khi muốn thay bằng texture sau này, chỉ cần đổi hàm apply icon, không đổi contract.
+		float top = 0.205f + index * 0.125f;
+		float bottom = top + 0.085f;
+
+		var rowRoot = new Control
+		{
+			Name = $"DepthPriorityRow{index + 1}",
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		PlaceBySlot(rowRoot, RectLTRB(0.055f, top, 0.940f, bottom));
+
+		var icon = CreateDepthTextLabel("✦", 12, new Color(0.92f, 0.34f, 0.56f), bold: true);
+		icon.HorizontalAlignment = HorizontalAlignment.Center;
+		icon.VerticalAlignment = VerticalAlignment.Center;
+		icon.AutowrapMode = TextServer.AutowrapMode.Off;
+		PlaceBySlot(icon, RectLTRB(0.000f, 0.05f, 0.075f, 0.95f));
+		rowRoot.AddChild(icon);
+
+		var title = CreateDepthTextLabel("", 9, new Color(0.63f, 0.21f, 0.38f), bold: true);
+		title.VerticalAlignment = VerticalAlignment.Center;
+		title.AutowrapMode = TextServer.AutowrapMode.Off;
+		title.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		PlaceBySlot(title, RectLTRB(0.090f, 0.00f, 0.515f, 1.00f));
+		rowRoot.AddChild(title);
+
+		var bar = new HBoxContainer
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+			Alignment = BoxContainer.AlignmentMode.Begin,
+		};
+		PlaceBySlot(bar, RectLTRB(0.525f, 0.30f, 0.825f, 0.70f));
+		rowRoot.AddChild(bar);
+
+		var segments = new List<Panel>();
+		for (int i = 0; i < 16; i++)
+		{
+			var segment = new Panel
+			{
+				MouseFilter = Control.MouseFilterEnum.Ignore,
+				CustomMinimumSize = new Vector2(4f, 12f),
+			};
+			segment.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+			{
+				BgColor = new Color(1f, 0.82f, 0.90f, 0.20f),
+				CornerRadiusTopLeft = 1,
+				CornerRadiusTopRight = 1,
+				CornerRadiusBottomLeft = 1,
+				CornerRadiusBottomRight = 1,
+			});
+			bar.AddChild(segment);
+			segments.Add(segment);
+		}
+
+		var percent = CreateDepthTextLabel("0%", 9, new Color(0.72f, 0.36f, 0.52f), bold: true);
+		percent.HorizontalAlignment = HorizontalAlignment.Right;
+		percent.VerticalAlignment = VerticalAlignment.Center;
+		percent.AutowrapMode = TextServer.AutowrapMode.Off;
+		PlaceBySlot(percent, RectLTRB(0.845f, 0.00f, 1.000f, 1.00f));
+		rowRoot.AddChild(percent);
+
+		return new DepthPriorityRowView
+		{
+			Root = rowRoot,
+			IconLabel = icon,
+			TitleLabel = title,
+			Segments = segments,
+			PercentLabel = percent,
+		};
+	}
 
 	private void BuildDepthSignalLogFrame(Control parent) =>
 		AddDepthFrameImage(parent, DepthSignalLogFramePath, SlotSignalLog);
@@ -769,33 +892,34 @@ public partial class UdpListener : Node2D
 			return;
 
 		ApplyDepthAffectContent("Bình tĩnh", "Thoải mái, sẵn sàng trò chuyện.", 0.72f);
-			ApplyDepthTomContent(
-				score: 0f,
-				summary: "chưa đọc được gì đủ chắc.",
+		ApplyDepthTomContent(
+			score: 0f,
+			summary: "chưa đọc được gì đủ chắc.",
 			confidence: 0f,
 			thickness: 0f,
 			attachment: 0f,
 			beliefCount: 0,
 			status: "đang chờ dữ liệu",
-				topBelief: "belief: chưa có");
+			topBelief: "belief: chưa có");
 
-			ApplyDepthSelfContinuityContent(0f, 0f, 0f, "chưa rõ");
-			ApplyDepthInteriorityEmpty("✦");
+		ApplyDepthSelfContinuityContent(0f, 0f, 0f, "chưa rõ");
+		ApplyDepthPriorityDefaults("attentive");
 
-			if (!string.IsNullOrWhiteSpace(_latestDepthV2Json))
-			{
+		if (!string.IsNullOrWhiteSpace(_latestDepthV2Json))
+		{
 			try
 			{
 				using var doc = JsonDocument.Parse(_latestDepthV2Json);
 				if (doc.RootElement.ValueKind == JsonValueKind.Object)
-					{
-						ApplyDepthV2Affect(doc.RootElement);
-						ApplyDepthV2Tom(doc.RootElement);
-						ApplyDepthV2SelfContinuity(doc.RootElement);
-						ApplyDepthV2Interiority(doc.RootElement);
-						return;
-					}
+				{
+					ApplyDepthV2Affect(doc.RootElement);
+					ApplyDepthV2Tom(doc.RootElement);
+					ApplyDepthV2SelfContinuity(doc.RootElement);
+					ApplyDepthV2Interiority(doc.RootElement);
+					ApplyDepthV2Priorities(doc.RootElement);
+					return;
 				}
+			}
 			catch (Exception ex)
 			{
 				GD.Print($"[depth_v2] refresh fail: {ex.Message}");
@@ -808,12 +932,13 @@ public partial class UdpListener : Node2D
 			{
 				using var doc = JsonDocument.Parse(_latestDepthJson);
 				if (doc.RootElement.ValueKind == JsonValueKind.Object)
-					{
-						ApplyLegacyDepthAffect(doc.RootElement);
-						ApplyLegacyDepthTom(doc.RootElement);
-						ApplyLegacyDepthInteriority(doc.RootElement);
-					}
+				{
+					ApplyLegacyDepthAffect(doc.RootElement);
+					ApplyLegacyDepthTom(doc.RootElement);
+					ApplyLegacyDepthInteriority(doc.RootElement);
+					ApplyLegacyDepthPriorities(doc.RootElement);
 				}
+			}
 			catch (Exception ex)
 			{
 				GD.Print($"[depth] affect refresh fail: {ex.Message}");
@@ -1280,6 +1405,218 @@ public partial class UdpListener : Node2D
 				"memory" or "memory_echo" => new Color(0.28f, 0.70f, 0.88f, 0.92f),
 				"technical" or "tech" or "architecture" or "repair" => new Color(0.64f, 0.50f, 0.96f, 0.92f),
 				_ => new Color(0.96f, 0.34f, 0.62f, 0.92f),
+			};
+		}
+
+		private void ApplyDepthV2Priorities(JsonElement root)
+		{
+			var items = DefaultDepthPriorityItems();
+			if (root.TryGetProperty("priorities", out var priorities) && priorities.ValueKind == JsonValueKind.Array)
+			{
+				var live = new List<DepthPriorityItem>();
+				foreach (var raw in priorities.EnumerateArray())
+				{
+					if (raw.ValueKind != JsonValueKind.Object)
+						continue;
+					string key = NormalizeDepthKind(JsonText(raw, "key", ""));
+					string label = JsonText(raw, "label", DepthPriorityDefaultLabel(key));
+					float score = NormalizeDepthPriorityScore(JsonFloat(raw, "score", 0f));
+					AddDepthPriorityItem(live, key, label, score);
+				}
+
+				// Payload thường đã sort theo score. Giữ thứ tự đó để panel phản ánh
+				// "ưu tiên hiện tại" thật, rồi bù các loại còn thiếu để layout đủ 5 dòng.
+				if (live.Count > 0)
+				{
+					foreach (var fallback in DefaultDepthPriorityItems())
+						AddDepthPriorityItem(live, fallback.Key, fallback.Label, fallback.Score);
+					items = live;
+				}
+			}
+
+			string focusMode = DepthV2FocusMode(root);
+			ApplyDepthPriorityRows(items, focusMode);
+		}
+
+		private void ApplyLegacyDepthPriorities(JsonElement root)
+		{
+			if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
+				return;
+			if (!depth.TryGetProperty("priorities", out var priorities) || priorities.ValueKind != JsonValueKind.Array)
+				return;
+
+			var items = new List<DepthPriorityItem>();
+			foreach (var raw in priorities.EnumerateArray())
+			{
+				if (raw.ValueKind != JsonValueKind.Object)
+					continue;
+				string key = NormalizeDepthKind(JsonText(raw, "key", JsonText(raw, "label", "casual")));
+				AddDepthPriorityItem(
+					items,
+					key,
+					JsonText(raw, "label", DepthPriorityDefaultLabel(key)),
+					NormalizeDepthPriorityScore(JsonFloat(raw, "score", 0f)));
+			}
+			foreach (var fallback in DefaultDepthPriorityItems())
+				AddDepthPriorityItem(items, fallback.Key, fallback.Label, fallback.Score);
+			ApplyDepthPriorityRows(items, "legacy");
+		}
+
+		private void ApplyDepthPriorityDefaults(string focusMode)
+		{
+			ApplyDepthPriorityRows(DefaultDepthPriorityItems(), focusMode);
+		}
+
+		private void ApplyDepthPriorityRows(List<DepthPriorityItem> items, string focusMode)
+		{
+			for (int i = 0; i < _depthPriorityRows.Count; i++)
+			{
+				var row = _depthPriorityRows[i];
+				var item = i < items.Count ? items[i] : null;
+				bool visible = item != null;
+				row.Root.Visible = visible;
+				if (!visible)
+					continue;
+
+				string key = NormalizeDepthKind(item.Key);
+				Color color = DepthPriorityColor(key);
+				UpdateDepthLabelText(row.IconLabel, DepthPriorityGlyph(key));
+				row.IconLabel.AddThemeColorOverride("font_color", color);
+				UpdateDepthLabelText(row.TitleLabel, DepthPriorityDisplayLabel(key, item.Label));
+				ApplyDepthPrioritySegments(row, NormalizeDepthPriorityScore(item.Score), color);
+				UpdateDepthLabelText(row.PercentLabel, $"{Mathf.RoundToInt(NormalizeDepthPriorityScore(item.Score) * 100f)}%");
+			}
+
+			UpdateDepthLabelText(_depthPriorityFocusModeLabel, string.IsNullOrWhiteSpace(focusMode) ? "attentive" : NormalizeDepthKind(focusMode));
+			UpdateDepthLabelText(_depthPriorityFooterGlyphLabel, "✦   ♡   ✦");
+		}
+
+		private void ApplyDepthPrioritySegments(DepthPriorityRowView row, float score, Color color)
+		{
+			float safeScore = NormalizeDepthPriorityScore(score);
+			int active = safeScore <= 0f ? 0 : Mathf.Clamp(Mathf.CeilToInt(safeScore * row.Segments.Count), 1, row.Segments.Count);
+			for (int i = 0; i < row.Segments.Count; i++)
+			{
+				bool filled = i < active;
+				row.Segments[i].AddThemeStyleboxOverride("panel", new StyleBoxFlat
+				{
+					BgColor = filled ? color : new Color(1f, 0.82f, 0.90f, 0.22f),
+					CornerRadiusTopLeft = 1,
+					CornerRadiusTopRight = 1,
+					CornerRadiusBottomLeft = 1,
+					CornerRadiusBottomRight = 1,
+				});
+			}
+		}
+
+		private static List<DepthPriorityItem> DefaultDepthPriorityItems() => new()
+		{
+			new DepthPriorityItem { Key = "technical", Label = "Architecture / Technical", Score = 0f },
+			new DepthPriorityItem { Key = "humor", Label = "Humor / Playfulness", Score = 0f },
+			new DepthPriorityItem { Key = "repair", Label = "Repair / Help", Score = 0f },
+			new DepthPriorityItem { Key = "emotional", Label = "Emotional Reading", Score = 0f },
+			new DepthPriorityItem { Key = "casual", Label = "Small Talk / Casual", Score = 0f },
+		};
+
+		private static void AddDepthPriorityItem(List<DepthPriorityItem> items, string key, string label, float score)
+		{
+			string safeKey = NormalizeDepthPriorityKey(key);
+			foreach (var existing in items)
+			{
+				if (NormalizeDepthPriorityKey(existing.Key) == safeKey)
+					return;
+			}
+
+			items.Add(new DepthPriorityItem
+			{
+				Key = safeKey,
+				Label = string.IsNullOrWhiteSpace(label) ? DepthPriorityDefaultLabel(safeKey) : TrimDepthUiText(label, 40),
+				Score = NormalizeDepthPriorityScore(score),
+			});
+		}
+
+		private static string DepthV2FocusMode(JsonElement root)
+		{
+			if (root.TryGetProperty("status", out var status)
+				&& status.ValueKind == JsonValueKind.Object)
+			{
+				string value = JsonText(status, "focus_mode", "");
+				if (!string.IsNullOrWhiteSpace(value))
+					return value;
+			}
+
+			if (root.TryGetProperty("context", out var context)
+				&& context.ValueKind == JsonValueKind.Object)
+				return JsonText(context, "focus_mode", "attentive");
+
+			return "attentive";
+		}
+
+		private static float NormalizeDepthPriorityScore(float score)
+		{
+			if (score > 1f)
+				score /= 100f;
+			return Mathf.Clamp(score, 0f, 1f);
+		}
+
+		private static string NormalizeDepthPriorityKey(string raw)
+		{
+			string key = NormalizeDepthKind(raw);
+			if (key.Contains("architecture") || key.Contains("technical") || key.Contains("code") || key.Contains("debug"))
+				return "technical";
+			if (key.Contains("humor") || key.Contains("play"))
+				return "humor";
+			if (key.Contains("repair") || key.Contains("help") || key.Contains("fix"))
+				return "repair";
+			if (key.Contains("emotion") || key.Contains("feeling"))
+				return "emotional";
+			if (key.Contains("casual") || key.Contains("small"))
+				return "casual";
+			return string.IsNullOrWhiteSpace(key) ? "casual" : key;
+		}
+
+		private static string DepthPriorityDisplayLabel(string key, string rawLabel)
+		{
+			string label = TrimDepthUiText(rawLabel, 38);
+			return string.IsNullOrWhiteSpace(label) ? DepthPriorityDefaultLabel(key) : label;
+		}
+
+		private static string DepthPriorityDefaultLabel(string key)
+		{
+			return NormalizeDepthPriorityKey(key) switch
+			{
+				"technical" => "Architecture / Technical",
+				"humor" => "Humor / Playfulness",
+				"repair" => "Repair / Help",
+				"emotional" => "Emotional Reading",
+				"casual" => "Small Talk / Casual",
+				_ => HumanizeDepthPhrase(key),
+			};
+		}
+
+		private static string DepthPriorityGlyph(string key)
+		{
+			return NormalizeDepthPriorityKey(key) switch
+			{
+				"technical" => "♜",
+				"humor" => "☺",
+				"repair" => "⚒",
+				"emotional" => "♥",
+				"casual" => "▱",
+				_ => "✦",
+			};
+		}
+
+		private static Color DepthPriorityColor(string key)
+		{
+			return NormalizeDepthPriorityKey(key) switch
+			{
+				"technical" => new Color(0.98f, 0.34f, 0.62f, 0.96f),
+				"humor" => new Color(1.00f, 0.58f, 0.42f, 0.96f),
+				"repair" => new Color(0.73f, 0.42f, 0.96f, 0.94f),
+				"emotional" => new Color(1.00f, 0.62f, 0.42f, 0.94f),
+				"casual" => new Color(0.42f, 0.76f, 0.68f, 0.94f),
+				_ => new Color(0.92f, 0.34f, 0.56f, 0.94f),
 			};
 		}
 
