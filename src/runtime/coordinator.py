@@ -1531,7 +1531,6 @@ class RuntimeCoordinator(
         if private_life_digest:
             self.private_life_digest = private_life_digest
         payload["emotion_debug"] = self._build_emotion_debug_payload()
-        payload["depth"] = self._build_depth_block()
         payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
         if str(channel or "").strip().lower() == "chat":
             # Chỉ dùng nội bộ stage: nhận ra user đang yêu cầu ERIS diễn một hành
@@ -1883,6 +1882,27 @@ class RuntimeCoordinator(
             "prosody_style": str(getattr(stage_frame, "prosody_style", "") or ""),
         }
         self.last_tts_event = record
+        if event_type == "audio_start":
+            self.logger.info(
+                "[TTS:event] audio_start turn=%s segment=%s text=%r",
+                record["turn_id"],
+                record["segment_id"],
+                str(getattr(event, "text", "") or "")[:120],
+            )
+        elif event_type == "audio_done":
+            self.logger.info(
+                "[TTS:event] audio_done turn=%s segment=%s",
+                record["turn_id"],
+                record["segment_id"],
+            )
+        elif event_type == "audio_failed":
+            self.logger.warning(
+                "[TTS:event] audio_failed turn=%s segment=%s error=%s reason=%s",
+                record["turn_id"],
+                record["segment_id"],
+                record["error"] or "<none>",
+                record["reason"] or "<none>",
+            )
         try:
             events = getattr(self, "tts_event_log", None)
             if not isinstance(events, list):
@@ -4327,11 +4347,14 @@ class RuntimeCoordinator(
             # Câu hỏi KIẾN THỨC THẾ GIỚI → 2 nhịp: lượt này nói "đợi em tra chút",
             # thread nền đi hỏi gia sư Gemini rồi gửi đáp án sau. Chỉ khi có đường
             # request_tutor_answer (Master_Switch bật) và qua throttle.
-            if self._looks_like_knowledge_question(low) and callable(getattr(self, "request_tutor_answer", None)):
+            if intent == "world_knowledge" and callable(getattr(self, "request_tutor_answer", None)):
                 if self._research_can_start():
                     self._research_pending = True
                     self._research_topic = text
-                    self._fire_research_followup(text, context="Câu hỏi kiến thức Ngài vừa hỏi")
+                    self._fire_research_followup(
+                        text,
+                        context="Câu hỏi kiến thức đã được intent classifier xác nhận",
+                    )
                     return
 
             # Mặc định: tự học qua Gemini (âm thầm, throttle). Eris vẫn trả lời tự nhiên.
@@ -4382,7 +4405,7 @@ class RuntimeCoordinator(
     )
 
     def _looks_like_knowledge_question(self, low: str) -> bool:
-        """True nếu câu trông như hỏi kiến thức thế giới (đáng đi tra gia sư)."""
+        """Legacy diagnostic only. Tutor user-facing phải gate bằng intent world_knowledge."""
 
         low = str(low or "")
         return any(marker in low for marker in self._KNOWLEDGE_QUESTION_MARKERS)
@@ -5507,11 +5530,31 @@ class RuntimeCoordinator(
 
             console = DebugConsole(self)
             self._debug_console = console
+        ok = True
+        result = ""
         try:
             result = console.execute(command)
             self.logger.info("[debug_command] %s -> %s", command, result)
         except Exception as exc:  # pragma: no cover - debug surface không được crash runtime
+            ok = False
+            result = str(exc)
             self.logger.warning("[debug_command] '%s' lỗi: %s", command, exc)
+        try:
+            # Gửi ack im lặng để panel DEBUG biết lệnh vừa chạy xong.
+            self.transport.send_json(
+                {
+                    "parse_mode": "debug_command_ack",
+                    "should_speak": False,
+                    "animation": "",
+                    "debug_command_ack": {
+                        "command": command[:240],
+                        "ok": ok,
+                        "result": str(result or "")[:500],
+                    },
+                }
+            )
+        except Exception as exc:  # pragma: no cover - ack debug không được làm rơi runtime
+            self.logger.debug("[debug_command] không gửi được ack: %s", exc)
 
     def _handle_anchor_control(self, msg: dict) -> None:
         """Tác_Giả bật/tắt trục tối từ panel Godot (R5.5, R10.4).
@@ -5566,59 +5609,6 @@ class RuntimeCoordinator(
             self.logger.info("[depth_control] %s -> %s", flag, value)
         except Exception as exc:
             self.logger.warning("[depth_control] %s failed: %s", flag, exc)
-
-    def _build_depth_block(self) -> dict[str, object]:
-        """Block 'depth' cho panel Godot: trạng thái cờ + tín hiệu chiều-sâu sống.
-
-        Đọc-only, JSON-safe, không bao giờ ném. Tín hiệu nhanh lấy từ cache đã có
-        (_last_expression_gate, _last_tom_advisory). Phần "giàu" (N2 phát triển, dòng
-        nội tâm, signal log, context) lấy từ ``build_panel_state`` — vốn đọc các file
-        đã persist bởi inner-diary / private-concerns (Gemma đã điền dần theo thời gian).
-        Gọi rất thường xuyên nên cache panel_state ~1s để khỏi đọc đĩa mỗi payload.
-        """
-        try:
-            from cortex.depth_flags import all_states
-
-            flags = all_states()
-        except Exception:
-            flags = {}
-        gate = getattr(self, "_last_expression_gate", None)
-        if not isinstance(gate, dict):
-            gate = {}
-
-        def _f(key: str) -> float:
-            try:
-                return round(float(gate.get(key, 0.0) or 0.0), 2)
-            except (TypeError, ValueError):
-                return 0.0
-
-        block: dict[str, object] = {
-            "flags": flags,
-            "expression": {
-                "want": _f("want_to_say"),
-                "suppress": _f("suppression_pressure"),
-                "allowed": _f("allowed_expression"),
-                "stance": str(gate.get("stance", "") or ""),
-            },
-            "tom_read": str(getattr(self, "_last_tom_advisory", "") or ""),
-        }
-
-        # Phần giàu (panel_state) — cache theo thời gian để không đọc đĩa mỗi payload.
-        try:
-            rich = self._cached_panel_state()
-            if isinstance(rich, dict):
-                for key in ("identity", "affect", "n2", "interiority", "signal_log", "context"):
-                    if key in rich:
-                        block[key] = rich[key]
-                # tom_read giàu (có confidence) thắng chuỗi thô nếu sống.
-                tom = rich.get("tom_read")
-                if isinstance(tom, dict) and tom.get("live"):
-                    block["tom_read_rich"] = tom
-        except Exception:
-            pass
-
-        self._maybe_log_depth_signals(block)
-        return block
 
     def _build_depth_v2_block(self, *, private_mind_digest: dict[str, object] | None = None) -> dict[str, object]:
         """Compact v2 contract for the replacement depth panel.
@@ -5685,30 +5675,6 @@ class RuntimeCoordinator(
             state = {}
         self._panel_state_cache = (now, state)
         return state
-
-    def _maybe_log_depth_signals(self, block: dict[str, object], *, throttle_seconds: float = 30.0) -> None:
-        """Append tín hiệu chiều-sâu ra ``logs/depth_signals.jsonl`` để phát triển theo thời gian.
-
-        Throttled, atomic-ish append, không bao giờ ném. Tắt bằng ERIS_DEPTH_LOG=0.
-        """
-        try:
-            if str(os.getenv("ERIS_DEPTH_LOG", "1")).strip().lower() not in {"1", "true", "yes", "on", "y"}:
-                return
-            now = time.time()
-            last = getattr(self, "_depth_log_last_at", 0.0)
-            if (now - float(last or 0.0)) < throttle_seconds:
-                return
-            import json as _json
-
-            log_dir = os.path.join(os.getenv("ERIS_LOG_DIR", "logs"))
-            os.makedirs(log_dir, exist_ok=True)
-            record = {"ts": round(now, 3), **block}
-            line = _json.dumps(record, ensure_ascii=False)
-            with open(os.path.join(log_dir, "depth_signals.jsonl"), "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
-            self._depth_log_last_at = now
-        except Exception:
-            pass
 
     def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
         self.fe_style_memory = self.fe_renderer.remember_style(

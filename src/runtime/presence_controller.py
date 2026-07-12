@@ -2548,6 +2548,24 @@ class PresenceControllerMixin:
         if no_fallback_mode_enabled() and not force_llm:
             return "", "no_fallback_block"
 
+        # Empty-draft circuit theo kind. Một model vừa trả rỗng không cần được
+        # hỏi lại sau vài giây bằng gần như cùng prompt.
+        now_mono = time.monotonic()
+        empty_until = getattr(self, "_micro_empty_until", None)
+        if not isinstance(empty_until, dict):
+            empty_until = {}
+            self._micro_empty_until = empty_until
+        empty_streak = getattr(self, "_micro_empty_streak", None)
+        if not isinstance(empty_streak, dict):
+            empty_streak = {}
+            self._micro_empty_streak = empty_streak
+        cooldown_until = float(empty_until.get(kind, 0.0) or 0.0)
+        strong_new_signal = bool(float(signal_score or 0.0) >= 0.82 and tuple(seeds or ()))
+        if cooldown_until > now_mono and not strong_new_signal:
+            if fallback_safe:
+                return fallback_safe, "local_during_empty_cooldown"
+            return "", "empty_draft_cooldown"
+
         generator = self._micro_presence_generator()
         try:
             draft = generator(
@@ -2582,41 +2600,42 @@ class PresenceControllerMixin:
             safe,
             getattr(self, "_last_micro_sanitize_reason", "") or "ok",
         )
-        if not safe and force_llm:
-            # Lần thử đầu có thể bị prompt cũ kéo về {"text":""}. Thử lại bằng LLM,
-            # không dùng câu mẫu local, để vẫn giữ no-fallback đúng nghĩa: không hardcode lời thoại.
-            retry_context = dict(micro_context or {})
-            retry_context["surface_contract"] = "must_return_tiny_text_retry"
-            retry_context["micro_presence_flags"] = str(retry_context.get("micro_presence_flags", "")) + "; retry_after_empty=true"
+        if not safe:
+            streak = int(empty_streak.get(kind, 0) or 0) + 1
+            empty_streak[kind] = streak
             try:
-                draft = generator(
-                    kind=kind,
-                    fallback_text="",
-                    avoid_text=self.last_text,
-                    focus_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
-                    focus_summary=str(getattr(snapshot, "focus_summary", "") or ""),
-                    idle_seconds=float(getattr(snapshot, "idle_seconds", 0.0) or 0.0),
-                    seeds=tuple(seeds or ()),
-                    micro_context=retry_context,
-                    signal_score=max(float(signal_score or 0.0), 0.62),
-                    force_llm=True,
-                    require_non_empty=True,
-                )
-                safe = self._sanitize_micro_presence_llm_text(
-                    draft,
-                    kind=kind,
-                    fallback_text="",
-                )
-                self.logger.info(
-                    "[micro_presence_draft] stage=retry kind=%s raw=%r sanitized=%r reason=%s",
-                    kind,
-                    str(draft or "")[:160],
-                    safe,
-                    getattr(self, "_last_micro_sanitize_reason", "") or "ok",
-                )
-            except Exception as exc:
-                self.logger.warning("Micro-presence LLM retry failed: %s", exc)
-                safe = ""
+                base_cooldown = float(os.environ.get("ERIS_MICRO_EMPTY_COOLDOWN_S", "120"))
+            except ValueError:
+                base_cooldown = 120.0
+            cooldown_s = min(300.0, max(30.0, base_cooldown * min(streak, 2)))
+            empty_until[kind] = time.monotonic() + cooldown_s
+            self.logger.info(
+                "[micro_presence_draft] empty cooldown kind=%s streak=%d cooldown=%.0fs",
+                kind, streak, cooldown_s,
+            )
+
+            # Retry sau empty mặc định tắt. Có thể bật tạm để debug, nhưng chỉ
+            # cho strong signal và vẫn không vượt một retry.
+            retry_enabled = os.environ.get("ERIS_MICRO_EMPTY_RETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
+            if force_llm and retry_enabled and strong_new_signal:
+                retry_context = dict(micro_context or {})
+                retry_context["surface_contract"] = "must_return_tiny_text_retry"
+                try:
+                    draft = generator(
+                        kind=kind, fallback_text="", avoid_text=self.last_text,
+                        focus_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
+                        focus_summary=str(getattr(snapshot, "focus_summary", "") or ""),
+                        idle_seconds=float(getattr(snapshot, "idle_seconds", 0.0) or 0.0),
+                        seeds=tuple(seeds or ()), micro_context=retry_context,
+                        signal_score=float(signal_score or 0.0), force_llm=True, require_non_empty=True,
+                    )
+                    safe = self._sanitize_micro_presence_llm_text(draft, kind=kind, fallback_text="")
+                except Exception as exc:
+                    self.logger.warning("Micro-presence LLM retry failed: %s", exc)
+                    safe = ""
+        if safe:
+            empty_streak.pop(kind, None)
+            empty_until.pop(kind, None)
         if not safe and fallback_safe:
             return fallback_safe, "local_after_llm_decline"
         if not safe:

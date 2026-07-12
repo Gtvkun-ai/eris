@@ -724,6 +724,52 @@ class FeRenderer:
             return "social_watch" if ti_mode == "social_watch" else "ordinary_dialogue"
         return "ordinary_dialogue"
 
+    @staticmethod
+    def _is_world_knowledge_question(user_text: str) -> bool:
+        """Nhận diện câu hỏi kiến thức, loại trừ self/relationship và lệnh thao tác.
+
+        Intent này là cổng duy nhất cho Tutor user-facing. Keyword chỉ tạo intent
+        ở đây; Tutor không tự quét chuỗi lần thứ hai.
+        """
+
+        normalized = _normalize_text(str(user_text or "").lower())
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        if not normalized:
+            return False
+
+        self_identity = (
+            "ban la ai", "ban la gi", "ban la cai gi", "may la ai", "may la gi",
+            "eris la ai", "eris la gi", "toi la ai", "toi la gi",
+            "ban co cam xuc", "eris co cam xuc", "ban nghi gi ve toi",
+        )
+        if any(pattern in normalized for pattern in self_identity):
+            return False
+
+        action_commands = (
+            "sua ", "fix ", "viet ", "tao ", "chay ", "kiem tra ", "debug ",
+            "mo ", "xoa ", "doi ", "them ", "lam cho ",
+        )
+        if any(normalized.startswith(command) for command in action_commands):
+            return False
+
+        explicit_tutor = (
+            "hoi gemini", "hoi su phu", "nho gemini", "keu gemini", "tra gemini",
+        )
+        if any(marker in normalized for marker in explicit_tutor):
+            return True
+
+        knowledge_shapes = (
+            " la gi", " la ai", " la con gi", " la cai gi", " la chat gi",
+            " la nuoc nao", " la benh gi", " la mon gi", " la ngon ngu gi",
+            "nghia la gi", "viet tat cua", "tai sao", "vi sao", "do dau",
+            "nguyen nhan", "o dau", "khi nao", "nam nao", "the ky",
+            "ai phat minh", "ai sang", "ai la nguoi", "khac nhau", "khac gi",
+            "so voi", "co tac dung gi", "hoat dong nhu the nao",
+            "hoat dong ra sao", "dinh nghia",
+        )
+        padded = f" {normalized} "
+        return any(shape in padded for shape in knowledge_shapes)
+
     def _infer_chat_intent(
         self,
         *,
@@ -739,6 +785,8 @@ class FeRenderer:
         should_raise_guard = bool(getattr(ni_report, "should_raise_guard", False))
         window_kind = str(getattr(snapshot, "active_window_kind", "") or "")
 
+        if self._is_world_knowledge_question(user_text):
+            return "world_knowledge"
         if ti_mode == "chat_code" or affect.technicality >= 0.62:
             return "technical_support"
         if affect.perceived_rejection >= 0.65 and affect.attachment >= 0.45:

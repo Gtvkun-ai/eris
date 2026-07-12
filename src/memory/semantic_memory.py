@@ -121,19 +121,7 @@ def clamp01(value: Any, default: float = 0.0) -> float:
     return max(0.0, min(1.0, number))
 
 
-def atomic_write_json(path: str, payload: Any) -> None:
-    """Ghi JSON an toàn hơn kiểu mở file rồi cầu nguyện.
-
-    Ghi ra file tạm rồi os.replace để giảm rủi ro hỏng memory nếu runtime chết giữa lúc write.
-    """
-
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    os.makedirs(directory, exist_ok=True)
-    temp_path = os.path.join(directory, f".{os.path.basename(path)}.{os.getpid()}.{int(time.time()*1000)}.tmp")
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-    os.replace(temp_path, path)
+from .json_store_io import atomic_write_json
 
 
 def strip_accents(text: str) -> str:

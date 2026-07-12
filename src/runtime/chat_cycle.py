@@ -43,6 +43,12 @@ class ChatCycleMixin:
     def _enter_chat_cycle(self) -> None:
         self._chat_last_activity_at = time.time()
         if not self.chat_mode:
+            cancel_generation = getattr(getattr(self, "llm_service", None), "cancel_pending_requests", None)
+            if callable(cancel_generation):
+                try:
+                    cancel_generation(reason="enter_chat_mode")
+                except Exception as exc:
+                    self.logger.debug("LLM cooperative cancel failed: %s", exc)
             self.chat_mode = True
             self.chat_ni_state = NiStateMachine()
             self.repeated_user_count = 0

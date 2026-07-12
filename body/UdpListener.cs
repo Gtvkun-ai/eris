@@ -67,7 +67,6 @@ public partial class UdpListener : Node2D
 	private int _facingDir = -1;      
 	private bool _isWalking = false;
 	private string _currentAction = "stand";
-	private float _gravity = 980f; // Gia tốc trọng trường tiêu chuẩn
 	private float _velocityY = 0f;
 	private bool _isFalling = false;
 	private Vector2 _spriteHalfSize; // Lấy từ CollisionShape2D trong _Ready()
@@ -122,7 +121,6 @@ public partial class UdpListener : Node2D
 	private Texture2D _chatFrameTexture;
 	private Texture2D _chatSubmitTexture;
 	private Texture2D _chatCloseTexture;
-	private Texture2D _privateMindFrameTexture;
 	private Texture2D _privateMindScrollCapTexture;
 	private Texture2D _privateMindScrollTrackTexture;
 	private Texture2D _privateMindScrollFillTexture;
@@ -133,9 +131,10 @@ public partial class UdpListener : Node2D
 	private TextureRect _privateMindScrollTrackRect;
 	private TextureRect _privateMindScrollFillRect;
 	private OptionButton _modeDropdown;
-	private bool _emotionSwitchEnabled = true;
+	private bool _showContextHints = true; // Switch Case: chỉ bật/tắt gợi ý UI, không gửi lệnh giả xuống backend.
 	private LineEdit _debugCommandInput;   // ô nhập lệnh debug
 	private Label _debugCommandStatus;     // báo lệnh debug vừa gửi
+	private Label _debugCommandHintLabel;  // dòng gợi ý cú pháp, chịu điều khiển bởi Switch Case
 	private LineEdit _chatInput;
 	private PacketPeerUdp _chatSend = new PacketPeerUdp();
 	// Tự ẩn khung chat sau khi Ngài ngừng tương tác, để màn hình không bị panel
@@ -231,12 +230,6 @@ public partial class UdpListener : Node2D
 		"air", "shime", "idle",
 	};
 
-	// Các animation có âm thanh lặp lại liên tục
-	private static readonly HashSet<string> _loopingSoundAnims = new()
-	{
-		"stand_walk", "sleep", "hop", "climb",
-	};
-
 	// Animation -> danh sách sound (tên ngẫu nhiên, sẽ rename sau)
 	private static readonly Dictionary<string, string[]> _soundMap = new()
 	{
@@ -290,6 +283,7 @@ public partial class UdpListener : Node2D
 	public override void _Ready()
 	{
 		RunLogger.Initialize();
+		LoadSettingsState();
 		ApplyGlobalUiFontTheme();
 		ConfigureDesktopOverlayWindow();
 		_udp.Bind(_port);
@@ -442,11 +436,8 @@ public partial class UdpListener : Node2D
 		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.AlwaysOnTop, KeepWindowAlwaysOnTop);
 		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.Borderless, UseBorderlessWindow);
 
-		if (UseTransparentWindow)
-		{
-			DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.Transparent, true);
-			GetViewport().TransparentBg = true;
-		}
+		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.Transparent, UseTransparentWindow);
+		GetViewport().TransparentBg = UseTransparentWindow;
 
 		if (FillScreenOverlay)
 		{
@@ -463,6 +454,8 @@ public partial class UdpListener : Node2D
 		// vùng quanh Eris (xem UpdateMousePassthrough) để desktop phía sau vẫn bấm được.
 		if (EnableMousePassthrough)
 			UpdateMousePassthrough();
+		else
+			DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
 	}
 
 	private bool _passthroughFullCapture = true;
@@ -1303,28 +1296,30 @@ public partial class UdpListener : Node2D
 		_modeDropdown.Position = new Vector2(580f, 118f);
 		_emotionPanel.AddChild(_modeDropdown);
 
-		_switchTexture = new TextureRect
-		{
-			Texture = _switchOnTexture,
-			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-			StretchMode = TextureRect.StretchModeEnum.Scale,
-			Position = new Vector2(666f, 160f),
-			Size = new Vector2(58f, 34f),
-			CustomMinimumSize = new Vector2(58f, 34f),
-			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
-		};
-		_switchTexture.GuiInput += OnEmotionSwitchGuiInput;
-		_emotionPanel.AddChild(_switchTexture);
+			_switchTexture = new TextureRect
+			{
+				Texture = _switchOnTexture,
+				ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+				StretchMode = TextureRect.StretchModeEnum.Scale,
+				Position = new Vector2(666f, 160f),
+				Size = new Vector2(58f, 34f),
+				CustomMinimumSize = new Vector2(58f, 34f),
+				MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+				TooltipText = "Hiện/ẩn gợi ý theo ngữ cảnh trong panel này",
+			};
+			_switchTexture.GuiInput += OnEmotionSwitchGuiInput;
+			_emotionPanel.AddChild(_switchTexture);
 
 		// Khung DEBUG: ô nhập lệnh tay (góc dưới phải) — gõ lệnh rồi Enter/Chạy.
 		BuildDebugCommandPanel();
 
 		// Build left-side content theo mode hiện tại
-		if (_isCasualMode)
-			BuildCasualContent();
-		else
-			BuildDevContent();
-	}
+			if (_isCasualMode)
+				BuildCasualContent();
+			else
+				BuildDevContent();
+			ApplyContextHintVisibility();
+		}
 
 	// ── Dev mode content ──────────────────────────────────────────────────────
 
@@ -1514,13 +1509,13 @@ public partial class UdpListener : Node2D
 		_emotionPanel.AddChild(showBtn);
 
 		// Gợi ý cú pháp (nhiều dòng).
-		var hint = CreateUiLabel(
-			"set/buff/rel <f>=<v> · trust <v>\nyan on|off · stage <name> · reset\nmem [ep] <text> · nối lệnh bằng ';'",
-			9, new Color(0.58f, 0.36f, 0.48f));
-		hint.Position     = new Vector2(innerX, btnY + 38f);
-		hint.Size         = new Vector2(innerW, 50f);
-		hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		_emotionPanel.AddChild(hint);
+			_debugCommandHintLabel = CreateUiLabel(
+				"set/buff/rel <f>=<v> · trust <v>\nyan on|off · stage <name> · reset\nmem [ep] <text> · nối lệnh bằng ';'",
+				9, new Color(0.58f, 0.36f, 0.48f));
+			_debugCommandHintLabel.Position     = new Vector2(innerX, btnY + 38f);
+			_debugCommandHintLabel.Size         = new Vector2(innerW, 50f);
+			_debugCommandHintLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			_emotionPanel.AddChild(_debugCommandHintLabel);
 
 		// Dòng trạng thái: lệnh vừa gửi.
 		_debugCommandStatus = CreateUiLabel("— gõ lệnh rồi Enter hoặc bấm Chạy —", 9, DbgBtnInk);
@@ -1545,10 +1540,11 @@ public partial class UdpListener : Node2D
 			if (!doc.RootElement.TryGetProperty("debug_command_ack", out var ack) || ack.ValueKind != JsonValueKind.Object)
 				return;
 			string result = ack.TryGetProperty("result", out var r) ? r.GetString() ?? "" : "";
+			bool ok = !ack.TryGetProperty("ok", out var okEl) || okEl.ValueKind != JsonValueKind.False;
 			if (string.IsNullOrEmpty(result))
 				return;
 			string head = result.Length > 64 ? result.Substring(0, 64) + "…" : result;
-			_debugCommandStatus.Text = "↳ " + head;
+			_debugCommandStatus.Text = (ok ? "↳ " : "lỗi: ") + head;
 		}
 		catch (Exception ex)
 		{
@@ -3006,16 +3002,24 @@ public partial class UdpListener : Node2D
 		return EmotionBarHeight * 0.80f;
 	}
 
-	private void OnEmotionSwitchGuiInput(InputEvent inputEvent)
-	{
-		if (inputEvent is not InputEventMouseButton mouse || mouse.ButtonIndex != MouseButton.Left || !mouse.Pressed)
-			return;
+		private void OnEmotionSwitchGuiInput(InputEvent inputEvent)
+		{
+			if (inputEvent is not InputEventMouseButton mouse || mouse.ButtonIndex != MouseButton.Left || !mouse.Pressed)
+				return;
 
-		_emotionSwitchEnabled = !_emotionSwitchEnabled;
-		if (_switchTexture != null)
-			_switchTexture.Texture = _emotionSwitchEnabled ? _switchOnTexture : _switchOffTexture;
-		SendChatSignal(_emotionSwitchEnabled ? "switch_case_on" : "switch_case_off");
-	}
+			_showContextHints = !_showContextHints;
+			ApplyContextHintVisibility();
+		}
+
+		private void ApplyContextHintVisibility()
+		{
+			if (_switchTexture != null)
+				_switchTexture.Texture = _showContextHints ? _switchOnTexture : _switchOffTexture;
+			if (_emotionHintLabel != null)
+				_emotionHintLabel.Visible = _showContextHints;
+			if (_debugCommandHintLabel != null)
+				_debugCommandHintLabel.Visible = _showContextHints;
+		}
 
 	private void OnModeDropdownSelected(long index)
 	{
@@ -3075,11 +3079,12 @@ public partial class UdpListener : Node2D
 		_moodDotCanvas           = null;
 		_casualBars.Clear();
 
-		if (_isCasualMode)
-			BuildCasualContent();
-		else
-			BuildDevContent();
-	}
+			if (_isCasualMode)
+				BuildCasualContent();
+			else
+				BuildDevContent();
+			ApplyContextHintVisibility();
+		}
 
 	private void BeginDrag(Vector2 mousePosition)
 	{
@@ -3694,8 +3699,7 @@ public partial class UdpListener : Node2D
 		if (payload.HasBodyBias)
 			_bodyAutonomy?.ApplyCognitionBias(payload.BodyBias);
 
-		TryCaptureDepthBlock(raw);
-		TryCaptureDepthV2Block(raw);
+			TryCaptureDepthV2Block(raw);
 
 		if (!string.IsNullOrEmpty(payload.ParseMode) || !string.IsNullOrEmpty(payload.DebugTrace) || !string.IsNullOrEmpty(payload.ParserTrace))
 		{
@@ -4512,7 +4516,26 @@ public partial class UdpListener : Node2D
 			if (string.IsNullOrWhiteSpace(title))
 				continue;
 
+				var items = ReadDiarySectionItems(sectionEl);
+
+			if (items.Count > 0)
+				sections.Add(new PrivateMindDiarySection { Title = title, Items = items });
+		}
+
+		if (sections.Count == 0 && diaryEl.TryGetProperty("text", out var textEl) && textEl.ValueKind == JsonValueKind.String)
+			sections = ParseDiarySectionsFromText(textEl.GetString() ?? "");
+
+			return sections;
+		}
+
+		private static List<PrivateMindDiaryItem> ReadDiarySectionItems(JsonElement sectionEl)
+		{
 			var items = new List<PrivateMindDiaryItem>();
+			if (sectionEl.ValueKind != JsonValueKind.Object)
+				return items;
+
+			// Contract mới: inner_diary.sections[].items[].text. Đây là đường compact
+			// UDP giữ lại khi payload lớn, nên phải là nguồn ưu tiên cho mọi renderer.
 			if (sectionEl.TryGetProperty("items", out var itemsEl) && itemsEl.ValueKind == JsonValueKind.Array)
 			{
 				foreach (var itemEl in itemsEl.EnumerateArray())
@@ -4526,6 +4549,7 @@ public partial class UdpListener : Node2D
 				}
 			}
 
+			// Contract cũ: sections[].lines. Giữ fallback để đọc cache cũ.
 			if (items.Count == 0 && sectionEl.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
 			{
 				foreach (var lineEl in linesEl.EnumerateArray())
@@ -4538,15 +4562,8 @@ public partial class UdpListener : Node2D
 				}
 			}
 
-			if (items.Count > 0)
-				sections.Add(new PrivateMindDiarySection { Title = title, Items = items });
+			return items;
 		}
-
-		if (sections.Count == 0 && diaryEl.TryGetProperty("text", out var textEl) && textEl.ValueKind == JsonValueKind.String)
-			sections = ParseDiarySectionsFromText(textEl.GetString() ?? "");
-
-		return sections;
-	}
 
 	private static List<PrivateMindDiarySection> BuildPrivateMindDiarySectionsFromRaw(JsonElement root)
 	{
@@ -4718,27 +4735,21 @@ public partial class UdpListener : Node2D
 		if (hasDiary && diaryEl.TryGetProperty("sections", out var sectionsEl) && sectionsEl.ValueKind == JsonValueKind.Array)
 		{
 			int rendered = 0;
-			foreach (var sec in sectionsEl.EnumerateArray())
-			{
-				if (sec.ValueKind != JsonValueKind.Object) continue;
-				string title = sec.TryGetProperty("title", out var tEl) ? tEl.GetString() ?? "" : "";
-				if (!sec.TryGetProperty("lines", out var linesEl) || linesEl.ValueKind != JsonValueKind.Array)
-					continue;
-				var lines = new List<string>();
-				foreach (var l in linesEl.EnumerateArray())
+				foreach (var sec in sectionsEl.EnumerateArray())
 				{
-					string s = l.GetString() ?? "";
-					if (!string.IsNullOrWhiteSpace(s)) lines.Add(s);
-				}
-				if (lines.Count == 0) continue;
-				if (rendered > 0) sb.Append('\n');
-				sb.Append("[color=#88aaff][b]").Append(EscapeBbcode(title)).Append("[/b][/color]\n");
-				foreach (string line in lines)
-				{
-					if (line.StartsWith("- ", StringComparison.Ordinal))
-						sb.Append("[color=#a090b8]·[/color] ").Append(EscapeBbcode(line[2..])).Append('\n');
-					else
-						sb.Append(EscapeBbcode(line)).Append('\n');
+					if (sec.ValueKind != JsonValueKind.Object) continue;
+					string title = sec.TryGetProperty("title", out var tEl) ? tEl.GetString() ?? "" : "";
+					var items = ReadDiarySectionItems(sec);
+					if (items.Count == 0) continue;
+					if (rendered > 0) sb.Append('\n');
+					sb.Append("[color=#88aaff][b]").Append(EscapeBbcode(title)).Append("[/b][/color]\n");
+					foreach (var item in items)
+					{
+						string line = item.Text ?? "";
+						if (line.StartsWith("- ", StringComparison.Ordinal))
+							sb.Append("[color=#a090b8]·[/color] ").Append(EscapeBbcode(line[2..])).Append('\n');
+						else
+							sb.Append(EscapeBbcode(line)).Append('\n');
 				}
 				rendered++;
 			}
@@ -4916,30 +4927,19 @@ public partial class UdpListener : Node2D
 				if (sectionEl.ValueKind != JsonValueKind.Object) continue;
 				string sectionTitle = sectionEl.TryGetProperty("title", out var tEl) ? tEl.GetString() ?? "" : "";
 
-				// Đếm lines thực có trong section này trước khi render tiêu đề,
-				// tránh render tiêu đề rỗng lơ lửng khi data chưa về.
-				var sectionLines = new List<string>();
-				if (sectionEl.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
-				{
-					foreach (var lineEl in linesEl.EnumerateArray())
+					var sectionItems = ReadDiarySectionItems(sectionEl);
+					if (sectionItems.Count == 0) continue; // bỏ qua section rỗng
+
+					sb.Append("\n[color=#88aaff][b]");
+					sb.Append(EscapeBbcode(sectionTitle));
+					sb.Append("[/b][/color]\n");
+
+					foreach (var item in sectionItems)
 					{
-						string line = lineEl.GetString() ?? "";
-						if (!string.IsNullOrWhiteSpace(line))
-							sectionLines.Add(line);
-					}
-				}
-
-				if (sectionLines.Count == 0) continue; // bỏ qua section rỗng
-
-				sb.Append("\n[color=#88aaff][b]");
-				sb.Append(EscapeBbcode(sectionTitle));
-				sb.Append("[/b][/color]\n");
-
-				foreach (string line in sectionLines)
-				{
-					if (line.StartsWith("- ", StringComparison.Ordinal))
-						sb.Append("[color=#a090b8]•[/color] ").Append(EscapeBbcode(line[2..])).Append('\n');
-					else
+						string line = item.Text ?? "";
+						if (line.StartsWith("- ", StringComparison.Ordinal))
+							sb.Append("[color=#a090b8]•[/color] ").Append(EscapeBbcode(line[2..])).Append('\n');
+						else
 						sb.Append(EscapeBbcode(line)).Append('\n');
 					totalLines++;
 				}
@@ -5500,11 +5500,16 @@ public partial class UdpListener : Node2D
 
 	private ErisServiceConfig BuildServiceConfig()
 	{
+		SyncSettingsInputsToFields();
 		return new ErisServiceConfig
 		{
 			PythonExecutable = PythonExecutable,
 			VisionScriptPath = VisionScriptPath,
 			EnableRemoteCognitionApi = EnableRemoteCognitionApi,
+			EnableTts = _settingsTtsEnabled,
+			TtsVoice = _settingsTtsVoice,
+			TtsLanguage = _settingsTtsLanguage,
+			TtsQuality = _settingsTtsQuality,
 			DefaultRemoteApiKey = DefaultRemoteApiKey,
 			RemoteApiProvider = RemoteApiProvider,
 			RemoteApiBaseUrl = RemoteApiBaseUrl,

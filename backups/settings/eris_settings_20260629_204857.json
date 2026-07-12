@@ -1,0 +1,15 @@
+﻿{
+  "version": 1,
+  "remote_api_enabled": true,
+  "remote_provider": "openai_compatible",
+  "remote_base_url": "https://api.groq.com/openai/v1",
+  "remote_model": "qwen/qwen3-32b",
+  "tts_enabled": true,
+  "tts_voice": "Aoede",
+  "tts_language": "ja",
+  "tts_quality": "high",
+  "always_on_top": true,
+  "transparent_window": true,
+  "mouse_passthrough": true,
+  "saved_at": "2026-06-29T20:48:39.3750847\u002B07:00"
+}

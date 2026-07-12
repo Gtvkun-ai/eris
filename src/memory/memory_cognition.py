@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import time
+import threading
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal, Mapping
@@ -179,6 +180,10 @@ class MemoryCognitionCore:
         self.base_dir = base_dir
         os.makedirs(self.base_dir, exist_ok=True)
         self.policy = policy or CommitPolicy()
+        # Tất cả commit qua core được serialize để chuỗi load -> mutate -> save
+        # không mất update khi các pipeline chạy song song.
+        self._commit_lock = threading.RLock()
+        self._save_lock = threading.RLock()
 
         self.event_ledger = EventLedger(os.path.join(base_dir, "event_ledger.json"))
         self.active_state = ActiveStateStore(os.path.join(base_dir, "active_state_snapshot.json"))
@@ -221,6 +226,15 @@ class MemoryCognitionCore:
     # ------------------------------------------------------------------
 
     def commit(self, request: StateCommitRequest, *, frame: Any = None) -> MemoryCommitDecision:
+        """Commit tuần tự qua một writer logic duy nhất.
+
+        Atomic replace chỉ bảo vệ file khỏi rách; lock này mới bảo vệ chuỗi
+        load -> mutate -> save khỏi lost update giữa các thread.
+        """
+        with self._commit_lock:
+            return self._commit_unlocked(request, frame=frame)
+
+    def _commit_unlocked(self, request: StateCommitRequest, *, frame: Any = None) -> MemoryCommitDecision:
         request = self._normalize_request(request)
         target = str(_request_get(request, "target", "") or "")
         confidence = clamp01(float(_request_get(request, "confidence", 0.0) or 0.0))
@@ -390,28 +404,30 @@ class MemoryCognitionCore:
         }
 
     def save(self, snapshot: Mapping[str, Any] | None = None) -> None:
-        if snapshot is None:
-            snapshot = self.load()
-        if isinstance(snapshot, Mapping) and "internal_state" in snapshot:
-            active_state = dict(snapshot.get("active_state") or {})
-            metadata = dict(active_state.get("metadata") or {})
-            metadata["internal_state"] = snapshot.get("internal_state") or {}
-            active_state["metadata"] = metadata
-            snapshot = {**dict(snapshot), "active_state": active_state}
-        if "active_state" in snapshot and isinstance(snapshot["active_state"], Mapping):
-            self.active_state.save(ActiveStateSnapshot.from_dict(dict(snapshot["active_state"])))
+        """Lưu các state được truyền vào, không rewrite toàn bộ memory store.
 
-        self.semantic.save(self.semantic.load())
-        self.relational.save(self.relational.load())
-        self.episodic.save(self.episodic.load())
-        self.affective_residue.save(self.affective_residue.load())
-        self.procedural.save(self.procedural.load())
-        self.repair.save(self.repair.load())
-        self.memory_candidate.save(self.memory_candidate.load())
-        if "agent_mind" in snapshot and isinstance(snapshot["agent_mind"], Mapping):
-            self.agent_mind.replace_from_dict(snapshot["agent_mind"])
-        else:
-            self.agent_mind.save()
+        Các semantic/episodic/... store đã tự persist ngay trong ``commit``.
+        Việc load rồi save lại mọi file ở đây vừa thừa vừa tạo contention và
+        có thể ghi đè dữ liệu mới bằng snapshot cũ.
+        """
+        with self._save_lock:
+            if snapshot is None:
+                # Không dựng full snapshot chỉ để ghi lại chính những file vừa đọc.
+                self.agent_mind.save()
+                return
+            snapshot = dict(snapshot)
+            if "internal_state" in snapshot:
+                active_state = dict(snapshot.get("active_state") or {})
+                metadata = dict(active_state.get("metadata") or {})
+                metadata["internal_state"] = snapshot.get("internal_state") or {}
+                active_state["metadata"] = metadata
+                snapshot["active_state"] = active_state
+            if "active_state" in snapshot and isinstance(snapshot["active_state"], Mapping):
+                self.active_state.save(ActiveStateSnapshot.from_dict(dict(snapshot["active_state"])))
+            if "agent_mind" in snapshot and isinstance(snapshot["agent_mind"], Mapping):
+                self.agent_mind.replace_from_dict(snapshot["agent_mind"])
+            else:
+                self.agent_mind.save()
 
     def render_context(self, query: MemoryQuery | str = "", *, snapshot: Any = None, frame: Any = None, max_lines: int = 18) -> str:
         packet = self.recall(query or self._query_from_snapshot(snapshot), frame=frame)
@@ -480,20 +496,6 @@ class MemoryCognitionCore:
             metadata=metadata,
         )
 
-    def lookup_fact(self, fact_key: str) -> Any:
-        """Lookup semantic fact value by fact_key for structured recall executor."""
-        target = str(fact_key or "").strip()
-        if not target:
-            return None
-        for item in self.semantic.load():
-            if getattr(item, "fact_key", "") != target:
-                continue
-            metadata = getattr(item, "metadata", {}) or {}
-            value = metadata.get("value")
-            if value not in (None, ""):
-                return value
-            return getattr(item, "claim", None)
-        return None
 
     def search_memory_candidates(self, query: str = "", *, limit: int = 8) -> list[UnresolvedMemoryCandidate]:
         return self.memory_candidate.search(query, limit=limit)

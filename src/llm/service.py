@@ -6,6 +6,7 @@ import os
 from enum import Enum
 
 import time
+import threading
 
 import requests
 
@@ -251,6 +252,28 @@ class LlmService:
         # None thì tự dùng fallback_client (đã là model mạnh hơn trong cấu hình hiện tại).
         self.escalation_client = escalation_client
         self.logger = logger or logging.getLogger(__name__)
+        self._generation_lock = threading.Lock()
+        self._generation_epoch = 0
+
+    def cancel_pending_requests(self, reason: str = "runtime_transition") -> int:
+        """Đánh dấu mọi generation đang bay là stale.
+
+        HTTP sync không thể cưỡng bức đóng socket an toàn; timeout theo channel
+        đã được hạ và kết quả cũ sẽ bị loại ngay khi request trả về.
+        """
+        with self._generation_lock:
+            self._generation_epoch += 1
+            epoch = self._generation_epoch
+        self.logger.info("[LLM CANCEL] epoch=%d reason=%s", epoch, reason)
+        return epoch
+
+    def _capture_generation_epoch(self) -> int:
+        with self._generation_lock:
+            return self._generation_epoch
+
+    def _generation_is_current(self, epoch: int) -> bool:
+        with self._generation_lock:
+            return self._generation_epoch == epoch
 
     def _resolve_escalation_client(self):
         """Client mạnh để bái sư. Ưu tiên escalation_client riêng, rồi fallback, rồi style."""
@@ -1944,7 +1967,22 @@ class LlmService:
         if no_fallback_mode_enabled():
             allow_local_fallback = False
             force_local_fallback = False
+        if request_timeout is None:
+            timeout_defaults = {
+                "chat": 30.0,
+                "directive": 15.0,
+                "autonomous": 15.0,
+                "parser": 10.0,
+                "repair": 10.0,
+                "micro_presence": 10.0,
+            }
+            env_key = f"ERIS_LLM_TIMEOUT_{str(channel or 'default').upper()}_S"
+            try:
+                request_timeout = float(os.environ.get(env_key, timeout_defaults.get(channel, 20.0)))
+            except (TypeError, ValueError):
+                request_timeout = timeout_defaults.get(channel, 20.0)
         max_tokens = 512 if channel == "chat" else 384
+        generation_epoch = self._capture_generation_epoch()
         if require_text:
             messages = self._with_non_empty_text_rule(messages)
         no_cot_contract = (
@@ -1961,6 +1999,10 @@ class LlmService:
                 break
         else:
             messages.insert(0, {"role": "system", "content": no_cot_contract})
+        # Lưới an toàn cho parser/repair legacy. Chat/directive chính đã được
+        # block-budget trước khi tới đây; các đường cũ vẫn không được vượt 4800.
+        from llm.token_budget import budget_existing_messages
+        messages = budget_existing_messages(messages, total_tokens=4800, output_reserve=max_tokens)
         def _call(messages_value: list[dict], *, stage: str, override_client=None):
             self._log_final_prompt(messages_value, channel=channel, stage=stage)
             target_client = override_client or self.client
@@ -2099,6 +2141,16 @@ class LlmService:
                 origin="primary",
             )
 
+        if not self._generation_is_current(generation_epoch):
+            self.logger.info("[LLM CANCEL] discard stale result channel=%s epoch=%d", channel, generation_epoch)
+            return json.dumps({
+                "text": "", "intent": "cancelled_stale", "action": "",
+                "reasoning_tags": ["cancelled_stale"], "should_speak": False,
+                "confidence": 1.0, "animation": "stand", "direction": 0,
+                "target_x": -1.0, "bounce_action": "", "extracted_fact": "",
+                "debug_trace": "cancelled_stale_generation", "next_animation": "",
+                "system_action": "", "action_input": ""
+            }, ensure_ascii=False)
         raw = self._extract_content(response)
         self._log_raw_api_text(channel, raw)
         try:
@@ -2945,7 +2997,12 @@ class LlmService:
         ti_hint = self._compress_internal_context(ti_context, kind="ti")
         action_plan_hint = self._extract_action_plan_context(ti_context)
         ni_hint = self._compress_internal_context(ni_context, kind="ni")
-        if self._dds_enabled():
+        # Hard block budget đã cắt memory trước khi assembly; DDS directive mặc
+        # định tắt để không gọi thêm model chỉ nhằm rút gọn một block vốn đã có quota.
+        use_directive_dds = (os.environ.get("ERIS_DIRECTIVE_HARD_BUDGET_USE_DDS", "0") or "0").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        if use_directive_dds and self._dds_enabled():
             _distilled = self._maybe_distill_blocks(
                 {"memory_context": memory_context}, channel="directive"
             )
@@ -3043,11 +3100,21 @@ class LlmService:
             user_msg += " Pattern_muse: duoc chiem nghiem mot nhip ngan neu co khong khi hien tai."
         if mode_addendum:
             user_msg += mode_addendum
+        from llm.token_budget import PromptBlockBudget, assemble_budgeted_prompt_blocks
+        directive_messages, budget_report = assemble_budgeted_prompt_blocks(
+            system_rules_text=f"{RUNTIME_RULES_PROMPT}\n\n{AUTONOMOUS_BEHAVIOR_PROMPT}",
+            state_style_text="\n".join(part for part in (style_block, ni_hint, ti_hint, action_plan_hint, intent_guidance) if part),
+            grounding_text="\n".join(part for part in (telemetry_data, vision_trace_marker) if part),
+            memory_text=memory_block,
+            user_text=user_msg,
+            budget=PromptBlockBudget(),
+        )
+        self.logger.info(
+            "[PROMPT BUDGET] channel=directive assembled=%d input_limit=%d spare=%d",
+            budget_report["assembled_input"], budget_report["input_limit"], budget_report["spare"],
+        )
         return self._complete_decision(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_msg},
-            ],
+            messages=directive_messages,
             channel="directive",
             request_timeout=request_timeout,
             require_text=require_text,
@@ -3383,34 +3450,47 @@ class LlmService:
                 + "Nhiệm vụ: sinh 4 câu theo lens trên (ghẹo/tò mò/níu/khịa tùy lens), mỗi câu là một phương án khác nhau. "
                 "Trả {\"candidates\":[\"...\",\"...\",\"...\",\"...\"]} với câu thật, ngắn, có hồn. Cấm rỗng. Cấm câu sáo/đóng hộp."
             )
+        micro_generation_epoch = self._capture_generation_epoch()
+        from llm.token_budget import PromptBlockBudget, assemble_budgeted_prompt_blocks
+        micro_messages, micro_budget_report = assemble_budgeted_prompt_blocks(
+            system_rules_text=system_prompt,
+            state_style_text="\n".join(part for part in (ego_surface_state, ego_surface_contract, surface_contract) if part),
+            grounding_text="\n".join(part for part in (focus_kind, focus_summary, reaction_seed, topic_seed) if part),
+            memory_text="",
+            user_text=user_msg,
+            budget=PromptBlockBudget(
+                total_tokens=4800, output_reserve=256, system_rules=1200,
+                user_history=2200, grounding=600, memory=0, state_style=300,
+            ),
+        )
+        self.logger.debug(
+            "[PROMPT BUDGET] channel=micro_presence assembled=%d input_limit=%d",
+            micro_budget_report["assembled_input"], micro_budget_report["input_limit"],
+        )
         try:
             response = self.client.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_msg},
-                ],
+                messages=micro_messages,
                 temperature=(0.7 if react_with_lens else 0.35),
                 frequency_penalty=(0.0 if react_with_lens else 0.7),
                 presence_penalty=(0.0 if react_with_lens else 0.2),
                 max_tokens=(180 if react_with_lens else 160),
                 response_format={"type": "json_object"},
                 grammar=None,
+                timeout=float(os.environ.get("ERIS_LLM_TIMEOUT_MICRO_PRESENCE_S", "10")),
             )
         except requests.HTTPError as exc:
             if self._is_retryable_http_5xx(exc):
                 time.sleep(0.15)
                 try:
                     response = self.client.create_chat_completion(
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_msg},
-                        ],
+                        messages=micro_messages,
                         temperature=0.35,
                         frequency_penalty=0.7,
                         presence_penalty=0.2,
                         max_tokens=160,
                         response_format={"type": "json_object"},
                         grammar=None,
+                        timeout=float(os.environ.get("ERIS_LLM_TIMEOUT_MICRO_PRESENCE_S", "10")),
                     )
                 except Exception:
                     return ""
@@ -3419,6 +3499,9 @@ class LlmService:
         except Exception:
             return ""
 
+        if not self._generation_is_current(micro_generation_epoch):
+            self.logger.info("[LLM CANCEL] discard stale micro-presence result")
+            return ""
         raw = self._extract_content(response)
         extracted = self._extract_first_json_object(raw) or raw
         payload = self._parse_json_object(extracted) or {}
@@ -3752,9 +3835,13 @@ class LlmService:
         use_escalation_client: bool = False,
         reasoning_effort: str = None,
     ):
-        # Phase 2/3 DDS: nếu ngữ cảnh nặng (dễ gây 413), rút gọn các khối lớn song
-        # song bằng worker nhỏ TRƯỚC khi ghép prompt synthesis. Turn nhỏ không bị ảnh hưởng.
-        if self._dds_enabled():
+        # Chat hard-budget mặc định dùng rút gọn deterministic theo quota, tránh bắn
+        # 5 worker DDS chỉ để rồi vẫn cắt prompt ở synthesis. Có thể bật lại DDS chat
+        # bằng ERIS_CHAT_HARD_BUDGET_USE_DDS=1 khi thật sự muốn semantic distillation.
+        use_chat_dds = (os.environ.get("ERIS_CHAT_HARD_BUDGET_USE_DDS", "0") or "0").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        if self._dds_enabled() and use_chat_dds:
             _distilled = self._maybe_distill_blocks(
                 {
                     "memory_context": memory_context,
@@ -3779,10 +3866,8 @@ class LlmService:
         effective_user_text = raw_user_text or user_message
         act = classify_chat_act(effective_user_text)
         chat_contract = self._build_chat_contract_prompt(effective_user_text, act=act)
-        conversation_section = f"{conversation_context}\n\n" if conversation_context else ""
         grounding_block = self._build_grounding_context_block(grounding_context)
-        grounding_section = f"{grounding_block}\n\n" if grounding_block else ""
-        chat_system = f"{style_block}\n\n{chat_contract}\n\n{conversation_section}{grounding_section}{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
+        memory_block = self._build_memory_context_block(memory_context)
         relational_repair_contract = self._build_relational_repair_contract(
             "\n".join(
                 (
@@ -3793,47 +3878,62 @@ class LlmService:
                 )
             )
         )
+
+        system_rule_parts = [chat_contract, CHAT_RULES_PROMPT, INFERENCE_LADDER_PROMPT]
         if relational_repair_contract:
-            chat_system = f"{chat_system}\n\n{relational_repair_contract}"
-        memory_block = self._build_memory_context_block(memory_context)
-        if memory_block:
-            chat_system = (
-                f"{style_block}\n\n{chat_contract}\n\n"
-                f"{conversation_section}"
-                f"{memory_block}\n\n"
-                f"{grounding_section}{CHAT_RULES_PROMPT}\n\n{INFERENCE_LADDER_PROMPT}"
-            )
-            if relational_repair_contract:
-                chat_system = f"{chat_system}\n\n{relational_repair_contract}"
-        if ni_context:
-            chat_system = f"{chat_system}\n\nNi context:\n{ni_context}"
-        if ti_context:
-            chat_system = f"{chat_system}\n\nTi context:\n{ti_context}"
+            system_rule_parts.append(relational_repair_contract)
         if format_retry_context or last_failure:
             retry_context = str(format_retry_context or "").strip()
             failure_flag = str(last_failure or "").strip()
-            chat_system = (
-                f"{chat_system}\n\n"
-                f"{retry_context}\n"
-                f"Runtime failure flag: last_failure={failure_flag or 'format_error'}"
+            system_rule_parts.append(
+                f"{retry_context}\nRuntime failure flag: last_failure={failure_flag or 'format_error'}"
             )
         previous_public_turn = getattr(reply_context, "previous_public_turn", None)
         if previous_public_turn is not None:
-            chat_system = (
-                f"{chat_system}\n\nReply context:\n"
-                "The current user message may be reacting to the latest visible assistant turn.\n"
+            system_rule_parts.append(
+                "Reply context: The current user message may be reacting to the latest visible assistant turn.\n"
                 f"previous_public_turn.channel={getattr(previous_public_turn, 'channel', '')}\n"
                 f"previous_public_turn.parse_mode={getattr(previous_public_turn, 'parse_mode', '')}\n"
                 f"previous_public_turn.text={getattr(previous_public_turn, 'text', '')}"
             )
 
-        final_user_content = user_message
+        state_style_parts = [style_block]
+        if ni_context:
+            state_style_parts.append(f"Ni context:\n{ni_context}")
+        if ti_context:
+            state_style_parts.append(f"Ti context:\n{ti_context}")
+        if defusing_context:
+            state_style_parts.append(f"Defusing context:\n{defusing_context}")
 
-        messages = [
-            {"role": "system", "content": chat_system},
-            *chat_history,
-            {"role": "user", "content": final_user_content},
-        ]
+        # Hard budget chat: quota từng block được áp trước khi ghép prompt.
+        # 4800 total - 512 output; phần chưa phân bổ là headroom cho role/JSON contract.
+        from llm.token_budget import ChatPromptBudget, assemble_budgeted_chat_messages
+
+        messages, budget_report = assemble_budgeted_chat_messages(
+            system_rules_text="\n\n".join(part for part in system_rule_parts if str(part or "").strip()),
+            state_style_text="\n\n".join(part for part in state_style_parts if str(part or "").strip()),
+            grounding_text=grounding_block,
+            memory_text=memory_block,
+            conversation_context=conversation_context,
+            chat_history=chat_history,
+            user_message=user_message,
+            budget=ChatPromptBudget(),
+        )
+        self.logger.info(
+            "[CHAT PROMPT BUDGET] input=%d/%d output_reserve=%d "
+            "rules=%d/1800 user_history=%d/500 grounding=%d/500 memory=%d/400 "
+            "state_style=%d/300 spare=%d",
+            budget_report["assembled_input"],
+            budget_report["input_limit"],
+            budget_report["output_reserve"],
+            budget_report["system_rules"],
+            budget_report["user_history"],
+            budget_report["grounding"],
+            budget_report["memory"],
+            budget_report["state_style"],
+            budget_report["spare"],
+        )
+
         raw = self._complete_decision(
             messages=messages,
             channel="chat",

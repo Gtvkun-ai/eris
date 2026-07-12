@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.Json;
 
 public partial class UdpListener : Node2D
@@ -62,6 +63,7 @@ public partial class UdpListener : Node2D
 		public Label Label { get; set; }
 		public string Key { get; set; } = "";
 		public string Accent { get; set; } = "pink";
+		public bool Active { get; set; } = true;
 	}
 
 	private sealed class DepthContextChipView
@@ -235,7 +237,6 @@ public partial class UdpListener : Node2D
 	private Label _depthEmotionLeftLabel;
 	private Label _depthEmotionRightLabel;
 
-	private string _latestDepthJson = "";
 	private Font _depthFontRegular;
 	private Font _depthFontBold;
 
@@ -598,7 +599,9 @@ public partial class UdpListener : Node2D
 		// Chip tự scale theo PNG card; không phụ thuộc pixel màn hình nên resize vẫn sạch.
 		var chip = new Panel
 		{
-			MouseFilter = Control.MouseFilterEnum.Ignore,
+			MouseFilter = Control.MouseFilterEnum.Stop,
+			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+			TooltipText = $"Bật/tắt {labelText}",
 		};
 		PlaceBySlot(chip, slot);
 		root.AddChild(chip);
@@ -617,9 +620,45 @@ public partial class UdpListener : Node2D
 			Label = label,
 			Key = key,
 			Accent = accent,
+			Active = true,
 		};
+		chip.GuiInput += inputEvent => OnDepthAutoSwitchChipInput(view, inputEvent);
 		_depthAutoSwitchChips.Add(view);
 		ApplyDepthAutoSwitchChipStyle(view, active: true, accent);
+	}
+
+	private void OnDepthAutoSwitchChipInput(DepthAutoSwitchChipView view, InputEvent inputEvent)
+	{
+		if (view == null || inputEvent is not InputEventMouseButton mouse || mouse.ButtonIndex != MouseButton.Left || !mouse.Pressed)
+			return;
+		string flag = DepthFlagForChip(view.Key);
+		if (string.IsNullOrWhiteSpace(flag))
+			return;
+
+		bool next = !view.Active;
+		ApplyDepthAutoSwitchChipStyle(view, next, view.Accent);
+		UpdateDepthLabelText(_depthAutoSwitchGlyphLabel, next ? "đã bật ✦" : "đã tắt");
+		SendDepthControl(flag, next);
+	}
+
+	private void SendDepthControl(string flag, bool value)
+	{
+		string payload = $"{{\"type\":\"depth_control\",\"flag\":{JsonSerializer.Serialize(flag)},\"value\":{(value ? "true" : "false")}}}";
+		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
+	}
+
+	private static string DepthFlagForChip(string key)
+	{
+		return NormalizeDepthKind(key) switch
+		{
+			"n1" => "emotional_consequence",
+			"n2" => "development_growth",
+			"interiority" => "interior_surface",
+			"tom" => "tom_advisor",
+			"embed" => "real_embeddings",
+			"mind" => "private_mind",
+			_ => "",
+		};
 	}
 
 	private void BuildDepthInteriorityFrame(Control parent)
@@ -1311,30 +1350,6 @@ public partial class UdpListener : Node2D
 		ctrl.OffsetBottom = 0f;
 	}
 
-	private void TryCaptureDepthBlock(string raw)
-	{
-		if (string.IsNullOrWhiteSpace(raw))
-			return;
-
-		try
-		{
-			using var doc = JsonDocument.Parse(raw);
-			var root = doc.RootElement;
-			if (root.ValueKind != JsonValueKind.Object
-				|| !root.TryGetProperty("depth", out var d)
-				|| d.ValueKind != JsonValueKind.Object)
-				return;
-
-			_latestDepthJson = raw;
-			if (_depthPanel != null && _depthPanel.Visible)
-				RefreshDepthPanel();
-		}
-		catch (Exception ex)
-		{
-			GD.Print($"[depth] parse fail: {ex.Message}");
-		}
-	}
-
 	private void TryCaptureDepthV2Block(string raw)
 	{
 		if (string.IsNullOrWhiteSpace(raw))
@@ -1479,27 +1494,6 @@ public partial class UdpListener : Node2D
 			}
 		}
 
-		if (!string.IsNullOrWhiteSpace(_latestDepthJson))
-		{
-			try
-			{
-				using var doc = JsonDocument.Parse(_latestDepthJson);
-				if (doc.RootElement.ValueKind == JsonValueKind.Object)
-				{
-					ApplyLegacyDepthAffect(doc.RootElement);
-					ApplyLegacyDepthEmotionJournal(doc.RootElement);
-					ApplyLegacyDepthTom(doc.RootElement);
-					ApplyLegacyDepthAutoSwitch(doc.RootElement);
-					ApplyLegacyDepthInteriority(doc.RootElement);
-					ApplyLegacyDepthPriorities(doc.RootElement);
-					ApplyLegacyDepthSignalTimeline(doc.RootElement);
-				}
-			}
-			catch (Exception ex)
-			{
-				GD.Print($"[depth] affect refresh fail: {ex.Message}");
-			}
-		}
 	}
 
 	private void ApplyDepthV2Affect(JsonElement root)
@@ -1606,35 +1600,6 @@ public partial class UdpListener : Node2D
 		ApplyDepthSelfContinuityContent(want, suppress, allowed, stance);
 	}
 
-	private void ApplyLegacyDepthTom(JsonElement root)
-	{
-		if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
-			return;
-
-		string tomText = "";
-		float confidence = 0f;
-		if (depth.TryGetProperty("tom_read_rich", out var rich) && rich.ValueKind == JsonValueKind.Object)
-		{
-			tomText = JsonText(rich, "text", "");
-			confidence = Mathf.Clamp(JsonFloat(rich, "confidence", 0f), 0f, 1f);
-		}
-		if (string.IsNullOrWhiteSpace(tomText))
-			tomText = JsonText(depth, "tom_read", "");
-
-		if (string.IsNullOrWhiteSpace(tomText))
-			return;
-
-		ApplyDepthTomContent(
-			score: Mathf.Clamp(confidence * 0.72f, 0f, 1f),
-			summary: StripTomPrefix(tomText),
-			confidence: confidence,
-			thickness: 0f,
-			attachment: DepthLegacyAttachmentFallback(depth),
-			beliefCount: 0,
-			status: "legacy depth: đã nhận",
-			topBelief: "belief: legacy chưa gửi user_model");
-	}
-
 	private void ApplyDepthTomContent(
 		float score,
 		string summary,
@@ -1735,14 +1700,6 @@ public partial class UdpListener : Node2D
 			ApplyDepthAutoSwitchFromFlags(flags, "adaptive", DepthV2SafetyPolicy(root));
 	}
 
-	private void ApplyLegacyDepthAutoSwitch(JsonElement root)
-	{
-		if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
-			return;
-		if (depth.TryGetProperty("flags", out var flags) && flags.ValueKind == JsonValueKind.Object)
-			ApplyDepthAutoSwitchFromFlags(flags, "adaptive", "voice_guarded_plus");
-	}
-
 	private void ApplyDepthAutoSwitchFromFlags(JsonElement flags, string mode, string policy)
 	{
 		// Mapping này bám theo cortex.depth_flags.KNOWN_FLAGS; UI chỉ đổi tên cho đẹp.
@@ -1789,7 +1746,10 @@ public partial class UdpListener : Node2D
 		if (chip == null || chip.Root == null || chip.Label == null)
 			return;
 
-		bool mint = NormalizeDepthKind(accent) == "mint";
+		string normalizedAccent = NormalizeDepthKind(accent);
+		chip.Active = active;
+		chip.Accent = string.IsNullOrWhiteSpace(normalizedAccent) ? chip.Accent : normalizedAccent;
+		bool mint = chip.Accent == "mint";
 		Color bg;
 		Color border;
 		Color text;
@@ -1876,35 +1836,6 @@ public partial class UdpListener : Node2D
 			}
 
 			ApplyDepthInteriorityItems(items, $"đã nhận {Math.Min(items.Count, _depthInteriorityRows.Count)} luồng nghĩ ✦");
-		}
-
-		private void ApplyLegacyDepthInteriority(JsonElement root)
-		{
-			if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
-				return;
-
-			var items = new List<DepthInteriorityItem>();
-			if (depth.TryGetProperty("interiority", out var interiority) && interiority.ValueKind == JsonValueKind.Object)
-			{
-				if (interiority.TryGetProperty("items", out var legacyItems) && legacyItems.ValueKind == JsonValueKind.Array)
-				{
-					foreach (var raw in legacyItems.EnumerateArray())
-					{
-						if (raw.ValueKind != JsonValueKind.Object)
-							continue;
-						AddDepthInteriorityItem(
-							items,
-							kind: JsonText(raw, "kind", "current"),
-							title: JsonText(raw, "status", ""),
-							text: JsonText(raw, "theme", ""),
-							meta: $"pressure {JsonFloat(raw, "pressure", 0f):0.00}",
-							time: "");
-					}
-				}
-			}
-
-			if (items.Count > 0)
-				ApplyDepthInteriorityItems(items, "legacy interiority ✦");
 		}
 
 		private void CollectDepthInteriorityFeed(JsonElement feed, List<DepthInteriorityItem> items)
@@ -2193,30 +2124,6 @@ public partial class UdpListener : Node2D
 			ApplyDepthPriorityRows(items, focusMode);
 		}
 
-		private void ApplyLegacyDepthPriorities(JsonElement root)
-		{
-			if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
-				return;
-			if (!depth.TryGetProperty("priorities", out var priorities) || priorities.ValueKind != JsonValueKind.Array)
-				return;
-
-			var items = new List<DepthPriorityItem>();
-			foreach (var raw in priorities.EnumerateArray())
-			{
-				if (raw.ValueKind != JsonValueKind.Object)
-					continue;
-				string key = NormalizeDepthKind(JsonText(raw, "key", JsonText(raw, "label", "casual")));
-				AddDepthPriorityItem(
-					items,
-					key,
-					JsonText(raw, "label", DepthPriorityDefaultLabel(key)),
-					NormalizeDepthPriorityScore(JsonFloat(raw, "score", 0f)));
-			}
-			foreach (var fallback in DefaultDepthPriorityItems())
-				AddDepthPriorityItem(items, fallback.Key, fallback.Label, fallback.Score);
-			ApplyDepthPriorityRows(items, "legacy");
-		}
-
 		private void ApplyDepthPriorityDefaults(string focusMode)
 		{
 			ApplyDepthPriorityRows(DefaultDepthPriorityItems(), focusMode);
@@ -2396,21 +2303,6 @@ public partial class UdpListener : Node2D
 			ApplyDepthSignalTimelineItems(items, $"timeline: {Math.Min(items.Count, _depthSignalTimelineRows.Count)} mốc ✦");
 		}
 
-		private void ApplyLegacyDepthSignalTimeline(JsonElement root)
-		{
-			if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
-				return;
-
-			var items = new List<DepthSignalTimelineItem>();
-			if (depth.TryGetProperty("signal_log", out var signalLog) && signalLog.ValueKind == JsonValueKind.Array)
-				CollectDepthSignalTimeline(signalLog, items);
-			if (items.Count == 0 && depth.TryGetProperty("journal", out var journal) && journal.ValueKind == JsonValueKind.Array)
-				CollectDepthSignalTimeline(journal, items);
-
-			if (items.Count > 0)
-				ApplyDepthSignalTimelineItems(items, "legacy timeline ✦");
-		}
-
 		private void CollectDepthSignalTimeline(JsonElement source, List<DepthSignalTimelineItem> items)
 		{
 			foreach (var raw in source.EnumerateArray())
@@ -2498,40 +2390,6 @@ public partial class UdpListener : Node2D
 				_ => new Color(0.92f, 0.34f, 0.56f, 0.92f),
 			};
 		}
-
-	private void ApplyLegacyDepthAffect(JsonElement root)
-	{
-		if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
-			return;
-		if (!depth.TryGetProperty("affect", out var affect) || affect.ValueKind != JsonValueKind.Object)
-			return;
-
-		bool live = JsonBool(affect, "live", false);
-		float valence = JsonFloat(affect, "valence", 0f);
-		float arousal = JsonFloat(affect, "arousal", 0.3f);
-		string stance = JsonText(affect, "stance", "");
-
-		string headline = live ? LocalizeDepthAffectHeadline(LegacyAffectHeadline(valence, arousal)) : "Ổn định";
-		string subtext = live ? LocalizeDepthAffectSubtext(LegacyAffectSubtext(valence, arousal, stance)) : "Đang lắng nghe yên tĩnh.";
-		float stability = Mathf.Clamp((1f - arousal) * 0.78f, 0f, 1f);
-
-		ApplyDepthAffectContent(headline, subtext, stability);
-	}
-
-	private void ApplyLegacyDepthEmotionJournal(JsonElement root)
-	{
-		if (!root.TryGetProperty("depth", out var depth) || depth.ValueKind != JsonValueKind.Object)
-			return;
-		if (!depth.TryGetProperty("affect", out var affect) || affect.ValueKind != JsonValueKind.Object)
-			return;
-
-		float valence = Mathf.Clamp(JsonFloat(affect, "valence", 0f), -1f, 1f);
-		float arousal = Mathf.Clamp(JsonFloat(affect, "arousal", 0.3f), 0f, 1f);
-		float latestValue = Mathf.Clamp((valence + 1f) * 0.5f, 0f, 1f);
-		float stability = Mathf.Clamp((1f - arousal) * 0.78f, 0f, 1f);
-
-		ApplyDepthEmotionJournalContent(BuildDepthEmotionFallbackValues(latestValue, stability), stability, latestValue);
-	}
 
 	private void ApplyDepthAffectContent(string headline, string subtext, float stability)
 	{
@@ -2702,17 +2560,6 @@ public partial class UdpListener : Node2D
 		return 0f;
 	}
 
-	private static float DepthLegacyAttachmentFallback(JsonElement depth)
-	{
-		if (depth.TryGetProperty("n2", out var n2)
-			&& n2.ValueKind == JsonValueKind.Object
-			&& n2.TryGetProperty("attachment", out var attachment)
-			&& attachment.ValueKind == JsonValueKind.Object)
-			return Mathf.Clamp(JsonFloat(attachment, "value", 0f), 0f, 1f);
-
-		return 0f;
-	}
-
 	private static string StripTomPrefix(string raw)
 	{
 		string text = TrimDepthUiText(raw, 180);
@@ -2752,28 +2599,6 @@ public partial class UdpListener : Node2D
 		if (want >= 0.58f && allowed >= 0.52f)
 			return "muốn nói";
 		return "cân bằng";
-	}
-
-	private static string LegacyAffectHeadline(float valence, float arousal)
-	{
-		if (arousal >= 0.68f)
-			return valence >= 0.10f ? "energized" : "tense";
-		if (valence >= 0.22f)
-			return "calm";
-		if (valence <= -0.18f)
-			return "tense";
-		return "steady";
-	}
-
-	private static string LegacyAffectSubtext(float valence, float arousal, string stance)
-	{
-		if (!string.IsNullOrWhiteSpace(stance) && stance.Contains("tender", StringComparison.OrdinalIgnoreCase))
-			return "warm and open to gentle conversation";
-		if (arousal >= 0.68f)
-			return "thinking quickly, with more inner movement";
-		if (valence <= -0.18f)
-			return "holding a little tension while listening";
-		return "listening quietly";
 	}
 
 	private static string LocalizeDepthAffectHeadline(string raw)

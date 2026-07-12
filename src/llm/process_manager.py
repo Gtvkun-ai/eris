@@ -102,21 +102,28 @@ class RemoteModelProcessManager:
         )
 
         if provider == "gemini":
-            api_key = api_key or get_secret("GEMINI_SPEECH_API_KEY", "GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
+            remote_provider = os.environ.get("ERIS_REMOTE_PROVIDER", "").strip().lower()
+            remote_base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "").strip()
+            remote_model = os.environ.get("ERIS_REMOTE_MODEL", "").strip()
+            remote_is_gemini = remote_provider == "gemini" or "generativelanguage.googleapis.com" in remote_base_url.lower()
+
+            api_key = api_key or get_secret("GEMINI_SPEECH_API_KEY", "GEMINI_API_KEY")
+            if not api_key and remote_is_gemini:
+                api_key = get_secret("ERIS_REMOTE_API_KEY")
             base_url = (
                 str(profile.get("base_url") or "").strip()
                 or os.environ.get(
                     "ERIS_SPEECH_BASE_URL",
-                    os.environ.get("ERIS_REMOTE_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
+                    remote_base_url if remote_is_gemini and remote_base_url else "https://generativelanguage.googleapis.com/v1beta",
                 ).strip()
             )
             model_name = (
                 str(profile.get("model") or "").strip()
                 or str(profile.get("model_name") or "").strip()
                 or os.environ.get("ERIS_SPEECH_MODEL", "").strip()
-                or os.environ.get("ERIS_REMOTE_MODEL", "").strip()
                 or os.environ.get("GEMINI_MODEL", "").strip()
-                or "gemma-4-31b-it"
+                or (remote_model if remote_is_gemini and remote_model else "")
+                or "gemini-2.5-flash"
             )
             if not api_key:
                 raise RuntimeError("Speech Gemini dang bat nhung chua co ERIS_SPEECH_API_KEY hoac GEMINI_API_KEY.")

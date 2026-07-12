@@ -16,12 +16,16 @@ Backend phát âm: miniaudio (không cần ffmpeg, không có audioop issue vớ
 from __future__ import annotations
 
 import io
+import asyncio
 import logging
 import os
 import queue
 import re
 import struct
+import subprocess
+import tempfile
 import threading
+import unicodedata
 import wave
 from dataclasses import dataclass
 from typing import Optional
@@ -66,8 +70,13 @@ def _model() -> str:
     return os.environ.get("ERIS_TTS_MODEL", "gemini-2.5-flash-preview-tts").strip()
 
 def _language_hint() -> str:
-    # "auto" = detect từ text; "ja" = ép Japanese; "vi" = Vietnamese; v.v.
-    return os.environ.get("ERIS_TTS_LANGUAGE", "auto").strip()
+    # Eris nói tiếng Việt mặc định. Chỉ dịch/đọc Nhật khi cấu hình rõ ``ja``.
+    raw = os.environ.get("ERIS_TTS_LANGUAGE", "vi").strip().lower()
+    if raw in {"", "auto", "vi", "vietnamese", "vi-vn"}:
+        return "vi"
+    if raw in {"jp", "japanese", "ja-jp"}:
+        return "ja"
+    return raw
 
 
 def _quality_mode() -> str:
@@ -86,6 +95,52 @@ def _queue_size() -> int:
         return max(1, min(24, int(raw)))
     except ValueError:
         return 4
+
+
+def _remote_provider_is_gemini() -> bool:
+    provider = os.environ.get("ERIS_REMOTE_PROVIDER", "").strip().lower()
+    if provider == "gemini":
+        return True
+    base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "").strip().lower()
+    return "generativelanguage.googleapis.com" in base_url or "googleapis.com" in base_url
+
+
+def _prelocalize_japanese_enabled() -> bool:
+    return os.environ.get("ERIS_TTS_PRELOCALIZE_JA", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _local_tts_fallback_enabled() -> bool:
+    return os.environ.get("ERIS_TTS_LOCAL_FALLBACK", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _edge_tts_fallback_enabled() -> bool:
+    return os.environ.get("ERIS_TTS_EDGE_FALLBACK", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _sapi_tts_fallback_enabled() -> bool:
+    # SAPI keeps Eris from going silent, but the stock Windows voices are not
+    # suitable for the anime/Japanese persona, so only use it when requested.
+    return os.environ.get("ERIS_TTS_SAPI_FALLBACK", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 # ── Emotion → Audio Tag mapping ───────────────────────────────────────────────
 # valence: [-1, 1]  arousal: [0, 1]  stance: string từ appraisal
@@ -272,15 +327,280 @@ def _get_api_key() -> str:
     key = os.environ.get("ERIS_SPEECH_API_KEY", "").strip()
     if key:
         return key
-    # 3. Fallback key chung
-    for env_name in ("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY"):
+    # 3. Gemini key chung
+    for env_name in ("GEMINI_SPEECH_API_KEY", "GEMINI_API_KEY"):
         key = os.environ.get(env_name, "").strip()
+        if key and not key.startswith("PASTE_"):
+            return key
+    # 4. Chỉ dùng ERIS_REMOTE_API_KEY nếu remote thật sự là Gemini.
+    if _remote_provider_is_gemini():
+        key = os.environ.get("ERIS_REMOTE_API_KEY", "").strip()
         if key and not key.startswith("PASTE_"):
             return key
     return ""
 
 
-def _synthesize_wav(prompt: str, voice: str, model: str) -> bytes:
+def _short_error(exc: Exception, *, limit: int = 220) -> str:
+    text = " ".join(str(exc or "").split())
+    if len(text) > limit:
+        return text[: max(0, limit - 3)].rstrip() + "..."
+    return text
+
+
+def _edge_voice_candidates(language_hint: str = "") -> list[str]:
+    lang = str(language_hint or "").strip().lower()
+    ja_voice = os.environ.get("ERIS_TTS_EDGE_JA_VOICE", "ja-JP-NanamiNeural").strip()
+    vi_voice = os.environ.get("ERIS_TTS_EDGE_VI_VOICE", "vi-VN-HoaiMyNeural").strip()
+    en_voice = os.environ.get("ERIS_TTS_EDGE_EN_VOICE", "en-US-JennyNeural").strip()
+
+    if lang.startswith(("ja", "jp")) or lang == "japanese":
+        voices = [ja_voice, vi_voice, en_voice]
+    elif lang.startswith("vi"):
+        voices = [vi_voice, ja_voice, en_voice]
+    else:
+        voices = [ja_voice, vi_voice, en_voice]
+
+    result: list[str] = []
+    for voice in voices:
+        if voice and voice not in result:
+            result.append(voice)
+    return result
+
+
+def _edge_romaji_enabled() -> bool:
+    return os.environ.get("ERIS_TTS_EDGE_ROMAJI", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _ascii_for_edge(text: str) -> str:
+    source = str(text or "").replace("đ", "d").replace("Đ", "D")
+    normalized = unicodedata.normalize("NFKD", source)
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii", "ignore")
+    return " ".join(ascii_text.split()).strip()
+
+
+def _clean_edge_romaji_output(text: str) -> str:
+    raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    raw = raw.strip().strip('"').strip("'").strip()
+    lines = [" ".join(line.split()).strip() for line in raw.split("\n")]
+    out = " ".join(line for line in lines if line).strip()
+    out = re.sub(r"^(romaji|output)\s*:\s*", "", out, flags=re.IGNORECASE).strip()
+    out = re.sub(r"\[[^\]]+\]", "", out).strip()
+    return out
+
+
+def _edge_japanese_romaji_text(text: str) -> str:
+    clean = _clean_text(text)
+    if not clean or not _edge_romaji_enabled():
+        return ""
+
+    api_key = _get_api_key()
+    if not api_key:
+        return _ascii_for_edge(clean)
+
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=api_key)
+        prompt = (
+            "Prepare this line for a Japanese neural TTS voice that cannot read kana/kanji in this runtime.\n"
+            "If the line is not Japanese, translate it into natural, gentle, polite Japanese for a soft anime girl "
+            "desktop companion speaking to her Master/Ngai.\n"
+            "Then output ONLY Hepburn romaji, with simple punctuation and no kana, kanji, quotes, labels, notes, "
+            "stage directions, or original text.\n\n"
+            f"Line:\n{clean}"
+        )
+        response = client.models.generate_content(
+            model=os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "gemini-2.5-flash").strip(),
+            contents=prompt,
+        )
+        return _clean_edge_romaji_output(getattr(response, "text", "") or "")
+    except Exception as exc:
+        logger.warning("[TTS] Edge JP romaji localizer loi: %s", _short_error(exc))
+        return _ascii_for_edge(clean)
+
+
+def _edge_text_candidates(text: str, language_hint: str = "") -> list[tuple[str, str]]:
+    clean = _clean_text(text)
+    if not clean:
+        return []
+
+    lang = str(language_hint or "").strip().lower()
+    if lang.startswith(("ja", "jp")) or lang == "japanese":
+        candidates = [
+            ("romaji", _edge_japanese_romaji_text(clean)),
+            ("ascii", _ascii_for_edge(clean)),
+            ("raw", clean),
+        ]
+    else:
+        candidates = [("raw", clean)]
+
+    result: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for mode, candidate in candidates:
+        value = str(candidate or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            result.append((mode, value))
+    return result
+
+
+def _mp3_file_to_wav_bytes(path: str) -> bytes:
+    import miniaudio
+
+    with open(path, "rb") as fh:
+        mp3_bytes = fh.read()
+    decoded = miniaudio.decode(mp3_bytes)
+    samples = getattr(decoded, "samples", b"")
+    if hasattr(samples, "tobytes"):
+        pcm = samples.tobytes()
+    else:
+        pcm = bytes(samples)
+
+    sample_width = int(getattr(decoded, "sample_width", 2) or 2)
+    nchannels = int(getattr(decoded, "nchannels", 1) or 1)
+    sample_rate = int(getattr(decoded, "sample_rate", 24000) or 24000)
+    if not pcm:
+        return b""
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(nchannels)
+        wf.setsampwidth(sample_width)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
+    return buf.getvalue()
+
+
+async def _edge_tts_save_mp3(text: str, voice: str, path: str) -> None:
+    import edge_tts
+
+    communicate = edge_tts.Communicate(text=text, voice=voice)
+    await communicate.save(path)
+
+
+def _synthesize_edge_tts_wav(text: str, *, language_hint: str = "") -> tuple[bytes, str]:
+    text_candidates = _edge_text_candidates(text, language_hint)
+    if not text_candidates or not _edge_tts_fallback_enabled():
+        return b"", ""
+
+    errors: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="eris_edge_tts_") as tmpdir:
+        for voice in _edge_voice_candidates(language_hint):
+            for mode, candidate_text in text_candidates:
+                mp3_path = os.path.join(tmpdir, f"{voice}_{mode}.mp3")
+                try:
+                    asyncio.run(_edge_tts_save_mp3(candidate_text, voice, mp3_path))
+                    if not os.path.exists(mp3_path) or os.path.getsize(mp3_path) <= 0:
+                        raise RuntimeError("Edge TTS returned an empty MP3")
+                    wav_bytes = _mp3_file_to_wav_bytes(mp3_path)
+                    if wav_bytes:
+                        return wav_bytes, f"{voice}/{mode}"
+                    raise RuntimeError("Edge TTS MP3 decode returned empty WAV")
+                except Exception as exc:
+                    errors.append(f"{voice}/{mode}: {_short_error(exc, limit=120)}")
+
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return b"", ""
+
+
+def _synthesize_windows_sapi_wav(text: str, *, language_hint: str = "") -> bytes:
+    """Render WAV with built-in Windows SAPI when remote TTS quota is exhausted."""
+    clean = _clean_text(text)
+    if os.name != "nt" or not clean:
+        return b""
+
+    script = r"""
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Speech
+$textPath = $env:ERIS_SAPI_TEXT_PATH
+$wavPath = $env:ERIS_SAPI_WAV_PATH
+$lang = ($env:ERIS_SAPI_LANGUAGE_HINT -as [string]).ToLowerInvariant()
+$text = [System.IO.File]::ReadAllText($textPath, [System.Text.Encoding]::UTF8)
+$speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer
+try {
+    $target = ""
+    if ($lang.StartsWith("ja") -or $lang -eq "jp" -or $lang -eq "japanese") { $target = "ja" }
+    elseif ($lang.StartsWith("vi")) { $target = "vi" }
+    if ($target) {
+        $voice = $speaker.GetInstalledVoices() |
+            Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name.ToLowerInvariant().StartsWith($target) } |
+            Select-Object -First 1
+        if ($voice) { $speaker.SelectVoice($voice.VoiceInfo.Name) }
+    }
+    $speaker.Rate = -1
+    $speaker.Volume = 100
+    $speaker.SetOutputToWaveFile($wavPath)
+    $speaker.Speak($text) | Out-Null
+}
+finally {
+    $speaker.Dispose()
+}
+"""
+    with tempfile.TemporaryDirectory(prefix="eris_tts_") as tmpdir:
+        text_path = os.path.join(tmpdir, "input.txt")
+        wav_path = os.path.join(tmpdir, "fallback.wav")
+        with open(text_path, "w", encoding="utf-8") as fh:
+            fh.write(clean)
+        env = dict(os.environ)
+        env["ERIS_SAPI_TEXT_PATH"] = text_path
+        env["ERIS_SAPI_WAV_PATH"] = wav_path
+        env["ERIS_SAPI_LANGUAGE_HINT"] = str(language_hint or "")
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            timeout=20,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError((completed.stderr or "Windows SAPI fallback failed").strip())
+        with open(wav_path, "rb") as fh:
+            return fh.read()
+
+
+def _try_local_tts_fallback(exc: Exception, *, fallback_text: str = "", language_hint: str = "") -> bytes:
+    if not _local_tts_fallback_enabled() or not str(fallback_text or "").strip():
+        return b""
+    try:
+        wav_bytes, voice = _synthesize_edge_tts_wav(fallback_text, language_hint=language_hint)
+        if wav_bytes:
+            logger.warning(
+                "[TTS] Gemini TTS loi/quota (%s). Dung Edge neural TTS fallback voice=%s.",
+                _short_error(exc),
+                voice,
+            )
+            return wav_bytes
+    except Exception as edge_exc:
+        logger.warning("[TTS] Edge neural TTS fallback loi: %s", _short_error(edge_exc))
+
+    if not _sapi_tts_fallback_enabled():
+        return b""
+
+    try:
+        wav_bytes = _synthesize_windows_sapi_wav(fallback_text, language_hint=language_hint)
+        if wav_bytes:
+            logger.warning("[TTS] Gemini TTS loi/quota (%s). Dung Windows SAPI fallback voice tam.", _short_error(exc))
+            return wav_bytes
+    except Exception as sapi_exc:
+        logger.warning("[TTS] Windows SAPI fallback loi: %s", _short_error(sapi_exc))
+    return b""
+
+
+def _synthesize_wav(
+    prompt: str,
+    voice: str,
+    model: str,
+    *,
+    fallback_text: str = "",
+    language_hint: str = "",
+) -> bytes:
     """Gọi Gemini TTS, trả về WAV bytes (24kHz, mono, 16-bit PCM)."""
     from google import genai
     from google.genai import types
@@ -296,8 +616,26 @@ def _synthesize_wav(prompt: str, voice: str, model: str) -> bytes:
 
     last_exc = None
     pcm_data = None
+    attempted_indices: set[int] = set()
     for attempt in range(max_attempts):
-        api_key = _get_api_key()
+        lease = None
+        if pool is not None and pool.size > 0:
+            lease = pool.acquire(exclude_indices=attempted_indices)
+            if lease is None:
+                wait_s = pool.next_available_in()
+                exc = RuntimeError(f"Gemini TTS key pool đang cooldown; thử lại sau khoảng {wait_s:.1f}s")
+                fallback = _try_local_tts_fallback(
+                    exc,
+                    fallback_text=fallback_text,
+                    language_hint=language_hint,
+                )
+                if fallback:
+                    return fallback
+                raise exc
+            attempted_indices.add(lease.index)
+            api_key = lease.key
+        else:
+            api_key = _get_api_key()
         if not api_key:
             raise RuntimeError("Không tìm thấy Gemini API key cho TTS.")
 
@@ -329,15 +667,26 @@ def _synthesize_wav(prompt: str, voice: str, model: str) -> bytes:
             except Exception:
                 pass
 
-            if is_rate_limit and pool is not None and attempt < max_attempts - 1:
-                logger.warning("[TTS] Key index %d bị rate limit/hết quota (lượt %d/%d). Đang xoay key...", pool.index(), attempt + 1, max_attempts)
-                pool.mark_dead(seconds=60.0)
-                pool.rotate()
-                continue
+            if is_rate_limit and pool is not None:
+                pool.mark_dead(seconds=60.0, lease=lease, reason="tts_http_429")
+                logger.warning(
+                    "[TTS] Key index %s bị rate limit/hết quota (lượt %d/%d).",
+                    getattr(lease, "index", "?"),
+                    attempt + 1,
+                    max_attempts,
+                )
+                if attempt < max_attempts - 1:
+                    continue
+            fallback = _try_local_tts_fallback(exc, fallback_text=fallback_text, language_hint=language_hint)
+            if fallback:
+                return fallback
             raise
 
     if pcm_data is None:
         if last_exc:
+            fallback = _try_local_tts_fallback(last_exc, fallback_text=fallback_text, language_hint=language_hint)
+            if fallback:
+                return fallback
             raise last_exc
         raise RuntimeError("Không thể tổng hợp giọng nói từ Gemini API.")
 
@@ -411,8 +760,41 @@ def _concat_wav_bytes(*items: bytes) -> bytes:
     return out.getvalue()
 
 
+def _wav_duration_seconds(wav_bytes: bytes) -> float:
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+            framerate = max(1, int(wf.getframerate() or 24000))
+            frames = max(0, int(wf.getnframes() or 0))
+            return frames / float(framerate)
+    except Exception:
+        return 0.0
+
+
+def _play_wav_winsound(wav_bytes: bytes, stop_event: threading.Event) -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import winsound
+        import time
+
+        duration = max(0.05, _wav_duration_seconds(wav_bytes))
+        winsound.PlaySound(wav_bytes, winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+        started_at = time.time()
+        while (time.time() - started_at) < duration:
+            if stop_event.is_set():
+                winsound.PlaySound(None, 0)
+                return True
+            time.sleep(0.02)
+        return True
+    except Exception as exc:
+        logger.debug("[TTS] winsound playback unavailable: %s", exc)
+        return False
+
+
 def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event) -> None:
-    """Phát WAV bytes qua sounddevice. Fallback → miniaudio stream."""
+    """Phát WAV bytes qua backend phù hợp. Windows ưu tiên winsound."""
+    if _play_wav_winsound(wav_bytes, stop_event):
+        return
     try:
         import sounddevice as sd
         import numpy as np
@@ -440,6 +822,9 @@ def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event) -> None:
 
     except ImportError:
         # Fallback: miniaudio
+        _play_wav_miniaudio(wav_bytes, stop_event)
+    except Exception as exc:
+        logger.warning("[TTS] sounddevice playback lỗi, fallback miniaudio: %s", exc)
         _play_wav_miniaudio(wav_bytes, stop_event)
 
 
@@ -674,7 +1059,7 @@ class _TtsWorker:
             kind=kind,
             style=req.prosody_style or getattr(prosody_plan, "style", "") or "neutral",
             text=prefix,
-            language_hint="auto",
+            language_hint=_language_hint(),
         )
         cached = self._vocal_cache.get(key)
         if cached:
@@ -697,12 +1082,18 @@ class _TtsWorker:
             prompt = _build_tts_prompt(
                 marked,
                 "",
-                "auto",
+                self._language_hint,
                 prosody_notes=prefix_plan.director_notes,
                 prelocalized=True,
                 quality_mode=_quality_mode(),
             )
-            wav_bytes = _synthesize_wav(prompt, self._voice, self._model)
+            wav_bytes = _synthesize_wav(
+                prompt,
+                self._voice,
+                self._model,
+                fallback_text=prefix,
+                language_hint=_language_hint(),
+            )
             self._vocal_cache.put(key, wav_bytes)
             logger.debug("[TTS] Vocal cache stored kind=%s text=%r", kind, prefix)
             return wav_bytes
@@ -724,7 +1115,7 @@ class _TtsWorker:
         prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
         text_to_speak = main_text_raw
         localized = bool(req.prelocalized)
-        if self._language_hint == "ja" and not req.prelocalized:
+        if self._language_hint == "ja" and _prelocalize_japanese_enabled() and not req.prelocalized:
             # Dịch/style chạy ở backend nhưng trả về WAV thuần. Manager không cần
             # biết câu đã localize thế nào, chỉ cần audio bytes để xếp hàng phát.
             text_to_speak = self._localizer.localize(
@@ -753,7 +1144,13 @@ class _TtsWorker:
                 prelocalized=localized or req.prelocalized,
                 quality_mode=_quality_mode(),
             )
-            main_wav = _synthesize_wav(prompt, self._voice, self._model)
+            main_wav = _synthesize_wav(
+                prompt,
+                self._voice,
+                self._model,
+                fallback_text=text_to_speak,
+                language_hint=self._language_hint,
+            )
 
         logger.debug(
             "[TTS] valence=%.2f arousal=%.2f stance=%r → style=%r tag=%r",
@@ -786,7 +1183,7 @@ class _TtsWorker:
                     prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
                     text_to_speak = main_text_raw
                     localized = bool(req.prelocalized)
-                    if self._language_hint == "ja" and not req.prelocalized:
+                    if self._language_hint == "ja" and _prelocalize_japanese_enabled() and not req.prelocalized:
                         # Dịch/style TTS chạy trong worker nền để UI/runtime không bị
                         # kẹt bởi một call Gemini phụ. Engine vẫn chỉ nhận text sạch.
                         text_to_speak = self._localizer.localize(
@@ -815,7 +1212,13 @@ class _TtsWorker:
                             prelocalized=localized or req.prelocalized,
                             quality_mode=_quality_mode(),
                         )
-                        main_wav = _synthesize_wav(prompt, self._voice, self._model)
+                        main_wav = _synthesize_wav(
+                            prompt,
+                            self._voice,
+                            self._model,
+                            fallback_text=text_to_speak,
+                            language_hint=self._language_hint,
+                        )
 
                     logger.debug(
                         "[TTS] valence=%.2f arousal=%.2f stance=%r → style=%r tag=%r",
@@ -846,18 +1249,8 @@ class _TtsWorker:
                 except Exception as exc:
                     self._emit(req, "audio_failed", error=str(exc))
                     logger.warning("[TTS] Lỗi: %s", exc)
-                    # Đánh dấu key hiện tại chết và xoay key trong pool khi gặp 429/RESOURCE_EXHAUSTED
-                    try:
-                        from google.genai.errors import ClientError
-                        is_rate_limit = isinstance(exc, ClientError) and exc.code == 429
-                        if is_rate_limit or "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
-                            from llm.key_pool import get_key_pool
-                            pool = get_key_pool("gemini")
-                            if pool:
-                                pool.mark_dead(seconds=60.0)
-                                pool.rotate()
-                    except Exception:
-                        pass
+                    # _synthesize_wav đã đánh dấu đúng lease gây 429. Không được
+                    # mark "key hiện tại" lần nữa ở đây vì thread khác có thể đã xoay pool.
             finally:
                 if not callback_called and req.on_start_play is not None:
                     try:
@@ -893,7 +1286,7 @@ class TtsEngine:
         if not _get_api_key():
             logger.warning(
                 "[TTS] Không tìm thấy Gemini API key. "
-                "Set ERIS_SPEECH_API_KEY hoặc ERIS_REMOTE_API_KEY trong .env/secrets.json"
+                "Set ERIS_SPEECH_API_KEY hoặc GEMINI_API_KEY trong .env/secrets.json"
             )
             return
 

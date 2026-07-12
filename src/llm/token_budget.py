@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any
 
 _LOGGER = logging.getLogger("LLM")
@@ -286,3 +287,331 @@ def preflight(messages: Any, *, base_url: str | None = None, model: str | None =
         return trimmed
     except Exception:  # noqa: BLE001 — preflight không được làm hỏng hot path
         return list(messages or [])
+
+# ── Chat prompt block budget ─────────────────────────────────────────────────
+# Budget được áp TRƯỚC khi ghép prompt. Đây là lớp chính; preflight phía client
+# chỉ còn là lưới an toàn cuối, không phải máy chém xử lý một prompt đã phình.
+
+
+@dataclass(frozen=True, slots=True)
+class ChatPromptBudget:
+    total_tokens: int = 4800
+    output_reserve: int = 512
+    system_rules: int = 1800
+    user_history: int = 500
+    grounding: int = 500
+    memory: int = 400
+    state_style: int = 300
+
+    @property
+    def input_limit(self) -> int:
+        return max(512, self.total_tokens - self.output_reserve)
+
+    @property
+    def allocated_input(self) -> int:
+        return self.system_rules + self.user_history + self.grounding + self.memory + self.state_style
+
+    @property
+    def spare_tokens(self) -> int:
+        return max(0, self.input_limit - self.allocated_input)
+
+
+def _text_token_estimate(text: str, *, role: str = "system") -> int:
+    return estimate_tokens([{"role": role, "content": str(text or "")}])
+
+
+def truncate_text_to_budget(
+    text: str,
+    max_tokens: int,
+    *,
+    marker: str = "…[rút gọn theo block budget]…",
+    preserve_tail: bool = True,
+) -> str:
+    """Rút một block riêng xuống quota, giữ cả đầu và đuôi khi có thể."""
+
+    source = str(text or "").strip()
+    max_tokens = max(0, int(max_tokens))
+    if not source or max_tokens <= 0:
+        return ""
+    if _text_token_estimate(source) <= max_tokens:
+        return source
+
+    # Binary search theo số ký tự vì estimate_tokens cũng là heuristic ký tự.
+    lo, hi = 0, len(source)
+    best = ""
+    while lo <= hi:
+        keep = (lo + hi) // 2
+        if preserve_tail and keep > len(marker) + 40:
+            head = max(1, int(keep * 0.68))
+            tail = max(1, keep - head)
+            candidate = f"{source[:head].rstrip()}\n{marker}\n{source[-tail:].lstrip()}"
+        else:
+            candidate = source[:keep].rstrip() + (f"\n{marker}" if keep < len(source) else "")
+        if _text_token_estimate(candidate) <= max_tokens:
+            best = candidate
+            lo = keep + 1
+        else:
+            hi = keep - 1
+    return best or source[: max(24, max_tokens * 2)].rstrip()
+
+
+def _fit_user_history_bundle(
+    *,
+    chat_history: list[dict],
+    user_message: str,
+    conversation_context: str,
+    max_tokens: int,
+) -> tuple[str, list[dict], str]:
+    """Giữ user hiện tại trước, rồi context và các turn mới nhất trong cùng quota."""
+
+    budget = max(64, int(max_tokens))
+    user = str(user_message or "")
+    # User hiện tại có quyền ưu tiên tuyệt đối trong block này.
+    user = truncate_text_to_budget(user, budget, marker="…[user message vượt chat budget]…")
+    base_messages = [{"role": "user", "content": user}]
+    used = estimate_tokens(base_messages)
+    if used >= budget:
+        return "", [], user
+
+    remaining = budget - used
+    conversation = truncate_text_to_budget(
+        conversation_context,
+        min(120, remaining),
+        marker="…[conversation context rút gọn]…",
+    )
+    if conversation:
+        remaining = max(
+            0,
+            budget
+            - estimate_tokens(
+                [
+                    {"role": "system", "content": conversation},
+                    {"role": "user", "content": user},
+                ]
+            ),
+        )
+
+    kept_reversed: list[dict] = []
+    for raw in reversed(list(chat_history or [])):
+        if remaining <= 8 or not isinstance(raw, dict):
+            break
+        role = str(raw.get("role") or "user")
+        if role not in {"user", "assistant"}:
+            continue
+        content = raw.get("content", "")
+        if not isinstance(content, str):
+            content = str(content or "")
+        candidate = {"role": role, "content": content}
+        candidate_cost = estimate_tokens([candidate])
+        if candidate_cost > remaining:
+            compact = truncate_text_to_budget(
+                content,
+                remaining,
+                marker="…[history rút gọn]…",
+                preserve_tail=True,
+            )
+            if compact:
+                kept_reversed.append({"role": role, "content": compact})
+            break
+        kept_reversed.append(candidate)
+        remaining -= candidate_cost
+
+    kept_reversed.reverse()
+    return conversation, kept_reversed, user
+
+
+def assemble_budgeted_chat_messages(
+    *,
+    system_rules_text: str,
+    state_style_text: str,
+    grounding_text: str,
+    memory_text: str,
+    conversation_context: str,
+    chat_history: list[dict],
+    user_message: str,
+    budget: ChatPromptBudget | None = None,
+) -> tuple[list[dict], dict[str, int]]:
+    """Áp quota từng block rồi mới ghép message cho chat synthesis."""
+
+    cfg = budget or ChatPromptBudget()
+    if cfg.allocated_input > cfg.input_limit:
+        raise ValueError("ChatPromptBudget phân bổ vượt input_limit")
+
+    system_rules = truncate_text_to_budget(
+        system_rules_text,
+        cfg.system_rules,
+        marker="…[system rules rút gọn theo quota]…",
+    )
+    state_style = truncate_text_to_budget(
+        state_style_text,
+        cfg.state_style,
+        marker="…[state/style rút gọn theo quota]…",
+    )
+    grounding = truncate_text_to_budget(
+        grounding_text,
+        cfg.grounding,
+        marker="…[grounding rút gọn theo quota]…",
+    )
+    memory = truncate_text_to_budget(
+        memory_text,
+        cfg.memory,
+        marker="…[memory rút gọn theo quota]…",
+    )
+    conversation, history, user = _fit_user_history_bundle(
+        chat_history=chat_history,
+        user_message=user_message,
+        conversation_context=conversation_context,
+        max_tokens=cfg.user_history,
+    )
+
+    sections: list[str] = []
+    if state_style:
+        sections.append(f"[STATE_STYLE]\n{state_style}")
+    if system_rules:
+        sections.append(f"[SYSTEM_RULES]\n{system_rules}")
+    if grounding:
+        sections.append(f"[GROUNDING]\n{grounding}")
+    if memory:
+        sections.append(f"[MEMORY]\n{memory}")
+    if conversation:
+        sections.append(f"[CONVERSATION_CONTEXT]\n{conversation}")
+
+    messages: list[dict] = [
+        {"role": "system", "content": "\n\n".join(sections)},
+        *history,
+        {"role": "user", "content": user},
+    ]
+
+    # Lưới an toàn cho nhãn/role overhead. Bình thường spare 788 token hấp thụ đủ.
+    if estimate_tokens(messages) > cfg.input_limit:
+        messages, _ = enforce_prompt_cap(messages, cfg.input_limit)
+
+    report = {
+        "total": cfg.total_tokens,
+        "output_reserve": cfg.output_reserve,
+        "input_limit": cfg.input_limit,
+        "system_rules": _text_token_estimate(system_rules),
+        "user_history": estimate_tokens([
+            *([{"role": "system", "content": conversation}] if conversation else []),
+            *history,
+            {"role": "user", "content": user},
+        ]),
+        "grounding": _text_token_estimate(grounding),
+        "memory": _text_token_estimate(memory),
+        "state_style": _text_token_estimate(state_style),
+        "spare": cfg.spare_tokens,
+        "assembled_input": estimate_tokens(messages),
+    }
+    return messages, report
+
+# ── Generic block-first prompt budget ───────────────────────────────────────
+
+@dataclass(frozen=True, slots=True)
+class PromptBlockBudget:
+    """Quota prompt dùng cho các channel ngoài chat.
+
+    Tên block giữ thống nhất với chat để telemetry dễ so sánh. Caller có thể
+    đổi quota theo channel, nhưng mọi block luôn bị cắt trước khi ghép.
+    """
+
+    total_tokens: int = 4800
+    output_reserve: int = 512
+    system_rules: int = 1800
+    user_history: int = 500
+    grounding: int = 500
+    memory: int = 400
+    state_style: int = 300
+
+    @property
+    def input_limit(self) -> int:
+        return max(256, self.total_tokens - self.output_reserve)
+
+    @property
+    def allocated_input(self) -> int:
+        return self.system_rules + self.user_history + self.grounding + self.memory + self.state_style
+
+    @property
+    def spare_tokens(self) -> int:
+        return max(0, self.input_limit - self.allocated_input)
+
+
+def assemble_budgeted_prompt_blocks(
+    *,
+    system_rules_text: str = "",
+    user_text: str = "",
+    grounding_text: str = "",
+    memory_text: str = "",
+    state_style_text: str = "",
+    budget: PromptBlockBudget | None = None,
+) -> tuple[list[dict], dict[str, int]]:
+    """Cắt từng block theo quota rồi mới ghép thành system/user messages."""
+
+    cfg = budget or PromptBlockBudget()
+    if cfg.allocated_input > cfg.input_limit:
+        raise ValueError("PromptBlockBudget phân bổ vượt input_limit")
+
+    system_rules = truncate_text_to_budget(
+        system_rules_text, cfg.system_rules, marker="…[system rules rút gọn theo quota]…"
+    )
+    user = truncate_text_to_budget(
+        user_text, cfg.user_history, marker="…[user/instruction rút gọn theo quota]…"
+    )
+    grounding = truncate_text_to_budget(
+        grounding_text, cfg.grounding, marker="…[grounding rút gọn theo quota]…"
+    )
+    memory = truncate_text_to_budget(
+        memory_text, cfg.memory, marker="…[memory rút gọn theo quota]…"
+    )
+    state_style = truncate_text_to_budget(
+        state_style_text, cfg.state_style, marker="…[state/style rút gọn theo quota]…"
+    )
+
+    sections: list[str] = []
+    if state_style:
+        sections.append(f"[STATE_STYLE]\n{state_style}")
+    if system_rules:
+        sections.append(f"[SYSTEM_RULES]\n{system_rules}")
+    if grounding:
+        sections.append(f"[GROUNDING]\n{grounding}")
+    if memory:
+        sections.append(f"[MEMORY]\n{memory}")
+
+    messages = [
+        {"role": "system", "content": "\n\n".join(sections)},
+        {"role": "user", "content": user},
+    ]
+    if estimate_tokens(messages) > cfg.input_limit:
+        messages, _ = enforce_prompt_cap(messages, cfg.input_limit)
+
+    report = {
+        "total": cfg.total_tokens,
+        "output_reserve": cfg.output_reserve,
+        "input_limit": cfg.input_limit,
+        "system_rules": _text_token_estimate(system_rules),
+        "user_history": _text_token_estimate(user, role="user"),
+        "grounding": _text_token_estimate(grounding),
+        "memory": _text_token_estimate(memory),
+        "state_style": _text_token_estimate(state_style),
+        "spare": cfg.spare_tokens,
+        "assembled_input": estimate_tokens(messages),
+    }
+    return messages, report
+
+
+def budget_existing_messages(
+    messages: list[dict],
+    *,
+    total_tokens: int = 4800,
+    output_reserve: int = 512,
+) -> list[dict]:
+    """Lưới an toàn cho các đường legacy chưa tách block.
+
+    Hàm này không thay thế block-first assembler; nó chỉ ngăn parser/repair cũ
+    gửi prompt vượt trần trong lúc các call site đang được di chuyển dần.
+    """
+
+    input_limit = max(256, int(total_tokens) - int(output_reserve))
+    if estimate_tokens(messages) <= input_limit:
+        return [dict(item) for item in messages]
+    trimmed, _ = enforce_prompt_cap(messages, input_limit)
+    return trimmed

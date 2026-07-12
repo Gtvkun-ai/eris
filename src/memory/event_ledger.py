@@ -36,15 +36,8 @@ def compact_text(value: Any, *, limit: int = 600) -> str:
     return text
 
 
-def atomic_write_json(path: str, payload: Any) -> None:
-    """Ghi JSON bằng temp file rồi replace để giảm rủi ro hỏng file giữa chừng."""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    os.makedirs(directory, exist_ok=True)
-    temp_path = os.path.join(directory, f".{os.path.basename(path)}.{os.getpid()}.{int(time.time()*1000)}.tmp")
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-    os.replace(temp_path, path)
+
+from .json_store_io import atomic_write_json
 
 
 @dataclass(slots=True)

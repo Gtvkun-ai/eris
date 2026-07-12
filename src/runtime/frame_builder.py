@@ -897,8 +897,8 @@ class FrameBuilderMixin:
     def _maybe_write_panel_snapshot(self, appraisal, advisory) -> None:
         """Ghi tín hiệu sống ra panel_snapshot.json (flag-gated, throttled, không ném).
 
-        Cũng cache tom advisory để `_build_depth_block` (payload sang body Godot) có
-        dữ liệu — đây là chỗ duy nhất tom_read được tính trên hot path nói.
+        Cũng cache tom advisory để depth_v2 payload sang body Godot có dữ liệu —
+        đây là chỗ duy nhất tom_read được tính trên hot path nói.
         """
         try:
             self._last_tom_advisory = advisory or ""

@@ -18,7 +18,7 @@ from runtime.prosody_director import ProsodyDirector
 from runtime.stage_contracts import StageFrame
 
 
-_SENTENCE_RE = re.compile(r"[^.!?。！？\n]+[.!?。！？]?")
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?。！？])\s+")
 
 
 def _enabled() -> bool:
@@ -56,19 +56,28 @@ class SentenceSegmenter:
         if len(clean) < _min_split_chars():
             return (clean,)
 
-        parts = [match.group(0).strip() for match in _SENTENCE_RE.finditer(clean)]
-        parts = [part for part in parts if part]
+        # Chỉ tách khi dấu kết câu được theo sau bởi whitespace. Vì vậy dấu
+        # chấm trong 3.5, v1.2.3, URL hoặc tên file không bị coi là hết câu.
+        parts = [part.strip() for part in _SENTENCE_BOUNDARY_RE.split(clean) if part.strip()]
         if len(parts) <= 1:
             return (clean,)
 
-        # Gộp câu quá ngắn vào câu sau/trước để tránh TTS phát mấy mẩu vụn.
+        # Gộp câu quá ngắn vào câu trước để tránh TTS phát mẩu vụn.
         merged: list[str] = []
         for part in parts:
             if merged and len(part) < 12:
                 merged[-1] = f"{merged[-1]} {part}".strip()
             else:
                 merged.append(part)
-        return tuple(merged[: _max_segments()])
+
+        # Không được slice rồi làm mất phần cuối. Nếu vượt max segment, gộp toàn
+        # bộ phần dư vào segment cuối để bảo toàn 100% nội dung.
+        max_segments = _max_segments()
+        if len(merged) > max_segments:
+            head = merged[: max_segments - 1]
+            tail = " ".join(merged[max_segments - 1 :]).strip()
+            merged = [*head, tail]
+        return tuple(merged)
 
 
 class StageOutputPipeline:

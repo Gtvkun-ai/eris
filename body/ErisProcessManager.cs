@@ -11,6 +11,10 @@ public sealed class ErisServiceConfig
 	public string PythonExecutable { get; init; } = "python";
 	public string VisionScriptPath { get; init; } = "src/vision.py";
 	public bool EnableRemoteCognitionApi { get; init; } = true;
+	public bool EnableTts { get; init; } = true;
+	public string TtsVoice { get; init; } = "Aoede";
+	public string TtsLanguage { get; init; } = "auto";
+	public string TtsQuality { get; init; } = "high";
 	public string DefaultRemoteApiKey { get; init; } = "";
 	public string RemoteApiProvider { get; init; } = "gemini";
 	public string RemoteApiBaseUrl { get; init; } = "";
@@ -146,6 +150,30 @@ public sealed class ErisProcessManager
 			startInfo.Environment[key] = value;
 	}
 
+	private static string NormalizeTtsLanguage(string value)
+	{
+		string lang = (value ?? "").Trim().ToLowerInvariant();
+		return lang switch
+		{
+			"" => "ja",
+			"auto" => "ja",
+			"jp" => "ja",
+			"japanese" => "ja",
+			_ => lang,
+		};
+	}
+
+	private static bool ShouldMirrorRemoteKeyToGemini(ErisServiceConfig config)
+	{
+		string provider = (config.RemoteApiProvider ?? "").Trim().ToLowerInvariant();
+		if (provider == "gemini")
+			return true;
+
+		string baseUrl = (config.RemoteApiBaseUrl ?? "").Trim().ToLowerInvariant();
+		return baseUrl.Contains("generativelanguage.googleapis.com")
+			|| baseUrl.Contains("googleapis.com");
+	}
+
 	private void PopulateVisionEnvironment(ProcessStartInfo startInfo, ErisServiceConfig config)
 	{
 		foreach (var secret in LoadProjectSecretsEnvironment())
@@ -161,18 +189,22 @@ public sealed class ErisProcessManager
 		// suy ra tu __file__ (bi sai trong bundle PyInstaller).
 		startInfo.Environment["ERIS_PROJECT_ROOT"] = GetRuntimeBaseDir();
 		startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = config.EnableRemoteCognitionApi ? "1" : "0";
-		// secrets.json (neu co khai) la NGUON SU THAT cho REMOTE provider/base_url/model.
-		// Chi dung gia tri tu Godot config khi secrets CHUA khai -> tranh de-len cau hinh
-		// Groq trong secrets (vd ERIS_REMOTE_PROVIDER=openai_compatible).
-		SetEnvIfAbsent(startInfo, "ERIS_REMOTE_PROVIDER", config.RemoteApiProvider);
-		SetEnvIfAbsent(startInfo, "ERIS_REMOTE_BASE_URL", config.RemoteApiBaseUrl);
-		SetEnvIfAbsent(startInfo, "ERIS_REMOTE_MODEL", config.RemoteApiModelName);
+		startInfo.Environment["ERIS_TTS_ENABLED"] = config.EnableTts ? "1" : "0";
+		startInfo.Environment["ERIS_TTS_VOICE"] = string.IsNullOrWhiteSpace(config.TtsVoice) ? "Aoede" : config.TtsVoice.Trim();
+		startInfo.Environment["ERIS_TTS_LANGUAGE"] = NormalizeTtsLanguage(config.TtsLanguage);
+		startInfo.Environment["ERIS_TTS_QUALITY"] = string.IsNullOrWhiteSpace(config.TtsQuality) ? "high" : config.TtsQuality.Trim();
+		// Settings panel da load secrets/user settings vao config truoc khi start.
+		// Gan truc tiep de Restart ap dung ngay ca khi user chua bam Save.
+		startInfo.Environment["ERIS_REMOTE_PROVIDER"] = string.IsNullOrWhiteSpace(config.RemoteApiProvider) ? "gemini" : config.RemoteApiProvider.Trim();
+		startInfo.Environment["ERIS_REMOTE_BASE_URL"] = config.RemoteApiBaseUrl ?? "";
+		startInfo.Environment["ERIS_REMOTE_MODEL"] = config.RemoteApiModelName ?? "";
 		startInfo.Environment["ERIS_LOCAL_STYLE_REWRITE_ENABLED"] = "0";
 		startInfo.Environment["ERIS_LOCAL_VISION_FACTS"] = "0";
 		if (!string.IsNullOrWhiteSpace(config.DefaultRemoteApiKey))
 		{
 			startInfo.Environment["ERIS_REMOTE_API_KEY"] = config.DefaultRemoteApiKey;
-			startInfo.Environment["GEMINI_API_KEY"] = config.DefaultRemoteApiKey;
+			if (ShouldMirrorRemoteKeyToGemini(config))
+				startInfo.Environment["GEMINI_API_KEY"] = config.DefaultRemoteApiKey;
 		}
 	}
 
@@ -212,11 +244,29 @@ public sealed class ErisProcessManager
 
 		foreach (JsonProperty property in source.EnumerateObject())
 		{
-			if (property.Value.ValueKind != JsonValueKind.String)
+			if (string.IsNullOrWhiteSpace(property.Name))
 				continue;
-			string value = property.Value.GetString() ?? "";
-			if (!string.IsNullOrWhiteSpace(property.Name) && !string.IsNullOrWhiteSpace(value))
-				values[property.Name] = value.Trim();
+			if (property.Value.ValueKind == JsonValueKind.String)
+			{
+				string value = property.Value.GetString() ?? "";
+				if (!string.IsNullOrWhiteSpace(value))
+					values[property.Name] = value.Trim();
+				continue;
+			}
+			if (property.Value.ValueKind == JsonValueKind.Array)
+			{
+				var parts = new List<string>();
+				foreach (JsonElement item in property.Value.EnumerateArray())
+				{
+					if (item.ValueKind != JsonValueKind.String)
+						continue;
+					string value = item.GetString() ?? "";
+					if (!string.IsNullOrWhiteSpace(value))
+						parts.Add(value.Trim());
+				}
+				if (parts.Count > 0)
+					values[property.Name] = string.Join(",", parts);
+			}
 		}
 	}
 

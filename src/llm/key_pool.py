@@ -22,9 +22,22 @@ import os
 import threading
 import time
 from contextlib import contextmanager
-from typing import List
+from dataclasses import dataclass
+from typing import Iterable, List
 
 _LOGGER = logging.getLogger("LLM")
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyLease:
+    """Một key cụ thể đã được cấp cho đúng một request.
+
+    Request phải giữ lease này cho tới khi thành công/thất bại. Khi báo lỗi,
+    pool đánh dấu chính ``lease.index`` thay vì con trỏ toàn cục có thể đã bị
+    thread khác xoay mất.
+    """
+
+    index: int
+    key: str
 
 
 class ApiKeyPool:
@@ -70,55 +83,113 @@ class ApiKeyPool:
                 return idx
         return -1
 
-    def current_key(self) -> str:
+    def acquire(
+        self,
+        *,
+        exclude_indices: Iterable[int] = (),
+        allow_cooling: bool = False,
+    ) -> ApiKeyLease | None:
+        """Cấp một lease cho key sống, bỏ qua các index request đã thử.
+
+        ``allow_cooling=False`` là đường request chuẩn: nếu toàn pool đang cooldown
+        thì trả ``None`` để caller dừng, không lấy key "ít chết nhất" rồi tiếp tục
+        bắn API. ``current_key`` giữ hành vi tương thích cũ cho lúc khởi tạo client.
+        """
+
+        excluded = {int(i) for i in exclude_indices}
         now = time.time()
         with self._lock:
             if not self._keys:
-                return ""
-            if self._alive_locked(self._index, now):
-                return self._keys[self._index]
-            alive = self._next_alive_locked(self._index, now)
-            if alive >= 0:
-                self._index = alive
-                return self._keys[alive]
-            # Tất cả đang nghỉ → chọn key sắp hồi sớm nhất (least-bad), thử bừa.
-            soonest = min(range(len(self._keys)), key=lambda i: self._dead_until[i])
-            self._index = soonest
-            return self._keys[soonest]
+                return None
+            n = len(self._keys)
+            for offset in range(n):
+                idx = (self._index + offset) % n
+                if idx in excluded or not self._alive_locked(idx, now):
+                    continue
+                if idx != self._index:
+                    self._rotations += 1
+                self._index = idx
+                return ApiKeyLease(index=idx, key=self._keys[idx])
 
-    def rotate(self) -> bool:
-        """Xoay sang key SỐNG kế tiếp. Trả True nếu chuyển được sang index khác."""
+            if not allow_cooling:
+                return None
+            candidates = [i for i in range(n) if i not in excluded]
+            if not candidates:
+                candidates = list(range(n))
+            idx = min(candidates, key=lambda i: self._dead_until[i])
+            if idx != self._index:
+                self._rotations += 1
+            self._index = idx
+            return ApiKeyLease(index=idx, key=self._keys[idx])
+
+    def current_key(self) -> str:
+        lease = self.acquire(allow_cooling=True)
+        return lease.key if lease is not None else ""
+
+    def rotate(
+        self,
+        *,
+        from_index: int | None = None,
+        lease: ApiKeyLease | None = None,
+    ) -> bool:
+        """Xoay từ đúng key đã dùng, không mặc định đổ lỗi cho con trỏ hiện tại."""
+
         now = time.time()
         with self._lock:
             if len(self._keys) <= 1:
                 return False
-            nxt = self._next_alive_locked((self._index + 1) % len(self._keys), now)
-            if nxt < 0 or nxt == self._index:
-                # Không có key sống khác → vẫn nhích con trỏ để không kẹt.
-                new_index = (self._index + 1) % len(self._keys)
-                if new_index == self._index:
-                    return False
-                self._index = new_index
+            base = lease.index if lease is not None else from_index
+            if base is None or not (0 <= int(base) < len(self._keys)):
+                base = self._index
+            base = int(base)
+            nxt = self._next_alive_locked((base + 1) % len(self._keys), now)
+            if nxt < 0 or nxt == base:
+                return False
+            if nxt != self._index:
                 self._rotations += 1
-                return True
             self._index = nxt
-            self._rotations += 1
             return True
 
-    def mark_dead(self, seconds: float = 60.0) -> None:
-        """Đánh dấu key hiện tại nghỉ trong ``seconds`` giây (429/413/5xx)."""
+    def mark_dead(
+        self,
+        seconds: float = 60.0,
+        *,
+        index: int | None = None,
+        lease: ApiKeyLease | None = None,
+        reason: str = "",
+    ) -> None:
+        """Đánh dấu chính key gây lỗi, kể cả khi thread khác đã xoay pool."""
+
         now = time.time()
         with self._lock:
             if not self._keys:
                 return
-            self._dead_until[self._index] = now + max(1.0, float(seconds))
+            target = lease.index if lease is not None else index
+            if target is None or not (0 <= int(target) < len(self._keys)):
+                target = self._index
+            target = int(target)
+            cooldown = max(1.0, float(seconds))
+            self._dead_until[target] = max(self._dead_until[target], now + cooldown)
+            alive = sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now)
+            suffix = f" reason={reason}" if reason else ""
             _LOGGER.warning(
-                "[KEY POOL] mark dead index=%d cooldown=%.0fs alive=%d/%d",
-                self._index,
-                seconds,
-                sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now and i != self._index),
+                "[KEY POOL] mark dead index=%d cooldown=%.0fs alive=%d/%d%s",
+                target,
+                cooldown,
+                alive,
                 len(self._keys),
+                suffix,
             )
+
+    def next_available_in(self) -> float:
+        """Số giây còn lại tới lúc ít nhất một key hồi; 0 nếu có key sống."""
+
+        now = time.time()
+        with self._lock:
+            if not self._keys:
+                return 0.0
+            waits = [max(0.0, deadline - now) for deadline in self._dead_until]
+            return min(waits) if waits else 0.0
 
     def index(self) -> int:
         with self._lock:
@@ -302,3 +373,85 @@ def reset_concurrency_limits() -> None:
     """Test/hot-reload: dựng lại semaphore theo env hiện tại."""
     with _sem_lock:
         _semaphores.clear()
+
+# ── Provider circuit breaker ─────────────────────────────────────────────────
+# 5xx là lỗi provider/model, không phải lỗi API key. Nếu cứ xoay key khi 503,
+# ta chỉ biến một outage chung thành nghĩa địa key. Circuit này dùng chung theo
+# provider endpoint và chặn các request nền trong một khoảng ngắn.
+
+class ProviderCircuitOpen(RuntimeError):
+    pass
+
+
+class ProviderCircuitBreaker:
+    def __init__(self, *, failure_threshold: int = 2, cooldown_s: float = 20.0) -> None:
+        self.failure_threshold = max(1, int(failure_threshold))
+        self.cooldown_s = max(1.0, float(cooldown_s))
+        self._failures = 0
+        self._open_until = 0.0
+        self._lock = threading.Lock()
+
+    def before_request(self, provider: str = "provider") -> None:
+        now = time.monotonic()
+        with self._lock:
+            if self._open_until > now:
+                raise ProviderCircuitOpen(
+                    f"{provider} circuit đang mở; thử lại sau khoảng {self._open_until - now:.1f}s"
+                )
+            if self._open_until and self._open_until <= now:
+                # Half-open: cho đúng một request đi qua; thành công sẽ reset.
+                self._open_until = 0.0
+                self._failures = max(0, self.failure_threshold - 1)
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._failures = 0
+            self._open_until = 0.0
+
+    def record_failure(self, *, provider: str = "provider", status: int | None = None) -> None:
+        now = time.monotonic()
+        with self._lock:
+            self._failures += 1
+            if self._failures >= self.failure_threshold:
+                self._open_until = max(self._open_until, now + self.cooldown_s)
+                _LOGGER.warning(
+                    "[PROVIDER CIRCUIT] open provider=%s status=%s cooldown=%.0fs failures=%d",
+                    provider,
+                    status if status is not None else "?",
+                    self.cooldown_s,
+                    self._failures,
+                )
+
+    def remaining_s(self) -> float:
+        with self._lock:
+            return max(0.0, self._open_until - time.monotonic())
+
+
+_provider_circuits: dict[str, ProviderCircuitBreaker] = {}
+_provider_circuits_lock = threading.Lock()
+
+
+def get_provider_circuit(provider_id: str) -> ProviderCircuitBreaker:
+    key = str(provider_id or "provider").strip().lower()
+    circuit = _provider_circuits.get(key)
+    if circuit is not None:
+        return circuit
+    with _provider_circuits_lock:
+        circuit = _provider_circuits.get(key)
+        if circuit is None:
+            try:
+                threshold = int(os.environ.get("ERIS_PROVIDER_CIRCUIT_FAILURES", "2"))
+            except ValueError:
+                threshold = 2
+            try:
+                cooldown = float(os.environ.get("ERIS_PROVIDER_CIRCUIT_COOLDOWN_S", "20"))
+            except ValueError:
+                cooldown = 20.0
+            circuit = ProviderCircuitBreaker(failure_threshold=threshold, cooldown_s=cooldown)
+            _provider_circuits[key] = circuit
+        return circuit
+
+
+def reset_provider_circuits() -> None:
+    with _provider_circuits_lock:
+        _provider_circuits.clear()

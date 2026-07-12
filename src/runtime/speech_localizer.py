@@ -32,13 +32,25 @@ def _enabled() -> bool:
     }
 
 
+def _remote_provider_is_gemini() -> bool:
+    provider = os.environ.get("ERIS_REMOTE_PROVIDER", "").strip().lower()
+    if provider == "gemini":
+        return True
+    base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "").strip().lower()
+    return "generativelanguage.googleapis.com" in base_url or "googleapis.com" in base_url
+
+
 def _get_api_key() -> str:
     """Lấy key Gemini cho bước dịch TTS, không phụ thuộc vào tts_engine.
 
     Giữ thứ tự gần giống engine cũ để không phá cấu hình hiện tại của ông.
     """
-    for env_name in ("ERIS_TTS_API_KEY", "ERIS_SPEECH_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY"):
+    for env_name in ("ERIS_TTS_API_KEY", "ERIS_SPEECH_API_KEY", "GEMINI_SPEECH_API_KEY", "GEMINI_API_KEY"):
         key = os.environ.get(env_name, "").strip()
+        if key and not key.startswith("PASTE_"):
+            return key
+    if _remote_provider_is_gemini():
+        key = os.environ.get("ERIS_REMOTE_API_KEY", "").strip()
         if key and not key.startswith("PASTE_"):
             return key
     try:

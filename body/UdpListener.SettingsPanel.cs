@@ -2,14 +2,14 @@ using Godot;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 public partial class UdpListener : Node2D
 {
 	private Panel _settingsPanel;
 	private Label _settingsBrainStatusLabel;
-	private Label _settingsProviderValueLabel;
-	private Label _settingsModelValueLabel;
 	private Label _settingsPoolStatusLabel;
 	private Label _settingsFallbackStatusLabel;
 	private Label _settingsStatusNoteLabel;
@@ -17,7 +17,24 @@ public partial class UdpListener : Node2D
 	private TextureRect _settingsAlwaysOnTopSwitch;
 	private TextureRect _settingsTransparentSwitch;
 	private TextureRect _settingsPassthroughSwitch;
+	private OptionButton _settingsProviderSelect;
+	private OptionButton _settingsKeyPoolSelect;
+	private LineEdit _settingsModelInput;
+	private LineEdit _settingsBaseUrlInput;
+	private OptionButton _settingsVoiceSelect;
+	private OptionButton _settingsLanguageSelect;
+	private OptionButton _settingsQualitySelect;
+	private FileDialog _settingsImportSecretsDialog;
+	private VBoxContainer _settingsKeyRowsBox;
+	private readonly List<LineEdit> _settingsKeyInputs = new();
+	private string _settingsKeyPoolKind = "";
 	private bool _settingsTtsEnabled = true;
+	private string _settingsTtsVoice = "Aoede";
+	private string _settingsTtsLanguage = "auto";
+	private string _settingsTtsQuality = "high";
+
+	private const string SettingsStatePath = "user://eris_settings.json";
+	private const string SettingsExportFileName = "eris_settings_export.json";
 
 	private static readonly Color SettingsInk = new(0.42f, 0.07f, 0.27f);
 	private static readonly Color SettingsInkSoft = new(0.63f, 0.32f, 0.48f);
@@ -94,14 +111,11 @@ public partial class UdpListener : Node2D
 
 		_switchOnTexture ??= GD.Load<Texture2D>("res://asset/Resource/on.png");
 		_switchOffTexture ??= GD.Load<Texture2D>("res://asset/Resource/off.png");
-		_settingsTtsEnabled = true;
 
 		var root = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
 		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
 		_settingsPanel.AddChild(root);
 
-		// Nền cố ý để trống. Ông có thể gắn TextureRect background riêng sau mà
-		// không phải đập lại layout/control bên dưới.
 		var title = CreateUiLabel("Cài đặt", 34, SettingsInk);
 		title.Position = new Vector2(54f, 34f);
 		title.Size = new Vector2(260f, 52f);
@@ -119,7 +133,7 @@ public partial class UdpListener : Node2D
 		AddSettingsMainTabs(root);
 		AddSettingsModeStrip(root);
 
-		var statusCard = AddSettingsCard(root, new Rect2(32f, 205f, 302f, 342f), "Trạng thái Eris");
+		var statusCard = AddSettingsCard(root, new Rect2(32f, 205f, 302f, 342f), "Runtime");
 		BuildSettingsStatusColumn(statusCard);
 
 		var poolCard = AddSettingsCard(root, new Rect2(356f, 205f, 328f, 342f), "Key pool");
@@ -142,30 +156,30 @@ public partial class UdpListener : Node2D
 		noteHeart.Size = new Vector2(32f, 30f);
 		root.AddChild(noteHeart);
 
-		var note = CreateUiLabel("Key chỉ lưu local. Không cần sửa .env hay secrets.json.", 13, SettingsInkSoft);
+		var note = CreateUiLabel("Basic ghi config thật: user settings + config/secrets.json local.", 13, SettingsInkSoft);
 		note.Position = new Vector2(112f, 592f);
-		note.Size = new Vector2(430f, 24f);
+		note.Size = new Vector2(450f, 24f);
 		root.AddChild(note);
 
 		_settingsStatusNoteLabel = CreateUiLabel("", 12, SettingsInk);
 		_settingsStatusNoteLabel.Position = new Vector2(112f, 608f);
-		_settingsStatusNoteLabel.Size = new Vector2(392f, 16f);
+		_settingsStatusNoteLabel.Size = new Vector2(438f, 16f);
 		_settingsStatusNoteLabel.AutowrapMode = TextServer.AutowrapMode.Off;
 		_settingsStatusNoteLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		_settingsStatusNoteLabel.AddThemeFontSizeOverride("font_size", 10);
 		root.AddChild(_settingsStatusNoteLabel);
 
-		var backup = CreateSettingsButton("Sao lưu", () => SetSettingsStatus("Chưa bật sao lưu tự động trong bản này."), primary: false);
-		backup.Position = new Vector2(520f, 584f);
-		backup.Size = new Vector2(116f, 38f);
+		var backup = CreateSettingsButton("Sao lưu", BackupSettingsAndSecrets, primary: false);
+		backup.Position = new Vector2(560f, 584f);
+		backup.Size = new Vector2(104f, 38f);
 		root.AddChild(backup);
 
-		var export = CreateSettingsButton("Xuất config", () => SetSettingsStatus("Chưa xuất config ở bản UI preview."), primary: false);
-		export.Position = new Vector2(650f, 584f);
-		export.Size = new Vector2(126f, 38f);
+		var export = CreateSettingsButton("Xuất config", ExportSanitizedSettings, primary: false);
+		export.Position = new Vector2(674f, 584f);
+		export.Size = new Vector2(118f, 38f);
 		root.AddChild(export);
 
-		var save = CreateSettingsButton("Lưu", () => SetSettingsStatus("Đã giữ thay đổi trong phiên UI. Persistence sẽ nối sau."), primary: true);
+		var save = CreateSettingsButton("Lưu", SaveSettingsState, primary: true);
 		save.Position = new Vector2(812f, 582f);
 		save.Size = new Vector2(118f, 42f);
 		root.AddChild(save);
@@ -174,6 +188,17 @@ public partial class UdpListener : Node2D
 		cancel.Position = new Vector2(942f, 582f);
 		cancel.Size = new Vector2(82f, 42f);
 		root.AddChild(cancel);
+
+		_settingsImportSecretsDialog = new FileDialog
+		{
+			Title = "Nhập secrets.json",
+			Access = FileDialog.AccessEnum.Filesystem,
+			FileMode = FileDialog.FileModeEnum.OpenFile,
+			Filters = new[] { "*.json ; JSON secrets" },
+			Size = new Vector2I(720, 520),
+		};
+		_settingsImportSecretsDialog.FileSelected += ImportSecretsFile;
+		_settingsPanel.AddChild(_settingsImportSecretsDialog);
 
 		RefreshSettingsPanel();
 	}
@@ -218,231 +243,324 @@ public partial class UdpListener : Node2D
 
 	private void BuildSettingsStatusColumn(Control parent)
 	{
-		_settingsBrainStatusLabel = CreateSettingsChip("Brain đang chạy", true);
-		_settingsBrainStatusLabel.Position = new Vector2(18f, 62f);
+		_settingsBrainStatusLabel = CreateSettingsChip("Brain", true);
+		_settingsBrainStatusLabel.Position = new Vector2(18f, 56f);
 		_settingsBrainStatusLabel.Size = new Vector2(150f, 30f);
 		parent.AddChild(_settingsBrainStatusLabel);
 
-		float y = 106f;
-		_settingsProviderValueLabel = AddSettingsInfoRow(parent, y, "Provider chính", RemoteApiProvider);
-		y += 48f;
-		_settingsModelValueLabel = AddSettingsInfoRow(parent, y, "Model chính", RemoteApiModelName);
-		y += 48f;
-		_settingsPoolStatusLabel = AddSettingsInfoRow(parent, y, "Pool Gemini", "—");
-		y += 48f;
-		_settingsFallbackStatusLabel = AddSettingsInfoRow(parent, y, "Fallback", "Bật");
+		_settingsProviderSelect = AddSettingsOptionRow(parent, 96f, "Provider", new[] { "gemini", "openai_compatible", "groq" }, RemoteApiProvider);
+		_settingsProviderSelect.ItemSelected += _ =>
+		{
+			SyncSettingsInputsToFields(applyProviderDefaults: true);
+			_settingsKeyPoolKind = KeyPoolKindFromProvider(RemoteApiProvider, RemoteApiBaseUrl);
+			RefreshSettingsProviderInputs();
+			BuildSettingsPanelUi();
+			SetSettingsStatus("Đã đổi provider và pool key đang chỉnh. Bấm Lưu hoặc Restart để áp dụng.");
+		};
+		_settingsModelInput = AddSettingsLineEditRow(parent, 142f, "Model", RemoteApiModelName);
+		_settingsBaseUrlInput = AddSettingsLineEditRow(parent, 188f, "Base URL", RemoteApiBaseUrl);
 
 		var start = CreateSettingsButton("Start", StartVisionProcess, primary: false);
-		start.Position = new Vector2(18f, 252f);
+		start.Position = new Vector2(18f, 238f);
 		start.Size = new Vector2(80f, 34f);
 		parent.AddChild(start);
 		var stop = CreateSettingsButton("Stop", StopVisionProcess, primary: false);
-		stop.Position = new Vector2(102f, 252f);
+		stop.Position = new Vector2(102f, 238f);
 		stop.Size = new Vector2(80f, 34f);
 		parent.AddChild(stop);
-		var restart = CreateSettingsButton("Restart", RestartVisionProcess, primary: false);
-		restart.Position = new Vector2(186f, 252f);
+		var restart = CreateSettingsButton("Restart", () =>
+		{
+			SyncSettingsInputsToFields();
+			RestartVisionProcess();
+			SetSettingsStatus("Đã restart brain với cấu hình Basic hiện tại.");
+		}, primary: false);
+		restart.Position = new Vector2(186f, 238f);
 		restart.Size = new Vector2(96f, 34f);
 		parent.AddChild(restart);
 
-		var test = CreateSettingsButton("Test toàn hệ", TestSettingsSystem, primary: false);
-		test.Position = new Vector2(18f, 294f);
-		test.Size = new Vector2(264f, 36f);
+		var test = CreateSettingsButton("Test hệ", TestSettingsSystem, primary: false);
+		test.Position = new Vector2(18f, 286f);
+		test.Size = new Vector2(128f, 36f);
 		parent.AddChild(test);
+
+		var logs = CreateSettingsButton("Mở logs", OpenSettingsLogs, primary: false);
+		logs.Position = new Vector2(154f, 286f);
+		logs.Size = new Vector2(128f, 36f);
+		parent.AddChild(logs);
 	}
 
 	private void BuildSettingsKeyPoolColumn(Control parent)
 	{
+		if (string.IsNullOrWhiteSpace(_settingsKeyPoolKind))
+			_settingsKeyPoolKind = KeyPoolKindFromProvider(RemoteApiProvider, RemoteApiBaseUrl);
+
+		_settingsPoolStatusLabel = CreateSettingsChip("Gemini: —", true);
+		_settingsPoolStatusLabel.Position = new Vector2(18f, 52f);
+		_settingsPoolStatusLabel.Size = new Vector2(132f, 28f);
+		parent.AddChild(_settingsPoolStatusLabel);
+
+		_settingsFallbackStatusLabel = CreateSettingsChip("Fallback: —", true);
+		_settingsFallbackStatusLabel.Position = new Vector2(162f, 52f);
+		_settingsFallbackStatusLabel.Size = new Vector2(148f, 28f);
+		parent.AddChild(_settingsFallbackStatusLabel);
+
+		_settingsKeyPoolSelect = AddSettingsOptionRow(parent, 88f, "Đang sửa", new[] { "gemini", "groq" }, _settingsKeyPoolKind);
+		_settingsKeyPoolSelect.ItemSelected += _ =>
+		{
+			_settingsKeyPoolKind = SelectedOptionText(_settingsKeyPoolSelect, "gemini");
+			BuildSettingsPanelUi();
+			SetSettingsStatus($"Đang sửa pool {_settingsKeyPoolKind}. Sửa xong bấm Lưu.");
+		};
+
 		var list = new Panel
 		{
-			Position = new Vector2(18f, 58f),
-			Size = new Vector2(292f, 156f),
+			Position = new Vector2(18f, 132f),
+			Size = new Vector2(292f, 94f),
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
 		list.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.72f), SettingsBorder, 14));
 		parent.AddChild(list);
 
-		string[] keys = { "A91F", "7C20", "D4B8", "9EA1" };
-		string[] states = { "Sẵn sàng", "Sẵn sàng", "Cooldown 42s", "Sẵn sàng" };
-		for (int i = 0; i < 4; i++)
-			AddSettingsKeyRow(list, i, keys[i], states[i], i == 2);
+		_settingsKeyInputs.Clear();
+		var scroller = new ScrollContainer
+		{
+			Position = new Vector2(6f, 6f),
+			Size = new Vector2(280f, 82f),
+			HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+			VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		list.AddChild(scroller);
 
-		var add = CreateSettingsButton("Thêm key", () => SetSettingsStatus("Thêm key sẽ nối Credential Manager ở bước sau."), primary: false);
-		add.Position = new Vector2(18f, 228f);
-		add.Size = new Vector2(88f, 34f);
+		_settingsKeyRowsBox = new VBoxContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		_settingsKeyRowsBox.AddThemeConstantOverride("separation", 4);
+		scroller.AddChild(_settingsKeyRowsBox);
+
+		var keys = ReadEditableKeysForPool(_settingsKeyPoolKind);
+		foreach (string key in keys)
+			AddSettingsEditableKeyRow(key);
+		if (keys.Count == 0)
+			AddSettingsEditableKeyRow("");
+
+		var add = CreateSettingsButton("Thêm dòng", () =>
+		{
+			AddSettingsEditableKeyRow("");
+			SetSettingsStatus("Đã thêm dòng trống. Dán key vào rồi bấm Lưu.");
+		}, primary: false);
+		add.Position = new Vector2(18f, 238f);
+		add.Size = new Vector2(84f, 34f);
 		parent.AddChild(add);
-		var paste = CreateSettingsButton("Dán nhiều key", () => SetSettingsStatus("Dán nhiều key: UI đã có chỗ, parser sẽ nối sau."), primary: false);
-		paste.Position = new Vector2(116f, 228f);
-		paste.Size = new Vector2(104f, 34f);
+		var paste = CreateSettingsButton("Dán nhiều", () => AddKeysFromClipboard(false), primary: false);
+		paste.Position = new Vector2(108f, 238f);
+		paste.Size = new Vector2(92f, 34f);
 		parent.AddChild(paste);
-		var import = CreateSettingsButton("Nhập file key", () => SetSettingsStatus("Sẽ import secrets.json/key pool ở bước persistence."), primary: false);
-		import.Position = new Vector2(230f, 228f);
-		import.Size = new Vector2(80f, 34f);
+		var import = CreateSettingsButton("Nhập file", OpenImportSecretsDialog, primary: false);
+		import.Position = new Vector2(206f, 238f);
+		import.Size = new Vector2(104f, 34f);
 		parent.AddChild(import);
 
-		var rotate = CreateSettingsButton("Xoay thử", () => SetSettingsStatus("Đã gửi yêu cầu xoay thử ở UI. Backend nối sau."), primary: false);
-		rotate.Position = new Vector2(18f, 282f);
-		rotate.Size = new Vector2(132f, 38f);
-		parent.AddChild(rotate);
+		var reload = CreateSettingsButton("Nạp lại pool", () =>
+		{
+			BuildSettingsPanelUi();
+			SetSettingsStatus("Đã đọc lại key pool từ secrets/env.");
+		}, primary: false);
+		reload.Position = new Vector2(18f, 286f);
+		reload.Size = new Vector2(132f, 36f);
+		parent.AddChild(reload);
 		var test = CreateSettingsButton("Test pool", TestSettingsPool, primary: false);
-		test.Position = new Vector2(166f, 282f);
-		test.Size = new Vector2(144f, 38f);
+		test.Position = new Vector2(166f, 286f);
+		test.Size = new Vector2(144f, 36f);
 		parent.AddChild(test);
 	}
 
 	private void BuildSettingsDisplayColumn(Control parent)
 	{
-		_settingsTtsSwitch = AddSettingsSwitch(parent, new Vector2(234f, 58f), _settingsTtsEnabled, () =>
+		_settingsTtsSwitch = AddSettingsSwitch(parent, new Vector2(234f, 56f), _settingsTtsEnabled, () =>
 		{
 			_settingsTtsEnabled = !_settingsTtsEnabled;
 			ApplySettingsSwitch(_settingsTtsSwitch, _settingsTtsEnabled);
-			SetSettingsStatus(_settingsTtsEnabled ? "TTS bật trong phiên UI." : "TTS tắt trong phiên UI.");
+			SaveSettingsState(false, writeSecrets: false);
+			SetSettingsStatus(_settingsTtsEnabled ? "TTS bật. Restart để Python nhận nếu đang chạy." : "TTS tắt. Restart để Python nhận nếu đang chạy.");
 		});
 		var tts = CreateUiLabel("Bật TTS", 14, SettingsInk);
-		tts.Position = new Vector2(18f, 62f);
+		tts.Position = new Vector2(18f, 60f);
 		tts.Size = new Vector2(160f, 24f);
 		parent.AddChild(tts);
 
-		AddSettingsDropdownRow(parent, 104f, "TTS dùng", "Gemini pool");
-		AddSettingsDropdownRow(parent, 152f, "Giọng", "Aoede");
-		AddSettingsSegmentedLanguage(parent, 200f);
+		_settingsVoiceSelect = AddSettingsOptionRow(parent, 100f, "Giọng", new[] { "Aoede", "Leda", "Achernar", "Kore", "Callirrhoe" }, _settingsTtsVoice);
+		_settingsLanguageSelect = AddSettingsOptionRow(parent, 146f, "Ngôn ngữ", new[] { "auto", "vi", "ja", "en" }, _settingsTtsLanguage);
+		_settingsQualitySelect = AddSettingsOptionRow(parent, 192f, "Chất lượng", new[] { "balanced", "high" }, _settingsTtsQuality);
 
 		var line = new ColorRect
 		{
 			Color = new Color(0.96f, 0.72f, 0.84f, 0.45f),
-			Position = new Vector2(18f, 242f),
+			Position = new Vector2(18f, 238f),
 			Size = new Vector2(264f, 1.2f),
 			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
 		parent.AddChild(line);
 
-		AddSettingsToggleRow(parent, 252f, "Luôn nổi", KeepWindowAlwaysOnTop, ref _settingsAlwaysOnTopSwitch, () =>
+		AddSettingsToggleRow(parent, 248f, "Luôn nổi", KeepWindowAlwaysOnTop, ref _settingsAlwaysOnTopSwitch, () =>
 		{
 			KeepWindowAlwaysOnTop = !KeepWindowAlwaysOnTop;
 			ApplySettingsSwitch(_settingsAlwaysOnTopSwitch, KeepWindowAlwaysOnTop);
 			ConfigureDesktopOverlayWindow();
+			SaveSettingsState(false, writeSecrets: false);
 		});
-		AddSettingsToggleRow(parent, 280f, "Trong suốt", UseTransparentWindow, ref _settingsTransparentSwitch, () =>
+		AddSettingsToggleRow(parent, 278f, "Trong suốt", UseTransparentWindow, ref _settingsTransparentSwitch, () =>
 		{
 			UseTransparentWindow = !UseTransparentWindow;
 			ApplySettingsSwitch(_settingsTransparentSwitch, UseTransparentWindow);
 			ConfigureDesktopOverlayWindow();
+			SaveSettingsState(false, writeSecrets: false);
 		});
 		AddSettingsToggleRow(parent, 308f, "Click xuyên", EnableMousePassthrough, ref _settingsPassthroughSwitch, () =>
 		{
 			EnableMousePassthrough = !EnableMousePassthrough;
 			ApplySettingsSwitch(_settingsPassthroughSwitch, EnableMousePassthrough);
 			ConfigureDesktopOverlayWindow();
+			SaveSettingsState(false, writeSecrets: false);
 		});
 	}
 
-	private Label AddSettingsInfoRow(Control parent, float y, string label, string value)
+	private LineEdit AddSettingsLineEditRow(Control parent, float y, string label, string value)
 	{
 		var row = new Panel
 		{
 			Position = new Vector2(18f, y),
-			Size = new Vector2(264f, 42f),
-			MouseFilter = Control.MouseFilterEnum.Ignore,
+			Size = new Vector2(264f, 38f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
-		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.62f), SettingsBorder, 10));
+		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.62f), SettingsBorder, 12));
 		parent.AddChild(row);
 
-		var left = CreateUiLabel(label, 11, SettingsInkSoft);
-		left.Position = new Vector2(12f, 10f);
-		left.Size = new Vector2(104f, 22f);
+		var left = CreateUiLabel(label, 10, SettingsInkSoft);
+		left.Position = new Vector2(12f, 8f);
+		left.Size = new Vector2(76f, 22f);
 		StyleSettingsSingleLineLabel(left);
 		row.AddChild(left);
 
-		var right = CreateUiLabel(value, 11, SettingsInk);
-		right.Position = new Vector2(118f, 10f);
-		right.Size = new Vector2(134f, 22f);
-		StyleSettingsSingleLineLabel(right, HorizontalAlignment.Right);
-		row.AddChild(right);
-		return right;
+		var input = new LineEdit
+		{
+			Text = value ?? "",
+			Position = new Vector2(90f, 5f),
+			Size = new Vector2(162f, 28f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+			PlaceholderText = label,
+			Flat = true,
+		};
+		input.AddThemeColorOverride("font_color", SettingsInk);
+		input.AddThemeColorOverride("font_placeholder_color", SettingsInkSoft);
+		input.AddThemeFontSizeOverride("font_size", 10);
+		input.TextSubmitted += _ =>
+		{
+			SyncSettingsInputsToFields();
+			SetSettingsStatus("Đã nhận giá trị. Bấm Lưu để ghi config.");
+		};
+		row.AddChild(input);
+		return input;
 	}
 
-	private void AddSettingsKeyRow(Control parent, int index, string suffix, string state, bool warn)
+	private OptionButton AddSettingsOptionRow(Control parent, float y, string label, string[] values, string selected)
 	{
-		float y = 8f + index * 36f;
-		var name = CreateUiLabel($"Key {index + 1:00}", 12, SettingsInk);
-		name.Position = new Vector2(14f, y + 8f);
-		name.Size = new Vector2(56f, 22f);
+		var row = new Panel
+		{
+			Position = new Vector2(18f, y),
+			Size = new Vector2(264f, 38f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.62f), SettingsBorder, 12));
+		parent.AddChild(row);
+
+		var left = CreateUiLabel(label, 10, SettingsInkSoft);
+		left.Position = new Vector2(12f, 8f);
+		left.Size = new Vector2(82f, 22f);
+		StyleSettingsSingleLineLabel(left);
+		row.AddChild(left);
+
+		var option = new OptionButton
+		{
+			Position = new Vector2(96f, 5f),
+			Size = new Vector2(156f, 28f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+			ClipText = true,
+			TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+		};
+		option.AddThemeFontSizeOverride("font_size", 10);
+		option.AddThemeColorOverride("font_color", SettingsInk);
+		for (int i = 0; i < values.Length; i++)
+		{
+			option.AddItem(values[i]);
+			if (string.Equals(values[i], selected, StringComparison.OrdinalIgnoreCase))
+				option.Select(i);
+		}
+		option.ItemSelected += _ => SyncSettingsInputsToFields();
+		row.AddChild(option);
+		return option;
+	}
+
+	private void AddSettingsEditableKeyRow(string value)
+	{
+		if (_settingsKeyRowsBox == null)
+			return;
+
+		var row = new Panel
+		{
+			CustomMinimumSize = new Vector2(260f, 28f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.58f), new Color(0.96f, 0.76f, 0.86f, 0.45f), 9));
+		_settingsKeyRowsBox.AddChild(row);
+
+		int rowNumber = _settingsKeyInputs.Count + 1;
+		var name = CreateUiLabel($"{rowNumber:00}", 10, SettingsInkSoft);
+		name.Position = new Vector2(8f, 3f);
+		name.Size = new Vector2(24f, 22f);
 		StyleSettingsSingleLineLabel(name);
-		parent.AddChild(name);
+		row.AddChild(name);
 
-		var key = CreateUiLabel($"••••••••{suffix}", 12, SettingsInk);
-		key.Position = new Vector2(76f, y + 8f);
-		key.Size = new Vector2(106f, 22f);
-		StyleSettingsSingleLineLabel(key);
-		parent.AddChild(key);
-
-		var dot = CreateUiLabel("●", 10, warn ? new Color(1.00f, 0.52f, 0.08f) : new Color(0.12f, 0.75f, 0.20f));
-		dot.Position = new Vector2(188f, y + 9f);
-		dot.Size = new Vector2(14f, 18f);
-		StyleSettingsSingleLineLabel(dot, HorizontalAlignment.Center);
-		parent.AddChild(dot);
-
-		var st = CreateUiLabel(state, 9, warn ? new Color(0.96f, 0.42f, 0.10f) : new Color(0.10f, 0.50f, 0.14f));
-		st.Position = new Vector2(202f, y + 8f);
-		st.Size = new Vector2(58f, 22f);
-		StyleSettingsSingleLineLabel(st);
-		parent.AddChild(st);
-
-		var menu = CreateUiLabel("⋮", 17, SettingsInkSoft);
-		menu.Position = new Vector2(266f, y + 4f);
-		menu.Size = new Vector2(16f, 24f);
-		StyleSettingsSingleLineLabel(menu, HorizontalAlignment.Center);
-		parent.AddChild(menu);
-	}
-
-	private void AddSettingsDropdownRow(Control parent, float y, string label, string value)
-	{
-		var row = new Panel
+		var input = new LineEdit
 		{
-			Position = new Vector2(18f, y),
-			Size = new Vector2(264f, 38f),
+			Text = value ?? "",
+			PlaceholderText = "paste API key",
+			Position = new Vector2(34f, 2f),
+			Size = new Vector2(176f, 24f),
+			Flat = true,
+			Secret = true,
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
-		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.62f), SettingsBorder, 12));
-		parent.AddChild(row);
+		input.AddThemeFontSizeOverride("font_size", 9);
+		input.AddThemeColorOverride("font_color", SettingsInk);
+		input.AddThemeColorOverride("font_placeholder_color", SettingsInkSoft);
+		input.TextChanged += _ => SetSettingsStatus($"Đã sửa key trong pool {_settingsKeyPoolKind}. Bấm Lưu để ghi secrets.");
+		row.AddChild(input);
+		_settingsKeyInputs.Add(input);
 
-		var left = CreateUiLabel(label, 11, SettingsInkSoft);
-		left.Position = new Vector2(12f, 9f);
-		left.Size = new Vector2(78f, 22f);
-		StyleSettingsSingleLineLabel(left);
-		row.AddChild(left);
-		var right = CreateUiLabel(value, 11, SettingsInk);
-		right.Position = new Vector2(96f, 9f);
-		right.Size = new Vector2(126f, 22f);
-		StyleSettingsSingleLineLabel(right, HorizontalAlignment.Right);
-		row.AddChild(right);
-		var arrow = CreateUiLabel("⌄", 16, SettingsInkSoft);
-		arrow.Position = new Vector2(226f, 7f);
-		arrow.Size = new Vector2(20f, 24f);
-		StyleSettingsSingleLineLabel(arrow, HorizontalAlignment.Center);
-		row.AddChild(arrow);
-	}
-
-	private void AddSettingsSegmentedLanguage(Control parent, float y)
-	{
-		var row = new Panel
+		var reveal = CreateSettingsButton("M", () =>
 		{
-			Position = new Vector2(18f, y),
-			Size = new Vector2(264f, 38f),
-			MouseFilter = Control.MouseFilterEnum.Stop,
-		};
-		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.62f), SettingsBorder, 12));
-		parent.AddChild(row);
+			input.Secret = !input.Secret;
+			SetSettingsStatus(input.Secret ? "Đã ẩn key." : "Đang hiện key để sửa.");
+		}, primary: false);
+		reveal.TooltipText = "Mo/an key";
+		reveal.Position = new Vector2(216f, 3f);
+		reveal.Size = new Vector2(24f, 22f);
+		reveal.AddThemeFontSizeOverride("font_size", 9);
+		row.AddChild(reveal);
 
-		var left = CreateUiLabel("Ngôn ngữ", 11, SettingsInkSoft);
-		left.Position = new Vector2(12f, 9f);
-		left.Size = new Vector2(78f, 22f);
-		StyleSettingsSingleLineLabel(left);
-		row.AddChild(left);
-
-		AddSettingsSegment(row, new Rect2(136f, 6f, 40f, 26f), "Auto", true);
-		AddSettingsSegment(row, new Rect2(180f, 6f, 36f, 26f), "VI", false);
-		AddSettingsSegment(row, new Rect2(220f, 6f, 36f, 26f), "JA", false);
+		var remove = CreateSettingsButton("X", () =>
+		{
+			_settingsKeyInputs.Remove(input);
+			row.QueueFree();
+			SetSettingsStatus("Đã đánh dấu xóa dòng key. Bấm Lưu để ghi secrets.");
+		}, primary: false);
+		remove.Position = new Vector2(242f, 3f);
+		remove.Size = new Vector2(24f, 22f);
+		remove.AddThemeFontSizeOverride("font_size", 10);
+		row.AddChild(remove);
 	}
 
 	private void AddSettingsToggleRow(Control parent, float y, string label, bool initial, ref TextureRect target, Action onToggle)
@@ -498,7 +616,7 @@ public partial class UdpListener : Node2D
 
 	private void AddSettingsTab(Control parent, Rect2 rect, string text, bool active)
 	{
-		var btn = CreateSettingsButton(text, () => SetSettingsStatus(active ? "Đang ở tab Cơ bản." : "Tab này sẽ nối UI sau."), primary: active);
+		var btn = CreateSettingsButton(text, () => SetSettingsStatus(SettingsTabHint(text, active)), primary: active);
 		btn.Position = rect.Position;
 		btn.Size = rect.Size;
 		parent.AddChild(btn);
@@ -506,20 +624,26 @@ public partial class UdpListener : Node2D
 
 	private void AddSettingsSmallTab(Control parent, Rect2 rect, string text, bool active)
 	{
-		var btn = CreateSettingsButton(text, () => SetSettingsStatus(active ? "Đang ở chế độ cơ bản." : $"{text} sẽ mở ở bước sau."), primary: active);
+		var btn = CreateSettingsButton(text, () => SetSettingsStatus(SettingsTabHint(text, active)), primary: active);
 		btn.Position = rect.Position;
 		btn.Size = rect.Size;
 		btn.AddThemeFontSizeOverride("font_size", 12);
 		parent.AddChild(btn);
 	}
 
-	private void AddSettingsSegment(Control parent, Rect2 rect, string text, bool active)
+	private static string SettingsTabHint(string text, bool active)
 	{
-		var btn = CreateSettingsButton(text, () => SetSettingsStatus($"Ngôn ngữ: {text}"), primary: active);
-		btn.Position = rect.Position;
-		btn.Size = rect.Size;
-		btn.AddThemeFontSizeOverride("font_size", 10);
-		parent.AddChild(btn);
+		if (active)
+			return "Đang chỉnh Basic: runtime, key pool, TTS, overlay.";
+		if (text.Contains("Giọng", StringComparison.OrdinalIgnoreCase))
+			return "Giọng nói cơ bản nằm ở card Giọng & cửa sổ.";
+		if (text.Contains("Dữ liệu", StringComparison.OrdinalIgnoreCase))
+			return "Dữ liệu cơ bản: key pool, backup, export config.";
+		if (text.Contains("Advanced", StringComparison.OrdinalIgnoreCase))
+			return "Advanced chưa tách màn; Basic hiện đã ghi config thật.";
+		if (text.Contains("Danger", StringComparison.OrdinalIgnoreCase))
+			return "Danger Zone: import secrets sẽ backup file cũ trước khi ghi đè.";
+		return "Cấu hình nằm trong các card bên dưới.";
 	}
 
 	private Button CreateSettingsButton(string text, Action onPressed, bool primary)
@@ -569,9 +693,11 @@ public partial class UdpListener : Node2D
 
 	private Label CreateSettingsChip(string text, bool good)
 	{
-		var chip = CreateUiLabel(text, 12, good ? new Color(0.10f, 0.42f, 0.14f) : new Color(0.64f, 0.34f, 0.08f));
+		var chip = CreateUiLabel(text, 11, good ? new Color(0.10f, 0.42f, 0.14f) : new Color(0.64f, 0.34f, 0.08f));
 		chip.HorizontalAlignment = HorizontalAlignment.Center;
 		chip.VerticalAlignment = VerticalAlignment.Center;
+		chip.AutowrapMode = TextServer.AutowrapMode.Off;
+		chip.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		chip.AddThemeStyleboxOverride("normal", SettingsCardStyle(
 			good ? new Color(0.84f, 1.00f, 0.86f, 0.88f) : new Color(1.00f, 0.94f, 0.80f, 0.88f),
 			good ? new Color(0.40f, 0.84f, 0.48f, 0.80f) : new Color(1.00f, 0.62f, 0.24f, 0.75f),
@@ -596,6 +722,189 @@ public partial class UdpListener : Node2D
 		};
 	}
 
+	private void LoadSettingsState()
+	{
+		LoadSettingsFromSecrets();
+		try
+		{
+			string path = ProjectSettings.GlobalizePath(SettingsStatePath);
+			if (!File.Exists(path))
+				return;
+
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+			JsonElement root = doc.RootElement;
+			if (root.ValueKind != JsonValueKind.Object)
+				return;
+
+			if (TryReadBool(root, "tts_enabled", out bool tts))
+				_settingsTtsEnabled = tts;
+			if (TryReadBool(root, "always_on_top", out bool top))
+				KeepWindowAlwaysOnTop = top;
+			if (TryReadBool(root, "transparent_window", out bool transparent))
+				UseTransparentWindow = transparent;
+			if (TryReadBool(root, "mouse_passthrough", out bool pass))
+				EnableMousePassthrough = pass;
+			RemoteApiProvider = ReadString(root, "remote_provider", RemoteApiProvider);
+			RemoteApiBaseUrl = ReadString(root, "remote_base_url", RemoteApiBaseUrl);
+			RemoteApiModelName = ReadString(root, "remote_model", RemoteApiModelName);
+			_settingsTtsVoice = ReadString(root, "tts_voice", _settingsTtsVoice);
+			_settingsTtsLanguage = ReadString(root, "tts_language", _settingsTtsLanguage);
+			_settingsTtsQuality = ReadString(root, "tts_quality", _settingsTtsQuality);
+		}
+		catch (Exception ex)
+		{
+			RunLogger.LogErr($"[Settings] Khong doc duoc user settings: {ex.Message}");
+		}
+	}
+
+	private void LoadSettingsFromSecrets()
+	{
+		try
+		{
+			string path = GetSecretsPath();
+			if (!File.Exists(path))
+				return;
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+			JsonElement root = doc.RootElement;
+			if (root.ValueKind != JsonValueKind.Object)
+				return;
+
+			RemoteApiProvider = ReadSecretString(root, "ERIS_REMOTE_PROVIDER", RemoteApiProvider);
+			RemoteApiBaseUrl = ReadSecretString(root, "ERIS_REMOTE_BASE_URL", RemoteApiBaseUrl);
+			RemoteApiModelName = ReadSecretString(root, "ERIS_REMOTE_MODEL", RemoteApiModelName);
+			string tts = ReadSecretString(root, "ERIS_TTS_ENABLED", _settingsTtsEnabled ? "1" : "0");
+			_settingsTtsEnabled = IsTruthy(tts);
+			_settingsTtsVoice = ReadSecretString(root, "ERIS_TTS_VOICE", _settingsTtsVoice);
+			_settingsTtsLanguage = ReadSecretString(root, "ERIS_TTS_LANGUAGE", _settingsTtsLanguage);
+			_settingsTtsQuality = ReadSecretString(root, "ERIS_TTS_QUALITY", _settingsTtsQuality);
+		}
+		catch (Exception ex)
+		{
+			RunLogger.LogErr($"[Settings] Khong doc duoc config/secrets.json: {ex.Message}");
+		}
+	}
+
+	private void SaveSettingsState()
+	{
+		SaveSettingsState(true, writeSecrets: true);
+	}
+
+	private void SaveSettingsState(bool showStatus, bool writeSecrets)
+	{
+		SyncSettingsInputsToFields();
+		try
+		{
+			string path = ProjectSettings.GlobalizePath(SettingsStatePath);
+			string dir = Path.GetDirectoryName(path);
+			if (!string.IsNullOrWhiteSpace(dir))
+				Directory.CreateDirectory(dir);
+
+			var state = BuildSanitizedSettingsNode();
+			state["saved_at"] = DateTime.Now.ToString("O");
+			File.WriteAllText(path, state.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+			if (writeSecrets)
+				WriteRuntimeSettingsToSecrets(backup: true);
+			if (showStatus)
+				SetSettingsStatus(writeSecrets ? "Đã lưu Basic vào user settings + secrets.json." : "Đã lưu user settings.");
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Không lưu được settings: {ex.Message}");
+		}
+	}
+
+	private void WriteRuntimeSettingsToSecrets(bool backup)
+	{
+		string path = GetSecretsPath();
+		Directory.CreateDirectory(Path.GetDirectoryName(path) ?? GetRuntimeBaseDirForSettings());
+		if (backup)
+			BackupFileIfExists(path, "secrets_before_basic_save");
+
+		JsonObject root = LoadSecretsRoot();
+		JsonObject env = EnsureObject(root, "env");
+		env["ERIS_REMOTE_API_ENABLED"] = EnableRemoteCognitionApi ? "1" : "0";
+		env["ERIS_REMOTE_PROVIDER"] = RemoteApiProvider ?? "";
+		env["ERIS_REMOTE_BASE_URL"] = RemoteApiBaseUrl ?? "";
+		env["ERIS_REMOTE_MODEL"] = RemoteApiModelName ?? "";
+		env["ERIS_TTS_ENABLED"] = _settingsTtsEnabled ? "1" : "0";
+		env["ERIS_TTS_VOICE"] = _settingsTtsVoice ?? "Aoede";
+		env["ERIS_TTS_LANGUAGE"] = _settingsTtsLanguage ?? "auto";
+		env["ERIS_TTS_QUALITY"] = _settingsTtsQuality ?? "high";
+
+		if (_settingsKeyInputs.Count > 0)
+			ReplaceEditableKeysForPool(root, _settingsKeyPoolKind, CollectEditedSettingsKeys());
+
+		File.WriteAllText(path, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+	}
+
+	private JsonObject BuildSanitizedSettingsNode()
+	{
+		return new JsonObject
+		{
+			["version"] = 1,
+			["remote_api_enabled"] = EnableRemoteCognitionApi,
+			["remote_provider"] = RemoteApiProvider ?? "",
+			["remote_base_url"] = RemoteApiBaseUrl ?? "",
+			["remote_model"] = RemoteApiModelName ?? "",
+			["tts_enabled"] = _settingsTtsEnabled,
+			["tts_voice"] = _settingsTtsVoice ?? "Aoede",
+			["tts_language"] = _settingsTtsLanguage ?? "auto",
+			["tts_quality"] = _settingsTtsQuality ?? "high",
+			["always_on_top"] = KeepWindowAlwaysOnTop,
+			["transparent_window"] = UseTransparentWindow,
+			["mouse_passthrough"] = EnableMousePassthrough,
+			["editing_key_pool"] = _settingsKeyPoolKind ?? "",
+			["editing_key_count"] = CollectEditedSettingsKeys().Count,
+		};
+	}
+
+	private void SyncSettingsInputsToFields(bool applyProviderDefaults = false)
+	{
+		if (_settingsProviderSelect != null && _settingsProviderSelect.Selected >= 0)
+			RemoteApiProvider = _settingsProviderSelect.GetItemText(_settingsProviderSelect.Selected);
+		if (applyProviderDefaults)
+			ApplyProviderDefaults(RemoteApiProvider);
+		if (_settingsModelInput != null)
+			RemoteApiModelName = _settingsModelInput.Text.Trim();
+		if (_settingsBaseUrlInput != null)
+			RemoteApiBaseUrl = _settingsBaseUrlInput.Text.Trim();
+		if (_settingsVoiceSelect != null && _settingsVoiceSelect.Selected >= 0)
+			_settingsTtsVoice = _settingsVoiceSelect.GetItemText(_settingsVoiceSelect.Selected);
+		if (_settingsLanguageSelect != null && _settingsLanguageSelect.Selected >= 0)
+			_settingsTtsLanguage = _settingsLanguageSelect.GetItemText(_settingsLanguageSelect.Selected);
+		if (_settingsQualitySelect != null && _settingsQualitySelect.Selected >= 0)
+			_settingsTtsQuality = _settingsQualitySelect.GetItemText(_settingsQualitySelect.Selected);
+	}
+
+	private void ApplyProviderDefaults(string provider)
+	{
+		string normalized = (provider ?? "").Trim().ToLowerInvariant();
+		if (normalized == "groq" || normalized == "openai_compatible")
+		{
+			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || RemoteApiBaseUrl.Contains("googleapis", StringComparison.OrdinalIgnoreCase))
+				RemoteApiBaseUrl = "https://api.groq.com/openai/v1";
+			if (string.IsNullOrWhiteSpace(RemoteApiModelName) || RemoteApiModelName.Contains("gemini", StringComparison.OrdinalIgnoreCase) || RemoteApiModelName.Contains("gemma", StringComparison.OrdinalIgnoreCase))
+				RemoteApiModelName = "llama-3.1-8b-instant";
+			RemoteApiProvider = normalized == "groq" ? "groq" : "openai_compatible";
+			return;
+		}
+		if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || RemoteApiBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
+			RemoteApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
+		if (string.IsNullOrWhiteSpace(RemoteApiModelName) || RemoteApiModelName.StartsWith("llama", StringComparison.OrdinalIgnoreCase))
+			RemoteApiModelName = "gemini-2.5-flash";
+		RemoteApiProvider = "gemini";
+	}
+
+	private void RefreshSettingsProviderInputs()
+	{
+		if (_settingsModelInput != null)
+			_settingsModelInput.Text = RemoteApiModelName ?? "";
+		if (_settingsBaseUrlInput != null)
+			_settingsBaseUrlInput.Text = RemoteApiBaseUrl ?? "";
+		if (_settingsProviderSelect != null)
+			SelectOptionText(_settingsProviderSelect, RemoteApiProvider);
+	}
+
 	private void RestartVisionProcess()
 	{
 		StopVisionProcess();
@@ -604,15 +913,182 @@ public partial class UdpListener : Node2D
 
 	private void TestSettingsSystem()
 	{
-		int keys = CountConfiguredGeminiKeys();
+		SyncSettingsInputsToFields();
+		int gemini = CountConfiguredGeminiKeys();
+		int groq = CountConfiguredGroqKeys();
 		string brain = _processes != null && _processes.IsVisionRunning ? "brain chạy" : "brain dừng";
-		SetSettingsStatus($"Test nhanh: {brain}, Gemini pool {keys} key, TTS {_settingsTtsEnabledText()}.");
+		string secrets = File.Exists(GetSecretsPath()) ? "có secrets" : "thiếu secrets";
+		SetSettingsStatus($"OK: {brain}, provider {RemoteApiProvider}, Gemini {gemini}, Groq {groq}, TTS {_settingsTtsEnabledText()}, {secrets}.");
 	}
 
 	private void TestSettingsPool()
 	{
-		int keys = CountConfiguredGeminiKeys();
-		SetSettingsStatus(keys > 0 ? $"Tìm thấy {keys} key Gemini trong secrets/env." : "Chưa thấy key Gemini trong config/secrets.json.");
+		int gemini = CountConfiguredGeminiKeys();
+		int groq = CountConfiguredGroqKeys();
+		int editing = CollectEditedSettingsKeys().Count;
+		SetSettingsStatus($"Pool: Gemini {gemini} key, Groq/fallback {groq} key. Đang sửa {_settingsKeyPoolKind}: {editing} key.");
+	}
+
+	private void BackupSettingsAndSecrets()
+	{
+		try
+		{
+			string backupDir = GetSettingsBackupDir();
+			Directory.CreateDirectory(backupDir);
+			string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+			int copied = 0;
+
+			string secrets = GetSecretsPath();
+			if (File.Exists(secrets))
+			{
+				File.Copy(secrets, Path.Combine(backupDir, $"secrets_{stamp}.json"), overwrite: false);
+				copied++;
+			}
+
+			string settings = ProjectSettings.GlobalizePath(SettingsStatePath);
+			if (File.Exists(settings))
+			{
+				File.Copy(settings, Path.Combine(backupDir, $"eris_settings_{stamp}.json"), overwrite: false);
+				copied++;
+			}
+
+			SetSettingsStatus(copied > 0 ? $"Đã sao lưu {copied} file vào {backupDir}" : "Chưa có secrets/settings để sao lưu.");
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Sao lưu lỗi: {ex.Message}");
+		}
+	}
+
+	private void ExportSanitizedSettings()
+	{
+		try
+		{
+			SyncSettingsInputsToFields();
+			string exportPath = Path.Combine(GetRuntimeBaseDirForSettings(), "config", SettingsExportFileName);
+			Directory.CreateDirectory(Path.GetDirectoryName(exportPath) ?? GetRuntimeBaseDirForSettings());
+
+			var node = BuildSanitizedSettingsNode();
+			node["exported_at"] = DateTime.Now.ToString("O");
+			node["gemini_key_count"] = CountConfiguredGeminiKeys();
+			node["groq_key_count"] = CountConfiguredGroqKeys();
+			node["note"] = "No raw API keys are exported.";
+
+			File.WriteAllText(exportPath, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+			SetSettingsStatus($"Đã xuất config sạch: {exportPath}");
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Xuất config lỗi: {ex.Message}");
+		}
+	}
+
+	private void OpenSettingsLogs()
+	{
+		try
+		{
+			string logPath = RunLogger.LogFilePath ?? "";
+			string logDir = string.IsNullOrWhiteSpace(logPath)
+				? Path.Combine(GetRuntimeBaseDirForSettings(), "logs")
+				: Path.GetDirectoryName(logPath);
+			if (string.IsNullOrWhiteSpace(logDir))
+				logDir = Path.Combine(GetRuntimeBaseDirForSettings(), "logs");
+			Directory.CreateDirectory(logDir);
+			OS.ShellOpen(logDir);
+			SetSettingsStatus($"Đã mở logs: {logDir}");
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Không mở được logs: {ex.Message}");
+		}
+	}
+
+	private void AddKeysFromClipboard(bool onlyFirst)
+	{
+		try
+		{
+			string raw = DisplayServer.ClipboardGet();
+			var keys = ExtractClipboardKeys(raw);
+			if (onlyFirst && keys.Count > 1)
+				keys.RemoveRange(1, keys.Count - 1);
+			if (keys.Count == 0)
+			{
+				SetSettingsStatus("Clipboard không có key hợp lệ.");
+				return;
+			}
+
+			int added = AppendKeysToEditor(keys);
+			SetSettingsStatus(added > 0 ? $"Đã dán {added} key vào pool {_settingsKeyPoolKind}. Bấm Lưu để ghi secrets." : "Key trong clipboard đã có sẵn trong editor.");
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Thêm key lỗi: {ex.Message}");
+		}
+	}
+
+	private int AppendKeysToEditor(List<string> keys)
+	{
+		var existing = new HashSet<string>(CollectEditedSettingsKeys(), StringComparer.Ordinal);
+		int added = 0;
+		foreach (string key in keys)
+		{
+			if (!existing.Add(key))
+				continue;
+			AddSettingsEditableKeyRow(key);
+			added++;
+		}
+		return added;
+	}
+
+	private void OpenImportSecretsDialog()
+	{
+		if (_settingsImportSecretsDialog == null)
+		{
+			SetSettingsStatus("FileDialog chưa sẵn sàng.");
+			return;
+		}
+		_settingsImportSecretsDialog.PopupCentered(new Vector2I(720, 520));
+	}
+
+	private void ImportSecretsFile(string selectedPath)
+	{
+		try
+		{
+			if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+			{
+				SetSettingsStatus("File secrets không tồn tại.");
+				return;
+			}
+
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(selectedPath));
+			if (doc.RootElement.ValueKind != JsonValueKind.Object)
+			{
+				SetSettingsStatus("secrets.json phải là JSON object.");
+				return;
+			}
+
+			string target = GetSecretsPath();
+			Directory.CreateDirectory(Path.GetDirectoryName(target) ?? GetRuntimeBaseDirForSettings());
+			BackupFileIfExists(target, "secrets_before_import");
+			File.Copy(selectedPath, target, overwrite: true);
+			LoadSettingsFromSecrets();
+			BuildSettingsPanelUi();
+			SetSettingsStatus($"Đã nhập secrets.json: {target}");
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Nhập secrets lỗi: {ex.Message}");
+		}
+	}
+
+	private void BackupFileIfExists(string path, string prefix)
+	{
+		if (!File.Exists(path))
+			return;
+		string backupDir = GetSettingsBackupDir();
+		Directory.CreateDirectory(backupDir);
+		string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+		File.Copy(path, Path.Combine(backupDir, $"{prefix}_{stamp}.json"), overwrite: false);
 	}
 
 	private string _settingsTtsEnabledText() => _settingsTtsEnabled ? "bật" : "tắt";
@@ -642,16 +1118,12 @@ public partial class UdpListener : Node2D
 				running ? new Color(0.10f, 0.42f, 0.14f) : new Color(0.64f, 0.34f, 0.08f));
 		}
 
-		if (_settingsProviderValueLabel != null)
-			_settingsProviderValueLabel.Text = string.IsNullOrWhiteSpace(RemoteApiProvider) ? "Gemini" : RemoteApiProvider;
-		if (_settingsModelValueLabel != null)
-			_settingsModelValueLabel.Text = string.IsNullOrWhiteSpace(RemoteApiModelName) ? "gemini-2.5-flash" : RemoteApiModelName;
-
 		int geminiKeys = CountConfiguredGeminiKeys();
 		if (_settingsPoolStatusLabel != null)
-			_settingsPoolStatusLabel.Text = geminiKeys > 0 ? $"{geminiKeys}/{geminiKeys} sống" : "chưa có";
+			_settingsPoolStatusLabel.Text = geminiKeys > 0 ? $"Gemini {geminiKeys}" : "Gemini trống";
+		int groqKeys = CountConfiguredGroqKeys();
 		if (_settingsFallbackStatusLabel != null)
-			_settingsFallbackStatusLabel.Text = CountConfiguredGroqKeys() > 0 ? "Bật" : "Chưa khai";
+			_settingsFallbackStatusLabel.Text = groqKeys > 0 ? $"Fallback {groqKeys}" : "Fallback trống";
 
 		ApplySettingsSwitch(_settingsTtsSwitch, _settingsTtsEnabled);
 		ApplySettingsSwitch(_settingsAlwaysOnTopSwitch, KeepWindowAlwaysOnTop);
@@ -661,69 +1133,320 @@ public partial class UdpListener : Node2D
 
 	private int CountConfiguredGeminiKeys()
 	{
-		return CountSecretsKeys("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "ERIS_SPEECH_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS");
+		return ReadConfiguredGeminiKeys().Count;
 	}
 
 	private int CountConfiguredGroqKeys()
 	{
-		return CountSecretsKeys("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS", "ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY");
+		return ReadConfiguredGroqKeys().Count;
 	}
 
-	private int CountSecretsKeys(params string[] names)
+	private List<string> ReadConfiguredGeminiKeys()
 	{
-		var keys = new HashSet<string>(StringComparer.Ordinal);
+		return ReadConfiguredKeys("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "ERIS_SPEECH_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS");
+	}
+
+	private List<string> ReadConfiguredGroqKeys()
+	{
+		return ReadConfiguredKeys("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS", "ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY");
+	}
+
+	private List<string> ReadEditableKeysForPool(string poolKind)
+	{
+		return IsGroqPool(poolKind)
+			? ReadConfiguredKeysFromSecretsOnly("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS")
+			: ReadConfiguredKeysFromSecretsOnly("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS");
+	}
+
+	private List<string> CollectEditedSettingsKeys()
+	{
+		var keys = new List<string>();
+		var unique = new HashSet<string>(StringComparer.Ordinal);
+		foreach (LineEdit input in _settingsKeyInputs)
+		{
+			if (input == null || !IsInstanceValid(input))
+				continue;
+			foreach (string key in ExtractClipboardKeys(input.Text ?? ""))
+			{
+				if (unique.Add(key))
+					keys.Add(key);
+			}
+		}
+		return keys;
+	}
+
+	private static void ReplaceEditableKeysForPool(JsonObject root, string poolKind, List<string> keys)
+	{
+		bool groq = IsGroqPool(poolKind);
+		string[] controlled = groq
+			? new[] { "ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS" }
+			: new[] { "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS" };
+
+		RemoveControlledKeys(root, controlled);
+		foreach (string sectionName in new[] { "api_keys", "env", "secrets" })
+		{
+			if (root[sectionName] is JsonObject section)
+				RemoveControlledKeys(section, controlled);
+		}
+
+		JsonObject apiKeys = EnsureObject(root, "api_keys");
+		if (keys.Count == 0)
+			return;
+
+		if (groq)
+		{
+			apiKeys["ERIS_GROQ_API_KEY"] = keys[0];
+			JsonArray fallback = new();
+			for (int i = 1; i < keys.Count; i++)
+				fallback.Add(keys[i]);
+			apiKeys["ERIS_GROQ_FALLBACK_API_KEYS"] = fallback;
+			return;
+		}
+
+		apiKeys["ERIS_REMOTE_API_KEY"] = keys[0];
+		apiKeys["GEMINI_API_KEY"] = keys[0];
+		JsonArray privateMindFallback = new();
+		JsonArray geminiFallback = new();
+		for (int i = 1; i < keys.Count; i++)
+		{
+			privateMindFallback.Add(keys[i]);
+			geminiFallback.Add(keys[i]);
+		}
+		apiKeys["ERIS_PRIVATE_MIND_FALLBACK_API_KEYS"] = privateMindFallback;
+		apiKeys["ERIS_GEMINI_FALLBACK_API_KEYS"] = geminiFallback;
+	}
+
+	private static void RemoveControlledKeys(JsonObject obj, string[] names)
+	{
+		foreach (string name in names)
+			obj.Remove(name);
+	}
+
+	private List<string> ReadConfiguredKeys(params string[] names)
+	{
+		var unique = new HashSet<string>(StringComparer.Ordinal);
+		var keys = new List<string>();
 
 		foreach (string name in names)
-			AddSplitKeys(keys, System.Environment.GetEnvironmentVariable(name) ?? "");
+			AddSplitKeys(keys, unique, System.Environment.GetEnvironmentVariable(name) ?? "");
 
 		try
 		{
-			string path = Path.Combine(ProjectSettings.GlobalizePath("res://"), "config", "secrets.json");
+			string path = GetSecretsPath();
 			if (!File.Exists(path))
-				return keys.Count;
+				return keys;
 
 			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
 			JsonElement root = doc.RootElement;
 			if (root.ValueKind != JsonValueKind.Object)
-				return keys.Count;
+				return keys;
 
-			CollectSecretsKeysFromObject(root, keys, names);
+			CollectSecretsKeysFromObject(root, keys, unique, names);
 			foreach (string sectionName in new[] { "api_keys", "env", "secrets" })
 				if (root.TryGetProperty(sectionName, out JsonElement section) && section.ValueKind == JsonValueKind.Object)
-					CollectSecretsKeysFromObject(section, keys, names);
+					CollectSecretsKeysFromObject(section, keys, unique, names);
 		}
 		catch (Exception ex)
 		{
 			RunLogger.LogErr($"[Settings] Khong doc duoc key pool: {ex.Message}");
 		}
 
-		return keys.Count;
+		return keys;
 	}
 
-	private static void CollectSecretsKeysFromObject(JsonElement source, HashSet<string> keys, string[] names)
+	private List<string> ReadConfiguredKeysFromSecretsOnly(params string[] names)
+	{
+		var unique = new HashSet<string>(StringComparer.Ordinal);
+		var keys = new List<string>();
+		try
+		{
+			string path = GetSecretsPath();
+			if (!File.Exists(path))
+				return keys;
+
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+			JsonElement root = doc.RootElement;
+			if (root.ValueKind != JsonValueKind.Object)
+				return keys;
+
+			CollectSecretsKeysFromObject(root, keys, unique, names);
+			foreach (string sectionName in new[] { "api_keys", "env", "secrets" })
+				if (root.TryGetProperty(sectionName, out JsonElement section) && section.ValueKind == JsonValueKind.Object)
+					CollectSecretsKeysFromObject(section, keys, unique, names);
+		}
+		catch (Exception ex)
+		{
+			RunLogger.LogErr($"[Settings] Khong doc duoc editable key pool: {ex.Message}");
+		}
+		return keys;
+	}
+
+	private static void CollectSecretsKeysFromObject(JsonElement source, List<string> keys, HashSet<string> unique, string[] names)
 	{
 		foreach (string name in names)
 		{
 			if (!source.TryGetProperty(name, out JsonElement value))
 				continue;
 			if (value.ValueKind == JsonValueKind.String)
-				AddSplitKeys(keys, value.GetString() ?? "");
+				AddSplitKeys(keys, unique, value.GetString() ?? "");
 			else if (value.ValueKind == JsonValueKind.Array)
 			{
 				foreach (JsonElement item in value.EnumerateArray())
 					if (item.ValueKind == JsonValueKind.String)
-						AddSplitKeys(keys, item.GetString() ?? "");
+						AddSplitKeys(keys, unique, item.GetString() ?? "");
 			}
 		}
 	}
 
-	private static void AddSplitKeys(HashSet<string> keys, string raw)
+	private static void AddSplitKeys(List<string> keys, HashSet<string> unique, string raw)
 	{
 		foreach (string part in (raw ?? "").Replace("\n", ",").Replace(";", ",").Split(','))
 		{
 			string key = part.Trim();
-			if (key.Length > 0 && !key.StartsWith("PASTE_", StringComparison.OrdinalIgnoreCase))
+			if (key.Length > 0 && !key.StartsWith("PASTE_", StringComparison.OrdinalIgnoreCase) && unique.Add(key))
 				keys.Add(key);
 		}
+	}
+
+	private static List<string> ExtractClipboardKeys(string raw)
+	{
+		var keys = new List<string>();
+		var unique = new HashSet<string>(StringComparer.Ordinal);
+		foreach (string token in (raw ?? "").Split(new[] { '\r', '\n', '\t', ' ', ',', ';', '"', '\'', '[', ']' }, StringSplitOptions.RemoveEmptyEntries))
+		{
+			string key = token.Trim();
+			if (key.Length < 20 || key.Contains('=') || key.StartsWith("PASTE_", StringComparison.OrdinalIgnoreCase))
+				continue;
+			bool validChars = true;
+			foreach (char ch in key)
+			{
+				if (!(char.IsLetterOrDigit(ch) || ch == '_' || ch == '-' || ch == '.'))
+				{
+					validChars = false;
+					break;
+				}
+			}
+			if (validChars && unique.Add(key))
+				keys.Add(key);
+		}
+		return keys;
+	}
+
+	private static bool IsGroqPool(string poolKind)
+	{
+		string kind = (poolKind ?? "").Trim().ToLowerInvariant();
+		return kind == "groq" || kind == "openai" || kind == "openai_compatible" || kind == "compatible" || kind == "remote";
+	}
+
+	private static string KeyPoolKindFromProvider(string provider, string baseUrl)
+	{
+		string normalized = (provider ?? "").Trim().ToLowerInvariant();
+		if (IsGroqPool(normalized))
+			return "groq";
+		string url = (baseUrl ?? "").Trim().ToLowerInvariant();
+		return url.Contains("groq.com") || url.Contains("openai") || url.Contains("shopaikey") ? "groq" : "gemini";
+	}
+
+	private static JsonObject LoadSecretsRoot()
+	{
+		string path = GetSecretsPath();
+		if (!File.Exists(path))
+			return new JsonObject();
+		JsonNode parsed = JsonNode.Parse(File.ReadAllText(path));
+		return parsed as JsonObject ?? new JsonObject();
+	}
+
+	private static JsonObject EnsureObject(JsonObject root, string name)
+	{
+		if (root[name] is JsonObject obj)
+			return obj;
+		obj = new JsonObject();
+		root[name] = obj;
+		return obj;
+	}
+
+	private static bool TryReadBool(JsonElement root, string name, out bool value)
+	{
+		value = false;
+		if (!root.TryGetProperty(name, out JsonElement item))
+			return false;
+		if (item.ValueKind == JsonValueKind.True || item.ValueKind == JsonValueKind.False)
+		{
+			value = item.GetBoolean();
+			return true;
+		}
+		if (item.ValueKind == JsonValueKind.String)
+		{
+			value = IsTruthy(item.GetString() ?? "");
+			return true;
+		}
+		return false;
+	}
+
+	private static string ReadString(JsonElement root, string name, string fallback)
+	{
+		return root.TryGetProperty(name, out JsonElement item) && item.ValueKind == JsonValueKind.String
+			? item.GetString() ?? fallback
+			: fallback;
+	}
+
+	private static string ReadSecretString(JsonElement root, string name, string fallback)
+	{
+		string direct = ReadString(root, name, "");
+		if (!string.IsNullOrWhiteSpace(direct))
+			return direct;
+		foreach (string sectionName in new[] { "env", "api_keys", "secrets" })
+		{
+			if (root.TryGetProperty(sectionName, out JsonElement section) && section.ValueKind == JsonValueKind.Object)
+			{
+				string value = ReadString(section, name, "");
+				if (!string.IsNullOrWhiteSpace(value))
+					return value;
+			}
+		}
+		return fallback;
+	}
+
+	private static bool IsTruthy(string value)
+	{
+		string v = (value ?? "").Trim().ToLowerInvariant();
+		return v is "1" or "true" or "yes" or "on";
+	}
+
+	private static void SelectOptionText(OptionButton option, string value)
+	{
+		if (option == null)
+			return;
+		for (int i = 0; i < option.ItemCount; i++)
+		{
+			if (string.Equals(option.GetItemText(i), value, StringComparison.OrdinalIgnoreCase))
+			{
+				option.Select(i);
+				return;
+			}
+		}
+	}
+
+	private static string SelectedOptionText(OptionButton option, string fallback)
+	{
+		return option != null && option.Selected >= 0 ? option.GetItemText(option.Selected) : fallback;
+	}
+
+	private static string GetRuntimeBaseDirForSettings()
+	{
+		if (OS.HasFeature("editor"))
+			return ProjectSettings.GlobalizePath("res://");
+		string exeDir = Path.GetDirectoryName(OS.GetExecutablePath());
+		return string.IsNullOrWhiteSpace(exeDir) ? ProjectSettings.GlobalizePath("res://") : exeDir;
+	}
+
+	private static string GetSecretsPath()
+	{
+		return Path.Combine(GetRuntimeBaseDirForSettings(), "config", "secrets.json");
+	}
+
+	private static string GetSettingsBackupDir()
+	{
+		return Path.Combine(GetRuntimeBaseDirForSettings(), "backups", "settings");
 	}
 }

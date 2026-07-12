@@ -367,18 +367,6 @@ def _mk_frame(frame_type: str, relation: str, value: str, kind: str, evidence: s
     )
 
 
-def _extract_after(norm: str, raw: str, cues: Iterable[tuple[str, str]]) -> str:
-    for cue, _relation in cues:
-        cue_norm = normalize(cue)
-        if cue_norm and cue_norm in norm:
-            tail_norm = norm.split(cue_norm, 1)[1].strip()
-            if not tail_norm:
-                continue
-            # Fallback không cố map span perfect. Lấy tail surface tương đối đủ dùng.
-            return clean_surface(tail_norm)
-    return ""
-
-
 def _extract_identity_name(raw: str) -> tuple[str, bool] | None:
     """Bắt các câu khai báo/correction tên ở tầng MeaningFrame.
 
@@ -479,17 +467,6 @@ def _extract_year(norm: str) -> int | None:
     if tok.startswith("2k"):
         return 2000 + int(tok[2:])
     return int(tok)
-
-
-def _extract_preference(norm: str, raw: str) -> tuple[str, str] | None:
-    # Rất ít cue, chỉ dùng fallback. Model parser nên xử lý preference thật.
-    for cue in ("toi thich", "minh thich", "tui thich", "i like", "i prefer"):
-        if cue in norm:
-            value = clean_surface(norm.split(cue, 1)[1])
-            if value:
-                kind = "location" if link_entity(value, hinted_kind="unknown").kind == "location" else "unknown"
-                return value, kind
-    return None
 
 
 def _extract_after(raw: str, cues: Iterable[tuple[str, str]]) -> str:

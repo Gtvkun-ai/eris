@@ -4,6 +4,7 @@ import os
 import logging
 
 from llm.token_budget import preflight as _preflight
+from llm.key_pool import get_provider_circuit
 
 _LOGGER = logging.getLogger("LLM")
 
@@ -81,7 +82,7 @@ def _resolve_reasoning_effort() -> str:
 
 
 class LlamaServerClient:
-    def __init__(self, base_url: str, timeout: int = 180):
+    def __init__(self, base_url: str, timeout: int = 30):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.model_name = self._detect_model_name()
@@ -154,7 +155,7 @@ class LlamaServerClient:
 
 
 class OpenAICompatibleClient:
-    def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 180, key_pool=None):
+    def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 30, key_pool=None):
         self.base_url = base_url.rstrip("/")
         self.key_pool = key_pool
         if not (api_key or "").strip() and key_pool is not None:
@@ -162,6 +163,7 @@ class OpenAICompatibleClient:
         self.api_key = self._normalize_api_key(api_key)
         self.model_name = model_name.strip() or "gpt-5.4-nano"
         self.timeout = timeout
+        self._provider_circuit = get_provider_circuit(self.base_url)
 
     def _normalize_api_key(self, raw_value: str) -> str:
         candidate = (raw_value or "").strip()
@@ -248,14 +250,20 @@ class OpenAICompatibleClient:
         # Có pool: gặp 429 thì xoay key kế và thử lại, tối đa bằng số key trong pool.
         max_attempts = self.key_pool.size if (self.key_pool is not None and self.key_pool.size > 0) else 1
         last_error = None
+        attempted_indices: set[int] = set()
         for attempt in range(max(1, max_attempts)):
+            lease = None
             if self.key_pool is not None:
-                pool_key = self.key_pool.current_key()
-                if pool_key:
-                    self.api_key = self._normalize_api_key(pool_key)
-                    headers["Authorization"] = f"Bearer {self.api_key}"
+                lease = self.key_pool.acquire(exclude_indices=attempted_indices)
+                if lease is None:
+                    wait_s = self.key_pool.next_available_in()
+                    raise RuntimeError(f"API key pool đang cooldown; thử lại sau khoảng {wait_s:.1f}s")
+                attempted_indices.add(lease.index)
+                self.api_key = self._normalize_api_key(lease.key)
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
             rate_limited = False
+            auth_failed = False
             server_error = False
             seen_signatures = set()
             for candidate in _chat_payload_variants(payload):
@@ -265,6 +273,7 @@ class OpenAICompatibleClient:
                 seen_signatures.add(signature)
 
                 try:
+                    self._provider_circuit.before_request(self.base_url)
                     response = requests.post(
                         url,
                         headers=headers,
@@ -272,6 +281,7 @@ class OpenAICompatibleClient:
                         timeout=self.timeout if timeout is None else timeout,
                     )
                     response.raise_for_status()
+                    self._provider_circuit.record_success()
                     return response.json()
                 except requests.HTTPError as exc:
                     last_error = _http_error_with_body(exc.response) if exc.response is not None else exc
@@ -279,9 +289,12 @@ class OpenAICompatibleClient:
                     if status_code == 429:
                         rate_limited = True
                         break  # thoát vòng variant để xoay key
+                    if status_code in (401, 403):
+                        auth_failed = True
+                        break
                     if status_code in (500, 502, 503, 504):
                         server_error = True
-                        break  # lỗi tạm thời phía provider → xoay key thử lại
+                        break  # lỗi tạm thời phía provider, không phải lỗi key
                     if status_code is not None and status_code < 500:
                         continue  # thử biến thể payload kế (vd bỏ grammar/response_format)
                     raise last_error
@@ -289,14 +302,19 @@ class OpenAICompatibleClient:
                     last_error = exc
                     raise
 
-            if (
-                (rate_limited or server_error)
-                and self.key_pool is not None
-                and attempt < max_attempts - 1
-            ):
-                self.key_pool.mark_dead(60.0 if rate_limited else 15.0)
-                if self.key_pool.rotate():
+            if rate_limited and self.key_pool is not None:
+                self.key_pool.mark_dead(60.0, lease=lease, reason="http_429")
+                if attempt < max_attempts - 1:
                     continue
+            if auth_failed and self.key_pool is not None:
+                self.key_pool.mark_dead(3600.0, lease=lease, reason="http_auth")
+                if attempt < max_attempts - 1:
+                    continue
+            if server_error:
+                # 5xx thuộc provider/model, không đầu độc API key. Mở circuit
+                # và để fallback chain xử lý provider khác.
+                status = getattr(getattr(last_error, "response", None), "status_code", None)
+                self._provider_circuit.record_failure(provider=self.base_url, status=status)
             break
 
         if last_error is not None:
@@ -348,7 +366,7 @@ class ChainedFallbackClient:
 
 
 class GeminiClient:
-    def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 180, key_pool=None):
+    def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 30, key_pool=None):
         self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
         self.key_pool = key_pool
         # Nếu có pool dùng chung mà chưa truyền key cứng thì lấy key hiện tại của pool.
@@ -357,6 +375,7 @@ class GeminiClient:
         self.api_key = self._normalize_api_key(api_key)
         self.model_name = (model_name or "gemma-4-31b-it").strip()
         self.timeout = timeout
+        self._provider_circuit = get_provider_circuit(self.base_url)
 
     def _normalize_api_key(self, raw_value: str) -> str:
         candidate = (raw_value or "").strip()
@@ -544,11 +563,17 @@ class GeminiClient:
         # thử lại, tối đa bằng số key trong pool. Không pool → đúng một lần như cũ.
         max_attempts = self.key_pool.size if (self.key_pool is not None and self.key_pool.size > 0) else 1
         last_response = None
+        attempted_indices: set[int] = set()
         for attempt in range(max(1, max_attempts)):
+            lease = None
             if self.key_pool is not None:
-                pool_key = self.key_pool.current_key()
-                if pool_key:
-                    self.api_key = self._normalize_api_key(pool_key)
+                lease = self.key_pool.acquire(exclude_indices=attempted_indices)
+                if lease is None:
+                    wait_s = self.key_pool.next_available_in()
+                    raise RuntimeError(f"Gemini key pool đang cooldown; thử lại sau khoảng {wait_s:.1f}s")
+                attempted_indices.add(lease.index)
+                self.api_key = self._normalize_api_key(lease.key)
+            self._provider_circuit.before_request(self.base_url)
             last_response = requests.post(
                 f"{self.base_url}/models/{self.model_name}:generateContent",
                 headers={
@@ -559,21 +584,25 @@ class GeminiClient:
                 timeout=self.timeout if timeout is None else timeout,
             )
             status = last_response.status_code
-            if (
-                status in (429, 500, 502, 503, 504)
-                and self.key_pool is not None
-                and attempt < max_attempts - 1
-            ):
-                # 429 = hết quota key (nghỉ lâu); 5xx = lỗi tạm thời (nghỉ ngắn).
-                self.key_pool.mark_dead(60.0 if status == 429 else 15.0)
-                if self.key_pool.rotate():
+            if status == 429 and self.key_pool is not None:
+                self.key_pool.mark_dead(60.0, lease=lease, reason="http_429")
+                if attempt < max_attempts - 1:
                     _LOGGER.warning(
-                        "[GEMINI RETRY] status=%s attempt=%d/%d → rotate key",
-                        status,
+                        "[GEMINI RETRY] status=429 attempt=%d/%d failed_index=%s → acquire key khác",
                         attempt + 1,
                         max_attempts,
+                        getattr(lease, "index", "?"),
                     )
                     continue
+            elif status in (401, 403) and self.key_pool is not None:
+                self.key_pool.mark_dead(3600.0, lease=lease, reason="http_auth")
+                if attempt < max_attempts - 1:
+                    continue
+            elif status in (500, 502, 503, 504):
+                self._provider_circuit.record_failure(provider=self.base_url, status=status)
+                # Không xoay/mark-dead key vì mọi key cùng đập một provider đang lỗi.
+            elif 200 <= status < 300:
+                self._provider_circuit.record_success()
             break
 
         response = last_response
