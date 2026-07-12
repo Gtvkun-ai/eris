@@ -17,6 +17,11 @@ from typing import Iterable, Mapping, Any
 import time
 
 try:
+    from ..name_validation import is_valid_name_claim
+except Exception:  # pragma: no cover
+    from name_validation import is_valid_name_claim  # type: ignore
+
+try:
     from ..semantic_claim import ExtractedClaim, SemanticClaim, build_claim
     from ..understanding.meaning_frame import MeaningFrame, MeaningParseResult
 except Exception:  # pragma: no cover
@@ -126,6 +131,14 @@ class ClaimBuilder:
         object_value: Any = target.text if target else object_text
         object_type = str(defaults.get("object_type") or (target.kind if target else "unknown"))
 
+        if predicate in {"name_is", "nickname_is"}:
+            if not is_valid_name_claim(
+                object_text,
+                frame.evidence_span,
+                nickname=(predicate == "nickname_is"),
+            ):
+                return None
+
         # Nếu preference target là location thì thành preference_location, còn không là general_preference.
         if predicate == "preference_location_or_general":
             if target and target.kind == "location":
@@ -206,6 +219,16 @@ class ClaimBuilder:
         fact_key = str(raw.get("fact_key") or "")
         value = raw.get("value")
         confidence = float(raw.get("confidence") or 0.65)
+
+        if fact_key in {"user.name", "user.nickname"}:
+            # AI classification không được tự phong đại từ trong câu hỏi thành tên.
+            # Với identity bền vững, thiếu value hoặc thiếu cue tự khai thì bỏ claim.
+            if value is None or not is_valid_name_claim(
+                value,
+                str(raw.get("_source_evidence") or raw.get("evidence_text") or raw.get("evidence_span") or claim_text),
+                nickname=(fact_key == "user.nickname"),
+            ):
+                return None
         time_scope = str(raw.get("time_scope") or "stable")
         subject = str(raw.get("subject") or "user")
         why = str(raw.get("why") or "")
@@ -241,6 +264,8 @@ class ClaimBuilder:
         # Predicate đặc biệt: dùng fact_key nếu có, không thì dùng memory_type
         predicate = fact_key.replace(".", "_") if fact_key else f"{memory_type}_observed"
 
+        source_evidence = str(raw.get("_source_evidence") or raw.get("evidence_text") or raw.get("evidence_span") or claim_text)
+
         claim = build_claim(
             subject=subject,
             predicate=predicate,
@@ -256,7 +281,7 @@ class ClaimBuilder:
             scope="self",  # type: ignore[arg-type]
             source="user_text",  # type: ignore[arg-type]
             confidence=min(1.0, max(0.0, confidence)),
-            evidence_text=claim_text,
+            evidence_text=source_evidence,
             evidence_ids=evidence_ids,
             valid_until=None,
             stability="stable" if decay in {"slow"} else "medium" if decay == "normal" else "transient",  # type: ignore[arg-type]

@@ -38,6 +38,7 @@ try:  # package path: src/memory/memory_commit_policy.py
     from .memory_retention_policy import MemoryRetentionPolicy, retention_metadata
     from .predicate_ontology import fact_key_for_predicate, get_predicate, predicate_aliases
     from .semantic_claim import SemanticClaim
+    from .name_validation import is_valid_name_claim
 except Exception:  # pragma: no cover - chạy file rời khi test
     from memory_models import (  # type: ignore
         DecayPolicy,
@@ -51,6 +52,7 @@ except Exception:  # pragma: no cover - chạy file rời khi test
     from memory_retention_policy import MemoryRetentionPolicy, retention_metadata  # type: ignore
     from predicate_ontology import fact_key_for_predicate, get_predicate, predicate_aliases  # type: ignore
     from semantic_claim import SemanticClaim  # type: ignore
+    from name_validation import is_valid_name_claim  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +405,14 @@ class MemoryCommitPolicy:
         value = qualifiers.get("value")
         why = str(qualifiers.get("why") or "")
 
+        if fact_key in {"user.name", "user.nickname"}:
+            if value is None or not is_valid_name_claim(
+                value,
+                str(getattr(claim, "evidence_text", "") or ""),
+                nickname=(fact_key == "user.nickname"),
+            ):
+                return None
+
         # commit_hint → MemoryTarget
         target_map = {
             "semantic": MemoryTarget.SEMANTIC,
@@ -498,6 +508,13 @@ class MemoryCommitPolicy:
         spec = get_predicate(claim.predicate)
         aliases = list(predicate_aliases(claim.predicate))
         value: Any = claim.object_value if claim.object_value is not None else claim.object_text
+        if claim.predicate in {"name_is", "nickname_is"}:
+            if not is_valid_name_claim(
+                value,
+                str(claim.evidence_text or ""),
+                nickname=(claim.predicate == "nickname_is"),
+            ):
+                return None
         metadata = {
             "fact_key": fact_key,
             "value": value,
@@ -644,7 +661,7 @@ class MemoryCommitPolicy:
                 r"(?:^|\b)call\s+me\s+(.+?)(?=$|[.,;!?])",
             ),
         )
-        if not value or len(value) > 60:
+        if not value or len(value) > 60 or not is_valid_name_claim(value, raw):
             return None
 
         return MemoryCommitDecision(

@@ -17,6 +17,7 @@ import re
 import unicodedata
 
 from .meaning_frame import EntityRef
+from ..name_validation import is_plausible_user_name
 
 
 KNOWN_LOCATION_CANON = {
@@ -101,13 +102,7 @@ def _looks_like_location(norm: str) -> bool:
 
 
 def _looks_like_person_name(text: str) -> bool:
-    clean = text.strip()
-    if not clean or len(clean) > 60:
-        return False
-    # Tên người thường ngắn, không chứa câu dài. Dè dặt thôi, không phong thần.
-    if len(clean.split()) > 5:
-        return False
-    return bool(re.search(r"[A-Za-zÀ-ỹ]", clean))
+    return is_plausible_user_name(text)
 
 
 __all__ = ["link_entity", "clean_surface", "normalize", "strip_accents"]

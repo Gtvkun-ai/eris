@@ -61,6 +61,12 @@ class ApiKeyPool:
         self._index = 0
         self._lock = threading.Lock()
         self._rotations = 0
+        # Một request không được phép biến cả pool thành nghĩa địa chỉ vì provider
+        # đang rate-limit theo project/model. Ghi nhận burst 429 trên nhiều key và
+        # mở cooldown toàn pool ngắn để chặn vòng xoay dây chuyền.
+        self._rate_limit_events: list[tuple[float, int]] = []
+        self._global_cooldown_until = 0.0
+        self._rate_limit_bursts = 0
 
     @property
     def size(self) -> int:
@@ -72,6 +78,8 @@ class ApiKeyPool:
     def alive_count(self) -> int:
         now = time.time()
         with self._lock:
+            if self._global_cooldown_until > now:
+                return 0
             return sum(1 for i in range(len(self._keys)) if self._alive_locked(i, now))
 
     def _next_alive_locked(self, start: int, now: float) -> int:
@@ -100,6 +108,8 @@ class ApiKeyPool:
         now = time.time()
         with self._lock:
             if not self._keys:
+                return None
+            if self._global_cooldown_until > now and not allow_cooling:
                 return None
             n = len(self._keys)
             for offset in range(n):
@@ -150,6 +160,99 @@ class ApiKeyPool:
             self._index = nxt
             return True
 
+    def mark_success(self, *, lease: ApiKeyLease | None = None, index: int | None = None) -> None:
+        """Xóa dấu burst sau một request thành công.
+
+        Thành công trên bất kỳ key nào chứng minh provider không còn bị chặn toàn
+        cục. Cooldown riêng của các key khác vẫn được giữ nguyên.
+        """
+
+        now = time.time()
+        with self._lock:
+            target = lease.index if lease is not None else index
+            if target is not None and 0 <= int(target) < len(self._dead_until):
+                self._dead_until[int(target)] = 0.0
+            self._global_cooldown_until = 0.0
+            self._rate_limit_events = [
+                (ts, idx) for ts, idx in self._rate_limit_events if now - ts <= 2.0 and idx != target
+            ]
+
+    def mark_rate_limited(
+        self,
+        seconds: float = 60.0,
+        *,
+        index: int | None = None,
+        lease: ApiKeyLease | None = None,
+        reason: str = "http_429",
+    ) -> bool:
+        """Cooldown key bị 429 và quyết định có nên xoay sang key khác hay không.
+
+        Trả ``False`` khi nhiều key khác nhau cùng dính 429 trong một cửa sổ ngắn.
+        Khi đó lỗi gần như thuộc quota project/model/provider, không phải riêng key;
+        tiếp tục xoay chỉ giết nốt phần pool còn lại và tạo thêm log như máy in lỗi.
+        """
+
+        now = time.time()
+        cooldown = max(1.0, float(seconds))
+        try:
+            window_s = max(1.0, float(os.environ.get("ERIS_KEY_POOL_429_BURST_WINDOW_S", "8")))
+        except ValueError:
+            window_s = 8.0
+        try:
+            threshold = max(2, int(os.environ.get("ERIS_KEY_POOL_429_BURST_KEYS", "2")))
+        except ValueError:
+            threshold = 2
+        try:
+            global_cooldown_s = max(2.0, float(os.environ.get("ERIS_KEY_POOL_429_GLOBAL_COOLDOWN_S", "20")))
+        except ValueError:
+            global_cooldown_s = 20.0
+
+        with self._lock:
+            if not self._keys:
+                return False
+            target = lease.index if lease is not None else index
+            if target is None or not (0 <= int(target) < len(self._keys)):
+                target = self._index
+            target = int(target)
+            self._dead_until[target] = max(self._dead_until[target], now + cooldown)
+
+            self._rate_limit_events = [
+                (ts, idx) for ts, idx in self._rate_limit_events if now - ts <= window_s
+            ]
+            self._rate_limit_events.append((now, target))
+            unique_keys = {idx for _ts, idx in self._rate_limit_events}
+            threshold = min(max(2, threshold), max(2, len(self._keys)))
+            burst = len(self._keys) > 1 and len(unique_keys) >= threshold
+
+            alive = sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now)
+            if burst:
+                # Tôn trọng Retry-After nhưng không phạt toàn pool vô hạn. Cooldown
+                # riêng của từng key vẫn giữ nguyên ở _dead_until.
+                shared_wait = max(global_cooldown_s, min(cooldown, 120.0))
+                was_open = self._global_cooldown_until > now
+                self._global_cooldown_until = max(self._global_cooldown_until, now + shared_wait)
+                if not was_open:
+                    self._rate_limit_bursts += 1
+                    _LOGGER.warning(
+                        "[KEY POOL] 429 burst trên %d key/%ds; dừng xoay, cooldown pool %.0fs (alive=%d/%d)",
+                        len(unique_keys),
+                        int(window_s),
+                        shared_wait,
+                        alive,
+                        len(self._keys),
+                    )
+                return False
+
+            _LOGGER.warning(
+                "[KEY POOL] cooldown key index=%d %.0fs vì %s; alive=%d/%d",
+                target,
+                cooldown,
+                reason,
+                alive,
+                len(self._keys),
+            )
+            return alive > 0
+
     def mark_dead(
         self,
         seconds: float = 60.0,
@@ -182,14 +285,16 @@ class ApiKeyPool:
             )
 
     def next_available_in(self) -> float:
-        """Số giây còn lại tới lúc ít nhất một key hồi; 0 nếu có key sống."""
+        """Số giây còn lại tới lúc ít nhất một key có thể được cấp."""
 
         now = time.time()
         with self._lock:
             if not self._keys:
                 return 0.0
             waits = [max(0.0, deadline - now) for deadline in self._dead_until]
-            return min(waits) if waits else 0.0
+            key_wait = min(waits) if waits else 0.0
+            shared_wait = max(0.0, self._global_cooldown_until - now)
+            return max(shared_wait, key_wait)
 
     def index(self) -> int:
         with self._lock:
@@ -198,12 +303,18 @@ class ApiKeyPool:
     def stats(self) -> dict[str, int]:
         now = time.time()
         with self._lock:
-            alive = sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now)
+            shared_cooling = self._global_cooldown_until > now
+            alive_raw = sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now)
             return {
                 "size": len(self._keys),
-                "alive": alive,
-                "dead": len(self._keys) - alive,
+                # alive/dead mô tả trạng thái từng key; available mới phản ánh
+                # cooldown chung. Nhờ vậy alive + dead luôn bằng size.
+                "alive": alive_raw,
+                "available": 0 if shared_cooling else alive_raw,
+                "dead": len(self._keys) - alive_raw,
                 "rotations": self._rotations,
+                "rate_limit_bursts": self._rate_limit_bursts,
+                "global_cooldown_ms": int(max(0.0, self._global_cooldown_until - now) * 1000),
             }
 
 

@@ -22,6 +22,25 @@ def _http_error_with_body(response: requests.Response) -> requests.HTTPError:
     return exc
 
 
+def _retry_after_seconds(response, default: float = 60.0) -> float:
+    """Đọc Retry-After/retryDelay từ response 429, fallback về ``default``."""
+
+    try:
+        raw = str((getattr(response, "headers", {}) or {}).get("Retry-After", "")).strip()
+        if raw:
+            return max(1.0, min(float(raw), 3600.0))
+    except (TypeError, ValueError):
+        pass
+    try:
+        body = str(getattr(response, "text", "") or "")
+        match = re.search(r'"retryDelay"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)s?', body, flags=re.I)
+        if match:
+            return max(1.0, min(float(match.group(1)), 3600.0))
+    except Exception:
+        pass
+    return max(1.0, float(default))
+
+
 def _is_empty_output_error(exc: requests.HTTPError) -> bool:
     """Detect lỗi Groq 'model output must contain either output text or tool calls'.
 
@@ -282,6 +301,8 @@ class OpenAICompatibleClient:
                     )
                     response.raise_for_status()
                     self._provider_circuit.record_success()
+                    if self.key_pool is not None and lease is not None:
+                        self.key_pool.mark_success(lease=lease)
                     return response.json()
                 except requests.HTTPError as exc:
                     last_error = _http_error_with_body(exc.response) if exc.response is not None else exc
@@ -303,8 +324,9 @@ class OpenAICompatibleClient:
                     raise
 
             if rate_limited and self.key_pool is not None:
-                self.key_pool.mark_dead(60.0, lease=lease, reason="http_429")
-                if attempt < max_attempts - 1:
+                retry_s = _retry_after_seconds(getattr(last_error, "response", None), 60.0)
+                may_rotate = self.key_pool.mark_rate_limited(retry_s, lease=lease, reason="http_429")
+                if may_rotate and attempt < max_attempts - 1:
                     continue
             if auth_failed and self.key_pool is not None:
                 self.key_pool.mark_dead(3600.0, lease=lease, reason="http_auth")
@@ -585,8 +607,9 @@ class GeminiClient:
             )
             status = last_response.status_code
             if status == 429 and self.key_pool is not None:
-                self.key_pool.mark_dead(60.0, lease=lease, reason="http_429")
-                if attempt < max_attempts - 1:
+                retry_s = _retry_after_seconds(last_response, 60.0)
+                may_rotate = self.key_pool.mark_rate_limited(retry_s, lease=lease, reason="http_429")
+                if may_rotate and attempt < max_attempts - 1:
                     _LOGGER.warning(
                         "[GEMINI RETRY] status=429 attempt=%d/%d failed_index=%s → acquire key khác",
                         attempt + 1,
@@ -603,6 +626,8 @@ class GeminiClient:
                 # Không xoay/mark-dead key vì mọi key cùng đập một provider đang lỗi.
             elif 200 <= status < 300:
                 self._provider_circuit.record_success()
+                if self.key_pool is not None and lease is not None:
+                    self.key_pool.mark_success(lease=lease)
             break
 
         response = last_response

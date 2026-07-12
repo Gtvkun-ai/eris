@@ -22,6 +22,7 @@ from typing import Any, Callable, Iterable, Mapping, Protocol
 from .entity_linker import clean_surface, link_entity, normalize, strip_accents
 from .meaning_frame import EntityRef, MeaningFrame, MeaningParseResult
 from .polarity_temporal import analyse_surface, split_clauses
+from ..name_validation import is_plausible_user_name
 
 
 class SemanticParser(Protocol):
@@ -220,8 +221,16 @@ def _frame_from_mapping(item: Mapping[str, Any], *, fallback_evidence: str) -> M
         evidence_span=str(item.get("evidence_span") or item.get("evidence_text") or fallback_evidence),
         source=str(item.get("source") or "user_text"),
         # Giữ raw dict để ClaimBuilder đọc schema mới (memory_type, storage_target, decay, ...)
-        # khi Gemini dùng AI classification thay vì schema frame cũ.
-        slots={**dict(item.get("slots") or {}), "_raw": dict(item)},
+        # khi Gemini dùng AI classification thay vì schema frame cũ. Gắn luôn
+        # evidence gốc; nếu không, model có thể biến claim tóm tắt thành "bằng chứng"
+        # rồi identity guard không còn biết user thực sự đã nói gì.
+        slots={
+            **dict(item.get("slots") or {}),
+            "_raw": {
+                **dict(item),
+                "_source_evidence": str(item.get("evidence_span") or item.get("evidence_text") or fallback_evidence),
+            },
+        },
         warnings=tuple(warnings),
     )
 
@@ -386,7 +395,7 @@ def _extract_identity_name(raw: str) -> tuple[str, bool] | None:
         ("ten that toi", "name"),
     )
     value = _extract_after(raw, corrected_cues)
-    if value and len(value) <= 60:
+    if value and len(value) <= 60 and is_plausible_user_name(value):
         return value, True
 
     regular_cues = (
@@ -404,7 +413,7 @@ def _extract_identity_name(raw: str) -> tuple[str, bool] | None:
         ("call me", "name"),
     )
     value = _extract_after(raw, regular_cues)
-    if value and len(value) <= 60:
+    if value and len(value) <= 60 and is_plausible_user_name(value):
         return value, False
     return None
 
@@ -432,7 +441,7 @@ def _extract_identity_nickname(raw: str) -> str | None:
         ("nickname is", "nickname"),
     )
     value = _extract_after(raw, cues)
-    if value and len(value) <= 60:
+    if value and len(value) <= 60 and is_plausible_user_name(value):
         return value
     return None
 

@@ -1,5 +1,6 @@
 ﻿import json
 import re
+from llm.json_sanitizer import strip_reasoning_envelope
 import unicodedata
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
@@ -1881,7 +1882,7 @@ class ParserGroundingMixin:
         if not isinstance(raw_text, str):
             raw_text = str(raw_text)
 
-        cleaned = raw_text.strip()
+        cleaned = strip_reasoning_envelope(raw_text)
         if cleaned.startswith("```"):
             start = cleaned.find("\n")
             end = cleaned.rfind("```")

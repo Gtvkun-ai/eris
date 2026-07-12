@@ -48,7 +48,7 @@ def _parse_env_file(text: str) -> dict[str, str]:
         if "=" not in line:
             continue
         key, _, value = line.partition("=")
-        key = key.strip()
+        key = key.strip().lstrip("\ufeff")
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
@@ -92,6 +92,43 @@ def load_env_file(*, force: bool = False) -> dict[str, str]:
 
     if applied:
         _LOGGER.info("[CONFIG] loaded %d setting(s) from %s", len(applied), path)
+    return applied
+
+
+def refresh_runtime_preferences(*names: str) -> dict[str, str]:
+    """Nạp lại các preference do UI/.env quản lý ngay lúc runtime đang chạy.
+
+    Launcher có thể chèn default vào ``os.environ`` trước khi Python khởi động,
+    nên ``load_env_file`` đúng chuẩn OS-env precedence sẽ không ghi đè được. Với
+    các preference được gọi đích danh (ví dụ ``ERIS_TTS_LANGUAGE``), file .env là
+    nguồn cấu hình người dùng và được phép thắng default của launcher. API key và
+    secret không đi qua hàm này.
+    """
+
+    requested = tuple(dict.fromkeys(str(name or "").strip() for name in names if str(name or "").strip()))
+    if not requested:
+        return {}
+    if (os.environ.get("ERIS_DISABLE_DOTENV", "") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        return {}
+
+    path = _resolve_env_file_path()
+    if not path.is_file():
+        return {}
+    try:
+        # utf-8-sig nuốt BOM chuẩn; _parse_env_file vẫn lstrip BOM để phòng text
+        # được truyền từ nguồn khác. Con người đã đủ việc, không cần thêm ký tự ma.
+        parsed = _parse_env_file(path.read_text(encoding="utf-8-sig"))
+    except OSError:
+        return {}
+
+    applied: dict[str, str] = {}
+    for name in requested:
+        if name not in parsed:
+            continue
+        value = str(parsed[name])
+        os.environ[name] = value
+        _CONFIG_SOURCE[name] = ".env(runtime-preference)"
+        applied[name] = value
     return applied
 
 

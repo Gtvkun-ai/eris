@@ -9,6 +9,7 @@ import time
 import threading
 
 import requests
+from llm.json_sanitizer import strip_reasoning_envelope
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
 from cortex.banned_filler import HOLLOW_PRESENCE_LINES, STALE_MICRO_TEMPLATES, quoted_fragment
@@ -1547,7 +1548,9 @@ class LlmService:
         return json.dumps(sanitized, ensure_ascii=False)
 
     def _coerce_json_candidate(self, raw_text: str) -> str:
-        raw_text = (raw_text or "").strip()
+        # Qwen/GPT-OSS có thể nhét <think> trước JSON. Bóc tại biên format,
+        # không đợi parser cuối rồi retry cùng một câu trả lời hợp lệ.
+        raw_text = strip_reasoning_envelope(raw_text)
         if not raw_text:
             return ""
 
@@ -1836,7 +1839,8 @@ class LlmService:
         return self._build_json_fallback(raw_text, channel=channel)
 
     def _strict_decision_candidate_or_raise(self, raw: str, *, channel: str) -> str:
-        raw_text = str(raw or "").strip()
+        original_raw = str(raw or "").strip()
+        raw_text = strip_reasoning_envelope(original_raw)
         if not raw_text:
             raise FormatViolationException(
                 f"LlmService received empty {channel} response.",

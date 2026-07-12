@@ -661,6 +661,8 @@ def _synthesize_wav(
                 ),
             )
             pcm_data = response.candidates[0].content.parts[0].inline_data.data
+            if pool is not None and lease is not None:
+                pool.mark_success(lease=lease)
             break
         except Exception as exc:
             last_exc = exc
@@ -673,14 +675,14 @@ def _synthesize_wav(
                 pass
 
             if is_rate_limit and pool is not None:
-                pool.mark_dead(seconds=60.0, lease=lease, reason="tts_http_429")
+                may_rotate = pool.mark_rate_limited(seconds=60.0, lease=lease, reason="tts_http_429")
                 logger.warning(
                     "[TTS] Key index %s bị rate limit/hết quota (lượt %d/%d).",
                     getattr(lease, "index", "?"),
                     attempt + 1,
                     max_attempts,
                 )
-                if attempt < max_attempts - 1:
+                if may_rotate and attempt < max_attempts - 1:
                     continue
             fallback = _try_local_tts_fallback(exc, fallback_text=fallback_text, language_hint=language_hint)
             if fallback:

@@ -26,6 +26,7 @@ from .memory_query_ir import (
     SurfaceMode,
 )
 from .memory_turn_graph import TurnGraph, TurnNode
+from .name_validation import is_plausible_user_name
 
 
 class MemoryQueryExecutor:
@@ -183,16 +184,20 @@ class MemoryQueryExecutor:
         # Ưu tiên semantic memory ổn định.
         value = self._lookup_fact(memory_core, fact_key)
         if value is not None:
-            text = self._format_fact(fact_key, value)
-            return RawRecallResult(
-                found=True,
-                source=MemorySourceKind.SEMANTIC_MEMORY,
-                ir=ir,
-                exact_text=text,
-                gist=text,
-                confidence=min(0.92, max(ir.confidence, 0.78)),
-                evidence=(f"semantic_fact:{fact_key}",),
-            )
+            if fact_key == "user.name" and not is_plausible_user_name(value):
+                value = None
+            else:
+                text = self._format_fact(fact_key, value)
+                return RawRecallResult(
+                    found=True,
+                    source=MemorySourceKind.SEMANTIC_MEMORY,
+                    ir=ir,
+                    exact_text=text,
+                    gist=text,
+                    confidence=min(0.92, max(ir.confidence, 0.78)),
+                    evidence=(f"semantic_fact:{fact_key}",),
+                )
+
 
         # Fallback có kiểm soát: nếu fact vừa được nói trong phiên nhưng chưa commit xong,
         # lấy từ TurnGraph fact_mentions. Đây không phải long-term memory.
@@ -201,6 +206,8 @@ class MemoryQueryExecutor:
             for node in reversed(nodes):
                 for fact in node.fact_mentions:
                     if fact.key == fact_key:
+                        if fact_key == "user.name" and not is_plausible_user_name(fact.value):
+                            continue
                         text = self._format_fact(fact_key, fact.value)
                         return RawRecallResult(
                             found=True,
