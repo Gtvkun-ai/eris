@@ -76,7 +76,7 @@ class UtteranceEvaluator:
     """Rubric nhỏ để câu nháp tự qua một lượt nghe lại.
 
     Luật cố tình ít nhưng sắc:
-    - current screen domain thắng memory/private seed;
+    - current screen chỉ thắng khi câu đang claim về màn hình/hoạt động hiện tại;
     - claim "Ngài đang..." phải có evidence;
     - micro-presence không được thành filler/status ping;
     - khi user sửa lỗi, đừng hỏi rộng như chưa nghe.
@@ -133,6 +133,20 @@ class UtteranceEvaluator:
         "hinh nhu ngai dang",
         "co ve ngai dang",
     )
+    _SITUATED_CLAIM_MARKERS = (
+        "tren man hinh",
+        "man hinh dang",
+        "toi dang nhin",
+        "toi nhin thay",
+        "toi thay tren man hinh",
+        "cua so dang",
+        "tab dang",
+        "ngai dang xem",
+        "ngai dang nghe",
+        "ngai dang code",
+        "ngai vua mo",
+        "ung dung dang",
+    )
     _HEDGE_MARKERS = (
         "toi doan",
         "co ve",
@@ -188,18 +202,36 @@ class UtteranceEvaluator:
             quality = min(quality, 0.24)
             verdict = "rewrite"
 
-        evidence_text = self._evidence_text(snapshot=snapshot, frame=frame, speech_core=speech_core, grounding=grounding)
-        current_domain = self._domain_from_text(evidence_text, current_context=True)
-        text_domain = self._domain_from_text(raw)
-        if current_domain and text_domain and current_domain != "mixed" and text_domain != "mixed" and current_domain != text_domain:
-            issues.append(f"domain_contradiction:{text_domain}_vs_{current_domain}")
-            missing.append(f"current_{text_domain}_evidence")
-            quality = min(quality, 0.18)
-            verdict = "rewrite"
+        primary_evidence = self._primary_evidence_text(grounding=grounding, user_text=user_text)
+        supporting_evidence = self._supporting_evidence_text(grounding=grounding)
+        ambient_evidence = self._ambient_evidence_text(
+            grounding=grounding,
+            snapshot=snapshot,
+            frame=frame,
+            speech_core=speech_core,
+        )
+        evidence_text = " ".join(part for part in (primary_evidence, supporting_evidence, ambient_evidence) if part)
+
+        # Domain của màn hình chỉ có ý nghĩa khi câu đang tuyên bố về trạng thái
+        # hiện tại. Câu trả lời trực tiếp hoặc tool-grounded có thể nói về bất kỳ
+        # chủ đề nào dù user đang mở IDE, game hay một cửa sổ khác.
+        situated = self._is_situated_claim(
+            normalized,
+            channel=channel,
+            grounding=grounding,
+        )
+        if situated:
+            current_domain = self._domain_from_text(ambient_evidence, current_context=True)
+            text_domain = self._domain_from_text(raw)
+            if current_domain and text_domain and current_domain != "mixed" and text_domain != "mixed" and current_domain != text_domain:
+                issues.append(f"situated_domain_mismatch:{text_domain}_vs_{current_domain}")
+                missing.append(f"current_{text_domain}_evidence")
+                quality = min(quality, 0.18)
+                verdict = "rewrite"
 
         claims_activity = any(marker in normalized for marker in self._ASSERTIVE_USER_ACTIVITY)
         hedged = any(marker in normalized for marker in self._HEDGE_MARKERS)
-        if claims_activity and not self._has_activity_support(normalized, evidence_text):
+        if claims_activity and not self._has_activity_support(normalized, ambient_evidence):
             issues.append("unsupported_user_activity_claim")
             missing.append("activity_evidence")
             quality = min(quality, 0.28 if hedged else 0.18)
@@ -244,15 +276,91 @@ class UtteranceEvaluator:
         speech_core: Any = None,
         grounding: Any = None,
     ) -> str:
-        evidence = self._evidence_text(snapshot=snapshot, frame=frame, speech_core=speech_core, grounding=grounding)
+        primary = self._primary_evidence_text(grounding=grounding, user_text=user_text)
+        supporting = self._supporting_evidence_text(grounding=grounding)
+        ambient = self._ambient_evidence_text(grounding=grounding, snapshot=snapshot, frame=frame, speech_core=speech_core)
         return (
             f"channel={channel or 'unknown'}\n"
             f"user_text={str(user_text or '').strip()[:300]}\n"
             f"draft={str(text or '').strip()[:500]}\n"
             f"quality={evaluation.quality:.2f}; verdict={evaluation.verdict}; issues={','.join(evaluation.issues)}\n"
             f"missing_evidence={','.join(evaluation.missing_evidence) or 'none'}\n"
-            f"current_evidence={evidence[:1000] or 'none'}"
+            f"primary_evidence={primary[:700] or 'none'}\n"
+            f"supporting_evidence={supporting[:500] or 'none'}\n"
+            f"ambient_context={ambient[:500] or 'none'}"
         )
+
+    @staticmethod
+    def _evidence_item_value(item: Any, key: str, default: Any = "") -> Any:
+        if isinstance(item, dict):
+            return item.get(key, default)
+        return getattr(item, key, default)
+
+    def _role_evidence_text(self, grounding: Any, role: str) -> str:
+        if grounding is None:
+            return ""
+        items = getattr(grounding, "evidence_items", ()) or ()
+        parts: list[str] = []
+        for item in items:
+            if str(self._evidence_item_value(item, "role", "")) != role:
+                continue
+            text = str(self._evidence_item_value(item, "text", "") or "").strip()
+            if text:
+                parts.append(text)
+        return " ".join(parts)
+
+    def _primary_evidence_text(self, *, grounding: Any = None, user_text: str = "") -> str:
+        explicit = self._role_evidence_text(grounding, "primary")
+        if explicit:
+            return explicit
+        # Compatibility với report cũ chưa có evidence_items. User request vẫn là
+        # neo trực tiếp tốt hơn màn hình ngẫu nhiên đang mở.
+        return str(user_text or getattr(grounding, "user_text", "") or "").strip()
+
+    def _supporting_evidence_text(self, *, grounding: Any = None) -> str:
+        return self._role_evidence_text(grounding, "supporting")
+
+    def _ambient_evidence_text(
+        self,
+        *,
+        grounding: Any = None,
+        snapshot: Any = None,
+        frame: Any = None,
+        speech_core: Any = None,
+    ) -> str:
+        parts: list[str] = []
+        role_text = self._role_evidence_text(grounding, "ambient")
+        if role_text:
+            parts.append(role_text)
+        for owner in (snapshot, frame, speech_core):
+            if owner is None:
+                continue
+            for attr in (
+                "active_window_kind", "focus_kind", "focus_kind_hint",
+                "focus_summary", "activity_intent", "semantic_family",
+                "topic_seed", "speech_evidence", "reason",
+            ):
+                value = getattr(owner, attr, "")
+                if value:
+                    parts.append(str(value))
+            for attr in ("vision_facts", "recent_events", "grounded_facts"):
+                value = getattr(owner, attr, ())
+                if value:
+                    parts.append(_as_text(value))
+        if grounding is not None and not role_text:
+            previews = getattr(grounding, "screen_facts_preview", ()) or ()
+            if previews:
+                parts.append(_as_text(previews))
+        return " ".join(part for part in parts if part)
+
+    def _is_situated_claim(self, normalized_text: str, *, channel: str, grounding: Any = None) -> bool:
+        if str(channel or "") in {"autonomous", "force_speak", "surface", "micro_presence"}:
+            return True
+        if any(marker in normalized_text for marker in self._SITUATED_CLAIM_MARKERS):
+            return True
+        primary_source = str(getattr(grounding, "primary_source", "") or "")
+        refers_screen = bool(getattr(grounding, "refers_to_current_screen", False))
+        return refers_screen and primary_source in {"current_screen", "live_vision"}
 
     def _evidence_text(self, *, snapshot: Any = None, frame: Any = None, speech_core: Any = None, grounding: Any = None) -> str:
         parts: list[str] = []
@@ -295,7 +403,8 @@ class UtteranceEvaluator:
         media_markers = (
             "youtube", "youtu be", "nhac", "music", "playlist", "video",
             "anime", "thumbnail", "media", "lofi", "song", "mv", "watch",
-            "browsing", "gaming", "stream",
+            "browsing", "gaming", "stream", "vocaloid", "hatsune", "miku",
+            "ca si", "virtual singer",
         )
         code_markers = (
             "code", "coding", "vscode", "visual studio code", "ide", "repo",

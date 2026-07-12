@@ -40,6 +40,29 @@ SourceKind = Literal[
     "unknown",
 ]
 
+EvidenceRole = Literal["primary", "supporting", "ambient"]
+EvidenceStage = Literal["pre_generation", "tool_result", "post_tool"]
+
+
+@dataclass(slots=True)
+class GroundingEvidence:
+    """Một mẩu provenance có vai trò rõ ràng trong câu trả lời.
+
+    primary: nguồn trực tiếp tạo ra nội dung trả lời.
+    supporting: lịch sử/memory/user text bổ trợ cho nguồn chính.
+    ambient: màn hình/app hiện tại; chỉ được dùng để kiểm claim có tính situated.
+    """
+
+    evidence_id: str
+    source: SourceKind
+    role: EvidenceRole
+    text: str
+    confidence: float = 0.7
+    stage: EvidenceStage = "pre_generation"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass(slots=True)
 class SourceCandidate:
@@ -197,6 +220,10 @@ class SourceGroundingReport:
     evidence_ids: list[str] = field(default_factory=list)
     allowed_sources: list[SourceKind] = field(default_factory=list)
     grounding_source: str = "unknown"
+    # Provenance có vai trò. Không trộn screen context với nguồn trả lời chính nữa.
+    evidence_items: list[GroundingEvidence] = field(default_factory=list)
+    generation_stage: EvidenceStage = "pre_generation"
+    requested_source: SourceKind | None = None
     missing_evidence: list[str] = field(default_factory=list)
     preempt_mode: str = ""
     preempt_recommended: bool = False
@@ -772,6 +799,12 @@ class SourceGroundingEngine:
             notes=notes,
         )
 
+        # Gắn vai trò provenance ngay từ đầu. Màn hình chỉ là ambient trừ khi
+        # user thực sự hỏi về màn hình; user text là primary cho câu hỏi trực tiếp.
+        report.evidence_items = self._build_initial_evidence_items(report)
+        report.generation_stage = "pre_generation"
+        report.requested_source = "web" if (web_ref and not allow_web) else None
+
         # Information Gap -> Curiosity/Probe:
         # preempt cũ hay biến thiếu evidence thành một câu chết. Ở đây ta phân loại lại:
         # nếu thiếu screen/memory evidence nhưng còn đủ neo tương tác, ERIS được hỏi/probe
@@ -819,6 +852,162 @@ class SourceGroundingEngine:
             self._safe_setattr(frame, "source_memory_answer_profile", report.memory_answer_profile)
 
         return report
+
+    def _build_initial_evidence_items(self, report: SourceGroundingReport) -> list[GroundingEvidence]:
+        items: list[GroundingEvidence] = []
+        user_text = str(report.user_text or "").strip()
+        if user_text:
+            user_role: EvidenceRole = "primary" if report.primary_source == "user_text" else "supporting"
+            items.append(
+                GroundingEvidence(
+                    evidence_id="user:current_turn",
+                    source="user_text",
+                    role=user_role,
+                    text=user_text,
+                    confidence=0.95,
+                )
+            )
+
+        # Candidate preview của nguồn thật (file/memory/runtime) được giữ riêng.
+        for candidate in report.candidates:
+            previews = [str(v).strip() for v in candidate.evidence_preview if str(v).strip()]
+            if not previews:
+                continue
+            role: EvidenceRole = "primary" if candidate.kind == report.primary_source else "supporting"
+            if candidate.kind in {"current_screen", "live_vision"}:
+                role = "primary" if report.refers_to_current_screen and candidate.kind == report.primary_source else "ambient"
+            for index, preview in enumerate(previews[:3]):
+                evidence_id = (candidate.evidence_ids[index] if index < len(candidate.evidence_ids) else "") or f"{candidate.kind}:{index}"
+                items.append(
+                    GroundingEvidence(
+                        evidence_id=str(evidence_id),
+                        source=candidate.kind,
+                        role=role,
+                        text=preview,
+                        confidence=max(0.0, min(1.0, float(candidate.confidence))),
+                    )
+                )
+
+        # screen_facts_preview đôi lúc không nằm trong candidate preview. Không để mất
+        # nó, nhưng mặc định chỉ là ambient, không có quyền phủ định user/tool answer.
+        known_screen_texts = {item.text for item in items if item.source in {"current_screen", "live_vision"}}
+        screen_role: EvidenceRole = (
+            "primary"
+            if report.refers_to_current_screen and report.primary_source in {"current_screen", "live_vision"}
+            else "ambient"
+        )
+        for index, preview in enumerate(report.screen_facts_preview[:4]):
+            text = str(preview or "").strip()
+            if not text or text in known_screen_texts:
+                continue
+            items.append(
+                GroundingEvidence(
+                    evidence_id=f"screen:{index}",
+                    source="current_screen",
+                    role=screen_role,
+                    text=text,
+                    confidence=0.78 if report.screen_evidence_present else 0.55,
+                )
+            )
+        return items
+
+    def record_tool_result(
+        self,
+        report: SourceGroundingReport | None,
+        *,
+        action_name: str,
+        result: Any,
+        turn_id: str = "",
+    ) -> SourceGroundingReport | None:
+        """Nâng tool result thành primary evidence ngay khi tool chạy xong.
+
+        Hàm cố ý cập nhật report *in place*. Frame và coordinator đang cùng giữ
+        tham chiếu tới report này, nên final guards nhìn thấy provenance mới mà
+        không cần thay đổi contract của toàn pipeline.
+        """
+
+        if not isinstance(report, SourceGroundingReport):
+            return report
+        action = str(action_name or getattr(result, "action_name", "") or "tool").strip()
+        success = bool(getattr(result, "success", False))
+        report.generation_stage = "post_tool"
+        if not success:
+            warning = f"{action}_failed"
+            if warning not in report.warnings:
+                report.warnings.append(warning)
+            report.prompt_context = self.render_prompt_context(report)
+            return report
+
+        source = self._tool_source_for_action(action)
+        text = self._tool_result_text(result)
+        if not text:
+            warning = f"{action}_empty_result"
+            if warning not in report.warnings:
+                report.warnings.append(warning)
+            report.prompt_context = self.render_prompt_context(report)
+            return report
+
+        for item in report.evidence_items:
+            if item.role == "primary":
+                item.role = "supporting"
+
+        evidence_id = f"tool:{action}:{turn_id or 'current'}"
+        report.evidence_items.append(
+            GroundingEvidence(
+                evidence_id=evidence_id,
+                source=source,
+                role="primary",
+                text=text,
+                confidence=0.92,
+                stage="tool_result",
+            )
+        )
+        report.primary_source = source
+        report.grounding_source = source
+        report.requested_source = None
+        report.allowed_sources = self._dedupe([source, "user_text", *report.allowed_sources])
+        report.evidence_ids = self._dedupe([*report.evidence_ids, evidence_id])[:20]
+        missing_by_action = {
+            "search_web": {"web_access_or_search_result", "web_result", "live_web_evidence"},
+            "get_weather": {"web_access_or_search_result", "weather_result", "live_web_evidence"},
+            "get_now_playing": {"runtime_state", "media_session"},
+        }
+        removable = missing_by_action.get(action, set())
+        report.missing_evidence = [item for item in report.missing_evidence if item not in removable]
+        report.confidence_cap = max(float(report.confidence_cap or 0.0), 0.86)
+        report.epistemic_mode = "claim"
+        report.preempt_recommended = False
+        if report.preempt_mode in {"epistemic_curiosity", "investigate"}:
+            report.preempt_mode = ""
+        report.cognitive_flags.update(
+            {
+                "grounding_source": source,
+                "tool_grounded": True,
+                "tool_action": action,
+                "missing_evidence_ids": bool(report.missing_evidence),
+                "missing_evidence": list(report.missing_evidence),
+                "confidence": float(report.confidence_cap),
+            }
+        )
+        report.prompt_context = self.render_prompt_context(report)
+        return report
+
+    @staticmethod
+    def _tool_source_for_action(action_name: str) -> SourceKind:
+        if action_name in {"search_web", "get_weather"}:
+            return "web"
+        return "runtime_state"
+
+    @staticmethod
+    def _tool_result_text(result: Any) -> str:
+        data = getattr(result, "data", {}) or {}
+        if isinstance(data, Mapping):
+            preferred = ("answer", "summary", "text", "content", "title")
+            parts = [str(data.get(key, "") or "").strip() for key in preferred]
+            text = " ".join(part for part in parts if part)
+            if text:
+                return text[:6000]
+        return str(getattr(result, "message", "") or "").strip()[:6000]
 
     def classify(self, *args: Any, **kwargs: Any) -> SourceGroundingReport:
         return self.analyze(*args, **kwargs)
@@ -891,6 +1080,15 @@ class SourceGroundingEngine:
             lines.append(f"current_screen_reference: yes; strength={report.screen_reference_strength:.2f}")
         if report.evidence_ids:
             lines.append("evidence_ids: " + ", ".join(report.evidence_ids[:12]))
+        if getattr(report, "evidence_items", None):
+            lines.append(f"generation_stage: {report.generation_stage}")
+            for role in ("primary", "supporting", "ambient"):
+                role_items = [item for item in report.evidence_items if item.role == role]
+                if not role_items:
+                    continue
+                previews = " | ".join(f"{item.source}:{item.text[:140]}" for item in role_items[:3])
+                lines.append(f"{role}_evidence: {previews}")
+            lines.append("evidence_rule: ambient context may validate situated screen/activity claims, but must not contradict a direct user request or successful tool result.")
         if report.missing_evidence:
             lines.append("missing_evidence: " + ", ".join(report.missing_evidence))
         if report.warnings:

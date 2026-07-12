@@ -56,47 +56,84 @@ def _is_empty_output_error(exc: requests.HTTPError) -> bool:
 
 
 def _chat_payload_variants(payload: dict) -> list[dict]:
+    """Sinh các payload tương thích nhưng không vô tình tắt reasoning trước.
+
+    Biến thể đầu luôn là payload mạnh nhất. Chỉ khi endpoint trả 4xx vì không hiểu
+    field mới lần lượt bỏ grammar/response_format/reasoning metadata. Với endpoint
+    OpenAI-compatible cũ, ``max_completion_tokens`` cũng có biến thể ``max_tokens``.
+    """
+
     variants = [payload]
-    if "grammar" in payload:
-        without_grammar = dict(payload)
-        without_grammar.pop("grammar", None)
-        variants.append(without_grammar)
-    if "response_format" in payload:
-        without_response_format = dict(payload)
-        without_response_format.pop("response_format", None)
-        variants.append(without_response_format)
-    if "grammar" in payload and "response_format" in payload:
-        minimal = dict(payload)
-        minimal.pop("grammar", None)
-        minimal.pop("response_format", None)
-        variants.append(minimal)
-    # Một số endpoint không nhận reasoning_effort → biến thể bỏ field này để
-    # vẫn chạy được khi gặp 4xx (vd aggregator OpenAI-compatible thuần).
-    if "reasoning_effort" in payload:
-        for variant in list(variants):
-            without_reasoning = dict(variant)
-            without_reasoning.pop("reasoning_effort", None)
-            variants.append(without_reasoning)
+
+    if "max_completion_tokens" in payload:
+        legacy_tokens = dict(payload)
+        legacy_tokens["max_tokens"] = legacy_tokens.pop("max_completion_tokens")
+        variants.append(legacy_tokens)
+
+    base_variants = list(variants)
+    for base in base_variants:
+        if "grammar" in base:
+            without_grammar = dict(base)
+            without_grammar.pop("grammar", None)
+            variants.append(without_grammar)
+        if "response_format" in base:
+            without_response_format = dict(base)
+            without_response_format.pop("response_format", None)
+            variants.append(without_response_format)
+        if "grammar" in base and "response_format" in base:
+            minimal = dict(base)
+            minimal.pop("grammar", None)
+            minimal.pop("response_format", None)
+            variants.append(minimal)
+
+    # Aggregator OpenAI-compatible thuần có thể không nhận các field reasoning.
+    # Bỏ chúng ở cuối cùng, sau khi đã thử đường parsed reasoning chuẩn.
+    for optional_key in ("reasoning_effort", "reasoning_format", "include_reasoning"):
+        if any(optional_key in variant for variant in variants):
+            for variant in list(variants):
+                if optional_key not in variant:
+                    continue
+                relaxed = dict(variant)
+                relaxed.pop(optional_key, None)
+                variants.append(relaxed)
     return variants
 
 
-def _model_supports_reasoning_toggle(model_name: str) -> bool:
-    """Các model có chế độ "thinking" mà Groq cho tắt qua reasoning_effort.
+def _is_groq_endpoint(base_url: str) -> bool:
+    return "api.groq.com" in (base_url or "").strip().lower()
 
-    Chủ yếu Qwen3/Qwen và GPT-OSS. Trả về False cho llama/glm/gemma… để KHÔNG gửi
-    field lạ lên endpoint không hỗ trợ.
-    """
 
+def _is_qwen_model(model_name: str) -> bool:
+    return "qwen" in (model_name or "").strip().lower()
+
+
+def _is_gpt_oss_model(model_name: str) -> bool:
+    return "gpt-oss" in (model_name or "").strip().lower()
+
+
+def _model_supports_reasoning_format(model_name: str) -> bool:
     name = (model_name or "").strip().lower()
     return "qwen" in name or "gpt-oss" in name
 
 
-def _resolve_reasoning_effort() -> str:
-    """Mức reasoning cho model có thinking. Mặc định "medium" để bật suy nghĩ.
-    Đặt ERIS_REASONING_EFFORT=none/default/low/medium/high để thay đổi khi cần.
+def _normalize_reasoning_effort(model_name: str, requested: str | None) -> str | None:
+    """Ánh xạ effort đúng theo từng họ model Groq.
+
+    * qwen/qwen3-32b reasoning mặc định nhưng KHÔNG hỗ trợ low/medium/high.
+      Không gửi field, chỉ dùng ``reasoning_format=parsed``.
+    * qwen3.6 hỗ trợ ``default``/``none``.
+    * GPT-OSS hỗ trợ ``low``/``medium``/``high``.
     """
 
-    return (os.environ.get("ERIS_REASONING_EFFORT", "medium") or "medium").strip().lower()
+    name = (model_name or "").strip().lower()
+    raw = (requested or os.environ.get("ERIS_REASONING_EFFORT", "") or "").strip().lower()
+    if "qwen3-32b" in name:
+        return None
+    if "qwen3.6" in name:
+        return "none" if raw in {"none", "off", "0", "false"} else "default"
+    if _is_gpt_oss_model(name):
+        return raw if raw in {"low", "medium", "high"} else "medium"
+    return None
 
 
 
@@ -130,6 +167,7 @@ class LlamaServerClient:
         grammar=None,
         timeout=None,
         reasoning_effort=None,
+        reasoning_format=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         payload = {
@@ -220,6 +258,7 @@ class OpenAICompatibleClient:
         grammar=None,
         timeout=None,
         reasoning_effort=None,
+        reasoning_format=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         if response_format and response_format.get("type") == "json_object":
@@ -243,21 +282,32 @@ class OpenAICompatibleClient:
                     last_msg["content"] = list(last_msg["content"]) + [{"type": "text", "text": "\n\nReturn the output in json format."}]
                 messages[-1] = last_msg
 
+        groq_reasoning = _is_groq_endpoint(self.base_url) and _model_supports_reasoning_format(self.model_name)
         payload = {
             "model": self.model_name,
             "messages": messages,
             "temperature": temperature,
             "frequency_penalty": frequency_penalty,
             "presence_penalty": presence_penalty,
-            "max_tokens": max_tokens,
         }
+        # Groq tính reasoning + final answer chung trong completion budget. Dùng
+        # field mới để Qwen có đủ chỗ suy luận mà vẫn đóng JSON hoàn chỉnh.
+        if groq_reasoning:
+            payload["max_completion_tokens"] = max_tokens
+            payload["top_p"] = 0.95
+        else:
+            payload["max_tokens"] = max_tokens
         if response_format is not None:
             payload["response_format"] = response_format
         if grammar is not None:
             payload["grammar"] = grammar
-        if _model_supports_reasoning_toggle(self.model_name):
-            effort = reasoning_effort or _resolve_reasoning_effort()
-            if effort and effort != "off" and effort != "none":
+
+        if groq_reasoning:
+            # JSON mode không cho reasoning_format=raw. parsed giữ nguyên năng lực
+            # suy luận nhưng tách nó sang message.reasoning, content chỉ còn JSON.
+            payload["reasoning_format"] = reasoning_format or "parsed"
+            effort = _normalize_reasoning_effort(self.model_name, reasoning_effort)
+            if effort is not None:
                 payload["reasoning_effort"] = effort
 
         headers = {
@@ -539,6 +589,7 @@ class GeminiClient:
         grammar=None,
         timeout=None,
         reasoning_effort=None,
+        reasoning_format=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         system_instruction, contents = self._convert_messages(messages)
@@ -549,7 +600,7 @@ class GeminiClient:
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
-        effort = reasoning_effort or _resolve_reasoning_effort()
+        effort = (reasoning_effort or os.environ.get("ERIS_REASONING_EFFORT", "medium") or "medium").strip().lower()
         if "gemini-2.5" in self.model_name or "thinking" in self.model_name or "gemini-2.0" in self.model_name:
             if effort == "none" or effort == "off":
                 generation_config["thinkingConfig"] = {"thinkingBudget": 0}

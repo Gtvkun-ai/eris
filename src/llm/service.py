@@ -63,6 +63,7 @@ class FormatViolationException(Exception):
         origin: str = "",
         public_surface: str = "blocked",
         recoverable: bool = False,
+        transport_truncated: bool = False,
     ):
         super().__init__(reason)
         self.reason = reason
@@ -73,12 +74,14 @@ class FormatViolationException(Exception):
         self.origin = str(origin or "")
         self.public_surface = str(public_surface or "blocked")
         self.recoverable = bool(recoverable)
+        self.transport_truncated = bool(transport_truncated)
         self.failure_meta = build_failure_meta(
             kind=self.kind,
             stage=self.stage,
             origin=self.origin,
             public_surface=self.public_surface,
             recoverable=self.recoverable,
+            transport_truncated=self.transport_truncated,
         )
 
 
@@ -1153,6 +1156,51 @@ class LlmService:
 
         return json.dumps(response, ensure_ascii=False)
 
+
+    def _extract_reasoning(self, response: dict) -> str:
+        """Lấy reasoning riêng để telemetry, tuyệt đối không nhập vào content/history."""
+
+        if not isinstance(response, dict):
+            return ""
+        choices = response.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("message")
+                if isinstance(message, dict):
+                    value = message.get("reasoning")
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+                value = choice.get("reasoning")
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        direct = response.get("reasoning")
+        return direct.strip() if isinstance(direct, str) else ""
+
+    def _extract_finish_reason(self, response: dict) -> str:
+        if not isinstance(response, dict):
+            return ""
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            return str(choices[0].get("finish_reason") or "").strip().lower()
+        return str(response.get("finish_reason") or "").strip().lower()
+
+    def _log_reasoning_telemetry(self, channel: str, response: dict, content: str) -> None:
+        reasoning = self._extract_reasoning(response)
+        finish_reason = self._extract_finish_reason(response) or "unknown"
+        usage = response.get("usage") if isinstance(response, dict) else None
+        usage = usage if isinstance(usage, dict) else {}
+        self.logger.info(
+            "[%s reasoning] chars=%d content_chars=%d finish_reason=%s prompt_tokens=%s completion_tokens=%s",
+            channel,
+            len(reasoning),
+            len(content or ""),
+            finish_reason,
+            usage.get("prompt_tokens", "?"),
+            usage.get("completion_tokens", "?"),
+        )
+
     def _extract_first_json_object(self, text: str) -> str:
         text = (text or "").strip()
         start = text.find("{")
@@ -1956,6 +2004,20 @@ class LlmService:
         except Exception:
             return primary, "initial"
 
+    def _decision_completion_budget(self, *, channel: str, reasoning_effort: str | None = None) -> int:
+        """Ngân sách chung cho private reasoning và public JSON."""
+
+        effort_key = str(reasoning_effort or "").strip().lower()
+        if channel == "chat":
+            default = 1536 if effort_key == "high" else (1280 if effort_key == "medium" else 1024)
+        else:
+            default = 640 if effort_key in {"medium", "high"} else 512
+        try:
+            value = int(os.environ.get(f"ERIS_LLM_COMPLETION_{channel.upper()}_TOKENS", default))
+        except (TypeError, ValueError):
+            value = default
+        return max(384, min(value, 2048))
+
     def _complete_decision(
         self,
         *,
@@ -1985,16 +2047,20 @@ class LlmService:
                 request_timeout = float(os.environ.get(env_key, timeout_defaults.get(channel, 20.0)))
             except (TypeError, ValueError):
                 request_timeout = timeout_defaults.get(channel, 20.0)
-        max_tokens = 512 if channel == "chat" else 384
+        # Completion budget bao gồm reasoning + final JSON trên Groq.
+        max_tokens = self._decision_completion_budget(
+            channel=channel,
+            reasoning_effort=reasoning_effort,
+        )
+
         generation_epoch = self._capture_generation_epoch()
         if require_text:
             messages = self._with_non_empty_text_rule(messages)
         no_cot_contract = (
-            "CRITICAL OUTPUT CONTRACT: Start your response with '{' as the first character. "
-            "End with '}' as the last character. Return exactly one compact JSON object. "
-            "Do not write reasoning, analysis, options, bullets, markdown, code fences, "
-            "self-checks, translations, or explanations before or after the JSON. "
-            "Keep debug_trace compact: 3-8 words or one short marker."
+            "CRITICAL PUBLIC OUTPUT CONTRACT: Use your private reasoning channel fully, but put only "
+            "one compact JSON object in the public content field. Public content must start with '{' "
+            "and end with '}'. No analysis, markdown, code fences, or explanations may appear around "
+            "the JSON. Keep debug_trace compact: 3-8 words or one short marker."
         )
         messages = [dict(message) for message in messages]
         for message in messages:
@@ -2007,9 +2073,16 @@ class LlmService:
         # block-budget trước khi tới đây; các đường cũ vẫn không được vượt 4800.
         from llm.token_budget import budget_existing_messages
         messages = budget_existing_messages(messages, total_tokens=4800, output_reserve=max_tokens)
-        def _call(messages_value: list[dict], *, stage: str, override_client=None):
+        def _call(
+            messages_value: list[dict],
+            *,
+            stage: str,
+            override_client=None,
+            output_tokens: int | None = None,
+        ):
             self._log_final_prompt(messages_value, channel=channel, stage=stage)
             target_client = override_client or self.client
+            completion_tokens = int(output_tokens or max_tokens)
             # Persona-as-params: channel-aware temperature thay vì prose.
             # chat: 0.45 — trả lời cụ thể trước, vẫn đủ tự nhiên.
             # autonomous: 0.55 — tự phát biểu, cần novelty hơn.
@@ -2024,11 +2097,12 @@ class LlmService:
                 temperature=_temp,
                 frequency_penalty=_freq_pen,
                 presence_penalty=_pres_pen,
-                max_tokens=max_tokens,
+                max_tokens=completion_tokens,
                 response_format={"type": "json_object"},
                 grammar=DECISION_GBNF,
                 timeout=request_timeout,
                 reasoning_effort=reasoning_effort,
+                reasoning_format="parsed",
             )
 
         initial_client = self.style_client if force_local_fallback and self.style_client is not None else self.client
@@ -2145,6 +2219,43 @@ class LlmService:
                 origin="primary",
             )
 
+        finish_reason = self._extract_finish_reason(response)
+        if finish_reason in {"length", "max_tokens"}:
+            retry_tokens = min(2048, max(max_tokens + 384, int(max_tokens * 1.5)))
+            if retry_tokens > max_tokens:
+                self.logger.warning(
+                    "[LLM COMPLETION] channel=%s bị cắt ở %s; retry output=%d -> %d",
+                    channel,
+                    finish_reason,
+                    max_tokens,
+                    retry_tokens,
+                )
+                from llm.token_budget import budget_existing_messages
+                retry_messages = budget_existing_messages(
+                    messages,
+                    total_tokens=4800,
+                    output_reserve=retry_tokens,
+                )
+                response = _call(
+                    retry_messages,
+                    stage="completion_length_retry",
+                    override_client=initial_client,
+                    output_tokens=retry_tokens,
+                )
+                finish_reason = self._extract_finish_reason(response)
+            if finish_reason in {"length", "max_tokens"}:
+                raise FormatViolationException(
+                    f"LlmService {channel} completion vẫn bị cắt sau retry; không salvage JSON què.",
+                    channel=channel,
+                    raw_text=self._extract_content(response),
+                    kind="format_violation",
+                    stage="completion_truncated",
+                    origin="model_output",
+                    public_surface="blocked",
+                    recoverable=True,
+                    transport_truncated=True,
+                )
+
         if not self._generation_is_current(generation_epoch):
             self.logger.info("[LLM CANCEL] discard stale result channel=%s epoch=%d", channel, generation_epoch)
             return json.dumps({
@@ -2156,6 +2267,7 @@ class LlmService:
                 "system_action": "", "action_input": ""
             }, ensure_ascii=False)
         raw = self._extract_content(response)
+        self._log_reasoning_telemetry(channel, response, raw)
         self._log_raw_api_text(channel, raw)
         try:
             candidate = self._strict_decision_candidate_or_raise(raw, channel=channel)
@@ -2173,6 +2285,7 @@ class LlmService:
                 )
                 local_response = _call(messages, stage="local_format_recovery", override_client=recovery_client)
                 local_raw = self._extract_content(local_response)
+                self._log_reasoning_telemetry(channel, local_response, local_raw)
                 self._log_raw_api_text(channel, local_raw)
                 candidate = self._strict_decision_candidate_or_raise(local_raw, channel=channel)
                 raw = local_raw
@@ -3910,9 +4023,21 @@ class LlmService:
             state_style_parts.append(f"Defusing context:\n{defusing_context}")
 
         # Hard budget chat: quota từng block được áp trước khi ghép prompt.
-        # 4800 total - 512 output; phần chưa phân bổ là headroom cho role/JSON contract.
+        # Output reserve thay đổi theo reasoning lane, không còn cố định 512.
         from llm.token_budget import ChatPromptBudget, assemble_budgeted_chat_messages
 
+        completion_reserve = self._decision_completion_budget(
+            channel="chat",
+            reasoning_effort=reasoning_effort,
+        )
+        # Khi high reasoning cần 1536 token, hạ riêng quota rules để tổng block
+        # vẫn hợp lệ; user/history/grounding/memory không bị cắt âm thầm ở cuối.
+        fixed_other = 500 + 500 + 400 + 300
+        rules_quota = max(1200, min(1800, 4800 - completion_reserve - fixed_other))
+        chat_budget = ChatPromptBudget(
+            output_reserve=completion_reserve,
+            system_rules=rules_quota,
+        )
         messages, budget_report = assemble_budgeted_chat_messages(
             system_rules_text="\n\n".join(part for part in system_rule_parts if str(part or "").strip()),
             state_style_text="\n\n".join(part for part in state_style_parts if str(part or "").strip()),
@@ -3921,16 +4046,17 @@ class LlmService:
             conversation_context=conversation_context,
             chat_history=chat_history,
             user_message=user_message,
-            budget=ChatPromptBudget(),
+            budget=chat_budget,
         )
         self.logger.info(
             "[CHAT PROMPT BUDGET] input=%d/%d output_reserve=%d "
-            "rules=%d/1800 user_history=%d/500 grounding=%d/500 memory=%d/400 "
+            "rules=%d/%d user_history=%d/500 grounding=%d/500 memory=%d/400 "
             "state_style=%d/300 spare=%d",
             budget_report["assembled_input"],
             budget_report["input_limit"],
             budget_report["output_reserve"],
             budget_report["system_rules"],
+            rules_quota,
             budget_report["user_history"],
             budget_report["grounding"],
             budget_report["memory"],

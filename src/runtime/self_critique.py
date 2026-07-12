@@ -552,6 +552,34 @@ class SelfCritiqueEscalationMixin:
             return f"[get_now_playing] {label}" if label else f"[get_now_playing] {getattr(result, 'message', '')}"
         return f"[{name}] {getattr(result, 'message', '')}"
 
+    def _record_tool_grounding(self, result, *, action_name: str = ""):
+        """Đưa kết quả tool vào provenance chung của turn hiện tại.
+
+        `last_grounding_context` và frame.source_grounding dùng cùng một object,
+        nên cập nhật tại đây sẽ có hiệu lực cho final guards mà không phải đổi
+        chữ ký của cả pipeline.
+        """
+
+        report = getattr(self, "last_grounding_context", None)
+        engine = getattr(self, "source_grounding_engine", None)
+        recorder = getattr(engine, "record_tool_result", None)
+        if not callable(recorder):
+            return report
+        try:
+            updated = recorder(
+                report,
+                action_name=action_name or getattr(result, "action_name", ""),
+                result=result,
+            )
+            if updated is not None:
+                self.last_grounding_context = updated
+            return updated
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.debug("[source grounding] record tool result failed: %s", exc)
+            return report
+
     def _run_tool_continuation(self, decision, *, channel: str, snapshot, regenerate):
         executor = getattr(self, "action_executor", None)
         if executor is None:
@@ -561,6 +589,7 @@ class SelfCritiqueEscalationMixin:
         while getattr(decision, "system_action", "") and steps < max_steps:
             action_name = decision.system_action
             result = executor.execute(action_name, decision.action_input)
+            self._record_tool_grounding(result, action_name=action_name)
             steps += 1
             decision.debug_trace = self._sc_join(
                 decision.debug_trace,
@@ -587,6 +616,7 @@ class SelfCritiqueEscalationMixin:
         # Hết lượt mà vẫn còn action treo → chạy tất định lần cuối rồi xoá.
         if getattr(decision, "system_action", ""):
             result = executor.execute(decision.system_action, decision.action_input)
+            self._record_tool_grounding(result, action_name=decision.system_action)
             if not (decision.text or "").strip() or decision.system_action in {"search_web", "get_weather"}:
                 decision.text = self._action_result_to_text(result)
             decision.system_action = ""
@@ -676,10 +706,15 @@ class SelfCritiqueEscalationMixin:
     def _regenerate_chat_after_tool(self, escalation_kwargs: dict, tool_summary: str, *, user_text: str, ti_report):
         kwargs = dict(escalation_kwargs)
         kwargs.pop("use_escalation_client", None)
+        report = getattr(self, "last_grounding_context", None)
+        refreshed_grounding = str(getattr(report, "prompt_context", "") or "").strip()
+        base_grounding = refreshed_grounding or (kwargs.get("grounding_context", "") or "")
         kwargs["grounding_context"] = (
-            (kwargs.get("grounding_context", "") or "")
-            + "\nTOOL_RESULT (đã tra cứu giúp Ngài; hãy diễn đạt tự nhiên thành câu nói của em, "
-            f"KHÔNG đặt system_action nữa):\n{tool_summary}"
+            base_grounding
+            + "\nTOOL_RESULT (đã tra cứu giúp Ngài; đây là PRIMARY EVIDENCE của câu trả lời. "
+            "Hãy diễn đạt tự nhiên thành câu nói của em, KHÔNG đặt system_action nữa, "
+            "và không để bối cảnh màn hình phụ phủ định kết quả này):\n"
+            f"{tool_summary}"
         )
         kwargs["ti_context"] = (
             (kwargs.get("ti_context", "") or "")

@@ -935,6 +935,26 @@ class PostGenerationFiltersMixin:
         if evaluation.ok:
             return decision
 
+        # Một tool result thành công là neo primary. Guard domain đời cũ không được
+        # lấy cửa sổ ambient để phủ định câu trả lời đó, trừ khi chính câu đang
+        # claim về màn hình/hoạt động hiện tại.
+        issue_set = set(getattr(evaluation, "issues", ()) or ())
+        tool_grounded = bool(
+            grounding is not None
+            and str(getattr(grounding, "generation_stage", "") or "") == "post_tool"
+            and str(getattr(grounding, "primary_source", "") or "") in {"web", "runtime_state"}
+        )
+        domain_only = bool(issue_set) and all(
+            issue.startswith("domain_contradiction:") or issue.startswith("situated_domain_mismatch:")
+            for issue in issue_set
+        )
+        if tool_grounded and domain_only and not self._looks_like_screen_grounded_claim(text):
+            decision.debug_trace = self._append_trace(
+                getattr(decision, "debug_trace", ""),
+                "utterance_eval_tool_primary_preserved",
+            )
+            return decision
+
         marker = f"utterance_eval:q={evaluation.quality:.2f}:{evaluation.reason}"
         decision = self._trace_only_guard(decision, marker)
         protected_intents = {"no_fallback_block", "format_repair_fallback", "protocol_repair"}
@@ -1001,9 +1021,16 @@ class PostGenerationFiltersMixin:
                         pass
 
         if channel in {"chat"}:
-            # Chat không nên biến mất. Nếu reroll không cứu được, trả một repair cực ngắn
-            # thay vì để câu sai evidence đi tiếp.
-            decision.text = "Câu đó không đủ neo. Tôi rút lại."
+            # Không phát lời debug như “thiếu neo”, “guard chặn” ra public/TTS.
+            # Nếu mentor không cứu được, nói giới hạn nhận thức bằng lời tự nhiên.
+            if "unsupported_user_activity_claim" in issue_set or any(
+                issue.startswith("situated_domain_mismatch:") for issue in issue_set
+            ):
+                decision.text = "Tôi chưa đủ bằng chứng để khẳng định Ngài đang làm điều đó."
+            elif "protocol_or_schema_leak" in issue_set:
+                decision.text = "Tôi sẽ nói lại mà không kéo phần xử lý nội bộ ra ngoài."
+            else:
+                decision.text = "Tôi chưa đủ căn cứ để khẳng định điều đó."
             decision.should_speak = True
             decision.intent = str(getattr(decision, "intent", "") or "utterance_repair")
             decision.parse_mode = str(getattr(decision, "parse_mode", "") or "utterance_evaluator")

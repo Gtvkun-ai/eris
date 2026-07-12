@@ -8515,6 +8515,9 @@ class RuntimeCoordinator(
             return decision
 
         result = self.action_executor.execute(decision.system_action, decision.action_input)
+        recorder = getattr(self, "_record_tool_grounding", None)
+        if callable(recorder):
+            recorder(result, action_name=decision.system_action)
         action_trace = f"action={decision.system_action}:{'ok' if result.success else 'fail'}"
         if decision.debug_trace:
             decision.debug_trace = f"{decision.debug_trace} | {action_trace}"[:240]
