@@ -55,7 +55,7 @@ class TtsPlaybackEvent:
     reason: str = ""
     error: str = ""
 
-# ── Feature flag ──────────────────────────────────────────────────────────────
+# ── Feature flag (runtime language reload) ───────────────────────────────────
 
 def _enabled() -> bool:
     return os.environ.get("ERIS_TTS_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
@@ -69,14 +69,19 @@ def _model() -> str:
     # gemini-3.1-flash-tts-preview đã deprecated/không ổn định, dễ trả về 404
     return os.environ.get("ERIS_TTS_MODEL", "gemini-2.5-flash-preview-tts").strip()
 
-def _language_hint() -> str:
-    # Eris nói tiếng Việt mặc định. Chỉ dịch/đọc Nhật khi cấu hình rõ ``ja``.
-    raw = os.environ.get("ERIS_TTS_LANGUAGE", "vi").strip().lower()
+def _normalize_language_hint(value: str) -> str:
+    """Chuẩn hoá value từ .env/UI thành mã ngôn ngữ nội bộ ổn định."""
+    raw = str(value or "").strip().lower()
     if raw in {"", "auto", "vi", "vietnamese", "vi-vn"}:
         return "vi"
-    if raw in {"jp", "japanese", "ja-jp"}:
+    if raw in {"ja", "jp", "japanese", "ja-jp", "jp-jp", "日本語", "日本语"}:
         return "ja"
     return raw
+
+
+def _language_hint() -> str:
+    # Eris nói tiếng Việt mặc định. Chỉ dịch/đọc Nhật khi cấu hình rõ ``ja``.
+    return _normalize_language_hint(os.environ.get("ERIS_TTS_LANGUAGE", "vi"))
 
 
 def _quality_mode() -> str:
@@ -1270,6 +1275,9 @@ class TtsEngine:
     def __init__(self) -> None:
         self._worker: Optional[_TtsWorker] = None
         self._ok = False
+        self._closed = False
+        self._config_lock = threading.RLock()
+        self._config_signature = ""
 
         if not _enabled():
             logger.info("[TTS] Đã tắt (ERIS_TTS_ENABLED=0).")
@@ -1294,8 +1302,44 @@ class TtsEngine:
         model = _model()
         lang = _language_hint()
         self._worker = _TtsWorker(voice, model, lang)
+        self._config_signature = f"{voice}|{model}|{lang}"
         self._ok = True
         logger.info("[TTS] Khởi động. Model=%s Voice=%s Language=%s", model, voice, lang)
+
+    def refresh_configuration(self) -> bool:
+        """Nạp lại language setting và dựng worker mới nếu dropdown đã đổi."""
+        # Không biến một engine đã tắt/khởi động lỗi thành enabled chỉ vì panel
+        # đổi language. Chỉ hot-reload worker đã khởi động thành công.
+        if self._closed or not self._ok or self._worker is None:
+            return False
+        try:
+            from eris_secrets import refresh_runtime_preferences
+            refresh_runtime_preferences("ERIS_TTS_LANGUAGE")
+        except Exception as exc:
+            logger.debug("[TTS] Không thể reload runtime preference: %s", exc)
+        voice = _voice()
+        model = _model()
+        lang = _language_hint()
+        signature = f"{voice}|{model}|{lang}"
+        with self._config_lock:
+            if signature == self._config_signature:
+                return False
+            old_signature = self._config_signature or "<none>"
+            manager = getattr(self, "task_manager", None)
+            if manager is not None and callable(getattr(manager, "shutdown", None)):
+                try:
+                    manager.shutdown()
+                except Exception as exc:
+                    logger.debug("[TTS] task manager config refresh failed: %s", exc)
+                self.task_manager = None
+            old_worker = self._worker
+            if old_worker is not None:
+                old_worker.shutdown()
+            self._worker = _TtsWorker(voice, model, lang)
+            self._config_signature = signature
+            self._ok = True
+            logger.info("[TTS] Đã nạp lại setting. %s -> %s (Language=%s)", old_signature, signature, lang)
+            return True
 
     def speak(
         self,
@@ -1317,6 +1361,7 @@ class TtsEngine:
         on_event = None,
     ) -> None:
         """Phát TTS cho text với cảm xúc cho trước. Non-blocking."""
+        self.refresh_configuration()
         if not self._ok or self._worker is None:
             if on_event is not None:
                 try:
@@ -1363,6 +1408,7 @@ class TtsEngine:
         )
 
     def shutdown(self) -> None:
+        self._closed = True
         manager = getattr(self, "task_manager", None)
         if manager is not None and callable(getattr(manager, "shutdown", None)):
             try:
@@ -1403,6 +1449,7 @@ class TtsEngine:
         vocal_prefix: str = "",
     ) -> bytes:
         """Backend API mới: text sạch -> WAV bytes, chưa phát ra loa."""
+        self.refresh_configuration()
         if not self._ok or self._worker is None:
             raise RuntimeError("tts_disabled")
         clean = _clean_text(text)
@@ -1433,7 +1480,9 @@ class TtsEngine:
 
     def cache_signature(self) -> str:
         """Chữ ký cấu hình TTS để task manager cache đúng voice/model/style."""
-        return f"{_voice()}|{_model()}|{_language_hint()}|{_quality_mode()}"
+        with self._config_lock:
+            signature = self._config_signature or f"{_voice()}|{_model()}|{_language_hint()}"
+        return f"{signature}|{_quality_mode()}"
 
 
 def _clean_text(text: str) -> str:

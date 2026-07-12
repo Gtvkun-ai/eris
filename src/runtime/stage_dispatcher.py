@@ -67,6 +67,10 @@ class StageDispatcher:
         on_first_start: Callable[[], None] | None = None,
         on_event: Callable[[Any, StageFrame], None] | None = None,
     ) -> bool:
+        # Setting có thể đổi trong panel sau khi Python đã khởi động.
+        refresh = getattr(tts_engine, "refresh_configuration", None) if tts_engine is not None else None
+        if callable(refresh):
+            refresh()
         frame_list = [frame for frame in frames if str(frame.tts_text or "").strip()]
         if not frame_list or tts_engine is None or not getattr(tts_engine, "_ok", False):
             return False

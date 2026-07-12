@@ -383,7 +383,7 @@ public partial class UdpListener : Node2D
 		{
 			_settingsTtsEnabled = !_settingsTtsEnabled;
 			ApplySettingsSwitch(_settingsTtsSwitch, _settingsTtsEnabled);
-			SaveSettingsState(false, writeSecrets: false);
+			SaveSettingsState(false, writeSecrets: true);
 			SetSettingsStatus(_settingsTtsEnabled ? "TTS bật. Restart để Python nhận nếu đang chạy." : "TTS tắt. Restart để Python nhận nếu đang chạy.");
 		});
 		var tts = CreateUiLabel("Bật TTS", 14, SettingsInk);
@@ -394,6 +394,9 @@ public partial class UdpListener : Node2D
 		_settingsVoiceSelect = AddSettingsOptionRow(parent, 100f, "Giọng", new[] { "Aoede", "Leda", "Achernar", "Kore", "Callirrhoe" }, _settingsTtsVoice);
 		_settingsLanguageSelect = AddSettingsOptionRow(parent, 146f, "Ngôn ngữ", new[] { "auto", "vi", "ja", "en" }, _settingsTtsLanguage);
 		_settingsQualitySelect = AddSettingsOptionRow(parent, 192f, "Chất lượng", new[] { "balanced", "high" }, _settingsTtsQuality);
+		_settingsVoiceSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("giọng");
+		_settingsLanguageSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("ngôn ngữ");
+		_settingsQualitySelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("chất lượng");
 
 		var line = new ColorRect
 		{
@@ -803,9 +806,13 @@ public partial class UdpListener : Node2D
 			state["saved_at"] = DateTime.Now.ToString("O");
 			File.WriteAllText(path, state.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
 			if (writeSecrets)
+			{
 				WriteRuntimeSettingsToSecrets(backup: true);
+				WriteRuntimeSettingsToDotEnv();
+				SendTtsRuntimeSettingsUpdate();
+			}
 			if (showStatus)
-				SetSettingsStatus(writeSecrets ? "Đã lưu Basic vào user settings + secrets.json." : "Đã lưu user settings.");
+				SetSettingsStatus(writeSecrets ? "Đã lưu Basic và áp dụng TTS xuống runtime." : "Đã lưu user settings.");
 		}
 		catch (Exception ex)
 		{
@@ -828,13 +835,109 @@ public partial class UdpListener : Node2D
 		env["ERIS_REMOTE_MODEL"] = RemoteApiModelName ?? "";
 		env["ERIS_TTS_ENABLED"] = _settingsTtsEnabled ? "1" : "0";
 		env["ERIS_TTS_VOICE"] = _settingsTtsVoice ?? "Aoede";
-		env["ERIS_TTS_LANGUAGE"] = _settingsTtsLanguage ?? "auto";
+		env["ERIS_TTS_LANGUAGE"] = NormalizeSettingsTtsLanguage(_settingsTtsLanguage);
 		env["ERIS_TTS_QUALITY"] = _settingsTtsQuality ?? "high";
 
 		if (_settingsKeyInputs.Count > 0)
 			ReplaceEditableKeysForPool(root, _settingsKeyPoolKind, CollectEditedSettingsKeys());
 
 		File.WriteAllText(path, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+	}
+
+	private void WriteRuntimeSettingsToDotEnv()
+	{
+		string path = Path.Combine(GetRuntimeBaseDirForSettings(), ".env");
+		var updates = new Dictionary<string, string>(StringComparer.Ordinal)
+		{
+			["ERIS_TTS_ENABLED"] = _settingsTtsEnabled ? "1" : "0",
+			["ERIS_TTS_VOICE"] = string.IsNullOrWhiteSpace(_settingsTtsVoice) ? "Aoede" : _settingsTtsVoice.Trim(),
+			["ERIS_TTS_LANGUAGE"] = NormalizeSettingsTtsLanguage(_settingsTtsLanguage),
+			["ERIS_TTS_QUALITY"] = string.IsNullOrWhiteSpace(_settingsTtsQuality) ? "high" : _settingsTtsQuality.Trim().ToLowerInvariant(),
+		};
+
+		var lines = File.Exists(path)
+			? new List<string>(File.ReadAllLines(path))
+			: new List<string>();
+		var written = new HashSet<string>(StringComparer.Ordinal);
+		for (int i = 0; i < lines.Count; i++)
+		{
+			string trimmed = (lines[i] ?? "").Trim().TrimStart('\uFEFF');
+			if (trimmed.StartsWith("export ", StringComparison.OrdinalIgnoreCase))
+				trimmed = trimmed.Substring(7).Trim();
+			int equals = trimmed.IndexOf('=');
+			if (equals <= 0)
+				continue;
+			string key = trimmed.Substring(0, equals).Trim();
+			if (!updates.TryGetValue(key, out string value))
+				continue;
+			lines[i] = $"{key}={value}";
+			written.Add(key);
+		}
+		foreach (var pair in updates)
+		{
+			if (!written.Contains(pair.Key))
+				lines.Add($"{pair.Key}={pair.Value}");
+		}
+
+		File.WriteAllLines(path, lines, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+	}
+
+	private void ApplyLiveTtsSettingsFromPanel(string changedField)
+	{
+		SyncSettingsInputsToFields();
+		SaveSettingsState(false, writeSecrets: true);
+		SetSettingsStatus($"Đã áp dụng {changedField} TTS: {NormalizeSettingsTtsLanguage(_settingsTtsLanguage)}.");
+	}
+
+	private void SendTtsRuntimeSettingsUpdate()
+	{
+		var payload = new
+		{
+			type = "settings_update",
+			scope = "tts",
+			tts_language = NormalizeSettingsTtsLanguage(_settingsTtsLanguage),
+			tts_voice = string.IsNullOrWhiteSpace(_settingsTtsVoice) ? "Aoede" : _settingsTtsVoice.Trim(),
+			tts_quality = string.IsNullOrWhiteSpace(_settingsTtsQuality) ? "high" : _settingsTtsQuality.Trim().ToLowerInvariant(),
+		};
+		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
+		if (error != Error.Ok)
+			RunLogger.LogErr($"[Settings] Khong gui duoc TTS settings_update: {error}");
+		else
+			RunLogger.Log($"[Settings] Da gui TTS settings_update language={payload.tts_language} voice={payload.tts_voice} quality={payload.tts_quality}");
+	}
+
+	private void TryApplySettingsUpdateAck(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw) || !raw.Contains("settings_update_ack", StringComparison.Ordinal))
+			return;
+		try
+		{
+			using JsonDocument doc = JsonDocument.Parse(raw);
+			if (!doc.RootElement.TryGetProperty("settings_update_ack", out JsonElement ack) || ack.ValueKind != JsonValueKind.Object)
+				return;
+			string language = ack.TryGetProperty("language", out JsonElement langEl) ? langEl.GetString() ?? "" : "";
+			string voice = ack.TryGetProperty("voice", out JsonElement voiceEl) ? voiceEl.GetString() ?? "" : "";
+			bool rebuilt = ack.TryGetProperty("worker_rebuilt", out JsonElement rebuiltEl) && rebuiltEl.ValueKind == JsonValueKind.True;
+			SetSettingsStatus($"Backend đã nhận TTS: {language}, {voice}{(rebuilt ? " · worker đã nạp lại" : "")}");
+		}
+		catch (Exception ex)
+		{
+			RunLogger.LogErr($"[Settings] settings_update_ack loi: {ex.Message}");
+		}
+	}
+
+	private static string NormalizeSettingsTtsLanguage(string value)
+	{
+		string lang = (value ?? "").Trim().ToLowerInvariant();
+		return lang switch
+		{
+			"" => "ja",
+			"auto" => "ja",
+			"jp" => "ja",
+			"japanese" => "ja",
+			"ja-jp" => "ja",
+			_ => lang,
+		};
 	}
 
 	private JsonObject BuildSanitizedSettingsNode()

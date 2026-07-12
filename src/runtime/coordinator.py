@@ -127,7 +127,7 @@ from runtime.state_commit_service import StateCommitServiceMixin
 from runtime.subconscious_loop import SubconsciousLoop as RuntimeSubconsciousLoop
 from runtime.text_repeat_guard import TextRepeatGuardMixin
 from memory.memory_kernel import MemoryKernel
-from eris_secrets import get_config
+from eris_secrets import get_config, refresh_runtime_preferences
 
 '''coordinator.py là “bộ điều phối runtime” (orchestrator) cho ERIS: nó đứng giữa telemetry 
 (màn hình/hành vi), các tầng đánh giá (Ni/Ti/FE), LLM + parser, action system và kênh transport để quyết định
@@ -1613,11 +1613,13 @@ class RuntimeCoordinator(
             payload = stage_scorer.apply_to_payload(payload, stage_score, channel=channel)
         except Exception as exc:
             self.logger.debug("[director] stage scoring skipped: %s", exc)
+        refresh_runtime_preferences("ERIS_TTS_LANGUAGE")
+        stage_language = os.environ.get("ERIS_TTS_LANGUAGE", "auto").strip()
         stage_builder = getattr(self, "stage_frame_builder", None)
-        if stage_builder is None:
+        if stage_builder is None or str(getattr(stage_builder, "language_hint", "auto")) != stage_language:
             # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để
             # không làm phình __init__ của coordinator vốn đã rất đông dân.
-            stage_builder = StageFrameBuilder(language_hint=os.environ.get("ERIS_TTS_LANGUAGE", "auto").strip())
+            stage_builder = StageFrameBuilder(language_hint=stage_language)
             self.stage_frame_builder = stage_builder
         stage_frame = stage_builder.build(
             decision,
@@ -5426,6 +5428,10 @@ class RuntimeCoordinator(
             self._handle_depth_control(msg)
             return
 
+        if msg_type == "settings_update":
+            self._handle_settings_update(msg)
+            return
+
         if msg_type == "debug_command":
             self._handle_debug_command(msg)
             return
@@ -5435,6 +5441,65 @@ class RuntimeCoordinator(
             return
         if msg_type:
             self.logger.debug("[incoming] ignored unknown msg_type=%s", msg_type)
+
+    def _handle_settings_update(self, msg: dict) -> None:
+        """Áp dụng TTS setting do panel Body gửi qua UDP mà không restart brain."""
+
+        scope = str(msg.get("scope", "tts") or "tts").strip().lower()
+        if scope != "tts":
+            self.logger.debug("[settings] ignored unsupported scope=%s", scope)
+            return
+
+        raw_language = str(msg.get("tts_language", "") or "").strip().lower()
+        language_aliases = {
+            "auto": "ja", "jp": "ja", "japanese": "ja", "ja-jp": "ja",
+            "vi-vn": "vi", "vietnamese": "vi",
+            "en-us": "en", "english": "en",
+        }
+        language = language_aliases.get(raw_language, raw_language)
+        if language not in {"vi", "ja", "en"}:
+            self.logger.warning("[settings] rejected invalid tts_language=%r", raw_language)
+            return
+
+        voice = str(msg.get("tts_voice", "") or "").strip()
+        quality = str(msg.get("tts_quality", "") or "").strip().lower()
+        if voice and len(voice) <= 64 and all(ch.isalnum() or ch in {"-", "_"} for ch in voice):
+            os.environ["ERIS_TTS_VOICE"] = voice
+        if quality in {"balanced", "high"}:
+            os.environ["ERIS_TTS_QUALITY"] = quality
+        os.environ["ERIS_TTS_LANGUAGE"] = language
+
+        self.stage_frame_builder = None
+        changed = False
+        tts = getattr(self, "tts_engine", None)
+        refresh = getattr(tts, "refresh_configuration", None) if tts is not None else None
+        if callable(refresh):
+            try:
+                changed = bool(refresh())
+            except Exception as exc:
+                self.logger.warning("[settings] TTS refresh failed: %s", exc)
+
+        effective_voice = os.environ.get("ERIS_TTS_VOICE", "Aoede")
+        effective_quality = os.environ.get("ERIS_TTS_QUALITY", "high")
+        self.logger.info(
+            "[settings] TTS live update Language=%s Voice=%s Quality=%s worker_rebuilt=%s",
+            language, effective_voice, effective_quality, changed,
+        )
+        try:
+            self.transport.send_json(
+                {
+                    "type": "settings_update_ack",
+                    "parse_mode": "settings_update_ack",
+                    "should_speak": False,
+                    "settings_update_ack": {
+                        "scope": "tts", "language": language,
+                        "voice": effective_voice, "quality": effective_quality,
+                        "worker_rebuilt": changed,
+                    },
+                }
+            )
+        except Exception as exc:
+            self.logger.debug("[settings] ack send failed: %s", exc)
 
     def _handle_stage_inbound_event(self, msg: dict) -> None:
         """Nhận event ngược từ frontend/sân khấu.

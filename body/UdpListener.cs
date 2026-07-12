@@ -3683,6 +3683,7 @@ public partial class UdpListener : Node2D
 				RefreshEmotionPanel();
 		}
 		TryApplyDebugCommandAck(raw);
+		TryApplySettingsUpdateAck(raw);
 		if (payload.HasPrivateMindDebug)
 		{
 			// Chỉ nhận digest có nội dung thật; digest rỗng bị bỏ qua để giữ liên tục
