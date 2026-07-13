@@ -11,6 +11,7 @@ from domain import Decision
 from guard_config import LOG_ONLY_GUARD_MODE, OFF_GUARD_MODE, get_guard_mode, guards_warn_only
 from runtime.controlled_slippage import resolve_controlled_slippage
 from runtime.guard_violations import GuardViolation
+from semantic_authority import SemanticAuthorityPolicy
 from runtime.disclaimer_markers import (
     CHAT_DISCLAIMER_EMOTION_MARKERS,
     CHAT_DISCLAIMER_HARD_MARKERS,
@@ -489,6 +490,29 @@ class PostGenerationFiltersMixin:
             state = None
         decision = self._apply_protocol_surface_guard(decision)
         decision = self._apply_internal_object_surface_guard(decision)
+        semantic_policy = SemanticAuthorityPolicy.from_env()
+        if semantic_policy.hard_only_final_guards:
+            # Qwen owns wording. The runtime only blocks protocol leakage and
+            # unsupported factual claims; it no longer performs a parade of
+            # style, banter, novelty and emotional rewrites after the answer.
+            decision = self._apply_memory_haunting_guard(
+                decision,
+                grounding=(getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)) if frame is not None else None,
+                frame=frame,
+                channel="chat",
+                user_text=user_text,
+                allow_reroll=False,
+            )
+            decision = self._apply_chat_grounding_guard(
+                decision,
+                user_text=user_text,
+                frame=frame,
+                allow_reroll=False,
+            )
+            authority = getattr(self, "_apply_v3_authority_guard", None)
+            if callable(authority):
+                decision = authority(decision, frame=frame, channel="chat")
+            return decision
         conversation = getattr(state, "conversation_dynamics", None)
         flags = set(getattr(conversation, "adaptation_flags", ()) or ())
         decision = self._apply_chat_disclaimer_guard(

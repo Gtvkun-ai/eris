@@ -25,6 +25,7 @@ from runtime.controlled_slippage import (
     derive_repair_suppression,
     resolve_controlled_slippage,
 )
+from semantic_authority import SemanticAuthorityPolicy
 
 
 # Khi ERIS không sinh được phản hồi đủ chắc, nó vẫn phải nói như ERIS, không
@@ -262,6 +263,7 @@ class ChatCycleMixin:
         speech_interrupt_event=None,
         speech_interrupt_reaction=None,
     ) -> None:
+        semantic_policy = SemanticAuthorityPolicy.from_env()
         if not self.chat_mode:
             self.chat_ni_state = NiStateMachine() # reset trạng thái Ni khi bắt đầu chat mới, để tránh mang theo drift state từ autonomous mode.
 
@@ -454,7 +456,14 @@ class ChatCycleMixin:
         )
         # Curiosity Tutor: nếu Eris không hiểu/không phân loại nổi tin user → đi hỏi Gemini
         # (chạy nền, không chặn trả lời). Chỉ chạy khi Master_Switch bật.
-        self._maybe_tutor_on_unclear_user(user_text, frame)
+        if semantic_policy.allow_tutor_prepass:
+            self._maybe_tutor_on_unclear_user(user_text, frame)
+        else:
+            # Qwen must see the real turn before Tutor/clarification logic gets a
+            # chance to redirect it. Clear stale flags from a previous legacy turn.
+            self._clarify_user_pending = False
+            self._research_pending = False
+            self._research_topic = ""
         repeat_count = self._track_repeated_user_message(user_text)
         previous_user_text_for_semantics = getattr(self, "last_user_text_for_semantics", "")
         correction_detected = self._user_denies_last_assistant_assumption(user_text)
@@ -678,7 +687,11 @@ class ChatCycleMixin:
             self.last_user_text_for_semantics = user_text
             return
 
-        direct_decision = self._build_direct_action_decision(user_text, ti_report, snapshot, repeat_count=repeat_count)
+        direct_decision = (
+            self._build_direct_action_decision(user_text, ti_report, snapshot, repeat_count=repeat_count)
+            if semantic_policy.allow_pre_llm_intercepts
+            else None
+        )
         if direct_decision is not None:
             self._set_cognitive_action_plan(
                 frame,
@@ -698,10 +711,14 @@ class ChatCycleMixin:
             self.last_user_text_for_semantics = user_text
             return
 
-        grounding_preempt = self._build_grounding_preempt_decision(
-            grounding_report,
-            ti_report,
-            user_text=user_text,
+        grounding_preempt = (
+            self._build_grounding_preempt_decision(
+                grounding_report,
+                ti_report,
+                user_text=user_text,
+            )
+            if semantic_policy.allow_pre_llm_intercepts
+            else None
         )
         if grounding_preempt is not None:
             # Nếu SourceGrounding chuyển thiếu dữ kiện sang epistemic_curiosity,
@@ -727,12 +744,16 @@ class ChatCycleMixin:
             self.last_user_text_for_semantics = user_text
             return
 
-        repeat_decision = self._build_repeat_guard_decision(
-            user_text,
-            ti_report,
-            repeat_count,
-            grounding_report=grounding_report,
-            turn_semantics_report=turn_semantics_report,
+        repeat_decision = (
+            self._build_repeat_guard_decision(
+                user_text,
+                ti_report,
+                repeat_count,
+                grounding_report=grounding_report,
+                turn_semantics_report=turn_semantics_report,
+            )
+            if semantic_policy.allow_pre_llm_intercepts
+            else None
         )
         if repeat_decision is not None:
             self._set_cognitive_action_plan(
@@ -801,6 +822,9 @@ class ChatCycleMixin:
         planned_ti_context = (
             f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n{turn_semantics_context}"
         )
+        semantic_authority_context = semantic_policy.prompt_block()
+        if semantic_authority_context:
+            planned_ti_context = f"{semantic_authority_context}\n\n{planned_ti_context}"
         if previous_public_context:
             planned_ti_context = f"{planned_ti_context}\n\n{previous_public_context}"
         if speech_interrupt_context:
@@ -810,42 +834,43 @@ class ChatCycleMixin:
         # lần sinh Decision đầu tiên, thay vì nói xong rồi stage mới dọn hiện trường.
         # Dùng PerformanceContextBuilder riêng cho guard block để không tiêu cooldown
         # của ContentEngine chính hai lần trong cùng một turn.
-        try:
-            from runtime.content_engine import ContentEngine
-            from runtime.director_context import DirectorContextBuilder
-            from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
+        if semantic_policy.include_director_prompt:
+            try:
+                from runtime.content_engine import ContentEngine
+                from runtime.director_context import DirectorContextBuilder
+                from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
 
-            pre_payload = {
-                "user_text": user_text,
-                "intent": planned_speech_intent or planned_speech_act or "answer",
-                "audience_mode": "private",
-            }
-            director_builder = getattr(self, "director_context_builder", None)
-            if director_builder is None:
-                director_builder = DirectorContextBuilder()
-                self.director_context_builder = director_builder
-            pre_director = director_builder.build(
-                payload=pre_payload,
-                frame=frame,
-                channel="chat",
-                user_text=user_text,
-            )
-            pre_performance = PerformanceContextBuilder(
-                content_engine=ContentEngine(persist=False)
-            ).build(
-                pre_director,
-                payload=pre_payload,
-                channel="chat",
-            )
-            pre_contract = DirectorContractBuilder().build(pre_director, pre_performance)
-            planned_ti_context = (
-                f"{planned_ti_context}\n\n{pre_contract.to_generation_guard_block()}"
-            )
-            frame.debug_notes.append(
-                f"director_pre_generation={pre_director.scene_mode.name}:{pre_performance.performance_intent}"
-            )
-        except Exception as exc:
-            self.logger.debug("[director pre-generation] skipped: %s", exc)
+                pre_payload = {
+                    "user_text": user_text,
+                    "intent": planned_speech_intent or planned_speech_act or "answer",
+                    "audience_mode": "private",
+                }
+                director_builder = getattr(self, "director_context_builder", None)
+                if director_builder is None:
+                    director_builder = DirectorContextBuilder()
+                    self.director_context_builder = director_builder
+                pre_director = director_builder.build(
+                    payload=pre_payload,
+                    frame=frame,
+                    channel="chat",
+                    user_text=user_text,
+                )
+                pre_performance = PerformanceContextBuilder(
+                    content_engine=ContentEngine(persist=False)
+                ).build(
+                    pre_director,
+                    payload=pre_payload,
+                    channel="chat",
+                )
+                pre_contract = DirectorContractBuilder().build(pre_director, pre_performance)
+                planned_ti_context = (
+                    f"{planned_ti_context}\n\n{pre_contract.to_generation_guard_block()}"
+                )
+                frame.debug_notes.append(
+                    f"director_pre_generation={pre_director.scene_mode.name}:{pre_performance.performance_intent}"
+                )
+            except Exception as exc:
+                self.logger.debug("[director pre-generation] skipped: %s", exc)
 
         # Curiosity Tutor: Eris không hiểu ý Ngài → câu trả lời lượt này thành câu hỏi
         # làm rõ (thay vì đoán bừa hay lén tra Gemini). Giữ giọng Eris.
@@ -869,7 +894,11 @@ class ChatCycleMixin:
         # and can push out the previous turn during context shrink.
         llm_chat_history = self._chat_history_for_llm(limit=16)[:-1]
         self.logger.info("[LLM CHAT HISTORY] %s", llm_chat_history[-8:])
-        memory_recall_decision = self._build_memory_recall_decision(user_text)
+        memory_recall_decision = (
+            self._build_memory_recall_decision(user_text)
+            if semantic_policy.allow_pre_llm_intercepts
+            else None
+        )
         if memory_recall_decision is not None:
             self._set_cognitive_action_plan(
                 frame,
@@ -892,13 +921,17 @@ class ChatCycleMixin:
             self._commit_chat_decision(memory_recall_decision, fe_plan, frame=frame)
             self.last_user_text_for_semantics = user_text
             return
-        relational_seed_decision = self._build_relational_voice_seed_decision(
-            user_text,
-            frame=frame,
-            fe_plan=fe_plan,
-            ti_report=ti_report,
-            conversation_report=conversation_report,
-            relationship_report=relationship_report,
+        relational_seed_decision = (
+            self._build_relational_voice_seed_decision(
+                user_text,
+                frame=frame,
+                fe_plan=fe_plan,
+                ti_report=ti_report,
+                conversation_report=conversation_report,
+                relationship_report=relationship_report,
+            )
+            if semantic_policy.allow_pre_llm_intercepts
+            else None
         )
         if relational_seed_decision is not None:
             self._set_cognitive_action_plan(
@@ -922,12 +955,18 @@ class ChatCycleMixin:
             self._commit_chat_decision(relational_seed_decision, fe_plan, frame=frame)
             self.last_user_text_for_semantics = user_text
             return
-        difficulty = self._classify_query_difficulty(user_text)
-        use_escalation = False
-        reasoning_effort = None
-        if difficulty != "none":
-            use_escalation = True
-            reasoning_effort = difficulty
+        if semantic_policy.qwen_first:
+            # Qwen is always the first semantic pass. Medium thinking is the
+            # baseline, not something unlocked by another keyword classifier.
+            use_escalation = semantic_policy.primary_uses_escalation_client
+            reasoning_effort = semantic_policy.primary_reasoning_effort
+        else:
+            difficulty = self._classify_query_difficulty(user_text)
+            use_escalation = False
+            reasoning_effort = None
+            if difficulty != "none":
+                use_escalation = True
+                reasoning_effort = difficulty
 
         chat_generation_kwargs = {
             "chat_history": llm_chat_history,
@@ -1120,7 +1159,11 @@ class ChatCycleMixin:
             user_text=user_text,
             frame=frame,
             chat_generation_kwargs=chat_generation_kwargs,
-            skip_candidates=bool(format_repair_fallback or no_fallback_block),
+            skip_candidates=bool(
+                format_repair_fallback
+                or no_fallback_block
+                or not semantic_policy.generate_director_candidates
+            ),
         )
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text

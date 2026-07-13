@@ -27,6 +27,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from semantic_authority import SemanticAuthorityPolicy
+
 
 @dataclass(slots=True)
 class CritiqueResult:
@@ -129,6 +131,10 @@ class SelfCritiqueEscalationMixin:
         config_enabled = str(os.environ.get("ERIS_SELF_CRITIQUE_LLM", "0")).strip().lower() in {"1", "true", "on", "yes"}
         if config_enabled:
             return True
+        if SemanticAuthorityPolicy.from_env().qwen_first:
+            # Qwen-first uses explicit confidence/tags plus an advisory mentor
+            # pass. Do not sneak the old keyword difficulty classifier back in.
+            return False
         if user_text:
             return self._classify_query_difficulty(user_text) != "none"
         return False
@@ -141,6 +147,10 @@ class SelfCritiqueEscalationMixin:
         text = str(user_text or "").strip()
         if not text:
             return "none"
+
+        semantic_policy = SemanticAuthorityPolicy.from_env()
+        if semantic_policy.qwen_first:
+            return semantic_policy.primary_reasoning_effort
 
         normalized = self._sc_normalize(text)
 
@@ -371,8 +381,11 @@ class SelfCritiqueEscalationMixin:
         mentor_context = ""
         drop = False
 
-        # 1) User nhờ tra/hỏi nguồn ngoài nhưng câu nháp KHÔNG có system_action.
-        if not system_action and lowered_user:
+        semantic_policy = SemanticAuthorityPolicy.from_env()
+
+        # Legacy-only keyword router. In qwen_first, Qwen owns tool selection;
+        # the runtime no longer sees "Gemini" or "tra" and wrestles the wheel.
+        if not semantic_policy.qwen_first and not system_action and lowered_user:
             if any(trigger in lowered_user for trigger in _WEATHER_TRIGGERS):
                 needs_tool = True
                 tool_hint = "get_weather"
@@ -381,6 +394,12 @@ class SelfCritiqueEscalationMixin:
                 needs_tool = True
                 tool_hint = "search_web"
                 reasons.append("lookup_requested_no_action")
+
+        # Qwen may explicitly ask for mentor support through structured tags.
+        if semantic_policy.qwen_first and semantic_policy.requests_mentor_support(decision):
+            quality = min(quality, 0.30)
+            mentor_wanted = True
+            reasons.append("qwen_requested_mentor_support")
 
         # 2) Từ chối khả năng trong khi đáng lẽ phải tra (điếc đặc).
         if needs_tool and any(pattern in norm for pattern in _DENIAL_PATTERNS):
@@ -448,7 +467,7 @@ class SelfCritiqueEscalationMixin:
             drop=drop,
         )
 
-        if mentor_wanted and mentor_context:
+        if mentor_wanted and mentor_context and not semantic_policy.qwen_first:
             mentor = self._mentor_critique_decision(
                 decision,
                 channel=channel,
@@ -633,6 +652,14 @@ class SelfCritiqueEscalationMixin:
         chat_generation_kwargs: dict,
         ti_report,
     ):
+        if SemanticAuthorityPolicy.from_env().qwen_first:
+            return self._qwen_first_support_cycle(
+                decision,
+                user_text=user_text,
+                snapshot=snapshot,
+                chat_generation_kwargs=chat_generation_kwargs,
+                ti_report=ti_report,
+            )
         if not self._self_critique_enabled():
             return decision
         try:
@@ -702,6 +729,229 @@ class SelfCritiqueEscalationMixin:
                 ),
             )
         return strong
+
+    def _qwen_first_support_cycle(
+        self,
+        decision,
+        *,
+        user_text: str,
+        snapshot,
+        chat_generation_kwargs: dict,
+        ti_report,
+    ):
+        """Qwen drafts first; tools and Gemini only support that draft.
+
+        Flow:
+        1. Qwen may select a real ``system_action``. Execute it and let Qwen
+           synthesize the tool result.
+        2. If Qwen explicitly asks for support or emits a low-confidence weak
+           draft, Gemini returns private notes only.
+        3. Qwen receives those notes and writes the final ERIS answer.
+
+        Gemini never becomes the public speaker in this mode.
+        """
+
+        policy = SemanticAuthorityPolicy.from_env()
+        if getattr(decision, "system_action", ""):
+            return self._run_tool_continuation(
+                decision,
+                channel="chat",
+                snapshot=snapshot,
+                regenerate=lambda tool_summary: self._regenerate_chat_after_tool_primary(
+                    chat_generation_kwargs,
+                    tool_summary,
+                    user_text=user_text,
+                    ti_report=ti_report,
+                ),
+            )
+
+        if not self._self_critique_enabled():
+            return decision
+
+        try:
+            critique = self._critique_decision(
+                decision,
+                channel="chat",
+                user_text=user_text,
+                snapshot=snapshot,
+            )
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.debug("[qwen-first support] critique failed: %s", exc)
+            return decision
+
+        self._sc_trace(decision, critique, channel="chat")
+        wants_support = policy.requests_mentor_support(decision) or critique.mentor_wanted
+        weak_draft = critique.quality < self._escalation_threshold()
+        if not (wants_support or weak_draft):
+            return decision
+
+        notes = self._request_mentor_support_notes(
+            decision,
+            user_text=user_text,
+            critique=critique,
+            context=str(chat_generation_kwargs.get("conversation_context", "") or ""),
+        )
+        if not notes:
+            return decision
+
+        kwargs = dict(chat_generation_kwargs)
+        kwargs.pop("use_escalation_client", None)
+        kwargs["reasoning_effort"] = policy.primary_reasoning_effort
+        kwargs["ti_context"] = (
+            str(kwargs.get("ti_context", "") or "")
+            + "\n\nMENTOR SUPPORT NOTES (private, advisory, not authoritative):\n"
+            + notes
+            + "\nQwen remains the semantic and stylistic authority. Re-answer the original user request "
+              "using only useful suggestions. Do not mention the mentor, support pass, or these notes."
+        )
+        try:
+            raw = self.llm_service.generate_chat_reply(
+                **kwargs,
+                use_escalation_client=False,
+            )
+            revised = self.parser.parse(raw, user_hint=user_text)
+            revised = self.ti_governor.enforce_decision(
+                revised,
+                ti_report,
+                user_hint=user_text,
+                vision_grounded=bool(getattr(self, "vision_facts", None)),
+            )
+            revised.debug_trace = self._sc_join(
+                getattr(revised, "debug_trace", ""),
+                "qwen_after_mentor_support",
+            )
+        except Exception as exc:
+            self.logger.warning("[qwen-first support] Qwen synthesis failed: %s", exc)
+            return decision
+
+        if getattr(revised, "system_action", ""):
+            revised = self._run_tool_continuation(
+                revised,
+                channel="chat",
+                snapshot=snapshot,
+                regenerate=lambda tool_summary: self._regenerate_chat_after_tool_primary(
+                    kwargs,
+                    tool_summary,
+                    user_text=user_text,
+                    ti_report=ti_report,
+                ),
+            )
+        return revised
+
+    def _request_mentor_support_notes(
+        self,
+        decision,
+        *,
+        user_text: str,
+        critique: CritiqueResult,
+        context: str = "",
+    ) -> str:
+        """Ask Gemini/strong client for ideas, never for the public answer."""
+
+        svc = getattr(self, "llm_service", None)
+        resolver = getattr(svc, "_resolve_escalation_client", None) if svc is not None else None
+        if not callable(resolver):
+            return ""
+        try:
+            client = resolver()
+        except Exception:
+            client = None
+        if client is None:
+            return ""
+
+        draft = str(getattr(decision, "text", "") or "").strip()
+        if not draft:
+            return ""
+        system_prompt = (
+            "You are a private mentor for ERIS's Qwen model. Do not answer the user and do not imitate ERIS. "
+            "Analyze whether the draft understood the full conversational intent. Provide compact ideas, missing "
+            "angles, factual cautions, or useful associations. Never introduce unsupported facts. Return only JSON: "
+            '{"useful":true,"problems":["..."],"suggestions":["..."],"cautions":["..."]}.'
+        )
+        user_prompt = (
+            f"User request:\n{str(user_text or '').strip()[:700]}\n\n"
+            f"Qwen draft:\n{draft[:900]}\n\n"
+            f"Local quality signal: {critique.quality:.2f}; reason={critique.reason[:240]}\n\n"
+            f"Conversation context (may be partial):\n{str(context or '')[:1400]}"
+        )
+        try:
+            response = client.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=300,
+                response_format={"type": "json_object"},
+                grammar=None,
+            )
+            raw = svc._extract_content(response) if hasattr(svc, "_extract_content") else str(response)
+            extracted = svc._extract_first_json_object(raw) if hasattr(svc, "_extract_first_json_object") else ""
+            payload = json.loads(extracted or re.search(r"\{.*\}", raw, flags=re.DOTALL).group(0))
+            if not bool(payload.get("useful", True)):
+                return ""
+            lines: list[str] = []
+            for key in ("problems", "suggestions", "cautions"):
+                values = payload.get(key, ())
+                if isinstance(values, str):
+                    values = (values,)
+                for item in tuple(values or ())[:5]:
+                    clean = re.sub(r"\s+", " ", str(item or "")).strip()
+                    if clean:
+                        lines.append(f"- {clean[:260]}")
+            return "\n".join(lines[:10])
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.debug("[qwen-first mentor] failed: %s", exc)
+            return ""
+
+    def _regenerate_chat_after_tool_primary(
+        self,
+        generation_kwargs: dict,
+        tool_summary: str,
+        *,
+        user_text: str,
+        ti_report,
+    ):
+        """Feed tool evidence back to Qwen, not to Gemini."""
+
+        policy = SemanticAuthorityPolicy.from_env()
+        kwargs = dict(generation_kwargs)
+        kwargs.pop("use_escalation_client", None)
+        kwargs["reasoning_effort"] = policy.primary_reasoning_effort
+        report = getattr(self, "last_grounding_context", None)
+        refreshed_grounding = str(getattr(report, "prompt_context", "") or "").strip()
+        kwargs["grounding_context"] = (
+            refreshed_grounding
+            or str(kwargs.get("grounding_context", "") or "")
+        ) + (
+            "\nTOOL RESULT (primary evidence; synthesize it naturally and do not call another tool unless essential):\n"
+            + tool_summary
+        )
+        kwargs["ti_context"] = (
+            str(kwargs.get("ti_context", "") or "")
+            + "\nA tool result is now available. Answer the original request directly in ERIS voice."
+        )
+        try:
+            raw = self.llm_service.generate_chat_reply(
+                **kwargs,
+                use_escalation_client=False,
+            )
+            decision = self.parser.parse(raw, user_hint=user_text)
+            return self.ti_governor.enforce_decision(
+                decision,
+                ti_report,
+                user_hint=user_text,
+                vision_grounded=bool(getattr(self, "vision_facts", None)),
+            )
+        except Exception as exc:
+            self.logger.warning("[qwen-first tool continuation] failed: %s", exc)
+            return None
 
     def _regenerate_chat_after_tool(self, escalation_kwargs: dict, tool_summary: str, *, user_text: str, ti_report):
         kwargs = dict(escalation_kwargs)

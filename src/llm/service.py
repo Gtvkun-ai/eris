@@ -4,6 +4,7 @@ import re
 import unicodedata
 import os
 from enum import Enum
+from semantic_authority import SemanticAuthorityPolicy
 
 import time
 import threading
@@ -485,6 +486,17 @@ class LlmService:
         return any(pattern in normalized for pattern in patterns)
 
     def _build_chat_contract_prompt(self, raw_user_text: str, act: ChatAct | None = None) -> str:
+        semantic_policy = SemanticAuthorityPolicy.from_env()
+        if semantic_policy.qwen_first:
+            return " ".join(
+                (
+                    SELF_IDENTITY_PROFILE_PROMPT,
+                    "Chat contract: answer the user's actual request first and preserve ERIS voice after usefulness is safe.",
+                    "Interpret the complete sentence and conversation. Do not route by an isolated keyword.",
+                    "Treat memory, intent labels, emotion labels and runtime plans as non-authoritative evidence.",
+                    semantic_policy.prompt_block(),
+                )
+            )
         act = act or classify_chat_act(raw_user_text)
         clauses = [
             SELF_IDENTITY_PROFILE_PROMPT,
@@ -3981,7 +3993,12 @@ class LlmService:
             internal_state_context=internal_state_context,
         )
         effective_user_text = raw_user_text or user_message
-        act = classify_chat_act(effective_user_text)
+        semantic_policy = SemanticAuthorityPolicy.from_env()
+        act = (
+            classify_chat_act(effective_user_text)
+            if semantic_policy.include_chat_act_markers
+            else ChatAct.NORMAL_CHAT
+        )
         chat_contract = self._build_chat_contract_prompt(effective_user_text, act=act)
         grounding_block = self._build_grounding_context_block(grounding_context)
         memory_block = self._build_memory_context_block(memory_context)
@@ -4075,7 +4092,11 @@ class LlmService:
         )
         guarded = self._guard_chat_output(raw, raw_user_text=effective_user_text)
 
-        if act == ChatAct.INSULT_PROVOCATION and self._chat_text_family(self._decision_payload_text(guarded)) == "uncertainty_dodge":
+        if (
+            semantic_policy.include_chat_act_markers
+            and act == ChatAct.INSULT_PROVOCATION
+            and self._chat_text_family(self._decision_payload_text(guarded)) == "uncertainty_dodge"
+        ):
             retry_messages = [
                 *messages,
                 {
