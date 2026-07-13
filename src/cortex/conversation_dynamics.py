@@ -606,6 +606,18 @@ class ConversationDynamicsEngine:
                 evidence.append(f"conversational_relief={relief:.2f}")
                 flags.append("continue_recovered_thread")
 
+        # Failure chỉ sống khi lượt hiện tại còn đang sửa/nhắc lại lỗi. Một lượt
+        # sạch phải cho state quay về bình thường; nếu không mọi câu sau đều bị ép
+        # vào repair_reframe chỉ vì một record cũ còn nằm đó.
+        if (
+            not has_correction
+            and not references_previous_failure
+            and not relational_repair_needed
+            and str(getattr(failure, "type", "none") or "none") != "none"
+        ):
+            failure = ConversationFailure()
+            evidence.append("last_failure_cleared_after_clean_turn")
+
         if references_previous_failure:
             tension = _clamp(tension + 0.12)
             pressure = _clamp(pressure + 0.10)

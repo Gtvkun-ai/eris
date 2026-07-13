@@ -647,6 +647,8 @@ class MemoryCommitPolicy:
         value = _extract_with_patterns(
             raw,
             (
+                r"(?:^|\b)(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+t[eê]n\s+(?:đầy\s+đủ|day\s+du)\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
+                r"(?:^|\b)t[eê]n\s+(?:thật\s+)?(?:đầy\s+đủ|day\s+du)\s+(?:của\s+)?(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
                 r"(?:^|\b)(?:tôi|toi|mình|minh|tớ|to|tui|em)\s+t[eê]n\s+(?:là|la)\s+(.+?)(?=$|[.,;!?]|\s+(?:và|va|nhưng|nhung)\b)",
                 # Dạng rút gọn trong chat: "tôi tên Tín". Negative lookahead chặn
                 # các câu hỏi như "tôi tên gì" / "tôi tên là gì" để không lưu rác.

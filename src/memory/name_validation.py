@@ -72,7 +72,8 @@ def has_explicit_user_name_declaration(text: str) -> bool:
     if re.search(r"\b(?:ten gi|la gi|la ai|what is|who is)\b", norm):
         return False
     patterns = (
-        r"\b(?:toi|minh|tui|tao|em|i)\s+ten\s+(?:la\s+)?\S+",
+        r"\b(?:toi|minh|tui|tao|em|i)\s+ten\s+(?:day\s+du\s+)?(?:la\s+)?\S+",
+        r"\bten\s+(?:that\s+)?day\s+du\s+(?:cua\s+)?(?:toi|minh|tui|tao|em)\s+(?:la\s+)?\S+",
         r"\bten\s+(?:that\s+)?(?:cua\s+)?(?:toi|minh|tui|tao|em)\s+(?:la\s+)?\S+",
         r"\b(?:goi|cu goi)\s+(?:toi|minh|tui|tao|em)\s+(?:la\s+)?\S+",
         r"\b(?:my name is|call me)\s+\S+",

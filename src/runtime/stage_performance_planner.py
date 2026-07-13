@@ -105,6 +105,21 @@ def _looks_generic_or_empty(text: str) -> bool:
     return clean in {"haha", "ha ha", "hahaha", "hmph", "haa"}
 
 
+_LAUGH_REFUSAL_MARKERS = (
+    "khong the cuoi", "khong cuoi", "khong muon cuoi", "khong nen cuoi",
+    "khong the che gieu", "khong che gieu", "khong the mia mai", "khong mia mai",
+    "cannot laugh", "can t laugh", "won t laugh", "will not laugh",
+    "cannot mock", "won t mock", "will not mock",
+)
+
+
+def _act_conflicts_with_reply(act: PerformanceAct, text: str) -> bool:
+    normalized = _normalize_vi(text)
+    if act.kind not in {"playful_laugh", "requested_tease"}:
+        return False
+    return any(marker in normalized for marker in _LAUGH_REFUSAL_MARKERS)
+
+
 def _merge_actions(*groups: Iterable[str]) -> tuple[str, ...]:
     out: list[str] = []
     seen: set[str] = set()
@@ -162,6 +177,22 @@ class PerformanceRequestPlanner:
             )
 
         base_line = surfaces.tts_text or surfaces.display_text
+        if _act_conflicts_with_reply(act, base_line):
+            safe_cue = "" if str(nonverbal_cue or "").strip() in {"laugh_soft", "audible_laugh_soft"} else nonverbal_cue
+            safe_actions = tuple(
+                item for item in extracted_actions
+                if str(item or "").strip() not in {"laugh_soft", "audible_laugh_soft"}
+            )
+            return PerformanceSurfaces(
+                display_text=surfaces.display_text,
+                tts_text=surfaces.tts_text,
+                memory_text=surfaces.memory_text,
+                delivery_hint=delivery_hint,
+                nonverbal_cue=safe_cue,
+                stage_motion=stage_motion,
+                actions=_merge_actions((safe_cue,), safe_actions),
+                performance_act=None,
+            )
         if _looks_generic_or_empty(base_line):
             base_line = act.fallback_line
 

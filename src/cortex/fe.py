@@ -745,6 +745,18 @@ class FeRenderer:
         if any(pattern in normalized for pattern in self_identity):
             return False
 
+        research_commands = (
+            "dieu tra", "đieu tra", "tim ", "tim kiem", "tim hieu", "tra cuu", "kiem chung",
+            "xac minh", "fact check", "investigate", "look up", "search ", "verify",
+        )
+        local_technical_targets = (
+            "loi", "bug", "code", "file", "ham", "class", "module", "pipeline",
+            "runtime", "traceback", "repo", "src", "json", "python",
+        )
+        if any(normalized.startswith(command) for command in research_commands):
+            if not any(target in normalized for target in local_technical_targets):
+                return True
+
         action_commands = (
             "sua ", "fix ", "viet ", "tao ", "chay ", "kiem tra ", "debug ",
             "mo ", "xoa ", "doi ", "them ", "lam cho ",

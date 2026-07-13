@@ -1,4 +1,4 @@
-﻿import json
+import json
 import re
 from llm.json_sanitizer import strip_reasoning_envelope
 import unicodedata
@@ -338,16 +338,12 @@ class ParserGroundingMixin:
             "parse_mode": parse_mode,
         }
         for key, default in default_fields.items():
-            value = patched.get(key, None)
-            if value in (None, "") and key not in {"direction", "target_x", "motion_target_x", "motion_facing", "should_speak", "confidence"}:
-                patched[key] = default
-                fields_patched = True
-                continue
-            if key in {"direction", "target_x", "motion_target_x", "motion_facing"} and key not in patched:
-                patched[key] = default
-                fields_patched = True
-                continue
-            if key in {"should_speak", "confidence"} and key not in patched:
+            # Empty string is a valid value for optional fields such as
+            # system_action/action_input/delivery_hint. Only a missing key or an
+            # explicit null is a structural repair. Otherwise telemetry accuses
+            # perfectly valid JSON of needing hard repair, because apparently an
+            # empty optional field once committed a crime against civilization.
+            if key not in patched or patched.get(key) is None:
                 patched[key] = default
                 fields_patched = True
         return patched, fields_patched

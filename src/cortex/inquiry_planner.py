@@ -21,7 +21,9 @@ def _clamp(value: Any, default: float = 0.0) -> float:
 class InquiryPlannerEngine:
     module_name = "inquiry_planner"
     SEARCH_MARKERS = (
-        "tìm ", "tìm kiếm", "tra cứu", "search ", "look up", "kiểm tra web", "lên mạng",
+        "tìm ", "tìm kiếm", "tìm hiểu", "tra cứu", "điều tra", "kiểm chứng", "xác minh",
+        "tim ", "tim kiem", "tim hieu", "tra cuu", "dieu tra", "kiem chung", "xac minh",
+        "search ", "look up", "investigate", "verify", "fact check", "kiểm tra web", "lên mạng",
         "nguồn mới", "tin mới", "mới nhất", "latest", "hiện tại", "hôm nay", "bây giờ",
         "current", "giá bao nhiêu", "phiên bản mới", "lịch mới", "tin tức",
     )

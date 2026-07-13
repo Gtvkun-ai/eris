@@ -394,8 +394,23 @@ def infer_relation(norm: str) -> Optional[tuple[RelationRef, float]]:
     return None
 
 
+def _looks_like_interpretive_fact_question(norm: str) -> bool:
+    """True khi user hỏi ý nghĩa/liên tưởng, không hỏi giá trị fact đã lưu."""
+
+    interpretive_markers = (
+        "lien tuong", "y nghia", "goi nho", "goi len", "goi gi", "nghe giong",
+        "tuong trung", "cam giac", "an tuong", "nghi den", "gan voi", "vi sao ten",
+        "ten co nghia", "ten nay co nghia", "ten toi nghe", "ten toi co hay", "danh gia ten",
+        "associate", "remind you of", "meaning of",
+    )
+    return any(marker in norm for marker in interpretive_markers)
+
+
 def infer_fact_key(norm: str) -> Optional[tuple[str, float]]:
-    # Gợi ý fact_key, không đọc memory tại đây.
+    # Gợi ý fact_key, không đọc memory tại đây. Câu hỏi diễn giải phải đi qua LLM,
+    # không được memory adapter cướp lượt chỉ vì có cụm "tên tôi".
+    if _looks_like_interpretive_fact_question(norm):
+        return None
     if any(m in norm for m in ("toi ten gi", "ten toi", "toi ten la gi", "nho ten toi")):
         return ("user.name", 0.88)
     if any(m in norm for m in ("toi sinh thang may", "thang sinh", "sinh thang may", "birthday month")):
@@ -552,7 +567,9 @@ def parse_vi_number(value: str) -> Optional[int]:
 def _looks_like_name_disclosure(norm: str) -> bool:
     if any(marker in norm for marker in ("toi ten gi", "ten toi", "toi ten la gi", "nho ten toi")):
         return False
-    if re.search(r"\btoi\s+ten\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
+    if re.search(r"\btoi\s+ten\s+(?:day\s+du\s+)?la\s+[a-z0-9_ -]{2,60}\b", norm):
+        return True
+    if re.search(r"\bten\s+day\s+du\s+(?:cua\s+)?toi\s+la\s+[a-z0-9_ -]{2,60}\b", norm):
         return True
     # P0: tiếng Việt chat hay rút gọn "tôi tên Tín" thay vì "tôi tên là Tín".
     # Nếu không nhận dạng dạng này là fact disclosure, compiler sẽ cho semantic
@@ -578,6 +595,9 @@ UPDATE_FACT_PATTERNS = (
     "hay nho rang toi",
     "ten toi la",
     "ten cua toi la",
+    "toi ten day du la",
+    "ten day du toi la",
+    "ten day du cua toi la",
 )
 
 

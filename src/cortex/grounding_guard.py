@@ -6,7 +6,8 @@ not allowed to replace every imperfect sentence with customer-support oatmeal.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import fields, replace
 import re
 from typing import Any
 
@@ -25,6 +26,39 @@ def _clamp(value: Any, default: float = 0.0) -> float:
         return max(0.0, min(1.0, float(value)))
     except Exception:
         return max(0.0, min(1.0, default))
+
+
+def _coerce_decision(value: Any) -> Decision:
+    """Chuẩn hoá Decision ở biên production.
+
+    CognitiveFrame V3 lưu ``final_decision`` dạng dict để serialize, trong khi
+    GroundingGuard cần dataclass để ``replace()``. Guard phải tự bảo vệ biên dữ
+    liệu thay vì giả định mọi caller đều mang đúng kiểu như unit test.
+    """
+
+    if isinstance(value, Decision):
+        return value
+    payload = value
+    if not isinstance(payload, Mapping):
+        to_payload = getattr(value, "to_payload", None)
+        if callable(to_payload):
+            try:
+                payload = to_payload()
+            except Exception:
+                payload = None
+    if isinstance(payload, Mapping):
+        allowed = {item.name for item in fields(Decision)}
+        data = {key: payload[key] for key in allowed if key in payload}
+        data["text"] = str(data.get("text", "") or "")
+        data["animation"] = str(data.get("animation", "") or "stand")
+        tags = data.get("reasoning_tags", ())
+        if isinstance(tags, str):
+            tags = (tags,) if tags.strip() else ()
+        elif not isinstance(tags, tuple):
+            tags = tuple(tags or ())
+        data["reasoning_tags"] = tags
+        return Decision(**data)
+    return Decision(text="", animation="stand", should_speak=False, parse_mode="v3_empty")
 
 
 class GroundingGuardEngine:
@@ -54,10 +88,8 @@ class GroundingGuardEngine:
             final_text=None,
         )
 
-    def check(self, frame: Any, decision: Decision | None, *, external_grounding: Any = None) -> tuple[Decision, GroundingReport]:
-        if decision is None:
-            decision = Decision(text="", animation="stand", should_speak=False, parse_mode="v3_empty")
-        repaired = replace(decision)
+    def check(self, frame: Any, decision: Decision | Mapping[str, Any] | None, *, external_grounding: Any = None) -> tuple[Decision, GroundingReport]:
+        repaired = replace(_coerce_decision(decision))
         text = str(repaired.text or "").strip()
         permission = _get(frame, "permission", None)
         opportunity = _get(frame, "speech_opportunity", None)

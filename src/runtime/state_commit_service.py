@@ -415,7 +415,7 @@ class StateCommitServiceMixin:
 
         evidence_id = self._user_turn_memory_evidence_id(frame=frame, turn_id=turn_id)
         try:
-            ingest(
+            result = ingest(
                 user_text,
                 evidence_ids=[evidence_id] if evidence_id else None,
                 turn_id=evidence_id,
@@ -429,7 +429,29 @@ class StateCommitServiceMixin:
                     "channel": str(getattr(frame, "channel", "") or "").strip(),
                 },
             )
-            return True
+            receipt = result.to_dict() if callable(getattr(result, "to_dict", None)) else {
+                "accepted": bool(getattr(result, "accepted", False)),
+                "committed_count": int(getattr(result, "committed_count", 0) or 0),
+            }
+            facts: list[dict[str, object]] = []
+            for item in list(getattr(result, "decisions", []) or []):
+                metadata = getattr(item, "metadata", {}) or {}
+                if not isinstance(metadata, Mapping):
+                    metadata = {}
+                facts.append({
+                    "fact_key": str(metadata.get("fact_key", "") or ""),
+                    "value": metadata.get("value", getattr(item, "surface", "")),
+                    "surface": str(getattr(item, "surface", "") or ""),
+                })
+            receipt["facts"] = facts
+            try:
+                frame.memory_ingest_receipt = receipt
+            except Exception:
+                pass
+            committed = int(receipt.get("committed_count", 0) or 0) > 0
+            # Không có commit thì cho policy fallback tiếp tục chạy. Trước đây chỉ
+            # cần kernel không ném exception là runtime tưởng đã xử lý xong.
+            return committed
         except Exception as exc:
             self.logger.warning("MemoryKernel ingest failed on hot path, falling back to commit policy: %s", exc)
             return False

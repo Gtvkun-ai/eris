@@ -923,8 +923,9 @@ class RuntimeCoordinator(
                 channel=channel,
                 user_text=user_text,
             )
-            # Curiosity Tutor tick (ngoài hot path; no-op khi Master_Switch tắt).
-            if getattr(self, "tutor_daemon", None) is not None:
+            # Curiosity Tutor tick chỉ chạy khi rảnh; chat chính không chia TPM
+            # với một tiến trình nền đang tò mò quá mức cần thiết.
+            if getattr(self, "tutor_daemon", None) is not None and not getattr(self, "_chat_processing", False):
                 try:
                     from runtime.tutor_wiring import tutor_tick
                     tutor_tick(self, observer_frame=observer_frame, channel=channel or "autonomous", snapshot=signal_snapshot)
@@ -969,6 +970,11 @@ class RuntimeCoordinator(
                     self.logger.warning("PrivateMind tick (bg) error: %s", exc)
                 except Exception:
                     pass
+
+        # Chat chính có ưu tiên tuyệt đối. Có thể poll kết quả cũ ở trên, nhưng
+        # không submit thêm Gemini/PrivateMind trong lúc user đang chờ câu trả lời.
+        if getattr(self, "_chat_processing", False):
+            return
 
         # --- Nếu đang có future chạy rồi thì không submit thêm ---
         if getattr(self, "_private_mind_future", None) is not None:
@@ -1123,7 +1129,7 @@ class RuntimeCoordinator(
         """
 
         daemon = getattr(self, "private_life_daemon", None)
-        if daemon is None:
+        if daemon is None or getattr(self, "_chat_processing", False):
             return
         try:
             recent_events = tuple(getattr(signal_snapshot, "recent_events", ()) or ()) if signal_snapshot is not None else ()
@@ -4338,6 +4344,41 @@ class RuntimeCoordinator(
             self._preview_text(decision.parser_trace),
         )
 
+    def _is_tutor_delegation_only(self, text: str) -> bool:
+        normalized = self._normalize_marker_text(text)
+        if not normalized:
+            return False
+        markers = (
+            "hoi su phu gemini", "hoi su phu", "hoi gemini", "nho gemini",
+            "keu gemini", "tra gemini", "ask gemini", "ask your tutor",
+        )
+        stripped = normalized
+        for token in ("di", "dum", "giup", "cho toi", "cho ngai", "thu", "xem"):
+            stripped = re.sub(rf"\b{re.escape(token)}\b", " ", stripped)
+        stripped = re.sub(r"\s+", " ", stripped).strip()
+        return any(stripped == marker or stripped.startswith(marker + " ") for marker in markers) and len(stripped.split()) <= 6
+
+    def _resolve_tutor_research_topic(self, current_text: str) -> str:
+        """Lấy yêu cầu chưa giải quyết trước đó, không hỏi Gemini chính câu ra lệnh."""
+
+        candidates: list[str] = []
+        previous = str(getattr(self, "last_user_text_for_semantics", "") or "").strip()
+        if previous:
+            candidates.append(previous)
+        try:
+            turns = self._ensure_session_turn_ledger().user_turns()
+            candidates.extend(str(turn.text or "").strip() for turn in reversed(turns[-8:]))
+        except Exception:
+            pass
+        current_norm = self._normalize_marker_text(current_text)
+        for candidate in candidates:
+            if not candidate or self._normalize_marker_text(candidate) == current_norm:
+                continue
+            if self._is_tutor_delegation_only(candidate):
+                continue
+            return candidate
+        return ""
+
     def _maybe_tutor_on_unclear_user(self, user_text, frame) -> None:
         """Khi Eris không hiểu/không phân loại nổi tin user → định tuyến.
 
@@ -4387,12 +4428,13 @@ class RuntimeCoordinator(
             # thread nền đi hỏi gia sư Gemini rồi gửi đáp án sau. Chỉ khi có đường
             # request_tutor_answer (Master_Switch bật) và qua throttle.
             if intent == "world_knowledge" and callable(getattr(self, "request_tutor_answer", None)):
-                if self._research_can_start():
+                topic = self._resolve_tutor_research_topic(text) if self._is_tutor_delegation_only(text) else text
+                if topic and self._research_can_start():
                     self._research_pending = True
-                    self._research_topic = text
+                    self._research_topic = topic
                     self._fire_research_followup(
-                        text,
-                        context="Câu hỏi kiến thức đã được intent classifier xác nhận",
+                        topic,
+                        context="Chủ đề tra cứu đã được intent classifier xác nhận; không dùng câu ra lệnh gọi Tutor làm topic",
                     )
                     return
 
@@ -4507,10 +4549,33 @@ class RuntimeCoordinator(
             ))
         decision = Decision(
             text=text,
-            animation="",
+            animation="stand",
+            intent="world_knowledge",
+            action="tutor_followup",
+            reasoning_tags=("tutor_grounded", "research_followup"),
+            should_speak=True,
+            confidence=0.78 if answer else 0.35,
             parse_mode="chat",
-            debug_trace="research_followup",
+            debug_trace=f"research_followup; topic={str(topic)[:120]}",
         )
+        # Tutor không được có cửa hậu đi thẳng vào TTS. Dùng cùng final guards,
+        # Director precommit và V3 authority như chat chính, nhưng không mở thêm
+        # candidate generation để khỏi lại đốt model trong một follow-up nền.
+        guard = getattr(self, "_apply_chat_final_guards", None)
+        if callable(guard):
+            decision = guard(decision, user_text=topic, frame=None, allow_reroll=False)
+        decision = self._apply_director_precommit_guard(decision, frame=None, channel="chat")
+        authority = getattr(self, "_apply_v3_authority_guard", None)
+        if callable(authority):
+            decision = authority(decision, frame=None, channel="chat")
+        public_text = str(decision.text or "").strip()
+        if public_text:
+            self._append_chat_history("assistant", public_text, invalid=False)
+            self._ensure_session_turn_ledger().record_assistant(
+                public_text,
+                meta={"intent": decision.intent, "parse_mode": decision.parse_mode, "source": "tutor_followup"},
+            )
+            self.last_chat_answer = public_text
         self._send_decision_to_body(decision, channel="chat")
 
     def stop(self):
@@ -4578,7 +4643,7 @@ class RuntimeCoordinator(
                 self.logger.warning("Mental process background tick error: %s", exc)
 
     def _tick_mental_process_background(self) -> PersistentInternalState | None:
-        if self.memory_state is None:
+        if self.memory_state is None or getattr(self, "_chat_processing", False):
             return None
         with self._state_lock:
             mood_score = self.mood_score
@@ -5291,75 +5356,17 @@ class RuntimeCoordinator(
         return " ".join(tokens)
 
     def _looks_like_screen_vision_request(self, user_text: str) -> bool:
-        normalized = self._normalize_user_message(user_text)
-        if not normalized:
-            return False
+        """Dùng duy nhất smart vision gate của ChatCycleMixin.
 
-        direct_terms = set(
-            self._normalize_user_message(item)
-            for item in (
-                "brave",
-                "browser",
-                "chrome",
-                "cửa sổ",
-                "hình ảnh",
-                "màn hình",
-                "screenshot",
-                "screen",
-                "tab",
-                "trình duyệt",
-                "url",
-                "web",
-                "website",
-            )
-        )
-        if any(term in normalized for term in direct_terms):
-            return True
+        Bản cũ ở coordinator coi mọi lượt chat là lý do chụp màn hình và vô tình
+        đè method mới trong mixin. Delegate tường minh để MRO không thể hồi sinh
+        logic cũ trong một lần merge sau này.
+        """
 
-        visual_verbs = {"nhin", "thay"}
-        visual_objects = {"gi tren do", "noi dung", "trang nao"}
-        return any(term in normalized for term in visual_verbs) and any(
-            term in normalized for term in visual_objects
-        )
+        return ChatCycleMixin._looks_like_screen_vision_request(self, user_text)
 
     def _capture_screen_frame_for_chat(self, user_text: str) -> str:
-        # Bỏ cổng keyword: Eris nên "mở mắt" mỗi lượt chat thay vì chờ đúng chữ.
-        # Chỉ chặn bằng throttle thời gian để khỏi chụp + nén mỗi câu một cách phí phạm:
-        # nếu vừa chụp trong _CHAT_VISION_THROTTLE_SEC giây, tái dùng vision_facts gần
-        # nhất (grounding đã có cơ chế reuse facts trong 10s).
-        last_capture = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0)
-        if last_capture and (time.time() - last_capture) < self._CHAT_VISION_THROTTLE_SEC:
-            self.logger.info(
-                "[vision chat] Dùng lại screen facts vừa chụp (%.1fs trước), bỏ qua chụp mới.",
-                time.time() - last_capture,
-            )
-            return ""
-
-        capture_fn = getattr(self.telemetry_service, "capture_screen_frame_data_uri", None)
-        if not callable(capture_fn):
-            self.logger.info("[vision chat] telemetry service không hỗ trợ chụp màn hình.")
-            return ""
-
-        try:
-            data_uri = capture_fn()
-        except Exception as exc:
-            self.logger.warning("[vision chat] không chụp được màn hình: %s", exc)
-            return ""
-
-        self.logger.info("[vision chat] Đã đính kèm screenshot toàn màn hình cho lượt chat này.")
-        snapshot = getattr(self, "_chat_snapshot_for_vision", None)
-        if snapshot is not None:
-            try:
-                self._refresh_screen_facts_from_data_uri(
-                    data_uri=data_uri,
-                    snapshot=snapshot,
-                    channel="chat",
-                    user_text=user_text,
-                    force_refresh=True,
-                )
-            except Exception as exc:
-                self.logger.warning("[vision chat] không nén được screenshot: %s", exc)
-        return data_uri
+        return ChatCycleMixin._capture_screen_frame_for_chat(self, user_text)
 
     def _build_user_message_signature(self, user_text: str) -> str:
         normalized = self._normalize_user_message(user_text)
@@ -5855,6 +5862,30 @@ class RuntimeCoordinator(
             decision.debug_trace = " | ".join(part for part in (decision.debug_trace, marker) if part)
         return decision
 
+    _MEMORY_SUCCESS_CLAIM_MARKERS = (
+        "đã lưu", "đã ghi nhớ", "đã cập nhật ký ức", "đã cập nhật bộ nhớ",
+        "da luu", "da ghi nho", "da cap nhat ky uc", "da cap nhat bo nho",
+        "saved to memory", "updated memory", "i remember it now",
+    )
+
+    def _apply_memory_commit_truth_guard(self, decision: Decision, *, frame: CognitiveFrame | None = None) -> Decision:
+        text = str(getattr(decision, "text", "") or "")
+        normalized = self._normalize_marker_text(text)
+        claims_success = any(self._normalize_marker_text(marker) in normalized for marker in self._MEMORY_SUCCESS_CLAIM_MARKERS)
+        if not claims_success:
+            return decision
+        receipt = getattr(frame, "memory_ingest_receipt", {}) if frame is not None else {}
+        committed_count = int((receipt or {}).get("committed_count", 0) or 0) if isinstance(receipt, dict) else 0
+        if committed_count > 0:
+            decision.reasoning_tags = tuple(dict.fromkeys((*decision.reasoning_tags, "memory_commit_confirmed")))
+            return decision
+        decision.text = "Tôi nhận được thông tin đó, nhưng lượt lưu chưa xác nhận thành công."
+        decision.should_speak = True
+        decision.extracted_fact = ""
+        decision.reasoning_tags = tuple(dict.fromkeys((*decision.reasoning_tags, "memory_ack_suppressed_unconfirmed")))
+        decision.debug_trace = " | ".join(part for part in (decision.debug_trace, "memory_commit_unconfirmed") if part)
+        return decision
+
     def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
         try:
             decision = self._apply_director_precommit_guard(decision, frame=frame, channel="chat")
@@ -5865,6 +5896,7 @@ class RuntimeCoordinator(
         authority = getattr(self, "_apply_v3_authority_guard", None)
         if callable(authority):
             decision = authority(decision, frame=frame, channel="chat")
+        decision = self._apply_memory_commit_truth_guard(decision, frame=frame)
         public_text = str(decision.text or "").strip()
         if public_text:
             self.fe_style_memory = self.fe_renderer.remember_style(
@@ -8620,6 +8652,25 @@ class RuntimeCoordinator(
         return base_report
 
     def _build_direct_action_decision(self, user_text: str, ti_report, snapshot, *, repeat_count: int = 1) -> Decision | None:
+        normalized = self._normalize_marker_text(user_text)
+        identity_queries = {
+            "em ten gi", "ban ten gi", "may ten gi", "eris ten gi", "ten em la gi",
+            "what is your name", "whats your name", "who are you eris",
+        }
+        if normalized in identity_queries:
+            decision = Decision(
+                text="Em là Eris.",
+                animation="stand",
+                intent="identity_answer",
+                action="answer_identity",
+                reasoning_tags=("identity_fast_path",),
+                should_speak=True,
+                confidence=1.0,
+                parse_mode="direct_identity",
+                debug_trace="identity_fast_path",
+            )
+            return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
+
         if self.action_router is None or self.action_executor is None:
             return None
 

@@ -373,7 +373,9 @@ class TurnSemanticsEngine:
         state = getattr(conversation_report, "state", None)
         failure = getattr(state, "last_failure", None)
         failure_type = str(getattr(failure, "type", "") or "")
-        if failure_type and failure_type != "none":
+        mode = str(getattr(state, "mode", "") or "")
+        failure_active = bool(getattr(conversation_report, "failure_detected", False)) or mode in {"repair", "relational_repair"}
+        if failure_active and failure_type and failure_type != "none":
             pressure = max(pressure, 0.58)
         return self._clamp01(pressure)
 

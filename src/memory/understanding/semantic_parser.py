@@ -385,6 +385,9 @@ def _extract_identity_name(raw: str) -> tuple[str, bool] | None:
     """
 
     corrected_cues = (
+        ("thuc ra ten that day du cua toi la", "name"),
+        ("thuc ra ten day du cua toi la", "name"),
+        ("thuc ra toi ten day du la", "name"),
         ("thuc ra ten that cua toi la", "name"),
         ("thuc ra ten that toi la", "name"),
         ("thuc ra toi ten la", "name"),
@@ -399,6 +402,10 @@ def _extract_identity_name(raw: str) -> tuple[str, bool] | None:
         return value, True
 
     regular_cues = (
+        ("ten that day du cua toi la", "name"),
+        ("ten day du cua toi la", "name"),
+        ("ten day du toi la", "name"),
+        ("toi ten day du la", "name"),
         ("toi ten la", "name"),
         ("toi ten", "name"),
         ("minh ten la", "name"),

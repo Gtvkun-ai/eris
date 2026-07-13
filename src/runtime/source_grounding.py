@@ -416,7 +416,9 @@ class SourceGroundingEngine:
 
     WEB_REFERENCE_MARKERS = (
         "mới nhất", "hiện tại", "bây giờ", "hôm nay", "giá", "lịch",
+        "điều tra", "tìm", "tìm kiếm", "tìm hiểu", "tra cứu", "kiểm chứng", "xác minh",
         "latest", "current", "today", "recent", "news", "release",
+        "investigate", "search", "look up", "verify", "fact check",
     )
 
     # Đại từ chỉ định TRẦN. KHÔNG phải tham chiếu màn hình. Chỉ dùng để bind referent
@@ -1508,9 +1510,17 @@ class SourceGroundingEngine:
         )
         if any(marker in norm for marker in strong_web_markers):
             return True
+        explicit_research_markers = (
+            "tim", "tim kiem", "tim hieu", "tra cuu", "dieu tra", "kiem chung", "xac minh",
+            "search", "look up", "investigate", "verify", "fact check",
+        )
+        if any(re.search(r"(?:^|\s)" + re.escape(marker) + r"(?:\s|$)", norm) for marker in explicit_research_markers):
+            return True
         web_question_markers = (
             "bao nhieu", "may do", "nhiet do", "thoi tiet", "weather", "temperature",
-            "tim", "tra cuu", "search", "look up", "kiem tra", "check", "cap nhat",
+            "tim", "tim kiem", "tim hieu", "tra cuu", "dieu tra", "kiem chung", "xac minh",
+            "search", "look up", "investigate", "verify", "fact check",
+            "kiem tra", "check", "cap nhat",
         )
         if "?" in str(raw_text or "") and any(marker in norm for marker in web_question_markers):
             return True
