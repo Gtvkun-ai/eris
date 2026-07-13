@@ -44,6 +44,18 @@ from .relational_memory import RelationalMemoryItem, RelationalMemoryStore
 from .repair_memory import RepairMemoryItem, RepairMemoryStore
 from .semantic_memory import SemanticMemoryItem, SemanticMemoryStore
 from .unresolved_memory import UnresolvedMemoryCandidate, UnresolvedMemoryStore
+from .concept_graph import ConceptGraphStore
+from .canonical_long_term import (
+    BeliefStore,
+    WorldviewMemoryStore,
+    SocioculturalMemoryStore,
+    SpatialMemoryStore,
+    TemporalRhythmMemoryStore,
+    BodyRhythmMemoryStore,
+    ToMHistoryStore,
+    SelfContinuityMemoryStore,
+    HomeostaticBaselineStore,
+)
 
 from .memory_record import compact_text, clamp01
 from .memory_cue import MemoryCue, MemoryCueBuilder
@@ -206,6 +218,16 @@ class MemoryCognitionCore:
         self.procedural = ProceduralMemoryStore(os.path.join(base_dir, "procedural_memory.json"))
         self.repair = RepairMemoryStore(os.path.join(base_dir, "repair_memory.json"))
         self.memory_candidate = UnresolvedMemoryStore(os.path.join(base_dir, "memory_candidate.json"))
+        self.belief_store = BeliefStore(os.path.join(base_dir, "belief_store.json"))
+        self.worldview = WorldviewMemoryStore(os.path.join(base_dir, "worldview_memory.json"))
+        self.sociocultural = SocioculturalMemoryStore(os.path.join(base_dir, "sociocultural_memory.json"))
+        self.spatial = SpatialMemoryStore(os.path.join(base_dir, "spatial_memory.json"))
+        self.temporal_rhythm = TemporalRhythmMemoryStore(os.path.join(base_dir, "temporal_rhythm_memory.json"))
+        self.body_rhythm = BodyRhythmMemoryStore(os.path.join(base_dir, "body_rhythm_memory.json"))
+        self.tom_history = ToMHistoryStore(os.path.join(base_dir, "tom_history.json"))
+        self.self_continuity = SelfContinuityMemoryStore(os.path.join(base_dir, "self_continuity_memory.json"))
+        self.homeostatic_baseline = HomeostaticBaselineStore(os.path.join(base_dir, "homeostatic_baseline.json"))
+        self.concept_graph = ConceptGraphStore(os.path.join(base_dir, "concept_graph.json"))
         self.agent_mind = PersistentAgentMindStore(agent_mind_path_for_memory_core(base_dir))
 
         self.cue_builder = MemoryCueBuilder()
@@ -267,9 +289,15 @@ class MemoryCognitionCore:
             if target == "event_ledger":
                 record = self._commit_event_ledger(request, frame=frame)
                 stored_id = record.id
-            elif target in {"active_state", "homeostatic_baseline", "self_continuity"}:
+            elif target == "active_state":
                 snapshot = self.active_state.apply_commit(request)
                 stored_id = snapshot.updated_at
+            elif target == "homeostatic_baseline":
+                item = self.homeostatic_baseline.apply_commit(request)
+                stored_id = item.id if item else ""
+            elif target == "self_continuity":
+                item = self.self_continuity.apply_commit(request)
+                stored_id = item.id if item else ""
             elif target == "episodic_memory":
                 item = self.episodic.apply_commit(request, frame=frame)
                 stored_id = item.id if item else ""
@@ -293,6 +321,31 @@ class MemoryCognitionCore:
             elif target in {"memory_candidate", "unresolved_memory"}:
                 item = self.memory_candidate.apply_commit(request)
                 stored_id = item.id if item else ""
+            elif target == "belief_core":
+                item = self.belief_store.apply_commit(request)
+                stored_id = item.id if item else ""
+                if confidence < 0.72:
+                    outcome = "tentative"
+            elif target == "worldview_memory":
+                item = self.worldview.apply_commit(request)
+                stored_id = item.id if item else ""
+                if confidence < 0.74:
+                    outcome = "tentative"
+            elif target == "sociocultural_memory":
+                item = self.sociocultural.apply_commit(request)
+                stored_id = item.id if item else ""
+            elif target == "spatial_memory":
+                item = self.spatial.apply_commit(request)
+                stored_id = item.id if item else ""
+            elif target == "temporal_rhythm_memory":
+                item = self.temporal_rhythm.apply_commit(request)
+                stored_id = item.id if item else ""
+            elif target == "body_rhythm_memory":
+                item = self.body_rhythm.apply_commit(request)
+                stored_id = item.id if item else ""
+            elif target == "tom_history":
+                item = self.tom_history.apply_commit(request)
+                stored_id = item.id if item else ""
             else:
                 return MemoryCommitDecision(
                     outcome="rejected",
@@ -310,6 +363,17 @@ class MemoryCognitionCore:
                 confidence=confidence,
                 evidence_ids=evidence_ids,
             )
+
+        # Belief/worldview đã qua permission, confidence và evidence gate mới được
+        # đưa vào concept graph. Graph là chỉ mục liên kết, không phải một đường
+        # ghi lén vòng qua StateCommitter.
+        if stored_id and target in {"belief_core", "worldview_memory"}:
+            try:
+                graph_result = self.concept_graph.ingest_commit(request, record_id=stored_id)
+                if graph_result.get("nodes", 0) <= 0:
+                    warnings.append("concept_graph_no_extractable_concepts")
+            except Exception as exc:
+                warnings.append(f"concept_graph_failed:{type(exc).__name__}")
 
         return MemoryCommitDecision(
             outcome=outcome,
@@ -400,6 +464,16 @@ class MemoryCognitionCore:
             "procedural_memory": [item.to_dict() for item in self.procedural.load()],
             "repair_memory": [item.to_dict() for item in self.repair.load()],
             "memory_candidate": [item.to_dict() for item in self.memory_candidate.load()],
+            "belief_core": [item.to_dict() for item in self.belief_store.load()],
+            "worldview_memory": [item.to_dict() for item in self.worldview.load()],
+            "sociocultural_memory": [item.to_dict() for item in self.sociocultural.load()],
+            "spatial_memory": [item.to_dict() for item in self.spatial.load()],
+            "temporal_rhythm_memory": [item.to_dict() for item in self.temporal_rhythm.load()],
+            "body_rhythm_memory": [item.to_dict() for item in self.body_rhythm.load()],
+            "tom_history": [item.to_dict() for item in self.tom_history.load()],
+            "self_continuity": [item.to_dict() for item in self.self_continuity.load()],
+            "homeostatic_baseline": [item.to_dict() for item in self.homeostatic_baseline.load()],
+            "concept_graph": self.concept_graph.load(),
             "agent_mind": self.agent_mind.to_dict(),
         }
 
@@ -613,6 +687,21 @@ class MemoryCognitionCore:
             base = {"semantic": 4, "relational": 3, "episodic": 3, "procedural": 2, "affective_residue": 2, "repair": 2}
         scale = max(1, int(max_items)) / max(1, sum(base.values()))
         return {key: max(1, int(value * scale)) for key, value in base.items()}
+
+    def decay_canonical_long_term(self) -> dict[str, dict[str, int]]:
+        """Run evidence-preserving decay across canonical long-term stores."""
+        stores = {
+            "belief_core": self.belief_store,
+            "worldview_memory": self.worldview,
+            "sociocultural_memory": self.sociocultural,
+            "spatial_memory": self.spatial,
+            "temporal_rhythm_memory": self.temporal_rhythm,
+            "body_rhythm_memory": self.body_rhythm,
+            "tom_history": self.tom_history,
+            "self_continuity": self.self_continuity,
+            "homeostatic_baseline": self.homeostatic_baseline,
+        }
+        return {name: store.decay() for name, store in stores.items()}
 
     # Legacy hook giữ lại để downstream cũ không chết nếu còn gọi nhầm.
     def _packet_with_retrieval_resonance(self, packet: MemoryPacket, *, query_text: str) -> MemoryPacket:

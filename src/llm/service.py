@@ -2018,17 +2018,6 @@ class LlmService:
             value = default
         return max(384, min(value, 2048))
 
-    @staticmethod
-    def _prompt_total_budget() -> int:
-        """Ngân sách prompt tổng có thể chỉnh từ panel Advanced."""
-
-        raw = str(os.environ.get("ERIS_LLM_PROMPT_TOTAL_TOKENS", "4800") or "4800").strip()
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = 4800
-        return max(2400, min(value, 8000))
-
     def _complete_decision(
         self,
         *,
@@ -2083,7 +2072,7 @@ class LlmService:
         # Lưới an toàn cho parser/repair legacy. Chat/directive chính đã được
         # block-budget trước khi tới đây; các đường cũ vẫn không được vượt 4800.
         from llm.token_budget import budget_existing_messages
-        messages = budget_existing_messages(messages, total_tokens=self._prompt_total_budget(), output_reserve=max_tokens)
+        messages = budget_existing_messages(messages, total_tokens=4800, output_reserve=max_tokens)
         def _call(
             messages_value: list[dict],
             *,
@@ -2244,7 +2233,7 @@ class LlmService:
                 from llm.token_budget import budget_existing_messages
                 retry_messages = budget_existing_messages(
                     messages,
-                    total_tokens=self._prompt_total_budget(),
+                    total_tokens=4800,
                     output_reserve=retry_tokens,
                 )
                 response = _call(
@@ -3587,7 +3576,7 @@ class LlmService:
             memory_text="",
             user_text=user_msg,
             budget=PromptBlockBudget(
-                total_tokens=self._prompt_total_budget(), output_reserve=256, system_rules=1200,
+                total_tokens=4800, output_reserve=256, system_rules=1200,
                 user_history=2200, grounding=600, memory=0, state_style=300,
             ),
         )
@@ -4044,10 +4033,8 @@ class LlmService:
         # Khi high reasoning cần 1536 token, hạ riêng quota rules để tổng block
         # vẫn hợp lệ; user/history/grounding/memory không bị cắt âm thầm ở cuối.
         fixed_other = 500 + 500 + 400 + 300
-        prompt_total = self._prompt_total_budget()
-        rules_quota = max(1200, min(1800, prompt_total - completion_reserve - fixed_other))
+        rules_quota = max(1200, min(1800, 4800 - completion_reserve - fixed_other))
         chat_budget = ChatPromptBudget(
-            total_tokens=prompt_total,
             output_reserve=completion_reserve,
             system_rules=rules_quota,
         )

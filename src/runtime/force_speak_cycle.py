@@ -254,6 +254,7 @@ class ForceSpeakCycleMixin:
                 speech_core=speech_core,
                 snapshot=snapshot,
                 momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
+                frame=frame,
             )
             self._remember_inner_thought_rhythm(speech_core.inner_thought)
             self.fe_style_memory = self.fe_renderer.remember_style(
@@ -308,7 +309,7 @@ class ForceSpeakCycleMixin:
             self._log_decision_stage("force_speak_inner_thought", "pre_ti", decision)
             decision = self.ti_governor.enforce_decision(decision, ti_report)
             self._log_decision_stage("force_speak_inner_thought", "after_ti", decision)
-            decision = self._execute_system_action(decision, snapshot=snapshot)
+            decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
             if self._is_near_duplicate_text(decision.text or "", self.last_text) or self._is_generic_force_speak_ack(decision.text or ""):
                 repair_ti_context = (
                     inner_ti_context
@@ -342,13 +343,14 @@ class ForceSpeakCycleMixin:
                 self._log_decision_stage("force_speak_inner_thought_repair", "pre_ti", decision)
                 decision = self.ti_governor.enforce_decision(decision, ti_report)
                 self._log_decision_stage("force_speak_inner_thought_repair", "after_ti", decision)
-                decision = self._execute_system_action(decision, snapshot=snapshot)
+                decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
             decision = self._apply_post_generation_filters(
                 decision,
                 channel="force_speak",
                 speech_core=speech_core,
                 snapshot=snapshot,
                 momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
+                frame=frame,
             )
             self._remember_inner_thought_rhythm(speech_core.inner_thought)
             self.fe_style_memory = self.fe_renderer.remember_style(
@@ -429,13 +431,14 @@ class ForceSpeakCycleMixin:
             },
             vision_grounded=bool(getattr(self, "vision_facts", None)),
         )
-        decision = self._execute_system_action(decision, snapshot=snapshot)
+        decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
         decision = self._apply_post_generation_filters(
             decision,
             channel="force_speak",
             speech_core=speech_core,
             snapshot=snapshot,
             momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
+            frame=frame,
         )
 
         self.fe_style_memory = self.fe_renderer.remember_style(

@@ -5,7 +5,7 @@ runtime/shadow_pipeline.py
 Bridge chuyển tải CognitivePipeline (V3) vào runtime production.
 
 Ý tưởng:
-    Runtime thật vẫn chạy frame cũ (cortex/contracts.CognitiveFrame) qua
+    Production still exposes the compatibility frame (cortex/contracts.CognitiveFrame) qua
     coordinator/chat_cycle như thường. Song song đó, ta dựng RawSignal từ ĐÚNG
     cùng input (user_text, snapshot, vision_facts), chạy CognitivePipeline V3,
     rồi render debug_trace cả hai bên để so.
@@ -34,10 +34,12 @@ from typing import Any, Optional, Sequence
 from core.evidence import RawSignal
 from runtime.cognitive_pipeline import CognitivePipeline, PipelineResult
 from runtime.debug_trace import render_frame_trace
+from runtime.v3_authority import V3AuthorityController
+from runtime.v3_consolidation import build_v3_daydream_packets
 
 
 class ShadowPipelineMixin:
-    """Trộn vào RuntimeCoordinator để chạy V3 pipeline ở chế độ shadow."""
+    """Trộn V3 canonical pipeline + production authority vào RuntimeCoordinator."""
 
     # ------------------------------------------------------------------
     # Gate + lazy engine
@@ -65,6 +67,13 @@ class ShadowPipelineMixin:
             self._shadow_pipeline_instance = pipeline
         return pipeline
 
+    def _get_v3_authority(self) -> V3AuthorityController:
+        controller = getattr(self, "_v3_authority_instance", None)
+        if controller is None:
+            controller = V3AuthorityController()
+            self._v3_authority_instance = controller
+        return controller
+
     # ------------------------------------------------------------------
     # Promotion: V3 thành xương sống cho vài path quan trọng
     # ------------------------------------------------------------------
@@ -73,7 +82,7 @@ class ShadowPipelineMixin:
     #: memory (MemoryCognitionCore._budget_from_frame) + global_workspace, nên là
     #: path promote an toàn nhất. "focus"/"evidence" hiện ghi advisory lên frame
     #: (không ghi đè broadcast cũ) để downstream/prompt có thể đọc khi muốn.
-    _V3_PROMOTABLE_PATHS: frozenset[str] = frozenset({"budget", "focus", "evidence"})
+    _V3_PROMOTABLE_PATHS: frozenset[str] = frozenset({"budget", "focus", "evidence", "meaning", "tom", "agency", "permission", "speech", "body", "modality", "knowledge"})
 
     def _v3_promoted_paths(self) -> frozenset[str]:
         """Tập path V3 được phép ghi đè frame cũ.
@@ -141,6 +150,21 @@ class ShadowPipelineMixin:
             if evidence and self._set_frame_metadata(old_frame, "v3_selected_evidence", list(evidence)):
                 applied["evidence"] = list(evidence)
 
+        v3 = getattr(result, "frame", None)
+        for path, attr in (
+            ("meaning", "meaning"), ("tom", "tom"), ("agency", "agency"),
+            ("permission", "permission"), ("speech", "speech_plan"),
+            ("body", "body_plan"), ("modality", "modality"),
+        ):
+            if path in paths and v3 is not None:
+                value = getattr(v3, attr, None)
+                if value is not None and self._set_frame_metadata(old_frame, f"v3_{attr}", value):
+                    applied[path] = getattr(value, "to_dict", lambda: repr(value))()
+        if "knowledge" in paths and v3 is not None:
+            value = (getattr(v3, "metadata", {}) or {}).get("knowledge_acquisition")
+            if value is not None and self._set_frame_attr(old_frame, "v3_knowledge", value):
+                applied["knowledge"] = getattr(value, "to_dict", lambda: repr(value))()
+
         if applied:
             self._record_frame_note(old_frame, f"v3_promoted={','.join(sorted(applied))}")
             logger = getattr(self, "logger", None)
@@ -204,6 +228,8 @@ class ShadowPipelineMixin:
 
         try:
             started = time.time()
+            if user_text:
+                self._resolve_v3_feedback_for_previous_turn(user_text, current_frame=old_frame)
             raw_signals = self._build_shadow_raw_signals(
                 user_text=user_text,
                 snapshot=snapshot,
@@ -219,6 +245,7 @@ class ShadowPipelineMixin:
                 idle_seconds=idle_seconds,
                 legacy_frame=old_frame,
                 snapshot=snapshot,
+                runtime_owner=self,
             )
             elapsed_ms = (time.time() - started) * 1000.0
 
@@ -231,6 +258,10 @@ class ShadowPipelineMixin:
                 self._set_frame_attr(old_frame, "v3_cognitive_frame", result.frame)
                 self._set_frame_attr(old_frame, "v3_budget_mode", result.budget_mode)
                 self._set_frame_attr(old_frame, "v3_prompt_context", pipeline.render_prompt_context(result.frame))
+                knowledge = (getattr(result.frame, "metadata", {}) or {}).get("knowledge_acquisition")
+                self._set_frame_attr(old_frame, "v3_knowledge", knowledge)
+                projection = self._get_v3_authority().project_to_legacy(result.frame, old_frame)
+                self._set_frame_attr(old_frame, "v3_authority", projection)
                 self._record_frame_note(old_frame, f"v3_planning_complete={result.frame.frame_id}")
 
             self.last_shadow_pipeline_result = result
@@ -268,6 +299,104 @@ class ShadowPipelineMixin:
             self.last_shadow_comparison = {"error": repr(exc)}
             return None
 
+    def _apply_v3_authority_guard(
+        self,
+        decision: Any,
+        *,
+        frame: Any = None,
+        channel: str = "",
+    ) -> Any:
+        """Cổng authoritative cuối trước execution/body."""
+        try:
+            governed = self._get_v3_authority().apply_to_decision(
+                decision,
+                legacy_frame=frame,
+                v3_frame=getattr(frame, "v3_cognitive_frame", None) if frame is not None else None,
+                channel=channel,
+            )
+            v3_frame = getattr(frame, "v3_cognitive_frame", None) if frame is not None else None
+            if v3_frame is not None:
+                pipeline = self._get_shadow_pipeline()
+                governed, report = pipeline.grounding_guard.check(
+                    v3_frame,
+                    governed,
+                    external_grounding=getattr(frame, "grounding", None),
+                )
+                try:
+                    v3_frame.grounding = report
+                    frame.v3_grounding_report = report
+                except Exception:
+                    pass
+            return governed
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.warning("[v3 authority] lỗi, giữ decision cũ: %r", exc)
+            return decision
+
+    def _resolve_v3_feedback_for_previous_turn(self, user_text: str, *, current_frame: Any = None) -> Any:
+        """Dùng turn N+1 để đóng outcome thật của canonical turn N."""
+        previous = getattr(self, "last_cognitive_frame", None)
+        if previous is None or previous is current_frame or bool(getattr(previous, "v3_feedback_resolved", False)):
+            return None
+        v3_frame = getattr(previous, "v3_cognitive_frame", None)
+        if v3_frame is None or str(getattr(v3_frame, "status", "")) != "closed":
+            return None
+        try:
+            pipeline = self._get_shadow_pipeline()
+            report = pipeline.outcome_observer.observe_user_feedback_for_previous_frame(
+                v3_frame, str(user_text or ""), attach_to_frame=True
+            )
+            v3_frame.outcome = report
+            self_obs = pipeline.self_observer.reflect(v3_frame, outcome=report, attach_to_frame=False)
+            v3_frame.self_observation = self_obs
+            pipeline.self_observer.append_repair_commit_request(v3_frame, report=self_obs)
+            # Outcome thật chỉ xuất hiện ở turn kế tiếp. Chạy lại scheduler ở đây
+            # để correction/rupture không bị bỏ lỡ chỉ vì frame đã đóng trước đó.
+            # LongTermUpdateEngine chỉ phát StateCommitRequest, không ghi thẳng store.
+            try:
+                pipeline.long_term_update.prepare(v3_frame)
+            except Exception as exc:
+                try:
+                    v3_frame.add_warning(f"feedback long-term update failed: {exc!r}", actor="dream_consolidation")
+                except Exception:
+                    pass
+            self._set_frame_attr(previous, "v3_feedback_resolved", True)
+            self._set_frame_attr(previous, "outcome", report)
+            self._set_frame_attr(previous, "self_observation", self_obs)
+            new_requests = list(getattr(v3_frame, "commit_requests", []) or [])
+            requests = getattr(previous, "commit_requests", None)
+            if isinstance(requests, list):
+                requests.extend(new_requests)
+            # Previous frame đã commit xong. Repair từ phản hồi N+1 phải đi nhờ
+            # current frame qua StateCommitter, nếu không nó chỉ nằm đẹp trong
+            # một object đã đóng và chẳng bao giờ thành trí nhớ.
+            current_requests = getattr(current_frame, "commit_requests", None)
+            if isinstance(current_requests, list):
+                existing = {
+                    (str(getattr(req, "target", "")), str(getattr(req, "content", "")))
+                    for req in current_requests
+                }
+                for req in new_requests:
+                    key = (str(getattr(req, "target", "")), str(getattr(req, "content", "")))
+                    if key not in existing:
+                        current_requests.append(req)
+                        existing.add(key)
+            packets = build_v3_daydream_packets(v3_frame)
+            queue = getattr(self, "v3_daydream_packets", None)
+            if not isinstance(queue, list):
+                queue = []
+                self.v3_daydream_packets = queue
+            queue.extend(packets)
+            del queue[:-80]
+            self._record_frame_note(previous, f"v3_feedback_resolved={getattr(report, 'tags', ())}")
+            return report
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.warning("[v3 outcome feedback] lỗi: %r", exc)
+            return None
+
     def _v3_prompt_context(self, frame: Any) -> str:
         return str(getattr(frame, "v3_prompt_context", "") or "") if frame is not None else ""
 
@@ -287,12 +416,12 @@ class ShadowPipelineMixin:
             return None
         try:
             pipeline = self._get_shadow_pipeline()
-            result = pipeline.finalize_from_legacy(
+            result = pipeline.finalize_from_production(
                 v3_frame,
                 legacy_frame=old_frame,
                 final_decision=getattr(old_frame, "final_decision", None),
                 grounding=getattr(old_frame, "grounding", None),
-                execution=getattr(old_frame, "execution", None),
+                execution=(getattr(old_frame, "v3_tool_execution_result", None) or getattr(old_frame, "execution", None)),
                 outcome=getattr(old_frame, "outcome", None),
                 self_observation=getattr(old_frame, "self_observation", None),
             )
@@ -303,6 +432,16 @@ class ShadowPipelineMixin:
             legacy_requests = getattr(old_frame, "commit_requests", None)
             if isinstance(legacy_requests, list):
                 legacy_requests.extend(list(getattr(result.frame, "commit_requests", []) or []))
+            knowledge = (getattr(result.frame, "metadata", {}) or {}).get("knowledge_acquisition")
+            self._set_frame_attr(old_frame, "v3_knowledge", knowledge)
+            packets = build_v3_daydream_packets(result.frame)
+            self._set_frame_attr(old_frame, "v3_daydream_packets", packets)
+            queue = getattr(self, "v3_daydream_packets", None)
+            if not isinstance(queue, list):
+                queue = []
+                self.v3_daydream_packets = queue
+            queue.extend(packets)
+            del queue[:-80]
             self._record_frame_note(old_frame, f"v3_finalized={result.frame.frame_id}")
             self.last_shadow_pipeline_result = result
             self.last_shadow_trace = result.debug_trace
@@ -310,7 +449,7 @@ class ShadowPipelineMixin:
         except Exception as exc:
             logger = getattr(self, "logger", None)
             if logger is not None:
-                logger.warning("[v3 pipeline] finalize lỗi (runtime cũ vẫn commit): %r", exc)
+                logger.warning("[v3 pipeline] production finalization failed; compatibility runtime continues: %r", exc)
             self._record_frame_note(old_frame, f"v3_finalize_error={exc!r}")
             return None
 

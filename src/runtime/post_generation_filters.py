@@ -534,13 +534,18 @@ class PostGenerationFiltersMixin:
             previous_text=last_assistant_text,
         )
         decision = self._apply_novelty_advisory(decision, channel="chat")
-        # Nước 1 — van bước-cuối cho nhánh chat (flag-gated; mặc định no-op).
-        return self._apply_emotional_consequence_filter(
+        # Emotional consequence sửa nhịp/câu trước; canonical authority là cửa
+        # cuối quyết định có được nói, search và body action nào thật sự đi ra.
+        decision = self._apply_emotional_consequence_filter(
             decision,
             channel="chat",
             frame=frame,
             user_text=user_text,
         )
+        authority = getattr(self, "_apply_v3_authority_guard", None)
+        if callable(authority):
+            decision = authority(decision, frame=frame, channel="chat")
+        return decision
 
     def _append_trace(self, trace: str, marker: str) -> str:
         trace = str(trace or "").strip()
@@ -2136,10 +2141,12 @@ class PostGenerationFiltersMixin:
         speech_core: AgentSpeechCore,
         snapshot=None,
         momentum_topic: str = "",
+        frame=None,
     ) -> Decision:
         guard_mode = get_guard_mode()
+        authority = getattr(self, "_apply_v3_authority_guard", None)
         if guard_mode == OFF_GUARD_MODE:
-            return decision
+            return authority(decision, frame=frame, channel=channel) if callable(authority) else decision
         if guard_mode == LOG_ONLY_GUARD_MODE:
             # LOG_ONLY đúng nghĩa: chỉ ghi rằng guard *sẽ* sửa, không sửa decision thật.
             # Tên mode mà vẫn mutate là một lời nguyền bé xinh của cấu hình runtime.
@@ -2176,11 +2183,12 @@ class PostGenerationFiltersMixin:
                 speech_core=speech_core,
                 snapshot=snapshot,
             )
-            return self._apply_banter_arbiter(
+            decision = self._apply_banter_arbiter(
                 decision,
                 channel=channel,
                 speech_core=speech_core,
             )
+            return authority(decision, frame=frame, channel=channel) if callable(authority) else decision
 
         decision = self._apply_protocol_surface_guard(decision)
         decision = self._apply_internal_object_surface_guard(decision)
@@ -2249,13 +2257,13 @@ class PostGenerationFiltersMixin:
             speech_core=speech_core,
         )
         decision = self._apply_novelty_advisory(decision, channel=channel)
-        # Nước 1 — van bước-cuối chạy CUỐI CÙNG, sau mọi guard clip, để đo câu thật
-        # sự sẽ phát ra. Flag-gated; mặc định no-op.
-        return self._apply_emotional_consequence_filter(
+        # Emotional consequence chạy trước; V3 authority mới là cổng cuối cùng.
+        decision = self._apply_emotional_consequence_filter(
             decision,
             channel=channel,
             speech_core=speech_core,
         )
+        return authority(decision, frame=frame, channel=channel) if callable(authority) else decision
         # NOTE: advisory cũng được gắn ở _apply_chat_final_guards cho nhánh chat,
         # để cả hai cửa ra đều đi qua một cửa novelty chung.
 

@@ -135,6 +135,7 @@ PIPELINE_ORDER: tuple[str, ...] = (
     "raw_signal_collector",
     "evidence_normalizer",
     "attention_salience",
+    "cognitive_budget",
     "temporal_perception",
     "spatial_proprioception",
     "homeostasis",

@@ -406,129 +406,68 @@ class ExecutionReport(_Serializable):
 
 
 class CanonicalStageSuite:
-    """Tập adapter deterministic cho các stage còn lại của canonical frame."""
+    """Canonical stage facade backed by dedicated V3 engines.
+
+    Contracts remain in this module for compatibility, while decisions now live
+    in independent modules matching the Grand Architecture. The old single-file
+    heuristic blob was convenient in the same way a drawer full of loose wires
+    is convenient: only until someone needs to debug it.
+    """
+
+    def __init__(self) -> None:
+        # Local imports avoid a contracts/import cycle: engine modules consume
+        # the dataclasses re-exported by this compatibility module.
+        from cortex.temporal_perception import TemporalPerceptionEngine
+        from cortex.spatial_proprioception import SpatialProprioceptionEngine
+        from cortex.homeostasis import HomeostasisEngine
+        from cortex.affective_substrate import AffectiveSubstrateEngine
+        from cortex.epistemic_drive import EpistemicDriveEngine
+        from cortex.inquiry_planner import InquiryPlannerEngine
+        from cortex.relational_dynamics import RelationalDynamicsEngine
+        from cortex.permission_engine import PermissionEngine
+        from cortex.value_resolution import ValueResolutionEngine
+        from cortex.predictive_simulation import PredictiveSimulationEngine
+        from cortex.cognitive_arbitration import CognitiveArbitrationEngine
+        from cortex.agency_engine import AgencyEngine
+        from cortex.speech_opportunity import SpeechOpportunityEngine
+        from cortex.modality_sync import ModalitySyncEngine
+        from cortex.memory_cognition_adapter import MemoryCognitionAdapterEngine
+        from cortex.belief_core import BeliefCoreEngine
+        from cortex.calculated_noise import CalculatedNoiseEngine
+        from cortex.speech_planner import SpeechPlannerEngine
+        from cortex.body_action_planner import BodyActionPlannerEngine
+
+        self.temporal_engine = TemporalPerceptionEngine()
+        self.spatial_engine = SpatialProprioceptionEngine()
+        self.homeostasis_engine = HomeostasisEngine()
+        self.affect_engine = AffectiveSubstrateEngine()
+        self.epistemic_engine = EpistemicDriveEngine()
+        self.inquiry_engine = InquiryPlannerEngine()
+        self.relation_engine = RelationalDynamicsEngine()
+        self.permission_engine = PermissionEngine()
+        self.value_engine = ValueResolutionEngine()
+        self.simulation_engine = PredictiveSimulationEngine()
+        self.arbitration_engine = CognitiveArbitrationEngine()
+        self.agency_engine = AgencyEngine()
+        self.speech_opportunity_engine = SpeechOpportunityEngine()
+        self.modality_engine = ModalitySyncEngine()
+        self.memory_engine = MemoryCognitionAdapterEngine()
+        self.belief_engine = BeliefCoreEngine()
+        self.noise_engine = CalculatedNoiseEngine()
+        self.speech_planner_engine = SpeechPlannerEngine()
+        self.body_planner_engine = BodyActionPlannerEngine()
 
     def temporal(self, frame: Any, *, idle_seconds: Optional[float] = None, legacy_frame: Any = None) -> TemporalFrame:
-        now = float(_get(frame, "timestamp", time.time()) or time.time())
-        timestamps = [float(_get(ev, "timestamp", now) or now) for ev in (_get(frame, "evidence", []) or [])]
-        duration = max(0.0, now - min(timestamps)) if timestamps else 0.0
-        idle = max(0.0, float(idle_seconds or 0.0))
-        user_text = str(_get(frame, "user_text", "") or "").strip()
-        old_notes = " ".join(str(x) for x in (_get(legacy_frame, "debug_notes", []) or [])).lower()
-        repeat = 0.7 if "repeat" in old_notes else 0.0
-        if idle >= 90:
-            rhythm = "idle"
-        elif repeat > 0.5:
-            rhythm = "repetitive"
-        elif "correction" in old_notes or "rupture" in old_notes:
-            rhythm = "escalating"
-        elif len(user_text) > 220:
-            rhythm = "focused"
-        else:
-            rhythm = "focused"
-        turn_count = int(_first(legacy_frame, ("cycle_index", "turn_index"), 0) or 0)
-        if turn_count <= 1:
-            arc = "opening"
-        elif idle > 240:
-            arc = "closing"
-        elif len(user_text) > 300:
-            arc = "deep_work"
-        else:
-            arc = "building"
-        return TemporalFrame(
-            recency=_clamp(1.0 - min(duration, 300.0) / 300.0),
-            duration=_clamp(duration / 300.0),
-            rhythm=rhythm,  # type: ignore[arg-type]
-            recurrence=repeat,
-            session_arc=arc,  # type: ignore[arg-type]
-            unfinished_time_pressure=_clamp(0.35 if "unfinished" in old_notes else 0.0),
-            meaning_debt=_clamp(0.45 if "correction" in old_notes else 0.0),
-            waiting_pressure=_clamp(idle / 600.0),
-            repetition_fatigue=_clamp(repeat * 0.75),
-        )
+        return self.temporal_engine.evaluate(frame, idle_seconds=idle_seconds, legacy_frame=legacy_frame)
 
     def spatial(self, frame: Any, *, snapshot: Any = None, legacy_frame: Any = None) -> SpatialFrame:
-        x = float(_first(snapshot, ("inferred_pos_x", "body_x", "position_x"), 0.5) or 0.5)
-        x = max(0.0, min(1.0, x))
-        active = str(_first(snapshot, ("active_window", "active_app", "focus_summary"), "") or "").strip()
-        idle = float(_first(snapshot, ("idle_seconds",), 0.0) or 0.0)
-        posture = "idle" if idle >= 30 else "attentive"
-        relation = "parallel" if active else "unknown"
-        return SpatialFrame(
-            body_position=(x, 0.5),
-            gaze_target=active or ("user" if _get(frame, "channel", "") == "chat" else None),
-            posture=posture,  # type: ignore[arg-type]
-            distance_to_focus=0.35 if active else 0.5,
-            shared_space_relation=relation,  # type: ignore[arg-type]
-            approach_affordance=0.55 if idle < 15 else 0.30,
-            withdrawal_affordance=0.35 if idle < 15 else 0.60,
-            body_interaction_meaning="attend_to_active_focus" if active else None,
-        )
+        return self.spatial_engine.evaluate(frame, snapshot=snapshot, legacy_frame=legacy_frame)
 
     def homeostasis(self, frame: Any, *, legacy_frame: Any = None) -> HomeostaticState:
-        state = _first(legacy_frame, ("internal_state_before", "internal_state_after"), None)
-        energy = _clamp(_first(state, ("energy", "energy_budget", "vitality"), 0.65), 0.65)
-        cognitive_load = _clamp(_first(state, ("cognitive_load", "cognitive_tension", "load"), 0.25), 0.25)
-        social_load = _clamp(_first(state, ("social_load", "social_pressure"), 0.20), 0.20)
-        exposure = _clamp(_first(state, ("exposure_load", "exposure_recoil"), 0.10), 0.10)
-        curiosity = _clamp(_first(state, ("curiosity_pressure", "curiosity"), 0.25), 0.25)
-        attachment = _clamp(_first(state, ("attachment_pressure", "attachment"), 0.15), 0.15)
-        irritation = _clamp(_first(state, ("irritation_pressure", "irritation"), 0.05), 0.05)
-        tenderness = _clamp(_first(state, ("tenderness_pressure", "tenderness"), 0.10), 0.10)
-        silence_need = _clamp(max(0.0, cognitive_load - 0.55) + max(0.0, social_load - 0.60))
-        speech_cost = _clamp(0.15 + cognitive_load * 0.45 + social_load * 0.25)
-        readiness = _clamp(energy * (1.0 - cognitive_load * 0.55))
-        if irritation > 0.72 and _get(frame, "channel", "") == "chat":
-            policy = "short_grounded"
-        elif cognitive_load > 0.78:
-            policy = "short_grounded"
-        elif social_load > 0.78:
-            policy = "reduce_speech"
-        elif exposure > 0.78:
-            policy = "withdraw"
-        elif _get(frame, "channel", "") == "chat":
-            policy = "act_practically"
-        else:
-            policy = "normal"
-        return HomeostaticState(
-            energy_budget=energy,
-            cognitive_load=cognitive_load,
-            social_load=social_load,
-            exposure_load=exposure,
-            curiosity_pressure=curiosity,
-            attachment_pressure=attachment,
-            irritation_pressure=irritation,
-            tenderness_pressure=tenderness,
-            silence_recovery_need=silence_need,
-            speech_cost=speech_cost,
-            action_readiness=readiness,
-            regulation_policy=policy,  # type: ignore[arg-type]
-        )
+        return self.homeostasis_engine.evaluate(frame, legacy_frame=legacy_frame)
 
     def affect(self, frame: Any, homeostasis: HomeostaticState, *, legacy_frame: Any = None) -> AffectiveState:
-        state = _first(legacy_frame, ("internal_state_before", "internal_state_after"), None)
-        arousal = _clamp(_first(state, ("arousal",), 0.30), 0.30)
-        tension = _clamp(_first(state, ("tension", "cognitive_tension"), homeostasis.cognitive_load), homeostasis.cognitive_load)
-        restraint = _clamp(_first(state, ("restraint", "restraint_pressure"), 0.45), 0.45)
-        continuity = _clamp(_first(state, ("continuity_anxiety", "continuity_pressure"), 0.10), 0.10)
-        return AffectiveState(
-            energy=homeostasis.energy_budget,
-            fatigue=_clamp(1.0 - homeostasis.energy_budget),
-            arousal=arousal,
-            tension=tension,
-            curiosity=homeostasis.curiosity_pressure,
-            restraint=restraint,
-            attachment_pressure=homeostasis.attachment_pressure,
-            irritation=homeostasis.irritation_pressure,
-            tenderness=homeostasis.tenderness_pressure,
-            exposure_recoil=homeostasis.exposure_load,
-            continuity_anxiety=continuity,
-            affective_residue={
-                "tension": tension,
-                "irritation": homeostasis.irritation_pressure,
-                "tenderness": homeostasis.tenderness_pressure,
-            },
-        )
+        return self.affect_engine.evaluate(frame, homeostasis, legacy_frame=legacy_frame)
 
     def meaning(self, phase2: Any, frame: Any = None) -> CanonicalMeaningReport:
         hypotheses = list(_get(phase2, "meaning_hypotheses", []) or [])
@@ -614,316 +553,51 @@ class CanonicalStageSuite:
         )
 
     def epistemic(self, frame: Any, meaning: CanonicalMeaningReport, tom: CanonicalTheoryOfMindReport) -> EpistemicDrive:
-        salience = _get(frame, "salience", None)
-        contradiction = 0.0
-        for ev in _get(frame, "evidence", []) or []:
-            tags = {str(x).lower() for x in (_get(ev, "tags", []) or [])}
-            if "contradiction" in tags or "correction" in tags:
-                contradiction = max(contradiction, _confidence(ev, 0.5))
-        user_rel = _clamp(_first(salience, ("user_relevance", "broadcast_priority"), 0.5), 0.5)
-        gap = max(meaning.ambiguity, 1.0 - meaning.confidence)
-        intrusion = _clamp(tom.global_overread_risk * 0.7 + 0.15)
-        return EpistemicDrive(
-            curiosity_pressure=_clamp(_get(_get(frame, "homeostasis", None), "curiosity_pressure", 0.2), 0.2),
-            knowledge_gap=_clamp(gap),
-            contradiction_pressure=contradiction,
-            worldview_tension=_clamp(contradiction * 0.5),
-            user_relevance=user_rel,
-            identity_relevance=_clamp(_first(salience, ("identity_relevance",), 0.0)),
-            inquiry_urgency=_clamp(gap * user_rel + contradiction * 0.45),
-            intrusion_risk=intrusion,
-        )
+        return self.epistemic_engine.evaluate(frame, meaning, tom)
 
     def inquiry(self, frame: Any, drive: EpistemicDrive, meaning: CanonicalMeaningReport) -> InquiryPlan:
-        text = str(_get(frame, "user_text", "") or "").lower()
-        asks_current = any(marker in text for marker in ("mới nhất", "hiện tại", "hôm nay", "latest", "current", "giá bao nhiêu"))
-        if drive.intrusion_risk > 0.65 and drive.knowledge_gap < 0.75:
-            action = "suppress_inquiry"
-            reason = "Overread/intrusion risk cao hơn giá trị câu hỏi phụ."
-        elif asks_current and drive.knowledge_gap > 0.45:
-            action = "search_web"
-            reason = "Yêu cầu có dấu hiệu phụ thuộc dữ liệu hiện tại."
-        elif meaning.needs_clarification:
-            action = "ask_user"
-            reason = "Nghĩa chi phối chưa đủ chắc để cam kết hành động."
-        elif drive.contradiction_pressure > 0.55:
-            action = "compare_patterns"
-            reason = "Có contradiction/correction cần đối chiếu."
-        elif drive.knowledge_gap > 0.55:
-            action = "search_memory"
-            reason = "Thiếu context nhưng chưa cần làm phiền user."
-        else:
-            action = "infer_quietly"
-            reason = "Đủ evidence để tiếp tục mà không đào sâu thêm."
-        return InquiryPlan(
-            action=action,  # type: ignore[arg-type]
-            reason=reason,
-            expected_value=_clamp(drive.inquiry_urgency),
-            privacy_cost=_clamp(drive.intrusion_risk),
-            interruption_cost=0.35 if action == "ask_user" else 0.05,
+        return self.inquiry_engine.plan(frame, drive, meaning)
+
+    def memory_packet(self, frame: Any, *, legacy_frame: Any = None, runtime_owner: Any = None, knowledge: Any = None) -> CanonicalMemoryPacket:
+        return self.memory_engine.build(
+            frame, legacy_frame=legacy_frame, runtime_owner=runtime_owner, knowledge=knowledge
         )
 
-    def memory_packet(self, frame: Any, *, legacy_frame: Any = None) -> CanonicalMemoryPacket:
-        workspace = _get(frame, "workspace", None)
-        selected = [str(x) for x in (_get(workspace, "selected_memory", []) or []) if str(x).strip()]
-        resonance = _get(legacy_frame, "memory_resonance", None)
-        episodic = list(selected)
-        semantic: list[str] = []
-        relational: list[str] = []
-        for attr, target in (("episodic", episodic), ("semantic", semantic), ("relational", relational)):
-            values = _get(resonance, attr, []) or []
-            if isinstance(values, str):
-                values = [values]
-            target.extend(str(x) for x in values if str(x).strip())
-        budget = {"fast": 180, "normal": 420, "deep": 760, "reflection": 620}.get(str(_get(frame, "budget_mode", "normal")), 420)
-        return CanonicalMemoryPacket(
-            episodic=list(dict.fromkeys(episodic))[:6],
-            semantic=list(dict.fromkeys(semantic))[:6],
-            relational=list(dict.fromkeys(relational))[:4],
-            confidence_notes=["Chỉ memory đã qua GlobalWorkspace được surface vào packet."],
-            token_budget=budget,
-        )
-
-    def belief(self, frame: Any, meaning: CanonicalMeaningReport) -> BeliefReport:
-        active: list[Belief] = []
-        candidates: list[Belief] = []
-        contradictions: list[str] = []
-        for ev in (_get(frame, "evidence", []) or [])[:12]:
-            claim = _summary(ev)
-            if not claim:
-                continue
-            eid = str(_first(ev, ("id", "evidence_id"), ""))
-            conf = _confidence(ev, 0.5)
-            raw = str(_get(ev, "raw_or_inferred", "raw")) == "raw"
-            belief = Belief(
-                id=f"belief:{eid or hashlib.sha1(claim.encode('utf-8')).hexdigest()[:10]}",
-                claim=claim,
-                domain="user" if str(_get(ev, "source", "")) == "user_chat" else "world",
-                confidence=conf,
-                source_ids=[eid] if eid else [],
-                status="active" if raw and conf >= 0.72 else "tentative",
-            )
-            (active if belief.status == "active" else candidates).append(belief)
-            tags = {str(x).lower() for x in (_get(ev, "tags", []) or [])}
-            if "contradiction" in tags:
-                contradictions.append(claim)
-        open_questions = []
-        if meaning.needs_clarification:
-            open_questions.append("Ý định chính của user còn mơ hồ; cần clarification hoặc hành động reversible.")
-        return BeliefReport(active_beliefs=active, candidate_beliefs=candidates, contradictions=contradictions, open_questions=open_questions)
+    def belief(self, frame: Any, meaning: CanonicalMeaningReport, *, knowledge: Any = None) -> BeliefReport:
+        return self.belief_engine.evaluate(frame, meaning, knowledge=knowledge)
 
     def relation(self, frame: Any, *, legacy_frame: Any = None) -> RelationalState:
-        state = _first(legacy_frame, ("internal_state_before", "internal_state_after"), None)
-        rel = _first(state, ("relationship_dynamics", "relationship_state"), None)
-        trust = _clamp(_first(rel, ("trust", "trust_score"), 0.5), 0.5)
-        familiarity = _clamp(_first(rel, ("familiarity", "familiarity_score", "closeness"), 0.5), 0.5)
-        rupture = _clamp(_first(rel, ("rupture", "rupture_score", "distance_pressure"), 0.0), 0.0)
-        repair = _clamp(_first(rel, ("repair_need", "repair_pressure"), rupture), rupture)
-        return RelationalState(
-            trust=trust,
-            familiarity=familiarity,
-            rupture=rupture,
-            repair_need=repair,
-            preferred_distance=_clamp(0.65 - familiarity * 0.35 + rupture * 0.25),
-            attachment_visibility=_clamp(_first(rel, ("attachment_visibility",), familiarity * 0.35), familiarity * 0.35),
-            dignity_defense=_clamp(_first(rel, ("dignity_defense",), 0.55), 0.55),
-            teasing_permission=_clamp(trust * 0.55 + familiarity * 0.25 - rupture * 0.8),
-            privacy_sensitivity=_clamp(_first(rel, ("privacy_sensitivity",), 0.55), 0.55),
-            overread_correction=_clamp(_first(rel, ("overread_correction",), 0.55), 0.55),
-            user_specific_rhythm=str(_first(rel, ("user_specific_rhythm", "last_event"), "unknown") or "unknown"),
-            cultural_boundary=0.5,
-        )
+        return self.relation_engine.evaluate(frame, legacy_frame=legacy_frame)
 
-    def permission(self, frame: Any, tom: CanonicalTheoryOfMindReport, relation: RelationalState, inquiry: InquiryPlan) -> PermissionReport:
-        evidence = list(_get(frame, "evidence", []) or [])
-        privacy_levels = {str(_get(ev, "privacy_level", "normal")) for ev in evidence}
-        sensitive = bool(privacy_levels & {"private", "sensitive"})
-        overread = tom.global_overread_risk
-        max_intensity = _clamp(0.72 - overread * 0.38 - relation.rupture * 0.22)
-        allowed_search = inquiry.action == "search_web" and not sensitive
-        allowed_tease = relation.teasing_permission >= 0.45 and relation.rupture < 0.30 and overread < 0.55
-        public = not (sensitive and _get(frame, "channel", "") != "chat")
-        return PermissionReport(
-            public_sayable=public,
-            prompt_sayable=not sensitive,
-            memory_storable=not sensitive,
-            raw_evidence_storable=False,
-            allowed_reaction=["answer", "clarify", "practical_help", "repair"] + (["tease"] if allowed_tease else []),
-            allowed_body_action=["none", "face_user", "look_at_focus", "stillness", "idle_shift"],
-            allowed_search=allowed_search,
-            allowed_tease=allowed_tease,
-            allowed_proactivity=relation.trust > 0.62 and relation.rupture < 0.20,
-            max_intensity=max_intensity,
-            reason="Giới hạn theo privacy, overread risk và trạng thái quan hệ; permission chỉ thu hẹp action space.",
-        )
+    def permission(self, frame: Any, tom: CanonicalTheoryOfMindReport, relation: RelationalState, inquiry: InquiryPlan, *, knowledge: Any = None) -> PermissionReport:
+        return self.permission_engine.evaluate(frame, tom, relation, inquiry, knowledge=knowledge)
 
     def values(self, frame: Any, inquiry: InquiryPlan, permission: PermissionReport, relation: RelationalState) -> ValueResolutionReport:
-        conflicts: list[ValueConflict] = []
-        if inquiry.action in {"ask_user", "search_web"} and inquiry.privacy_cost > 0.45:
-            conflicts.append(ValueConflict("privacy_conflict", ["curiosity", "privacy"], inquiry.privacy_cost, "privacy thắng; giảm hoặc hoãn inquiry"))
-        if relation.repair_need > 0.45:
-            conflicts.append(ValueConflict("relational_conflict", ["dignity", "relationship_trust"], relation.repair_need, "acknowledge ngắn rồi sửa hành vi"))
-        winner = "privacy" if any(c.conflict_type == "privacy_conflict" for c in conflicts) else "truthfulness"
-        return ValueResolutionReport(
-            conflicts=conflicts,
-            winning_value=winner,
-            suppressed_values=["dramatic_effect"] + (["curiosity"] if winner == "privacy" else []),
-            max_allowed_intensity=permission.max_intensity,
-            reason="Grounding và autonomy được ưu tiên; continuity chỉ thắng khi vô hại.",
-        )
+        return self.value_engine.resolve(frame, inquiry, permission, relation)
 
     def simulations(self, frame: Any, inquiry: InquiryPlan, permission: PermissionReport, relation: RelationalState) -> list[SimulatedActionOutcome]:
-        channel = str(_get(frame, "channel", "") or "")
-        chat = channel == "chat"
-        actions = ["practical_help", "ask", "stay_silent", "body_only"]
-        if permission.allowed_search:
-            actions.append("search")
-        result: list[SimulatedActionOutcome] = []
-        for action in actions:
-            usefulness = {
-                "practical_help": 0.92 if chat else 0.45,
-                "ask": 0.75 if inquiry.action == "ask_user" else 0.42,
-                "search": 0.82,
-                "stay_silent": 0.15 if chat else 0.68,
-                "body_only": 0.10 if chat else 0.55,
-            }.get(action, 0.4)
-            social_risk = 0.12 if action == "practical_help" else (0.35 if action == "ask" else 0.08)
-            privacy_risk = inquiry.privacy_cost if action in {"ask", "search"} else 0.02
-            relationship_cost = 0.55 if chat and action in {"stay_silent", "body_only"} else social_risk * 0.4
-            continuity_gain = 0.72 if action == "practical_help" else (0.48 if action == "stay_silent" else 0.42)
-            result.append(SimulatedActionOutcome(
-                action_type=action,
-                expected_user_reaction="nhận được tiến triển cụ thể" if action == "practical_help" else "phản ứng phụ thuộc ngữ cảnh",
-                usefulness=_clamp(usefulness),
-                social_risk=_clamp(social_risk + relation.rupture * 0.2),
-                privacy_risk=_clamp(privacy_risk),
-                relationship_cost=_clamp(relationship_cost),
-                continuity_gain=_clamp(continuity_gain),
-                confidence=0.72,
-            ))
-        return result
+        return self.simulation_engine.simulate(frame, inquiry, permission, relation)
 
     def arbitration(self, simulations: list[SimulatedActionOutcome], inquiry: InquiryPlan, permission: PermissionReport) -> ArbitrationResult:
-        def utility(item: SimulatedActionOutcome) -> float:
-            return item.usefulness + item.continuity_gain * 0.45 - item.social_risk * 0.55 - item.privacy_risk * 0.8 - item.relationship_cost * 0.5
-        allowed = [x for x in simulations if not (x.action_type == "search" and not permission.allowed_search)]
-        winner = max(allowed, key=utility, default=None)
-        action = winner.action_type if winner else "stay_silent"
-        drive_map = {"practical_help": "practical_help", "ask": "curiosity", "search": "knowledge_acquisition", "stay_silent": "restraint", "body_only": "presence"}
-        winning_drive = drive_map.get(action, action)
-        return ArbitrationResult(
-            competing_drives=[drive_map.get(x.action_type, x.action_type) for x in allowed],
-            winning_drive=winning_drive,
-            suppressed_drives=[drive_map.get(x.action_type, x.action_type) for x in allowed if x is not winner],
-            compromise_action="answer_directly_no_intrusive_probe" if action == "practical_help" and inquiry.privacy_cost > 0.35 else action,
-            reason=f"Utility cao nhất sau risk/privacy/relationship cost: {action}.",
-            confidence=_clamp(winner.confidence if winner else 0.3),
-        )
+        return self.arbitration_engine.resolve(simulations, inquiry, permission)
 
     def agency(self, arbitration: ArbitrationResult, inquiry: InquiryPlan) -> ActionCommitment:
-        mapping = {"practical_help": "speak", "curiosity": "ask", "knowledge_acquisition": "search", "restraint": "stay_silent", "presence": "body_only"}
-        intent = mapping.get(arbitration.winning_drive, "speak")
-        return ActionCommitment(
-            intent=intent,  # type: ignore[arg-type]
-            goal_preserved="giải quyết yêu cầu hiện tại mà không overread",
-            commitment_strength=arbitration.confidence,
-            reversibility=0.95 if intent in {"ask", "stay_silent", "body_only"} else 0.72,
-            reason=arbitration.reason,
-        )
+        return self.agency_engine.commit(arbitration, inquiry)
 
     def noise(self, frame: Any) -> NoiseFrame:
-        seed = hashlib.sha256(str(_get(frame, "frame_id", "")).encode("utf-8")).digest()
-        vals = [(b / 255.0) * 0.12 for b in seed[:7]]
-        return NoiseFrame(*vals)
+        return self.noise_engine.generate(frame)
 
     def speech_opportunity(self, frame: Any, agency: ActionCommitment, homeostasis: HomeostaticState, permission: PermissionReport) -> SpeechOpportunity:
-        channel = str(_get(frame, "channel", "") or "")
-        if not permission.public_sayable:
-            return SpeechOpportunity(mode="silence", speech_allowed=False, reason_to_stay_silent="Privacy boundary chặn public surface.", urgency=0.0, interruption_cost=0.0)
-        if agency.intent == "stay_silent":
-            return SpeechOpportunity(mode="silence", speech_allowed=False, reason_to_stay_silent="Arbitration chọn restraint.", urgency=0.1, interruption_cost=0.0)
-        if agency.intent == "body_only":
-            return SpeechOpportunity(mode="body_only_reaction", speech_allowed=False, reason_to_stay_silent="Body-only presence có utility cao hơn speech.", urgency=0.2, interruption_cost=0.0)
-        mode = "direct_answer" if channel == "chat" else "reengagement"
-        if homeostasis.regulation_policy in {"short_grounded", "reduce_speech"}:
-            mode = "practical_help"
-        return SpeechOpportunity(
-            mode=mode,  # type: ignore[arg-type]
-            speech_allowed=True,
-            reason_to_speak="Có yêu cầu trực tiếp và practical utility cao.",
-            reason_to_stay_silent="Speech cost/interrupt cost có thể thắng nếu state xấu đi.",
-            urgency=_clamp(0.7 if channel == "chat" else 0.35),
-            interruption_cost=_clamp(homeostasis.speech_cost * (0.25 if channel == "chat" else 0.75)),
-        )
+        return self.speech_opportunity_engine.evaluate(frame, agency, homeostasis, permission)
 
     def speech_plan(self, frame: Any, opportunity: SpeechOpportunity, meaning: CanonicalMeaningReport, relation: RelationalState, permission: PermissionReport) -> SpeechPlan:
-        text = str(_get(frame, "user_text", "") or "").strip().lower()
-        technical = any(x in text for x in ("code", "file", "fix", "lỗi", "bug", "repo", "src", "pipeline", "kiến trúc", "json", "python"))
-        correction = any(x in text for x in ("không phải", "chưa", "sai", "tôi nhớ là", "ý tôi"))
-        if not opportunity.speech_allowed:
-            act = "compress"
-        elif correction or relation.repair_need > 0.48:
-            act = "repair"
-        elif meaning.needs_clarification:
-            act = "clarify"
-        elif technical:
-            act = "technical_diagnosis"
-        else:
-            act = "answer"
-        return SpeechPlan(
-            speech_act=act,  # type: ignore[arg-type]
-            tone="cold_soft" if relation.rupture < 0.4 else "restrained_repair",
-            warmth=_clamp(0.20 + relation.trust * 0.32),
-            restraint=_clamp(0.35 + (1.0 - permission.max_intensity) * 0.55),
-            directness=0.90 if technical or correction else 0.72,
-            tease_level=0.18 if permission.allowed_tease and not technical and not correction else 0.0,
-            technical_depth=0.88 if technical else 0.35,
-            emotional_visibility=_clamp(relation.attachment_visibility * 0.55),
-            must_include=["answer-first", "state uncertainty where needed"] + (["acknowledge correction"] if correction else []),
-            must_avoid=list(_get(_get(frame, "tom", None), "forbidden_assumptions", []) or []) + ["unsupported current-state claims"],
-        )
+        return self.speech_planner_engine.plan(frame, opportunity, meaning, relation, permission)
 
     def body_plan(self, frame: Any, opportunity: SpeechOpportunity, spatial: SpatialFrame, permission: PermissionReport) -> BodyActionPlan:
-        if not permission.allowed_body_action:
-            return BodyActionPlan()
-        if opportunity.mode == "silence":
-            action = "stillness"
-        elif spatial.gaze_target and spatial.gaze_target != "user":
-            action = "look_at_focus"
-        elif str(_get(frame, "channel", "")) == "chat":
-            action = "face_user"
-        else:
-            action = "idle_shift"
-        return BodyActionPlan(
-            action=action,  # type: ignore[arg-type]
-            gaze_target=spatial.gaze_target,
-            posture="attentive" if opportunity.speech_allowed else "neutral",
-            movement=action,
-            intensity=0.35 if opportunity.speech_allowed else 0.15,
-            timing_delay_ms=80 if opportunity.speech_allowed else 180,
-        )
+        return self.body_planner_engine.plan(frame, opportunity, spatial, permission)
 
     def modality(self, speech: SpeechPlan, body: BodyActionPlan, spatial: SpatialFrame, permission: PermissionReport, *, system_action: str = "") -> ModalitySyncFrame:
-        notes: list[str] = []
-        contradiction = 0.0
-        if speech.speech_act in {"support", "repair"} and body.action in {"withdraw", "turn_away_softly"}:
-            contradiction = 0.72
-            notes.append("Repair/support không được đi cùng withdrawal mạnh.")
-        if body.action not in permission.allowed_body_action:
-            contradiction = max(contradiction, 0.85)
-            notes.append("Body action ngoài permission; fallback stillness.")
-            body = BodyActionPlan(action="stillness", posture="neutral", intensity=0.1)
-        safety = _clamp(1.0 - spatial.obstruction_risk)
-        return ModalitySyncFrame(
-            speech_plan=speech,
-            body_plan=body,
-            system_action=system_action or None,
-            emotional_congruence=_clamp(1.0 - contradiction * 0.65),
-            spatial_safety=safety,
-            contradiction_risk=contradiction,
-            final_delay_ms=max(0, int(body.timing_delay_ms)),
-            correction_notes=notes,
-        )
+        return self.modality_engine.sync(speech, body, spatial, permission, system_action=system_action)
 
     def deferred_wording(self) -> LLMWordingResult:
         return LLMWordingResult(raw_text="", parsed_text=None, parser_ok=True, violations=[], deferred=True)
@@ -963,6 +637,7 @@ class CanonicalStageSuite:
         opportunity = _get(frame, "speech_opportunity", None)
         speech = _get(frame, "speech_plan", None)
         agency = _get(frame, "agency", None)
+        knowledge = (_get(frame, "metadata", {}) or {}).get("knowledge_acquisition")
         lines = ["[V3_COGNITIVE_PLAN]"]
         if dominant:
             lines.append(f"meaning={dominant[:180]}")
@@ -971,6 +646,14 @@ class CanonicalStageSuite:
         lines.append(f"agency={_get(agency, 'intent', 'observe')}; speech_allowed={bool(_get(opportunity, 'speech_allowed', False))}; mode={_get(opportunity, 'mode', 'silence')}")
         lines.append(f"speech_act={_get(speech, 'speech_act', 'answer')}; tone={_get(speech, 'tone', 'cold_soft')}; directness={_get(speech, 'directness', 0.7):.2f}; technical_depth={_get(speech, 'technical_depth', 0.3):.2f}")
         lines.append(f"max_intensity={_get(permission, 'max_intensity', 0.5):.2f}; allowed_tease={bool(_get(permission, 'allowed_tease', False))}")
+        if knowledge is not None:
+            lines.append(
+                f"knowledge_action={_get(knowledge, 'action', 'none')}; "
+                f"succeeded={bool(_get(knowledge, 'succeeded', False))}; deferred={bool(_get(knowledge, 'deferred', False))}"
+            )
+            facts = [str(x) for x in (_get(knowledge, "distilled_facts", []) or []) if str(x).strip()][:3]
+            for idx, fact in enumerate(facts, 1):
+                lines.append(f"knowledge_fact_{idx}={fact[:240]}")
         avoid = list(_get(speech, "must_avoid", []) or [])[:5]
         if avoid:
             lines.append("must_avoid=" + " | ".join(str(x)[:100] for x in avoid))

@@ -1209,6 +1209,20 @@ class RuntimeCoordinator(
                 )
             )
 
+        # Canonical V3 packets được tạo khi frame đóng và khi user phản hồi turn
+        # trước. Hợp nhất vào scheduler hiện hữu thay vì dựng thêm một giấc mơ
+        # song song, bởi repo đã đủ nhiều tiềm thức cho một nhân vật rồi.
+        for packet in tuple(getattr(self, "v3_daydream_packets", ()) or ())[-20:]:
+            add(
+                packet_id=str(getattr(packet, "id", "") or ""),
+                kind=str(getattr(packet, "kind", "unresolved") or "unresolved"),
+                text=getattr(packet, "text", ""),
+                evidence_ids=tuple(getattr(packet, "evidence_ids", ()) or ()),
+                importance=float(getattr(packet, "importance", 0.55) or 0.55),
+                confidence=float(getattr(packet, "confidence", 0.55) or 0.55),
+                metadata=dict(getattr(packet, "metadata", {}) or {}),
+            )
+
         resonance = getattr(self, "active_memory_resonance", None)
         if resonance is not None:
             for idx, activation in enumerate(tuple(getattr(resonance, "activations", ()) or ())[:limit]):
@@ -2051,8 +2065,6 @@ class RuntimeCoordinator(
         thật, nhưng chỉ đưa prompt context nếu ledger xác nhận audio đã thật sự
         ``audio_start`` và còn phần pending đáng kể.
         """
-        if os.environ.get("ERIS_INTERRUPT_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
-            return None
         text = str(user_text or "").strip()
         if not text:
             return None
@@ -5468,12 +5480,9 @@ class RuntimeCoordinator(
             self.logger.debug("[incoming] ignored unknown msg_type=%s", msg_type)
 
     def _handle_settings_update(self, msg: dict) -> None:
-        """Áp dụng setting TTS/Advanced do panel Body gửi qua UDP."""
+        """Áp dụng TTS setting do panel Body gửi qua UDP mà không restart brain."""
 
         scope = str(msg.get("scope", "tts") or "tts").strip().lower()
-        if scope == "advanced":
-            self._handle_advanced_settings_update(msg)
-            return
         if scope != "tts":
             self.logger.debug("[settings] ignored unsupported scope=%s", scope)
             return
@@ -5529,127 +5538,6 @@ class RuntimeCoordinator(
         except Exception as exc:
             self.logger.debug("[settings] ack send failed: %s", exc)
 
-    def _handle_advanced_settings_update(self, msg: dict) -> None:
-        """Áp dụng allowlist Advanced do Body gửi qua UDP.
-
-        Những mục đọc env theo từng lượt có hiệu lực ngay. Các thành phần được
-        dựng một lần lúc boot vẫn được ghi nhận và báo ``restart_required`` để
-        panel không giả vờ rằng mọi nút đều có phép thuật thời gian thực.
-        """
-
-        raw = msg.get("advanced_env")
-        if not isinstance(raw, dict):
-            self.logger.warning("[settings] advanced_env phải là object")
-            return
-
-        bool_keys = {
-            "ERIS_NO_FALLBACK_MODE",
-            "ERIS_SELF_CRITIQUE_ENABLED",
-            "ERIS_CHAT_DIRECTOR_SECOND_PASS",
-            "ERIS_DDS_ENABLED",
-            "ERIS_STRICT_GROUNDING",
-            "ERIS_MEMORY_SEMANTIC_PARSER",
-            "ERIS_MEMORY_DIGEST_MAINTENANCE",
-            "ERIS_V3_PIPELINE",
-            "ERIS_PERFORMANCE_ACTS_ENABLED",
-            "ERIS_INTERRUPT_ENABLED",
-            "ERIS_STAGE_PROTOCOL",
-            "ERIS_STAGE_SEGMENT_TTS",
-            "ERIS_TTS_TASK_MANAGER",
-            "ERIS_TTS_STAGE_LOCALIZE",
-            "ERIS_TTS_AUDIO_POLISH",
-        }
-        int_ranges = {
-            "ERIS_LLM_COMPLETION_CHAT_TOKENS": (384, 2048),
-            "ERIS_LLM_TIMEOUT_CHAT_S": (5, 120),
-            "ERIS_LLM_MAX_CONCURRENCY": (1, 16),
-            "ERIS_LLM_PROMPT_TOTAL_TOKENS": (2400, 8000),
-            "ERIS_LLM_PROMPT_HARD_CAP_TOKENS": (1024, 12000),
-            "ERIS_TTS_PREFETCH_WORKERS": (1, 8),
-            "ERIS_STAGE_MAX_TTS_SEGMENTS": (1, 12),
-        }
-        enum_values = {
-            "ERIS_REASONING_EFFORT": {"low", "medium", "high"},
-            "ERIS_MEMORY_MAINTENANCE_BUDGET": {"small", "medium", "large"},
-            "ERIS_TTS_SEGMENT_DISPATCH": {"inline", "queued"},
-        }
-        restart_keys = {
-            "ERIS_LLM_MAX_CONCURRENCY",
-            "ERIS_STRICT_GROUNDING",
-            "ERIS_MEMORY_SEMANTIC_PARSER",
-            "ERIS_MEMORY_DIGEST_MAINTENANCE",
-            "ERIS_MEMORY_MAINTENANCE_BUDGET",
-            "ERIS_V3_PIPELINE",
-            "ERIS_TTS_PREFETCH_WORKERS",
-        }
-
-        allowed = bool_keys | set(int_ranges) | set(enum_values)
-        applied: list[str] = []
-        rejected: list[str] = []
-        restart_required: list[str] = []
-
-        for key, value in raw.items():
-            name = str(key or "").strip()
-            if name not in allowed:
-                rejected.append(name or "<empty>")
-                continue
-            text = str(value if value is not None else "").strip().lower()
-            if name in bool_keys:
-                if text in {"1", "true", "yes", "on"}:
-                    normalized = "1"
-                elif text in {"0", "false", "no", "off"}:
-                    normalized = "0"
-                else:
-                    rejected.append(name)
-                    continue
-            elif name in int_ranges:
-                try:
-                    number = int(text)
-                except (TypeError, ValueError):
-                    rejected.append(name)
-                    continue
-                lo, hi = int_ranges[name]
-                if number < lo or number > hi:
-                    rejected.append(name)
-                    continue
-                normalized = str(number)
-            else:
-                if text not in enum_values[name]:
-                    rejected.append(name)
-                    continue
-                normalized = text
-
-            os.environ[name] = normalized
-            applied.append(name)
-            if name in restart_keys:
-                restart_required.append(name)
-
-        # Một số stage object giữ helper được tạo từ env. Dựng lại builder là
-        # rẻ và làm các setting pipeline động phản ánh ngay ở lượt tiếp theo.
-        if any(name.startswith("ERIS_STAGE_") or name.startswith("ERIS_TTS_") or name == "ERIS_PERFORMANCE_ACTS_ENABLED" for name in applied):
-            self.stage_frame_builder = None
-
-        self.logger.info(
-            "[settings] Advanced live applied=%d rejected=%d restart_required=%d",
-            len(applied), len(rejected), len(restart_required),
-        )
-        try:
-            self.transport.send_json(
-                {
-                    "type": "settings_update_ack",
-                    "parse_mode": "settings_update_ack",
-                    "should_speak": False,
-                    "settings_update_ack": {
-                        "scope": "advanced",
-                        "applied": applied,
-                        "rejected": rejected,
-                        "restart_required": restart_required,
-                    },
-                }
-            )
-        except Exception as exc:
-            self.logger.debug("[settings] advanced ack send failed: %s", exc)
-
     def _handle_stage_inbound_event(self, msg: dict) -> None:
         """Nhận event ngược từ frontend/sân khấu.
 
@@ -5685,13 +5573,6 @@ class RuntimeCoordinator(
             self._emit_stage_protocol_state("stage_ack_received", data=event.to_meta())
 
     def _handle_stage_interrupt_event(self, event) -> None:
-        if os.environ.get("ERIS_INTERRUPT_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
-            self._emit_stage_protocol_state(
-                "interrupt_ack",
-                reason=str(getattr(event, "reason", "") or ""),
-                data={**event.to_meta(), "ignored": True, "disabled": True},
-            )
-            return
         text = str(getattr(event, "message", "") or "").strip()
         if text:
             self._capture_speech_interrupt_for_user(text, timestamp=float(getattr(event, "timestamp", time.time()) or time.time()))
@@ -5981,6 +5862,9 @@ class RuntimeCoordinator(
             # Không để lỗi phụ của guard làm sập cả turn. Vẫn log rõ để test/ops
             # bắt được, thay vì nuốt im rồi giả vờ mọi thứ rất chuyên nghiệp.
             self.logger.warning("[director] precommit guard failed: %s", exc)
+        authority = getattr(self, "_apply_v3_authority_guard", None)
+        if callable(authority):
+            decision = authority(decision, frame=frame, channel="chat")
         public_text = str(decision.text or "").strip()
         if public_text:
             self.fe_style_memory = self.fe_renderer.remember_style(
@@ -8357,13 +8241,14 @@ class RuntimeCoordinator(
             self._log_decision_stage("directive_inner_thought", "pre_ti", decision)
             decision = self.ti_governor.enforce_decision(decision, ti_report)
             self._log_decision_stage("directive_inner_thought", "after_ti", decision)
-            decision = self._execute_system_action(decision, snapshot=snapshot)
+            decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
             decision = self._apply_post_generation_filters(
                 decision,
                 channel="autonomous",
                 speech_core=speech_core,
                 snapshot=snapshot,
                 momentum_topic=getattr(thought_surface, "topic_seed", ""),
+                frame=frame,
             )
             self._remember_inner_thought_rhythm(speech_core.inner_thought)
             self.fe_style_memory = self.fe_renderer.remember_style(
@@ -8428,13 +8313,14 @@ class RuntimeCoordinator(
         self._log_decision_stage("directive", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report)
         self._log_decision_stage("directive", "after_ti", decision)
-        decision = self._execute_system_action(decision, snapshot=snapshot)
+        decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
         decision = self._apply_post_generation_filters(
             decision,
             channel="autonomous",
             speech_core=speech_core,
             snapshot=snapshot,
             momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
+            frame=frame,
         )
 
         self.fe_style_memory = self.fe_renderer.remember_style(
@@ -8764,11 +8650,21 @@ class RuntimeCoordinator(
             decision.motion_target_x = 0.5
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
 
-    def _execute_system_action(self, decision: Decision, *, snapshot) -> Decision:
+    def _execute_system_action(self, decision: Decision, *, snapshot, frame=None) -> Decision:
+        # V3 authority phải chạy TRƯỚC tool execution. Chạy sau rồi mới gắn
+        # system_action chỉ tạo một lệnh rất đẹp không bao giờ được thực thi.
+        authority = getattr(self, "_apply_v3_authority_guard", None)
+        if callable(authority):
+            decision = authority(decision, frame=frame, channel=str(getattr(frame, "channel", "") or ""))
         if self.action_executor is None or not decision.system_action:
             return decision
 
         result = self.action_executor.execute(decision.system_action, decision.action_input)
+        if frame is not None:
+            try:
+                frame.v3_tool_execution_result = result
+            except Exception:
+                pass
         recorder = getattr(self, "_record_tool_grounding", None)
         if callable(recorder):
             recorder(result, action_name=decision.system_action)

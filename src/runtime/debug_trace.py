@@ -284,6 +284,18 @@ def attach_trace_to_frame(frame: Any) -> dict[str, Any]:
     """
 
     trace = render_frame_trace(frame)
+    try:
+        debug_obj = _get(frame, "debug_trace", None)
+        if debug_obj is None:
+            from core.evidence import DebugTrace
+            debug_obj = DebugTrace()
+            setattr(frame, "debug_trace", debug_obj)
+        add = getattr(debug_obj, "add", None)
+        if callable(add):
+            add(actor="debug_trace", event="frame_trace", data=trace)
+    except Exception:
+        # Trace must never kill the runtime; metadata below remains the fallback.
+        pass
     metadata = _get(frame, "metadata", None)
     if isinstance(metadata, dict):
         metadata["debug_trace"] = trace

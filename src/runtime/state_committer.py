@@ -39,6 +39,10 @@ CommitTarget = Literal[
     "memory_candidate",
     "unresolved_memory",
     "worldview_memory",
+    "sociocultural_memory",
+    "spatial_memory",
+    "temporal_rhythm_memory",
+    "body_rhythm_memory",
     "belief_core",
     "tom_history",
     "homeostatic_baseline",
@@ -83,6 +87,10 @@ class StateCommitterConfig:
             "memory_candidate",
             "unresolved_memory",
             "worldview_memory",
+            "sociocultural_memory",
+            "spatial_memory",
+            "temporal_rhythm_memory",
+            "body_rhythm_memory",
             "belief_core",
             "tom_history",
             "homeostatic_baseline",
@@ -316,6 +324,11 @@ def _normalize_target(target: Any) -> str:
         "unresolved_memory": "memory_candidate",
         "unresolved": "memory_candidate",
         "worldview": "worldview_memory",
+        "culture_memory": "sociocultural_memory",
+        "sociocultural": "sociocultural_memory",
+        "spatial": "spatial_memory",
+        "temporal": "temporal_rhythm_memory",
+        "body_rhythm": "body_rhythm_memory",
         "belief": "belief_core",
         "belief_store": "belief_core",
         "tom": "tom_history",
@@ -385,6 +398,10 @@ class StateCommitter:
             "memory_candidate",
             "unresolved_memory",
             "worldview_memory",
+            "sociocultural_memory",
+            "spatial_memory",
+            "temporal_rhythm_memory",
+            "body_rhythm_memory",
             "belief_core",
             "tom_history",
             "homeostatic_baseline",
@@ -433,6 +450,7 @@ class StateCommitter:
 
         if not requests:
             report.finish()
+            self._run_canonical_decay_if_needed(actual_frame, report)
             self._attach_report_to_frame(actual_frame, report)
             return report
 
@@ -479,8 +497,67 @@ class StateCommitter:
                 break
 
         report.finish()
+        self._run_canonical_decay_if_needed(actual_frame, report)
         self._attach_report_to_frame(actual_frame, report)
         return report
+
+    def _run_canonical_decay_if_needed(
+        self,
+        frame: Any,
+        report: CommitBatchReport,
+    ) -> None:
+        """Run long-term decay only on reflection or committed dream consolidation.
+
+        DreamConsolidation is allowed to *request* durable updates, but it still
+        cannot write stores directly. Once those requests survive StateCommitter,
+        this hook performs evidence-preserving decay across canonical stores.
+        Ordinary turns do not run decay. Otherwise every "ừ" would age the
+        entire identity model, which is a rather theatrical way to corrupt state.
+        """
+
+        decay_fn = getattr(self.memory_cognition, "decay_canonical_long_term", None)
+        if not callable(decay_fn):
+            return
+
+        budget_mode = str(_get(frame, "budget_mode", "") or "").strip().lower()
+        reflection = budget_mode == "reflection"
+        dream_commit = False
+        for decision in report.decisions:
+            if not decision.committed or decision.normalized_request is None:
+                continue
+            request = decision.normalized_request
+            source_module = str(_get(request, "source_module", "") or "").strip().lower()
+            tags = set(_request_tags(request))
+            if source_module == "dream_consolidation" or "dream_consolidation" in tags:
+                dream_commit = True
+                break
+
+        if not (reflection or dream_commit):
+            return
+
+        metadata = _get(frame, "metadata", None)
+        try:
+            decay_result = decay_fn()
+        except Exception as exc:  # decay must never roll back already-valid commits
+            self.logger.exception("Canonical long-term decay failed after consolidation commit")
+            if isinstance(metadata, dict):
+                metadata["canonical_decay_error"] = f"{type(exc).__name__}: {exc}"
+            return
+
+        if isinstance(metadata, dict):
+            metadata["canonical_decay"] = {
+                "trigger": "reflection" if reflection else "dream_consolidation",
+                "result": decay_result,
+                "timestamp": time.time(),
+            }
+
+        audit = _get(frame, "audit_mutations", None)
+        if isinstance(audit, list):
+            audit.append({
+                "type": "canonical_long_term_decay",
+                "trigger": "reflection" if reflection else "dream_consolidation",
+                "result": decay_result,
+            })
 
     def commit_frame(self, frame: Any) -> CommitBatchReport:
         """Alias rõ nghĩa cho coordinator thích gọi tên dài."""
@@ -1017,13 +1094,27 @@ class StateCommitter:
         if target == "repair_memory":
             return True
 
+        # State snapshots often contain innocent field names such as
+        # `overread_correction`. Scanning repr(dict) turned those into fake user
+        # corrections and rerouted active_state into RepairMemory. Structured
+        # state is not prose; only explicit correction fields/tags may trigger.
+        if isinstance(content, Mapping):
+            content_text = " ".join(
+                str(content.get(key, "") or "")
+                for key in ("user_correction", "user_correction_text", "correction_text", "wrong_assumption", "failure_type")
+            )
+        else:
+            content_text = str(content or "")[:800]
+        if target in {"active_state", "event_ledger", "homeostatic_baseline", "self_continuity", "spatial_memory", "temporal_rhythm_memory", "body_rhythm_memory"} and not content_text.strip():
+            return False
+
         haystack = " ".join(
             [
                 str(reason or ""),
                 str(metadata.get("failure_type", "") or ""),
                 str(metadata.get("wrong_assumption", "") or ""),
                 str(metadata.get("user_correction_text", "") or ""),
-                str(content or "")[:800],
+                content_text,
             ]
         ).lower()
 

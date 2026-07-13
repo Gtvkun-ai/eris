@@ -29,8 +29,9 @@ Vì sao orchestrator tự ghi slot thay vì để engine tự gắn:
     core. Engine đổi cách attach cũng không phá pipeline.
 
 File này từng dừng ở GlobalWorkspace rồi tự gọi mình là pipeline. Một sự tự tin
-đáng nể, hơi thiếu dây điện. Bản hiện tại đi hết canonical planning graph; sau khi
-runtime cũ thực thi output, ``finalize_from_legacy`` khép vòng wording -> outcome.
+đáng nể, hơi thiếu dây điện. Bản hiện tại đi hết canonical planning graph;
+``V3WordingEngine`` + ``GroundingGuardEngine`` + ``V3ExecutionEngine`` sở hữu
+đường production, còn ``finalize_from_legacy`` chỉ là alias tương thích cho caller cũ.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
 from core.cognitive_frame import CognitiveFrame
-from core.evidence import ModuleReport, RawSignal
+from core.evidence import EvidenceItem, ModuleReport, RawSignal, StateCommitRequest
 from core.evidence_normalizer import EvidenceNormalizer, EvidenceNormalizerConfig
 
 from cortex.attention_salience import AttentionSalienceEngine
@@ -54,6 +55,11 @@ from runtime.cognitive_budget import CognitiveBudgetEngine, BudgetDecision
 from runtime.canonical_cognition import CanonicalStageSuite, GroundingReport, ExecutionReport, LLMWordingResult
 from runtime.debug_trace import attach_trace_to_frame
 from runtime.outcome_observer import OutcomeObserver
+from runtime.knowledge_acquisition import KnowledgeAcquisitionEngine, KnowledgeAcquisitionResult
+from runtime.v3_wording import V3WordingEngine
+from runtime.v3_execution import V3ExecutionEngine
+from runtime.long_term_update import LongTermUpdateEngine
+from cortex.grounding_guard import GroundingGuardEngine
 
 
 class _SituationEmbeddingProvider:
@@ -121,6 +127,11 @@ class CognitivePipeline:
         situation_model: Optional[SituationModel] = None,
         meaning_pipeline: Optional[Phase2MeaningPipeline] = None,
         stages: Optional[CanonicalStageSuite] = None,
+        knowledge_acquisition: Optional[KnowledgeAcquisitionEngine] = None,
+        wording_engine: Optional[V3WordingEngine] = None,
+        grounding_guard: Optional[GroundingGuardEngine] = None,
+        execution_engine: Optional[V3ExecutionEngine] = None,
+        long_term_update: Optional[LongTermUpdateEngine] = None,
         outcome_observer: Optional[OutcomeObserver] = None,
         self_observer: Optional[SelfObservationEngine] = None,
     ) -> None:
@@ -153,6 +164,11 @@ class CognitivePipeline:
             semantic_engine=SemanticHypothesisEngine(LexicalHashingSemanticEncoder())
         )
         self.stages = stages or CanonicalStageSuite()
+        self.knowledge_acquisition = knowledge_acquisition or KnowledgeAcquisitionEngine()
+        self.wording_engine = wording_engine or V3WordingEngine()
+        self.grounding_guard = grounding_guard or GroundingGuardEngine()
+        self.execution_engine = execution_engine or V3ExecutionEngine()
+        self.long_term_update = long_term_update or LongTermUpdateEngine()
         self.outcome_observer = outcome_observer or OutcomeObserver()
         self.self_observer = self_observer or SelfObservationEngine()
 
@@ -174,6 +190,7 @@ class CognitivePipeline:
         force_reflection: bool = False,
         legacy_frame: Any = None,
         snapshot: Any = None,
+        runtime_owner: Any = None,
     ) -> PipelineResult:
         """Tạo frame từ raw signals rồi chạy toàn bộ canonical planning graph."""
 
@@ -198,6 +215,7 @@ class CognitivePipeline:
             force_reflection=force_reflection,
             legacy_frame=legacy_frame,
             snapshot=snapshot,
+            runtime_owner=runtime_owner,
         )
 
     def run(
@@ -212,6 +230,7 @@ class CognitivePipeline:
         force_reflection: bool = False,
         legacy_frame: Any = None,
         snapshot: Any = None,
+        runtime_owner: Any = None,
     ) -> PipelineResult:
         """Chạy canonical planning graph trên một frame đã có raw_signals."""
 
@@ -287,7 +306,10 @@ class CognitivePipeline:
             "working_memory",
             wm_frame,
             actor="working_memory",
-            evidence_used=list(self._safe_call(wm_frame, "evidence_ids") or []),
+            evidence_used=[
+                eid for eid in (list(self._safe_call(wm_frame, "evidence_ids") or []))
+                if eid in frame.evidence_ids()
+            ],
             confidence=float(getattr(wm_frame, "context_pressure", 0.0) or 0.0),
         )
 
@@ -374,17 +396,38 @@ class CognitivePipeline:
             confidence=float(getattr(inquiry, "expected_value", 0.0) or 0.0),
         )
 
-        memory_packet = self.stages.memory_packet(frame, legacy_frame=legacy_frame)
-        self._set_slot(
+        # Inquiry phải đi qua một acquisition result có source. Web action mặc
+        # định được hoãn sang ActionExecutor production; memory/pattern chạy ngay.
+        knowledge = self.knowledge_acquisition.acquire(
             frame,
-            "memory_packet",
-            memory_packet,
-            actor="memory_cognition",
-            evidence_used=ws_evidence,
-            confidence=0.70,
+            inquiry,
+            runtime_owner=runtime_owner,
+            legacy_frame=legacy_frame,
         )
+        frame.metadata["knowledge_acquisition"] = knowledge
+        self._append_knowledge_evidence(frame, knowledge)
+        try:
+            frame.add_report(ModuleReport(
+                module_name="knowledge_acquisition",
+                confidence=float(getattr(knowledge, "confidence", 0.0) or 0.0),
+                pressure=float(getattr(inquiry, "expected_value", 0.0) or 0.0),
+                evidence_used=list(ws_evidence),
+                result=knowledge,
+                warnings=[str(getattr(knowledge, "error", ""))] if str(getattr(knowledge, "error", "")) else [],
+                debug={
+                    "action": str(getattr(knowledge, "action", "none") or "none"),
+                    "deferred": bool(getattr(knowledge, "deferred", False)),
+                    "succeeded": bool(getattr(knowledge, "succeeded", False)),
+                    "latency_ms": float(getattr(knowledge, "latency_ms", 0.0) or 0.0),
+                },
+            ))
+        except Exception as exc:
+            frame.add_warning(f"knowledge report failed: {exc!r}", actor="knowledge_acquisition")
 
-        belief = self.stages.belief(frame, meaning)
+        # Belief candidates are evaluated from evidence + knowledge first. Memory
+        # cognition then retrieves context under budget, matching the canonical
+        # Knowledge -> Belief -> Memory order.
+        belief = self.stages.belief(frame, meaning, knowledge=knowledge)
         belief_conf = max(
             [float(getattr(item, "confidence", 0.0) or 0.0) for item in (belief.active_beliefs + belief.candidate_beliefs)],
             default=0.0,
@@ -398,10 +441,20 @@ class CognitivePipeline:
             confidence=belief_conf,
         )
 
+        memory_packet = self.stages.memory_packet(frame, legacy_frame=legacy_frame, runtime_owner=runtime_owner, knowledge=knowledge)
+        self._set_slot(
+            frame,
+            "memory_packet",
+            memory_packet,
+            actor="memory_cognition",
+            evidence_used=ws_evidence,
+            confidence=0.70,
+        )
+
         # --- 8. Values -> simulation -> arbitration -> agency -----------------
         frame.set_status("planning", actor="cognitive_pipeline")
         relation = self.stages.relation(frame, legacy_frame=legacy_frame)
-        permission = self.stages.permission(frame, tom, relation, inquiry)
+        permission = self.stages.permission(frame, tom, relation, inquiry, knowledge=knowledge)
         value_resolution = self.stages.values(frame, inquiry, permission, relation)
         self._set_slot(
             frame,
@@ -473,7 +526,10 @@ class CognitivePipeline:
         body_plan = self.stages.body_plan(frame, opportunity, spatial, permission)
         self._set_slot(frame, "body_plan", body_plan, actor="body_action_planner", confidence=0.68)
 
-        modality = self.stages.modality(speech_plan, body_plan, spatial, permission)
+        modality = self.stages.modality(
+            speech_plan, body_plan, spatial, permission,
+            system_action=str(getattr(knowledge, "system_action", "") or "") if bool(getattr(knowledge, "deferred", False)) else "",
+        )
         self._set_slot(
             frame,
             "modality",
@@ -482,18 +538,22 @@ class CognitivePipeline:
             confidence=float(getattr(modality, "emotional_congruence", 0.0) or 0.0),
         )
 
-        # Wording/guard/execution có placeholder có cấu trúc ngay trong planning
-        # frame. Khi runtime cũ sinh text và thực thi xong, finalize_from_legacy sẽ
-        # thay chúng bằng kết quả thật rồi mới đóng frame.
-        wording = self.stages.deferred_wording()
+        # V3 owns the wording request and guard/execution contracts. The actual
+        # model, renderer and tool executor remain replaceable adapters.
+        wording_request, wording = self.wording_engine.prepare(
+            frame,
+            prompt_context=self.render_prompt_context(frame),
+        )
+        frame.metadata["wording_request"] = wording_request
         self._set_slot(frame, "wording", wording, actor="llm_wording", confidence=0.50)
 
-        grounding = self.stages.baseline_grounding(frame, permission, modality)
-        self._set_slot(frame, "grounding", grounding, actor="grounding_guard", confidence=0.72)
+        grounding = self.grounding_guard.baseline(frame)
+        self._set_slot(frame, "grounding", grounding, actor="grounding_guard", confidence=0.76)
 
-        execution = self.stages.planned_execution(agency, modality)
-        self._set_slot(frame, "execution", execution, actor="execution_layer", confidence=0.50)
+        execution = self.execution_engine.planned(frame)
+        self._set_slot(frame, "execution", execution, actor="execution_layer", confidence=0.55)
 
+        self._build_canonical_commit_requests(frame, permission=permission, belief=belief, knowledge=knowledge)
         trace = attach_trace_to_frame(frame)
         frame.metadata["canonical_planning_complete"] = True
         # Không close ở đây. Output thật vẫn chạy qua runtime hiện có; finalizer
@@ -508,7 +568,7 @@ class CognitivePipeline:
             frame.add_warning(f"render_prompt_context failed: {exc!r}", actor="cognitive_pipeline")
             return ""
 
-    def finalize_from_legacy(
+    def finalize_from_production(
         self,
         frame_or_result: CognitiveFrame | PipelineResult,
         *,
@@ -519,13 +579,11 @@ class CognitivePipeline:
         outcome: Any = None,
         self_observation: Any = None,
     ) -> PipelineResult:
-        """Khép vòng canonical sau khi runtime cũ đã wording/guard/execute.
+        """Close the canonical frame from production adapter results.
 
-        Đây là cầu chuyển tiếp có chủ đích. Nó không chạy lại cognition và không
-        tạo một quyết định thứ hai. Nó chỉ đưa kết quả production đã xảy ra vào
-        đúng slot V3, chạy Outcome/SelfObservation nếu caller chưa có report, rồi
-        đóng frame. Nhờ vậy V3 là xương sống quan sát được thay vì một bản shadow
-        chết ở GlobalWorkspace.
+        The LLM/tool/renderer are adapters. V3 captures their outputs, applies its
+        own grounding contract, observes execution, then closes Outcome and
+        SelfObservation. No second cognition pass and no legacy decision owner.
         """
         if isinstance(frame_or_result, PipelineResult):
             result = frame_or_result
@@ -543,15 +601,15 @@ class CognitivePipeline:
         if legacy_final is None and legacy_frame is not None:
             legacy_final = getattr(legacy_frame, "final_decision", None)
         text = self._extract_final_text(legacy_final)
-        violations = self._extract_violations(grounding if grounding is not None else getattr(legacy_frame, "grounding", None))
+        external_grounding = grounding if grounding is not None else getattr(legacy_frame, "grounding", None)
+        violations = self._extract_violations(external_grounding)
 
         frame.set_status("wording", actor="cognitive_pipeline")
-        wording_result = LLMWordingResult(
-            raw_text=text,
-            parsed_text=text or None,
-            parser_ok=not bool(violations),
-            violations=violations,
-            deferred=False,
+        wording_result = self.wording_engine.capture(
+            frame,
+            legacy_final,
+            raw_response=text,
+            external_violations=violations,
         )
         self._set_slot(
             frame,
@@ -562,14 +620,44 @@ class CognitivePipeline:
         )
 
         frame.set_status("guarding", actor="cognitive_pipeline")
-        legacy_grounding = grounding if grounding is not None else getattr(legacy_frame, "grounding", None)
-        grounding_result = self._coerce_grounding(legacy_grounding, final_text=text, fallback=frame.grounding)
-        self._set_slot(frame, "grounding", grounding_result, actor="grounding_guard", confidence=0.88)
+        guarded_decision, grounding_result = self.grounding_guard.check(
+            frame,
+            legacy_final,
+            external_grounding=external_grounding,
+        )
+        legacy_final = guarded_decision
+        text = self._extract_final_text(legacy_final)
+        self._set_slot(frame, "grounding", grounding_result, actor="grounding_guard", confidence=0.90)
 
         frame.set_status("executing", actor="cognitive_pipeline")
         legacy_execution = execution if execution is not None else getattr(legacy_frame, "execution", None)
-        execution_result = self._coerce_execution(legacy_execution, legacy_final, text=text, fallback=frame.execution)
-        self._set_slot(frame, "execution", execution_result, actor="execution_layer", confidence=0.86)
+        execution_result = self.execution_engine.observe(
+            frame,
+            legacy_final,
+            execution_result=legacy_execution,
+        )
+        self._set_slot(frame, "execution", execution_result, actor="execution_layer", confidence=0.88)
+
+        # Kết quả search/tool thật quay lại KnowledgeAcquisition thay vì chết ở
+        # text surface. Belief candidate vẫn tentative cho tới commit protocol.
+        try:
+            current_knowledge = frame.metadata.get("knowledge_acquisition")
+            resolved_knowledge = self.knowledge_acquisition.resolve_from_execution(
+                current_knowledge,
+                frame=frame,
+                final_decision=legacy_final,
+                execution_result=legacy_execution,
+            )
+            frame.metadata["knowledge_acquisition"] = resolved_knowledge
+            self._append_knowledge_evidence(frame, resolved_knowledge)
+            report = getattr(frame, "module_reports", {}).get("knowledge_acquisition")
+            if report is not None:
+                report.result = resolved_knowledge
+                report.confidence = float(getattr(resolved_knowledge, "confidence", 0.0) or 0.0)
+            if bool(getattr(resolved_knowledge, "succeeded", False)):
+                self._append_knowledge_commit_requests(frame, resolved_knowledge, storage_permission=bool(getattr(frame.permission, "memory_storable", False)))
+        except Exception as exc:
+            frame.add_warning(f"knowledge finalize failed: {exc!r}", actor="knowledge_acquisition")
 
         frame.set_status("observing", actor="cognitive_pipeline")
         outcome_result = outcome if outcome is not None else getattr(legacy_frame, "outcome", None)
@@ -597,11 +685,179 @@ class CognitivePipeline:
         except Exception as exc:
             frame.add_warning(f"repair request bridge failed: {exc!r}", actor="self_observation")
 
-        frame.metadata["canonical_finalized_from_legacy"] = legacy_frame is not None
+        # Dream/long-term update is scheduled only for reflection pressure,
+        # corrections, repeated failures or high residue. It emits commit requests
+        # through the same StateCommitter gate and never writes stores directly.
+        try:
+            self.long_term_update.prepare(frame)
+        except Exception as exc:
+            frame.add_warning(f"long-term update preparation failed: {exc!r}", actor="dream_consolidation")
+
+        frame.metadata["canonical_finalized_from_production"] = True
+        frame.metadata["production_adapter_frame_present"] = legacy_frame is not None
         frame.close(actor="cognitive_pipeline")
         result.debug_trace = attach_trace_to_frame(frame)
         result.finalized = True
         return result
+
+    def finalize_from_legacy(self, *args: Any, **kwargs: Any) -> PipelineResult:
+        """Compatibility alias. Production adapters are no longer decision owners."""
+        return self.finalize_from_production(*args, **kwargs)
+
+    def _build_canonical_commit_requests(
+        self,
+        frame: CognitiveFrame,
+        *,
+        permission: Any,
+        belief: Any,
+        knowledge: Any,
+    ) -> None:
+        """Tạo commit request chuẩn ngay trong frame, không ghi thẳng memory."""
+        evidence_ids = [str(getattr(ev, "id", "") or "") for ev in (getattr(frame, "evidence", []) or [])]
+        evidence_ids = [x for x in evidence_ids if x][:16]
+        storage = bool(getattr(permission, "memory_storable", False))
+        try:
+            frame.add_commit_request(StateCommitRequest(
+                target="event_ledger",
+                content={
+                    "frame_id": frame.frame_id,
+                    "channel": str(frame.channel),
+                    "user_text": str(frame.user_text or "")[:1200],
+                    "budget_mode": str(frame.budget_mode),
+                },
+                evidence_ids=evidence_ids,
+                confidence=1.0,
+                permission_required=False,
+                storage_permission=True,
+                decay_policy="none",
+                reason="Canonical raw turn audit.",
+                source_module="cognitive_pipeline",
+                tags=["v3", "event_ledger"],
+            ), actor="cognitive_pipeline")
+            frame.add_commit_request(StateCommitRequest(
+                target="active_state",
+                content={
+                    "frame_id": frame.frame_id,
+                    "dominant_focus": str(getattr(getattr(frame, "salience", None), "dominant_focus", "") or ""),
+                    "agency": str(getattr(getattr(frame, "agency", None), "intent", "observe") or "observe"),
+                    "relation": getattr(getattr(frame, "relation", None), "to_dict", lambda: {})(),
+                    "homeostasis": getattr(getattr(frame, "homeostasis", None), "to_dict", lambda: {})(),
+                },
+                evidence_ids=evidence_ids,
+                confidence=0.78,
+                permission_required=False,
+                storage_permission=True,
+                decay_policy="session_only",
+                reason="Canonical active-state snapshot.",
+                source_module="cognitive_pipeline",
+                tags=["v3", "active_state"],
+            ), actor="cognitive_pipeline")
+        except Exception as exc:
+            frame.add_warning(f"base commit request failed: {exc!r}", actor="state_committer")
+
+        # Belief source phải có evidence và permission. Raw user utterance không tự
+        # phong thành semantic fact dài hạn chỉ vì confidence cao.
+        for item in list(getattr(belief, "candidate_beliefs", []) or [])[:6]:
+            source_ids = [str(x) for x in (getattr(item, "source_ids", []) or []) if str(x).strip()]
+            if not source_ids:
+                continue
+            try:
+                frame.add_commit_request(StateCommitRequest(
+                    target="belief_core",
+                    content=getattr(item, "to_dict", lambda: {"claim": str(getattr(item, "claim", ""))})(),
+                    evidence_ids=source_ids,
+                    confidence=min(0.74, float(getattr(item, "confidence", 0.5) or 0.5)),
+                    permission_required=True,
+                    storage_permission=storage,
+                    decay_policy="normal",
+                    reason="Tentative belief candidate from canonical evidence/knowledge.",
+                    source_module="belief_core",
+                    tags=["v3", "tentative_belief"],
+                ), actor="belief_core")
+            except Exception:
+                continue
+
+    def _append_knowledge_evidence(self, frame: CognitiveFrame, knowledge: Any) -> None:
+        """Promote real knowledge-source outputs into EvidenceItem contracts.
+
+        Candidate beliefs may only cite IDs that exist in the frame evidence
+        ledger. A tool source living solely inside metadata is not evidence; it
+        is a very well-dressed orphan.
+        """
+        existing = frame.evidence_ids()
+        for source in list(getattr(knowledge, "sources", []) or [])[:16]:
+            source_id = str(getattr(source, "source_id", "") or "").strip()
+            claim = str(getattr(source, "content", "") or "").strip()
+            if not source_id or not claim or source_id in existing:
+                continue
+            source_type = str(getattr(source, "source_type", "") or "").lower()
+            canonical_source = "memory" if "memory" in source_type else "system_log"
+            try:
+                reliability = float(getattr(source, "reliability", 0.65) or 0.65)
+                raw_signal = RawSignal.create(
+                    source=canonical_source,
+                    content={
+                        "knowledge_source_id": source_id,
+                        "source_type": source_type,
+                        "title": str(getattr(source, "title", "") or ""),
+                        "content": claim[:1800],
+                    },
+                    timestamp=float(getattr(frame, "timestamp", 0.0) or 0.0),
+                    reliability=reliability,
+                    privacy_level="normal",
+                    signal_id=source_id,
+                )
+                if source_id not in frame.raw_signal_ids():
+                    frame.add_raw_signal(raw_signal, actor="knowledge_acquisition")
+                item = EvidenceItem(
+                    id=source_id,
+                    source_signal_id=source_id,
+                    source=canonical_source,  # type: ignore[arg-type]
+                    claim=claim[:1800],
+                    timestamp=float(getattr(frame, "timestamp", 0.0) or 0.0),
+                    confidence=float(getattr(source, "confidence", 0.65) or 0.65),
+                    reliability=reliability,
+                    raw_or_inferred="raw",
+                    privacy_level="normal",
+                    tags=("knowledge_source", source_type or "tool_source"),
+                    metadata={
+                        "title": str(getattr(source, "title", "") or ""),
+                        "upstream_evidence_ids": list(getattr(source, "evidence_ids", ()) or ()),
+                        "knowledge_action": str(getattr(knowledge, "action", "") or ""),
+                    },
+                )
+                frame.add_evidence(item, actor="knowledge_acquisition")
+                existing.add(source_id)
+            except Exception as exc:
+                frame.add_warning(f"knowledge evidence rejected: {exc!r}", actor="knowledge_acquisition")
+
+    def _append_knowledge_commit_requests(self, frame: CognitiveFrame, knowledge: Any, *, storage_permission: bool) -> None:
+        for idx, item in enumerate((getattr(knowledge, "candidate_beliefs", []) or [])[:6]):
+            claim = str(item.get("claim", "") if isinstance(item, dict) else getattr(item, "claim", "") or "").strip()
+            if not claim:
+                continue
+            source_ids = list(item.get("source_ids", []) if isinstance(item, dict) else getattr(item, "source_ids", []) or [])
+            source_ids = [str(x) for x in source_ids if str(x).strip()]
+            if not source_ids:
+                continue
+            frame.add_commit_request(StateCommitRequest(
+                target="belief_core",
+                content={
+                    "claim": claim,
+                    "domain": item.get("domain", "world") if isinstance(item, dict) else getattr(item, "domain", "world"),
+                    "status": "tentative",
+                    "knowledge_action": str(getattr(knowledge, "action", "")),
+                },
+                evidence_ids=source_ids,
+                confidence=min(0.78, float(item.get("confidence", 0.62) if isinstance(item, dict) else getattr(item, "confidence", 0.62) or 0.62)),
+                permission_required=True,
+                storage_permission=bool(storage_permission),
+                decay_policy="normal",
+                reason="Tool-grounded knowledge candidate; still tentative until consolidation.",
+                source_module="knowledge_acquisition",
+                tags=["v3", "knowledge", "tool_grounded"],
+                metadata={"candidate_index": idx},
+            ), actor="knowledge_acquisition")
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -1113,7 +1113,7 @@ class ChatCycleMixin:
             ti_report=ti_report,
         )
         self._log_decision_stage("chat", "after_escalation", decision)
-        decision = self._execute_system_action(decision, snapshot=snapshot)
+        decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
         decision = self._finalize_chat_director_decision(
             decision,

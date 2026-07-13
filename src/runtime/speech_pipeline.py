@@ -62,7 +62,7 @@ class SpeechPipelineMixin:
             decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
 
         if callable(getattr(self, "_execute_system_action", None)) and snapshot is not None:
-            decision = self._execute_system_action(decision, snapshot=snapshot)
+            decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
 
         if channel == "chat" and callable(getattr(self, "_apply_chat_final_guards", None)):
             return self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
@@ -74,5 +74,6 @@ class SpeechPipelineMixin:
                 speech_core=speech_core,
                 snapshot=snapshot,
                 momentum_topic=momentum_topic,
+                frame=frame,
             )
         return decision

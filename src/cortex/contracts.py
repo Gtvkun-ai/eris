@@ -1261,6 +1261,12 @@ class CognitiveFrame:
     v3_budget_mode: str = ""
     v3_prompt_context: str = ""
     v3_pipeline_finalized: bool = False
+    # Production authority + knowledge/outcome bridge của canonical V3.
+    v3_authority: dict[str, object] = field(default_factory=dict)
+    v3_knowledge: object | None = None
+    v3_feedback_resolved: bool = False
+    v3_daydream_packets: tuple[object, ...] = ()
+    v3_tool_execution_result: object | None = None
     # Epistemic V2 episode or its pre-action preparation. Kept as object to avoid a reverse dependency
     # from the shared cortex contracts into cortex.epistemic.
     epistemic_episode: object | None = None
@@ -1308,6 +1314,11 @@ class CognitiveFrame:
             "v3_budget_mode": self.v3_budget_mode,
             "v3_prompt_context": self.v3_prompt_context,
             "v3_pipeline_finalized": bool(self.v3_pipeline_finalized),
+            "v3_authority": _to_plain_contract(self.v3_authority),
+            "v3_knowledge": _to_plain_contract(self.v3_knowledge),
+            "v3_feedback_resolved": bool(self.v3_feedback_resolved),
+            "v3_daydream_packets": _to_plain_contract(self.v3_daydream_packets),
+            "v3_tool_execution_result": _to_plain_contract(self.v3_tool_execution_result),
             "v3_cognitive_frame": (
                 {
                     "frame_id": str(getattr(self.v3_cognitive_frame, "frame_id", "") or ""),

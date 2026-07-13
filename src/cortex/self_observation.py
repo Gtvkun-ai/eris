@@ -194,17 +194,19 @@ class SelfObservationEngine:
             evidence.append(f"grounding_risk=factual:{factual_risk:.2f}/overcertainty:{overcertainty_risk:.2f}")
             adjustments.append("Khi factual risk cao, trả lời bằng giả thuyết hoặc yêu cầu thêm evidence.")
 
-        # 2. Overread.
-        if (
-            user_corrected
-            and self._mentions_overread(correction_text)
-        ) or global_overread_risk >= 0.60 or "anti_mindreading" in risk_flags:
+        # 2. Overread. ToM risk là tín hiệu để phanh TRƯỚC khi nói, không phải
+        # bằng chứng rằng ERIS đã thật sự mind-read trên surface. Chỉ ghi failure
+        # khi output mang hình dạng suy diễn hoặc user trực tiếp sửa điều đó.
+        surface_mindread = self._contains_mindread_shape(final_text_norm)
+        corrected_overread = user_corrected and self._mentions_overread(correction_text)
+        risk_became_surface = surface_mindread and (global_overread_risk >= 0.60 or "anti_mindreading" in risk_flags)
+        if corrected_overread or risk_became_surface:
             overread_detected = True
             matched_beliefs = False
             evidence.append(f"overread_signal=tom:{global_overread_risk:.2f}/correction:{correction_text[:120]}")
             adjustments.append("Giảm suy diễn tâm lý; bám vào yêu cầu bề mặt trước.")
 
-        if global_tom_confidence < 0.45 and self._contains_mindread_shape(final_text_norm):
+        if global_tom_confidence < 0.45 and surface_mindread:
             overread_detected = True
             evidence.append(f"low_tom_confidence_with_mindread_shape={global_tom_confidence:.2f}")
             adjustments.append("Không nói trực tiếp mental-state khi ToM confidence thấp.")
