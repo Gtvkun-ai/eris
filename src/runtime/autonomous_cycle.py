@@ -519,7 +519,10 @@ class AutonomousCycleMixin:
             if self._process_pending_user_input():
                 return self.running
 
-            inner_ti_context = self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought, speech_core)
+            inner_ti_context = self._merge_v3_prompt_context(
+                self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought, speech_core),
+                frame,
+            )
             raw = self.llm_service.generate_directive(
                 telemetry_data=telemetry_data,
                 ni_context="",
@@ -589,8 +592,9 @@ class AutonomousCycleMixin:
             self._sleep_interruptible(sleep_duration)
             return True
 
-        planned_ti_context = (
-            self._build_llm_ti_context(ti_report, frame.action_plan)
+        planned_ti_context = self._merge_v3_prompt_context(
+            self._build_llm_ti_context(ti_report, frame.action_plan),
+            frame,
         )
         if self._process_pending_user_input():
             return self.running

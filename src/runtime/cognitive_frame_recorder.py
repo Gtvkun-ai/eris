@@ -945,6 +945,11 @@ class CognitiveFrameRecorderMixin:
         self._start_epistemic_episode(frame)
         self._reflect_self_observation_for_frame(frame)
         self._append_self_observation_repair_request(frame)
+        # Khép vòng canonical V3 bằng đúng final_decision/grounding/execution/outcome
+        # production vừa xảy ra. Không chạy lại cognition, không sinh quyết định thứ hai.
+        finalize_v3 = getattr(self, "_finalize_v3_cognitive_frame", None)
+        if callable(finalize_v3):
+            finalize_v3(frame)
         self._remember_cognitive_frame(frame)
         self._dedupe_frame_commit_requests(frame)
         commit_report = self._commit_frame_through_state_committer(frame)

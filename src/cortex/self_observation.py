@@ -131,8 +131,8 @@ class SelfObservationEngine:
 
         grounding = getattr(frame, "grounding", None)
         modality = getattr(frame, "modality", None)
-        action_plan = getattr(frame, "action_plan", None)
-        speech_core = getattr(frame, "speech_core", None)
+        action_plan = getattr(frame, "action_plan", None) or getattr(frame, "agency", None)
+        speech_core = getattr(frame, "speech_core", None) or getattr(frame, "speech_plan", None)
         tom = getattr(frame, "tom", None)
         sociocultural = getattr(frame, "sociocultural", None)
 
@@ -149,9 +149,21 @@ class SelfObservationEngine:
 
         risk_flags = tuple(str(item) for item in (getattr(action_plan, "risk_flags", ()) or ()))
         notes = tuple(str(item) for item in (getattr(action_plan, "notes", ()) or ()))
-        speech_act = str(getattr(action_plan, "speech_act", "") or "")
-        utterance_type = str(getattr(speech_core, "utterance_type", "") or "")
-        speech_source = str(getattr(speech_core, "speech_source", "") or "")
+        speech_act = str(
+            getattr(action_plan, "speech_act", "")
+            or getattr(speech_core, "speech_act", "")
+            or getattr(action_plan, "intent", "")
+            or ""
+        )
+        utterance_type = str(
+            getattr(speech_core, "utterance_type", "")
+            or getattr(speech_core, "speech_act", "")
+            or ""
+        )
+        speech_source = str(
+            getattr(speech_core, "speech_source", "")
+            or ("canonical_v3" if getattr(frame, "wording", None) is not None else "")
+        )
         channel = str(getattr(frame, "channel", "") or "")
 
         user_corrected = bool(getattr(outcome_report, "user_corrected", False))
@@ -741,9 +753,17 @@ class SelfObservationEngine:
     def _extract_final_text(frame: Any) -> str:
         final_decision = getattr(frame, "final_decision", None)
         if isinstance(final_decision, Mapping):
-            return str(final_decision.get("text", "") or "").strip()
+            text = str(final_decision.get("text", "") or "").strip()
+            if text:
+                return text
         decision = getattr(frame, "decision", None)
-        return str(getattr(decision, "text", "") or "").strip()
+        text = str(getattr(decision, "text", "") or "").strip()
+        if text:
+            return text
+        wording = getattr(frame, "wording", None)
+        if isinstance(wording, Mapping):
+            return str(wording.get("parsed_text") or wording.get("raw_text") or "").strip()
+        return str(getattr(wording, "parsed_text", None) or getattr(wording, "raw_text", "") or "").strip()
 
     @staticmethod
     def _read_float(obj: Any, key: str, *, default: float = 0.0) -> float:

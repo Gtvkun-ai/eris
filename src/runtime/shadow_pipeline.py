@@ -2,7 +2,7 @@
 """
 runtime/shadow_pipeline.py
 
-Shadow mode cho CognitivePipeline (V3).
+Bridge chuyển tải CognitivePipeline (V3) vào runtime production.
 
 Ý tưởng:
     Runtime thật vẫn chạy frame cũ (cortex/contracts.CognitiveFrame) qua
@@ -10,18 +10,14 @@ Shadow mode cho CognitivePipeline (V3).
     cùng input (user_text, snapshot, vision_facts), chạy CognitivePipeline V3,
     rồi render debug_trace cả hai bên để so.
 
-    Shadow = chỉ quan sát. Nó KHÔNG được phép:
-        - đổi quyết định của frame cũ
-        - ném exception ra hot path
-        - làm chậm runtime đáng kể khi tắt
-
-    Mục tiêu là tích lũy bằng chứng "V3 chọn focus/budget giống hay khác frame cũ"
-    trước khi dám chuyển tải. Chuyển tải mù là cách tốt để biến một refactor thành
-    một đám tang production.
+    V3 planning chạy mặc định trên mọi chat/autonomous/force_speak cycle, gắn
+    canonical frame + prompt projection vào frame production, rồi được khép vòng
+    sau execution. Shadow comparison vẫn là debug tùy chọn, không còn là gate khiến
+    cả kiến trúc chỉ tồn tại trên giấy.
 
 Bật/tắt:
-    - env ERIS_SHADOW_PIPELINE=1, hoặc
-    - self.shadow_pipeline_enabled = True
+    - ERIS_V3_PIPELINE=0 để tắt bridge V3 (mặc định bật)
+    - ERIS_SHADOW_PIPELINE=1 để log thêm so sánh V3 với trace cũ
 
 Kết quả lưu trên coordinator để test/inspect:
     - self.last_shadow_pipeline_result : PipelineResult | None
@@ -46,6 +42,13 @@ class ShadowPipelineMixin:
     # ------------------------------------------------------------------
     # Gate + lazy engine
     # ------------------------------------------------------------------
+
+    def _v3_pipeline_enabled(self) -> bool:
+        """V3 chạy mặc định; env 0/false/off mới tắt."""
+        raw = os.getenv("ERIS_V3_PIPELINE")
+        if raw is None:
+            return bool(getattr(self, "v3_pipeline_enabled", True))
+        return raw.strip().lower() not in {"0", "false", "no", "off", "n"}
 
     def _shadow_pipeline_enabled(self) -> bool:
         if getattr(self, "shadow_pipeline_enabled", False):
@@ -119,7 +122,7 @@ class ShadowPipelineMixin:
         if "budget" in paths:
             mode = str(getattr(result, "budget_mode", "") or "")
             if mode and mode != "unknown":
-                if self._set_frame_attr(old_frame, "budget_mode", mode):
+                if self._set_frame_attr(old_frame, "v3_budget_mode", mode):
                     decision = getattr(result, "budget_decision", None)
                     self._set_frame_metadata(
                         old_frame,
@@ -196,7 +199,7 @@ class ShadowPipelineMixin:
         Trả PipelineResult nếu chạy được, None nếu tắt hoặc lỗi (đã nuốt).
         """
 
-        if not self._shadow_pipeline_enabled():
+        if not self._v3_pipeline_enabled():
             return None
 
         try:
@@ -214,26 +217,46 @@ class ShadowPipelineMixin:
                 user_text=user_text,
                 active_goal=active_goal,
                 idle_seconds=idle_seconds,
+                legacy_frame=old_frame,
+                snapshot=snapshot,
             )
             elapsed_ms = (time.time() - started) * 1000.0
 
             shadow_trace = result.debug_trace
-            old_trace = self._safe_render_trace(old_frame)
-            comparison = self._compare_traces(
-                v3_trace=shadow_trace,
-                old_trace=old_trace,
-                elapsed_ms=elapsed_ms,
-                channel=channel,
-            )
+
+            # Gắn canonical frame vào frame production. Prompt projection là phần
+            # V3 tác động thật lên wording; frame object được giữ để finalizer nối
+            # Outcome/SelfObservation sau khi output đã thực thi.
+            if old_frame is not None:
+                self._set_frame_attr(old_frame, "v3_cognitive_frame", result.frame)
+                self._set_frame_attr(old_frame, "v3_budget_mode", result.budget_mode)
+                self._set_frame_attr(old_frame, "v3_prompt_context", pipeline.render_prompt_context(result.frame))
+                self._record_frame_note(old_frame, f"v3_planning_complete={result.frame.frame_id}")
 
             self.last_shadow_pipeline_result = result
             self.last_shadow_trace = shadow_trace
-            self.last_shadow_comparison = comparison
-            self._log_shadow_comparison(comparison, shadow_trace, old_trace)
 
-            # Promotion: với các path đã bật cờ, V3 trở thành xương sống — quyết định
-            # của nó được ghi đè lên frame cũ. Mặc định TẮT (shadow thuần), nên bước
-            # này an toàn cho tới khi có đủ bằng chứng so trace để bật từng path.
+            if self._shadow_pipeline_enabled():
+                old_trace = self._safe_render_trace(old_frame)
+                comparison = self._compare_traces(
+                    v3_trace=shadow_trace,
+                    old_trace=old_trace,
+                    elapsed_ms=elapsed_ms,
+                    channel=channel,
+                )
+                self.last_shadow_comparison = comparison
+                self._log_shadow_comparison(comparison, shadow_trace, old_trace)
+            else:
+                self.last_shadow_comparison = {
+                    "channel": channel,
+                    "v3_frame_id": result.frame.frame_id,
+                    "v3_budget": result.budget_mode,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "comparison_disabled": True,
+                }
+
+            # Giữ promotion flags cũ cho migration có kiểm soát; budget consumer
+            # giờ đọc v3_budget_mode nên không còn setattr vào slot không tồn tại.
             self._promote_v3_paths(result, old_frame=old_frame, channel=channel)
             return result
         except Exception as exc:  # shadow không bao giờ được làm chết hot path
@@ -243,6 +266,52 @@ class ShadowPipelineMixin:
             self.last_shadow_pipeline_result = None
             self.last_shadow_trace = {}
             self.last_shadow_comparison = {"error": repr(exc)}
+            return None
+
+    def _v3_prompt_context(self, frame: Any) -> str:
+        return str(getattr(frame, "v3_prompt_context", "") or "") if frame is not None else ""
+
+    def _merge_v3_prompt_context(self, base: str, frame: Any) -> str:
+        v3 = self._v3_prompt_context(frame)
+        base = str(base or "").strip()
+        if not v3:
+            return base
+        return f"{base}\n\n{v3}".strip()
+
+    def _finalize_v3_cognitive_frame(self, old_frame: Any) -> Optional[PipelineResult]:
+        """Đưa kết quả production vào canonical frame và đóng vòng V3."""
+        if old_frame is None or bool(getattr(old_frame, "v3_pipeline_finalized", False)):
+            return None
+        v3_frame = getattr(old_frame, "v3_cognitive_frame", None)
+        if v3_frame is None:
+            return None
+        try:
+            pipeline = self._get_shadow_pipeline()
+            result = pipeline.finalize_from_legacy(
+                v3_frame,
+                legacy_frame=old_frame,
+                final_decision=getattr(old_frame, "final_decision", None),
+                grounding=getattr(old_frame, "grounding", None),
+                execution=getattr(old_frame, "execution", None),
+                outcome=getattr(old_frame, "outcome", None),
+                self_observation=getattr(old_frame, "self_observation", None),
+            )
+            self._set_frame_attr(old_frame, "v3_pipeline_finalized", True)
+            # Đưa commit request canonical sang cổng StateCommitter production.
+            # Recorder sẽ dedupe trước commit, nên cùng một repair request không
+            # nhân đôi chỉ vì hai frame cùng nhìn thấy lỗi.
+            legacy_requests = getattr(old_frame, "commit_requests", None)
+            if isinstance(legacy_requests, list):
+                legacy_requests.extend(list(getattr(result.frame, "commit_requests", []) or []))
+            self._record_frame_note(old_frame, f"v3_finalized={result.frame.frame_id}")
+            self.last_shadow_pipeline_result = result
+            self.last_shadow_trace = result.debug_trace
+            return result
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.warning("[v3 pipeline] finalize lỗi (runtime cũ vẫn commit): %r", exc)
+            self._record_frame_note(old_frame, f"v3_finalize_error={exc!r}")
             return None
 
     # ------------------------------------------------------------------

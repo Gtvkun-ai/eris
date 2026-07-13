@@ -19,6 +19,13 @@ public partial class UdpListener : Node2D
 	private Panel _settingsPanel;
 	private Label _settingsBrainStatusLabel;
 	private Label _settingsRuntimeDetailLabel;
+	private Label _settingsRuntimeProviderSummaryLabel;
+	private Label _settingsRuntimeModelSummaryLabel;
+	private Button _settingsRuntimeStartButton;
+	private Button _settingsRuntimeStopButton;
+	private Button _settingsRuntimeRestartButton;
+	private Control _settingsConnectionOverlay;
+	private Label _settingsConnectionFeedbackLabel;
 	private Label _settingsPoolStatusLabel;
 	private Label _settingsFallbackStatusLabel;
 	private Label _settingsPoolHealthLabel;
@@ -230,6 +237,7 @@ public partial class UdpListener : Node2D
 		_settingsImportSecretsDialog.FileSelected += ImportSecretsFile;
 		_settingsPanel.AddChild(_settingsImportSecretsDialog);
 
+		BuildSettingsConnectionOverlay(root);
 		RefreshSettingsPanel();
 	}
 
@@ -273,70 +281,325 @@ public partial class UdpListener : Node2D
 
 	private void BuildSettingsStatusColumn(Control parent)
 	{
+		// Runtime chỉ điều khiển tiến trình. Cấu hình model/API được mở ở một editor riêng,
+		// tránh bắt người dùng vừa nhìn PID vừa giải mã endpoint trong cùng một ô bé tí.
 		_settingsBrainStatusLabel = CreateSettingsChip("Brain", true);
 		_settingsBrainStatusLabel.Position = new Vector2(18f, 48f);
-		_settingsBrainStatusLabel.Size = new Vector2(150f, 28f);
+		_settingsBrainStatusLabel.Size = new Vector2(264f, 30f);
 		parent.AddChild(_settingsBrainStatusLabel);
 
-		_settingsRuntimeDetailLabel = CreateUiLabel("PID — · uptime —", 10, SettingsInkSoft);
-		_settingsRuntimeDetailLabel.Position = new Vector2(176f, 50f);
-		_settingsRuntimeDetailLabel.Size = new Vector2(108f, 26f);
-		_settingsRuntimeDetailLabel.HorizontalAlignment = HorizontalAlignment.Right;
-		StyleSettingsSingleLineLabel(_settingsRuntimeDetailLabel, HorizontalAlignment.Right);
+		_settingsRuntimeDetailLabel = CreateUiLabel("PID — · chưa chạy", 10, SettingsInkSoft);
+		_settingsRuntimeDetailLabel.Position = new Vector2(20f, 80f);
+		_settingsRuntimeDetailLabel.Size = new Vector2(260f, 20f);
+		StyleSettingsSingleLineLabel(_settingsRuntimeDetailLabel);
 		parent.AddChild(_settingsRuntimeDetailLabel);
 
-		AddSettingsCompactToggle(parent, 82f, "Tự mở Brain", AutoStartVision, ref _settingsAutoStartSwitch, () =>
+		AddSettingsCompactToggle(parent, 104f, "Tự khởi động cùng Eris", AutoStartVision, ref _settingsAutoStartSwitch, () =>
 		{
 			AutoStartVision = !AutoStartVision;
 			ApplySettingsSwitch(_settingsAutoStartSwitch, AutoStartVision);
-			SetSettingsStatus(AutoStartVision ? "Brain sẽ tự chạy khi mở Eris." : "Đã tắt tự chạy Brain khi mở Eris.");
+			SetSettingsStatus(AutoStartVision
+				? "Brain sẽ tự khởi động khi mở Eris."
+				: "Đã tắt tự khởi động Brain khi mở Eris.");
 		});
-		AddSettingsCompactToggle(parent, 108f, "Tự chạy lại khi lỗi", AutoRestartVisionOnCrash, ref _settingsAutoRestartSwitch, () =>
+		AddSettingsCompactToggle(parent, 132f, "Tự phục hồi khi gặp lỗi", AutoRestartVisionOnCrash, ref _settingsAutoRestartSwitch, () =>
 		{
 			AutoRestartVisionOnCrash = !AutoRestartVisionOnCrash;
 			ApplySettingsSwitch(_settingsAutoRestartSwitch, AutoRestartVisionOnCrash);
-			SetSettingsStatus(AutoRestartVisionOnCrash ? "Đã bật tự restart khi Brain crash." : "Đã tắt tự restart khi Brain crash.");
+			SetSettingsStatus(AutoRestartVisionOnCrash
+				? "Đã bật tự phục hồi Brain sau crash."
+				: "Đã tắt tự phục hồi Brain sau crash.");
 		});
 
-		_settingsProviderSelect = AddSettingsOptionRow(parent, 140f, "Provider", new[] { "gemini", "openai_compatible", "groq" }, RemoteApiProvider);
-		_settingsProviderSelect.ItemSelected += _ =>
+		_settingsRuntimeStartButton = CreateSettingsButton("▶  Khởi động Brain", () =>
 		{
-			SyncSettingsInputsToFields(applyProviderDefaults: true);
-			_settingsKeyPoolKind = KeyPoolKindFromProvider(RemoteApiProvider, RemoteApiBaseUrl);
-			RefreshSettingsProviderInputs();
-			BuildSettingsPanelUi();
-			SetSettingsStatus("Đã đổi provider. Bấm Lưu & Restart để Brain dùng cấu hình mới.");
-		};
-		_settingsModelInput = AddSettingsLineEditRow(parent, 180f, "Model", RemoteApiModelName);
-		_settingsBaseUrlInput = AddSettingsLineEditRow(parent, 220f, "Base URL", RemoteApiBaseUrl);
+			SyncSettingsInputsToFields();
+			StartVisionProcess();
+			SetSettingsStatus("Đang khởi động Brain...");
+			RefreshSettingsRuntimeStatus();
+		}, primary: true);
+		_settingsRuntimeStartButton.Position = new Vector2(18f, 166f);
+		_settingsRuntimeStartButton.Size = new Vector2(264f, 34f);
+		parent.AddChild(_settingsRuntimeStartButton);
 
-		var start = CreateSettingsButton("Start", StartVisionProcess, primary: false);
-		start.Position = new Vector2(18f, 264f);
-		start.Size = new Vector2(80f, 30f);
-		parent.AddChild(start);
-		var stop = CreateSettingsButton("Stop", StopVisionProcess, primary: false);
-		stop.Position = new Vector2(102f, 264f);
-		stop.Size = new Vector2(80f, 30f);
-		parent.AddChild(stop);
-		var restart = CreateSettingsButton("Restart", () =>
+		_settingsRuntimeStopButton = CreateSettingsButton("■  Dừng", () =>
+		{
+			StopVisionProcess();
+			SetSettingsStatus("Đã yêu cầu dừng Brain.");
+			RefreshSettingsRuntimeStatus();
+		}, primary: false);
+		_settingsRuntimeStopButton.Position = new Vector2(18f, 166f);
+		_settingsRuntimeStopButton.Size = new Vector2(104f, 34f);
+		parent.AddChild(_settingsRuntimeStopButton);
+
+		_settingsRuntimeRestartButton = CreateSettingsButton("↻  Khởi động lại", () =>
 		{
 			SyncSettingsInputsToFields();
 			RestartVisionProcess();
-			SetSettingsStatus("Đã restart Brain với cấu hình đang hiển thị.");
-		}, primary: false);
-		restart.Position = new Vector2(186f, 264f);
-		restart.Size = new Vector2(96f, 30f);
-		parent.AddChild(restart);
+			SetSettingsStatus("Đang khởi động lại Brain với cấu hình hiện tại...");
+			RefreshSettingsRuntimeStatus();
+		}, primary: true);
+		_settingsRuntimeRestartButton.Position = new Vector2(128f, 166f);
+		_settingsRuntimeRestartButton.Size = new Vector2(154f, 34f);
+		parent.AddChild(_settingsRuntimeRestartButton);
+
+		var divider = new ColorRect
+		{
+			Color = new Color(0.96f, 0.72f, 0.84f, 0.42f),
+			Position = new Vector2(18f, 202f),
+			Size = new Vector2(264f, 1.2f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		parent.AddChild(divider);
+
+		var modelTitle = CreateUiLabel("Model đang dùng", 10, SettingsInkSoft);
+		modelTitle.Position = new Vector2(20f, 208f);
+		modelTitle.Size = new Vector2(150f, 18f);
+		StyleSettingsSingleLineLabel(modelTitle);
+		parent.AddChild(modelTitle);
+
+		var modelSummaryPanel = new Panel
+		{
+			Position = new Vector2(18f, 226f),
+			Size = new Vector2(264f, 44f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		modelSummaryPanel.AddThemeStyleboxOverride("panel", SettingsCardStyle(
+			new Color(1f, 0.98f, 0.99f, 0.66f), SettingsBorder, 12));
+		parent.AddChild(modelSummaryPanel);
+
+		_settingsRuntimeProviderSummaryLabel = CreateUiLabel("Provider: —", 9, SettingsInkSoft);
+		_settingsRuntimeProviderSummaryLabel.Position = new Vector2(12f, 3f);
+		_settingsRuntimeProviderSummaryLabel.Size = new Vector2(240f, 19f);
+		StyleSettingsSingleLineLabel(_settingsRuntimeProviderSummaryLabel);
+		modelSummaryPanel.AddChild(_settingsRuntimeProviderSummaryLabel);
+
+		_settingsRuntimeModelSummaryLabel = CreateUiLabel("Model: —", 10, SettingsInk);
+		_settingsRuntimeModelSummaryLabel.Position = new Vector2(12f, 22f);
+		_settingsRuntimeModelSummaryLabel.Size = new Vector2(240f, 21f);
+		_settingsRuntimeModelSummaryLabel.TooltipText = RemoteApiModelName ?? "";
+		StyleSettingsSingleLineLabel(_settingsRuntimeModelSummaryLabel);
+		modelSummaryPanel.AddChild(_settingsRuntimeModelSummaryLabel);
+
+		var editModel = CreateSettingsButton("Model & kết nối", ShowSettingsConnectionEditor, primary: false);
+		editModel.Position = new Vector2(18f, 278f);
+		editModel.Size = new Vector2(264f, 28f);
+		parent.AddChild(editModel);
 
 		var test = CreateSettingsButton("Chẩn đoán", TestSettingsSystem, primary: false);
-		test.Position = new Vector2(18f, 304f);
-		test.Size = new Vector2(128f, 30f);
+		test.Position = new Vector2(18f, 312f);
+		test.Size = new Vector2(128f, 26f);
 		parent.AddChild(test);
 
 		var logs = CreateSettingsButton("Mở logs", OpenSettingsLogs, primary: false);
-		logs.Position = new Vector2(154f, 304f);
-		logs.Size = new Vector2(128f, 30f);
+		logs.Position = new Vector2(154f, 312f);
+		logs.Size = new Vector2(128f, 26f);
 		parent.AddChild(logs);
+	}
+
+
+	private void BuildSettingsConnectionOverlay(Control root)
+	{
+		_settingsConnectionOverlay = new Control
+		{
+			Visible = false,
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		_settingsConnectionOverlay.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		root.AddChild(_settingsConnectionOverlay);
+
+		var dim = new ColorRect
+		{
+			Color = new Color(0.24f, 0.05f, 0.15f, 0.22f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		dim.GuiInput += ev =>
+		{
+			if (ev is InputEventMouseButton mouse && mouse.ButtonIndex == MouseButton.Left && mouse.Pressed)
+				HideSettingsConnectionEditor();
+		};
+		_settingsConnectionOverlay.AddChild(dim);
+
+		var card = new Panel
+		{
+			Position = new Vector2(190f, 148f),
+			Size = new Vector2(660f, 338f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		card.AddThemeStyleboxOverride("panel", SettingsCardStyle(
+			new Color(1.00f, 0.97f, 0.985f, 0.985f),
+			new Color(0.96f, 0.62f, 0.79f, 0.92f),
+			20));
+		_settingsConnectionOverlay.AddChild(card);
+
+		var title = CreateUiLabel("Model & kết nối", 22, SettingsInk);
+		title.Position = new Vector2(22f, 16f);
+		title.Size = new Vector2(300f, 32f);
+		card.AddChild(title);
+
+		var close = CreateSettingsButton("×", HideSettingsConnectionEditor, primary: false);
+		close.Position = new Vector2(608f, 14f);
+		close.Size = new Vector2(34f, 30f);
+		close.AddThemeFontSizeOverride("font_size", 16);
+		card.AddChild(close);
+
+		var hint = CreateUiLabel("Đổi provider/model ở đây. Runtime chỉ giữ các nút chạy, dừng và phục hồi.", 10, SettingsInkSoft);
+		hint.Position = new Vector2(24f, 50f);
+		hint.Size = new Vector2(590f, 22f);
+		StyleSettingsSingleLineLabel(hint);
+		card.AddChild(hint);
+
+		_settingsProviderSelect = AddSettingsOptionRow(card, 80f, "Provider", new[] { "gemini", "groq", "openai_compatible" }, RemoteApiProvider);
+		_settingsModelInput = AddSettingsLineEditRow(card, 124f, "Model", RemoteApiModelName);
+		_settingsBaseUrlInput = AddSettingsLineEditRow(card, 168f, "Base URL", RemoteApiBaseUrl);
+
+		_settingsProviderSelect.ItemSelected += _ =>
+		{
+			RemoteApiProvider = SelectedOptionText(_settingsProviderSelect, "gemini");
+			ApplyProviderDefaults(RemoteApiProvider);
+			RefreshSettingsProviderInputs();
+			RefreshSettingsRuntimeModelSummary();
+			SetSettingsConnectionStatus("Đã nạp preset provider. Bấm Áp dụng & Restart để Brain dùng cấu hình mới.");
+		};
+		_settingsModelInput.TextChanged += _ =>
+		{
+			SyncSettingsInputsToFields();
+			RefreshSettingsRuntimeModelSummary();
+			SetSettingsConnectionStatus("Model đã thay đổi, chưa áp dụng xuống Brain.");
+		};
+		_settingsBaseUrlInput.TextChanged += _ =>
+		{
+			SyncSettingsInputsToFields();
+			RefreshSettingsRuntimeModelSummary();
+			SetSettingsConnectionStatus("Base URL đã thay đổi, chưa áp dụng xuống Brain.");
+		};
+
+		var infoPanel = new Panel
+		{
+			Position = new Vector2(310f, 80f),
+			Size = new Vector2(326f, 126f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		infoPanel.AddThemeStyleboxOverride("panel", SettingsCardStyle(
+			new Color(1f, 0.985f, 0.995f, 0.82f), SettingsBorder, 14));
+		card.AddChild(infoPanel);
+
+		var infoTitle = CreateUiLabel("Trạng thái cấu hình", 12, SettingsInk);
+		infoTitle.Position = new Vector2(14f, 10f);
+		infoTitle.Size = new Vector2(250f, 22f);
+		StyleSettingsSingleLineLabel(infoTitle);
+		infoPanel.AddChild(infoTitle);
+
+		_settingsConnectionFeedbackLabel = CreateUiLabel("Chưa có thay đổi.", 10, SettingsInkSoft);
+		_settingsConnectionFeedbackLabel.Position = new Vector2(14f, 36f);
+		_settingsConnectionFeedbackLabel.Size = new Vector2(298f, 72f);
+		_settingsConnectionFeedbackLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		_settingsConnectionFeedbackLabel.VerticalAlignment = VerticalAlignment.Top;
+		infoPanel.AddChild(_settingsConnectionFeedbackLabel);
+
+		var test = CreateSettingsButton("Kiểm tra cấu hình", TestSettingsConnectionEditor, primary: false);
+		test.Position = new Vector2(310f, 216f);
+		test.Size = new Vector2(156f, 32f);
+		card.AddChild(test);
+
+		var logs = CreateSettingsButton("Mở logs", OpenSettingsLogs, primary: false);
+		logs.Position = new Vector2(474f, 216f);
+		logs.Size = new Vector2(162f, 32f);
+		card.AddChild(logs);
+
+		var cancel = CreateSettingsButton("Đóng", HideSettingsConnectionEditor, primary: false);
+		cancel.Position = new Vector2(310f, 274f);
+		cancel.Size = new Vector2(92f, 36f);
+		card.AddChild(cancel);
+
+		var save = CreateSettingsButton("Lưu", () =>
+		{
+			SaveSettingsState(false, writeSecrets: true);
+			RefreshSettingsRuntimeModelSummary();
+			SetSettingsConnectionStatus("Đã lưu cấu hình. Brain đang chạy vẫn dùng cấu hình cũ cho tới khi restart.");
+		}, primary: false);
+		save.Position = new Vector2(410f, 274f);
+		save.Size = new Vector2(86f, 36f);
+		card.AddChild(save);
+
+		var apply = CreateSettingsButton("Áp dụng & Restart", () =>
+		{
+			SaveSettingsState(false, writeSecrets: true);
+			RestartVisionProcess();
+			RefreshSettingsRuntimeModelSummary();
+			HideSettingsConnectionEditor();
+			SetSettingsStatus("Đã lưu model/kết nối và khởi động lại Brain.");
+		}, primary: true);
+		apply.Position = new Vector2(504f, 272f);
+		apply.Size = new Vector2(132f, 40f);
+		apply.AddThemeFontSizeOverride("font_size", 10);
+		card.AddChild(apply);
+	}
+
+	private void ShowSettingsConnectionEditor()
+	{
+		if (_settingsConnectionOverlay == null)
+			return;
+		RefreshSettingsProviderInputs();
+		SetSettingsConnectionStatus(_processes != null && _processes.IsVisionRunning
+			? "Brain đang chạy. Thay đổi provider/model cần Restart để áp dụng."
+			: "Brain đang dừng. Lưu cấu hình rồi khởi động khi sẵn sàng.");
+		_settingsConnectionOverlay.Visible = true;
+		_settingsConnectionOverlay.MoveToFront();
+	}
+
+	private void HideSettingsConnectionEditor()
+	{
+		if (_settingsConnectionOverlay != null)
+			_settingsConnectionOverlay.Visible = false;
+	}
+
+	private void SetSettingsConnectionStatus(string text)
+	{
+		if (_settingsConnectionFeedbackLabel != null)
+			_settingsConnectionFeedbackLabel.Text = text ?? "";
+	}
+
+	private void TestSettingsConnectionEditor()
+	{
+		SyncSettingsInputsToFields();
+		var problems = new List<string>();
+		if (string.IsNullOrWhiteSpace(RemoteApiProvider))
+			problems.Add("thiếu provider");
+		if (string.IsNullOrWhiteSpace(RemoteApiModelName))
+			problems.Add("thiếu model");
+		if (!string.Equals(RemoteApiProvider, "gemini", StringComparison.OrdinalIgnoreCase)
+			&& string.IsNullOrWhiteSpace(RemoteApiBaseUrl))
+			problems.Add("thiếu Base URL");
+
+		string pool = KeyPoolKindFromProvider(RemoteApiProvider, RemoteApiBaseUrl);
+		int keys = IsGroqPool(pool) ? CountConfiguredGroqKeys() : CountConfiguredGeminiKeys();
+		if (keys <= 0)
+			problems.Add($"pool {pool} chưa có key");
+
+		if (problems.Count > 0)
+		{
+			SetSettingsConnectionStatus("Chưa ổn: " + string.Join(", ", problems) + ".");
+			return;
+		}
+
+		string runtime = _processes != null && _processes.IsVisionRunning
+			? $"Brain đang chạy PID {_processes.VisionProcessId}."
+			: "Brain đang dừng.";
+		SetSettingsConnectionStatus($"Cấu hình hợp lệ cục bộ: {DisplaySettingsProviderName(RemoteApiProvider)}, {RemoteApiModelName}, {keys} key. {runtime}");
+	}
+
+	private static string DisplaySettingsProviderName(string provider)
+	{
+		string normalized = (provider ?? "").Trim().ToLowerInvariant();
+		return normalized switch
+		{
+			"gemini" => "Gemini",
+			"groq" => "Groq",
+			"openai_compatible" => "OpenAI-compatible",
+			_ => string.IsNullOrWhiteSpace(provider) ? "Chưa chọn" : provider,
+		};
 	}
 
 
@@ -1517,16 +1780,24 @@ public partial class UdpListener : Node2D
 	private void RefreshSettingsRuntimeStatus()
 	{
 		bool running = _processes != null && _processes.IsVisionRunning;
+		bool recovering = _visionRestartPending && !running;
 		if (_settingsBrainStatusLabel != null)
 		{
-			_settingsBrainStatusLabel.Text = running ? "●  Brain đang chạy" : "●  Brain đang dừng";
+			_settingsBrainStatusLabel.Text = recovering
+				? "●  Brain đang phục hồi..."
+				: running ? "●  Brain đang chạy" : "●  Brain đã dừng";
 			_settingsBrainStatusLabel.AddThemeStyleboxOverride("normal", SettingsCardStyle(
-				running ? new Color(0.84f, 1.00f, 0.86f, 0.88f) : new Color(1.00f, 0.94f, 0.80f, 0.88f),
-				running ? new Color(0.40f, 0.84f, 0.48f, 0.80f) : new Color(1.00f, 0.62f, 0.24f, 0.75f),
+				running ? new Color(0.84f, 1.00f, 0.86f, 0.88f)
+					: recovering ? new Color(1.00f, 0.96f, 0.82f, 0.90f)
+					: new Color(1.00f, 0.94f, 0.80f, 0.88f),
+				running ? new Color(0.40f, 0.84f, 0.48f, 0.80f)
+					: recovering ? new Color(0.96f, 0.66f, 0.24f, 0.82f)
+					: new Color(1.00f, 0.62f, 0.24f, 0.75f),
 				10));
 			_settingsBrainStatusLabel.AddThemeColorOverride(
 				"font_color",
-				running ? new Color(0.10f, 0.42f, 0.14f) : new Color(0.64f, 0.34f, 0.08f));
+				running ? new Color(0.10f, 0.42f, 0.14f)
+					: new Color(0.64f, 0.34f, 0.08f));
 		}
 
 		if (_settingsRuntimeDetailLabel != null)
@@ -1534,15 +1805,62 @@ public partial class UdpListener : Node2D
 			if (running)
 			{
 				TimeSpan uptime = _processes.VisionUptime;
-				string uptimeText = uptime.TotalHours >= 1d ? $"{(int)uptime.TotalHours}h{uptime.Minutes:00}" : $"{uptime.Minutes:00}m{uptime.Seconds:00}";
-				_settingsRuntimeDetailLabel.Text = $"PID {_processes.VisionProcessId} · {uptimeText}";
+				string uptimeText = uptime.TotalHours >= 1d
+					? $"{(int)uptime.TotalHours} giờ {uptime.Minutes:00} phút"
+					: $"{uptime.Minutes:00} phút {uptime.Seconds:00} giây";
+				_settingsRuntimeDetailLabel.Text = $"PID {_processes.VisionProcessId} · Đã chạy {uptimeText}";
+				_settingsRuntimeDetailLabel.TooltipText = _processes.VisionStartedAtUtc.HasValue
+					? $"Khởi động lúc {_processes.VisionStartedAtUtc.Value.ToLocalTime():HH:mm:ss}"
+					: "Brain đang chạy";
+			}
+			else if (recovering)
+			{
+				_settingsRuntimeDetailLabel.Text = "Đang chờ 2 giây trước khi tự khởi động lại";
+				_settingsRuntimeDetailLabel.TooltipText = "Tự phục hồi đang hoạt động";
 			}
 			else
 			{
-				_settingsRuntimeDetailLabel.Text = _processes?.LastVisionExitCode is int code ? $"exit {code}" : "PID — · uptime —";
+				_settingsRuntimeDetailLabel.Text = _processes?.LastVisionExitCode is int code
+					? $"Lần thoát gần nhất · mã {code}"
+					: "Chưa có tiến trình Brain đang chạy";
+				_settingsRuntimeDetailLabel.TooltipText = _processes?.LastVisionExitCode is int lastCode
+					? $"Exit code gần nhất: {lastCode}"
+					: "Bấm Khởi động Brain để chạy runtime";
 			}
 		}
+
+		if (_settingsRuntimeStartButton != null)
+		{
+			_settingsRuntimeStartButton.Visible = !running;
+			_settingsRuntimeStartButton.Disabled = recovering;
+			_settingsRuntimeStartButton.Text = recovering ? "Đang phục hồi..." : "▶  Khởi động Brain";
+		}
+		if (_settingsRuntimeStopButton != null)
+		{
+			_settingsRuntimeStopButton.Visible = running;
+			_settingsRuntimeStopButton.Disabled = !running;
+		}
+		if (_settingsRuntimeRestartButton != null)
+		{
+			_settingsRuntimeRestartButton.Visible = running;
+			_settingsRuntimeRestartButton.Disabled = !running;
+		}
+
+		RefreshSettingsRuntimeModelSummary();
 	}
+
+	private void RefreshSettingsRuntimeModelSummary()
+	{
+		if (_settingsRuntimeProviderSummaryLabel != null)
+			_settingsRuntimeProviderSummaryLabel.Text = $"Provider: {DisplaySettingsProviderName(RemoteApiProvider)}";
+		if (_settingsRuntimeModelSummaryLabel != null)
+		{
+			string model = string.IsNullOrWhiteSpace(RemoteApiModelName) ? "Chưa chọn model" : RemoteApiModelName.Trim();
+			_settingsRuntimeModelSummaryLabel.Text = model;
+			_settingsRuntimeModelSummaryLabel.TooltipText = model;
+		}
+	}
+
 
 	private void RefreshSettingsKeyRowHealthIndicators()
 	{

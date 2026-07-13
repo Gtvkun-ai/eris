@@ -1254,6 +1254,13 @@ class CognitiveFrame:
     modality: object | None = None
     outcome: object | None = None
     self_observation: object | None = None
+    # Bridge sang CognitiveFrame canonical V3. Runtime cũ vẫn giữ contract hiện tại
+    # trong giai đoạn chuyển tải, nhưng mọi turn có một frame V3 chạy thật và được
+    # khép vòng sau execution. Không còn "shadow chết ở GlobalWorkspace" nữa.
+    v3_cognitive_frame: object | None = None
+    v3_budget_mode: str = ""
+    v3_prompt_context: str = ""
+    v3_pipeline_finalized: bool = False
     # Epistemic V2 episode or its pre-action preparation. Kept as object to avoid a reverse dependency
     # from the shared cortex contracts into cortex.epistemic.
     epistemic_episode: object | None = None
@@ -1298,6 +1305,21 @@ class CognitiveFrame:
             "modality": _to_plain_contract(self.modality),
             "outcome": _to_plain_contract(self.outcome),
             "self_observation": _to_plain_contract(self.self_observation),
+            "v3_budget_mode": self.v3_budget_mode,
+            "v3_prompt_context": self.v3_prompt_context,
+            "v3_pipeline_finalized": bool(self.v3_pipeline_finalized),
+            "v3_cognitive_frame": (
+                {
+                    "frame_id": str(getattr(self.v3_cognitive_frame, "frame_id", "") or ""),
+                    "status": str(getattr(self.v3_cognitive_frame, "status", "") or ""),
+                    "budget_mode": str(getattr(self.v3_cognitive_frame, "budget_mode", "") or ""),
+                    "warnings": list(getattr(self.v3_cognitive_frame, "warnings", []) or [])[-8:],
+                    "debug_trace": _to_plain_contract(
+                        (getattr(self.v3_cognitive_frame, "metadata", {}) or {}).get("debug_trace")
+                    ),
+                }
+                if self.v3_cognitive_frame is not None else None
+            ),
             "epistemic_episode": _to_plain_contract(self.epistemic_episode),
             "commit_requests": _to_plain_contract(self.commit_requests),
             "debug_notes": list(self.debug_notes),

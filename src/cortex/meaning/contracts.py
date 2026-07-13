@@ -251,6 +251,18 @@ class Phase2Result:
     decisions: list[SurfaceDecision]    # R10.5
     debug: dict                         # contract_violations, missing_fields, stage debugs
 
+    # Canonical artifacts của từng stage. Trước đây facade chỉ trả kết luận cuối,
+    # khiến runtime V3 không thể điền các slot world_scene -> tom mà phải chạy lại
+    # từng module hoặc đào object từ debug. Giữ artifact có cấu trúc ở đây để một
+    # lần chạy Phase 2 có đúng một nguồn sự thật.
+    world_scene: object | None = None
+    observations: list[object] = field(default_factory=list)
+    sociocultural_annotations: list[object] = field(default_factory=list)
+    meaning_hypotheses: list[object] = field(default_factory=list)
+    pragmatic_intents: list[object] = field(default_factory=list)
+    mental_states: list[object] = field(default_factory=list)
+    evaluated_conclusions: list[object] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Hỗ trợ guard

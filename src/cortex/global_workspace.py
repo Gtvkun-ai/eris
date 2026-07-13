@@ -1355,10 +1355,34 @@ class GlobalWorkspaceEngine:
         """Gợi ý module downstream nên đọc phần nào. Đây là tài liệu runtime, không phải luật cứng."""
 
         contract: dict[str, list[str]] = {
-            "WorldSceneBuilder": ["selected_evidence", "selected_body_state", "dominant_thread"],
+            "WorldSceneBuilder": [
+                "selected_evidence",
+                "selected_body_state",
+                "dominant_thread",
+            ],
             "WorldInterpreter": ["broadcast_items", "risks", "active_threads"],
-            "MeaningHypothesis": ["selected_evidence", "selected_memory", "selected_goal", "social_hypotheses"],
-            "TheoryOfMind": ["social_hypotheses", "selected_evidence", "forbidden_assumptions"],
+            "SocioculturalContext": [
+                "social_hypotheses",
+                "selected_evidence",
+                "forbidden_assumptions",
+            ],
+            # Tên phải khớp đúng module name mà FrameReadView dùng. Bản cũ dùng
+            # "MeaningHypothesis" / "TheoryOfMind" trong khi facade gọi
+            # "MeaningHypothesisEngine" / "TheoryOfMindCore", nên contract guard
+            # chặn chính pipeline hợp lệ của mình. Con người gọi đây là bảo mật;
+            # máy tính gọi đây là tự khóa cửa rồi ném chìa ra ngoài.
+            "MeaningHypothesisEngine": [
+                "selected_evidence",
+                "selected_memory",
+                "selected_goal",
+                "social_hypotheses",
+            ],
+            "TheoryOfMindCore": [
+                "social_hypotheses",
+                "selected_evidence",
+                "selected_memory",
+                "forbidden_assumptions",
+            ],
             "EpistemicDrive": ["selected_goal", "selected_evidence", "risks"],
             "SpeechCore": ["broadcast_items", "selected_risk", "forbidden_assumptions", "context_pressure"],
             "ActionPlanner": ["selected_goal", "selected_body_state", "risks", "broadcast_priority"],
@@ -1366,8 +1390,6 @@ class GlobalWorkspaceEngine:
         }
         if risks:
             contract["PermissionEngine"] = ["risks", "forbidden_assumptions", "selected_risk"]
-        if social_hypotheses:
-            contract["SocioculturalContext"] = ["social_hypotheses", "selected_evidence"]
         return contract
 
     # ------------------------------------------------------------------

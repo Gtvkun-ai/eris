@@ -238,6 +238,19 @@ class Phase2MeaningPipeline:
             evaluated, frame_id=frame_id
         )
 
+        # Giữ nguyên artifact trung gian trên kết quả canonical. Đây không phải
+        # debug decoration: CognitivePipeline dùng chính các object này để điền
+        # world_scene / interpretation / sociocultural / meaning / tom mà không
+        # chạy Phase 2 lần thứ hai. Một pipeline chạy hai lần cho cùng một input là
+        # một cách khá sáng tạo để tự tạo ra hai sự thật.
+        result.world_scene = scene
+        result.observations = list(observations)
+        result.sociocultural_annotations = list(annotations)
+        result.meaning_hypotheses = list(meaning_hyps)
+        result.pragmatic_intents = list(intents)
+        result.mental_states = list(mental_states)
+        result.evaluated_conclusions = list(evaluated)
+
         # --- Gắn stage debugs + Phase2Run vào result.debug -------------------
         self._attach_debug(result, frame_id, stage_debugs)
         return result

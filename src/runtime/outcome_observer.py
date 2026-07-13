@@ -496,9 +496,20 @@ class OutcomeObserver:
     def _extract_final_text(frame: Any) -> str:
         final_decision = getattr(frame, "final_decision", None)
         if isinstance(final_decision, Mapping):
-            return str(final_decision.get("text", "") or "").strip()
+            text = str(final_decision.get("text", "") or "").strip()
+            if text:
+                return text
         decision = getattr(frame, "decision", None)
-        return str(getattr(decision, "text", "") or "").strip()
+        text = str(getattr(decision, "text", "") or "").strip()
+        if text:
+            return text
+        # Canonical V3 không có final_decision; wording là source of truth sau
+        # finalize. Observer cũ bỏ qua slot này nên mọi câu đã nói đều bị nhìn như
+        # im lặng. Một cách khá hiệu quả để tự chẩn đoán sai chính mình.
+        wording = getattr(frame, "wording", None)
+        if isinstance(wording, Mapping):
+            return str(wording.get("parsed_text") or wording.get("raw_text") or "").strip()
+        return str(getattr(wording, "parsed_text", None) or getattr(wording, "raw_text", "") or "").strip()
 
     @staticmethod
     def _extract_system_action(frame: Any) -> str:
@@ -508,7 +519,13 @@ class OutcomeObserver:
             if action:
                 return action
         action_plan = getattr(frame, "action_plan", None)
-        return str(getattr(action_plan, "system_action", "") or "").strip()
+        action = str(getattr(action_plan, "system_action", "") or "").strip()
+        if action:
+            return action
+        modality = getattr(frame, "modality", None)
+        if isinstance(modality, Mapping):
+            return str(modality.get("system_action", "") or "").strip()
+        return str(getattr(modality, "system_action", "") or "").strip()
 
     @staticmethod
     def _read_bool(obj: Any, key: str) -> bool | None:

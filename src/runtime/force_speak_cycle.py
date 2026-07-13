@@ -279,7 +279,10 @@ class ForceSpeakCycleMixin:
             return
 
         if self._is_inner_thought_speech_act(frame.action_plan.speech_act):
-            inner_ti_context = self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought, speech_core)
+            inner_ti_context = self._merge_v3_prompt_context(
+                self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought, speech_core),
+                frame,
+            )
             raw = self.llm_service.generate_directive(
                 telemetry_data=telemetry_data,
                 ni_context="",
@@ -387,6 +390,7 @@ class ForceSpeakCycleMixin:
         if not vision_marker:
             forced_ti_context += " Không có screen_facts mới; nói thật gọn, không dựng cảnh ngoài dữ kiện."
             self.logger.info("[force_speak] context menu requested immediate speech.")
+        forced_ti_context = self._merge_v3_prompt_context(forced_ti_context, frame)
         raw = self.llm_service.generate_directive(
             telemetry_data=telemetry_data,
             ni_context="",

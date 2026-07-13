@@ -397,10 +397,9 @@ class ChatCycleMixin:
             memory_resonance=memory_resonance,
             affect_signal=affect_signal,
         )
-        # V3 CognitivePipeline chạy shadow trên CÙNG input (observe-only, env-gated
-        # ERIS_SHADOW_PIPELINE). Không đổi quyết định của frame cũ, không ném ra hot
-        # path. Đây là bước tích lũy bằng chứng focus/budget trước khi chuyển tải V3
-        # thành xương sống cho path chat.
+        # V3 CognitivePipeline chạy canonical planning trên cùng input, gắn prompt
+        # projection vào frame production và được khép vòng sau execution. Shadow
+        # comparison chỉ còn là debug tùy chọn, không phải cánh cổng giữ V3 ngoài đời.
         self._run_shadow_cognitive_pipeline(
             channel="chat",
             user_text=user_text,
@@ -941,7 +940,10 @@ class ChatCycleMixin:
             "internal_state_context": self._build_internal_state_context(
                 sensed_internal_state, frame.self_state, user_text=user_text
             ),
-            "conversation_context": f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
+            "conversation_context": self._merge_v3_prompt_context(
+                f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
+                frame,
+            ),
             "memory_context": memory_context,
             "grounding_context": grounding_report.prompt_context,
             "screen_image_data_uri": screen_image_data_uri,

@@ -591,7 +591,13 @@ class MemoryCognitionCore:
         return compact_text(" ".join(parts), limit=520)
 
     def _budget_from_frame(self, frame: Any) -> BudgetMode:
-        mode = str(getattr(frame, "budget_mode", "normal") or "normal")
+        # Runtime production đang dùng legacy CognitiveFrame trong giai đoạn
+        # chuyển tải; budget canonical được bridge qua v3_budget_mode.
+        mode = str(
+            getattr(frame, "v3_budget_mode", "")
+            or getattr(frame, "budget_mode", "normal")
+            or "normal"
+        )
         if mode in {"fast", "normal", "deep", "reflection"}:
             return mode  # type: ignore[return-value]
         return "normal"

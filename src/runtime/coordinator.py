@@ -230,15 +230,6 @@ def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
     return "lỗi định dạng" in text or "loi dinh dang" in text or "vấn đề đường truyền" in text
 
 
-
-def _clamp_float(value, minimum: float, maximum: float, fallback: float) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        parsed = fallback
-    return max(minimum, min(maximum, parsed))
-
-
 class RuntimeCoordinator(
     CognitiveCycleMixin,
     ChatCycleMixin,
@@ -5464,14 +5455,6 @@ class RuntimeCoordinator(
             self._handle_settings_update(msg)
             return
 
-        if msg_type == "settings_health":
-            self._handle_settings_health(msg)
-            return
-
-        if msg_type == "tts_preview":
-            self._handle_tts_preview(msg)
-            return
-
         if msg_type == "debug_command":
             self._handle_debug_command(msg)
             return
@@ -5501,68 +5484,29 @@ class RuntimeCoordinator(
             self.logger.warning("[settings] rejected invalid tts_language=%r", raw_language)
             return
 
-        enabled_raw = msg.get("tts_enabled", True)
-        if isinstance(enabled_raw, str):
-            enabled = enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
-        else:
-            enabled = bool(enabled_raw)
-        volume = _clamp_float(msg.get("tts_volume", os.environ.get("ERIS_TTS_VOLUME", "1.0")), 0.0, 1.0, 1.0)
-        speed = _clamp_float(msg.get("tts_speed", os.environ.get("ERIS_TTS_SPEED", "1.0")), 0.85, 1.15, 1.0)
-
         voice = str(msg.get("tts_voice", "") or "").strip()
         quality = str(msg.get("tts_quality", "") or "").strip().lower()
         if voice and len(voice) <= 64 and all(ch.isalnum() or ch in {"-", "_"} for ch in voice):
             os.environ["ERIS_TTS_VOICE"] = voice
         if quality in {"balanced", "high"}:
             os.environ["ERIS_TTS_QUALITY"] = quality
-        os.environ["ERIS_TTS_ENABLED"] = "1" if enabled else "0"
         os.environ["ERIS_TTS_LANGUAGE"] = language
-        os.environ["ERIS_TTS_VOLUME"] = f"{volume:.2f}"
-        os.environ["ERIS_TTS_SPEED"] = f"{speed:.2f}"
 
         self.stage_frame_builder = None
         changed = False
         tts = getattr(self, "tts_engine", None)
-        if enabled and (tts is None or not getattr(tts, "_ok", False)):
-            try:
-                from runtime.tts_engine import build_tts_engine
-
-                replacement = build_tts_engine()
-                if getattr(replacement, "_ok", False):
-                    old_tts = tts
-                    tts = replacement
-                    self.tts_engine = replacement
-                    try:
-                        self._ensure_voice_manager().bind_tts_engine(replacement)
-                    except Exception:
-                        pass
-                    if old_tts is not None and old_tts is not replacement:
-                        shutdown = getattr(old_tts, "shutdown", None)
-                        if callable(shutdown):
-                            shutdown()
-                    changed = True
-            except Exception as exc:
-                self.logger.warning("[settings] TTS live enable failed: %s", exc)
-        if not enabled and tts is not None:
-            cancel = getattr(tts, "cancel_current", None)
-            if callable(cancel):
-                try:
-                    cancel(reason="tts_disabled_from_settings", only_interruptible=False)
-                except Exception as exc:
-                    self.logger.debug("[settings] TTS cancel on disable failed: %s", exc)
         refresh = getattr(tts, "refresh_configuration", None) if tts is not None else None
-        if enabled and callable(refresh):
+        if callable(refresh):
             try:
-                changed = bool(refresh()) or changed
+                changed = bool(refresh())
             except Exception as exc:
                 self.logger.warning("[settings] TTS refresh failed: %s", exc)
 
         effective_voice = os.environ.get("ERIS_TTS_VOICE", "Aoede")
         effective_quality = os.environ.get("ERIS_TTS_QUALITY", "high")
-        engine_ready = bool(enabled and tts is not None and getattr(tts, "_ok", False))
         self.logger.info(
-            "[settings] TTS live update enabled=%s Language=%s Voice=%s Quality=%s volume=%.2f speed=%.2f worker_rebuilt=%s",
-            enabled, language, effective_voice, effective_quality, volume, speed, changed,
+            "[settings] TTS live update Language=%s Voice=%s Quality=%s worker_rebuilt=%s",
+            language, effective_voice, effective_quality, changed,
         )
         try:
             self.transport.send_json(
@@ -5571,95 +5515,14 @@ class RuntimeCoordinator(
                     "parse_mode": "settings_update_ack",
                     "should_speak": False,
                     "settings_update_ack": {
-                        "scope": "tts", "enabled": enabled, "language": language,
+                        "scope": "tts", "language": language,
                         "voice": effective_voice, "quality": effective_quality,
-                        "volume": volume, "speed": speed,
-                        "worker_rebuilt": changed, "engine_ready": engine_ready,
+                        "worker_rebuilt": changed,
                     },
                 }
             )
         except Exception as exc:
             self.logger.debug("[settings] ack send failed: %s", exc)
-
-    def _handle_settings_health(self, _msg: dict) -> None:
-        """Trả health runtime cho Settings Panel, không thực hiện request API tốn quota."""
-
-        try:
-            from llm.key_pool import get_key_pool
-
-            pools = {
-                "gemini": get_key_pool("gemini").health_snapshot(),
-                "groq": get_key_pool("groq").health_snapshot(),
-            }
-        except Exception as exc:
-            self.logger.warning("[settings] key-pool health failed: %s", exc)
-            pools = {}
-
-        tts = getattr(self, "tts_engine", None)
-        tts_state = {
-            "enabled": os.environ.get("ERIS_TTS_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"},
-            "ready": bool(tts is not None and getattr(tts, "_ok", False)),
-            "voice": os.environ.get("ERIS_TTS_VOICE", "Aoede"),
-            "language": os.environ.get("ERIS_TTS_LANGUAGE", "vi"),
-            "volume": _clamp_float(os.environ.get("ERIS_TTS_VOLUME", "1.0"), 0.0, 1.0, 1.0),
-            "speed": _clamp_float(os.environ.get("ERIS_TTS_SPEED", "1.0"), 0.85, 1.15, 1.0),
-        }
-        try:
-            self.transport.send_json(
-                {
-                    "type": "settings_health_ack",
-                    "parse_mode": "settings_health_ack",
-                    "should_speak": False,
-                    "settings_health_ack": {"pools": pools, "tts": tts_state},
-                }
-            )
-        except Exception as exc:
-            self.logger.debug("[settings] health ack send failed: %s", exc)
-
-    def _handle_tts_preview(self, msg: dict) -> None:
-        """Phát một câu mẫu ngắn bằng đúng worker TTS hiện tại."""
-
-        text = " ".join(str(msg.get("text", "") or "").split())[:220]
-        tts = getattr(self, "tts_engine", None)
-        enabled = os.environ.get("ERIS_TTS_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
-        accepted = bool(text and enabled and tts is not None and getattr(tts, "_ok", False))
-        reason = ""
-        if not text:
-            reason = "empty_text"
-        elif not enabled:
-            reason = "tts_disabled"
-        elif tts is None or not getattr(tts, "_ok", False):
-            reason = "tts_engine_not_ready"
-        if accepted:
-            try:
-                tts.speak(
-                    text,
-                    valence=0.12,
-                    arousal=0.28,
-                    stance="soft_near",
-                    prelocalized=True,
-                    prosody_style="soft_near",
-                    prosody_notes="A short clean voice preview. Keep the sentence natural and close.",
-                    turn_id="settings-preview",
-                    segment_id=0,
-                    interruptible=True,
-                    replace=True,
-                )
-            except Exception as exc:
-                accepted = False
-                reason = f"preview_error:{type(exc).__name__}"
-                self.logger.warning("[settings] TTS preview failed: %s", exc)
-        try:
-            self.transport.send_json(
-                {
-                    "type": "tts_preview_ack",
-                    "parse_mode": "tts_preview_ack",
-                    "should_speak": False,
-                    "tts_preview_ack": {"accepted": accepted, "reason": reason},
-                }
-            )
-        except Exception as exc:
-            self.logger.debug("[settings] preview ack send failed: %s", exc)
 
     def _handle_stage_inbound_event(self, msg: dict) -> None:
         """Nhận event ngược từ frontend/sân khấu.
