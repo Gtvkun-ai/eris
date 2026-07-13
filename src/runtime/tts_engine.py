@@ -94,6 +94,35 @@ def _quality_mode() -> str:
     return value if value in {"balanced", "high"} else "high"
 
 
+
+def _output_volume() -> float:
+    try:
+        value = float(os.environ.get("ERIS_TTS_VOLUME", "1.0"))
+    except (TypeError, ValueError):
+        value = 1.0
+    return max(0.0, min(1.0, value))
+
+
+def _speech_speed() -> float:
+    try:
+        value = float(os.environ.get("ERIS_TTS_SPEED", "1.0"))
+    except (TypeError, ValueError):
+        value = 1.0
+    return max(0.85, min(1.15, value))
+
+
+def _pace_directive() -> str:
+    speed = _speech_speed()
+    if speed <= 0.90:
+        return "Pacing target: noticeably slower and more deliberate than normal, without stretching vowels unnaturally.\n"
+    if speed >= 1.10:
+        return "Pacing target: brisk and responsive, about ten percent faster than normal, while keeping articulation clear.\n"
+    if speed < 0.98:
+        return "Pacing target: slightly slower than normal.\n"
+    if speed > 1.02:
+        return "Pacing target: slightly faster than normal.\n"
+    return ""
+
 def _queue_size() -> int:
     raw = os.environ.get("ERIS_TTS_QUEUE_SIZE", "4").strip()
     try:
@@ -300,7 +329,8 @@ def _build_tts_prompt(
         "Style: Soft anime girl voice. Slightly breathy. Youthful but with interior depth.\n"
         "Emotionally nuanced — not flat, not over-the-top. Warmth is subtle, not bubbly.\n"
         "Apply this voice style to whatever language the transcript is in.\n\n"
-        "Pacing: Unhurried but responsive. Let tiny silences breathe; do not stall between short lines.\n\n"
+        "Pacing: Unhurried but responsive. Let tiny silences breathe; do not stall between short lines.\n"
+        f"{_pace_directive()}\n"
         f"{performance_rules}"
         f"{prosody_line}"
         f"{lang_line}"
@@ -777,6 +807,36 @@ def _wav_duration_seconds(wav_bytes: bytes) -> float:
         return 0.0
 
 
+def _apply_output_volume(wav_bytes: bytes) -> bytes:
+    """Scale PCM16 volume before playback, without depending on audioop/numpy."""
+
+    volume = _output_volume()
+    if not wav_bytes or abs(volume - 1.0) < 0.001:
+        return wav_bytes
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+            params = wf.getparams()
+            frames = wf.readframes(wf.getnframes())
+        if params.sampwidth != 2:
+            return wav_bytes
+
+        sample_count = len(frames) // 2
+        samples = struct.unpack("<" + "h" * sample_count, frames)
+        scaled = bytearray(len(frames))
+        for index, sample in enumerate(samples):
+            value = max(-32768, min(32767, int(sample * volume)))
+            struct.pack_into("<h", scaled, index * 2, value)
+
+        out = io.BytesIO()
+        with wave.open(out, "wb") as wf:
+            wf.setparams(params)
+            wf.writeframes(bytes(scaled))
+        return out.getvalue()
+    except Exception as exc:
+        logger.debug("[TTS] volume transform skipped: %s", exc)
+        return wav_bytes
+
+
 def _play_wav_winsound(wav_bytes: bytes, stop_event: threading.Event) -> bool:
     if os.name != "nt":
         return False
@@ -800,6 +860,7 @@ def _play_wav_winsound(wav_bytes: bytes, stop_event: threading.Event) -> bool:
 
 def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event) -> None:
     """Phát WAV bytes qua backend phù hợp. Windows ưu tiên winsound."""
+    wav_bytes = _apply_output_volume(wav_bytes)
     if _play_wav_winsound(wav_bytes, stop_event):
         return
     try:
@@ -1364,7 +1425,7 @@ class TtsEngine:
     ) -> None:
         """Phát TTS cho text với cảm xúc cho trước. Non-blocking."""
         self.refresh_configuration()
-        if not self._ok or self._worker is None:
+        if not _enabled() or not self._ok or self._worker is None:
             if on_event is not None:
                 try:
                     on_event(TtsPlaybackEvent(type="audio_failed", text=str(text or ""), reason="tts_disabled"))
@@ -1452,7 +1513,7 @@ class TtsEngine:
     ) -> bytes:
         """Backend API mới: text sạch -> WAV bytes, chưa phát ra loa."""
         self.refresh_configuration()
-        if not self._ok or self._worker is None:
+        if not _enabled() or not self._ok or self._worker is None:
             raise RuntimeError("tts_disabled")
         clean = _clean_text(text)
         if not clean:

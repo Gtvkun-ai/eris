@@ -17,6 +17,7 @@ Thread-safe. Không bao giờ ném lỗi ra ngoài (đọc secrets hỏng → po
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -315,6 +316,40 @@ class ApiKeyPool:
                 "rotations": self._rotations,
                 "rate_limit_bursts": self._rate_limit_bursts,
                 "global_cooldown_ms": int(max(0.0, self._global_cooldown_until - now) * 1000),
+            }
+
+    def health_snapshot(self) -> dict[str, object]:
+        """Ảnh chụp health không lộ raw key, dùng cho Settings Panel.
+
+        ``stats()`` đủ cho log, nhưng UI còn cần biết dòng nào đang active và
+        dòng nào đang cooldown. Chỉ trả index/trạng thái, tuyệt đối không trả key.
+        """
+
+        now = time.time()
+        with self._lock:
+            shared_cooling = self._global_cooldown_until > now
+            alive_raw = sum(1 for deadline in self._dead_until if deadline <= now)
+            keys = []
+            for index, deadline in enumerate(self._dead_until):
+                cooldown_ms = int(max(0.0, deadline - now) * 1000)
+                keys.append(
+                    {
+                        "index": index,
+                        "fingerprint": hashlib.sha256(self._keys[index].encode("utf-8")).hexdigest()[:12],
+                        "status": "cooldown" if cooldown_ms > 0 else "alive",
+                        "cooldown_ms": cooldown_ms,
+                        "active": index == self._index and cooldown_ms <= 0 and not shared_cooling,
+                    }
+                )
+            return {
+                "size": len(self._keys),
+                "alive": alive_raw,
+                "available": 0 if shared_cooling else alive_raw,
+                "dead": len(self._keys) - alive_raw,
+                "rotations": self._rotations,
+                "rate_limit_bursts": self._rate_limit_bursts,
+                "global_cooldown_ms": int(max(0.0, self._global_cooldown_until - now) * 1000),
+                "keys": keys,
             }
 
 

@@ -1,4 +1,4 @@
-﻿using Godot;
+using Godot;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -49,6 +49,7 @@ public partial class UdpListener : Node2D
 	[Export] public string PythonExecutable = "python";
 	[Export] public string VisionScriptPath = "src/vision.py";
 	[Export] public bool AutoStartVision = true;
+	[Export] public bool AutoRestartVisionOnCrash = true;
 	[Export] public bool EnableRemoteCognitionApi = true;
 	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "";
 	[Export] public string RemoteApiProvider = "gemini";
@@ -61,6 +62,7 @@ public partial class UdpListener : Node2D
 	[Export] public bool UseTransparentWindow = true;
 	[Export] public bool FillScreenOverlay = true;
 	[Export] public bool EnableMousePassthrough = true;
+	[Export] public bool LockCharacterPosition = false;
 
 	private float _moveSpeed = 60f;   
 	private float _moveDir = 1f;      
@@ -180,6 +182,7 @@ public partial class UdpListener : Node2D
 	private const string DepthV2StatePath = "user://depth_v2_state.json";
 	private bool _grabModeArmed = false;
 	private bool _isDraggingCharacter = false;
+	private bool _visionRestartPending = false;
 	private Control _draggingPanel = null;
 	private Vector2 _panelDragOffset = Vector2.Zero;
 	private Vector2 _dragOffset = Vector2.Zero;
@@ -414,7 +417,7 @@ public partial class UdpListener : Node2D
 		_isFalling = false;
 
 		// Khởi tạo AudioStreamPlayer
-		_processes = new ErisProcessManager(UpdateServiceButtons);
+		_processes = new ErisProcessManager(OnVisionProcessStatusChanged, OnVisionProcessUnexpectedExit);
 
 		// Trạng thái mặc định khi khởi động
 		_monika.Play("stand");
@@ -568,6 +571,7 @@ public partial class UdpListener : Node2D
 		UpdateChatPanelAutoHide();
 		UpdateBubbleAutoHide();
 		UpdateTutorPanelAutoHide();
+		TickSettingsPanelRuntimeStatus();
 
 		if (_udp.GetAvailablePacketCount() > 0)
 		{
@@ -831,6 +835,11 @@ public partial class UdpListener : Node2D
 	{
 		CloseCharacterContextMenu();
 		_bodyAutonomy?.RecordUserInteraction();
+		if (LockCharacterPosition)
+		{
+			SetSettingsStatus("Vị trí đang khóa. Tắt 'Khóa vị trí' trong Cài đặt để kéo Eris.");
+			return;
+		}
 		_grabModeArmed = true;
 	}
 
@@ -3088,6 +3097,11 @@ public partial class UdpListener : Node2D
 
 	private void BeginDrag(Vector2 mousePosition)
 	{
+		if (LockCharacterPosition)
+		{
+			CancelGrabMode();
+			return;
+		}
 		CloseCharacterContextMenu();
 		_bodyAutonomy?.RecordUserInteraction();
 		_grabModeArmed = false;
@@ -5521,6 +5535,33 @@ public partial class UdpListener : Node2D
 	private void UpdateServiceButtons()
 	{
 		RefreshSettingsPanel();
+	}
+
+	// Process.Exited chạy trên thread hệ thống. Mọi thao tác UI/restart được đưa
+	// về main thread của Godot để tránh crash ngẫu nhiên khi panel đang mở.
+	private void OnVisionProcessStatusChanged()
+	{
+		CallDeferred(nameof(UpdateServiceButtons));
+	}
+
+	private void OnVisionProcessUnexpectedExit()
+	{
+		CallDeferred(nameof(ScheduleVisionRestartAfterCrash));
+	}
+
+	private async void ScheduleVisionRestartAfterCrash()
+	{
+		if (!AutoRestartVisionOnCrash || _visionRestartPending || !IsInsideTree())
+			return;
+		_visionRestartPending = true;
+		SetSettingsStatus("Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.");
+		await ToSignal(GetTree().CreateTimer(2.0), SceneTreeTimer.SignalName.Timeout);
+		_visionRestartPending = false;
+		if (AutoRestartVisionOnCrash && (_processes == null || !_processes.IsVisionRunning))
+		{
+			StartVisionProcess();
+			SetSettingsStatus("Đã tự khởi động lại Brain sau lỗi.");
+		}
 	}
 
 	// ── Casual mode refresh ───────────────────────────────────────────────────

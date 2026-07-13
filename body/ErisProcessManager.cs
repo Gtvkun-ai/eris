@@ -25,23 +25,38 @@ public sealed class ErisProcessManager
 {
 	private Process _visionProcess;
 	private bool _visionTracebackActive;
+	private bool _visionStopRequested;
+	private DateTime? _visionStartedAtUtc;
+	private int? _lastVisionExitCode;
 	private readonly Action _onStatusChanged;
+	private readonly Action _onUnexpectedExit;
 
-	public ErisProcessManager(Action onStatusChanged = null)
+	public ErisProcessManager(Action onStatusChanged = null, Action onUnexpectedExit = null)
 	{
 		_onStatusChanged = onStatusChanged ?? (() => { });
+		_onUnexpectedExit = onUnexpectedExit ?? (() => { });
 	}
 
 	public bool IsVisionRunning => _visionProcess != null && !_visionProcess.HasExited;
+	public int VisionProcessId => IsVisionRunning ? _visionProcess.Id : 0;
+	public DateTime? VisionStartedAtUtc => IsVisionRunning ? _visionStartedAtUtc : null;
+	public TimeSpan VisionUptime => VisionStartedAtUtc.HasValue ? DateTime.UtcNow - VisionStartedAtUtc.Value : TimeSpan.Zero;
+	public int? LastVisionExitCode => _lastVisionExitCode;
 
 	public void StartVision(ErisServiceConfig config)
 	{
-		if (_visionProcess != null && !_visionProcess.HasExited)
+		if (_visionProcess != null)
 		{
-			RunLogger.Log($"[Vision] Da chay san, PID={_visionProcess.Id}");
-			return;
+			if (!_visionProcess.HasExited)
+			{
+				RunLogger.Log($"[Vision] Da chay san, PID={_visionProcess.Id}");
+				return;
+			}
+			try { _visionProcess.Dispose(); } catch { }
+			_visionProcess = null;
 		}
 
+		_visionStopRequested = false;
 		string baseDir = GetRuntimeBaseDir();
 
 		// Ban export (packaged): uu tien runtime da dong goi bang PyInstaller,
@@ -101,8 +116,15 @@ public sealed class ErisProcessManager
 			process.ErrorDataReceived += (_, e) => HandleVisionStderr(e.Data);
 			process.Exited += (_, _) =>
 			{
-				RunLogger.Log($"[Vision] vision.py da thoat (PID={process.Id}, code={process.ExitCode}).");
+				int exitCode = 0;
+				try { exitCode = process.ExitCode; } catch { }
+				_lastVisionExitCode = exitCode;
+				_visionStartedAtUtc = null;
+				bool unexpected = !_visionStopRequested;
+				RunLogger.Log($"[Vision] vision.py da thoat (PID={process.Id}, code={exitCode}, unexpected={unexpected}).");
 				_onStatusChanged();
+				if (unexpected)
+					_onUnexpectedExit();
 			};
 
 			if (!process.Start())
@@ -112,6 +134,8 @@ public sealed class ErisProcessManager
 			}
 
 			_visionProcess = process;
+			_visionStartedAtUtc = DateTime.UtcNow;
+			_lastVisionExitCode = null;
 			process.BeginOutputReadLine();
 			process.BeginErrorReadLine();
 			RunLogger.Log($"[Vision] Da khoi chay vision.py PID={process.Id}");
@@ -125,7 +149,9 @@ public sealed class ErisProcessManager
 
 	public void StopVision()
 	{
+		_visionStopRequested = true;
 		StopProcess(ref _visionProcess, "Vision", "vision.py");
+		_visionStartedAtUtc = null;
 	}
 
 	public void ToggleVision(ErisServiceConfig config)
