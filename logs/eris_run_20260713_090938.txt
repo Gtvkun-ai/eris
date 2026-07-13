@@ -1,0 +1,61 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-13 09:09:38
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+09:09:39.113 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+09:09:39.113 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+09:09:39.140 [INFO] [Vision] Da khoi chay vision.py PID=20720
+09:09:40.782 [INFO] [vision.py] [Vision][INFO] Đang dùng remote API làm cognition chính.
+09:09:40.782 [INFO] [vision.py] [LLM][INFO] Dung OpenAI-compatible API tai https://api.groq.com/openai/v1 voi model qwen/qwen3-32b
+09:09:40.783 [INFO] [vision.py] [LLM][INFO] Dung Gemini speech API tai https://generativelanguage.googleapis.com/v1beta voi model gemini-2.5-flash
+09:09:40.783 [INFO] [vision.py] [Vision][INFO] Speech/style client đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+09:09:40.783 [INFO] [vision.py] [LLM][INFO] Dung vision API tai https://api.shopaikey.com/v1 voi model gpt-4o-mini
+09:09:40.783 [INFO] [vision.py] [Vision][INFO] Vision facts client đã sẵn sàng.
+09:09:40.783 [INFO] [vision.py] [LLM][INFO] Chat fallback chain: gpt-4o-mini -> gemini-2.5-flash
+09:09:40.783 [INFO] [vision.py] [LLM][INFO] Escalation client (Gemini) san sang tai https://generativelanguage.googleapis.com/v1beta voi model gemini-2.5-flash
+09:09:40.783 [INFO] [vision.py] [Vision][INFO] Escalation client (bái sư) đã sẵn sàng: https://generativelanguage.googleapis.com/v1beta
+09:09:40.783 [INFO] [vision.py] [Vision][INFO] Mô hình đã sẵn sàng.
+09:09:41.096 [INFO] [vision.py] [Loop][INFO] [depth] auto-enable cờ chiều-sâu: {'emotional_consequence': True, 'development_growth': True, 'interior_surface': True, 'tom_advisor': True, 'real_embeddings': True, 'private_mind': True}
+09:09:41.261 [INFO] [vision.py] [Loop][INFO] Epistemic V2 ready in authoritative mode; cognitive state writes use V2.
+09:09:41.266 [INFO] [vision.py] [Loop][INFO] [vision structure] tầng-2 cấu trúc-hoá REMOTE qua gpt-4o-mini (caption→JSON).
+09:09:41.266 [INFO] [vision.py] [Loop][INFO] [vision caption] caption stage chạy REMOTE (gpt-4o-mini); bỏ moondream local.
+09:09:41.270 [INFO] [vision.py] [Loop][INFO] Model inference scheduler đã bọc llm_service và sensory adapter: main, vision, sensory.
+09:09:41.270 [INFO] [vision.py] [Loop][INFO] [PrivateMind API] ready fragment(llamacpp/src/qwen3-1.7b-q4_k_m.gguf)×5 + synthesis(openai_compatible/llama-3.1-8b-instant)×1
+09:09:41.285 [INFO] [vision.py] [Loop][INFO] [InnerDiary fallback] ready provider=openai_compatible model=qwen-plus-character
+09:09:41.332 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=qwen/qwen3-32b est_tokens=564 budget=6000 cap=4800
+09:09:41.370 [INFO] [vision.py] [Loop][INFO] tutor: Master_Switch BẬT — đang dựng Curiosity Tutor daemon
+09:09:41.370 [INFO] [vision.py] [Loop][INFO] tutor: KnowledgeProvider sẵn sàng (SituationModel sẽ nối khi pipeline dựng)
+09:09:43.102 [INFO] [vision.py] [TTS][INFO] [TTS] Khởi động. Model=gemini-2.5-flash-preview-tts Voice=Leda Language=ja
+09:09:43.102 [INFO] [vision.py] [Loop][INFO] --- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---
+09:09:44.069 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemini-2.5-flash est_tokens=335 budget=1000000 cap=850000
+09:09:44.710 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 13s vì http_429; alive=8/9
+09:09:44.710 [INFO] [vision.py] [LLM][WARNING] [GEMINI RETRY] status=429 attempt=1/9 failed_index=0 → acquire key khác
+09:09:44.914 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=qwen/qwen3-32b est_tokens=469 budget=6000 cap=4800
+09:09:45.019 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] 429 burst trên 2 key/8s; dừng xoay, cooldown pool 20s (alive=7/9)
+09:09:45.020 [INFO] [vision.py] [Loop][WARNING] affect_self_read gemma call failed: 429 Client Error: Too Many Requests for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent | body: {
+09:09:45.094 [INFO] [vision.py] [Loop][INFO] [session_ritual raw] {"text": "Ngài mở lại rồi à.", "intent": "session_ritual", "action": {"type": "none"}, "reasoning_tags": ["session_ritual", "greeting_cognition"], "should_speak": true, "confidence": 0.76, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "debug_trace": "session_ritual_deterministic; situation=low_evidence_start | low_evidence_no_llm", "next_animation": "", "system_action": "", "action_input": ""}
+09:09:45.189 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent LLM greeting text="Ngài mở lại rồi à."
+09:09:45.249 [INFO] [vision.py] [Loop][INFO] [session_ritual] sent greeting
+09:09:45.512 [INFO] [vision.py] [Loop][INFO] Bắt đầu tạo chỉ thị AI...
+09:09:45.752 [INFO] [vision.py] [TTS][WARNING] [TTS] Edge JP romaji localizer loi: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/do...
+09:09:48.028 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=groq model=qwen/qwen3-32b est_tokens=491 budget=6000 cap=4800
+09:09:48.170 [INFO] [vision.py] [Loop][INFO] [Observer] mode=llm model=qwen3:0.6b
+09:09:48.170 [INFO] [vision.py] [Loop][INFO] [Observer] action=call_vision_compressor salience=0.93 error=0.00 focus=unknown intent=unknown
+09:09:48.170 [INFO] [vision.py] [Loop][INFO] [Observer] speech_pressure=0.23 user_presence=0.48 novelty=0.75 repetition=0.00
+09:09:48.239 [INFO] [vision.py] [Loop][INFO] [wake governor] level=call_vision_compressor ext=0.22 internal=0.04 permission=0.82 interrupt=0.18 speech=0.10 wants_vision=True vision_permission_ok=True vision_rejected_by=none budget=scheduler_allow silence_debt=0.00 cycles=0 micro_checked=False reengagement_checked=False
+09:09:49.849 [INFO] [vision.py] [Loop][INFO] [TTS:event] audio_done turn=664b348296e44b7ab31cbe5d90127783 segment=0
+09:09:51.317 [INFO] [vision.py] [Loop][WARNING] [vision caption remote] lỗi: 403 Client Error: Forbidden for url: https://api.shopaikey.com/v1/chat/completions | body: {"error":{"message":"用户 [4678] 配额不足","type":"shell_api_error","param":"","code":"insufficient_quota"}}
+09:09:51.317 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=default model=gpt-4o-mini est_tokens=637 budget=30000 cap=25500
+09:09:52.159 [INFO] [vision.py] [LLM][WARNING] [FALLBACK CHAIN] tier 1/2 (gpt-4o-mini) loi: 403 Client Error: Forbidden for url: https://api.shopaikey.com/v1/chat/completions | body: {"error":{"message":"用户 [4678] 配额不足","type":"shell_api_error","param":"","code":"insufficient_quota"}} -> thu tier ke
+09:09:52.159 [INFO] [vision.py] [LLM][INFO] [LLM PREFLIGHT] provider=gemini model=gemini-2.5-flash est_tokens=637 budget=1000000 cap=850000
+09:09:52.159 [INFO] [vision.py] [LLM][WARNING] [FALLBACK CHAIN] tier 2/2 (gemini-2.5-flash) loi: Gemini key pool đang cooldown; thử lại sau khoảng 12.9s -> thu tier ke
+09:09:52.159 [INFO] [vision.py] [Loop][WARNING] Vision structuring failed: RuntimeError:Gemini key pool đang cooldown; thử lại sau khoảng 12.9s
+09:09:52.160 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=compressor channel=autonomous count=0 novelty=none trace=ocr_only:screen_context:delta=0 fact=<empty>
+09:09:52.186 [INFO] [vision.py] [Loop][INFO] [wake route] level=call_vision_compressor reason=wake_governor_vision_only body_update=True sleep=5s
+09:09:52.186 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 6.67s. Nghỉ 5s.
+09:09:55.067 [INFO] [Vision] Dang dung vision.py PID=20720...
+09:09:55.086 [INFO] [Vision] vision.py da thoat (PID=20720, code=-1, unexpected=False).
+09:09:55.098 [INFO] [RunLogger] Ket thuc phien chay.

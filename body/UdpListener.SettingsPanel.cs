@@ -139,6 +139,7 @@ public partial class UdpListener : Node2D
 			_settingsPanel.RemoveChild(child);
 			child.QueueFree();
 		}
+		ResetSettingsUiReferencesForRebuild();
 
 		_switchOnTexture ??= GD.Load<Texture2D>("res://asset/Resource/on.png");
 		_switchOffTexture ??= GD.Load<Texture2D>("res://asset/Resource/off.png");
@@ -163,6 +164,13 @@ public partial class UdpListener : Node2D
 
 		AddSettingsMainTabs(root);
 		AddSettingsModeStrip(root);
+
+		if (_settingsModePage == SettingsModePage.Advanced)
+		{
+			BuildAdvancedSettingsPage(root);
+			RefreshSettingsPanel();
+			return;
+		}
 
 		var statusCard = AddSettingsCard(root, new Rect2(32f, 205f, 302f, 342f), "Runtime");
 		BuildSettingsStatusColumn(statusCard);
@@ -255,9 +263,9 @@ public partial class UdpListener : Node2D
 		label.Size = new Vector2(160f, 24f);
 		root.AddChild(label);
 
-		AddSettingsSmallTab(root, new Rect2(560f, 168f, 132f, 32f), "Cơ bản", true);
-		AddSettingsSmallTab(root, new Rect2(706f, 168f, 132f, 32f), "Advanced", false);
-		AddSettingsSmallTab(root, new Rect2(852f, 168f, 148f, 32f), "△ Danger Zone", false);
+		AddSettingsSmallTab(root, new Rect2(560f, 168f, 132f, 32f), "Cơ bản", _settingsModePage == SettingsModePage.Basic, () => SwitchSettingsMode(SettingsModePage.Basic));
+		AddSettingsSmallTab(root, new Rect2(706f, 168f, 132f, 32f), "Advanced", _settingsModePage == SettingsModePage.Advanced, () => SwitchSettingsMode(SettingsModePage.Advanced));
+		AddSettingsSmallTab(root, new Rect2(852f, 168f, 148f, 32f), "△ Danger Zone", false, () => SetSettingsStatus("Danger Zone sẽ là màn riêng; chưa nhét thao tác phá dữ liệu vào Advanced."));
 	}
 
 	private Panel AddSettingsCard(Control parent, Rect2 rect, string title)
@@ -1050,9 +1058,9 @@ public partial class UdpListener : Node2D
 		parent.AddChild(btn);
 	}
 
-	private void AddSettingsSmallTab(Control parent, Rect2 rect, string text, bool active)
+	private void AddSettingsSmallTab(Control parent, Rect2 rect, string text, bool active, Action customAction = null)
 	{
-		var btn = CreateSettingsButton(text, () => SetSettingsStatus(SettingsTabHint(text, active)), primary: active);
+		var btn = CreateSettingsButton(text, customAction ?? (() => SetSettingsStatus(SettingsTabHint(text, active))), primary: active);
 		btn.Position = rect.Position;
 		btn.Size = rect.Size;
 		btn.AddThemeFontSizeOverride("font_size", 12);
@@ -1188,6 +1196,7 @@ public partial class UdpListener : Node2D
 			_settingsTtsVoice = ReadString(root, "tts_voice", _settingsTtsVoice);
 			_settingsTtsLanguage = ReadString(root, "tts_language", _settingsTtsLanguage);
 			_settingsTtsQuality = ReadString(root, "tts_quality", _settingsTtsQuality);
+			LoadAdvancedSettingsState(root);
 		}
 		catch (Exception ex)
 		{
@@ -1219,6 +1228,7 @@ public partial class UdpListener : Node2D
 				_settingsTtsVolume = Mathf.Clamp(volume, 0f, 1f);
 			if (float.TryParse(ReadSecretString(root, "ERIS_TTS_SPEED", _settingsTtsSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture)), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float speed))
 				_settingsTtsSpeed = Mathf.Clamp(speed, 0.85f, 1.15f);
+			LoadAdvancedSettingsFromSecrets(root);
 		}
 		catch (Exception ex)
 		{
@@ -1241,6 +1251,7 @@ public partial class UdpListener : Node2D
 	private void SaveSettingsState(bool showStatus, bool writeSecrets)
 	{
 		SyncSettingsInputsToFields();
+		SyncAdvancedSettingsInputsToFields();
 		try
 		{
 			string path = ProjectSettings.GlobalizePath(SettingsStatePath);
@@ -1255,10 +1266,13 @@ public partial class UdpListener : Node2D
 			{
 				WriteRuntimeSettingsToSecrets(backup: true);
 				WriteRuntimeSettingsToDotEnv();
-				SendTtsRuntimeSettingsUpdate();
+				if (_settingsModePage == SettingsModePage.Basic)
+					SendTtsRuntimeSettingsUpdate();
 			}
 			if (showStatus)
-				SetSettingsStatus(writeSecrets ? "Đã lưu Basic và áp dụng TTS xuống runtime." : "Đã lưu user settings.");
+				SetSettingsStatus(writeSecrets
+					? (_settingsModePage == SettingsModePage.Advanced ? "Đã lưu Advanced. Dùng Áp dụng live hoặc Restart cho mục có cache." : "Đã lưu Basic và áp dụng TTS xuống runtime.")
+					: "Đã lưu user settings.");
 		}
 		catch (Exception ex)
 		{
@@ -1285,6 +1299,7 @@ public partial class UdpListener : Node2D
 		env["ERIS_TTS_QUALITY"] = _settingsTtsQuality ?? "high";
 		env["ERIS_TTS_VOLUME"] = _settingsTtsVolume.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
 		env["ERIS_TTS_SPEED"] = _settingsTtsSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+		WriteAdvancedSettingsToSecrets(env);
 
 		if (_settingsKeyInputs.Count > 0)
 			ReplaceEditableKeysForPool(root, _settingsKeyPoolKind, CollectEditedSettingsKeys());
@@ -1304,6 +1319,7 @@ public partial class UdpListener : Node2D
 			["ERIS_TTS_VOLUME"] = _settingsTtsVolume.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
 			["ERIS_TTS_SPEED"] = _settingsTtsSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
 		};
+		AppendAdvancedSettingsToDotEnv(updates);
 
 		var lines = File.Exists(path)
 			? new List<string>(File.ReadAllLines(path))
@@ -1377,6 +1393,16 @@ public partial class UdpListener : Node2D
 
 			if (root.TryGetProperty("settings_update_ack", out JsonElement ack) && ack.ValueKind == JsonValueKind.Object)
 			{
+				string scope = ack.TryGetProperty("scope", out JsonElement scopeEl) ? scopeEl.GetString() ?? "tts" : "tts";
+				if (string.Equals(scope, "advanced", StringComparison.OrdinalIgnoreCase))
+				{
+					int appliedCount = ack.TryGetProperty("applied", out JsonElement appliedEl) && appliedEl.ValueKind == JsonValueKind.Array ? appliedEl.GetArrayLength() : 0;
+					int rejectedCount = ack.TryGetProperty("rejected", out JsonElement rejectedEl) && rejectedEl.ValueKind == JsonValueKind.Array ? rejectedEl.GetArrayLength() : 0;
+					int restartCount = ack.TryGetProperty("restart_required", out JsonElement restartEl) && restartEl.ValueKind == JsonValueKind.Array ? restartEl.GetArrayLength() : 0;
+					SetSettingsStatus($"Brain đã nhận {appliedCount} thiết lập Advanced{(restartCount > 0 ? $" · {restartCount} mục cần restart" : "")}{(rejectedCount > 0 ? $" · {rejectedCount} mục bị từ chối" : "")}.");
+				}
+				else
+				{
 				string language = ack.TryGetProperty("language", out JsonElement langEl) ? langEl.GetString() ?? "" : "";
 				string voice = ack.TryGetProperty("voice", out JsonElement voiceEl) ? voiceEl.GetString() ?? "" : "";
 				bool rebuilt = ack.TryGetProperty("worker_rebuilt", out JsonElement rebuiltEl) && rebuiltEl.ValueKind == JsonValueKind.True;
@@ -1388,6 +1414,7 @@ public partial class UdpListener : Node2D
 				SetSettingsStatus(ready
 					? $"Backend đã nhận TTS: {language}, {voice}{(rebuilt ? " · worker đã nạp lại" : "")}"
 					: "Backend đã nhận setting nhưng TTS chưa sẵn sàng; kiểm tra key hoặc Lưu & Restart.");
+				}
 			}
 
 			if (root.TryGetProperty("settings_health_ack", out JsonElement healthAck) && healthAck.ValueKind == JsonValueKind.Object)
@@ -1465,9 +1492,9 @@ public partial class UdpListener : Node2D
 
 	private JsonObject BuildSanitizedSettingsNode()
 	{
-		return new JsonObject
+		var state = new JsonObject
 		{
-			["version"] = 2,
+			["version"] = 3,
 			["remote_api_enabled"] = EnableRemoteCognitionApi,
 			["auto_start_brain"] = AutoStartVision,
 			["auto_restart_brain"] = AutoRestartVisionOnCrash,
@@ -1487,6 +1514,8 @@ public partial class UdpListener : Node2D
 			["editing_key_pool"] = _settingsKeyPoolKind ?? "",
 			["editing_key_count"] = CollectEditedSettingsKeys().Count,
 		};
+		AddAdvancedSettingsToState(state);
+		return state;
 	}
 
 	private void SyncSettingsInputsToFields(bool applyProviderDefaults = false)

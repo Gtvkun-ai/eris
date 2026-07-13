@@ -17,6 +17,7 @@ Module này đứng ở tầng stage, sau Decision và trước TTS:
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -126,6 +127,8 @@ class PerformanceRequestPlanner:
     """
 
     def detect(self, user_text: str) -> PerformanceAct | None:
+        if os.environ.get("ERIS_PERFORMANCE_ACTS_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return None
         normalized = _normalize_vi(user_text)
         if not normalized:
             return None
