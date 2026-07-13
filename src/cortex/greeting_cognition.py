@@ -65,6 +65,10 @@ class GreetingFrame:
     dry_edge: float
     poetic_permission: float
     active_anchor: str | None
+    # Thông tin nhịp phiên để phân biệt mở lại nhanh, vắng lâu và restart.
+    seconds_since_last_session: float = 0.0
+    recent_return: bool = False
+    restart_detected: bool = False
     must_not_claim_screen: bool = True
     reason: str = ""
 
@@ -83,6 +87,9 @@ class GreetingFrame:
                 f"- dry_edge: {self.dry_edge:.2f}",
                 f"- poetic_permission: {self.poetic_permission:.2f}",
                 f"- active_anchor: {anchor}",
+                f"- seconds_since_last_session: {self.seconds_since_last_session:.1f}",
+                f"- recent_return: {int(self.recent_return)}",
+                f"- restart_detected: {int(self.restart_detected)}",
                 f"- must_not_claim_screen: {int(self.must_not_claim_screen)}",
                 f"- reason: {self.reason or 'none'}",
             )
@@ -176,12 +183,21 @@ class GreetingCognitionEngine:
         tone: str = "",
         greeted_recently: bool = False,
         relational_feedback: str = "",
+        seconds_since_last_session: float = 0.0,
+        restart_detected: bool = False,
     ) -> GreetingFrame:
         active_goal = clean_text(active_goal)
         current_attractor = clean_text(current_attractor)
         recent_direction = clean_text(recent_direction)
         self_continuity = clean_text(self_continuity)
         relational_feedback = clean_text(relational_feedback)
+        try:
+            seconds_since_last_session = max(0.0, float(seconds_since_last_session or 0.0))
+        except (TypeError, ValueError):
+            seconds_since_last_session = 0.0
+        restart_detected = bool(restart_detected)
+        recent_return = 0.0 < seconds_since_last_session <= 180.0
+        long_absence = seconds_since_last_session >= 6.0 * 3600.0
         loops = tuple(clean_text(item) for item in (unresolved_loops or ()) if clean_text(item))[:3]
 
         active_anchor = active_goal or current_attractor or (loops[0] if loops else "") or recent_direction or self_continuity
@@ -230,6 +246,20 @@ class GreetingCognitionEngine:
             warmth = 0.28
             dry_edge = 0.25
             reason = "startup has an unresolved cognitive anchor"
+        elif restart_detected:
+            situation = "after_crash_or_restart"
+            intent = "acknowledge_return"
+            poetic_permission = 0.02
+            warmth = 0.22
+            dry_edge = 0.34
+            reason = "runtime restart/crash marker detected without a dynamic continuity anchor"
+        elif long_absence:
+            situation = "after_long_absence"
+            intent = "acknowledge_return"
+            poetic_permission = 0.04
+            warmth = 0.34
+            dry_edge = 0.30
+            reason = "user returned after a long absence"
         elif evidence_strength < 0.25:
             situation = "low_evidence_start"
             intent = "acknowledge_return"
@@ -265,6 +295,9 @@ class GreetingCognitionEngine:
             dry_edge=clamp01(dry_edge),
             poetic_permission=clamp01(poetic_permission),
             active_anchor=active_anchor or None,
+            seconds_since_last_session=seconds_since_last_session,
+            recent_return=recent_return,
+            restart_detected=restart_detected,
             must_not_claim_screen=True,
             reason=reason,
         )

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -36,6 +36,7 @@ from core.evidence import EvidenceItem, RawSignal
 from cortex.modes import QUIET_MODES
 from cortex.ni import NiStateMachine
 from domain import Decision
+from runtime.greeting_preset_runtime import emit_session_ritual_preset
 from runtime.body_bias import BodyBiasProjector
 from runtime.presence_controller import SocialPresenceEvent
 from runtime.speech_pipeline import SpeechIntentDecision
@@ -1695,6 +1696,16 @@ class FrameBuilderMixin:
             int(bool(report.should_greet)),
             report.tone,
         )
+
+        if emit_session_ritual_preset(self, report):
+            updated_state = self.internal_state_engine.commit_session_ritual(
+                internal_state,
+                session_ritual=report,
+            )
+            self._set_internal_state(updated_state)
+            if self.memory_state is not None:
+                self._save_memory_state()
+            return report
 
         if report.should_greet:
             self.logger.info("[session_ritual] generating startup greeting")

@@ -88,6 +88,10 @@ class StageOutputPipeline:
         self.prosody = ProsodyDirector()
 
     def frames_for_tts(self, frame: StageFrame) -> tuple[StageFrame, ...]:
+        # Một audio preset đã render ứng với toàn bộ câu. Tách segment sẽ làm
+        # metadata file WAV lệch khỏi transcript và phát cùng file nhiều lần.
+        if str(getattr(frame, "audio_asset", "") or "").strip():
+            return (frame,)
         if not _enabled():
             return (frame,)
         segments = self.segmenter.split(frame.tts_text)

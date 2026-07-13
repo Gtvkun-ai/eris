@@ -38,6 +38,10 @@ class StageFrame:
     interruptible: bool
     body_only: bool
     source: str
+    # Metadata preset audio. Rỗng với mọi câu nói động bình thường.
+    speech_act: str = ""
+    preset_id: str = ""
+    audio_asset: str = ""
 
     def to_payload_patch(self) -> dict[str, Any]:
         """Patch gắn vào payload cũ mà không phá Godot/client hiện tại."""
@@ -54,6 +58,9 @@ class StageFrame:
                 "interruptible": self.interruptible,
                 "body_only": self.body_only,
                 "source": self.source,
+                "speech_act": self.speech_act,
+                "preset_id": self.preset_id,
+                "audio_asset": self.audio_asset,
             },
         }
 
@@ -185,7 +192,8 @@ class StageFrameBuilder:
 
         should_speak = bool(payload.get("should_speak", getattr(decision, "should_speak", True)))
         affect = affect_signals_from(payload, frame=frame)
-        base_emotion = surfaces.marks.emotion_hint or _emotion_from_payload(payload, frame=frame)
+        preset_emotion = str(payload.get("preset_emotion", getattr(decision, "preset_emotion", "")) or "").strip()
+        base_emotion = preset_emotion or surfaces.marks.emotion_hint or _emotion_from_payload(payload, frame=frame)
         explicit_motion = _motion_from_decision(decision)
         delivery = self.delivery_planner.plan(
             performance.display_text or performance.tts_text,
@@ -196,7 +204,8 @@ class StageFrameBuilder:
             extracted_actions=performance.actions,
             affect=affect,
         )
-        emotion = delivery.emotion or base_emotion
+        # Preset đã được art-direct sẵn; delivery planner không được tự đổi mặt.
+        emotion = preset_emotion or delivery.emotion or base_emotion
         motion = performance.stage_motion or (explicit_motion if explicit_motion and explicit_motion != "none" else delivery.motion)
         valence, arousal, stance = _prosody_numbers(payload, frame=frame)
         prosody_notes = delivery.prosody_notes
@@ -231,6 +240,9 @@ class StageFrameBuilder:
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
             body_only=bool(not should_speak and (motion or performance.actions)),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",
+            speech_act=str(payload.get("speech_act", getattr(decision, "speech_act", "")) or ""),
+            preset_id=str(payload.get("preset_id", getattr(decision, "preset_id", "")) or ""),
+            audio_asset=str(payload.get("audio_asset", getattr(decision, "audio_asset", "")) or ""),
         )
 
 

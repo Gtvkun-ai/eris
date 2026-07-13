@@ -21,6 +21,7 @@ import threading
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from runtime.stage_audio_bus import StageAudioBus
@@ -238,6 +239,13 @@ class TtsTaskManager:
     def _synthesize_task(self, task: TtsSegmentTask, *, backend: Any, cancel_event: threading.Event) -> bytes:
         if cancel_event.is_set():
             raise RuntimeError("cancelled_before_synth")
+
+        # Preset WAV có quyền ưu tiên cao nhất. Nếu file chưa được render hoặc hỏng,
+        # fail mềm về TTS live để Eris không câm chỉ vì thiếu một asset.
+        preset_audio = _read_audio_asset(task.frame)
+        if preset_audio:
+            return preset_audio
+
         cache_key = self._cache_key(task, backend=backend)
         cached = self._cache_get(cache_key)
         if cached:
@@ -459,6 +467,50 @@ class TtsTaskManager:
                 self._cache.popitem(last=False)
 
 
+def _audio_asset_candidates(raw_path: str) -> tuple[Path, ...]:
+    """Trả các vị trí có thể chứa asset, hỗ trợ chạy từ repo hoặc thư mục khác."""
+    asset = Path(str(raw_path or "").strip())
+    if not str(asset):
+        return ()
+    if asset.is_absolute():
+        return (asset,)
+    candidates: list[Path] = []
+    configured_root = os.environ.get("ERIS_AUDIO_ASSET_ROOT", "").strip()
+    if configured_root:
+        candidates.append(Path(configured_root) / asset)
+    candidates.append(Path.cwd() / asset)
+    # runtime/tts_task_manager.py -> repo root là parent.parent
+    candidates.append(Path(__file__).resolve().parent.parent / asset)
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate.resolve(strict=False))
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return tuple(unique)
+
+
+def _read_audio_asset(frame: Any) -> bytes | None:
+    raw_path = str(getattr(frame, "audio_asset", "") or "").strip()
+    if not raw_path:
+        return None
+    for path in _audio_asset_candidates(raw_path):
+        try:
+            if not path.is_file():
+                continue
+            data = path.read_bytes()
+            # WAV PCM thường bắt đầu RIFF/RF64. File quá ngắn hoặc sai header sẽ
+            # fallback TTS live thay vì ném lỗi khó hiểu vào playback backend.
+            if len(data) >= 44 and data[:4] in {b"RIFF", b"RF64"}:
+                logger.debug("[tts-task-manager] preset hit: %s", path)
+                return data
+            logger.warning("[tts-task-manager] preset audio không hợp lệ: %s", path)
+        except Exception as exc:
+            logger.debug("[tts-task-manager] không đọc được preset %s: %s", path, exc)
+    return None
+
+
 def _prefetch_workers() -> int:
     raw = os.environ.get("ERIS_TTS_PREFETCH_WORKERS", "2").strip()
     try:
@@ -468,6 +520,9 @@ def _prefetch_workers() -> int:
 
 
 def _dispatch_policy(tasks: list[TtsSegmentTask]) -> TtsDispatchPolicy:
+    # Audio preset phải đi qua task manager để đọc file và vẫn phát lifecycle event.
+    if any(str(getattr(task.frame, "audio_asset", "") or "").strip() for task in tasks):
+        return TtsDispatchPolicy(strategy="prefetch", workers=1, reason="audio_preset")
     mode = os.environ.get("ERIS_TTS_TASK_STRATEGY", "auto").strip().lower()
     if mode in {"inline", "join"}:
         return TtsDispatchPolicy(strategy="inline", workers=1, reason="forced_inline")

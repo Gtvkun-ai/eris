@@ -78,6 +78,7 @@ from cortex.vision_semantic_compressor import (
 from cortex.working_memory import WorkingMemoryEngine
 from domain import Decision
 from failure_meta import is_technical_failure_meta
+from runtime.greeting_preset_runtime import emit_session_ritual_preset
 from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
 from runtime.autonomous_cycle import AutonomousCycleMixin
 from runtime.ambient_silence_policy import (
@@ -4164,6 +4165,15 @@ class RuntimeCoordinator(
             thought_stream_report=thought_stream_report,
             social_presence_event=social_presence_event,
         )
+
+        if emit_session_ritual_preset(self, report):
+            updated_state = self.internal_state_engine.commit_session_ritual(
+                internal_state,
+                session_ritual=report,
+            )
+            self._set_internal_state(updated_state)
+            self._save_memory_state()
+            return report
 
         if report.should_greet:
             self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)

@@ -2,6 +2,7 @@ import re
 import time
 
 from .contracts import SessionRitualReport
+from .greeting_presets import GreetingPresetResolver
 
 try:
     from .greeting_cognition import GreetingCognitionEngine
@@ -81,6 +82,9 @@ class SessionRitualEngine:
 
     GREETING_COOLDOWN_SECONDS = 0.0
 
+    def __init__(self, *, preset_resolver: GreetingPresetResolver | None = None) -> None:
+        self.preset_resolver = preset_resolver or GreetingPresetResolver()
+
     def evaluate(
         self,
         *,
@@ -96,6 +100,11 @@ class SessionRitualEngine:
         unresolved_loops = self._unresolved_loops(thought_stream_report)
         recent_direction = self._recent_cognition_direction(internal_state, thought_stream_report)
         self_continuity = self._self_continuity(internal_state)
+        last_session_at = float(getattr(internal_state, "last_session_ritual_at", 0.0) or 0.0)
+        seconds_since_last_session = (
+            max(0.0, current_time - last_session_at) if last_session_at > 0.0 else 0.0
+        )
+        restart_detected = self._restart_detected(snapshot)
 
         continuity_restored = bool(
             active_goal
@@ -136,9 +145,22 @@ class SessionRitualEngine:
             self_continuity=self_continuity,
             tone=tone,
             greeted_recently=greeted_recently,
+            seconds_since_last_session=seconds_since_last_session,
+            restart_detected=restart_detected,
         )
         should_greet = True
-        greeting_text = greeting_candidate if should_greet else ""
+
+        # Chỉ dùng preset khi KHÔNG có anchor động. Có project/vòng lặp cụ thể thì
+        # Qwen phải tự viết để giữ ngữ cảnh, không được đọc một macro vô can.
+        greeting_preset = None
+        if not greeting_candidate and greeting_frame is not None:
+            try:
+                greeting_preset = self.preset_resolver.resolve(greeting_frame, tone=tone)
+            except Exception:
+                greeting_preset = None
+        greeting_text = (
+            greeting_preset.text if greeting_preset is not None else greeting_candidate
+        ) if should_greet else ""
         evidence = self._evidence(
             presence_restored=presence_restored,
             continuity_restored=continuity_restored,
@@ -163,14 +185,18 @@ class SessionRitualEngine:
             self_continuity=self_continuity,
             unresolved_loops=unresolved_loops,
             evidence=evidence,
+            greeting_frame=greeting_frame,
+            greeting_preset_id=greeting_preset.id if greeting_preset is not None else "",
+            greeting_preset_text=greeting_preset.text if greeting_preset is not None else "",
+            greeting_preset_emotion=greeting_preset.emotion if greeting_preset is not None else "",
+            greeting_preset_motion=greeting_preset.motion if greeting_preset is not None else "",
+            greeting_preset_prosody=greeting_preset.prosody_style if greeting_preset is not None else "",
+            greeting_audio_asset=greeting_preset.audio_asset if greeting_preset is not None else "",
         )
         # Dynamic fields keep backward compatibility with the existing SessionRitualReport
         # contract while letting newer wording layers read a proper greeting cognition frame.
-        try:
-            report.greeting_frame = greeting_frame
-            report.greeting_anchor = greeting_candidate
-        except Exception:
-            pass
+        # greeting_frame/preset đã là field chính thức trong contract; không còn
+        # gắn dynamic attribute rồi nuốt lỗi như trước.
         report.prompt_context = self.render_prompt_context(report)
         return report
 
@@ -322,6 +348,21 @@ class SessionRitualEngine:
         return "quiet_background"
 
 
+    def _restart_detected(self, snapshot) -> bool:
+        """Nhận tín hiệu restart/crash mềm từ snapshot nếu backend có cung cấp."""
+        if snapshot is None:
+            return False
+        values = []
+        for attr in ("restart_reason", "startup_reason", "recovery_reason", "recent_events"):
+            value = getattr(snapshot, attr, "")
+            if isinstance(value, (tuple, list)):
+                values.extend(str(item or "") for item in value[:8])
+            else:
+                values.append(str(value or ""))
+        text = " ".join(values).lower()
+        return any(token in text for token in ("crash", "restart", "recovered", "process_restarted", "body_restarted"))
+
+
     def _greeting_frame(
         self,
         *,
@@ -334,6 +375,8 @@ class SessionRitualEngine:
         self_continuity: str,
         tone: str,
         greeted_recently: bool,
+        seconds_since_last_session: float = 0.0,
+        restart_detected: bool = False,
     ):
         if GreetingCognitionEngine is None:
             return None
@@ -348,6 +391,8 @@ class SessionRitualEngine:
                 self_continuity=self_continuity,
                 tone=tone,
                 greeted_recently=greeted_recently,
+                seconds_since_last_session=seconds_since_last_session,
+                restart_detected=restart_detected,
             )
         except Exception:
             return None

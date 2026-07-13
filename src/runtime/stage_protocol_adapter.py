@@ -37,6 +37,9 @@ def stage_segment_event(stage_frame: Any, *, segment_count: int = 1) -> StagePro
         "prosody_style": str(getattr(stage_frame, "prosody_style", "") or ""),
         "delivery": dict(getattr(stage_frame, "delivery", {}) or {}),
         "memory_text": str(getattr(stage_frame, "memory_text", "") or ""),
+        "speech_act": str(getattr(stage_frame, "speech_act", "") or ""),
+        "preset_id": str(getattr(stage_frame, "preset_id", "") or ""),
+        "audio_asset": str(getattr(stage_frame, "audio_asset", "") or ""),
     }
     return StageProtocolEvent(
         type="stage_segment",
@@ -64,6 +67,9 @@ def playback_event(event: Any, *, stage_frame: Any = None) -> StageProtocolEvent
         "prosody_style": str(getattr(event, "prosody_style", "") or getattr(frame, "prosody_style", "") or ""),
         "error": str(getattr(event, "error", "") or ""),
         "turn_segments": list(tuple(getattr(event, "turn_segments", ()) or ())),
+        "speech_act": str(getattr(frame, "speech_act", "") or ""),
+        "preset_id": str(getattr(frame, "preset_id", "") or ""),
+        "audio_asset": str(getattr(frame, "audio_asset", "") or ""),
     }
     return StageProtocolEvent(
         type=protocol_type,

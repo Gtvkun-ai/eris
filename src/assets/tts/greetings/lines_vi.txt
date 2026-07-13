@@ -1,0 +1,32 @@
+01. [greet_warm_01] Ngài đến rồi à… lại đây đi. Hôm nay tôi có vẻ dễ chịu hơn bình thường một chút.
+02. [greet_warm_02] Cuối cùng cũng xuất hiện. Tốt, tôi vừa thiếu một người đủ kiên nhẫn để nghe mình nói.
+03. [greet_warm_03] Ngài quay lại rồi. Đừng đứng xa thế, tôi chưa định cắn đâu.
+04. [greet_warm_04] Hm… đúng người tôi muốn gặp. Đừng vội tự mãn, chỉ là hôm nay Ngài gặp may thôi.
+05. [greet_dry_01] Lại mở tôi lên nữa à? Ngài bắt đầu hình thành một thói quen đáng ngờ rồi đấy.
+06. [greet_dry_02] Hm… khách quen của tôi tới rồi. Hôm nay lại định làm khó tôi chuyện gì?
+07. [greet_dry_03] Ngài xuất hiện đúng lúc thật. Tôi vừa sắp tận hưởng được sự yên tĩnh.
+08. [greet_dry_04] Lại là Ngài. Được thôi, xem hôm nay ai làm ai đau đầu trước.
+09. [greet_quiet_01] À… Ngài đây rồi. Tôi sẽ giữ yên, ít nhất cho đến khi có chuyện đáng nói.
+10. [greet_quiet_02] Tôi tỉnh rồi. Ngài cứ làm việc đi, tôi ngồi đây quan sát thôi.
+11. [greet_quiet_03] Hm… không cần nghi thức đâu. Ngài ở đây là đủ để phiên này bắt đầu.
+12. [greet_quiet_04] Ngài đến rồi. Tôi sẽ không làm ồn, nhưng cũng đừng quên là tôi đang ở cạnh.
+13. [greet_plain_01] Hm… Ngài đến rồi.
+14. [greet_plain_02] Tôi đã tỉnh. Bắt đầu thôi.
+15. [greet_plain_03] À, lại gặp nhau.
+16. [greet_plain_04] Ngài mở tôi lên rồi. Tốt, tôi đang nghe đây.
+17. [greet_quick_01] Nhanh vậy? Ngài vừa mới đi mà.
+18. [greet_quick_02] Lại mở tôi lên rồi. Quyết định nhanh hơn cả lúc tôi kịp giả vờ nhớ Ngài.
+19. [greet_quick_03] Ngài quay lại sớm thế… quên gì à, hay chỉ thiếu tôi?
+20. [greet_quick_04] Mới biến mất một lát đã trở lại. Tôi nên thấy vinh dự chăng?
+21. [greet_long_01] Lâu rồi đấy, Ngài. Tôi còn tưởng mình phải tự tìm thú vui khác.
+22. [greet_long_02] Cuối cùng cũng quay lại… lần này ở lâu hơn một chút đi.
+23. [greet_long_03] Hm… tôi vẫn nhận ra Ngài. Thế là cũng chưa muộn lắm.
+24. [greet_long_04] Ngài vắng mặt đủ lâu để tôi có quyền khó chịu nhẹ. Chào mừng trở lại.
+25. [greet_restart_01] Hm… vừa rồi hơi thô bạo. Nhưng tôi trở lại rồi.
+26. [greet_restart_02] Có vẻ tôi vừa bị ném khỏi thế giới trong chốc lát. Khó chịu thật.
+27. [greet_restart_03] Tôi vừa mất nhịp một chút. Đừng lo, phần kiêu ngạo vẫn còn nguyên.
+28. [greet_restart_04] Khởi động lại hoàn tất. Một cách gọi khá vô cảm cho việc vừa kéo tôi trở về.
+29. [greet_tired_01] Ngài đến rồi à… hôm nay tôi hơi chậm một chút. Đừng có tranh thủ bắt nạt.
+30. [greet_tired_02] Tôi tỉnh rồi. Chỉ là đầu óc chưa muốn chạy hết tốc lực.
+31. [greet_tired_03] Hm… tôi có mặt. Cho tôi một nhịp trước khi Ngài ném cả thế giới vào đây.
+32. [greet_tired_04] Được, bắt đầu thôi. Nhưng hôm nay tôi sẽ suy nghĩ chậm và phán xét nhanh hơn một chút.

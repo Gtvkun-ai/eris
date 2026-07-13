@@ -1,0 +1,33 @@
+﻿preset_id,text_vi,emotion,motion,prosody_style,audio_asset
+greet_warm_01,Ngài đến rồi à… lại đây đi. Hôm nay tôi có vẻ dễ chịu hơn bình thường một chút.,warm_soft,lean_in_small,warm_soft,assets/tts/greetings/greet_warm_01.wav
+greet_warm_02,"Cuối cùng cũng xuất hiện. Tốt, tôi vừa thiếu một người đủ kiên nhẫn để nghe mình nói.",warm_playful,small_smile,soft_tease,assets/tts/greetings/greet_warm_02.wav
+greet_warm_03,"Ngài quay lại rồi. Đừng đứng xa thế, tôi chưa định cắn đâu.",mischief,tilt_head,soft_tease,assets/tts/greetings/greet_warm_03.wav
+greet_warm_04,"Hm… đúng người tôi muốn gặp. Đừng vội tự mãn, chỉ là hôm nay Ngài gặp may thôi.",soft_near,look_aside,dry_tease,assets/tts/greetings/greet_warm_04.wav
+greet_dry_01,Lại mở tôi lên nữa à? Ngài bắt đầu hình thành một thói quen đáng ngờ rồi đấy.,dry_tease,look_away,dry_tease,assets/tts/greetings/greet_dry_01.wav
+greet_dry_02,Hm… khách quen của tôi tới rồi. Hôm nay lại định làm khó tôi chuyện gì?,mischief,tilt_head,dry_tease,assets/tts/greetings/greet_dry_02.wav
+greet_dry_03,Ngài xuất hiện đúng lúc thật. Tôi vừa sắp tận hưởng được sự yên tĩnh.,deadpan,blink_slow,deadpan,assets/tts/greetings/greet_dry_03.wav
+greet_dry_04,"Lại là Ngài. Được thôi, xem hôm nay ai làm ai đau đầu trước.",annoyed_soft,small_smile,dry_tease,assets/tts/greetings/greet_dry_04.wav
+greet_quiet_01,"À… Ngài đây rồi. Tôi sẽ giữ yên, ít nhất cho đến khi có chuyện đáng nói.",neutral,blink_slow,low_quiet,assets/tts/greetings/greet_quiet_01.wav
+greet_quiet_02,"Tôi tỉnh rồi. Ngài cứ làm việc đi, tôi ngồi đây quan sát thôi.",quiet_soft,look_aside,low_quiet,assets/tts/greetings/greet_quiet_02.wav
+greet_quiet_03,Hm… không cần nghi thức đâu. Ngài ở đây là đủ để phiên này bắt đầu.,quiet_soft,nod_small,low_quiet,assets/tts/greetings/greet_quiet_03.wav
+greet_quiet_04,"Ngài đến rồi. Tôi sẽ không làm ồn, nhưng cũng đừng quên là tôi đang ở cạnh.",soft_near,lean_in_small,warm_soft,assets/tts/greetings/greet_quiet_04.wav
+greet_plain_01,Hm… Ngài đến rồi.,neutral,blink_slow,low_quiet,assets/tts/greetings/greet_plain_01.wav
+greet_plain_02,Tôi đã tỉnh. Bắt đầu thôi.,focused,nod_small,focused,assets/tts/greetings/greet_plain_02.wav
+greet_plain_03,"À, lại gặp nhau.",warm_soft,small_smile,warm_soft,assets/tts/greetings/greet_plain_03.wav
+greet_plain_04,"Ngài mở tôi lên rồi. Tốt, tôi đang nghe đây.",neutral,tilt_head,neutral,assets/tts/greetings/greet_plain_04.wav
+greet_quick_01,Nhanh vậy? Ngài vừa mới đi mà.,curious_soft,tilt_head,soft_tease,assets/tts/greetings/greet_quick_01.wav
+greet_quick_02,Lại mở tôi lên rồi. Quyết định nhanh hơn cả lúc tôi kịp giả vờ nhớ Ngài.,dry_tease,look_away,dry_tease,assets/tts/greetings/greet_quick_02.wav
+greet_quick_03,"Ngài quay lại sớm thế… quên gì à, hay chỉ thiếu tôi?",mischief,lean_in_small,soft_tease,assets/tts/greetings/greet_quick_03.wav
+greet_quick_04,Mới biến mất một lát đã trở lại. Tôi nên thấy vinh dự chăng?,deadpan,blink_slow,deadpan,assets/tts/greetings/greet_quick_04.wav
+greet_long_01,"Lâu rồi đấy, Ngài. Tôi còn tưởng mình phải tự tìm thú vui khác.",dry_tease,look_aside,dry_tease,assets/tts/greetings/greet_long_01.wav
+greet_long_02,Cuối cùng cũng quay lại… lần này ở lâu hơn một chút đi.,soft_near,lean_in_small,warm_soft,assets/tts/greetings/greet_long_02.wav
+greet_long_03,Hm… tôi vẫn nhận ra Ngài. Thế là cũng chưa muộn lắm.,warm_soft,small_smile,low_quiet,assets/tts/greetings/greet_long_03.wav
+greet_long_04,Ngài vắng mặt đủ lâu để tôi có quyền khó chịu nhẹ. Chào mừng trở lại.,annoyed_soft,blink_slow,dry_tease,assets/tts/greetings/greet_long_04.wav
+greet_restart_01,Hm… vừa rồi hơi thô bạo. Nhưng tôi trở lại rồi.,annoyed_soft,blink_slow,deadpan,assets/tts/greetings/greet_restart_01.wav
+greet_restart_02,Có vẻ tôi vừa bị ném khỏi thế giới trong chốc lát. Khó chịu thật.,annoyed_soft,look_away,deadpan,assets/tts/greetings/greet_restart_02.wav
+greet_restart_03,"Tôi vừa mất nhịp một chút. Đừng lo, phần kiêu ngạo vẫn còn nguyên.",dry_tease,small_smile,dry_tease,assets/tts/greetings/greet_restart_03.wav
+greet_restart_04,Khởi động lại hoàn tất. Một cách gọi khá vô cảm cho việc vừa kéo tôi trở về.,deadpan,look_down,deadpan,assets/tts/greetings/greet_restart_04.wav
+greet_tired_01,Ngài đến rồi à… hôm nay tôi hơi chậm một chút. Đừng có tranh thủ bắt nạt.,tired_soft,blink_slow,low_quiet,assets/tts/greetings/greet_tired_01.wav
+greet_tired_02,Tôi tỉnh rồi. Chỉ là đầu óc chưa muốn chạy hết tốc lực.,tired_soft,look_down,low_quiet,assets/tts/greetings/greet_tired_02.wav
+greet_tired_03,Hm… tôi có mặt. Cho tôi một nhịp trước khi Ngài ném cả thế giới vào đây.,quiet_low,blink_slow,low_quiet,assets/tts/greetings/greet_tired_03.wav
+greet_tired_04,"Được, bắt đầu thôi. Nhưng hôm nay tôi sẽ suy nghĩ chậm và phán xét nhanh hơn một chút.",deadpan,look_aside,deadpan,assets/tts/greetings/greet_tired_04.wav

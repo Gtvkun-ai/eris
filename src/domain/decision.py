@@ -31,6 +31,11 @@ class Decision:
     delivery_hint: str = ""    # ví dụ: dry_tease, soft_tease, focused, low_quiet
     nonverbal_cue: str = ""    # ví dụ: laugh_soft, small_smile, sigh_soft
     stage_motion: str = ""     # ví dụ: look_away, tilt_head, blink_slow
+    # Metadata audio preset. Các field này do runtime gắn, không yêu cầu LLM sinh.
+    speech_act: str = ""
+    preset_id: str = ""
+    audio_asset: str = ""
+    preset_emotion: str = ""
     failure_meta: dict[str, Any] | None = None
     # Dấu niêm phong của DirectorGenerationPipeline. Khi True, coordinator không
     # được chấm/repair lại cùng một câu ở precommit hoặc stage output.
@@ -109,6 +114,10 @@ class Decision:
             "delivery_hint": self.delivery_hint,
             "nonverbal_cue": self.nonverbal_cue,
             "stage_motion": self.stage_motion,
+            "speech_act": self.speech_act,
+            "preset_id": self.preset_id,
+            "audio_asset": self.audio_asset,
+            "preset_emotion": self.preset_emotion,
         }
         payload["director_finalized"] = bool(self.director_finalized)
         if self.director_trace_id:

@@ -17,6 +17,7 @@ from cortex.contracts import (
 )
 from cortex.internal_state import PersistentInternalState
 from domain import Decision
+from runtime.greeting_preset_runtime import emit_session_ritual_preset
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.voice_policy import VOICE_POLICY
 
@@ -763,6 +764,16 @@ class PromptContextBuilderMixin:
                 tone="quiet_background",
                 evidence=("session_ritual_error",),
             )
+
+        if emit_session_ritual_preset(self, report):
+            updated_state = self.internal_state_engine.commit_session_ritual(
+                internal_state,
+                session_ritual=report,
+            )
+            self._set_internal_state(updated_state)
+            if self.memory_state is not None:
+                self._save_memory_state()
+            return report
 
         if report.should_greet:
             self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
