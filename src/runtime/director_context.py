@@ -223,7 +223,13 @@ class DirectorContextBuilder:
         audience = self._audience_mode(payload=payload, channel=channel)
         relation = self._relation_band(payload=payload)
         scene = self.scene_classifier.classify(machine, channel=channel or "", audience_mode=audience)
-        evidence = self._evidence(payload=payload, snapshot=snapshot, machine=machine, now=now)
+        evidence = self._evidence(
+            payload=payload,
+            snapshot=snapshot,
+            machine=machine,
+            now=now,
+            user_text=user_text,
+        )
         forbidden = self._forbidden_claims(payload=payload, machine=machine)
         return DirectorContext(
             session_id=self.session_id,
@@ -232,6 +238,7 @@ class DirectorContextBuilder:
             relation_band=relation,
             scene_mode=scene,
             machine_state=machine,
+            world_state={"user_text_current": str(user_text or "")[:600]},
             evidence=tuple(evidence),
             forbidden_claims=tuple(forbidden),
             speak_budget_words=self._budget_words(scene, channel=channel, user_text=user_text),
@@ -292,12 +299,27 @@ class DirectorContextBuilder:
         snapshot: Any,
         machine: MachineState,
         now: int,
+        user_text: str = "",
     ) -> list[EvidenceClaim]:
         evidence: list[EvidenceClaim] = [
             EvidenceClaim("active_app", "observed", machine.active_app, 0.90, "machine_state", now, expires_at_ms=now + 5000),
             EvidenceClaim("focus_kind", "observed", machine.focus_kind, 0.82, "machine_state", now, expires_at_ms=now + 5000),
             EvidenceClaim("idle_ms", "observed", machine.idle_ms, 0.80, "machine_state", now, expires_at_ms=now + 5000),
         ]
+        if str(user_text or "").strip():
+            # Lời user ở turn hiện tại là observed evidence, khác hẳn memory hay
+            # suy đoán. Candidate có thể ref key này khi paraphrase điều user vừa nói.
+            evidence.append(
+                EvidenceClaim(
+                    "user_text_current",
+                    "observed",
+                    str(user_text or "")[:600],
+                    1.0,
+                    "user_input",
+                    now,
+                    expires_at_ms=now + 30_000,
+                )
+            )
         if machine.window_title:
             evidence.append(EvidenceClaim("window_title", "observed", machine.window_title, 0.70, "machine_state", now, expires_at_ms=now + 5000, public_ok=False))
         if isinstance(payload.get("emotion_debug"), Mapping):

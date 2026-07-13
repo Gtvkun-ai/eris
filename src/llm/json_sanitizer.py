@@ -56,7 +56,14 @@ def iter_json_objects(text: str) -> Iterator[str]:
                 start = -1
 
 
-def _last_valid_json_object(text: str) -> str:
+def extract_last_valid_json_object(text: str) -> str:
+    """Lấy object JSON hợp lệ cuối cùng trong output model.
+
+    Model reasoning đôi khi tự viết ví dụ JSON trong ``<think>`` rồi mới trả
+    contract thật. Lấy object đầu tiên sẽ chọn nhầm ví dụ; lấy object cuối cùng
+    khớp với quy ước "reasoning trước, answer sau" của Qwen.
+    """
+
     last = ""
     for candidate in iter_json_objects(text):
         try:
@@ -66,6 +73,10 @@ def _last_valid_json_object(text: str) -> str:
         if isinstance(parsed, dict):
             last = candidate
     return last
+
+
+# Alias nội bộ cũ để không làm vỡ code đã import private helper trong plugin.
+_last_valid_json_object = extract_last_valid_json_object
 
 
 def strip_reasoning_envelope(text: str) -> str:
@@ -106,4 +117,4 @@ def strip_reasoning_envelope(text: str) -> str:
     return cleaned
 
 
-__all__ = ["iter_json_objects", "strip_reasoning_envelope"]
+__all__ = ["extract_last_valid_json_object", "iter_json_objects", "strip_reasoning_envelope"]

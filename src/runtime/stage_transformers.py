@@ -40,6 +40,11 @@ class StageTextSurfaces:
 
 
 _FENCE_RE = re.compile(r"```.*?```", re.S)
+_INTERNAL_REASONING_RE = re.compile(
+    r"<\s*(?:think|analysis|reasoning)\s*>.*?<\s*/\s*(?:think|analysis|reasoning)\s*>",
+    re.I | re.S,
+)
+_INTERNAL_PREFIX_RE = re.compile(r"^\s*(?:analysis|reasoning|suy nghĩ|suy nghi)\s*:\s*", re.I)
 _INLINE_CODE_RE = re.compile(r"`([^`]*)`")
 _URL_RE = re.compile(r"https?://\S+")
 _MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+", re.M)
@@ -230,7 +235,12 @@ class MemorySurfaceFilter:
     """Text lưu hội thoại/memory: chỉ nội dung thật, không action tag."""
 
     def clean(self, text: str) -> str:
-        t = _strip_markdown(text, code_placeholder="[code]")
+        # Phòng thủ lớp cuối: reasoning không được lọt vào history/memory ngay cả
+        # khi một adapter mới quên gọi json_sanitizer. Cùng một lỗi không cần có
+        # đời sống lâu dài hơn chính nó.
+        t = _INTERNAL_REASONING_RE.sub(" ", str(text or ""))
+        t = _INTERNAL_PREFIX_RE.sub("", t)
+        t = _strip_markdown(t, code_placeholder="[code]")
         t = _URL_RE.sub("", t)
         t = _EMOJI_RE.sub("", t)
         return _squash(t)
@@ -246,12 +256,16 @@ class StageTransformerChain:
         self.memory_filter = MemorySurfaceFilter()
 
     def transform(self, raw_text: str) -> StageTextSurfaces:
-        marks = self.action_extractor.extract(raw_text)
+        raw = str(raw_text or "")
+        # Bóc reasoning trước ActionTagExtractor. Nếu làm ngược, regex angle tag
+        # sẽ nuốt riêng ``<think>`` rồi để phần suy nghĩ trơ trọi giữa sân khấu.
+        safe_raw = _INTERNAL_REASONING_RE.sub(" ", raw)
+        marks = self.action_extractor.extract(safe_raw)
         display_text = self.display_filter.clean(marks.text)
         tts_text = self.tts_filter.clean(marks.text)
         memory_text = self.memory_filter.clean(marks.text)
         return StageTextSurfaces(
-            raw_text=str(raw_text or ""),
+            raw_text=raw,
             display_text=display_text,
             tts_text=tts_text,
             memory_text=memory_text,

@@ -32,6 +32,11 @@ class Decision:
     nonverbal_cue: str = ""    # ví dụ: laugh_soft, small_smile, sigh_soft
     stage_motion: str = ""     # ví dụ: look_away, tilt_head, blink_slow
     failure_meta: dict[str, Any] | None = None
+    # Dấu niêm phong của DirectorGenerationPipeline. Khi True, coordinator không
+    # được chấm/repair lại cùng một câu ở precommit hoặc stage output.
+    director_finalized: bool = False
+    director_trace_id: str = ""
+    director_meta: dict[str, Any] | None = None
 
     def resolve_motion_intent(self) -> str:
         intent = (self.motion_intent or "").strip().lower()
@@ -105,6 +110,9 @@ class Decision:
             "nonverbal_cue": self.nonverbal_cue,
             "stage_motion": self.stage_motion,
         }
+        payload["director_finalized"] = bool(self.director_finalized)
+        if self.director_trace_id:
+            payload["director_trace_id"] = self.director_trace_id
         failure_meta = normalize_failure_meta(self.failure_meta)
         if failure_meta is not None:
             payload["failure_meta"] = failure_meta

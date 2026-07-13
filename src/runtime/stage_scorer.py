@@ -14,23 +14,11 @@ from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
 from runtime.director_context import DecisionMode, DirectorContext
+from runtime.evidence_authority import EvidenceAuthority
+from runtime.scene_repair_policy import SceneRepairPolicy
 
 
 _WORD_RE = re.compile(r"\S+")
-_PERCEPTION_CLAIM_RE = re.compile(
-    r"\b("
-    r"tôi thấy|toi thay|tôi nhìn|toi nhin|trên màn hình|tren man hinh|"
-    r"màn hình của ngài|man hinh cua ngai|cửa sổ|cua so|tab |file này|file nay"
-    r")\b",
-    re.I,
-)
-_ACTION_CLAIM_RE = re.compile(
-    r"\b("
-    r"tôi đã làm|toi da lam|tôi đã sửa|toi da sua|tôi đã chạy|toi da chay|"
-    r"tôi đã mở|toi da mo|tôi vừa|toi vua|đã hoàn tất|da hoan tat"
-    r")\b",
-    re.I,
-)
 _STAGE_TAG_RE = re.compile(r"\((?:cười|cuoi|thở dài|tho dai|nhìn|nhin|nghiêng|nghieng|blink|smile)[^)]+\)", re.I)
 
 
@@ -56,6 +44,12 @@ class CandidateUtterance:
             delivery_hint=str(payload.get("delivery_hint", getattr(decision, "delivery_hint", "")) or ""),
             nonverbal_cue=str(payload.get("nonverbal_cue", getattr(decision, "nonverbal_cue", "")) or ""),
             stage_motion=str(payload.get("stage_motion", getattr(decision, "stage_motion", "")) or ""),
+            evidence_refs=tuple(
+                str(item or "").strip()
+                for item in (payload.get("evidence_refs", ()) or ())
+                if str(item or "").strip()
+            ) if not isinstance(payload.get("evidence_refs", ()), str) else (str(payload.get("evidence_refs") or "").strip(),),
+            repair_mode=str(payload.get("repair_mode", "") or ""),
         )
 
     @classmethod
@@ -141,32 +135,23 @@ def _word_count(text: str) -> int:
     return len(_WORD_RE.findall(str(text or "")))
 
 
-class EvidenceAuthority:
-    """Kiem tra nhanh cac claim bi cam theo ladder observed/tool/inferred."""
-
-    def evaluate_text(self, text: str, context: DirectorContext) -> tuple[bool, tuple[str, ...]]:
-        normalized = _normalize(text)
-        reasons: list[str] = []
-        forbidden = set(context.forbidden_claims)
-        if "screen_claim_without_sensor" in forbidden and _PERCEPTION_CLAIM_RE.search(normalized):
-            reasons.append("screen_claim_without_sensor")
-        if "system_action_without_tool" in forbidden and _ACTION_CLAIM_RE.search(normalized):
-            reasons.append("system_action_without_tool")
-        return (not reasons, tuple(reasons))
-
-
 class StageScorer:
     """Rule-based scorer dau tien cho Director -> Stage.
 
-    Chat co user text la khu vuc nhay cam: scorer chi annotate, khong nen tu
-    suppress tru khi candidate da rong/should_speak=false.  Autonomous thi can
-    nghiem hon de Eris khong pha focus bang filler.
+    Scorer áp dụng hard gate cho mọi channel. Chat vẫn được ưu tiên repair thay
+    vì suppress, nhưng không còn đặc quyền phát một câu mà runtime đã biết là sai.
     """
 
     LOW_INTRUSION_SCENES = {"coding_partner", "study_partner", "social_sidecar"}
 
-    def __init__(self, *, evidence_authority: EvidenceAuthority | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        evidence_authority: EvidenceAuthority | None = None,
+        repair_policy: SceneRepairPolicy | None = None,
+    ) -> None:
         self.evidence_authority = evidence_authority or EvidenceAuthority()
+        self.repair_policy = repair_policy or SceneRepairPolicy()
 
     def score_decision(
         self,
@@ -232,10 +217,18 @@ class StageScorer:
         text = str(candidate.text or "").strip()
         words = _word_count(text)
         tags: list[str] = []
-        evidence_ok, evidence_reasons = self.evidence_authority.evaluate_text(text, context)
+        authority = self.evidence_authority.validate_candidate(candidate, context)
+        evidence_ok = authority.allowed
+        evidence_reasons = authority.reasons
         tags.extend(evidence_reasons)
+        if authority.used_levels:
+            tags.extend(f"evidence_level:{level}" for level in authority.used_levels)
         budget_ratio = words / max(1, context.speak_budget_words)
         clip_risk = _clamp01((budget_ratio - 0.9) / 1.4)
+        if not authority.allowed:
+            # Hard-gate lỗi bằng chứng phải nổi lên rõ trong score, không chìm
+            # dưới một câu văn có nhịp khá. Con người rất thích bị câu chữ đẹp lừa.
+            clip_risk = max(clip_risk, 0.78)
         tts_fit = self._tts_fit(text, words=words, budget=context.speak_budget_words)
         liveliness = self._liveliness(text, candidate)
         hook_bonus, hook_tags = self._content_hook_bonus(candidate, context)
@@ -248,12 +241,33 @@ class StageScorer:
 
         channel_name = str(channel or "").strip().lower()
         interactive_chat = channel_name == "chat"
+        hard_authority_failure = any(
+            reason in {
+                "missing_evidence_ref",
+                "expired_evidence_ref",
+                "private_evidence_in_public",
+                "forbidden_evidence_level",
+                "screen_claim_without_sensor",
+                "screen_claim_not_grounded",
+                "system_action_without_tool",
+                "emotion_as_fact",
+                "hearing_user_breath",
+                "physical_world_overreach",
+            }
+            for reason in evidence_reasons
+        )
         if not candidate.should_speak or not text:
             decision_mode: DecisionMode = "body_only" if candidate.stage_motion or candidate.nonverbal_cue else "suppress"
             reason = "candidate_empty_or_non_speech"
-        elif not evidence_ok:
+        elif hard_authority_failure:
+            # Chat cũng phải chịu hard gate. Trước đây chat chỉ được annotate,
+            # tức là runtime biết câu sai nhưng vẫn đọc nó ra. Một kiểu trung thực
+            # rất đặc biệt của phần mềm.
             decision_mode = "repair" if interactive_chat else "suppress"
             reason = ",".join(evidence_reasons) or "evidence_block"
+        elif not evidence_ok:
+            decision_mode = "repair"
+            reason = ",".join(evidence_reasons) or "evidence_surface_repair"
         elif budget_ratio > 2.2 and not interactive_chat:
             decision_mode = "suppress"
             reason = "autonomous_text_far_over_budget"
@@ -297,26 +311,26 @@ class StageScorer:
         score: StageScore,
         *,
         channel: str | None = None,
+        context: DirectorContext | None = None,
     ) -> dict[str, Any]:
-        """Can thiep nhe vao payload cu truoc StageFrameBuilder.
+        """Thực thi quyết định scorer trên mọi channel, kể cả chat.
 
-        Chat cua user chi nhan metadata; autonomous/presence moi bi keo ve
-        body_only/suppress.  Neu sau nay can strict hon, doi policy o day.
+        Bản cũ chỉ annotate chat nên ``repair``/``short`` không hề sửa gì. Bản
+        này dùng SceneRepairPolicy deterministic: rút ngắn, bóc stage tag, thêm
+        marker ký ức/hedge; claim vượt quyền thì suppress thay vì phát ra rồi ghi
+        log như thể log có thể bịt tai người nghe.
         """
 
         payload["stage_score"] = score.to_payload()
-        channel_name = str(channel or "").strip().lower()
-        if channel_name == "chat":
-            return payload
-        if score.decision == "suppress":
-            payload["text"] = ""
-            payload["should_speak"] = False
-            payload["parse_mode"] = f"{payload.get('parse_mode', 'json')}:director_suppress"
-        elif score.decision == "body_only":
-            payload["text"] = ""
-            payload["should_speak"] = False
-            payload.setdefault("stage_motion", "blink_slow")
-            payload["parse_mode"] = f"{payload.get('parse_mode', 'json')}:director_body_only"
+        max_words = int(getattr(context, "speak_budget_words", 0) or payload.get("speak_budget_words", 0) or 16)
+        payload, repair = self.repair_policy.apply_to_payload(
+            payload,
+            decision=score.decision,
+            reasons=score.policy_tags,
+            max_words=max_words,
+        )
+        payload["stage_score"]["applied_action"] = repair.action
+        payload["stage_score"]["applied_changed"] = repair.changed
         return payload
 
     def apply_candidate_to_payload(
@@ -326,6 +340,7 @@ class StageScorer:
         score: StageScore,
         *,
         channel: str | None = None,
+        context: DirectorContext | None = None,
     ) -> dict[str, Any]:
         """Đổ candidate thắng vào payload Decision cũ.
 
@@ -341,7 +356,15 @@ class StageScorer:
         payload["nonverbal_cue"] = candidate.nonverbal_cue or str(payload.get("nonverbal_cue", "") or "")
         payload["stage_motion"] = candidate.stage_motion or str(payload.get("stage_motion", "") or "")
         payload["selected_candidate"] = candidate.to_payload()
-        return self.apply_to_payload(payload, score, channel=channel)
+        return self.apply_to_payload(payload, score, channel=channel, context=context)
+
+    def ranking_value(self, candidate: CandidateUtterance, score: StageScore) -> float:
+        """Điểm xếp hạng public cho pipeline Director.
+
+        Quyền quyết định vẫn nằm trong ``StageScore.decision``; giá trị này chỉ
+        dùng để so sánh các candidate trong cùng một turn.
+        """
+        return self._ranking_value(candidate, score)
 
     def _ranking_value(self, candidate: CandidateUtterance, score: StageScore) -> float:
         mode_bonus = {

@@ -36,6 +36,7 @@ class StageFrame:
     prosody_notes: str
     delivery: dict[str, Any]
     interruptible: bool
+    body_only: bool
     source: str
 
     def to_payload_patch(self) -> dict[str, Any]:
@@ -51,6 +52,7 @@ class StageFrame:
                 "prosody_style": self.prosody_style,
                 "delivery": self.delivery,
                 "interruptible": self.interruptible,
+                "body_only": self.body_only,
                 "source": self.source,
             },
         }
@@ -227,6 +229,7 @@ class StageFrameBuilder:
             prosody_notes=prosody.director_notes,
             delivery=delivery_payload,
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
+            body_only=bool(not should_speak and (motion or performance.actions)),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",
         )
 

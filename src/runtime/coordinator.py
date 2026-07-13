@@ -101,6 +101,7 @@ from runtime.frame_builder import FrameBuilderMixin
 from runtime.guard_violations import GuardViolation
 from runtime.inner_diary_persistence import InnerDiaryPersister
 from runtime.interrupt_ledger import InterruptLedger
+from runtime.voice_manager import VoiceManager
 from runtime.outcome_observer import OutcomeObserver
 from guard_config import guards_warn_only
 from runtime.post_generation_filters import PostGenerationFiltersMixin
@@ -356,6 +357,7 @@ class RuntimeCoordinator(
         self.fe_renderer = fe_renderer
         self.public_turn_ledger = PublicTurnLedger()
         self.interrupt_ledger = InterruptLedger()
+        self.voice_manager = VoiceManager(ledger=self.interrupt_ledger)
         self.pending_speech_interrupt_event = None
         self.reply_context = SimpleNamespace(previous_public_turn=None)
         # Protocol sân khấu mới: gửi event typed ra frontend, nhưng không thay
@@ -1544,75 +1546,95 @@ class RuntimeCoordinator(
         # Director foundation: gom scene/evidence/budget rồi chấm quyền phát biểu
         # trước khi dựng StageFrame.  Chat user chỉ được annotate; autonomous có
         # thể bị kéo về body-only/suppress nếu câu yếu hoặc thiếu evidence.
-        try:
-            director_builder = getattr(self, "director_context_builder", None)
-            if director_builder is None:
-                director_builder = DirectorContextBuilder()
-                self.director_context_builder = director_builder
-            director_context = director_builder.build(
-                payload=payload,
-                frame=getattr(self, "last_cognitive_frame", None),
-                channel=channel,
-                user_text=str(payload.get("user_text", "") or ""),
-            )
-            harvester = getattr(self, "content_harvester", None)
-            if harvester is None:
-                harvester = ContentHarvester()
-                self.content_harvester = harvester
-            harvested_content = harvester.payloads(
-                runtime=self,
-                frame=getattr(self, "last_cognitive_frame", None),
-                payload=payload,
-                channel=channel,
-            )
-            payload["content_seeds"] = [
-                seed for seed in harvested_content
-                if isinstance(seed, dict) and bool(seed.get("public_ok", True))
-            ]
-            director_context.world_state["runtime_hints"] = [
-                seed for seed in harvested_content
-                if isinstance(seed, dict) and not bool(seed.get("public_ok", True))
-            ]
-            performance_builder = getattr(self, "performance_context_builder", None)
-            if performance_builder is None:
-                performance_builder = PerformanceContextBuilder()
-                self.performance_context_builder = performance_builder
-            performance_context = performance_builder.build(
-                director_context,
-                payload=payload,
-                channel=channel,
-            )
+        final_meta = getattr(decision, "director_meta", None)
+        if bool(getattr(decision, "director_finalized", False)) and isinstance(final_meta, dict):
+            # Chat FinalDecision đã được chấm đúng một lần ngay trước commit.
+            # Tái sử dụng metadata ở đây để StageFrame/TTS nhìn thấy cùng kết quả,
+            # không harvest hook hoặc repair lần nữa.
+            payload["director"] = dict(final_meta.get("director") or {})
+            payload["performance_context"] = dict(final_meta.get("performance_context") or {})
+            payload["director_contract"] = dict(final_meta.get("director_contract") or {})
+            payload["selected_candidate"] = dict(final_meta.get("selected_candidate") or {})
+            payload["stage_score"] = dict(final_meta.get("stage_score") or {})
+            payload["scene_repair"] = dict(final_meta.get("scene_repair") or {})
+            perf = payload["performance_context"]
+            payload["delivery_hint"] = str(payload.get("delivery_hint") or perf.get("delivery_style", ""))
+            payload["stage_motion"] = str(payload.get("stage_motion") or perf.get("stage_motion", ""))
+        else:
             try:
-                director_context.world_state["content_hook"] = performance_context.content_hook or {}
-                director_context.world_state["topic_stack"] = performance_builder.content_engine.topic_stack_payload()
-            except Exception:
-                pass
-            contract_builder = getattr(self, "director_contract_builder", None)
-            if contract_builder is None:
-                contract_builder = DirectorContractBuilder()
-                self.director_contract_builder = contract_builder
-            director_contract = contract_builder.build(director_context, performance_context)
-            payload["performance_context"] = performance_context.to_payload()
-            payload["director_contract"] = director_contract.to_payload()
-            payload["director_contract_prompt"] = director_contract.to_prompt_block()
-            # Nếu Decision chưa khai stage metadata thì dùng contract làm mặc định.
-            # Cognition vẫn quyết nội dung; stage quyết cách biểu diễn.
-            payload["delivery_hint"] = str(payload.get("delivery_hint") or performance_context.delivery_style)
-            payload["stage_motion"] = str(payload.get("stage_motion") or performance_context.stage_motion)
-            stage_scorer = getattr(self, "stage_scorer", None)
-            if stage_scorer is None:
-                stage_scorer = StageScorer()
-                self.stage_scorer = stage_scorer
-            stage_score = stage_scorer.score_decision(
-                decision,
-                payload=payload,
-                context=director_context,
-                channel=channel,
-            )
-            payload["director"] = director_context.compact_payload()
-            payload = stage_scorer.apply_to_payload(payload, stage_score, channel=channel)
-        except Exception as exc:
-            self.logger.debug("[director] stage scoring skipped: %s", exc)
+                director_builder = getattr(self, "director_context_builder", None)
+                if director_builder is None:
+                    director_builder = DirectorContextBuilder()
+                    self.director_context_builder = director_builder
+                director_context = director_builder.build(
+                    payload=payload,
+                    frame=getattr(self, "last_cognitive_frame", None),
+                    channel=channel,
+                    user_text=str(payload.get("user_text", "") or ""),
+                )
+                harvester = getattr(self, "content_harvester", None)
+                if harvester is None:
+                    harvester = ContentHarvester()
+                    self.content_harvester = harvester
+                harvested_content = harvester.payloads(
+                    runtime=self,
+                    frame=getattr(self, "last_cognitive_frame", None),
+                    payload=payload,
+                    channel=channel,
+                )
+                payload["content_seeds"] = [
+                    seed for seed in harvested_content
+                    if isinstance(seed, dict) and bool(seed.get("public_ok", True))
+                ]
+                director_context.world_state["runtime_hints"] = [
+                    seed for seed in harvested_content
+                    if isinstance(seed, dict) and not bool(seed.get("public_ok", True))
+                ]
+                performance_builder = getattr(self, "performance_context_builder", None)
+                if performance_builder is None:
+                    performance_builder = PerformanceContextBuilder()
+                    self.performance_context_builder = performance_builder
+                performance_context = performance_builder.build(
+                    director_context,
+                    payload=payload,
+                    channel=channel,
+                )
+                try:
+                    director_context.world_state["content_hook"] = performance_context.content_hook or {}
+                    director_context.world_state["topic_stack"] = performance_builder.content_engine.topic_stack_payload()
+                except Exception:
+                    pass
+                contract_builder = getattr(self, "director_contract_builder", None)
+                if contract_builder is None:
+                    contract_builder = DirectorContractBuilder()
+                    self.director_contract_builder = contract_builder
+                director_contract = contract_builder.build(director_context, performance_context)
+                payload["performance_context"] = performance_context.to_payload()
+                payload["director_contract"] = director_contract.to_payload()
+                payload["director_contract_prompt"] = director_contract.to_prompt_block()
+                # Nếu Decision chưa khai stage metadata thì dùng contract làm mặc định.
+                # Cognition vẫn quyết nội dung; stage quyết cách biểu diễn.
+                payload["delivery_hint"] = str(payload.get("delivery_hint") or performance_context.delivery_style)
+                payload["stage_motion"] = str(payload.get("stage_motion") or performance_context.stage_motion)
+                stage_scorer = getattr(self, "stage_scorer", None)
+                if stage_scorer is None:
+                    stage_scorer = StageScorer()
+                    self.stage_scorer = stage_scorer
+                stage_score = stage_scorer.score_decision(
+                    decision,
+                    payload=payload,
+                    context=director_context,
+                    channel=channel,
+                )
+                payload["director"] = director_context.compact_payload()
+                payload = stage_scorer.apply_to_payload(
+                    payload,
+                    stage_score,
+                    channel=channel,
+                    context=director_context,
+                )
+            except Exception as exc:
+                self.logger.debug("[director] stage scoring skipped: %s", exc)
         refresh_runtime_preferences("ERIS_TTS_LANGUAGE")
         stage_language = os.environ.get("ERIS_TTS_LANGUAGE", "auto").strip()
         stage_builder = getattr(self, "stage_frame_builder", None)
@@ -1919,8 +1941,7 @@ class RuntimeCoordinator(
         if event_type in {"audio_failed", "audio_cancelled"}:
             self.logger.debug("[TTS:event] %s", record)
         try:
-            ledger = self._ensure_interrupt_ledger()
-            ledger.track_tts_event(event, stage_frame=stage_frame)
+            self._ensure_voice_manager().track_tts_event(event, stage_frame=stage_frame)
         except Exception as exc:
             self.logger.debug("[interrupt] track tts event failed: %s", exc)
         try:
@@ -2013,6 +2034,16 @@ class RuntimeCoordinator(
         self.interrupt_ledger = ledger
         return ledger
 
+    def _ensure_voice_manager(self) -> VoiceManager:
+        manager = getattr(self, "voice_manager", None)
+        ledger = self._ensure_interrupt_ledger()
+        if not isinstance(manager, VoiceManager) or manager.ledger is not ledger:
+            manager = VoiceManager(ledger=ledger, tts_engine=getattr(self, "tts_engine", None))
+            self.voice_manager = manager
+        else:
+            manager.bind_tts_engine(getattr(self, "tts_engine", None))
+        return manager
+
     def _capture_speech_interrupt_for_user(self, user_text: str, *, timestamp: float | None = None):
         """Ghi nhận user chen vào khi Eris đang phát TTS.
 
@@ -2025,22 +2056,14 @@ class RuntimeCoordinator(
             return None
         event = None
         try:
-            event = self._ensure_interrupt_ledger().record_user_interrupt(
-                user_text=text,
+            result = self._ensure_voice_manager().interrupt_with_text(
+                text,
                 timestamp=time.time() if timestamp is None else float(timestamp),
+                reason="user_interrupt",
             )
+            event = result.interrupt_event
         except Exception as exc:
-            self.logger.debug("[interrupt] record failed: %s", exc)
-
-        # Dù không đủ điều kiện ghi context, user input mới vẫn nên cắt TTS cũ nếu
-        # đoạn đó interruptible. Nếu không, Eris sẽ tiếp tục đọc qua lời Ngài.
-        try:
-            tts = getattr(self, "tts_engine", None)
-            cancel = getattr(tts, "cancel_current", None)
-            if callable(cancel):
-                cancel(reason="user_interrupt", only_interruptible=True)
-        except Exception as exc:
-            self.logger.debug("[interrupt] tts cancel failed: %s", exc)
+            self.logger.debug("[interrupt] voice manager failed: %s", exc)
 
         if event is not None:
             self.pending_speech_interrupt_event = event
@@ -5543,10 +5566,9 @@ class RuntimeCoordinator(
             # Voice-start interrupt: chưa có STT text, nhưng sân khấu phải dừng
             # ngay để Eris không đọc đè lên người dùng.
             try:
-                tts = getattr(self, "tts_engine", None)
-                cancel = getattr(tts, "cancel_current", None)
-                if callable(cancel):
-                    cancel(reason=str(getattr(event, "reason", "") or "frontend_interrupt"), only_interruptible=True)
+                self._ensure_voice_manager().interrupt_signal(
+                    reason=str(getattr(event, "reason", "") or "frontend_interrupt")
+                )
             except Exception as exc:
                 self.logger.debug("[stage-protocol] interrupt cancel failed: %s", exc)
         self._emit_stage_protocol_state("interrupt_ack", reason=str(getattr(event, "reason", "") or ""), data=event.to_meta())
@@ -5556,7 +5578,7 @@ class RuntimeCoordinator(
 
         legacy_type = "audio_start" if event.type == "audio_playback_started" else "audio_done"
         try:
-            self._ensure_interrupt_ledger().track_tts_event(
+            self._ensure_voice_manager().track_tts_event(
                 SimpleNamespace(
                     type=legacy_type,
                     turn_id=str(getattr(event, "turn_id", "") or ""),
@@ -5741,12 +5763,98 @@ class RuntimeCoordinator(
         self._panel_state_cache = (now, state)
         return state
 
-    def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
-        self.fe_style_memory = self.fe_renderer.remember_style(
-            self.fe_style_memory,
-            plan=fe_plan,
-            rendered_text=decision.text,
+    def _apply_director_precommit_guard(
+        self,
+        decision: Decision,
+        *,
+        frame: CognitiveFrame | None = None,
+        channel: str = "chat",
+    ) -> Decision:
+        """Chặn/sửa câu *trước* khi ghi chat history và memory.
+
+        Stage layer vốn đã chấm lại trong ``_send_decision_to_body``. Tuy nhiên nếu
+        chỉ chặn ở đó thì câu sai quyền vẫn kịp chui vào history/session ledger
+        trước khi bị tắt tiếng. Đây là kiểu an toàn đóng cửa sau khi dữ liệu đã
+        đi dạo một vòng trong nhà. Guard này dùng cùng DirectorContext +
+        StageScorer, rồi phản chiếu kết quả về chính ``Decision`` trước commit.
+        """
+
+        if bool(getattr(decision, "director_finalized", False)):
+            # FinalDecision đã qua đúng cùng authority/scorer/repair ngay trước
+            # commit. Chấm lại ở đây vừa tốn thời gian vừa có thể đổi kết quả do
+            # scene/hook vừa tick thêm vài mili giây.
+            return decision
+
+        payload = decision.to_payload()
+        user_text = str(getattr(self, "current_stage_user_text", "") or "")
+        payload["user_text"] = user_text
+
+        director_builder = getattr(self, "director_context_builder", None)
+        if director_builder is None:
+            director_builder = DirectorContextBuilder()
+            self.director_context_builder = director_builder
+        director_context = director_builder.build(
+            payload=payload,
+            frame=frame or getattr(self, "last_cognitive_frame", None),
+            channel=channel,
+            user_text=user_text,
         )
+
+        stage_scorer = getattr(self, "stage_scorer", None)
+        if stage_scorer is None:
+            stage_scorer = StageScorer()
+            self.stage_scorer = stage_scorer
+        score = stage_scorer.score_decision(
+            decision,
+            payload=payload,
+            context=director_context,
+            channel=channel,
+        )
+        guarded = stage_scorer.apply_to_payload(
+            payload,
+            score,
+            channel=channel,
+            context=director_context,
+        )
+
+        old_text = str(decision.text or "")
+        decision.text = str(guarded.get("text", "") or "")
+        decision.should_speak = bool(guarded.get("should_speak", False) and decision.text.strip())
+        decision.delivery_hint = str(guarded.get("delivery_hint", decision.delivery_hint) or "")
+        decision.nonverbal_cue = str(guarded.get("nonverbal_cue", decision.nonverbal_cue) or "")
+        decision.stage_motion = str(guarded.get("stage_motion", decision.stage_motion) or "")
+        decision.parse_mode = str(guarded.get("parse_mode", decision.parse_mode) or decision.parse_mode)
+
+        applied_action = str(
+            ((guarded.get("stage_score") or {}) if isinstance(guarded.get("stage_score"), dict) else {}).get(
+                "applied_action", "keep"
+            )
+            or "keep"
+        )
+        changed = decision.text != old_text or not decision.should_speak
+        if changed:
+            # Candidate bị sửa/chặn không còn là nguồn đáng tin để auto-commit
+            # extracted_fact. User fact thật vẫn đi qua MemoryCommitPolicy riêng.
+            decision.extracted_fact = ""
+            decision.reasoning_tags = tuple(dict.fromkeys((*decision.reasoning_tags, "director_precommit_guard")))
+            marker = f"director_precommit={score.decision}:{score.reason}:{applied_action}"
+            decision.debug_trace = " | ".join(part for part in (decision.debug_trace, marker) if part)
+        return decision
+
+    def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
+        try:
+            decision = self._apply_director_precommit_guard(decision, frame=frame, channel="chat")
+        except Exception as exc:
+            # Không để lỗi phụ của guard làm sập cả turn. Vẫn log rõ để test/ops
+            # bắt được, thay vì nuốt im rồi giả vờ mọi thứ rất chuyên nghiệp.
+            self.logger.warning("[director] precommit guard failed: %s", exc)
+        public_text = str(decision.text or "").strip()
+        if public_text:
+            self.fe_style_memory = self.fe_renderer.remember_style(
+                self.fe_style_memory,
+                plan=fe_plan,
+                rendered_text=decision.text,
+            )
         if decision.extracted_fact and not self._has_structured_memory_store():
             self.long_term_memory.append(decision.extracted_fact)
 
@@ -5756,8 +5864,11 @@ class RuntimeCoordinator(
         # Fallback/service-error vẫn có thể hiện ra UI, nhưng không được đưa vào
         # LLM semantic history như một câu trả lời thật. Nếu không, prompt lượt sau
         # tự nhiễm câu "tôi bị lỗi định dạng" và TurnGraph nối nhầm ANSWERS.
-        self._append_chat_history("assistant", decision.text, invalid=invalid_for_semantic_history)
-        if bool(decision.should_speak) and str(decision.text or "").strip():
+        # Câu bị Director suppress/body-only thì không chèn một lượt assistant
+        # rỗng vào history; im lặng cũng không nên giả dạng thành văn bản.
+        if public_text:
+            self._append_chat_history("assistant", decision.text, invalid=invalid_for_semantic_history)
+        if bool(decision.should_speak) and public_text:
             assistant_meta = {
                 "intent": decision.intent,
                 "parse_mode": decision.parse_mode,
@@ -5786,6 +5897,16 @@ class RuntimeCoordinator(
             self._commit_internal_state_for_frame(frame)
             self._send_decision_to_body(decision, channel="chat")
             self._finalize_cognitive_frame(frame)
+        trace_store = getattr(self, "director_trace_store", None)
+        trace_id = str(getattr(decision, "director_trace_id", "") or "")
+        if trace_store is not None and trace_id:
+            try:
+                trace_store.mark_committed(
+                    trace_id,
+                    memory_committed=bool(public_text and not invalid_for_semantic_history),
+                )
+            except Exception:
+                pass
         self.logger.info("ERIS: %s", decision.text)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[chat parser] %s", decision.parser_trace or "<empty>")

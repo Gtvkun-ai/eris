@@ -806,6 +806,48 @@ class ChatCycleMixin:
             planned_ti_context = f"{planned_ti_context}\n\n{previous_public_context}"
         if speech_interrupt_context:
             planned_ti_context = f"{planned_ti_context}\n\n{speech_interrupt_context}"
+
+        # Director đi TRƯỚC answer pass: model nhận scene/evidence/budget ngay từ
+        # lần sinh Decision đầu tiên, thay vì nói xong rồi stage mới dọn hiện trường.
+        # Dùng PerformanceContextBuilder riêng cho guard block để không tiêu cooldown
+        # của ContentEngine chính hai lần trong cùng một turn.
+        try:
+            from runtime.content_engine import ContentEngine
+            from runtime.director_context import DirectorContextBuilder
+            from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
+
+            pre_payload = {
+                "user_text": user_text,
+                "intent": planned_speech_intent or planned_speech_act or "answer",
+                "audience_mode": "private",
+            }
+            director_builder = getattr(self, "director_context_builder", None)
+            if director_builder is None:
+                director_builder = DirectorContextBuilder()
+                self.director_context_builder = director_builder
+            pre_director = director_builder.build(
+                payload=pre_payload,
+                frame=frame,
+                channel="chat",
+                user_text=user_text,
+            )
+            pre_performance = PerformanceContextBuilder(
+                content_engine=ContentEngine(persist=False)
+            ).build(
+                pre_director,
+                payload=pre_payload,
+                channel="chat",
+            )
+            pre_contract = DirectorContractBuilder().build(pre_director, pre_performance)
+            planned_ti_context = (
+                f"{planned_ti_context}\n\n{pre_contract.to_generation_guard_block()}"
+            )
+            frame.debug_notes.append(
+                f"director_pre_generation={pre_director.scene_mode.name}:{pre_performance.performance_intent}"
+            )
+        except Exception as exc:
+            self.logger.debug("[director pre-generation] skipped: %s", exc)
+
         # Curiosity Tutor: Eris không hiểu ý Ngài → câu trả lời lượt này thành câu hỏi
         # làm rõ (thay vì đoán bừa hay lén tra Gemini). Giữ giọng Eris.
         if getattr(self, "_clarify_user_pending", False):
@@ -1054,13 +1096,9 @@ class ChatCycleMixin:
                 public_surface="blocked",
                 recoverable=False,
             )
-        decision = self._maybe_apply_director_candidate_rerank(
-            decision,
-            user_text=user_text,
-            frame=frame,
-            chat_generation_kwargs=chat_generation_kwargs,
-            skip=bool(format_repair_fallback or no_fallback_block),
-        )
+        # Candidate selection được dời xuống sau TI/escalation/final guards. Nếu
+        # chọn ở đây rồi các tầng sau lại sửa text, ``selected_candidate`` chỉ còn
+        # là một tấm biên bản đẹp nhưng sai sự thật.
         self._log_decision_stage("chat", "after_parser", decision)
         self._log_decision_stage("chat", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text, vision_grounded=bool(screen_image_data_uri) or bool(getattr(self, "vision_facts", None)))
@@ -1075,9 +1113,95 @@ class ChatCycleMixin:
         self._log_decision_stage("chat", "after_escalation", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot)
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
+        decision = self._finalize_chat_director_decision(
+            decision,
+            user_text=user_text,
+            frame=frame,
+            chat_generation_kwargs=chat_generation_kwargs,
+            skip_candidates=bool(format_repair_fallback or no_fallback_block),
+        )
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return
+
+    def _finalize_chat_director_decision(
+        self,
+        decision: Decision,
+        *,
+        user_text: str,
+        frame,
+        chat_generation_kwargs: dict,
+        skip_candidates: bool = False,
+    ) -> Decision:
+        """Tạo đúng một FinalDecision trước khi commit chat.
+
+        DirectorContext, content hook, candidate selection, hard gate và repair
+        đều đi qua ``DirectorGenerationPipeline``. Quyết định trả về được đóng
+        dấu ``director_finalized`` để precommit/stage output tái sử dụng metadata
+        thay vì chấm lại rồi vô tình cho kết quả khác.
+        """
+
+        try:
+            from runtime.director_generation import DirectorGenerationPipeline
+            from runtime.director_trace import DirectorTraceStore
+
+            pipeline = getattr(self, "director_generation_pipeline", None)
+            if pipeline is None:
+                trace_store = getattr(self, "director_trace_store", None)
+                if trace_store is None:
+                    trace_store = DirectorTraceStore()
+                    self.director_trace_store = trace_store
+                pipeline = DirectorGenerationPipeline(
+                    director_builder=getattr(self, "director_context_builder", None),
+                    performance_builder=getattr(self, "performance_context_builder", None),
+                    contract_builder=getattr(self, "director_contract_builder", None),
+                    stage_scorer=getattr(self, "stage_scorer", None),
+                    content_harvester=getattr(self, "content_harvester", None),
+                    trace_store=trace_store,
+                )
+                self.director_generation_pipeline = pipeline
+                # Chia sẻ instance để các đường autonomous/legacy dùng cùng
+                # session id, scorer và content state; không sinh thêm "Eris song
+                # sinh" chỉ vì lazy-init ở hai file khác nhau.
+                self.director_context_builder = pipeline.director_builder
+                self.performance_context_builder = pipeline.performance_builder
+                self.director_contract_builder = pipeline.contract_builder
+                self.stage_scorer = pipeline.stage_scorer
+                self.content_harvester = pipeline.content_harvester
+
+            prepared = pipeline.prepare(
+                runtime=self,
+                frame=frame,
+                payload=decision.to_payload(),
+                user_text=user_text,
+                channel="chat",
+                harvest_content=True,
+            )
+            final = pipeline.finalize(
+                draft_decision=decision,
+                prepared=prepared,
+                llm_service=None if skip_candidates else self.llm_service,
+                conversation_context=str(chat_generation_kwargs.get("conversation_context", "") or ""),
+                grounding_context=str(chat_generation_kwargs.get("grounding_context", "") or ""),
+                memory_context=str(chat_generation_kwargs.get("memory_context", "") or ""),
+                generate_candidates=not skip_candidates,
+            )
+            self.last_final_decision = final
+            self.logger.info(
+                "[director final] trace=%s scene=%s candidates=%d selected=%d action=%s text=%r",
+                final.trace.trace_id,
+                final.trace.scene_mode,
+                final.trace.candidate_count,
+                final.trace.selected_index,
+                final.trace.repair_action,
+                final.decision.text,
+            )
+            return final.to_decision()
+        except Exception as exc:  # noqa: BLE001
+            # Pipeline lỗi thì giữ Decision đã qua final guards; precommit legacy
+            # vẫn còn làm lưới an toàn. Không để telemetry/selection phụ giết chat.
+            self.logger.warning("[director final] fallback to legacy precommit: %s", exc)
+            return decision
 
     def _maybe_apply_director_candidate_rerank(
         self,
@@ -1088,146 +1212,20 @@ class ChatCycleMixin:
         chat_generation_kwargs: dict,
         skip: bool = False,
     ) -> Decision:
-        """Sinh candidate bề mặt rồi rerank theo Director/StageScorer.
+        """Compatibility shim cho plugin cũ.
 
-        Đây là cầu nối M2: LLM draft vẫn trả lời một JSON Decision chuẩn trước,
-        sau đó pass này tạo 3-5 cách nói ngắn hơn/có stage metadata hơn. Nếu có
-        lỗi hoặc candidate yếu, giữ nguyên decision cũ.
+        Tên hàm được giữ để extension ngoài repo không vỡ import, nhưng mọi logic
+        đã chuyển vào ``_finalize_chat_director_decision``. Không còn một scorer
+        thứ hai sống bí mật dưới cái tên "rerank" nữa.
         """
 
-        if skip:
-            return decision
-        if os.environ.get("ERIS_CHAT_DIRECTOR_CANDIDATES", "1").strip().lower() not in {"1", "true", "yes", "on"}:
-            return decision
-        if not bool(getattr(decision, "should_speak", True)) or not str(getattr(decision, "text", "") or "").strip():
-            return decision
-        parse_mode = str(getattr(decision, "parse_mode", "") or "")
-        intent = str(getattr(decision, "intent", "") or "")
-        system_action = str(getattr(decision, "system_action", "") or "").strip()
-        if system_action or intent in {"no_fallback_block", "format_repair_fallback", "service_error"}:
-            return decision
-        if "no_fallback" in parse_mode or "format_repair" in parse_mode:
-            return decision
-
-        try:
-            from runtime.content_engine import ContentHarvester
-            from runtime.director_context import DirectorContextBuilder
-            from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
-            from runtime.stage_scorer import StageScorer
-
-            payload = decision.to_payload()
-            payload["user_text"] = str(user_text or "")
-            director_builder = getattr(self, "director_context_builder", None)
-            if director_builder is None:
-                director_builder = DirectorContextBuilder()
-                self.director_context_builder = director_builder
-            director_context = director_builder.build(
-                payload=payload,
-                frame=frame,
-                channel="chat",
-                user_text=user_text,
-            )
-            harvester = getattr(self, "content_harvester", None)
-            if harvester is None:
-                harvester = ContentHarvester()
-                self.content_harvester = harvester
-            harvested_content = harvester.payloads(
-                runtime=self,
-                frame=frame,
-                payload=payload,
-                channel="chat",
-            )
-            payload["content_seeds"] = [
-                seed for seed in harvested_content
-                if isinstance(seed, dict) and bool(seed.get("public_ok", True))
-            ]
-            director_context.world_state["runtime_hints"] = [
-                seed for seed in harvested_content
-                if isinstance(seed, dict) and not bool(seed.get("public_ok", True))
-            ]
-            performance_builder = getattr(self, "performance_context_builder", None)
-            if performance_builder is None:
-                performance_builder = PerformanceContextBuilder()
-                self.performance_context_builder = performance_builder
-            performance_context = performance_builder.build(
-                director_context,
-                payload=payload,
-                channel="chat",
-            )
-            try:
-                director_context.world_state["content_hook"] = performance_context.content_hook or {}
-                director_context.world_state["topic_stack"] = performance_builder.content_engine.topic_stack_payload()
-            except Exception:
-                pass
-            contract_builder = getattr(self, "director_contract_builder", None)
-            if contract_builder is None:
-                contract_builder = DirectorContractBuilder()
-                self.director_contract_builder = contract_builder
-            director_contract = contract_builder.build(director_context, performance_context)
-            payload["performance_context"] = performance_context.to_payload()
-            payload["director_contract"] = director_contract.to_payload()
-            payload["delivery_hint"] = str(payload.get("delivery_hint") or performance_context.delivery_style)
-            payload["stage_motion"] = str(payload.get("stage_motion") or performance_context.stage_motion)
-
-            raw_candidates = self.llm_service.generate_director_candidates(
-                draft_payload=payload,
-                user_message=user_text,
-                director_contract_prompt=director_contract.to_prompt_block(),
-                conversation_context=str(chat_generation_kwargs.get("conversation_context", "") or ""),
-                grounding_context=str(chat_generation_kwargs.get("grounding_context", "") or ""),
-                memory_context=str(chat_generation_kwargs.get("memory_context", "") or ""),
-            )
-            if not raw_candidates:
-                return decision
-
-            stage_scorer = getattr(self, "stage_scorer", None)
-            if stage_scorer is None:
-                stage_scorer = StageScorer()
-                self.stage_scorer = stage_scorer
-            best, score = stage_scorer.choose_best_from_payload(
-                raw_candidates,
-                context=director_context,
-                channel="chat",
-            )
-            if best is None or score is None:
-                return decision
-            if score.decision in {"suppress", "body_only"} or not str(best.text or "").strip():
-                return decision
-            selected_payload = stage_scorer.apply_candidate_to_payload(
-                dict(payload),
-                best,
-                score,
-                channel="chat",
-            )
-
-            decision.text = str(selected_payload.get("text", decision.text) or decision.text)
-            decision.should_speak = bool(selected_payload.get("should_speak", decision.should_speak))
-            decision.confidence = max(
-                float(getattr(decision, "confidence", 0.0) or 0.0),
-                float(selected_payload.get("confidence", 0.0) or 0.0),
-            )
-            decision.intent = str(selected_payload.get("intent", decision.intent) or decision.intent)
-            decision.delivery_hint = str(selected_payload.get("delivery_hint", decision.delivery_hint) or "")
-            decision.nonverbal_cue = str(selected_payload.get("nonverbal_cue", decision.nonverbal_cue) or "")
-            decision.stage_motion = str(selected_payload.get("stage_motion", decision.stage_motion) or "")
-            decision.reasoning_tags = tuple(
-                dict.fromkeys((*tuple(getattr(decision, "reasoning_tags", ()) or ()), "director_candidate_rerank"))
-            )
-            decision.parse_mode = f"{parse_mode or 'json'}:director_candidate_rerank"
-            decision.debug_trace = self._join_debug_trace(
-                str(getattr(decision, "debug_trace", "") or ""),
-                f"director_candidate_score={score.decision}:{score.reason}",
-            )
-            self.logger.info(
-                "[director candidate] selected decision=%s reason=%s text=%r",
-                score.decision,
-                score.reason,
-                decision.text,
-            )
-            return decision
-        except Exception as exc:  # noqa: BLE001
-            self.logger.debug("[director candidate] skipped: %s", exc)
-            return decision
+        return self._finalize_chat_director_decision(
+            decision,
+            user_text=user_text,
+            frame=frame,
+            chat_generation_kwargs=chat_generation_kwargs,
+            skip_candidates=skip,
+        )
 
     def _recall_repair_suppression(self, user_text: str):
         """Recall ký ức sửa lỗi quan hệ/tâm lý và rút ra tín hiệu siết cho lượt này.

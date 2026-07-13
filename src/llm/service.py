@@ -9,7 +9,7 @@ import time
 import threading
 
 import requests
-from llm.json_sanitizer import strip_reasoning_envelope
+from llm.json_sanitizer import extract_last_valid_json_object, strip_reasoning_envelope
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
 from cortex.banned_filler import HOLLOW_PRESENCE_LINES, STALE_MICRO_TEMPLATES, quoted_fragment
@@ -1617,7 +1617,7 @@ class LlmService:
         if self._is_decision_like_payload(direct_payload):
             return self._coerce_decision_like_payload(direct_payload)
 
-        extracted = self._extract_first_json_object(raw_text)
+        extracted = extract_last_valid_json_object(raw_text) or self._extract_first_json_object(raw_text)
         extracted_payload = self._parse_json_object(extracted)
         if self._is_valid_decision_payload(extracted_payload):
             return extracted
@@ -4200,7 +4200,14 @@ class LlmService:
                 grammar=None,
             )
             raw = self._extract_content(response)
-            payload = self._parse_json_object(self._extract_first_json_object(raw) or raw) or {}
+            # Qwen được phép reasoning. Ta bóc envelope rồi lấy contract JSON cuối
+            # cùng, không retry chỉ vì model đã nghĩ trước khi trả lời.
+            cleaned = strip_reasoning_envelope(raw)
+            candidate_json = (
+                cleaned if self._parse_json_object(cleaned) is not None
+                else extract_last_valid_json_object(cleaned or raw)
+            )
+            payload = self._parse_json_object(candidate_json) or {}
             return self._extract_candidate_payloads(payload)
         except Exception as exc:  # noqa: BLE001
             self.logger.debug("[director_candidates] skipped: %s", exc)

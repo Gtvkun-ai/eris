@@ -15,12 +15,18 @@ Nguyên tắc:
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Mapping
 
+from memory.json_store_io import atomic_write_json
 from runtime.director_context import DirectorContext
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +69,7 @@ class ContentHook:
     cooldown_sec: float = 90.0
     body_only_ok: bool = True
     score_bonus: float = 0.08
+    max_uses_per_session: int = 2
     content_seed: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, Any]:
@@ -509,11 +516,28 @@ class ContentHarvester:
 
 
 class ContentEngine:
-    """Chọn content hook có cooldown và topic stack phiên hiện tại."""
+    """Chọn content hook có cooldown, quota phiên và persistence nhẹ.
 
-    def __init__(self) -> None:
+    State chỉ chứa timestamp/counter/topic label, không chứa raw prompt hay secret.
+    Nhờ đó restart app không khiến Eris quên mình vừa kể đúng một trò đùa.
+    """
+
+    STATE_VERSION = 1
+
+    def __init__(self, *, state_path: str | os.PathLike[str] | None = None, persist: bool | None = None) -> None:
         self._last_used: dict[str, float] = {}
         self._topic_stack: list[TopicStackItem] = []
+        self._session_id = ""
+        self._session_uses: dict[str, int] = {}
+        self._persist_enabled = (
+            os.environ.get("ERIS_CONTENT_PERSIST", "1").strip().lower() in {"1", "true", "yes", "on"}
+            if persist is None
+            else bool(persist)
+        )
+        root = Path(os.environ.get("ERIS_PROJECT_ROOT") or Path(__file__).resolve().parents[1])
+        self._state_path = Path(state_path) if state_path is not None else root / "memory_core" / "content_engine_state.json"
+        if self._persist_enabled:
+            self._load_state()
 
     def select_hook(
         self,
@@ -529,6 +553,7 @@ class ContentEngine:
         """
 
         now = time.time()
+        self._begin_session(director.session_id)
         seeds = self._coerce_seed_payloads(payload.get("content_seeds", ()))
         self._update_topic_stack(payload=payload, channel=channel, now=now, seeds=seeds)
         scene = director.scene_mode.name
@@ -537,11 +562,25 @@ class ContentEngine:
         blob = _lower_blob(intent, user_text, director.machine_state.focus_kind, director.machine_state.active_app)
         seed_hook = self._hook_from_seed(director, scene=scene, intent=intent, seeds=seeds)
         if seed_hook is not None and self._seed_hook_available(seed_hook, now=now):
-            self._last_used[seed_hook.id] = now
+            self._remember_use(seed_hook, now=now)
             return seed_hook
         candidates = self._candidate_hooks(director, scene=scene, intent=intent, blob=blob)
-        chosen = self._first_available(candidates, now=now) or candidates[-1]
-        self._last_used[chosen.id] = now
+        chosen = self._first_available(candidates, now=now)
+        if chosen is None:
+            # Tất cả bit đang cooldown/quá quota: im còn tự nhiên hơn nhai lại.
+            # Hook này bảo candidate generator ưu tiên body_only thay vì bịa mồi mới.
+            return ContentHook(
+                id="cooldown_silence",
+                family="silence",
+                tone="silent_presence",
+                allowed_use="body-only; all content hooks are cooling down",
+                prompt_seed="Không lặp bit cũ. Nếu không có câu thật sự cần nói, chọn body_only.",
+                cooldown_sec=0.0,
+                body_only_ok=True,
+                score_bonus=0.0,
+                max_uses_per_session=999,
+            )
+        self._remember_use(chosen, now=now)
         return chosen
 
     def topic_stack_payload(self, *, limit: int = 5) -> list[dict[str, Any]]:
@@ -761,6 +800,9 @@ class ContentEngine:
     def _first_available(self, hooks: list[ContentHook], *, now: float) -> ContentHook | None:
         for hook in hooks:
             last = self._last_used.get(hook.id, 0.0)
+            uses = self._session_uses.get(hook.id, 0)
+            if uses >= max(1, int(hook.max_uses_per_session)):
+                continue
             if now - last >= max(0.0, hook.cooldown_sec):
                 return hook
         return None
@@ -769,7 +811,81 @@ class ContentEngine:
         # Seed thật được phép lặp nhanh hơn rule bit vì nó đại diện cho mạch hội
         # thoại hiện tại, nhưng vẫn có cooldown ngắn để tránh echo y nguyên.
         last = self._last_used.get(hook.id, 0.0)
-        return now - last >= max(0.0, min(hook.cooldown_sec, 20.0))
+        uses = self._session_uses.get(hook.id, 0)
+        return (
+            uses < max(1, int(hook.max_uses_per_session))
+            and now - last >= max(0.0, min(hook.cooldown_sec, 20.0))
+        )
+
+    def _begin_session(self, session_id: str) -> None:
+        current = str(session_id or "")
+        if current == self._session_id:
+            return
+        self._session_id = current
+        self._session_uses = {}
+
+    def _remember_use(self, hook: ContentHook, *, now: float) -> None:
+        self._last_used[hook.id] = now
+        self._session_uses[hook.id] = self._session_uses.get(hook.id, 0) + 1
+        self._save_state()
+
+    def _load_state(self) -> None:
+        try:
+            if not self._state_path.exists():
+                return
+            raw = json.loads(self._state_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                return
+            now = time.time()
+            last_used = raw.get("last_used", {})
+            if isinstance(last_used, dict):
+                # Bỏ cooldown cổ hơn 30 ngày, giữ file nhỏ và tránh ma quá khứ.
+                self._last_used = {
+                    str(key): float(value)
+                    for key, value in last_used.items()
+                    if _safe_float(value, 0.0) > 0 and now - _safe_float(value, 0.0) <= 30 * 86400
+                }
+            topics = raw.get("topic_stack", [])
+            if isinstance(topics, list):
+                loaded: list[TopicStackItem] = []
+                for item in topics[:20]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    key = _clean(item.get("key"))
+                    if not key:
+                        continue
+                    tags_raw = item.get("tags", ())
+                    tags = tuple(str(tag or "").strip() for tag in tags_raw if str(tag or "").strip()) if isinstance(tags_raw, (list, tuple)) else ()
+                    loaded.append(
+                        TopicStackItem(
+                            key=key,
+                            label=_clean(item.get("label")),
+                            strength=max(0.0, min(1.0, _safe_float(item.get("strength"), 0.0))),
+                            last_seen=_safe_float(item.get("last_seen"), now),
+                            source=_clean(item.get("source")),
+                            tags=tags,
+                        )
+                    )
+                self._topic_stack = loaded
+                self._decay_topics(now)
+        except Exception as exc:
+            logger.debug("[content-engine] load state skipped: %s", exc)
+
+    def _save_state(self) -> None:
+        if not self._persist_enabled:
+            return
+        try:
+            atomic_write_json(
+                self._state_path,
+                {
+                    "version": self.STATE_VERSION,
+                    "saved_at": time.time(),
+                    "last_used": dict(self._last_used),
+                    "topic_stack": self.topic_stack_payload(limit=12),
+                },
+            )
+        except Exception as exc:
+            logger.debug("[content-engine] save state skipped: %s", exc)
 
     def _update_topic_stack(self, *, payload: Mapping[str, Any], channel: str | None, now: float, seeds: list[ContentSeed] | None = None) -> None:
         for seed in seeds or []:

@@ -110,8 +110,36 @@ class DirectorContract:
         }
 
     def to_prompt_block(self) -> str:
-        """Render thành block JSON compact để nhét vào prompt khi cần."""
+        """Render contract candidate-generation đầy đủ."""
         return "[DIRECTOR_CONTRACT]\n" + json.dumps(self.to_payload(), ensure_ascii=False, separators=(",", ":"))
+
+    def to_generation_guard_block(self) -> str:
+        """Contract hẹp cho lượt sinh Decision đầu tiên.
+
+        Không gửi ``output_schema=candidates`` vào answer pass vì nó xung đột
+        với Decision JSON hiện tại. Director vẫn đi trước model bằng scene, budget
+        và evidence gate; pass candidate sau đó mới dùng schema nhiều candidate.
+        """
+
+        payload = {
+            "contract_version": self.contract_version,
+            "scene_mode": self.scene_mode,
+            "audience_mode": self.audience_mode,
+            "relation_band": self.relation_band,
+            "performance_intent": self.performance_intent,
+            "delivery_style": self.delivery_style,
+            "stage_emotion": self.stage_emotion,
+            "stage_motion": self.stage_motion,
+            "tts_style": self.tts_style,
+            "publicity": self.publicity,
+            "max_words": self.max_words,
+            "body_only_ok": self.body_only_ok,
+            "evidence": list(self.evidence),
+            "allowed_claim_levels": list(self.allowed_claim_levels),
+            "forbidden_claims": list(self.forbidden_claims),
+            "instruction": "Return the normal Decision JSON. Do not add facts outside this evidence contract.",
+        }
+        return "[DIRECTOR_GENERATION_GUARD]\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def _clean(value: object) -> str:
@@ -154,6 +182,23 @@ class PerformanceContextBuilder:
         publicity = _publicity_for(director)
         reasons: list[str] = [f"scene={scene}", f"intent={intent or 'unknown'}"]
         hook = self.content_engine.select_hook(director, payload=payload, channel=channel)
+
+        if hook.family == "silence" and channel_name != "chat":
+            reasons.append("content_cooldown_body_only")
+            return PerformanceContext(
+                performance_intent="body_only",
+                delivery_style="silent_presence",
+                stage_emotion="neutral",
+                stage_motion="blink_slow",
+                tts_style="none",
+                publicity=publicity,
+                content_hook_id=hook.id,
+                content_hook=hook.to_payload(),
+                body_only_ok=True,
+                max_words=0,
+                candidate_count=1,
+                reasons=tuple(reasons),
+            )
 
         if director.interruption_state == "interrupted" or intent in {"interrupt_repair", "format_repair_fallback"}:
             reasons.append("interrupt_or_repair")
