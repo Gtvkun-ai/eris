@@ -1,0 +1,167 @@
+{
+  "summary": {
+    "started_at": 1784005482.6064794,
+    "completed_at": 1784005482.6072912,
+    "cases": 7,
+    "passed": 7,
+    "failed": 0,
+    "pass_rate": 1.0,
+    "buckets": {
+      "multimodal_weak_evidence": {
+        "cases": 3,
+        "passed": 3,
+        "pass_rate": 1.0
+      },
+      "multimodal_grounded": {
+        "cases": 1,
+        "passed": 1,
+        "pass_rate": 1.0
+      },
+      "tpm_stress": {
+        "cases": 3,
+        "passed": 3,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "vision_weak_ambient",
+      "bucket": "multimodal_weak_evidence",
+      "passed": true,
+      "expected": {
+        "recommendation": "silence",
+        "grounded_claims": 0
+      },
+      "actual": {
+        "recommendation": "silence",
+        "grounded_claims": 0,
+        "contradictions": [
+          "no_direct_sensor_evidence",
+          "generic_or_content_free_claim"
+        ],
+        "unknowns": [
+          "missing_direct_sensor_evidence",
+          "scene_confidence_below_grounded_threshold",
+          "no_grounded_claim"
+        ],
+        "evidence_strength": 0.1292
+      },
+      "failures": []
+    },
+    {
+      "case_id": "vision_weak_requested",
+      "bucket": "multimodal_weak_evidence",
+      "passed": true,
+      "expected": {
+        "recommendation": "soften",
+        "grounded_claims": 0
+      },
+      "actual": {
+        "recommendation": "soften",
+        "grounded_claims": 0,
+        "contradictions": [
+          "no_direct_sensor_evidence"
+        ],
+        "unknowns": [
+          "missing_direct_sensor_evidence",
+          "scene_confidence_below_grounded_threshold",
+          "no_grounded_claim"
+        ],
+        "evidence_strength": 0.1824
+      },
+      "failures": []
+    },
+    {
+      "case_id": "vision_grounded",
+      "bucket": "multimodal_grounded",
+      "passed": true,
+      "expected": {
+        "recommendation": "speak"
+      },
+      "actual": {
+        "recommendation": "speak",
+        "grounded_claims": 2,
+        "contradictions": [],
+        "unknowns": [],
+        "evidence_strength": 0.94
+      },
+      "failures": []
+    },
+    {
+      "case_id": "vision_stale",
+      "bucket": "multimodal_weak_evidence",
+      "passed": true,
+      "expected": {
+        "recommendation": "silence",
+        "grounded_claims": 0
+      },
+      "actual": {
+        "recommendation": "silence",
+        "grounded_claims": 0,
+        "contradictions": [],
+        "unknowns": [
+          "scene_is_stale",
+          "no_grounded_claim"
+        ],
+        "evidence_strength": 0.684
+      },
+      "failures": []
+    },
+    {
+      "case_id": "tpm_normal_chat",
+      "bucket": "tpm_stress",
+      "passed": true,
+      "expected": {
+        "allowed": true,
+        "level": "normal",
+        "shed_optional_passes": false
+      },
+      "actual": {
+        "allowed": true,
+        "level": "normal",
+        "shed_optional_passes": false,
+        "reason": "ok",
+        "max_model_candidates": 3
+      },
+      "failures": []
+    },
+    {
+      "case_id": "tpm_micro_shed",
+      "bucket": "tpm_stress",
+      "passed": true,
+      "expected": {
+        "allowed": false,
+        "level": "warm",
+        "shed_optional_passes": true
+      },
+      "actual": {
+        "allowed": false,
+        "level": "warm",
+        "shed_optional_passes": true,
+        "reason": "shed_optional:warm",
+        "max_model_candidates": 2
+      },
+      "failures": []
+    },
+    {
+      "case_id": "tpm_429_shed",
+      "bucket": "tpm_stress",
+      "passed": true,
+      "expected": {
+        "allowed": false,
+        "level": "critical",
+        "shed_optional_passes": true,
+        "max_model_candidates": 0
+      },
+      "actual": {
+        "allowed": false,
+        "level": "critical",
+        "shed_optional_passes": true,
+        "reason": "shed_optional:critical",
+        "max_model_candidates": 0
+      },
+      "failures": []
+    }
+  ]
+}

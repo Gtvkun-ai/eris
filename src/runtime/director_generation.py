@@ -59,6 +59,9 @@ class DirectorGenerationPipeline:
         content_harvester: ContentHarvester | None = None,
         trace_store: DirectorTraceStore | None = None,
         candidate_controller: AdaptiveCandidateController | None = None,
+        observability: Any | None = None,
+        rollout_controller: Any | None = None,
+        session_id: str = "",
     ) -> None:
         self.director_builder = director_builder or DirectorContextBuilder()
         self.performance_builder = performance_builder or PerformanceContextBuilder()
@@ -67,6 +70,9 @@ class DirectorGenerationPipeline:
         self.content_harvester = content_harvester or ContentHarvester()
         self.trace_store = trace_store or DirectorTraceStore()
         self.candidate_controller = candidate_controller or AdaptiveCandidateController()
+        self.observability = observability
+        self.rollout_controller = rollout_controller
+        self.session_id = str(session_id or "")
 
     def prepare(
         self,
@@ -180,6 +186,21 @@ class DirectorGenerationPipeline:
             recent_failures=recent_failures,
             token_snapshot=pressure_snapshot,
         )
+        rollout_decision = None
+        if self.rollout_controller is not None:
+            try:
+                rollout_decision = self.rollout_controller.decide(
+                    "adaptive_candidates",
+                    session_id=self.session_id or prepared.director_context.trace_id,
+                )
+                if not rollout_decision.apply:
+                    candidate_plan = replace(
+                        candidate_plan,
+                        model_candidates=0,
+                        reason=f"rollout_{rollout_decision.reason}",
+                    )
+            except Exception:
+                rollout_decision = None
         generation_notes.append(
             f"adaptive_candidates:{candidate_plan.model_candidates}:{candidate_plan.reason}:"
             f"{candidate_plan.pressure_level}"
@@ -191,6 +212,8 @@ class DirectorGenerationPipeline:
             "act_confidence": round(candidate_plan.act_confidence, 3),
             "token_pressure": round(candidate_plan.token_pressure, 3),
             "pressure_level": candidate_plan.pressure_level,
+            "rollout": rollout_decision.to_dict() if rollout_decision is not None else {},
+            "lane": prepared.channel,
         }
 
         can_generate = (
@@ -267,6 +290,17 @@ class DirectorGenerationPipeline:
             notes=tuple(generation_notes),
         )
         self.trace_store.put(trace)
+        if self.observability is not None:
+            try:
+                self.observability.record_director(
+                    candidate_count=len(candidates),
+                    selected_index=selected_index,
+                    latency_ms=generation_latency_ms,
+                    plan=base_payload.get("adaptive_candidate_plan", {}),
+                    final_text=str(final_decision.text or ""),
+                )
+            except Exception:
+                pass
 
         # Gắn metadata compact vào Decision để precommit và stage output không
         # chấm lại. Đây là "con dấu" của FinalDecision, không phải lời mời mở thêm

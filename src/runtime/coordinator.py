@@ -444,6 +444,19 @@ class RuntimeCoordinator(
         self.internal_state_engine = InternalStateEngine()
         self.inner_thought_engine = InnerThoughtEngine()
         self.outcome_observer = OutcomeObserver()
+        # Observability + rollout được khởi tạo sớm để cả autonomous/vision trước
+        # lượt chat đầu tiên cũng có metric và kill-switch. Hai subsystem này
+        # best-effort, không được phép biến boot thành nghi lễ hiến tế.
+        try:
+            from runtime.observability import ErisObservability
+            from runtime.rollout_control import RolloutController
+
+            self.observability = ErisObservability()
+            self.rollout_controller = RolloutController(observability=self.observability)
+        except Exception as exc:
+            self.observability = None
+            self.rollout_controller = None
+            self.logger.warning("Observability/rollout init skipped: %s", exc)
         epistemic_enabled = str(os.getenv("ERIS_EPISTEMIC_V2_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
         if epistemic_enabled:
             epistemic_mode = str(os.getenv("ERIS_EPISTEMIC_V2_MODE", "authoritative") or "authoritative").strip().lower()
@@ -6351,9 +6364,43 @@ class RuntimeCoordinator(
             policy = VisionGroundingPolicy()
             self.vision_grounding_policy = policy
         report = policy.evaluate(note, requested=requested, stale=stale)
-        facts = self._sanitize_screen_facts(
-            report.to_screen_facts(max_items=self.vision_fact_max_items)
-        )
+        rollout = None
+        try:
+            from runtime.rollout_control import ensure_rollout_controller
+
+            rollout = ensure_rollout_controller(self).decide(
+                "vision_abstain",
+                session_id=str(getattr(self, "runtime_session_id", "") or getattr(self, "session_id", "") or id(self)),
+            )
+        except Exception:
+            rollout = None
+
+        if rollout is None or rollout.apply:
+            facts = self._sanitize_screen_facts(
+                report.to_screen_facts(max_items=self.vision_fact_max_items)
+            )
+        else:
+            # Control path cho dark/shadow/canary: giữ hành vi legacy đủ gần để
+            # so sánh, trong khi report mới vẫn được log. Không surface relation
+            # mềm vì đó chưa từng là tri giác trực tiếp đáng tin.
+            legacy = []
+            for value in (
+                getattr(note, "content_summary", ""),
+                getattr(note, "visible_context", ""),
+                *tuple(getattr(note, "important_text", ()) or ()),
+            ):
+                text = str(value or "").strip()
+                if text and text not in legacy:
+                    legacy.append(text)
+                if len(legacy) >= int(self.vision_fact_max_items):
+                    break
+            facts = self._sanitize_screen_facts(tuple(legacy))
+        try:
+            from runtime.observability import ensure_observability
+
+            ensure_observability(self).record_vision(report, channel="requested" if requested else "ambient")
+        except Exception:
+            pass
         return report, facts
 
     def _semantic_scene_note_to_facts(self, note: SemanticSceneNote | None) -> tuple[str, ...]:

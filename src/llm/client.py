@@ -9,6 +9,7 @@ from llm.token_budget import (
     preflight as _preflight,
 )
 from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+from runtime.observability import GLOBAL_OBSERVABILITY
 from llm.key_pool import get_provider_circuit
 
 _LOGGER = logging.getLogger("LLM")
@@ -23,12 +24,17 @@ def _record_pressure_request(base_url: str, model_name: str, messages, max_token
 
     provider = _pressure_provider(base_url, model_name)
     try:
+        prompt_tokens = _estimate_tokens(messages)
         GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
             provider,
             lane="transport",
-            prompt_tokens=_estimate_tokens(messages),
+            prompt_tokens=prompt_tokens,
             output_tokens=max_tokens,
         )
+        GLOBAL_OBSERVABILITY.observe("input_tokens_by_lane", prompt_tokens, tags={"provider": provider, "lane": "transport"})
+        GLOBAL_OBSERVABILITY.observe("output_tokens_by_lane", max_tokens, tags={"provider": provider, "lane": "transport"})
+        snapshot = GLOBAL_TOKEN_PRESSURE_GOVERNOR.snapshot(provider, lane="transport")
+        GLOBAL_OBSERVABILITY.gauge("token_pressure_ratio", snapshot.pressure, tags={"provider": provider})
     except Exception:
         pass
     return provider
@@ -43,10 +49,13 @@ def _record_pressure_success(provider: str) -> None:
 
 def _record_pressure_429(provider: str, response, default: float = 20.0) -> None:
     try:
+        retry_after = _retry_after_seconds(response, default)
         GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit(
             provider,
-            retry_after_s=_retry_after_seconds(response, default),
+            retry_after_s=retry_after,
         )
+        GLOBAL_OBSERVABILITY.increment("rate_limit_429_total", tags={"provider": provider})
+        GLOBAL_OBSERVABILITY.observe("retry_after_seconds", retry_after, tags={"provider": provider})
     except Exception:
         pass
 

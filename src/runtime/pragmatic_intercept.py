@@ -8,6 +8,7 @@ Intercept này *không trả lời thay Qwen*. Nó chỉ:
 3) tạo response envelope để model biết phải perform hay chỉ thương lượng boundary.
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -120,8 +121,13 @@ def intercept_social_turn(
     session_id: str = "",
     now: float | None = None,
     ttl_seconds: float = 1200.0,
+    mutate_state: bool = True,
 ) -> PragmaticInterceptResult:
-    act, confidence = classify_chat_act_with_confidence(user_text, history=history, state=state, now=now)
+    # Shadow/dark rollout phải chạy được toàn bộ policy mà không làm bẩn state
+    # thật. Dùng bản sao nhỏ vì object chỉ chứa scalar/tuple/dict; không mang
+    # socket hay lock như những sinh vật kiến trúc kém may mắn khác.
+    working_state = state if mutate_state else deepcopy(state)
+    act, confidence = classify_chat_act_with_confidence(user_text, history=history, state=working_state, now=now)
     intercepted = act in {
         ChatAct.PLAYFUL_INTERACTION_REQUEST,
         ChatAct.TEASE_REQUEST,
@@ -137,7 +143,7 @@ def intercept_social_turn(
     reason = "non_social_turn"
 
     if act == ChatAct.GRANT_RELATIONAL_PERMISSION:
-        state.grant(
+        working_state.grant(
             permission_type=infer_permission_type(user_text, act),
             scope="current_session",
             intensity_cap=requested_intensity,
@@ -153,9 +159,9 @@ def intercept_social_turn(
         event_type = "permission_granted"
         reason = "explicit_relational_permission"
 
-    elif act == ChatAct.INITIATE_INTERACTION and not state.is_active(now=now):
+    elif act == ChatAct.INITIATE_INTERACTION and not working_state.is_active(now=now):
         # "Chủ động đi" tự nó đã là một grant. Scope vẫn là session và chỉ một bypass.
-        state.grant(
+        working_state.grant(
             permission_type=infer_permission_type(user_text, act),
             scope="current_session",
             intensity_cap=requested_intensity,
@@ -172,7 +178,7 @@ def intercept_social_turn(
         reason = "initiation_implies_session_permission"
 
     elif act == ChatAct.REVOKE_RELATIONAL_PERMISSION:
-        state.revoke(reason="explicit_revoke", now=now)
+        working_state.revoke(reason="explicit_revoke", now=now)
         state_changed = True
         event_type = "permission_revoked"
         reason = "explicit_relational_revoke"
@@ -197,7 +203,7 @@ def intercept_social_turn(
         requested_intensity=requested_intensity,
         forbidden_patterns=forbidden,
         preferred_shapes=shapes,
-        permission_snapshot=state.to_dict(now=now),
+        permission_snapshot=working_state.to_dict(now=now),
     )
 
 

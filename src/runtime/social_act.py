@@ -7,6 +7,7 @@ Nó không sinh câu trả lời, không ghi memory và không tự gọi model.
 vẫn giữ quyền viết câu, còn runtime thôi giả vờ rằng mọi câu đều chỉ là text thô.
 """
 
+import os
 import re
 import unicodedata
 from enum import Enum
@@ -83,6 +84,7 @@ def _matches_any(text: str, patterns: Iterable[str]) -> bool:
 
 
 _REVOKE_PATTERNS = (
+    r"\b(?:tat|bo|dung)\s+(?:che do|tro)?\s*(?:treu|ca khia|choc|lam phien|chu dong)\b",
     r"\b(?:thoi|dung|ngung)\s+(?:treu|ca khia|choc|lam phien|chu dong)\b",
     r"\bdung\s+(?:treu|ca khia|choc|lam phien)\s+(?:toi|ta|nua)?\b",
     r"\bkhong\s+duoc\s+(?:treu|ca khia|choc|lam phien|chu dong)\b",
@@ -156,6 +158,19 @@ def classify_chat_act_with_confidence(
     if _matches_any(normalized, _META_BOUNDARY_PATTERNS):
         return ChatAct.META_SOCIAL_BOUNDARY, 0.91
 
+    # "Cứ cà khịa tôi thử xem" là lời mời thực hiện ngay, không phải giấy phép
+    # chung. Tách nó trước grant để policy khỏi lại đọc biên bản thay vì hành động.
+    explicit_cu_perform = bool(
+        re.search(
+            r"\bcu\s+(?:treu|ca khia|choc|lam phien)\s+(?:toi|ta).*\b(?:di|thu|xem)\b",
+            normalized,
+        )
+    )
+    if explicit_cu_perform:
+        if any(marker in normalized for marker in ("treu", "ca khia", "choc")):
+            return ChatAct.TEASE_REQUEST, 0.96
+        return ChatAct.PLAYFUL_INTERACTION_REQUEST, 0.95
+
     if _matches_any(normalized, _GRANT_PATTERNS):
         return ChatAct.GRANT_RELATIONAL_PERMISSION, 0.97
 
@@ -174,10 +189,29 @@ def classify_chat_act_with_confidence(
 
     # Contextual override: permission đang mở + câu imperative rất ngắn.
     if active_permission:
+        imperative_only = normalized in {
+            "gio di", "bat dau di", "bat dau", "lam di", "thu di", "trien di",
+        }
         imperative = any(marker in normalized for marker in ("gio", "di", "thu di", "bat dau"))
         social_verb = any(marker in normalized for marker in ("lam phien", "treu", "ca khia", "choc", "chu dong"))
-        if imperative and social_verb:
-            return ChatAct.INITIATE_INTERACTION, 0.84
+        if imperative_only or (imperative and social_verb):
+            return ChatAct.INITIATE_INTERACTION, 0.86 if imperative_only else 0.84
+
+    # Fallback head nhỏ xử lý paraphrase/slang mà regex không phủ. Head chỉ được
+    # phép nâng thành social act khi confidence cao; label "other" hoặc điểm thấp
+    # rơi về classifier chat thường. Vậy model nhỏ giúp recall mà không tự phong
+    # mọi câu có chữ "đi" thành nghi lễ cấp quyền.
+    try:
+        from runtime.social_intent_head import predict_social_intent
+
+        label, head_confidence = predict_social_intent(normalized, history=tuple(history))
+        threshold = max(0.50, min(0.99, float(os.getenv("ERIS_SOCIAL_INTENT_HEAD_THRESHOLD", "0.82") or 0.82)))
+        if label != "other" and head_confidence >= threshold:
+            head_act = ChatAct(label)
+            if head_act in SOCIAL_ACTS:
+                return head_act, min(0.96, max(0.70, float(head_confidence)))
+    except Exception:
+        pass
 
     insult_patterns = (
         "do ngu", "may ngu", "ban ngu", "eris ngu", "ngu vcl", "ngu vai",

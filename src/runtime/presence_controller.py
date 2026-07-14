@@ -134,6 +134,17 @@ class PresenceControllerMixin:
             allowed = state.can_bypass_autonomous(now=now, requested_intensity=requested_intensity)
             if allowed:
                 try:
+                    from runtime.rollout_control import ensure_rollout_controller
+
+                    rollout = ensure_rollout_controller(self).decide(
+                        "permission_bypass",
+                        session_id=str(getattr(self, "runtime_session_id", "") or getattr(self, "session_id", "") or id(self)),
+                    )
+                    allowed = bool(rollout.apply)
+                except Exception:
+                    pass
+            if allowed:
+                try:
                     self.logger.info(
                         "[relational permission] conditional presence bypass allowed; uses=%d",
                         state.bypass_uses_remaining,
@@ -153,8 +164,25 @@ class PresenceControllerMixin:
             from runtime.relational_permission_state import ensure_relational_permission_state
 
             state = ensure_relational_permission_state(self)
+            try:
+                from runtime.rollout_control import ensure_rollout_controller
+
+                rollout = ensure_rollout_controller(self).decide(
+                    "permission_bypass",
+                    session_id=str(getattr(self, "runtime_session_id", "") or getattr(self, "session_id", "") or id(self)),
+                )
+                if not rollout.apply:
+                    return False
+            except Exception:
+                pass
             consumed = state.consume_bypass(now=now)
             if consumed:
+                try:
+                    from runtime.observability import ensure_observability
+
+                    ensure_observability(self).increment("autonomous_bypass_usage_total")
+                except Exception:
+                    pass
                 try:
                     self.logger.info("[relational permission] autonomous bypass consumed")
                 except Exception:

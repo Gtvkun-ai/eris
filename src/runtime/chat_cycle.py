@@ -88,6 +88,16 @@ class ChatCycleMixin:
                     from runtime.relational_permission_state import ensure_relational_permission_state
                     relational_permission = ensure_relational_permission_state(self)
                     permission_bypass = relational_permission.can_bypass_autonomous(now=now)
+                    try:
+                        from runtime.rollout_control import ensure_rollout_controller
+
+                        rollout = ensure_rollout_controller(self).decide(
+                            "permission_bypass",
+                            session_id=self._relational_permission_session_id(),
+                        )
+                        permission_bypass = permission_bypass and bool(rollout.apply)
+                    except Exception:
+                        pass
                 except Exception:
                     permission_bypass = False
                 grace = min(base_grace, 3.0) if permission_bypass else base_grace
@@ -135,7 +145,20 @@ class ChatCycleMixin:
             str(getattr(turn, "text", "") or "")
             for turn in self._ensure_session_turn_ledger().user_turns()[-4:-1]
         )
-        return intercept_social_turn(
+        # Progressive delivery: classifier/policy có thể chạy dark hoặc shadow
+        # mà không thay state/output. Mặc định feature ở mode enabled để giữ hành
+        # vi hiện tại; canary dùng bucket ổn định theo session.
+        try:
+            from runtime.rollout_control import ensure_rollout_controller
+
+            rollout = ensure_rollout_controller(self).decide(
+                "social_intercept",
+                session_id=self._relational_permission_session_id(),
+            )
+        except Exception:
+            rollout = None
+
+        result = intercept_social_turn(
             user_text,
             history=history,
             state=state,
@@ -143,7 +166,31 @@ class ChatCycleMixin:
             session_id=self._relational_permission_session_id(),
             now=now,
             ttl_seconds=ttl_seconds,
+            mutate_state=bool(getattr(rollout, "apply", True)),
         )
+        try:
+            from runtime.observability import ensure_observability
+
+            ensure_observability(self).record_social_intercept(result, rollout)
+        except Exception:
+            pass
+        self.current_social_rollout_decision = rollout
+
+        if rollout is not None and not bool(getattr(rollout, "apply", False)):
+            # Giữ act/confidence để debug, nhưng downstream không được xem nó như
+            # intercept thật. Shadow mà vẫn đổi prompt thì chỉ là production cải
+            # trang bằng ria mép giả.
+            return replace(
+                result,
+                intercepted=False,
+                state_changed=False,
+                event_type="",
+                response_mode="normal",
+                reason=f"rollout_{getattr(rollout, 'reason', 'control')}",
+                forbidden_patterns=(),
+                preferred_shapes=(),
+            )
+        return result
 
     def _add_pragmatic_event_commit_request(self, frame, result, *, user_text: str, source_turn_id: str) -> None:
         """Ghi event session-only qua StateCommitRequest, không mint semantic fact."""
@@ -1323,6 +1370,9 @@ class ChatCycleMixin:
                     stage_scorer=getattr(self, "stage_scorer", None),
                     content_harvester=getattr(self, "content_harvester", None),
                     trace_store=trace_store,
+                    observability=getattr(self, "observability", None),
+                    rollout_controller=getattr(self, "rollout_controller", None),
+                    session_id=self._relational_permission_session_id(),
                 )
                 self.director_generation_pipeline = pipeline
                 # Chia sẻ instance để các đường autonomous/legacy dùng cùng
@@ -1585,6 +1635,25 @@ class ChatCycleMixin:
             return
         try:
             outcome = observer.observe(previous, user_feedback_text=user_text, attach_to_frame=True)
+            try:
+                from runtime.observability import ensure_observability
+                from runtime.rollout_control import ensure_rollout_controller
+
+                ensure_observability(self).record_outcome(outcome)
+                # Feedback turn là gate đáng tin nhất cho social canary. Correction,
+                # confusion hoặc rupture tính là failure; intrusion có gate riêng.
+                ensure_rollout_controller(self).record_outcome(
+                    "social_intercept",
+                    failed=bool(
+                        getattr(outcome, "user_corrected", False)
+                        or getattr(outcome, "user_confused", False)
+                        or getattr(outcome, "relation_ruptured", False)
+                    ),
+                    intrusive=bool(getattr(outcome, "user_felt_intruded", False)),
+                    fields={"feedback_tags": tuple(getattr(outcome, "tags", ()) or ())},
+                )
+            except Exception:
+                pass
             kernel = getattr(self, "epistemic_kernel", None)
             episode = getattr(previous, "epistemic_episode", None)
             if kernel is not None and episode is not None:
