@@ -930,24 +930,66 @@ class AutonomousCycleMixin:
                 break
         return tuple(cleaned)
     def _maybe_update_screen_facts(self) -> tuple[str, ...]:
+        """Cập nhật ambient screen facts từ Screen Text Index trước.
+
+        Autonomous không còn chụp ảnh + gọi VLM theo lịch mặc định. UIA/OCR worker
+        đã chạy nền và rẻ hơn nhiều cho laptop chủ yếu code/log/chữ. Vision chỉ còn
+        là escalation opt-in qua ERIS_AUTONOMOUS_VISION_ESCALATION=1.
+        """
         if not self.vision_facts_enabled:
             self.vision_facts_novelty_hint = "none"
             return ()
 
         now = time.time()
+        store = getattr(self, "screen_evidence_store", None)
+        text_facts: tuple[str, ...] = ()
+        if store is not None:
+            try:
+                text_facts = tuple(store.ambient_facts(
+                    max_age_seconds=float(os.getenv("ERIS_SCREEN_TEXT_AMBIENT_MAX_AGE_SEC", "8") or 8.0),
+                    max_items=self.vision_fact_max_items,
+                ))
+            except Exception as exc:
+                self.logger.debug("[screen text autonomous] query lỗi: %s", exc)
+
+        if text_facts:
+            cleaned = self._sanitize_screen_facts(text_facts)
+            signature = "\n".join(cleaned)
+            self.vision_facts_novelty_hint = (
+                "new_screen_text"
+                if cleaned and signature != self.vision_facts_signature
+                else ("repeated_screen_text" if cleaned else "none")
+            )
+            self.vision_facts_signature = signature
+            self.vision_facts = cleaned
+            self.vision_facts_are_stale = False
+            self.vision_last_capture_at = now
+            self.vision_last_trace = "screen_text_index"
+            return self.vision_facts
+
+        allow_vision = os.getenv("ERIS_AUTONOMOUS_VISION_ESCALATION", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if not allow_vision:
+            # Không có text tươi thì im, không thuê VLM đi đọc terminal.
+            if self.vision_last_capture_at and (now - self.vision_last_capture_at) > max(8.0, self.vision_interval_sec):
+                self.vision_stale_facts = tuple(self.vision_facts)
+                self.vision_facts = ()
+                self.vision_facts_are_stale = True
+                self.vision_facts_signature = ""
+            self.vision_facts_novelty_hint = "none"
+            return self.vision_facts
+
+        # Escalation cũ chỉ chạy khi chủ động bật.
         if now < self.vision_disabled_until:
             self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
             return self.vision_facts
         if self.vision_last_capture_at and (now - self.vision_last_capture_at) < self.vision_interval_sec:
             self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
             return self.vision_facts
-
         try:
             data_uri = self.telemetry_service.capture_screen_frame_data_uri()
         except Exception as exc:
             self._note_vision_failure("capture", exc)
             return self.vision_facts
-
         if not data_uri:
             self.vision_last_capture_at = now
             self.vision_facts = ()
@@ -955,27 +997,22 @@ class AutonomousCycleMixin:
             self.vision_facts_signature = ""
             self.vision_facts_novelty_hint = "none"
             return self.vision_facts
-
         try:
             facts, trace = self.llm_service.generate_screen_facts(screen_image_data_uri=data_uri)
         except Exception as exc:
             self._note_vision_failure("vlm", exc)
             return self.vision_facts
-
         self.vision_last_capture_at = now
         self.vision_failure_count = 0
         self.vision_disabled_until = 0.0
         cleaned = self._sanitize_screen_facts(facts)
         signature = "\n".join(cleaned)
-        self.vision_facts_novelty_hint = (
-            "new_screen_fact"
-            if cleaned and signature != self.vision_facts_signature
-            else ("repeated_screen_fact" if cleaned else "none")
-        )
+        self.vision_facts_novelty_hint = "new_screen_fact" if cleaned and signature != self.vision_facts_signature else ("repeated_screen_fact" if cleaned else "none")
         self.vision_facts_signature = signature
         self.vision_facts = cleaned
         self.vision_last_trace = trace or ""
         return self.vision_facts
+
     def _attach_screen_facts(self, snapshot, facts: tuple[str, ...]) -> str:
         if not facts:
             return ""

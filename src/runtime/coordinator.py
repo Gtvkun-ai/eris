@@ -116,6 +116,7 @@ from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.vision_grounding import VisionGroundingPolicy, VisionGroundingReport
+from screen import build_screen_text_runtime
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
 from runtime.director_context import DirectorContextBuilder
 from runtime.stage_contracts import StageFrameBuilder
@@ -693,6 +694,21 @@ class RuntimeCoordinator(
         self.vision_last_trace = ""
         self.vision_facts_signature = ""
         self.vision_facts_novelty_hint = "none"
+        # Screen Text Index chạy nền: UI Automation trước, OCR vùng thay đổi sau.
+        # Chat chỉ đọc snapshot đã có; tuyệt đối không chờ OCR/VLM trên critical path.
+        try:
+            (
+                self.screen_evidence_store,
+                self.screen_text_worker,
+                self.screen_relevance_router,
+            ) = build_screen_text_runtime(logger=self.logger)
+        except Exception as exc:
+            self.screen_evidence_store = None
+            self.screen_text_worker = None
+            self.screen_relevance_router = None
+            self.logger.warning("[screen text] không khởi tạo được index: %s", exc)
+        self._chat_screen_route_decision = None
+        self._chat_screen_text_evidence = ()
         # NiStateMachine giữ state drift rời rạc theo thời gian (ON_GOAL / BORDERLINE / OFF_GOAL)
         #  dựa trên chuỗi GoalDriftReport, thay vì chỉ nhìn một snapshot đơn lẻ.
         self.autonomous_ni_state = NiStateMachine()
@@ -4634,6 +4650,12 @@ class RuntimeCoordinator(
 
     def stop(self):
         self.running = False
+        worker = getattr(self, "screen_text_worker", None)
+        if worker is not None:
+            try:
+                worker.stop()
+            except Exception as exc:
+                self.logger.warning("[screen text] stop error: %s", exc)
         self._stop_mental_process_loop()
         tutor_daemon = getattr(self, "tutor_daemon", None)
         if tutor_daemon is not None:
@@ -8599,6 +8621,12 @@ class RuntimeCoordinator(
 
         if not self.running:
             return
+        worker = getattr(self, "screen_text_worker", None)
+        if worker is not None:
+            try:
+                worker.start()
+            except Exception as exc:
+                self.logger.warning("[screen text] start error: %s", exc)
         self.cognitive_substrate.start()
         self._start_mental_process_loop()
         while self.running:

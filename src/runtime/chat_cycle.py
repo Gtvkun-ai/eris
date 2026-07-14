@@ -1756,50 +1756,72 @@ class ChatCycleMixin:
             term in normalized for term in visual_objects
         )
     def _capture_screen_frame_for_chat(self, user_text: str) -> str:
-        # Smart gate: ưu tiên vision_facts đã có từ autonomous cycle.
-        # Chỉ chụp màn hình mới khi:
-        #   1. User hỏi trực tiếp về màn hình (keyword marker), HOẶC
-        #   2. Cache autonomous vision đã cũ hơn ERIS_CHAT_VISION_STALE_SEC (mặc định 90s)
-        #
-        # Tránh VLM call nặng mỗi lượt chat — trước đây "bỏ gate" gây mỗi chat
-        # phải OCR lại toàn màn hình, dẫn đến 2 LLM call nối tiếp.
+        """Resolve screen context theo thang: none -> UIA/OCR -> vision.
 
-        # Nếu user hỏi về màn hình → luôn chụp mới
-        user_wants_screen = self._looks_like_screen_vision_request(user_text)
+        Hàm giữ tên cũ để không phá caller, nhưng không còn mặc định chụp ảnh khi
+        cache vision cũ. Screen Text Index chạy nền; chat chỉ đọc evidence đã có.
+        VLM chỉ được gọi khi router xác định cần bố cục/hình ảnh hoặc text evidence
+        không đủ mạnh. Đây mới là escalation, không phải thuế màn hình mỗi lượt.
+        """
+        self._chat_screen_route_decision = None
+        self._chat_screen_text_evidence = ()
 
-        # Kiểm tra cache autonomous còn tươi không
-        stale_threshold = float(
-            (lambda r: max(30.0, float(r)) if r.strip() else 90.0)(
-                str(os.environ.get("ERIS_CHAT_VISION_STALE_SEC", "90") or "90")
+        router = getattr(self, "screen_relevance_router", None)
+        route = None
+        if router is not None:
+            try:
+                route = router.route(user_text)
+            except Exception as exc:
+                self.logger.warning("[screen route] router lỗi: %s", exc)
+
+        if route is None:
+            # Fallback tối thiểu cho bản chạy thiếu module screen: chỉ vision khi user
+            # trỏ màn hình tường minh. Không còn nhánh cache_stale tự chụp bừa.
+            if not self._looks_like_screen_vision_request(user_text):
+                self.logger.debug("[screen route] mode=none reason=no_screen_reference")
+                return ""
+            try:
+                from screen.evidence_models import ScreenRouteDecision
+                route = ScreenRouteDecision(mode="vision", references_screen=True, reason="router_unavailable_explicit_request")
+            except Exception:
+                route = None
+
+        self._chat_screen_route_decision = route
+        if route is not None:
+            self._chat_screen_text_evidence = tuple(getattr(route, "evidence", ()) or ())
+            self.logger.info(
+                "[screen route] mode=%s refs=%s visual=%s evidence=%d confidence=%.2f stale=%s reason=%s",
+                str(getattr(route, "mode", "none") or "none"),
+                int(bool(getattr(route, "references_screen", False))),
+                int(bool(getattr(route, "needs_visual", False))),
+                len(self._chat_screen_text_evidence),
+                float(getattr(route, "confidence", 0.0) or 0.0),
+                int(bool(getattr(route, "stale", False))),
+                str(getattr(route, "reason", "") or "none"),
             )
-        )
-        last_capture = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0)
-        cache_age = time.time() - last_capture if last_capture > 0.0 else float("inf")
-        cache_is_fresh = cache_age < stale_threshold
-        has_cached_facts = bool(tuple(getattr(self, "vision_facts", ()) or ()))
 
-        if not user_wants_screen and cache_is_fresh and has_cached_facts:
-            self.logger.debug(
-                "[vision chat] Dùng vision_facts cache (age=%.0fs < stale=%.0fs, %d facts).",
-                cache_age,
-                stale_threshold,
-                len(tuple(getattr(self, "vision_facts", ()) or ())),
-            )
-            return ""  # Không cần data_uri — grounding context sẽ dùng vision_facts có sẵn
+        mode = str(getattr(route, "mode", "none") or "none") if route is not None else "none"
+        if mode == "none":
+            return ""
+        if mode in {"text_evidence", "text_evidence_soft"}:
+            # UIA/OCR đã đủ: không capture, không remote vision, không latency 30s.
+            return ""
+        if mode == "ask_or_abstain":
+            return ""
+        if mode != "vision":
+            return ""
 
         capture_fn = getattr(self.telemetry_service, "capture_screen_frame_data_uri", None)
         if not callable(capture_fn):
             self.logger.info("[vision chat] telemetry service không hỗ trợ chụp màn hình.")
             return ""
-
         try:
             data_uri = capture_fn()
         except Exception as exc:
             self.logger.warning("[vision chat] không chụp được màn hình: %s", exc)
             return ""
 
-        reason = "user_screen_request" if user_wants_screen else f"cache_stale_{cache_age:.0f}s"
-        self.logger.info("[vision chat] Chụp màn hình mới (%s).", reason)
+        self.logger.info("[vision chat] Escalate từ screen-text sang vision (%s).", str(getattr(route, "reason", "") or "policy"))
         snapshot = getattr(self, "_chat_snapshot_for_vision", None)
         if snapshot is not None:
             try:
@@ -1814,15 +1836,42 @@ class ChatCycleMixin:
                 self.logger.warning("[vision chat] không nén được screenshot: %s", exc)
         return data_uri
 
-    
-    def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
-        """Chỉ đưa GroundedClaim vào SourceGrounding.
 
-        Raw screenshot marker không chứng minh bất kỳ nội dung nào. Trước đây marker
-        "live screenshot attached" có confidence 0.93 đủ để model suy ra một cảnh
-        rồi guard cuối pipeline phải dọn xác. Bây giờ ảnh chỉ có quyền tạo claim sau
-        khi VisionGroundingPolicy kiểm xong.
+    def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
+        """Đưa text evidence hoặc GroundedClaim vào SourceGrounding.
+
+        Screen context chỉ tồn tại khi turn thật sự tham chiếu màn hình. Chat thường
+        không được ăn stale vision facts như ambient context nữa, vì chính kiểu đó
+        từng kéo chữ "pixel" vô một câu hỏi chẳng liên quan.
         """
+        route = getattr(self, "_chat_screen_route_decision", None)
+        if route is None or str(getattr(route, "mode", "none") or "none") == "none":
+            return ()
+
+        now = time.time()
+        text_blocks = tuple(getattr(self, "_chat_screen_text_evidence", ()) or ())
+        text_items: list[object] = []
+        for block in text_blocks:
+            to_item = getattr(block, "to_grounding_item", None)
+            if callable(to_item):
+                try:
+                    text_items.append(to_item(now=now, stale_after=8.0))
+                    continue
+                except Exception:
+                    pass
+            text = str(getattr(block, "text", "") or "").strip()
+            if text:
+                text_items.append({
+                    "id": str(getattr(block, "block_id", "screen_text") or "screen_text"),
+                    "source": str(getattr(block, "source", "screen_text_index") or "screen_text_index"),
+                    "claim": text,
+                    "confidence": float(getattr(block, "confidence", 0.65) or 0.65),
+                    "grounded": True,
+                    "stale": bool(getattr(route, "stale", False)),
+                    "tags": ["screen", "screen_text"],
+                })
+        if text_items and not screen_image_data_uri:
+            return tuple(text_items)
 
         report = getattr(self, "last_vision_grounding_report", None)
         facts: list[object] = []
@@ -1830,45 +1879,37 @@ class ChatCycleMixin:
             to_items = getattr(report, "to_evidence_items", None)
             if callable(to_items):
                 facts.extend(to_items(grounded_only=True))
-
         if facts:
             return tuple(facts)
 
-        # Không có capture tươi trong lượt này: facts lần trước vẫn có thể làm context
-        # continuity, nhưng phải gắn stale để prompt buộc nói "lúc nãy".
-        if not screen_image_data_uri:
-            snapshot_facts = tuple(getattr(snapshot, "vision_facts", ()) or ())
-            coordinator_facts = tuple(getattr(self, "vision_facts", ()) or ())
-            merged = snapshot_facts or coordinator_facts
-            for index, text in enumerate(merged):
-                cleaned = str(text or "").strip()
-                if not cleaned:
-                    continue
-                facts.append(
-                    {
-                        "id": f"vision_stale:{index}",
-                        "source": "vision_grounded_claim",
-                        "claim": cleaned,
-                        "confidence": 0.58,
-                        "grounded": True,
-                        "stale": True,
-                        "tags": ["vision", "screen", "grounded", "stale"],
-                    }
-                )
+        # Vision capture thất bại: text evidence mềm vẫn tốt hơn marker ảnh rỗng.
+        if text_items:
+            return tuple(text_items)
 
-        # Có ảnh tươi nhưng không có claim grounded: giữ marker audit với
-        # grounded=False. SourceGroundingEngine sẽ loại nó khỏi evidence present.
-        if screen_image_data_uri and not facts:
-            facts.append(
-                {
-                    "id": "chat_screen_frame_unresolved",
-                    "source": "screen_capture",
-                    "claim": "fresh screenshot captured but no grounded semantic claim",
-                    "confidence": 0.25,
-                    "grounded": False,
-                    "tags": ["vision", "screen", "chat", "ungrounded"],
-                }
-            )
+        if screen_image_data_uri:
+            return ({
+                "id": "chat_screen_frame_unresolved",
+                "source": "screen_capture",
+                "claim": "fresh screenshot captured but no grounded semantic claim",
+                "confidence": 0.25,
+                "grounded": False,
+                "tags": ["vision", "screen", "chat", "ungrounded"],
+            },)
+
+        # Chỉ dùng cache vision cũ khi user đang hỏi màn hình mà capture mới hỏng.
+        merged = tuple(getattr(snapshot, "vision_facts", ()) or ()) or tuple(getattr(self, "vision_facts", ()) or ())
+        for index, text in enumerate(merged):
+            cleaned = str(text or "").strip()
+            if cleaned:
+                facts.append({
+                    "id": f"vision_stale:{index}",
+                    "source": "vision_grounded_claim",
+                    "claim": cleaned,
+                    "confidence": 0.52,
+                    "grounded": True,
+                    "stale": True,
+                    "tags": ["vision", "screen", "grounded", "stale"],
+                })
         return tuple(facts)
 
     def _build_chat_source_grounding_report(
@@ -1894,9 +1935,14 @@ class ChatCycleMixin:
             # Capture có thể tươi nhưng compressor thất bại và chỉ còn cache cũ.
             # Vì vậy freshness phải dựa cả vào trạng thái vision, không chỉ data URI.
             screen_facts_stale=(
-                not bool(screen_image_data_uri)
-                or bool(getattr(self, "vision_facts_are_stale", False))
-                or bool(getattr(getattr(self, "last_vision_grounding_report", None), "stale", False))
+                bool(getattr(getattr(self, "_chat_screen_route_decision", None), "stale", False))
+                or (
+                    bool(screen_image_data_uri)
+                    and (
+                        bool(getattr(self, "vision_facts_are_stale", False))
+                        or bool(getattr(getattr(self, "last_vision_grounding_report", None), "stale", False))
+                    )
+                )
             ),
             memory_packet=memory_resonance,
             runtime_state=snapshot,
