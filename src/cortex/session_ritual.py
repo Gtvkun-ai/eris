@@ -1,8 +1,13 @@
+import logging
+import os
 import re
 import time
 
+from core.temporal_context import TemporalContextBuilder
 from .contracts import SessionRitualReport
 from .greeting_presets import GreetingPresetResolver
+
+logger = logging.getLogger("SessionRitual")
 
 try:
     from .greeting_cognition import GreetingCognitionEngine
@@ -104,6 +109,11 @@ class SessionRitualEngine:
         seconds_since_last_session = (
             max(0.0, current_time - last_session_at) if last_session_at > 0.0 else 0.0
         )
+        temporal_context = TemporalContextBuilder(session_started_at=current_time).build(
+            now=current_time,
+            last_session_at=last_session_at,
+            session_started_at=current_time,
+        )
         restart_detected = self._restart_detected(snapshot)
 
         continuity_restored = bool(
@@ -147,17 +157,50 @@ class SessionRitualEngine:
             greeted_recently=greeted_recently,
             seconds_since_last_session=seconds_since_last_session,
             restart_detected=restart_detected,
+            temporal_context=temporal_context,
         )
-        should_greet = True
+        greeting_mode = os.environ.get("ERIS_STARTUP_GREETING_MODE", "hybrid").strip().lower()
+        if greeting_mode not in {"hybrid", "preset", "llm", "silent", "off"}:
+            greeting_mode = "hybrid"
+        should_greet = greeting_mode not in {"silent", "off"}
 
-        # Chỉ dùng preset khi KHÔNG có anchor động. Có project/vòng lặp cụ thể thì
-        # Qwen phải tự viết để giữ ngữ cảnh, không được đọc một macro vô can.
+        # hybrid: không có anchor động -> preset; có project/vòng lặp -> Qwen.
+        # preset: luôn ưu tiên catalog. llm: bỏ catalog có chủ đích.
+        # Không nuốt lỗi im lặng: selection_error được đưa vào report để log nhìn
+        # ra đúng bệnh, thay vì lặng lẽ quay về câu "Ừm. Lại gặp Ngài.".
         greeting_preset = None
-        if not greeting_candidate and greeting_frame is not None:
+        selection_reason = ""
+        selection_error = ""
+        should_try_preset = bool(
+            should_greet
+            and greeting_frame is not None
+            and (greeting_mode == "preset" or (greeting_mode == "hybrid" and not greeting_candidate))
+        )
+        if should_try_preset:
             try:
-                greeting_preset = self.preset_resolver.resolve(greeting_frame, tone=tone)
-            except Exception:
-                greeting_preset = None
+                greeting_preset = self.preset_resolver.resolve_or_default(
+                    greeting_frame,
+                    tone=tone,
+                    force=True,
+                )
+                selection_reason = "catalog_match" if greeting_preset is not None else "catalog_empty"
+            except Exception as exc:
+                selection_error = f"{type(exc).__name__}: {exc}"[:240]
+                logger.warning("[startup] greeting preset selection failed: %s", selection_error)
+
+        # Lưới an toàn cuối cho startup preset/hybrid: lấy một câu plain trong
+        # chính catalog, không gọi deterministic fallback cũ.
+        if should_try_preset and greeting_preset is None:
+            try:
+                pool = tuple(getattr(self.preset_resolver, "presets", ()) or ())
+                greeting_preset = next((item for item in pool if item.id == "greet_plain_03"), None)
+                if greeting_preset is None:
+                    greeting_preset = next((item for item in pool if "plain" in tuple(item.tags or ())), None)
+                if greeting_preset is not None:
+                    selection_reason = "catalog_safe_default"
+            except Exception as exc:
+                selection_error = selection_error or f"{type(exc).__name__}: {exc}"[:240]
+
         greeting_text = (
             greeting_preset.text if greeting_preset is not None else greeting_candidate
         ) if should_greet else ""
@@ -186,12 +229,16 @@ class SessionRitualEngine:
             unresolved_loops=unresolved_loops,
             evidence=evidence,
             greeting_frame=greeting_frame,
+            temporal_context=temporal_context,
             greeting_preset_id=greeting_preset.id if greeting_preset is not None else "",
             greeting_preset_text=greeting_preset.text if greeting_preset is not None else "",
             greeting_preset_emotion=greeting_preset.emotion if greeting_preset is not None else "",
             greeting_preset_motion=greeting_preset.motion if greeting_preset is not None else "",
             greeting_preset_prosody=greeting_preset.prosody_style if greeting_preset is not None else "",
             greeting_audio_asset=greeting_preset.audio_asset if greeting_preset is not None else "",
+            greeting_mode=greeting_mode,
+            greeting_selection_reason=selection_reason,
+            greeting_selection_error=selection_error,
         )
         # Dynamic fields keep backward compatibility with the existing SessionRitualReport
         # contract while letting newer wording layers read a proper greeting cognition frame.
@@ -204,8 +251,19 @@ class SessionRitualEngine:
     # bao gồm các cờ trạng thái chính, mục tiêu đang hoạt động đã được phục hồi, vòng hút hiện tại, hướng kéo gần đây, 
     # trạng thái liên tục của bản thân và các vòng lặp chưa giải quyết. Chuỗi này nhằm mục đích cung cấp một bối cảnh rõ ràng và súc tích cho việc tạo phản hồi chào hỏi nếu có thể, đồng thời truyền đạt thông tin quan trọng về trạng thái hiện tại của hệ thống mà không cần phải giải thích quá nhiều về dữ liệu telemetri.
     def render_prompt_context(self, report: SessionRitualReport) -> str:
+        temporal_context = getattr(report, "temporal_context", None)
+        temporal_block = (
+            temporal_context.to_prompt_block()
+            if callable(getattr(temporal_context, "to_prompt_block", None))
+            else ""
+        )
         if not report.restored:
-            return "session_ritual: no startup continuity restored."
+            return "\n".join(
+                part for part in (
+                    temporal_block,
+                    "session_ritual: no startup continuity restored.",
+                ) if str(part or "").strip()
+            )
         loops = " | ".join(report.unresolved_loops[:3]) or "none"
         flags = (
             f"presence_restored={int(report.presence_restored)}, "
@@ -214,7 +272,8 @@ class SessionRitualEngine:
             f"tone={report.tone}, greet={int(report.should_greet)}"
         )
         return "\n".join(
-            (
+            part for part in (
+                temporal_block,
                 "session_ritual: startup rehydration; continuity memory only, not current screen proof.",
                 f"session_flags: {flags}.",
                 f"rehydrated_goal: {report.active_goal or 'none'}.",
@@ -226,11 +285,12 @@ class SessionRitualEngine:
                     "ritual_rule: say exactly one opening line; a greeting is optional, not mandatory. "
                     "If there is a rehydrated goal/loop/attractor above, open by reaching for that thread "
                     "so the line evokes the unfinished thing, instead of announcing a return. "
+                    "Use local time only when it naturally changes the greeting; do not announce the clock. "
                     "Lead with a bare 'chào' only when there is no continuity to lean on. "
-                    "avoid phrases like 'tôi vẫn ở đây', 'tôi vẫn giữ mạch', 'mạch đã nối lại'."
+                    "avoid phrases like 'tôi vẫn ở đây', 'tôi vẫn giữ mạch', 'mạch đã nối lại'. "
                     "Do not over-explain telemetry."
                 ),
-            )
+            ) if str(part or "").strip()
         )
 
     #lấy goal persistence, goal còn active không, summary goal
@@ -377,6 +437,7 @@ class SessionRitualEngine:
         greeted_recently: bool,
         seconds_since_last_session: float = 0.0,
         restart_detected: bool = False,
+        temporal_context=None,
     ):
         if GreetingCognitionEngine is None:
             return None
@@ -393,6 +454,11 @@ class SessionRitualEngine:
                 greeted_recently=greeted_recently,
                 seconds_since_last_session=seconds_since_last_session,
                 restart_detected=restart_detected,
+                timezone=str(getattr(temporal_context, "timezone", "Asia/Ho_Chi_Minh") or "Asia/Ho_Chi_Minh"),
+                local_time=str(getattr(temporal_context, "local_time", "") or ""),
+                weekday_vi=str(getattr(temporal_context, "weekday_vi", "") or ""),
+                time_of_day=str(getattr(temporal_context, "time_of_day", "") or ""),
+                is_weekend=bool(getattr(temporal_context, "is_weekend", False)),
             )
         except Exception:
             return None

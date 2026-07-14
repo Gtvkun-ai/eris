@@ -54,8 +54,18 @@ def emit_session_ritual_preset(runtime: Any, report: Any) -> bool:
         if callable(block):
             block(now=spoken_at)
         runtime._send_decision_to_body(decision, channel="session_ritual")
-        GreetingPresetResolver().mark_used(decision.preset_id)
-        logger.info("[greeting-preset] emitted %s", decision.preset_id)
+        resolver = getattr(getattr(runtime, "session_ritual_engine", None), "preset_resolver", None)
+        if resolver is None:
+            resolver = GreetingPresetResolver()
+        resolver.mark_used(decision.preset_id)
+        audio_mode = "asset_then_live_fallback" if str(decision.audio_asset or "").strip() else "live_tts"
+        logger.info(
+            "[startup] greeting=%s tone=%s situation=%s audio=%s",
+            decision.preset_id,
+            str(getattr(report, "tone", "") or "unknown"),
+            str(getattr(getattr(report, "greeting_frame", None), "situation", "") or "unknown"),
+            audio_mode,
+        )
         return True
     except Exception as exc:
         logger.warning("[greeting-preset] emit failed, fallback to Qwen: %s", exc)

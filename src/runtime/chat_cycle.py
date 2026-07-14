@@ -80,20 +80,108 @@ class ChatCycleMixin:
         if callable(block_fn):
             try:
                 raw_grace = str(os.environ.get("ERIS_POST_CHAT_GRACE_SEC", "45") or "45").strip()
-                grace = max(15.0, float(raw_grace) if raw_grace else 45.0)
+                base_grace = max(15.0, float(raw_grace) if raw_grace else 45.0)
                 now = time.time()
-                # Dùng max với block hiện tại — nếu block đang cao hơn thì giữ.
+                # Permission active không xóa guard chống spam. Nó chỉ đổi hard block
+                # 45s thành debounce 3s; cooldown/grounding gate phía sau vẫn chạy.
+                try:
+                    from runtime.relational_permission_state import ensure_relational_permission_state
+                    relational_permission = ensure_relational_permission_state(self)
+                    permission_bypass = relational_permission.can_bypass_autonomous(now=now)
+                except Exception:
+                    permission_bypass = False
+                grace = min(base_grace, 3.0) if permission_bypass else base_grace
                 current_block = float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0)
                 self.autonomous_presence_blocked_until = max(current_block, now + grace)
                 self.logger.info(
-                    "Exited chat mode; autonomous blocked for %.0fs (post-chat grace).",
+                    "Exited chat mode; autonomous blocked for %.0fs (post-chat %s).",
                     grace,
+                    "permission debounce" if permission_bypass else "grace",
                 )
             except Exception:
                 self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
         else:
             self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
 
+
+    def _ensure_relational_permission_state(self):
+        """Lazy-init state permission ngắn hạn, không đụng semantic memory."""
+        from runtime.relational_permission_state import ensure_relational_permission_state
+
+        return ensure_relational_permission_state(self)
+
+    def _relational_permission_session_id(self) -> str:
+        session_id = str(
+            getattr(self, "runtime_session_id", "")
+            or getattr(self, "session_id", "")
+            or getattr(self, "_relational_permission_session_id_value", "")
+        ).strip()
+        if not session_id:
+            session_id = f"runtime_session:{id(self)}"
+            self._relational_permission_session_id_value = session_id
+        return session_id
+
+    def _prepare_pragmatic_social_turn(self, user_text: str, *, source_turn_id: str, now: float):
+        """Chạy pragmatic intercept nhưng tuyệt đối không trả lời thay Qwen."""
+        from runtime.pragmatic_intercept import intercept_social_turn
+
+        state = self._ensure_relational_permission_state()
+        try:
+            raw_ttl = float(os.environ.get("ERIS_RELATIONAL_PERMISSION_TTL_SEC", "1200") or 1200)
+        except (TypeError, ValueError):
+            raw_ttl = 1200.0
+        ttl_seconds = max(60.0, min(7200.0, raw_ttl))
+        history = tuple(
+            str(getattr(turn, "text", "") or "")
+            for turn in self._ensure_session_turn_ledger().user_turns()[-4:-1]
+        )
+        return intercept_social_turn(
+            user_text,
+            history=history,
+            state=state,
+            source_turn_id=source_turn_id,
+            session_id=self._relational_permission_session_id(),
+            now=now,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def _add_pragmatic_event_commit_request(self, frame, result, *, user_text: str, source_turn_id: str) -> None:
+        """Ghi event session-only qua StateCommitRequest, không mint semantic fact."""
+        if frame is None or result is None or not bool(getattr(result, "intercepted", False)):
+            return
+        try:
+            from core.evidence import StateCommitRequest
+
+            request = StateCommitRequest(
+                target="event_ledger",
+                content=result.event_payload(user_text=user_text, source_turn_id=source_turn_id),
+                evidence_ids=[source_turn_id] if source_turn_id else [],
+                confidence=float(getattr(result, "confidence", 0.8) or 0.8),
+                permission_required=False,
+                storage_permission=True,
+                decay_policy="session_only",
+                reason=str(getattr(result, "reason", "pragmatic_social_event") or "pragmatic_social_event"),
+                source_module="pragmatic_intercept",
+                tags=["relational_permission", "social_policy", "session_only"],
+                metadata={
+                    "session_only": True,
+                    "social_act": str(getattr(getattr(result, "act", None), "value", "") or ""),
+                    "state_changed": bool(getattr(result, "state_changed", False)),
+                },
+            )
+            add_request = getattr(frame, "add_commit_request", None)
+            if callable(add_request):
+                try:
+                    add_request(request, actor="pragmatic_intercept")
+                except TypeError:
+                    add_request(request)
+            else:
+                frame.commit_requests.append(request)
+        except Exception as exc:
+            try:
+                self.logger.debug("[pragmatic intercept] event request skipped: %s", exc)
+            except Exception:
+                pass
 
     def _build_relational_voice_stance(
         self,
@@ -249,7 +337,11 @@ class ChatCycleMixin:
                 speech_interrupt_reaction=speech_interrupt_reaction,
             )
         finally:
+            # Chỉ cập nhật sau khi lượt hiện tại đã dùng xong context, để
+            # since_last_user_turn phản ánh lượt user TRƯỚC đó chứ không luôn = 0.
+            self._temporal_last_user_turn_at = cycle_start
             self.current_stage_user_text = ""
+            self.current_pragmatic_intercept_result = None
             self._chat_processing = False
 
     def _run_chat_cycle_inner(
@@ -286,6 +378,20 @@ class ChatCycleMixin:
             timestamp=cycle_start,
             meta=user_turn_meta,
         )
+        memory_turn_id = f"session_turn:{user_turn.index}"
+        pragmatic_result = self._prepare_pragmatic_social_turn(
+            user_text,
+            source_turn_id=memory_turn_id,
+            now=cycle_start,
+        )
+        # Result chỉ sống trong turn hiện tại để final guard/director đọc.
+        self.current_pragmatic_intercept_result = pragmatic_result
+        if pragmatic_result.intercepted:
+            user_turn.meta.update({
+                "social_act": pragmatic_result.act.value,
+                "social_act_confidence": round(pragmatic_result.confidence, 4),
+                "relational_permission_state_changed": pragmatic_result.state_changed,
+            })
 
         # PRE-GROUNDING phải chạy TRƯỚC memory recall/resonance.
         # Lý do: với câu "xem đi", "đoạn đang mở", hoặc hỏi file cụ thể, memory chỉ được phép
@@ -399,6 +505,17 @@ class ChatCycleMixin:
             memory_resonance=memory_resonance,
             affect_signal=affect_signal,
         )
+        if pragmatic_result.intercepted:
+            frame.debug_notes.append(
+                f"social_act={pragmatic_result.act.value};confidence={pragmatic_result.confidence:.2f};"
+                f"state_changed={pragmatic_result.state_changed}"
+            )
+            self._add_pragmatic_event_commit_request(
+                frame,
+                pragmatic_result,
+                user_text=user_text,
+                source_turn_id=memory_turn_id,
+            )
         # V3 CognitivePipeline chạy canonical planning trên cùng input, gắn prompt
         # projection vào frame production và được khép vòng sau execution. Shadow
         # comparison chỉ còn là debug tùy chọn, không phải cánh cổng giữ V3 ngoài đời.
@@ -409,7 +526,8 @@ class ChatCycleMixin:
             vision_facts=tuple(getattr(snapshot, "vision_facts", ()) or ()),
             old_frame=frame,
         )
-        memory_turn_id = f"session_turn:{user_turn.index}"
+        # ``memory_turn_id`` đã được tạo trước pragmatic intercept để cùng một
+        # evidence id đi xuyên state/event/memory pipeline.
         # Ném bản phân rã sâu qua background worker. Hot path vẫn commit rule/fact rõ
         # bằng policy rẻ, còn model semantic parser được dùng khi remote API đang pending.
         self._enqueue_background_memory_digest(
@@ -819,8 +937,10 @@ class ChatCycleMixin:
             last_chat_answer=self.last_chat_answer,
         )
         turn_semantics_context = str(getattr(turn_semantics_report, "prompt_context", "") or "")
+        pragmatic_context = pragmatic_result.to_prompt_context() if pragmatic_result.intercepted else ""
         planned_ti_context = (
-            f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n{turn_semantics_context}"
+            f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n"
+            f"{turn_semantics_context}\n{pragmatic_context}"
         )
         semantic_authority_context = semantic_policy.prompt_block()
         if semantic_authority_context:

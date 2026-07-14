@@ -79,6 +79,7 @@ from cortex.working_memory import WorkingMemoryEngine
 from domain import Decision
 from failure_meta import is_technical_failure_meta
 from runtime.greeting_preset_runtime import emit_session_ritual_preset
+from runtime.public_payload_policy import sanitize_body_payload
 from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
 from runtime.autonomous_cycle import AutonomousCycleMixin
 from runtime.ambient_silence_policy import (
@@ -566,6 +567,14 @@ class RuntimeCoordinator(
         các guard chống lặp.
         '''
         self.chat_mode = False
+        # Đồng hồ cognition chuẩn. Ba mốc này tách khỏi cooldown kỹ thuật để
+        # Qwen biết phiên đã chạy bao lâu và khoảng cách giữa các lượt nói.
+        # Không dùng _chat_last_activity_at làm nguồn duy nhất vì field đó bị
+        # cập nhật ngay đầu lượt, khiến "lượt user trước" biến mất khỏi lịch sử.
+        self._temporal_session_started_at = time.time()
+        self._temporal_last_user_turn_at = 0.0
+        self._temporal_last_assistant_turn_at = 0.0
+        self._temporal_context_builder = None
         # Mốc thời gian lượt user gần nhất. chat_mode là trạng thái "đang trò
         # chuyện" suy ra từ độ tươi này: còn tươi thì ERIS nhường lời cho Ngài;
         # quá ngưỡng thì autonomous tự quay lại nhịp ambient (kể cả khi panel
@@ -1456,7 +1465,11 @@ class RuntimeCoordinator(
         preview = (raw or "").replace("\n", "\\n")
         if len(preview) > 5500:
             preview = preview[:5500].rstrip() + "..."
-        self.logger.info("[%s raw] %s", channel, preview or "<empty>")
+        # Raw JSON hữu ích khi mổ lỗi, nhưng spam INFO ở mọi lượt chỉ biến log
+        # thành bãi chữ. Bật ERIS_LOG_RAW_LLM=1 hoặc profile debug khi cần.
+        raw_enabled = os.environ.get("ERIS_LOG_RAW_LLM", "0").strip().lower() in {"1", "true", "yes", "on"}
+        log_fn = self.logger.info if raw_enabled else self.logger.debug
+        log_fn("[%s raw] %s", channel, preview or "<empty>")
 
     def _preview_text(self, text: str, *, limit: int = 1000) -> str:
         preview = (text or "").replace("\n", "\\n").strip()
@@ -1712,7 +1725,10 @@ class RuntimeCoordinator(
             text_payload_sent = True
             send_stage_protocol_segments()
             try:
-                self.transport.send_json(payload)
+                # Godot chỉ cần text/action/stage. Parser trace là metadata nội
+                # bộ; gửi nó sang body khiến console in ba dòng AI Debug cho
+                # mỗi câu, trong khi chẳng giúp nhân vật cử động tốt hơn.
+                self.transport.send_json(sanitize_body_payload(payload))
             except Exception as e:
                 self.logger.warning("Failed to send deferred chat text payload: %s", e)
 
@@ -1789,6 +1805,11 @@ class RuntimeCoordinator(
             and str(payload.get("memory_text", payload.get("text", "")) or "").strip()
         ):
             self._append_chat_history("assistant", str(payload.get("memory_text", payload.get("text", ""))).strip())
+        if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip():
+            # Ghi mốc assistant sau khi output public đã được dựng và gửi. Đây là
+            # mốc cognition, không phải audio_done; đủ để hiểu nhịp hội thoại mà
+            # không phải chờ TTS remote hoàn tất mới biết mình vừa nói.
+            self._temporal_last_assistant_turn_at = time.time()
         if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip() and self.subconscious_runtime_enabled:
             try:
                 snapshot = self.telemetry_service.capture_snapshot(
@@ -6933,7 +6954,7 @@ class RuntimeCoordinator(
         if not getattr(self, "presence_maintenance_enabled", True):
             status["rejected_by"] = "presence_maintenance_disabled"
             return status
-        if now < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
+        if not self._relational_presence_allowed(now, requested_intensity="light"):
             status["rejected_by"] = "presence_blocked_until"
             return status
         if self.presence_maintenance_silent_cycles < self.presence_maintenance_silent_loop_threshold:
@@ -6984,7 +7005,7 @@ class RuntimeCoordinator(
         if self.reengagement_quiet_cycles < self.reengagement_quiet_loop_threshold:
             status["rejected_by"] = "quiet_cycles_below_threshold"
             return status
-        if now < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
+        if not self._relational_presence_allowed(now, requested_intensity="light"):
             status["rejected_by"] = "presence_blocked_until"
             return status
         cooldown = float(getattr(self, "reengagement_cooldown_sec", 0.0) or 0.0)
@@ -8405,13 +8426,22 @@ class RuntimeCoordinator(
 
     def run_loop(self):
         self.logger.info("--- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---")
-        self._start_mental_process_loop()
-        self.cognitive_substrate.start()
+        ritual_report = None
         if self.memory_state is not None:
             try:
-                report = self._restore_session_ritual_once()
-                if report.should_greet:
-                    self.logger.info("[session_ritual] sent greeting")
+                ritual_report = self._restore_session_ritual_once()
+                if ritual_report.should_greet:
+                    # Preset runtime đã ghi đúng một dòng [startup] kèm id, tone
+                    # và audio mode. Chỉ log ở đây khi Qwen viết greeting động,
+                    # tránh hai dòng INFO kể cùng một việc.
+                    preset_id = str(getattr(ritual_report, "greeting_preset_id", "") or "")
+                    if not preset_id:
+                        mode = str(getattr(ritual_report, "greeting_mode", "hybrid") or "hybrid")
+                        self.logger.info(
+                            "[startup] greeting=qwen_dynamic tone=%s mode=%s",
+                            str(getattr(ritual_report, "tone", "") or "unknown"),
+                            mode,
+                        )
             except Exception:
                 log_exception = getattr(self.logger, "exception", None)
                 if callable(log_exception):
@@ -8420,13 +8450,31 @@ class RuntimeCoordinator(
                     self.logger.warning("[session_ritual] failed; continuing. %s", traceback.format_exc().strip())
                 try:
                     self._send_session_ritual_fallback_greeting()
-                    self.logger.info("[session_ritual] sent fallback greeting")
+                    self.logger.info("[startup] fallback greeting sent")
                 except Exception:
                     log_exception = getattr(self.logger, "exception", None)
                     if callable(log_exception):
                         log_exception("[session_ritual] fallback greeting failed")
                     else:
                         self.logger.warning("[session_ritual] fallback greeting failed. %s", traceback.format_exc().strip())
+
+        # Không khởi động các vòng cognition nền trước lời chào. Nếu không,
+        # PrivateMind/Observer tranh request với greeting rồi Groq 429 ngay phút
+        # đầu tiên, một màn chào sân có phần quá nhiệt tình. Grace vẫn poll UDP
+        # nên user nói vào là thoát ngay, không khóa chat.
+        if ritual_report is not None and bool(getattr(ritual_report, "should_greet", False)):
+            raw_grace = os.environ.get("ERIS_STARTUP_QUIET_SECONDS", "12").strip()
+            try:
+                startup_grace = max(0.0, min(60.0, float(raw_grace)))
+            except ValueError:
+                startup_grace = 12.0
+            if startup_grace > 0.0:
+                self._sleep_interruptible(startup_grace)
+
+        if not self.running:
+            return
+        self.cognitive_substrate.start()
+        self._start_mental_process_loop()
         while self.running:
             try:
                 should_continue = self._run_loop_iteration()

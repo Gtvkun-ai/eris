@@ -1,34 +1,47 @@
 # Greeting preset của Eris
 
-Thư mục này chứa metadata cho **32 lời chào mở đầu** theo tone và tình huống.
+Thư mục này chứa metadata cho **32 lời chào mở đầu** theo tone, tình huống và thời điểm trong ngày.
 
-- `manifest.json`: danh sách câu, emotion, motion, prosody và tên file WAV.
-- Các file WAV chưa được nhét giả vào repo. Hãy render đúng giọng Eris rồi đặt
-  theo tên `greet_*.wav` ghi trong manifest.
-- Nếu file WAV chưa tồn tại hoặc hỏng, runtime tự fallback sang TTS live.
+- `manifest.json`: catalog chuẩn của runtime.
+- `render_queue.csv`: hàng đợi để render TTS theo lô.
+- `lines_vi.txt`: danh sách câu đọc nhanh.
+- Các file WAV chưa được tạo giả. Render đúng giọng Eris rồi đặt theo tên
+  `greet_*.wav` trong manifest.
+- Thiếu hoặc hỏng WAV thì runtime tự fallback sang TTS live.
+
+## Chế độ greeting
+
+Mặc định nên giữ:
+
+```powershell
+$env:ERIS_STARTUP_GREETING_MODE="hybrid"
+```
+
+- `hybrid`: không có chủ đề động thì dùng preset; còn project/vòng lặp dang dở thì Qwen viết.
+- `preset`: luôn ưu tiên catalog 32 câu.
+- `llm`: luôn để Qwen viết greeting.
+- `silent` hoặc `off`: không chào khi startup.
+
+Biến cũ `ERIS_GREETING_PRESETS` vẫn được giữ để tương thích, nhưng `hybrid` và
+`preset` là nguồn quyết định chính. Điều này ngăn một file `.env` cũ vô tình kéo
+runtime trở lại câu greeting deterministic nhạt.
 
 ## Định dạng audio khuyến nghị
 
-- WAV PCM 16-bit mono
-- 24 kHz hoặc sample rate mà backend hiện tại dùng ổn định
-- Không có khoảng lặng dài ở đầu/cuối
-- Loudness giữa 32 file nên tương đương nhau
-
-## Công tắc
+- WAV PCM 16-bit mono.
+- 24 kHz hoặc sample rate ổn định của backend hiện tại.
+- Cắt khoảng lặng dài ở đầu/cuối.
+- Loudness giữa 32 file nên tương đương.
 
 ```powershell
-$env:ERIS_GREETING_PRESETS="1"
 $env:ERIS_AUDIO_ASSET_ROOT="C:\duong-dan\toi\repo"
 ```
 
-Tắt preset và quay lại Qwen/TTS live hoàn toàn:
-
-```powershell
-$env:ERIS_GREETING_PRESETS="0"
-```
-
-Lịch sử chống lặp mặc định lưu tại:
+Lịch sử chống lặp mặc định:
 
 ```text
 memory_core/greeting_preset_history.json
 ```
+
+Sau khi sửa `render_queue.csv`, Godot sẽ tự tạo lại các file `.translation` và
+`.import`; không cần lưu các file sinh tự động đó trong gói source.

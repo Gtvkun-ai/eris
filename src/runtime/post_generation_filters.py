@@ -252,6 +252,13 @@ class PostGenerationFiltersMixin:
             return False
         if violation.rule == "anti_disclaimer_voice" and self._reroll_still_disclaimer(candidate):
             return False
+        if violation.rule == "social_literal_paraphrase":
+            try:
+                from runtime.pragmatic_intercept import looks_like_literal_permission_paraphrase
+                if looks_like_literal_permission_paraphrase(candidate):
+                    return False
+            except Exception:
+                return False
         return True
 
     def _repair_guard_violation_decision(
@@ -479,6 +486,76 @@ class PostGenerationFiltersMixin:
             allow_reroll=allow_reroll,
         )
 
+    def _apply_social_pragmatic_guard(
+        self,
+        decision: Decision,
+        *,
+        user_text: str,
+        frame=None,
+        allow_reroll: bool = True,
+    ) -> Decision:
+        """Ngăn lỗi "xác nhận permission" thay vì thực hiện social move.
+
+        Guard này chỉ chạy khi pragmatic intercept của chính turn hiện tại đã gắn
+        ``perform_now``. Nó không đoán lại intent bằng keyword ở cuối pipeline.
+        """
+        result = getattr(self, "current_pragmatic_intercept_result", None)
+        if result is None or not bool(getattr(result, "perform_now", False)):
+            return decision
+        text = str(getattr(decision, "text", "") or "")
+        try:
+            from runtime.pragmatic_intercept import (
+                deterministic_social_fallback,
+                looks_like_literal_permission_paraphrase,
+            )
+        except Exception:
+            return decision
+        if not looks_like_literal_permission_paraphrase(text):
+            return decision
+
+        violation = GuardViolation(
+            rule="social_literal_paraphrase",
+            severity="soft",
+            reason=(
+                "The draft paraphrases the user's relational permission instead of "
+                "performing the requested social move."
+            ),
+            original_text=text,
+            suggested_action="reroll",
+            trace_marker="social_policy; literal_paraphrase",
+            fallback_text=deterministic_social_fallback(result.act),
+        )
+        repaired = self._repair_guard_violation_decision(
+            decision,
+            violation,
+            frame=frame,
+            grounding=(getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)) if frame is not None else None,
+            channel="chat",
+            user_text=user_text,
+            parse_mode="social_policy_repair",
+            allow_reroll=allow_reroll,
+        )
+        repaired_text = str(getattr(repaired, "text", "") or "")
+        if bool(getattr(repaired, "should_speak", True)) and repaired_text and not looks_like_literal_permission_paraphrase(repaired_text):
+            return repaired
+
+        # Lưới cuối deterministic chỉ dùng khi reroll không sạch/không khả dụng.
+        # Đây là hành vi được user yêu cầu rõ, không phải câu bịa từ grounding yếu.
+        fallback = deterministic_social_fallback(result.act)
+        if not fallback:
+            return decision
+        fallback_decision = self._copy_decision_with_text(
+            decision,
+            text=fallback,
+            trace_marker="social_policy; literal_paraphrase; deterministic_fallback",
+            parse_mode="social_policy_fallback",
+        )
+        fallback_decision.should_speak = True
+        fallback_decision.intent = str(getattr(result.act, "value", "social_interaction") or "social_interaction")
+        fallback_decision.action = "none"
+        fallback_decision.confidence = min(float(getattr(decision, "confidence", 0.55) or 0.55), 0.55)
+        return fallback_decision
+
     def _apply_chat_final_guards(self, decision: Decision, *, user_text: str, frame=None, allow_reroll: bool = True) -> Decision:
         feedback_markers = self._record_agent_mind_feedback_from_user(user_text, frame=frame)
         if feedback_markers:
@@ -490,6 +567,12 @@ class PostGenerationFiltersMixin:
             state = None
         decision = self._apply_protocol_surface_guard(decision)
         decision = self._apply_internal_object_surface_guard(decision)
+        decision = self._apply_social_pragmatic_guard(
+            decision,
+            user_text=user_text,
+            frame=frame,
+            allow_reroll=allow_reroll,
+        )
         semantic_policy = SemanticAuthorityPolicy.from_env()
         if semantic_policy.hard_only_final_guards:
             # Qwen owns wording. The runtime only blocks protocol leakage and

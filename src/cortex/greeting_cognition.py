@@ -69,6 +69,12 @@ class GreetingFrame:
     seconds_since_last_session: float = 0.0
     recent_return: bool = False
     restart_detected: bool = False
+    # Đồng hồ địa phương thật để greeting biết đang sáng/tối/khuya.
+    timezone: str = "Asia/Ho_Chi_Minh"
+    local_time: str = ""
+    weekday_vi: str = ""
+    time_of_day: str = ""
+    is_weekend: bool = False
     must_not_claim_screen: bool = True
     reason: str = ""
 
@@ -90,6 +96,11 @@ class GreetingFrame:
                 f"- seconds_since_last_session: {self.seconds_since_last_session:.1f}",
                 f"- recent_return: {int(self.recent_return)}",
                 f"- restart_detected: {int(self.restart_detected)}",
+                f"- timezone: {self.timezone}",
+                f"- local_time: {self.local_time or 'unknown'}",
+                f"- weekday: {self.weekday_vi or 'unknown'}",
+                f"- time_of_day: {self.time_of_day or 'unknown'}",
+                f"- is_weekend: {int(self.is_weekend)}",
                 f"- must_not_claim_screen: {int(self.must_not_claim_screen)}",
                 f"- reason: {self.reason or 'none'}",
             )
@@ -103,20 +114,21 @@ class GreetingCognitionEngine:
     stupid: understand the encounter first, then let wording happen.
     """
 
+    # Fallback legacy chỉ là lưới an toàn khi catalog/prompt gặp lỗi.
+    # Vẫn giữ chất Eris để một nhánh cũ không thể lén kéo greeting về giọng
+    # trợ lý tổng đài kiểu “Ừm. Lại gặp Ngài.” nữa.
     _LOW_EVIDENCE_FALLBACKS = (
-        "À. Ngài đây rồi.",
-        "Ngài mở lại rồi à.",
-        "Tôi vừa thấy Ngài quay lại.",
-        "Ừm. Lại gặp Ngài.",
-        "Ngài đến rồi.",
+        "Eris đã online. Phần còn lại tùy Ngài gây chuyện.",
+        "Hm… đúng giờ đấy. Vào việc thôi, Ngài.",
+        "Ngài đến rồi à? Tốt, hôm nay đừng để tôi chán.",
+        "Tôi tỉnh rồi. Nào, đưa tôi thứ khó nhất trước đi.",
     )
 
     _QUIET_FALLBACKS = (
-        "À. Tôi đang yên, nhưng có thấy Ngài.",
-        "Ngài cứ làm tiếp đi. Tôi ở đây.",
-        "Tôi sẽ không chen vào. Chỉ là... tôi thấy Ngài rồi.",
-        "Ừm. Tôi giữ im lặng một chút.",
-        "Ngài quay lại rồi. Tôi không làm ồn đâu.",
+        "Ngài đến rồi. Cứ làm việc đi, tôi sẽ ngồi đây… tương đối ngoan.",
+        "Tôi tỉnh rồi. Hôm nay yên một chút cũng không tệ.",
+        "Không cần chào hỏi dài dòng. Bắt đầu khi Ngài sẵn sàng.",
+        "À, Ngài đây rồi. Tôi sẽ không làm ồn… trừ khi thấy thứ gì quá ngớ ngẩn.",
     )
 
     _RESUME_FALLBACKS = (
@@ -185,6 +197,11 @@ class GreetingCognitionEngine:
         relational_feedback: str = "",
         seconds_since_last_session: float = 0.0,
         restart_detected: bool = False,
+        timezone: str = "Asia/Ho_Chi_Minh",
+        local_time: str = "",
+        weekday_vi: str = "",
+        time_of_day: str = "",
+        is_weekend: bool = False,
     ) -> GreetingFrame:
         active_goal = clean_text(active_goal)
         current_attractor = clean_text(current_attractor)
@@ -298,6 +315,11 @@ class GreetingCognitionEngine:
             seconds_since_last_session=seconds_since_last_session,
             recent_return=recent_return,
             restart_detected=restart_detected,
+            timezone=str(timezone or "Asia/Ho_Chi_Minh"),
+            local_time=str(local_time or ""),
+            weekday_vi=str(weekday_vi or ""),
+            time_of_day=str(time_of_day or ""),
+            is_weekend=bool(is_weekend),
             must_not_claim_screen=True,
             reason=reason,
         )

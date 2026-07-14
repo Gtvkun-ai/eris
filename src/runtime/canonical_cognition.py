@@ -88,6 +88,23 @@ class _Serializable:
 
 @dataclass(slots=True)
 class TemporalFrame(_Serializable):
+    # Clock context: thời gian địa phương thật, không chỉ nhịp/TTL kỹ thuật.
+    timezone: str = "Asia/Ho_Chi_Minh"
+    now_iso: str = ""
+    local_date: str = ""
+    local_time: str = ""
+    weekday: str = ""
+    weekday_vi: str = ""
+    time_of_day: str = ""
+    time_of_day_vi: str = ""
+    is_weekend: bool = False
+    session_elapsed_seconds: float = 0.0
+    since_last_user_turn_seconds: float | None = None
+    since_last_assistant_turn_seconds: float | None = None
+    since_last_session_seconds: float | None = None
+    calendar_relation: str = ""
+
+    # Conversation rhythm: phần temporal cũ vẫn giữ nguyên để tương thích.
     recency: float = 1.0
     duration: float = 0.0
     rhythm: Literal["idle", "focused", "fragmented", "repetitive", "escalating", "cooling"] = "focused"

@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from time import time
+from typing import Any, Iterable, Literal, Optional
+
+try:
+    from ..memory.text_normalize_vi import compact_spaces, looks_like_question, visible_len
+except ImportError:
+    from memory.text_normalize_vi import compact_spaces, looks_like_question, visible_len
+
+
+Role = Literal["user", "assistant"]
+
+
+@dataclass(frozen=True)
+class SessionTurn:
+    """
+    Một lượt public trong phiên.
+
+    Đây là raw ledger dùng để đếm/lấy exact trong phiên hiện tại.
+    Không được coi nó là long-term memory. Không ai muốn ký ức nhân cách
+    của ERIS biến thành biên bản cuộc họp phường.
+    """
+
+    index: int
+    role: Role
+    text: str
+    timestamp: float
+    is_question: bool = False
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+class SessionTurnLedger:
+    """Ledger deterministic cho câu hỏi về thứ tự, số lượng, câu dài nhất."""
+
+    def __init__(self) -> None:
+        self._turns: list[SessionTurn] = []
+        self._next_index = 1
+
+    def record_user(self, text: str, *, timestamp: Optional[float] = None, meta: Optional[dict[str, Any]] = None) -> SessionTurn:
+        return self._record("user", text, timestamp=timestamp, meta=meta)
+
+    def record_assistant(self, text: str, *, timestamp: Optional[float] = None, meta: Optional[dict[str, Any]] = None) -> SessionTurn:
+        return self._record("assistant", text, timestamp=timestamp, meta=meta)
+
+    def _record(self, role: Role, text: str, *, timestamp: Optional[float], meta: Optional[dict[str, Any]]) -> SessionTurn:
+        cleaned = compact_spaces(text)
+        turn = SessionTurn(
+            index=self._next_index,
+            role=role,
+            text=cleaned,
+            timestamp=timestamp if timestamp is not None else time(),
+            is_question=looks_like_question(cleaned) if role == "user" else False,
+            meta=dict(meta or {}),
+        )
+        self._next_index += 1
+        self._turns.append(turn)
+        return turn
+
+    def all_turns(self) -> list[SessionTurn]:
+        return list(self._turns)
+
+    def turns_by_role(self, role: Role) -> list[SessionTurn]:
+        return [turn for turn in self._turns if turn.role == role]
+
+    def user_turns(self) -> list[SessionTurn]:
+        return self.turns_by_role("user")
+
+    def assistant_turns(self) -> list[SessionTurn]:
+        return self.turns_by_role("assistant")
+
+    def user_questions(self) -> list[SessionTurn]:
+        return [turn for turn in self.user_turns() if turn.is_question]
+
+    def nth_user_turn(self, ordinal: int) -> Optional[SessionTurn]:
+        return self._nth(self.user_turns(), ordinal)
+
+    def nth_assistant_turn(self, ordinal: int) -> Optional[SessionTurn]:
+        return self._nth(self.assistant_turns(), ordinal)
+
+    def nth_user_question(self, ordinal: int) -> Optional[SessionTurn]:
+        return self._nth(self.user_questions(), ordinal)
+
+    def count_user_questions(self, *, include_current: bool = True) -> int:
+        questions = self.user_questions()
+        if include_current:
+            return len(questions)
+        return max(0, len(questions) - 1)
+
+    def longest_user_question(self) -> Optional[SessionTurn]:
+        questions = self.user_questions()
+        if not questions:
+            return None
+        return max(questions, key=lambda turn: visible_len(turn.text))
+
+    def gist_recent_user_topics(self, *, limit: int = 8) -> list[str]:
+        """
+        Sinh gist rất nhẹ từ user turns gần đây.
+
+        Đây không thay MeaningLayer. Nó chỉ dùng khi user hỏi “nhớ gì không”
+        và không yêu cầu exact.
+        """
+        topics: list[str] = []
+        for turn in self.user_turns()[-limit:]:
+            text = turn.text
+            lower = text.lower()
+            if "tên" in lower or "ten" in lower:
+                topics.append("tên")
+            elif "tháng" in lower or "thang" in lower:
+                topics.append("tháng sinh/tháng 8")
+            elif "câu" in lower or "cau" in lower or "hỏi" in lower or "hoi" in lower:
+                topics.append("kiểm tra trí nhớ/thứ tự câu")
+            elif "màn hình" in lower or "man hinh" in lower or "icon" in lower:
+                topics.append("màn hình/icon")
+            elif "thế giới" in lower or "the gioi" in lower or "quan sát" in lower or "quan sat" in lower:
+                topics.append("cách ERIS hiểu/quan sát thế giới")
+            else:
+                topics.append("một đoạn đối thoại gần đây")
+
+        return self._unique_keep_order(topics)
+
+    @staticmethod
+    def _nth(items: Iterable[SessionTurn], ordinal: int) -> Optional[SessionTurn]:
+        if ordinal <= 0:
+            return None
+        seq = list(items)
+        if ordinal > len(seq):
+            return None
+        return seq[ordinal - 1]
+
+    @staticmethod
+    def _unique_keep_order(items: Iterable[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for item in items:
+            if item in seen:
+                continue
+            seen.add(item)
+            out.append(item)
+        return out

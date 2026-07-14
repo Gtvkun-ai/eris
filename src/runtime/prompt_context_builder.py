@@ -18,6 +18,7 @@ from cortex.contracts import (
 from cortex.internal_state import PersistentInternalState
 from domain import Decision
 from runtime.greeting_preset_runtime import emit_session_ritual_preset
+from core.temporal_context import build_temporal_context_from_runtime
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.voice_policy import VOICE_POLICY
 
@@ -152,11 +153,23 @@ class PromptContextBuilderMixin:
         user_text: str = "",
     ) -> str:
         resolved_state = state or self._get_internal_state()
+        # TEMPORAL_CONTEXT là evidence đồng hồ chuẩn, không phải lời thoại mẫu.
+        # Inject trước các pressure tâm lý để Qwen hiểu đúng "hôm nay", "mai",
+        # "tối nay" và độ dài khoảng nghỉ giữa các lượt.
+        temporal_block = ""
+        if os.environ.get("ERIS_TEMPORAL_CONTEXT", "1").strip().lower() in {"1", "true", "yes", "on"}:
+            try:
+                temporal_block = build_temporal_context_from_runtime(self).to_prompt_block()
+            except Exception:
+                temporal_block = ""
+
         # DYNAMIC_STATE tag (~20 tokens): stance/tension/pacing từ internal state.
         dynamic_tag = self._build_dynamic_state_tag(resolved_state)
 
         prompt_context = str(getattr(self_state, "prompt_context", "") or "").strip()
-        parts = [dynamic_tag] if dynamic_tag else []
+        parts = [temporal_block] if temporal_block else []
+        if dynamic_tag:
+            parts.append(dynamic_tag)
         if prompt_context:
             parts.append(prompt_context)
 

@@ -37,9 +37,11 @@ File này từng dừng ở GlobalWorkspace rồi tự gọi mình là pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 from typing import Any, Optional, Sequence
 
 from core.cognitive_frame import CognitiveFrame
+from core.temporal_context import build_temporal_context_from_runtime
 from core.evidence import EvidenceItem, ModuleReport, RawSignal, StateCommitRequest
 from core.evidence_normalizer import EvidenceNormalizer, EvidenceNormalizerConfig
 
@@ -194,15 +196,29 @@ class CognitivePipeline:
     ) -> PipelineResult:
         """Tạo frame từ raw signals rồi chạy toàn bộ canonical planning graph."""
 
+        frame_now = float(getattr(legacy_frame, "timestamp", 0.0) or time.time())
+        temporal_context = build_temporal_context_from_runtime(runtime_owner, now=frame_now)
+        signals = list(raw_signals)
+        if not any(str(getattr(signal, "source", "") or "") == "time" for signal in signals):
+            signals.append(
+                RawSignal.from_time(
+                    temporal_context.to_dict(),
+                    timestamp=frame_now,
+                    reliability=1.0,
+                    privacy_level="public",
+                )
+            )
         frame = CognitiveFrame.start(
-            raw_signals=list(raw_signals),
+            raw_signals=signals,
             channel=channel,  # type: ignore[arg-type]
             session_id=session_id,
             user_text=user_text or self._infer_user_text(raw_signals),
             turn_id=str(getattr(legacy_frame, "cycle_id", "") or "") or None,
+            timestamp=frame_now,
             metadata={
                 "legacy_cycle_id": str(getattr(legacy_frame, "cycle_id", "") or ""),
                 "has_snapshot": snapshot is not None,
+                "temporal_context": temporal_context.to_dict(),
             },
         )
         return self.run(
@@ -236,6 +252,28 @@ class CognitivePipeline:
 
         channel = channel or str(getattr(frame, "channel", "unknown"))
         user_text = str(getattr(frame, "user_text", "") or "")
+
+        # Bảo đảm cả caller tạo frame thủ công cũng có clock evidence chuẩn.
+        # ``run_from_signals`` đã làm việc này, nhưng ``run(frame)`` là public API
+        # nên không thể giả định mọi caller đều đi đúng một cửa.
+        if "temporal_context" not in frame.metadata:
+            temporal_context = build_temporal_context_from_runtime(
+                runtime_owner,
+                now=float(getattr(frame, "timestamp", 0.0) or time.time()),
+            )
+            frame.metadata["temporal_context"] = temporal_context.to_dict()
+        else:
+            temporal_context = frame.metadata.get("temporal_context")
+        if not any(str(getattr(signal, "source", "") or "") == "time" for signal in frame.raw_signals):
+            frame.add_raw_signal(
+                RawSignal.from_time(
+                    temporal_context if isinstance(temporal_context, dict) else {},
+                    timestamp=float(getattr(frame, "timestamp", 0.0) or time.time()),
+                    reliability=1.0,
+                    privacy_level="public",
+                ),
+                actor="temporal_context",
+            )
 
         # --- 0. RawSignal -> EvidenceItem -------------------------------------
         frame.set_status("normalizing", actor="cognitive_pipeline")

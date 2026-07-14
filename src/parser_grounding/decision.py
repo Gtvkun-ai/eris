@@ -337,15 +337,16 @@ class ParserGroundingMixin:
             "stage_motion": "",
             "parse_mode": parse_mode,
         }
+        # Chỉ thiếu field cấu trúc cốt lõi mới được gắn nhãn repair. Các field
+        # stage/motion/debug là optional; model bỏ chúng vẫn là JSON hợp lệ. Nếu
+        # tính mọi metadata vắng mặt là hard repair thì telemetry lại vu oan cho
+        # Qwen chỉ vì nó không khai đủ một tờ đơn hành chính dài hai trang.
+        structural_fields = {"should_speak", "animation"}
         for key, default in default_fields.items():
-            # Empty string is a valid value for optional fields such as
-            # system_action/action_input/delivery_hint. Only a missing key or an
-            # explicit null is a structural repair. Otherwise telemetry accuses
-            # perfectly valid JSON of needing hard repair, because apparently an
-            # empty optional field once committed a crime against civilization.
             if key not in patched or patched.get(key) is None:
                 patched[key] = default
-                fields_patched = True
+                if key in structural_fields:
+                    fields_patched = True
         return patched, fields_patched
 
     def _finalize_loaded_json_payload(self, payload, *, parse_mode: str, user_hint: str = ""):

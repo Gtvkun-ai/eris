@@ -19,6 +19,8 @@ quyết định retention.
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+from runtime.social_act import should_exclude_from_persistent_memory
+
 try:
     from .semantic_claim import ExtractedClaim
     from .understanding.semantic_parser import FallbackSurfaceSemanticParser, SemanticParser
@@ -51,6 +53,10 @@ class ClaimExtractor:
     ) -> list[ExtractedClaim]:
         raw = str(user_text or "").strip()
         if not raw:
+            return []
+        # Defense-in-depth: extractor có thể được gọi trực tiếp ngoài MemoryKernel.
+        # Giấy phép xã hội được lưu ở RelationalPermissionState/event session-only.
+        if should_exclude_from_persistent_memory(raw):
             return []
         parsed = self.parser.parse(raw, structured=llm_structured)
         return self.builder.build_many(parsed, evidence_ids=tuple(str(x) for x in evidence_ids if str(x).strip()), source=source)

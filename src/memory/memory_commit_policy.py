@@ -25,6 +25,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+from runtime.social_act import should_exclude_from_persistent_memory
+
 try:  # package path: src/memory/memory_commit_policy.py
     from .memory_models import (
         DecayPolicy,
@@ -304,6 +306,10 @@ class MemoryCommitPolicy:
     ) -> list[MemoryCommitDecision]:
         raw = str(user_text or "").strip()
         if not raw:
+            return []
+        # Permission/revoke là state phiên, không phải fact bền. Chặn ngay ở cổng
+        # chung để cả fast path lẫn semantic digest đều không lén ghi nó vào memory.
+        if should_exclude_from_persistent_memory(raw):
             return []
 
         norm = normalize_vi(raw)

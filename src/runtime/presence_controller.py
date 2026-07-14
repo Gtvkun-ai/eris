@@ -109,6 +109,60 @@ class SurfaceArbitrationResult:
 
 
 class PresenceControllerMixin:
+    def _relational_permission_repair_blocked(self) -> bool:
+        """Không dùng permission bypass khi quan hệ đang ở nhịp rupture/repair."""
+        try:
+            state = self._get_internal_state()
+            relation = getattr(state, "relationship_dynamics", None)
+            rupture = float(getattr(relation, "rupture", 0.0) or 0.0)
+            repair_need = float(getattr(relation, "repair_need", 0.0) or 0.0)
+            return max(rupture, repair_need) >= 0.45
+        except Exception:
+            return False
+
+    def _relational_presence_allowed(self, now: float, *, requested_intensity: str = "light") -> bool:
+        """Tôn trọng hard block trừ khi permission state cho bypass có điều kiện."""
+        blocked_until = float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0)
+        if float(now) >= blocked_until:
+            return True
+        if self._relational_permission_repair_blocked():
+            return False
+        try:
+            from runtime.relational_permission_state import ensure_relational_permission_state
+
+            state = ensure_relational_permission_state(self)
+            allowed = state.can_bypass_autonomous(now=now, requested_intensity=requested_intensity)
+            if allowed:
+                try:
+                    self.logger.info(
+                        "[relational permission] conditional presence bypass allowed; uses=%d",
+                        state.bypass_uses_remaining,
+                    )
+                except Exception:
+                    pass
+            return allowed
+        except Exception:
+            return False
+
+    def _consume_relational_permission_bypass_if_needed(self, now: float) -> bool:
+        """Chỉ trừ budget khi thực sự đã phát ra lời autonomous trong block window."""
+        blocked_until = float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0)
+        if float(now) >= blocked_until:
+            return False
+        try:
+            from runtime.relational_permission_state import ensure_relational_permission_state
+
+            state = ensure_relational_permission_state(self)
+            consumed = state.consume_bypass(now=now)
+            if consumed:
+                try:
+                    self.logger.info("[relational permission] autonomous bypass consumed")
+                except Exception:
+                    pass
+            return consumed
+        except Exception:
+            return False
+
     def _surface_anchor_token(self, kind: str, value: object) -> str:
         text = re.sub(r"\s+", " ", str(value or "")).strip()
         if not text:
@@ -839,6 +893,7 @@ class PresenceControllerMixin:
         now: float | None = None,
     ) -> None:
         current_time = time.time() if now is None else now
+        self._consume_relational_permission_bypass_if_needed(current_time)
         # Body-only presence không được tính là ERIS đã "nói". Nếu reset silent_cycles ở đây,
         # policy force-LLM sẽ không bao giờ tới lượt; hệ sẽ múa idle_shift đến hết đời runtime.
         if presence_maintenance:
@@ -1495,7 +1550,7 @@ class PresenceControllerMixin:
         current_time = time.time() if now is None else now
         if not getattr(self, "presence_maintenance_enabled", True):
             return False
-        if current_time < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
+        if not self._relational_presence_allowed(current_time, requested_intensity="light"):
             return False
         if self.presence_maintenance_silent_cycles < self.presence_maintenance_silent_loop_threshold:
             return False
@@ -2707,7 +2762,7 @@ class PresenceControllerMixin:
         extra_impulses: tuple[object, ...] = (),
     ) -> SurfaceArbitrationResult:
         now = time.time()
-        if now < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
+        if not self._relational_presence_allowed(now, requested_intensity="light"):
             self.logger.info(
                 "[surface_arbiter] blocked before arbitration kind=%s reason=presence_blocked_until",
                 surface_kind,
@@ -3224,7 +3279,7 @@ class PresenceControllerMixin:
 
         # Kiểm tra cooldown để tránh re-engagement quá thường xuyên, giúp ERIS không làm phiền người dùng nếu họ đang bận hoặc không muốn tương tác ngay lập tức sau khi đã có một re-engagement gần đây.
         current_time = time.time() if now is None else now
-        if current_time < float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0):
+        if not self._relational_presence_allowed(current_time, requested_intensity="light"):
             return False
         cooldown = float(getattr(self, "reengagement_cooldown_sec", 0.0) or 0.0)
         if self.last_reengagement_at > 0.0 and current_time - self.last_reengagement_at < cooldown:

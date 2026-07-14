@@ -265,7 +265,7 @@ def preflight(messages: Any, *, base_url: str | None = None, model: str | None =
         budget = budget_for_provider(provider)
         cap = hard_cap_for_provider(provider)
         est = estimate_tokens(messages)
-        _LOGGER.info(
+        _LOGGER.debug(
             "[LLM PREFLIGHT] provider=%s model=%s est_tokens=%d budget=%d cap=%d",
             provider,
             (model or "").strip() or "?",

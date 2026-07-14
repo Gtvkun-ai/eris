@@ -48,6 +48,10 @@ class TemporalPerceptionEngine:
         now = float(_get(frame, "timestamp", time.time()) or time.time())
         session_id = str(_get(frame, "session_id", "") or "default")
         text = str(_get(frame, "user_text", "") or "").strip()
+        metadata = _get(frame, "metadata", {}) or {}
+        clock = metadata.get("temporal_context", {}) if isinstance(metadata, dict) else {}
+        if not isinstance(clock, dict):
+            clock = {}
         fingerprint = _fingerprint(text)
         history = self._history[session_id]
 
@@ -114,7 +118,30 @@ class TemporalPerceptionEngine:
             "correction": corrected,
         })
 
+        def optional_float(name: str) -> float | None:
+            value = clock.get(name)
+            if value is None:
+                return None
+            try:
+                return max(0.0, float(value))
+            except (TypeError, ValueError):
+                return None
+
         return TemporalFrame(
+            timezone=str(clock.get("timezone", "Asia/Ho_Chi_Minh") or "Asia/Ho_Chi_Minh"),
+            now_iso=str(clock.get("now_iso", "") or ""),
+            local_date=str(clock.get("local_date", "") or ""),
+            local_time=str(clock.get("local_time", "") or ""),
+            weekday=str(clock.get("weekday", "") or ""),
+            weekday_vi=str(clock.get("weekday_vi", "") or ""),
+            time_of_day=str(clock.get("time_of_day", "") or ""),
+            time_of_day_vi=str(clock.get("time_of_day_vi", "") or ""),
+            is_weekend=bool(clock.get("is_weekend", False)),
+            session_elapsed_seconds=max(0.0, float(clock.get("session_elapsed_seconds", 0.0) or 0.0)),
+            since_last_user_turn_seconds=optional_float("since_last_user_turn_seconds"),
+            since_last_assistant_turn_seconds=optional_float("since_last_assistant_turn_seconds"),
+            since_last_session_seconds=optional_float("since_last_session_seconds"),
+            calendar_relation=str(clock.get("calendar_relation", "") or ""),
             recency=_clamp(1.0 - min(duration_seconds, 300.0) / 300.0),
             duration=_clamp(duration_seconds / 300.0),
             rhythm=rhythm,  # type: ignore[arg-type]

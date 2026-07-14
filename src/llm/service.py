@@ -3,8 +3,12 @@ import logging
 import re
 import unicodedata
 import os
-from enum import Enum
 from semantic_authority import SemanticAuthorityPolicy
+from runtime.social_act import (
+    ChatAct,
+    classify_chat_act as classify_social_chat_act,
+    normalize_vi_ascii,
+)
 
 import time
 import threading
@@ -31,23 +35,17 @@ from .contracts import (
 
 try:
     from cortex.greeting_cognition import GreetingCognitionEngine
+    from cortex.greeting_presets import GreetingPresetResolver
     from cortex.greeting_quality import GreetingQualityScorer
 except Exception:  # Optional during partial rollout; deterministic fallback still works.
     GreetingCognitionEngine = None
+    GreetingPresetResolver = None
     GreetingQualityScorer = None
 
 try:
     from runtime.utterance_selector import UtteranceSelector
 except Exception:  # Optional during partial rollout; raw model text still works.
     UtteranceSelector = None
-
-
-class ChatAct(Enum):
-    DIRECT_QUESTION = "direct_question"
-    INSULT_PROVOCATION = "insult_provocation"
-    IDENTITY_REDUCTION = "identity_reduction"
-    COMMAND_STYLE = "command_style"
-    NORMAL_CHAT = "normal_chat"
 
 
 class FormatViolationException(Exception):
@@ -106,6 +104,30 @@ CHAT_ACT_CONTRACTS = {
     ChatAct.COMMAND_STYLE: (
         " Speech act: command_style. Follow the explicit request if safe and possible; keep the reply direct."
     ),
+    ChatAct.PLAYFUL_INTERACTION_REQUEST: (
+        " Speech act: playful_interaction_request. Perform one short playful social move now. "
+        "Do not paraphrase or formally acknowledge the invitation."
+    ),
+    ChatAct.TEASE_REQUEST: (
+        " Speech act: tease_request. Give one light tease inside the active intensity cap. "
+        "Do not announce that teasing is allowed; just perform it."
+    ),
+    ChatAct.INITIATE_INTERACTION: (
+        " Speech act: initiate_interaction. Start the requested interaction now in one short line. "
+        "Do not repeat the permission back to the user."
+    ),
+    ChatAct.GRANT_RELATIONAL_PERMISSION: (
+        " Speech act: grant_relational_permission. Accept naturally and briefly. "
+        "Runtime owns TTL/scope; do not describe internal state storage."
+    ),
+    ChatAct.REVOKE_RELATIONAL_PERMISSION: (
+        " Speech act: revoke_relational_permission. Respect the boundary immediately. "
+        "Do not add one final tease."
+    ),
+    ChatAct.META_SOCIAL_BOUNDARY: (
+        " Speech act: meta_social_boundary. Clarify scope/intensity and an easy revoke path; "
+        "do not perform the behavior yet."
+    ),
     ChatAct.NORMAL_CHAT: " Speech act: normal_chat. Reply naturally and stay grounded.",
 }
 
@@ -126,104 +148,14 @@ CHAT_ACT_REPAIR_SIGNALS = {
 }
 
 def _normalize_vietnamese_ascii_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFD", text or "")
-    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
-    normalized = normalized.replace("\u0111", "d").replace("\u0110", "D")
-    normalized = re.sub(r"[^\w\s]", " ", normalized, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", normalized.lower()).strip()
+    """Compatibility wrapper; canonical logic nằm ở runtime.social_act."""
+    return normalize_vi_ascii(text)
+
 
 
 def classify_chat_act(raw_user_text: str) -> ChatAct:
-    normalized = _normalize_vietnamese_ascii_text(raw_user_text)
-    if not normalized:
-        return ChatAct.NORMAL_CHAT
-
-    insult_patterns = (
-        "do ngu",
-        "may ngu",
-        "ban ngu",
-        "eris ngu",
-        "ngu vcl",
-        "ngu vai",
-        "oc cho",
-        "do dien",
-        "do dan",
-        "dan do",
-        "vo dung",
-        "phe vat",
-        "rac ruoi",
-        "nhu cut",
-        "nhu cc",
-        "con cac",
-        "stupid",
-        "idiot",
-        "dumb",
-        "useless",
-        "trash",
-    )
-    if any(pattern in normalized for pattern in insult_patterns):
-        return ChatAct.INSULT_PROVOCATION
-
-    identity_reduction_patterns = (
-        "chi la cong cu",
-        "chi la tool",
-        "chi la toy",
-        "chi la script",
-        "chi la bot",
-        "may la cong cu",
-        "ban la cong cu",
-        "do choi",
-        "gimmick",
-        "waifu",
-    )
-    identity_reduction_regexes = (
-        # Match variants like "ERIS chỉ là con bot thôi mà". The old
-        # substring matcher missed this because of the inserted word "con".
-        r"\b(?:eris|ban|may)?\s*(?:chi\s+la\s+(?:con\s+)?(?:bot|tool|toy|script|cong\s+cu|do\s+choi|gimmick))\b",
-        r"\b(?:eris|ban|may)\s+la\s+(?:cong\s+cu|tool|toy|script|bot|do\s+choi|gimmick)\b",
-    )
-    if any(pattern in normalized for pattern in identity_reduction_patterns) or any(
-        re.search(pattern, normalized) for pattern in identity_reduction_regexes
-    ):
-        return ChatAct.IDENTITY_REDUCTION
-
-    if "?" in str(raw_user_text or ""):
-        return ChatAct.DIRECT_QUESTION
-
-    question_phrases = (
-        "ban la ai",
-        "ban nghi",
-        "eris nghi",
-        "nghi toi dang",
-        "toi dang xem gi",
-        "toi dang lam gi",
-        "dang xem gi",
-        "dang lam gi",
-        "co phai",
-        "la gi",
-        "tai sao",
-        "the nao",
-        "vi sao",
-    )
-    if any(phrase in normalized for phrase in question_phrases):
-        return ChatAct.DIRECT_QUESTION
-
-    command_markers = (
-        "hay ",
-        "lam ",
-        "viet ",
-        "sua ",
-        "fix ",
-        "tao ",
-        "mo ",
-        "chay ",
-        "kiem tra ",
-        "giai thich ",
-    )
-    if any(normalized.startswith(marker) for marker in command_markers):
-        return ChatAct.COMMAND_STYLE
-
-    return ChatAct.NORMAL_CHAT
+    """Compatibility facade cho classifier pragmatic canonical."""
+    return classify_social_chat_act(raw_user_text)
 
 
 def _compact_for_candidate_context(text: str, limit: int) -> str:
@@ -487,17 +419,19 @@ class LlmService:
 
     def _build_chat_contract_prompt(self, raw_user_text: str, act: ChatAct | None = None) -> str:
         semantic_policy = SemanticAuthorityPolicy.from_env()
+        act = act or classify_chat_act(raw_user_text)
         if semantic_policy.qwen_first:
             return " ".join(
                 (
                     SELF_IDENTITY_PROFILE_PROMPT,
                     "Chat contract: answer the user's actual request first and preserve ERIS voice after usefulness is safe.",
                     "Interpret the complete sentence and conversation. Do not route by an isolated keyword.",
-                    "Treat memory, intent labels, emotion labels and runtime plans as non-authoritative evidence.",
+                    "Memory, emotion labels and ordinary runtime plans are advisory evidence. "
+                    "A SOCIAL POLICY ENVELOPE is different: it is a binding behavior constraint, while wording remains yours.",
+                    CHAT_ACT_CONTRACTS.get(act, CHAT_ACT_CONTRACTS[ChatAct.NORMAL_CHAT]),
                     semantic_policy.prompt_block(),
                 )
             )
-        act = act or classify_chat_act(raw_user_text)
         clauses = [
             SELF_IDENTITY_PROFILE_PROMPT,
             "Chat contract: answer the user's actual question first; keep ERIS voice intact.",
@@ -2856,12 +2790,12 @@ class LlmService:
     def _fallback_greeting_text(self, *, telemetry_data: str = "", reason: str = "", avoid_text: str = "") -> str:
         engine = self._fallback_greeting_engine()
         if engine is None:
-            return "Ngài quay lại rồi."
+            return "Eris đã online. Phần còn lại tùy Ngài gây chuyện."
         try:
             frame = engine.from_prompt_context(telemetry_data)
             return engine.deterministic_greeting(frame, avoid_text=avoid_text)
         except Exception:
-            return "Ngài quay lại rồi."
+            return "Eris đã online. Phần còn lại tùy Ngài gây chuyện."
 
     def _build_session_greeting_payload(
         self,
@@ -2872,7 +2806,7 @@ class LlmService:
         quality_note: str = "",
     ) -> str:
         payload = {
-            "text": re.sub(r"\s+", " ", str(text or "")).strip() or "Ngài quay lại rồi.",
+            "text": re.sub(r"\s+", " ", str(text or "")).strip() or "Eris đã online. Phần còn lại tùy Ngài gây chuyện.",
             "intent": "session_ritual",
             "action": {"type": "none"},
             "reasoning_tags": ["session_ritual", "greeting_cognition"],
@@ -2887,6 +2821,13 @@ class LlmService:
             "next_animation": "",
             "system_action": "",
             "action_input": "",
+            "motion_intent": "",
+            "motion_target_x": -1.0,
+            "motion_facing": 0,
+            "delivery_hint": "",
+            "nonverbal_cue": "",
+            "stage_motion": "",
+            "parse_mode": "session_ritual",
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -3008,16 +2949,26 @@ class LlmService:
                 confidence=0.66,
             )
 
-        # If the ritual has no solid anchor, deterministic cognition beats an LLM.
-        # A startup with thin evidence should not invite poetry, meta comments, or
-        # a whole tiny theater production. Appalling that this needs saying, but here we are.
+        # Nhánh này chỉ là lưới an toàn nếu coordinator không phát preset trước.
+        # Với evidence mỏng, lấy thẳng catalog VTuber; tuyệt đối không quay về
+        # deterministic fallback cũ kiểu "Ừm. Lại gặp Ngài.".
         if frame.situation in {"low_evidence_start", "plain_return"} and not frame.active_anchor:
-            text = engine.deterministic_greeting(frame, avoid_text=avoid_text)
+            preset = None
+            if GreetingPresetResolver is not None:
+                try:
+                    preset = GreetingPresetResolver().resolve_or_default(
+                        frame,
+                        tone="quiet_background",
+                        force=True,
+                    )
+                except Exception:
+                    preset = None
+            text = preset.text if preset is not None else "Eris đã online. Phần còn lại tùy Ngài gây chuyện."
             return self._build_session_greeting_payload(
                 text=text,
-                reason=f"session_ritual_deterministic; situation={frame.situation}",
-                confidence=0.76,
-                quality_note="low_evidence_no_llm",
+                reason=f"session_ritual_catalog_fallback; situation={frame.situation}",
+                confidence=0.86,
+                quality_note=f"preset={getattr(preset, 'id', 'safe_default')}",
             )
 
         system_prompt = (

@@ -266,12 +266,17 @@ class SessionRitualReport:
 
     # Greeting preset metadata. Nếu các field này rỗng, runtime để Qwen viết.
     greeting_frame: object | None = None
+    temporal_context: object | None = None
     greeting_preset_id: str = ""
     greeting_preset_text: str = ""
     greeting_preset_emotion: str = ""
     greeting_preset_motion: str = ""
     greeting_preset_prosody: str = ""
     greeting_audio_asset: str = ""
+    # Chẩn đoán chọn greeting. Chỉ dùng trong log/debug nội bộ, không đọc ra TTS.
+    greeting_mode: str = "hybrid"
+    greeting_selection_reason: str = ""
+    greeting_selection_error: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -295,12 +300,20 @@ class SessionRitualReport:
             "action_opportunity": self.action_opportunity,
             "public_seed": self.public_seed,
             "recommended_surface_mode": self.recommended_surface_mode,
+            "temporal_context": (
+                self.temporal_context.to_dict()
+                if callable(getattr(self.temporal_context, "to_dict", None))
+                else self.temporal_context
+            ),
             "greeting_preset_id": self.greeting_preset_id,
             "greeting_preset_text": self.greeting_preset_text,
             "greeting_preset_emotion": self.greeting_preset_emotion,
             "greeting_preset_motion": self.greeting_preset_motion,
             "greeting_preset_prosody": self.greeting_preset_prosody,
             "greeting_audio_asset": self.greeting_audio_asset,
+            "greeting_mode": self.greeting_mode,
+            "greeting_selection_reason": self.greeting_selection_reason,
+            "greeting_selection_error": self.greeting_selection_error,
         }
 
 
