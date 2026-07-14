@@ -295,13 +295,20 @@ def preflight(messages: Any, *, base_url: str | None = None, model: str | None =
 
 @dataclass(frozen=True, slots=True)
 class ChatPromptBudget:
+    """Quota chat V2: prefix tĩnh nhỏ, policy động nhỏ, phần còn lại có headroom.
+
+    ``system_rules`` được giữ tên để tương thích code cũ nhưng nay chỉ dành cho
+    prefix cacheable. Mọi rule thay đổi theo lượt phải đi vào ``dynamic_policy``.
+    """
+
     total_tokens: int = 4800
     output_reserve: int = 512
-    system_rules: int = 1800
+    system_rules: int = 560
+    dynamic_policy: int = 350
     user_history: int = 500
-    grounding: int = 500
-    memory: int = 400
-    state_style: int = 300
+    grounding: int = 260
+    memory: int = 240
+    state_style: int = 220
 
     @property
     def input_limit(self) -> int:
@@ -309,7 +316,14 @@ class ChatPromptBudget:
 
     @property
     def allocated_input(self) -> int:
-        return self.system_rules + self.user_history + self.grounding + self.memory + self.state_style
+        return (
+            self.system_rules
+            + self.dynamic_policy
+            + self.user_history
+            + self.grounding
+            + self.memory
+            + self.state_style
+        )
 
     @property
     def spare_tokens(self) -> int:
@@ -423,6 +437,7 @@ def _fit_user_history_bundle(
 def assemble_budgeted_chat_messages(
     *,
     system_rules_text: str,
+    dynamic_policy_text: str = "",
     state_style_text: str,
     grounding_text: str,
     memory_text: str,
@@ -440,7 +455,13 @@ def assemble_budgeted_chat_messages(
     system_rules = truncate_text_to_budget(
         system_rules_text,
         cfg.system_rules,
-        marker="…[system rules rút gọn theo quota]…",
+        marker="…[static prefix rút gọn theo quota]…",
+        preserve_tail=False,
+    )
+    dynamic_policy = truncate_text_to_budget(
+        dynamic_policy_text,
+        cfg.dynamic_policy,
+        marker="…[dynamic policy rút gọn theo quota]…",
     )
     state_style = truncate_text_to_budget(
         state_style_text,
@@ -465,10 +486,14 @@ def assemble_budgeted_chat_messages(
     )
 
     sections: list[str] = []
+    # Prefix tĩnh phải đứng ĐẦU để exact-prefix caching có cơ hội hit. Các khối
+    # thay đổi theo lượt nằm sau; đảo thứ tự sẽ làm cache vô dụng rất sáng tạo.
+    if system_rules:
+        sections.append(f"[CACHEABLE_STATIC_PREFIX]\n{system_rules}")
+    if dynamic_policy:
+        sections.append(f"[DYNAMIC_POLICY]\n{dynamic_policy}")
     if state_style:
         sections.append(f"[STATE_STYLE]\n{state_style}")
-    if system_rules:
-        sections.append(f"[SYSTEM_RULES]\n{system_rules}")
     if grounding:
         sections.append(f"[GROUNDING]\n{grounding}")
     if memory:
@@ -491,6 +516,7 @@ def assemble_budgeted_chat_messages(
         "output_reserve": cfg.output_reserve,
         "input_limit": cfg.input_limit,
         "system_rules": _text_token_estimate(system_rules),
+        "dynamic_policy": _text_token_estimate(dynamic_policy),
         "user_history": estimate_tokens([
             *([{"role": "system", "content": conversation}] if conversation else []),
             *history,

@@ -15,6 +15,9 @@ import threading
 
 import requests
 from llm.json_sanitizer import extract_last_valid_json_object, strip_reasoning_envelope
+from llm.prompt_compaction import CACHEABLE_CHAT_PREFIX_V2, cacheable_prefix_id
+from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+from llm.token_budget import estimate_tokens
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
 from cortex.banned_filler import HOLLOW_PRESENCE_LINES, STALE_MICRO_TEMPLATES, quoted_fragment
@@ -189,6 +192,9 @@ class LlmService:
         # None thì tự dùng fallback_client (đã là model mạnh hơn trong cấu hình hiện tại).
         self.escalation_client = escalation_client
         self.logger = logger or logging.getLogger(__name__)
+        # Một governor dùng chung cho mọi LlmService instance trong process. Nó chỉ
+        # giữ số token/429 ước lượng, tuyệt đối không giữ nội dung prompt hay API key.
+        self.token_pressure_governor = GLOBAL_TOKEN_PRESSURE_GOVERNOR
         self._generation_lock = threading.Lock()
         self._generation_epoch = 0
 
@@ -418,36 +424,32 @@ class LlmService:
         return any(pattern in normalized for pattern in patterns)
 
     def _build_chat_contract_prompt(self, raw_user_text: str, act: ChatAct | None = None) -> str:
+        """Policy động của đúng lượt hiện tại.
+
+        Persona, schema JSON và evidence ladder đã nằm trong prefix tĩnh V2. Hàm
+        này chỉ giữ những gì thật sự thay đổi theo câu user, tránh bê nguyên một
+        bản hiến pháp 1.800 token vào mỗi request rồi ngạc nhiên khi model lạc ý.
+        """
+
         semantic_policy = SemanticAuthorityPolicy.from_env()
         act = act or classify_chat_act(raw_user_text)
-        if semantic_policy.qwen_first:
-            return " ".join(
-                (
-                    SELF_IDENTITY_PROFILE_PROMPT,
-                    "Chat contract: answer the user's actual request first and preserve ERIS voice after usefulness is safe.",
-                    "Interpret the complete sentence and conversation. Do not route by an isolated keyword.",
-                    "Memory, emotion labels and ordinary runtime plans are advisory evidence. "
-                    "A SOCIAL POLICY ENVELOPE is different: it is a binding behavior constraint, while wording remains yours.",
-                    CHAT_ACT_CONTRACTS.get(act, CHAT_ACT_CONTRACTS[ChatAct.NORMAL_CHAT]),
-                    semantic_policy.prompt_block(),
-                )
-            )
         clauses = [
-            SELF_IDENTITY_PROFILE_PROMPT,
-            "Chat contract: answer the user's actual question first; keep ERIS voice intact.",
-            "Use context, memory, and relational rhythm naturally. Do not flatten tension into assistant disclaimers.",
-            "If uncertain, show uncertainty through wording, not generic fallback.",
+            f"chat_act={act.value}.",
+            CHAT_ACT_CONTRACTS.get(act, CHAT_ACT_CONTRACTS[ChatAct.NORMAL_CHAT]),
+            semantic_policy.prompt_block(),
         ]
-        clauses.append(CHAT_ACT_CONTRACTS[act])
-        if act in (ChatAct.NORMAL_CHAT, ChatAct.DIRECT_QUESTION, ChatAct.IDENTITY_REDUCTION):
-            clauses.append(ANTI_DISCLAIMER_FEWSHOT)
         if act == ChatAct.DIRECT_QUESTION or self._looks_like_direct_question(raw_user_text):
-            clauses.append("This user turn is a direct question. answer_first is mandatory, but style is still allowed.")
+            clauses.append("answer_first=true; one concise clarification only when a grounded answer is impossible.")
         if self._is_self_identity_question(raw_user_text):
             clauses.append(
-                "This is a self-identity question. Say you are not human when relevant, then answer from SelfIdentityProfile."
+                "identity_query=true: answer briefly from profile: ERIS is a bounded digital runtime presence "
+                "with memory and conversational rhythm; not human or omniscient."
             )
-        return " ".join(clauses)
+        if act in (ChatAct.NORMAL_CHAT, ChatAct.DIRECT_QUESTION, ChatAct.IDENTITY_REDUCTION):
+            clauses.append(
+                "voice_guard: do not collapse into generic assistant disclaimers; keep a direct answer and restrained ERIS voice."
+            )
+        return " ".join(part for part in clauses if str(part or "").strip())
 
     def _chat_text_family(self, text: str) -> str:
         normalized = self._normalize_vietnamese_ascii(text or "")
@@ -1917,6 +1919,44 @@ class LlmService:
         )
         return provider, hard_cap_for_provider(provider)
 
+    def token_pressure_snapshot(self, *, client=None, channel: str = "chat"):
+        """Snapshot public nhẹ để Director/presence cùng dùng một tín hiệu pressure."""
+
+        from llm.token_budget import detect_provider
+
+        target = client or self.client
+        provider = detect_provider(
+            getattr(target, "base_url", ""), getattr(target, "model_name", "")
+        )
+        return self.token_pressure_governor.snapshot(provider, lane=channel)
+
+    def _pressure_plan_for_client(
+        self,
+        client,
+        *,
+        channel: str,
+        messages: list[dict],
+        output_tokens: int,
+        optional_pass: bool = False,
+    ):
+        from llm.token_budget import detect_provider, estimate_tokens
+
+        provider = detect_provider(
+            getattr(client, "base_url", ""), getattr(client, "model_name", "")
+        )
+        prompt_tokens = estimate_tokens(messages)
+        min_prompt = 700 if channel == "chat" else 256
+        min_output = 640 if channel == "chat" else 96
+        return self.token_pressure_governor.plan_request(
+            provider,
+            lane=channel,
+            prompt_tokens=prompt_tokens,
+            requested_output_tokens=output_tokens,
+            optional_pass=optional_pass,
+            min_prompt_tokens=min_prompt,
+            min_output_tokens=min_output,
+        )
+
     def _route_client_for_size(self, messages, *, primary, channel: str):
         """Nếu prompt vượt cap của ``primary`` (vd Groq free 6000 TPM) mà có
         fallback budget lớn ôm trọn được prompt → route sang fallback để KHÔNG bị
@@ -2026,9 +2066,39 @@ class LlmService:
             override_client=None,
             output_tokens: int | None = None,
         ):
-            self._log_final_prompt(messages_value, channel=channel, stage=stage)
             target_client = override_client or self.client
-            completion_tokens = int(output_tokens or max_tokens)
+            requested_completion = int(output_tokens or max_tokens)
+            pressure_plan = self._pressure_plan_for_client(
+                target_client,
+                channel=channel,
+                messages=messages_value,
+                output_tokens=requested_completion,
+                optional_pass=False,
+            )
+            completion_tokens = pressure_plan.output_tokens
+            governed_messages = list(messages_value)
+            if pressure_plan.prompt_limit < estimate_tokens(governed_messages):
+                from llm.token_budget import budget_existing_messages
+
+                governed_messages = budget_existing_messages(
+                    governed_messages,
+                    total_tokens=pressure_plan.prompt_limit + completion_tokens,
+                    output_reserve=completion_tokens,
+                )
+            if pressure_plan.snapshot.level != "normal":
+                self.logger.warning(
+                    "[TOKEN PRESSURE] provider=%s lane=%s level=%s pressure=%.2f stage=%s "
+                    "prompt<=%d output=%d reason=%s",
+                    pressure_plan.provider,
+                    channel,
+                    pressure_plan.snapshot.level,
+                    pressure_plan.snapshot.pressure,
+                    stage,
+                    pressure_plan.prompt_limit,
+                    completion_tokens,
+                    pressure_plan.reason,
+                )
+            self._log_final_prompt(governed_messages, channel=channel, stage=stage)
             # Persona-as-params: channel-aware temperature thay vì prose.
             # chat: 0.45 — trả lời cụ thể trước, vẫn đủ tự nhiên.
             # autonomous: 0.55 — tự phát biểu, cần novelty hơn.
@@ -2039,7 +2109,7 @@ class LlmService:
             _freq_pen = 0.70
             _pres_pen = 0.50
             return target_client.create_chat_completion(
-                messages=messages_value,
+                messages=governed_messages,
                 temperature=_temp,
                 frequency_penalty=_freq_pen,
                 presence_penalty=_pres_pen,
@@ -3234,8 +3304,8 @@ class LlmService:
         fallback_text = str(fallback_text or "").strip()
         system_prompt = (
             "You are ERIS's voice — a living, curious, slightly mischievous companion always present on screen. "
-            "Generate several candidate lines, not analysis. "
-            "Return exactly one valid JSON object: {\"candidates\": [string, string, string, string]}. "
+            "Generate one candidate line, not analysis. "
+            "Return exactly one valid JSON object: {\"candidates\": [string]}. "
             "When must_surface is false, candidates may be empty if truly nothing stirs. "
             "When must_surface is true, include non-empty candidates unless safety or hard grounding is violated. "
             "Use Vietnamese with full diacritics. No analysis, no markdown, no English. "
@@ -3275,6 +3345,18 @@ class LlmService:
         reaction_pretext = str(context.get("allow_pretext", "") if isinstance(context, dict) else "").lower() == "true"
         if react_with_lens:
             force_surface = True
+        try:
+            micro_pressure = self.token_pressure_snapshot(client=self.client, channel="micro_presence")
+            if micro_pressure.shed_optional_passes and not force_surface:
+                self.logger.info(
+                    "[micro_presence] shed pressure=%.2f level=%s cooldown=%.1fs",
+                    micro_pressure.pressure,
+                    micro_pressure.level,
+                    micro_pressure.cooldown_remaining_s,
+                )
+                return ""
+        except Exception:
+            micro_pressure = None
         allow_no_screen_anchor = (
             "allow_no_screen_anchor" in surface_contract
             or str(context.get("allow_no_screen_anchor", "") if isinstance(context, dict) else "").lower() == "true"
@@ -3496,8 +3578,8 @@ class LlmService:
         user_msg += (
             "\nOutput contract:\n"
             "- Return exactly one JSON object.\n"
-            "- Shape: {\"candidates\":[\"line 1\",\"line 2\",\"line 3\",\"line 4\"]}\n"
-            "- Generate 3-5 varied candidates so the runtime can choose the most human one.\n"
+            "- Shape: {\"candidates\":[\"one short line\"]}\n"
+            "- Generate exactly 1 candidate. Micro-presence is not worth a miniature talent show.\n"
             "- If must_surface=false, candidates may be [] when body-only is better.\n"
             "- If must_surface=true, candidates must contain speakable final sentences; if allow_no_screen_anchor=true, use seed/state/rhythm instead of screen facts.\n"
             "- If thin_presence_no_screen=true and must_surface=true, non-empty candidates are required unless safety/permission/grounding is genuinely violated.\n"
@@ -3512,7 +3594,7 @@ class LlmService:
             vf_blob = str(context.get("vision_facts", "") if isinstance(context, dict) else "")
             system_prompt = (
                 "Bạn là Eris — INFJ, hơi lạnh và sắc, đôi khi nhõng nhẽo có kiểm soát — đang buột miệng "
-                "vài khả năng nói với Ngài. Trả đúng một JSON object {\"candidates\": [\"...\", \"...\", \"...\"]}. "
+                "một câu buột miệng với Ngài. Trả đúng một JSON object {\"candidates\": [\"...\"]}. "
                 "Mỗi câu NGẮN (3-16 chữ), tự nhiên như người thật, có cá tính. "
                 "Không báo cáo trạng thái, không giải thích, không kể system. TUYỆT ĐỐI không trả rỗng."
             )
@@ -3527,8 +3609,8 @@ class LlmService:
                     "trong khung nhân vật, chỉ KHÔNG bịa fact cụ thể về màn hình.\n"
                     if reaction_pretext else ""
                 )
-                + "Nhiệm vụ: sinh 4 câu theo lens trên (ghẹo/tò mò/níu/khịa tùy lens), mỗi câu là một phương án khác nhau. "
-                "Trả {\"candidates\":[\"...\",\"...\",\"...\",\"...\"]} với câu thật, ngắn, có hồn. Cấm rỗng. Cấm câu sáo/đóng hộp."
+                + "Nhiệm vụ: sinh đúng 1 câu theo lens trên (ghẹo/tò mò/níu/khịa tùy lens). "
+                "Trả {\"candidates\":[\"...\"]} với câu thật, ngắn, có hồn. Cấm rỗng. Cấm câu sáo/đóng hộp."
             )
         micro_generation_epoch = self._capture_generation_epoch()
         from llm.token_budget import PromptBlockBudget, assemble_budgeted_prompt_blocks
@@ -3539,13 +3621,28 @@ class LlmService:
             memory_text="",
             user_text=user_msg,
             budget=PromptBlockBudget(
-                total_tokens=4800, output_reserve=256, system_rules=1200,
-                user_history=2200, grounding=600, memory=0, state_style=300,
+                total_tokens=1800, output_reserve=128, system_rules=450,
+                user_history=760, grounding=220, memory=0, state_style=180,
             ),
         )
         self.logger.debug(
             "[PROMPT BUDGET] channel=micro_presence assembled=%d input_limit=%d",
             micro_budget_report["assembled_input"], micro_budget_report["input_limit"],
+        )
+        pressure_plan = self._pressure_plan_for_client(
+            self.client,
+            channel="micro_presence",
+            messages=micro_messages,
+            output_tokens=(120 if react_with_lens else 96),
+            optional_pass=not force_surface,
+        )
+        if not pressure_plan.allowed:
+            return ""
+        from llm.token_budget import budget_existing_messages
+        micro_messages = budget_existing_messages(
+            micro_messages,
+            total_tokens=pressure_plan.prompt_limit + pressure_plan.output_tokens,
+            output_reserve=pressure_plan.output_tokens,
         )
         try:
             response = self.client.create_chat_completion(
@@ -3553,7 +3650,7 @@ class LlmService:
                 temperature=(0.7 if react_with_lens else 0.35),
                 frequency_penalty=(0.0 if react_with_lens else 0.7),
                 presence_penalty=(0.0 if react_with_lens else 0.2),
-                max_tokens=(180 if react_with_lens else 160),
+                max_tokens=pressure_plan.output_tokens,
                 response_format={"type": "json_object"},
                 grammar=None,
                 timeout=float(os.environ.get("ERIS_LLM_TIMEOUT_MICRO_PRESENCE_S", "10")),
@@ -3567,7 +3664,7 @@ class LlmService:
                         temperature=0.35,
                         frequency_penalty=0.7,
                         presence_penalty=0.2,
-                        max_tokens=160,
+                        max_tokens=pressure_plan.output_tokens,
                         response_format={"type": "json_object"},
                         grammar=None,
                         timeout=float(os.environ.get("ERIS_LLM_TIMEOUT_MICRO_PRESENCE_S", "10")),
@@ -3964,19 +4061,21 @@ class LlmService:
             )
         )
 
-        system_rule_parts = [chat_contract, CHAT_RULES_PROMPT, INFERENCE_LADDER_PROMPT]
+        # Prefix tĩnh đứng đầu và giữ nguyên giữa các turn để provider có thể
+        # cache exact-prefix. Policy thay đổi theo lượt được tách sang block riêng.
+        dynamic_policy_parts = [chat_contract]
         if relational_repair_contract:
-            system_rule_parts.append(relational_repair_contract)
+            dynamic_policy_parts.append(relational_repair_contract)
         if format_retry_context or last_failure:
             retry_context = str(format_retry_context or "").strip()
             failure_flag = str(last_failure or "").strip()
-            system_rule_parts.append(
+            dynamic_policy_parts.append(
                 f"{retry_context}\nRuntime failure flag: last_failure={failure_flag or 'format_error'}"
             )
         previous_public_turn = getattr(reply_context, "previous_public_turn", None)
         if previous_public_turn is not None:
-            system_rule_parts.append(
-                "Reply context: The current user message may be reacting to the latest visible assistant turn.\n"
+            dynamic_policy_parts.append(
+                "Reply context: the current user message may react to the latest visible assistant turn.\n"
                 f"previous_public_turn.channel={getattr(previous_public_turn, 'channel', '')}\n"
                 f"previous_public_turn.parse_mode={getattr(previous_public_turn, 'parse_mode', '')}\n"
                 f"previous_public_turn.text={getattr(previous_public_turn, 'text', '')}"
@@ -3990,24 +4089,20 @@ class LlmService:
         if defusing_context:
             state_style_parts.append(f"Defusing context:\n{defusing_context}")
 
-        # Hard budget chat: quota từng block được áp trước khi ghép prompt.
-        # Output reserve thay đổi theo reasoning lane, không còn cố định 512.
+        # Hard budget chat V2: từng block bị cắt trước khi ghép. Prefix tĩnh chỉ
+        # khoảng 520 token thay vì để rules nuốt gần nửa prompt.
         from llm.token_budget import ChatPromptBudget, assemble_budgeted_chat_messages
 
         completion_reserve = self._decision_completion_budget(
             channel="chat",
             reasoning_effort=reasoning_effort,
         )
-        # Khi high reasoning cần 1536 token, hạ riêng quota rules để tổng block
-        # vẫn hợp lệ; user/history/grounding/memory không bị cắt âm thầm ở cuối.
-        fixed_other = 500 + 500 + 400 + 300
-        rules_quota = max(1200, min(1800, 4800 - completion_reserve - fixed_other))
-        chat_budget = ChatPromptBudget(
-            output_reserve=completion_reserve,
-            system_rules=rules_quota,
-        )
+        chat_budget = ChatPromptBudget(output_reserve=completion_reserve)
         messages, budget_report = assemble_budgeted_chat_messages(
-            system_rules_text="\n\n".join(part for part in system_rule_parts if str(part or "").strip()),
+            system_rules_text=CACHEABLE_CHAT_PREFIX_V2,
+            dynamic_policy_text="\n\n".join(
+                part for part in dynamic_policy_parts if str(part or "").strip()
+            ),
             state_style_text="\n\n".join(part for part in state_style_parts if str(part or "").strip()),
             grounding_text=grounding_block,
             memory_text=memory_block,
@@ -4017,18 +4112,24 @@ class LlmService:
             budget=chat_budget,
         )
         self.logger.info(
-            "[CHAT PROMPT BUDGET] input=%d/%d output_reserve=%d "
-            "rules=%d/%d user_history=%d/500 grounding=%d/500 memory=%d/400 "
-            "state_style=%d/300 spare=%d",
+            "[CHAT PROMPT V2] prefix=%s input=%d/%d output=%d static=%d/%d dynamic=%d/%d "
+            "history=%d/%d grounding=%d/%d memory=%d/%d state=%d/%d spare=%d",
+            cacheable_prefix_id(),
             budget_report["assembled_input"],
             budget_report["input_limit"],
             budget_report["output_reserve"],
             budget_report["system_rules"],
-            rules_quota,
+            chat_budget.system_rules,
+            budget_report["dynamic_policy"],
+            chat_budget.dynamic_policy,
             budget_report["user_history"],
+            chat_budget.user_history,
             budget_report["grounding"],
+            chat_budget.grounding,
             budget_report["memory"],
+            chat_budget.memory,
             budget_report["state_style"],
+            chat_budget.state_style,
             budget_report["spare"],
         )
 
@@ -4094,17 +4195,22 @@ class LlmService:
         conversation_context: str = "",
         grounding_context: str = "",
         memory_context: str = "",
+        candidate_count: int = 2,
     ) -> list[dict]:
-        """Sinh 3-5 candidate theo DirectorContract để runtime rerank.
+        """Sinh đúng số biến thể mà AdaptiveCandidateController yêu cầu.
 
-        Đây là pass viết lại có giám sát, không phải answer pass mới. Draft đầu
-        tiên vẫn giữ trách nhiệm trả lời đúng ý user; pass này chỉ tạo vài bề mặt
-        ngắn hơn/sống hơn, giữ nguyên nghĩa chính và stage metadata sạch.
+        Pass này là tùy chọn. Khi token pressure cao hoặc vừa có 429, governor trả
+        ``allowed=False`` và Director giữ draft/deterministic candidates, thay vì
+        đốt thêm một request chỉ để diễn đạt cùng câu bằng ba kiểu tóc khác nhau.
         """
 
         if os.environ.get("ERIS_CHAT_DIRECTOR_CANDIDATES", "1").strip().lower() not in {"1", "true", "yes", "on"}:
             return []
-        if not isinstance(draft_payload, dict):
+        try:
+            requested_count = max(0, min(3, int(candidate_count)))
+        except (TypeError, ValueError):
+            requested_count = 0
+        if requested_count < 2 or not isinstance(draft_payload, dict):
             return []
         draft_text = self._coerce_text_value(draft_payload.get("text", "")).strip()
         if not draft_text:
@@ -4116,71 +4222,88 @@ class LlmService:
         if client is None or not callable(getattr(client, "create_chat_completion", None)):
             return []
 
-        # Chỉ đưa context cực ngắn vào pass này. Context đầy đủ đã được dùng ở
-        # draft pass; nếu nhồi lại hết, model dễ "trả lời lại từ đầu" và lệch ý.
         compact_context = "\n".join(
             part
             for part in (
-                _compact_for_candidate_context(conversation_context, 700),
-                _compact_for_candidate_context(grounding_context, 700),
-                _compact_for_candidate_context(memory_context, 500),
+                _compact_for_candidate_context(conversation_context, 360),
+                _compact_for_candidate_context(grounding_context, 360),
+                _compact_for_candidate_context(memory_context, 240),
             )
             if part
         )
         system_prompt = (
-            "Bạn là surface candidate generator cho ERIS. "
-            "Nhiệm vụ: từ draft JSON đã trả lời đúng ý user, sinh 3-5 candidate bề mặt để runtime chọn. "
-            "Giữ nguyên nghĩa chính; chỉ cải thiện nhịp, độ ngắn, chất Eris, delivery và motion. "
-            "Không thêm fact mới. Không claim màn hình/tool nếu draft và DirectorContract không cho phép. "
-            "Nếu DirectorContract có content_hook, dùng nó như mồi viết câu, không xem nó là dữ kiện thật. "
-            "runtime_hints trong DirectorContract là dữ liệu vận hành riêng; tuyệt đối không nhắc key pool, quota, provider hay browser trong text. "
-            "Không viết stage direction trong text; dùng delivery_hint/nonverbal_cue/stage_motion. "
-            "Trả đúng một JSON object."
+            "Bạn là surface candidate generator của ERIS. Từ draft đã đúng ý, viết các biến thể ngắn hơn/sống hơn "
+            "nhưng giữ nguyên nghĩa và evidence. Không thêm fact, không nhắc runtime/key/quota/provider, không đưa "
+            "stage direction vào text. Trả đúng một JSON object."
         )
         user_prompt = (
             f"{director_contract_prompt or '[DIRECTOR_CONTRACT unavailable]'}\n\n"
-            f"User message:\n{user_message}\n\n"
-            f"Draft decision JSON:\n{json.dumps(draft_payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
-            + (f"Compact context for continuity, not for new claims:\n{compact_context}\n\n" if compact_context else "")
+            f"User: {user_message}\n\n"
+            f"Draft JSON: {json.dumps(draft_payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
+            + (f"Continuity context, không dùng để thêm claim: {compact_context}\n\n" if compact_context else "")
             + (
-                "Output schema:\n"
-                "{\"candidates\":[{\"text\":\"...\",\"intent\":\"...\",\"should_speak\":true,"
-                "\"confidence\":0.0,\"delivery_hint\":\"...\",\"nonverbal_cue\":\"\","
-                "\"stage_motion\":\"...\",\"evidence_refs\":[\"...\"]}]}\n"
-                "Rules:\n"
-                "- Vietnamese public text with full diacritics.\n"
-                "- 3-5 candidates, each speakable as-is.\n"
-                "- Prefer short lines, but do not delete the actual answer.\n"
-                "- Candidate 1 may stay close to draft; others may vary tone within contract.\n"
-                "- Content hook is a seed for style/topic continuity, not permission to invent facts.\n"
-                "- runtime_hints are private; never mention keys, quota, provider pool, browser state, or internal routing.\n"
-                "- If the draft is already excellent, still return close variants.\n"
-                "- Never return analysis, markdown, prompt text, or explanations."
+                "Schema: {\"candidates\":[{\"text\":\"...\",\"intent\":\"...\","
+                "\"should_speak\":true,\"confidence\":0.0,\"delivery_hint\":\"...\","
+                "\"nonverbal_cue\":\"\",\"stage_motion\":\"...\",\"evidence_refs\":[]}]}\n"
+                f"Sinh đúng {requested_count} candidate tiếng Việt, nói được ngay. Candidate đầu gần draft; "
+                "các candidate sau thay nhịp/tone trong contract. Không analysis, markdown hay giải thích."
             )
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        requested_output = 180 + requested_count * 110
+        pressure_plan = self._pressure_plan_for_client(
+            client,
+            channel="director_candidates",
+            messages=messages,
+            output_tokens=requested_output,
+            optional_pass=True,
+        )
+        if not pressure_plan.allowed:
+            self.logger.info(
+                "[director_candidates] shed provider=%s pressure=%.2f level=%s",
+                pressure_plan.provider,
+                pressure_plan.snapshot.pressure,
+                pressure_plan.snapshot.level,
+            )
+            return []
+        allowed_count = min(requested_count, pressure_plan.snapshot.max_model_candidates)
+        if allowed_count < 2:
+            return []
+        if allowed_count != requested_count:
+            user_prompt = user_prompt.replace(
+                f"Sinh đúng {requested_count} candidate",
+                f"Sinh đúng {allowed_count} candidate",
+            )
+            messages[-1] = {"role": "user", "content": user_prompt}
+
+        from llm.token_budget import budget_existing_messages
+
+        governed_messages = budget_existing_messages(
+            messages,
+            total_tokens=pressure_plan.prompt_limit + pressure_plan.output_tokens,
+            output_reserve=pressure_plan.output_tokens,
         )
         try:
             response = client.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=governed_messages,
                 temperature=0.45,
                 frequency_penalty=0.45,
                 presence_penalty=0.15,
-                max_tokens=520,
+                max_tokens=pressure_plan.output_tokens,
                 response_format={"type": "json_object"},
                 grammar=None,
             )
             raw = self._extract_content(response)
-            # Qwen được phép reasoning. Ta bóc envelope rồi lấy contract JSON cuối
-            # cùng, không retry chỉ vì model đã nghĩ trước khi trả lời.
             cleaned = strip_reasoning_envelope(raw)
             candidate_json = (
                 cleaned if self._parse_json_object(cleaned) is not None
                 else extract_last_valid_json_object(cleaned or raw)
             )
             payload = self._parse_json_object(candidate_json) or {}
-            return self._extract_candidate_payloads(payload)
+            return self._extract_candidate_payloads(payload)[:allowed_count]
         except Exception as exc:  # noqa: BLE001
             self.logger.debug("[director_candidates] skipped: %s", exc)
             return []

@@ -115,6 +115,7 @@ from runtime.performance_contract import DirectorContractBuilder, PerformanceCon
 from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.source_grounding import SourceGroundingEngine
+from runtime.vision_grounding import VisionGroundingPolicy, VisionGroundingReport
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
 from runtime.director_context import DirectorContextBuilder
 from runtime.stage_contracts import StageFrameBuilder
@@ -471,6 +472,11 @@ class RuntimeCoordinator(
         self.speech_core_engine = SpeechCoreEngine(inner_thought_engine=self.inner_thought_engine)
         self.action_planner = ActionPlanner()
         self.source_grounding_engine = SourceGroundingEngine()
+        # Vision không còn được phép nhảy thẳng từ caption sang câu nói. Policy này
+        # tách note thành claim, kiểm provenance/confidence rồi mới cho downstream
+        # dùng như screen fact.
+        self.vision_grounding_policy = VisionGroundingPolicy()
+        self.last_vision_grounding_report: VisionGroundingReport | None = None
         self.semantic_repeat_guard = SemanticRepeatGuard()
         self.micro_line_policy = MicroLinePolicy(repeat_guard=self.semantic_repeat_guard)
         self.body_bias_projector = BodyBiasProjector(self._get_internal_state)
@@ -664,6 +670,10 @@ class RuntimeCoordinator(
             self._load_vision_fact_settings()
         )
         self.vision_facts: tuple[str, ...] = ()
+        # Cache cũ chỉ để audit/debug. Khi frame mới không tạo được claim grounded,
+        # runtime không được lén dùng cache này như thể nó vẫn là màn hình hiện tại.
+        self.vision_stale_facts: tuple[str, ...] = ()
+        self.vision_facts_are_stale = False
         self.vision_last_capture_at = 0.0
         self.vision_disabled_until = 0.0
         self.vision_failure_count = 0
@@ -6322,29 +6332,35 @@ class RuntimeCoordinator(
                 break
         return tuple(cleaned)
 
+    def _ground_semantic_scene_note(
+        self,
+        note: SemanticSceneNote | None,
+        *,
+        requested: bool = False,
+        stale: bool = False,
+    ) -> tuple[VisionGroundingReport, tuple[str, ...]]:
+        """Kiểm từng claim vision trước khi biến thành ``screen_facts``.
+
+        ``SemanticSceneNote`` là output của model, chưa phải bằng chứng đã được
+        cấp quyền nói. Policy claim-level ở đây là van một chiều: claim yếu vẫn
+        được giữ trong report để debug, nhưng không lọt vào prompt như fact.
+        """
+
+        policy = getattr(self, "vision_grounding_policy", None)
+        if not isinstance(policy, VisionGroundingPolicy):
+            policy = VisionGroundingPolicy()
+            self.vision_grounding_policy = policy
+        report = policy.evaluate(note, requested=requested, stale=stale)
+        facts = self._sanitize_screen_facts(
+            report.to_screen_facts(max_items=self.vision_fact_max_items)
+        )
+        return report, facts
+
     def _semantic_scene_note_to_facts(self, note: SemanticSceneNote | None) -> tuple[str, ...]:
-        if note is None:
-            return ()
-        items: list[str] = []
-        # Nghĩa của cảnh đi trước caption thô: nội dung là gì, sắc thái, đổi gì.
-        content = str(getattr(note, "content_summary", "") or "").strip()
-        affect = str(getattr(note, "content_affect", "") or "").strip()
-        if content:
-            items.append(f"{content} (affect: {affect})" if affect else content)
-        delta = str(getattr(note, "delta", "") or "").strip()
-        if delta:
-            items.append(f"change: {delta}")
-        relation = str(getattr(note, "relation_to_user", "") or "").strip()
-        if relation:
-            items.append(f"relation: {relation}")
-        visible = str(getattr(note, "visible_context", "") or "").strip()
-        if visible and visible != content:
-            items.append(visible)
-        for item in list(getattr(note, "important_text", []) or []):
-            text = str(item or "").strip()
-            if text:
-                items.append(text)
-        return self._sanitize_screen_facts(items)
+        """API tương thích cho caller cũ; mặc định coi đây là lane ambient."""
+
+        _report, facts = self._ground_semantic_scene_note(note, requested=False, stale=False)
+        return facts
 
     def _vision_trace_from_scene_note(self, note: SemanticSceneNote | None) -> str:
         if note is None:
@@ -6397,14 +6413,35 @@ class RuntimeCoordinator(
         force_refresh: bool = False,
         started_at: float | None = None,
     ) -> tuple[str, ...]:
+        requested = bool(
+            channel == "chat"
+            and callable(getattr(self, "_looks_like_screen_vision_request", None))
+            and self._looks_like_screen_vision_request(user_text)
+        )
+        policy = getattr(self, "vision_grounding_policy", None)
+        if not isinstance(policy, VisionGroundingPolicy):
+            policy = VisionGroundingPolicy()
+            self.vision_grounding_policy = policy
+
         if not data_uri:
-            self.last_semantic_scene_note = None
-            # Không xóa vision_facts cũ khi OCR trả về rỗng — facts autonomous
-            # vẫn còn hiệu lực cho tới khi có OCR mới thật sự ghi đè.
-            # self.vision_facts = ()  ← cũ: xóa facts tốt từ autonomous
+            # Không có frame mới: cache còn hữu ích cho continuity nhưng phải mang
+            # nhãn stale. Đừng đổi "lúc nãy" thành "tôi đang thấy" chỉ vì tuple
+            # vẫn còn nằm trong RAM.
+            self.vision_facts_are_stale = bool(self.vision_facts)
             self.vision_last_trace = ""
-            self.vision_facts_signature = ""
-            self.vision_facts_novelty_hint = "none"
+            self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
+            if self.last_semantic_scene_note is not None:
+                self.last_vision_grounding_report = policy.evaluate(
+                    self.last_semantic_scene_note,
+                    requested=requested,
+                    stale=True,
+                )
+            else:
+                self.last_vision_grounding_report = policy.empty_report(
+                    requested=requested,
+                    stale=True,
+                    reason="no_fresh_screen_frame",
+                )
             return self.vision_facts
 
         if observer_frame is None and snapshot is not None:
@@ -6418,13 +6455,9 @@ class RuntimeCoordinator(
 
         note: SemanticSceneNote | None = None
         trace = ""
-        cleaned: tuple[str, ...] = ()
         compressor = getattr(self, "vision_semantic_compressor", None)
         can_use_compressor = callable(getattr(compressor, "compress", None))
 
-        # Single vision path: luôn dùng VisionSemanticCompressor (Ollama/Moondream).
-        # Bỏ nhánh llm_service.generate_screen_facts — vision model nhẹ nên không cần
-        # phân biệt "khi nào mới gọi compressor"; cứ có ảnh là compress luôn.
         if can_use_compressor:
             try:
                 signal_snapshot = None
@@ -6434,7 +6467,7 @@ class RuntimeCoordinator(
                             snapshot=snapshot,
                             channel=channel,
                             user_text=user_text,
-                            vision_facts=tuple(getattr(snapshot, "vision_facts", ()) or ()) if snapshot is not None else (),
+                            vision_facts=tuple(getattr(snapshot, "vision_facts", ()) or ()),
                             started_at=started_at,
                         )
                     except Exception as exc:
@@ -6452,45 +6485,91 @@ class RuntimeCoordinator(
                     extra_context=user_text if channel == "chat" else "",
                 )
                 trace = self._vision_trace_from_scene_note(note)
-                cleaned = self._semantic_scene_note_to_facts(note)
             except Exception as exc:
                 self._note_vision_failure("compressor", exc)
+                self.vision_stale_facts = tuple(self.vision_facts)
+                self.vision_facts_are_stale = bool(self.vision_facts)
+                self.last_vision_grounding_report = policy.empty_report(
+                    requested=requested,
+                    stale=True,
+                    reason=f"vision_compressor_failed:{type(exc).__name__}",
+                    unknowns=("fresh_frame_not_interpreted",),
+                )
                 return self.vision_facts
         else:
-            # Compressor chưa init (ERIS_VISION_COMPRESSOR=0 hoặc Ollama chưa sẵn sàng):
-            # trả cache, không gọi llm_service nữa.
             self.logger.info(
                 "[vision_facts] source=cached reason=no_compressor channel=%s",
                 channel,
             )
+            self.vision_stale_facts = tuple(self.vision_facts)
+            self.vision_facts_are_stale = bool(self.vision_facts)
+            self.last_vision_grounding_report = policy.empty_report(
+                requested=requested,
+                stale=True,
+                reason="vision_compressor_unavailable",
+            )
             return self.vision_facts
 
+        report, cleaned = self._ground_semantic_scene_note(
+            note,
+            requested=requested,
+            stale=False,
+        )
+        self.last_vision_grounding_report = report
         self.vision_failure_count = 0
         self.vision_disabled_until = 0.0
         self.vision_last_capture_at = time.time()
         self.last_semantic_scene_note = note
+
+        previous_facts = tuple(self.vision_facts)
         signature = "\n".join(cleaned)
         self.vision_facts_novelty_hint = (
             "new_screen_fact"
             if cleaned and signature != self.vision_facts_signature
-            else ("repeated_screen_fact" if cleaned else "none")
+            else ("repeated_screen_fact" if cleaned else "abstained_screen_fact")
         )
         self.vision_facts_signature = signature
-        # Chỉ ghi đè vision_facts khi có facts mới. Nếu OCR lần này trả rỗng,
-        # giữ nguyên facts cũ (từ lần autonomous OCR trước) thay vì xóa sạch.
+
         if cleaned:
+            self.vision_stale_facts = previous_facts
             self.vision_facts = cleaned
-        self.vision_last_trace = trace or ""
+            self.vision_facts_are_stale = False
+        else:
+            # Frame mới đã được đọc nhưng không có claim nào đủ chắc. Xóa current
+            # facts để cache cũ không đội mồ sống dậy thành hiện tại. Vẫn giữ bản
+            # cũ trong ``vision_stale_facts`` cho audit, không đưa vào prompt.
+            if previous_facts:
+                self.vision_stale_facts = previous_facts
+            self.vision_facts = ()
+            self.vision_facts_are_stale = False
+
+        self.vision_last_trace = (
+            f"{trace};grounding={report.recommendation};"
+            f"strength={report.evidence_strength:.2f};"
+            f"grounded={len(report.grounded_claims)}"
+        ).strip(";")
         self.logger.info(
-            "[vision_facts] source=compressor channel=%s count=%d novelty=%s trace=%s fact=%s",
+            "[vision_grounding] channel=%s requested=%d recommendation=%s strength=%.2f "
+            "claims=%d grounded=%d contradictions=%s unknowns=%s",
+            channel,
+            int(requested),
+            report.recommendation,
+            report.evidence_strength,
+            len(report.claims),
+            len(report.grounded_claims),
+            ",".join(report.contradictions) or "none",
+            ",".join(report.unknowns) or "none",
+        )
+        self.logger.info(
+            "[vision_facts] source=grounded_claims channel=%s count=%d novelty=%s trace=%s fact=%s",
             channel,
             len(cleaned),
             self.vision_facts_novelty_hint,
             self.vision_last_trace or "<empty>",
-            cleaned[0] if cleaned else "<empty>",
+            cleaned[0] if cleaned else "<abstained>",
         )
         if snapshot is not None:
-            snapshot.vision_facts = tuple(cleaned)
+            snapshot.vision_facts = tuple(self.vision_facts)
         return self.vision_facts
 
     def _maybe_update_screen_facts(

@@ -3,10 +3,52 @@ import re
 import os
 import logging
 
-from llm.token_budget import preflight as _preflight
+from llm.token_budget import (
+    detect_provider as _detect_provider,
+    estimate_tokens as _estimate_tokens,
+    preflight as _preflight,
+)
+from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
 from llm.key_pool import get_provider_circuit
 
 _LOGGER = logging.getLogger("LLM")
+
+
+def _pressure_provider(base_url: str, model_name: str) -> str:
+    return _detect_provider(base_url, model_name)
+
+
+def _record_pressure_request(base_url: str, model_name: str, messages, max_tokens: int) -> str:
+    """Ghi request ở tầng transport để mọi lane đều góp vào pressure window."""
+
+    provider = _pressure_provider(base_url, model_name)
+    try:
+        GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
+            provider,
+            lane="transport",
+            prompt_tokens=_estimate_tokens(messages),
+            output_tokens=max_tokens,
+        )
+    except Exception:
+        pass
+    return provider
+
+
+def _record_pressure_success(provider: str) -> None:
+    try:
+        GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success(provider)
+    except Exception:
+        pass
+
+
+def _record_pressure_429(provider: str, response, default: float = 20.0) -> None:
+    try:
+        GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit(
+            provider,
+            retry_after_s=_retry_after_seconds(response, default),
+        )
+    except Exception:
+        pass
 
 
 def _http_error_with_body(response: requests.Response) -> requests.HTTPError:
@@ -170,6 +212,7 @@ class LlamaServerClient:
         reasoning_format=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
+        pressure_provider = _record_pressure_request(self.base_url, self.model_name, messages, max_tokens)
         payload = {
             "model": self.model_name,
             "messages": messages,
@@ -198,10 +241,13 @@ class LlamaServerClient:
             )
             try:
                 response.raise_for_status()
+                _record_pressure_success(pressure_provider)
                 return response.json()
             except requests.HTTPError as exc:
                 last_error = _http_error_with_body(response)
                 status_code = exc.response.status_code if exc.response is not None else None
+                if status_code == 429:
+                    _record_pressure_429(pressure_provider, response)
                 if status_code is not None and status_code < 500:
                     continue
                 raise last_error
@@ -261,6 +307,7 @@ class OpenAICompatibleClient:
         reasoning_format=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
+        pressure_provider = _record_pressure_request(self.base_url, self.model_name, messages, max_tokens)
         if response_format and response_format.get("type") == "json_object":
             last_msg_has_json = False
             if messages:
@@ -351,6 +398,7 @@ class OpenAICompatibleClient:
                     )
                     response.raise_for_status()
                     self._provider_circuit.record_success()
+                    _record_pressure_success(pressure_provider)
                     if self.key_pool is not None and lease is not None:
                         self.key_pool.mark_success(lease=lease)
                     return response.json()
@@ -359,6 +407,7 @@ class OpenAICompatibleClient:
                     status_code = exc.response.status_code if exc.response is not None else None
                     if status_code == 429:
                         rate_limited = True
+                        _record_pressure_429(pressure_provider, exc.response)
                         break  # thoát vòng variant để xoay key
                     if status_code in (401, 403):
                         auth_failed = True
@@ -592,6 +641,7 @@ class GeminiClient:
         reasoning_format=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
+        pressure_provider = _record_pressure_request(self.base_url, self.model_name, messages, max_tokens)
         system_instruction, contents = self._convert_messages(messages)
         is_gemma = self._is_gemma()
         if is_gemma:
@@ -657,6 +707,8 @@ class GeminiClient:
                 timeout=self.timeout if timeout is None else timeout,
             )
             status = last_response.status_code
+            if status == 429:
+                _record_pressure_429(pressure_provider, last_response, 60.0)
             if status == 429 and self.key_pool is not None:
                 retry_s = _retry_after_seconds(last_response, 60.0)
                 may_rotate = self.key_pool.mark_rate_limited(retry_s, lease=lease, reason="http_429")
@@ -677,6 +729,7 @@ class GeminiClient:
                 # Không xoay/mark-dead key vì mọi key cùng đập một provider đang lỗi.
             elif 200 <= status < 300:
                 self._provider_circuit.record_success()
+                _record_pressure_success(pressure_provider)
                 if self.key_pool is not None and lease is not None:
                     self.key_pool.mark_success(lease=lease)
             break

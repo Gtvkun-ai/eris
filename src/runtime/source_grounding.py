@@ -1943,7 +1943,20 @@ class SourceGroundingEngine:
                 items.append(ev)
 
         # Lọc bớt signal quá rỗng kiểu chỉ có "active window" không nội dung.
-        non_empty_items = [item for item in items if self._preview_item(item)]
+        # Quan trọng hơn: GroundedClaim có ``grounded=False`` chỉ là giả thuyết từ
+        # vision, không được tính như evidence màn hình hiện tại. Trước đây chỉ cần
+        # một dict có chữ là đủ làm ``present=True`` và model lại được cấp quyền
+        # nói chắc. Con đường ấy rất năng suất, nếu mục tiêu là sản xuất ảo giác.
+        non_empty_items: list[Any] = []
+        for item in items:
+            grounded_marker = (
+                item.get("grounded") if isinstance(item, Mapping) else getattr(item, "grounded", None)
+            )
+            if grounded_marker is False or str(grounded_marker).strip().lower() == "false":
+                continue
+            preview = self._preview_item(item)
+            if preview:
+                non_empty_items.append(item)
         ids, previews, confidence = self._summarize_evidence_items(non_empty_items, default_confidence=0.62)
         return {
             "present": bool(non_empty_items),

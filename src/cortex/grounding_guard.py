@@ -95,7 +95,30 @@ class GroundingGuardEngine:
         opportunity = _get(frame, "speech_opportunity", None)
         modality = _get(frame, "modality", None)
         evidence = list(_get(frame, "evidence", []) or [])
-        has_vision = any(str(_get(ev, "source", "")) in {"vision", "ocr", "telemetry", "active_window"} for ev in evidence)
+
+        def _is_grounded_vision_evidence(ev: Any) -> bool:
+            source = str(_get(ev, "source", "") or "").lower()
+            tags = {str(tag or "").lower() for tag in (_get(ev, "tags", []) or [])}
+            if not (
+                source in {"vision", "ocr", "vision_grounded_claim"}
+                or source.startswith(("vision_", "ocr_", "screen_"))
+                or bool(tags & {"vision", "ocr", "screen", "grounded"})
+            ):
+                return False
+            grounded = _get(ev, "grounded", None)
+            if grounded is False or str(grounded).strip().lower() == "false":
+                return False
+            stale = _get(ev, "stale", False)
+            if stale is True or str(stale).strip().lower() == "true":
+                return False
+            return True
+
+        has_vision = any(_is_grounded_vision_evidence(ev) for ev in evidence)
+        external_grounded = list(_get(external_grounding, "grounded_claims", []) or [])
+        if external_grounding is not None and not external_grounded:
+            recommendation = str(_get(external_grounding, "recommendation", "") or "")
+            if recommendation in {"soften", "silence"}:
+                has_vision = False
         unsupported: list[str] = []
         tone_violation = 0.0
         permission_violation = 0.0

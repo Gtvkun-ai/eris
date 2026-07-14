@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Mapping, Sequence
 
 from domain import Decision
+from runtime.adaptive_candidates import AdaptiveCandidateController
 from runtime.content_engine import ContentHarvester
 from runtime.director_context import DirectorContext, DirectorContextBuilder
 from runtime.director_trace import DirectorTrace, DirectorTraceStore
@@ -57,6 +58,7 @@ class DirectorGenerationPipeline:
         stage_scorer: StageScorer | None = None,
         content_harvester: ContentHarvester | None = None,
         trace_store: DirectorTraceStore | None = None,
+        candidate_controller: AdaptiveCandidateController | None = None,
     ) -> None:
         self.director_builder = director_builder or DirectorContextBuilder()
         self.performance_builder = performance_builder or PerformanceContextBuilder()
@@ -64,6 +66,7 @@ class DirectorGenerationPipeline:
         self.stage_scorer = stage_scorer or StageScorer()
         self.content_harvester = content_harvester or ContentHarvester()
         self.trace_store = trace_store or DirectorTraceStore()
+        self.candidate_controller = candidate_controller or AdaptiveCandidateController()
 
     def prepare(
         self,
@@ -151,8 +154,48 @@ class DirectorGenerationPipeline:
         )
         generation_notes: list[str] = ["deterministic_candidate_set"]
 
+        pressure_snapshot = None
+        if llm_service is not None:
+            try:
+                pressure_client = (
+                    getattr(llm_service, "style_client", None)
+                    or getattr(llm_service, "fallback_client", None)
+                    or getattr(llm_service, "client", None)
+                )
+                pressure_snapshot = llm_service.token_pressure_snapshot(
+                    client=pressure_client,
+                    channel="director_candidates",
+                )
+            except Exception:
+                pressure_snapshot = None
+        recent_failures = (
+            *tuple(getattr(draft_decision, "reasoning_tags", ()) or ()),
+            str(getattr(draft_decision, "debug_trace", "") or ""),
+            str(getattr(draft_decision, "parse_mode", "") or ""),
+        )
+        candidate_plan = self.candidate_controller.decide(
+            lane=prepared.channel,
+            user_text=prepared.user_text,
+            draft_confidence=float(getattr(draft_decision, "confidence", 0.0) or 0.0),
+            recent_failures=recent_failures,
+            token_snapshot=pressure_snapshot,
+        )
+        generation_notes.append(
+            f"adaptive_candidates:{candidate_plan.model_candidates}:{candidate_plan.reason}:"
+            f"{candidate_plan.pressure_level}"
+        )
+        base_payload["adaptive_candidate_plan"] = {
+            "model_candidates": candidate_plan.model_candidates,
+            "reason": candidate_plan.reason,
+            "chat_act": candidate_plan.chat_act.value,
+            "act_confidence": round(candidate_plan.act_confidence, 3),
+            "token_pressure": round(candidate_plan.token_pressure, 3),
+            "pressure_level": candidate_plan.pressure_level,
+        }
+
         can_generate = (
             generate_candidates
+            and candidate_plan.use_model_second_pass
             and llm_service is not None
             and bool(str(draft_decision.text or "").strip())
             and bool(getattr(draft_decision, "should_speak", True))
@@ -169,6 +212,7 @@ class DirectorGenerationPipeline:
                     conversation_context=conversation_context,
                     grounding_context=grounding_context,
                     memory_context=memory_context,
+                    candidate_count=candidate_plan.model_candidates,
                 )
                 if isinstance(generated, list):
                     raw_candidates.extend(item for item in generated if isinstance(item, Mapping))
@@ -384,11 +428,10 @@ class DirectorGenerationPipeline:
         }
 
     def _model_second_pass_enabled(self) -> bool:
-        """Mặc định tắt model candidate pass để mỗi chat chỉ gọi model một lần."""
+        """Mặc định dùng chế độ adaptive, không phải bật model pass mọi lượt."""
 
-        return os.environ.get("ERIS_CHAT_DIRECTOR_SECOND_PASS", "0").strip().lower() in {
-            "1", "true", "yes", "on"
-        }
+        raw = os.environ.get("ERIS_CHAT_DIRECTOR_SECOND_PASS", "adaptive").strip().lower()
+        return raw not in {"0", "false", "no", "off", "disabled"}
 
     @staticmethod
     def _join_trace(current: str, marker: str) -> str:

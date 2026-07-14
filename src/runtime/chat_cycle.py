@@ -1747,46 +1747,59 @@ class ChatCycleMixin:
 
     
     def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
+        """Chỉ đưa GroundedClaim vào SourceGrounding.
+
+        Raw screenshot marker không chứng minh bất kỳ nội dung nào. Trước đây marker
+        "live screenshot attached" có confidence 0.93 đủ để model suy ra một cảnh
+        rồi guard cuối pipeline phải dọn xác. Bây giờ ảnh chỉ có quyền tạo claim sau
+        khi VisionGroundingPolicy kiểm xong.
+        """
+
+        report = getattr(self, "last_vision_grounding_report", None)
         facts: list[object] = []
-        # Luôn dùng vision_facts gần nhất từ coordinator (autonomous OCR đã bắt được)
-        # — không cần kiểm tra window 10s vì facts đó vẫn là thật, chỉ hơi cũ.
-        # Ưu tiên snapshot (mới nhất), fallback về self.vision_facts của coordinator.
-        coordinator_facts = tuple(getattr(self, "vision_facts", ()) or ())
-        snapshot_facts = tuple(getattr(snapshot, "vision_facts", ()) or ())
-        merged = snapshot_facts or coordinator_facts
-        if merged:
-            facts.extend(merged)
-        if screen_image_data_uri:
-            facts.append(
-                {
-                    "id": "chat_screen_frame",
-                    "source": "screen_capture",
-                    "claim": "live screenshot attached for current chat turn",
-                    "confidence": 0.93,
-                    "tags": ["vision", "screen", "chat"],
-                }
-            )
-        elif not merged:
-            # Không chụp tươi lượt này VÀ chưa có facts nào: nếu runtime VẪN có màn hình
-            # (vừa chụp lượt trước, hoặc telemetry chụp được) thì cho ERIS hiểu nó có màn
-            # hình — chỉ là chưa đọc được nội dung lượt này. Tránh thú nhận sai "tôi chưa
-            # từng thấy màn hình". Marker này được coi là stale ở tầng grounding.
-            captured_before = float(getattr(self, "vision_last_capture_at", 0.0) or 0.0) > 0.0
-            # "tôi CÓ THỂ nhìn" != "tôi ĐÃ nhìn": chỉ phát marker stale khi ERIS THỰC SỰ
-            # đã chụp frame trước đó. Bỏ điều kiện "telemetry có hàm chụp" (can_capture)
-            # vì nó gần như luôn True và khiến ERIS bịa "màn hình từng hiện lượt trước"
-            # dù chưa hề thấy gì → nói dối tri giác (#2). Khi chưa từng chụp: không phát
-            # marker nào -> grounding để ERIS thú nhận thật rằng nó chưa nhìn màn hình.
-            if captured_before:
+        if report is not None and screen_image_data_uri and not bool(getattr(report, "stale", False)):
+            to_items = getattr(report, "to_evidence_items", None)
+            if callable(to_items):
+                facts.extend(to_items(grounded_only=True))
+
+        if facts:
+            return tuple(facts)
+
+        # Không có capture tươi trong lượt này: facts lần trước vẫn có thể làm context
+        # continuity, nhưng phải gắn stale để prompt buộc nói "lúc nãy".
+        if not screen_image_data_uri:
+            snapshot_facts = tuple(getattr(snapshot, "vision_facts", ()) or ())
+            coordinator_facts = tuple(getattr(self, "vision_facts", ()) or ())
+            merged = snapshot_facts or coordinator_facts
+            for index, text in enumerate(merged):
+                cleaned = str(text or "").strip()
+                if not cleaned:
+                    continue
                 facts.append(
                     {
-                        "id": "screen_prev_turn",
-                        "source": "screen_capture_prev_turn",
-                        "claim": "screen was visible on a previous turn (no fresh capture this turn)",
-                        "confidence": 0.5,
-                        "tags": ["vision", "screen", "stale"],
+                        "id": f"vision_stale:{index}",
+                        "source": "vision_grounded_claim",
+                        "claim": cleaned,
+                        "confidence": 0.58,
+                        "grounded": True,
+                        "stale": True,
+                        "tags": ["vision", "screen", "grounded", "stale"],
                     }
                 )
+
+        # Có ảnh tươi nhưng không có claim grounded: giữ marker audit với
+        # grounded=False. SourceGroundingEngine sẽ loại nó khỏi evidence present.
+        if screen_image_data_uri and not facts:
+            facts.append(
+                {
+                    "id": "chat_screen_frame_unresolved",
+                    "source": "screen_capture",
+                    "claim": "fresh screenshot captured but no grounded semantic claim",
+                    "confidence": 0.25,
+                    "grounded": False,
+                    "tags": ["vision", "screen", "chat", "ungrounded"],
+                }
+            )
         return tuple(facts)
 
     def _build_chat_source_grounding_report(
@@ -1809,8 +1822,13 @@ class ChatCycleMixin:
                 snapshot,
                 screen_image_data_uri=screen_image_data_uri,
             ),
-            # Không chụp tươi lượt này -> mọi facts màn hình (nếu có) là từ lượt trước.
-            screen_facts_stale=not bool(screen_image_data_uri),
+            # Capture có thể tươi nhưng compressor thất bại và chỉ còn cache cũ.
+            # Vì vậy freshness phải dựa cả vào trạng thái vision, không chỉ data URI.
+            screen_facts_stale=(
+                not bool(screen_image_data_uri)
+                or bool(getattr(self, "vision_facts_are_stale", False))
+                or bool(getattr(getattr(self, "last_vision_grounding_report", None), "stale", False))
+            ),
             memory_packet=memory_resonance,
             runtime_state=snapshot,
             allow_web=False,
