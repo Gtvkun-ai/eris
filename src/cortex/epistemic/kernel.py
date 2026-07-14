@@ -273,7 +273,7 @@ class EpistemicKernel:
 
         updates: list[LearningUpdate] = []
         selected = episode.hypothesis_set.selected
-        if report.tone_feedback:
+        if report.tone_feedback_pressure >= 0.55:
             updates.append(self._update_procedural_policy(episode, report))
         elif selected is not None:
             if report.corrected or report.confused or report.felt_intruded is True:
@@ -540,7 +540,7 @@ class EpistemicKernel:
         key = f"tone:{episode.action.action_type if episode.action else 'unknown'}"
         policy = self.store.procedural_policies.setdefault(key, {"success": 0.0, "failure": 0.0, "last_feedback": ""})
         before = float(policy.get("failure", 0.0))
-        if feedback.relation_improved:
+        if feedback.relationship_warmth_signal >= 0.55:
             policy["success"] = float(policy.get("success", 0.0)) + 1.0
             operation = "reinforce"
             after = float(policy["success"])
@@ -557,11 +557,11 @@ class EpistemicKernel:
             return
         bucket = self.store.calibration.setdefault(hypothesis.origin, {"predictions": 0.0, "accepted": 0.0, "corrected": 0.0, "intruded": 0.0})
         bucket["predictions"] += 1.0
-        if feedback.accepted is True:
+        if feedback.acceptance_support >= 0.60:
             bucket["accepted"] += 1.0
-        if feedback.corrected or feedback.confused:
+        if max(feedback.correction_pressure, feedback.confusion_pressure) >= 0.55:
             bucket["corrected"] += 1.0
-        if feedback.felt_intruded is True:
+        if feedback.intrusion_risk >= 0.55:
             bucket["intruded"] += 1.0
 
     def _calibrated_confidence(self, origin: str, confidence: float) -> float:

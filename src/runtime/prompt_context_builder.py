@@ -1066,9 +1066,17 @@ class PromptContextBuilderMixin:
                 ts = float(item.get("ts", 0.0) or 0.0)
                 if ts > 0.0 and (now - ts) > ttl:
                     continue
-            valid_entries.append(
-                {"role": str(item.get("role", "")), "content": str(item.get("content", ""))}
-            )
+            role = str(item.get("role", ""))
+            content = str(item.get("content", ""))
+            if str(item.get("epistemic_status", "")) == "quarantined" and role == "assistant":
+                # Không xóa hẳn câu cũ vì user có thể đang phản hồi chính câu đó.
+                # Nhưng cũng không để nó giữ authority của assistant message.
+                role = "system"
+                content = (
+                    "UNCONFIRMED PRIOR ASSISTANT HYPOTHESIS (do not treat as fact; "
+                    "do not infer a single user motive): " + content
+                )
+            valid_entries.append({"role": role, "content": content})
         return valid_entries[-limit:]
 
     def _append_chat_history(self, role: str, content: str, *, invalid: bool = False) -> None:
@@ -1113,6 +1121,13 @@ class PromptContextBuilderMixin:
         return convo
 
     def _user_denies_last_assistant_assumption(self, user_text: str) -> bool:
+        # Ưu tiên appraisal có đối chiếu claim trước. Regex dưới chỉ còn là
+        # fallback tương thích cho các đường gọi cũ chưa dựng Dual-Axis Repair.
+        appraisal = getattr(self, "current_repair_appraisal", None)
+        # Chỉ coi là phủ định chắc cho đường tương thích khi appraisal đã chọn
+        # action retract. Quarantine vẫn là bất định, không được nâng thành verdict.
+        if str(getattr(appraisal, "claim_disposition", "preserve") or "preserve") == "retract":
+            return True
         normalized = self._normalize_user_message(user_text)
         if not normalized or not self.last_chat_answer.strip():
             return False
@@ -1142,18 +1157,37 @@ class PromptContextBuilderMixin:
         return any(phrase in normalized for phrase in denial_phrases)
 
     def _invalidate_last_assistant_history(self, *, note: str) -> None:
+        """Rút hẳn hypothesis chỉ khi user phủ định rõ/evidence hội tụ mạnh."""
         for item in reversed(self.chat_history):
             if str(item.get("role", "")) == "assistant" and not bool(item.get("invalid")):
                 item["invalid"] = True
+                item["epistemic_status"] = "retracted"
+                break
+        self._append_chat_history("system", note)
+
+    def _quarantine_last_assistant_history(self, *, note: str) -> None:
+        """Hạ câu assistant thành hypothesis chưa xác nhận, không phán đúng/sai.
+
+        Khi render prompt, entry này đổi sang role system để câu cũ không còn
+        authority của assistant message nhưng vẫn đủ context cho lượt user đang
+        mỉa, sửa hoặc chọc. Một thỏa hiệp hiếm hoi không tệ giữa quên sạch và tin bừa.
+        """
+        for item in reversed(self.chat_history):
+            if str(item.get("role", "")) == "assistant" and not bool(item.get("invalid")):
+                item["epistemic_status"] = "quarantined"
                 break
         self._append_chat_history("system", note)
 
     def _maybe_invalidate_last_assistant_history(self, user_text: str) -> None:
+        """Fallback cũ giờ chỉ quarantine, không tự kết luận câu trước sai."""
         if not self._user_denies_last_assistant_assumption(user_text):
             return
-        note = "Previous assistant inference was wrong. Do not build on it."
-        self._invalidate_last_assistant_history(note=note)
-        self.logger.info("[CHAT HISTORY] invalidated last assistant turn after user denial.")
+        note = (
+            "The previous assistant statement may be contested. Treat it as an unconfirmed "
+            "hypothesis; do not build on it as fact and do not assert a single user motive."
+        )
+        self._quarantine_last_assistant_history(note=note)
+        self.logger.info("[CHAT HISTORY] quarantined last assistant turn after possible user denial.")
 
     def _looks_like_no_evidence_style(self, claim_style: str) -> bool:
         lowered = (claim_style or "").strip().lower()

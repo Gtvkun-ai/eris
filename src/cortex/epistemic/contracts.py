@@ -263,14 +263,17 @@ class ActionCandidate:
 
 @dataclass(slots=True)
 class EpisodeFeedback:
+    """Feedback dạng score, không chứa verdict chắc chắn về user/quan hệ."""
+
     kind: str = "unknown"
-    accepted: bool | None = None
-    corrected: bool = False
-    confused: bool = False
-    felt_intruded: bool | None = None
-    relation_improved: bool | None = None
-    relation_ruptured: bool | None = None
-    tone_feedback: bool = False
+    acceptance_support: float = 0.0
+    correction_pressure: float = 0.0
+    confusion_pressure: float = 0.0
+    intrusion_risk: float = 0.0
+    relationship_warmth_signal: float = 0.0
+    relationship_strain_signal: float = 0.0
+    tone_feedback_pressure: float = 0.0
+    interpretation_uncertainty: float = 1.0
     text: str = ""
     evidence: tuple[str, ...] = ()
     confidence: float = 0.5

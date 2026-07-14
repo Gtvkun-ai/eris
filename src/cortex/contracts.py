@@ -1308,6 +1308,10 @@ class CognitiveFrame:
     # from the shared cortex contracts into cortex.epistemic.
     epistemic_episode: object | None = None
     commit_requests: list[object] = field(default_factory=list)
+    # Metadata runtime theo turn. Một số pipeline V3 đã dùng contract này từ
+    # trước; khai báo chính thức để các feature như Dual-Axis Repair không phải
+    # gắn attribute động lên dataclass slots rồi cầu nguyện Python làm ngơ.
+    metadata: dict[str, object] = field(default_factory=dict)
     # Receipt xác nhận ingest nóng. Public layer chỉ được nói "đã lưu" khi
     # committed_count > 0, thay vì tin lời model về một side effect chưa xảy ra.
     memory_ingest_receipt: dict[str, object] = field(default_factory=dict)
@@ -1373,6 +1377,7 @@ class CognitiveFrame:
             ),
             "epistemic_episode": _to_plain_contract(self.epistemic_episode),
             "commit_requests": _to_plain_contract(self.commit_requests),
+            "metadata": _to_plain_contract(self.metadata),
             "memory_ingest_receipt": _to_plain_contract(self.memory_ingest_receipt),
             "debug_notes": list(self.debug_notes),
             "memory_update": self.memory_update.to_dict(),

@@ -389,6 +389,9 @@ class ChatCycleMixin:
             self._temporal_last_user_turn_at = cycle_start
             self.current_stage_user_text = ""
             self.current_pragmatic_intercept_result = None
+            # Appraisal chỉ sống trong một turn. Giữ nó lâu hơn sẽ làm lượt sau
+            # tiếp tục "sửa lỗi" dù user đã đổi chủ đề, một kiểu day dứt rất máy.
+            self.current_repair_appraisal = None
             self._chat_processing = False
 
     def _run_chat_cycle_inner(
@@ -426,6 +429,25 @@ class ChatCycleMixin:
             meta=user_turn_meta,
         )
         memory_turn_id = f"session_turn:{user_turn.index}"
+
+        # Dual-Axis Repair chạy sớm để Ti không nhìn một chữ "nhớ" rồi tự phong
+        # cả lượt thành tình cảm. Đây mới là appraisal sơ bộ; sau Affect/Feedback
+        # nó sẽ được refine lần nữa, không phải một regex đứng trên ngai vàng.
+        from runtime.dual_axis_repair import DualAxisRepairAppraiser
+
+        repair_appraiser = getattr(self, "dual_axis_repair_appraiser", None)
+        if repair_appraiser is None:
+            repair_appraiser = DualAxisRepairAppraiser()
+            self.dual_axis_repair_appraiser = repair_appraiser
+        preliminary_repair = repair_appraiser.appraise(
+            user_text=user_text,
+            previous_assistant_text=self.last_chat_answer,
+            previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
+        )
+        self.current_repair_appraisal = preliminary_repair
+        if preliminary_repair.active:
+            user_turn.meta["dual_axis_repair_preliminary"] = preliminary_repair.to_dict()
+
         pragmatic_result = self._prepare_pragmatic_social_turn(
             user_text,
             source_turn_id=memory_turn_id,
@@ -500,6 +522,9 @@ class ChatCycleMixin:
             ni_report=ni_report,
             user_text=user_text,
         )
+        from runtime.dual_axis_repair import apply_repair_appraisal_to_ti_report
+
+        ti_report = apply_repair_appraisal_to_ti_report(ti_report, preliminary_repair)
         affect_signal = self.affect_semantics.analyze(
             user_text,
             ti_mode=str(getattr(ti_report, "mode", "") or ""),
@@ -514,6 +539,22 @@ class ChatCycleMixin:
             user_text,
             previous_assistant_text=self.last_chat_answer,
         )
+        # Refine bằng affect + relational feedback. Trục epistemic và relational
+        # được giữ riêng: user có thể vừa sửa claim sai, vừa mỉa/chọc thân mật.
+        repair_appraisal = repair_appraiser.appraise(
+            user_text=user_text,
+            previous_assistant_text=self.last_chat_answer,
+            previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
+            affect_signal=affect_signal,
+            relational_feedback=relational_feedback,
+        )
+        self.current_repair_appraisal = repair_appraisal
+        ti_report = apply_repair_appraisal_to_ti_report(ti_report, repair_appraisal)
+        from runtime.dual_axis_repair import calibrate_affect_for_repair
+
+        affect_signal = calibrate_affect_for_repair(affect_signal, repair_appraisal)
+        if repair_appraisal.active:
+            user_turn.meta["dual_axis_repair"] = repair_appraisal.to_dict()
         fe_affect_signal = merge_affect_with_relational_feedback(affect_signal, relational_feedback)
         fe_plan = self.fe_renderer.evaluate_chat(
             snapshot=snapshot,
@@ -552,6 +593,14 @@ class ChatCycleMixin:
             memory_resonance=memory_resonance,
             affect_signal=affect_signal,
         )
+        if repair_appraisal.active:
+            frame.metadata["dual_axis_repair"] = repair_appraisal.to_dict()
+            frame.debug_notes.append(
+                "uncertainty_preserving_repair="
+                f"posture={repair_appraisal.preferred_posture};contest={repair_appraisal.claim_contest_score:.2f};"
+                f"playful_h={repair_appraisal.playful_score:.2f};disposition={repair_appraisal.claim_disposition};"
+                f"uncertainty={repair_appraisal.interpretation_uncertainty:.2f}"
+            )
         if pragmatic_result.intercepted:
             frame.debug_notes.append(
                 f"social_act={pragmatic_result.act.value};confidence={pragmatic_result.confidence:.2f};"
@@ -587,6 +636,13 @@ class ChatCycleMixin:
                 "active_topic": str(self.active_conversational_topic or ""),
                 "ti_mode": str(getattr(ti_report, "mode", "") or ""),
                 "fe_intent": str(getattr(fe_plan, "intent_label", "") or ""),
+                # Worker được biết đây là lượt repair để không hợp nhất claim
+                # assistant đang bị rút. User fact rõ vẫn được xử lý bình thường.
+                "repair_preferred_posture": repair_appraisal.preferred_posture,
+                "repair_plausible_postures": list(repair_appraisal.plausible_postures),
+                "claim_disposition": repair_appraisal.claim_disposition,
+                "claim_contest_score": repair_appraisal.claim_contest_score,
+                "assistant_fact_commit_policy": repair_appraisal.fact_commit_policy,
             },
         )
         self._add_user_turn_memory_commit_requests(
@@ -631,7 +687,13 @@ class ChatCycleMixin:
             self._research_topic = ""
         repeat_count = self._track_repeated_user_message(user_text)
         previous_user_text_for_semantics = getattr(self, "last_user_text_for_semantics", "")
-        correction_detected = self._user_denies_last_assistant_assumption(user_text)
+        # Giữ pressure liên tục. Không ép một lượt mơ hồ thành verdict
+        # ``correction=True`` trước khi ConversationDynamics được nhìn toàn cảnh.
+        correction_pressure = max(
+            float(getattr(repair_appraisal, "explicit_correction_score", 0.0) or 0.0),
+            float(getattr(repair_appraisal, "correction_pressure", 0.0) or 0.0),
+            0.86 if self._user_denies_last_assistant_assumption(user_text) else 0.0,
+        )
         conversation_report = self.conversation_dynamics_engine.evaluate_chat(
             getattr(sensed_internal_state, "conversation_dynamics", None),
             user_text=user_text,
@@ -639,7 +701,7 @@ class ChatCycleMixin:
             last_user_intent=self.last_user_intent,
             active_topic=self.active_conversational_topic,
             repeat_count=repeat_count,
-            correction_detected=correction_detected,
+            correction_pressure=correction_pressure,
             affect_signal=affect_signal,
             relational_feedback=relational_feedback,
         )
@@ -648,13 +710,14 @@ class ChatCycleMixin:
             ti_mode=str(getattr(ti_report, "mode", "") or ""),
             active_window_kind=str(getattr(snapshot, "active_window_kind", "") or ""),
             turn_index=max(1, int(getattr(sensed_internal_state, "chat_ticks", 0) or 0) + 1),
-            assistant_overread=bool(conversation_report.correction_detected),
+            assistant_overread_pressure=float(getattr(conversation_report, "correction_pressure", 0.0) or 0.0),
             previous_assistant_text=self.last_chat_answer,
             goal_state=getattr(sensed_internal_state, "goal_persistence", None),
             conversation_state=getattr(sensed_internal_state, "conversation_dynamics", None),
             recent_user_topics=tuple(getattr(self._ensure_session_turn_ledger(), "gist_recent_user_topics", lambda: tuple())() or ()),
             explicit_repeated_project_context=0.58 if self.active_conversational_topic in {"technical_support", "goal_guard"} else None,
             relational_feedback=relational_feedback,
+            repair_appraisal=repair_appraisal,
         )
         epistemic_kernel = getattr(self, "epistemic_kernel", None)
         if epistemic_kernel is not None and getattr(epistemic_kernel, "authoritative", False):
@@ -746,7 +809,24 @@ class ChatCycleMixin:
             turn_semantics_report.identity_pressure,
             turn_semantics_report.correction_pressure,
         )
-        self._maybe_invalidate_last_assistant_history(user_text)
+        if repair_appraisal.claim_disposition == "retract":
+            self._invalidate_last_assistant_history(note=repair_appraisal.history_uncertainty_note())
+            self.logger.info(
+                "[repair appraisal] retracted previous assistant hypothesis | posture=%s contest=%.2f playful_h=%.2f",
+                repair_appraisal.preferred_posture,
+                repair_appraisal.claim_contest_score,
+                repair_appraisal.playful_score,
+            )
+        elif repair_appraisal.claim_disposition == "quarantine":
+            self._quarantine_last_assistant_history(note=repair_appraisal.history_uncertainty_note())
+            self.logger.info(
+                "[repair appraisal] quarantined previous assistant hypothesis | posture=%s contest=%.2f uncertainty=%.2f",
+                repair_appraisal.preferred_posture,
+                repair_appraisal.claim_contest_score,
+                repair_appraisal.interpretation_uncertainty,
+            )
+        else:
+            self._maybe_invalidate_last_assistant_history(user_text)
         self._append_chat_history("user", user_text)
         self.logger.info("[CHAT HISTORY] %s", self._chat_history_for_llm(limit=8))
         self.logger.info("[LAST USER INTENT] %s", self.last_user_intent or "<empty>")
@@ -985,9 +1065,10 @@ class ChatCycleMixin:
         )
         turn_semantics_context = str(getattr(turn_semantics_report, "prompt_context", "") or "")
         pragmatic_context = pragmatic_result.to_prompt_context() if pragmatic_result.intercepted else ""
+        repair_context = repair_appraisal.to_prompt_context()
         planned_ti_context = (
             f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n"
-            f"{turn_semantics_context}\n{pragmatic_context}"
+            f"{turn_semantics_context}\n{pragmatic_context}\n{repair_context}"
         )
         semantic_authority_context = semantic_policy.prompt_block()
         if semantic_authority_context:
@@ -1064,6 +1145,7 @@ class ChatCycleMixin:
         memory_recall_decision = (
             self._build_memory_recall_decision(user_text)
             if semantic_policy.allow_pre_llm_intercepts
+            and repair_appraisal.fact_commit_policy == "allow"
             else None
         )
         if memory_recall_decision is not None:
@@ -1321,6 +1403,10 @@ class ChatCycleMixin:
         self._log_decision_stage("chat", "after_escalation", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
+        from runtime.dual_axis_repair import apply_repair_output_guard
+
+        decision = apply_repair_output_guard(decision, repair_appraisal)
+        repair_candidate_override = repair_appraisal.candidate_count_hint >= 2
         decision = self._finalize_chat_director_decision(
             decision,
             user_text=user_text,
@@ -1329,7 +1415,7 @@ class ChatCycleMixin:
             skip_candidates=bool(
                 format_repair_fallback
                 or no_fallback_block
-                or not semantic_policy.generate_director_candidates
+                or (not semantic_policy.generate_director_candidates and not repair_candidate_override)
             ),
         )
         self._commit_chat_decision(decision, fe_plan, frame=frame)
@@ -1642,15 +1728,25 @@ class ChatCycleMixin:
                 ensure_observability(self).record_outcome(outcome)
                 # Feedback turn là gate đáng tin nhất cho social canary. Correction,
                 # confusion hoặc rupture tính là failure; intrusion có gate riêng.
+                from runtime.social_outcome_appraisal import social_score
+
+                correction_pressure = social_score(outcome, "correction_pressure")
+                confusion_pressure = social_score(outcome, "confusion_pressure")
+                strain_pressure = social_score(outcome, "relationship_strain_signal")
+                intrusion_risk = social_score(outcome, "intrusion_risk")
+                # Rollout gate là quyết định vận hành. Không ghi lại rằng user
+                # "chắc chắn" sửa/khó chịu; chỉ dùng pressure để canary tự phanh.
                 ensure_rollout_controller(self).record_outcome(
                     "social_intercept",
-                    failed=bool(
-                        getattr(outcome, "user_corrected", False)
-                        or getattr(outcome, "user_confused", False)
-                        or getattr(outcome, "relation_ruptured", False)
-                    ),
-                    intrusive=bool(getattr(outcome, "user_felt_intruded", False)),
-                    fields={"feedback_tags": tuple(getattr(outcome, "tags", ()) or ())},
+                    failed=max(correction_pressure, confusion_pressure, strain_pressure) >= 0.62,
+                    intrusive=intrusion_risk >= 0.62,
+                    fields={
+                        "feedback_tags": tuple(getattr(outcome, "tags", ()) or ()),
+                        "correction_pressure": correction_pressure,
+                        "confusion_pressure": confusion_pressure,
+                        "relationship_strain_signal": strain_pressure,
+                        "intrusion_risk": intrusion_risk,
+                    },
                 )
             except Exception:
                 pass

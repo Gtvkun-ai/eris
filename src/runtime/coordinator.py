@@ -5962,6 +5962,38 @@ class RuntimeCoordinator(
         decision.debug_trace = " | ".join(part for part in (decision.debug_trace, "memory_commit_unconfirmed") if part)
         return decision
 
+    def _apply_dual_axis_memory_commit_gate(self, decision: Decision) -> Decision:
+        """Chặn assistant fact ở đúng turn đang rút claim sai.
+
+        Gate này không đụng user-memory hay relationship state. Nó chỉ ngăn
+        ``extracted_fact`` do chính draft assistant sinh đi vào semantic memory.
+        Đặt ở coordinator để mọi đường commit dùng chung một luật provenance.
+        """
+
+        repair_appraisal = getattr(self, "current_repair_appraisal", None)
+        commit_policy = str(getattr(repair_appraisal, "fact_commit_policy", "allow") or "allow")
+        if commit_policy == "allow":
+            return decision
+        if str(getattr(decision, "extracted_fact", "") or "").strip():
+            logger = getattr(self, "logger", None)
+            if logger is not None and callable(getattr(logger, "info", None)):
+                logger.info(
+                    "[repair appraisal] removed assistant extracted_fact | policy=%s",
+                    commit_policy,
+                )
+        decision.extracted_fact = ""
+        decision.reasoning_tags = tuple(dict.fromkeys((
+            *tuple(getattr(decision, "reasoning_tags", ()) or ()),
+            f"assistant_fact_{commit_policy}",
+        )))
+        decision.debug_trace = " | ".join(
+            part for part in (
+                str(getattr(decision, "debug_trace", "") or "").strip(),
+                f"repair:assistant_fact_policy={commit_policy}",
+            ) if part
+        )
+        return decision
+
     def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
         try:
             decision = self._apply_director_precommit_guard(decision, frame=frame, channel="chat")
@@ -5973,6 +6005,9 @@ class RuntimeCoordinator(
         if callable(authority):
             decision = authority(decision, frame=frame, channel="chat")
         decision = self._apply_memory_commit_truth_guard(decision, frame=frame)
+
+        decision = self._apply_dual_axis_memory_commit_gate(decision)
+
         public_text = str(decision.text or "").strip()
         if public_text:
             self.fe_style_memory = self.fe_renderer.remember_style(

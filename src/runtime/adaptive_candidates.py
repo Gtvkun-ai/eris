@@ -71,9 +71,16 @@ class AdaptiveCandidateController:
 
         requested = 0
         reason = "single_draft_sufficient"
+        repair_uncertain = "repair_uncertain" in failure_blob
+        # Repair uncertainty chỉ cần đúng hai biến thể: một direct, một playful.
+        # Không mở 3 candidate vì một lượt tự sửa sai không đáng đốt provider như
+        # cuộc thi văn mẫu. Token pressure ở trên vẫn có quyền shed toàn bộ pass.
+        if repair_uncertain:
+            requested = 2
+            reason = "dual_axis_repair_uncertainty"
         # confidence=0 thường là field cũ bị thiếu, không phải model tự thú rằng
         # nó mù tịt. Chỉ coi low-confidence khi giá trị dương có chủ ý.
-        if (0.0 < confidence < 0.70) or had_pragmatic_failure:
+        elif (0.0 < confidence < 0.70) or had_pragmatic_failure:
             requested = 3
             reason = "low_confidence_or_recent_failure"
         elif act in PERFORM_NOW_ACTS:

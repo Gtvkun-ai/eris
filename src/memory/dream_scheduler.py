@@ -12,6 +12,7 @@ import time
 from typing import Any
 
 from core.evidence import StateCommitRequest
+from runtime.social_outcome_appraisal import social_score
 
 
 def _get(obj: Any, name: str, default: Any = None) -> Any:
@@ -69,7 +70,7 @@ class DreamScheduler:
         affect = _get(frame, "affect", None)
         outcome = _get(frame, "outcome", None)
         self_obs = _get(frame, "self_observation", None)
-        correction = bool(_get(outcome, "user_corrected", False)) or bool(_get(self_obs, "overread_detected", False))
+        correction_pressure = max(social_score(outcome, "correction_pressure"), 1.0 if bool(_get(self_obs, "overread_detected", False)) else 0.0)
         residue = max(
             float(_get(affect, "tension", 0.0) or 0.0),
             float(_get(affect, "irritation", 0.0) or 0.0),
@@ -78,18 +79,18 @@ class DreamScheduler:
         repetition = float(_get(temporal, "repetition_fatigue", 0.0) or 0.0)
         meaning_debt = float(_get(temporal, "meaning_debt", 0.0) or 0.0)
         closing = str(_get(temporal, "session_arc", "unknown")) == "closing"
-        pressure = min(1.0, (0.55 if correction else 0.0) + residue * 0.25 + repetition * 0.22 + meaning_debt * 0.32 + (0.35 if budget == "reflection" else 0.0) + (0.18 if closing else 0.0))
-        scheduled = budget == "reflection" or correction or pressure >= 0.58
+        pressure = min(1.0, (0.55 * correction_pressure) + residue * 0.25 + repetition * 0.22 + meaning_debt * 0.32 + (0.35 if budget == "reflection" else 0.0) + (0.18 if closing else 0.0))
+        scheduled = budget == "reflection" or correction_pressure >= 0.62 or pressure >= 0.58
         tags = []
-        if correction:
-            tags.append("correction")
+        if correction_pressure >= 0.40:
+            tags.append(f"correction_pressure:{correction_pressure:.2f}")
         if repetition > 0.45:
             tags.append("repetition")
         if residue > 0.62:
             tags.append("affective_residue")
         if closing:
             tags.append("session_closing")
-        delay = 0.0 if budget == "reflection" else (15.0 if correction else 60.0)
+        delay = 0.0 if budget == "reflection" else (15.0 if correction_pressure >= 0.62 else 60.0)
         return DreamScheduleDecision(
             scheduled=scheduled,
             reason="Reflection pressure passed threshold." if scheduled else "Ordinary turn; no consolidation run.",
@@ -160,7 +161,7 @@ class DreamConsolidationEngine:
                 confidence = float(_get(fact, "confidence", 0.0) or 0.0)
                 if confidence >= 0.74:
                     add("worldview_memory", _plain(fact), min(0.82, confidence), decay="slow", tags=["tool_grounded", "tentative_worldview"])
-        if decision.pressure >= 0.70 or bool(_get(outcome, "user_corrected", False)):
+        if decision.pressure >= 0.70 or social_score(outcome, "correction_pressure") >= 0.62:
             add("episodic_memory", {
                 "scene": [str(_get(frame, "user_text", "") or "")],
                 "eris_action": str(_get(_get(frame, "wording", None), "parsed_text", "") or ""),

@@ -1331,6 +1331,17 @@ class CognitiveFrameRecorderMixin:
         notes: tuple[str, ...] = (),
     ) -> None:
         remembered_fact = (decision.extracted_fact if decision else "") or ""
+        repair_meta = {}
+        try:
+            repair_meta = dict((getattr(frame, "metadata", {}) or {}).get("dual_axis_repair", {}) or {})
+        except Exception:
+            repair_meta = {}
+        repair_commit_policy = str(repair_meta.get("fact_commit_policy", "allow") or "allow")
+        if repair_commit_policy != "allow":
+            # Claim assistant đang quarantine/retract không được sống lại qua frame.
+            remembered_fact = ""
+            if decision is not None:
+                decision.extracted_fact = ""
         ephemeral_presence = False
         if decision is not None:
             parse_mode = str(getattr(decision, "parse_mode", "") or "")
@@ -1367,7 +1378,11 @@ class CognitiveFrameRecorderMixin:
             remembered_style_excerpt="" if ephemeral_presence else ((decision.text if decision else "")[:140] if decision else ""),
             last_text=(self.last_text or "")[:140],
             system_action=(decision.system_action if decision else "") or "",
-            notes=tuple((*notes, *(("ephemeral_presence_signal_buffer_only",) if ephemeral_presence else ()))),
+            notes=tuple((
+                *notes,
+                *(("ephemeral_presence_signal_buffer_only",) if ephemeral_presence else ()),
+                *((f"assistant_fact_{repair_commit_policy}_by_repair",) if repair_commit_policy != "allow" else ()),
+            )),
             semantic_fact=remembered_fact,
             norm_deviation=norm_deviation,
             relationship_reflection=getattr(frame.memory_update, "relationship_reflection", ""),

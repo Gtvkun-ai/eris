@@ -159,26 +159,48 @@ def update_relationship_projection(kernel: EpistemicKernel, engine: Any, event: 
 
 
 def feedback_from_outcome(outcome: Any) -> EpisodeFeedback:
+    """Chuyển outcome score sang feedback cho EpistemicKernel.
+
+    Không tạo lại các bool ``user_corrected``/``relation_ruptured``. ``kind`` chỉ
+    là route vận hành dựa trên pressure trội, không phải claim về động cơ user.
+    """
+
+    from runtime.social_outcome_appraisal import social_score
+
     tags = tuple(str(item) for item in (getattr(outcome, "tags", ()) or ()))
     text = str(getattr(outcome, "feedback_text", "") or "")
-    normalized = text.lower()
-    tone_feedback = any(marker in normalized for marker in (
-        "lạnh", "lanh", "robot", "máy móc", "may moc", "vô hồn", "vo hon",
-        "formal", "cứng", "cung", "không tự nhiên", "khong tu nhien",
-    ))
-    corrected = bool(getattr(outcome, "user_corrected", False))
-    confused = bool(getattr(outcome, "user_confused", False))
-    accepted = getattr(outcome, "user_accepted", None)
-    kind = "tone_feedback" if tone_feedback else "correction" if corrected else "acceptance" if accepted is True else "unknown"
+    acceptance = social_score(outcome, "acceptance_support")
+    correction = social_score(outcome, "correction_pressure")
+    confusion = social_score(outcome, "confusion_pressure")
+    intrusion = social_score(outcome, "intrusion_risk")
+    warmth = social_score(outcome, "relationship_warmth_signal")
+    strain = social_score(outcome, "relationship_strain_signal")
+    tone = social_score(outcome, "tone_feedback_pressure")
+    social = getattr(outcome, "social", None)
+    uncertainty = clamp01(getattr(social, "interpretation_uncertainty", 1.0), 1.0)
+
+    pressures = {
+        "tone_feedback": tone,
+        "correction": correction,
+        "confusion": confusion,
+        "intrusion_guard": intrusion,
+        "acceptance": acceptance,
+        "relationship_strain": strain,
+        "relationship_warmth": warmth,
+    }
+    kind, peak = max(pressures.items(), key=lambda item: item[1])
+    if peak < 0.40:
+        kind = "unknown"
     return EpisodeFeedback(
         kind=kind,
-        accepted=accepted,
-        corrected=corrected,
-        confused=confused,
-        felt_intruded=getattr(outcome, "user_felt_intruded", None),
-        relation_improved=getattr(outcome, "relation_improved", None),
-        relation_ruptured=getattr(outcome, "relation_ruptured", None),
-        tone_feedback=tone_feedback,
+        acceptance_support=acceptance,
+        correction_pressure=correction,
+        confusion_pressure=confusion,
+        intrusion_risk=intrusion,
+        relationship_warmth_signal=warmth,
+        relationship_strain_signal=strain,
+        tone_feedback_pressure=tone,
+        interpretation_uncertainty=uncertainty,
         text=compact_text(text, 300),
         evidence=tuple(getattr(outcome, "evidence", ()) or ()) + tags,
         confidence=clamp01(getattr(outcome, "confidence", 0.5), 0.5),

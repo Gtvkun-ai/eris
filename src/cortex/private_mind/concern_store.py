@@ -338,21 +338,36 @@ class ConcernStore:
         if not data:
             return ()
 
-        def truthy(name: str) -> bool:
-            return bool(data.get(name))
-
         def score(name: str, default: float = 1.0) -> float:
             return clamp01(data.get(name, default))
 
+        social = data.get("social") if isinstance(data.get("social"), Mapping) else {}
+        def social_score(name: str) -> float:
+            return clamp01(social.get(name, 0.0))
+
+        correction_pressure = social_score("correction_pressure")
+        confusion_pressure = social_score("confusion_pressure")
+        intrusion_risk = social_score("intrusion_risk")
+        strain_signal = social_score("relationship_strain_signal")
+        acceptance_support = social_score("acceptance_support")
+        laughter_signal = social_score("laughter_signal")
+        warmth_signal = social_score("relationship_warmth_signal")
+        negative_pressure = max(correction_pressure, confusion_pressure, intrusion_risk, strain_signal)
+        positive_support = max(acceptance_support, laughter_signal * 0.72, warmth_signal)
         negative_flags = tuple(
-            name
-            for name in ("user_corrected", "user_confused", "user_felt_intruded", "relation_ruptured")
-            if truthy(name)
+            name for name, value in (
+                ("correction_pressure", correction_pressure),
+                ("confusion_pressure", confusion_pressure),
+                ("intrusion_risk", intrusion_risk),
+                ("relationship_strain_signal", strain_signal),
+            ) if value >= 0.55
         )
         positive_flags = tuple(
-            name
-            for name in ("user_accepted", "user_laughed", "relation_improved")
-            if truthy(name)
+            name for name, value in (
+                ("acceptance_support", acceptance_support),
+                ("laughter_signal", laughter_signal),
+                ("relationship_warmth_signal", warmth_signal),
+            ) if value >= 0.55
         )
         action_success = score("action_success", 1.0)
         body_success = score("body_match_success", 1.0)
@@ -369,12 +384,12 @@ class ConcernStore:
         # +0.10 pressure mỗi tick — một trong các máy bơm nuôi vòng lặp. Chỉ coi là
         # negative khi có cờ xấu rõ hoặc success thực sự thấp.
         clearly_failed = action_success < 0.45 or body_success < 0.45
-        negative = bool(negative_flags or clearly_failed)
-        positive = bool(positive_flags and not negative and action_success >= 0.70 and body_success >= 0.70)
+        negative = bool(negative_pressure >= 0.55 or clearly_failed)
+        positive = bool(positive_support >= 0.55 and negative_pressure < 0.55 and action_success >= 0.70 and body_success >= 0.70)
         if not negative and not positive and not soothed and not hardened:
             return ()
 
-        correction = compact_text(data.get("correction_text") or data.get("rupture_reason") or data.get("ignored_reason") or "", 260)
+        correction = compact_text(data.get("correction_excerpt") or data.get("idle_evidence") or "", 260)
         evidence = tuple(str(item) for item in (data.get("evidence") or ()) if str(item).strip())[:8]
         targets = list(self.open_concerns(limit=4))
         if not targets and negative:

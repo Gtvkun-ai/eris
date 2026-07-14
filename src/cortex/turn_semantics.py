@@ -281,9 +281,7 @@ class TurnSemanticsEngine:
         return self._clamp01(pressure)
 
     def _correction_pressure(self, conversation_report: Any, affect_signal: Any, normalized: str) -> float:
-        pressure = 0.0
-        if bool(getattr(conversation_report, "correction_detected", False)):
-            pressure = max(pressure, 0.78)
+        pressure = self._safe_float(getattr(conversation_report, "correction_pressure", 0.0))
         state = getattr(conversation_report, "state", None)
         if str(getattr(state, "mode", "") or "") in {"repair", "relational_repair"}:
             pressure = max(pressure, 0.68)
@@ -374,7 +372,7 @@ class TurnSemanticsEngine:
         failure = getattr(state, "last_failure", None)
         failure_type = str(getattr(failure, "type", "") or "")
         mode = str(getattr(state, "mode", "") or "")
-        failure_active = bool(getattr(conversation_report, "failure_detected", False)) or mode in {"repair", "relational_repair"}
+        failure_active = self._safe_float(getattr(conversation_report, "failure_pressure", 0.0)) >= 0.38 or mode in {"repair", "relational_repair"}
         if failure_active and failure_type and failure_type != "none":
             pressure = max(pressure, 0.58)
         return self._clamp01(pressure)

@@ -70,6 +70,8 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence
 
+from .social_outcome_appraisal import social_score
+
 
 # =============================================================================
 # 1. Import mềm các contract nền
@@ -138,7 +140,7 @@ BudgetEscalationReason = Literal[
     "code_debugging_or_architecture",
     "high_value_decision",
     "memory_contradiction",
-    "relational_rupture",
+    "relationship_strain_pressure",
     "high_risk_or_permission_pressure",
     "context_flood_requires_deep_selection",
     "ordinary_interaction",
@@ -470,7 +472,7 @@ class BudgetSignalSnapshot:
     architecture_depth: float = 0.0
     correction_pressure: float = 0.0
     contradiction_pressure: float = 0.0
-    relational_rupture: float = 0.0
+    relationship_strain_pressure: float = 0.0
 
     # Debug/guard cho heuristic:
     # keyword pressure vẫn tồn tại, nhưng hard floor không được kích hoạt nếu thiếu semantic support.
@@ -505,10 +507,8 @@ class BudgetSignalSnapshot:
     force_deep: bool = False
     force_fast: bool = False
     has_user_text: bool = False
-    has_user_correction: bool = False
     has_technical_request: bool = False
     has_architecture_request: bool = False
-    has_relational_event: bool = False
     has_memory_contradiction: bool = False
     has_worldview_update: bool = False
     has_high_value_decision: bool = False
@@ -523,7 +523,7 @@ class BudgetSignalSnapshot:
             self.architecture_depth,
             self.correction_pressure,
             self.contradiction_pressure,
-            self.relational_rupture,
+            self.relationship_strain_pressure,
             self.affective_residue,
             self.homeostasis_load,
             self.goal_pressure,
@@ -730,7 +730,7 @@ class CognitiveBudgetConfig:
 
     # Sàn nâng mode.
     strong_correction_threshold: float = 0.62
-    relational_rupture_threshold: float = 0.58
+    relationship_strain_pressure_threshold: float = 0.58
     memory_conflict_threshold: float = 0.55
     high_risk_threshold: float = 0.68
     context_flood_threshold: float = 0.72
@@ -1249,7 +1249,7 @@ class CognitiveBudgetEngine:
             text_blob, evidence, outcome, self_observation, affect_signal=affect_signal, conversation=conversation, has_user_text=has_user_text
         )
         contradiction_pressure = self._estimate_contradiction_pressure(text_blob, evidence, belief, self_observation)
-        relational_rupture = self._estimate_relational_rupture(text_blob, relation, outcome, self_observation)
+        relationship_strain_pressure = self._estimate_relationship_strain_pressure(text_blob, relation, outcome, self_observation)
         affective_residue = self._estimate_affective_residue(text_blob, affect, relation)
         homeostasis_load = self._estimate_homeostasis_load(homeostasis, affect)
         goal_pressure, goal_permission = self._estimate_goal_pressure(frame, text_blob)
@@ -1281,7 +1281,7 @@ class CognitiveBudgetEngine:
             salience_priority=salience_priority,
             risk_pressure=risk_pressure,
             technical_depth=technical_depth,
-            relational_rupture=relational_rupture,
+            relationship_strain_pressure=relationship_strain_pressure,
             idle_pressure=idle_pressure,
         )
 
@@ -1297,7 +1297,7 @@ class CognitiveBudgetEngine:
             architecture_depth=architecture_depth,
             correction_pressure=correction_pressure,
             contradiction_pressure=contradiction_pressure,
-            relational_rupture=relational_rupture,
+            relationship_strain_pressure=relationship_strain_pressure,
             technical_semantic_support=technical_semantic_support,
             architecture_semantic_support=architecture_semantic_support,
             correction_semantic_support=correction_semantic_support,
@@ -1329,10 +1329,8 @@ class CognitiveBudgetEngine:
             force_deep=bool(force_deep),
             force_fast=bool(force_fast),
             has_user_text=has_user_text,
-            has_user_correction=correction_pressure >= 0.45,
             has_technical_request=technical_depth >= 0.45,
             has_architecture_request=architecture_depth >= 0.45,
-            has_relational_event=relational_rupture >= 0.40,
             has_memory_contradiction=memory_conflict >= 0.45 or contradiction_pressure >= 0.55,
             has_worldview_update=worldview_pressure >= 0.48,
             has_high_value_decision=self._estimate_high_value_decision(
@@ -1802,7 +1800,7 @@ class CognitiveBudgetEngine:
                 step=0.12,
             ),
         )
-        if safe_get(outcome, "user_corrected", False):
+        if social_score(outcome, "correction_pressure") >= 0.62:
             semantic = max(semantic, 0.78)
         if safe_get(self_observation, "overread_detected", False):
             semantic = max(semantic, 0.70)
@@ -1835,14 +1833,13 @@ class CognitiveBudgetEngine:
             score = max(score, 0.52)
         return clamp01(score)
 
-    def _estimate_relational_rupture(self, text_blob: str, relation: Any, outcome: Any, self_observation: Any) -> float:
+    def _estimate_relationship_strain_pressure(self, text_blob: str, relation: Any, outcome: Any, self_observation: Any) -> float:
         score = weighted_keyword_score(text_blob, {"rupture": RELATIONAL_RUPTURE_KEYWORDS}, {"rupture": 0.64})
         for attr in ("rupture", "repair_need", "dignity_defense", "exposure_recoil", "overread_correction"):
             score = max(score, clamp01(safe_get(relation, attr, 0.0)) * (1.0 if attr in {"rupture", "repair_need"} else 0.85))
-        if safe_get(outcome, "relation_ruptured", False):
-            score = max(score, 0.82)
-        if safe_get(outcome, "user_felt_intruded", False):
-            score = max(score, 0.74)
+        strain = social_score(outcome, "relationship_strain_signal")
+        intrusion = social_score(outcome, "intrusion_risk")
+        score = max(score, strain * 0.88, intrusion * 0.82)
         if safe_get(self_observation, "distance_violation", False) or safe_get(self_observation, "curiosity_intrusion", False):
             score = max(score, 0.68)
         return clamp01(score)
@@ -1994,10 +1991,11 @@ class CognitiveBudgetEngine:
         shutdown_pressure: float,
     ) -> float:
         score = weighted_keyword_score(text_blob, {"reflection": REFLECTION_KEYWORDS}, {"reflection": 0.64})
-        if safe_get(outcome, "user_corrected", False):
-            score = max(score, 0.68)
-        if safe_get(outcome, "relation_ruptured", False) or safe_get(outcome, "user_felt_intruded", False):
-            score = max(score, 0.72)
+        correction_pressure = social_score(outcome, "correction_pressure")
+        strain_pressure = social_score(outcome, "relationship_strain_signal")
+        intrusion_risk = social_score(outcome, "intrusion_risk")
+        score = max(score, correction_pressure * 0.86)
+        score = max(score, strain_pressure * 0.88, intrusion_risk * 0.86)
         for attr in ("overread_detected", "distance_violation", "curiosity_intrusion", "spoke_too_much", "hid_too_much", "modality_mismatch", "cultural_misread"):
             if safe_get(self_observation, attr, False):
                 score = max(score, 0.56)
@@ -2054,7 +2052,7 @@ class CognitiveBudgetEngine:
         salience_priority: float,
         risk_pressure: float,
         technical_depth: float,
-        relational_rupture: float,
+        relationship_strain_pressure: float,
         idle_pressure: float,
     ) -> float:
         if channel not in {"autonomous", "session_start", "unknown"}:
@@ -2066,7 +2064,7 @@ class CognitiveBudgetEngine:
             score += 0.24
         if salience_priority < self.config.low_salience_threshold:
             score += 0.20
-        if risk_pressure < 0.20 and technical_depth < 0.25 and relational_rupture < 0.20:
+        if risk_pressure < 0.20 and technical_depth < 0.25 and relationship_strain_pressure < 0.20:
             score += 0.18
         if idle_pressure >= self.config.fast_idle_pressure_threshold:
             score += 0.10
@@ -2114,7 +2112,7 @@ class CognitiveBudgetEngine:
         fast -= s.technical_depth * 0.20
         fast -= s.architecture_depth * 0.30
         fast -= s.correction_pressure * 0.26
-        fast -= s.relational_rupture * 0.28
+        fast -= s.relationship_strain_pressure * 0.28
         fast -= s.memory_conflict * 0.24
         fast -= s.reflection_pressure() * 0.34
         if s.channel in {"chat", "force_speak"}:
@@ -2130,14 +2128,14 @@ class CognitiveBudgetEngine:
         normal += (1.0 - abs(s.signal_density - 0.45)) * 0.10
         normal -= max(0.0, s.architecture_depth - 0.55) * 0.22
         normal -= max(0.0, s.correction_pressure - 0.60) * 0.22
-        normal -= max(0.0, s.relational_rupture - 0.55) * 0.18
+        normal -= max(0.0, s.relationship_strain_pressure - 0.55) * 0.18
         normal -= max(0.0, s.reflection_pressure() - 0.62) * 0.25
 
         deep = 0.16
         deep += s.technical_depth * 0.30
         deep += s.architecture_depth * 0.42
         deep += s.correction_pressure * 0.30
-        deep += s.relational_rupture * 0.28
+        deep += s.relationship_strain_pressure * 0.28
         deep += s.memory_conflict * 0.32
         deep += s.contradiction_pressure * 0.25
         deep += s.context_pressure * 0.20
@@ -2245,7 +2243,7 @@ class CognitiveBudgetEngine:
             and snapshot.correction_semantic_support >= semantic_floor
         ):
             mode = self._max_mode(mode, "deep")
-        if snapshot.relational_rupture >= self.config.relational_rupture_threshold:
+        if snapshot.relationship_strain_pressure >= self.config.relationship_strain_pressure_threshold:
             mode = self._max_mode(mode, "deep")
         if snapshot.memory_conflict >= self.config.memory_conflict_threshold:
             mode = self._max_mode(mode, "deep")
@@ -2305,8 +2303,8 @@ class CognitiveBudgetEngine:
             escalation.append("high_value_decision")
         if snapshot.memory_conflict >= self.config.memory_conflict_threshold:
             escalation.append("memory_contradiction")
-        if snapshot.relational_rupture >= self.config.relational_rupture_threshold:
-            escalation.append("relational_rupture")
+        if snapshot.relationship_strain_pressure >= self.config.relationship_strain_pressure_threshold:
+            escalation.append("relationship_strain_pressure")
         if snapshot.risk_pressure >= self.config.high_risk_threshold or snapshot.privacy_pressure >= self.config.privacy_pressure_high:
             escalation.append("high_risk_or_permission_pressure")
         if snapshot.context_pressure >= self.config.context_flood_threshold:
@@ -2357,7 +2355,7 @@ class CognitiveBudgetEngine:
         return clamp(confidence, 0.35, 0.96)
 
     def _estimate_urgency(self, mode: BudgetMode, snapshot: BudgetSignalSnapshot) -> BudgetUrgency:
-        pressure = max(snapshot.risk_pressure, snapshot.salience_priority, snapshot.correction_pressure, snapshot.relational_rupture)
+        pressure = max(snapshot.risk_pressure, snapshot.salience_priority, snapshot.correction_pressure, snapshot.relationship_strain_pressure)
         if snapshot.shutdown_pressure > 0.90:
             return "medium"
         if mode == "reflection":
@@ -2499,9 +2497,9 @@ class CognitiveBudgetEngine:
         # Understanding layers.
         add("world_scene_builder", mode in {"normal", "deep"}, "scene needed for normal/deep interpretation", priority=max(snapshot.salience_priority, snapshot.technical_depth), optional=(mode == "normal"))
         add("world_interpreter", mode in {"normal", "deep"}, "interpret selected scene, not raw world", priority=max(snapshot.ambiguity, snapshot.technical_depth), optional=(mode == "normal"))
-        add("sociocultural_context", mode in {"normal", "deep"} or snapshot.relational_rupture > 0.40, "Vietnamese/dev/social norm can change meaning", priority=max(snapshot.relational_rupture, snapshot.ambiguity), optional=(mode != "deep"))
+        add("sociocultural_context", mode in {"normal", "deep"} or snapshot.relationship_strain_pressure > 0.40, "Vietnamese/dev/social norm can change meaning", priority=max(snapshot.relationship_strain_pressure, snapshot.ambiguity), optional=(mode != "deep"))
         add("meaning_hypothesis", mode in {"normal", "deep"}, "meaning ranking required before ToM/speech", priority=max(snapshot.user_directness, snapshot.ambiguity, snapshot.technical_depth))
-        add("theory_of_mind", mode == "deep" or (mode == "normal" and snapshot.ambiguity > 0.45), "ToM deep only when ambiguity/rupture justifies it", priority=max(snapshot.ambiguity, snapshot.relational_rupture), optional=(mode != "deep"))
+        add("theory_of_mind", mode == "deep" or (mode == "normal" and snapshot.ambiguity > 0.45), "ToM deep only when ambiguity/rupture justifies it", priority=max(snapshot.ambiguity, snapshot.relationship_strain_pressure), optional=(mode != "deep"))
 
         # Inquiry / knowledge / belief.
         add("epistemic_drive", mode == "deep" or snapshot.worldview_pressure > 0.50, "curiosity must be gated by privacy and value", priority=max(snapshot.worldview_pressure, snapshot.uncertainty), optional=True)
@@ -2511,11 +2509,11 @@ class CognitiveBudgetEngine:
         add("memory_cognition", profile.allow_memory_cognition, "memory is cognition, but budgeted", priority=max(snapshot.goal_pressure, snapshot.memory_conflict, snapshot.correction_pressure), optional=(mode != "deep"), max_items=profile.max_memory_items)
 
         # Values / decisions.
-        add("value_resolution", mode == "deep" or snapshot.risk_pressure > 0.55 or snapshot.privacy_pressure > 0.55, "resolve value conflict when risk/privacy/relationship matters", priority=max(snapshot.risk_pressure, snapshot.privacy_pressure, snapshot.relational_rupture), optional=(mode != "deep"))
-        add("predictive_simulation", profile.allow_predictive_simulation, "simulate action outcomes only when cost is justified", priority=max(snapshot.risk_pressure, snapshot.relational_rupture, snapshot.has_high_value_decision and 0.70 or 0.0), optional=True, max_items=profile.max_simulations)
+        add("value_resolution", mode == "deep" or snapshot.risk_pressure > 0.55 or snapshot.privacy_pressure > 0.55, "resolve value conflict when risk/privacy/relationship matters", priority=max(snapshot.risk_pressure, snapshot.privacy_pressure, snapshot.relationship_strain_pressure), optional=(mode != "deep"))
+        add("predictive_simulation", profile.allow_predictive_simulation, "simulate action outcomes only when cost is justified", priority=max(snapshot.risk_pressure, snapshot.relationship_strain_pressure, snapshot.has_high_value_decision and 0.70 or 0.0), optional=True, max_items=profile.max_simulations)
         add("cognitive_arbitration", mode in {"normal", "deep"} or snapshot.risk_pressure > 0.45, "speech/silence/action competition needs arbitration", priority=max(snapshot.speech_need, snapshot.risk_pressure, snapshot.goal_pressure))
         add("agency_engine", mode in {"normal", "deep"} or snapshot.speech_need > 0.45, "commit or wait; do not drift", priority=max(snapshot.speech_need, snapshot.goal_pressure))
-        add("relational_dynamics", mode in {"normal", "deep"} or snapshot.relational_rupture > 0.30, "relationship pressure changes surface permission", priority=snapshot.relational_rupture, optional=(mode == "fast"))
+        add("relational_dynamics", mode in {"normal", "deep"} or snapshot.relationship_strain_pressure > 0.30, "relationship pressure changes surface permission", priority=snapshot.relationship_strain_pressure, optional=(mode == "fast"))
         add("permission_engine", True, "permission gates action space; it must not rewrite output", priority=max(snapshot.privacy_pressure, snapshot.risk_pressure, 0.60))
         add("calculated_noise", mode in {"normal", "deep"} and snapshot.risk_pressure < 0.60, "bounded noise only when it cannot harm truth", priority=0.25, optional=True)
 
@@ -2529,9 +2527,9 @@ class CognitiveBudgetEngine:
 
         # Execution/outcome/reflection.
         add("execution_layer", mode != "reflection", "execute selected public/system/body action", priority=max(snapshot.speech_need, snapshot.body_need))
-        add("outcome_observer", mode in {"normal", "deep", "reflection"}, "observe aftermath for learning", priority=max(snapshot.correction_pressure, snapshot.relational_rupture, 0.35), optional=(mode == "normal"))
+        add("outcome_observer", mode in {"normal", "deep", "reflection"}, "observe aftermath for learning", priority=max(snapshot.correction_pressure, snapshot.relationship_strain_pressure, 0.35), optional=(mode == "normal"))
         add("self_observation", mode in {"deep", "reflection"}, "needed after overread/correction/major action", priority=max(snapshot.reflection_debt, snapshot.correction_pressure), optional=(mode == "deep"))
-        add("repair_memory", mode == "reflection" or snapshot.correction_pressure > 0.55 or snapshot.relational_rupture > 0.55, "repair memory prevents repeated failure", priority=max(snapshot.correction_pressure, snapshot.relational_rupture), optional=(mode != "reflection"))
+        add("repair_memory", mode == "reflection" or snapshot.correction_pressure > 0.55 or snapshot.relationship_strain_pressure > 0.55, "repair memory prevents repeated failure", priority=max(snapshot.correction_pressure, snapshot.relationship_strain_pressure), optional=(mode != "reflection"))
         add("state_committer", True, "state changes must go through commit protocol", priority=0.85)
         add("dream_scheduler", profile.allow_dream_schedule and (snapshot.reflection_debt > 0.50 or mode in {"deep", "reflection"}), "schedule consolidation only when there is actual residue/debt", priority=snapshot.reflection_debt, optional=True)
 

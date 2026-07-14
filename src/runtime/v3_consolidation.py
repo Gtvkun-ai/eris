@@ -7,6 +7,7 @@ import hashlib
 from typing import Any
 
 from cortex.daydream_consolidation import DaydreamPacket
+from .social_outcome_appraisal import social_score
 
 
 def _get(obj: Any, name: str, default: Any = None) -> Any:
@@ -77,9 +78,16 @@ def build_v3_daydream_packets(frame: Any, *, limit: int = 12) -> tuple[DaydreamP
         add("repair", adjustment, confidence=0.72, importance=0.80)
 
     outcome = _get(frame, "outcome", None)
-    correction = str(_get(outcome, "correction_text", "") or "").strip()
-    if correction:
-        add("repair", correction, confidence=0.86, importance=0.92, metadata={"user_correction": True})
+    correction = str(_get(outcome, "correction_excerpt", _get(outcome, "correction_text", "")) or "").strip()
+    correction_pressure = social_score(outcome, "correction_pressure")
+    if correction and correction_pressure >= 0.52:
+        add(
+            "repair",
+            correction,
+            confidence=min(0.84, 0.48 + correction_pressure * 0.36),
+            importance=0.70 + correction_pressure * 0.20,
+            metadata={"correction_pressure": round(correction_pressure, 4), "social_claim": "unconfirmed"},
+        )
 
     return tuple(packets[:limit])
 

@@ -283,6 +283,11 @@ class RelationshipDynamicsState:
     overread_correction: float = 0.0
     irritation_memory: float = 0.0
     technical_respect: float = 0.25
+    # Tách "user dành thời gian/tiếp tục tương tác" khỏi affection chắc chắn.
+    # Engagement có thể tăng nhờ nhiều lượt, continuity và repair playful mà
+    # không biến mọi tin nhắn thành tuyên bố tình cảm.
+    engagement_investment: float = 0.0
+    playful_safety: float = 0.0
     last_event: str = "none"
     last_update_turn: int = 0
 
@@ -300,6 +305,8 @@ class RelationshipDynamicsState:
         self.overread_correction = clamp01(self.overread_correction)
         self.irritation_memory = clamp01(self.irritation_memory)
         self.technical_respect = clamp01(self.technical_respect)
+        self.engagement_investment = clamp01(self.engagement_investment)
+        self.playful_safety = clamp01(self.playful_safety)
         self.last_event = str(self.last_event or "none")
         self.last_update_turn = int(max(0, self.last_update_turn or 0))
         return self
@@ -320,6 +327,8 @@ class RelationshipDynamicsState:
             "overread_correction": self.overread_correction,
             "irritation_memory": self.irritation_memory,
             "technical_respect": self.technical_respect,
+            "engagement_investment": self.engagement_investment,
+            "playful_safety": self.playful_safety,
             "last_event": self.last_event,
             "last_update_turn": self.last_update_turn,
         }
@@ -342,6 +351,8 @@ class RelationshipDynamicsState:
             overread_correction=clamp01(data.get("overread_correction", 0.0)),
             irritation_memory=clamp01(data.get("irritation_memory", 0.0)),
             technical_respect=clamp01(data.get("technical_respect", 0.25)),
+            engagement_investment=clamp01(data.get("engagement_investment", 0.0)),
+            playful_safety=clamp01(data.get("playful_safety", 0.0)),
             last_event=str(data.get("last_event", "none") or "none"),
             last_update_turn=int(max(0, _safe_float(data.get("last_update_turn", 0)))),
         ).clamp()
@@ -362,6 +373,8 @@ class RelationshipDynamicsState:
             f"dignity_defense={self.dignity_defense:.2f}; "
             f"overread_correction={self.overread_correction:.2f}; "
             f"technical_respect={self.technical_respect:.2f}; "
+            f"engagement_investment={self.engagement_investment:.2f}; "
+            f"playful_safety={self.playful_safety:.2f}; "
             f"last_event={self.last_event}."
         )
 
@@ -395,12 +408,11 @@ class RelationshipTurnEvent:
     affect: AffectSemanticSignal = field(default_factory=AffectSemanticSignal.empty)
     turn_index: int = 0
 
-    user_corrected_misread: bool = False
-    user_accepted_style: bool = False
-    user_objectified: bool = False
-    repeated_project_context: bool = False
+    # Chỉ giữ pressure/score; không còn các verdict bool về user.
+    surface_correction_pressure: float = 0.0
+    objectification_pressure: float = 0.0
 
-    # Score mới, dùng để update gradient.
+    # Score dùng để update gradient.
     repeated_project_context_score: float = 0.0
     accepted_answer_score: float = 0.0
     accepted_style_score: float = 0.0
@@ -414,10 +426,24 @@ class RelationshipTurnEvent:
     relationship_evidence: tuple[RelationshipEvidence, ...] = ()
     relationship_debug: Mapping[str, float] = field(default_factory=dict)
 
+    # Projection từ Dual-Axis Repair. Scalar ở đây để cortex không phải import
+    # runtime module, giữ dependency đi đúng chiều.
+    repair_mismatch_score: float = 0.0
+    repair_correction_score: float = 0.0
+    repair_playful_score: float = 0.0
+    repair_affectionate_score: float = 0.0
+    repair_irritation_score: float = 0.0
+    repair_boundary_score: float = 0.0
+    repair_engagement_score: float = 0.0
+    repair_strategy: str = "continue_normally"
+    repair_claim_disposition: str = "preserve"
+    repair_interpretation_uncertainty: float = 0.0
+    claim_retraction_pressure: float = 0.0
+
     assistant_emotional_exposure: float = 0.0
-    assistant_overread: bool = False
-    assistant_too_verbose: bool = False
-    assistant_too_performative: bool = False
+    assistant_overread_pressure: float = 0.0
+    assistant_verbosity_pressure: float = 0.0
+    assistant_performative_pressure: float = 0.0
     assistant_technical_success: float = 0.0
 
     session_gap_hours: float = 0.0
@@ -430,13 +456,22 @@ class RelationshipTurnEvent:
         affect: AffectSemanticSignal,
         turn_index: int = 0,
         assistant_emotional_exposure: float = 0.0,
-        assistant_overread: bool = False,
-        assistant_too_verbose: bool = False,
-        assistant_too_performative: bool = False,
+        assistant_overread_pressure: float = 0.0,
+        assistant_verbosity_pressure: float = 0.0,
+        assistant_performative_pressure: float = 0.0,
         assistant_technical_success: float = 0.0,
-        repeated_project_context: bool | None = None,
-        user_accepted_style: bool | None = None,
         relationship_scores: RelationshipEventScores | None = None,
+        repair_mismatch_score: float = 0.0,
+        repair_correction_score: float = 0.0,
+        repair_playful_score: float = 0.0,
+        repair_affectionate_score: float = 0.0,
+        repair_irritation_score: float = 0.0,
+        repair_boundary_score: float = 0.0,
+        repair_engagement_score: float = 0.0,
+        repair_strategy: str = "continue_normally",
+        repair_claim_disposition: str = "preserve",
+        repair_interpretation_uncertainty: float = 0.0,
+        claim_retraction_pressure: float = 0.0,
         session_gap_hours: float = 0.0,
     ) -> "RelationshipTurnEvent":
         """Tạo event từ affect + scores đã build.
@@ -461,11 +496,6 @@ class RelationshipTurnEvent:
         user_requests_less_distance = _score(getattr(scores, "user_requests_less_distance", 0.0))
         defensive_risk = _score(getattr(scores, "defensive_risk", 0.0))
 
-        # Override bool cũ nếu caller cố ý truyền. Đây là lối tương thích, không
-        # phải đường khuyến nghị.
-        repeated_bool = bool(repeated_project_context) if repeated_project_context is not None else repeated_score >= 0.62
-        accepted_bool = bool(user_accepted_style) if user_accepted_style is not None else accepted_style_score >= 0.62
-
         # Nếu không có builder, technical_success cao vẫn có thể xem là acceptance
         # hành động/kỹ thuật, nhưng không tự xem là accepted_style.
         if relationship_scores is None and technical_success >= 0.65:
@@ -480,10 +510,11 @@ class RelationshipTurnEvent:
             user_text=user_text,
             affect=affect,
             turn_index=turn_index,
-            user_corrected_misread=clamp01(getattr(affect, "correction", 0.0)) >= 0.45,
-            user_accepted_style=accepted_bool,
-            user_objectified=clamp01(getattr(affect, "objectification", 0.0)) >= 0.40,
-            repeated_project_context=repeated_bool,
+            surface_correction_pressure=max(
+                clamp01(getattr(affect, "correction", 0.0)),
+                clamp01(repair_correction_score),
+            ),
+            objectification_pressure=clamp01(getattr(affect, "objectification", 0.0)),
             repeated_project_context_score=repeated_score,
             accepted_answer_score=accepted_answer_score,
             accepted_style_score=accepted_style_score,
@@ -496,10 +527,21 @@ class RelationshipTurnEvent:
             event_confidence=_score(scores.confidence),
             relationship_evidence=tuple(scores.evidence or ()),
             relationship_debug=scores.debug or {},
+            repair_mismatch_score=clamp01(repair_mismatch_score),
+            repair_correction_score=clamp01(repair_correction_score),
+            repair_playful_score=clamp01(repair_playful_score),
+            repair_affectionate_score=clamp01(repair_affectionate_score),
+            repair_irritation_score=clamp01(repair_irritation_score),
+            repair_boundary_score=clamp01(repair_boundary_score),
+            repair_engagement_score=clamp01(repair_engagement_score),
+            repair_strategy=str(repair_strategy or "continue_normally"),
+            repair_claim_disposition=str(repair_claim_disposition or "preserve"),
+            repair_interpretation_uncertainty=clamp01(repair_interpretation_uncertainty),
+            claim_retraction_pressure=clamp01(claim_retraction_pressure),
             assistant_emotional_exposure=clamp01(assistant_emotional_exposure),
-            assistant_overread=bool(assistant_overread),
-            assistant_too_verbose=bool(assistant_too_verbose),
-            assistant_too_performative=bool(assistant_too_performative),
+            assistant_overread_pressure=clamp01(assistant_overread_pressure),
+            assistant_verbosity_pressure=clamp01(assistant_verbosity_pressure),
+            assistant_performative_pressure=clamp01(assistant_performative_pressure),
             assistant_technical_success=technical_success,
             session_gap_hours=max(0.0, _safe_float(session_gap_hours)),
         )
@@ -567,9 +609,9 @@ class RelationshipDynamicsEngine:
         active_window_kind: str = "",
         turn_index: int = 0,
         assistant_emotional_exposure: float = 0.0,
-        assistant_overread: bool = False,
-        assistant_too_verbose: bool = False,
-        assistant_too_performative: bool = False,
+        assistant_overread_pressure: float = 0.0,
+        assistant_verbosity_pressure: float = 0.0,
+        assistant_performative_pressure: float = 0.0,
         assistant_technical_success: float = 0.0,
         session_gap_hours: float = 0.0,
         # Context mới cho builder. Caller có thể bỏ qua, score sẽ thấp hơn.
@@ -587,6 +629,7 @@ class RelationshipDynamicsEngine:
         explicit_accepted_answer: float | None = None,
         explicit_accepted_action: float | None = None,
         relational_feedback: Any = None,
+        repair_appraisal: Any = None,
     ) -> RelationshipTurnEvent:
         """Tạo RelationshipTurnEvent từ text + context.
 
@@ -620,16 +663,47 @@ class RelationshipDynamicsEngine:
             relational_feedback=relational_feedback,
             evidence_ids=evidence_ids,
         )
+        # Các score là hypothesis pressure, không phải verdict về động cơ user.
+        repair_mismatch_score = _score(getattr(repair_appraisal, "claim_contest_score", 0.0))
+        repair_correction_score = _score(getattr(repair_appraisal, "correction_pressure", 0.0))
+        repair_playful_score = _score(getattr(repair_appraisal, "playful_score", 0.0))
+        repair_affectionate_score = _score(getattr(repair_appraisal, "affectionate_score", 0.0))
+        repair_irritation_score = _score(getattr(repair_appraisal, "irritation_score", 0.0))
+        repair_boundary_score = _score(getattr(repair_appraisal, "boundary_score", 0.0))
+        repair_engagement_score = _score(getattr(repair_appraisal, "engagement_score", 0.0))
+        repair_strategy = str(getattr(repair_appraisal, "preferred_posture", "continue_normally") or "continue_normally")
+        repair_claim_disposition = str(
+            getattr(repair_appraisal, "claim_disposition", "preserve") or "preserve"
+        )
+        repair_interpretation_uncertainty = _score(
+            getattr(repair_appraisal, "interpretation_uncertainty", 0.0)
+        )
+        # Policy disposition được chiếu thành pressure, không thành verdict bool.
+        claim_retraction_pressure = max(
+            _score(getattr(repair_appraisal, "claim_retraction_score", 0.0)),
+            0.92 if repair_claim_disposition == "retract" else 0.48 if repair_claim_disposition == "quarantine" else 0.0,
+        )
         return RelationshipTurnEvent.from_affect(
             user_text=user_text,
             affect=affect,
             turn_index=turn_index,
             assistant_emotional_exposure=assistant_emotional_exposure,
-            assistant_overread=assistant_overread,
-            assistant_too_verbose=assistant_too_verbose,
-            assistant_too_performative=assistant_too_performative,
+            assistant_overread_pressure=assistant_overread_pressure,
+            assistant_verbosity_pressure=assistant_verbosity_pressure,
+            assistant_performative_pressure=assistant_performative_pressure,
             assistant_technical_success=assistant_technical_success,
             relationship_scores=scores,
+            repair_mismatch_score=repair_mismatch_score,
+            repair_correction_score=repair_correction_score,
+            repair_playful_score=repair_playful_score,
+            repair_affectionate_score=repair_affectionate_score,
+            repair_irritation_score=repair_irritation_score,
+            repair_boundary_score=repair_boundary_score,
+            repair_engagement_score=repair_engagement_score,
+            repair_strategy=repair_strategy,
+            repair_claim_disposition=repair_claim_disposition,
+            repair_interpretation_uncertainty=repair_interpretation_uncertainty,
+            claim_retraction_pressure=claim_retraction_pressure,
             session_gap_hours=session_gap_hours,
         )
 
@@ -667,6 +741,29 @@ class RelationshipDynamicsEngine:
         user_requests_less_distance = _score(getattr(event, "user_requests_less_distance", 0.0))
         defensive_risk = _score(getattr(event, "defensive_risk", 0.0))
 
+        # Dual-Axis Repair giữ riêng phần đúng/sai và phần quan hệ. Một lượt có
+        # thể vừa rút claim sai, vừa là cú chọc thân mật. Vì vậy không được dùng
+        # correction như công tắc "quan hệ nứt" nữa.
+        repair_mismatch = _score(getattr(event, "repair_mismatch_score", 0.0))
+        repair_correction = _score(getattr(event, "repair_correction_score", 0.0))
+        repair_playful = _score(getattr(event, "repair_playful_score", 0.0))
+        repair_affectionate = _score(getattr(event, "repair_affectionate_score", 0.0))
+        repair_irritation = _score(getattr(event, "repair_irritation_score", 0.0))
+        repair_boundary = _score(getattr(event, "repair_boundary_score", 0.0))
+        repair_engagement = _score(getattr(event, "repair_engagement_score", 0.0))
+        repair_disposition = str(getattr(event, "repair_claim_disposition", "preserve") or "preserve")
+        repair_uncertainty = _score(getattr(event, "repair_interpretation_uncertainty", 0.0))
+        claim_retraction_pressure = _score(getattr(event, "claim_retraction_pressure", 0.0))
+        # Đây là fit cho update policy, không phải claim rằng user "đang đùa".
+        playful_repair_fit = clamp01(
+            repair_playful
+            * max(repair_mismatch, repair_correction)
+            * (1.0 - repair_boundary * 0.65)
+            * (1.0 - repair_uncertainty * 0.30)
+        )
+        playful_repair = playful_repair_fit >= 0.18 and repair_irritation < 0.72
+        boundary_repair_fit = claim_retraction_pressure * repair_boundary
+
         # 1) Familiarity / ritual từ repeated_project_context score.
         familiarity_gain = 0.006
         
@@ -689,28 +786,93 @@ class RelationshipDynamicsEngine:
             familiarity_gain += 0.010 * tech
             current.technical_respect = _nudge(current.technical_respect, 0.012 * tech)
             notes.append("technical:ongoing_work")
+
+        # User dành thời gian ở lại, sửa, chọc hoặc tiếp tục cùng một project là
+        # evidence engagement hợp lệ. Nó tăng investment/familiarity, nhưng không
+        # tự biến thành "user yêu ERIS". Máy móc cũng nên biết phân biệt hai việc,
+        # dù lịch sử chatbot đã chứng minh đây là một tham vọng khá lớn.
+        continuity_engagement = min(0.42, max(0, event.turn_index) * 0.035)
+        engagement_signal = max(
+            repair_engagement,
+            repeated_score * 0.82,
+            accepted_action * 0.62,
+            continuity_engagement,
+        )
+        if engagement_signal >= 0.12:
+            engagement_delta = min(0.026, 0.004 + engagement_signal * 0.020)
+            current.engagement_investment = _nudge(current.engagement_investment, engagement_delta)
+            familiarity_gain += min(0.010, engagement_signal * 0.008)
+            notes.append(f"engagement:continued_investment:{engagement_signal:.2f}")
+
+        if playful_repair:
+            # Chỉ cập nhật theo fit xác suất. Không ghi "user chắc chắn đang đùa".
+            current.playful_safety = _nudge(current.playful_safety, 0.004 + playful_repair_fit * 0.016)
+            familiarity_gain += 0.002 + playful_repair_fit * 0.004
+            notes.append(f"repair:playful_hypothesis_fit:{playful_repair_fit:.2f}")
+        elif repair_boundary >= 0.55:
+            current.playful_safety = _nudge(current.playful_safety, -(0.018 + repair_boundary * 0.030))
+            notes.append(f"boundary:playful_safety_reduced:{repair_boundary:.2f}")
+
         current.familiarity = _nudge(current.familiarity, familiarity_gain)
 
         # 2) Correction / misread repair pressure.
-        correction_score = max(clamp01(getattr(affect, "correction", 0.0)), _score(getattr(event, "relationship_debug", {}).get("correction", 0.0)))
-        if event.user_corrected_misread or correction_score >= 0.45:
-            current.rupture = _nudge(current.rupture, 0.070 + correction_score * 0.060)
-            current.overread_correction = _nudge(current.overread_correction, 0.085 + correction_score * 0.070)
-            current.preferred_distance = _nudge(current.preferred_distance, 0.035)
-            current.trust = _nudge(current.trust, -0.025)
-            current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, -0.035)
-            notes.append("rupture:user_corrected_misread")
+        correction_score = max(
+            clamp01(getattr(affect, "correction", 0.0)),
+            _score(getattr(event, "relationship_debug", {}).get("correction", 0.0)),
+            repair_correction,
+        )
+        correction_pressure = max(_score(getattr(event, "surface_correction_pressure", 0.0)), claim_retraction_pressure)
+        if repair_disposition == "quarantine":
+            # Học một lesson mềm: claim có thể đã overread, nhưng chưa đủ quyền
+            # biến nó thành rupture/trust loss. State tăng theo pressure và tự decay.
+            soft_lesson = max(repair_mismatch, repair_correction) * (1.0 - repair_uncertainty * 0.45)
+            current.overread_correction = _nudge(current.overread_correction, 0.010 + soft_lesson * 0.024)
+            current.repair = _nudge(current.repair, 0.004 + repair_engagement * 0.008)
+            notes.append(f"repair:claim_quarantined:{soft_lesson:.2f}")
+        elif correction_pressure >= 0.58:
+            # Chỉ hard correction khi user phủ định rõ/evidence hội tụ.
+            current.overread_correction = _nudge(
+                current.overread_correction,
+                0.045 + max(correction_score, repair_mismatch) * 0.045,
+            )
+
+            if playful_repair:
+                current.rupture = _nudge(current.rupture, 0.004 + repair_irritation * 0.010)
+                current.repair = _nudge(current.repair, 0.016 + repair_engagement * 0.018)
+                current.trust = _nudge(current.trust, 0.002 if repair_engagement >= 0.55 else -0.001)
+                current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, 0.003)
+                notes.append("repair:explicit_but_playful_fit")
+            elif boundary_repair_fit >= 0.42:
+                current.rupture = _nudge(current.rupture, 0.055 + correction_score * 0.045)
+                current.preferred_distance = _nudge(current.preferred_distance, 0.050)
+                current.trust = _nudge(current.trust, -0.022)
+                current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, -0.028)
+                notes.append("boundary:explicit_correction_and_limit")
+            else:
+                severity = max(repair_irritation, correction_score * 0.58)
+                current.rupture = _nudge(current.rupture, 0.018 + severity * 0.045)
+                current.preferred_distance = _nudge(current.preferred_distance, 0.006 + repair_irritation * 0.020)
+                current.trust = _nudge(current.trust, -(0.005 + repair_irritation * 0.014))
+                current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, -(0.006 + repair_irritation * 0.016))
+                notes.append("repair:explicit_user_correction")
 
         # 3) Conflict mềm. Conflict không luôn là quan hệ nứt; có thể user đang chửi code.
         conflict = clamp01(getattr(affect, "conflict", 0.0))
         objectification = clamp01(getattr(affect, "objectification", 0.0))
         if conflict >= 0.50:
             conflict_delta = 0.025 + conflict * 0.035
-            if objectification >= 0.30 or correction_score >= 0.35:
+            if objectification >= 0.30 or (correction_score >= 0.35 and not playful_repair):
                 conflict_delta += 0.035
+            if playful_repair:
+                # Sarcasm/playful correction có thể làm classifier thấy conflict.
+                # Không cộng phạt hai lần chỉ vì một câu vừa có răng vừa có nụ cười.
+                conflict_delta *= 0.30
             current.rupture = _nudge(current.rupture, conflict_delta)
-            current.irritation_memory = _nudge(current.irritation_memory, 0.020 + conflict * 0.025)
-            notes.append("tension:conflict_signal")
+            current.irritation_memory = _nudge(
+                current.irritation_memory,
+                (0.006 if playful_repair else 0.020) + conflict * (0.010 if playful_repair else 0.025),
+            )
+            notes.append("tension:playful_conflict" if playful_repair else "tension:conflict_signal")
 
         # 4) Perceived rejection / boundary probe.
         if perceived_rejection > 0.65:
@@ -749,8 +911,9 @@ class RelationshipDynamicsEngine:
             notes.append(f"{BOUNDARY_PROBE}:romantic_boundary")
 
         # 5) Objectification boundary.
-        if event.user_objectified or objectification >= 0.40:
-            current.dignity_defense = _nudge(current.dignity_defense, 0.120 + objectification * 0.080)
+        objectification_pressure = max(_score(getattr(event, "objectification_pressure", 0.0)), objectification)
+        if objectification_pressure >= 0.40:
+            current.dignity_defense = _nudge(current.dignity_defense, 0.120 + objectification_pressure * 0.080)
             current.preferred_distance = _nudge(current.preferred_distance, 0.060)
             current.attachment_visibility = _nudge(current.attachment_visibility, -0.055)
             current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, -0.060)
@@ -795,19 +958,28 @@ class RelationshipDynamicsEngine:
             notes.append("recoil:after_emotional_exposure")
 
         # 8) Assistant self-correction flags.
-        if event.assistant_overread:
-            current.overread_correction = _nudge(current.overread_correction, 0.100)
-            current.rupture = _nudge(current.rupture, 0.060)
-            current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, -0.050)
-            notes.append("self_correction:assistant_overread")
+        assistant_overread_pressure = _score(getattr(event, "assistant_overread_pressure", 0.0))
+        if assistant_overread_pressure >= 0.38:
+            if playful_repair:
+                # Lesson đã được ghi ở block correction; chỉ thêm residue rất nhỏ.
+                current.overread_correction = _nudge(current.overread_correction, 0.035)
+                current.rupture = _nudge(current.rupture, 0.006)
+                notes.append("self_correction:assistant_overread_playful")
+            else:
+                current.overread_correction = _nudge(current.overread_correction, 0.100)
+                current.rupture = _nudge(current.rupture, 0.060)
+                current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, -0.050)
+                notes.append("self_correction:assistant_overread")
 
-        if event.assistant_too_performative:
+        assistant_performative_pressure = _score(getattr(event, "assistant_performative_pressure", 0.0))
+        if assistant_performative_pressure >= 0.38:
             current.dignity_defense = _nudge(current.dignity_defense, 0.060)
             current.user_tolerates_strangeness = _nudge(current.user_tolerates_strangeness, -0.060)
             current.attachment_visibility = _nudge(current.attachment_visibility, -0.030)
             notes.append("self_correction:too_performative")
 
-        if event.assistant_too_verbose:
+        assistant_verbosity_pressure = _score(getattr(event, "assistant_verbosity_pressure", 0.0))
+        if assistant_verbosity_pressure >= 0.38:
             current.preferred_distance = _nudge(current.preferred_distance, 0.015)
             if clamp01(getattr(affect, "technicality", 0.0)) >= 0.45:
                 current.technical_respect = _nudge(current.technical_respect, 0.020)
@@ -818,6 +990,15 @@ class RelationshipDynamicsEngine:
         # owns a distance-reduction term, so genuine warmth (not only coldness
         # repair) can pull preferred_distance down over a realistic conversation.
         intimacy_pressure = max(clamp01(getattr(affect, "intimacy", 0.0)), clamp01(getattr(affect, "attachment", 0.0)))
+        if playful_repair and repair_affectionate < 0.35:
+            # Cấu trúc "tôi nhớ tôi đang thở" dùng "nhớ" theo nghĩa hồi tưởng,
+            # không phải attachment bid. Vẫn giữ engagement/playful safety ở trên,
+            # chỉ ngăn một token đa nghĩa tự bật warmth path.
+            intimacy_pressure = min(intimacy_pressure, 0.22)
+        elif repair_affectionate >= 0.35:
+            # Nếu user thật sự vừa sửa vừa gần gũi, đừng khóa cảm xúc. Hai trục
+            # độc lập tồn tại chính để giữ được trường hợp này.
+            intimacy_pressure = max(intimacy_pressure, repair_affectionate)
         
         # FIX #2: Relational probe branch — khi user hỏi về khoảng cách/cảm xúc.
         # Các câu như "em gần hay xa với tôi" hoặc "em có thích tôi không" không
@@ -883,6 +1064,17 @@ class RelationshipDynamicsEngine:
             "relational_repair_requested": relational_repair_requested,
             "user_requests_less_distance": user_requests_less_distance,
             "defensive_risk": defensive_risk,
+            "repair_mismatch": repair_mismatch,
+            "repair_correction": repair_correction,
+            "repair_playful": repair_playful,
+            "repair_affectionate": repair_affectionate,
+            "repair_irritation": repair_irritation,
+            "repair_boundary": repair_boundary,
+            "repair_engagement": repair_engagement,
+            "claim_retraction_pressure": claim_retraction_pressure,
+            "surface_correction_pressure": _score(getattr(event, "surface_correction_pressure", 0.0)),
+            "objectification_pressure": _score(getattr(event, "objectification_pressure", 0.0)),
+            "assistant_overread_pressure": _score(getattr(event, "assistant_overread_pressure", 0.0)),
             "event_confidence": _score(event.event_confidence),
         }
 
@@ -928,6 +1120,10 @@ class RelationshipDynamicsEngine:
         ritual_before = clamp01(state.ritual_strength)
         state.familiarity = _decay(state.familiarity, hours, half_life_hours=240.0)
         state.ritual_strength = _decay(state.ritual_strength, hours, half_life_hours=336.0)
+        # Engagement và playful safety là continuity đã kiếm được, decay chậm hơn
+        # cảm xúc tức thời nhưng vẫn phải phai khi bỏ lâu.
+        state.engagement_investment = _decay(state.engagement_investment, hours, half_life_hours=480.0)
+        state.playful_safety = _decay(state.playful_safety, hours, half_life_hours=240.0)
         # Trust KHÔNG reset về mức người lạ (0.25) nếu quan hệ đã được xây. Floor "đã
         # kiếm được" bám theo familiarity + ritual. KHÔNG nâng trust giả tạo khi vắng
         # mặt; chỉ decay phần NẰM TRÊN floor.
@@ -965,6 +1161,8 @@ class RelationshipDynamicsEngine:
             "overread_correction",
             "irritation_memory",
             "technical_respect",
+            "engagement_investment",
+            "playful_safety",
         )
         deltas: dict[str, float] = {}
         for key in keys:

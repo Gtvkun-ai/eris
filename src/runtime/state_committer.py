@@ -68,7 +68,7 @@ class StateCommitterConfig:
     # Request dưới commit nhưng >= tentative sẽ được lưu với trạng thái tentative.
     min_confidence_tentative: float = 0.35
 
-    # Repair memory được nới hơn vì user correction thường quan trọng dù evidence mỏng.
+    # Repair memory được nới hơn vì correction pressure thường quan trọng dù evidence mỏng.
     min_confidence_repair: float = 0.30
 
     # Event ledger có thể ghi raw event với confidence thấp hơn vì nó là audit thô.
@@ -108,7 +108,7 @@ class StateCommitterConfig:
     # Nếu evidence là private/sensitive + raw, cần quyền raw_evidence_storable từ frame.permission.
     enforce_private_raw_permission: bool = True
 
-    # Nếu phát hiện user correction ở request target khác, reroute sang repair_memory.
+    # Nếu correction pressure đủ mạnh ở target khác, reroute sang repair_memory.
     prioritize_user_correction_to_repair: bool = True
 
     # Khi low confidence nhưng vẫn tentative, ép decay nhanh hơn để ký ức yếu tự mục rữa.
@@ -584,7 +584,7 @@ class StateCommitter:
         - confidence thấp thì tentative hoặc bỏ;
         - thiếu evidence thì bỏ ở target cần evidence;
         - private raw evidence phải có permission;
-        - user correction ưu tiên repair_memory.
+        - correction pressure đủ mạnh ưu tiên repair_memory.
         """
 
         evidence_index = evidence_index or self._build_evidence_index(frame)
@@ -718,26 +718,31 @@ class StateCommitter:
                     )
                     return decision
 
-        # 7. User correction ưu tiên RepairMemory.
-        # Phải reroute TRƯỚC semantic grounding check. Nếu không, một correction bị upstream
-        # gắn nhầm target=semantic_memory + ungrounded sẽ bị reject mất, thay vì thành repair rule.
-        correction_detected = self._looks_like_user_correction(request, content, reason, tags, metadata)
+        # 7. Áp lực correction đủ mạnh được ưu tiên vào RepairMemory.
+        # Đây là policy routing, không phải phán quyết rằng người dùng "chắc chắn đang sửa".
+        # Score vẫn được giữ trong metadata để downstream biết mức bất định ban đầu.
+        correction_pressure = self._user_correction_pressure(request, content, reason, tags, metadata)
         if (
-            correction_detected
+            correction_pressure >= 0.58
             and self.config.prioritize_user_correction_to_repair
             and final_target != "repair_memory"
         ):
             issues.append(
                 CommitValidationIssue(
-                    code="rerouted_user_correction_to_repair",
-                    message=f"User correction được ưu tiên vào repair_memory thay vì '{final_target}'.",
+                    code="rerouted_correction_pressure_to_repair",
+                    message=(
+                        f"correction_pressure={correction_pressure:.2f} đủ mở repair policy; "
+                        f"reroute từ '{final_target}' sang repair_memory."
+                    ),
                     severity="info",
                 )
             )
             metadata = dict(metadata)
             metadata.setdefault("original_target", final_target)
             metadata["rerouted_by_state_committer"] = True
-            tags = list(dict.fromkeys([*tags, "user_correction", "repair_priority"]))
+            metadata["correction_pressure"] = round(correction_pressure, 4)
+            metadata.setdefault("social_claim", "unconfirmed")
+            tags = list(dict.fromkeys([*tags, "correction_pressure", "repair_priority"]))
             final_target = "repair_memory"
             decision.final_target = final_target
 
@@ -793,8 +798,9 @@ class StateCommitter:
         metadata.setdefault("validated_at", time.time())
         if frame is not None:
             metadata.setdefault("frame_id", self._frame_id(frame))
-        if correction_detected:
-            metadata.setdefault("user_correction", True)
+        if correction_pressure > 0.0:
+            metadata.setdefault("correction_pressure", round(correction_pressure, 4))
+            metadata.setdefault("social_claim", "unconfirmed")
 
         normalized = self._clone_request(
             request,
@@ -1075,38 +1081,73 @@ class StateCommitter:
     # Correction / confidence logic
     # ------------------------------------------------------------------
 
-    def _looks_like_user_correction(
+    def _user_correction_pressure(
         self,
         request: Any,
         content: Any,
         reason: str,
         tags: Sequence[str],
         metadata: Mapping[str, Any],
-    ) -> bool:
+    ) -> float:
+        """Ước lượng áp lực correction mà không đóng dấu ý định người dùng.
+
+        Các field boolean cũ chỉ được đọc ở biên migration. Kết quả mới luôn là
+        score 0..1 và không bao giờ được serialize ngược thành ``user_correction=True``.
+        """
+
+        candidates: list[float] = []
+
+        # Contract mới: upstream truyền score trực tiếp.
+        for key in ("correction_pressure", "user_correction_pressure"):
+            value = metadata.get(key)
+            if value is not None:
+                candidates.append(max(0.0, min(1.0, _safe_float(value, 0.0))))
+            req_value = _get(request, key, None)
+            if req_value is not None:
+                candidates.append(max(0.0, min(1.0, _safe_float(req_value, 0.0))))
+
+        # Migration-only: chấp nhận request cũ nhưng hạ nó thành evidence score.
         if _safe_bool(metadata.get("user_correction"), False):
-            return True
+            candidates.append(0.90)
         if _safe_bool(_get(request, "user_correction", False), False):
-            return True
-        if "user_correction" in tags or "correction" in tags or "repair" in tags:
-            return True
+            candidates.append(0.90)
+
+        normalized_tags = {str(tag or "").strip().lower() for tag in tags}
+        if "correction_pressure" in normalized_tags:
+            candidates.append(0.72)
+        if normalized_tags & {"user_correction", "correction", "repair"}:
+            candidates.append(0.66)
 
         target = _normalize_target(_get(request, "target", ""))
         if target == "repair_memory":
-            return True
+            candidates.append(0.72)
 
-        # State snapshots often contain innocent field names such as
-        # `overread_correction`. Scanning repr(dict) turned those into fake user
-        # corrections and rerouted active_state into RepairMemory. Structured
-        # state is not prose; only explicit correction fields/tags may trigger.
+        # State snapshot có thể chứa tên field vô hại như overread_correction.
+        # Không quét repr(dict) vì cách đó biến tên field thành "bằng chứng" giả.
         if isinstance(content, Mapping):
             content_text = " ".join(
                 str(content.get(key, "") or "")
-                for key in ("user_correction", "user_correction_text", "correction_text", "wrong_assumption", "failure_type")
+                for key in (
+                    "user_correction_text",
+                    "correction_text",
+                    "wrong_assumption",
+                    "failure_type",
+                )
             )
         else:
             content_text = str(content or "")[:800]
-        if target in {"active_state", "event_ledger", "homeostatic_baseline", "self_continuity", "spatial_memory", "temporal_rhythm_memory", "body_rhythm_memory"} and not content_text.strip():
-            return False
+
+        passive_targets = {
+            "active_state",
+            "event_ledger",
+            "homeostatic_baseline",
+            "self_continuity",
+            "spatial_memory",
+            "temporal_rhythm_memory",
+            "body_rhythm_memory",
+        }
+        if target in passive_targets and not content_text.strip():
+            return max(candidates, default=0.0)
 
         haystack = " ".join(
             [
@@ -1114,25 +1155,35 @@ class StateCommitter:
                 str(metadata.get("failure_type", "") or ""),
                 str(metadata.get("wrong_assumption", "") or ""),
                 str(metadata.get("user_correction_text", "") or ""),
+                str(metadata.get("correction_text", "") or ""),
                 content_text,
             ]
         ).lower()
 
-        correction_markers = (
-            "user corrected",
-            "user correction",
-            "correction",
-            "misread",
-            "wrong assumption",
-            "sai rồi",
+        strong_markers = (
             "không phải",
             "khong phai",
-            "thiếu là",
-            "thieu la",
+            "sai rồi",
+            "sai roi",
             "đính chính",
             "dinh chinh",
+            "wrong assumption",
+            "user corrected",
         )
-        return any(marker in haystack for marker in correction_markers)
+        soft_markers = (
+            "correction",
+            "misread",
+            "thiếu là",
+            "thieu la",
+            "ý tôi là",
+            "y toi la",
+        )
+        if any(marker in haystack for marker in strong_markers):
+            candidates.append(0.82)
+        elif any(marker in haystack for marker in soft_markers):
+            candidates.append(0.58)
+
+        return max(candidates, default=0.0)
 
     def _confidence_thresholds(self, target: str) -> tuple[float, float]:
         if target == "repair_memory":

@@ -606,9 +606,15 @@ class BeliefMutationEngine(RuleBasedWorker):
         if outcome is None:
             return 0.0
         if isinstance(outcome, dict):
-            accepted = 1.0 if outcome.get("user_accepted") or outcome.get("relation_improved") else 0.0
-            corrected = 1.0 if outcome.get("user_corrected") or outcome.get("relation_ruptured") else 0.0
-            return clamp01(accepted * 0.65 + max(0.0, 1.0 - corrected) * 0.15)
+            social = outcome.get("social") if isinstance(outcome.get("social"), dict) else {}
+            acceptance = clamp01(social.get("acceptance_support", 0.0))
+            warmth = clamp01(social.get("relationship_warmth_signal", 0.0))
+            correction = clamp01(social.get("correction_pressure", 0.0))
+            strain = clamp01(social.get("relationship_strain_signal", 0.0))
+            # Đây là pressure học policy, không phải verdict user đã chấp nhận/sửa.
+            positive = max(acceptance, warmth)
+            negative = max(correction, strain)
+            return clamp01(positive * 0.65 + max(0.0, 1.0 - negative) * 0.15)
         texts = " ".join(collect_texts(outcome, limit=8)).lower()
         positive_terms = ("accepted", "improved", "repair", "ổn", "đúng", "ok", "pass")
         negative_terms = ("corrected", "ruptured", "sai", "lệch", "fail")
