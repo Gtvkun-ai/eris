@@ -3,7 +3,7 @@ from __future__ import annotations
 """Guard tập trung cho fact ``user.name`` / ``user.nickname``.
 
 Tên người là dữ liệu ổn định và được surface rất tự tin, nên false positive kiểu
-"Tên Ngài là bạn" tệ hơn việc bỏ sót một câu tự giới thiệu mơ hồ. Module này dùng
+"Tên bạn là bạn" tệ hơn việc bỏ sót một câu tự giới thiệu mơ hồ. Module này dùng
 cả lúc ghi lẫn lúc đọc để dữ liệu rác cũ không tiếp tục được phát ngôn.
 """
 
@@ -13,7 +13,7 @@ from typing import Any
 
 _GENERIC_VALUES = {
     "ban", "ban oi", "nguoi ban", "nguoi dung", "user", "the user",
-    "ngai", "chu nhan", "sep", "boss", "khach", "nguoi hoi",
+    "ban", "chu nhan", "sep", "boss", "khach", "nguoi hoi",
     "toi", "minh", "tui", "tao", "ta", "em", "anh", "chi", "co", "chu",
     "you", "your", "me", "myself", "someone", "somebody",
     "ai", "gi", "ten gi", "la gi", "who", "what", "unknown", "khong biet",

@@ -18,6 +18,17 @@ from .contracts import ActionExecutionResult, VALID_SYSTEM_ACTIONS
 # như lấy thông tin bài
 
 class ActionExecutor:
+    _ACTION_ALIASES = {
+        "adjust_volume": "set_volume",
+        "change_volume": "set_volume",
+        "volume": "set_volume",
+        "volume_up": "set_volume",
+        "volume_down": "set_volume",
+        "get_time": "get_local_time",
+        "show_time": "get_local_time",
+        "current_time": "get_local_time",
+        "time_now": "get_local_time",
+    }
     _VK_MEDIA_PLAY_PAUSE = 0xB3
     _VK_VOLUME_MUTE = 0xAD
     _VK_VOLUME_DOWN = 0xAE
@@ -42,7 +53,8 @@ class ActionExecutor:
     return ActionExecutionResult
     '''
     def execute(self, action_name: str, action_input: str = "") -> ActionExecutionResult:
-        action_name = (action_name or "").strip()
+        original_action_name = (action_name or "").strip()
+        action_name = self._ACTION_ALIASES.get(original_action_name.lower(), original_action_name)
         action_input = (action_input or "").strip()
         if action_name not in VALID_SYSTEM_ACTIONS:
             return ActionExecutionResult(
@@ -75,6 +87,18 @@ class ActionExecutor:
 
         self._log("info", "[action] %s(%s) -> %s", action_name, action_input or "<empty>", result.message)
         return result
+
+    def _get_local_time(self, action_input: str) -> ActionExecutionResult:
+        now = time.localtime()
+        hhmm = time.strftime("%H:%M", now)
+        date_text = time.strftime("%Y-%m-%d", now)
+        return ActionExecutionResult(
+            action_name="get_local_time",
+            action_input=action_input,
+            success=True,
+            message=f"Bây giờ là {hhmm}, ngày {date_text} theo đồng hồ máy.",
+            data={"time": hhmm, "date": date_text},
+        )
 
     # Nó gọi PowerShell:
     # subprocess.run(["powershell", ...])
@@ -241,16 +265,22 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 message="Đã gửi lệnh mute/unmute âm lượng hệ thống.",
             )
 
-        match = re.search(r"-?\d+", lowered)
-        if not match:
-            return ActionExecutionResult(
-                action_name="set_volume",
-                action_input=action_input,
-                success=False,
-                message="Cần truyền mức âm lượng từ 0 đến 100.",
-            )
-
-        level = max(0, min(100, int(match.group(0))))
+        max_words = {"max", "maximum", "full", "100", "toi da", "tối đa", "het co", "hết cỡ", "to nhat", "to nhất"}
+        min_words = {"min", "minimum", "0", "nho nhat", "nhỏ nhất", "im lang", "im lặng"}
+        if lowered in max_words or any(word in lowered for word in max_words):
+            level = 100
+        elif lowered in min_words or any(word in lowered for word in min_words):
+            level = 0
+        else:
+            match = re.search(r"-?\d+", lowered)
+            if not match:
+                return ActionExecutionResult(
+                    action_name="set_volume",
+                    action_input=action_input,
+                    success=False,
+                    message="Cần truyền mức âm lượng từ 0 đến 100.",
+                )
+            level = max(0, min(100, int(match.group(0))))
         for _ in range(50):
             self._press_virtual_key(self._VK_VOLUME_DOWN, pause=0.005)
         for _ in range(round(level / 2)):

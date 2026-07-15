@@ -6,7 +6,7 @@ cortex/tom_advisor.py
 Nước 3 (a)+(b) — cắm Theory-of-Mind pipeline (đang chết) vào response path, với
 ngữ nghĩa MiniLM thật thay cho hash fallback.
 
-Bối cảnh (khảo sát chiều-sâu thấu-hiểu-Ngài): ``Phase2MeaningPipeline`` (8 tầng,
+Bối cảnh (khảo sát chiều-sâu thấu-hiểu-bạn): ``Phase2MeaningPipeline`` (8 tầng,
 có OverreadBrake, counterfactual correction) sản xuất ``MentalStateInference`` —
 nhưng KHÔNG runtime nào gọi nó. Tệ hơn: ``GlobalWorkspaceEngine`` dựng
 ``downstream_contract`` với *field sai* cho các tầng Phase 2 (vd WorldSceneBuilder
@@ -165,7 +165,7 @@ def _render_advisory(result: Any) -> str:
         return ""
     vi = _STATE_VI.get(category, category)
     return (
-        f"tom_read: Ngài có thể {vi} (độ tin ~{max(0.0, best_conf):.2f}). "
+        f"tom_read: bạn có thể {vi} (độ tin ~{max(0.0, best_conf):.2f}). "
         "Đây là SUY ĐOÁN hỗ trợ chọn giọng, KHÔNG phải sự thật — đừng nói thẳng ra "
         "như đã biết chắc; chỉ để điều chỉnh khoảng cách và độ ấm."
     )

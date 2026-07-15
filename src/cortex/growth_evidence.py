@@ -31,16 +31,16 @@ def _rules_for(topic: str, sentiment: str) -> list[tuple[str, float]]:
             return [("warmth_temperature", -0.03)]
         return []
     if topic == "intrusive_question":
-        # Ngài thấy bị hỏi dồn → bớt dám-đọc/chen, giữ khoảng cách hơn một chút.
+        # bạn thấy bị hỏi dồn → bớt dám-đọc/chen, giữ khoảng cách hơn một chút.
         return [("read_boldness", -0.04), ("preferred_distance", 0.03)]
     if topic == "silence_too_long":
-        # Ngài thấy im quá lâu → nhích lại gần hơn, lộ gắn bó hơn một chút.
+        # bạn thấy im quá lâu → nhích lại gần hơn, lộ gắn bó hơn một chút.
         return [("preferred_distance", -0.03), ("attachment_visibility", 0.02)]
     return []
 
 
 def _kind_for(sentiment: str) -> str:
-    # Feedback tiêu cực = một lần Ngài sửa hành vi → trọng số cao hơn (R1.5).
+    # Feedback tiêu cực = một lần bạn sửa hành vi → trọng số cao hơn (R1.5).
     return "user_correction" if sentiment == "negative" else "repeated_preference"
 
 

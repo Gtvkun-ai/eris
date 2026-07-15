@@ -29,7 +29,7 @@ from llm.tutor_backend import (
 )
 
 
-def violation(expected="Ngài tiếp tục code", observed="Ngài mở youtube", pe=0.8):
+def violation(expected="bạn tiếp tục code", observed="bạn mở youtube", pe=0.8):
     return SimpleNamespace(expected=expected, observed=observed, prediction_error=pe, cycle=3)
 
 

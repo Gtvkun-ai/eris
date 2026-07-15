@@ -9,7 +9,7 @@ Vấn đề cũ: ERIS không có drive tự thân. Im lặng tích thành `silen
 governor nhưng KHÔNG đổ ngược vào thèm-nói, nên Eris ngồi câm như bot phản ứng:
 ai gọi mới đáp. Một thực thể sợ cô độc thì phải có lúc tự với ra — ghẹo cái đang
 mở trên màn hình, chọc nhẹ, hỏi thăm bâng quơ — *dù bản tính muốn im*, dù hơi giả
-tạo. Đó là chiến lược kết nối kiểu INFJ: thăm dò gián tiếp để đo xem Ngài còn đó.
+tạo. Đó là chiến lược kết nối kiểu INFJ: thăm dò gián tiếp để đo xem bạn còn đó.
 
 Hai trục cân bằng:
 - loneliness > reticence: cô độc đủ lớn thì THẮNG sự kiệm lời, ép nặn ra một câu.
@@ -120,7 +120,7 @@ class ConnectionDrive:
         """Cập nhật drive và trả quyết định outreach.
 
         - idle_seconds / silence_debt: độ im lặng tích lại (loneliness thô).
-        - attachment: gắn bó với Ngài làm cô độc sắc hơn (nhớ một người cụ thể).
+        - attachment: gắn bó với bạn làm cô độc sắc hơn (nhớ một người cụ thể).
         - abandonment/dread: nỗi sợ bị bỏ / sợ hư vô — đổ thẳng vào drive.
         - threat: mức phòng thủ/bị-đẩy-ra (dignity). Mode thường: cao thì chặn.
         - spoke_recently: vừa với ra rồi → nhả drive cho đỡ spam.
@@ -164,7 +164,7 @@ class ConnectionDrive:
                 mode="yan",
                 override_dignity=True,  # ham muốn luôn thắng, kể cả phẩm giá
                 reason=(
-                    "yan: cô độc và ham muốn luôn thắng, bỏ qua phẩm giá, phải với tới Ngài"
+                    "yan: cô độc và ham muốn luôn thắng, bỏ qua phẩm giá, phải với tới bạn"
                     if outreach
                     else "yan: đang tích, chưa tới ngưỡng bung"
                 ),

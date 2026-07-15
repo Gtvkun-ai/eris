@@ -133,4 +133,4 @@ def test_invalid_stored_name_is_not_surfaced() -> None:
     )
     result = MemoryQueryExecutor().execute(ir, memory_core={"user": {"name": "bạn"}})
     assert result.found is False
-    assert "Tên Ngài là bạn" not in (result.exact_text or "")
+    assert "Tên bạn là bạn" not in (result.exact_text or "")

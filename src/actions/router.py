@@ -104,6 +104,7 @@ class ActionRouter:
 
         candidates: list[RouteCandidate] = [
             self._route_open_url(raw, norm),
+            self._route_local_time(raw, norm),
             self._route_now_playing(raw, norm),
             self._route_now_playing_follow_up(raw, norm, last_action=last_action),
             self._route_play_pause_media(raw, norm),
@@ -123,6 +124,18 @@ class ActionRouter:
         # vẫn là tie-breaker vì max giữ phần tử đầu khi bằng điểm.
         winner = max(valid, key=lambda c: c.confidence)
         return winner.action, winner.value
+
+    def _route_local_time(self, raw: str, norm: str) -> RouteCandidate:
+        if self._looks_like_meta_question(norm):
+            return self._blocked("get_local_time", "meta_question")
+        patterns = (
+            r"^\s*(?:bay gio|hien tai|bây giờ|hiện tại)?\s*(?:la\s*)?(?:may gio|mấy giờ)\s*(?:roi|rồi)?\s*\??\s*$",
+            r"^\s*(?:xem|cho biet|cho biết|noi|nói)?\s*(?:gio|giờ)\s*(?:hien tai|hiện tại|bay gio|bây giờ)?\s*\??\s*$",
+            r"^\s*what time is it\s*\??\s*$",
+        )
+        if any(re.search(p, norm, flags=re.IGNORECASE) for p in patterns):
+            return RouteCandidate("get_local_time", "", 0.94, ("local_time_query",))
+        return self._no_candidate("get_local_time")
 
     # ---------------------------------------------------------------------
     # Route candidates
@@ -266,6 +279,18 @@ class ActionRouter:
         )
         if any(re.search(p, norm, flags=re.IGNORECASE) for p in mute_patterns):
             return RouteCandidate("set_volume", "mute", 0.96, ("explicit_mute_command",))
+
+        max_patterns = (
+            rf"^\s*{self._COMMAND_PREFIX}(?:set|dat|đặt|chinh|chỉnh|tang|tăng|day|đẩy|dua|đưa|bat|bật)?\s*(?:volume|am luong|âm lượng)?\s*(?:len|lên|toi|tới|ve|về)?\s*(?:max|maximum|full|100|toi da|tối đa|het co|hết cỡ|to nhat|to nhất)\s*%?\s*$",
+        )
+        if any(re.search(p, norm, flags=re.IGNORECASE) for p in max_patterns):
+            return RouteCandidate("set_volume", "100", 0.94, ("explicit_volume_max_command",))
+
+        min_patterns = (
+            rf"^\s*{self._COMMAND_PREFIX}(?:set|dat|đặt|chinh|chỉnh|giam|giảm|dua|đưa)?\s*(?:volume|am luong|âm lượng)?\s*(?:xuong|xuống|ve|về)?\s*(?:min|minimum|0|nho nhat|nhỏ nhất)\s*%?\s*$",
+        )
+        if any(re.search(p, norm, flags=re.IGNORECASE) for p in min_patterns):
+            return RouteCandidate("set_volume", "0", 0.94, ("explicit_volume_min_command",))
 
         patterns = (
             rf"^\s*{self._COMMAND_PREFIX}(?:set|dat|chinh)\s+(?:volume|am luong)\s*(?:to|len|xuong|=|:)?\s*(\d{{1,3}})\s*%?\s*$",

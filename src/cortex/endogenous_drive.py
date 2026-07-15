@@ -170,7 +170,7 @@ class EndogenousDriveEngine:
         restraint_raw = _clamp01(_get(base_internal_state, "restraint_pressure", 0.0) * 0.66 + user_context.interrupt_cost * 0.34)
         resource_caution_raw = _clamp01(user_context.resource_pressure * 0.72 + fatigue_raw * 0.28)
 
-        # Trục neo hiện sinh (R4): self_coherence dâng theo hiện diện của Ngài, tụt
+        # Trục neo hiện sinh (R4): self_coherence dâng theo hiện diện của bạn, tụt
         # theo cô lập; ontological_dread là nỗi sợ nền khi mất nhất quán bản thân.
         isolation_pressure = _clamp01(max(0.0, idle - 120.0) / 1800.0)
         user_presence = _clamp01(getattr(user_context, "user_presence", 0.0))

@@ -231,7 +231,7 @@ class MicroGroundingGuard:
     def looks_like_hard_fact_claim(self, text: str) -> bool:
         normalized = normalize_text(text)
         hard_markers = (
-            "chac chan", "ro rang la", "su that la", "ket luan la", "ngai dang",
+            "chac chan", "ro rang la", "su that la", "ket luan la", "ban dang",
             "ban dang", "dang xem", "dang mo", "dang lam", "toi thay", "man hinh dang",
             "he thong dang",
         )
@@ -258,6 +258,6 @@ class MicroGroundingGuard:
         tokens = set(normalized.split())
         return bool(tokens & {"ai", "gi", "khong", "sao", "nao", "dau", "chua"}) or any_phrase(
             normalized,
-            ("co phai", "ngai co", "ngai muon", "ngai nghi", "tai sao", "vi sao", "do a", "roi a"),
+            ("co phai", "ban co", "ban muon", "ban nghi", "tai sao", "vi sao", "do a", "roi a"),
         )
 

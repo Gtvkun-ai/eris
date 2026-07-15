@@ -116,7 +116,7 @@ STOP_WORDS: set[str] = {
     "had", "was", "were", "are", "is", "be", "been", "being", "can", "will",
     "just", "only", "also", "very", "more", "most", "less", "some", "any",
     # Vietnamese function words after diacritic stripping
-    "dang", "trong", "cua", "voi", "khi", "thi", "neu", "ngai", "toi",
+    "dang", "trong", "cua", "voi", "khi", "thi", "neu", "ban", "toi",
     "mot", "nhung", "khong", "duoc", "cho", "cai", "nay", "kia", "roi",
     "nhe", "nhi", "vay", "day", "nua", "qua", "hoi", "lam", "nha", "the",
     "la", "va", "hay", "de", "ve", "ra", "vao", "len", "xuong", "di",

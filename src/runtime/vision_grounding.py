@@ -389,7 +389,7 @@ class VisionGroundingPolicy:
         relation = _mapping_get(note, "relation_to_user", "")
         if relation:
             # Relation-to-user không phải fact nhìn thấy. Để inference_only nhằm ngăn
-            # model nói chắc "Ngài đang..." chỉ vì một cửa sổ nào đó đang mở.
+            # model nói chắc "bạn đang..." chỉ vì một cửa sổ nào đó đang mở.
             add_claim(relation, kind="relation", confidence=note_confidence - 0.16, inference_only=True)
 
         grounded = [claim for claim in candidates if claim.grounded]

@@ -5,11 +5,11 @@ cortex/tutor/curiosity_router.py
 
 Định tuyến một Knowledge_Gap khi Eris không hiểu/không chắc:
 - skip       : đã biết rồi hoặc không đáng hỏi → im, đỡ nhiễu.
-- ask_user   : lỗ về NGÀI / việc của Ngài / mơ hồ → Eris hỏi lại Ngài (nói ra).
+- ask_user   : lỗ về BẠN / việc của bạn / mơ hồ → Eris hỏi lại bạn (nói ra).
 - ask_gemini : kiến thức THẾ GIỚI → hỏi gia sư Gemini (âm thầm) rồi học.
 
 Local LLM quyết (khôn), heuristic làm lưới đỡ. Đây là phần "cho nó khôn ra": không lén
-Google chuyện riêng của Ngài, không hỏi lại điều đã biết.
+Google chuyện riêng của bạn, không hỏi lại điều đã biết.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ class CuriosityRouter:
 
         # 3. Heuristic nền theo nguồn.
         if gap.source == "expectation_violation":
-            base: RouteAction = "ask_user"      # bất ngờ thường là về hành vi của Ngài
+            base: RouteAction = "ask_user"      # bất ngờ thường là về hành vi của bạn
         elif gap.source == "observer_unknown":
             base = "ask_gemini"                 # học app/site đó là gì
         else:

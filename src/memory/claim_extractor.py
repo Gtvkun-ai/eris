@@ -11,7 +11,7 @@ ontology nhưng ruột vẫn là marker-word. Bản này chỉ còn là cầu n�
 
     SemanticParser/model.gguf -> MeaningFrame -> ClaimBuilder -> ExtractedClaim
 
-Nếu Ngài muốn gắn model.gguf, truyền parser vào `ClaimExtractor(parser=...)` hoặc
+Nếu bạn muốn gắn model.gguf, truyền parser vào `ClaimExtractor(parser=...)` hoặc
 đưa payload JSON qua `llm_structured`. Extractor không commit memory và không tự
 quyết định retention.
 """

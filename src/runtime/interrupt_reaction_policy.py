@@ -153,7 +153,7 @@ class InterruptReactionPolicy:
             ack_style="brief_ack_then_answer",
             should_acknowledge=True,
             allow_tease=False,
-            opening_bias="Ừ, tôi dừng ở đó. Ngài nói tiếp đi.",
+            opening_bias="Ừ, tôi dừng ở đó. bạn nói tiếp đi.",
             body_hint="soft_stop_and_listen",
             reason="User interrupted during audible speech with a meaningful message.",
         )

@@ -133,7 +133,7 @@ class StandingStakesTests(unittest.TestCase):
         self.assertFalse(salience.selected_evidence_ids)
 
     def test_stakes_make_what_he_watches_salient(self):
-        # Có stake -> "Ngài đang xem video" chạm theme + care_user_activity,
+        # Có stake -> "bạn đang xem video" chạm theme + care_user_activity,
         # interest vector không còn 0 và evidence được chọn.
         salience = self.engine.evaluate(
             evidence=self._youtube_evidence(),

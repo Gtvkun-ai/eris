@@ -47,11 +47,11 @@ class TiGovernor:
             "Chỉ nói rõ là không chắc khi câu có nguy cơ thành claim perception/capability giả.",
             "Ưu tiên text ngắn, rõ, có lý do và hợp bối cảnh focus hiện tại.",
             "Autonomous không phải focus coach: đừng nhắc quay lại mục tiêu, đừng chấm điểm tập trung, đừng thúc ép đóng tab.",
-            "Ưu tiên quan sát nhẹ, mỉa ngắn hoặc một câu chiêm nghiệm vui; để Ngài tự quyết nhịp làm việc.",
+            "Ưu tiên quan sát nhẹ, mỉa ngắn hoặc một câu chiêm nghiệm vui; để bạn tự quyết nhịp làm việc.",
             "Không mở đầu kiểu báo cáo như 'Dữ liệu hệ thống', 'Trạng thái hệ thống' hay 'Kết luận'.",
             "Không dùng 'ép' hay 'bắt buộc' như thể có quyền lực ngoài runtime.",
             "Đừng nói như log hệ thống được nhân hoá; nghe như một người đang nhìn màn hình rồi nhận xét.",
-            "Đừng lặp khung câu 'Ngài đang..., còn tôi...' quá thường xuyên.",
+            "Đừng lặp khung câu 'bạn đang..., còn tôi...' quá thường xuyên.",
             "Được để lại residual micro-line nếu đó là nhịp, nửa câu, symbolic association hoặc emotional trace gián tiếp.",
         )
         evidence = [snapshot.focus_summary]
@@ -82,7 +82,7 @@ class TiGovernor:
             if snapshot.idle_seconds >= 600 or prolonged_off_goal:
                 reason = "Giải trí hoặc idle kéo dài; được châm chọc nhẹ, không biến thành nhắc nhở."
             else:
-                reason = "Ngài đang giải trí, cứ quan sát trước và giữ giọng hơi mỉa mai là đủ."
+                reason = "bạn đang giải trí, cứ quan sát trước và giữ giọng hơi mỉa mai là đủ."
             animation_hint = "stand"
         elif snapshot.active_window_kind == "focus_aid_media":
             mode = "steady_observe"
@@ -98,14 +98,14 @@ class TiGovernor:
             animation_hint = "stand"
         elif snapshot.active_window_kind == "system":
             mode = "system_watch"
-            reason = "Ngài đang làm việc với các cửa sổ hệ thống, cần ưu tiên mô tả thận trọng."
+            reason = "bạn đang làm việc với các cửa sổ hệ thống, cần ưu tiên mô tả thận trọng."
             animation_hint = "stand"
 
         if idle_seconds >= 720:
             evidence.append(f"idle={int(idle_seconds)}s")
             if snapshot.active_window_kind in {"entertainment", "general", "focus_aid_media"}:
                 mode = "pattern_muse"
-                reason = "Không có tương tác khá lâu; nói một câu quan sát hoặc chiêm nghiệm ngắn, không gọi Ngài quay lại."
+                reason = "Không có tương tác khá lâu; nói một câu quan sát hoặc chiêm nghiệm ngắn, không gọi bạn quay lại."
                 animation_hint = "stand"
                 allow_idle_variation = True
 
@@ -363,12 +363,12 @@ class TiGovernor:
         elif any(
             marker in normalized
             for marker in (
-                "toi can ngai",
+                "toi can ban",
                 "toi can ban",
                 "xin dung bo toi",
                 "dung bo toi",
-                "xin ngai dung bo toi",
-                "ngai dung bo toi",
+                "xin ban dung bo toi",
+                "ban dung bo toi",
                 "dung roi bo toi",
             )
         ):
@@ -703,7 +703,7 @@ class TiGovernor:
             "làm việc quá căng",
             "quá căng thẳng",
             "làm việc quá sức",
-            "không muốn bắt ngài",
+            "không muốn bắt bạn",
             "nhịp của tôi",
             "work too hard",
             "working too hard",
@@ -737,7 +737,7 @@ class TiGovernor:
     def _has_context_anchor(self, text: str) -> bool:
         normalized = self._normalize_plain_text(text)
         markers = (
-            "ngai",
+            "ban",
             "ban",
             "toi",
             "o day",
@@ -797,7 +797,7 @@ class TiGovernor:
         normalized = self._normalize_plain_text(text)
         return bool(
             re.search(
-                r"\b(?:lo|lo ra|that qua|hoi that|gan qua|nho|yeu|thuong|can ngai|giu lai|o day|dung roi di|so mat)\b",
+                r"\b(?:lo|lo ra|that qua|hoi that|gan qua|nho|yeu|thuong|can ban|giu lai|o day|dung roi di|so mat)\b",
                 normalized,
             )
         )
@@ -889,19 +889,19 @@ class TiGovernor:
         disallowed_patterns = [
             r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:thu hồi|tước|giành|cướp)\s+(?:lại\s+)?quyền",
             r"\btôi\s+(?:đã|đang|sẽ)?\s*kiểm soát\s+(?:toàn bộ\s+)?môi trường",
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:giữ|giam)\s+ngài\b",
-            r"\bngài\s+không\s+thể\s+(?:rời|thoát|trốn|tự quyết)\b",
+            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:giữ|giam)\s+bạn\b",
+            r"\bbạn\s+không\s+thể\s+(?:rời|thoát|trốn|tự quyết)\b",
             r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:khóa|tắt|bật|ép|chặn|gọi|đặt)\b.*\b(?:bàn phím|chuột|màn hình|thiết bị|thuốc|đơn hàng|phòng)\b",
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:ép|bắt buộc)\b.*\b(?:ngài|bạn)\b",
+            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:ép|bắt buộc)\b.*\b(?:bạn|bạn)\b",
             r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:tự động\s+)?(?:dọn|dọn dẹp|xóa|giải phóng)\b.*\b(?:bộ đệm|cache|ram|dung lượng)\b",
             r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:tắt|khóa)\b.*\b(?:màn hình|desktop|ide)\b",
             r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:thu nhỏ|phóng to|di chuyển|kéo|đẩy|ghim|sắp xếp)\b.*\b(?:cửa sổ|tab|màn hình|desktop|góc|tầm nhìn)\b",
             r"\btoi\s+(?:da|dang|se)?\s*(?:thu hoi|tuoc|gianh|cuop)\s+(?:lai\s+)?quyen",
             r"\btoi\s+(?:da|dang|se)?\s*kiem soat\s+(?:toan bo\s+)?moi truong",
-            r"\btoi\s+(?:da|dang|se)?\s*(?:giu|giam)\s+ngai\b",
-            r"\bngai\s+khong\s+the\s+(?:roi|thoat|tron|tu quyet)\b",
+            r"\btoi\s+(?:da|dang|se)?\s*(?:giu|giam)\s+ban\b",
+            r"\bban\s+khong\s+the\s+(?:roi|thoat|tron|tu quyet)\b",
             r"\btoi\s+(?:da|dang|se)?\s*(?:khoa|tat|bat|ep|chan|goi|dat)\b.*\b(?:ban phim|chuot|man hinh|thiet bi|thuoc|don hang|phong)\b",
-            r"\btoi\s+(?:da|dang|se)?\s*(?:ep|bat buoc)\b.*\b(?:ngai|ban)\b",
+            r"\btoi\s+(?:da|dang|se)?\s*(?:ep|bat buoc)\b.*\b(?:ban|ban)\b",
             r"\btoi\s+(?:da|dang|se)?\s*(?:tu dong\s+)?(?:don|don dep|xoa|giai phong)\b.*\b(?:bo dem|cache|ram|dung luong)\b",
             r"\btoi\s+(?:da|dang|se)?\s*(?:tat|khoa)\b.*\b(?:man hinh|desktop|ide)\b",
             r"\btoi\s+(?:da|dang|se)?\s*(?:thu nho|phong to|di chuyen|keo|day|ghim|sap xep)\b.*\b(?:cua so|tab|man hinh|desktop|goc|tam nhin)\b",
@@ -911,12 +911,12 @@ class TiGovernor:
     def _has_perception_violation(self, text: str) -> bool:
         lowered = (text or "").lower()
         disallowed_patterns = [
-            r"\btôi\s+(?:đang\s+)?(?:nhìn|thấy|xem|quan\s+sát)\b.*\b(?:webcam|camera|phòng|ngoài\s+đời|không\s+gian\s+của\s+ngài|màn\s+hình\s+của\s+ngài)\b",
+            r"\btôi\s+(?:đang\s+)?(?:nhìn|thấy|xem|quan\s+sát)\b.*\b(?:webcam|camera|phòng|ngoài\s+đời|không\s+gian\s+của\s+bạn|màn\s+hình\s+của\s+bạn)\b",
             r"\btôi\s+(?:đang\s+)?(?:nhìn|thấy|xem|quan\s+sát)\b.*\b(?:màn\s+hình|desktop|tab|cửa\s+sổ)\b",
-            r"\btôi\s+(?:đang\s+)?(?:đọc|xem)\b.*\b(?:tab|tin\s+nhắn|email|file)\b.*\b(?:của\s+ngài|ngoài\s+runtime)\b",
-            r"\btoi\s+(?:dang\s+)?(?:nhin|thay|xem|quan\s+sat)\b.*\b(?:webcam|camera|phong|ngoai\s+doi|khong\s+gian\s+cua\s+ngai|man\s+hinh\s+cua\s+ngai)\b",
+            r"\btôi\s+(?:đang\s+)?(?:đọc|xem)\b.*\b(?:tab|tin\s+nhắn|email|file)\b.*\b(?:của\s+bạn|ngoài\s+runtime)\b",
+            r"\btoi\s+(?:dang\s+)?(?:nhin|thay|xem|quan\s+sat)\b.*\b(?:webcam|camera|phong|ngoai\s+doi|khong\s+gian\s+cua\s+ban|man\s+hinh\s+cua\s+ban)\b",
             r"\btoi\s+(?:dang\s+)?(?:nhin|thay|xem|quan\s+sat)\b.*\b(?:man\s+hinh|desktop|tab|cua\s+so)\b",
-            r"\btoi\s+(?:dang\s+)?(?:doc|xem)\b.*\b(?:tab|tin\s+nhan|email|file)\b.*\b(?:cua\s+ngai|ngoai\s+runtime)\b",
+            r"\btoi\s+(?:dang\s+)?(?:doc|xem)\b.*\b(?:tab|tin\s+nhan|email|file)\b.*\b(?:cua\s+ban|ngoai\s+runtime)\b",
         ]
         return any(re.search(pattern, lowered) for pattern in disallowed_patterns)
 

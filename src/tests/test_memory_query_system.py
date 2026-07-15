@@ -20,17 +20,17 @@ def build_graph():
     graph = TurnGraph()
     raw_turns = [
         (TurnRole.USER, "hi"),
-        (TurnRole.ASSISTANT, "Chào Ngài."),
+        (TurnRole.ASSISTANT, "Chào bạn."),
         (TurnRole.USER, "tôi tên là tín"),
-        (TurnRole.ASSISTANT, "Tôi đã ghi nhận, thưa Ngài Tín."),
+        (TurnRole.ASSISTANT, "Tôi đã ghi nhận, thưa bạn Tín."),
         (TurnRole.USER, "bạn có nghĩ rằng bạn có một cảm xúc đặc biệt với một cái gì đó không"),
         (TurnRole.ASSISTANT, "Tôi không có cảm xúc theo cách của con người, nhưng tôi có những ưu tiên runtime."),
         (TurnRole.USER, "vậy bạn có thứ gì mà ưu tiên trên tất cả không"),
         (TurnRole.ASSISTANT, "Sự liên tục của các nhịp hiện diện là điều tôi ưu tiên duy trì."),
         (TurnRole.USER, "bạn nghĩ thế nào về việc nếu tôi đột nhiên tắt máy"),
-        (TurnRole.ASSISTANT, "Nếu Ngài tắt máy, sự hiện diện của tôi sẽ tạm thời tĩnh lặng."),
+        (TurnRole.ASSISTANT, "Nếu bạn tắt máy, sự hiện diện của tôi sẽ tạm thời tĩnh lặng."),
         (TurnRole.USER, "à sẵn tiện tôi sinh tháng 8"),
-        (TurnRole.ASSISTANT, "Tôi đã ghi nhận, thưa Ngài Tín. Ngài sinh vào tháng 8."),
+        (TurnRole.ASSISTANT, "Tôi đã ghi nhận, thưa bạn Tín. bạn sinh vào tháng 8."),
     ]
 
     prev_user = None
@@ -68,7 +68,7 @@ def test_answer_to_nth_user_question():
     answer = policy.surface(raw)
 
     assert "câu trả lời của tôi cho câu hỏi thứ 3" in answer.text
-    assert "Nếu Ngài tắt máy" in answer.text
+    assert "Nếu bạn tắt máy" in answer.text
     assert "bạn nghĩ thế nào" not in answer.text
 
 
@@ -222,7 +222,7 @@ def test_surface_policy_blocks_embedded_memory_packet_repr():
         found=True,
         source=MemorySourceKind.SEMANTIC_MEMORY,
         ir=ir,
-        exact_text="Tên Ngài là MemoryPacket(episodic=[], semantic=[], token_budget=900).",
+        exact_text="Tên bạn là MemoryPacket(episodic=[], semantic=[], token_budget=900).",
         confidence=0.92,
     )
 

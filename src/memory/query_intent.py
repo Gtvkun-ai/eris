@@ -9,7 +9,7 @@ Compatibility layer cho semantic query intent.
 Hướng mới:
     query text/model JSON -> QueryMeaning -> SemanticQueryIntent -> entailment
 
-Nếu Ngài nối model.gguf, cho model trả `answer_target` hoặc `target_predicates`.
+Nếu bạn nối model.gguf, cho model trả `answer_target` hoặc `target_predicates`.
 Fallback ở đây chỉ dùng khi chưa có structured parse, và nó cố tình dè dặt:
 không chắc thì trả unknown, không lôi memory overlap ra bói toán. Một phép màu nhỏ
 mang tên "đừng bịa".
@@ -87,7 +87,7 @@ class QueryIntentParserProtocol:
 class SemanticQueryIntentCompiler:
     """Compiler query có hook cho model parser.
 
-    `structured_parser` có thể là adapter model.gguf của Ngài. Nó nên trả:
+    `structured_parser` có thể là adapter model.gguf của bạn. Nó nên trả:
       {"answer_target":"user_hometown", "confidence":0.9}
     hoặc:
       {"target_predicates":["hometown_is"], "expected_object_type":"location"}

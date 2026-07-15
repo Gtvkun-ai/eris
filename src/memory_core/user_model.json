@@ -28,7 +28,7 @@
     {
       "id": "ub.c79bbc7f82612406",
       "facet": "treats_eris_as",
-      "claim": "Ngài dường như thân thiện",
+      "claim": "bạn dường như thân thiện",
       "evidence_ids": [
         "dossier.user.current",
         "dossier.runtime.state",

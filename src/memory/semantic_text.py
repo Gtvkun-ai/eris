@@ -10,7 +10,7 @@ Mục tiêu của file này không phải biến vài keyword thành chân lý. 
 "đọc bề mặt tiếng Việt" vào một chỗ để những file như claim_extractor.py,
 query_intent.py, retention policy... không tự rải marker word khắp repo.
 
-Nếu sau này Ngài gắn embedding hoặc LLM structured parser, đây vẫn là lớp fallback
+Nếu sau này bạn gắn embedding hoặc LLM structured parser, đây vẫn là lớp fallback
 nhẹ để:
 - normalize tiếng Việt có/không dấu;
 - tách clause;
@@ -165,7 +165,7 @@ def relation_regex(aliases: Iterable[str]) -> str:
 
 
 def _has_interrogative_context(norm: str) -> bool:
-    return has_any(norm, "toi", "minh", "tui", "em", "eris", "ban", "ngai", "my", "me")
+    return has_any(norm, "toi", "minh", "tui", "em", "eris", "ban", "ban", "my", "me")
 
 
 def _surface_evidence(norm: str) -> list[str]:

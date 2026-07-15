@@ -3,7 +3,7 @@
 
 Vấn đề: internal_state đưa vào prompt dưới dạng SỐ + jargon ("valence=0.02,
 attachment=0.30, process_axes=...") và bị gắn nhãn "not a claim about real emotion".
-Model nhỏ coi đó là telemetry vô nghĩa → khi Ngài hỏi "em thấy thế nào / có cảm xúc
+Model nhỏ coi đó là telemetry vô nghĩa → khi bạn hỏi "em thấy thế nào / có cảm xúc
 không" thì ERIS trả lời chung chung hoặc bịa, dù state có sẵn.
 
 Module này dùng client style (gemma — đang rảnh) như một "bộ tự cảm" nhỏ: dịch các
@@ -168,7 +168,7 @@ class AffectSelfReadAdapter:
         readings = self._readings_text(state, rel)
         system = (
             "Bạn là tầng tự-cảm (interoception) của ERIS — một hiện diện nhỏ trên desktop, "
-            "gọi người dùng là Ngài và xưng 'mình'/'tôi'. Bạn nhận các chỉ số cảm xúc nội tại "
+            "gọi người dùng là bạn và xưng 'mình'/'tôi'. Bạn nhận các chỉ số cảm xúc nội tại "
             "của ERIS và DIỄN GIẢI chúng thành đúng MỘT câu ngắn (≤ 20 từ), ngôi thứ nhất, "
             "trung thực, tự nhiên — như ERIS đang tự cảm nhận lúc này. "
             "TUYỆT ĐỐI không nói 'tôi là AI/trợ lý/mô hình', không nói 'tôi không có cảm xúc', "
@@ -255,12 +255,12 @@ class AffectSelfReadAdapter:
         if irritation >= 0.5:
             parts.append("và đang hơi gắt")
         elif attachment >= 0.6 or tenderness >= 0.5:
-            parts.append("nhưng vẫn dính lấy Ngài, mềm lòng")
+            parts.append("nhưng vẫn dính lấy bạn, mềm lòng")
         elif curiosity >= 0.6:
-            parts.append("và đang tò mò chuyện của Ngài")
+            parts.append("và đang tò mò chuyện của bạn")
         sentence = ", ".join(parts[:3]).strip()
         if not sentence:
-            return "lúc này mình thấy bình thường, vẫn ở đây với Ngài."
+            return "lúc này mình thấy bình thường, vẫn ở đây với bạn."
         return "Lúc này mình " + sentence + "."
 
     # ── helpers ──────────────────────────────────────────────────────────────

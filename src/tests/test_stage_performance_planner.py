@@ -40,7 +40,7 @@ def test_stage_frame_adds_audible_laugh_without_polluting_memory():
 
 def test_stage_frame_keeps_good_model_line_but_adds_laugh_prefix():
     decision = Decision(
-        text="Ngài định cho tôi làm trò hề gì vậy?",
+        text="bạn định cho tôi làm trò hề gì vậy?",
         animation="",
         intent="chat",
     )
@@ -55,8 +55,8 @@ def test_stage_frame_keeps_good_model_line_but_adds_laugh_prefix():
         channel="chat",
     )
 
-    assert frame.tts_text == "Hah... haha. Ngài định cho tôi làm trò hề gì vậy?"
-    assert frame.memory_text == "Ngài định cho tôi làm trò hề gì vậy?"
+    assert frame.tts_text == "Hah... haha. bạn định cho tôi làm trò hề gì vậy?"
+    assert frame.memory_text == "bạn định cho tôi làm trò hề gì vậy?"
 
 
 def test_stage_frame_renders_fake_anger_as_deadpan_act():
@@ -81,9 +81,9 @@ def test_stage_frame_renders_fake_anger_as_deadpan_act():
 
 
 def test_stage_transformer_still_removes_parenthesized_stage_tags():
-    surfaces = StageTransformerChain().transform("(cười khẽ) Ngài lại phá gì rồi?")
+    surfaces = StageTransformerChain().transform("(cười khẽ) bạn lại phá gì rồi?")
 
-    assert surfaces.display_text == "Ngài lại phá gì rồi?"
-    assert surfaces.tts_text == "Ngài lại phá gì rồi?"
-    assert surfaces.memory_text == "Ngài lại phá gì rồi?"
+    assert surfaces.display_text == "bạn lại phá gì rồi?"
+    assert surfaces.tts_text == "bạn lại phá gì rồi?"
+    assert surfaces.memory_text == "bạn lại phá gì rồi?"
     assert "laugh_soft" in surfaces.marks.actions

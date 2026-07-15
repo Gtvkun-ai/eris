@@ -59,7 +59,7 @@ class RollingUserContext:
     insight_pressure:
         Áp lực cần nhìn sâu hơn để tạo insight, không đồng nghĩa được nói.
     busy_score:
-        Độ bận của Ngài theo signal, không phải phán xét đạo đức. May quá.
+        Độ bận của bạn theo signal, không phải phán xét đạo đức. May quá.
     """
 
     timestamp: float = field(default_factory=time.time)

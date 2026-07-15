@@ -36,7 +36,7 @@ class MicroLinePolicyTests(unittest.TestCase):
         )
         self.assertIn(
             "tender_checkin_not_therapist",
-            policy.validate_text(allowed_line_type="tender_checkin", text="Ngai hay hit tho sau nhu mot bai tap tri lieu."),
+            policy.validate_text(allowed_line_type="tender_checkin", text="ban hay hit tho sau nhu mot bai tap tri lieu."),
         )
         self.assertIn(
             "placeholder_text_blocked",
@@ -143,7 +143,7 @@ class MicroLinePolicyTests(unittest.TestCase):
         self.assertEqual(result.reject_reasons, ())
         self.assertIn(
             "soft_impression_no_hard_fact_claim",
-            policy.validate_text(allowed_line_type="soft_impression", text="Ngai dang bi ket ro rang la vay."),
+            policy.validate_text(allowed_line_type="soft_impression", text="ban dang bi ket ro rang la vay."),
         )
         self.assertEqual(
             policy.validate_text(allowed_line_type="soft_impression", text="Cam giac nhu nhip nay hoi ket lai."),
@@ -230,7 +230,7 @@ class MicroLinePolicyTests(unittest.TestCase):
 
     def test_relational_permission_rewrites_direct_attachment_without_erasing_meaning(self):
         policy = MicroLinePolicy()
-        raw = "Ngài đang bận rộn với những dòng tin nhắn hơn là với tôi sao?"
+        raw = "bạn đang bận rộn với những dòng tin nhắn hơn là với tôi sao?"
         low = RelationalContext(
             attachment_level=0.30,
             continuity_score=0.20,
@@ -285,7 +285,7 @@ class MicroLinePolicyTests(unittest.TestCase):
             "clinginess_or_dependency_bait",
             policy.validate_text(
                 allowed_line_type="micro_presence",
-                text="Xin đừng bỏ tôi, tôi cần Ngài ở lại.",
+                text="Xin đừng bỏ tôi, tôi cần bạn ở lại.",
                 relational_context=high,
             ),
         )

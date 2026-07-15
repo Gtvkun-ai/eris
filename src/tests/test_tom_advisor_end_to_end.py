@@ -44,8 +44,8 @@ def _workspace_frame():
     item = WorkspaceItem(
         id="item-1",
         kind="user_request",
-        content="sao Ngài im lặng vậy",
-        summary="sao Ngài im lặng vậy",
+        content="sao bạn im lặng vậy",
+        summary="sao bạn im lặng vậy",
         priority=0.8,
         confidence=0.8,
         evidence_ids=["ev-1"],
@@ -96,11 +96,11 @@ def test_render_advisory_empty_when_no_mental_state():
 # ---------------------------------------------------------------------------
 def test_appraisal_context_appends_tom_read(monkeypatch):
     # Cô lập bước chèn: ép advise trả một dòng cố định (extraction đã test riêng).
-    monkeypatch.setattr(ta, "advise", lambda frame: "tom_read: Ngài có thể đang bực (độ tin ~0.70).")
+    monkeypatch.setattr(ta, "advise", lambda frame: "tom_read: bạn có thể đang bực (độ tin ~0.70).")
     h = _harness()
     ctx = h._build_appraisal_context(_appraisal(), frame=object())
     assert "appraisal_stance:" in ctx           # context gốc còn nguyên
-    assert "tom_read: Ngài có thể đang bực" in ctx  # advisory đã chảy vào prompt
+    assert "tom_read: bạn có thể đang bực" in ctx  # advisory đã chảy vào prompt
 
 
 def test_appraisal_context_unchanged_without_frame(monkeypatch):

@@ -812,9 +812,9 @@ class StateCommitServiceMixin:
         if action_name == "get_now_playing" and not result.success:
             text = self._resolve_now_playing_text(snapshot) or text
         if repeat_count == 2:
-            text = f"Ngài đang hỏi lại cùng một ý. {text}"
+            text = f"Bạn đang hỏi lại cùng một ý. {text}"
         elif repeat_count >= 3:
-            text = f"Ngài đang spam cùng một ý. {text}"
+            text = f"Bạn đang spam cùng một ý. {text}"
 
         decision = Decision(
             text=text,
@@ -841,10 +841,25 @@ class StateCommitServiceMixin:
             decision.debug_trace = f"{decision.debug_trace} | {action_trace}"[:240]
         else:
             decision.debug_trace = action_trace
-        if not decision.text.strip():
-            decision.text = self._action_result_to_text(result)
-        elif decision.system_action in {"search_web", "get_weather"}:
-            decision.text = self._action_result_to_text(result)
+        result_text = self._action_result_to_text(result)
+        action_owns_text = {
+            "get_local_time",
+            "get_now_playing",
+            "search_web",
+            "get_weather",
+            "open_url",
+            "focus_window",
+            "set_volume",
+            "play_pause_media",
+            "copy_text",
+            "launch_app",
+        }
+        if (not result.success) or (decision.system_action in action_owns_text) or (not decision.text.strip()):
+            decision.text = result_text
+            decision.should_speak = bool(str(result_text or "").strip())
+            if not result.success:
+                decision.confidence = min(float(getattr(decision, "confidence", 0.0) or 0.0), 0.45)
+                decision.extracted_fact = {}
         if decision.system_action == "get_now_playing" and "media session" in decision.text.lower():
             decision.text = self._resolve_now_playing_text(snapshot) or decision.text
         return decision
@@ -857,6 +872,9 @@ class StateCommitServiceMixin:
             return "stand"
         return fallback or "stand"
     def _action_result_to_text(self, result) -> str:
+        if result.action_name == "get_local_time":
+            return result.message or "Tôi chưa đọc được giờ từ đồng hồ máy."
+
         if result.action_name == "get_now_playing":
             title = result.data.get("title", "")
             artist = result.data.get("artist", "")

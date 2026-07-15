@@ -21,7 +21,7 @@ def _store():
     return ConcernStore(config=ConcernStoreConfig())
 
 
-def _seed_concern(store, claim="Lo rằng Ngài sẽ rời đi"):
+def _seed_concern(store, claim="Lo rằng bạn sẽ rời đi"):
     store.update_from_fragments([
         ThoughtFragment(source="x", claim=claim, confidence=0.6, evidence_ids=("e1",), pressure=0.6)
     ])

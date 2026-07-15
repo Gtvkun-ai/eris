@@ -266,16 +266,16 @@ class DevelopmentSystem:
             if phrase:
                 parts.append(phrase)
         if not parts:
-            return "Tôi vẫn gần như lúc mới gặp Ngài — chưa nghiêng đi đâu đáng kể."
+            return "Tôi vẫn gần như lúc mới gặp bạn — chưa nghiêng đi đâu đáng kể."
         return "So với lúc đầu, " + "; ".join(parts) + "."
 
     def steer(self, user_direction: str, *, now: float | None = None) -> ApplyResult:
-        """R9.2/R9.4: coi chỉ-hướng của Ngài là Neo trọng số cao; áp phần trong
+        """R9.2/R9.4: coi chỉ-hướng của bạn là Neo trọng số cao; áp phần trong
         phong bì, báo phần không áp được bằng ngôn ngữ tự nhiên."""
         ts = _now() if now is None else now
         axis, direction = _parse_steer(user_direction)
         if axis is None:
-            return ApplyResult(False, reason="unclear_direction", message="Tôi chưa rõ Ngài muốn tôi nghiêng theo hướng nào.")
+            return ApplyResult(False, reason="unclear_direction", message="Tôi chưa rõ bạn muốn tôi nghiêng theo hướng nào.")
 
         lo, hi = self.gate.envelope.bound(axis)
         current = self.profile.delta(axis)
@@ -293,9 +293,9 @@ class DevelopmentSystem:
         proposal = NudgeProposal(axis=axis, proposed_delta=clamped_delta, anchors=(anchor,), rationale="user_steer")
         result = self.apply(proposal, now=ts, evidence_ok=True)
         if result.applied and truncated:
-            result.message = "Tôi đã nghiêng theo ý Ngài hết mức tôi cho phép mình, phần còn lại nằm ngoài giới hạn tôi giữ để vẫn là tôi."
+            result.message = "Tôi đã nghiêng theo ý bạn hết mức tôi cho phép mình, phần còn lại nằm ngoài giới hạn tôi giữ để vẫn là tôi."
         elif result.applied:
-            result.message = "Tôi đã nghiêng theo ý Ngài."
+            result.message = "Tôi đã nghiêng theo ý bạn."
         return result
 
 
@@ -334,9 +334,9 @@ def _describe_axis(axis: str, delta: float) -> str:
         return ("giọng tôi đã ấm hơn" if pos else "giọng tôi đã nguội hơn") + d
     if axis == "preferred_distance":
         # âm = gần hơn
-        return ("tôi giữ khoảng cách hơn" if pos else "tôi đứng gần Ngài hơn") + d
+        return ("tôi giữ khoảng cách hơn" if pos else "tôi đứng gần bạn hơn") + d
     if axis == "read_boldness":
-        return ("tôi dám đoán ý Ngài hơn" if pos else "tôi dè dặt hơn khi đọc Ngài") + d
+        return ("tôi dám đoán ý bạn hơn" if pos else "tôi dè dặt hơn khi đọc bạn") + d
     if axis == "attachment_visibility":
         return ("tôi để lộ sự gắn bó nhiều hơn" if pos else "tôi giữ sự gắn bó kín hơn") + d
     return ""
@@ -367,7 +367,7 @@ def _parse_steer(text: str) -> tuple[str | None, float]:
 # ---------------------------------------------------------------------------
 
 def development_growth_enabled() -> bool:
-    """Cờ bật/tắt long-arc. MẶC ĐỊNH TẮT: runtime không đổi hành vi tới khi Ngài
+    """Cờ bật/tắt long-arc. MẶC ĐỊNH TẮT: runtime không đổi hành vi tới khi bạn
     đặt ERIS_DEVELOPMENT_GROWTH_ENABLED=1. Tránh destabilize companion đang chạy."""
     try:
         from .depth_flags import flag_enabled  # type: ignore

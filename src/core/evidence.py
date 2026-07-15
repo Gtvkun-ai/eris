@@ -189,7 +189,7 @@ class RawSignal:
     - action decision
     - prompt style
 
-    Nếu Ngài nhét mấy thứ đó vào đây, pipeline sẽ thành bùn có type hint.
+    Nếu bạn nhét mấy thứ đó vào đây, pipeline sẽ thành bùn có type hint.
     """
 
     id: str

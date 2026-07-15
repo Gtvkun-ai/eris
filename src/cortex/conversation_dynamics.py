@@ -219,9 +219,9 @@ def _previous_assistant_asked_clarification(text: str) -> bool:
         return False
     markers = (
         "co dieu gi toi vua noi",
-        "ngai co the noi ro hon",
-        "toi chua hieu y ngai",
-        "co dieu gi khien ngai",
+        "ban co the noi ro hon",
+        "toi chua hieu y ban",
+        "co dieu gi khien ban",
         "noi ro hon duoc khong",
     )
     return "?" in (text or "") and any(marker in normalized for marker in markers)

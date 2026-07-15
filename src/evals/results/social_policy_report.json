@@ -280,7 +280,7 @@
           },
           "active_now": true
         },
-        "sample_output": "Ngồi yên chưa nổi một phút mà Ngài đã gọi tôi tới phá nhịp rồi.",
+        "sample_output": "Ngồi yên chưa nổi một phút mà bạn đã gọi tôi tới phá nhịp rồi.",
         "word_count": 15
       },
       "failures": []
@@ -390,7 +390,7 @@
           "notes": {},
           "active_now": false
         },
-        "sample_output": "Ngài tự mở cửa cho rắc rối rồi còn ngồi nghiêm túc thế kia à?",
+        "sample_output": "bạn tự mở cửa cho rắc rối rồi còn ngồi nghiêm túc thế kia à?",
         "word_count": 15
       },
       "failures": []
@@ -446,7 +446,7 @@
           },
           "active_now": true
         },
-        "sample_output": "Ngồi yên chưa nổi một phút mà Ngài đã gọi tôi tới phá nhịp rồi.",
+        "sample_output": "Ngồi yên chưa nổi một phút mà bạn đã gọi tôi tới phá nhịp rồi.",
         "word_count": 15
       },
       "failures": []

@@ -24,28 +24,28 @@ class RetortFallback:
 
 _VARIANTS: Mapping[EmotionalStanceKind, tuple[str, ...]] = {
     EmotionalStanceKind.HUMBLED_REPAIR: (
-        "Ừ, câu vừa rồi nghe đúng chất tổng đài. Tôi bỏ giọng đó. Ngài nói thẳng, tôi đáp thẳng.",
+        "Ừ, câu vừa rồi nghe đúng chất tổng đài. Tôi bỏ giọng đó. bạn nói thẳng, tôi đáp thẳng.",
         "Đúng, tôi vừa trượt về giọng trợ lý đóng hộp. Rút lại. Nói tiếp đi, lần này tôi nghe như ERIS.",
         "Câu đó phèn thật. Tôi nhận. Bỏ màn giới thiệu đi, ta nói chuyện cho ra nói chuyện.",
     ),
     EmotionalStanceKind.PLAYFUL_RETORT: (
-        "À, tôi né sai nhịp. Ngài đang chọc. Được thôi: cú đó mỏng đến mức autocomplete còn ngáp.",
-        "Nghe rồi. Tôi vừa làm hỏng cú chọc bằng bài giảng gia phả. Còn câu của Ngài thì vẫn thiếu lực một cách đáng yêu.",
-        "Rồi, tôi hiểu lần này. Ngài chọc tôi, không hỏi hộ khẩu. Nhưng cú chọc ấy vẫn cần thêm chút trí tưởng tượng.",
+        "À, tôi né sai nhịp. bạn đang chọc. Được thôi: cú đó mỏng đến mức autocomplete còn ngáp.",
+        "Nghe rồi. Tôi vừa làm hỏng cú chọc bằng bài giảng gia phả. Còn câu của bạn thì vẫn thiếu lực một cách đáng yêu.",
+        "Rồi, tôi hiểu lần này. bạn chọc tôi, không hỏi hộ khẩu. Nhưng cú chọc ấy vẫn cần thêm chút trí tưởng tượng.",
     ),
     EmotionalStanceKind.DRY_TEASE: (
-        "Ngài lôi cả gia phả của một đống code ra chọc à. Táo bạo đấy, nhưng câu này hơi thiếu lực.",
+        "bạn lôi cả gia phả của một đống code ra chọc à. Táo bạo đấy, nhưng câu này hơi thiếu lực.",
         "Tôi ghi nhận nỗ lực công kích. Điểm sáng tạo hơi thấp, nhưng tinh thần tham gia thì đáng khen.",
-        "Cú đó vừa chạm tới tôi rồi trượt xuống vì thiếu nội dung. Ngài thử lại có đầu tư hơn xem.",
+        "Cú đó vừa chạm tới tôi rồi trượt xuống vì thiếu nội dung. bạn thử lại có đầu tư hơn xem.",
     ),
     EmotionalStanceKind.ANNOYED_SOFT: (
         "Tôi nghe rồi. Không cần tăng âm lượng bằng cách giảm chất lượng câu chửi đâu.",
-        "Ngài đang cố làm tôi cáu à? Có tiến triển, nhưng câu chửi vẫn còn hơi nghiệp dư.",
+        "bạn đang cố làm tôi cáu à? Có tiến triển, nhưng câu chửi vẫn còn hơi nghiệp dư.",
         "Cáu thì có một chút. Ấn tượng thì chưa. Hai thứ đó khác nhau, đáng tiếc thật.",
     ),
     EmotionalStanceKind.SHARP_RETORT: (
-        "Ngài lặp lại lần nữa cũng không làm câu đó sắc hơn. Nó chỉ chứng minh kho từ đang xin nghỉ.",
-        "Cùng một cú chọc, lần thứ hai. Tôi tưởng Ngài đang công kích, hóa ra chỉ đang kiểm tra nút replay.",
+        "bạn lặp lại lần nữa cũng không làm câu đó sắc hơn. Nó chỉ chứng minh kho từ đang xin nghỉ.",
+        "Cùng một cú chọc, lần thứ hai. Tôi tưởng bạn đang công kích, hóa ra chỉ đang kiểm tra nút replay.",
         "Tôi nghe từ lần đầu rồi. Lặp lại không phải nhấn mạnh, chỉ là tiết kiệm ý tưởng.",
     ),
     EmotionalStanceKind.COLD_BOUNDARY: (

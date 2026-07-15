@@ -26,7 +26,7 @@ def _blank_snapshot():
 
 def test_inner_diary_voice_becomes_the_spoken_seed() -> None:
     compiler = SurfaceSeedCompiler()
-    want = "Tôi vẫn muốn hỏi Ngài về cái dự án dang dở kia."
+    want = "Tôi vẫn muốn hỏi bạn về cái dự án dang dở kia."
     compiled = compiler.compile(
         snapshot=_blank_snapshot(),
         surface_kind="surface",

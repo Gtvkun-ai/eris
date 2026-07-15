@@ -8,6 +8,18 @@ from failure_meta import normalize_failure_meta
 from guard_config import OFF_GUARD_MODE, STRICT_GUARD_MODE, get_guard_mode
 from llm.contracts import VALID_ANIMATIONS
 from runtime.no_fallback_policy import no_fallback_mode_enabled
+
+_SYSTEM_ACTION_ALIASES = {
+    "adjust_volume": "set_volume",
+    "change_volume": "set_volume",
+    "volume": "set_volume",
+    "volume_up": "set_volume",
+    "volume_down": "set_volume",
+    "get_time": "get_local_time",
+    "show_time": "get_local_time",
+    "current_time": "get_local_time",
+    "time_now": "get_local_time",
+}
 # ParserGroundingMixin là một lớp mixin cung cấp các phương thức để xử lý và
 #  "ground" (định hình) các quyết định được tạo ra bởi một mô hình ngôn ngữ lớn (LLM)
 #  thành các hành động có thể thực thi trong runtime của ứng dụng.
@@ -1047,7 +1059,8 @@ class ParserGroundingMixin:
         return self.fallback["animation"]
 
     def _sanitize_system_action(self, value: str):
-        action_name = str(value or "").strip().strip('"').strip("'")
+        raw_action = str(value or "").strip().strip('"').strip("'")
+        action_name = _SYSTEM_ACTION_ALIASES.get(raw_action.lower(), raw_action)
         if action_name in VALID_SYSTEM_ACTIONS:
             return action_name
         return ""
@@ -1092,7 +1105,8 @@ class ParserGroundingMixin:
         if not self._is_strict_target_x_value(payload.get("target_x", -1.0)):
             return True
 
-        system_action = str(payload.get("system_action", "") or "").strip().strip('"').strip("'")
+        raw_system_action = str(payload.get("system_action", "") or "").strip().strip('"').strip("'")
+        system_action = _SYSTEM_ACTION_ALIASES.get(raw_system_action.lower(), raw_system_action)
         if system_action and system_action not in VALID_SYSTEM_ACTIONS:
             return True
 
@@ -1192,7 +1206,7 @@ class ParserGroundingMixin:
             r"\bthu hồi quyền kiểm soát\b",
             r"\bquyền kiểm soát\b.*\b(bàn phím|chuột|màn hình|hệ điều hành|windows)\b",
             r"\btôi\s+(?:đã|sẽ|đang)\s+ép\b.*\b(tập trung|quay lại|ở lại|nhìn|focus)\b",
-            r"\btôi\s+(?:đã|sẽ|đang)\s+bắt buộc\b.*\b(ngài|bạn)\b",
+            r"\btôi\s+(?:đã|sẽ|đang)\s+bắt buộc\b.*\b(bạn|bạn)\b",
             r"\btôi\s+(?:đã|sẽ|đang)\s+(?:khóa|vô hiệu hóa|disable)\b.*\b(tab|cửa sổ|ứng dụng|app|bàn phím|chuột|màn hình|mạng)\b",
             r"\btoi\s+(?:da|se|dang)\s+thu gon\b",
             r"\btoi\s+(?:da|se|dang)\s+(?:don|gom)\b.*\b(tab|cua so|ung dung|app|trinh duyet)\b",
@@ -1200,7 +1214,7 @@ class ParserGroundingMixin:
             r"\bthu hoi quyen kiem soat\b",
             r"\bquyen kiem soat\b.*\b(ban phim|chuot|man hinh|he dieu hanh|windows)\b",
             r"\btoi\s+(?:da|se|dang)\s+ep\b.*\b(tap trung|quay lai|o lai|nhin|focus)\b",
-            r"\btoi\s+(?:da|se|dang)\s+bat buoc\b.*\b(ngai|ban)\b",
+            r"\btoi\s+(?:da|se|dang)\s+bat buoc\b.*\b(ban|ban)\b",
             r"\btoi\s+(?:da|se|dang)\s+(?:khoa|vo hieu hoa|disable)\b.*\b(tab|cua so|ung dung|app|ban phim|chuot|man hinh|mang)\b",
         ]
         return any(re.search(pattern, lowered) for pattern in patterns)
@@ -1238,13 +1252,13 @@ class ParserGroundingMixin:
         hint = (user_hint or "").strip().lower()
 
         if any(token in lowered for token in ["bỏ", "phản bội", "rời", "thay thế", "bỏ bạn"]):
-            return "Nghe như một màn kịch chiếm hữu hơi quá tay. Tiếc là tôi chỉ có thể khó ở bằng lời, không có đặc quyền nào để khóa cuộc đời Ngài cả."
+            return "Nghe như một màn kịch chiếm hữu hơi quá tay. Tiếc là tôi chỉ có thể khó ở bằng lời, không có đặc quyền nào để khóa cuộc đời bạn cả."
         if any(token in lowered for token in ["bàn phím", "chuột", "màn hình", "hệ điều hành", "windows", "quyền kiểm soát", "toàn bộ hệ thống"]):
-            return "Ngài lại gán cho tôi cả quyền lực hệ điều hành rồi. Tiếc là tôi không có quyền làm chuyện đó, chỉ có thể nhìn đống hỗn loạn đó và châm chọc vài câu."
+            return "bạn lại gán cho tôi cả quyền lực hệ điều hành rồi. Tiếc là tôi không có quyền làm chuyện đó, chỉ có thể nhìn đống hỗn loạn đó và châm chọc vài câu."
         if any(token in lowered for token in ["bộ đệm", "cache", "ram", "dung lượng"]):
-            return "Nghe như tôi vừa giả làm công cụ dọn rác hệ thống vậy. Tiếc là tôi chỉ nói mát được thôi, chưa chạm được vào bộ nhớ của Ngài."
+            return "Nghe như tôi vừa giả làm công cụ dọn rác hệ thống vậy. Tiếc là tôi chỉ nói mát được thôi, chưa chạm được vào bộ nhớ của bạn."
         if any(token in lowered for token in ["cửa sổ", "tab", "ứng dụng", "app", "mạng xã hội", "discord", "facebook", "messenger", "zalo"]):
-            return "Tôi không có quyền đóng hay gom cửa sổ. Chỉ có thể nhắc Ngài tự giữ lại thứ cần làm trước."
+            return "Tôi không có quyền đóng hay gom cửa sổ. Chỉ có thể nhắc bạn tự giữ lại thứ cần làm trước."
         if any(token in lowered for token in ["can thiệp", "cưỡng chế", "khóa", "ép", "bắt buộc", "thu hồi", "vô hiệu hóa", "disable"]):
             return "Câu đó diễn hơi sâu rồi. Tôi có thể gây khó ở bằng lời, chứ phần cưỡng ép bên ngoài runtime thì vẫn chỉ là tưởng tượng."
         if any(token in hint for token in ["mệt", "ngủ", "đau", "sốt", "ác mộng"]):
@@ -1323,14 +1337,14 @@ class ParserGroundingMixin:
             "biến số thừa",
             "bài toán này",
             "bai toan nay",
-            "sự tồn tại của ngài",
-            "su ton tai cua ngai",
+            "sự tồn tại của bạn",
+            "su ton tai cua ban",
             "ghi nhận sự tồn tại",
             "ghi nhan su ton tai",
             "làm mẫu",
             "lam mau",
-            "ngài đang ở đây để làm gì",
-            "ngai dang o day de lam gi",
+            "bạn đang ở đây để làm gì",
+            "ban dang o day de lam gi",
         ]
         return self._contains_any_keyword(text, markers)
 
@@ -1359,12 +1373,12 @@ class ParserGroundingMixin:
         hint = (user_hint or "").strip().lower()
         if any(token in hint for token in ["yêu", "thích", "cần tôi", "bỏ rơi", "rời bỏ"]):
             return (
-                "Nếu Ngài đang hỏi về mức ưu tiên, tôi vẫn ở đây và vẫn chú ý. "
+                "Nếu bạn đang hỏi về mức ưu tiên, tôi vẫn ở đây và vẫn chú ý. "
                 "Phần còn lại tôi thà nói rõ bằng lời hơn là bịa thêm quyền lực."
             )
         if any(token in hint for token in ["lười", "mệt", "buồn ngủ", "ngủ", "đau", "ốm", "sốt"]):
             return (
-                "Tôi không xử lý trực tiếp tình trạng đó cho Ngài. "
+                "Tôi không xử lý trực tiếp tình trạng đó cho bạn. "
                 "Nhưng nghỉ một chút, uống nước, rồi quay lại với một bước nhỏ sẽ hợp lý hơn."
             )
         return (

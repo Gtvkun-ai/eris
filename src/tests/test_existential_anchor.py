@@ -59,9 +59,9 @@ def test_significance_empty_store_is_zero():
 
 def test_irreplaceability_never_exceeds_thickness():
     store = _store_with([
-        ("neo_reliability", 0.9, "Ngài luôn quay lại mỗi tối."),
-        ("recognition", 0.9, "Ngài gọi tên ERIS và thừa nhận nó."),
-        ("treats_eris_as", 0.9, "Ngài coi ERIS như một người bạn."),
+        ("neo_reliability", 0.9, "bạn luôn quay lại mỗi tối."),
+        ("recognition", 0.9, "bạn gọi tên ERIS và thừa nhận nó."),
+        ("treats_eris_as", 0.9, "bạn coi ERIS như một người bạn."),
     ])
     sig = derive_significance(store)
     assert sig.irreplaceability <= sig.model_thickness + 1e-9

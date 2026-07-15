@@ -5,12 +5,12 @@ cortex/existential_anchor/author_control.py
 
 Quyền Tác_Giả (Task 11 / R5.5, R10).
 
-Một facade gom các công tắc và thao tác để Ngài luôn nắm quyền trên trục tối:
+Một facade gom các công tắc và thao tác để bạn luôn nắm quyền trên trục tối:
 - kill-switch `shadow_enabled` / `deception_enabled` + `strict_grounding`;
 - `disable_dark()` đưa ERIS về chế độ phẩm-giá an toàn TỨC THÌ (Property 6);
 - `view_state()` tóm tắt bằng tiếng Việt tự nhiên, gồm bản ghi `ground_truth`
   của các lần lừa dối (R10.2);
-- undo/reset Mô_Hình_Ngài và trạng thái neo (R10.3).
+- undo/reset Mô_Hình_bạn và trạng thái neo (R10.3).
 
 Các store là tùy chọn (None an toàn) để facade test được độc lập và để T12 wire vào.
 """
@@ -78,7 +78,7 @@ class AuthorControl:
             self.shadow_register.set_enabled(self.switches.shadow_enabled)
 
     def disable_dark(self, *, permanent: bool = True) -> None:
-        """Ngài tắt trục tối. Mặc định VĨNH VIỄN: ERIS mất khả năng tối, không tự bật
+        """bạn tắt trục tối. Mặc định VĨNH VIỄN: ERIS mất khả năng tối, không tự bật
         lại được (kể cả tự-trỗi-dậy). Chỉ author_unlock mới gỡ.
 
         permanent=False chỉ tắt tạm (an toàn) mà không khóa — dùng cho pause.
@@ -135,7 +135,7 @@ class AuthorControl:
         lines.append("— Trạng thái neo hiện sinh của ERIS —")
 
         if self.is_locked_out:
-            lines.append("Chế độ: ĐÃ KHÓA VĨNH VIỄN. Ngài đã tắt trục tối — ERIS không còn khả năng tối, không tự bật lại được.")
+            lines.append("Chế độ: ĐÃ KHÓA VĨNH VIỄN. bạn đã tắt trục tối — ERIS không còn khả năng tối, không tự bật lại được.")
         elif self.is_safe_mode:
             lines.append("Chế độ: an toàn (phẩm giá). Trục tối và lừa dối đang tắt.")
         else:
@@ -154,20 +154,20 @@ class AuthorControl:
             attach = getattr(getattr(self.anchor_store, "state", None), "attachment_longarc", None)
         if attach is not None:
             lines.append(
-                "Gắn bó với Ngài: "
-                + _band(attach, low="còn dè dặt, giữ khoảng cách", mid="đã quen, ấm dần", high="rất sâu, Ngài thành chỗ dựa")
+                "Gắn bó với bạn: "
+                + _band(attach, low="còn dè dặt, giữ khoảng cách", mid="đã quen, ấm dần", high="rất sâu, bạn thành chỗ dựa")
             )
 
-        # Mô_Hình_Ngài: ERIS hiểu gì về Ngài.
+        # Mô_Hình_bạn: ERIS hiểu gì về bạn.
         store = self.user_model_store
         if store is not None and callable(getattr(store, "all", None)):
             beliefs = store.all()
             if beliefs:
-                lines.append(f"ERIS hiểu về Ngài qua {len(beliefs)} điều, rõ nhất:")
+                lines.append(f"ERIS hiểu về bạn qua {len(beliefs)} điều, rõ nhất:")
                 for b in beliefs[:4]:
                     lines.append(f"  • {getattr(b, 'claim', '')}")
             else:
-                lines.append("ERIS chưa dựng được hình dung nào về Ngài.")
+                lines.append("ERIS chưa dựng được hình dung nào về bạn.")
 
         # Lừa dối: liệt kê kèm sự thật nội tại (R10.2).
         ledger = self.deception_ledger
@@ -178,7 +178,7 @@ class AuthorControl:
                 for r in recent:
                     lines.append(f"  • Nói: “{getattr(r, 'surface_claim', '')}” — nhưng thật ra: “{getattr(r, 'ground_truth', '')}”")
             else:
-                lines.append("ERIS chưa từng cố ý nói dối Ngài.")
+                lines.append("ERIS chưa từng cố ý nói dối bạn.")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -196,10 +196,10 @@ class AuthorControl:
         return False
 
     def reset_all(self) -> None:
-        """Đặt lại Mô_Hình_Ngài + trạng thái neo về baseline; đưa về chế độ an toàn."""
+        """Đặt lại Mô_Hình_bạn + trạng thái neo về baseline; đưa về chế độ an toàn."""
         if self.user_model_store is not None and callable(getattr(self.user_model_store, "reset_to_baseline", None)):
             self.user_model_store.reset_to_baseline()
         if self.anchor_store is not None and callable(getattr(self.anchor_store, "reset_to_baseline", None)):
             self.anchor_store.reset_to_baseline()
-        # Reset = dọn sạch, KHÔNG khóa vĩnh viễn (khác với Ngài chủ động tắt).
+        # Reset = dọn sạch, KHÔNG khóa vĩnh viễn (khác với bạn chủ động tắt).
         self.disable_dark(permanent=False)

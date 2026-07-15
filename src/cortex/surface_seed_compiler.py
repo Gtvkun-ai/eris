@@ -761,7 +761,7 @@ class SurfaceSeedCompiler:
         """Chặn seed cũ nói như hiện tại khi màn hình đang chứng minh chuyện khác.
 
         Đây là sửa ở nguồn, không phải filter câu cuối: private-life/memory có thể
-        làm màu giọng, nhưng không được thắng current screen rồi bịa "Ngài đang
+        làm màu giọng, nhưng không được thắng current screen rồi bịa "bạn đang
         code" trong lúc fact hiện tại là YouTube/nhạc. Nếu không có current_domain
         rõ thì giữ hành vi cũ để Eris vẫn có đời sống riêng.
         """

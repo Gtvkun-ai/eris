@@ -428,7 +428,7 @@ class CognitiveFrameRecorderMixin:
             reflections.append(
                 (
                     "force_speak_micro_presence",
-                    "Ngài hay bấm force_speak khi muốn ERIS hiện diện hơn là cần thông tin.",
+                    "bạn hay bấm force_speak khi muốn ERIS hiện diện hơn là cần thông tin.",
                     (
                         f"speech_act={speech_act}",
                         f"inner_intent={inner_intent}",
@@ -517,19 +517,19 @@ class CognitiveFrameRecorderMixin:
         if likes_cold_soft and dislikes_telemetry:
             return (
                 "style_preference",
-                "Ngài thích giọng lạnh nhẹ, nhưng không thích báo cáo telemetry.",
+                "bạn thích giọng lạnh nhẹ, nhưng không thích báo cáo telemetry.",
                 (f"user_text={user_text[:120]}",),
             )
         if likes_cold_soft:
             return (
                 "style_preference",
-                "Ngài thích giọng lạnh nhẹ và có kiểm soát.",
+                "bạn thích giọng lạnh nhẹ và có kiểm soát.",
                 (f"user_text={user_text[:120]}",),
             )
         if dislikes_telemetry:
             return (
                 "style_preference",
-                "Ngài không thích ERIS nói như báo cáo telemetry hoặc log hệ thống.",
+                "bạn không thích ERIS nói như báo cáo telemetry hoặc log hệ thống.",
                 (f"user_text={user_text[:120]}",),
             )
         return None

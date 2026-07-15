@@ -23,8 +23,8 @@ class VoicePolicyResult:
 
 
 _GENERIC_HELPER_MARKERS = (
-    "toi la eris", "tro ly ca nhan", "tro ly cua ngai", "san sang ho tro",
-    "toi co the giup", "hay cho toi biet", "ngai can gi", "dat cau hoi",
+    "toi la eris", "tro ly ca nhan", "tro ly cua ban", "san sang ho tro",
+    "toi co the giup", "hay cho toi biet", "ban can gi", "dat cau hoi",
 )
 
 _LITERAL_FAMILY_MARKERS = (
@@ -49,7 +49,7 @@ _SEXUAL_DEGRADATION_MARKERS = (
 
 _REPAIR_ACK_MARKERS = (
     "a ", "ừ ", "uh ", "toi hieu sai", "toi doc sai", "toi ne sai",
-    "toi bat sai", "cau vua roi", "dung,", "dung roi", "y ngai",
+    "toi bat sai", "cau vua roi", "dung,", "dung roi", "y ban",
 )
 
 

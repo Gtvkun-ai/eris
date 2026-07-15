@@ -25,7 +25,7 @@ class ActionPlanner:
     def __init__(self, *, scorer: ActionUtilityScorer | None = None) -> None:
         self.scorer = scorer or ActionUtilityScorer()
         # Fallback RAM memory nếu coordinator chưa truyền action_memory vào.
-        # Khi Ngài nối thật, nên persist ActionMemoryState trong PersistentInternalState.
+        # Khi bạn nối thật, nên persist ActionMemoryState trong PersistentInternalState.
         self._local_action_memory = ActionMemoryState()
 
     def _has_safety_sensitive_pressure(self, *, appraisal=None, speech_core=None) -> bool:
@@ -251,7 +251,7 @@ class ActionPlanner:
     ) -> None:
         """Helper để coordinator ghi action vào memory sau final decision.
 
-        Nếu Ngài nối persistent state, gọi hàm này sau khi gửi Decision hoặc sau Ti final.
+        Nếu bạn nối persistent state, gọi hàm này sau khi gửi Decision hoặc sau Ti final.
         """
         action_memory.record(
             action=speech_act,
@@ -581,12 +581,12 @@ class ActionPlanner:
 
         if channel == "force_speak" or force_speak:
             if utility_report.rhythm_phase in {"touch", "recoil"}:
-                return "Ngai vua keo ERIS len tieng; dap lai rat ngan, khong phong dai cam xuc"
-            return "Ngai vua goi ERIS len tieng; hay dap lai ngan, tinh, co mat nhung khong phong dai cam xuc"
+                return "ban vua keo ERIS len tieng; dap lai rat ngan, khong phong dai cam xuc"
+            return "ban vua goi ERIS len tieng; hay dap lai ngan, tinh, co mat nhung khong phong dai cam xuc"
 
         if user_text and channel == "chat":
             said = soften_anchor(user_text, fallback="tin nhan hien tai", limit=90)
-            return "Ngai vua noi: " + said + "; tra loi dung viec, khong suy dien qua xa"
+            return "ban vua noi: " + said + "; tra loi dung viec, khong suy dien qua xa"
 
         if speech_act in {"inner_whim", "random_chatter", "light_muse"}:
             return "Xung luc noi nay den tu noi sinh: chi noi nhu mot manh y nghi, khong duoc gan no thanh dieu ERIS thay tren man hinh"
@@ -654,7 +654,7 @@ class ActionPlanner:
         if speech_act == "practical_help":
             return "ngan nhung du y; neu la debug thi neu bug, nguyen nhan, huong fix"
         if channel == "chat":
-            return "tra loi gon theo viec Ngai hoi; khong triet ly neu khong can"
+            return "tra loi gon theo viec ban hoi; khong triet ly neu khong can"
         return "toi da hai cau ngan; khong triet ly; khong dung anchor gia"
 
     def _broadcast_anchor_text(self, broadcast) -> str:

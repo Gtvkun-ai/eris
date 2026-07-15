@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 # Các hằng số và lớp dữ liệu liên quan đến các hành động và quyết định trong hệ thống.
 
 VALID_SYSTEM_ACTION_LIST = (
+    "get_local_time",
     "get_now_playing",
     "focus_window",
     "open_url",

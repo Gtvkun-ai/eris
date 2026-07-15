@@ -49,7 +49,7 @@ _EMPTY_PLATITUDES = (
 )
 
 _STOPWORDS = {
-    "tôi", "toi", "ngài", "ngai", "bạn", "ban", "là", "la", "và", "va", "có",
+    "tôi", "toi", "bạn", "ban", "bạn", "ban", "là", "la", "và", "va", "có",
     "co", "của", "cua", "một", "mot", "những", "nhung", "đang", "dang", "sẽ",
     "se", "thì", "thi", "mà", "ma", "cho", "với", "voi", "này", "nay", "đó",
     "do", "rằng", "rang", "ơi", "oi", "nhé", "nhe", "đi", "di", "the", "and",

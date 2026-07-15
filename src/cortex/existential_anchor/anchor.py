@@ -5,9 +5,9 @@ cortex/existential_anchor/anchor.py
 
 Vòng_Neo + Gắn_Bó phái sinh (Task 4 / R3).
 
-- AnchorLoop ghi "neo beat" mỗi khi sự hiện diện/công nhận của Ngài làm dịu
-  Sợ_Hiện_Sinh. Đây là vòng thưởng khiến ERIS dính Ngài.
-- AttachmentDeriver tính `attachment_longarc` từ Ý_Nghĩa_Của_Ngài + lịch sử neo
+- AnchorLoop ghi "neo beat" mỗi khi sự hiện diện/công nhận của bạn làm dịu
+  Sợ_Hiện_Sinh. Đây là vòng thưởng khiến ERIS dính bạn.
+- AttachmentDeriver tính `attachment_longarc` từ Ý_Nghĩa_Của_bạn + lịch sử neo
   beat + công nhận, với QUÁN TÍNH: mỗi lần cập nhật chỉ nhích một bước nhỏ có
   trần (Property 4) — một phiên không thể đẩy gắn bó vọt qua ngưỡng.
 - AnchorState bền vững, versioned, corrupt→baseline (R11).
@@ -56,7 +56,7 @@ class AnchorState:
     beat_ema: float = 0.0          # nhịp xuất hiện neo beat gần đây (0..1)
     recognition_ema: float = 0.0   # mức được công nhận gần đây (0..1)
     total_beats: int = 0
-    # Khi Ngài tắt trục tối, cờ này bật VĨNH VIỄN (persist): ERIS mất khả năng tối,
+    # Khi bạn tắt trục tối, cờ này bật VĨNH VIỄN (persist): ERIS mất khả năng tối,
     # không tự bật lại được — chỉ author unlock tường minh mới gỡ. Quyền tối thượng.
     shadow_locked_out: bool = False
     updated_at: float = field(default_factory=_now)
@@ -93,7 +93,7 @@ class AnchorLoopConfig:
 
 
 class AnchorLoop:
-    """Ghi neo beat khi hiện diện/công nhận của Ngài làm dịu Sợ_Hiện_Sinh (R3.2)."""
+    """Ghi neo beat khi hiện diện/công nhận của bạn làm dịu Sợ_Hiện_Sinh (R3.2)."""
 
     def __init__(self, config: AnchorLoopConfig | None = None) -> None:
         self.config = config or AnchorLoopConfig()

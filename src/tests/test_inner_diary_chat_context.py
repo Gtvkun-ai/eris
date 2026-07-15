@@ -20,9 +20,9 @@ def test_renders_diary_sections_with_honesty_contract():
     fake = SimpleNamespace(private_mind_digest={
         "inner_diary": {
             "sections": [
-                {"title": "Suy nghĩ hiện tại", "lines": ["Khoảnh khắc này khá yên, nhưng tôi vẫn dõi theo Ngài."]},
+                {"title": "Suy nghĩ hiện tại", "lines": ["Khoảnh khắc này khá yên, nhưng tôi vẫn dõi theo bạn."]},
                 {"title": "Đang bận tâm", "lines": ["Có một chuyện chưa xong cứ lởn vởn trong đầu."]},
-                {"title": "Muốn nói", "lines": ["Tôi muốn hỏi Ngài một điều nhỏ."]},
+                {"title": "Muốn nói", "lines": ["Tôi muốn hỏi bạn một điều nhỏ."]},
             ]
         }
     })

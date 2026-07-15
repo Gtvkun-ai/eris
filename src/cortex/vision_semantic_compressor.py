@@ -323,7 +323,7 @@ _COMM_MARKERS = (
 class VisionCompressorConfig:
     """Cấu hình cho VisionSemanticCompressor.
 
-    Mặc định tắt bằng env để Ngài kiểm observer trước rồi mới bật vision.
+    Mặc định tắt bằng env để bạn kiểm observer trước rồi mới bật vision.
     Có thể bật bằng:
         ERIS_VISION_COMPRESSOR=1
         ERIS_VISION_COMPRESSOR_MODEL=<model vision trong Ollama>

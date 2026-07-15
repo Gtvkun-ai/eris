@@ -278,7 +278,7 @@ ClaimStatus = Literal["grounded", "ungrounded", "known_false"]
 # Dùng cho annotate: nếu một mệnh đề mang dấu này mà evidence thiếu → ungrounded.
 _ERIS_PERCEPTION_CLAIM_MARKERS = (
     "tôi thấy", "toi thay", "tôi nhìn", "toi nhin", "tôi đang xem", "tôi đọc được",
-    "trên màn hình", "tren man hinh", "màn hình của ngài", "cửa sổ", "tab ",
+    "trên màn hình", "tren man hinh", "màn hình của bạn", "cửa sổ", "tab ",
     "file này", "trong file", "nội dung file",
 )
 _ERIS_ACTION_CLAIM_MARKERS = (
@@ -1617,9 +1617,9 @@ class SourceGroundingEngine:
         if screen_evidence_present and not refers_to_screen:
             forbidden.extend(
                 [
-                    "Screen facts chỉ là context nền; KHÔNG được tự khoe nội dung màn hình khi Ngài không hỏi.",
-                    "Câu trả lời phải neo vào điều Ngài vừa nói, không lái sang thứ đang hiện trên màn hình.",
-                    "Chỉ nhắc nội dung màn hình khi Ngài hỏi về nó hoặc khi nó trực tiếp trả lời câu của Ngài.",
+                    "Screen facts chỉ là context nền; KHÔNG được tự khoe nội dung màn hình khi bạn không hỏi.",
+                    "Câu trả lời phải neo vào điều bạn vừa nói, không lái sang thứ đang hiện trên màn hình.",
+                    "Chỉ nhắc nội dung màn hình khi bạn hỏi về nó hoặc khi nó trực tiếp trả lời câu của bạn.",
                 ]
             )
 

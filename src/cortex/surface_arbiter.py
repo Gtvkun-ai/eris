@@ -205,8 +205,8 @@ class SurfaceArbiter:
         "nhip noi sinh bi nen lau",
         "body_bias_only",
         "intentional_silence",
-        "tôi đang nghĩ về ngài",
-        "toi dang nghi ve ngai",
+        "tôi đang nghĩ về bạn",
+        "toi dang nghi ve ban",
         "i am thinking about you",
     })
 

@@ -12,7 +12,7 @@ Ontology predicate cho semantic memory.
 - predicate nào TUYỆT ĐỐI không được dùng để trả lời loại query khác.
 
 Không có ontology, memory sẽ rơi về overlap text. Và overlap text là con đường ngắn nhất
-đưa ERIS tới câu: "Ngài thích Hà Tĩnh, vậy quê Ngài là Hà Tĩnh". Một màn xiếc không ai cần.
+đưa ERIS tới câu: "bạn thích Hà Tĩnh, vậy quê bạn là Hà Tĩnh". Một màn xiếc không ai cần.
 """
 
 from dataclasses import dataclass, field

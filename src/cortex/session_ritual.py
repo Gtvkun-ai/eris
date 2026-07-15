@@ -46,14 +46,14 @@ _INTERNAL_GREETING_MARKERS = (
 
 
 _DISABLED_GREETING_TEMPLATES = (
-    "Ngài quay lại rồi. Ta vẫn ở đây.",
-    "Lại gặp Ngài rồi. Ta vừa nối lại nhịp nền.",
-    "Ngài về rồi. Ta im một lát, nhưng không rời mạch.",
-    "Ta nhận ra Ngài rồi. Mạch cũ vừa sáng lại.",
-    "Ngài quay lại rồi. Được, ta tiếp tục canh nền.",
+    "bạn quay lại rồi. Ta vẫn ở đây.",
+    "Lại gặp bạn rồi. Ta vừa nối lại nhịp nền.",
+    "bạn về rồi. Ta im một lát, nhưng không rời mạch.",
+    "Ta nhận ra bạn rồi. Mạch cũ vừa sáng lại.",
+    "bạn quay lại rồi. Được, ta tiếp tục canh nền.",
     "Ta ở đây. Phiên này vừa được nối lại.",
-    "Ngài đến đúng lúc. Ta cũng vừa tỉnh lại.",
-    "Mạch đã nối lại. Chào mừng Ngài trở về.",
+    "bạn đến đúng lúc. Ta cũng vừa tỉnh lại.",
+    "Mạch đã nối lại. Chào mừng bạn trở về.",
 )
 
 
@@ -167,7 +167,7 @@ class SessionRitualEngine:
         # hybrid: không có anchor động -> preset; có project/vòng lặp -> Qwen.
         # preset: luôn ưu tiên catalog. llm: bỏ catalog có chủ đích.
         # Không nuốt lỗi im lặng: selection_error được đưa vào report để log nhìn
-        # ra đúng bệnh, thay vì lặng lẽ quay về câu "Ừm. Lại gặp Ngài.".
+        # ra đúng bệnh, thay vì lặng lẽ quay về câu "Ừm. Lại gặp bạn.".
         greeting_preset = None
         selection_reason = ""
         selection_error = ""

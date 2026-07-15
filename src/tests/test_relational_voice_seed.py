@@ -176,20 +176,20 @@ def test_should_use_voice_seed_property(register, scope, act):
 
 def test_join_normal():
     a = _adapter()
-    assert a._join("Tôi quen có Ngài ở đây.", "Gọi đó là gì thì tùy Ngài.") == \
-        "Tôi quen có Ngài ở đây. Gọi đó là gì thì tùy Ngài."
+    assert a._join("Tôi quen có bạn ở đây.", "Gọi đó là gì thì tùy bạn.") == \
+        "Tôi quen có bạn ở đây. Gọi đó là gì thì tùy bạn."
 
 
 def test_join_drops_leading_echo():
     a = _adapter()
-    out = a._join("Tôi quen có Ngài ở đây.", "Tôi quen có Ngài ở đây. Gọi đó là gì thì tùy Ngài.")
-    assert out.count("Tôi quen có Ngài ở đây") == 1
-    assert out.startswith("Tôi quen có Ngài ở đây")
+    out = a._join("Tôi quen có bạn ở đây.", "Tôi quen có bạn ở đây. Gọi đó là gì thì tùy bạn.")
+    assert out.count("Tôi quen có bạn ở đây") == 1
+    assert out.startswith("Tôi quen có bạn ở đây")
 
 
 def test_join_pure_echo_returns_seed():
     a = _adapter()
-    assert a._join("Tôi quen có Ngài ở đây.", "Tôi quen có Ngài ở đây.") == "Tôi quen có Ngài ở đây."
+    assert a._join("Tôi quen có bạn ở đây.", "Tôi quen có bạn ở đây.") == "Tôi quen có bạn ở đây."
 
 
 def test_join_whitespace_collapsed():
@@ -202,12 +202,12 @@ def test_join_whitespace_collapsed():
 # ---------------------------------------------------------------------------
 
 def test_try_answer_normal_join():
-    seed = _FakeClient("Tôi quen có Ngài ở đây.")
-    cont = _FakeClient("Gọi đó là gì thì tùy Ngài.")
+    seed = _FakeClient("Tôi quen có bạn ở đây.")
+    cont = _FakeClient("Gọi đó là gì thì tùy bạn.")
     a = _adapter(style_client=seed, client=cont)
     d = a.try_answer("em có thích tôi không", stance=_social_stance())
     assert d is not None
-    assert d.text == "Tôi quen có Ngài ở đây. Gọi đó là gì thì tùy Ngài."
+    assert d.text == "Tôi quen có bạn ở đây. Gọi đó là gì thì tùy bạn."
     assert d.parse_mode == "relational_voice_seed"
     assert d.extracted_fact == ""
     assert "voice_seed_mode:joined" in d.reasoning_tags
@@ -215,12 +215,12 @@ def test_try_answer_normal_join():
 
 
 def test_try_answer_seed_only_on_llama_429():
-    seed = _FakeClient("Tôi quen có Ngài ở đây.")
+    seed = _FakeClient("Tôi quen có bạn ở đây.")
     cont = _FakeClient(error=_http_429())
     a = _adapter(style_client=seed, client=cont)
     d = a.try_answer("em có thích tôi không", stance=_social_stance())
     assert d is not None
-    assert d.text == "Tôi quen có Ngài ở đây."
+    assert d.text == "Tôi quen có bạn ở đây."
     assert "voice_seed_mode:seed_only" in d.reasoning_tags
     assert "rate_limited" in d.debug_trace
 
@@ -236,11 +236,11 @@ def test_try_answer_seed_only_on_llama_failure(err):
 
 
 def test_try_answer_seed_only_on_dirty_tail():
-    seed = _FakeClient("Tôi quen có Ngài ở đây.")
-    cont = _FakeClient("tôi chỉ cố gắng hỗ trợ và giúp đỡ Ngài.")
+    seed = _FakeClient("Tôi quen có bạn ở đây.")
+    cont = _FakeClient("tôi chỉ cố gắng hỗ trợ và giúp đỡ bạn.")
     a = _adapter(style_client=seed, client=cont)
     d = a.try_answer("em có thích tôi không", stance=_social_stance())
-    assert d is not None and d.text == "Tôi quen có Ngài ở đây."
+    assert d is not None and d.text == "Tôi quen có bạn ở đây."
     assert "voice_seed_mode:seed_only" in d.reasoning_tags
 
 
@@ -286,10 +286,10 @@ def test_try_answer_never_raises_and_falls_through():
 
 
 def test_try_answer_seed_only_when_no_llama_client():
-    seed = _FakeClient("Tôi quen có Ngài ở đây.")
+    seed = _FakeClient("Tôi quen có bạn ở đây.")
     a = _adapter(style_client=seed, client=None)
     d = a.try_answer("em có thích tôi không", stance=_social_stance())
-    assert d is not None and d.text == "Tôi quen có Ngài ở đây."
+    assert d is not None and d.text == "Tôi quen có bạn ở đây."
 
 
 def test_try_answer_never_returns_empty_text():
@@ -333,8 +333,8 @@ def _client_for(behavior: str, content: str) -> _FakeClient:
 
 @given(seed_b=st.sampled_from(_BEHAVIORS), cont_b=st.sampled_from(_BEHAVIORS))
 def test_try_answer_total(seed_b, cont_b):
-    seed = _client_for(seed_b, "Tôi quen có Ngài ở đây.")
-    cont = _client_for(cont_b, "Gọi đó là gì thì tùy Ngài.")
+    seed = _client_for(seed_b, "Tôi quen có bạn ở đây.")
+    cont = _client_for(cont_b, "Gọi đó là gì thì tùy bạn.")
     a = _adapter(style_client=seed, client=cont)
     d = a.try_answer("em có thích tôi không", stance=_social_stance())
     assert d is None or (d.text and d.text.strip())
@@ -363,8 +363,8 @@ def test_voice_seed_logs_cost_summary_on_joined_turn() -> None:
     logger = _CapturingLogger()
     adapter = RelationalVoiceSeedAdapter(
         llm_service=_FakeLlmService(
-            style_client=_FakeClient("Tôi quen có Ngài ở đây."),
-            client=_FakeClient("Gọi đó là gì thì tùy Ngài."),
+            style_client=_FakeClient("Tôi quen có bạn ở đây."),
+            client=_FakeClient("Gọi đó là gì thì tùy bạn."),
         ),
         config=RelationalVoiceSeedConfig(enabled=True, scope=VoiceSeedScope.SOCIAL),
         logger=logger,
@@ -383,7 +383,7 @@ def test_voice_seed_logs_cost_summary_on_seed_only_turn() -> None:
     logger = _CapturingLogger()
     adapter = RelationalVoiceSeedAdapter(
         llm_service=_FakeLlmService(
-            style_client=_FakeClient("Tôi quen có Ngài ở đây."),
+            style_client=_FakeClient("Tôi quen có bạn ở đây."),
             client=_FakeClient(error=_http_429()),
         ),
         config=RelationalVoiceSeedConfig(enabled=True, scope=VoiceSeedScope.SOCIAL),

@@ -3,7 +3,7 @@
 
 Spec: .kiro/specs/eris-existential-anchor. Các module ở đây cố ý mỏng và đọc
 state có sẵn (UserModelStore, continuity, internal_state) rồi phái sinh ra:
-- UserSignificance (Ý_Nghĩa_Của_Ngài)
+- UserSignificance (Ý_Nghĩa_Của_bạn)
 - attachment_longarc (Gắn_Bó phái sinh) + AnchorLoop
 - abandonment_pressure (Tín_Hiệu_Bỏ_Rơi)
 - ShadowState (Đăng_Ký_Bóng_Tối)

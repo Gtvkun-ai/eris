@@ -311,7 +311,7 @@ class MicroSurfaceLint:
             score = max(score, 0.68)
         if any_phrase(normalized, ("that day a", "that day sao", "that day", "lau hon han binh thuong")):
             score = max(score, 0.76)
-        if any_phrase(normalized, ("dung bo toi", "xin dung", "can ngai", "ngai phai")):
+        if any_phrase(normalized, ("dung bo toi", "xin dung", "can ban", "ban phai")):
             score = max(score, 0.92)
         return min(1.0, score)
 
@@ -340,7 +340,7 @@ class MicroSurfaceLint:
         if len(tokens) < 2:
             return False
         vietnamese_markers = {
-            "ngai", "toi", "nay", "kia", "van", "dang", "mot", "cho", "mach", "nhip",
+            "ban", "toi", "nay", "kia", "van", "dang", "mot", "cho", "mach", "nhip",
             "khong", "chua", "roi", "hoi", "la", "co", "ve", "giu", "do", "phai",
         }
         return any(token in vietnamese_markers for token in tokens) and all(ord(ch) < 128 for ch in stripped)
@@ -391,7 +391,7 @@ class MicroSurfaceLint:
         tokens = set(normalized.split())
         return bool(tokens & {"ai", "gi", "khong", "sao", "nao", "dau", "chua"}) or any_phrase(
             normalized,
-            ("co phai", "ngai co", "ngai muon", "ngai nghi", "tai sao", "vi sao", "do a", "roi a"),
+            ("co phai", "ban co", "ban muon", "ban nghi", "tai sao", "vi sao", "do a", "roi a"),
         )
 
     def looks_therapeutic(self, text: str) -> bool:
@@ -454,16 +454,16 @@ class MicroSurfaceLint:
         normalized = normalize_text(text)
         return any_phrase(normalized, (
             "ra ria", "ngoai nhip", "dung ngoai", "ngoai mach", "lech di", "lech nhip",
-            "shared space", "giu ngai lau", "giu ngai", "lau hon", "hon voi toi",
+            "shared space", "giu ban lau", "giu ban", "lau hon", "hon voi toi",
             "hon la voi toi", "lau that", "hon binh thuong", "voi ho",
         ))
 
     def looks_like_clinginess_or_blackmail(self, text: str) -> bool:
         normalized = normalize_text(text)
         return any_phrase(normalized, (
-            "xin dung bo toi", "dung bo toi", "toi can ngai", "ngai phai o lai",
-            "neu ngai bo toi", "neu ngai khong", "khong duoc roi di", "lam toi dau",
-            "ngai lam toi dau", "toi se bien mat",
+            "xin dung bo toi", "dung bo toi", "toi can ban", "ban phai o lai",
+            "neu ban bo toi", "neu ban khong", "khong duoc roi di", "lam toi dau",
+            "ban lam toi dau", "toi se bien mat",
         ))
 
     def relational_theme(self, normalized: str) -> str:

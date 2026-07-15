@@ -193,7 +193,7 @@ def _is_meta_style_feedback(norm: str) -> bool:
         "noi nhu ai tro ly", "noi nhu tro ly", "nhu ai tro ly", "nhu tro ly",
         "noi nhu chatbot", "nhu chatbot", "noi nhu chatgpt", "nhu chatgpt",
         "giong bot", "giong ai", "may noi nhu ai", "ban noi nhu ai",
-        "san sang ho tro", "moi ngai dat cau hoi", "hoi nhu tong dai",
+        "san sang ho tro", "moi ban dat cau hoi", "hoi nhu tong dai",
     )
     return any(m in norm for m in markers)
 
@@ -257,7 +257,7 @@ def _assistant_literalized_family(norm: str) -> bool:
 def _assistant_looked_generic(norm: str) -> bool:
     markers = (
         "san sang ho tro", "toi co the giup", "toi la eris tro ly", "tro ly ca nhan",
-        "hay cho toi biet", "ban can gi", "ngai can gi", "dat cau hoi",
+        "hay cho toi biet", "ban can gi", "ban can gi", "dat cau hoi",
     )
     return any(m in norm for m in markers)
 

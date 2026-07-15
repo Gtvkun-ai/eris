@@ -33,10 +33,10 @@ from semantic_authority import SemanticAuthorityPolicy
 # Data bans trong RUNTIME_RULES_PROMPT). Trung thực ở chỗ thừa nhận chưa đủ chắc
 # để trả lời, nhưng giữ giọng và xoay câu để không thành canned response.
 _FORMAT_REPAIR_FALLBACK_LINES = (
-    "Tôi chưa chốt được câu trả lời cho cái này, và tôi không muốn nói bừa. Ngài nói lại ý chính giúp tôi một chút.",
-    "Cái này tôi chưa nắm đủ chắc để trả cho gọn. Để khỏi đoán mò, Ngài thử hỏi lại theo hướng khác xem.",
+    "Tôi chưa chốt được câu trả lời cho cái này, và tôi không muốn nói bừa. bạn nói lại ý chính giúp tôi một chút.",
+    "Cái này tôi chưa nắm đủ chắc để trả cho gọn. Để khỏi đoán mò, bạn thử hỏi lại theo hướng khác xem.",
     "Tôi đang hơi kẹt ở câu này, chưa đủ dữ liệu để trả lời cho an toàn. Tôi dừng ở đây thay vì bịa cho có.",
-    "Tôi không muốn đưa Ngài một câu nửa vời. Cho tôi thêm một góc nữa rồi tôi trả lại cho tử tế.",
+    "Tôi không muốn đưa bạn một câu nửa vời. Cho tôi thêm một góc nữa rồi tôi trả lại cho tử tế.",
 )
 
 
@@ -434,7 +434,7 @@ class ChatCycleMixin:
 
         # Dual-Axis Repair chạy sớm để Ti không nhìn một chữ "nhớ" rồi tự phong
         # cả lượt thành tình cảm. Đây mới là appraisal sơ bộ; sau Affect/Feedback
-        # nó sẽ được refine lần nữa, không phải một regex đứng trên ngai vàng.
+        # nó sẽ được refine lần nữa, không phải một regex đứng trên ban vàng.
         from runtime.dual_axis_repair import DualAxisRepairAppraiser
 
         # Một engine duy nhất tạo snapshot xã hội. DualAxisRepair chỉ là projection
@@ -1162,19 +1162,19 @@ class ChatCycleMixin:
             except Exception as exc:
                 self.logger.debug("[director pre-generation] skipped: %s", exc)
 
-        # Curiosity Tutor: Eris không hiểu ý Ngài → câu trả lời lượt này thành câu hỏi
+        # Curiosity Tutor: Eris không hiểu ý bạn → câu trả lời lượt này thành câu hỏi
         # làm rõ (thay vì đoán bừa hay lén tra Gemini). Giữ giọng Eris.
         if getattr(self, "_clarify_user_pending", False):
             planned_ti_context = (
-                f"{planned_ti_context}\n\nLÀM RÕ: Em chưa chắc hiểu ý Ngài vừa nói. "
-                "Thay vì đoán hay bịa, hãy hỏi lại Ngài MỘT câu ngắn, tự nhiên, đúng giọng "
+                f"{planned_ti_context}\n\nLÀM RÕ: Em chưa chắc hiểu ý bạn vừa nói. "
+                "Thay vì đoán hay bịa, hãy hỏi lại bạn MỘT câu ngắn, tự nhiên, đúng giọng "
                 "của em để làm rõ ý; đừng xin lỗi dài dòng."
             )
-        # Nhịp 1 của tra cứu: Eris chưa biết câu kiến thức Ngài vừa hỏi → báo "đợi em tra
+        # Nhịp 1 của tra cứu: Eris chưa biết câu kiến thức bạn vừa hỏi → báo "đợi em tra
         # chút" rồi sẽ trả lời sau (nhịp 2 chạy ở thread nền). TUYỆT ĐỐI không đoán đáp án.
         if getattr(self, "_research_pending", False):
             planned_ti_context = (
-                f"{planned_ti_context}\n\nĐANG TRA CỨU: Em chưa chắc câu trả lời cho câu Ngài "
+                f"{planned_ti_context}\n\nĐANG TRA CỨU: Em chưa chắc câu trả lời cho câu bạn "
                 "vừa hỏi và KHÔNG được bịa. Hãy nói ngắn gọn, tự nhiên, đúng giọng em rằng em "
                 "chưa chắc nên đang đi tra cứu và sẽ trả lời ngay khi xong. Đừng đưa ra bất kỳ "
                 "đáp án phỏng đoán nào ở câu này."

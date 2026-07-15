@@ -410,7 +410,7 @@ class StageScorer:
             score += 0.08
         if candidate.delivery_hint or candidate.nonverbal_cue or candidate.stage_motion:
             score += 0.16
-        if any(token in normalized for token in ("ngai", "bug", "khoan", "hm", "toi", "eris")):
+        if any(token in normalized for token in ("ban", "bug", "khoan", "hm", "toi", "eris")):
             score += 0.08
         if normalized in {"ok", "oke", "duoc", "duoc roi", "vang", "uh"}:
             score -= 0.22

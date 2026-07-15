@@ -50,7 +50,7 @@ def test_build_depth_v2_state_uses_private_mind_as_primary_source(tmp_path, monk
             "sections": [
                 {
                     "title": "Suy nghĩ hiện tại",
-                    "items": [{"text": "Ngài đang muốn làm việc về kiến trúc.", "badge": ""}],
+                    "items": [{"text": "bạn đang muốn làm việc về kiến trúc.", "badge": ""}],
                 },
                 {
                     "title": "Suy nghĩ tương lai",
@@ -62,7 +62,7 @@ def test_build_depth_v2_state_uses_private_mind_as_primary_source(tmp_path, monk
                 },
                 {
                     "title": "Phân tích gần đây",
-                    "items": [{"text": "Đây là chủ đề Ngài quan tâm.", "badge": "score 0.81"}],
+                    "items": [{"text": "Đây là chủ đề bạn quan tâm.", "badge": "score 0.81"}],
                 },
                 {
                     "title": "Muốn nói",

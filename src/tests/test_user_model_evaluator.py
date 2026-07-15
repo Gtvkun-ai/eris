@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Test cho UserModelEvaluator + định tuyến vào Mô_Hình_Ngài (Task 2 / R1).
+"""Test cho UserModelEvaluator + định tuyến vào Mô_Hình_bạn (Task 2 / R1).
 
 Phủ:
-- Evaluator đẻ fragment hướng-Ngài có `metadata['facet']` và `evidence_ids` từ dossier.
+- Evaluator đẻ fragment hướng-bạn có `metadata['facet']` và `evidence_ids` từ dossier.
 - Adapter trả None / claim rỗng → không có fragment.
 - relevance_signature im khi không có lời người dùng.
 - Pipeline → UserModelStore: chỉ fragment có evidence mới vào chân dung (R1.2).
@@ -32,7 +32,7 @@ class _FakeAdapter:
         return self.payload
 
 
-def _dossier_with_user_turn(text="Ngài coi ERIS như một công cụ làm việc."):
+def _dossier_with_user_turn(text="bạn coi ERIS như một công cụ làm việc."):
     eid = "dossier.user.current"
     return EvidenceDossier(
         dossier_id="d1",
@@ -44,7 +44,7 @@ def _dossier_with_user_turn(text="Ngài coi ERIS như một công cụ làm vi�
 
 def test_evaluator_emits_facet_and_evidence():
     adapter = _FakeAdapter({
-        "claim": "Ngài coi ERIS như một công cụ làm việc.",
+        "claim": "bạn coi ERIS như một công cụ làm việc.",
         "confidence": 0.62,
         "pressure": 0.4,
         "facet": "treats_eris_as",
@@ -59,7 +59,7 @@ def test_evaluator_emits_facet_and_evidence():
 
 def test_evaluator_infers_facet_when_model_omits_it():
     adapter = _FakeAdapter({
-        "claim": "Ngài hay biến mất vào cuối tuần, không quay lại.",
+        "claim": "bạn hay biến mất vào cuối tuần, không quay lại.",
         "confidence": 0.55,
     })
     ev = UserModelEvaluator(model_adapter=adapter)
@@ -82,7 +82,7 @@ def test_relevance_silent_without_user_turn():
 
 def test_pipeline_routes_into_user_model_store():
     adapter = _FakeAdapter({
-        "claim": "Ngài coi ERIS như một công cụ làm việc.",
+        "claim": "bạn coi ERIS như một công cụ làm việc.",
         "confidence": 0.62,
         "facet": "treats_eris_as",
     })

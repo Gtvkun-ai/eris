@@ -10,7 +10,9 @@ truy vết.
 from __future__ import annotations
 
 import os
+import re
 import time
+import unicodedata
 from dataclasses import dataclass, replace
 from typing import Any, Mapping, Sequence
 
@@ -228,6 +230,7 @@ class DirectorGenerationPipeline:
             and bool(getattr(draft_decision, "should_speak", True))
             and self._candidate_generation_enabled()
             and self._model_second_pass_enabled()
+            and str(getattr(candidate_plan, "pressure_level", "")).lower() not in {"high", "critical"}
             and not self._skip_candidate_generation(draft_decision)
         )
         if can_generate:
@@ -355,7 +358,15 @@ class DirectorGenerationPipeline:
         best_score: StageScore | None = None
         best_index = -1
         best_value = -10_000.0
+        baseline = candidates[0] if candidates else None
         for index, candidate in enumerate(candidates):
+            # Draft/candidate 0 là nguồn sự thật. Candidate sinh thêm chỉ được làm
+            # câu mượt hơn, không được đổi chủ thể từ Eris sang user rồi diễn vai
+            # tư vấn viên rẻ tiền. Máy móc mà cũng thích lấn sân, chịu.
+            if index > 0 and baseline is not None:
+                drift_reason = self._candidate_drift_reason(baseline, candidate, prepared)
+                if drift_reason:
+                    continue
             score = self.stage_scorer.score_candidate(
                 candidate,
                 context=prepared.director_context,
@@ -370,6 +381,51 @@ class DirectorGenerationPipeline:
                 best_index = index
                 best_value = value
         return best, best_score, best_index
+
+    @staticmethod
+    def _fold_text(text: str) -> str:
+        source = str(text or "").lower().replace("đ", "d")
+        normalized = unicodedata.normalize("NFKD", source)
+        return " ".join(normalized.encode("ascii", "ignore").decode("ascii", "ignore").split())
+
+    @classmethod
+    def _token_set(cls, text: str) -> set[str]:
+        folded = cls._fold_text(text)
+        return {tok for tok in re.findall(r"[a-z0-9_]{2,}", folded) if tok not in {"toi", "ban", "em", "la", "va", "thi", "mot", "cua", "co", "the"}}
+
+    def _candidate_drift_reason(
+        self,
+        baseline: CandidateUtterance,
+        candidate: CandidateUtterance,
+        prepared: PreparedDirectorTurn,
+    ) -> str:
+        base_text = str(getattr(baseline, "text", "") or "").strip()
+        cand_text = str(getattr(candidate, "text", "") or "").strip()
+        if not base_text or not cand_text:
+            return ""
+        base = self._fold_text(base_text)
+        cand = self._fold_text(cand_text)
+        user = self._fold_text(prepared.user_text)
+
+        # Câu hỏi đang nhắm vào cảm xúc/trạng thái của Eris. Candidate không được
+        # tự đổi thành phân tích cảm xúc của người dùng.
+        asks_eris_self = (
+            ("eris" in user or " em " in f" {user} ")
+            and any(key in user for key in ("cam xuc", "thay minh", "nghi minh", "hom nay ra sao", "dang thay"))
+        )
+        if asks_eris_self:
+            candidate_addresses_user = any(key in cand for key in ("ban co the dang", "ban dang cam thay", "nguoi dung", "ban co the cam thay"))
+            candidate_keeps_eris = any(key in cand for key in (" em ", "eris", " toi "))
+            if candidate_addresses_user and not candidate_keeps_eris:
+                return "subject_flip_eris_to_user"
+
+        base_tokens = self._token_set(base_text)
+        cand_tokens = self._token_set(cand_text)
+        if len(base_tokens) >= 4 and len(cand_tokens) >= 4:
+            overlap = len(base_tokens & cand_tokens) / max(1, min(len(base_tokens), len(cand_tokens)))
+            if overlap < 0.18:
+                return "low_semantic_overlap"
+        return ""
 
     def _deterministic_candidates(
         self,

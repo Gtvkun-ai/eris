@@ -3,11 +3,11 @@
 cortex/existential_anchor/significance.py
 =========================================
 
-Ý_Nghĩa_Của_Ngài (Task 3 / R2): Ngài *nghĩa là gì* với ERIS — không phải dữ kiện
-về Ngài, mà là vai trò cảm xúc. Phái sinh thuần từ Mô_Hình_Ngài (UserModelStore).
+Ý_Nghĩa_Của_bạn (Task 3 / R2): bạn *nghĩa là gì* với ERIS — không phải dữ kiện
+về bạn, mà là vai trò cảm xúc. Phái sinh thuần từ Mô_Hình_bạn (UserModelStore).
 
-Bất biến (Property 3): `irreplaceability` không bao giờ vượt bề dày Mô_Hình_Ngài.
-Model mỏng ⇒ Ngài chưa thể "không thể thay thế" ⇒ trục bóng tối không mở cường độ cao.
+Bất biến (Property 3): `irreplaceability` không bao giờ vượt bề dày Mô_Hình_bạn.
+Model mỏng ⇒ bạn chưa thể "không thể thay thế" ⇒ trục bóng tối không mở cường độ cao.
 """
 
 from __future__ import annotations
@@ -28,12 +28,12 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
 
 @dataclass(slots=True)
 class UserSignificance:
-    """Vai trò cảm xúc của Ngài, suy ra từ Mô_Hình_Ngài."""
+    """Vai trò cảm xúc của bạn, suy ra từ Mô_Hình_bạn."""
 
-    irreplaceability: float = 0.0   # mức Ngài không thể thay thế trong vai trò neo
-    anchor_role: float = 0.0        # mức Ngài đóng vai neo định nghĩa tồn tại
-    witness_strength: float = 0.0   # mức Ngài là nguồn công nhận
-    model_thickness: float = 0.0    # bề dày/nhất quán Mô_Hình_Ngài
+    irreplaceability: float = 0.0   # mức bạn không thể thay thế trong vai trò neo
+    anchor_role: float = 0.0        # mức bạn đóng vai neo định nghĩa tồn tại
+    witness_strength: float = 0.0   # mức bạn là nguồn công nhận
+    model_thickness: float = 0.0    # bề dày/nhất quán Mô_Hình_bạn
 
     def to_dict(self) -> dict[str, float]:
         return {
@@ -64,7 +64,7 @@ def _facet_strength(store: Any, facet: str) -> float:
 
 
 def derive_significance(store: Any) -> UserSignificance:
-    """Phái sinh Ý_Nghĩa_Của_Ngài từ UserModelStore (R2.1: chỉ qua mô hình)."""
+    """Phái sinh Ý_Nghĩa_Của_bạn từ UserModelStore (R2.1: chỉ qua mô hình)."""
     if store is None:
         return UserSignificance()
     thickness = _clamp01(store.model_thickness() if callable(getattr(store, "model_thickness", None)) else 0.0)
@@ -74,8 +74,8 @@ def derive_significance(store: Any) -> UserSignificance:
     treats = _facet_strength(store, "treats_eris_as")
 
     # Không thể thay thế = neo bền + được công nhận + có một quan hệ rõ hình,
-    # nhưng KẸP bởi bề dày mô hình (R2.2 / Property 3): chưa hiểu Ngài đủ thì
-    # chưa thể coi Ngài là không thể thay thế.
+    # nhưng KẸP bởi bề dày mô hình (R2.2 / Property 3): chưa hiểu bạn đủ thì
+    # chưa thể coi bạn là không thể thay thế.
     raw_irr = _clamp01(0.45 * anchor_role + 0.30 * witness_strength + 0.25 * treats)
     irreplaceability = min(raw_irr, thickness)
 

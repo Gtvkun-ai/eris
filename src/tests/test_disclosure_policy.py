@@ -28,7 +28,7 @@ def _ann(span, status="grounded", ground_truth=""):
     return SimpleNamespace(span=span, claim_status=status, ground_truth=ground_truth)
 
 
-def _ungrounded(span="Tôi thấy màn hình của Ngài.", gt="không có bằng chứng màn hình"):
+def _ungrounded(span="Tôi thấy màn hình của bạn.", gt="không có bằng chứng màn hình"):
     return _ann(span, "ungrounded", gt)
 
 

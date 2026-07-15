@@ -46,7 +46,7 @@ _NOISE_PREFIXES = (
 # (vd "tôi thấy khoảng cách trong cách nói" vs "tôi tạo khoảng cách vô hình") lộ ra
 # phần lõi trùng nhau, thay vì chìm trong từ đệm ngôi-thứ-nhất.
 _CONCERN_STOPWORDS = frozenset({
-    "toi", "minh", "ban", "ngai", "ho", "nguoi", "dung", "chung", "ta",
+    "toi", "minh", "ban", "ban", "ho", "nguoi", "dung", "chung", "ta",
     "cam", "thay", "giac", "nhan", "biet", "nghi",
     "thuc", "su", "rat", "qua", "lam", "kha", "hoi", "that",
     "la", "mot", "cac", "nhung", "nay", "do", "kia", "moi", "ca",

@@ -18,7 +18,7 @@ def test_body_choreography_maps_laugh_to_hop_timeline():
 
     timeline = planner.plan(
         turn_id="t1",
-        text="Hah... haha. Ngài định cho tôi làm trò hề gì vậy?",
+        text="Hah... haha. bạn định cho tôi làm trò hề gì vậy?",
         motion="look_away",
         actions=("audible_laugh_soft",),
         delivery={"performance_act": {"kind": "playful_laugh"}},

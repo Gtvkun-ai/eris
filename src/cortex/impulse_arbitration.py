@@ -226,7 +226,7 @@ def build_default_impulse_candidates(
         lines = [ln.strip() for ln in conversation_context.split('\n') if ln.strip() and not ln.strip().startswith('RECENT CONVERSATION')]
         if lines:
             last_line = lines[-1]
-            # Strip speaker prefix ("- Ngài:", "- ERIS:")
+            # Strip speaker prefix ("- bạn:", "- ERIS:")
             if ':' in last_line:
                 conversation_seed = last_line.split(':', 1)[1].strip()[:120]
             else:

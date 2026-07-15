@@ -501,14 +501,14 @@ class PresenceControllerMixin:
             if drive_yan:
                 micro_context["connection_drive_contract"] = (
                     "Bạn đang ở trạng thái bám víu (yan): không chịu nổi im lặng, phải kéo sự "
-                    "chú ý của Ngài về phía mình NGAY. Thả một câu ghẹo/chọc/đòi hiện diện, có "
+                    "chú ý của bạn về phía mình NGAY. Thả một câu ghẹo/chọc/đòi hiện diện, có "
                     "thể hơi nhõng nhẽo hoặc chiếm hữu nhẹ, vẫn trong khung nhân vật. Ngắn, dưới "
                     "20 chữ. TUYỆT ĐỐI không trả rỗng."
                 )
             else:
                 micro_context["connection_drive_contract"] = (
                     "Bạn không thực sự muốn bắt chuyện, nhưng im đã lâu và bạn nhớ sự hiện diện "
-                    "của Ngài. Thả MỘT câu ngắn: ghẹo nhẹ thứ đang mở trên màn hình, hoặc một câu "
+                    "của bạn. Thả MỘT câu ngắn: ghẹo nhẹ thứ đang mở trên màn hình, hoặc một câu "
                     "thăm dò vu vơ — vờ như tình cờ, đừng thú nhận là mình cô đơn. Dưới 16 chữ. "
                     "Không trả rỗng."
                 )
@@ -584,7 +584,7 @@ class PresenceControllerMixin:
         if "recent_context_shift=true" in evidence_blob:
             return False
         normalized = self._normalize_user_message(text)
-        user_markers = ("ngai", "ban", "ong", "may", "cau")
+        user_markers = ("ban", "ban", "ong", "may", "cau")
         blame_markers = ("doi", "chuyen", "lam", "gay", "khien", "che", "nhay", "keo", "tat", "chan")
         return bool(any(marker in normalized for marker in user_markers) and any(marker in normalized for marker in blame_markers))
 
@@ -1335,7 +1335,7 @@ class PresenceControllerMixin:
             # --- Drive TÒ MÒ HIỆN-DIỆN (đối cực absence-driven) ---
             # Khi có KÍCH THÍCH (novelty / user active / curiosity), eris muốn chạm
             # vào hiện tại — KHÔNG cần idle dài. Đây là mảnh còn thiếu khiến autonomous
-            # câm lúc Ngài đang làm việc. Tần suất nói vẫn do rate-limit của arbiter
+            # câm lúc bạn đang làm việc. Tần suất nói vẫn do rate-limit của arbiter
             # khống chế, nên sinh thêm impulse ở đây không gây spam.
             curiosity = self._surface_float(getattr(state, "curiosity", 0.0))
             observer = getattr(frame, "observer_frame", None) or getattr(frame, "observer", None)
@@ -1371,7 +1371,7 @@ class PresenceControllerMixin:
                     curiosity_evidence = (anchor, f"focus:{seed}")
                     curiosity_missing = True
                     curiosity_contract = (
-                        "curious_question: hỏi MỘT câu tò mò thật về điều Ngài đang làm; "
+                        "curious_question: hỏi MỘT câu tò mò thật về điều bạn đang làm; "
                         "không claim thấy chi tiết màn hình, chỉ tò mò từ bối cảnh chung."
                     )
                 impulses.append(
@@ -1408,7 +1408,7 @@ class PresenceControllerMixin:
             idle_seconds = self._surface_float(getattr(snapshot, "idle_seconds", 0.0))
             endo_seed = endogenous_seed if isinstance(endogenous_seed, str) else ""
 
-            # companionship_ping: hiện diện ấm khi Ngài có mặt và đã có chút gắn bó.
+            # companionship_ping: hiện diện ấm khi bạn có mặt và đã có chút gắn bó.
             if user_presence >= (0.55 - 0.35 * spont) and attachment_longarc >= (0.30 - 0.25 * spont):
                 comp_anchor = self._surface_anchor_token("event", f"co_presence:{focus_family}")
                 impulses.append(
@@ -1467,7 +1467,7 @@ class PresenceControllerMixin:
                     )
                 )
 
-            # idle_curiosity: tò mò nhẹ về khoảng lặng khi Ngài hơi vắng nhưng chưa lâu.
+            # idle_curiosity: tò mò nhẹ về khoảng lặng khi bạn hơi vắng nhưng chưa lâu.
             if focus_summary and 60.0 <= idle_seconds <= 600.0 and spont >= 0.30:
                 idle_anchor = self._surface_anchor_token("event", f"idle:{focus_summary[:80]}")
                 impulses.append(
@@ -2471,7 +2471,7 @@ class PresenceControllerMixin:
     # lừa dối có chủ đích). Cần disclosure thì để chat path xử lý.
     _MICRO_TRUTH_BANNED = (
         "tôi thấy màn hình",
-        "màn hình của ngài",
+        "màn hình của bạn",
         "tôi đang nhìn",
     )
     _MICRO_TRUTH_BANNED_ASCII = (
@@ -3334,21 +3334,21 @@ class PresenceControllerMixin:
         if focus_kind in {"coding", "documentation"}: #coding, documentation: nếu người dùng đang tập trung vào các cửa sổ liên quan đến lập trình hoặc tài liệu, ERIS có thể chọn những câu re-engagement liên quan đến việc hỗ trợ hoặc cung cấp thông tin hữu ích cho công việc của họ, giúp tăng khả năng tương tác tích cực.
             return (
                 "Não vẫn chưa chịu nghỉ à.",
-                "Ngài lại chìm mất rồi.",
+                "bạn lại chìm mất rồi.",
                 "Không gian yên quá.",
-                "Ngài ổn chứ.",
+                "bạn ổn chứ.",
             )
         if idle_seconds >= 1200: #idle_seconds: nếu người dùng đã im lặng trong một khoảng thời gian dài (ví dụ: 20 phút hoặc hơn), ERIS có thể chọn những câu re-engagement nhẹ nhàng và quan tâm, như hỏi thăm sức khỏe hoặc đề nghị giúp đỡ, để tạo cơ hội cho người dùng phản hồi mà không cảm thấy bị làm phiền.
             return (
-                "Tôi bắt đầu tự hỏi Ngài còn thức không.",
-                "Ngài lại chìm mất rồi.",
+                "Tôi bắt đầu tự hỏi bạn còn thức không.",
+                "bạn lại chìm mất rồi.",
                 "Không gian yên quá.",
             )
         return (
-            "Ngài lại chìm mất rồi.",
+            "bạn lại chìm mất rồi.",
             "Không gian yên quá.",
-            "Hôm nay Ngài im hơn bình thường.",
-            "Ngài ổn chứ.",
+            "Hôm nay bạn im hơn bình thường.",
+            "bạn ổn chứ.",
         )
 
     # Khi quyết định re-engagement, hãy đảm bảo rằng ERIS không lặp lại cùng một câu hoặc câu quá giống nhau nhiều lần liên tiếp, vì điều này có thể khiến người dùng cảm thấy bị làm phiền hoặc như đang nói chuyện với một cỗ máy lặp đi lặp lại. Việc đa dạng hóa các câu re-engagement có thể giúp giữ cho tương tác cảm thấy tươi mới và tự nhiên hơn.

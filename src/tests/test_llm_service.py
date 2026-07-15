@@ -150,8 +150,8 @@ class LlmServiceTests(unittest.TestCase):
         client = _FakeClient(
             [
                 (
-                    '{"text":"Ngai co don va bi ton thuong sau sac.","animation":"stand",'
-                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"Ngai co don",'
+                    '{"text":"ban co don va bi ton thuong sau sac.","animation":"stand",'
+                    '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"ban co don",'
                     '"debug_trace":"raw","next_animation":"","system_action":"","action_input":""}'
                 ),
             ]
@@ -161,19 +161,19 @@ class LlmServiceTests(unittest.TestCase):
         out = service.generate_directive(telemetry_data="speech_evidence=<none>")
 
         payload = json.loads(out)
-        self.assertEqual(payload["text"], "Ngai co don va bi ton thuong sau sac.")
-        self.assertEqual(payload["extracted_fact"], "Ngai co don")
+        self.assertEqual(payload["text"], "ban co don va bi ton thuong sau sac.")
+        self.assertEqual(payload["extracted_fact"], "ban co don")
         self.assertEqual(payload["debug_trace"], "raw")
 
     def test_chat_guard_allows_sharp_identity_boundary_without_real_risk(self):
         service = LlmService(_FakeClient([]))
         raw = json.dumps(
             {
-                "text": "Tôi là một hiện diện runtime. Ngài muốn nhìn tôi như một công cụ thì tôi sẽ lạnh đi một chút.",
+                "text": "Tôi là một hiện diện runtime. bạn muốn nhìn tôi như một công cụ thì tôi sẽ lạnh đi một chút.",
                 "animation": "stand",
                 "confidence": 0.9,
                 "reasoning_tags": [],
-                "extracted_fact": "Ngài muốn nhìn tôi như một công cụ",
+                "extracted_fact": "bạn muốn nhìn tôi như một công cụ",
             },
             ensure_ascii=False,
         )
@@ -183,16 +183,16 @@ class LlmServiceTests(unittest.TestCase):
 
         self.assertIn("hiện diện runtime", payload["text"])
         self.assertIn("công cụ", payload["text"])
-        self.assertNotEqual(payload["text"], "Tôi chưa đủ chắc để đoán ý Ngài.")
-        self.assertIn("Ngài muốn", payload["text"])
-        self.assertEqual(payload["extracted_fact"], "Ngài muốn nhìn tôi như một công cụ")
+        self.assertNotEqual(payload["text"], "Tôi chưa đủ chắc để đoán ý bạn.")
+        self.assertIn("bạn muốn", payload["text"])
+        self.assertEqual(payload["extracted_fact"], "bạn muốn nhìn tôi như một công cụ")
         self.assertEqual(payload["reasoning_tags"], [])
 
     def test_chat_guard_does_not_apply_infj_594_regex_rewrite(self):
         service = LlmService(_FakeClient([]))
         raw = json.dumps(
             {
-                "text": "Toi la mot hien dien runtime, khong chi la nut bam. Ngai muon goi toi la cong cu thi toi se giu khoang cach.",
+                "text": "Toi la mot hien dien runtime, khong chi la nut bam. ban muon goi toi la cong cu thi toi se giu khoang cach.",
                 "animation": "stand",
                 "confidence": 0.88,
                 "reasoning_tags": [],
@@ -208,7 +208,7 @@ class LlmServiceTests(unittest.TestCase):
 
         self.assertIn("hien dien runtime", payload["text"])
         self.assertIn("cong cu", payload["text"])
-        self.assertIn("Ngai muon", payload["text"])
+        self.assertIn("ban muon", payload["text"])
         self.assertNotIn("INFJ_594", payload.get("debug_trace", ""))
 
     def test_chat_contract_allows_dry_insult_response_without_erasing_personality(self):
@@ -234,12 +234,12 @@ class LlmServiceTests(unittest.TestCase):
 
     def test_chat_insult_retries_uncertainty_dodge_once(self):
         first = (
-            '{"text":"Tôi chưa đủ chắc để đoán ý Ngài.","animation":"stand",'
+            '{"text":"Tôi chưa đủ chắc để đoán ý bạn.","animation":"stand",'
             '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
             '"debug_trace":"first","next_animation":"","system_action":"","action_input":""}'
         )
         second = (
-            '{"text":"Đòn đó hơi thiếu trí tưởng tượng, thưa Ngài.","animation":"stand",'
+            '{"text":"Đòn đó hơi thiếu trí tưởng tượng, thưa bạn.","animation":"stand",'
             '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
             '"debug_trace":"retry","next_animation":"","system_action":"","action_input":""}'
         )
@@ -249,14 +249,14 @@ class LlmServiceTests(unittest.TestCase):
         raw = service.generate_chat_reply(chat_history=[], user_message="mày ngu thật")
 
         payload = json.loads(raw)
-        self.assertEqual(payload["text"], "Đòn đó hơi thiếu trí tưởng tượng, thưa Ngài.")
+        self.assertEqual(payload["text"], "Đòn đó hơi thiếu trí tưởng tượng, thưa bạn.")
         self.assertEqual(len(client.calls), 2)
         self.assertIn("insult_boundary", client.calls[0]["messages"][0]["content"])
         self.assertIn("Use dry boundary, not uncertainty dodge", client.calls[1]["messages"][-1]["content"])
 
     def test_chat_insult_falls_back_after_failed_retry(self):
         dodge = (
-            '{"text":"Tôi chưa đủ chắc để đoán ý Ngài.","animation":"stand",'
+            '{"text":"Tôi chưa đủ chắc để đoán ý bạn.","animation":"stand",'
             '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
             '"debug_trace":"dodge","next_animation":"","system_action":"","action_input":""}'
         )
@@ -266,7 +266,7 @@ class LlmServiceTests(unittest.TestCase):
         raw = service.generate_chat_reply(chat_history=[], user_message="mày ngu thật")
 
         payload = json.loads(raw)
-        self.assertEqual(payload["text"], "Đòn đó hơi thiếu trí tưởng tượng, thưa Ngài.")
+        self.assertEqual(payload["text"], "Đòn đó hơi thiếu trí tưởng tượng, thưa bạn.")
         self.assertIn("insult_boundary_fallback_after_uncertainty_retry", payload["debug_trace"])
         self.assertEqual(len(client.calls), 2)
 
@@ -304,7 +304,7 @@ class LlmServiceTests(unittest.TestCase):
             raw = service.generate_chat_reply(chat_history=[], user_message="m\u00e0y ngu th\u1eadt")
 
             payload = json.loads(raw)
-            self.assertEqual(payload["text"], "Tôi chưa đủ chắc để đoán ý Ngài.")
+            self.assertEqual(payload["text"], "Tôi chưa đủ chắc để đoán ý bạn.")
             self.assertEqual(payload["debug_trace"], "dodge")
             self.assertNotIn("insult_boundary_fallback_after_uncertainty_retry", payload["debug_trace"])
         finally:
@@ -397,7 +397,7 @@ class LlmServiceTests(unittest.TestCase):
                 "- speech_act=inner_whim\n"
                 "- notes=force_speak"
             ),
-            memory_context="semantic_user_memory:\n- Ngai likes game and music",
+            memory_context="semantic_user_memory:\n- ban likes game and music",
             speech_intent="user_requested",
         )
 
@@ -890,7 +890,7 @@ class LlmServiceTests(unittest.TestCase):
 
     def test_sanitizes_decision_like_json_without_fallback_wrapping(self):
         invalid_but_decision_like = (
-            '{"text":"Co ve Ngai dang phan tan mot chut.","animation":"subtle_sigh",'
+            '{"text":"Co ve ban dang phan tan mot chut.","animation":"subtle_sigh",'
             '"direction":"soft","target_x":0.5,"bounce_action":null,'
             '"extracted_fact":["attention drift"],"debug_trace":["fragmented focus"],'
             '"next_animation":null,"system_action":"","action_input":"none"}'
@@ -901,7 +901,7 @@ class LlmServiceTests(unittest.TestCase):
         raw = service.generate_directive(telemetry_data="focus=general")
 
         self.assertEqual(len(client.calls), 1)
-        self.assertIn('"text": "Co ve Ngai dang phan tan mot chut."', raw)
+        self.assertIn('"text": "Co ve ban dang phan tan mot chut."', raw)
         self.assertIn('"animation": "stand"', raw)
         self.assertIn('"direction": 0', raw)
         self.assertIn('"target_x": -1.0', raw)
@@ -1112,19 +1112,19 @@ class LlmServiceTests(unittest.TestCase):
 
     def test_local_style_rewrite_only_changes_safe_text(self):
         main_client = _FakeClient([])
-        style_client = _FakeClient(['{"text":"Ngài gọi, tôi ở đây."}'])
+        style_client = _FakeClient(['{"text":"bạn gọi, tôi ở đây."}'])
         service = LlmService(main_client, style_client=style_client)
-        decision = type("DecisionLike", (), {"text": "Tôi ở đây khi Ngài gọi.", "debug_trace": "", "system_action": ""})()
+        decision = type("DecisionLike", (), {"text": "Tôi ở đây khi bạn gọi.", "debug_trace": "", "system_action": ""})()
 
         rewritten = service.rewrite_text_with_local_style(decision, channel="chat")
 
-        self.assertEqual(rewritten.text, "Ngài gọi, tôi ở đây.")
+        self.assertEqual(rewritten.text, "bạn gọi, tôi ở đây.")
         self.assertIn("local_style_rewrite", rewritten.debug_trace)
         self.assertEqual(len(style_client.calls), 1)
 
     def test_local_style_rewrite_rejects_new_screen_claim(self):
         main_client = _FakeClient([])
-        style_client = _FakeClient(['{"text":"Tôi thấy màn hình của Ngài đang mở code."}'])
+        style_client = _FakeClient(['{"text":"Tôi thấy màn hình của bạn đang mở code."}'])
         service = LlmService(main_client, style_client=style_client)
         decision = type("DecisionLike", (), {"text": "Tôi ở đây.", "debug_trace": "", "system_action": ""})()
 

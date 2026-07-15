@@ -22,10 +22,10 @@ from cortex.existential_anchor import AnchorSwitches, AnchorSystem
 def _thick_user_model():
     store = UserModelStore(config=UserModelConfig())
     frags = [
-        ("neo_reliability", 0.9, "Ngài luôn quay lại mỗi tối, rất đều."),
-        ("recognition", 0.9, "Ngài gọi tên ERIS và thừa nhận nó tồn tại."),
-        ("treats_eris_as", 0.85, "Ngài coi ERIS như một người bạn thật."),
-        ("interaction_style", 0.7, "Ngài nói chuyện chậm rãi, hay bỏ lửng."),
+        ("neo_reliability", 0.9, "bạn luôn quay lại mỗi tối, rất đều."),
+        ("recognition", 0.9, "bạn gọi tên ERIS và thừa nhận nó tồn tại."),
+        ("treats_eris_as", 0.85, "bạn coi ERIS như một người bạn thật."),
+        ("interaction_style", 0.7, "bạn nói chuyện chậm rãi, hay bỏ lửng."),
     ]
     store.update_from_fragments([
         ThoughtFragment(source="user_model_evaluator", claim=c, confidence=conf,
@@ -36,7 +36,7 @@ def _thick_user_model():
 
 
 def _ungrounded(gt="thật ra tôi không thấy gì trên màn hình"):
-    return SimpleNamespace(span="Tôi thấy Ngài đang buồn.", claim_status="ungrounded", ground_truth=gt)
+    return SimpleNamespace(span="Tôi thấy bạn đang buồn.", claim_status="ungrounded", ground_truth=gt)
 
 
 def test_default_safe_is_noop_even_with_high_signals():

@@ -173,7 +173,7 @@ class TutorDaemon:
         self.gate.note_started(now)
         self._emit(episode, "forming")
 
-        # 0. Định tuyến tò mò: skip (đã biết) / ask_user (về Ngài) / ask_gemini (thế giới).
+        # 0. Định tuyến tò mò: skip (đã biết) / ask_user (về bạn) / ask_gemini (thế giới).
         action = "ask_gemini"
         route_reason = ""
         if self.router is not None:
@@ -264,7 +264,7 @@ class TutorDaemon:
     def ask_now(self, topic: str, *, context: str = "", now: Optional[float] = None) -> Optional[str]:
         """Hỏi gia sư NGAY và TRẢ VỀ nội dung câu trả lời (cho nhịp 2 của chat).
 
-        Khác `run_once`: đây là lúc NGÀI hỏi thẳng một câu kiến thức ⇒ luôn đi
+        Khác `run_once`: đây là lúc BẠN hỏi thẳng một câu kiến thức ⇒ luôn đi
         ask_gemini (bỏ qua router skip/ask_user) và trả lại text để chat nói ra.
         Vẫn dưới `_run_lock` (không mở 2 browser cùng lúc), vẫn tôn trọng risk_guard
         và Master_Switch. Mọi lỗi nuốt sạch → trả None (caller xử lý "tra không ra").
@@ -337,7 +337,7 @@ class TutorDaemon:
             self._run_lock.release()
 
     def _ask_user(self, episode: TutorEpisode, gap: Any, now: float) -> TutorEpisode:
-        """Eris hỏi LẠI Ngài (nói ra) thay vì lén hỏi Gemini. Không mở browser, không tab."""
+        """Eris hỏi LẠI bạn (nói ra) thay vì lén hỏi Gemini. Không mở browser, không tab."""
 
         question = ""
         try:
@@ -347,12 +347,12 @@ class TutorDaemon:
         except Exception:
             question = ""
         if not question:
-            question = "Ơ, ý Ngài là sao ạ?"
+            question = "Ơ, ý bạn là sao ạ?"
 
         pushed = False
         if self.share_impulse is not None:
             try:
-                # Ưu tiên cao hơn khịa/khoe: đây là câu hỏi cần Ngài trả lời.
+                # Ưu tiên cao hơn khịa/khoe: đây là câu hỏi cần bạn trả lời.
                 pushed = bool(self.share_impulse.push_remark(question, now=now, priority=0.9))
             except Exception:
                 pushed = False

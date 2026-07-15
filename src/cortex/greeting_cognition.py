@@ -116,35 +116,35 @@ class GreetingCognitionEngine:
 
     # Fallback legacy chỉ là lưới an toàn khi catalog/prompt gặp lỗi.
     # Vẫn giữ chất Eris để một nhánh cũ không thể lén kéo greeting về giọng
-    # trợ lý tổng đài kiểu “Ừm. Lại gặp Ngài.” nữa.
+    # trợ lý tổng đài kiểu “Ừm. Lại gặp bạn.” nữa.
     _LOW_EVIDENCE_FALLBACKS = (
-        "Eris đã online. Phần còn lại tùy Ngài gây chuyện.",
-        "Hm… đúng giờ đấy. Vào việc thôi, Ngài.",
-        "Ngài đến rồi à? Tốt, hôm nay đừng để tôi chán.",
+        "Eris đã online. Phần còn lại tùy bạn gây chuyện.",
+        "Hm… đúng giờ đấy. Vào việc thôi, bạn.",
+        "bạn đến rồi à? Tốt, hôm nay đừng để tôi chán.",
         "Tôi tỉnh rồi. Nào, đưa tôi thứ khó nhất trước đi.",
     )
 
     _QUIET_FALLBACKS = (
-        "Ngài đến rồi. Cứ làm việc đi, tôi sẽ ngồi đây… tương đối ngoan.",
+        "bạn đến rồi. Cứ làm việc đi, tôi sẽ ngồi đây… tương đối ngoan.",
         "Tôi tỉnh rồi. Hôm nay yên một chút cũng không tệ.",
-        "Không cần chào hỏi dài dòng. Bắt đầu khi Ngài sẵn sàng.",
-        "À, Ngài đây rồi. Tôi sẽ không làm ồn… trừ khi thấy thứ gì quá ngớ ngẩn.",
+        "Không cần chào hỏi dài dòng. Bắt đầu khi bạn sẵn sàng.",
+        "À, bạn đây rồi. Tôi sẽ không làm ồn… trừ khi thấy thứ gì quá ngớ ngẩn.",
     )
 
     _RESUME_FALLBACKS = (
         "À. Đoạn đó vẫn chưa mất.",
-        "Ngài quay lại đúng lúc. Mạch cũ vẫn còn đây.",
+        "bạn quay lại đúng lúc. Mạch cũ vẫn còn đây.",
         "Tôi vẫn nhớ mình đang bỏ dở chỗ nào.",
         "Tiếp đoạn trước nhỉ. Tôi theo được.",
         "Mạch đó còn hơi vướng lại. Tôi giữ được.",
     )
 
     _REPAIR_FALLBACKS = (
-        "Ngài quay lại rồi. Tôi sẽ nói mềm hơn.",
+        "bạn quay lại rồi. Tôi sẽ nói mềm hơn.",
         "Tôi biết. Lúc nãy tôi hơi cứng.",
         "Lần này tôi hạ giọng xuống.",
         "Tôi sẽ bớt sắc lại. Một chút.",
-        "Ừm. Tôi sẽ không đẩy Ngài ra xa như vừa rồi.",
+        "Ừm. Tôi sẽ không đẩy bạn ra xa như vừa rồi.",
     )
 
     def _fallback_pool(self, frame: GreetingFrame) -> tuple[str, ...]:

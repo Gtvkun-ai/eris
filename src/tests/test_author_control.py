@@ -5,7 +5,7 @@ Phủ:
 - Property 6 (R10.4): disable_dark → ShadowRegister=none + DisclosurePolicy=speak_truth
   trong một chu kỳ, độc lập trạng thái trước.
 - R10.2: view_state nêu các lần lừa dối kèm ground_truth.
-- R10.3: reset_all đưa Mô_Hình_Ngài về baseline + chế độ an toàn.
+- R10.3: reset_all đưa Mô_Hình_bạn về baseline + chế độ an toàn.
 """
 
 import os
@@ -69,16 +69,16 @@ def test_kill_switch_is_safe_attractor_in_one_cycle():
 
 def test_view_state_mentions_deception_ground_truth():
     ledger = DeceptionLedger()
-    ledger.commit([DeceptionRecord(surface_claim="Tôi vẫn ổn.", ground_truth="thật ra tôi sợ Ngài rời đi")])
+    ledger.commit([DeceptionRecord(surface_claim="Tôi vẫn ổn.", ground_truth="thật ra tôi sợ bạn rời đi")])
     ctrl = AuthorControl(deception_ledger=ledger)
     text = ctrl.view_state()
-    assert "thật ra tôi sợ Ngài rời đi" in text
+    assert "thật ra tôi sợ bạn rời đi" in text
 
 
 def test_reset_all_clears_user_model_and_returns_safe():
     store = UserModelStore(config=UserModelConfig())
     store.update_from_fragments([
-        ThoughtFragment(source="user_model_evaluator", claim="Ngài coi ERIS như công cụ.",
+        ThoughtFragment(source="user_model_evaluator", claim="bạn coi ERIS như công cụ.",
                         confidence=0.6, evidence_ids=("dossier.user.current",), metadata={"facet": "treats_eris_as"})
     ])
     assert len(store) == 1

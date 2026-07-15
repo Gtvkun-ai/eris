@@ -23,7 +23,7 @@ class BuildFeStyleSupervisionTests(unittest.TestCase):
             [
                 {"role": "system", "content": "base"},
                 {"role": "user", "content": "xin chao"},
-                {"role": "assistant", "content": "chao ngai"},
+                {"role": "assistant", "content": "chao ban"},
             ],
         )
 

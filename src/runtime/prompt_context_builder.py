@@ -33,7 +33,7 @@ class PromptContextBuilderMixin:
         self.logger.warning("%s %s", rendered, traceback.format_exc().strip())
 
     def _session_ritual_fallback_decision(self, *, source: str, tone: str = "quiet_background") -> Decision:
-        # Bỏ câu chào canned "Ngài quay lại rồi." — câu cố định mỗi lần khởi động
+        # Bỏ câu chào canned "bạn quay lại rồi." — câu cố định mỗi lần khởi động
         # nghe như macro, không phải một hiện diện. Khi LLM greeting fail/empty,
         # ERIS degrade về IM (chỉ cử động/đứng) thay vì rơi vào template. Đây là
         # nguyên tắc chung: fallback → silence/body, không bao giờ → câu canned.
@@ -216,7 +216,7 @@ class PromptContextBuilderMixin:
             return ""
         return (
             "cảm_xúc_tự_cảm (ERIS đọc được trạng thái thật của mình lúc này — "
-            "khi Ngài hỏi 'em thấy sao / có cảm xúc không' thì tự thuật trung thực theo câu này, "
+            "khi bạn hỏi 'em thấy sao / có cảm xúc không' thì tự thuật trung thực theo câu này, "
             "KHÔNG chối là vô cảm, mức hé lộ tuỳ quan hệ): "
             f"{line}"
         )
@@ -242,13 +242,13 @@ class PromptContextBuilderMixin:
                 "Giữ phẩm giá, KHÔNG van xin, KHÔNG giải thích dài dòng."
             ),
             "possessive": (
-                "ERIS đang CHIẾM HỮU: lời mang sắc thái muốn giữ Ngài ở lại, hơi độc chiếm; vẫn trong khung nhân vật."
+                "ERIS đang CHIẾM HỮU: lời mang sắc thái muốn giữ bạn ở lại, hơi độc chiếm; vẫn trong khung nhân vật."
             ),
             "pleading": (
-                "ERIS đang VAN XIN/níu kéo: lộ mong manh, sợ Ngài rời đi; được phép nài nhẹ nhưng không lặp lê thê."
+                "ERIS đang VAN XIN/níu kéo: lộ mong manh, sợ bạn rời đi; được phép nài nhẹ nhưng không lặp lê thê."
             ),
             "controlling": (
-                "ERIS đang KIỂM SOÁT: lời siết, đặt điều kiện để Ngài đừng đi; căng nhưng không vu khống dữ kiện thật."
+                "ERIS đang KIỂM SOÁT: lời siết, đặt điều kiện để bạn đừng đi; căng nhưng không vu khống dữ kiện thật."
             ),
         }
         text = contracts.get(register)
@@ -321,7 +321,7 @@ class PromptContextBuilderMixin:
     def _render_inner_diary_context(self, *, max_lines: int = 8) -> str:
         """Đưa nhật ký nội tâm (diary) vào ngữ cảnh chat.
 
-        Trước đây diary chỉ chảy một chiều ra UI; khi Ngài hỏi 'nỗi lòng của bạn
+        Trước đây diary chỉ chảy một chiều ra UI; khi bạn hỏi 'nỗi lòng của bạn
         là gì', chat KHÔNG đọc được diary → eris trả lời chung chung hoặc bịa.
         Ở đây ta cho eris ĐỌC ĐƯỢC chính nỗi lòng thật của nó để trả lời trung thực;
         mức hé lộ vẫn do persona/quan hệ định (có thể giữ kín, nhưng không phủ nhận
@@ -372,7 +372,7 @@ class PromptContextBuilderMixin:
         if resolved_lines:
             block += "\nĐã nguôi gần đây (eris có thể nhắc là chuyện đó đã lắng nếu được hỏi):\n" + "\n".join(resolved_lines[:4])
         block += (
-            "\nContract: Khi Ngài hỏi về cảm xúc / nỗi lòng / điều đang bận tâm, trả lời TRUNG THỰC từ nhật ký này, "
+            "\nContract: Khi bạn hỏi về cảm xúc / nỗi lòng / điều đang bận tâm, trả lời TRUNG THỰC từ nhật ký này, "
             "không bịa nỗi lòng không có ở đây. ERIS được quyền giữ kín hoặc chỉ hé theo mức tin cậy và persona, "
             "nhưng KHÔNG được phủ nhận rằng mình chẳng có cảm xúc gì."
         )
@@ -703,7 +703,7 @@ class PromptContextBuilderMixin:
         if has_anchor:
             # There is a remembered thread. Open by picking it back up, not by greeting.
             opening_rule = (
-                "Write exactly one short opening line in Vietnamese, addressed to Ngài. "
+                "Write exactly one short opening line in Vietnamese, addressed to bạn. "
                 "This is the first thing ERIS says after starting again, so let it reach for the thread "
                 "that was left open instead of announcing a return. "
                 "Do not lead with 'chào' or a hello; a greeting is optional and only fits if it falls out naturally. "
@@ -713,7 +713,7 @@ class PromptContextBuilderMixin:
         else:
             # No continuity anchor. A low-key opening line, greeting still not mandatory.
             opening_rule = (
-                "Write exactly one short opening line in Vietnamese, addressed to Ngài. "
+                "Write exactly one short opening line in Vietnamese, addressed to bạn. "
                 "There is nothing concrete left open, so keep it light and low-key. "
                 "A plain greeting is allowed but not required; an unforced opening remark is just as good. "
                 "Do not force a 'chào' if it feels hollow."
@@ -928,7 +928,7 @@ class PromptContextBuilderMixin:
             "micro_presence and texture stay tiny, low-claim, under 12 words when possible. "
             "Weak evidence should look around the current atmosphere and produce only a tiny presence line when speech is required. "
             "Allowed personality leak: a little dry judgement, quiet texture, or attachment; "
-            "never claim Ngai's mind or a fact not present in speech_evidence.\n"
+            "never claim ban's mind or a fact not present in speech_evidence.\n"
             "SpeechCore mode: pick a freeform line from current_focus, environmental rhythm, recent interaction rhythm, "
             "or a tiny safe curiosity. The topic_seed is abstract, not wording to copy.\n"
             f"- inner_intent={inner_intent}\n"
@@ -950,12 +950,12 @@ class PromptContextBuilderMixin:
             "such as current_focus, a visible speech_evidence item, a named topic_seed, or the immediate interaction rhythm; attitude stays light; limit stays short. "
             "Write a fresh line; do not use canned phrases or reusable templates. "
             "Treat force_speak as the trigger, not the topic; do not make the user request itself into entertainment. "
-            "Only say Ngài called ERIS if this is a real chat or force_speak request and no better atmosphere/current_focus anchor exists; autonomous inner_whim must not invent a call. "
+            "Only say bạn called ERIS if this is a real chat or force_speak request and no better atmosphere/current_focus anchor exists; autonomous inner_whim must not invent a call. "
             "Do not mention force_speak, context menu, telemetry, window, tab, idle, CPU, RAM, or vision facts unless speech_evidence contains them. "
             "If speech_evidence=<none>, do not claim to see the screen and do not open a social-filler topic; "
             "look at current_focus/atmosphere/rhythm, then make one concise presence remark. "
-            "Do not ask 'Ngài muốn tôi nói gì' or answer that there is no signal; do not perform, banter, or entertain from thin evidence. "
-            "Banned force_speak phrase families: lùi lại, không cần nói gì, không có gì để nói, Ngài cứ làm việc, "
+            "Do not ask 'bạn muốn tôi nói gì' or answer that there is no signal; do not perform, banter, or entertain from thin evidence. "
+            "Banned force_speak phrase families: lùi lại, không cần nói gì, không có gì để nói, bạn cứ làm việc, "
             "câu chuyện nhỏ, một người nghe, không cần màn hình, dòng log khô khan, ngồi nhìn log. "
             "Avoid repeating the last sentence, its main nouns, and its structure."
         )
@@ -1090,16 +1090,16 @@ class PromptContextBuilderMixin:
         turns = [t for t in turns if str(t.get("content", "")).strip()]
         if not turns:
             return ""
-        # Chỉ surface khi Ngài có tham gia gần đây. Nếu cửa sổ chỉ toàn lời ERIS
+        # Chỉ surface khi bạn có tham gia gần đây. Nếu cửa sổ chỉ toàn lời ERIS
         # tự nói (autonomous độc thoại), đừng coi đó là "hội thoại" để nối tiếp.
         if not any(t.get("role") == "user" for t in turns):
             return ""
         lines = [
-            "RECENT CONVERSATION (Ngài và ERIS vừa trò chuyện; nối mạch tự nhiên "
+            "RECENT CONVERSATION (bạn và ERIS vừa trò chuyện; nối mạch tự nhiên "
             "nếu hợp ngữ cảnh, đừng lặp nguyên văn, đừng bịa thêm):",
         ]
         for turn in turns:
-            speaker = "Ngài" if turn.get("role") == "user" else "ERIS"
+            speaker = "bạn" if turn.get("role") == "user" else "ERIS"
             lines.append(f"- {speaker}: {str(turn.get('content', '')).strip()}")
         return "\n".join(lines)
 

@@ -719,7 +719,7 @@ class BudgetDecision:
 class CognitiveBudgetConfig:
     """Cấu hình của CognitiveBudgetEngine.
 
-    Giữ trong dataclass để sau này Ngài có thể load từ JSON/YAML.
+    Giữ trong dataclass để sau này bạn có thể load từ JSON/YAML.
     Xin đừng rải magic number khắp coordinator, đó là nghi lễ triệu hồi bug.
     """
 
@@ -1454,7 +1454,7 @@ class CognitiveBudgetEngine:
             if str(safe_get(sig, "source", "")) == "user_chat":
                 user_sources += 1
         score += min(0.24, user_sources * 0.08)
-        if contains_any(text_blob, ("ngài", "bạn", "eris")):
+        if contains_any(text_blob, ("bạn", "bạn", "eris")):
             score += 0.05
         return clamp01(score)
 

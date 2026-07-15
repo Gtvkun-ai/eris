@@ -11,7 +11,7 @@ Semantic parser cho memory intake.
 
 Đường fallback trong file này chỉ là phanh an toàn khi chưa gắn model. Nó cố tình
 nghèo, tập trung, và trả confidence vừa phải. Fallback không được tự tin như thần
-linh hạng rẻ. Khi Ngài nối model.gguf, hãy dùng `ModelSemanticParser` với một
+linh hạng rẻ. Khi bạn nối model.gguf, hãy dùng `ModelSemanticParser` với một
 callable trả dict JSON.
 """
 
@@ -36,7 +36,7 @@ class SemanticParser(Protocol):
 class ModelSemanticParser:
     """Adapter cho model/LLM parser bên ngoài.
 
-    `parse_callable` là hàm của Ngài. Nó nhận text và trả dict/list đã parse.
+    `parse_callable` là hàm của bạn. Nó nhận text và trả dict/list đã parse.
     File này không biết llama.cpp, Ollama hay GGUF. Nó chỉ biết verify output.
 
     Expected JSON gợi ý:
@@ -254,7 +254,7 @@ def _parse_clause_as_frames(clause: str, surface: Any) -> list[MeaningFrame]:
     """Fallback detector tập trung.
 
     Đây là phần còn lexical, nhưng chỉ làm fallback và chỉ sinh MeaningFrame. Nếu
-    Ngài nối model.gguf, function này gần như không còn chạy trong hot path.
+    bạn nối model.gguf, function này gần như không còn chạy trong hot path.
     """
 
     raw = clean_surface(clause)

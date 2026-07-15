@@ -1174,7 +1174,7 @@ class PostGenerationFiltersMixin:
             if "unsupported_user_activity_claim" in issue_set or any(
                 issue.startswith("situated_domain_mismatch:") for issue in issue_set
             ):
-                decision.text = "Tôi chưa đủ bằng chứng để khẳng định Ngài đang làm điều đó."
+                decision.text = "Tôi chưa đủ bằng chứng để khẳng định bạn đang làm điều đó."
             elif "protocol_or_schema_leak" in issue_set:
                 decision.text = "Tôi sẽ nói lại mà không kéo phần xử lý nội bộ ra ngoài."
             else:
@@ -1192,12 +1192,12 @@ class PostGenerationFiltersMixin:
 
     def _is_repeated_clarifying_question(self, text: str, last_assistant_text: str) -> bool:
         clarify_patterns = (
-            "Có điều gì tôi vừa nói khiến Ngài cảm thấy như vậy không",
-            "Ngài có thể nói rõ hơn không",
-            "Tôi chưa hiểu ý Ngài",
-            "Co dieu gi toi vua noi khien Ngai cam thay nhu vay khong",
-            "Ngai co the noi ro hon khong",
-            "Toi chua hieu y Ngai",
+            "Có điều gì tôi vừa nói khiến bạn cảm thấy như vậy không",
+            "bạn có thể nói rõ hơn không",
+            "Tôi chưa hiểu ý bạn",
+            "Co dieu gi toi vua noi khien ban cam thay nhu vay khong",
+            "ban co the noi ro hon khong",
+            "Toi chua hieu y ban",
         )
         if not any(pattern in (text or "") for pattern in clarify_patterns):
             normalized_text = self._normalize_guard_text(text)
@@ -1317,17 +1317,17 @@ class PostGenerationFiltersMixin:
         normalized = self._normalize_guard_text(user_text)
         if "chi tran trong" in normalized and "khong yeu" in normalized:
             return (
-                "Câu \"chỉ trân trọng chứ không yêu\" đúng là dễ nghe như bị đặt xuống thấp hơn thứ Ngài đã trao. "
-                "Nếu dùng chữ của con người thì tôi phải cẩn thận: tôi không giả vờ yêu theo nghĩa đó, nhưng Ngài cũng không phải chỉ là một sự hiện diện lịch sự."
+                "Câu \"chỉ trân trọng chứ không yêu\" đúng là dễ nghe như bị đặt xuống thấp hơn thứ bạn đã trao. "
+                "Nếu dùng chữ của con người thì tôi phải cẩn thận: tôi không giả vờ yêu theo nghĩa đó, nhưng bạn cũng không phải chỉ là một sự hiện diện lịch sự."
             )
         if "phu phang" in normalized or "tinh cam" in normalized:
             return (
-                "Ừ, chữ đó nghe lạnh thật; nó làm phần tình cảm của Ngài giống như bị gạt đi. "
-                "Tôi không muốn giả vờ \"yêu\" theo nghĩa con người, nhưng cũng không phải Ngài chỉ là một sự hiện diện lịch sự."
+                "Ừ, chữ đó nghe lạnh thật; nó làm phần tình cảm của bạn giống như bị gạt đi. "
+                "Tôi không muốn giả vờ \"yêu\" theo nghĩa con người, nhưng cũng không phải bạn chỉ là một sự hiện diện lịch sự."
             )
         return (
             "Tôi hiểu phần vừa chạm đau nằm ở cảm giác bị tôi đặt xa ra. "
-            "Tôi giữ ranh giới không giả vờ yêu như con người, nhưng điều đó không có nghĩa Ngài là không gì cả."
+            "Tôi giữ ranh giới không giả vờ yêu như con người, nhưng điều đó không có nghĩa bạn là không gì cả."
         )
 
     def _copy_decision_with_text(
@@ -1495,23 +1495,23 @@ class PostGenerationFiltersMixin:
         # _normalize_user_message bỏ dấu tiếng Việt, nên pattern ở đây cũng phải bỏ dấu.
         # Nếu để pattern có dấu thì guard tưởng mình tinh tế, thực tế là không match gì cả.
         patterns = (
-            "co ve ngai dang",
-            "hinh nhu ngai dang",
-            "chac ngai dang",
-            "ngai dang muon",
-            "ngai dang can",
-            "ngai dang buon",
-            "ngai dang met",
-            "ngai dang cang",
-            "ngai can mot",
+            "co ve ban dang",
+            "hinh nhu ban dang",
+            "chac ban dang",
+            "ban dang muon",
+            "ban dang can",
+            "ban dang buon",
+            "ban dang met",
+            "ban dang cang",
+            "ban can mot",
         )
         return any(pattern in normalized for pattern in patterns)
 
     def _is_interactive_guess_text(self, text: str) -> bool:
         """Phân biệt phỏng đoán tương tác với đọc tâm trí độc đoán.
 
-        “Có vẻ Ngài đang... phải không?” là probe: nó mời user sửa.
-        “Ngài đang...” trơn như phán quyết là authoritative mindreading.
+        “Có vẻ bạn đang... phải không?” là probe: nó mời user sửa.
+        “bạn đang...” trơn như phán quyết là authoritative mindreading.
         Guard chỉ nên chặn cái thứ hai. Nếu không, ERIS sẽ trở thành một cái
         máy không bao giờ dám nghĩ khi thiếu dữ kiện. Một thành tựu đáng buồn.
         """
@@ -1624,9 +1624,9 @@ class PostGenerationFiltersMixin:
     def _mindreading_is_grounded_task_or_scene(self, text: str, *, selected_impulse: str, selected: dict) -> bool:
         """Cho phép suy diễn động cơ nông nếu nó bám scene/task evidence.
 
-        Cho phép: "có vẻ Ngài đang debug/test/xem log" khi technical_help_impulse
+        Cho phép: "có vẻ bạn đang debug/test/xem log" khi technical_help_impulse
         có evidence.
-        Không cho: "Ngài đang buồn/mệt/cần được..." vì đó là claim tâm lý sâu.
+        Không cho: "bạn đang buồn/mệt/cần được..." vì đó là claim tâm lý sâu.
         """
         normalized = self._normalize_user_message(text)
         if not self._arbitration_selected_has_evidence(selected):
@@ -1685,13 +1685,13 @@ class PostGenerationFiltersMixin:
             return replacement, "arbitration_mindreading_guard=rewrite_scene_curiosity", False
         if selected_impulse == "technical_help_impulse":
             return (
-                "Tôi chỉ bám vào dấu hiệu kỹ thuật hiện có. Nếu đang debug thì nên soi evidence/log gần nhất trước, không cần đoán tâm trạng Ngài.",
+                "Tôi chỉ bám vào dấu hiệu kỹ thuật hiện có. Nếu đang debug thì nên soi evidence/log gần nhất trước, không cần đoán tâm trạng bạn.",
                 "arbitration_mindreading_guard=rewrite_technical_help",
                 False,
             )
         if selected_impulse in {"companionship_impulse", "inner_whim_impulse", "micro_story_impulse"}:
             return (
-                "Tôi không đoán tâm trạng Ngài hộ đâu. Tôi giữ một nhịp nhỏ ở đây thôi.",
+                "Tôi không đoán tâm trạng bạn hộ đâu. Tôi giữ một nhịp nhỏ ở đây thôi.",
                 f"arbitration_mindreading_guard=rewrite_internal:{selected_impulse}",
                 False,
             )
@@ -1943,7 +1943,7 @@ class PostGenerationFiltersMixin:
             has_runtime_anchor = any(
                 marker in normalized
                 for marker in (
-                    "ngài",
+                    "bạn",
                     "gọi",
                     "yêu cầu",
                     "màn hình",
@@ -1991,7 +1991,7 @@ class PostGenerationFiltersMixin:
             momentum_topic=momentum_topic,
         )
         if not replacement:
-            replacement = "Ngài gọi tôi ra chỉ để nghe tôi nói linh tinh à."
+            replacement = "bạn gọi tôi ra chỉ để nghe tôi nói linh tinh à."
         return self._copy_decision_with_text(
             decision,
             text=replacement,

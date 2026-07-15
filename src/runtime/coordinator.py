@@ -144,7 +144,7 @@ VISION_TRACE_MARKER = "vision_facts_attached"
 
 FALLBACK_BY_INTENT: dict[str, tuple[str, ...]] = {
     "random_chatter": (
-        "Ngài gọi tôi ra chỉ để nghe tôi nói linh tinh à.",
+        "bạn gọi tôi ra chỉ để nghe tôi nói linh tinh à.",
         "Tín hiệu mờ quá. Tôi lùi lại một nhịp.",
     ),
     "inner_whim": (
@@ -634,14 +634,14 @@ class RuntimeCoordinator(
         self._temporal_last_assistant_turn_at = 0.0
         self._temporal_context_builder = None
         # Mốc thời gian lượt user gần nhất. chat_mode là trạng thái "đang trò
-        # chuyện" suy ra từ độ tươi này: còn tươi thì ERIS nhường lời cho Ngài;
+        # chuyện" suy ra từ độ tươi này: còn tươi thì ERIS nhường lời cho bạn;
         # quá ngưỡng thì autonomous tự quay lại nhịp ambient (kể cả khi panel
         # vẫn mở). Đây thay cho công tắc cứng + idle-timeout cũ.
         self._chat_last_activity_at = 0.0
         self._chat_fresh_seconds = max(
             0.0, float(os.getenv("ERIS_CHAT_FRESH_SEC", "20") or 0.0)
         )
-        # Bộ đệm hội thoại hợp nhất: cả lời Ngài, lời chat của ERIS, lẫn lời
+        # Bộ đệm hội thoại hợp nhất: cả lời bạn, lời chat của ERIS, lẫn lời
         # autonomous đều ghi vào đây. Không xoá khi rời chat; tự phai theo TTL.
         self.chat_history = []
         self.last_chat_answer = ""
@@ -4333,7 +4333,7 @@ class RuntimeCoordinator(
             except Exception as exc:
                 self.logger.warning("[session_ritual] LLM greeting failed: %s", exc)
                 greeting_source = "fallback_after_llm_error"
-                # Bỏ câu chào canned "Ngài quay lại rồi." — degrade về IM thay vì
+                # Bỏ câu chào canned "bạn quay lại rồi." — degrade về IM thay vì
                 # template cố định mỗi lần khởi động.
                 decision = Decision(
                     text="",
@@ -4461,7 +4461,7 @@ class RuntimeCoordinator(
             "keu gemini", "tra gemini", "ask gemini", "ask your tutor",
         )
         stripped = normalized
-        for token in ("di", "dum", "giup", "cho toi", "cho ngai", "thu", "xem"):
+        for token in ("di", "dum", "giup", "cho toi", "cho ban", "thu", "xem"):
             stripped = re.sub(rf"\b{re.escape(token)}\b", " ", stripped)
         stripped = re.sub(r"\s+", " ", stripped).strip()
         return any(stripped == marker or stripped.startswith(marker + " ") for marker in markers) and len(stripped.split()) <= 6
@@ -4490,13 +4490,13 @@ class RuntimeCoordinator(
     def _maybe_tutor_on_unclear_user(self, user_text, frame) -> None:
         """Khi Eris không hiểu/không phân loại nổi tin user → định tuyến.
 
-        NGUYÊN TẮC: mặc định TỰ HỌC (hỏi Gemini âm thầm) — Ngài KHÔNG phải giải thích
-        kiến thức chung (vd "INTP 538", "Rust", tên phim). Chỉ HỎI LẠI NGÀI khi đó là
+        NGUYÊN TẮC: mặc định TỰ HỌC (hỏi Gemini âm thầm) — bạn KHÔNG phải giải thích
+        kiến thức chung (vd "INTP 538", "Rust", tên phim). Chỉ HỎI LẠI BẠN khi đó là
         tham chiếu CÁ NHÂN mơ hồ mà Gemini không thể biết ("vụ đó hôm qua", "ý m là sao").
 
         - hỏi Gemini: chạy nền, im lặng, có throttle (Eris vẫn trả lời tự nhiên lượt này,
           học để lần sau hiểu hơn).
-        - hỏi lại Ngài: câu trả lời lượt này thành câu làm rõ ngắn (giọng Eris).
+        - hỏi lại bạn: câu trả lời lượt này thành câu làm rõ ngắn (giọng Eris).
         No-op khi Master_Switch tắt.
         """
 
@@ -4519,7 +4519,7 @@ class RuntimeCoordinator(
             unclear = (not meaning) or intent in ("", "unknown", "unclear", "other")
 
             low = text.lower()
-            # Tham chiếu cá nhân/mơ hồ — chỉ Ngài giải đáp được → hỏi lại Ngài.
+            # Tham chiếu cá nhân/mơ hồ — chỉ bạn giải đáp được → hỏi lại bạn.
             personal_markers = (
                 "vụ đó", "vụ này", "cái đó", "cái này", "cái kia", "cái nớ", "hôm qua",
                 "lúc nãy", "khi nãy", "hồi nãy", "bữa đó", "như thế", "như vậy",
@@ -4528,7 +4528,7 @@ class RuntimeCoordinator(
             is_personal_ambiguous = (len(words) <= 6 and any(m in low for m in personal_markers))
 
             if is_personal_ambiguous:
-                # Không hiểu Ngài ám chỉ gì → hỏi lại Ngài ngay trong câu trả lời lượt này.
+                # Không hiểu bạn ám chỉ gì → hỏi lại bạn ngay trong câu trả lời lượt này.
                 self._clarify_user_pending = True
                 return
 
@@ -4581,7 +4581,7 @@ class RuntimeCoordinator(
         threading.Thread(target=_bg, name="ERIS-TutorOnUnclear", daemon=True).start()
 
     # Nhãn câu hỏi kiến thức thế giới — bộ đánh dấu thiên về sự thật/khái niệm, cố ý
-    # KHÔNG bắt câu xã giao ("dạo này thế nào", "khỏe không") hay câu về chính Ngài.
+    # KHÔNG bắt câu xã giao ("dạo này thế nào", "khỏe không") hay câu về chính bạn.
     _KNOWLEDGE_QUESTION_MARKERS = (
         "hỏi gemini", "hoi gemini", "hỏi sư phụ", "hoi su phu", "nhờ gemini",
         "nho gemini", "kêu gemini", "keu gemini", "tra gemini",
@@ -4653,7 +4653,7 @@ class RuntimeCoordinator(
         else:
             text = random.choice((
                 "Em lục một vòng mà chưa ra cái gì chắc chắn về vụ này. Em chưa dám nói bừa đâu.",
-                "Hừm, vụ này em tra chưa tới nơi. Để em đào lại sau rồi nói Ngài nghe.",
+                "Hừm, vụ này em tra chưa tới nơi. Để em đào lại sau rồi nói bạn nghe.",
             ))
         decision = Decision(
             text=text,
@@ -5519,8 +5519,8 @@ class RuntimeCoordinator(
 
         if repeat_count == 2:
             text = (
-                "Ngài đang lặp lại đúng cùng một câu. "
-                "Tôi đã nhận câu đó rồi. Nếu muốn tôi nói khác đi, hãy chỉ rõ phần nào Ngài chưa hiểu."
+                "bạn đang lặp lại đúng cùng một câu. "
+                "Tôi đã nhận câu đó rồi. Nếu muốn tôi nói khác đi, hãy chỉ rõ phần nào bạn chưa hiểu."
             )
         else:
             text = (
@@ -7789,7 +7789,7 @@ class RuntimeCoordinator(
 
         # Re-engagement là xung dài hạn hơn presence maintenance, nên nó được
         # thử trước. Nhưng nó vẫn phải qua SurfaceArbiter, không tự cầm câu mẫu
-        # nhảy ra làm NPC hỏi "Ngài ổn chứ" sau mỗi khoảng im lặng.
+        # nhảy ra làm NPC hỏi "bạn ổn chứ" sau mỗi khoảng im lặng.
         if bool(reengagement_status.get("allowed", False)):
             cue = self._derive_reengagement_cue(snapshot=snapshot, internal_state=internal_state)
             result = self._build_surface_arbiter_result(
@@ -8107,7 +8107,7 @@ class RuntimeCoordinator(
         """True nếu đang chat_mode nhưng lượt user cuối đã hết "tươi".
 
         chat_mode không còn là công tắc bật/tắt thủ công mà là trạng thái suy ra
-        từ độ tươi của hội thoại: Ngài ngừng gõ quá ``_chat_fresh_seconds`` thì
+        từ độ tươi của hội thoại: bạn ngừng gõ quá ``_chat_fresh_seconds`` thì
         autonomous tự quay lại nhịp ambient, dù panel vẫn mở. Cũng là lưới an
         toàn nếu gói ``chat_end`` rớt trên UDP. Đặt ERIS_CHAT_FRESH_SEC<=0 để tắt.
         """
@@ -8246,7 +8246,7 @@ class RuntimeCoordinator(
         )
         memory_context = self._build_memory_context(snapshot, memory_resonance=memory_resonance)
         # Nối đuôi hội thoại gần nhất (cùng một bộ đệm với chat) để autonomous
-        # sống liền mạch, không quên ngay những gì vừa nói với Ngài.
+        # sống liền mạch, không quên ngay những gì vừa nói với bạn.
         memory_context = self._merge_conversation_context(memory_context)
         internal_state_before = self._get_internal_state()
         ni_report = self.ni_engine.evaluate_autonomous(
@@ -9177,9 +9177,9 @@ class RuntimeCoordinator(
         if action_name == "get_now_playing" and not result.success:
             text = self._resolve_now_playing_text(snapshot) or text
         if repeat_count == 2:
-            text = f"Ngài đang hỏi lại cùng một ý. {text}"
+            text = f"Bạn đang hỏi lại cùng một ý. {text}"
         elif repeat_count >= 3:
-            text = f"Ngài đang spam cùng một ý. {text}"
+            text = f"Bạn đang spam cùng một ý. {text}"
 
         decision = Decision(
             text=text,
@@ -9217,10 +9217,28 @@ class RuntimeCoordinator(
             decision.debug_trace = f"{decision.debug_trace} | {action_trace}"[:240]
         else:
             decision.debug_trace = action_trace
-        if not decision.text.strip():
-            decision.text = self._action_result_to_text(result)
-        elif decision.system_action in {"search_web", "get_weather"}:
-            decision.text = self._action_result_to_text(result)
+        result_text = self._action_result_to_text(result)
+        # Tool/action là nguồn sự thật cuối. Không được để model giữ câu "đã làm"
+        # khi executor fail hoặc action bị alias/sanitize. Báo thành công giả là cách
+        # nhanh nhất để biến assistant thành cái đài phát thanh của niềm tin mù quáng.
+        action_owns_text = {
+            "get_local_time",
+            "get_now_playing",
+            "search_web",
+            "get_weather",
+            "open_url",
+            "focus_window",
+            "set_volume",
+            "play_pause_media",
+            "copy_text",
+            "launch_app",
+        }
+        if (not result.success) or (decision.system_action in action_owns_text) or (not decision.text.strip()):
+            decision.text = result_text
+            decision.should_speak = bool(str(result_text or "").strip())
+            if not result.success:
+                decision.confidence = min(float(getattr(decision, "confidence", 0.0) or 0.0), 0.45)
+                decision.extracted_fact = {}
         if decision.system_action == "get_now_playing" and "media session" in decision.text.lower():
             decision.text = self._resolve_now_playing_text(snapshot) or decision.text
         return decision
@@ -9235,6 +9253,9 @@ class RuntimeCoordinator(
         return fallback or "stand"
 
     def _action_result_to_text(self, result) -> str:
+        if result.action_name == "get_local_time":
+            return result.message or "Tôi chưa đọc được giờ từ đồng hồ máy."
+
         if result.action_name == "get_now_playing":
             title = result.data.get("title", "")
             artist = result.data.get("artist", "")

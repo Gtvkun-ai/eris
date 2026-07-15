@@ -261,7 +261,7 @@ def apply_repair_appraisal_to_ti_report(report: Any, appraisal: RepairAppraisal)
 
 _RETRACTION_MARKERS = (
     "toi hieu sai", "toi doan qua", "toi tu keo", "toi tu bia", "toi nham", "toi lo",
-    "do toi suy dien", "khong phai dieu ngai noi", "khong phai y ngai", "rut lai",
+    "do toi suy dien", "khong phai dieu ban noi", "khong phai y ban", "rut lai",
     "toi vua phong", "toi vua tu dung", "toi keo qua tay",
 )
 
@@ -292,14 +292,14 @@ def build_safe_repair_text(appraisal: RepairAppraisal) -> str:
     if snapshot.is_playful_repair:
         if contrast:
             return f"Ừ, {claim_label} là tôi tự kéo vào. {contrast}; tôi diễn giải quá tay rồi."
-        return f"Ừ, {claim_label} là tôi tự dựng thêm. Ngài đang chọc đúng chỗ tôi vừa suy diễn quá tay rồi."
+        return f"Ừ, {claim_label} là tôi tự dựng thêm. bạn đang chọc đúng chỗ tôi vừa suy diễn quá tay rồi."
     if snapshot.boundary.value >= snapshot.thresholds.boundary_high:
         return f"Tôi hiểu sai và bỏ phần {claim_label}. Tôi sẽ không tiếp tục đẩy suy diễn đó nữa."
     if snapshot.irritation.value >= snapshot.thresholds.irritation_high:
-        return f"Tôi hiểu sai: phần {claim_label} là suy diễn của tôi, không phải điều Ngài nói."
+        return f"Tôi hiểu sai: phần {claim_label} là suy diễn của tôi, không phải điều bạn nói."
     if contrast:
         return f"Tôi kéo {claim_label} vào sai chỗ. {contrast}; tôi hiểu quá tay rồi."
-    return f"Tôi hiểu sai và bỏ phần {claim_label}; đó là suy diễn của tôi, không phải dữ kiện từ Ngài."
+    return f"Tôi hiểu sai và bỏ phần {claim_label}; đó là suy diễn của tôi, không phải dữ kiện từ bạn."
 
 
 def apply_repair_output_guard(decision: Any, appraisal: RepairAppraisal) -> Any:

@@ -10,7 +10,7 @@ Mục tiêu
 --------
 File này cố ý chỉ định nghĩa *hợp đồng* và vài implementation an toàn.
 Nó không ép project phải dùng một embedding model cụ thể. Làm vậy để sau này
-Ngài có thể đổi local model, remote API, FAISS, sqlite-vec, hoặc một thứ mới
+bạn có thể đổi local model, remote API, FAISS, sqlite-vec, hoặc một thứ mới
 mà loài người lại đặt tên thật kêu, mà không phải sửa toàn bộ cortex.
 
 Điểm quan trọng

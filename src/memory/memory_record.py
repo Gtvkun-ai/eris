@@ -34,7 +34,7 @@ STOPWORDS = {
     "cho", "co", "con", "cua", "cung", "da", "dang", "day", "de", "den",
     "di", "do", "duoc", "em", "gi", "ha", "hay", "hoi", "hon", "khi",
     "khong", "kia", "la", "lai", "lam", "len", "luc", "ma", "may", "minh",
-    "mot", "nay", "neu", "ngai", "nguoi", "nhu", "nhung", "noi", "nua",
+    "mot", "nay", "neu", "ban", "nguoi", "nhu", "nhung", "noi", "nua",
     "o", "qua", "ra", "rang", "roi", "sao", "se", "thi", "thoi", "toi",
     "trong", "tu", "van", "ve", "vi", "vua", "voi",
 }

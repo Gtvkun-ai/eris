@@ -11,7 +11,7 @@ Vector không được quyết định "câu thứ 3 là câu nào". Nó chỉ g
 - paraphrase đang trỏ tới role/act/relation nào
 - fact_key có thể là gì
 
-Nếu sau này Ngài có embedding provider thật, cắm vào đây.
+Nếu sau này bạn có embedding provider thật, cắm vào đây.
 Nếu không, prototype lexical fallback vẫn chạy nhưng luôn bị cap confidence.
 """
 
@@ -259,7 +259,7 @@ INTENT_PROTOTYPES: dict[QueryIntent, tuple[str, ...]] = {
 }
 
 ROLE_PROTOTYPES: dict[RoleRef, tuple[str, ...]] = {
-    RoleRef.USER: ("toi hoi", "cua toi", "ngai hoi", "toi da noi"),
+    RoleRef.USER: ("toi hoi", "cua toi", "ban hoi", "toi da noi"),
     RoleRef.ASSISTANT: ("em tra loi", "em dap", "em noi", "ban tra loi", "eris noi"),
 }
 

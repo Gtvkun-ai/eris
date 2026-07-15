@@ -7,8 +7,8 @@ from cortex.micro_repeat_guard import SemanticRepeatGuard
 def test_fresh_line_scores_high():
     guard = SemanticRepeatGuard()
     score = guard.novelty_score(
-        "Ngài vừa đổi sang file khác à.",
-        recent_lines=("Tôi nhớ hôm qua Ngài bỏ dở cái hàm parser.",),
+        "bạn vừa đổi sang file khác à.",
+        recent_lines=("Tôi nhớ hôm qua bạn bỏ dở cái hàm parser.",),
     )
     assert score > 0.5
 
@@ -43,6 +43,6 @@ def test_no_references_means_novel():
 
 def test_score_is_bounded():
     guard = SemanticRepeatGuard()
-    for text in ("a", "Tôi ở đây.", "Ngài quay lại rồi.", "x y z foo bar"):
+    for text in ("a", "Tôi ở đây.", "bạn quay lại rồi.", "x y z foo bar"):
         score = guard.novelty_score(text)
         assert 0.0 <= score <= 1.0

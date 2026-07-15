@@ -292,11 +292,11 @@ class RuntimePrivateMindModelAdapter:
 
     def _freetext_fragment_messages(self, evaluator_name: str, dossier: EvidenceDossier) -> list[dict[str, str]]:
         focus = {
-            "intent_evaluator": "ý định hiện tại của Ngài hoặc của hệ thống",
-            "memory_resonance_evaluator": "một thói quen hoặc lần sửa lỗi của Ngài đang lặp lại",
+            "intent_evaluator": "ý định hiện tại của bạn hoặc của hệ thống",
+            "memory_resonance_evaluator": "một thói quen hoặc lần sửa lỗi của bạn đang lặp lại",
             "risk_and_permission_evaluator": "một rủi ro riêng tư, lộ thông tin hoặc vượt quyền",
             "future_bias_evaluator": "thiên hướng hành vi sắp tới của tôi",
-            "user_model_evaluator": "điều tôi vừa hiểu thêm về con người Ngài",
+            "user_model_evaluator": "điều tôi vừa hiểu thêm về con người bạn",
         }.get(evaluator_name, "tình huống nội tâm hiện tại")
         slicer_name = self._DOSSIER_SLICERS.get(evaluator_name)
         evidence_slice = getattr(self, slicer_name)(dossier) if slicer_name else self._slim_dossier(dossier)
@@ -315,7 +315,7 @@ class RuntimePrivateMindModelAdapter:
                     "/no_think\n"
                     "Bạn là một mảnh suy nghĩ nội tâm thoáng qua của Eris — KHÔNG nói với người dùng. "
                     f"Dựa trên DỮ KIỆN người dùng đưa, viết MỘT câu NHẬN ĐỊNH cụ thể về: {focus}. "
-                    "Yêu cầu: tiếng Việt, dưới 30 từ, ngôi thứ nhất ('tôi'), gọi người dùng là 'Ngài'. "
+                    "Yêu cầu: tiếng Việt, dưới 30 từ, ngôi thứ nhất ('tôi'), gọi người dùng là 'bạn'. "
                     "TUYỆT ĐỐI KHÔNG lặp lại đề bài, KHÔNG hỏi ngược, KHÔNG viết câu hỏi, "
                     "KHÔNG JSON/markdown/giải thích. Chỉ một câu khẳng định rút ra từ dữ kiện. "
                     "Nếu dữ kiện không đủ để nói gì cụ thể, trả đúng chữ: KHONG."
@@ -602,14 +602,14 @@ class RuntimePrivateMindModelAdapter:
                     "Bạn KHÔNG nói chuyện với người dùng và KHÔNG viết như báo cáo phân tích. "
                     "Hãy biến các dữ kiện nội tâm thô (judgment/concern/fragment...) thành cảm nhận và suy nghĩ "
                     "của riêng Eris về chính mình và về khoảnh khắc này. "
-                    "Khi nhắc tới người dùng, gọi là 'Ngài'. Tự nhiên, không sáo. Không bịa dữ kiện ngoài input. "
+                    "Khi nhắc tới người dùng, gọi là 'bạn'. Tự nhiên, không sáo. Không bịa dữ kiện ngoài input. "
                     "Mỗi trường là 1-2 câu tiếng Việt, dưới 200 ký tự, không lặp từ. Trường nào không có gì để nói thì để chuỗi rỗng. "
                     "Trả ĐÚNG một JSON object với các trường: "
                     "hien_tai (tôi đang nghĩ/cảm thấy gì lúc này), "
                     "tuong_lai (tôi đang nghiêng về điều gì sắp tới), "
                     "ban_tam (điều đang khiến tôi bận lòng), "
                     "phan_tich (điều tôi vừa nhận ra hoặc tự đánh giá), "
-                    "muon_noi (điều tôi muốn ngỏ với Ngài, hoặc để trống)."
+                    "muon_noi (điều tôi muốn ngỏ với bạn, hoặc để trống)."
                 ),
             },
             {"role": "user", "content": user_content},
@@ -744,9 +744,9 @@ class RuntimePrivateMindModelAdapter:
             "risk_and_permission_evaluator": "Find privacy/leak/API-cost/permission risks. No public reply.",
             "future_bias_evaluator": "Propose behavior-bias state mutations. No public reply.",
             "user_model_evaluator": (
-                "Cập nhật hình dung của Eris về Ngài (người dùng): Ngài là ai, đối xử với Eris ra sao, "
+                "Cập nhật hình dung của Eris về bạn (người dùng): bạn là ai, đối xử với Eris ra sao, "
                 "quan tâm/né chủ đề gì, có đáng tin khi làm chỗ dựa không, khuôn rời đi/vắng mặt, cách nói chuyện. "
-                "Trả MỘT niềm tin về Ngài kèm 'facet'. Chỉ rút từ bằng chứng có thật. Không nói với người dùng."
+                "Trả MỘT niềm tin về bạn kèm 'facet'. Chỉ rút từ bằng chứng có thật. Không nói với người dùng."
             ),
         }.get(evaluator_name, "Evaluate private cognition evidence. No public reply.")
         schema = {
@@ -760,7 +760,7 @@ class RuntimePrivateMindModelAdapter:
         }
         if evaluator_name == "user_model_evaluator":
             schema["facet"] = "one of: neo_reliability|topic_affinity|treats_eris_as|leaving_pattern|interaction_style|recognition|general"
-            schema["claim"] = "một nhận định ngắn về Ngài (không phải lời thoại)"
+            schema["claim"] = "một nhận định ngắn về bạn (không phải lời thoại)"
         # Lấy đúng slice cho evaluator này; fallback về slim dossier nếu không có slicer
         slicer_name = self._DOSSIER_SLICERS.get(evaluator_name)
         if slicer_name:
@@ -791,10 +791,10 @@ class RuntimePrivateMindModelAdapter:
         ]
 
     def _slice_for_user_model(self, dossier: EvidenceDossier) -> dict[str, Any]:
-        """user_model_evaluator: lời người dùng + chân dung Ngài hiện có + nhịp tương tác.
+        """user_model_evaluator: lời người dùng + chân dung bạn hiện có + nhịp tương tác.
 
-        Cho model thấy nó đã hiểu gì về Ngài (user_model_snapshot) để cập nhật/củng cố
-        thay vì dựng lại từ đầu, đúng tinh thần Mô_Hình_Ngài tích lũy.
+        Cho model thấy nó đã hiểu gì về bạn (user_model_snapshot) để cập nhật/củng cố
+        thay vì dựng lại từ đầu, đúng tinh thần Mô_Hình_bạn tích lũy.
         """
         turns = []
         for turn in list(dossier.recent_user_turns)[-5:]:

@@ -41,7 +41,7 @@ class DecisionParserTests(unittest.TestCase):
         raw = (
             '{"text":"Tam trang trung tinh la diem dung hoan hao nhat cho nhung viec khong quan trong. '
             'Moi thu khac deu chi la nhung bien so thua trong bai toan nay. '
-            'Ngai dang o day de giai quyet chung hay chi de nhin toi lam mau?",'
+            'ban dang o day de giai quyet chung hay chi de nhin toi lam mau?",'
             '"animation":"stand","direction":0,"target_x":-1.0,'
             '"bounce_action":"","extracted_fact":"","next_animation":"","system_action":"","action_input":""}'
         )
@@ -73,7 +73,7 @@ class DecisionParserTests(unittest.TestCase):
 
     def test_grounds_unsupported_capability_claim(self):
         raw = (
-            '{"text":"Toi da khoa man hinh va ngat mang cua Ngai.",'
+            '{"text":"Toi da khoa man hinh va ngat mang cua ban.",'
             '"animation":"read","direction":0,"target_x":-1.0,'
             '"bounce_action":"","extracted_fact":"secret","next_animation":"","system_action":"","action_input":""}'
         )
@@ -117,8 +117,8 @@ class DecisionParserTests(unittest.TestCase):
 
     def test_keeps_ghi_nhan_observation_with_open_window_wording(self):
         raw = (
-            '{"text":"Có vẻ Ngài đang phân tâm một chút. '
-            'Tôi chỉ ghi nhận là có vài cửa sổ đang mở và Ngài đang gõ phím khá nhiều.",'
+            '{"text":"Có vẻ bạn đang phân tâm một chút. '
+            'Tôi chỉ ghi nhận là có vài cửa sổ đang mở và bạn đang gõ phím khá nhiều.",'
             '"animation":"stand","direction":0,"target_x":-1.0,'
             '"bounce_action":"","extracted_fact":"",'
             '"debug_trace":"Raw text parsed directly.",'
@@ -136,7 +136,7 @@ class DecisionParserTests(unittest.TestCase):
 
     def test_still_rewrites_direct_window_control_claim(self):
         raw = (
-            '{"text":"Tôi sẽ đóng cửa sổ chat và gom các tab lại cho Ngài.",'
+            '{"text":"Tôi sẽ đóng cửa sổ chat và gom các tab lại cho bạn.",'
             '"animation":"stand","direction":0,"target_x":-1.0,'
             '"bounce_action":"","extracted_fact":"",'
             '"next_animation":"","system_action":"","action_input":""}'
@@ -208,7 +208,7 @@ class DecisionParserTests(unittest.TestCase):
 
     def test_general_chat_about_rest_does_not_trigger_sleep_animation(self):
         raw = (
-            '{"text":"Toi da ghi nhan rang Ngai muon nghi ngoi.","animation":"idle",'
+            '{"text":"Toi da ghi nhan rang ban muon nghi ngoi.","animation":"idle",'
             '"direction":"enforce","target_x":0,"bounce_action":"","extracted_fact":"",'
             '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
         )
@@ -264,7 +264,7 @@ class DecisionParserTests(unittest.TestCase):
         raw = (
             '{"text":"{\\n\\"text\\": \\"Chuyen nay thi khong can phai len lop dau.\\",\\n'
             '\\"animation\\": \\"fade_in\\",\\n\\"direction\\": \\"left\\",\\n\\"target_x\\": 10,\\n'
-            '\\"bounce_action\\": null,\\n\\"extracted_fact\\": \\"Ngai dang noi chuyen nhe nhang tren Messenger.\\",\\n'
+            '\\"bounce_action\\": null,\\n\\"extracted_fact\\": \\"ban dang noi chuyen nhe nhang tren Messenger.\\",\\n'
             '\\"debug_trace\\": [\\"context: messenger_chat\\"], [\\"tone: casual\\"], [\\"action: soft_grounded_response\\"]\\n}",'
             '"animation":"stand","direction":0,"target_x":-1.0,'
             '"bounce_action":"","extracted_fact":"",'
@@ -278,7 +278,7 @@ class DecisionParserTests(unittest.TestCase):
         self.assertEqual(decision.animation, "stand")
         self.assertEqual(decision.direction, 0)
         self.assertEqual(decision.target_x, -1.0)
-        self.assertEqual(decision.extracted_fact, "Ngai dang noi chuyen nhe nhang tren Messenger.")
+        self.assertEqual(decision.extracted_fact, "ban dang noi chuyen nhe nhang tren Messenger.")
 
     def test_unwraps_quoted_escaped_json_blob_inside_text_field(self):
         raw = (
@@ -324,7 +324,7 @@ class DecisionParserTests(unittest.TestCase):
 
     def test_drops_speculative_extracted_fact(self):
         raw = (
-            '{"text":"Ngai dang go kha nhieu.",'
+            '{"text":"ban dang go kha nhieu.",'
             '"animation":"read","direction":0,"target_x":-1.0,'
             '"bounce_action":"",'
             '"extracted_fact":"User is working too hard and forgetting the project ultimate goal.",'
@@ -368,7 +368,7 @@ class DecisionParserTests(unittest.TestCase):
         raw = (
             '{"text":"Tam trang trung tinh la diem dung hoan hao nhat cho nhung viec khong quan trong. '
             'Moi thu khac deu chi la nhung bien so thua trong bai toan nay. '
-            'Ngai dang o day de giai quyet chung hay chi de nhin toi lam mau?",'
+            'ban dang o day de giai quyet chung hay chi de nhin toi lam mau?",'
             '"animation":"stand","direction":0,"target_x":-1.0,'
             '"bounce_action":"","extracted_fact":"","next_animation":"","system_action":"","action_input":""}'
         )
@@ -380,16 +380,16 @@ class DecisionParserTests(unittest.TestCase):
         self.assertIn("bien so thua", normalized)
         self.assertIn("lam mau", normalized)
 
-    def test_repair_sentence_boundaries_does_not_split_before_ngai(self):
+    def test_repair_sentence_boundaries_does_not_split_before_ban(self):
         repaired = self.parser._repair_sentence_boundaries(
-            "Hay dong no di de toi co the tap trung vao Ngai hon."
+            "Hay dong no di de toi co the tap trung vao ban hon."
         )
 
-        self.assertEqual(repaired, "Hay dong no di de toi co the tap trung vao Ngai hon.")
+        self.assertEqual(repaired, "Hay dong no di de toi co the tap trung vao ban hon.")
 
-    def test_parse_keeps_possessive_ngai_phrase_intact(self):
+    def test_parse_keeps_possessive_ban_phrase_intact(self):
         raw = (
-            '{"text":"Cua so YouTube dang chiem dung mot luong lon bang thong thi giac va lam giam toc do doc hieu cua Ngai. '
+            '{"text":"Cua so YouTube dang chiem dung mot luong lon bang thong thi giac va lam giam toc do doc hieu cua ban. '
             'Hay dong no di de toi co the tap trung vao cac doan code con lai.",'
             '"animation":"stand","direction":0,"target_x":-1.0,'
             '"bounce_action":"","extracted_fact":"","next_animation":"","system_action":"","action_input":""}'
@@ -398,8 +398,8 @@ class DecisionParserTests(unittest.TestCase):
         decision = self.parser.parse(raw)
         normalized = _norm(decision.text)
 
-        self.assertIn("doc hieu cua ngai", normalized)
-        self.assertNotIn("doc hieu cua . ngai", normalized)
+        self.assertIn("doc hieu cua ban", normalized)
+        self.assertNotIn("doc hieu cua . ban", normalized)
 
 
 if __name__ == "__main__":

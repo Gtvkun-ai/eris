@@ -45,7 +45,7 @@ def normalize_vi(text: str) -> str:
 
 
 _STOPWORDS = {
-    "toi", "ngai", "ban", "em", "anh", "chi", "minh", "ta", "no", "day",
+    "toi", "ban", "ban", "em", "anh", "chi", "minh", "ta", "no", "day",
     "la", "thi", "ma", "va", "voi", "cua", "mot", "cai", "do", "nay", "kia",
     "dang", "da", "se", "co", "khong", "ko", "k", "duoc", "bi", "cho", "vao",
     "ra", "len", "xuong", "ve", "gi", "sao", "the", "nhi", "nhe", "a", "ha",

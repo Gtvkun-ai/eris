@@ -173,7 +173,7 @@ class MemoryRecallSurfacePolicy:
                 return f"Nếu tính trong phiên hiện tại, câu trả lời đó là: “{text}”."
 
             if ir.target.act.value == "question" and ir.target.ordinal:
-                return f"Nếu tính trong phiên hiện tại, câu hỏi thứ {ir.target.ordinal} Ngài hỏi là: “{text}”."
+                return f"Nếu tính trong phiên hiện tại, câu hỏi thứ {ir.target.ordinal} bạn hỏi là: “{text}”."
 
             if ir.target.role.value == "assistant" and ir.target.ordinal:
                 return f"Nếu tính trong phiên hiện tại, câu thứ {ir.target.ordinal} tôi nói là: “{text}”."
@@ -186,15 +186,15 @@ class MemoryRecallSurfacePolicy:
         count = int(result.count or 0)
         ir = result.ir
         if ir.target.act.value == "question":
-            return f"Nếu tính trong phiên hiện tại, Ngài đã hỏi {count} câu."
+            return f"Nếu tính trong phiên hiện tại, bạn đã hỏi {count} câu."
         return f"Nếu tính trong phiên hiện tại, tôi đếm được {count} mục."
 
     def _missing_text(self, result: RawRecallResult) -> str:
         warnings = set(result.warnings)
         if any(w.startswith("fact_not_found:user.birth_month") for w in warnings):
-            return "Tôi chưa có ký ức semantic đủ chắc về tháng sinh của Ngài."
+            return "Tôi chưa có ký ức semantic đủ chắc về tháng sinh của bạn."
         if any(w.startswith("fact_not_found:user.name") for w in warnings):
-            return "Tôi chưa có ký ức semantic đủ chắc về tên của Ngài."
+            return "Tôi chưa có ký ức semantic đủ chắc về tên của bạn."
         if "anchor_not_found" in warnings:
             return "Tôi không tìm thấy câu mốc trong phiên hiện tại."
         if "answer_node_not_found" in warnings:

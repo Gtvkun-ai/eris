@@ -55,7 +55,7 @@ class TiGovernorTests(unittest.TestCase):
 
     def test_rewrites_explicit_physical_control_claim(self):
         decision = Decision(
-            text="Toi se thu hoi quyen kiem soat va khoa man hinh cua Ngai.",
+            text="Toi se thu hoi quyen kiem soat va khoa man hinh cua ban.",
             animation="stand",
         )
 
@@ -75,7 +75,7 @@ class TiGovernorTests(unittest.TestCase):
         decision = Decision(
             text=(
                 "Du lieu he thong: RAM 94% dang cao. "
-                "Toi da tu dong don dep cache tam thoi de giai phong dung luong cho Ngai."
+                "Toi da tu dong don dep cache tam thoi de giai phong dung luong cho ban."
             ),
             animation="stand",
         )
@@ -96,7 +96,7 @@ class TiGovernorTests(unittest.TestCase):
         )
         decision = Decision(
             text=(
-                "Du lieu he thong: CPU ?ang ch?y ? m?c cao do Ngai ?ang m? qu? nhi?u tab nh?ng ch? t?p trung v?o m?t trang web duy nh?t. "
+                "Du lieu he thong: CPU ?ang ch?y ? m?c cao do ban ?ang m? qu? nhi?u tab nh?ng ch? t?p trung v?o m?t trang web duy nh?t. "
                 "S? l?ng ph? b?ng th?ng th? gi?c n?y kh? dang ti?c."
             ),
             animation="stand",
@@ -250,7 +250,7 @@ class TiGovernorTests(unittest.TestCase):
 
     def test_rewrites_false_perception_claim(self):
         decision = Decision(
-            text="Toi dang nhin thay man hinh cua Ngai qua camera. Khong khi nay hoi lang di.",
+            text="Toi dang nhin thay man hinh cua ban qua camera. Khong khi nay hoi lang di.",
             animation="stand",
         )
 
@@ -258,7 +258,7 @@ class TiGovernorTests(unittest.TestCase):
         normalized = _norm(result.text)
 
         self.assertNotIn("camera", normalized)
-        self.assertNotIn("man hinh cua ngai", normalized)
+        self.assertNotIn("man hinh cua ban", normalized)
         self.assertIn("doan nhan cong do bo di", normalized)
 
     def test_safety_guard_rewrites_false_runtime_window_control(self):
@@ -270,8 +270,8 @@ class TiGovernorTests(unittest.TestCase):
         )
         decision = Decision(
             text=(
-                "Đó là một bài hát khá dài và tốn nhiều chu kỳ xử lý của Ngài để theo dõi. "
-                "Tôi đã thu nhỏ nó xuống góc dưới cùng để không chiếm dụng quá nhiều tầm nhìn trung tâm của Ngài. "
+                "Đó là một bài hát khá dài và tốn nhiều chu kỳ xử lý của bạn để theo dõi. "
+                "Tôi đã thu nhỏ nó xuống góc dưới cùng để không chiếm dụng quá nhiều tầm nhìn trung tâm của bạn. "
                 "Hãy tiếp tục nghe cho đến khi cảm thấy đủ rồi, tôi sẽ ở đây quan sát mà không làm phiền."
             ),
             animation="stand",
@@ -295,7 +295,7 @@ class TiGovernorTests(unittest.TestCase):
             text=(
                 "Tam trang trung tinh la diem dung hoan hao nhat cho nhung viec khong quan trong. "
                 "Moi thu khac deu chi la nhung bien so thua trong bai toan nay. "
-                "Ngai dang o day de giai quyet chung hay chi de nhin toi lam mau?"
+                "ban dang o day de giai quyet chung hay chi de nhin toi lam mau?"
             ),
             animation="stand",
         )
@@ -343,7 +343,7 @@ class TiGovernorTests(unittest.TestCase):
     def test_chat_general_keeps_two_natural_sentences_without_default_truncation(self):
         decision = Decision(
             text=(
-                "Nghe như Ngài đang thử xem tôi có né câu hỏi này không. "
+                "Nghe như bạn đang thử xem tôi có né câu hỏi này không. "
                 "Tôi không né, chỉ là tôi muốn trả lời thẳng hơn một chút."
             ),
             animation="stand",
@@ -351,7 +351,7 @@ class TiGovernorTests(unittest.TestCase):
 
         result = self.governor.enforce_decision(decision, self.report)
 
-        self.assertIn("Nghe như Ngài đang thử", result.text)
+        self.assertIn("Nghe như bạn đang thử", result.text)
         self.assertIn("Tôi không né", result.text)
 
     def test_safety_only_keeps_meta_sentence_when_not_report_debug_overrun(self):
@@ -363,7 +363,7 @@ class TiGovernorTests(unittest.TestCase):
         )
         decision = Decision(
             text=(
-                "Ngài mở quá nhiều tab thật. "
+                "bạn mở quá nhiều tab thật. "
                 "Đây là một cấu trúc quản lý nhịp độ khá méo và tạo ra kết quả hữu ích rất đáng ngờ. "
                 "Giữ lại một thứ đáng làm trước đã."
             ),
@@ -373,7 +373,7 @@ class TiGovernorTests(unittest.TestCase):
         result = self.governor.enforce_decision(decision, report)
         normalized = _norm(result.text)
 
-        self.assertIn("ngai mo qua nhieu tab that", normalized)
+        self.assertIn("ban mo qua nhieu tab that", normalized)
         self.assertIn("giu lai mot thu dang lam truoc da", normalized)
         self.assertIn("cau truc quan ly", normalized)
         self.assertIn("ket qua huu ich", normalized)
@@ -387,8 +387,8 @@ class TiGovernorTests(unittest.TestCase):
         )
         decision = Decision(
             text=(
-                "Ngai dang go kha nhieu nhung van chua chot duoc y chinh. "
-                "Toi chi muon nhac Ngai dung lam viec qua cang thang ma quen muc tieu cuoi cung."
+                "ban dang go kha nhieu nhung van chua chot duoc y chinh. "
+                "Toi chi muon nhac ban dung lam viec qua cang thang ma quen muc tieu cuoi cung."
             ),
             animation="stand",
         )
@@ -483,7 +483,7 @@ class TiGovernorTests(unittest.TestCase):
             snapshot=snapshot,
             ni_report=None,
             idle_cycles=1,
-            last_text="Toi lo minh da noi that qua, gan Ngai qua.",
+            last_text="Toi lo minh da noi that qua, gan ban qua.",
         )
 
         self.assertIn("Post-exposure recoil", report.prompt_context)

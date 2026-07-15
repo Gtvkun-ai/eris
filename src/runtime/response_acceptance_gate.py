@@ -267,8 +267,8 @@ def _append_trace(trace: str, marker: str) -> str:
 
 def _looks_like_helper_reset(norm: str) -> bool:
     markers = (
-        "toi la eris", "tro ly ca nhan", "tro ly cua ngai", "san sang ho tro",
-        "toi co the giup", "ngai can gi", "hay cho toi biet", "dat cau hoi",
+        "toi la eris", "tro ly ca nhan", "tro ly cua ban", "san sang ho tro",
+        "toi co the giup", "ban can gi", "hay cho toi biet", "dat cau hoi",
     )
     return any(m in norm for m in markers)
 

@@ -11,7 +11,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 # Cấu hình địa chỉ và cổng
-UDP_IP = "127.0.0.1"  # Localhost (chính máy của Ngài)
+UDP_IP = "127.0.0.1"  # Localhost (chính máy của bạn)
 UDP_PORT = 4242
 MESSAGE = "Hello World"
 

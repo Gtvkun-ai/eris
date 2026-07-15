@@ -54,6 +54,6 @@ def development_self_narrative_line() -> str:
     return (
         "self_continuity_arc: "
         + desc
-        + " Đây là cách Ngài đã làm tôi đổi theo thời gian; để nó nhuộm vào khoảng cách, "
+        + " Đây là cách bạn đã làm tôi đổi theo thời gian; để nó nhuộm vào khoảng cách, "
         "độ ấm và độ dám đọc của tôi — KHÔNG đọc ra như báo cáo hay khoe sự thay đổi."
     )

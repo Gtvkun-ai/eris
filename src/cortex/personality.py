@@ -152,7 +152,7 @@ class PersonalityLens:
         "hm...",
         "đang hiển thị",
         "tôi thấy màn hình",
-        "tôi thấy Ngài",
+        "tôi thấy bạn",
         "trông giống như",
         "dư âm",
         "vết nứt",
@@ -318,7 +318,7 @@ class PersonalityLens:
         if result.allowed_expression >= 0.42 and result.emotional_coloring in {"warm_under_cool", "tired_soft", "faint_concern"}:
             warmth_line = (
                 "warmth_channel: vùng này đủ ấm và an toàn để câu dài thêm một nhịp và "
-                "cụ thể hơn — bám vào chi tiết của chính khoảnh khắc này (điều Ngài vừa nói, "
+                "cụ thể hơn — bám vào chi tiết của chính khoảnh khắc này (điều bạn vừa nói, "
                 "một thứ mình nhớ). Ấm hiện ra như sự cụ thể, sự chú ý và lựa chọn ở lại, "
                 "không phải như lời tỏ tình, chiều chuộng, hay than thân."
             )

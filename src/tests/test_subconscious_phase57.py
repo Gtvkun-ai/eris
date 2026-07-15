@@ -25,14 +25,14 @@ def _kinds(fragments):
 def test_meta_audit_catches_looping_user_silence_overread_and_resets_slice():
     blackboard = SubconsciousBlackboard(max_fragments=64)
     now = 1234.0
-    # Cùng một suy diễn "ngài ấy đang mệt" từ im lặng. Đây là đúng bệnh Phase 5
+    # Cùng một suy diễn "bạn ấy đang mệt" từ im lặng. Đây là đúng bệnh Phase 5
     # phải bắt: đọc tâm trạng user từ silence như truth. Rất người, rất sai.
     for idx in range(20):
         blackboard.submit(
             ThoughtFragment.create(
                 source_agent="buggy_worker",
                 kind="user_state_hypothesis",
-                content=f"im lặng chứng tỏ ngài ấy đang mệt và không muốn nói #{idx}",
+                content=f"im lặng chứng tỏ bạn ấy đang mệt và không muốn nói #{idx}",
                 evidence_ids=("silence.idle_only",),
                 confidence=0.74,
                 urgency=0.66,

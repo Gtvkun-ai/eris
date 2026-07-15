@@ -176,7 +176,7 @@ def test_inner_diary_future_thought_becomes_curious_question() -> None:
     # Chỉ có suy nghĩ tương lai → phát ra curious_question (đường mà
     # surface_seed_compiler trước đây không bao giờ tạo được).
     compiled = SurfaceSeedCompiler().compile(
-        inner_diary={"tuong_lai": "Liệu mình có nên hỏi Ngài về cái lỗi đó không."},
+        inner_diary={"tuong_lai": "Liệu mình có nên hỏi bạn về cái lỗi đó không."},
         surface_kind="re_engagement",
     )
 

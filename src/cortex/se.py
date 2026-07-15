@@ -725,7 +725,7 @@ class SeLens:
         quality_score = self._evidence_quality_score(concrete_evidence)
 
         # Router mơ hồ thì không được cho phép giọng chắc, trừ khi DOM/OCR đã có fact cụ thể.
-        # classification yếu không được biến thành "Ngài đang ..." như sự thật.
+        # classification yếu không được biến thành "bạn đang ..." như sự thật.
         if context_classification and content_confidence < 0.72:
             if context_classification.confidence < 0.48:
                 return "WEAK_IMPRESSION"
@@ -1050,18 +1050,18 @@ class SeLens:
 
     def _build_focus_summary(self, active_window_kind: str, active_app: str, browser_url: str) -> str:
         if active_window_kind == "coding":
-            return f"Ngài đang ở bối cảnh code hoặc project: {active_app}"
+            return f"bạn đang ở bối cảnh code hoặc project: {active_app}"
         if active_window_kind == "documentation":
-            return f"Ngài đang đọc tài liệu hoặc reference: {browser_url or active_app}"
+            return f"bạn đang đọc tài liệu hoặc reference: {browser_url or active_app}"
         if active_window_kind == "communication":
-            return f"Ngài đang ở bối cảnh giao tiếp: {active_app}"
+            return f"bạn đang ở bối cảnh giao tiếp: {active_app}"
         if active_window_kind == "focus_aid_media":
             return f"Có media nền hoặc nguồn hỗ trợ tập trung gần bối cảnh hiện tại: {active_app}"
         if active_window_kind == "entertainment":
-            return f"Ngài đang nghiêng sang giải trí hoặc nghỉ nhịp: {active_app}"
+            return f"bạn đang nghiêng sang giải trí hoặc nghỉ nhịp: {active_app}"
         if active_window_kind == "system":
-            return f"Ngài đang thao tác hệ thống: {active_app}"
-        return f"Ngài đang ở bối cảnh tổng quát: {active_app}"
+            return f"bạn đang thao tác hệ thống: {active_app}"
+        return f"bạn đang ở bối cảnh tổng quát: {active_app}"
 
     def _label_position(self, inferred_pos_x: float) -> str:
         if inferred_pos_x <= 0.15:

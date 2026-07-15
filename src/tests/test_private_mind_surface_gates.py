@@ -137,7 +137,7 @@ def test_to_surface_impulse_copies_stance_and_intent_unchanged():
     # Req 5.11: stance + intent đi qua SurfaceValve không đổi.
     candidate = SurfaceCandidate(
         kind="private_mind_surface",
-        topic_seed="Ngài đang mở screen_fact về kiến trúc.",
+        topic_seed="bạn đang mở screen_fact về kiến trúc.",
         usefulness=0.80,
         confidence=0.80,
         interrupt_cost=0.20,
@@ -159,7 +159,7 @@ def test_to_surface_impulse_grounded_includes_public_anchor_references():
     # gồm cả refs khai báo trong metadata.
     candidate = SurfaceCandidate(
         kind="private_mind_surface",
-        topic_seed="Ngài vừa nhắc tới điều này trong user_chat.",
+        topic_seed="bạn vừa nhắc tới điều này trong user_chat.",
         usefulness=0.80,
         confidence=0.80,
         interrupt_cost=0.20,
@@ -185,7 +185,7 @@ def test_to_surface_impulse_ungrounded_aware_reflects_intent_in_contract():
     # Req 4.5: llm_contract của ungrounded_aware phản ánh mục đích có chủ đích.
     candidate = SurfaceCandidate(
         kind="private_mind_surface",
-        topic_seed="Có lẽ ngài đang trốn việc, chỉ là đoán thôi nha.",
+        topic_seed="Có lẽ bạn đang trốn việc, chỉ là đoán thôi nha.",
         usefulness=0.80,
         confidence=0.80,
         interrupt_cost=0.20,

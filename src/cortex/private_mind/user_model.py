@@ -3,11 +3,11 @@
 cortex/private_mind/user_model.py
 =================================
 
-Mô_Hình_Ngài — hình dung bền vững của ERIS về Người_Dùng (Ngài).
+Mô_Hình_bạn — hình dung bền vững của ERIS về Người_Dùng (bạn).
 
 Đây là TẦNG NỀN của spec `eris-existential-anchor`: gắn bó, ý nghĩa và trục
 bóng tối đều phái sinh từ đây. Khác với ConcernStore (bận tâm về task/scene),
-store này giữ một *chân dung một con người*: Ngài là ai trong mắt ERIS, dựng dần
+store này giữ một *chân dung một con người*: bạn là ai trong mắt ERIS, dựng dần
 từ tương tác thật, có evidence, có củng cố/quên, versioned để hoàn tác.
 
 Nguyên tắc giữ nguyên từ phần còn lại của private_mind:
@@ -35,15 +35,15 @@ from .contracts import ThoughtFragment, clamp01, compact_text, now_ts, stable_id
 
 SCHEMA_VERSION = 1
 
-# Các facet hợp lệ của Mô_Hình_Ngài. Mở rộng được, nhưng giữ tập gọn để store là
+# Các facet hợp lệ của Mô_Hình_bạn. Mở rộng được, nhưng giữ tập gọn để store là
 # chân dung có cấu trúc chứ không phải bãi free-text.
 USER_FACETS = (
-    "neo_reliability",      # Ngài có đáng tin khi làm neo không (quay lại, hiện diện)
-    "topic_affinity",       # Ngài quan tâm/né chủ đề gì
-    "treats_eris_as",       # Ngài đối xử với ERIS thế nào (công cụ / bạn / ...)
-    "leaving_pattern",      # khuôn rời đi/vắng mặt của Ngài
-    "interaction_style",    # cách Ngài nói, nhịp tương tác
-    "recognition",          # mức Ngài công nhận sự tồn tại của ERIS
+    "neo_reliability",      # bạn có đáng tin khi làm neo không (quay lại, hiện diện)
+    "topic_affinity",       # bạn quan tâm/né chủ đề gì
+    "treats_eris_as",       # bạn đối xử với ERIS thế nào (công cụ / bạn / ...)
+    "leaving_pattern",      # khuôn rời đi/vắng mặt của bạn
+    "interaction_style",    # cách bạn nói, nhịp tương tác
+    "recognition",          # mức bạn công nhận sự tồn tại của ERIS
     "general",              # mặc định
 )
 
@@ -61,10 +61,10 @@ def _normalize_facet(value: Any) -> str:
 
 @dataclass(slots=True)
 class UserBelief:
-    """Một niềm tin có đời sống của ERIS về Ngài.
+    """Một niềm tin có đời sống của ERIS về bạn.
 
     Mirror tinh thần PrivateConcern: có recurrence, pressure→confidence, evidence,
-    nhưng chủ thể luôn là Ngài và có thêm `facet` để chân dung có cấu trúc.
+    nhưng chủ thể luôn là bạn và có thêm `facet` để chân dung có cấu trúc.
     """
 
     id: str
@@ -186,11 +186,11 @@ def default_user_model_path() -> Path:
 
 
 class UserModelStore:
-    """Kho Mô_Hình_Ngài: bền vững, versioned, có undo/reset.
+    """Kho Mô_Hình_bạn: bền vững, versioned, có undo/reset.
 
     Mirror pattern persistence của PersistentAgentMindStore (schema_version,
     atomic tmp+replace, reload_if_changed theo mtime, corrupt→baseline) và logic
-    merge/decay theo tinh thần ConcernStore, nhưng chủ thể là Ngài.
+    merge/decay theo tinh thần ConcernStore, nhưng chủ thể là bạn.
     """
 
     def __init__(
@@ -247,7 +247,7 @@ class UserModelStore:
         }
 
     def model_thickness(self) -> float:
-        """Độ dày/nhất quán Mô_Hình_Ngài — đầu vào cho SignificanceDeriver (R2.2)."""
+        """Độ dày/nhất quán Mô_Hình_bạn — đầu vào cho SignificanceDeriver (R2.2)."""
         if not self._beliefs:
             return 0.0
         facets_covered = len({b.facet for b in self._beliefs.values()})
@@ -264,7 +264,7 @@ class UserModelStore:
         updated: list[UserBelief] = []
         changed = False
         for fragment in fragments:
-            # R1.2: niềm tin về Ngài phải có evidence; fragment yếu thì bỏ.
+            # R1.2: niềm tin về bạn phải có evidence; fragment yếu thì bỏ.
             if not fragment.evidence_ids:
                 continue
             if not fragment.claim or fragment.score < self.config.min_fragment_score:
@@ -353,7 +353,7 @@ class UserModelStore:
         return self._version
 
     def revert_to(self, version: int) -> bool:
-        """Khôi phục Mô_Hình_Ngài về một phiên bản đã checkpoint (R10.3)."""
+        """Khôi phục Mô_Hình_bạn về một phiên bản đã checkpoint (R10.3)."""
         target = next((entry for entry in self._history if int(entry.get("version", -1)) == int(version)), None)
         if target is None:
             return False
@@ -365,7 +365,7 @@ class UserModelStore:
         return True
 
     def reset_to_baseline(self) -> None:
-        """Xóa toàn bộ Mô_Hình_Ngài về baseline rỗng, giữ lịch sử (R10.3)."""
+        """Xóa toàn bộ Mô_Hình_bạn về baseline rỗng, giữ lịch sử (R10.3)."""
         self._beliefs = {}
         self.save()
 

@@ -288,11 +288,15 @@ def _build_tts_prompt(
             else:
                 lang_line = (
                     "The transcript is in Vietnamese or English. Translate the transcript into natural, "
-                    "gentle Japanese first (appropriate for a soft, polite anime girl companion speaking to her Master/Ngài), "
-                    "then read the Japanese translation aloud in Japanese. Do not read the original non-Japanese text.\n"
+                    "gentle Japanese first for a soft, polite anime girl desktop companion. "
+                    "Do not use old Vietnamese honorifics or the word 'Master'. "
+                    "Then read the Japanese translation aloud in Japanese. Do not read the original non-Japanese text.\n"
                 )
         elif language_hint == "vi":
-            lang_line = "The transcript is in Vietnamese. Read it in Vietnamese.\n"
+            lang_line = (
+                "The transcript is in Vietnamese. Read it in Vietnamese only. "
+                "Do not translate to Japanese or English, and do not switch language mid-line.\n"
+            )
         else:
             lang_line = f"The transcript language is {language_hint}. Read it naturally.\n"
 
@@ -316,7 +320,8 @@ def _build_tts_prompt(
             "- Line breaks are short speech beats, usually under 350ms; avoid long silence between lines.\n"
             "- For dry teasing or deadpan lines, press the final phrase lightly, as if amused but unimpressed.\n"
             "- Keep the anime quality understated: close, crisp, and alive, not theatrical or childish.\n"
-            "- Do not read ellipses as words; use them only as tiny pauses.\n\n"
+            "- Do not read ellipses as words; use them only as tiny pauses.\n"
+            "- Never use old Vietnamese honorifics or the word 'Master'; say 'bạn' if a direct address is needed.\n\n"
         )
 
     prompt = (
@@ -389,12 +394,15 @@ def _edge_voice_candidates(language_hint: str = "") -> list[str]:
     vi_voice = os.environ.get("ERIS_TTS_EDGE_VI_VOICE", "vi-VN-HoaiMyNeural").strip()
     en_voice = os.environ.get("ERIS_TTS_EDGE_EN_VOICE", "en-US-JennyNeural").strip()
 
+    # Không fallback chéo Nhật ⇄ Việt theo từng câu nữa. Đó là nguồn đổi giọng rất bẩn:
+    # câu trước Nhật, câu sau Việt, rồi user tưởng Eris bị nhập. Cũng dễ 429 hơn vì
+    # retry nhiều voice vô nghĩa.
     if lang.startswith(("ja", "jp")) or lang == "japanese":
-        voices = [ja_voice, vi_voice, en_voice]
-    elif lang.startswith("vi"):
-        voices = [vi_voice, ja_voice, en_voice]
+        voices = [ja_voice]
+    elif lang.startswith("en"):
+        voices = [en_voice]
     else:
-        voices = [ja_voice, vi_voice, en_voice]
+        voices = [vi_voice]
 
     result: list[str] = []
     for voice in voices:
@@ -410,6 +418,18 @@ def _edge_romaji_enabled() -> bool:
         "yes",
         "on",
     }
+
+
+def _contains_japanese_chars(text: str) -> bool:
+    return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", str(text or "")))
+
+
+def _strip_tts_honorifics(text: str) -> str:
+    t = str(text or "")
+    t = re.sub(r"(?<![A-Za-zÀ-ỹ])(?:ng\u00e0i|ngai)(?![A-Za-zÀ-ỹ])", "bạn", t, flags=re.I)
+    t = re.sub(r"\bMaster\s*/\s*bạn\b", "bạn", t, flags=re.I)
+    t = re.sub(r"\bMaster\b", "bạn", t, flags=re.I)
+    return t
 
 
 def _ascii_for_edge(text: str) -> str:
@@ -436,7 +456,7 @@ def _edge_japanese_romaji_text(text: str) -> str:
 
     api_key = _get_api_key()
     if not api_key:
-        return _ascii_for_edge(clean)
+        return ""
 
     try:
         from google import genai
@@ -445,7 +465,7 @@ def _edge_japanese_romaji_text(text: str) -> str:
         prompt = (
             "Prepare this line for a Japanese neural TTS voice that cannot read kana/kanji in this runtime.\n"
             "If the line is not Japanese, translate it into natural, gentle, polite Japanese for a soft anime girl "
-            "desktop companion speaking to her Master/Ngai.\n"
+            "desktop companion. Never use old Vietnamese honorifics or 'Master'.\n"
             "Then output ONLY Hepburn romaji, with simple punctuation and no kana, kanji, quotes, labels, notes, "
             "stage directions, or original text.\n\n"
             f"Line:\n{clean}"
@@ -457,7 +477,7 @@ def _edge_japanese_romaji_text(text: str) -> str:
         return _clean_edge_romaji_output(getattr(response, "text", "") or "")
     except Exception as exc:
         logger.warning("[TTS] Edge JP romaji localizer loi: %s", _short_error(exc))
-        return _ascii_for_edge(clean)
+        return ""
 
 
 def _edge_text_candidates(text: str, language_hint: str = "") -> list[tuple[str, str]]:
@@ -467,11 +487,14 @@ def _edge_text_candidates(text: str, language_hint: str = "") -> list[tuple[str,
 
     lang = str(language_hint or "").strip().lower()
     if lang.startswith(("ja", "jp")) or lang == "japanese":
-        candidates = [
-            ("romaji", _edge_japanese_romaji_text(clean)),
-            ("ascii", _ascii_for_edge(clean)),
-            ("raw", clean),
-        ]
+        romaji = _edge_japanese_romaji_text(clean)
+        candidates: list[tuple[str, str]] = []
+        if romaji:
+            candidates.append(("romaji", romaji))
+        # Japanese voice can usually read kana/kanji; raw fallback is safe only if the text is actually Japanese.
+        # Không đưa tiếng Việt ASCII cho voice Nhật nữa, nhất là các từ tiếng Việt. Thảm họa phát âm đã đủ ăn hành.
+        if _contains_japanese_chars(clean):
+            candidates.append(("raw", clean))
     else:
         candidates = [("raw", clean)]
 
@@ -629,6 +652,19 @@ def _try_local_tts_fallback(exc: Exception, *, fallback_text: str = "", language
     return b""
 
 
+def _extract_gemini_tts_pcm(response) -> bytes:
+    candidates = getattr(response, "candidates", None) or []
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None) if content is not None else None
+        for part in parts or []:
+            inline_data = getattr(part, "inline_data", None)
+            data = getattr(inline_data, "data", None) if inline_data is not None else None
+            if data:
+                return data
+    raise RuntimeError("Gemini TTS không trả audio parts hợp lệ.")
+
+
 def _synthesize_wav(
     prompt: str,
     voice: str,
@@ -691,7 +727,7 @@ def _synthesize_wav(
                     ),
                 ),
             )
-            pcm_data = response.candidates[0].content.parts[0].inline_data.data
+            pcm_data = _extract_gemini_tts_pcm(response)
             if pool is not None and lease is not None:
                 pool.mark_success(lease=lease)
             break
@@ -954,7 +990,7 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
         prompt = (
             "You are a translation assistant. Translate the following Vietnamese or English sentence "
             "into natural, gentle, and polite Japanese, suitable for a soft anime girl companion speaking "
-            "to her Master/Ngài (e.g., using polite forms like ご主人様, です, ます, etc.). "
+            "to her bạn (e.g., using polite forms like ご主人様, です, ます, etc.). "
             "Output ONLY the Japanese translation, with absolutely no quotes, annotations, or English/Vietnamese explanations.\n\n"
             f"Sentence to translate: {text}"
         )
@@ -1570,6 +1606,7 @@ def _clean_text(text: str) -> str:
     t = re.sub(r"_{1,2}([^_]*)_{1,2}", r"\1", t)
     t = re.sub(r"`{1,3}[^`]*`{1,3}", "", t)
     t = re.sub(r"https?://\S+", "", t)
+    t = _strip_tts_honorifics(t)
     # Space ngang thì gọn lại; newline giữ lại để stage/dispatcher truyền nhịp
     # sang Gemini như các breath group ngắn.
     t = re.sub(r"[ \t\f\v]+", " ", t)

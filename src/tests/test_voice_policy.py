@@ -27,7 +27,7 @@ class VoicePolicyDetectionTests(unittest.TestCase):
             )
 
     def test_clean_eris_line_not_flagged(self):
-        clean = "Tôi quen có Ngài ở đây. Gọi đó là gì thì tùy Ngài."
+        clean = "Tôi quen có bạn ở đây. Gọi đó là gì thì tùy bạn."
         self.assertFalse(VOICE_POLICY.is_disclaimer(clean))
 
     def test_real_disclaimer_sentence_flagged_with_diacritics(self):

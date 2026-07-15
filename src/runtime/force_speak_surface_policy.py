@@ -26,9 +26,9 @@ class ForceSpeakSurfacePolicyMixin:
         if not normalized:
             return False
         generic_patterns = (
-            "ngài muốn tôi nói gì",
-            "ngài muốn tôi nói cái gì",
-            "ngài vừa yêu cầu tôi nói ngay",
+            "bạn muốn tôi nói gì",
+            "bạn muốn tôi nói cái gì",
+            "bạn vừa yêu cầu tôi nói ngay",
             "không có tín hiệu mới đủ chắc",
             "không có tín hiệu",
             "không có gì để nói",
@@ -43,9 +43,9 @@ class ForceSpeakSurfacePolicyMixin:
             "tôi lùi lại",
             "tôi sẽ lùi lại",
             "lùi đúng chỗ",
-            "ngài cứ làm việc",
+            "bạn cứ làm việc",
             "cứ làm việc",
-            "ngài làm việc tiếp",
+            "bạn làm việc tiếp",
             "làm việc tiếp",
             "tôi sẽ giữ lời đó",
             "tôi nghe rồi tôi sẽ giữ lời",
@@ -75,7 +75,7 @@ class ForceSpeakSurfacePolicyMixin:
             "tôi lùi",
             "lùi đúng chỗ",
             "dừng lại",
-            "ngài cứ làm việc",
+            "bạn cứ làm việc",
             "cứ làm việc",
             "làm việc tiếp",
             "tôi chỉ để mắt",
@@ -103,10 +103,10 @@ class ForceSpeakSurfacePolicyMixin:
         question_phrases = (
             "bao giờ",
             "có phải",
-            "ngài có",
-            "ngài nghĩ",
-            "ngài thích",
-            "ngài muốn",
+            "bạn có",
+            "bạn nghĩ",
+            "bạn thích",
+            "bạn muốn",
             "tại sao",
             "thế nào",
             "vì sao",
@@ -123,7 +123,7 @@ class ForceSpeakSurfacePolicyMixin:
             return ""
 
         normalized = self._normalize_user_message(raw)
-        if any(term in normalized for term in ("ngài đang mệt", "ngài đang buồn", "ngài đang căng")):
+        if any(term in normalized for term in ("bạn đang mệt", "bạn đang buồn", "bạn đang căng")):
             return ""
 
         shaped = raw.strip().strip(".!。！")

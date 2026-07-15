@@ -109,7 +109,7 @@ class _RepeatingForceSpeakLlmService(_DummyLlmService):
         self.directive_calls += 1
         self.last_directive_kwargs = kwargs
         return (
-            '{"text":"Ngài vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",'
+            '{"text":"bạn vừa yêu cầu tôi nói ngay. Tôi sẽ giữ lời đó.",'
             '"animation":"stand","direction":0,"target_x":-1.0,'
             '"bounce_action":"","next_animation":"","system_action":"","action_input":""}'
         )
@@ -119,8 +119,8 @@ class _GenericThenSocialLlmService(_DummyLlmService):
     def __init__(self):
         super().__init__()
         self._texts = [
-            "Ngài muốn tôi nói gì đây.",
-            "Tạm bỏ màn hình qua một bên. Ngài thích buổi sáng yên hay buổi đêm yên hơn.",
+            "bạn muốn tôi nói gì đây.",
+            "Tạm bỏ màn hình qua một bên. bạn thích buổi sáng yên hay buổi đêm yên hơn.",
         ]
 
     def generate_directive(self, **kwargs):
@@ -147,7 +147,7 @@ class _MindreadingForceSpeakLlmService(_DummyLlmService):
         self.last_directive_kwargs = kwargs
         return json.dumps(
             {
-                "text": "Co ve Ngai dang met.",
+                "text": "Co ve ban dang met.",
                 "animation": "stand",
                 "direction": 0,
                 "target_x": -1.0,
@@ -682,9 +682,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
     def test_public_turn_ledger_infers_special_channels(self):
         coordinator = self._make_coordinator()
 
-        coordinator._send_decision_to_body(Decision(text="Chào lại Ngài.", animation="stand", parse_mode="session_ritual"))
+        coordinator._send_decision_to_body(Decision(text="Chào lại bạn.", animation="stand", parse_mode="session_ritual"))
         coordinator._send_decision_to_body(Decision(text="Tôi vẫn ở đây.", animation="stand", parse_mode="presence_maintenance"))
-        coordinator._send_decision_to_body(Decision(text="Ngài còn đó chứ.", animation="stand", parse_mode="re_engagement"))
+        coordinator._send_decision_to_body(Decision(text="bạn còn đó chứ.", animation="stand", parse_mode="re_engagement"))
 
         self.assertEqual(
             [turn.channel for turn in coordinator.public_turn_ledger.all()],
@@ -721,7 +721,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         coordinator = self._make_coordinator()
         coordinator.public_turn_ledger.append(
             channel="session_ritual",
-            text="Ngài quay lại rồi.",
+            text="bạn quay lại rồi.",
             timestamp=100.0,
             parse_mode="session_ritual",
         )
@@ -730,7 +730,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         previous = coordinator.reply_context.previous_public_turn
         self.assertIsNotNone(previous)
-        self.assertEqual(previous.text, "Ngài quay lại rồi.")
+        self.assertEqual(previous.text, "bạn quay lại rồi.")
         self.assertIs(coordinator.llm_service.last_chat_kwargs["reply_context"], coordinator.reply_context)
         self.assertIn("previous_public_turn", coordinator.llm_service.last_chat_kwargs["ti_context"])
 
@@ -759,7 +759,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
     def test_chat_memory_recall_final_guard_blocks_memory_packet_repr(self):
         coordinator = self._make_coordinator(parser=_JsonParser())
         coordinator._build_memory_recall_decision = lambda user_text: Decision(
-            text="Tên Ngài là MemoryPacket(episodic=[], semantic=[], token_budget=900, source_counts={'semantic': 0}).",
+            text="Tên bạn là MemoryPacket(episodic=[], semantic=[], token_budget=900, source_counts={'semantic': 0}).",
             intent="memory_recall",
             action="answer",
             animation="stand",
@@ -1341,7 +1341,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
     def test_chat_final_guard_allows_sharp_identity_boundary_without_real_risk(self):
         coordinator = self._make_coordinator()
         decision = Decision(
-            text="Tôi là một hiện diện runtime. Ngài muốn nhìn tôi như một công cụ thì tôi sẽ lạnh đi một chút.",
+            text="Tôi là một hiện diện runtime. bạn muốn nhìn tôi như một công cụ thì tôi sẽ lạnh đi một chút.",
             animation="stand",
             confidence=0.92,
         )
@@ -1350,8 +1350,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertIn("hiện diện runtime", guarded.text)
         self.assertIn("công cụ", guarded.text)
-        self.assertIn("Ngài muốn", guarded.text)
-        self.assertNotEqual(guarded.text, "Tôi chưa đủ chắc để đoán ý Ngài.")
+        self.assertIn("bạn muốn", guarded.text)
+        self.assertNotEqual(guarded.text, "Tôi chưa đủ chắc để đoán ý bạn.")
         self.assertEqual(guarded.debug_trace, "")
 
     def test_force_speak_low_signal_surfaces_micro_presence_before_directive_llm(self):
@@ -1461,7 +1461,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         snapshot = SimpleNamespace(active_window_kind="general")
 
         decision = coordinator._apply_post_generation_filters(
-            Decision(text="Ngài lại đang nghĩ về game hay nhạc à?", animation="stand"),
+            Decision(text="bạn lại đang nghĩ về game hay nhạc à?", animation="stand"),
             channel="force_speak",
             speech_core=speech_core,
             snapshot=snapshot,
@@ -1538,8 +1538,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         coordinator._handle_incoming({"type": "force_speak"})
 
         self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "micro_presence")
-        self.assertNotIn("ngai dang met", coordinator.transport.sent[-1]["text"].lower())
-        self.assertNotEqual(coordinator.transport.sent[-1]["text"], "Co ve Ngai dang met.")
+        self.assertNotIn("ban dang met", coordinator.transport.sent[-1]["text"].lower())
+        self.assertNotEqual(coordinator.transport.sent[-1]["text"], "Co ve ban dang met.")
 
     def test_force_speak_style_contract_rejects_unanchored_absurdism(self):
         coordinator = self._make_coordinator()
@@ -1576,7 +1576,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             safety_flags=(),
             speech_risk_level="soft_read",
         )
-        raw_text = "Tôi cần Ngài. Xin đừng bỏ tôi."
+        raw_text = "Tôi cần bạn. Xin đừng bỏ tôi."
 
         decision = coordinator._apply_post_generation_filters(
             Decision(text=raw_text, animation="stand"),
@@ -1609,7 +1609,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
 
         decision = coordinator._apply_post_generation_filters(
-            Decision(text="Ngai dang ne friction sau loi do.", animation="stand"),
+            Decision(text="ban dang ne friction sau loi do.", animation="stand"),
             channel="autonomous",
             speech_core=speech_core,
             snapshot=SimpleNamespace(active_window_kind="general"),
@@ -2016,7 +2016,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 item.get("claim", "")
                 for item in coordinator.memory_core.load().get("relational_memory", [])
             ]
-            self.assertTrue(any("Ngài thích giọng lạnh nhẹ" in item for item in reflections))
+            self.assertTrue(any("bạn thích giọng lạnh nhẹ" in item for item in reflections))
 
     def test_percept_events_use_normalized_schema_for_telemetry_and_vision(self):
         coordinator = self._make_coordinator()
@@ -3057,7 +3057,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 memory_core=core,
                 telemetry_service=_PresenceTelemetry(),
                 parser=_JsonParser(),
-                llm_service=_StaticDirectiveLlmService("Ngài quay lại rồi. Ta nhớ phần việc còn dang dở."),
+                llm_service=_StaticDirectiveLlmService("bạn quay lại rồi. Ta nhớ phần việc còn dang dở."),
             )
 
             report = coordinator._restore_session_ritual_once()
@@ -3065,7 +3065,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertTrue(report.session_resumed)
             self.assertTrue(report.should_greet)
             self.assertEqual(coordinator.transport.sent[-1]["parse_mode"], "session_ritual")
-            self.assertEqual(coordinator.transport.sent[-1]["text"], "Ngài quay lại rồi. Ta nhớ phần việc còn dang dở.")
+            self.assertEqual(coordinator.transport.sent[-1]["text"], "bạn quay lại rồi. Ta nhớ phần việc còn dang dở.")
             self.assertEqual(coordinator.llm_service.directive_calls, 1)
             self.assertEqual(coordinator.llm_service.last_directive_kwargs["speech_intent"], "session_ritual")
             self.assertIn("resume_goal:implement session ritual layer", coordinator.llm_service.last_directive_kwargs["ti_context"])
@@ -3073,7 +3073,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
     def test_session_ritual_empty_llm_stays_silent_no_canned_greeting(self):
         # Hành vi mới: khi LLM greeting rỗng, ERIS KHÔNG rơi vào câu chào canned
-        # "Ngài quay lại rồi." nữa — nó degrade về IM. Vẫn thử gọi LLM một lần.
+        # "bạn quay lại rồi." nữa — nó degrade về IM. Vẫn thử gọi LLM một lần.
         coordinator = self._make_coordinator(
             telemetry_service=_DummyTelemetry(),
             parser=_JsonParser(),
@@ -3091,7 +3091,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         ]
         self.assertEqual(session_ritual_turns, [])
         self.assertFalse(
-            any(sent.get("text") == "Ngài quay lại rồi." for sent in coordinator.transport.sent)
+            any(sent.get("text") == "bạn quay lại rồi." for sent in coordinator.transport.sent)
         )
 
 

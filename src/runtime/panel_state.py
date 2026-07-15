@@ -75,7 +75,7 @@ def _development() -> dict[str, Any]:
             {"label": "ấm hơn", "delta": 0.0},
             {"label": "gần hơn", "delta": 0.0},
         ],
-        "sentence": "Tôi vẫn gần như lúc mới gặp Ngài." if not axes_out else "So với lúc đầu, tôi đã đổi đôi chút.",
+        "sentence": "Tôi vẫn gần như lúc mới gặp bạn." if not axes_out else "So với lúc đầu, tôi đã đổi đôi chút.",
     }
 
 

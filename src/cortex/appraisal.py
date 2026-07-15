@@ -24,7 +24,7 @@ class _EventAffect:
     """
 
     valence: float = 0.0      # [-1,1] đã gate theo stake+surprise; âm = cảnh buồn
-    tenderness: float = 0.0   # [0,1] lực kéo dịu dàng/để ý khi Ngài có vẻ không ổn
+    tenderness: float = 0.0   # [0,1] lực kéo dịu dàng/để ý khi bạn có vẻ không ổn
     arousal: float = 0.0      # [0,1] mức kích hoạt do sự-kiện
     label: str = ""
 
@@ -130,8 +130,8 @@ class AppraisalEngine:
             broadcast_score=broadcast_score,
             ni_guard=bool(getattr(ni_report, "should_raise_guard", False)),
         )
-        # Sự-kiện nổi bật (cảnh Ngài đang xem/làm) được đọc thành tín hiệu cảm xúc,
-        # đã gate theo stake (Eris quan tâm tâm trạng Ngài tới đâu) và surprise
+        # Sự-kiện nổi bật (cảnh bạn đang xem/làm) được đọc thành tín hiệu cảm xúc,
+        # đã gate theo stake (Eris quan tâm tâm trạng bạn tới đâu) và surprise
         # (lệch khỏi kỳ vọng). Đây là phần làm appraisal phản ứng với THẾ GIỚI,
         # không chỉ với nội trạng của chính mình.
         event = self._event_affect(

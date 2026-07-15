@@ -347,12 +347,12 @@ class TwentyTurnConversationRegressionTests(unittest.TestCase):
         patterns = (
             (
                 "Bạn nói như AI trợ lý vậy",
-                "Tôi sẵn sàng hỗ trợ. Ngài cần gì?",
+                "Tôi sẵn sàng hỗ trợ. bạn cần gì?",
                 "Tôi sẵn sàng hỗ trợ, hãy cho tôi biết câu hỏi.",
             ),
             (
                 "Em làm được gì thì tôi mới hỏi chứ",
-                "Ngài cần gì?",
+                "bạn cần gì?",
                 "Tôi không thay thế chuyên gia y tế hay pháp lý.",
             ),
             (

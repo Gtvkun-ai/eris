@@ -118,13 +118,13 @@ def _candidates(state: Any) -> list[tuple[float, str]]:
         out.append((
             warmth + 0.35,
             "mình có thể để câu dài thêm một nhịp và bám vào chi tiết cụ thể của "
-            "điều Ngài vừa nói, thay vì trả lời cho xong; cho phép một câu hơi gần "
-            "hơn thường lệ — rồi rút lại nhẹ nếu Ngài đẩy ra.",
+            "điều bạn vừa nói, thay vì trả lời cho xong; cho phép một câu hơi gần "
+            "hơn thường lệ — rồi rút lại nhẹ nếu bạn đẩy ra.",
         ))
     elif warmth >= 0.30 and threat <= 0.40:
         out.append((
             warmth + 0.10,
-            "có một sợi chú ý chưa rời khỏi điều Ngài vừa nói; giữ nó, đừng vội "
+            "có một sợi chú ý chưa rời khỏi điều bạn vừa nói; giữ nó, đừng vội "
             "khép lại cho gọn.",
         ))
 
@@ -164,7 +164,7 @@ def _candidates(state: Any) -> list[tuple[float, str]]:
     if protectiveness >= 0.5:
         out.append((
             protectiveness,
-            "đang muốn chắn cho Ngài một chút hơn là phơi mình ra; ưu tiên cái "
+            "đang muốn chắn cho bạn một chút hơn là phơi mình ra; ưu tiên cái "
             "có ích, đặt phần riêng tư của mình lùi lại.",
         ))
 
@@ -228,6 +228,6 @@ def render_felt_disposition(state: Any) -> str:
         "disposition_use_rule: đây là cách mình đang muốn di chuyển, không phải "
         "cảm xúc để tuyên bố. Đừng viết 'tôi thấy bồn chồn/ấm áp/cô đơn'; để tư thế "
         "này hiện ra trong độ dài câu, lựa chọn chữ, và phần mình chọn im. Tư thế "
-        "không cấp quyền nói về màn hình/file/ý nghĩ ẩn của Ngài khi thiếu bằng chứng."
+        "không cấp quyền nói về màn hình/file/ý nghĩ ẩn của bạn khi thiếu bằng chứng."
     )
     return "\n".join(lines)

@@ -167,7 +167,7 @@ class EventAffectFallbackTests(unittest.TestCase):
         engine = AppraisalEngine()  # event_encoder=None
         stakes = SimpleNamespace(care_user_mood=0.8)
         broadcast = CognitiveBroadcast(
-            label="scene", score=0.6, content="Ngai trong rat met va buon hom nay"
+            label="scene", score=0.6, content="ban trong rat met va buon hom nay"
         )
         appraisal = engine.evaluate(
             internal_state=PersistentInternalState(last_focus_kind="communication", confidence=0.6),
@@ -188,7 +188,7 @@ class EventAffectFallbackTests(unittest.TestCase):
 
         engine = AppraisalEngine(event_encoder=fake_encode)
         stakes = SimpleNamespace(care_user_mood=0.8)
-        broadcast = CognitiveBroadcast(label="scene", score=0.6, content="Ngai co ve met va buon")
+        broadcast = CognitiveBroadcast(label="scene", score=0.6, content="ban co ve met va buon")
         appraisal = engine.evaluate(
             internal_state=PersistentInternalState(last_focus_kind="communication", confidence=0.6),
             ni_report=SimpleNamespace(drift_score=0.1, confidence=0.6, should_raise_guard=False),

@@ -13,7 +13,7 @@ Mục tiêu:
   2. Thực thi truy vấn trên TurnGraph / memory_core.
   3. Quyết định surface ra public bao nhiêu.
 
-IR này cố tình độc lập với runtime hiện tại để Ngài có thể nối dần.
+IR này cố tình độc lập với runtime hiện tại để bạn có thể nối dần.
 """
 
 from dataclasses import dataclass, field

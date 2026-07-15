@@ -138,7 +138,7 @@ class AppraisalEventCouplingTests(unittest.TestCase):
     def test_sad_scene_with_stakes_lowers_valence_and_raises_tenderness(self):
         broadcast = CognitiveBroadcast(
             label="ambient_context",
-            content="Ngài đang xem một video buồn, nhân vật khóc một mình",
+            content="bạn đang xem một video buồn, nhân vật khóc một mình",
             score=0.40,
         )
         without = self.engine.evaluate(**self._kwargs(broadcast))
@@ -163,7 +163,7 @@ class AppraisalEventCouplingTests(unittest.TestCase):
     def test_no_stakes_keeps_legacy_behavior(self):
         broadcast = CognitiveBroadcast(
             label="ambient_context",
-            content="Ngài đang xem một video buồn, nhân vật khóc",
+            content="bạn đang xem một video buồn, nhân vật khóc",
             score=0.40,
         )
         a = self.engine.evaluate(**self._kwargs(broadcast))

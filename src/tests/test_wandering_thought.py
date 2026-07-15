@@ -41,7 +41,7 @@ def test_random_chat_not_status_ping():
     result = engine.tick(snapshot=snapshot, internal_state=internal, now=1000.0)
     joined = "\n".join(fragment.content.lower() for fragment in result.fragments)
 
-    assert "tôi đang nghĩ về ngài" not in joined
+    assert "tôi đang nghĩ về bạn" not in joined
     assert "status ping" not in joined
     assert "idle_seconds=" not in joined
 

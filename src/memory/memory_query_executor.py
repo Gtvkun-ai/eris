@@ -259,19 +259,19 @@ class MemoryQueryExecutor:
 
     def _format_fact(self, fact_key: str, value: Any) -> str:
         if fact_key == "user.name":
-            return f"Tên Ngài là {value}."
+            return f"Tên bạn là {value}."
         if fact_key == "user.birth_month":
-            return f"Ngài sinh vào tháng {value}."
+            return f"bạn sinh vào tháng {value}."
         if fact_key == "user.current_location":
-            return f"Ngài hiện ở {value}."
+            return f"bạn hiện ở {value}."
         if fact_key == "user.living_location":
-            return f"Theo những gì Ngài đã nói, Ngài đang sống ở {value}."
+            return f"Theo những gì bạn đã nói, bạn đang sống ở {value}."
         if fact_key == "user.hometown":
-            return f"Quê của Ngài là {value}."
+            return f"Quê của bạn là {value}."
         if fact_key == "user.preference.location":
-            return f"Ngài từng nói thích {value}."
+            return f"bạn từng nói thích {value}."
         if fact_key == "user.past_location":
-            return f"Trước đây Ngài từng ở {value}."
+            return f"Trước đây bạn từng ở {value}."
         return f"{fact_key}: {value}"
 
     # ------------------------------------------------------------------

@@ -289,7 +289,7 @@ class MemoryCommitPolicy:
         """Gắn parser model.gguf/hybrid sau khi khởi tạo runtime.
 
         Parser chỉ đọc nghĩa và trả MeaningFrame. Nó không được commit memory.
-        Đây là điểm nối sạch cho model local của Ngài, thay vì nhét llama call
+        Đây là điểm nối sạch cho model local của bạn, thay vì nhét llama call
         vào giữa policy rồi lại sinh thêm món spaghetti có GPU.
         """
 

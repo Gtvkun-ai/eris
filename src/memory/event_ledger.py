@@ -174,7 +174,7 @@ class EventLedger:
     def append_from_signal(self, signal: Any, *, frame_id: str = "", evidence_ids: Iterable[str] = ()) -> EventLedgerRecord:
         """Tạo record từ RawSignal-like object mà không buộc import cortex.
 
-        Dùng getattr để file này vẫn sống được khi Ngài chưa nối core/evidence.py.
+        Dùng getattr để file này vẫn sống được khi bạn chưa nối core/evidence.py.
         """
         content = getattr(signal, "content", signal)
         return self.append_raw_event(

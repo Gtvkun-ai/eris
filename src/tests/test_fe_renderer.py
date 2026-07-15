@@ -149,12 +149,12 @@ class FeRendererTests(unittest.TestCase):
         memory = self.renderer.remember_style(
             self.memory,
             plan=plan,
-            rendered_text="Có vẻ Ngài đang phân tán sự chú ý khá nhiều.",
+            rendered_text="Có vẻ bạn đang phân tán sự chú ý khá nhiều.",
         )
         memory = self.renderer.remember_style(
             memory,
             plan=plan,
-            rendered_text="Có vẻ Ngài đang phân tán một chút.",
+            rendered_text="Có vẻ bạn đang phân tán một chút.",
         )
 
         self.assertEqual(memory.repeated_topic_tag, "attention_drift")

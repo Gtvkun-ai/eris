@@ -154,9 +154,9 @@ class BanterArbiter:
         "not what i mean",
     )
     _GENERIC_CLARIFY_MARKERS = (
-        "ngai dang lam gi vay",
-        "ngai co the mo ta",
-        "ngai co the noi ro",
+        "ban dang lam gi vay",
+        "ban co the mo ta",
+        "ban co the noi ro",
         "toi chua hieu",
         "co ve nhu toi da hieu sai",
     )
@@ -164,14 +164,14 @@ class BanterArbiter:
         "khong co kha nang nhin man hinh",
         "khong the nhin man hinh",
         "khong nhin duoc man hinh",
-        "chi co the phan hoi dua tren nhung gi ngai chia se",
+        "chi co the phan hoi dua tren nhung gi ban chia se",
         "khong co quyen truy cap man hinh",
     )
     _MINDREADING_MEDIA_MARKERS = (
-        "co le ngai dang tim kiem",
-        "co le ngai dang suy nghi",
+        "co le ban dang tim kiem",
+        "co le ban dang suy nghi",
         "mot chut tinh lang",
-        "giup ngai suy nghi ro hon",
+        "giup ban suy nghi ro hon",
         "tim kiem mot goc nhin",
     )
 
@@ -413,7 +413,7 @@ class BanterArbiter:
 
         # "hiểu sai là sao/tôi đã nói gì đâu" nói về lỗi repair của ERIS,
         # không phải user đang đưa correction mới. Nếu coi nó là correction thật,
-        # ERIS sẽ nói dối kiểu "từ chỗ Ngài vừa sửa".
+        # ERIS sẽ nói dối kiểu "từ chỗ bạn vừa sửa".
         if meta_challenge and not has_replacement:
             return CorrectionEvidence(
                 explicit_correction=False,
@@ -477,13 +477,13 @@ class BanterArbiter:
         if normalized_user in {"ha", "hả", "gi", "gi vay"}:
             return "Câu vừa rồi không có neo. Bỏ qua nó đi."
         if correction.has_replacement_content:
-            return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, nói lại theo phần Ngài vừa chỉnh."
+            return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, nói lại theo phần bạn vừa chỉnh."
         return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, không dựng tiếp trên nó."
 
     def _needs_overread_challenge_repair(self, normalized_text: str) -> bool:
         return (
             _has_any(normalized_text, self._GENERIC_CLARIFY_MARKERS)
-            or _has_any(normalized_text, ("cam thay khong thoai mai", "phan ung cua ngai", "ngai dang"))
+            or _has_any(normalized_text, ("cam thay khong thoai mai", "phan ung cua ban", "ban dang"))
             or "khong du neo" in normalized_text
         )
 
@@ -494,7 +494,7 @@ class BanterArbiter:
                 "can mot chut thoi gian",
                 "du luan trong tam tri",
                 "khong thoai mai",
-                "phan ung cua ngai",
+                "phan ung cua ban",
                 "hieu sai",
                 "vua sua",
                 "vua chinh",
@@ -505,10 +505,10 @@ class BanterArbiter:
 
     def _overread_challenge_repair_text(self, *, normalized_user: str, previous_norm: str, current_norm: str) -> str:
         if _has_any(normalized_user, self._META_CHALLENGE_MARKERS):
-            return "Đúng, Ngài chưa sửa gì cả. Tôi tự gán nhầm frame đó."
+            return "Đúng, bạn chưa sửa gì cả. Tôi tự gán nhầm frame đó."
         if _has_any(previous_norm, ("can mot chut thoi gian", "du luan trong tam tri", "khong thoai mai")):
-            return "Ừ, câu vừa rồi tôi tự suy quá tay. Ngài chỉ đang hỏi lại thôi."
-        if _has_any(current_norm, ("phan ung cua ngai", "khong thoai mai", "ngai dang")):
+            return "Ừ, câu vừa rồi tôi tự suy quá tay. bạn chỉ đang hỏi lại thôi."
+        if _has_any(current_norm, ("phan ung cua ban", "khong thoai mai", "ban dang")):
             return "Ừ, câu đó gán cảm xúc hơi vội. Tôi rút lại."
         return "Câu vừa rồi không đủ neo. Tôi rút lại."
 

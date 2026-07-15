@@ -112,7 +112,7 @@ def build_response_contract(
                 "Do not introduce ERIS as an assistant.",
                 "Do not say 'sẵn sàng hỗ trợ' or invite the user to ask a question.",
             ),
-            fallback_text="Ừ, câu vừa rồi nghe đúng chất tổng đài. Tôi bỏ giọng đó. Ngài nói thẳng, tôi đáp thẳng.",
+            fallback_text="Ừ, câu vừa rồi nghe đúng chất tổng đài. Tôi bỏ giọng đó. bạn nói thẳng, tôi đáp thẳng.",
             hard=True,
             repair_axis="style",
         )
@@ -162,7 +162,7 @@ def build_response_contract(
                 "Do not continue the interrupted/pending assistant text.",
                 "Do not invite the user to describe the issue again.",
             ),
-            fallback_text="À, tôi né sai nhịp rồi. Ngài đang nhắc lại ý cũ, không mở một chủ đề mới.",
+            fallback_text="À, tôi né sai nhịp rồi. bạn đang nhắc lại ý cũ, không mở một chủ đề mới.",
             hard=True,
             repair_axis="misread",
         )
@@ -202,12 +202,12 @@ def build_response_contract(
             priority=70,
             must=("Acknowledge that the previous helper wording was vague or hollow.",),
             must_not=("Do not ask the user to restate the problem as if nothing happened.",),
-            fallback_text="Ý Ngài là câu 'hỗ trợ' của tôi rỗng quá chứ gì. Đúng, nó nghe như nút help màu xám. Tôi nói cụ thể hơn.",
+            fallback_text="Ý bạn là câu 'hỗ trợ' của tôi rỗng quá chứ gì. Đúng, nó nghe như nút help màu xám. Tôi nói cụ thể hơn.",
             hard=False,
             repair_axis="wording",
         )
         obligations.append(obligation)
-        prohibited.extend(("ban dang gap van de gi", "ngai can ho tro gi", "hay mo ta van de"))
+        prohibited.extend(("ban dang gap van de gi", "ban can ho tro gi", "hay mo ta van de"))
         set_fallback(obligation.fallback_text, obligation.priority)
 
     # Một số stance như identity reduction vẫn cần contract dù không phải insult.

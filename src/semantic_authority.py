@@ -75,7 +75,10 @@ class SemanticAuthorityPolicy:
 
     @property
     def allow_pre_llm_intercepts(self) -> bool:
-        return not self.qwen_first
+        # qwen_first vẫn giữ Qwen làm semantic authority cho hội thoại mở, nhưng
+        # các intent tất định (memory slot, giờ máy, volume...) phải được route trước.
+        # Không làm vậy thì hỏi tên cũng biến thành thơ bí ẩn. Nhân loại đã khổ đủ.
+        return True
 
     @property
     def allow_tutor_prepass(self) -> bool:

@@ -24,7 +24,7 @@ _TIME_OF_DAY = (
 )
 
 _SIGNAL_TEXT = {
-    "tom_read": "cập nhật cách đọc Ngài.",
+    "tom_read": "cập nhật cách đọc bạn.",
     "expanded": "mở rộng một mạch nghĩ.",
     "interior": "dịch vào dòng nội tâm.",
     "surface": "chuẩn bị câu phản hồi.",
@@ -161,7 +161,7 @@ def _attachment_summary() -> dict[str, Any]:
 
 
 def _anchor_depth_summary(private_mind_digest: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Lấy phần Mô_Hình_Ngài/neo từ private_mind digest cho depth_v2.
+    """Lấy phần Mô_Hình_bạn/neo từ private_mind digest cho depth_v2.
 
     Lỗi cũ: depth_v2 có `tom` nhưng không chở `user_model` và `significance`,
     nên body chỉ biết một câu ToM thoáng qua, không biết "độ dày mô hình",
@@ -618,12 +618,12 @@ def _signal_timeline(
     current_items = _list(current.get("items"))
     if current_items:
         item = _dict(current_items[0])
-        add("context", _text(item.get("text"), limit=96) or "nhận context mới từ Ngài.")
+        add("context", _text(item.get("text"), limit=96) or "nhận context mới từ bạn.")
         badge = _text(item.get("badge"), limit=70)
         if badge:
             add("recurrence", badge)
     elif tom_text:
-        add("context", "nhận context mới từ Ngài.")
+        add("context", "nhận context mới từ bạn.")
 
     top_priority = _dict(priorities[0] if priorities else {})
     if top_priority:
@@ -740,7 +740,7 @@ def _interiority_feed(
     # ToM và signal chỉ dùng làm fallback cuối. Chúng giúp panel không trống khi
     # inner diary chưa tick kịp, nhưng không lấn át các thought section thật.
     if tom_text:
-        add("concern", tom_text, "đọc Ngài gần nhất", title="thấu hiểu Ngài")
+        add("concern", tom_text, "đọc bạn gần nhất", title="thấu hiểu bạn")
     for raw_signal in _list(_dict(signal_snapshot).get("signal_log"))[:4]:
         item = _dict(raw_signal)
         kind = _text(item.get("kind"), limit=32)
@@ -791,7 +791,7 @@ def build_depth_v2_state(
             "text": _text(tom_read, limit=220),
             "confidence": round(_parse_tom_confidence(tom_read), 3),
         },
-        # Contract riêng cho khung "Mô Hình Ngài": body đọc trực tiếp block này,
+        # Contract riêng cho khung "Mô Hình bạn": body đọc trực tiếp block này,
         # không còn phải suy ra độ dày/nghĩa/gắn bó từ một câu tom_read mơ hồ.
         **anchor_depth,
         "autoswitch": _autoswitch_block(

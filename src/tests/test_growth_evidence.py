@@ -64,7 +64,7 @@ def test_end_to_end_feedback_to_bounded_growth(tmp_path):
     system = DevelopmentSystem(profile=profile, log=log, gate=IdentityGate())
     consolidator = GrowthConsolidator()
 
-    # 3 ngày khác nhau, mỗi ngày Ngài khen kiểu "sống động hơn" → warmth nên lên.
+    # 3 ngày khác nhau, mỗi ngày bạn khen kiểu "sống động hơn" → warmth nên lên.
     events = [_event(d * _DAY, "positive", ["more_life"]) for d in (1, 2, 3)]
     observations, allowed = observations_from_feedback(events)
     proposals = consolidator.consolidate(observations, allowed_evidence_ids=allowed)

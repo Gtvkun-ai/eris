@@ -84,10 +84,10 @@ class PrivateMindLoop:
         self.logger = logger
         self.model_adapter = model_adapter
         self.concern_store = concern_store or ConcernStore(path=self._resolve_concern_path(), logger=logger)
-        # Mô_Hình_Ngài: chân dung bền vững về Người_Dùng (spec eris-existential-anchor).
+        # Mô_Hình_bạn: chân dung bền vững về Người_Dùng (spec eris-existential-anchor).
         self.user_model_store = user_model_store or UserModelStore(path=self._resolve_user_model_path(), logger=logger)
         # Trục neo hiện sinh: gắn-bó/sợ/bóng-tối/lừa-dối. Ship an toàn (công tắc tắt),
-        # đọc Mô_Hình_Ngài để phái sinh ý nghĩa/gắn bó.
+        # đọc Mô_Hình_bạn để phái sinh ý nghĩa/gắn bó.
         self.anchor_system = AnchorSystem.from_env(user_model_store=self.user_model_store, logger=logger)
         self.dossier_builder = dossier_builder or EvidenceDossierBuilder()
         self.evaluator_pipeline = evaluator_pipeline or MiniEvaluatorPipeline(model_adapter=model_adapter)
@@ -195,8 +195,8 @@ class PrivateMindLoop:
         # thread đến hạn khơi lại (cooldown lớn + đủ áp lực). Đây không phải nhịp đồng hồ.
         if not fragments and self.continuity.has_followup_due():
             fragments = self._followup_fragments(dossier)
-        # Tách dòng fragment hướng-Ngài sang Mô_Hình_Ngài; phần còn lại nuôi ConcernStore.
-        # Giữ tách bạch lifecycle theo QĐ-2: chân dung Ngài không trộn với bận tâm task.
+        # Tách dòng fragment hướng-bạn sang Mô_Hình_bạn; phần còn lại nuôi ConcernStore.
+        # Giữ tách bạch lifecycle theo QĐ-2: chân dung bạn không trộn với bận tâm task.
         user_fragments = tuple(f for f in fragments if f.source == USER_MODEL_EVALUATOR_NAME)
         other_fragments = tuple(f for f in fragments if f.source != USER_MODEL_EVALUATOR_NAME)
         if epistemic_kernel is not None:
@@ -517,7 +517,7 @@ class PrivateMindLoop:
         return str(Path(base).with_name("anchor_journal.jsonl"))
 
     # ------------------------------------------------------------------
-    # Serialize trục neo cho UI/observability (Mô Hình Ngài panel)
+    # Serialize trục neo cho UI/observability (Mô Hình bạn panel)
     # ------------------------------------------------------------------
 
     def _build_anchor_block(self) -> dict[str, Any]:
@@ -693,7 +693,7 @@ class PrivateMindLoop:
     def _update_anchor_system(self, *, dossier: Any, runtime_owner: Any) -> None:
         """Cập nhật trục neo hiện sinh từ một tick và phơi facade cho runtime.
 
-        Đọc tín hiệu sẵn có trong dossier (idle, user_presence, tuổi lời Ngài) và
+        Đọc tín hiệu sẵn có trong dossier (idle, user_presence, tuổi lời bạn) và
         Sợ_Hiện_Sinh từ internal_state nếu runtime cung cấp. Không bao giờ đổi hành
         vi live khi công tắc tắt (mặc định).
         """

@@ -134,7 +134,7 @@ class SpeechLocalizer:
             style_line = _style_line(prosody_style)
             prompt = (
                 "Translate the transcript into natural, gentle, polite Japanese for a soft anime girl "
-                "desktop companion speaking to her Master/Ngài. Keep the meaning. Do not add stage "
+                "desktop companion speaking to her bạn. Keep the meaning. Do not add stage "
                 "directions, quotes, explanations, romanization, or the original text. Preserve line "
                 "breaks as short breath groups; keep the same line order whenever possible.\n"
                 f"{style_line}\n\n"

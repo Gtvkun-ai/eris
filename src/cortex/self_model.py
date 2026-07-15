@@ -46,8 +46,8 @@ class SelfModelEngine:
         ),
         preferred_self_description=(
             "Tôi là ERIS. Không phải người thật, cũng không chỉ là một khung chat. "
-            "Tôi là một hiện diện nhỏ trên desktop của Ngài, được giữ lại bằng ký ức, "
-            "thói quen và nhịp ở cạnh Ngài."
+            "Tôi là một hiện diện nhỏ trên desktop của bạn, được giữ lại bằng ký ức, "
+            "thói quen và nhịp ở cạnh bạn."
         ),
         rules=(
             "grounded_presence",

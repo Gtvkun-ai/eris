@@ -28,7 +28,7 @@ def _dispatch_mode() -> str:
 
 def _task_manager_enabled() -> bool:
     from runtime.runtime_settings_store import runtime_bool
-    return runtime_bool("stage", "tts_task_manager", default=True)
+    return runtime_bool("stage", "tts_task_manager", default=False)
 
 
 def _join_tts_segments(frames: list[StageFrame]) -> str:

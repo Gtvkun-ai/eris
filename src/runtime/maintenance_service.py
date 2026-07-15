@@ -87,7 +87,7 @@ ACTION_SPECS: dict[str, MaintenanceActionSpec] = {
         ("active_state_snapshot.json",),
     ),
     "reset_user_model": MaintenanceActionSpec(
-        "reset_user_model", "Đặt lại mô hình về Ngài",
+        "reset_user_model", "Đặt lại mô hình về bạn",
         "Reset user model và epistemic beliefs về user; giữ đời sống riêng của Eris.",
         "danger", True, True,
         ("user_model.json", "epistemic_v2.json", "tom_history.json"),

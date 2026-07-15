@@ -104,7 +104,7 @@ class ConfigTests(unittest.TestCase):
 class PredictionErrorTests(unittest.TestCase):
     def test_cosine_low_error_when_match(self):
         sm = enabled_model()
-        pred = Prediction(description="Ngài tiếp tục: code cortex", embedding=WordEmbeddingProvider().embed("code cortex"), embedding_available=True)
+        pred = Prediction(description="bạn tiếp tục: code cortex", embedding=WordEmbeddingProvider().embed("code cortex"), embedding_available=True)
         from cortex.situation_model import PerceptView
         percept = PerceptView(text="code cortex module", tokens=("code", "cortex"), embedding=WordEmbeddingProvider().embed("code cortex module"))
         res = sm._compute_error(pred, percept)

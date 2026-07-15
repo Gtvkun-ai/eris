@@ -367,7 +367,7 @@ class MetaCognitiveAuditAgent(RuleBasedWorker):
         text = re.sub(r"\b\d+(?:\.\d+)?\b", "#", text)
         text = re.sub(r"[^\w\s#]+", " ", text)
         tokens = [token for token in text.split() if len(token) >= 2]
-        # Bỏ một ít số thứ tự/nhiễu phổ biến để "ngài ấy đang mệt 1..20" gom được.
+        # Bỏ một ít số thứ tự/nhiễu phổ biến để "bạn ấy đang mệt 1..20" gom được.
         stop = {"fragment", "seed", "lần", "thu", "thứ"}
         tokens = [token for token in tokens if token not in stop]
         return "_".join(tokens[:10]) or "empty"

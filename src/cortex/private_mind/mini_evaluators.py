@@ -215,7 +215,7 @@ def _infer_user_facet(claim: str) -> str:
 
 
 class UserModelEvaluator(BaseMiniEvaluator):
-    """Agent nhỏ hướng-Ngài: dựng Mô_Hình_Ngài (spec eris-existential-anchor R1).
+    """Agent nhỏ hướng-bạn: dựng Mô_Hình_bạn (spec eris-existential-anchor R1).
 
     Không sinh lời thoại. Mỗi fragment mang `metadata['facet']` để UserModelStore
     định tuyến, và buộc có `evidence_ids` (kỷ luật fragment chung — R1.2).
@@ -227,7 +227,7 @@ class UserModelEvaluator(BaseMiniEvaluator):
         super().__init__(USER_MODEL_EVALUATOR_NAME, model_adapter=model_adapter)
 
     def relevance_signature(self, dossier: EvidenceDossier) -> str | None:
-        # Học về Ngài khi có lời/hành vi của Ngài. Không có turn người dùng thì
+        # Học về bạn khi có lời/hành vi của bạn. Không có turn người dùng thì
         # không có gì mới để cập nhật chân dung.
         if not dossier.recent_user_turns:
             return None

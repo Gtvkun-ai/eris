@@ -59,7 +59,7 @@ class _Frame:
 
 
 class _Decision:
-    text = "(cười khẽ) **Ngài lại vá bằng băng keo à?** [look_away] emotion=teasing"
+    text = "(cười khẽ) **bạn lại vá bằng băng keo à?** [look_away] emotion=teasing"
     intent = "playful_aside"
     animation = "stand"
     should_speak = True
@@ -70,12 +70,12 @@ class _Decision:
 
 def test_stage_transformer_removes_action_tags_from_text_surfaces():
     surfaces = StageTransformerChain().transform(
-        "(cười khẽ) **Ngài lại vá bằng băng keo à?** [look_away] emotion=teasing"
+        "(cười khẽ) **bạn lại vá bằng băng keo à?** [look_away] emotion=teasing"
     )
 
-    assert surfaces.display_text == "Ngài lại vá bằng băng keo à?"
-    assert surfaces.tts_text == "Ngài lại vá bằng băng keo à?"
-    assert surfaces.memory_text == "Ngài lại vá bằng băng keo à?"
+    assert surfaces.display_text == "bạn lại vá bằng băng keo à?"
+    assert surfaces.tts_text == "bạn lại vá bằng băng keo à?"
+    assert surfaces.memory_text == "bạn lại vá bằng băng keo à?"
     assert "laugh_soft" in surfaces.marks.actions
     assert "look_away" in surfaces.marks.actions
     assert surfaces.marks.emotion_hint == "teasing"
@@ -83,7 +83,7 @@ def test_stage_transformer_removes_action_tags_from_text_surfaces():
 
 def test_delivery_planner_turns_affect_into_stage_actions_not_text_tags():
     plan = SpeechDeliveryPlanner().plan(
-        "Ngài lại vá bằng băng keo à?",
+        "bạn lại vá bằng băng keo à?",
         intent="playful_aside",
         affect=AffectSignals(valence=0.22, arousal=0.42, restraint=0.66, stance="playful"),
     )
@@ -108,14 +108,14 @@ def test_stage_frame_builder_exposes_display_tts_memory_and_delivery():
         turn_id="turn-test",
     )
 
-    assert frame.display_text == "Ngài lại vá bằng băng keo à?"
-    assert frame.tts_text == "Ngài lại vá bằng băng keo à?"
-    assert frame.memory_text == "Ngài lại vá bằng băng keo à?"
+    assert frame.display_text == "bạn lại vá bằng băng keo à?"
+    assert frame.tts_text == "bạn lại vá bằng băng keo à?"
+    assert frame.memory_text == "bạn lại vá bằng băng keo à?"
     assert frame.emotion in {"dry_tease", "mischief_soft"}
     assert "laugh_soft" in frame.actions
     assert frame.delivery["voice_style"] in {"dry_tease", "soft_tease"}
     payload = frame.to_payload_patch()
-    assert payload["display_text"] == "Ngài lại vá bằng băng keo à?"
+    assert payload["display_text"] == "bạn lại vá bằng băng keo à?"
     assert payload["stage"]["actions"]
 
 
@@ -123,7 +123,7 @@ def test_llm_structured_stage_fields_survive_parser_and_drive_stage():
     parser = DecisionParser(fallback=Decision(text="", animation="stand"))
     raw = """
     {
-      "text": "Ngài lại vá bằng băng keo à?",
+      "text": "bạn lại vá bằng băng keo à?",
       "intent": "playful_aside",
       "action": {"type":"none"},
       "animation": "stand",
@@ -144,7 +144,7 @@ def test_llm_structured_stage_fields_survive_parser_and_drive_stage():
     }
     """
     decision = parser.parse(raw)
-    assert decision.text == "Ngài lại vá bằng băng keo à?"
+    assert decision.text == "bạn lại vá bằng băng keo à?"
     assert decision.delivery_hint == "dry_tease"
     assert decision.nonverbal_cue == "laugh_soft"
     assert decision.stage_motion == "look_away"
@@ -156,7 +156,7 @@ def test_llm_structured_stage_fields_survive_parser_and_drive_stage():
         frame=_Frame(),
         turn_id="turn-structured",
     )
-    assert frame.tts_text == "Ngài lại vá bằng băng keo à?"
+    assert frame.tts_text == "bạn lại vá bằng băng keo à?"
     assert "laugh_soft" in frame.actions
     assert frame.motion == "look_away"
     assert frame.delivery["voice_style"] == "dry_tease"

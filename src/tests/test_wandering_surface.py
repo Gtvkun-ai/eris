@@ -76,4 +76,4 @@ def test_wandering_surface_goes_through_surface_arbiter():
     # arbiter and is classified as wandering_surface_candidate.
     assert decision.body_only is True
     assert decision.kind == "wandering_surface_candidate"
-    assert "tôi đang nghĩ về ngài" not in decision.text.lower()
+    assert "tôi đang nghĩ về bạn" not in decision.text.lower()

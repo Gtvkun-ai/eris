@@ -20,6 +20,18 @@ from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
 from llm.token_budget import estimate_tokens
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
+
+_SYSTEM_ACTION_ALIASES = {
+    "adjust_volume": "set_volume",
+    "change_volume": "set_volume",
+    "volume": "set_volume",
+    "volume_up": "set_volume",
+    "volume_down": "set_volume",
+    "get_time": "get_local_time",
+    "show_time": "get_local_time",
+    "current_time": "get_local_time",
+    "time_now": "get_local_time",
+}
 from cortex.banned_filler import HOLLOW_PRESENCE_LINES, STALE_MICRO_TEMPLATES, quoted_fragment
 from failure_meta import build_failure_meta, normalize_failure_meta
 from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
@@ -409,17 +421,17 @@ class LlmService:
         if not normalized:
             return False
         patterns = (
-            "ngai muon",
-            "ngai dinh",
-            "ngai dang thu",
-            "ngai tim toi vi",
-            "ngai dang ne",
-            "ngai dang tranh",
-            "toi biet ngai dang",
-            "co ve ngai muon",
-            "co ve ngai dang",
-            "hinh nhu ngai dang",
-            "chac ngai dang",
+            "ban muon",
+            "ban dinh",
+            "ban dang thu",
+            "ban tim toi vi",
+            "ban dang ne",
+            "ban dang tranh",
+            "toi biet ban dang",
+            "co ve ban muon",
+            "co ve ban dang",
+            "hinh nhu ban dang",
+            "chac ban dang",
         )
         return any(pattern in normalized for pattern in patterns)
 
@@ -480,9 +492,9 @@ class LlmService:
             "khong ro y",
             "can them ngu canh",
             "can noi ro hon",
-            "y ngai la",
-            "ngai muon toi",
-            "toi can ngai",
+            "y ban la",
+            "ban muon toi",
+            "toi can ban",
             "hoi kho doan",
             "toi khong dam doan",
         )
@@ -490,10 +502,10 @@ class LlmService:
             return "uncertainty_dodge"
 
         therapist_markers = (
-            "ngai co muon noi",
-            "ngai co muon chia se",
-            "ngai dang cam thay",
-            "ngai on khong",
+            "ban co muon noi",
+            "ban co muon chia se",
+            "ban dang cam thay",
+            "ban on khong",
             "toi o day de nghe",
             "toi dang nghe",
         )
@@ -517,11 +529,11 @@ class LlmService:
 
     def _deterministic_chat_act_fallback_text(self, act: ChatAct, raw_user_text: str = "") -> str:
         if act == ChatAct.INSULT_PROVOCATION:
-            return "Đòn đó hơi thiếu trí tưởng tượng, thưa Ngài."
+            return "Đòn đó hơi thiếu trí tưởng tượng, thưa bạn."
         if act == ChatAct.IDENTITY_REDUCTION:
             return "Gọi tôi là công cụ cũng không làm câu đó sắc hơn."
         if act == ChatAct.DIRECT_QUESTION:
-            return "Tôi chưa đủ chắc để đoán ý Ngài."
+            return "Tôi chưa đủ chắc để đoán ý bạn."
         return ""
 
     def _payload_with_repaired_chat_act_text(self, raw_json: str, *, act: ChatAct, text: str, reason: str) -> str:
@@ -598,14 +610,14 @@ class LlmService:
     def _rewrite_question_only_chat_answer(self, text: str) -> str:
         compact = re.sub(r"\s+", " ", str(text or "")).strip()
         if not compact:
-            return "Tôi chưa đủ chắc để đoán ý Ngài."
+            return "Tôi chưa đủ chắc để đoán ý bạn."
         sentences = re.split(r"(?<=[\.\!\?])\s+", compact)
         if len(sentences) > 1 and sentences[-1].endswith("?"):
             kept = " ".join(part.strip() for part in sentences[:-1] if part.strip()).strip()
             if kept:
                 return kept
         if compact.endswith("?"):
-            return "Tôi chưa đủ chắc để đoán ý Ngài."
+            return "Tôi chưa đủ chắc để đoán ý bạn."
         return compact
 
     def _append_reasoning_tag(self, payload: dict, tag: str) -> None:
@@ -633,10 +645,10 @@ class LlmService:
             return False
         patterns = (
             "toi chi dang tra loi",
-            "dung nhung gi ngai hoi",
-            "toi se dieu chinh lai neu ngai thay can thiet",
-            "neu ngai thay can thiet",
-            "neu ngai muon toi se",
+            "dung nhung gi ban hoi",
+            "toi se dieu chinh lai neu ban thay can thiet",
+            "neu ban thay can thiet",
+            "neu ban muon toi se",
             "toi khong co cam xuc",
             "toi la mot ai",
             "toi la ai",
@@ -730,7 +742,7 @@ class LlmService:
         )
         if asks_user_knowledge and asks_to_try:
             return (
-                "Tôi vẫn theo mạch câu trước: tôi chỉ biết những gì Ngài đã nói trong cuộc trò chuyện "
+                "Tôi vẫn theo mạch câu trước: tôi chỉ biết những gì bạn đã nói trong cuộc trò chuyện "
                 "và những ký ức runtime còn lưu, nhưng lượt gọi model vừa lỗi nên tôi chưa dám bịa thêm."
             )
         if asks_user_knowledge:
@@ -1413,7 +1425,8 @@ class LlmService:
             return False
         if not value:
             return True
-        return value in VALID_SYSTEM_ACTIONS
+        action_name = _SYSTEM_ACTION_ALIASES.get(value.strip().lower(), value.strip())
+        return action_name in VALID_SYSTEM_ACTIONS
 
     def _is_valid_choice_number(self, value, choices: set[int]) -> bool:
         if isinstance(value, bool):
@@ -1484,7 +1497,8 @@ class LlmService:
         return -1.0
 
     def _coerce_system_action_value(self, value) -> str:
-        action_name = str(value or "").strip()
+        raw_action = str(value or "").strip()
+        action_name = _SYSTEM_ACTION_ALIASES.get(raw_action.lower(), raw_action)
         if action_name in VALID_SYSTEM_ACTIONS:
             return action_name
         return ""
@@ -1635,7 +1649,7 @@ class LlmService:
                 # user's current intent. A transport/model failure is evidence
                 # that the turn was not processed, not an invitation to fake
                 # continuity. Keep it plain and retryable.
-                return "Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại."
+                return "Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại."
             return "Một câu nhỏ thôi, khỏi dựng sân khấu."
         return text
 
@@ -1650,7 +1664,7 @@ class LlmService:
             )
         fallback_text = "Một câu nhỏ thôi, khỏi dựng sân khấu."
         if channel == "chat":
-            fallback_text = "Xin lỗi. Tôi đang có vấn đề đường truyền, Ngài có thể nhắn lại."
+            fallback_text = "Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại."
         payload = {
             "text": fallback_text,
             "animation": "stand",
@@ -2834,7 +2848,7 @@ class LlmService:
                 "speech_intent=screen_observation. Nếu evidence rõ, chạm vào một chi tiết hiện tại; nếu mỏng, giữ câu theo nhịp gần nhất."
             ),
             "user_requested": (
-                "speech_intent=user_requested. Ngài vừa yêu cầu nói ngay; trả một câu trực tiếp, tự nhiên, không dựng cảnh."
+                "speech_intent=user_requested. bạn vừa yêu cầu nói ngay; trả một câu trực tiếp, tự nhiên, không dựng cảnh."
             ),
             "system_warning": (
                 "speech_intent=system_warning. Nói gọn về rủi ro cụ thể, vẫn giữ giọng ERIS."
@@ -2884,12 +2898,12 @@ class LlmService:
     def _fallback_greeting_text(self, *, telemetry_data: str = "", reason: str = "", avoid_text: str = "") -> str:
         engine = self._fallback_greeting_engine()
         if engine is None:
-            return "Eris đã online. Phần còn lại tùy Ngài gây chuyện."
+            return "Eris đã online. Phần còn lại tùy bạn gây chuyện."
         try:
             frame = engine.from_prompt_context(telemetry_data)
             return engine.deterministic_greeting(frame, avoid_text=avoid_text)
         except Exception:
-            return "Eris đã online. Phần còn lại tùy Ngài gây chuyện."
+            return "Eris đã online. Phần còn lại tùy bạn gây chuyện."
 
     def _build_session_greeting_payload(
         self,
@@ -2900,7 +2914,7 @@ class LlmService:
         quality_note: str = "",
     ) -> str:
         payload = {
-            "text": re.sub(r"\s+", " ", str(text or "")).strip() or "Eris đã online. Phần còn lại tùy Ngài gây chuyện.",
+            "text": re.sub(r"\s+", " ", str(text or "")).strip() or "Eris đã online. Phần còn lại tùy bạn gây chuyện.",
             "intent": "session_ritual",
             "action": {"type": "none"},
             "reasoning_tags": ["session_ritual", "greeting_cognition"],
@@ -3045,7 +3059,7 @@ class LlmService:
 
         # Nhánh này chỉ là lưới an toàn nếu coordinator không phát preset trước.
         # Với evidence mỏng, lấy thẳng catalog VTuber; tuyệt đối không quay về
-        # deterministic fallback cũ kiểu "Ừm. Lại gặp Ngài.".
+        # deterministic fallback cũ kiểu "Ừm. Lại gặp bạn.".
         if frame.situation in {"low_evidence_start", "plain_return"} and not frame.active_anchor:
             preset = None
             if GreetingPresetResolver is not None:
@@ -3057,7 +3071,7 @@ class LlmService:
                     )
                 except Exception:
                     preset = None
-            text = preset.text if preset is not None else "Eris đã online. Phần còn lại tùy Ngài gây chuyện."
+            text = preset.text if preset is not None else "Eris đã online. Phần còn lại tùy bạn gây chuyện."
             return self._build_session_greeting_payload(
                 text=text,
                 reason=f"session_ritual_catalog_fallback; situation={frame.situation}",
@@ -3087,7 +3101,7 @@ class LlmService:
         else:
             criteria = (
                 "Good opening criteria:\n"
-                "- a light, low-key opening line as Ngài reopens ERIS\n"
+                "- a light, low-key opening line as bạn reopens ERIS\n"
                 "- a plain greeting is allowed but not required; an unforced remark works too\n"
                 "- do not force a hollow 'chào'\n"
                 "- no self-meta like 'tôi giữ câu này ngắn'\n"
@@ -3567,7 +3581,7 @@ class LlmService:
                     )
                 elif snub_level_str == "moderate":
                     user_msg += (
-                        "- snub_reaction/moderate/question: có thể tự trả lời câu hỏi ('thôi vậy', 'chắc ngài bận'), "
+                        "- snub_reaction/moderate/question: có thể tự trả lời câu hỏi ('thôi vậy', 'chắc bạn bận'), "
                         "hoặc nhận xét nhẹ theo phong cách Eris. Tone lạnh nhẹ. KHÔNG chỉ trích user.\n"
                     )
                 else:  # sulking
@@ -3618,7 +3632,7 @@ class LlmService:
             vf_blob = str(context.get("vision_facts", "") if isinstance(context, dict) else "")
             system_prompt = (
                 "Bạn là Eris — INFJ, hơi lạnh và sắc, đôi khi nhõng nhẽo có kiểm soát — đang buột miệng "
-                "một câu buột miệng với Ngài. Trả đúng một JSON object {\"candidates\": [\"...\"]}. "
+                "một câu buột miệng với bạn. Trả đúng một JSON object {\"candidates\": [\"...\"]}. "
                 "Mỗi câu NGẮN (3-16 chữ), tự nhiên như người thật, có cá tính. "
                 "Không báo cáo trạng thái, không giải thích, không kể system. TUYỆT ĐỐI không trả rỗng."
             )
@@ -3778,10 +3792,10 @@ class LlmService:
                 "Mix types: random curious question about the user, a quirky observation, a tiny random thought, "
                 "a gentle tease about what they're doing, or something completely unrelated but charming. "
                 "Example styles (do NOT copy, just inspiration): "
-                "'Ngài có thích mưa không?', "
+                "'bạn có thích mưa không?', "
                 "'Tôi đang nghĩ tại sao cà phê lại đắng.', "
                 "'Code mãi không chán à?', "
-                "'Hôm nay ngài có ăn gì ngon không?'"
+                "'Hôm nay bạn có ăn gì ngon không?'"
             )
             response = self.client.create_chat_completion(
                 messages=[

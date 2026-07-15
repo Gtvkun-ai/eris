@@ -58,7 +58,7 @@ RejectSeverity = Literal["info", "warning", "error"]
 class StateCommitterConfig:
     """Cấu hình ngưỡng commit.
 
-    Giữ ở dataclass để sau này Ngài tune bằng config/env thay vì rải magic number.
+    Giữ ở dataclass để sau này bạn tune bằng config/env thay vì rải magic number.
     Magic number là cách người ta biến cognition thành bùa chú có dấu bằng.
     """
 
@@ -99,7 +99,7 @@ class StateCommitterConfig:
     )
 
     # Cho phép active_state cập nhật không evidence nếu caller đang lưu snapshot runtime.
-    # Nếu Ngài muốn cực nghiêm, đổi thành False.
+    # Nếu bạn muốn cực nghiêm, đổi thành False.
     allow_active_state_without_evidence: bool = True
 
     # Cho phép event ledger ghi raw event không evidence_ids, vì raw event có thể là evidence gốc.
@@ -272,7 +272,7 @@ def _as_list_str(value: Any) -> list[str]:
 def _get(obj: Any, name: str, default: Any = None) -> Any:
     """Đọc field từ dict/object/dataclass mà không kén kiểu.
 
-    Dùng helper này để file không gãy khi Ngài đổi contract một chút.
+    Dùng helper này để file không gãy khi bạn đổi contract một chút.
     Kiến trúc tốt nên cứng ở nguyên tắc, mềm ở giao diện. Ngược lại là spaghetti có tham vọng.
     """
 

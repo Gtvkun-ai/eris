@@ -21,10 +21,10 @@ from runtime.social_act import ChatAct, PERFORM_NOW_ACTS, classify_chat_act_with
 
 
 _LITERAL_ACK_PATTERNS = (
-    "Ngài cho phép tôi",
-    "Vâng, Ngài đã cho phép",
+    "bạn cho phép tôi",
+    "Vâng, bạn đã cho phép",
     "Tôi sẽ làm phiền một cách hữu ích",
-    "Tôi hiểu rằng Ngài cho phép",
+    "Tôi hiểu rằng bạn cho phép",
 )
 
 
@@ -210,9 +210,9 @@ def intercept_social_turn(
 def looks_like_literal_permission_paraphrase(text: str) -> bool:
     normalized = " ".join(str(text or "").lower().split())
     markers = (
-        "ngài cho phép tôi",
-        "ngài đã cho phép",
-        "tôi hiểu rằng ngài cho phép",
+        "bạn cho phép tôi",
+        "bạn đã cho phép",
+        "tôi hiểu rằng bạn cho phép",
         "tôi sẽ làm phiền một cách hữu ích",
         "bạn cho phép tôi",
         "bạn đã cho phép",
@@ -226,9 +226,9 @@ def deterministic_social_fallback(act: ChatAct) -> str:
     if act == ChatAct.TEASE_REQUEST:
         return "Tự tin thế mà vẫn phải gọi tôi tới cà khịa hộ à?"
     if act == ChatAct.INITIATE_INTERACTION:
-        return "Ngồi yên được có một lát mà Ngài đã gọi tôi tới phá nhịp rồi."
+        return "Ngồi yên được có một lát mà bạn đã gọi tôi tới phá nhịp rồi."
     if act == ChatAct.PLAYFUL_INTERACTION_REQUEST:
-        return "Ngài tự mở cửa cho rắc rối rồi còn ngồi nghiêm túc thế kia à?"
+        return "bạn tự mở cửa cho rắc rối rồi còn ngồi nghiêm túc thế kia à?"
     return ""
 
 

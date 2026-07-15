@@ -8,7 +8,7 @@ agenda) và **không tự ghi** Hồ_Sơ — chỉ trả đề xuất cho Hệ_P
 
 Lõi deterministic (không bắt buộc LLM): gom quan sát đã-lọc qua NHIỀU PHIÊN, một
 phiên một phiếu (nên một phiên cảm xúc mạnh không định hình lại ERIS — R8.1/R8.3),
-yêu cầu tần suất tối thiểu (R1.4), sửa-lỗi/định-hướng của Ngài có trọng số cao hơn
+yêu cầu tần suất tối thiểu (R1.4), sửa-lỗi/định-hướng của bạn có trọng số cao hơn
 quan sát thụ động (R1.5). Có thể bọc LLM phản tư sau mà không đổi API.
 """
 
@@ -21,7 +21,7 @@ from typing import Iterable, Mapping
 from .development_profile import GrowthAnchor, NudgeProposal, PERSONA_AXES
 
 
-# Trọng số theo loại neo (R1.5): can thiệp tường minh của Ngài > quan sát thụ động.
+# Trọng số theo loại neo (R1.5): can thiệp tường minh của bạn > quan sát thụ động.
 _KIND_WEIGHT: dict[str, float] = {
     "user_correction": 2.0,
     "user_steer": 2.0,
@@ -63,7 +63,7 @@ class GrowthConsolidator:
         user_interacting_high_risk: bool = False,
     ) -> bool:
         if user_interacting_high_risk:
-            return False                # hoãn khi Ngài đang tương tác kỹ thuật/rủi ro cao
+            return False                # hoãn khi bạn đang tương tác kỹ thuật/rủi ro cao
         if not budget_allows:
             return False                # tôn trọng phủ quyết ngân sách model
         return max(_f(idle_pressure), _f(consolidation_pressure)) >= self.config.trigger_threshold

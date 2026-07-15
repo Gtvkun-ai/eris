@@ -122,7 +122,7 @@ def test_private_mind_inference_does_not_create_counted_belief(tmp_path) -> None
 
     obs = kernel.observe(
         kind="user_message",
-        content="hôm nay trời đẹp nhỉ chắc ngài muốn đi chơi",
+        content="hôm nay trời đẹp nhỉ chắc bạn muốn đi chơi",
         source="user",
         directness=1.0,
         reliability=0.9,

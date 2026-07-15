@@ -115,7 +115,7 @@ class MemoryRecallAdapterLLMIntegrationTests(unittest.TestCase):
         ledger.record_user("ban ten gi", timestamp=1.0)
         ledger.record_assistant("Toi la ERIS.", timestamp=2.0, meta={"intent": "answer"})
         ledger.record_user("toi ten la Tin", timestamp=3.0)
-        ledger.record_assistant("Toi da nho ten Ngai.", timestamp=4.0, meta={"intent": "answer"})
+        ledger.record_assistant("Toi da nho ten ban.", timestamp=4.0, meta={"intent": "answer"})
         return ledger
 
     def test_low_ambiguity_recall_does_not_call_llm(self):

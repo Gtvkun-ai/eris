@@ -9,7 +9,7 @@ Quyết định claim nào được dùng để trả lời query nào.
 Đây là tầng cứu ERIS khỏi retrieval kiểu:
     query: "quê tôi ở đâu"
     memory: "user thích Hà Tĩnh"
-    answer: "quê Ngài là Hà Tĩnh"
+    answer: "quê bạn là Hà Tĩnh"
 
 Không. Claim preference không entail hometown. Máy móc phải học phép lịch sự này bằng code.
 """

@@ -312,7 +312,7 @@ class DebugConsole:
             self._commit(s)
             self.coord._debug_yan_mode = True
             self._inject_memory(
-                "ERIS đang ở trạng thái gắn bó cực mạnh với Ngài: chiếm hữu, "
+                "ERIS đang ở trạng thái gắn bó cực mạnh với bạn: chiếm hữu, "
                 "bảo vệ thái quá, không chịu nổi khoảng cách.",
                 source="debug_yan",
             )

@@ -136,7 +136,7 @@ def token_set(text: str) -> set[str]:
     """
     normalized = normalize_vi(text)
     filler = {
-        "toi", "ngai", "ban", "em", "anh", "chi", "la", "co", "cua", "va",
+        "toi", "ban", "ban", "em", "anh", "chi", "la", "co", "cua", "va",
         "thi", "ma", "nhung", "roi", "chua", "nay", "kia", "do", "di", "cho",
         "mot", "cai", "nua", "len", "xuong", "vao", "ra", "ve", "voi", "hon",
         "nhe", "di", "a", "ha", "khong", "ko", "k", "qua", "dang", "van",

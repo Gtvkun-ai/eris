@@ -100,7 +100,7 @@ def test_snapshot_writes_when_enabled(snap_env, monkeypatch):
     ps.write(
         appraisal=_Appraisal(),
         expression_gate={"want_to_say": 0.71, "suppression_pressure": 0.44, "allowed_expression": 0.40},
-        tom_read="tom_read: Ngài có thể đang bực (độ tin ~0.72).",
+        tom_read="tom_read: bạn có thể đang bực (độ tin ~0.72).",
         channel="chat",
     )
     data = json.loads((snap_env / "panel_snapshot.json").read_text(encoding="utf-8"))
@@ -115,7 +115,7 @@ def test_panel_state_reads_live_snapshot(snap_env, flags_path, monkeypatch):
     monkeypatch.setenv("ERIS_PANEL_SNAPSHOT", "1")
     import runtime.panel_snapshot as ps
     ps.write(appraisal=_Appraisal(), expression_gate={"want_to_say": 0.6, "allowed_expression": 0.3},
-             tom_read="tom_read: Ngài có thể đang tò mò (độ tin ~0.55).")
+             tom_read="tom_read: bạn có thể đang tò mò (độ tin ~0.55).")
     from runtime.panel_state import build_panel_state
     s = build_panel_state()
     assert s["affect"]["live"] is True

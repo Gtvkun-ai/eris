@@ -50,7 +50,7 @@ class KnowledgeProvider:
             if not claim:
                 continue
             activity = (str(percept_text or "") or str(content_thread or "")).strip()
-            base = f"Ngài tiếp tục: {activity}" if activity else "Tiếp tục như hiện tại"
+            base = f"bạn tiếp tục: {activity}" if activity else "Tiếp tục như hiện tại"
             enriched = f"{base} — dựa trên điều đã học: {claim}"
             return enriched[:_MAX_PRED_LEN]
         return ""

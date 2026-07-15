@@ -8,7 +8,7 @@ Mục tiêu:
 - tích social_fatigue / boredom / exposure_recoil
 - tạo rhythm_phase cho planner đọc: settled, watching, touch, exposure, recoil,
   repair, execute, withdrawn, dormant
-- serialize được để Ngài tự nhét vào PersistentInternalState nếu muốn
+- serialize được để bạn tự nhét vào PersistentInternalState nếu muốn
 
 """
 
@@ -107,7 +107,7 @@ class ActionTrace:
 class ActionMemoryState:
     """State dài hơi cho action planner.
 
-    Đây là phần Ngài cần persist nếu muốn ERIS có lịch sử hành vi thật.
+    Đây là phần bạn cần persist nếu muốn ERIS có lịch sử hành vi thật.
     Nếu không persist, planner vẫn chạy, nhưng sẽ mất cảm giác tích lũy qua session.
     """
 
@@ -190,7 +190,7 @@ class ActionMemoryState:
         """Ghi nhận action sau khi planner chốt.
 
         Hàm này nên được gọi ở coordinator sau khi đã có final decision.
-        Nếu Ngài chỉ muốn planner tự nhớ trong RAM, có thể để ActionPlanner gọi luôn.
+        Nếu bạn chỉ muốn planner tự nhớ trong RAM, có thể để ActionPlanner gọi luôn.
         """
         now = monotonic() if now is None else now
         action = str(action or "no_speech")

@@ -20,7 +20,7 @@ def _relation_names(frame):
 def test_robotic_feedback_builds_meta_style_contract():
     frame = build_turn_frame(
         user_text="bạn nói như AI trợ lý vậy",
-        previous_assistant_text="Tôi là ERIS, trợ lý cá nhân của Ngài, sẵn sàng hỗ trợ.",
+        previous_assistant_text="Tôi là ERIS, trợ lý cá nhân của bạn, sẵn sàng hỗ trợ.",
     )
     contract = build_response_contract(frame)
 
@@ -43,7 +43,7 @@ def test_reassertion_after_misread_builds_repair_contract():
     frame = build_turn_frame(
         user_text="tôi bảo là mẹ mày béo",
         previous_user_text="mẹ mày béo",
-        previous_assistant_text="Tôi không có gia đình, nhưng tôi sẵn sàng hỗ trợ Ngài.",
+        previous_assistant_text="Tôi không có gia đình, nhưng tôi sẵn sàng hỗ trợ bạn.",
     )
     contract = build_response_contract(frame)
 
@@ -57,10 +57,10 @@ def test_reassertion_after_misread_builds_repair_contract():
 def test_acceptance_gate_blocks_helper_reset_after_style_feedback():
     frame = build_turn_frame(
         user_text="bạn nói như AI trợ lý vậy",
-        previous_assistant_text="Tôi sẵn sàng hỗ trợ Ngài.",
+        previous_assistant_text="Tôi sẵn sàng hỗ trợ bạn.",
     )
     bad = Decision(
-        text="Tôi là ERIS, trợ lý cá nhân của Ngài. Tôi sẵn sàng hỗ trợ.",
+        text="Tôi là ERIS, trợ lý cá nhân của bạn. Tôi sẵn sàng hỗ trợ.",
         animation="idle",
     )
     fixed = ResponseAcceptanceGate().apply(bad, frame=frame)

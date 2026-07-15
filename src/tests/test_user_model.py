@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Test cho Mô_Hình_Ngài (UserBelief + UserModelStore).
+"""Test cho Mô_Hình_bạn (UserBelief + UserModelStore).
 
 Phủ:
 - Property 8 (round-trip): serialize → deserialize → serialize tương đương.
@@ -53,8 +53,8 @@ def _store(tmp_path=None):
 def test_round_trip_beliefs_equivalent():
     store = _store()
     store.update_from_fragments([
-        _fragment("Ngài coi ERIS như một công cụ làm việc.", facet="treats_eris_as"),
-        _fragment("Ngài hay quay lại vào buổi tối.", facet="leaving_pattern", evidence=("dossier.user.history.1",)),
+        _fragment("bạn coi ERIS như một công cụ làm việc.", facet="treats_eris_as"),
+        _fragment("bạn hay quay lại vào buổi tối.", facet="leaving_pattern", evidence=("dossier.user.history.1",)),
     ])
     first = store.to_dict()["beliefs"]
 
@@ -67,7 +67,7 @@ def test_round_trip_beliefs_equivalent():
 
 def test_missing_fields_safe_default():
     # R11.3 + R12.4: dict thiếu trường không được làm sập.
-    belief = UserBelief.from_mapping({"claim": "Ngài kiệm lời."})
+    belief = UserBelief.from_mapping({"claim": "bạn kiệm lời."})
     assert belief.id
     assert belief.facet == "general"
     assert 0.0 <= belief.confidence <= 1.0
@@ -83,11 +83,11 @@ def test_missing_fields_safe_default():
 
 def test_reinforce_increases_recurrence_lowers_uncertainty():
     store = _store()
-    store.update_from_fragments([_fragment("Ngài coi ERIS như công cụ.", confidence=0.5)])
+    store.update_from_fragments([_fragment("bạn coi ERIS như công cụ.", confidence=0.5)])
     belief = store.all()[0]
     rec0, unc0 = belief.recurrence, belief.uncertainty
 
-    store.update_from_fragments([_fragment("Ngài coi ERIS như công cụ.", confidence=0.7)])
+    store.update_from_fragments([_fragment("bạn coi ERIS như công cụ.", confidence=0.7)])
     belief = store.all()[0]
     assert belief.recurrence == rec0 + 1
     assert belief.uncertainty <= unc0
@@ -95,7 +95,7 @@ def test_reinforce_increases_recurrence_lowers_uncertainty():
 
 def test_decay_lowers_confidence_when_not_reinforced():
     store = _store()
-    store.update_from_fragments([_fragment("Ngài quan tâm chủ đề triết học.", facet="topic_affinity")])
+    store.update_from_fragments([_fragment("bạn quan tâm chủ đề triết học.", facet="topic_affinity")])
     belief = store.all()[0]
     conf0 = belief.confidence
 
@@ -106,9 +106,9 @@ def test_decay_lowers_confidence_when_not_reinforced():
 
 
 def test_fragment_without_evidence_is_ignored():
-    # R1.2: niềm tin về Ngài phải có evidence.
+    # R1.2: niềm tin về bạn phải có evidence.
     store = _store()
-    store.update_from_fragments([_fragment("Ngài thân thiện.", evidence=())])
+    store.update_from_fragments([_fragment("bạn thân thiện.", evidence=())])
     assert len(store) == 0
 
 
@@ -118,11 +118,11 @@ def test_fragment_without_evidence_is_ignored():
 
 def test_checkpoint_revert_reset():
     store = _store()
-    store.update_from_fragments([_fragment("Ngài coi ERIS như công cụ.")])
+    store.update_from_fragments([_fragment("bạn coi ERIS như công cụ.")])
     v1 = store.checkpoint()
     assert v1 >= 1
 
-    store.update_from_fragments([_fragment("Ngài bắt đầu trò chuyện riêng tư hơn.", facet="recognition", evidence=("dossier.user.history.2",))])
+    store.update_from_fragments([_fragment("bạn bắt đầu trò chuyện riêng tư hơn.", facet="recognition", evidence=("dossier.user.history.2",))])
     assert len(store) == 2
 
     assert store.revert_to(v1) is True
@@ -135,7 +135,7 @@ def test_checkpoint_revert_reset():
 def test_persistence_round_trip_on_disk(tmp_path):
     path = tmp_path / "user_model.json"
     store = UserModelStore(path=path, config=UserModelConfig())
-    store.update_from_fragments([_fragment("Ngài hay vắng vào cuối tuần.", facet="leaving_pattern")])
+    store.update_from_fragments([_fragment("bạn hay vắng vào cuối tuần.", facet="leaving_pattern")])
     before = store.to_dict()["beliefs"]
 
     reopened = UserModelStore(path=path, config=UserModelConfig())

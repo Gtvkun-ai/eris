@@ -158,7 +158,7 @@ def test_steer_applies_in_envelope(tmp_path):
     r = sys_.steer("ấm hơn chút đi", now=1000.0)
     assert r.applied and r.axis == "warmth_temperature"
     assert sys_.profile.delta("warmth_temperature") > 0.0
-    assert "nghiêng theo ý Ngài" in r.message
+    assert "nghiêng theo ý bạn" in r.message
 
 
 def test_steer_truncates_outside_envelope_and_reports(tmp_path):

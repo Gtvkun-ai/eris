@@ -45,7 +45,7 @@ try:
         clean_text,
         normalize,
     )
-except ImportError:  # Hữu ích khi Ngài chạy file này trong thư mục nháp phẳng.
+except ImportError:  # Hữu ích khi bạn chạy file này trong thư mục nháp phẳng.
     from orientation_context import (  # type: ignore
         GoalRelationLabel,
         LexicalOrientationInterpreter,

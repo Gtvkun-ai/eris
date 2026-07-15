@@ -132,7 +132,7 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
 
     runtime_owner.request_tutor_lookup = request_tutor_lookup
 
-    # API "tra rồi TRẢ LỜI ngay": dùng cho nhịp 2 của chat khi Ngài hỏi câu kiến thức
+    # API "tra rồi TRẢ LỜI ngay": dùng cho nhịp 2 của chat khi bạn hỏi câu kiến thức
     # mà Eris chưa biết. Trả về nội dung câu trả lời (str) hoặc None nếu tra không ra.
     def request_tutor_answer(topic, *, context=""):
         try:
@@ -168,7 +168,7 @@ def _ask_gemini_grounding_fallback(runtime_owner: Any, topic: Any, logger: Any) 
     """Fallback cho request_tutor_answer khi tutor web/browser chết.
 
     Đây không thay thế Curiosity Tutor dài hạn; nó chỉ cứu đường user-facing
-    "Ngài hỏi kiến thức -> Eris tra rồi trả lời". Nếu ActionExecutor có
+    "bạn hỏi kiến thức -> Eris tra rồi trả lời". Nếu ActionExecutor có
     search_web (Gemini grounding API), dùng nó để tránh phụ thuộc Playwright.
     """
 

@@ -84,7 +84,7 @@ class TestUngroundedBlind:
     def test_filter_returns_non_none(self):
         """ungrounded_blind KHÔNG bao giờ trả None — cognition không cắt về 0 (Req 3.8)."""
         judgment = _make_judgment(
-            topic_seed="Tôi chắc chắn là ngài đang làm việc.",
+            topic_seed="Tôi chắc chắn là bạn đang làm việc.",
             evidence_ids=(),  # không anchor
             intent="sincere",  # → ungrounded_blind
         )
@@ -94,7 +94,7 @@ class TestUngroundedBlind:
     def test_filter_channel_is_body_only(self):
         """Req 3.7: channel phải là body_only."""
         judgment = _make_judgment(
-            topic_seed="Tôi nghĩ ngài đang làm điều gì đó.",
+            topic_seed="Tôi nghĩ bạn đang làm điều gì đó.",
             evidence_ids=(),
             intent="sincere",
         )
@@ -105,7 +105,7 @@ class TestUngroundedBlind:
     def test_filter_never_surface_arbiter_channel(self):
         """Req 3.1: ungrounded_blind không bao giờ có channel=surface_arbiter."""
         judgment = _make_judgment(
-            topic_seed="Ngài đang nghĩ tới điều gì đó.",
+            topic_seed="bạn đang nghĩ tới điều gì đó.",
             evidence_ids=(),
             intent="sincere",
         )
@@ -120,7 +120,7 @@ class TestUngroundedBlind:
         impulse nhưng should_surface=False — không bao giờ là public assertion.
         """
         judgment = _make_judgment(
-            topic_seed="Tôi chắc chắn ngài đang gõ code.",
+            topic_seed="Tôi chắc chắn bạn đang gõ code.",
             evidence_ids=(),
             intent="sincere",
         )
@@ -169,7 +169,7 @@ class TestUngroundedBlind:
     def test_reason_field_is_block_marker(self):
         """Req 3.2: trường reason của candidate body_only phải là marker block."""
         judgment = _make_judgment(
-            topic_seed="Tôi thấy ngài đang làm gì đó.",
+            topic_seed="Tôi thấy bạn đang làm gì đó.",
             evidence_ids=(),
             intent="sincere",
         )
@@ -203,7 +203,7 @@ class TestUngroundedAware:
         usefulness >= 0.58 + confidence >= 0.55. Gate không cần anchor để body_only.
         """
         return _make_judgment(
-            topic_seed="Có lẽ ngài đang muốn thư giãn một chút?",
+            topic_seed="Có lẽ bạn đang muốn thư giãn một chút?",
             evidence_ids=(),  # không anchor → ungrounded_aware
             intent=intent,
             usefulness=0.70,
@@ -292,7 +292,7 @@ class TestGrounded:
     ) -> InternalJudgment:
         """Candidate có screen_fact anchor → grounded."""
         return _make_judgment(
-            topic_seed="Ngài đang mở màn hình code.",
+            topic_seed="bạn đang mở màn hình code.",
             evidence_ids=("screen_fact.window.title",),
             intent=intent,
             usefulness=usefulness,
@@ -374,7 +374,7 @@ class TestApiInvalidJsonBlocked:
     def test_api_invalid_json_grounded_blocked(self):
         """Req 4.1 + Property 6: api_invalid_json candidate với anchor bị block hoàn toàn."""
         judgment = _make_judgment(
-            topic_seed="Ngài đang nhìn vào màn hình.",
+            topic_seed="bạn đang nhìn vào màn hình.",
             evidence_ids=("screen_fact.window.title",),
             intent="sincere",
             usefulness=0.80,
@@ -394,7 +394,7 @@ class TestApiInvalidJsonBlocked:
     def test_api_invalid_json_ungrounded_aware_blocked(self):
         """Property 6: api_invalid_json + ungrounded_aware cũng bị chặn."""
         judgment = _make_judgment(
-            topic_seed="Chắc ngài đang nghĩ tới điều gì đó thú vị.",
+            topic_seed="Chắc bạn đang nghĩ tới điều gì đó thú vị.",
             evidence_ids=(),
             intent="speculative",
             usefulness=0.80,
@@ -417,7 +417,7 @@ class TestApiInvalidJsonBlocked:
         body_only TRƯỚC khi public gate chạy (Req 3.7/3.8).
         """
         judgment = _make_judgment(
-            topic_seed="Tôi chắc chắn ngài đang làm việc.",
+            topic_seed="Tôi chắc chắn bạn đang làm việc.",
             evidence_ids=(),
             intent="sincere",
             usefulness=0.80,
@@ -444,7 +444,7 @@ class TestEquivalence:
 
     def _base_candidate_kwargs(self) -> dict:
         return dict(
-            topic_seed="Ngài có vẻ đang tập trung vào công việc.",
+            topic_seed="bạn có vẻ đang tập trung vào công việc.",
             evidence_ids=("screen_fact.active_window",),
             intent="sincere",
             usefulness=0.75,
@@ -514,7 +514,7 @@ class TestEquivalence:
     def test_model_vs_fallback_ungrounded_aware_same_metadata_flag(self):
         """Req 4.7: ungrounded_aware, source model vs fallback → cùng metadata flag."""
         kwargs = dict(
-            topic_seed="Có lẽ ngài đang mơ tới kỳ nghỉ?",
+            topic_seed="Có lẽ bạn đang mơ tới kỳ nghỉ?",
             evidence_ids=(),
             intent="teasing",
             usefulness=0.70,

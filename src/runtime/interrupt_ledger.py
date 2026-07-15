@@ -17,7 +17,7 @@ class ActiveSpeechSpan:
 
     Ledger chỉ xem một câu là "đang nói" sau event ``audio_start``. Nếu mới
     queue/synthesize mà user chen vào thì nên dừng TTS, nhưng không nên bắt Eris
-    diễn như thể Ngài vừa nghe/cắt một câu chưa từng phát ra.
+    diễn như thể bạn vừa nghe/cắt một câu chưa từng phát ra.
     """
 
     turn_id: str

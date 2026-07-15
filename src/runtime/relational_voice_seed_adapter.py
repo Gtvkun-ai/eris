@@ -30,7 +30,7 @@ from runtime.voice_policy import VOICE_POLICY
 try:  # persona/constraint assets reused for the seed prompt
     from llm.contracts import SELF_IDENTITY_PROFILE_PROMPT, STYLE_FALLBACK_PROMPT
 except Exception:  # pragma: no cover - defensive
-    STYLE_FALLBACK_PROMPT = "Bạn là ERIS, một hiện diện nhỏ trên desktop. Gọi người dùng là Ngài, xưng tôi."
+    STYLE_FALLBACK_PROMPT = "Bạn là ERIS, một hiện diện nhỏ trên desktop. Gọi người dùng là bạn, xưng tôi."
     SELF_IDENTITY_PROFILE_PROMPT = ""
 
 

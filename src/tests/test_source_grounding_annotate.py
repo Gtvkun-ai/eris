@@ -27,7 +27,7 @@ def _report(missing=(), refers_to_screen=False, evidence_ids=()):
 
 def test_perception_claim_without_evidence_is_ungrounded():
     engine = SourceGroundingEngine()
-    text = "Tôi thấy trên màn hình Ngài đang mở VSCode."
+    text = "Tôi thấy trên màn hình bạn đang mở VSCode."
     anns = engine.annotate_claims(text, report=_report(missing=("screen_evidence",)))
     assert anns
     assert any(a.claim_status == "ungrounded" and a.ground_truth for a in anns)
@@ -52,7 +52,7 @@ def test_annotate_does_not_rewrite_text():
 def test_claim_status_independent_of_relationship():
     # annotate không nhận attachment/register → nhãn chỉ phụ thuộc bằng chứng (R7).
     engine = SourceGroundingEngine()
-    text = "Tôi đã sửa xong file cho Ngài."
+    text = "Tôi đã sửa xong file cho bạn."
     anns = engine.annotate_claims(text, report=_report(evidence_ids=()))
     assert any(a.claim_status == "ungrounded" for a in anns)
     # Gọi lại lần nữa: kết quả ổn định (không trạng thái quan hệ nào len vào).

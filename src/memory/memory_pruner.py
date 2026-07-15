@@ -48,7 +48,7 @@ class MemoryPruner:
 
         # Dọn nhiễu semantic cũ: fact kiểu greeting/slang/asked/questioning không
         # thuộc long-term semantic. Chúng nên ở session/episodic/repair. Nếu cứ giữ,
-        # ERIS sẽ nhớ rất kỹ chuyện Ngài chào thế nào, rồi quên thứ đáng nhớ hơn.
+        # ERIS sẽ nhớ rất kỹ chuyện bạn chào thế nào, rồi quên thứ đáng nhớ hơn.
         # Một thảm họa nhỏ nhưng có indent đẹp.
         if not fact_key and _looks_like_trivial_semantic_noise(surface, semantic_source):
             return PruneDecision("archive", "trivial_semantic_noise_without_fact_key", score=0.10)

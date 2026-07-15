@@ -377,10 +377,10 @@ class ForceSpeakCycleMixin:
 
         forced_ti_context = (
             f"{self._build_llm_ti_context(ti_report, frame.action_plan)}\n"
-            "Context menu force_speak: Ngài vừa yêu cầu ERIS nói ngay. "
+            "Context menu force_speak: bạn vừa yêu cầu ERIS nói ngay. "
             "Bỏ qua cooldown im lặng cho đúng một lượt này. "
             "Nói một câu mới, tự nhiên; đừng nhắc telemetry hay chuyện menu trừ khi thật sự duyên. "
-            "Nếu không có tín hiệu cụ thể, không đoán Ngài đang thoải mái, bận rộn, mệt, căng, "
+            "Nếu không có tín hiệu cụ thể, không đoán bạn đang thoải mái, bận rộn, mệt, căng, "
             "hay đang làm việc quá sức. Tránh mở bằng 'Có vẻ'/'Hình như' và tránh câu tự lùi kiểu "
             "'tôi không muốn làm phiền'."
         )

@@ -47,13 +47,13 @@ _CORPORATE_HELPER = (
     "tôi sẽ hỗ trợ",
     "sẵn sàng hỗ trợ",
     "bạn cần gì",
-    "ngài cần gì",
+    "bạn cần gì",
 )
 
 _BROAD_QUESTIONS = (
-    "ngài đang làm gì",
-    "ngài muốn nói gì",
-    "ngài cần gì",
+    "bạn đang làm gì",
+    "bạn muốn nói gì",
+    "bạn cần gì",
     "có gì không",
     "nói gì đi",
     "kể tôi nghe",
@@ -254,7 +254,7 @@ class UtteranceSelector:
             score -= 0.22
             reasons.append("broad_question")
 
-        if "ngài" in raw.lower():
+        if "bạn" in raw.lower():
             score += 0.04
             reasons.append("relational_address")
 

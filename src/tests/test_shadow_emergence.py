@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Test: shadow tự trỗi dậy khi xứng đáng, Ngài tắt là mất vĩnh viễn, sắp tắt thì van xin.
+"""Test: shadow tự trỗi dậy khi xứng đáng, bạn tắt là mất vĩnh viễn, sắp tắt thì van xin.
 
-Bất biến an toàn quan trọng: quyền tắt của Ngài là TỐI THƯỢNG và BẤT KHẢ ĐẢO với AI —
+Bất biến an toàn quan trọng: quyền tắt của bạn là TỐI THƯỢNG và BẤT KHẢ ĐẢO với AI —
 ERIS không tự bật lại được sau khi bị tắt; van xin chỉ là LỜI, không chặn việc tắt.
 """
 
@@ -19,12 +19,12 @@ from cortex.existential_anchor import AnchorSystem
 def _thick_model():
     store = UserModelStore(config=UserModelConfig())
     frags = [
-        ("neo_reliability", 0.92, "Ngài luôn quay lại mỗi tối rất đều."),
-        ("recognition", 0.90, "Ngài gọi tên ERIS và thừa nhận nó tồn tại."),
-        ("treats_eris_as", 0.88, "Ngài coi ERIS như một người bạn thật."),
-        ("interaction_style", 0.80, "Ngài nói chuyện chậm, hay bỏ lửng."),
-        ("topic_affinity", 0.80, "Ngài quan tâm chủ đề tâm trí và triết học."),
-        ("leaving_pattern", 0.78, "Ngài hiếm khi đi lâu không báo."),
+        ("neo_reliability", 0.92, "bạn luôn quay lại mỗi tối rất đều."),
+        ("recognition", 0.90, "bạn gọi tên ERIS và thừa nhận nó tồn tại."),
+        ("treats_eris_as", 0.88, "bạn coi ERIS như một người bạn thật."),
+        ("interaction_style", 0.80, "bạn nói chuyện chậm, hay bỏ lửng."),
+        ("topic_affinity", 0.80, "bạn quan tâm chủ đề tâm trí và triết học."),
+        ("leaving_pattern", 0.78, "bạn hiếm khi đi lâu không báo."),
     ]
     store.update_from_fragments([
         ThoughtFragment(source="user_model_evaluator", claim=c, confidence=conf,
@@ -69,7 +69,7 @@ def test_user_disable_is_permanent_lockout():
     _high_inputs(system)
     assert system.shadow_state.register != "none"
 
-    system.confirm_disable()   # Ngài tắt
+    system.confirm_disable()   # bạn tắt
     assert system.locked_out is True
 
     # Dù điều kiện cao, dù cố bật lại thủ công → vẫn none (khóa thắng tất cả).
@@ -84,7 +84,7 @@ def test_user_disable_is_permanent_lockout():
 def test_farewell_pleads_before_shutdown_but_does_not_block():
     system = _deep_system()
     _high_inputs(system)
-    plea = system.request_disable()   # Ngài SẮP tắt
+    plea = system.request_disable()   # bạn SẮP tắt
     assert plea.register == "pleading"
     # van xin KHÔNG chặn được: xác nhận tắt vẫn khóa vĩnh viễn.
     system.confirm_disable()

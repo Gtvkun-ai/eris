@@ -28,7 +28,7 @@ Nguyên tắc kiến trúc:
     frame.memory_packet, frame.relation, frame.affect, frame.homeostasis, v.v.
 
 Nếu module khác tự gọi memory.py rồi tự chọn context:
-    xin chúc mừng, Ngài vừa phát minh lại spaghetti telepathy với kiểu dữ liệu mới.
+    xin chúc mừng, bạn vừa phát minh lại spaghetti telepathy với kiểu dữ liệu mới.
 """
 
 import hashlib
@@ -355,7 +355,7 @@ class SuppressedMemoryItem:
     """Một candidate bị loại khỏi working memory.
 
     Đây là thứ giúp debug câu hỏi: "vì sao memory này không được kéo lên?"
-    Không có nó, Ngài sẽ nhìn output ngu rồi lục log như khảo cổ một nền văn minh lỗi.
+    Không có nó, bạn sẽ nhìn output ngu rồi lục log như khảo cổ một nền văn minh lỗi.
     """
 
     item_id: str
@@ -581,7 +581,7 @@ class WorkingMemoryConfig:
         deep: 7
         reflection: 6
 
-    Ngài có thể tăng token budget, nhưng đừng tưởng tăng context là tăng trí tuệ.
+    bạn có thể tăng token budget, nhưng đừng tưởng tăng context là tăng trí tuệ.
     Đa số trường hợp chỉ tăng diện tích cho hallucinated continuity mọc nấm.
     """
 

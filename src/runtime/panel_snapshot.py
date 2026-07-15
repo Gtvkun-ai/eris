@@ -5,7 +5,7 @@ runtime/panel_snapshot.py
 
 Ghi tín hiệu nội-tâm-SỐNG (chỉ tồn tại trong runtime) ra ``memory_core/
 panel_snapshot.json`` để Eris Panel hiển thị thật: cảm xúc (appraisal), giằng co
-biểu đạt (N1), và lần đọc-Ngài gần nhất (tom_read) + một nhật ký tín hiệu ngắn.
+biểu đạt (N1), và lần đọc-bạn gần nhất (tom_read) + một nhật ký tín hiệu ngắn.
 
 Nguyên tắc:
 - MẶC ĐỊNH TẮT (cờ ``ERIS_PANEL_SNAPSHOT``). Tắt -> không ghi gì, zero I/O.

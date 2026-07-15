@@ -43,7 +43,7 @@ class _Affect:
 def test_coldness_feedback_signal_detects_short_direct_feedback():
     signal = RelationalFeedbackAnalyzer().analyze(
         "lạnh lùng vl luôn",
-        previous_assistant_text="Tôi chỉ đang trả lời đúng những gì Ngài hỏi.",
+        previous_assistant_text="Tôi chỉ đang trả lời đúng những gì bạn hỏi.",
     )
 
     assert signal.detected is True
@@ -57,12 +57,12 @@ def test_coldness_feedback_signal_detects_short_direct_feedback():
 def test_coldness_feedback_routes_conversation_to_relational_repair():
     signal = RelationalFeedbackAnalyzer().analyze(
         "lạnh lùng vl luôn",
-        previous_assistant_text="Tôi chỉ đang trả lời đúng những gì Ngài hỏi.",
+        previous_assistant_text="Tôi chỉ đang trả lời đúng những gì bạn hỏi.",
     )
     report = ConversationDynamicsEngine().evaluate_chat(
         None,
         user_text="lạnh lùng vl luôn",
-        last_assistant_text="Tôi chỉ đang trả lời đúng những gì Ngài hỏi.",
+        last_assistant_text="Tôi chỉ đang trả lời đúng những gì bạn hỏi.",
         relational_feedback=signal,
     )
 
@@ -111,7 +111,7 @@ def test_llm_service_rewrites_defensive_relational_reply():
     service = service_mod.LlmService(DummyClient())
     raw = json.dumps(
         {
-            "text": "Tôi chỉ đang trả lời đúng những gì Ngài hỏi.",
+            "text": "Tôi chỉ đang trả lời đúng những gì bạn hỏi.",
             "intent": "defensive_clarification",
             "action": {"type": "none"},
             "animation": "stand",

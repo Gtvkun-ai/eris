@@ -44,7 +44,7 @@ class SemanticAnswerPolicy:
     def answer(self, query: str | SemanticQueryIntent, memory_items: Iterable[Any]) -> SemanticAnswer:
         intent = compile_semantic_query(query, allow_fallback=True) if isinstance(query, str) else query
         if not intent.is_known:
-            return SemanticAnswer(False, "Tôi chưa xác định được Ngài đang hỏi loại ký ức nào.", 0.0, warnings=("unknown_query_intent",))
+            return SemanticAnswer(False, "Tôi chưa xác định được bạn đang hỏi loại ký ức nào.", 0.0, warnings=("unknown_query_intent",))
 
         claims: list[SemanticClaim] = []
         for item in memory_items:
@@ -77,37 +77,37 @@ class SemanticAnswerPolicy:
         if intent.requires_freshness:
             return "Tôi không có bằng chứng hiện tại đủ mới để trả lời câu đó."
         if intent.answer_target == "user_nickname":
-            return "Tôi chưa có claim nào nói rõ biệt danh của Ngài."
+            return "Tôi chưa có claim nào nói rõ biệt danh của bạn."
         if intent.answer_target == "user_hometown":
-            return "Tôi chưa có claim nào nói rõ quê của Ngài."
+            return "Tôi chưa có claim nào nói rõ quê của bạn."
         if intent.answer_target == "user_living_location":
-            return "Tôi chưa có claim nào nói rõ nơi Ngài đang sống."
+            return "Tôi chưa có claim nào nói rõ nơi bạn đang sống."
         if intent.answer_target == "user_location_preference":
-            return "Tôi chưa có claim nào nói rõ địa điểm Ngài thích."
+            return "Tôi chưa có claim nào nói rõ địa điểm bạn thích."
         return "Tôi chưa có ký ức đủ chắc để trả lời câu đó."
 
     def _format(self, intent: SemanticQueryIntent, claim: SemanticClaim) -> str:
         obj = claim.object_text
         if intent.answer_target == "user_name":
-            return f"Tên Ngài là {obj}."
+            return f"Tên bạn là {obj}."
         if intent.answer_target == "user_nickname":
-            return f"Biệt danh của Ngài là {obj}."
+            return f"Biệt danh của bạn là {obj}."
         if intent.answer_target == "user_birth_month":
-            return f"Ngài sinh vào tháng {obj}."
+            return f"bạn sinh vào tháng {obj}."
         if intent.answer_target == "user_birth_year":
-            return f"Ngài sinh năm {obj}."
+            return f"bạn sinh năm {obj}."
         if intent.answer_target == "user_current_location":
-            return f"Theo ký ức hiện tại tôi có, Ngài đang ở {obj}."
+            return f"Theo ký ức hiện tại tôi có, bạn đang ở {obj}."
         if intent.answer_target == "user_living_location":
-            return f"Theo những gì Ngài đã nói, Ngài đang sống ở {obj}."
+            return f"Theo những gì bạn đã nói, bạn đang sống ở {obj}."
         if intent.answer_target == "user_hometown":
-            return f"Quê của Ngài là {obj}."
+            return f"Quê của bạn là {obj}."
         if intent.answer_target == "user_location_preference":
             if claim.assertion == "denied":
-                return f"Ngài từng nói không thích {obj}."
-            return f"Ngài từng nói thích {obj}."
+                return f"bạn từng nói không thích {obj}."
+            return f"bạn từng nói thích {obj}."
         if intent.answer_target == "user_response_style":
-            return f"Ngài có preference về cách tôi trả lời: {obj}"
+            return f"bạn có preference về cách tôi trả lời: {obj}"
         return f"Tôi nhớ: {obj}"
 
 

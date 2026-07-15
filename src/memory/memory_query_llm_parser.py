@@ -10,7 +10,7 @@ Quy tắc:
 - LLM KHÔNG được bịa nội dung đã nhớ.
 - LLM chỉ chuyển user text thành JSON theo schema MemoryQueryIR.
 
-Module này không tự gọi API. Ngài inject client vào.
+Module này không tự gọi API. bạn inject client vào.
 """
 
 from dataclasses import dataclass

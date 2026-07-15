@@ -34,7 +34,7 @@ class ContentSeed:
     """Một mảnh content có nguồn gốc thật trong runtime.
 
     Seed khác hook: seed là "đời sống đã xảy ra", hook là "cách dùng seed trên
-    sân khấu". Ví dụ seed từ session ledger: "Ngài đang làm Eris thành VTuber";
+    sân khấu". Ví dụ seed từ session ledger: "bạn đang làm Eris thành VTuber";
     hook có thể là thread_tug/technical_nudge tuỳ scene.
     """
 
@@ -47,7 +47,7 @@ class ContentSeed:
     risk: float = 0.15
     tags: tuple[str, ...] = ()
     # False nghĩa là seed chỉ dùng cho runtime/điều phối, không được biến thành
-    # câu nói trước Ngài hay audience. Ví dụ: tình trạng key pool, quota, browser.
+    # câu nói trước bạn hay audience. Ví dụ: tình trạng key pool, quota, browser.
     public_ok: bool = True
     observed_at: float = 0.0
 
@@ -732,7 +732,7 @@ class ContentEngine:
                     tone="dry_tease",
                     allowed_use="one tiny teasing line about long silence; no screen claims",
                     prompt_seed="Im lâu thì được khịa nhẹ: cái ghế/sự im lặng sắp thắng cuộc trò chuyện.",
-                    keywords=("im", "ghế", "thắng", "lâu", "ngài"),
+                    keywords=("im", "ghế", "thắng", "lâu", "bạn"),
                     evidence_policy="internal_rhythm_only",
                     cooldown_sec=180.0,
                     body_only_ok=True,
@@ -775,7 +775,7 @@ class ContentEngine:
                     tone="soft_near",
                     allowed_use="use inner rhythm or relation only; never claim visible screen facts",
                     prompt_seed="Không có bằng chứng màn hình thì chỉ bám nhịp im/nội tâm/quan hệ.",
-                    keywords=("nhịp", "im", "gần", "giữ", "ngài"),
+                    keywords=("nhịp", "im", "gần", "giữ", "bạn"),
                     evidence_policy="no_screen_claims",
                     cooldown_sec=45.0,
                     body_only_ok=True,
@@ -1029,7 +1029,7 @@ class ContentEngine:
             word = raw.strip(".,:;!?()[]{}\"'").lower()
             if len(word) < 3:
                 continue
-            if word in {"ngài", "toi", "tôi", "đang", "này", "kia", "trước", "sau", "with", "from"}:
+            if word in {"bạn", "toi", "tôi", "đang", "này", "kia", "trước", "sau", "with", "from"}:
                 continue
             words.append(word)
         merged = tuple(dict.fromkeys((*words[:8], *fallback)))

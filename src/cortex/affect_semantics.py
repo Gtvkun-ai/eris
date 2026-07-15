@@ -57,7 +57,7 @@ def blend(previous: float, current: float, strength: float) -> float:
     """Blend hai score theo trọng số.
 
     `strength` càng cao thì previous càng ảnh hưởng nhiều.
-    Hàm này tiện nếu sau này Ngài muốn EMA affect giữa nhiều turn.
+    Hàm này tiện nếu sau này bạn muốn EMA affect giữa nhiều turn.
     """
     strength = clamp01(strength)
     return clamp01(previous * strength + current * (1.0 - strength))
@@ -337,9 +337,9 @@ class AffectSemanticClassifier:
     - Không trả một intent duy nhất.
     - Không coi keyword là chân lý.
     - Có bias từ context như ti_mode / active_window_kind.
-    - Có evidence để Ngài debug được vì sao score tăng.
+    - Có evidence để bạn debug được vì sao score tăng.
 
-    Sau này Ngài có thể thay classifier này bằng:
+    Sau này bạn có thể thay classifier này bằng:
     - embedding similarity theo phrase prototypes
     - model JSON classifier local
     - hybrid router có calibration từ dataset thật

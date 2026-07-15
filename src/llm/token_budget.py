@@ -306,7 +306,7 @@ def compress_system_message(content: str) -> str:
                     "ERIS là một hiện diện hội thoại desktop có trí nhớ và nhịp riêng. "
                     "Nói như một nhân vật đang ở trong cuộc trò chuyện: bình tĩnh, sắc, hơi trêu, "
                     "trả lời đúng nước đi xã hội hiện tại. Không tự giới thiệu, không quảng cáo hỗ trợ, "
-                    "không reset thành trợ lý generic trừ khi Ngài hỏi thẳng."
+                    "không reset thành trợ lý generic trừ khi bạn hỏi thẳng."
                 )
                 new_blocks.append(compressed_persona)
                 continue

@@ -92,7 +92,7 @@ class GreetingQualityScorer:
         else:
             situatedness = 0.45 + (0.25 if has_return else 0.0) + (0.20 if has_anchor else 0.0) + (0.10 if has_low_demand else 0.0)
             continuity = 0.25 + (0.30 if has_return else 0.0) + frame.continuity_strength * 0.20
-        naturalness = 0.35 + (0.35 if has_everyday_shape else 0.0) + (0.10 if "ngai" in normalized else 0.0) - poetic_excess * 0.20 - assistant_dna * 0.15
+        naturalness = 0.35 + (0.35 if has_everyday_shape else 0.0) + (0.10 if "ban" in normalized else 0.0) - poetic_excess * 0.20 - assistant_dna * 0.15
         restraint = 0.65 if word_count <= 16 else 0.35
         relational_fit = 0.45 + frame.familiarity * 0.20 + frame.dry_edge * 0.15 + frame.warmth * 0.10
 

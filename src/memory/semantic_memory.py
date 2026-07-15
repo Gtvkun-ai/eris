@@ -315,7 +315,7 @@ class FactProfile:
     fact_key là điểm quan trọng nhất. Nó biến các câu paraphrase thành cùng một fact.
     Ví dụ:
         "Người dùng tên Gtvkun"
-        "Ngài tên là Gtvkun"
+        "bạn tên là Gtvkun"
         "user name: Gtvkun"
     đều nên về fact_key="user.name".
     """
@@ -332,9 +332,9 @@ class FactProfile:
 # Các pattern này không quyết định output public. Chúng chỉ hỗ trợ lưu fact có key.
 USER_NAME_PATTERNS = (
     r"\bnguoi dung ten\b",
-    r"\bngai ten\b",
+    r"\bban ten\b",
     r"\bten cua nguoi dung\b",
-    r"\bten cua ngai\b",
+    r"\bten cua ban\b",
     r"\buser name\b",
     r"\bpreferred name\b",
     r"\bgoi nguoi dung la\b",
@@ -964,7 +964,7 @@ class SemanticMemoryStore:
         normalized = normalize_text(claim)
         tokens = normalized.split()
         score = min(1.0, len(tokens) / 12.0)
-        if any(tok in normalized for tok in ("user", "nguoi dung", "ngai", "eris", "project")):
+        if any(tok in normalized for tok in ("user", "nguoi dung", "ban", "eris", "project")):
             score += 0.10
         if len(claim) > 220:
             score -= 0.08
@@ -1019,8 +1019,8 @@ class SemanticMemoryStore:
             # Các pattern đơn giản: "tên ... là X", "user name: X".
             patterns = [
                 r"(?:user s name is|users name is|user name|preferred name)\s*(?:la|is|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
-                r"(?:ten cua nguoi dung|ten cua ngai|nguoi dung ten|ngai ten)\s*(?:la|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
-                r"(?:goi nguoi dung la|goi ngai la)\s*([a-zA-Z0-9_\- ]{2,80})",
+                r"(?:ten cua nguoi dung|ten cua ban|nguoi dung ten|ban ten)\s*(?:la|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
+                r"(?:goi nguoi dung la|goi ban la)\s*([a-zA-Z0-9_\- ]{2,80})",
             ]
             for pattern in patterns:
                 match = re.search(pattern, normalized)
@@ -1031,7 +1031,7 @@ class SemanticMemoryStore:
         if fact_key == "user.nickname":
             patterns = [
                 r"(?:user s nickname is|users nickname is|user nickname)\s*(?:la|is|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
-                r"(?:biet danh cua nguoi dung|biet danh cua ngai|biet danh cua toi|biet danh toi|biet danh la|biet hieu la|nickname la|ten goi la)\s*(?:la|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
+                r"(?:biet danh cua nguoi dung|biet danh cua ban|biet danh cua toi|biet danh toi|biet danh la|biet hieu la|nickname la|ten goi la)\s*(?:la|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
             ]
             for pattern in patterns:
                 match = re.search(pattern, normalized)
@@ -1693,7 +1693,7 @@ class SemanticMemoryStore:
         lowered = normalize_text(claim)
         target_norm = normalize_text(str(target or ""))
 
-        if any(phrase in lowered for phrase in ("nguoi dung", "ngai", "user ", "user_", "preferred name")):
+        if any(phrase in lowered for phrase in ("nguoi dung", "ban", "user ", "user_", "preferred name")):
             return "user"
         if "eris" in lowered or "self" in lowered or "runtime artificial observer" in lowered:
             # Nếu claim có ERIS + project/pipeline thì nghiêng về project, trừ khi là identity.

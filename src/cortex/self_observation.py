@@ -667,11 +667,11 @@ class SelfObservationEngine:
         return any(
             marker in normalized_text
             for marker in (
-                "ngai muon",
-                "ngai dang",
-                "co ve ngai",
-                "toi biet ngai",
-                "that ra ngai",
+                "ban muon",
+                "ban dang",
+                "co ve ban",
+                "toi biet ban",
+                "that ra ban",
                 "you want",
                 "you are feeling",
                 "it seems you are",
@@ -687,7 +687,7 @@ class SelfObservationEngine:
                 "ke toi nghe",
                 "noi ro hon",
                 "ban co dang",
-                "ngai co dang",
+                "ban co dang",
             )
         )
 

@@ -26,8 +26,8 @@ from runtime.director_context import DirectorContext, EvidenceClaim
 
 _PERCEPTION_CLAIM_RE = re.compile(
     r"\b(?:tôi thấy|toi thay|tôi nhìn|toi nhin|tôi đang nhìn|toi dang nhin|"
-    r"trên màn hình|tren man hinh|màn hình của ngài|man hinh cua ngai|"
-    r"cửa sổ của ngài|cua so cua ngai|tab của ngài|tab cua ngai)\b",
+    r"trên màn hình|tren man hinh|màn hình của bạn|man hinh cua ban|"
+    r"cửa sổ của bạn|cua so cua ban|tab của bạn|tab cua ban)\b",
     re.I,
 )
 _SYSTEM_ACTION_CLAIM_RE = re.compile(
@@ -39,20 +39,20 @@ _SYSTEM_ACTION_CLAIM_RE = re.compile(
     re.I,
 )
 _EMOTION_AS_FACT_RE = re.compile(
-    r"\b(?:ngài|ngai|bạn|ban)\s+(?:đang|dang|rất|rat|thật sự|that su)\s+"
+    r"\b(?:bạn|ban|bạn|ban)\s+(?:đang|dang|rất|rat|thật sự|that su)\s+"
     r"(?:tuyệt vọng|tuyet vong|trầm cảm|tram cam|lo âu|lo au|sợ hãi|so hai|"
     r"ghét|ghet|căm ghét|cam ghet|đau khổ|dau kho|hoảng loạn|hoang loan|"
     r"cô đơn|co don|buồn|buon|tức giận|tuc gian)\b",
     re.I,
 )
 _HEARING_CLAIM_RE = re.compile(
-    r"\b(?:tôi nghe (?:ngài|bạn)|toi nghe (?:ngai|ban)|"
-    r"nghe ngài thở|nghe bạn thở|nghe ngai tho|nghe ban tho)\b",
+    r"\b(?:tôi nghe (?:bạn|bạn)|toi nghe (?:ban|ban)|"
+    r"nghe bạn thở|nghe bạn thở|nghe ban tho|nghe ban tho)\b",
     re.I,
 )
 _PHYSICAL_OVERREACH_RE = re.compile(
     r"\b(?:tôi|toi)\s+(?:ôm|om|chạm|cham|kéo|keo|nắm|nam|vuốt|vuot|"
-    r"đỡ|do|đẩy|day)\s+(?:ngài|ngai|bạn|ban|tay|vai|mặt|mat)\b",
+    r"đỡ|do|đẩy|day)\s+(?:bạn|ban|bạn|ban|tay|vai|mặt|mat)\b",
     re.I,
 )
 _MEMORY_MARKER_RE = re.compile(
@@ -69,7 +69,7 @@ _INFERENCE_HEDGE_RE = re.compile(
 
 _SCREEN_EVIDENCE_KEYS = {"screen_summary", "window_title", "active_app", "focus_kind"}
 _CLAIM_STOPWORDS = {
-    "toi", "thay", "nhin", "tren", "man", "hinh", "cua", "ngai", "ban",
+    "toi", "thay", "nhin", "tren", "man", "hinh", "cua", "ban", "ban",
     "dang", "mot", "nay", "kia", "la", "co", "va", "voi", "tab", "cua",
     "so", "window", "screen", "the", "you", "your", "see", "look", "at",
     "unknown",

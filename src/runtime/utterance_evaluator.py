@@ -4,7 +4,7 @@ from __future__ import annotations
 
 Tầng này không phải persona writer. Nó là tai nghe lại câu nháp:
 - câu có bám evidence hiện tại không;
-- có đang tự suy diễn hoạt động của Ngài không;
+- có đang tự suy diễn hoạt động của bạn không;
 - có nên im thay vì cố nói không;
 - có đáng gọi mentor/Gemini để sửa không.
 
@@ -77,7 +77,7 @@ class UtteranceEvaluator:
 
     Luật cố tình ít nhưng sắc:
     - current screen chỉ thắng khi câu đang claim về màn hình/hoạt động hiện tại;
-    - claim "Ngài đang..." phải có evidence;
+    - claim "bạn đang..." phải có evidence;
     - micro-presence không được thành filler/status ping;
     - khi user sửa lỗi, đừng hỏi rộng như chưa nghe.
     """
@@ -101,7 +101,7 @@ class UtteranceEvaluator:
         "co gi khong",
         "ban can gi",
         "toi co the giup gi",
-        "ngai can gi",
+        "ban can gi",
         "im hoi lau",
         "nhip nay",
         "khoang yen nay",
@@ -119,19 +119,19 @@ class UtteranceEvaluator:
         "ha",
     )
     _BROAD_CLARIFY = (
-        "ngai dang lam gi",
-        "ngai co the noi ro",
+        "ban dang lam gi",
+        "ban co the noi ro",
         "noi ro hon",
         "toi chua hieu",
         "co ve nhu toi da hieu sai",
     )
     _ASSERTIVE_USER_ACTIVITY = (
-        "ngai dang",
-        "ngai vua",
-        "toi thay ngai",
-        "toi doan ngai dang",
-        "hinh nhu ngai dang",
-        "co ve ngai dang",
+        "ban dang",
+        "ban vua",
+        "toi thay ban",
+        "toi doan ban dang",
+        "hinh nhu ban dang",
+        "co ve ban dang",
     )
     _SITUATED_CLAIM_MARKERS = (
         "tren man hinh",
@@ -141,10 +141,10 @@ class UtteranceEvaluator:
         "toi thay tren man hinh",
         "cua so dang",
         "tab dang",
-        "ngai dang xem",
-        "ngai dang nghe",
-        "ngai dang code",
-        "ngai vua mo",
+        "ban dang xem",
+        "ban dang nghe",
+        "ban dang code",
+        "ban vua mo",
         "ung dung dang",
     )
     _HEDGE_MARKERS = (

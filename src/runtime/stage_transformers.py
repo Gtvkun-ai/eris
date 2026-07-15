@@ -68,10 +68,24 @@ _PARENS_ACTION_RE = re.compile(
     r"(?P<tag>[\(\*]\s*(?:"
     r"cười khẽ|cười nhẹ|cười|nhíu mắt|thở nhẹ|thở dài|im lặng|nghiêng đầu|"
     r"liếc|nhìn sang bên|nhìn xuống|gật|lắc đầu|mỉm cười|"
-    r"smile|small smile|laugh|soft laugh|sigh|whisper|look away|look down|tilt head"
+    r"nháy mắt|nhay mat|vỗ tay|vo tay|nhún vai|nhun vai|"
+    r"hát một câu[^)\*]*|hat mot cau[^)\*]*|hát[^)\*]{0,24}|hat[^)\*]{0,24}|"
+    r"smile|small smile|laugh|soft laugh|sigh|whisper|look away|look down|tilt head|"
+    r"wink|eye twinkle|clap|shrug|sing"
     r")[^)\*]{0,48}[\)\*])",
     re.I,
 )
+
+_FORBIDDEN_HONORIFIC_RE = re.compile(r"(?<![A-Za-zÀ-ỹ])(?:ng\u00e0i|ngai)(?![A-Za-zÀ-ỹ])", re.I)
+
+
+def clean_forbidden_honorifics(text: str) -> str:
+    # Van cuối: dù prompt/candidate còn sót, UI/TTS/memory không được hồi sinh lối xưng hô cũ.
+    t = str(text or "")
+    t = _FORBIDDEN_HONORIFIC_RE.sub("bạn", t)
+    t = re.sub(r"\bMaster\s*/\s*bạn\b", "bạn", t, flags=re.I)
+    t = re.sub(r"\bMaster\b", "bạn", t, flags=re.I)
+    return _squash(t)
 
 _ACTION_ALIASES: dict[str, str] = {
     "cười": "laugh_soft",
@@ -93,6 +107,19 @@ _ACTION_ALIASES: dict[str, str] = {
     "look away": "look_away",
     "nhìn xuống": "look_down",
     "look down": "look_down",
+    "nháy mắt": "wink",
+    "nhay mat": "wink",
+    "wink": "wink",
+    "eye twinkle": "wink",
+    "vỗ tay": "clap_soft",
+    "vo tay": "clap_soft",
+    "clap": "clap_soft",
+    "nhún vai": "shrug_small",
+    "nhun vai": "shrug_small",
+    "shrug": "shrug_small",
+    "sing": "sing_tease",
+    "hát": "sing_tease",
+    "hat": "sing_tease",
     "gật": "nod_small",
     "lắc đầu": "shake_head_small",
     "whisper": "voice_whisper",
@@ -178,7 +205,7 @@ class ActionTagExtractor:
             mapped = _ACTION_ALIASES.get(value) or _ACTION_ALIASES.get(value.replace("_", " "))
             if mapped:
                 actions.append(mapped)
-                if mapped in {"look_away", "look_down", "tilt_head", "small_smile"}:
+                if mapped in {"look_away", "look_down", "tilt_head", "small_smile", "wink", "clap_soft", "shrug_small"}:
                     motion_hint = motion_hint or mapped
                 return
             if value in _EMOTION_ALIASES:
@@ -223,7 +250,7 @@ class DisplayFilter:
     """Text cho UI: đẹp, gọn, không chứa tag nội bộ."""
 
     def clean(self, text: str) -> str:
-        return _strip_markdown(text, code_placeholder="[code]")
+        return clean_forbidden_honorifics(_strip_markdown(text, code_placeholder="[code]"))
 
 
 class TTSFilter:
@@ -233,7 +260,7 @@ class TTSFilter:
         t = _strip_markdown(text, code_placeholder="")
         t = _URL_RE.sub("", t)
         t = _EMOJI_RE.sub("", t)
-        return _squash(t)
+        return clean_forbidden_honorifics(_squash(t))
 
 
 class MemorySurfaceFilter:
@@ -248,7 +275,7 @@ class MemorySurfaceFilter:
         t = _strip_markdown(t, code_placeholder="[code]")
         t = _URL_RE.sub("", t)
         t = _EMOJI_RE.sub("", t)
-        return _squash(t)
+        return clean_forbidden_honorifics(_squash(t))
 
 
 class StageTransformerChain:
@@ -286,4 +313,5 @@ __all__ = [
     "StageTextSurfaces",
     "StageTransformerChain",
     "TTSFilter",
+    "clean_forbidden_honorifics",
 ]

@@ -196,11 +196,11 @@ class RelationalFeedbackAnalyzer:
         "vl", "vcl", "vai", "that su", "rat", "qua", "cuc", "cuc ky", "luon", "lam", "qua troi",
     )
     _DIRECT_TARGETS = (
-        "eris", "ban", "em", "ngai", "cau do", "cach noi", "tone", "giong", "vibe", "tra loi",
+        "eris", "ban", "em", "ban", "cau do", "cach noi", "tone", "giong", "vibe", "tra loi",
     )
     _DEFENSIVE_ASSISTANT = (
-        "toi chi dang tra loi", "dung nhung gi ngai hoi", "neu ngai thay can thiet",
-        "neu ngai muon", "toi se dieu chinh", "toi khong", "khong phai",
+        "toi chi dang tra loi", "dung nhung gi ban hoi", "neu ban thay can thiet",
+        "neu ban muon", "toi se dieu chinh", "toi khong", "khong phai",
     )
 
     def analyze(self, user_text: str, *, previous_assistant_text: str = "") -> RelationalFeedbackSignal:

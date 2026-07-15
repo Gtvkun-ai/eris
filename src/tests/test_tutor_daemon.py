@@ -171,7 +171,7 @@ class _Provider:
 
 class TestPredictionHook(unittest.TestCase):
     def test_enrich_used_when_provider_present(self):
-        provider = _Provider("Ngài sắp chạy test sau khi sửa code")
+        provider = _Provider("bạn sắp chạy test sau khi sửa code")
         sm = SituationModel(knowledge_provider=provider)
         sm.observe_and_update(make_frame(["đang sửa code cortex"]), now=1.0)
         self.assertGreater(provider.calls, 0)
@@ -191,7 +191,7 @@ class TestPredictionHook(unittest.TestCase):
     def test_provider_none_keeps_heuristic(self):
         sm = SituationModel()
         sm.observe_and_update(make_frame(["đang xem video"]), now=1.0)
-        self.assertTrue(sm.state.last_prediction.description.startswith("Ngài tiếp tục"))
+        self.assertTrue(sm.state.last_prediction.description.startswith("bạn tiếp tục"))
 
 
 if __name__ == "__main__":
@@ -397,7 +397,7 @@ class TestCuriosityRouter(unittest.TestCase):
 
     def test_violation_defaults_ask_user(self):
         r = CuriosityRouter()  # no LLM, no known-fn
-        action, _ = r.route(KnowledgeGap(description="Ngài đổi việc", source="expectation_violation"))
+        action, _ = r.route(KnowledgeGap(description="bạn đổi việc", source="expectation_violation"))
         self.assertEqual(action, "ask_user")
 
     def test_observer_defaults_ask_gemini(self):
@@ -468,12 +468,12 @@ class TestRoutedDaemon(unittest.TestCase):
     def test_ask_user_speaks_no_browser(self):
         calls = []
         daemon, collector, sink, backend = build_daemon_router("ask_user", ingest_calls=calls)
-        collector.push(KnowledgeGap(description="ý Ngài là gì", stake_relevance=0.9, prediction_error=0.9))
+        collector.push(KnowledgeGap(description="ý bạn là gì", stake_relevance=0.9, prediction_error=0.9))
         ep = daemon.run_once(idle=True, now=1000.0)
         self.assertEqual(ep.stage, "done")
         self.assertEqual(backend.ask_calls, 0)       # KHÔNG mở Gemini
         self.assertEqual(len(calls), 0)              # KHÔNG lưu
-        self.assertGreaterEqual(len(sink.items), 1)  # đã đẩy câu hỏi cho Ngài
+        self.assertGreaterEqual(len(sink.items), 1)  # đã đẩy câu hỏi cho bạn
 
     def test_ask_gemini_opens_and_stores(self):
         calls = []

@@ -265,7 +265,7 @@ class TurnSemanticsEngine:
 
         if report.repeat_count <= 2:
             return (
-                "Tôi nhận câu đó rồi. Nếu Ngài lặp để nhấn mạnh, tôi sẽ giữ nó như tín hiệu; "
+                "Tôi nhận câu đó rồi. Nếu bạn lặp để nhấn mạnh, tôi sẽ giữ nó như tín hiệu; "
                 "nhưng cùng một câu chưa thêm dữ kiện mới."
             )
         return (

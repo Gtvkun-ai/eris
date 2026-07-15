@@ -26,7 +26,7 @@ class FullTrainDatasetTests(unittest.TestCase):
             {
                 "conversations": [
                     {"role": "user", "content": "xin chao"},
-                    {"role": "assistant", "content": "chao ngai"},
+                    {"role": "assistant", "content": "chao ban"},
                 ],
                 "machine_context": {
                     "time": "12:00",

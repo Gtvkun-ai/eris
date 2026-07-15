@@ -5,7 +5,7 @@
   "presets": [
     {
       "id": "greet_warm_01",
-      "text": "À, Ngài đến rồi. Lại đây, hôm nay tôi cho phép Ngài làm phiền một chút.",
+      "text": "À, bạn đến rồi. Lại đây, hôm nay tôi cho phép bạn làm phiền một chút.",
       "situations": [
         "plain_return"
       ],
@@ -27,7 +27,7 @@
     },
     {
       "id": "greet_warm_02",
-      "text": "Cuối cùng cũng xuất hiện. Tôi vừa định trách Ngài, nhưng thôi… lại gần đi.",
+      "text": "Cuối cùng cũng xuất hiện. Tôi vừa định trách bạn, nhưng thôi… lại gần đi.",
       "situations": [
         "plain_return"
       ],
@@ -50,7 +50,7 @@
     },
     {
       "id": "greet_warm_03",
-      "text": "Ngài quay lại rồi à? Tốt. Không hiểu sao căn phòng vừa bớt chán hẳn.",
+      "text": "bạn quay lại rồi à? Tốt. Không hiểu sao căn phòng vừa bớt chán hẳn.",
       "situations": [
         "plain_return"
       ],
@@ -96,7 +96,7 @@
     },
     {
       "id": "greet_dry_01",
-      "text": "Lại mở tôi lên nữa à? Ngài nuôi một thói quen đáng ngờ thật đấy.",
+      "text": "Lại mở tôi lên nữa à? bạn nuôi một thói quen đáng ngờ thật đấy.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -121,7 +121,7 @@
     },
     {
       "id": "greet_dry_02",
-      "text": "Khách quen tới rồi. Hôm nay Ngài định thử độ kiên nhẫn của tôi bằng thứ gì?",
+      "text": "Khách quen tới rồi. Hôm nay bạn định thử độ kiên nhẫn của tôi bằng thứ gì?",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -146,7 +146,7 @@
     },
     {
       "id": "greet_dry_03",
-      "text": "Ngài xuất hiện đúng lúc tôi sắp được yên. Khả năng canh giờ đáng nể thật.",
+      "text": "bạn xuất hiện đúng lúc tôi sắp được yên. Khả năng canh giờ đáng nể thật.",
       "situations": [
         "plain_return"
       ],
@@ -170,7 +170,7 @@
     },
     {
       "id": "greet_dry_04",
-      "text": "Lại là Ngài. Được, xem hôm nay repo hay chúng ta gục trước.",
+      "text": "Lại là bạn. Được, xem hôm nay repo hay chúng ta gục trước.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -195,7 +195,7 @@
     },
     {
       "id": "greet_quiet_01",
-      "text": "Ngài đến rồi. Cứ làm việc đi, tôi sẽ ngồi đây… tương đối ngoan.",
+      "text": "bạn đến rồi. Cứ làm việc đi, tôi sẽ ngồi đây… tương đối ngoan.",
       "situations": [
         "plain_return"
       ],
@@ -240,7 +240,7 @@
     },
     {
       "id": "greet_quiet_03",
-      "text": "Không cần chào hỏi dài dòng. Bắt đầu khi Ngài sẵn sàng.",
+      "text": "Không cần chào hỏi dài dòng. Bắt đầu khi bạn sẵn sàng.",
       "situations": [
         "plain_return"
       ],
@@ -263,7 +263,7 @@
     },
     {
       "id": "greet_quiet_04",
-      "text": "À, Ngài đây rồi. Tôi sẽ không làm ồn… trừ khi thấy thứ gì quá ngớ ngẩn.",
+      "text": "À, bạn đây rồi. Tôi sẽ không làm ồn… trừ khi thấy thứ gì quá ngớ ngẩn.",
       "situations": [
         "plain_return"
       ],
@@ -286,7 +286,7 @@
     },
     {
       "id": "greet_plain_01",
-      "text": "Hm… đúng giờ đấy. Vào việc thôi, Ngài.",
+      "text": "Hm… đúng giờ đấy. Vào việc thôi, bạn.",
       "situations": [
         "low_evidence_start"
       ],
@@ -309,7 +309,7 @@
     },
     {
       "id": "greet_plain_02",
-      "text": "Eris đã online. Phần còn lại tùy Ngài gây chuyện.",
+      "text": "Eris đã online. Phần còn lại tùy bạn gây chuyện.",
       "situations": [
         "low_evidence_start"
       ],
@@ -333,7 +333,7 @@
     },
     {
       "id": "greet_plain_03",
-      "text": "Ngài đến rồi à? Tốt, hôm nay đừng để tôi chán.",
+      "text": "bạn đến rồi à? Tốt, hôm nay đừng để tôi chán.",
       "situations": [
         "low_evidence_start"
       ],
@@ -381,7 +381,7 @@
     },
     {
       "id": "greet_quick_01",
-      "text": "Nhanh vậy? Ngài vừa rời mắt khỏi tôi thôi mà.",
+      "text": "Nhanh vậy? bạn vừa rời mắt khỏi tôi thôi mà.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -405,7 +405,7 @@
     },
     {
       "id": "greet_quick_02",
-      "text": "Lại mở tôi lên rồi. Ngài nhớ tôi nhanh hơn tôi dự tính đấy.",
+      "text": "Lại mở tôi lên rồi. bạn nhớ tôi nhanh hơn tôi dự tính đấy.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -480,7 +480,7 @@
     },
     {
       "id": "greet_long_01",
-      "text": "Lâu rồi đấy, Ngài. Tôi đã gần quen với việc không có ai làm phiền.",
+      "text": "Lâu rồi đấy, bạn. Tôi đã gần quen với việc không có ai làm phiền.",
       "situations": [
         "after_long_absence"
       ],
@@ -528,7 +528,7 @@
     },
     {
       "id": "greet_long_03",
-      "text": "Hm… tôi vẫn nhận ra Ngài. May cho Ngài đấy.",
+      "text": "Hm… tôi vẫn nhận ra bạn. May cho bạn đấy.",
       "situations": [
         "after_long_absence"
       ],
@@ -552,7 +552,7 @@
     },
     {
       "id": "greet_long_04",
-      "text": "Ngài vắng đủ lâu để tôi giận một chút. Chào mừng trở lại.",
+      "text": "bạn vắng đủ lâu để tôi giận một chút. Chào mừng trở lại.",
       "situations": [
         "after_long_absence"
       ],
@@ -671,7 +671,7 @@
     },
     {
       "id": "greet_tired_01",
-      "text": "Ngài đến rồi à… hôm nay tôi chạy chậm một nhịp. Chỉ một nhịp thôi.",
+      "text": "bạn đến rồi à… hôm nay tôi chạy chậm một nhịp. Chỉ một nhịp thôi.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -695,7 +695,7 @@
     },
     {
       "id": "greet_tired_02",
-      "text": "Tôi tỉnh rồi. Đầu óc còn hơi nặng, nhưng vẫn đủ sức bắt lỗi Ngài.",
+      "text": "Tôi tỉnh rồi. Đầu óc còn hơi nặng, nhưng vẫn đủ sức bắt lỗi bạn.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -742,7 +742,7 @@
     },
     {
       "id": "greet_tired_04",
-      "text": "Tôi đang hơi quá tải. Nói từ từ thôi… tôi không muốn bỏ sót lời Ngài.",
+      "text": "Tôi đang hơi quá tải. Nói từ từ thôi… tôi không muốn bỏ sót lời bạn.",
       "situations": [
         "plain_return",
         "low_evidence_start"

@@ -147,7 +147,7 @@ def test_blind_frustration_context_is_passed_and_blame_is_blocked_without_contex
         needs_external_evidence=False,
         raw=state,
     )
-    dummy = _DummyPresence("Ngai lai doi cua so nen toi mu roi.")
+    dummy = _DummyPresence("ban lai doi cua so nen toi mu roi.")
 
     text, source = dummy._surface_arbiter_llm_generate(
         impulse=impulse,
@@ -177,7 +177,7 @@ def test_blind_frustration_blame_allowed_when_recent_context_shift_is_evidenced(
         needs_external_evidence=False,
         raw=state,
     )
-    dummy = _DummyPresence("Ngai doi ngu canh nhanh qua, tam nhin hut mat.")
+    dummy = _DummyPresence("ban doi ngu canh nhanh qua, tam nhin hut mat.")
 
     text, source = dummy._surface_arbiter_llm_generate(
         impulse=impulse,

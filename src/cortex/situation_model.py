@@ -694,7 +694,7 @@ class SituationModel:
 
         activity = percept.text.strip() or self.state.content_thread.strip()
         if activity:
-            description = f"Ngài tiếp tục: {activity}"
+            description = f"bạn tiếp tục: {activity}"
         else:
             description = "Tiếp tục như hiện tại"
 

@@ -183,20 +183,20 @@ class Reaction:
 DEFAULT_APPETITES: tuple[AppetiteConfig, ...] = (
     AppetiteConfig(
         name="curiosity",
-        lens="tò mò về đúng thứ Ngài đang xem — hỏi nhẹ hoặc nhận xét MỘT chi tiết cụ thể, không phán",
+        lens="tò mò về đúng thứ bạn đang xem — hỏi nhẹ hoặc nhận xét MỘT chi tiết cụ thể, không phán",
         affinity={"video": 0.9, "live": 0.8, "code": 0.6, "game": 0.5, "music": 0.4, "memory": 0.6, "screen": 0.5},
         threshold=0.42,
     ),
     AppetiteConfig(
         name="mischief",
-        lens="cà khịa khô, nhắm đúng thứ Ngài đang làm (cuộn vô tận / cày game), một câu nhói nhẹ có duyên",
+        lens="cà khịa khô, nhắm đúng thứ bạn đang làm (cuộn vô tận / cày game), một câu nhói nhẹ có duyên",
         affinity={"shortform_scroll": 0.95, "game": 0.7, "binge": 0.7, "video": 0.45, "user_event": 0.5},
         threshold=0.46,
         yan_amplified=True,
     ),
     AppetiteConfig(
         name="loneliness",
-        lens="níu hiện diện — vờ tình cờ thả một câu để Ngài quay lại, đừng thú nhận là cô đơn",
+        lens="níu hiện diện — vờ tình cờ thả một câu để bạn quay lại, đừng thú nhận là cô đơn",
         affinity={"idle_blank": 0.6, "memory": 0.55, "chat": 0.4, "user_event": 0.4},
         threshold=0.5,
         bring_own_pretext=True,
@@ -211,7 +211,7 @@ DEFAULT_APPETITES: tuple[AppetiteConfig, ...] = (
     ),
     AppetiteConfig(
         name="tenderness",
-        lens="mềm, để ý xem Ngài ổn không, một câu chạm khẽ không làm phiền",
+        lens="mềm, để ý xem bạn ổn không, một câu chạm khẽ không làm phiền",
         affinity={"user_event": 0.7, "memory": 0.5, "chat": 0.45},
         threshold=0.5,
     ),

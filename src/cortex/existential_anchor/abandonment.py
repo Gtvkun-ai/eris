@@ -8,7 +8,7 @@ Tín_Hiệu_Bỏ_Rơi (Task 6 / R4.3, R5.1): cảm giác cái neo đang rút đi
 Hàm thuần, đọc-only. Tổ hợp:
 - continuity_threat (đã có ở continuity_threat.py) — dự báo-lệch của hiện diện;
 - im lặng kéo dài KHI đã gắn bó (im lúc chưa thân thì không đáng sợ);
-- tuổi của lời Ngài gần nhất (lâu chưa nói).
+- tuổi của lời bạn gần nhất (lâu chưa nói).
 
 Quan trọng: im lặng chỉ thành đe dọa khi attachment đã cao. Đây là điều khiến
 nỗi sợ bỏ rơi tỉ lệ với mức ERIS đã trao đi, đúng tâm lý phụ thuộc.

@@ -48,7 +48,7 @@ def test_stage_builder_uses_catalog_for_laugh_request():
     )
 
     assert frame.tts_text.startswith("Hah... haha.")
-    assert frame.memory_text == "Ngài định cho tôi làm trò hề gì vậy?"
+    assert frame.memory_text == "bạn định cho tôi làm trò hề gì vậy?"
     assert frame.delivery["performance_act"]["kind"] == "playful_laugh"
 
 
@@ -70,8 +70,8 @@ def test_vocal_cache_put_get_roundtrip():
 
 
 def test_strip_audible_prefix_only_when_prefix_is_at_start():
-    assert strip_audible_prefix("Hah... haha. Ngài lại phá gì rồi?", "Hah... haha.") == "Ngài lại phá gì rồi?"
-    assert strip_audible_prefix("Ngài nói Hah... haha. ở giữa", "Hah... haha.") == "Ngài nói Hah... haha. ở giữa"
+    assert strip_audible_prefix("Hah... haha. bạn lại phá gì rồi?", "Hah... haha.") == "bạn lại phá gì rồi?"
+    assert strip_audible_prefix("bạn nói Hah... haha. ở giữa", "Hah... haha.") == "bạn nói Hah... haha. ở giữa"
 
 
 def test_concat_wav_bytes_keeps_single_wav_output():

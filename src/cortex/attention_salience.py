@@ -48,7 +48,7 @@ from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, cast
 # =============================================================================
 # 0. Import mềm
 # =============================================================================
-# File này cố ý ít phụ thuộc. Trong giai đoạn Ngài đang xây lại core, layout repo có thể là:
+# File này cố ý ít phụ thuộc. Trong giai đoạn bạn đang xây lại core, layout repo có thể là:
 # - src/core/evidence.py
 # - src/cortex/evidence.py
 # - src/core/cognitive_frame.py
@@ -374,11 +374,11 @@ class AttentionSalienceConfig:
 # =============================================================================
 # Đây là phần trả lời cho "TẦNG 3 — stakes": nếu vector quan tâm toàn 0 thì kể cả
 # tri giác hoàn hảo cũng chỉ ra một quan sát vô-can. ERIS phản ứng vì CÓ quan điểm:
-# tò mò về thứ Ngài xem, để ý tâm trạng Ngài, có một quỹ đạo quan hệ muốn dịch chuyển.
+# tò mò về thứ bạn xem, để ý tâm trạng bạn, có một quỹ đạo quan hệ muốn dịch chuyển.
 #
 # StandingStakes KHÔNG phải goal nhất thời. Nó là thiên kiến chú ý bền vững, sống qua
 # cả phiên. Attention dùng nó để: (a) cho _goal_relevance một mức nền khi không có goal,
-# (b) cho _user_relevance biết "việc/ tâm trạng của Ngài" là đáng quan tâm dù không phải
+# (b) cho _user_relevance biết "việc/ tâm trạng của bạn" là đáng quan tâm dù không phải
 # tin nhắn trực tiếp, (c) một prior nhẹ thiên lệch điều gì được nổi lên.
 #
 # Quy tắc: nếu caller không truyền StandingStakes, attention chạy y hệt như cũ.
@@ -412,9 +412,9 @@ class StandingStakes:
     """Tập mối quan tâm bền vững của ERIS, dùng để thiên lệch chú ý.
 
     care_user_activity:
-        Mức quan tâm tới thứ Ngài đang làm/xem (kể cả khi không nhắn gì).
+        Mức quan tâm tới thứ bạn đang làm/xem (kể cả khi không nhắn gì).
     care_user_mood:
-        Mức quan tâm tới tâm trạng/affect của Ngài.
+        Mức quan tâm tới tâm trạng/affect của bạn.
     relational_pull:
         Lực kéo theo quỹ đạo quan hệ (tín hiệu relational/identity).
     """
@@ -461,7 +461,7 @@ DEFAULT_STANDING_STAKES = StandingStakes(
         ),
         StandingTheme(
             name="us",
-            tokens=frozenset({"ngài", "ngai", "tôi", "toi", "cùng", "ở cạnh", "o canh", "nhớ", "nho", "quay lại", "quay lai"}),
+            tokens=frozenset({"bạn", "ban", "tôi", "toi", "cùng", "ở cạnh", "o canh", "nhớ", "nho", "quay lại", "quay lai"}),
             weight=0.66,
             families=frozenset({"relational_signal", "identity_signal"}),
         ),
@@ -1465,7 +1465,7 @@ class AttentionSalienceEngine:
             if candidate.family == "goal_signal":
                 base = 0.50
             # Không có goal nhất thời -> dùng stake thường trực làm mức nền.
-            # "Ngài đang xem video" chạm theme what_he_watches nên không còn = 0.
+            # "bạn đang xem video" chạm theme what_he_watches nên không còn = 0.
             if stakes is not None:
                 base = max(base, stakes.theme_overlap(candidate.text_tokens, family=candidate.family))
             return clamp01(base)
@@ -1487,12 +1487,12 @@ class AttentionSalienceEngine:
             score += 0.75
         if channel == "chat":
             score += 0.15
-        if any(token in lower_claim for token in ("tôi", "toi", "ngài", "ngai", "mình", "minh", "bạn", "ban")):
+        if any(token in lower_claim for token in ("tôi", "toi", "bạn", "ban", "mình", "minh", "bạn", "ban")):
             score += 0.18
         if "?" in candidate.claim:
             score += 0.15
-        # Stake: ERIS quan tâm tới VIỆC Ngài đang làm/xem và TÂM TRẠNG của Ngài,
-        # nên một quan sát ambient về hoạt động của Ngài cũng "liên quan tới người",
+        # Stake: ERIS quan tâm tới VIỆC bạn đang làm/xem và TÂM TRẠNG của bạn,
+        # nên một quan sát ambient về hoạt động của bạn cũng "liên quan tới người",
         # không cần là tin nhắn trực tiếp.
         if stakes is not None and candidate.source != "user_chat":
             if self._is_user_activity(candidate):
@@ -1502,7 +1502,7 @@ class AttentionSalienceEngine:
         return clamp01(score)
 
     def _is_user_activity(self, candidate: AttentionCandidate) -> bool:
-        """Candidate này có phải mô tả thứ Ngài đang làm/xem trên màn hình không."""
+        """Candidate này có phải mô tả thứ bạn đang làm/xem trên màn hình không."""
 
         if candidate.source in {"active_window", "browser", "vision", "ocr"}:
             return True
@@ -1512,7 +1512,7 @@ class AttentionSalienceEngine:
         """Mức chạm tổng hợp của candidate với stake thường trực, trên [0,1].
 
         Đây là trục để debug và để prior thiên lệch bám vào. Nó gộp: chạm theme,
-        quan tâm hoạt động của Ngài, quan tâm tâm trạng, và lực kéo quan hệ.
+        quan tâm hoạt động của bạn, quan tâm tâm trạng, và lực kéo quan hệ.
         """
 
         if stakes is None:
@@ -1521,7 +1521,7 @@ class AttentionSalienceEngine:
         activity = stakes.care_user_activity if self._is_user_activity(candidate) else 0.0
         mood = stakes.care_user_mood if candidate.family in {"affective_signal", "relational_signal"} else 0.0
         relational = stakes.relational_pull if candidate.family in {"relational_signal", "identity_signal"} else 0.0
-        # Theme match (thật sự chạm thứ Ngài đang xem/làm/cảm) là tín hiệu mạnh nhất.
+        # Theme match (thật sự chạm thứ bạn đang xem/làm/cảm) là tín hiệu mạnh nhất.
         # care_user_activity một mình (vd cửa sổ trống "general") chỉ là nền yếu — không
         # được phép biến mọi telemetry ambient thành "đáng để ý".
         return clamp01(max(theme, mood, 0.70 * relational, 0.55 * activity))

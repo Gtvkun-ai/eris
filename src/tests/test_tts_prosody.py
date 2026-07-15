@@ -6,7 +6,7 @@ from runtime.tts_markup import render_tts_markup
 
 
 def test_prosody_director_detects_dry_tease():
-    plan = ProsodyDirector().plan("Ngài lại phá gì rồi?", valence=0.0, arousal=0.35)
+    plan = ProsodyDirector().plan("bạn lại phá gì rồi?", valence=0.0, arousal=0.35)
 
     assert plan.style == "dry_tease"
     assert "teasing" in plan.opening_tag
@@ -14,12 +14,12 @@ def test_prosody_director_detects_dry_tease():
 
 
 def test_tts_markup_adds_tag_and_light_pause_for_tease():
-    plan = ProsodyDirector().plan("Ngài lại phá gì rồi?", valence=0.0, arousal=0.35)
-    marked = render_tts_markup("Ngài lại phá gì rồi?", plan)
+    plan = ProsodyDirector().plan("bạn lại phá gì rồi?", valence=0.0, arousal=0.35)
+    marked = render_tts_markup("bạn lại phá gì rồi?", plan)
 
     assert marked.startswith("[dryly, teasing")
     assert "…" in marked
-    assert "Ngài" in marked
+    assert "bạn" in marked
 
 
 def test_tts_prompt_prelocalized_japanese_does_not_translate_again():

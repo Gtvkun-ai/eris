@@ -163,7 +163,7 @@ class TheoryOfMindCore:
         Khi > 0, sức nặng của counterfactual đối thủ bị hạ *tỉ lệ với mức rủi ro
         đọc-quá thấp* của từng inference, để một cú đọc tự tin và ít rủi ro không
         bị các diễn giải cạnh tranh dìm xuống ``content`` trung tính. Đây là dám
-        đọc Ngài rồi đi theo cú đọc đó — KHÔNG phải bịa: chỗ rủi ro cao
+        đọc bạn rồi đi theo cú đọc đó — KHÔNG phải bịa: chỗ rủi ro cao
         (``overread_risk`` lớn) hầu như không được nới.
         """
 

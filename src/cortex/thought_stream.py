@@ -861,7 +861,7 @@ class CognitiveMomentumEngine:
 
     USER_PROJECT_TERMS = (
         "user",
-        "ngai",
+        "ban",
         "project",
         "repo",
         "code",

@@ -190,7 +190,7 @@ def content_tokens(text: str, *, min_len: int = 3) -> tuple[str, ...]:
 
     normalized = normalize_text(text)
     ignored = {
-        "ngai", "toi", "mot", "nhung", "van", "dang", "hoi", "nay", "kia",
+        "ban", "toi", "mot", "nhung", "van", "dang", "hoi", "nay", "kia",
         "la", "co", "thi", "roi", "cho", "cai", "do", "day", "nay", "nua",
         "thoi", "nhu", "the", "voi", "cua", "trong", "ngoai", "len", "xuong",
     }

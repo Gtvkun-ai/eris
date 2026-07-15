@@ -9,7 +9,7 @@ import unicodedata
 
 from .evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
 
-_STOPWORDS = {"cai", "nay", "do", "kia", "gi", "la", "sao", "ta", "toi", "ban", "em", "ngai", "tren", "man", "hinh", "xem", "nhin", "cho", "voi", "di"}
+_STOPWORDS = {"cai", "nay", "do", "kia", "gi", "la", "sao", "ta", "toi", "ban", "em", "ban", "tren", "man", "hinh", "xem", "nhin", "cho", "voi", "di"}
 
 
 def _normalize(text: str) -> str:

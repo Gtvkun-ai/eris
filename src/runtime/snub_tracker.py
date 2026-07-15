@@ -186,7 +186,7 @@ class SnubTracker:
 
     Cách dùng:
         tracker = SnubTracker()
-        tracker.on_eris_spoke("Ngài có thích mưa không?")  # câu hỏi
+        tracker.on_eris_spoke("bạn có thích mưa không?")  # câu hỏi
         tracker.on_eris_spoke("Tôi đang nghĩ về cà phê.")   # khẳng định
 
         tracker.on_user_responded(user_text)  # gọi khi user nhắn tin

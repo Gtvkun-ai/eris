@@ -15,7 +15,7 @@ def test_tts_worker_emits_queued_start_done_events():
     try:
         worker.speak(
             tts._SpeakRequest(
-                "Ngài lại phá gì rồi?",
+                "bạn lại phá gì rồi?",
                 turn_id="turn-x",
                 segment_id=2,
                 prosody_style="dry_tease",

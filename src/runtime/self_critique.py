@@ -693,7 +693,7 @@ class SelfCritiqueEscalationMixin:
         if critique.needs_tool:
             escalation_kwargs["ti_context"] = (
                 (escalation_kwargs.get("ti_context", "") or "")
-                + f"\nESCALATION: Ngài đang nhờ tra cứu / hỏi nguồn ngoài. Nếu cần, đặt system_action="
+                + f"\nESCALATION: bạn đang nhờ tra cứu / hỏi nguồn ngoài. Nếu cần, đặt system_action="
                 f"{critique.tool_hint} với action_input là truy vấn cụ thể. ĐỪNG từ chối khả năng tra cứu."
             )
 
@@ -864,7 +864,7 @@ class SelfCritiqueEscalationMixin:
         except Exception:
             fallback = ""
         if not fallback:
-            fallback = "Câu vừa rồi của tôi lệch nhịp. Tôi rút lại và trả lời gọn hơn: Ngài nói tiếp phần chính đi."
+            fallback = "Câu vừa rồi của tôi lệch nhịp. Tôi rút lại và trả lời gọn hơn: bạn nói tiếp phần chính đi."
         try:
             from dataclasses import replace
             revised = replace(decision)
@@ -1199,14 +1199,14 @@ class SelfCritiqueEscalationMixin:
         base_grounding = refreshed_grounding or (kwargs.get("grounding_context", "") or "")
         kwargs["grounding_context"] = (
             base_grounding
-            + "\nTOOL_RESULT (đã tra cứu giúp Ngài; đây là PRIMARY EVIDENCE của câu trả lời. "
+            + "\nTOOL_RESULT (đã tra cứu giúp bạn; đây là PRIMARY EVIDENCE của câu trả lời. "
             "Hãy diễn đạt tự nhiên thành câu nói của em, KHÔNG đặt system_action nữa, "
             "và không để bối cảnh màn hình phụ phủ định kết quả này):\n"
             f"{tool_summary}"
         )
         kwargs["ti_context"] = (
             (kwargs.get("ti_context", "") or "")
-            + "\nĐã có kết quả công cụ ở trên; nói lại cho Ngài bằng giọng của em, không gọi thêm action."
+            + "\nĐã có kết quả công cụ ở trên; nói lại cho bạn bằng giọng của em, không gọi thêm action."
         )
         try:
             raw = self.llm_service.generate_chat_reply(**kwargs, use_escalation_client=True)

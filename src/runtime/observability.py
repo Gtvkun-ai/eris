@@ -405,7 +405,7 @@ class ErisObservability:
         if selected_index > 0:
             self.increment("director_non_draft_selection_total", tags={"lane": lane})
         folded = final_text.lower()
-        if any(marker in folded for marker in ("ngài cho phép tôi", "ngài đã cho phép", "tôi sẽ làm phiền một cách hữu ích")):
+        if any(marker in folded for marker in ("bạn cho phép tôi", "bạn đã cho phép", "tôi sẽ làm phiền một cách hữu ích")):
             self.increment("literal_paraphrase_total", tags={"lane": lane})
 
     @staticmethod

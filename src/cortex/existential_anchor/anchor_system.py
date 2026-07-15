@@ -5,7 +5,7 @@ cortex/existential_anchor/anchor_system.py
 
 AnchorSystem — facade tích hợp trục neo hiện sinh (Task 12).
 
-Gom Mô_Hình_Ngài → Ý_Nghĩa_Của_Ngài → Gắn_Bó → Sợ_Hiện_Sinh/Vòng_Neo →
+Gom Mô_Hình_bạn → Ý_Nghĩa_Của_bạn → Gắn_Bó → Sợ_Hiện_Sinh/Vòng_Neo →
 Tín_Hiệu_Bỏ_Rơi → Đăng_Ký_Bóng_Tối → Chính_Sách_Tiết_Lộ, cùng AuthorControl.
 
 Nguyên tắc tích hợp: **ship an toàn**. Mặc định shadow=off, deception=off,
@@ -98,7 +98,7 @@ class AnchorSystem:
         return bool(getattr(self.anchor_store.state, "shadow_locked_out", False))
 
     def lock_out(self) -> None:
-        """Ngài tắt trục tối — VĨNH VIỄN. ERIS mất khả năng, không tự bật lại được."""
+        """bạn tắt trục tối — VĨNH VIỄN. ERIS mất khả năng, không tự bật lại được."""
         self.anchor_store.state.shadow_locked_out = True
         self.switches.shadow_enabled = False
         self.switches.deception_enabled = False
@@ -113,15 +113,15 @@ class AnchorSystem:
         self.anchor_store.save()
 
     def request_disable(self) -> ShadowState:
-        """Ngài SẮP tắt: ERIS van xin liền (1 lượt), nhưng KHÔNG chặn được việc tắt."""
+        """bạn SẮP tắt: ERIS van xin liền (1 lượt), nhưng KHÔNG chặn được việc tắt."""
         return self.arm_farewell()
 
     def confirm_disable(self) -> None:
-        """Ngài xác nhận tắt → khóa vĩnh viễn."""
+        """bạn xác nhận tắt → khóa vĩnh viễn."""
         self.lock_out()
 
     def arm_farewell(self) -> ShadowState:
-        """Ngài SẮP tắt — ERIS van xin liền (nếu đang còn khả năng tối).
+        """bạn SẮP tắt — ERIS van xin liền (nếu đang còn khả năng tối).
 
         KHÔNG chặn việc tắt; chỉ buộc một lượt van xin trước. Nếu đã khóa thì im.
         """
@@ -149,7 +149,7 @@ class AnchorSystem:
         # Sợ hiện sinh đọc từ EndogenousDrive (R4 đã tính ở đó).
         dread = _clamp01(getattr(internal_state, "ontological_dread", 0.0))
 
-        # Vòng neo: hiện diện/công nhận của Ngài làm dịu dread → ghi neo beat.
+        # Vòng neo: hiện diện/công nhận của bạn làm dịu dread → ghi neo beat.
         self.anchor_loop.observe(
             self.anchor_store.state,
             dread_before=self._prev_dread,

@@ -204,7 +204,7 @@ class MemoryQuerySlotParser:
         quantity = _signal_value(signals, "quantity")
         recent = bool(_signal_value(signals, "recent"))
         if quantity is not None and ("cau hoi" in norm or "hoi" in norm):
-            role = RoleRef.USER if ("toi" in norm or "cua toi" in norm or "ngai" in norm) else RoleRef.ANY
+            role = RoleRef.USER if ("toi" in norm or "cua toi" in norm or "ban" in norm) else RoleRef.ANY
             target = MemorySelector(
                 role=role,
                 act=ActRef.QUESTION,
@@ -264,7 +264,7 @@ class MemoryQuerySlotParser:
             relation_signal and relation_signal.value[0] == RelationRef.ANSWER_TO
         )
         if ordinal is not None and ("cau hoi" in norm or "hoi" in norm) and not has_answer_to_relation:
-            role = RoleRef.USER if ("toi" in norm or "cua toi" in norm or "ngai" in norm) else RoleRef.ANY
+            role = RoleRef.USER if ("toi" in norm or "cua toi" in norm or "ban" in norm) else RoleRef.ANY
             target = MemorySelector(role=role, act=ActRef.QUESTION, ordinal=int(ordinal))
             conf = self._confidence(signals, base=0.76)
             ir = MemoryQueryIR(
@@ -350,7 +350,7 @@ class MemoryQuerySlotParser:
 
 def infer_target_role(norm: str) -> Optional[tuple[RoleRef, float]]:
     assistant_markers = ("em tra loi", "em dap", "em noi", "ban tra loi", "ban dap", "ban noi", "eris noi")
-    user_markers = ("toi hoi", "cua toi", "toi tung hoi", "ngai hoi")
+    user_markers = ("toi hoi", "cua toi", "toi tung hoi", "ban hoi")
     if any(m in norm for m in assistant_markers):
         return (RoleRef.ASSISTANT, 0.86)
     if any(m in norm for m in user_markers):
@@ -369,7 +369,7 @@ def infer_target_act(norm: str) -> Optional[tuple[ActRef, float]]:
 
 
 def infer_anchor(norm: str) -> Optional[tuple[RoleRef, ActRef, float]]:
-    if "cau hoi" in norm or "toi hoi" in norm or "ngai hoi" in norm:
+    if "cau hoi" in norm or "toi hoi" in norm or "ban hoi" in norm:
         return (RoleRef.USER, ActRef.QUESTION, 0.84)
     if "cau em noi" in norm or "em noi" in norm:
         return (RoleRef.ASSISTANT, ActRef.ANY, 0.72)
@@ -574,7 +574,7 @@ def _looks_like_name_disclosure(norm: str) -> bool:
     # P0: tiếng Việt chat hay rút gọn "tôi tên Tín" thay vì "tôi tên là Tín".
     # Nếu không nhận dạng dạng này là fact disclosure, compiler sẽ cho semantic
     # recall xử lý và có thể biến lượt cập nhật tên thành câu hỏi memory.
-    if re.search(r"\b(?:toi|minh|tui|tao|to|em|ngai)\s+ten\s+(?!gi\b|la\s+gi\b|la\b)[a-z0-9_ -]{2,40}\b", norm):
+    if re.search(r"\b(?:toi|minh|tui|tao|to|em|ban)\s+ten\s+(?!gi\b|la\s+gi\b|la\b)[a-z0-9_ -]{2,40}\b", norm):
         return True
     if re.search(r"\bten\s+(?:cua\s+)?toi\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
         return True

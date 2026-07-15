@@ -96,18 +96,18 @@ class QuestionFormulator:
         return text
 
     def craft_user_question(self, gap: KnowledgeGap) -> str:
-        """Câu hỏi ngắn, thân mật ERIS hỏi LẠI Ngài để hiểu rõ (không lén tra)."""
+        """Câu hỏi ngắn, thân mật ERIS hỏi LẠI bạn để hiểu rõ (không lén tra)."""
 
         desc = gap.description.strip()
         prompt = (
-            "ERIS (AI đồng hành) chưa hiểu rõ điều Ngài (người dùng) vừa nói/làm. Viết MỘT "
-            "câu hỏi ngắn, tự nhiên, thân mật (tiếng Việt, tối đa 25 từ) để hỏi LẠI Ngài cho "
+            "ERIS (AI đồng hành) chưa hiểu rõ điều bạn (người dùng) vừa nói/làm. Viết MỘT "
+            "câu hỏi ngắn, tự nhiên, thân mật (tiếng Việt, tối đa 25 từ) để hỏi LẠI bạn cho "
             "rõ. Không khách sáo, không giải thích.\n"
             f"Chưa rõ: {desc}\nNgữ cảnh: {gap.context}\nMột câu hỏi của ERIS:"
         )
         text = self._sanitize(self._try_llm(prompt))
         if not text:
-            text = f"Ơ, ý Ngài về '{desc}' là sao ạ?" if desc else "Ngài nói rõ hơn chút được không ạ?"
+            text = f"Ơ, ý bạn về '{desc}' là sao ạ?" if desc else "bạn nói rõ hơn chút được không ạ?"
             text = self._sanitize(text)
         if len(text) > _MAX_HIGHLIGHT_LEN:
             text = text[:_MAX_HIGHLIGHT_LEN].rstrip()
@@ -127,11 +127,11 @@ class QuestionFormulator:
             return ""
         if kind == "context":
             prompt = (
-                "ERIS vừa tra để đoán Ngài đang làm gì trên màn hình. Viết MỘT câu ngắn "
+                "ERIS vừa tra để đoán bạn đang làm gì trên màn hình. Viết MỘT câu ngắn "
                 "(tiếng Việt, tối đa 25 từ) kiểu suy đoán nhẹ nhàng, KHÔNG sao chép câu trả lời.\n"
                 f"Manh mối: {episode.gap.description}\nThông tin: {answer}\nMột câu của ERIS:"
             )
-            fallback = f"Chắc Ngài đang {episode.gap.description}?"
+            fallback = f"Chắc bạn đang {episode.gap.description}?"
         else:  # banter
             prompt = (
                 "ERIS vừa biết một chuyện vui. Viết MỘT câu ngắn (tiếng Việt, tối đa 25 từ) "

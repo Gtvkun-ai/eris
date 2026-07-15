@@ -212,8 +212,8 @@ class TestTutorWiringRuntime(unittest.TestCase):
 
     def test_tutor_tick_collects_observer_and_violation_and_lazy_attaches_provider(self):
         violation = SimpleNamespace(
-            expected="Ngai tiep tuc viet test",
-            observed="Ngai mo docs",
+            expected="ban tiep tuc viet test",
+            observed="ban mo docs",
             prediction_error=0.83,
         )
         runtime = SimpleNamespace(

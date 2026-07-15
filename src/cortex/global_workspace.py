@@ -42,7 +42,7 @@ import json
 import math
 
 
-try:  # pragma: no cover - phụ thuộc vào layout repo khi Ngài nối thật.
+try:  # pragma: no cover - phụ thuộc vào layout repo khi bạn nối thật.
     from core.evidence import ModuleReport  # type: ignore
 except Exception:  # pragma: no cover
     try:
@@ -1398,7 +1398,7 @@ class GlobalWorkspaceEngine:
 
     def _classify_slot_kind(self, name: str, content: Any) -> WorkspaceItemKind:
         text = f"{name} {stringify_content(content)}".lower()
-        if any(k in text for k in ("user request", "current request", "user_text", "chat", "ngài yêu cầu", "request")):
+        if any(k in text for k in ("user request", "current request", "user_text", "chat", "bạn yêu cầu", "request")):
             return "user_request"
         if any(k in text for k in ("goal", "mục tiêu", "task", "active technical")):
             return "goal"
