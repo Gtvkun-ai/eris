@@ -289,8 +289,7 @@ class ErisObservability:
             ),
             "user_quality_rollout": (
                 "session_retention_", "manual_disable_", "thumbs_down_", "rollback_", "canary_",
-                "social_acceptance_", "social_correction_", "social_confusion_", "social_intrusion_",
-                "social_relationship_", "social_disengagement_",
+                "user_accepted_", "user_corrected_", "user_intruded_", "relation_ruptured_",
             ),
         }
         dashboards: dict[str, dict[str, Any]] = {name: {} for name in groups}
@@ -362,26 +361,29 @@ class ErisObservability:
     def record_outcome(self, outcome: Any) -> None:
         if outcome is None:
             return
-        from .social_outcome_appraisal import social_score
-
         mapping = {
-            "acceptance_support": "social_acceptance_support",
-            "correction_pressure": "social_correction_pressure",
-            "confusion_pressure": "social_confusion_pressure",
-            "intrusion_risk": "social_intrusion_risk",
-            "relationship_strain_signal": "social_relationship_strain_signal",
-            "relationship_warmth_signal": "social_relationship_warmth_signal",
-            "laughter_signal": "social_laughter_signal",
-            "soothing_signal": "social_soothing_signal",
-            "disengagement_risk": "social_disengagement_risk",
+            "user_accepted": "user_accepted_total",
+            "user_corrected": "user_corrected_total",
+            "user_confused": "user_confused_total",
+            "user_felt_intruded": "user_intruded_total",
+            "relation_ruptured": "relation_ruptured_total",
+            "relation_improved": "relation_improved_total",
         }
         for field_name, metric in mapping.items():
-            value = social_score(outcome, field_name)
-            self.observe(metric, value)
-            # Event threshold chỉ phục vụ dashboard; tên metric vẫn là pressure,
-            # không biến nó thành claim rằng user chắc chắn ở trạng thái nào.
-            if value >= 0.70:
-                self.increment(f"{metric}_high_total")
+            value = getattr(outcome, field_name, None)
+            if value is True:
+                self.increment(metric)
+        # Metric mới đọc pressure mềm từ Unified Social Appraisal. Bool legacy
+        # vẫn được đếm để dashboard cũ không vỡ, nhưng tuning nên dựa vào score.
+        for field_name in (
+            "correction_pressure",
+            "confusion_pressure",
+            "laughter_signal",
+            "intrusion_pressure",
+            "rupture_pressure",
+            "acceptance_pressure",
+        ):
+            self.observe(field_name, float(getattr(outcome, field_name, 0.0) or 0.0))
         self.observe("action_success", float(getattr(outcome, "action_success", 1.0) or 0.0))
         self.observe("body_match_success", float(getattr(outcome, "body_match_success", 1.0) or 0.0))
 

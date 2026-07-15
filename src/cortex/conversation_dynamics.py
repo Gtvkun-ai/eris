@@ -322,17 +322,11 @@ class ConversationFailure:
 
 @dataclass(slots=True)
 class CorrectionAssessment:
-    """Áp lực sửa sai dạng score; không khẳng định user chắc chắn đang sửa."""
-
-    pressure: float = 0.0
+    detected: bool = False
     severity: float = 0.0
     semantic_divergence: float = 0.0
     frustration: float = 0.0
-    minor_fit: float = 0.0
-
-    @property
-    def policy_active(self) -> bool:
-        return self.pressure >= 0.38
+    minor: bool = False
 
 
 @dataclass(slots=True)
@@ -508,16 +502,16 @@ class ConversationDynamicsState:
 class ConversationDynamicsReport:
     state: ConversationDynamicsState = field(default_factory=ConversationDynamicsState)
     prompt_context: str = ""
-    correction_pressure: float = 0.0
-    failure_pressure: float = 0.0
+    correction_detected: bool = False
+    failure_detected: bool = False
     evidence: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
             "state": self.state.to_dict(),
             "prompt_context": self.prompt_context,
-            "correction_pressure": round(_clamp(self.correction_pressure), 4),
-            "failure_pressure": round(_clamp(self.failure_pressure), 4),
+            "correction_detected": bool(self.correction_detected),
+            "failure_detected": bool(self.failure_detected),
             "evidence": list(self.evidence),
         }
 
@@ -532,18 +526,40 @@ class ConversationDynamicsEngine:
         last_user_intent: str = "",
         active_topic: str = "",
         repeat_count: int = 1,
-        correction_pressure: float = 0.0,
+        correction_detected: bool = False,
         affect_signal: object | None = None,
         relational_feedback: RelationalFeedbackSignal | None = None,
+        social_appraisal: object | None = None,
     ) -> ConversationDynamicsReport:
         previous = state or ConversationDynamicsState() #nếu không có state trước đó, bắt đầu với state mặc định
         normalized = normalize_vietnamese_ascii(user_text) #bình thường hóa văn bản người dùng để dễ dàng phân tích
-        correction = self.assess_correction(
-            user_text,
-            last_assistant_text=last_assistant_text,
-            external_pressure=correction_pressure,
-        )
-        has_correction = correction.policy_active  # gate vận hành từ pressure, không phải verdict về user
+        if social_appraisal is not None:
+            correction_signal = getattr(social_appraisal, "correction", None)
+            claim = getattr(social_appraisal, "claim", None)
+            irritation_signal = getattr(social_appraisal, "irritation", None)
+            thresholds = getattr(social_appraisal, "thresholds", None)
+            pressure = max(
+                _clamp(getattr(correction_signal, "value", 0.0)),
+                _clamp(getattr(claim, "contest", 0.0)),
+                _clamp(getattr(claim, "contradiction", 0.0)),
+            )
+            repair_gate = float(getattr(thresholds, "repair_active", 0.46) or 0.46)
+            suppress_gate = float(getattr(thresholds, "claim_suppress", 0.66) or 0.66)
+            correction = CorrectionAssessment(
+                detected=pressure >= repair_gate,
+                severity=pressure,
+                semantic_divergence=_clamp(getattr(claim, "contradiction", 0.0)),
+                frustration=_clamp(getattr(irritation_signal, "value", 0.0)),
+                minor=(pressure >= repair_gate and pressure < suppress_gate),
+            )
+        else:
+            # Fallback cho caller legacy. Hot path chat phải truyền snapshot chung.
+            correction = self.assess_correction(
+                user_text,
+                last_assistant_text=last_assistant_text,
+                external_detected=correction_detected,
+            )
+        has_correction = correction.detected #phát hiện xem người dùng có đang sửa lỗi không, dựa trên cờ correction_detected hoặc các dấu hiệu trong văn bản
         references_previous_failure = self.references_previous_failure(user_text) #kiểm tra xem người dùng có đang nhắc đến lỗi trước đó không, dựa trên các dấu hiệu trong văn bản
         direct_execute = self.looks_like_execute_request(user_text) #phát hiện xem người dùng có đang yêu cầu thực thi trực tiếp không, dựa trên các dấu hiệu trong văn bản
         compression = self.looks_like_compression_request(user_text) #phát hiện xem người dùng có đang yêu cầu nén thông tin không, dựa trên các dấu hiệu trong văn bản
@@ -597,7 +613,7 @@ class ConversationDynamicsEngine:
                 + min(0.16, correction_streak * 0.04)
             )
             evidence.append(f"user_correction_severity={correction.severity:.2f}")
-            if correction.minor_fit >= 0.55:
+            if correction.minor:
                 flags.extend(("apply_small_correction", "avoid_overrepair", "preserve_conversation_mode"))
             else:
                 flags.extend(("repair_first", "avoid_failed_frame", "lower_inference_confidence"))
@@ -727,12 +743,8 @@ class ConversationDynamicsEngine:
         return ConversationDynamicsReport(
             state=next_state,
             prompt_context=next_state.to_prompt_context(),
-            correction_pressure=correction.pressure,
-            failure_pressure=max(
-                correction.pressure,
-                0.72 if references_previous_failure else 0.0,
-                max(perceived_rejection, feedback_repair) if relational_repair_needed else 0.0,
-            ),
+            correction_detected=has_correction,
+            failure_detected=has_correction or references_previous_failure or relational_repair_needed,
             evidence=tuple(dict.fromkeys(evidence))[-10:],
         )
 
@@ -742,7 +754,7 @@ class ConversationDynamicsEngine:
         text: str,
         *,
         last_assistant_text: str = "",
-        external_pressure: float = 0.0,
+        external_detected: bool = False,
     ) -> CorrectionAssessment:
         normalized = normalize_vietnamese_ascii(text)
         if not normalized:
@@ -810,17 +822,16 @@ class ConversationDynamicsEngine:
         minor = _contains_any(normalized, MINOR_CORRECTION_MARKERS)
         strong = _contains_any(normalized, strong_markers)
         moderate = _contains_any(normalized, moderate_markers)
-        surface_pressure = 0.82 if strong else 0.62 if moderate else 0.34 if minor else 0.0
-        pressure = max(_clamp(external_pressure), surface_pressure)
-        if pressure < 0.18:
+        detected = bool(external_detected or strong or moderate or minor)
+        if not detected:
             return CorrectionAssessment()
 
-        frustration = self.estimate_frustration(normalized, correction_pressure=pressure)
+        frustration = self.estimate_frustration(normalized, correction_detected=detected)
         if strong:
             severity = 0.72
         elif moderate:
             severity = 0.50
-        elif external_pressure >= 0.38:
+        elif external_detected:
             severity = 0.44
         else:
             severity = 0.24
@@ -843,16 +854,15 @@ class ConversationDynamicsEngine:
             semantic_divergence = _clamp(semantic_divergence + 0.10)
 
         return CorrectionAssessment(
-            pressure=_clamp(max(pressure, severity * 0.82)),
+            detected=True,
             severity=_clamp(severity),
             semantic_divergence=semantic_divergence,
             frustration=frustration,
-            minor_fit=0.78 if (minor or severity < 0.35) else 0.0,
+            minor=bool(minor or severity < 0.35),
         )
 
-    def correction_pressure(self, text: str) -> float:
-        """Trả pressure bề mặt, không đóng dấu user chắc chắn đang sửa."""
-        return self.assess_correction(text).pressure
+    def looks_like_correction(self, text: str) -> bool:
+        return self.assess_correction(text).detected
 
     def estimate_semantic_divergence(
         self,
@@ -876,7 +886,7 @@ class ConversationDynamicsEngine:
             divergence = divergence * 0.72 + lexical_distance * 0.28
         return _clamp(divergence)
 
-    def estimate_frustration(self, normalized_text: str, *, correction_pressure: float = 0.0) -> float:
+    def estimate_frustration(self, normalized_text: str, *, correction_detected: bool = False) -> float:
         if not normalized_text:
             return 0.0
         score = 0.0
@@ -884,7 +894,7 @@ class ConversationDynamicsEngine:
             if _contains_phrase(normalized_text, marker):
                 score += weight
 
-        if correction_pressure >= 0.38 and any(marker in normalized_text for marker in ("ban", "co", "eris")):
+        if correction_detected and any(marker in normalized_text for marker in ("ban", "co", "eris")):
             score += 0.06
         if any(marker in normalized_text for marker in ("that su", "qua", "rat", "cuc ky")):
             score += 0.06
@@ -933,7 +943,7 @@ class ConversationDynamicsEngine:
             relief += 0.12
         if previous.mode == "repair" and positive_relief >= 0.30:
             relief += 0.18
-        if previous.conversation_pressure >= 0.25 and self.assess_correction(text).pressure < 0.38:
+        if previous.conversation_pressure >= 0.25 and not self.assess_correction(text).detected:
             relief += 0.08
         relief += self.estimate_acknowledgment_quality(last_assistant_text) * 0.35
         return _clamp(relief)
@@ -965,7 +975,7 @@ class ConversationDynamicsEngine:
 
         if correction.severity >= 0.55:
             arc = "rupture"
-        elif correction.pressure >= 0.38:
+        elif correction.detected:
             arc = "minor_adjustment"
         elif relief >= 0.45:
             arc = "recovering"

@@ -985,6 +985,11 @@ class PostGenerationFiltersMixin:
                 grounding=grounding,
                 frame=frame,
                 speech_core=speech_core,
+                social_appraisal=(
+                    getattr(frame, "social_appraisal", None)
+                    if frame is not None
+                    else getattr(self, "current_social_appraisal", None)
+                ),
             )
             return arbiter.apply(decision, banter)
         except Exception as exc:

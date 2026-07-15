@@ -17,6 +17,7 @@ Thread-safe. Không bao giờ ném lỗi ra ngoài (đọc secrets hỏng → po
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -315,6 +316,43 @@ class ApiKeyPool:
                 "rotations": self._rotations,
                 "rate_limit_bursts": self._rate_limit_bursts,
                 "global_cooldown_ms": int(max(0.0, self._global_cooldown_until - now) * 1000),
+            }
+
+    def snapshot(self) -> dict[str, object]:
+        """Trả health an toàn cho Settings UI, tuyệt đối không lộ raw API key.
+
+        UI chỉ nhận SHA-256 fingerprint 12 ký tự để ghép trạng thái runtime với
+        key đang hiện trong editor. Nhờ vậy có thể chỉ đúng key đang dùng/cooldown
+        mà không gửi bí mật ngược qua transport hoặc ghi chúng vào log.
+        """
+
+        now = time.time()
+        with self._lock:
+            shared_cooling = self._global_cooldown_until > now
+            alive_raw = sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now)
+            active_index = -1 if shared_cooling else self._next_alive_locked(self._index, now)
+            keys: list[dict[str, object]] = []
+            for idx, raw_key in enumerate(self._keys):
+                cooldown_ms = int(max(0.0, self._dead_until[idx] - now) * 1000)
+                keys.append(
+                    {
+                        "index": idx,
+                        "fingerprint": hashlib.sha256(raw_key.encode("utf-8", "ignore")).hexdigest()[:12],
+                        "status": "cooldown" if cooldown_ms > 0 else "ready",
+                        "cooldown_ms": cooldown_ms,
+                        "active": idx == active_index,
+                    }
+                )
+
+            return {
+                "size": len(self._keys),
+                "alive": alive_raw,
+                "available": 0 if shared_cooling else alive_raw,
+                "dead": len(self._keys) - alive_raw,
+                "rotations": self._rotations,
+                "rate_limit_bursts": self._rate_limit_bursts,
+                "global_cooldown_ms": int(max(0.0, self._global_cooldown_until - now) * 1000),
+                "keys": keys,
             }
 
 

@@ -1,0 +1,31 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-14 23:22:09
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+23:22:11.223 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+23:22:11.223 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+23:22:11.242 [INFO] [Vision] Da khoi chay vision.py PID=11244
+23:22:29.155 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 4s vì http_429; alive=7/8
+23:22:31.363 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+23:22:31.515 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+23:22:35.147 [INFO] [Settings] OK: brain chạy PID 11244, provider openai_compatible, Gemini 10, Groq 9, TTS bật, có secrets.
+23:22:42.984 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.53 pressure=0.32 surface=no mutations=2
+23:22:47.023 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=2 grounded=0 contradictions=none unknowns=scene_confidence_below_grounded_threshold,no_grounded_claim
+23:22:47.023 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=gpt-4o-mini:app_settings:affect=neutral:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+23:22:47.049 [INFO] [vision.py] [Loop][INFO] [wake route] level=call_vision_compressor reason=wake_governor_vision_only body_update=True sleep=5s
+23:22:47.049 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 15.40s. Nghỉ 5s.
+23:22:52.895 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=True reengagement_allowed=False
+23:22:54.045 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.70 pressure=0.65 surface=yes mutations=2
+23:23:02.765 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=surface requested=0 recommendation=silence strength=0.00 claims=4 grounded=0 contradictions=none unknowns=scene_confidence_below_grounded_threshold,no_grounded_claim
+23:23:02.765 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=surface count=0 novelty=abstained_screen_fact trace=gpt-4o-mini:app_settings:affect=neutral:delta=1;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+23:23:02.765 [INFO] [vision.py] [Loop][INFO] [surface_evidence] current_context=True fresh_after_refresh=False fact_count=0
+23:23:02.770 [INFO] [vision.py] [Loop][INFO] [surface_evidence] blocked speech kind=presence_maintenance reason=stale_screen_evidence_no_refresh
+23:23:03.298 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-1 | channel=autonomous | broadcast=<none>:0.00 | speech=none/no_speech | appraisal=grounded | action=presence_maintenance/micro_presence | final=<empty> | commits=2/2 rejected=0 errors=0
+23:23:03.333 [INFO] [vision.py] [Loop][INFO] [wake gate reflex] parse_mode=surface_body_only text=<empty>
+23:23:03.333 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated reflex trong 10.95s. Nghỉ 40s.
+23:23:05.282 [INFO] [Vision] Dang dung vision.py PID=11244...
+23:23:05.301 [INFO] [Vision] vision.py da thoat (PID=11244, code=-1, unexpected=False).
+23:23:05.316 [INFO] [RunLogger] Ket thuc phien chay.

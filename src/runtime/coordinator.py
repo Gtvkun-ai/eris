@@ -5552,6 +5552,10 @@ class RuntimeCoordinator(
             self._handle_settings_update(msg)
             return
 
+        if msg_type == "settings_health":
+            self._handle_settings_health()
+            return
+
         if msg_type == "debug_command":
             self._handle_debug_command(msg)
             return
@@ -5561,6 +5565,50 @@ class RuntimeCoordinator(
             return
         if msg_type:
             self.logger.debug("[incoming] ignored unknown msg_type=%s", msg_type)
+
+    def _handle_settings_health(self) -> None:
+        """Gửi trạng thái hai key pool cho Settings UI mà không lộ API key.
+
+        Trước đây nút kiểm tra chỉ gửi message nhưng coordinator chưa xử lý.
+        Handler này trả snapshot thật gồm key đang dùng, key cooldown và cooldown
+        toàn pool để UI hiển thị đúng trạng thái.
+        """
+
+        try:
+            from llm.key_pool import get_key_pool
+
+            pools = {
+                "gemini": get_key_pool("gemini").snapshot(),
+                "groq": get_key_pool("groq").snapshot(),
+            }
+            tts = getattr(self, "tts_engine", None)
+            tts_ready = bool(tts is not None and getattr(tts, "_ok", False))
+            ack = {
+                "type": "settings_health_ack",
+                "parse_mode": "settings_health_ack",
+                "should_speak": False,
+                "settings_health_ack": {
+                    "pools": pools,
+                    "tts": {"ready": tts_ready},
+                },
+            }
+        except Exception as exc:
+            self.logger.warning("[settings] key pool health snapshot failed: %s", exc)
+            ack = {
+                "type": "settings_health_ack",
+                "parse_mode": "settings_health_ack",
+                "should_speak": False,
+                "settings_health_ack": {
+                    "pools": {},
+                    "tts": {"ready": False},
+                    "error": str(exc)[:240],
+                },
+            }
+
+        try:
+            self.transport.send_json(ack)
+        except Exception as exc:
+            self.logger.debug("[settings] health ack send failed: %s", exc)
 
     def _handle_settings_update(self, msg: dict) -> None:
         """Áp dụng TTS setting do panel Body gửi qua UDP mà không restart brain."""
@@ -5962,7 +6010,7 @@ class RuntimeCoordinator(
         decision.debug_trace = " | ".join(part for part in (decision.debug_trace, "memory_commit_unconfirmed") if part)
         return decision
 
-    def _apply_dual_axis_memory_commit_gate(self, decision: Decision) -> Decision:
+    def _apply_social_appraisal_memory_commit_gate(self, decision: Decision) -> Decision:
         """Chặn assistant fact ở đúng turn đang rút claim sai.
 
         Gate này không đụng user-memory hay relationship state. Nó chỉ ngăn
@@ -5970,26 +6018,28 @@ class RuntimeCoordinator(
         Đặt ở coordinator để mọi đường commit dùng chung một luật provenance.
         """
 
-        repair_appraisal = getattr(self, "current_repair_appraisal", None)
-        commit_policy = str(getattr(repair_appraisal, "fact_commit_policy", "allow") or "allow")
-        if commit_policy == "allow":
+        social = getattr(self, "current_social_appraisal", None)
+        policy = getattr(social, "claim_policy", None)
+        blocked = social is not None and not bool(getattr(policy, "memory_write_allowed", True))
+        if not blocked:
+            # Compatibility path cho runtime extension cũ.
+            repair_appraisal = getattr(self, "current_repair_appraisal", None)
+            blocked = bool(getattr(repair_appraisal, "blocks_assistant_fact_commit", False))
+        if not blocked:
             return decision
         if str(getattr(decision, "extracted_fact", "") or "").strip():
             logger = getattr(self, "logger", None)
             if logger is not None and callable(getattr(logger, "info", None)):
-                logger.info(
-                    "[repair appraisal] removed assistant extracted_fact | policy=%s",
-                    commit_policy,
-                )
+                logger.info("[social appraisal] blocked assistant extracted_fact because claim authority is low")
         decision.extracted_fact = ""
         decision.reasoning_tags = tuple(dict.fromkeys((
             *tuple(getattr(decision, "reasoning_tags", ()) or ()),
-            f"assistant_fact_{commit_policy}",
+            "assistant_fact_commit_blocked_by_social_appraisal",
         )))
         decision.debug_trace = " | ".join(
             part for part in (
                 str(getattr(decision, "debug_trace", "") or "").strip(),
-                f"repair:assistant_fact_policy={commit_policy}",
+                "social_appraisal:assistant_fact_commit_blocked",
             ) if part
         )
         return decision
@@ -6006,7 +6056,7 @@ class RuntimeCoordinator(
             decision = authority(decision, frame=frame, channel="chat")
         decision = self._apply_memory_commit_truth_guard(decision, frame=frame)
 
-        decision = self._apply_dual_axis_memory_commit_gate(decision)
+        decision = self._apply_social_appraisal_memory_commit_gate(decision)
 
         public_text = str(decision.text or "").strip()
         if public_text:

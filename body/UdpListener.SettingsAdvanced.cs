@@ -106,7 +106,6 @@ public partial class UdpListener : Node2D
 		_settingsPassthroughSwitch = null;
 		_settingsPositionLockSwitch = null;
 		_settingsProviderSelect = null;
-		_settingsKeyPoolSelect = null;
 		_settingsModelInput = null;
 		_settingsBaseUrlInput = null;
 		_settingsVoiceSelect = null;

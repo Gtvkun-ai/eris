@@ -237,8 +237,7 @@ class PrivateMindDaemon:
             if not feedback_text:
                 return outcome
             # Pre-filter rẻ: không có dấu hiệu dỗ thì khỏi gọi agent nhỏ.
-            from .social_outcome_appraisal import social_score
-            soothed_hint = social_score(outcome, "soothing_signal") >= 0.52
+            soothed_hint = self._extract_flag(outcome, "user_soothed")
             if not soothed_hint and not self._comfort_appraiser.looks_like_comfort(feedback_text):
                 return outcome
             store = self.concern_store
@@ -269,8 +268,8 @@ class PrivateMindDaemon:
     @staticmethod
     def _extract_feedback_text(outcome: Any) -> str:
         if isinstance(outcome, Mapping):
-            return str(outcome.get("feedback_text") or outcome.get("correction_excerpt") or outcome.get("correction_text") or "").strip()
-        return str(getattr(outcome, "feedback_text", "") or getattr(outcome, "correction_excerpt", "") or getattr(outcome, "correction_text", "") or "").strip()
+            return str(outcome.get("feedback_text") or outcome.get("correction_text") or "").strip()
+        return str(getattr(outcome, "feedback_text", "") or getattr(outcome, "correction_text", "") or "").strip()
 
     @staticmethod
     def _extract_flag(outcome: Any, name: str) -> bool:

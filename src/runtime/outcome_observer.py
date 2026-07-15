@@ -1,92 +1,110 @@
 from __future__ import annotations
 
-"""Quan sát hậu quả theo score giả thuyết, không đóng dấu trạng thái user.
+"""
+runtime/outcome_observer.py
 
-OutcomeObserver chỉ đọc tín hiệu bề mặt và tạo ``SocialOutcomeAppraisal``.
-Nó không còn lưu các field kiểu ``user_corrected=True`` hay
-``relation_ruptured=True``. Downstream có thể dùng score để mở policy gate,
-nhưng gate đó không được ghi ngược thành fact về động cơ/cảm xúc người dùng.
+Tầng này đọc kết quả sau một lượt chạy của ERIS.
+
+Nguyên tắc thiết kế:
+- OutcomeObserver chỉ quan sát và phân loại hậu quả.
+- Không ghi memory trực tiếp.
+- Không sửa frame theo kiểu side-effect nặng, ngoại trừ gắn `frame.outcome`
+  nếu frame có field đó.
+- Những kết luận cần phản hồi của user phải để `None` hoặc confidence thấp
+  khi chưa có tín hiệu user thật.
 """
 
 import re
 import unicodedata
-from dataclasses import dataclass, field
-from typing import Any, Mapping
-
-from .social_outcome_appraisal import (
-    SocialHypothesis,
-    SocialOutcomeAppraisal,
-    clamp01,
-)
+from dataclasses import asdict, dataclass, field
+from typing import Any, Mapping, Optional
 
 
 @dataclass(slots=True)
 class OutcomeReport:
-    """Báo cáo hậu quả một turn.
+    """
+    Báo cáo hậu quả sau một turn.
 
-    ``social`` là phân bố tín hiệu mềm. Hai field kỹ thuật ``action_success`` và
-    ``body_match_success`` vẫn là score trực tiếp vì chúng mô tả kết quả runtime,
-    không phải phán đoán tâm lý người dùng.
+    Các field lõi bám theo ERIS Cognitive Pipeline:
+    - user_accepted: user có chấp nhận/đồng ý với câu trả lời không.
+      `None` nghĩa là chưa đủ tín hiệu.
+    - user_corrected: user có sửa ERIS không.
+    - user_ignored: user có bỏ qua phản hồi không.
+      Field này chỉ nên bật khi runtime có tín hiệu idle/session thật.
+    - user_laughed: user có phản ứng hài/hưởng ứng không.
+    - user_confused: user có vẻ khó hiểu/lạc nhịp không.
+    - user_felt_intruded: user có cảm giác bị xen vào/bị suy diễn/bị xâm phạm không.
+      `None` nghĩa là chưa đủ tín hiệu.
+    - user_soothed: user có đang dỗ/trấn an/xoa dịu ERIS không (vd "đừng lo",
+      "không sao đâu", "tôi ở đây"). `None` nghĩa là chưa đủ tín hiệu. Đây là tín
+      hiệu để private mind cho nỗi lo nguôi đi thay vì pegged mãi.
+    - relation_improved / relation_ruptured: quan hệ có tốt lên/rạn đi không.
+      `None` nghĩa là chưa đủ tín hiệu.
+    - action_success: hành động/text/system action có thực thi ổn không.
+    - body_match_success: body có khớp speech/action không.
+    - evidence: các mẩu bằng chứng ngắn, dùng cho audit/debug.
     """
 
-    social: SocialOutcomeAppraisal = field(default_factory=SocialOutcomeAppraisal)
+    user_accepted: Optional[bool] = None
+    user_corrected: bool = False
+    user_ignored: bool = False
+    user_laughed: bool = False
+    user_confused: bool = False
+    user_felt_intruded: Optional[bool] = None
+    user_soothed: Optional[bool] = None
+    relation_improved: Optional[bool] = None
+    relation_ruptured: Optional[bool] = None
+
+    # Projection mềm từ Unified Social Appraisal. Các bool phía trên được giữ
+    # cho compatibility, còn learning/observability mới nên đọc các pressure này.
+    correction_pressure: float = 0.0
+    confusion_pressure: float = 0.0
+    laughter_signal: float = 0.0
+    intrusion_pressure: float = 0.0
+    rupture_pressure: float = 0.0
+    acceptance_pressure: float = 0.0
+    social_appraisal: dict[str, Any] = field(default_factory=dict)
+
     action_success: float = 1.0
     body_match_success: float = 1.0
     evidence: list[str] = field(default_factory=list)
+
+    # Metadata phụ để self_observation phân loại lỗi chính xác hơn.
     confidence: float = 0.5
-    correction_excerpt: str = ""
+    correction_text: str = ""
     feedback_text: str = ""
-    idle_evidence: str = ""
+    ignored_reason: str = ""
+    accepted_reason: str = ""
+    rupture_reason: str = ""
     tags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "social": self.social.to_dict(),
-            "action_success": round(clamp01(self.action_success), 4),
-            "body_match_success": round(clamp01(self.body_match_success), 4),
-            "evidence": list(self.evidence),
-            "confidence": round(clamp01(self.confidence), 4),
-            "correction_excerpt": self.correction_excerpt,
-            "feedback_text": self.feedback_text,
-            "idle_evidence": self.idle_evidence,
-            "tags": list(self.tags),
-        }
+        return asdict(self)
 
     @classmethod
     def from_any(cls, value: Any) -> "OutcomeReport":
         if isinstance(value, cls):
             return value
-        if not isinstance(value, Mapping):
-            return cls()
-        payload = dict(value)
-        social = SocialOutcomeAppraisal.from_any(payload.get("social"))
-        # Đọc dữ liệu legacy tại biên migration, nhưng không giữ lại hard claim.
-        if payload.get("social") is None:
-            social.acceptance_support = 1.0 if payload.get("user_accepted") is True else 0.0
-            social.correction_pressure = 1.0 if payload.get("user_corrected") is True else 0.0
-            social.confusion_pressure = 1.0 if payload.get("user_confused") is True else 0.0
-            social.laughter_signal = 1.0 if payload.get("user_laughed") is True else 0.0
-            social.intrusion_risk = 1.0 if payload.get("user_felt_intruded") is True else 0.0
-            social.soothing_signal = 1.0 if payload.get("user_soothed") is True else 0.0
-            social.relationship_warmth_signal = 1.0 if payload.get("relation_improved") is True else 0.0
-            social.relationship_strain_signal = 1.0 if payload.get("relation_ruptured") is True else 0.0
-            social.disengagement_risk = 1.0 if payload.get("user_ignored") is True else 0.0
-            social.clamp()
-        return cls(
-            social=social,
-            action_success=clamp01(payload.get("action_success", 1.0), 1.0),
-            body_match_success=clamp01(payload.get("body_match_success", 1.0), 1.0),
-            evidence=[str(x) for x in (payload.get("evidence", ()) or ())],
-            confidence=clamp01(payload.get("confidence", social.confidence), social.confidence),
-            correction_excerpt=str(payload.get("correction_excerpt") or payload.get("correction_text") or "")[:300],
-            feedback_text=str(payload.get("feedback_text", "") or "")[:300],
-            idle_evidence=str(payload.get("idle_evidence") or payload.get("ignored_reason") or "")[:160],
-            tags=[str(x) for x in (payload.get("tags", ()) or ())],
-        )
+        if isinstance(value, Mapping):
+            allowed = {field.name for field in cls.__dataclass_fields__.values()}
+            return cls(**{key: val for key, val in value.items() if key in allowed})
+        return cls()
 
 
 class OutcomeObserver:
-    """Đọc feedback thành các pressure/support score độc lập."""
+    """
+    Đọc tín hiệu hậu quả sau một turn.
+
+    Cách dùng thường gặp:
+        outcome = outcome_observer.observe(frame)
+        frame.outcome = outcome
+
+    Nếu muốn đánh giá phản ứng user đối với turn trước:
+        outcome = outcome_observer.observe(previous_frame, user_feedback_text=current_user_text)
+
+    Tầng này không nên đoán quá sâu. Nếu thiếu feedback của user,
+    các field như accepted/corrected/ruptured phải giữ ở mức không chắc.
+    """
 
     ACCEPTANCE_PATTERNS = (
         "đúng", "dung", "chuẩn", "chuan", "hợp lý", "hop ly",
@@ -94,6 +112,7 @@ class OutcomeObserver:
         "đúng rồi", "dung roi", "chuẩn rồi", "chuan roi",
         "hợp lý đó", "hop ly do", "tiếp", "tiếp tục", "tiep tuc",
     )
+
     CORRECTION_PATTERNS = (
         "không phải", "khong phai", "sai rồi", "sai roi", "sai",
         "thiếu", "thieu", "chưa đúng", "chua dung", "chưa phải", "chua phai",
@@ -101,15 +120,18 @@ class OutcomeObserver:
         "không hiểu ý", "khong hieu y", "ý tôi là", "y toi la",
         "no, ", "not what", "wrong", "incorrect", "you missed",
     )
+
     CONFUSION_PATTERNS = (
         "khó hiểu", "kho hieu", "gì vậy", "gi vay", "là sao", "la sao",
         "nói gì", "noi gi", "không hiểu", "khong hieu", "wtf",
         "what do you mean", "confused",
     )
+
     LAUGHTER_PATTERNS = (
         "haha", "hahaha", "hehe", "hihi", "kkk", "kaka", "lol", "lmao",
         "cười", "cuoi", "hề", "he",
     )
+
     INTRUSION_PATTERNS = (
         "đừng suy diễn", "dung suy dien", "đừng hỏi", "dung hoi",
         "đừng nói kháy", "dung noi khay", "nói kháy", "noi khay",
@@ -117,26 +139,32 @@ class OutcomeObserver:
         "overread", "mindread", "intrusive", "privacy",
         "đừng phân tích", "dung phan tich",
     )
-    STRAIN_PATTERNS = (
+
+    RUPTURE_PATTERNS = (
         "khó chịu", "kho chiu", "bực", "buc", "cay", "ghét", "ghet",
-        "tức", "tuc", "nói như", "noi nhu", "chán", "chan",
-        "thất vọng", "that vong",
+        "tức", "tuc", "ngu eq", "nói như", "noi nhu",
+        "chán", "chan", "thất vọng", "that vong",
     )
-    WARMTH_PATTERNS = (
-        "cảm ơn", "cam on", "thanks", "thank you", "đúng ý", "dung y",
-        "hợp gu", "hop gu", "nghe được", "nghe duoc", "ổn rồi", "on roi",
+
+    IMPROVEMENT_PATTERNS = (
+        "cảm ơn", "cam on", "thanks", "thank you",
+        "đúng ý", "dung y", "hợp gu", "hop gu",
+        "nghe được", "nghe duoc", "ổn rồi", "on roi",
     )
+
+    # User đang dỗ/trấn an/xoa dịu ERIS (chứ không phải đánh giá câu trả lời).
+    # Cố ý tránh các cụm trùng với CORRECTION (vd "không phải") để khỏi bị hiểu nhầm
+    # thành sửa lỗi.
     COMFORT_PATTERNS = (
         "đừng lo", "dung lo", "đừng buồn", "dung buon", "đừng căng", "dung cang",
         "đừng nghĩ nhiều", "dung nghi nhieu", "đừng tự trách", "dung tu trach",
-        "không sao", "khong sao", "bình tĩnh", "binh tinh", "yên tâm", "yen tam",
-        "ổn mà", "on ma", "tôi ở đây", "toi o day", "có tôi đây", "co toi day",
-        "nghỉ đi", "nghi di", "thư giãn", "thu gian", "thả lỏng", "tha long",
+        "không sao", "khong sao", "không sao đâu", "khong sao dau",
+        "bình tĩnh", "binh tinh", "yên tâm", "yen tam", "ổn mà", "on ma",
+        "tôi ở đây", "toi o day", "có tôi đây", "co toi day", "anh ở đây", "anh o day",
+        "nghỉ đi", "nghi di", "nghỉ ngơi", "nghi ngoi", "thư giãn", "thu gian",
+        "thả lỏng", "tha long", "thôi nào", "thoi nao", "đừng áp lực", "dung ap luc",
     )
-    TONE_PATTERNS = (
-        "lạnh", "lanh", "robot", "máy móc", "may moc", "vô hồn", "vo hon",
-        "formal", "cứng", "cung", "không tự nhiên", "khong tu nhien",
-    )
+
     NEGATED_ACCEPTANCE_PATTERNS = (
         "ok nhưng sai", "ok nhung sai", "đúng nhưng", "dung nhung",
         "chuẩn nhưng", "chuan nhung", "hợp lý nhưng", "hop ly nhung",
@@ -151,148 +179,244 @@ class OutcomeObserver:
         body_result: Any = None,
         idle_seconds_after_turn: float | None = None,
         attach_to_frame: bool = True,
+        social_appraisal: Any = None,
     ) -> OutcomeReport:
+        """
+        Tạo OutcomeReport từ frame và các tín hiệu hậu quả.
+
+        Parameters
+        ----------
+        frame:
+            CognitiveFrame hoặc object tương thích.
+        user_feedback_text:
+            Phản hồi user sau turn này. Nếu chưa có thì để None.
+        execution_result:
+            Kết quả system action nếu có. Có thể là dict/dataclass có `success`.
+        body_result:
+            Kết quả body/modality nếu có. Có thể là dict/dataclass có `matched` hoặc `success`.
+        idle_seconds_after_turn:
+            Nếu runtime biết user im/bỏ qua sau turn bao lâu, truyền vào đây.
+        attach_to_frame:
+            Nếu True, gắn report vào `frame.outcome` khi có thể.
+        """
+
         evidence: list[str] = []
         tags: list[str] = []
+
         final_text = self._extract_final_text(frame)
         system_action = self._extract_system_action(frame)
+
         action_success = self._infer_action_success(
-            frame, final_text=final_text, system_action=system_action,
-            execution_result=execution_result, evidence=evidence, tags=tags,
+            frame,
+            final_text=final_text,
+            system_action=system_action,
+            execution_result=execution_result,
+            evidence=evidence,
+            tags=tags,
         )
         body_match_success = self._infer_body_match_success(
-            frame, body_result=body_result, evidence=evidence, tags=tags,
+            frame,
+            body_result=body_result,
+            evidence=evidence,
+            tags=tags,
         )
 
         feedback = str(user_feedback_text or "").strip()
-        norm = self._normalize(feedback)
-        acceptance = correction = confusion = laughter = intrusion = 0.0
-        soothing = warmth = strain = tone = disengagement = 0.0
-        correction_excerpt = ""
-        hypotheses: list[SocialHypothesis] = []
-        social_evidence: list[str] = []
+        normalized_feedback = self._normalize(feedback)
+
+        user_corrected = False
+        user_accepted: Optional[bool] = None
+        user_laughed = False
+        user_confused = False
+        user_felt_intruded: Optional[bool] = None
+        user_soothed: Optional[bool] = None
+        relation_improved: Optional[bool] = None
+        relation_ruptured: Optional[bool] = None
+        correction_text = ""
+        accepted_reason = ""
+        rupture_reason = ""
+
+        correction_pressure = 0.0
+        confusion_pressure = 0.0
+        laughter_signal = 0.0
+        intrusion_pressure = 0.0
+        rupture_pressure = 0.0
+        acceptance_pressure = 0.0
+        social_appraisal_dict: dict[str, Any] = {}
 
         if feedback:
-            correction_hit = self._has_any(norm, self.CORRECTION_PATTERNS)
-            confusion_hit = self._has_any(norm, self.CONFUSION_PATTERNS)
-            laughter_hit = self._has_any(norm, self.LAUGHTER_PATTERNS)
-            intrusion_hit = self._has_any(norm, self.INTRUSION_PATTERNS)
-            strain_hit = self._has_any(norm, self.STRAIN_PATTERNS)
-            warmth_hit = self._has_any(norm, self.WARMTH_PATTERNS)
-            acceptance_hit = self._has_any(norm, self.ACCEPTANCE_PATTERNS)
-            comfort_hit = self._has_any(norm, self.COMFORT_PATTERNS)
-            tone_hit = self._has_any(norm, self.TONE_PATTERNS)
-            negated_acceptance = self._has_any(norm, self.NEGATED_ACCEPTANCE_PATTERNS)
+            # Khi có snapshot chung, OutcomeObserver không được tự đoán lại bằng
+            # regex. Bool cũ chỉ là operational projection để code legacy còn chạy.
+            if social_appraisal is not None:
+                thresholds = getattr(social_appraisal, "thresholds", None)
+                correction_pressure = max(
+                    self._clamp01(getattr(getattr(social_appraisal, "correction", None), "value", 0.0)),
+                    self._clamp01(getattr(getattr(social_appraisal, "claim", None), "contest", 0.0)),
+                    self._clamp01(getattr(getattr(social_appraisal, "claim", None), "contradiction", 0.0)),
+                )
+                confusion_pressure = self._clamp01(getattr(getattr(social_appraisal, "confusion", None), "value", 0.0))
+                laughter_signal = self._clamp01(getattr(getattr(social_appraisal, "playful", None), "value", 0.0))
+                intrusion_pressure = self._clamp01(getattr(getattr(social_appraisal, "intrusion", None), "value", 0.0))
+                rupture_pressure = self._clamp01(getattr(getattr(social_appraisal, "rupture", None), "value", 0.0))
+                acceptance_pressure = self._clamp01(getattr(getattr(social_appraisal, "acceptance", None), "value", 0.0))
+                repair_gate = float(getattr(thresholds, "repair_active", 0.46) or 0.46)
+                failure_gate = float(getattr(thresholds, "failure_gate", 0.58) or 0.58)
+                user_corrected = correction_pressure >= repair_gate
+                user_confused = confusion_pressure >= repair_gate
+                user_laughed = laughter_signal >= 0.48
+                intruded = intrusion_pressure >= failure_gate
+                ruptured = rupture_pressure >= failure_gate
+                accepted = acceptance_pressure >= 0.52 and correction_pressure < repair_gate
+                negated_acceptance = correction_pressure >= repair_gate
+                improved = accepted and rupture_pressure < 0.30
+                try:
+                    social_appraisal_dict = social_appraisal.to_dict()
+                except Exception:
+                    social_appraisal_dict = {}
+            else:
+                # Fallback chỉ dành cho caller legacy chưa nối Unified Appraisal.
+                user_corrected = self._has_any(normalized_feedback, self.CORRECTION_PATTERNS)
+                user_laughed = self._has_any(normalized_feedback, self.LAUGHTER_PATTERNS)
+                user_confused = self._has_any(normalized_feedback, self.CONFUSION_PATTERNS)
+                intruded = self._has_any(normalized_feedback, self.INTRUSION_PATTERNS)
+                ruptured = self._has_any(normalized_feedback, self.RUPTURE_PATTERNS)
+                improved = self._has_any(normalized_feedback, self.IMPROVEMENT_PATTERNS)
+                accepted = self._has_any(normalized_feedback, self.ACCEPTANCE_PATTERNS)
+                negated_acceptance = self._has_any(normalized_feedback, self.NEGATED_ACCEPTANCE_PATTERNS)
+                correction_pressure = 1.0 if user_corrected else 0.0
+                confusion_pressure = 1.0 if user_confused else 0.0
+                laughter_signal = 1.0 if user_laughed else 0.0
+                intrusion_pressure = 1.0 if intruded else 0.0
+                rupture_pressure = 1.0 if ruptured else 0.0
+                acceptance_pressure = 1.0 if accepted else 0.0
 
-            correction = 0.82 if correction_hit else 0.0
-            confusion = 0.66 if confusion_hit else 0.0
-            laughter = 0.72 if laughter_hit else 0.0
-            intrusion = 0.76 if intrusion_hit else 0.0
-            strain = max(0.68 if strain_hit else 0.0, intrusion * 0.72)
-            warmth = 0.66 if warmth_hit else 0.0
-            acceptance = 0.72 if acceptance_hit else 0.0
-            soothing = 0.72 if comfort_hit else 0.0
-            tone = 0.72 if tone_hit else 0.0
+            if user_corrected:
+                correction_text = feedback[:300]
+                evidence.append(f"user_feedback_correction={feedback[:140]}")
+                tags.append("user_correction")
 
-            # Các tín hiệu được giữ đồng thời. Chỉ hạ support khi phrase tự phủ định.
-            if negated_acceptance:
-                acceptance = min(acceptance, 0.24)
-                correction = max(correction, 0.76)
-            if correction_hit or confusion_hit:
-                acceptance = min(acceptance, 0.34)
-            if intrusion_hit:
-                soothing = min(soothing, 0.20)
-            if laughter_hit and (correction_hit or confusion_hit):
-                # Có thể là playful correction, không xóa correction pressure.
-                strain *= 0.72
+            if user_confused:
+                evidence.append(f"user_feedback_confusion={feedback[:140]}")
+                tags.append("user_confused")
 
-            signals = (
-                ("acceptance_support", acceptance),
-                ("correction_pressure", correction),
-                ("confusion_pressure", confusion),
-                ("laughter_signal", laughter),
-                ("intrusion_risk", intrusion),
-                ("soothing_signal", soothing),
-                ("relationship_warmth_signal", warmth),
-                ("relationship_strain_signal", strain),
-                ("tone_feedback_pressure", tone),
-            )
-            for label, score in signals:
-                if score < 0.18:
-                    continue
-                ev = f"{label}={feedback[:140]}"
-                social_evidence.append(ev)
-                hypotheses.append(SocialHypothesis(label=label, score=score, evidence=(ev,)))
-                tags.append(f"hypothesis:{label}")
-            if correction >= 0.40:
-                correction_excerpt = feedback[:300]
+            if user_laughed:
+                evidence.append(f"user_feedback_laughter={feedback[:140]}")
+                tags.append("user_laughed")
 
-        idle_evidence = ""
+            if intruded:
+                user_felt_intruded = True
+                evidence.append(f"user_feedback_intrusion={feedback[:140]}")
+                tags.append("user_felt_intruded")
+
+            # Acceptance không được thắng correction. Câu "ok nhưng sai" là correction.
+            if accepted and not user_corrected and not negated_acceptance:
+                user_accepted = True
+                accepted_reason = "user_feedback_acceptance"
+                evidence.append(f"user_feedback_acceptance={feedback[:140]}")
+                tags.append("user_accepted")
+            elif user_corrected or user_confused:
+                user_accepted = False
+
+            if ruptured or intruded:
+                relation_ruptured = True
+                rupture_reason = "user_feedback_rupture_or_intrusion"
+                evidence.append(f"user_feedback_rupture={feedback[:140]}")
+                tags.append("relation_ruptured")
+            elif improved or (accepted and not user_corrected and not negated_acceptance):
+                relation_improved = True
+                evidence.append(f"user_feedback_improvement={feedback[:140]}")
+                tags.append("relation_improved")
+
+            if user_felt_intruded is None and feedback:
+                user_felt_intruded = False
+
+            # Dỗ/trấn an: user đang xoa dịu ERIS. Không tính nếu đang là correction/
+            # intrusion (lúc đó câu nói mang nghĩa khác).
+            soothed = self._has_any(normalized_feedback, self.COMFORT_PATTERNS)
+            if soothed and not user_corrected and not intruded:
+                user_soothed = True
+                evidence.append(f"user_feedback_comfort={feedback[:140]}")
+                tags.append("user_soothed")
+            elif feedback:
+                user_soothed = False
+
+        user_ignored = False
+        ignored_reason = ""
         if idle_seconds_after_turn is not None:
             try:
-                idle = max(0.0, float(idle_seconds_after_turn))
+                idle_value = float(idle_seconds_after_turn)
             except Exception:
-                idle = 0.0
-            if idle >= 90.0 and (final_text or system_action):
-                # Im lặng có nhiều nguyên nhân. Chỉ ghi disengagement risk mềm.
-                disengagement = min(0.68, 0.36 + (idle - 90.0) / 600.0)
-                idle_evidence = f"idle_after_turn={idle:.1f}s"
-                social_evidence.append(idle_evidence)
-                hypotheses.append(SocialHypothesis(
-                    label="disengagement_risk", score=disengagement,
-                    evidence=(idle_evidence,), provenance="runtime_idle_signal", ttl_turns=1,
-                ))
-                tags.append("hypothesis:disengagement_risk")
+                idle_value = 0.0
+            # Không nên kết luận bị ignore quá sớm. Chỉ bật nếu im lâu và turn thật sự có nói/hành động.
+            if idle_value >= 90.0 and (final_text or system_action):
+                user_ignored = True
+                ignored_reason = f"idle_after_turn={idle_value:.1f}s"
+                evidence.append(ignored_reason)
+                tags.append("user_ignored")
 
-        active_scores = [
-            score for score in (acceptance, correction, confusion, laughter, intrusion,
-                                soothing, warmth, strain, disengagement, tone)
-            if score >= 0.18
-        ]
-        confidence = self._estimate_social_confidence(
-            has_feedback=bool(feedback), active_count=len(active_scores),
-            action_success=action_success, body_match_success=body_match_success,
+        confidence = self._estimate_confidence(
+            has_feedback=bool(feedback),
+            user_corrected=user_corrected,
+            user_accepted=user_accepted,
+            user_confused=user_confused,
+            user_felt_intruded=user_felt_intruded,
+            action_success=action_success,
+            body_match_success=body_match_success,
         )
-        uncertainty = 1.0 if not active_scores else clamp01(
-            0.68 - min(0.42, max(active_scores) * 0.34) + (0.10 if len(active_scores) >= 3 else 0.0)
-        )
-        social = SocialOutcomeAppraisal(
-            acceptance_support=acceptance,
-            correction_pressure=correction,
-            confusion_pressure=confusion,
-            laughter_signal=laughter,
-            intrusion_risk=intrusion,
-            soothing_signal=soothing,
-            relationship_warmth_signal=warmth,
-            relationship_strain_signal=strain,
-            disengagement_risk=disengagement,
-            tone_feedback_pressure=tone,
-            interpretation_uncertainty=uncertainty,
-            confidence=confidence,
-            hypotheses=tuple(hypotheses),
-            evidence=tuple(social_evidence),
-        ).clamp()
+
         report = OutcomeReport(
-            social=social,
-            action_success=clamp01(action_success, 1.0),
-            body_match_success=clamp01(body_match_success, 1.0),
-            evidence=[*evidence, *social_evidence][:16],
-            confidence=confidence,
-            correction_excerpt=correction_excerpt,
+            user_accepted=user_accepted,
+            user_corrected=user_corrected,
+            user_ignored=user_ignored,
+            user_laughed=user_laughed,
+            user_confused=user_confused,
+            user_felt_intruded=user_felt_intruded,
+            user_soothed=user_soothed,
+            relation_improved=relation_improved,
+            relation_ruptured=relation_ruptured,
+            correction_pressure=self._clamp01(correction_pressure),
+            confusion_pressure=self._clamp01(confusion_pressure),
+            laughter_signal=self._clamp01(laughter_signal),
+            intrusion_pressure=self._clamp01(intrusion_pressure),
+            rupture_pressure=self._clamp01(rupture_pressure),
+            acceptance_pressure=self._clamp01(acceptance_pressure),
+            social_appraisal=social_appraisal_dict,
+            action_success=self._clamp01(action_success),
+            body_match_success=self._clamp01(body_match_success),
+            evidence=evidence[:12],
+            confidence=self._clamp01(confidence),
+            correction_text=correction_text,
             feedback_text=feedback[:300],
-            idle_evidence=idle_evidence,
-            tags=list(dict.fromkeys(tags))[:16],
+            ignored_reason=ignored_reason,
+            accepted_reason=accepted_reason,
+            rupture_reason=rupture_reason,
+            tags=tags[:12],
         )
+
         if attach_to_frame:
             self._safe_setattr(frame, "outcome", report)
+
         return report
 
     def observe_user_feedback_for_previous_frame(
-        self, previous_frame: Any, user_feedback_text: str, *, attach_to_frame: bool = True,
+        self,
+        previous_frame: Any,
+        user_feedback_text: str,
+        *,
+        attach_to_frame: bool = True,
+        social_appraisal: Any = None,
     ) -> OutcomeReport:
+        """
+        Helper dành cho coordinator khi user vừa nhắn một câu phản hồi.
+        Thay vì đánh giá current frame, nó đánh giá câu user đó như phản ứng
+        đối với previous_frame.
+        """
+
         return self.observe(
-            previous_frame, user_feedback_text=user_feedback_text,
+            previous_frame,
+            user_feedback_text=user_feedback_text,
             attach_to_frame=attach_to_frame,
+            social_appraisal=social_appraisal,
         )
 
     def _infer_action_success(
@@ -389,16 +513,31 @@ class OutcomeObserver:
 
         return 1.0
 
-    def _estimate_social_confidence(
-        self, *, has_feedback: bool, active_count: int, action_success: float, body_match_success: float
+    def _estimate_confidence(
+        self,
+        *,
+        has_feedback: bool,
+        user_corrected: bool,
+        user_accepted: Optional[bool],
+        user_confused: bool,
+        user_felt_intruded: Optional[bool],
+        action_success: float,
+        body_match_success: float,
     ) -> float:
-        confidence = 0.34 + (0.30 if has_feedback else 0.0)
-        confidence += min(0.18, max(0, int(active_count)) * 0.045)
+        confidence = 0.42
+        if has_feedback:
+            confidence += 0.28
+        if user_corrected or user_confused:
+            confidence += 0.12
+        if user_accepted is not None:
+            confidence += 0.08
+        if user_felt_intruded is not None:
+            confidence += 0.06
         if action_success in (0.0, 1.0):
             confidence += 0.04
         if body_match_success in (0.0, 1.0):
             confidence += 0.02
-        return clamp01(confidence)
+        return confidence
 
     @classmethod
     def _normalize(cls, text: str) -> str:

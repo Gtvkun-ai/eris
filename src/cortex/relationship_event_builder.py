@@ -8,8 +8,8 @@ Tầng này chuyển một lượt hội thoại thành các score quan hệ có
 Lý do tồn tại
 -------------
 Trước đây RelationshipDynamics có khuynh hướng suy trực tiếp:
-    "ổn" / "chuẩn"  -> verdict chấp nhận style
-    "eris" / "project" -> verdict về nghi thức dự án lặp lại
+    "ổn" / "chuẩn"  -> user_accepted_style
+    "eris" / "project" -> repeated_project_context
 
 Cách đó nhanh, nhưng bẩn. Nó biến relationship memory thành nơi keyword có thể
 đi thẳng vào trust/ritual/familiarity. Một chữ "ổn chưa?" mà tăng trust thì

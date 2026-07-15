@@ -106,6 +106,7 @@ class TurnSemanticsEngine:
         conversation_report: Any = None,
         relationship_report: Any = None,
         grounding_report: Any = None,
+        social_appraisal: Any = None,
     ) -> TurnSemanticsReport:
         repeated = repeat_count >= 2
         normalized = self.normalize(user_text)
@@ -115,7 +116,12 @@ class TurnSemanticsEngine:
         semantic_similarity = self._jaccard_similarity(normalized, previous) if previous else literal_repeat_score
 
         question_pressure = self._question_pressure(user_text, normalized, affect_signal)
-        correction_pressure = self._correction_pressure(conversation_report, affect_signal, normalized)
+        correction_pressure = self._correction_pressure(
+            conversation_report,
+            affect_signal,
+            normalized,
+            social_appraisal=social_appraisal,
+        )
         relational_pressure = self._relational_pressure(affect_signal, relationship_report)
         identity_pressure = self._identity_pressure(affect_signal, relationship_report)
         fact_disclosure_pressure = self._fact_disclosure_pressure(user_text=user_text, normalized=normalized, grounding_report=grounding_report)
@@ -280,8 +286,31 @@ class TurnSemanticsEngine:
         pressure = max(pressure, self._safe_float(getattr(affect_signal, "ambiguity", 0.0)) * 0.42)
         return self._clamp01(pressure)
 
-    def _correction_pressure(self, conversation_report: Any, affect_signal: Any, normalized: str) -> float:
-        pressure = self._safe_float(getattr(conversation_report, "correction_pressure", 0.0))
+    def _correction_pressure(
+        self,
+        conversation_report: Any,
+        affect_signal: Any,
+        normalized: str,
+        *,
+        social_appraisal: Any = None,
+    ) -> float:
+        """Đọc correction từ snapshot chung; chỉ fallback cho caller legacy.
+
+        Khi `social_appraisal` có mặt, file này không được tự dò keyword lại.
+        Như vậy repeat arbitration không tự mở một tòa án xã hội thứ hai.
+        """
+        if social_appraisal is not None:
+            correction = getattr(social_appraisal, "correction", None)
+            claim = getattr(social_appraisal, "claim", None)
+            return self._clamp01(max(
+                self._safe_float(getattr(correction, "value", 0.0)),
+                self._safe_float(getattr(claim, "contest", 0.0)),
+                self._safe_float(getattr(claim, "contradiction", 0.0)),
+            ))
+
+        pressure = 0.0
+        if bool(getattr(conversation_report, "correction_detected", False)):
+            pressure = max(pressure, 0.78)
         state = getattr(conversation_report, "state", None)
         if str(getattr(state, "mode", "") or "") in {"repair", "relational_repair"}:
             pressure = max(pressure, 0.68)
@@ -372,7 +401,7 @@ class TurnSemanticsEngine:
         failure = getattr(state, "last_failure", None)
         failure_type = str(getattr(failure, "type", "") or "")
         mode = str(getattr(state, "mode", "") or "")
-        failure_active = self._safe_float(getattr(conversation_report, "failure_pressure", 0.0)) >= 0.38 or mode in {"repair", "relational_repair"}
+        failure_active = bool(getattr(conversation_report, "failure_detected", False)) or mode in {"repair", "relational_repair"}
         if failure_active and failure_type and failure_type != "none":
             pressure = max(pressure, 0.58)
         return self._clamp01(pressure)

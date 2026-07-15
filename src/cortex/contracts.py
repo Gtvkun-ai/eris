@@ -1280,6 +1280,9 @@ class CognitiveFrame:
     # Hồ sơ ControlledSlippage của frame hiện tại. Để object để tránh cortex.contracts
     # import ngược runtime.controlled_slippage và tạo vòng phụ thuộc.
     controlled_slippage_profile: object | None = None
+    # Snapshot canonical của Unified Social Appraisal cho turn hiện tại.
+    # Để object nhằm tránh cortex import ngược runtime.social_appraisal.
+    social_appraisal: object | None = None
     social_presence_event: SocialPresenceEvent = field(default_factory=SocialPresenceEvent)
     session_ritual: SessionRitualReport = field(default_factory=SessionRitualReport)
     speech_core: AgentSpeechCore = field(default_factory=AgentSpeechCore)
@@ -1344,6 +1347,7 @@ class CognitiveFrame:
                 else self.memory_resonance
             ),
             "controlled_slippage_profile": _to_plain_contract(self.controlled_slippage_profile),
+            "social_appraisal": _to_plain_contract(self.social_appraisal),
             "social_presence_event": self.social_presence_event.to_dict(),
             "session_ritual": self.session_ritual.to_dict(),
             "speech_core": self.speech_core.to_dict(),

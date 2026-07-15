@@ -102,6 +102,7 @@ FrameSlotName = Literal[
     "workspace",
     "world_scene",
     "interpretation",
+    "social_appraisal",
     "sociocultural",
     "meaning",
     "tom",
@@ -373,6 +374,8 @@ class CognitiveFrame:
     workspace: Optional[Any] = None
     world_scene: Optional[Any] = None
     interpretation: Optional[Any] = None
+    # Snapshot xã hội canonical; module downstream chỉ đọc, không tự classify lại.
+    social_appraisal: Optional[Any] = None
     sociocultural: Optional[Any] = None
     meaning: Optional[Any] = None
     tom: Optional[Any] = None

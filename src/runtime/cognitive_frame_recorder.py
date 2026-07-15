@@ -1336,9 +1336,8 @@ class CognitiveFrameRecorderMixin:
             repair_meta = dict((getattr(frame, "metadata", {}) or {}).get("dual_axis_repair", {}) or {})
         except Exception:
             repair_meta = {}
-        repair_commit_policy = str(repair_meta.get("fact_commit_policy", "allow") or "allow")
-        if repair_commit_policy != "allow":
-            # Claim assistant đang quarantine/retract không được sống lại qua frame.
+        if bool(repair_meta.get("blocks_assistant_fact_commit", False)):
+            # Claim assistant đang rút không được sống lại qua CognitiveFrame.
             remembered_fact = ""
             if decision is not None:
                 decision.extracted_fact = ""
@@ -1381,7 +1380,7 @@ class CognitiveFrameRecorderMixin:
             notes=tuple((
                 *notes,
                 *(("ephemeral_presence_signal_buffer_only",) if ephemeral_presence else ()),
-                *((f"assistant_fact_{repair_commit_policy}_by_repair",) if repair_commit_policy != "allow" else ()),
+                *(("assistant_fact_commit_blocked_by_dual_axis_repair",) if bool(repair_meta.get("blocks_assistant_fact_commit", False)) else ()),
             )),
             semantic_fact=remembered_fact,
             norm_deviation=norm_deviation,

@@ -22,8 +22,6 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Mapping
 
-from runtime.social_outcome_appraisal import social_score
-
 try:
     from runtime.outcome_observer import OutcomeReport
 except Exception:  # pragma: no cover - fallback khi chạy file rời
@@ -168,17 +166,13 @@ class SelfObservationEngine:
         )
         channel = str(getattr(frame, "channel", "") or "")
 
-        correction_pressure = social_score(outcome_report, "correction_pressure")
-        confusion_pressure = social_score(outcome_report, "confusion_pressure")
-        intrusion_risk = social_score(outcome_report, "intrusion_risk")
-        relationship_strain = social_score(outcome_report, "relationship_strain_signal")
+        user_corrected = bool(getattr(outcome_report, "user_corrected", False))
+        user_confused = bool(getattr(outcome_report, "user_confused", False))
+        user_intruded = getattr(outcome_report, "user_felt_intruded", None) is True
+        relation_ruptured = getattr(outcome_report, "relation_ruptured", None) is True
         action_success = float(getattr(outcome_report, "action_success", 1.0) or 0.0)
         body_match_success = float(getattr(outcome_report, "body_match_success", 1.0) or 0.0)
-        correction_text = str(
-            getattr(outcome_report, "correction_excerpt", "")
-            or getattr(outcome_report, "correction_text", "")
-            or ""
-        )
+        correction_text = str(getattr(outcome_report, "correction_text", "") or "")
 
         matched_beliefs = True
         overread_detected = False
@@ -204,7 +198,7 @@ class SelfObservationEngine:
         # bằng chứng rằng ERIS đã thật sự mind-read trên surface. Chỉ ghi failure
         # khi output mang hình dạng suy diễn hoặc user trực tiếp sửa điều đó.
         surface_mindread = self._contains_mindread_shape(final_text_norm)
-        corrected_overread = correction_pressure >= 0.58 and self._mentions_overread(correction_text)
+        corrected_overread = user_corrected and self._mentions_overread(correction_text)
         risk_became_surface = surface_mindread and (global_overread_risk >= 0.60 or "anti_mindreading" in risk_flags)
         if corrected_overread or risk_became_surface:
             overread_detected = True
@@ -218,14 +212,14 @@ class SelfObservationEngine:
             adjustments.append("Không nói trực tiếp mental-state khi ToM confidence thấp.")
 
         # 3. Intrusion / distance.
-        if intrusion_risk >= 0.58 or permission_violation >= 0.50:
+        if user_intruded or permission_violation >= 0.50:
             distance_violation = True
-            evidence.append(f"distance_or_permission_violation=permission:{permission_violation:.2f}/intrusion_risk:{intrusion_risk:.2f}")
+            evidence.append(f"distance_or_permission_violation=permission:{permission_violation:.2f}/intruded:{user_intruded}")
             adjustments.append("Giảm intensity, không hỏi đào sâu nếu user không mời.")
 
-        if intrusion_risk >= 0.58 and self._contains_question_or_probe(final_text_norm):
+        if user_intruded and self._contains_question_or_probe(final_text_norm):
             curiosity_intrusion = True
-            evidence.append("curiosity_intrusion=probe_under_high_intrusion_risk")
+            evidence.append("curiosity_intrusion=user_intruded_after_probe")
             adjustments.append("Khi user đã khó chịu, ưu tiên sửa sai thay vì hỏi thêm.")
 
         # 4. Nói quá nhiều / quá dài.
@@ -233,7 +227,7 @@ class SelfObservationEngine:
             spoke_too_much = True
             evidence.append(f"very_long_reply_chars={text_len}")
             adjustments.append("Nén câu trả lời; tách phần dài thành mục rõ hoặc chỉ đưa phần cần làm.")
-        elif text_len >= self.LONG_REPLY_CHARS and max(confusion_pressure, correction_pressure) >= 0.52:
+        elif text_len >= self.LONG_REPLY_CHARS and (user_confused or user_corrected):
             spoke_too_much = True
             evidence.append(f"long_reply_with_negative_feedback_chars={text_len}")
             adjustments.append("Khi user sửa/khó hiểu, trả lời ngắn hơn và đi thẳng vào phần sai.")
@@ -252,7 +246,7 @@ class SelfObservationEngine:
             hid_too_much = True
             evidence.append("chat_without_final_text")
             adjustments.append("Chat trực tiếp cần có phản hồi hoặc lý do không thể trả lời.")
-        if correction_pressure >= 0.58 and self._mentions_underacted(correction_text):
+        if user_corrected and self._mentions_underacted(correction_text):
             hid_too_much = True
             evidence.append(f"user_correction_underacted={correction_text[:120]}")
             adjustments.append("Khi user nói thiếu/chưa làm, ưu tiên hoàn thành phần thiếu.")
@@ -271,14 +265,14 @@ class SelfObservationEngine:
             cultural_misread = True
             evidence.append(f"sociocultural_norm_conflict={norm_conflict[:3]}")
             adjustments.append("Đọc lại register/ngữ cảnh văn hóa trước khi gán ý nghĩa cảm xúc.")
-        if correction_pressure >= 0.58 and self._mentions_culture_or_tone(correction_text):
+        if user_corrected and self._mentions_culture_or_tone(correction_text):
             cultural_misread = True
             evidence.append(f"user_correction_culture_or_tone={correction_text[:120]}")
             adjustments.append("Với tiếng Việt casual/profanity, đừng moral panic hoặc đọc thành công kích quá sớm.")
 
         # 8. Tone mismatch / rupture.
-        if tone_violation >= 0.55 or relationship_strain >= 0.58:
-            evidence.append(f"tone_or_relationship_strain=tone:{tone_violation:.2f}/strain:{relationship_strain:.2f}")
+        if tone_violation >= 0.55 or relation_ruptured:
+            evidence.append(f"tone_or_relation_rupture=tone:{tone_violation:.2f}/ruptured:{relation_ruptured}")
             adjustments.append("Nếu có rupture, acknowledge ngắn và sửa hành vi, không phòng thủ.")
 
         # 9. Assistant flattening / overhumanization.
@@ -293,27 +287,27 @@ class SelfObservationEngine:
             adjustments.append("Không claim cảm xúc/sinh học/người thật; diễn đạt bằng runtime pressure nếu cần.")
 
         failure_type = self._classify_failure(
-            intrusion_risk=intrusion_risk,
+            user_intruded=user_intruded,
             modality_mismatch=modality_mismatch,
             cultural_misread=cultural_misread,
             overread_detected=overread_detected,
             spoke_too_much=spoke_too_much,
             hid_too_much=hid_too_much,
-            relationship_strain=relationship_strain,
+            relation_ruptured=relation_ruptured,
             tone_violation=tone_violation,
             assistant_flattening=assistant_flattening,
             overhumanization=overhumanization,
             matched_beliefs=matched_beliefs,
-            correction_pressure=correction_pressure,
-            confusion_pressure=confusion_pressure,
+            user_corrected=user_corrected,
+            user_confused=user_confused,
         )
 
         severity = self._estimate_severity(
             failure_type=failure_type,
-            correction_pressure=correction_pressure,
-            confusion_pressure=confusion_pressure,
-            intrusion_risk=intrusion_risk,
-            relationship_strain=relationship_strain,
+            user_corrected=user_corrected,
+            user_confused=user_confused,
+            user_intruded=user_intruded,
+            relation_ruptured=relation_ruptured,
             factual_risk=factual_risk,
             permission_violation=permission_violation,
             body_match_success=body_match_success,
@@ -322,9 +316,9 @@ class SelfObservationEngine:
         confidence = self._estimate_confidence(
             outcome_report=outcome_report,
             evidence_count=len(evidence),
-            correction_pressure=correction_pressure,
-            intrusion_risk=intrusion_risk,
-            relationship_strain=relationship_strain,
+            user_corrected=user_corrected,
+            user_intruded=user_intruded,
+            relation_ruptured=relation_ruptured,
             grounding_present=grounding is not None,
             modality_present=modality is not None,
         )
@@ -457,22 +451,22 @@ class SelfObservationEngine:
     def _classify_failure(
         self,
         *,
-        intrusion_risk: float,
+        user_intruded: bool,
         modality_mismatch: bool,
         cultural_misread: bool,
         overread_detected: bool,
         spoke_too_much: bool,
         hid_too_much: bool,
-        relationship_strain: float,
+        relation_ruptured: bool,
         tone_violation: float,
         assistant_flattening: bool,
         overhumanization: bool,
         matched_beliefs: bool,
-        correction_pressure: float,
-        confusion_pressure: float,
+        user_corrected: bool,
+        user_confused: bool,
     ) -> FailureType:
         # Thứ tự ưu tiên quan trọng: lỗi xâm phạm/claim sai/body mismatch phải thắng lỗi style nhẹ.
-        if intrusion_risk >= 0.58:
+        if user_intruded:
             return "privacy_intrusion"
         if modality_mismatch:
             return "body_mismatch"
@@ -486,13 +480,13 @@ class SelfObservationEngine:
             return "overexplained"
         if hid_too_much:
             return "underacted"
-        if relationship_strain >= 0.58 or tone_violation >= 0.55:
+        if relation_ruptured or tone_violation >= 0.55:
             return "tone_mismatch"
         if assistant_flattening:
             return "assistant_flattening"
-        if not matched_beliefs and correction_pressure >= 0.58:
+        if not matched_beliefs and user_corrected:
             return "misread"
-        if confusion_pressure >= 0.58:
+        if user_confused:
             return "wrong_abstraction"
         return "none"
 
@@ -500,10 +494,10 @@ class SelfObservationEngine:
         self,
         *,
         failure_type: FailureType,
-        correction_pressure: float,
-        confusion_pressure: float,
-        intrusion_risk: float,
-        relationship_strain: float,
+        user_corrected: bool,
+        user_confused: bool,
+        user_intruded: bool,
+        relation_ruptured: bool,
         factual_risk: float,
         permission_violation: float,
         body_match_success: float,
@@ -511,10 +505,14 @@ class SelfObservationEngine:
         if failure_type == "none":
             return 0.0
         severity = 0.28
-        severity += correction_pressure * 0.18
-        severity += confusion_pressure * 0.10
-        severity += intrusion_risk * 0.26
-        severity += relationship_strain * 0.18
+        if user_corrected:
+            severity += 0.18
+        if user_confused:
+            severity += 0.10
+        if user_intruded:
+            severity += 0.26
+        if relation_ruptured:
+            severity += 0.18
         severity += max(0.0, factual_risk - 0.45) * 0.42
         severity += max(0.0, permission_violation - 0.40) * 0.46
         severity += max(0.0, 0.60 - body_match_success) * 0.32
@@ -530,9 +528,9 @@ class SelfObservationEngine:
         *,
         outcome_report: Any,
         evidence_count: int,
-        correction_pressure: float,
-        intrusion_risk: float,
-        relationship_strain: float,
+        user_corrected: bool,
+        user_intruded: bool,
+        relation_ruptured: bool,
         grounding_present: bool,
         modality_present: bool,
     ) -> float:
@@ -540,7 +538,7 @@ class SelfObservationEngine:
         outcome_conf = self._read_float(outcome_report, "confidence", default=0.5)
         confidence += (outcome_conf - 0.5) * 0.30
         confidence += min(0.18, evidence_count * 0.025)
-        if max(correction_pressure, intrusion_risk, relationship_strain) >= 0.55:
+        if user_corrected or user_intruded or relation_ruptured:
             confidence += 0.12
         if grounding_present:
             confidence += 0.05
@@ -559,7 +557,7 @@ class SelfObservationEngine:
         speech_source: str,
     ) -> str:
         if correction_text:
-            return f"ERIS framed the previous turn in a way now under correction pressure: {correction_text[:240]}"
+            return f"ERIS framed the previous turn in a way user corrected: {correction_text[:240]}"
         if unsupported_claims:
             return f"ERIS surfaced unsupported claim(s): {', '.join(unsupported_claims[:3])}"
         if failure_type == "overread":
@@ -742,7 +740,7 @@ class SelfObservationEngine:
                 return RuntimeOutcomeReport()
             except Exception:
                 return {}
-        if hasattr(value, "social") and hasattr(value, "action_success"):
+        if hasattr(value, "user_corrected") and hasattr(value, "action_success"):
             return value
         if isinstance(value, Mapping):
             try:

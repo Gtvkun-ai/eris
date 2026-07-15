@@ -3,7 +3,7 @@ from __future__ import annotations
 """BanterArbiter - trọng tài duyên nói ở cửa ra.
 
 Mục tiêu không phải "thêm hài" vào mọi câu. Một câu đùa có duyên phải có neo:
-user vừa đùa, lượt mới tạo áp lực sửa lỗi, hoặc runtime có bằng chứng màn hình/ngữ cảnh rõ.
+user vừa đùa, user vừa sửa lỗi, hoặc runtime có bằng chứng màn hình/ngữ cảnh rõ.
 Không có neo thì im/repair gọn tốt hơn là diễn sâu.
 """
 
@@ -38,37 +38,24 @@ class BanterDecision:
 
 @dataclass(frozen=True, slots=True)
 class CorrectionEvidence:
-    """Các score evidence nhỏ cho repair, không phải verdict về ý định user.
+    """Bằng chứng rất nhỏ cho repair.
 
-    Một câu có thể đồng thời có áp lực sửa, chọc, khó hiểu và meta-challenge.
-    Threshold bên dưới chỉ mở hành động kỹ thuật; chúng không được serialize
-    thành claim kiểu ``user đang sửa`` hay ``user chỉ đang thách thức``.
+    Điểm quan trọng: "gì vậy/là sao" chỉ là challenge/confusion. Nó không tự
+    biến thành user correction, vì user chưa đưa một nội dung mới để sửa theo.
     """
 
-    explicit_correction_score: float = 0.0
-    replacement_content_score: float = 0.0
-    challenge_score: float = 0.0
-    meta_challenge_score: float = 0.0
+    explicit_correction: bool = False
+    has_replacement_content: bool = False
+    confusion_or_challenge: bool = False
+    meta_challenge: bool = False
 
     @property
-    def correction_pressure(self) -> float:
-        base = max(self.explicit_correction_score, self.replacement_content_score)
-        # Meta-challenge làm giảm quyền cam kết, nhưng không xóa hoàn toàn khả năng repair.
-        return max(0.0, min(1.0, base * (1.0 - 0.55 * self.meta_challenge_score)))
+    def is_real_correction(self) -> bool:
+        return self.explicit_correction and not self.meta_challenge
 
     @property
-    def challenge_pressure(self) -> float:
-        return max(0.0, min(1.0, max(self.challenge_score, self.meta_challenge_score)))
-
-    @property
-    def repair_gate_open(self) -> bool:
-        """Policy gate vận hành, không phải kết luận xã hội được lưu lại."""
-        return self.correction_pressure >= 0.62
-
-    @property
-    def challenge_gate_open(self) -> bool:
-        """Policy gate cho repair dè dặt khi previous frame có dấu hiệu overread."""
-        return self.challenge_pressure >= 0.56
+    def is_challenge_only(self) -> bool:
+        return self.confusion_or_challenge or self.meta_challenge
 
 
 def _env_enabled() -> bool:
@@ -114,7 +101,7 @@ class BanterArbiter:
     - repair thắng joke;
     - joke phải bám evidence;
     - không bao giờ nói về JSON/parser/format/debug ra public;
-    - khi correction pressure đủ mạnh, không hỏi lại rộng nếu có thể tự nhận sai gọn.
+    - khi user vừa sửa, không hỏi lại rộng nếu có thể tự nhận sai gọn.
     """
 
     _PROTOCOL_MARKERS = (
@@ -198,6 +185,7 @@ class BanterArbiter:
         grounding: Any = None,
         frame: Any = None,
         speech_core: Any = None,
+        social_appraisal: Any = None,
     ) -> BanterDecision:
         if not _env_enabled():
             return BanterDecision(reason="disabled")
@@ -227,8 +215,10 @@ class BanterArbiter:
                 confidence=0.86,
             )
 
-        correction = self._assess_user_correction(normalized_user)
-        if correction.repair_gate_open:
+        correction = self._correction_from_social_appraisal(social_appraisal)
+        if correction is None:
+            correction = self._assess_user_correction(normalized_user)
+        if correction.is_real_correction:
             repair = self._correction_repair_text(
                 normalized_user=normalized_user,
                 previous_norm=previous_norm,
@@ -240,11 +230,11 @@ class BanterArbiter:
                 return BanterDecision(
                     mode="correction_repair",
                     text=repair,
-                    reason="correction_pressure_first",
+                    reason="user_correction_first",
                     confidence=0.80,
                 )
 
-        if correction.challenge_gate_open and self._needs_overread_challenge_repair(normalized_text):
+        if correction.is_challenge_only and self._needs_overread_challenge_repair(normalized_text):
             return BanterDecision(
                 mode="overread_challenge_repair",
                 text=self._overread_challenge_repair_text(
@@ -252,7 +242,7 @@ class BanterArbiter:
                     previous_norm=previous_norm,
                     current_norm=normalized_text,
                 ),
-                reason="challenge_pressure_without_replacement",
+                reason="user_challenge_without_replacement",
                 confidence=0.78,
             )
 
@@ -304,20 +294,23 @@ class BanterArbiter:
         grounding: Any = None,
         frame: Any = None,
         speech_core: Any = None,
+        social_appraisal: Any = None,
     ) -> BanterDecision:
-        """Sinh repair khi lượt mới tạo áp lực phủ định/sửa câu public trước.
+        """Sinh repair cho lượt user đang phủ định/sửa câu public trước.
 
         Đây là API cho chat-cycle trước khi gọi LLM. Nó giúp Eris sửa nhịp như
         một chủ thể đang bị bắt lỗi: nhận frame sai, bỏ frame đó, rồi dừng. Nếu
-        evidence chưa đủ mở repair gate, trả none để pipeline bình thường tiếp tục.
+        user không thật sự đang sửa, trả none để pipeline bình thường tiếp tục.
         """
         if not _env_enabled():
             return BanterDecision(reason="disabled")
         normalized_user = _normalize_vi(user_text)
         previous_norm = _normalize_vi(previous_text)
-        correction = self._assess_user_correction(normalized_user)
-        if not correction.repair_gate_open:
-            if correction.challenge_gate_open:
+        correction = self._correction_from_social_appraisal(social_appraisal)
+        if correction is None:
+            correction = self._assess_user_correction(normalized_user)
+        if not correction.is_real_correction:
+            if correction.is_challenge_only:
                 if not self._previous_text_invites_challenge_repair(previous_norm):
                     return BanterDecision(reason="challenge_without_bad_previous_frame")
                 return BanterDecision(
@@ -330,7 +323,7 @@ class BanterArbiter:
                     reason="previous_public_turn_challenged_without_replacement",
                     confidence=0.80,
                 )
-            return BanterDecision(reason="correction_pressure_below_gate")
+            return BanterDecision(reason="user_not_correcting")
         if not previous_norm:
             return BanterDecision(reason="no_previous_public_text")
         evidence_blob = self._evidence_blob(grounding=grounding, frame=frame, speech_core=speech_core)
@@ -346,7 +339,7 @@ class BanterArbiter:
         return BanterDecision(
             mode="correction_repair",
             text=text,
-            reason="previous_public_turn_correction_pressure",
+            reason="previous_public_turn_correction",
             confidence=0.82,
         )
 
@@ -383,6 +376,30 @@ class BanterArbiter:
         # surfaced text itself leaks protocol/debug markers.
         return _has_any(normalized_text, self._PROTOCOL_MARKERS)
 
+    def _correction_from_social_appraisal(self, social_appraisal: Any) -> CorrectionEvidence | None:
+        """Chiếu snapshot chung sang contract banter, không tự phân loại lại."""
+        if social_appraisal is None:
+            return None
+        correction = getattr(social_appraisal, "correction", None)
+        confusion = getattr(social_appraisal, "confusion", None)
+        claim = getattr(social_appraisal, "claim", None)
+        policy = getattr(social_appraisal, "claim_policy", None)
+        thresholds = getattr(social_appraisal, "thresholds", None)
+        repair_gate = float(getattr(thresholds, "repair_active", 0.46) or 0.46)
+        correction_pressure = max(
+            float(getattr(correction, "value", 0.0) or 0.0),
+            float(getattr(claim, "contest", 0.0) or 0.0),
+            float(getattr(claim, "contradiction", 0.0) or 0.0),
+        )
+        confusion_pressure = float(getattr(confusion, "value", 0.0) or 0.0)
+        suppress = bool(getattr(policy, "suppress_for_current_turn", False))
+        return CorrectionEvidence(
+            explicit_correction=bool(suppress or correction_pressure >= repair_gate),
+            has_replacement_content=bool(float(getattr(claim, "contradiction", 0.0) or 0.0) >= 0.72),
+            confusion_or_challenge=bool(confusion_pressure >= repair_gate),
+            meta_challenge=False,
+        )
+
     def _assess_user_correction(self, normalized_user: str) -> CorrectionEvidence:
         if not normalized_user:
             return CorrectionEvidence()
@@ -394,21 +411,25 @@ class BanterArbiter:
         has_replacement = _has_any(normalized_user, self._REPLACEMENT_MARKERS)
         explicit = _has_any(normalized_user, self._CORRECTION_MARKERS)
 
-        # "hiểu sai là sao/tôi đã nói gì đâu" thường là meta-challenge. Ta chỉ
-        # hạ correction pressure, không đóng dấu user chắc chắn không sửa gì.
+        # "hiểu sai là sao/tôi đã nói gì đâu" nói về lỗi repair của ERIS,
+        # không phải user đang đưa correction mới. Nếu coi nó là correction thật,
+        # ERIS sẽ nói dối kiểu "từ chỗ Ngài vừa sửa".
         if meta_challenge and not has_replacement:
             return CorrectionEvidence(
-                explicit_correction_score=0.18 if explicit else 0.0,
-                replacement_content_score=0.0,
-                challenge_score=0.72 if challenge else 0.58,
-                meta_challenge_score=0.92,
+                explicit_correction=False,
+                has_replacement_content=False,
+                confusion_or_challenge=True,
+                meta_challenge=True,
             )
         return CorrectionEvidence(
-            explicit_correction_score=0.86 if explicit else 0.0,
-            replacement_content_score=0.92 if has_replacement else 0.0,
-            challenge_score=0.68 if challenge else 0.0,
-            meta_challenge_score=0.0,
+            explicit_correction=bool(explicit or has_replacement),
+            has_replacement_content=has_replacement,
+            confusion_or_challenge=challenge,
+            meta_challenge=False,
         )
+
+    def _user_corrected(self, normalized_user: str) -> bool:
+        return self._assess_user_correction(normalized_user).is_real_correction
 
     def _has_screen_evidence(self, grounding: Any, evidence_blob: str) -> bool:
         if grounding is not None:
@@ -422,8 +443,8 @@ class BanterArbiter:
         return _has_any(evidence_blob, ("youtube", "video", "music", "nhac", "anime", "screen", "man hinh"))
 
     def _protocol_repair_text(self, *, normalized_user: str, previous_norm: str, evidence_blob: str) -> str:
-        correction = self._assess_user_correction(normalized_user)
-        if correction.repair_gate_open:
+        if self._user_corrected(normalized_user):
+            correction = self._assess_user_correction(normalized_user)
             return self._correction_repair_text(
                 normalized_user=normalized_user,
                 previous_norm=previous_norm,
@@ -455,7 +476,7 @@ class BanterArbiter:
             return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, không hỏi vòng thêm."
         if normalized_user in {"ha", "hả", "gi", "gi vay"}:
             return "Câu vừa rồi không có neo. Bỏ qua nó đi."
-        if correction.replacement_content_score >= 0.58:
+        if correction.has_replacement_content:
             return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, nói lại theo phần Ngài vừa chỉnh."
         return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, không dựng tiếp trên nó."
 
