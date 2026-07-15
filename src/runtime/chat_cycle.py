@@ -601,6 +601,23 @@ class ChatCycleMixin:
         )
         frame.metadata["social_appraisal"] = repair_appraisal.social_snapshot.to_dict()
         frame.social_appraisal = repair_appraisal.social_snapshot
+        repair_lifetime = getattr(self, "repair_state_controller", None)
+        if repair_lifetime is not None:
+            try:
+                if repair_appraisal.active:
+                    if not repair_lifetime.state.active and not repair_lifetime.state.exhausted:
+                        repair_lifetime.begin(target=str(getattr(repair_appraisal, "response_strategy", "") or ""))
+                    if repair_lifetime.available():
+                        repair_lifetime.consume_public_turn()
+                    frame.metadata["repair_state"] = {
+                        "active": bool(repair_lifetime.state.active),
+                        "turns_left": int(repair_lifetime.state.turns_left),
+                        "exhausted": bool(repair_lifetime.state.exhausted),
+                    }
+                else:
+                    repair_lifetime.clear()
+            except Exception:
+                pass
         if repair_appraisal.active:
             frame.debug_notes.append(
                 "social_appraisal="
@@ -859,6 +876,11 @@ class ChatCycleMixin:
             turn_semantics_report.correction_pressure,
         )
         if repair_appraisal.suppress_previous_claim_for_turn:
+            try:
+                from memory.provenance_policy import GLOBAL_CONTESTED_CLAIMS
+                GLOBAL_CONTESTED_CLAIMS.mark(str(getattr(self, "last_chat_answer", "") or ""))
+            except Exception:
+                pass
             self._invalidate_last_assistant_history(note=repair_appraisal.history_invalidation_note())
             self.logger.info(
                 "[social appraisal] lowered previous claim authority | posture=%s contest=%.2f playful=%.2f",

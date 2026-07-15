@@ -19,6 +19,7 @@ from typing import Any
 from runtime.autonomous_performance import AutonomousPerformancePlanner
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
+from runtime.speech_contract import SpeechContractResolver
 from runtime.stage_performance_planner import PerformanceRequestPlanner
 from runtime.stage_transformers import StageTransformerChain
 
@@ -43,6 +44,7 @@ class StageFrame:
     prosody_notes: str = ""
     delivery: dict[str, Any] = field(default_factory=dict)
     stage_act: dict[str, Any] = field(default_factory=dict)
+    speech_contract: dict[str, Any] = field(default_factory=dict)
     interruptible: bool = True
     body_only: bool = False
     source: str = "unknown"
@@ -64,6 +66,7 @@ class StageFrame:
                 "prosody_style": self.prosody_style,
                 "delivery": self.delivery,
                 "stage_act": self.stage_act,
+                "speech_contract": self.speech_contract,
                 "interruptible": self.interruptible,
                 "body_only": self.body_only,
                 "source": self.source,
@@ -159,6 +162,7 @@ class StageFrameBuilder:
     def __init__(self, *, localizer: Any = None, language_hint: str = "auto") -> None:
         self.localizer = localizer
         self.language_hint = language_hint or "auto"
+        self.speech_contract_resolver = SpeechContractResolver(default_language=self.language_hint)
         self.prosody_director = ProsodyDirector()
         self.transformers = StageTransformerChain()
         self.delivery_planner = SpeechDeliveryPlanner()
@@ -192,9 +196,16 @@ class StageFrameBuilder:
         )
 
         tts_source = performance.tts_text
-        if self.localizer is not None and tts_source:
+        speech_contract = self.speech_contract_resolver.resolve(payload, text=tts_source)
+        if self.localizer is not None and tts_source and speech_contract.can_translate:
             try:
-                tts_text = str(self.localizer.localize(tts_source, language_hint=self.language_hint) or "").strip()
+                tts_text = str(
+                    self.localizer.localize(
+                        tts_source,
+                        language_hint=speech_contract.language,
+                        prosody_style=performance.delivery_hint,
+                    ) or ""
+                ).strip()
             except Exception:
                 tts_text = tts_source
         else:
@@ -265,6 +276,7 @@ class StageFrameBuilder:
             prosody_notes=prosody.director_notes,
             delivery=delivery_payload,
             stage_act=autonomous_act.to_payload() if autonomous_act is not None else {},
+            speech_contract=speech_contract.to_payload(),
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
             body_only=bool(not should_speak and (motion or performance.actions)),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+
 
 FORCE_SPEAK_RECENT_FAMILY_WINDOW = 5
 
@@ -56,21 +59,60 @@ FORCE_SPEAK_BANNED_FAMILIES = {
 }
 
 
-class TextRepeatGuardMixin:
-    def _is_near_duplicate_text(self, text: str, other: str) -> bool:
-        left = self._normalize_user_message(text)
-        right = self._normalize_user_message(other)
-        if not left or not right:
-            return False
-        if left == right:
-            return True
+@dataclass(frozen=True, slots=True)
+class SemanticRepeatFingerprint:
+    normalized_text: str
+    intent: str = ""
+    action_schema: str = ""
 
-        left_tokens = set(left.split())
-        right_tokens = set(right.split())
+
+def repeat_fingerprint(normalizer, text: str, *, intent: str = "", action_schema: str = "") -> SemanticRepeatFingerprint:
+    return SemanticRepeatFingerprint(
+        normalized_text=str(normalizer(text) or ""),
+        intent=str(intent or "").strip().lower(),
+        action_schema=str(action_schema or "").strip().lower(),
+    )
+
+
+
+class TextRepeatGuardMixin:
+    def _semantic_repeat_match(
+        self,
+        text: str,
+        other: str,
+        *,
+        intent: str = "",
+        other_intent: str = "",
+        action_schema: str = "",
+        other_action_schema: str = "",
+        repair: bool = False,
+        follow_up_after_failure: bool = False,
+        new_evidence: bool = False,
+    ) -> bool:
+        # Hỏi lại để sửa một câu sai không phải spam. Exact-string guard từng
+        # quên điều hiển nhiên này, vì máy rất thích luật gọn hơn thực tế.
+        if repair or follow_up_after_failure or new_evidence:
+            return False
+        left = repeat_fingerprint(self._normalize_user_message, text, intent=intent, action_schema=action_schema)
+        right = repeat_fingerprint(self._normalize_user_message, other, intent=other_intent, action_schema=other_action_schema)
+        if not left.normalized_text or not right.normalized_text:
+            return False
+        if left.intent and right.intent and left.intent != right.intent:
+            return False
+        if left.action_schema and right.action_schema and left.action_schema != right.action_schema:
+            return False
+        if left.normalized_text == right.normalized_text:
+            return True
+        left_tokens = set(left.normalized_text.split())
+        right_tokens = set(right.normalized_text.split())
         if not left_tokens or not right_tokens:
             return False
         overlap = len(left_tokens & right_tokens) / max(1, min(len(left_tokens), len(right_tokens)))
-        return overlap >= 0.82
+        sequence = SequenceMatcher(None, left.normalized_text, right.normalized_text).ratio()
+        return overlap >= 0.82 and sequence >= 0.72
+
+    def _is_near_duplicate_text(self, text: str, other: str) -> bool:
+        return self._semantic_repeat_match(text, other)
 
     def _recent_spoken_texts(self, *, limit: int = FORCE_SPEAK_RECENT_FAMILY_WINDOW) -> tuple[str, ...]:
         texts: list[str] = []

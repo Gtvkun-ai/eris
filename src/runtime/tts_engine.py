@@ -17,14 +17,17 @@ from __future__ import annotations
 
 import io
 import asyncio
+import inspect
 import logging
 import os
 import queue
+import random
 import re
 import struct
 import subprocess
 import tempfile
 import threading
+import time
 import unicodedata
 import wave
 from dataclasses import dataclass
@@ -35,6 +38,8 @@ from runtime.speech_localizer import SpeechLocalizer
 from runtime.tts_audio_polish import audio_polish_enabled, polish_pcm16_mono
 from runtime.tts_markup import render_tts_markup
 from runtime.vocal_cache import VocalCache, VocalCacheKey, strip_audible_prefix, vocal_cache_enabled
+from runtime.speech_contract import normalize_language
+from runtime.tts_circuit_breaker import GLOBAL_TTS_BREAKER
 
 logger = logging.getLogger("TTS")
 
@@ -665,6 +670,24 @@ def _extract_gemini_tts_pcm(response) -> bytes:
     raise RuntimeError("Gemini TTS không trả audio parts hợp lệ.")
 
 
+def _tts_breaker_enabled() -> bool:
+    return os.environ.get("ERIS_TTS_BREAKER_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _tts_max_attempts() -> int:
+    try:
+        return max(1, min(4, int(os.environ.get("ERIS_TTS_MAX_ATTEMPTS", "2") or 2)))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _same_language_locale(language_hint: str, locale: str = "") -> str:
+    if str(locale or "").strip():
+        return str(locale).strip()
+    lang = normalize_language(language_hint)
+    return {"vi": "vi-VN", "ja": "ja-JP", "en": "en-US"}.get(lang, lang)
+
+
 def _synthesize_wav(
     prompt: str,
     voice: str,
@@ -672,6 +695,7 @@ def _synthesize_wav(
     *,
     fallback_text: str = "",
     language_hint: str = "",
+    locale: str = "",
 ) -> bytes:
     """Gọi Gemini TTS, trả về WAV bytes (24kHz, mono, 16-bit PCM)."""
     from google import genai
@@ -681,10 +705,22 @@ def _synthesize_wav(
     try:
         from llm.key_pool import get_key_pool
         pool = get_key_pool("gemini")
-        max_attempts = pool.size if (pool and pool.size > 0) else 1
+        pool_attempts = pool.size if (pool and pool.size > 0) else 1
     except Exception:
         pool = None
-        max_attempts = 1
+        pool_attempts = 1
+    max_attempts = min(pool_attempts, _tts_max_attempts())
+
+    breaker_key = ("gemini", str(model or ""), str(voice or ""), _same_language_locale(language_hint, locale))
+    permit = None
+    if _tts_breaker_enabled():
+        permit = GLOBAL_TTS_BREAKER.allow(breaker_key)
+        if not permit.allowed:
+            exc = RuntimeError(f"TTS circuit breaker {permit.state.value}: {permit.reason}")
+            fallback = _try_local_tts_fallback(exc, fallback_text=fallback_text, language_hint=language_hint)
+            if fallback:
+                return fallback
+            raise exc
 
     last_exc = None
     pcm_data = None
@@ -730,6 +766,13 @@ def _synthesize_wav(
             pcm_data = _extract_gemini_tts_pcm(response)
             if pool is not None and lease is not None:
                 pool.mark_success(lease=lease)
+            if _tts_breaker_enabled():
+                GLOBAL_TTS_BREAKER.record_success(breaker_key)
+            try:
+                from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
+            except Exception:
+                pass
             break
         except Exception as exc:
             last_exc = exc
@@ -750,6 +793,37 @@ def _synthesize_wav(
             except Exception:
                 pass
 
+            error_text = str(exc).lower()
+            is_invalid_shape = "audio parts" in error_text or "parts hợp lệ" in error_text or "nonetype" in error_text
+            is_transient = bool(
+                str(error_kind) == "transient_server"
+                or any(code in error_text for code in ("500", "502", "503", "504", "temporarily unavailable"))
+            )
+            breaker_failure = ""
+            if is_rate_limit:
+                breaker_failure = "rate_limit"
+            elif is_invalid_shape:
+                breaker_failure = "invalid_shape"
+            elif is_transient:
+                breaker_failure = "transient_server"
+            # Ở HALF_OPEN, bất kỳ probe nào lỗi cũng phải mở breaker lại.
+            # Nếu chỉ tính 429/5xx, một lỗi auth/shape lạ sẽ giữ probes_in_flight
+            # mãi mãi và breaker kẹt ở half-open.
+            is_half_open_probe = bool(
+                permit is not None and getattr(getattr(permit, "state", None), "value", "") == "half_open"
+            )
+            if _tts_breaker_enabled() and (breaker_failure or is_half_open_probe):
+                GLOBAL_TTS_BREAKER.record_failure(
+                    breaker_key,
+                    kind=breaker_failure or str(error_kind or "provider_error"),
+                )
+            if is_rate_limit:
+                try:
+                    from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0)
+                except Exception:
+                    pass
+
             if is_revoked and pool is not None and lease is not None:
                 pool.mark_permanently_dead(lease=lease, reason="tts_key_reported_leaked")
                 logger.warning(
@@ -757,6 +831,7 @@ def _synthesize_wav(
                     getattr(lease, "index", "?"),
                 )
                 if attempt < max_attempts - 1:
+                    time.sleep(min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)))
                     continue
 
             if is_rate_limit and pool is not None:
@@ -768,7 +843,11 @@ def _synthesize_wav(
                     max_attempts,
                 )
                 if may_rotate and attempt < max_attempts - 1:
+                    time.sleep(min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)))
                     continue
+            elif (is_invalid_shape or is_transient) and attempt < max_attempts - 1:
+                time.sleep(min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)))
+                continue
             fallback = _try_local_tts_fallback(exc, fallback_text=fallback_text, language_hint=language_hint)
             if fallback:
                 return fallback
@@ -810,6 +889,28 @@ def _synthesize_wav(
         wf.setframerate(24000)   # 24kHz
         wf.writeframes(pcm_data)
     return buf.getvalue()
+
+
+def _invoke_synthesize_wav(
+    prompt: str,
+    voice: str,
+    model: str,
+    **kwargs,
+) -> bytes:
+    """Gọi synth với contract mới nhưng vẫn tương thích adapter/mock cũ.
+
+    Kiểm tra chữ ký trước khi gọi, không bắt bừa ``TypeError`` phát sinh bên
+    trong provider. Nhờ vậy backend cũ ba tham số vẫn sống trong giai đoạn migration.
+    """
+    try:
+        params = tuple(inspect.signature(_synthesize_wav).parameters.values())
+        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+        names = {p.name for p in params}
+    except (TypeError, ValueError):
+        accepts_kwargs = True
+        names = set(kwargs)
+    supported = kwargs if accepts_kwargs else {key: value for key, value in kwargs.items() if key in names}
+    return _synthesize_wav(prompt, voice, model, **supported)
 
 
 def _concat_wav_bytes(*items: bytes) -> bytes:
@@ -1027,6 +1128,9 @@ class _SpeakRequest:
         "interruptible",
         "vocal_cache_kind",
         "vocal_prefix",
+        "language_hint",
+        "voice_family",
+        "locale",
         "on_event",
     )
 
@@ -1045,6 +1149,9 @@ class _SpeakRequest:
         interruptible: bool = True,
         vocal_cache_kind: str = "",
         vocal_prefix: str = "",
+        language_hint: str = "",
+        voice_family: str = "",
+        locale: str = "",
         on_event = None,
     ):
         self.text = text
@@ -1065,6 +1172,9 @@ class _SpeakRequest:
         self.interruptible = bool(interruptible)
         self.vocal_cache_kind = str(vocal_cache_kind or "")
         self.vocal_prefix = str(vocal_prefix or "")
+        self.language_hint = str(language_hint or "")
+        self.voice_family = str(voice_family or "")
+        self.locale = str(locale or "")
         self.on_event = on_event
 
 
@@ -1166,6 +1276,18 @@ class _TtsWorker:
         self._drain_pending(reason=reason)
         return True
 
+    def _request_language(self, req: _SpeakRequest) -> str:
+        return _normalize_language_hint(req.language_hint or self._language_hint)
+
+    def _request_voice(self, req: _SpeakRequest) -> str:
+        requested = str(req.voice_family or "").strip()
+        if not requested or requested.lower() in {"eris_primary", "primary", "default"}:
+            return self._voice
+        return requested
+
+    def _request_locale(self, req: _SpeakRequest) -> str:
+        return _same_language_locale(self._request_language(req), req.locale)
+
     def _vocal_prefix_wav(self, req: _SpeakRequest, prefix: str, prosody_plan) -> bytes:
         """Lấy/sinh WAV cho prefix nghe được như "Hah... haha.".
 
@@ -1176,13 +1298,16 @@ class _TtsWorker:
         if not prefix or not vocal_cache_enabled():
             return b""
         kind = str(getattr(req, "vocal_cache_kind", "") or "vocal_prefix")
+        language_hint = self._request_language(req)
+        voice = self._request_voice(req)
+        locale = self._request_locale(req)
         key = VocalCacheKey(
-            voice=self._voice,
+            voice=voice,
             model=self._model,
             kind=kind,
             style=req.prosody_style or getattr(prosody_plan, "style", "") or "neutral",
             text=prefix,
-            language_hint=_language_hint(),
+            language_hint=language_hint,
         )
         cached = self._vocal_cache.get(key)
         if cached:
@@ -1205,17 +1330,18 @@ class _TtsWorker:
             prompt = _build_tts_prompt(
                 marked,
                 "",
-                self._language_hint,
+                language_hint,
                 prosody_notes=prefix_plan.director_notes,
                 prelocalized=True,
                 quality_mode=_quality_mode(),
             )
-            wav_bytes = _synthesize_wav(
+            wav_bytes = _invoke_synthesize_wav(
                 prompt,
-                self._voice,
+                voice,
                 self._model,
                 fallback_text=prefix,
-                language_hint=_language_hint(),
+                language_hint=language_hint,
+                locale=locale,
             )
             self._vocal_cache.put(key, wav_bytes)
             logger.debug("[TTS] Vocal cache stored kind=%s text=%r", kind, prefix)
@@ -1232,18 +1358,21 @@ class _TtsWorker:
         vẫn dùng đường ``speak`` tuần tự để tương thích với code hiện có.
         """
 
+        language_hint = self._request_language(req)
+        voice = self._request_voice(req)
+        locale = self._request_locale(req)
         audio_tag = _emotion_to_tag(req.valence, req.arousal, req.stance)
         vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
         main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
         prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
         text_to_speak = main_text_raw
         localized = bool(req.prelocalized)
-        if self._language_hint == "ja" and _prelocalize_japanese_enabled() and not req.prelocalized:
+        if language_hint == "ja" and _prelocalize_japanese_enabled() and not req.prelocalized:
             # Dịch/style chạy ở backend nhưng trả về WAV thuần. Manager không cần
             # biết câu đã localize thế nào, chỉ cần audio bytes để xếp hàng phát.
             text_to_speak = self._localizer.localize(
                 main_text_raw,
-                language_hint=self._language_hint,
+                language_hint=language_hint,
                 prosody_style=req.prosody_style,
             )
             localized = text_to_speak != main_text_raw
@@ -1262,17 +1391,18 @@ class _TtsWorker:
             prompt = _build_tts_prompt(
                 marked_text,
                 "",
-                self._language_hint,
+                language_hint,
                 prosody_notes=prosody_plan.director_notes,
                 prelocalized=localized or req.prelocalized,
                 quality_mode=_quality_mode(),
             )
-            main_wav = _synthesize_wav(
+            main_wav = _invoke_synthesize_wav(
                 prompt,
-                self._voice,
+                voice,
                 self._model,
                 fallback_text=text_to_speak,
-                language_hint=self._language_hint,
+                language_hint=language_hint,
+                locale=locale,
             )
 
         logger.debug(
@@ -1300,18 +1430,21 @@ class _TtsWorker:
             callback_called = False
             try:
                 try:
+                    language_hint = self._request_language(req)
+                    voice = self._request_voice(req)
+                    locale = self._request_locale(req)
                     audio_tag = _emotion_to_tag(req.valence, req.arousal, req.stance)
                     vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
                     main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
                     prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
                     text_to_speak = main_text_raw
                     localized = bool(req.prelocalized)
-                    if self._language_hint == "ja" and _prelocalize_japanese_enabled() and not req.prelocalized:
+                    if language_hint == "ja" and _prelocalize_japanese_enabled() and not req.prelocalized:
                         # Dịch/style TTS chạy trong worker nền để UI/runtime không bị
                         # kẹt bởi một call Gemini phụ. Engine vẫn chỉ nhận text sạch.
                         text_to_speak = self._localizer.localize(
                             main_text_raw,
-                            language_hint=self._language_hint,
+                            language_hint=language_hint,
                             prosody_style=req.prosody_style,
                         )
                         localized = text_to_speak != main_text_raw
@@ -1330,17 +1463,18 @@ class _TtsWorker:
                         prompt = _build_tts_prompt(
                             marked_text,
                             "",
-                            self._language_hint,
+                            language_hint,
                             prosody_notes=prosody_plan.director_notes,
                             prelocalized=localized or req.prelocalized,
                             quality_mode=_quality_mode(),
                         )
-                        main_wav = _synthesize_wav(
+                        main_wav = _invoke_synthesize_wav(
                             prompt,
-                            self._voice,
+                            voice,
                             self._model,
                             fallback_text=text_to_speak,
-                            language_hint=self._language_hint,
+                            language_hint=language_hint,
+                            locale=locale,
                         )
 
                     logger.debug(
@@ -1470,6 +1604,9 @@ class TtsEngine:
         interruptible: bool = True,
         vocal_cache_kind: str = "",
         vocal_prefix: str = "",
+        language_hint: str = "",
+        voice_family: str = "",
+        locale: str = "",
         replace: bool = True,
         on_event = None,
     ) -> None:
@@ -1515,6 +1652,9 @@ class TtsEngine:
                 interruptible=interruptible,
                 vocal_cache_kind=vocal_cache_kind,
                 vocal_prefix=vocal_prefix,
+                language_hint=language_hint,
+                voice_family=voice_family,
+                locale=locale,
                 on_event=on_event,
             ),
             replace=replace,
@@ -1560,6 +1700,9 @@ class TtsEngine:
         interruptible: bool = True,
         vocal_cache_kind: str = "",
         vocal_prefix: str = "",
+        language_hint: str = "",
+        voice_family: str = "",
+        locale: str = "",
     ) -> bytes:
         """Backend API mới: text sạch -> WAV bytes, chưa phát ra loa."""
         self.refresh_configuration()
@@ -1582,6 +1725,9 @@ class TtsEngine:
             interruptible=interruptible,
             vocal_cache_kind=vocal_cache_kind,
             vocal_prefix=vocal_prefix,
+            language_hint=language_hint,
+            voice_family=voice_family,
+            locale=locale,
             on_event=None,
         )
         return self._worker.synthesize(req)

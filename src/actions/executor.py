@@ -10,6 +10,7 @@ import requests # Thêm import requests để thực hiện các yêu cầu HTTP
 
 from eris_secrets import get_agent_profile, get_secret
 from .contracts import ActionExecutionResult, VALID_SYSTEM_ACTIONS
+from .capability_registry import canonicalize_action_id
 # ActionExecutor là một lớp để thực thi các hành động hệ thống được định nghĩa 
 # trong VALID_SYSTEM_ACTIONS.
 # Lớp này cung cấp một phương thức execute để thực thi một hành động cụ thể dựa
@@ -54,7 +55,7 @@ class ActionExecutor:
     '''
     def execute(self, action_name: str, action_input: str = "") -> ActionExecutionResult:
         original_action_name = (action_name or "").strip()
-        action_name = self._ACTION_ALIASES.get(original_action_name.lower(), original_action_name)
+        action_name = canonicalize_action_id(original_action_name)
         action_input = (action_input or "").strip()
         if action_name not in VALID_SYSTEM_ACTIONS:
             return ActionExecutionResult(
@@ -82,7 +83,8 @@ class ActionExecutor:
                 action_name=action_name,
                 action_input=action_input,
                 success=False,
-                message=f"Không thực thi được action {action_name}: {exc}",
+                message=f"Không thực thi được action {action_name}.",
+                error_kind=type(exc).__name__,
             )
 
         self._log("info", "[action] %s(%s) -> %s", action_name, action_input or "<empty>", result.message)
@@ -263,6 +265,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
                 action_input=action_input,
                 success=True,
                 message="Đã gửi lệnh mute/unmute âm lượng hệ thống.",
+                status="dispatched",
             )
 
         max_words = {"max", "maximum", "full", "100", "toi da", "tối đa", "het co", "hết cỡ", "to nhat", "to nhất"}
@@ -290,8 +293,9 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             action_name="set_volume",
             action_input=str(level),
             success=True,
-            message=f"Đã đưa âm lượng hệ thống về khoảng {level} phần trăm.",
+            message=f"Đã gửi yêu cầu đưa âm lượng hệ thống về khoảng {level} phần trăm.",
             data={"level": str(level)},
+            status="dispatched",
         )
     
     #Search web bằng Gemini grounding

@@ -21,6 +21,9 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
+from actions.capability_registry import singing_capability_enabled
+from runtime.final_surface_sanitizer import FinalSurfaceSanitizer
+
 
 @dataclass(frozen=True, slots=True)
 class StageMarks:
@@ -214,6 +217,10 @@ class ActionTagExtractor:
             value = tag.split(":", 1)[-1].strip() if ":" in tag else tag
             mapped = _ACTION_ALIASES.get(value) or _ACTION_ALIASES.get(value.replace("_", " "))
             if mapped:
+                # TTS không phải SVS. Khi singing capability tắt, tag hát bị bóc
+                # khỏi public text nhưng không phát action giả sang stage.
+                if mapped == "sing_tease" and not singing_capability_enabled():
+                    return
                 actions.append(mapped)
                 if mapped in {"look_away", "look_down", "tilt_head", "small_smile", "wink", "clap_soft", "shrug_small"}:
                     motion_hint = motion_hint or mapped
@@ -296,6 +303,7 @@ class StageTransformerChain:
         self.display_filter = DisplayFilter()
         self.tts_filter = TTSFilter()
         self.memory_filter = MemorySurfaceFilter()
+        self.final_sanitizer = FinalSurfaceSanitizer()
 
     def transform(self, raw_text: str) -> StageTextSurfaces:
         raw = str(raw_text or "")
@@ -303,9 +311,17 @@ class StageTransformerChain:
         # sẽ nuốt riêng ``<think>`` rồi để phần suy nghĩ trơ trọi giữa sân khấu.
         safe_raw = _INTERNAL_REASONING_RE.sub(" ", raw)
         marks = self.action_extractor.extract(safe_raw)
-        display_text = self.display_filter.clean(marks.text)
-        tts_text = self.tts_filter.clean(marks.text)
-        memory_text = self.memory_filter.clean(marks.text)
+        # Một sanitizer dùng chung ở cửa ra. Các filter vẫn giữ chức năng riêng,
+        # nhưng không lane nào được lách qua và surface secret/stack/stage note.
+        display_text = self.final_sanitizer.sanitize(
+            self.display_filter.clean(marks.text), surface="display"
+        ).text
+        tts_text = self.final_sanitizer.sanitize(
+            self.tts_filter.clean(marks.text), surface="tts"
+        ).text
+        memory_text = self.final_sanitizer.sanitize(
+            self.memory_filter.clean(marks.text), surface="memory"
+        ).text
         return StageTextSurfaces(
             raw_text=raw,
             display_text=display_text,

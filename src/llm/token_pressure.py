@@ -214,6 +214,11 @@ class TokenPressureGovernor:
             "curiosity_seed",
             "private_mind_optional",
             "style_rewrite_optional",
+            "constrained_rerun",
+            "support_pass",
+            "speech_localizer",
+            "tts_localizer",
+            "romaji_localizer",
         }
         # Micro-presence bị shed sớm hơn vì nó từng là lane đốt TPM nhiều nhất mà
         # giá trị mỗi request chỉ là một câu rất ngắn.

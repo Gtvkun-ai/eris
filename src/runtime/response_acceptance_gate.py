@@ -13,6 +13,7 @@ from dataclasses import replace
 from typing import Iterable
 
 from domain import Decision
+from actions.capability_registry import singing_capability_enabled
 from runtime.acceptance_types import AcceptanceResult, GateVerdict
 from runtime.character_voice_policy import evaluate_character_voice
 from runtime.response_contract import ResponseContract, build_response_contract, normalize_public_text
@@ -69,6 +70,15 @@ class ResponseAcceptanceGate:
             return AcceptanceResult(
                 GateVerdict.BLOCK,
                 reasons=("protocol_surface_leak",),
+            )
+        if _claims_singing_performance(text) and not singing_capability_enabled():
+            return AcceptanceResult(
+                GateVerdict.DOMAIN_FALLBACK,
+                reasons=("singing_capability_unavailable",),
+                fallback_text=(
+                    "Tôi chưa có bộ tổng hợp giọng hát riêng. Tôi có thể đọc lời với nhịp và cảm xúc phù hợp, "
+                    "nhưng sẽ không giả vờ rằng TTS đang hát."
+                ),
             )
         if not contract.active:
             return AcceptanceResult(GateVerdict.PASS)
@@ -297,6 +307,15 @@ def _literalizes_family_insult(norm: str) -> bool:
             "ai khong co gia dinh", "toi chi la mot ai",
         )
     )
+
+
+def _claims_singing_performance(text: str) -> bool:
+    raw = str(text or "").lower()
+    markers = (
+        "(hát", "[sing", "<sing", "*hát", "hát một câu",
+        "tôi sẽ hát", "để tôi hát", "i will sing", "singing now",
+    )
+    return any(marker in raw for marker in markers)
 
 
 def _looks_like_protocol_leak(norm: str) -> bool:

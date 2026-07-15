@@ -11,6 +11,7 @@ class ProviderErrorKind(StrEnum):
     KEY_REVOKED = "key_revoked"
     PROJECT_PERMISSION = "project_permission"
     INVALID_REQUEST = "invalid_request"
+    INVALID_RESPONSE_SHAPE = "invalid_response_shape"
     TRANSIENT_SERVER = "transient_server"
     UNKNOWN = "unknown"
 
@@ -26,6 +27,8 @@ def classify_provider_error(exc: Exception | str, *, status_code: int | None = N
         if any(m in text for m in ("permission_denied", "permission denied", "api has not been used", "disabled", "not enabled", "forbidden")):
             return ProviderErrorKind.PROJECT_PERMISSION
         return ProviderErrorKind.KEY_REVOKED
+    if any(marker in text for marker in ("audio parts hợp lệ", "không trả audio parts", "nonetype") ):
+        return ProviderErrorKind.INVALID_RESPONSE_SHAPE
     if code in (500, 502, 503, 504) or "unavailable" in text:
         return ProviderErrorKind.TRANSIENT_SERVER
     if code is not None and 400 <= code < 500:

@@ -1,3 +1,5 @@
+from actions.confirmation import public_action_text
+from runtime.repair_state import RepairStateController
 import json
 import os
 import random
@@ -651,6 +653,7 @@ class RuntimeCoordinator(
         # autonomous đều ghi vào đây. Không xoá khi rời chat; tự phai theo TTL.
         self.chat_history = []
         self.last_chat_answer = ""
+        self.repair_state_controller = RepairStateController()
         self.last_user_intent = ""
         self.active_conversational_topic = ""
         self.last_system_action = ""
@@ -4712,6 +4715,11 @@ class RuntimeCoordinator(
         if callable(guard):
             decision = guard(decision, user_text=topic, frame=None, allow_reroll=False)
         decision = self._apply_director_precommit_guard(decision, frame=None, channel="chat")
+        try:
+            from actions.capability_registry import canonicalize_action_id
+            decision.system_action = canonicalize_action_id(decision.system_action)
+        except Exception:
+            pass
         authority = getattr(self, "_apply_v3_authority_guard", None)
         if callable(authority):
             decision = authority(decision, frame=None, channel="chat")
@@ -9261,6 +9269,7 @@ class RuntimeCoordinator(
 
         action_name, action_input = routed
         result = self.action_executor.execute(action_name, action_input)
+        action_name = result.action_name  # canonical schema từ executor
         text = self._action_result_to_text(result)
         if action_name == "get_now_playing" and not result.success:
             text = self._resolve_now_playing_text(snapshot) or text
@@ -9276,6 +9285,7 @@ class RuntimeCoordinator(
             parse_mode="direct_action",
             system_action=action_name,
             action_input=action_input,
+            action_result_meta=result.to_public_meta(),
         )
         if action_name in {"open_url", "focus_window", "launch_app"}:
             decision.motion_intent = "walk_to"
@@ -9292,6 +9302,7 @@ class RuntimeCoordinator(
             return decision
 
         result = self.action_executor.execute(decision.system_action, decision.action_input)
+        decision.action_result_meta = result.to_public_meta()
         if frame is not None:
             try:
                 frame.v3_tool_execution_result = result
@@ -9300,7 +9311,7 @@ class RuntimeCoordinator(
         recorder = getattr(self, "_record_tool_grounding", None)
         if callable(recorder):
             recorder(result, action_name=decision.system_action)
-        action_trace = f"action={decision.system_action}:{'ok' if result.success else 'fail'}"
+        action_trace = f"action={result.action_name}:{'ok' if result.success else 'fail'}:{result.public_mode}"
         if decision.debug_trace:
             decision.debug_trace = f"{decision.debug_trace} | {action_trace}"[:240]
         else:
@@ -9321,13 +9332,13 @@ class RuntimeCoordinator(
             "copy_text",
             "launch_app",
         }
-        if (not result.success) or (decision.system_action in action_owns_text) or (not decision.text.strip()):
+        if (not result.success) or (result.action_name in action_owns_text) or (not decision.text.strip()):
             decision.text = result_text
             decision.should_speak = bool(str(result_text or "").strip())
             if not result.success:
                 decision.confidence = min(float(getattr(decision, "confidence", 0.0) or 0.0), 0.45)
                 decision.extracted_fact = {}
-        if decision.system_action == "get_now_playing" and "media session" in decision.text.lower():
+        if result.action_name == "get_now_playing" and "media session" in decision.text.lower():
             decision.text = self._resolve_now_playing_text(snapshot) or decision.text
         return decision
 
@@ -9341,44 +9352,8 @@ class RuntimeCoordinator(
         return fallback or "stand"
 
     def _action_result_to_text(self, result) -> str:
-        if result.action_name == "get_local_time":
-            return result.message or "Tôi chưa đọc được giờ từ đồng hồ máy."
-
-        if result.action_name == "get_now_playing":
-            title = result.data.get("title", "")
-            artist = result.data.get("artist", "")
-            if result.success and title and artist:
-                return f"Tôi thấy bài đang phát là {title} của {artist}."
-            if result.success and title:
-                return f"Tôi thấy bài đang phát là {title}."
-            return "Tôi chưa đọc được tên bài đang phát từ media session hiện tại."
-
-        if result.action_name == "search_web":
-            if not result.success:
-                return result.message
-            answer = (result.data.get("answer", "") or result.message or "").strip()
-            query = (result.action_input or "một chủ đề lạ mặt").strip()
-            if answer:
-                return f"Tôi vừa kéo về một mẩu thế giới quanh {query}. {answer}"
-            return f"Tôi vừa lục lại mạng cho chủ đề {query}, nhưng thứ kéo về vẫn còn quá ít để nói cho ra hồn."
-        if result.action_name == "open_url":
-            return f"Tôi đã gửi yêu cầu mở {result.data.get('url', result.action_input)}."
-        if result.action_name == "focus_window":
-            matched = result.data.get("matched_title", result.action_input)
-            if result.success:
-                return f"Tôi đã đưa cửa sổ {matched} lên foreground."
-            return f"Tôi chưa tìm thấy cửa sổ khớp với {result.action_input}."
-        if result.action_name == "set_volume":
-            level = result.data.get("level", result.action_input or "mức yêu cầu")
-            return f"Tôi đã gửi yêu cầu chỉnh âm lượng về khoảng {level} phần trăm." if result.success else result.message
-        if result.action_name == "play_pause_media":
-            return "Tôi đã gửi phím play/pause cho media session hiện tại." if result.success else result.message
-        if result.action_name == "copy_text":
-            return "Tôi đã đưa nội dung bạn yêu cầu vào clipboard." if result.success else result.message
-        if result.action_name == "launch_app":
-            command = result.data.get("command", result.action_input)
-            return f"Tôi đã yêu cầu Windows mở {command}." if result.success else result.message
-        return result.message or "Action đã được xử lý."
+        """Public surface chỉ được mạnh bằng execution evidence hiện có."""
+        return public_action_text(result)
 
     def _resolve_now_playing_text(self, snapshot) -> str | None:
         title = self._extract_media_title_from_snapshot(snapshot)

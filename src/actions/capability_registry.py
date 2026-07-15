@@ -89,6 +89,33 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
 }
 
 
+_ACTION_ALIASES: dict[str, str] = {
+    "adjust_volume": "set_volume",
+    "change_volume": "set_volume",
+    "volume": "set_volume",
+    "volume_up": "set_volume",
+    "volume_down": "set_volume",
+    "get_time": "get_local_time",
+    "show_time": "get_local_time",
+    "current_time": "get_local_time",
+    "time_now": "get_local_time",
+}
+
+
+def canonicalize_action_id(action_id: str) -> str:
+    """Map alias về schema chuẩn trước parser/executor.
+
+    Action lạ được trả nguyên dạng để validation reject rõ, không âm thầm đoán.
+    """
+    clean = str(action_id or "").strip().lower()
+    return _ACTION_ALIASES.get(clean, clean)
+
+
+def singing_capability_enabled() -> bool:
+    """Singing/SVS là capability riêng, mặc định tắt; TTS không giả làm máy hát."""
+    return os.environ.get("ERIS_SINGING_CAPABILITY", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def iter_public_capabilities(
     action_ids: Iterable[str] | None = None,
     *,
@@ -231,4 +258,6 @@ __all__ = [
     "capability_snapshot_id",
     "live_capability_ids",
     "capability_definition",
+    "canonicalize_action_id",
+    "singing_capability_enabled",
 ]

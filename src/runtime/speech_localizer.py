@@ -124,6 +124,34 @@ class SpeechLocalizer:
         return self._cache[key]
 
     def _translate_to_japanese(self, text: str, *, prosody_style: str = "") -> str:
+        # Localizer là lane phụ. Khi TPM/429 nóng, bỏ pass này thay vì chồng retry
+        # lên TTS chính rồi bắt key pool quay thêm một vòng vô nghĩa.
+        all_lane_budget = os.environ.get("ERIS_TOKEN_BUDGET_ALL_LANES", "1").strip().lower() not in {
+            "0", "false", "off", "no",
+        }
+        if all_lane_budget:
+            try:
+                from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                estimated_prompt = max(64, len(str(text or "")) // 3 + 180)
+                plan = GLOBAL_TOKEN_PRESSURE_GOVERNOR.plan_request(
+                    "gemini",
+                    lane="speech_localizer",
+                    prompt_tokens=estimated_prompt,
+                    requested_output_tokens=384,
+                    optional_pass=True,
+                )
+                if not plan.allowed:
+                    logger.info("[TTS.Localizer] Bỏ pass dịch do token pressure: %s", plan.reason)
+                    return text
+                GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
+                    "gemini",
+                    lane="speech_localizer",
+                    prompt_tokens=estimated_prompt,
+                    output_tokens=plan.output_tokens,
+                )
+            except Exception:
+                pass
+
         api_key, pool, lease = _get_api_key_lease()
         if not api_key:
             return text
@@ -149,6 +177,8 @@ class SpeechLocalizer:
             try:
                 if pool is not None and lease is not None:
                     pool.mark_success(lease=lease)
+                from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
             except Exception:
                 pass
             return out or text
@@ -161,6 +191,11 @@ class SpeechLocalizer:
                         pool.mark_permanently_dead(lease=lease, reason="localizer_key_reported_leaked")
                     elif str(kind) == "rate_limit":
                         pool.mark_rate_limited(seconds=60.0, lease=lease, reason="localizer_http_429")
+                        try:
+                            from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                            GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0)
+                        except Exception:
+                            pass
                     elif str(kind) == "project_permission":
                         pool.mark_dead(3600.0, lease=lease, reason="localizer_project_permission")
             except Exception:

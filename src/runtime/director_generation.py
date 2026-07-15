@@ -30,6 +30,7 @@ from runtime.performance_contract import (
 )
 from runtime.stage_scorer import CandidateUtterance, StageScore, StageScorer
 from runtime.scene_repair_policy import shorten_text
+from runtime.semantic_equivalence_gate import SemanticEquivalenceGate
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,7 @@ class DirectorGenerationPipeline:
         candidate_controller: AdaptiveCandidateController | None = None,
         observability: Any | None = None,
         rollout_controller: Any | None = None,
+        semantic_gate: SemanticEquivalenceGate | None = None,
         session_id: str = "",
     ) -> None:
         self.director_builder = director_builder or DirectorContextBuilder()
@@ -75,6 +77,7 @@ class DirectorGenerationPipeline:
         self.candidate_controller = candidate_controller or AdaptiveCandidateController()
         self.observability = observability
         self.rollout_controller = rollout_controller
+        self.semantic_gate = semantic_gate or SemanticEquivalenceGate()
         self.session_id = str(session_id or "")
 
     def prepare(
@@ -403,6 +406,15 @@ class DirectorGenerationPipeline:
         cand_text = str(getattr(candidate, "text", "") or "").strip()
         if not base_text or not cand_text:
             return ""
+        gate = self.semantic_gate.evaluate(
+            base_text,
+            cand_text,
+            intent=str(getattr(candidate, "intent", "") or getattr(baseline, "intent", "") or ""),
+            user_text=prepared.user_text,
+        )
+        if not gate.accepted:
+            return f"semantic_gate:{gate.reason}:{gate.score:.3f}<{gate.threshold:.3f}"
+
         base = self._fold_text(base_text)
         cand = self._fold_text(cand_text)
         user = self._fold_text(prepared.user_text)

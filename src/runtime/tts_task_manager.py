@@ -261,6 +261,7 @@ class TtsTaskManager:
             segment_id=int(task.order),
             interruptible=bool(getattr(task.frame, "interruptible", True)),
             **_performance_kwargs(task.frame),
+            **_speech_kwargs(task.frame),
         )
         if cancel_event.is_set():
             raise RuntimeError("cancelled_after_synth")
@@ -445,6 +446,7 @@ class TtsTaskManager:
                 str(getattr(task.frame, "prosody_style", "") or ""),
                 str(getattr(task.frame, "prosody_notes", "") or ""),
                 repr(_performance_kwargs(task.frame)),
+                repr(_speech_kwargs(task.frame)),
             ]
         )
         return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
@@ -598,6 +600,18 @@ def _audio_cache_size() -> int:
         return max(0, min(96, int(raw)))
     except ValueError:
         return 24
+
+
+def _speech_kwargs(frame: Any) -> dict[str, str]:
+    """Truyền contract ngôn ngữ/voice đã pin của StageFrame xuống backend."""
+    contract = getattr(frame, "speech_contract", None)
+    if not isinstance(contract, dict):
+        return {}
+    return {
+        "language_hint": str(contract.get("language", "") or ""),
+        "voice_family": str(contract.get("voice_family", "") or ""),
+        "locale": str(contract.get("locale", "") or ""),
+    }
 
 
 def _performance_kwargs(frame: Any) -> dict[str, str]:

@@ -49,6 +49,18 @@ def _join_tts_segments(frames: list[StageFrame]) -> str:
     return " ".join(str(frame.tts_text or "").strip() for frame in frames if str(frame.tts_text or "").strip()).strip()
 
 
+def _speech_kwargs(frame) -> dict[str, str]:
+    """Truyền contract đã pin theo turn xuống backend TTS."""
+    contract = getattr(frame, "speech_contract", None)
+    if not isinstance(contract, dict):
+        return {}
+    return {
+        "language_hint": str(contract.get("language", "") or ""),
+        "voice_family": str(contract.get("voice_family", "") or ""),
+        "locale": str(contract.get("locale", "") or ""),
+    }
+
+
 def _performance_kwargs(frame: StageFrame) -> dict[str, str]:
     """Rút metadata vocal cache từ delivery payload nếu có.
 
@@ -187,6 +199,7 @@ class StageDispatcher:
             replace=True,
             on_event=event_callback,
             **_performance_kwargs(inline_frame),
+            **_speech_kwargs(inline_frame),
         )
         return True
 
@@ -223,6 +236,7 @@ class StageDispatcher:
                 replace=(index == 0),
                 on_event=event_callback,
                 **_performance_kwargs(frame),
+                **_speech_kwargs(frame),
             )
             scheduled = True
         return scheduled

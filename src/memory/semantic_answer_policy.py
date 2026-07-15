@@ -14,6 +14,8 @@ Nếu không có claim exact, nó phải nói không có bằng chứng, thay v�
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from .provenance_policy import GLOBAL_MEMORY_PROVENANCE_POLICY
+
 try:
     from .claim_entailment import ClaimEntailmentEngine, semantic_claim_from_memory_item
     from .query_intent import SemanticQueryIntent, compile_semantic_query
@@ -64,9 +66,17 @@ class SemanticAnswerPolicy:
             )
 
         claim, decision = exact[0]
+        surface_text = self._format(intent, claim)
+        provenance = GLOBAL_MEMORY_PROVENANCE_POLICY.decide(
+            source="semantic_claim",
+            confidence=decision.score,
+            evidence=claim.evidence_ids,
+            text=surface_text,
+        )
+        surface_text = GLOBAL_MEMORY_PROVENANCE_POLICY.render(surface_text, provenance)
         return SemanticAnswer(
             True,
-            self._format(intent, claim),
+            surface_text,
             confidence=decision.score,
             evidence_ids=claim.evidence_ids,
             used_claim_id=claim.claim_id,

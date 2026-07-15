@@ -42,6 +42,8 @@ class Decision:
     director_finalized: bool = False
     director_trace_id: str = ""
     director_meta: dict[str, Any] | None = None
+    # Bằng chứng action: request_sent khác observed_success.
+    action_result_meta: dict[str, Any] | None = None
 
     def resolve_motion_intent(self) -> str:
         intent = (self.motion_intent or "").strip().lower()
@@ -122,6 +124,8 @@ class Decision:
         payload["director_finalized"] = bool(self.director_finalized)
         if self.director_trace_id:
             payload["director_trace_id"] = self.director_trace_id
+        if self.action_result_meta:
+            payload["action_result"] = dict(self.action_result_meta)
         failure_meta = normalize_failure_meta(self.failure_meta)
         if failure_meta is not None:
             payload["failure_meta"] = failure_meta

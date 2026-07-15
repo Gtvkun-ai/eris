@@ -19,6 +19,7 @@ Bản mới chỉ quyết định:
 from dataclasses import dataclass
 import re
 
+from .provenance_policy import GLOBAL_MEMORY_PROVENANCE_POLICY
 from .memory_query_ir import (
     MemorySourceKind,
     RawRecallResult,
@@ -136,6 +137,14 @@ class MemoryRecallSurfacePolicy:
                     ir=ir,
                     debug_trace="raw_object_surface_blocked",
                 )
+            if result.source == MemorySourceKind.SEMANTIC_MEMORY:
+                provenance = GLOBAL_MEMORY_PROVENANCE_POLICY.decide(
+                    source=result.source.value,
+                    confidence=result.confidence,
+                    evidence=result.evidence,
+                    text=gist_text,
+                )
+                gist_text = GLOBAL_MEMORY_PROVENANCE_POLICY.render(gist_text, provenance)
             return RecallAnswer(
                 text=gist_text,
                 confidence=result.confidence,
@@ -159,7 +168,13 @@ class MemoryRecallSurfacePolicy:
         ir = result.ir
 
         if result.source == MemorySourceKind.SEMANTIC_MEMORY:
-            return text
+            decision = GLOBAL_MEMORY_PROVENANCE_POLICY.decide(
+                source=result.source.value,
+                confidence=result.confidence,
+                evidence=result.evidence,
+                text=text,
+            )
+            return GLOBAL_MEMORY_PROVENANCE_POLICY.render(text, decision)
 
         if result.source == MemorySourceKind.SESSION_TURN_GRAPH:
             if ir.target.quantity:
