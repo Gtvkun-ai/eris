@@ -82,6 +82,47 @@ class StageOutputPipeline:
         # metadata file WAV lệch khỏi transcript và phát cùng file nhiều lần.
         if str(getattr(frame, "audio_asset", "") or "").strip():
             return (frame,)
+
+        # Autonomous act đã có speech beat do Stage Director đặt. Ưu tiên beat
+        # này hơn sentence splitter tổng quát để điểm rơi không bị chia lại lần hai.
+        act = frame.stage_act if isinstance(getattr(frame, "stage_act", None), dict) else {}
+        beats = act.get("beats") if isinstance(act, dict) else None
+        speech_beats = [
+            beat for beat in (beats or [])
+            if isinstance(beat, dict) and str(beat.get("kind", "")) == "speech" and str(beat.get("text", "")).strip()
+        ]
+        if speech_beats:
+            frames: list[StageFrame] = []
+            for index, beat in enumerate(speech_beats):
+                text = str(beat.get("text", "") or "").strip()
+                delivery = dict(frame.delivery) if isinstance(frame.delivery, dict) else {}
+                delivery["active_beat"] = dict(beat)
+                pause_after = int(beat.get("pause_after_ms", 0) or 0)
+                notes = frame.prosody_notes
+                if pause_after > 0:
+                    notes = f"{notes} End this beat with a short {pause_after}ms rhetorical pause.".strip()
+                plan = self.prosody.plan(
+                    text,
+                    emotion=str(beat.get("emotion", frame.emotion) or frame.emotion),
+                    style_hint=str(beat.get("tts_style", frame.prosody_style) or frame.prosody_style),
+                    notes_hint=notes,
+                )
+                frames.append(
+                    replace(
+                        frame,
+                        segment_id=index,
+                        display_text=text,
+                        tts_text=text,
+                        memory_text=text,
+                        emotion=str(beat.get("emotion", frame.emotion) or frame.emotion),
+                        motion=str(beat.get("motion_intent", frame.motion) or frame.motion),
+                        prosody_style=plan.style,
+                        prosody_notes=plan.director_notes,
+                        delivery=delivery,
+                    )
+                )
+            return tuple(frames)
+
         if not _enabled():
             return (frame,)
         segments = self.segmenter.split(frame.tts_text)

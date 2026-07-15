@@ -154,11 +154,21 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
-def _strip_markdown(text: str, *, code_placeholder: str = "") -> str:
+def _strip_markdown(
+    text: str,
+    *,
+    code_placeholder: str = "",
+    inline_code_placeholder: str | None = None,
+) -> str:
     t = str(text or "")
     t = _FENCE_RE.sub(code_placeholder, t)
     t = _MARKDOWN_HEADING_RE.sub("", t)
-    t = _INLINE_CODE_RE.sub(r"\1", t)
+    if inline_code_placeholder is None:
+        # UI/memory có thể giữ nội dung code ngắn sau khi bỏ backtick.
+        t = _INLINE_CODE_RE.sub(r"\1", t)
+    else:
+        # TTS không đọc foo(), JSON hay path code như một bài thần chú lỗi thời.
+        t = _INLINE_CODE_RE.sub(inline_code_placeholder, t)
     t = _BOLD_ITALIC_RE.sub(r"\2", t)
     return _squash(t)
 
@@ -257,7 +267,7 @@ class TTSFilter:
     """Text cho TTS: không markdown, URL, emoji, code, tag sân khấu."""
 
     def clean(self, text: str) -> str:
-        t = _strip_markdown(text, code_placeholder="")
+        t = _strip_markdown(text, code_placeholder="", inline_code_placeholder="")
         t = _URL_RE.sub("", t)
         t = _EMOJI_RE.sub("", t)
         return clean_forbidden_honorifics(_squash(t))

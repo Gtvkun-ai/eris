@@ -32,10 +32,12 @@ def test_stage_frame_separates_display_tts_and_prosody():
     )
 
     assert frame.turn_id == "turn-test"
-    assert frame.display_text == "(nhíu mắt) **Khoan.** Bug này không nằm ở TTS."
+    # Action tag và markdown là metadata sân khấu, không được lộ ra subtitle.
+    assert frame.display_text == "Khoan. Bug này không nằm ở TTS."
     assert frame.tts_text == "Khoan. Bug này không nằm ở TTS."
     assert frame.motion == "tilt_head"
-    assert frame.prosody_style == "focused"
+    assert frame.actions == ("squint_soft",)
+    assert frame.prosody_style == "neutral"
     assert frame.interruptible is True
 
 

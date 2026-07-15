@@ -81,6 +81,7 @@ from failure_meta import is_technical_failure_meta
 from runtime.greeting_preset_runtime import emit_session_ritual_preset
 from runtime.public_payload_policy import sanitize_body_payload
 from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
+from runtime.autonomous_orchestrator import AutonomousPerformerOrchestrator, AutonomousPlan
 from runtime.autonomous_cycle import AutonomousCycleMixin
 from runtime.ambient_silence_policy import (
     ambient_silence_cooldown_seconds,
@@ -564,6 +565,11 @@ class RuntimeCoordinator(
             agent_mind=self.epistemic_agent_mind,
             logger=self.logger,
         )
+        # Autonomous Performer là van trước main cognition: nó giữ scene liên tục,
+        # tìm opportunity thật và cấp budget nói. Không có mic/ASR ở đây; text mới,
+        # nút stop và scene change vẫn là các nguồn cancel hiện có.
+        self.autonomous_performer = AutonomousPerformerOrchestrator(logger=self.logger)
+        self.last_autonomous_plan: AutonomousPlan | None = None
         self.last_signal_snapshot: SignalSnapshot | None = None
         self.last_signal_diff = None
         self.last_observer_frame: ObserverFrame | None = None
@@ -975,6 +981,28 @@ class RuntimeCoordinator(
             )
             self.rolling_user_context = result.user_context
             self.rolling_internal_state = result.internal_state
+            # Ghép opportunity/speak gate vào wake decision. Khi có permit thật,
+            # performer mở đúng một lượt main cognition; nếu không thì veto lời chen.
+            performer = getattr(self, "autonomous_performer", None)
+            if performer is not None and str(channel or "autonomous").strip().lower() != "chat":
+                plan = performer.evaluate(
+                    signal_snapshot=signal_snapshot,
+                    observer_frame=observer_frame,
+                    signal_diff=signal_diff,
+                    user_context=result.user_context,
+                    wake_decision=result.wake_decision,
+                )
+                result.wake_decision = performer.refine_wake_decision(result.wake_decision, plan)
+                self.last_autonomous_plan = plan
+                selected = plan.selected_opportunity
+                self.logger.info(
+                    "[autonomous stage] scene=%s opportunity=%s permit=%s/%s reason=%s",
+                    plan.scene.name,
+                    str(getattr(selected, "kind", "none") or "none"),
+                    plan.permit.allowed,
+                    plan.permit.mode,
+                    plan.permit.reason,
+                )
             self.last_wake_decision = result.wake_decision
             if result.daydream_result is not None:
                 self.last_daydream_result = result.daydream_result
@@ -1645,7 +1673,14 @@ class RuntimeCoordinator(
             self.private_life_digest = private_life_digest
         payload["emotion_debug"] = self._build_emotion_debug_payload()
         payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
-        if str(channel or "").strip().lower() == "chat":
+        channel_name = str(channel or "").strip().lower()
+        if channel_name == "autonomous":
+            plan = getattr(self, "last_autonomous_plan", None)
+            if plan is not None:
+                # Payload này đi tới Director/Stage, không đi vào prompt như raw fact.
+                # Nó nói "vì sao được diễn", không tự bịa nội dung màn hình.
+                payload["autonomous_plan"] = plan.to_payload()
+        if channel_name == "chat":
             # Chỉ dùng nội bộ stage: nhận ra user đang yêu cầu ERIS diễn một hành
             # vi nghe được như cười, thở dài, giả giận. Không gửi field này cho
             # model; nó đi sau Decision để tránh phá JSON contract.
@@ -1887,6 +1922,10 @@ class RuntimeCoordinator(
             # mốc cognition, không phải audio_done; đủ để hiểu nhịp hội thoại mà
             # không phải chờ TTS remote hoàn tất mới biết mình vừa nói.
             self._temporal_last_assistant_turn_at = time.time()
+            if channel_name == "autonomous":
+                performer = getattr(self, "autonomous_performer", None)
+                if performer is not None:
+                    performer.mark_spoken(getattr(self, "last_autonomous_plan", None))
         if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip() and self.subconscious_runtime_enabled:
             try:
                 snapshot = self.telemetry_service.capture_snapshot(
@@ -7297,6 +7336,49 @@ class RuntimeCoordinator(
             confidence=0.0,
         )
 
+    def _autonomous_stage_prompt_block(self) -> str:
+        """Dựng contract hẹp để model biết *vì sao* autonomous được nói.
+
+        Khối này chỉ chứa scene/opportunity/budget đã qua gate. Nó không đưa
+        raw telemetry hay suy đoán màn hình vào prompt, nhờ vậy model nhỏ
+        không biến một tín hiệu mơ hồ thành câu khẳng định chắc nịch.
+        """
+        plan = getattr(self, "last_autonomous_plan", None)
+        if plan is None or not bool(getattr(plan, "enabled", True)):
+            return ""
+        permit = getattr(plan, "permit", None)
+        opportunity = getattr(plan, "selected_opportunity", None)
+        if permit is None or opportunity is None or not bool(getattr(permit, "allowed", False)):
+            return ""
+        mode = str(getattr(permit, "mode", "suppress") or "suppress")
+        if mode not in {"short_reply", "full_line"}:
+            return ""
+
+        scene = getattr(plan, "scene", None)
+        contract = {
+            "contract": "autonomous_stage.v1",
+            "scene_mode": str(getattr(scene, "name", "private_idle") or "private_idle"),
+            "opportunity": {
+                "kind": str(getattr(opportunity, "kind", "autonomous") or "autonomous"),
+                "reason": str(getattr(opportunity, "reason", "") or ""),
+                "suggested_intent": str(getattr(opportunity, "suggested_intent", "micro_presence") or "micro_presence"),
+                "evidence_refs": list(getattr(opportunity, "evidence_refs", ()) or ()),
+            },
+            "permit": {
+                "mode": mode,
+                "max_words": max(1, int(getattr(permit, "max_words", 12) or 12)),
+                "max_duration_ms": max(300, int(getattr(permit, "max_duration_ms", 2200) or 2200)),
+            },
+            "surface_rules": [
+                "Viết đúng một câu thoại ngắn bằng tiếng Việt, có điểm rơi tự nhiên.",
+                "Không viết chỉ dẫn sân khấu, action tag, ngoặc diễn xuất hoặc âm thanh giả vào text.",
+                "Không khẳng định điều nhìn/nghe/cảm xúc nếu evidence_refs không cho phép.",
+                "Không chào lại, không hỏi giúp gì, không tự giải thích vì sao đang nói.",
+                "Giữ delivery_hint, nonverbal_cue và stage_motion ở field JSON riêng.",
+            ],
+        }
+        return "AUTONOMOUS_STAGE_CONTRACT\n" + json.dumps(contract, ensure_ascii=False, separators=(",", ":"))
+
     def _wake_allows_main_cognition(self) -> bool:
         decision = getattr(self, "last_wake_decision", None)
         if decision is None:
@@ -8704,6 +8786,9 @@ class RuntimeCoordinator(
                 return self.running
 
             inner_ti_context = self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought, speech_core)
+            autonomous_stage_block = self._autonomous_stage_prompt_block()
+            if autonomous_stage_block:
+                inner_ti_context = f"{inner_ti_context}\n{autonomous_stage_block}".strip()
             raw = self.llm_service.generate_directive(
                 telemetry_data=telemetry_data,
                 ni_context="",
@@ -8783,6 +8868,9 @@ class RuntimeCoordinator(
         planned_ti_context = (
             self._build_llm_ti_context(ti_report, frame.action_plan)
         )
+        autonomous_stage_block = self._autonomous_stage_prompt_block()
+        if autonomous_stage_block:
+            planned_ti_context = f"{planned_ti_context}\n{autonomous_stage_block}".strip()
         if self._process_pending_user_input():
             return self.running
 

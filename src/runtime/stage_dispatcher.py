@@ -14,6 +14,7 @@ pause tự nhiên, rồi gọi TTS một lần. Nếu muốn test queue từng s
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import replace
 from typing import Any, Callable, Iterable
 
@@ -21,6 +22,11 @@ from runtime.stage_contracts import StageFrame
 
 
 def _dispatch_mode() -> str:
+    # Env được ưu tiên để test/CLI có thể ép mode mà không cần ghi settings.
+    # Panel runtime vẫn là nguồn mặc định khi env không được đặt.
+    env_value = os.environ.get("ERIS_TTS_SEGMENT_DISPATCH", "").strip().lower()
+    if env_value in {"inline", "queued"}:
+        return env_value
     from runtime.runtime_settings_store import runtime_text
     value = runtime_text("stage", "segment_dispatch", default="inline").strip().lower()
     return value if value in {"inline", "queued"} else "inline"
@@ -38,7 +44,9 @@ def _join_tts_segments(frames: list[StageFrame]) -> str:
     có trong từng segment đủ cho Gemini tạo ngắt nhịp tự nhiên trong cùng audio.
     Dùng line break thay vì dấu cách để mỗi segment là một breath group ngắn.
     """
-    return "\n".join(str(frame.tts_text or "").strip() for frame in frames if str(frame.tts_text or "").strip()).strip()
+    # Dùng khoảng trắng; line break ở vài backend remote bị diễn giải thành
+    # pause dài bất thường. Điểm rơi đã có trong dấu câu + prosody_notes.
+    return " ".join(str(frame.tts_text or "").strip() for frame in frames if str(frame.tts_text or "").strip()).strip()
 
 
 def _performance_kwargs(frame: StageFrame) -> dict[str, str]:
@@ -55,6 +63,14 @@ def _performance_kwargs(frame: StageFrame) -> dict[str, str]:
         "vocal_cache_kind": str(act.get("kind", "") or ""),
         "vocal_prefix": str(act.get("audible_prefix", "") or ""),
     }
+
+
+def _opening_hold_ms(frame: StageFrame) -> int:
+    act = frame.stage_act if isinstance(getattr(frame, "stage_act", None), dict) else {}
+    try:
+        return max(0, min(250, int(act.get("opening_hold_ms", 0) or 0)))
+    except (TypeError, ValueError):
+        return 0
 
 
 class StageDispatcher:
@@ -76,6 +92,12 @@ class StageDispatcher:
         frame_list = [frame for frame in frames if str(frame.tts_text or "").strip()]
         if not frame_list or tts_engine is None or not getattr(tts_engine, "_ok", False):
             return False
+
+        # Opening hold là nhịp thật, nhưng giới hạn 250ms để không biến stage thành
+        # lag. Text/UI có thể đã hiện trước; TTS vào sau một nhịp nhỏ như performer.
+        opening_hold = _opening_hold_ms(frame_list[0])
+        if opening_hold > 0:
+            time.sleep(opening_hold / 1000.0)
 
         if _task_manager_enabled():
             try:
@@ -142,8 +164,8 @@ class StageDispatcher:
         if len(frame_list) > 1:
             notes = (
                 f"{notes} Read the transcript as one continuous turn with natural short pauses "
-                f"between the {len(frame_list)} sentence segments. Treat line breaks as short speech beats, "
-                "not long silence."
+                f"between the {len(frame_list)} sentence segments; do not insert long silence. "
+                "Treat punctuation as short intentional speech beats."
             ).strip()
         inline_frame = replace(base, segment_id=0, tts_text=joined, prosody_notes=notes)
 

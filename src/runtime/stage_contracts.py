@@ -13,9 +13,10 @@ chứ không phải nhét "(cười khẽ)" vào text.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from runtime.autonomous_performance import AutonomousPerformancePlanner
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
 from runtime.stage_performance_planner import PerformanceRequestPlanner
@@ -24,20 +25,27 @@ from runtime.stage_transformers import StageTransformerChain
 
 @dataclass(frozen=True, slots=True)
 class StageFrame:
-    turn_id: str
-    segment_id: int
-    display_text: str
-    tts_text: str
-    memory_text: str
-    emotion: str
-    motion: str
-    actions: tuple[str, ...]
-    prosody_style: str
-    prosody_notes: str
-    delivery: dict[str, Any]
-    interruptible: bool
-    body_only: bool
-    source: str
+    """Một lát output sân khấu, có default để caller cũ không vỡ contract.
+
+    ``stage_act`` là contract nhịp trung tính cho autonomous performer. Nó không
+    chứa hotkey/parameter của Live2D; avatar 3D sau này chỉ việc map intent.
+    """
+
+    turn_id: str = ""
+    segment_id: int = 0
+    display_text: str = ""
+    tts_text: str = ""
+    memory_text: str = ""
+    emotion: str = "neutral"
+    motion: str = "none"
+    actions: tuple[str, ...] = ()
+    prosody_style: str = "neutral"
+    prosody_notes: str = ""
+    delivery: dict[str, Any] = field(default_factory=dict)
+    stage_act: dict[str, Any] = field(default_factory=dict)
+    interruptible: bool = True
+    body_only: bool = False
+    source: str = "unknown"
     # Metadata preset audio. Rỗng với mọi câu nói động bình thường.
     speech_act: str = ""
     preset_id: str = ""
@@ -55,6 +63,7 @@ class StageFrame:
                 "actions": list(self.actions),
                 "prosody_style": self.prosody_style,
                 "delivery": self.delivery,
+                "stage_act": self.stage_act,
                 "interruptible": self.interruptible,
                 "body_only": self.body_only,
                 "source": self.source,
@@ -154,6 +163,7 @@ class StageFrameBuilder:
         self.transformers = StageTransformerChain()
         self.delivery_planner = SpeechDeliveryPlanner()
         self.performance_planner = PerformanceRequestPlanner()
+        self.autonomous_performance_planner = AutonomousPerformancePlanner()
 
     def build(
         self,
@@ -215,6 +225,23 @@ class StageFrameBuilder:
             delivery_payload["performance_act"] = act_payload
             if performance.performance_act.prosody_note:
                 prosody_notes = f"{prosody_notes} {performance.performance_act.prosody_note}".strip()
+
+        # Autonomous không chỉ có text. Dựng opening hold, speech beat và closing
+        # settle từ plan đã được SpeakGate cấp quyền. LLM không được tự bịa nhịp.
+        autonomous_act = None
+        if str(channel or "").strip().lower() == "autonomous":
+            autonomous_act = self.autonomous_performance_planner.plan(
+                tts_text,
+                autonomous_plan=payload.get("autonomous_plan") if isinstance(payload.get("autonomous_plan"), dict) else None,
+                performance_context=payload.get("performance_context") if isinstance(payload.get("performance_context"), dict) else None,
+                emotion=emotion,
+                motion=motion or "none",
+                tts_style=delivery.voice_style,
+            )
+            if autonomous_act is not None:
+                delivery_payload["autonomous_act"] = autonomous_act.to_payload()
+                prosody_notes = f"{prosody_notes} {autonomous_act.director_note}".strip()
+
         prosody = self.prosody_director.plan(
             tts_text,
             emotion=emotion,
@@ -237,6 +264,7 @@ class StageFrameBuilder:
             prosody_style=prosody.style,
             prosody_notes=prosody.director_notes,
             delivery=delivery_payload,
+            stage_act=autonomous_act.to_payload() if autonomous_act is not None else {},
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
             body_only=bool(not should_speak and (motion or performance.actions)),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",

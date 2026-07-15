@@ -13,7 +13,7 @@ Module này cố ý không gọi LLM. Nó chỉ tạo contract hẹp để:
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal, Mapping
 
 from runtime.content_engine import ContentEngine, ContentHook
@@ -176,11 +176,32 @@ class PerformanceContextBuilder:
         payload: Mapping[str, Any],
         channel: str | None = None,
     ) -> PerformanceContext:
+        channel_name = _clean(channel).lower()
+        # Autonomous permit là budget đã được SpeakGate cấp trước cognition. Ép
+        # budget này xuống DirectorContext để candidate/scorer phía sau không vô
+        # tình nới câu trở lại theo budget scene tổng quát.
+        autonomous_budget_applied = False
+        autonomous_plan = payload.get("autonomous_plan") if isinstance(payload.get("autonomous_plan"), Mapping) else {}
+        permit = autonomous_plan.get("permit") if isinstance(autonomous_plan.get("permit"), Mapping) else {}
+        if channel_name == "autonomous" and bool(permit.get("allowed", False)):
+            try:
+                max_words = max(1, int(permit.get("max_words", director.speak_budget_words) or director.speak_budget_words))
+                max_duration_ms = max(300, int(permit.get("max_duration_ms", director.speak_budget_ms) or director.speak_budget_ms))
+                director = replace(
+                    director,
+                    speak_budget_words=min(director.speak_budget_words, max_words),
+                    speak_budget_ms=min(director.speak_budget_ms, max_duration_ms),
+                )
+                autonomous_budget_applied = True
+            except (TypeError, ValueError):
+                pass
+
         scene = director.scene_mode.name
         intent = _intent_from_payload(payload)
-        channel_name = _clean(channel).lower()
         publicity = _publicity_for(director)
         reasons: list[str] = [f"scene={scene}", f"intent={intent or 'unknown'}"]
+        if autonomous_budget_applied:
+            reasons.append(f"autonomous_budget={director.speak_budget_words}w/{director.speak_budget_ms}ms")
         hook = self.content_engine.select_hook(director, payload=payload, channel=channel)
 
         if hook.family == "silence" and channel_name != "chat":
