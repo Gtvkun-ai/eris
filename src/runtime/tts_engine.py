@@ -642,6 +642,13 @@ finally {
 def _try_local_tts_fallback(exc: Exception, *, fallback_text: str = "", language_hint: str = "") -> bytes:
     if not _local_tts_fallback_enabled() or not str(fallback_text or "").strip():
         return b""
+    try:
+        from runtime.rollout_control import feature_enabled
+        pin_enabled = feature_enabled("tts_language_pin")
+    except Exception:
+        pin_enabled = str(os.environ.get("ERIS_TTS_LANGUAGE_PIN", "1") or "1").strip().lower() not in {"0", "false", "off", "no"}
+    if not pin_enabled:
+        language_hint = normalize_language("", text=fallback_text)
     expected_locale = _same_language_locale(language_hint)
     try:
         wav_bytes, voice = _synthesize_edge_tts_wav(fallback_text, language_hint=language_hint)
@@ -707,7 +714,11 @@ def _extract_gemini_tts_pcm(response) -> bytes:
 
 
 def _tts_breaker_enabled() -> bool:
-    return os.environ.get("ERIS_TTS_BREAKER_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+    try:
+        from runtime.rollout_control import feature_enabled
+        return feature_enabled("tts_breaker")
+    except Exception:
+        return os.environ.get("ERIS_TTS_BREAKER_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
 
 
 def _tts_max_attempts() -> int:

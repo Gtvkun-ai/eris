@@ -12,12 +12,31 @@ import logging
 import os
 import sys
 
+from runtime.secure_redaction import GLOBAL_SECURE_REDACTOR
+
 
 class CategoryFormatter(logging.Formatter):
     def format(self, record):
         if not hasattr(record, "category"):
             record.category = record.name
         return super().format(record)
+
+
+class SecureLogFilter(logging.Filter):
+    """Redact message đã render trước khi formatter ghi ra console/file."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            rendered = record.getMessage()
+            result = GLOBAL_SECURE_REDACTOR.text(rendered)
+            record.msg = result.value
+            record.args = ()
+            if result.blocked_kinds:
+                record.redacted_kinds = ",".join(result.blocked_kinds)
+        except Exception:
+            # Redaction lỗi thì không làm sập logger; formatter vẫn xử lý record cũ.
+            pass
+        return True
 
 
 class RuntimeNoiseFilter(logging.Filter):
@@ -115,6 +134,7 @@ def configure_logging(level: int = logging.INFO) -> None:
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(CategoryFormatter("[%(category)s][%(levelname)s] %(message)s"))
+    handler.addFilter(SecureLogFilter())
     handler.addFilter(RuntimeNoiseFilter())
 
     root = logging.getLogger()
@@ -128,4 +148,4 @@ def get_logger(category: str) -> logging.LoggerAdapter:
     return logging.LoggerAdapter(logger, {"category": category})
 
 
-__all__ = ["CategoryFormatter", "RuntimeNoiseFilter", "configure_logging", "get_logger"]
+__all__ = ["CategoryFormatter", "RuntimeNoiseFilter", "SecureLogFilter", "configure_logging", "get_logger"]

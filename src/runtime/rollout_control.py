@@ -59,7 +59,29 @@ FEATURES = (
     "permission_bypass",
     "adaptive_candidates",
     "vision_abstain",
+    # Hardening flags trong báo cáo kiến trúc.
+    "director_semantic_gate",
+    "action_confirmation",
+    "tts_language_pin",
+    "tts_breaker",
+    "memory_provenance_guard",
+    "stage_final_sanitizer",
+    "token_budget_all_lanes",
+    "singing_capability",
 )
+
+_LEGACY_FLAG_ENV = {
+    "director_semantic_gate": "ERIS_DIRECTOR_SEMANTIC_GATE",
+    "action_confirmation": "ERIS_ACTION_CONFIRMATION_MODE",
+    "tts_language_pin": "ERIS_TTS_LANGUAGE_PIN",
+    "tts_breaker": "ERIS_TTS_BREAKER_ENABLED",
+    "memory_provenance_guard": "ERIS_MEMORY_PROVENANCE_GUARD",
+    "stage_final_sanitizer": "ERIS_STAGE_FINAL_SANITIZER",
+    "token_budget_all_lanes": "ERIS_TOKEN_BUDGET_ALL_LANES",
+    "singing_capability": "ERIS_SINGING_CAPABILITY",
+}
+
+GLOBAL_ROLLOUT_CONTROLLER: "RolloutController | None" = None
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -94,7 +116,22 @@ class FeatureRolloutConfig:
     @classmethod
     def from_env(cls, feature: str) -> "FeatureRolloutConfig":
         key = _feature_env_key(feature)
-        mode = RolloutMode.parse(os.getenv(f"ERIS_ROLLOUT_{key}_MODE", "enabled"))
+        explicit_mode = os.getenv(f"ERIS_ROLLOUT_{key}_MODE", "")
+        if explicit_mode:
+            mode = RolloutMode.parse(explicit_mode)
+        else:
+            legacy_name = _LEGACY_FLAG_ENV.get(feature, "")
+            legacy_raw = str(os.getenv(legacy_name, "") or "").strip().lower() if legacy_name else ""
+            # Singing mặc định off; các hardening guard khác mặc định on để giữ
+            # tương thích với Phase 1-3.
+            default_enabled = feature != "singing_capability"
+            if legacy_name == "ERIS_ACTION_CONFIRMATION_MODE" and legacy_raw:
+                enabled = legacy_raw not in {"0", "false", "off", "no", "disabled"}
+            elif legacy_raw:
+                enabled = legacy_raw in {"1", "true", "yes", "on", "enabled", "strict"}
+            else:
+                enabled = default_enabled
+            mode = RolloutMode.ENABLED if enabled else RolloutMode.DISABLED
         percent = max(0.0, min(100.0, _env_float(f"ERIS_ROLLOUT_{key}_PERCENT", 5.0)))
         kill = _env_bool(f"ERIS_KILL_{key}", False)
         min_samples = max(1, int(_env_float(f"ERIS_ROLLOUT_{key}_MIN_SAMPLES", 20)))
@@ -173,6 +210,8 @@ class RolloutController:
         self._manual_kills: dict[str, str] = {}
         self._lock = threading.RLock()
         self._load_state()
+        global GLOBAL_ROLLOUT_CONTROLLER
+        GLOBAL_ROLLOUT_CONTROLLER = self
 
     @staticmethod
     def bucket(feature: str, session_id: str) -> float:
@@ -357,6 +396,24 @@ class RolloutController:
             pass
 
 
+def feature_enabled(feature: str, *, session_id: str = "") -> bool:
+    """Đọc kill-switch/canary từ controller global với fallback env tương thích."""
+    controller = GLOBAL_ROLLOUT_CONTROLLER
+    if controller is None:
+        controller = RolloutController(observability=None)
+    actual_session = str(session_id or os.getenv("ERIS_RUNTIME_SESSION_ID", "runtime") or "runtime")
+    try:
+        return bool(controller.decide(feature, session_id=actual_session).apply)
+    except Exception:
+        legacy = _LEGACY_FLAG_ENV.get(feature, "")
+        if not legacy:
+            return True
+        raw = str(os.getenv(legacy, "") or "").strip().lower()
+        if not raw:
+            return feature != "singing_capability"
+        return raw not in {"0", "false", "off", "no", "disabled"}
+
+
 def ensure_rollout_controller(owner: Any) -> RolloutController:
     current = getattr(owner, "rollout_controller", None)
     if isinstance(current, RolloutController):
@@ -383,4 +440,6 @@ __all__ = [
     "RolloutDecision",
     "RolloutMode",
     "ensure_rollout_controller",
+    "feature_enabled",
+    "GLOBAL_ROLLOUT_CONTROLLER",
 ]

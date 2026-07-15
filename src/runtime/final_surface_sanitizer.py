@@ -13,6 +13,8 @@ import os
 import re
 from dataclasses import dataclass
 
+from runtime.secure_redaction import GLOBAL_SECURE_REDACTOR
+
 
 _SECRET_PATTERNS = (
     re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
@@ -48,9 +50,13 @@ _INTERNAL_PREFIX_RE = re.compile(
 
 
 def _enabled() -> bool:
-    return os.environ.get("ERIS_STAGE_FINAL_SANITIZER", "1").strip().lower() not in {
-        "0", "false", "off", "no",
-    }
+    try:
+        from runtime.rollout_control import feature_enabled
+        return feature_enabled("stage_final_sanitizer")
+    except Exception:
+        return os.environ.get("ERIS_STAGE_FINAL_SANITIZER", "1").strip().lower() not in {
+            "0", "false", "off", "no",
+        }
 
 
 def _squash(text: str) -> str:
@@ -70,7 +76,13 @@ class FinalSurfaceSanitizer:
             return SanitizeResult(raw)
 
         blocked: list[str] = []
-        out = raw
+        secure = GLOBAL_SECURE_REDACTOR.text(raw)
+        out = str(secure.value)
+        blocked.extend(secure.blocked_kinds)
+        if any(kind in {"google_api_key", "openai_api_key", "jwt", "bearer", "credential_assignment", "secret_query", "secret_field"} for kind in secure.blocked_kinds):
+            # Giữ contract metric/test cũ: mọi loại credential cụ thể cũng thuộc
+            # nhóm tổng quát ``secret``.
+            blocked.append("secret")
 
         out, count = _STACK_TRACE_RE.subn(" ", out)
         if count:

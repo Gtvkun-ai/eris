@@ -113,7 +113,11 @@ def canonicalize_action_id(action_id: str) -> str:
 
 def singing_capability_enabled() -> bool:
     """Singing/SVS là capability riêng, mặc định tắt; TTS không giả làm máy hát."""
-    return os.environ.get("ERIS_SINGING_CAPABILITY", "0").strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        from runtime.rollout_control import feature_enabled
+        return feature_enabled("singing_capability")
+    except Exception:
+        return os.environ.get("ERIS_SINGING_CAPABILITY", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def iter_public_capabilities(

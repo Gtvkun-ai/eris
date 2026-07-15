@@ -91,12 +91,22 @@ class ActionExecutor:
 
         # Executor mới chỉ có dispatch evidence. Observer đọc hậu điều kiện và
         # chỉ nâng lên observed khi thật sự nhìn thấy trạng thái đích.
-        if result.success and result.dispatched and not result.observed and self.observer is not None:
+        confirmation_enabled = True
+        try:
+            from runtime.rollout_control import feature_enabled
+            confirmation_enabled = feature_enabled("action_confirmation")
+        except Exception:
+            confirmation_enabled = str(os.getenv("ERIS_ACTION_CONFIRMATION_MODE", "strict") or "strict").strip().lower() not in {
+                "0", "false", "off", "no", "disabled",
+            }
+        if confirmation_enabled and result.success and result.dispatched and not result.observed and self.observer is not None:
             try:
                 observation = self.observer.observe(result)
                 result = apply_observation(result, observation)
             except Exception as exc:
                 result.observer_reason = f"observer_error:{type(exc).__name__}"
+        elif not confirmation_enabled and result.dispatched and not result.observed:
+            result.observer_reason = "confirmation_feature_disabled"
 
         try:
             from runtime.hardening_metrics import record_action_confirmation

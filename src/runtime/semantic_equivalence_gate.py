@@ -46,9 +46,13 @@ _FACTUAL_INTENTS = {
 
 
 def _enabled() -> bool:
-    return os.environ.get("ERIS_DIRECTOR_SEMANTIC_GATE", "1").strip().lower() not in {
-        "0", "false", "off", "no",
-    }
+    try:
+        from runtime.rollout_control import feature_enabled
+        return feature_enabled("director_semantic_gate")
+    except Exception:
+        return os.environ.get("ERIS_DIRECTOR_SEMANTIC_GATE", "1").strip().lower() not in {
+            "0", "false", "off", "no",
+        }
 
 
 def _fold(text: str) -> str:

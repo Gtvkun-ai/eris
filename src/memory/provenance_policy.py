@@ -15,9 +15,13 @@ from typing import Iterable
 
 
 def _guard_enabled() -> bool:
-    return os.environ.get("ERIS_MEMORY_PROVENANCE_GUARD", "1").strip().lower() not in {
-        "0", "false", "off", "no",
-    }
+    try:
+        from runtime.rollout_control import feature_enabled
+        return feature_enabled("memory_provenance_guard")
+    except Exception:
+        return os.environ.get("ERIS_MEMORY_PROVENANCE_GUARD", "1").strip().lower() not in {
+            "0", "false", "off", "no",
+        }
 
 class PublicMemoryMode(str, Enum):
     ASSERT = "assert"

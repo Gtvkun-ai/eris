@@ -14,7 +14,20 @@ _CONFIG_SOURCE: dict[str, str] = {}
 _ENV_FILE_LOADED = False
 
 
+def _versioned_secrets_path() -> Path | None:
+    """Trả path version cụ thể khi manifest đã được cấu hình."""
+    try:
+        from secret_versions import SecretVersionManager
+        manager = SecretVersionManager()
+        return manager.active_path()
+    except Exception:
+        return None
+
+
 def _resolve_secrets_path() -> Path:
+    versioned = _versioned_secrets_path()
+    if versioned is not None:
+        return versioned
     # Ban export (PyInstaller): __file__ nam trong bundle nen parents[1] sai.
     # C# truyen ERIS_PROJECT_ROOT = thu muc chua .exe; uu tien dung no.
     env_root = os.environ.get("ERIS_PROJECT_ROOT", "").strip()
@@ -151,10 +164,11 @@ def log_config_sources(*names: str) -> None:
 
 @lru_cache(maxsize=1)
 def _load_secrets() -> dict[str, Any]:
-    if not _SECRETS_PATH.is_file():
+    path = _resolve_secrets_path()
+    if not path.is_file():
         return {}
     try:
-        payload = json.loads(_SECRETS_PATH.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
@@ -300,6 +314,11 @@ def get_agent_profile(
             merged.setdefault("slot", slot)
             return merged
     return dict(default or {})
+
+
+def reload_secrets() -> None:
+    """Xóa cache sau activate/rollback secret version."""
+    _load_secrets.cache_clear()
 
 
 def apply_secrets_to_environ() -> None:

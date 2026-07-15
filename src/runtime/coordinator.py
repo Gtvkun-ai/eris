@@ -486,10 +486,20 @@ class RuntimeCoordinator(
             from runtime.rollout_control import RolloutController
 
             self.observability = ErisObservability()
+            self.runtime_session_id = str(
+                getattr(self, "runtime_session_id", "")
+                or f"runtime-{os.getpid()}-{id(self)}"
+            )
+            os.environ.setdefault("ERIS_RUNTIME_SESSION_ID", self.runtime_session_id)
             self.rollout_controller = RolloutController(observability=self.observability)
+            from runtime.hardening_rollout import HardeningHealthGate
+            self.hardening_health_gate = HardeningHealthGate(self.rollout_controller)
+            self._hardening_health_eval_counter = 0
         except Exception as exc:
             self.observability = None
             self.rollout_controller = None
+            self.hardening_health_gate = None
+            self._hardening_health_eval_counter = 0
             self.logger.warning("Observability/rollout init skipped: %s", exc)
         epistemic_enabled = str(os.getenv("ERIS_EPISTEMIC_V2_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
         if epistemic_enabled:
@@ -6401,6 +6411,15 @@ class RuntimeCoordinator(
             except Exception:
                 pass
         self.logger.info("ERIS: %s", public_text)
+        # Đánh giá auto-rollback theo cửa sổ metric, mặc định mỗi 10 public turn.
+        try:
+            self._hardening_health_eval_counter = int(getattr(self, "_hardening_health_eval_counter", 0) or 0) + 1
+            every = max(1, int(os.getenv("ERIS_HARDENING_HEALTH_EVAL_EVERY_TURNS", "10") or 10))
+            gate = getattr(self, "hardening_health_gate", None)
+            if gate is not None and self._hardening_health_eval_counter % every == 0:
+                gate.evaluate_observability(self.observability, auto_kill=True)
+        except Exception as exc:
+            self.logger.warning("[hardening rollout] health evaluation failed: %s", exc)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[chat parser] %s", decision.parser_trace or "<empty>")
 

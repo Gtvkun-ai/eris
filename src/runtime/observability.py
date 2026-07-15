@@ -26,6 +26,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
+from runtime.secure_redaction import GLOBAL_SECURE_REDACTOR
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = str(os.getenv(name, "") or "").strip().lower()
@@ -42,21 +44,23 @@ def _safe_text(value: Any, limit: int = 240) -> str:
 
 
 def _clean_mapping(value: Mapping[str, Any] | None, *, limit: int = 32) -> dict[str, Any]:
+    """Giới hạn cardinality rồi redaction theo key và theo pattern nội dung."""
     out: dict[str, Any] = {}
     for index, (key, item) in enumerate(dict(value or {}).items()):
         if index >= limit:
             break
         name = _safe_text(key, 64)
-        if isinstance(item, (bool, int, float)) or item is None:
-            out[name] = item
-        elif isinstance(item, str):
-            out[name] = _safe_text(item)
-        elif isinstance(item, (list, tuple, set)):
-            out[name] = [_safe_text(part, 120) for part in list(item)[:12]]
-        elif isinstance(item, Mapping):
-            out[name] = _clean_mapping(item, limit=12)
+        redacted = GLOBAL_SECURE_REDACTOR.value(item, key_hint=name).value
+        if isinstance(redacted, (bool, int, float)) or redacted is None:
+            out[name] = redacted
+        elif isinstance(redacted, str):
+            out[name] = _safe_text(redacted)
+        elif isinstance(redacted, list):
+            out[name] = [_safe_text(part, 120) if not isinstance(part, Mapping) else _clean_mapping(part, limit=12) for part in redacted[:12]]
+        elif isinstance(redacted, Mapping):
+            out[name] = _clean_mapping(redacted, limit=12)
         else:
-            out[name] = _safe_text(item)
+            out[name] = _safe_text(redacted)
     return out
 
 
@@ -149,7 +153,9 @@ class ErisObservability:
         for index, (key, value) in enumerate(dict(tags or {}).items()):
             if index >= 16:
                 break
-            cleaned[_safe_text(key, 48)] = _safe_text(value, 80)
+            safe_key = _safe_text(key, 48)
+            safe_value = GLOBAL_SECURE_REDACTOR.value(value, key_hint=safe_key).value
+            cleaned[safe_key] = _safe_text(safe_value, 80)
         return cleaned
 
     def emit(

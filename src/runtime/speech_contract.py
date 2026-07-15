@@ -52,6 +52,20 @@ class SpeechContractResolver:
         data = dict(payload or {})
         supplied = data.get("speech_contract") if isinstance(data.get("speech_contract"), Mapping) else {}
         supplied = dict(supplied or {})
+        try:
+            from runtime.rollout_control import feature_enabled
+            language_pin_enabled = feature_enabled("tts_language_pin")
+        except Exception:
+            language_pin_enabled = str(os.environ.get("ERIS_TTS_LANGUAGE_PIN", "1") or "1").strip().lower() not in {
+                "0", "false", "off", "no",
+            }
+        if not language_pin_enabled:
+            # Rollback an toàn: bỏ override contract của turn và suy từ transcript,
+            # nhưng vẫn không cho fallback nhảy sang ngôn ngữ khác.
+            language = normalize_language("", text=text)
+            locale = _LOCALES.get(language, language)
+            voice_family = str(os.environ.get("ERIS_TTS_VOICE_FAMILY") or os.environ.get("ERIS_TTS_VOICE") or "eris_primary").strip()
+            return SpeechContract(language, locale, voice_family, "safe_legacy", False)
         language = normalize_language(
             str(
                 supplied.get("language")

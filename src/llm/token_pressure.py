@@ -109,9 +109,13 @@ _DEFAULT_LANE_BUDGETS: dict[str, LaneTokenBudget] = {
 
 
 def _all_lane_budget_enabled() -> bool:
-    return str(os.environ.get("ERIS_TOKEN_BUDGET_ALL_LANES", "1") or "1").strip().lower() not in {
-        "0", "false", "off", "no",
-    }
+    try:
+        from runtime.rollout_control import feature_enabled
+        return feature_enabled("token_budget_all_lanes")
+    except Exception:
+        return str(os.environ.get("ERIS_TOKEN_BUDGET_ALL_LANES", "1") or "1").strip().lower() not in {
+            "0", "false", "off", "no",
+        }
 
 
 def lane_budget_for(lane: str) -> LaneTokenBudget:
