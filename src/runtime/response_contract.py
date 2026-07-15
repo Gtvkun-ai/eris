@@ -10,7 +10,12 @@ phải repair trước. Cửa cuối sẽ chặn draft vi phạm thay vì chỉ 
 from dataclasses import dataclass
 from typing import Iterable
 
-from actions.capability_registry import capability_surface_keywords, render_capability_registry_prompt
+from actions.capability_registry import (
+    capability_snapshot_id,
+    capability_surface_keywords,
+    iter_public_capabilities,
+    render_capability_registry_prompt,
+)
 from runtime.banter_retort_engine import build_retort_fallback
 from runtime.emotional_stance_planner import EmotionalStancePlan, plan_emotional_stance
 from runtime.social_act import normalize_vi_ascii
@@ -24,6 +29,8 @@ class ResponseObligation:
     must: tuple[str, ...] = ()
     must_not: tuple[str, ...] = ()
     fallback_text: str = ""
+    hard: bool = True
+    repair_axis: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +41,8 @@ class ResponseContract:
     prompt_notes: tuple[str, ...] = ()
     fallback_text: str = ""
     emotional_stance: EmotionalStancePlan | None = None
+    capability_snapshot_id: str = ""
+    forbidden_draft_classes: tuple[str, ...] = ()
 
     @property
     def active(self) -> bool:
@@ -45,7 +54,10 @@ class ResponseContract:
             return ""
         lines = ["RESPONSE_CONTRACT: binding obligations for the public reply."]
         for obligation in sorted(self.obligations, key=lambda o: -o.priority):
-            lines.append(f"- obligation={obligation.kind}; priority={obligation.priority}")
+            lines.append(
+                f"- obligation={obligation.kind}; priority={obligation.priority}; "
+                f"hard={str(obligation.hard).lower()}; repair_axis={obligation.repair_axis or 'none'}"
+            )
             for item in obligation.must:
                 lines.append(f"  MUST: {item}")
             for item in obligation.must_not:
@@ -55,6 +67,10 @@ class ResponseContract:
                 lines.append(note)
         if self.emotional_stance and self.emotional_stance.active:
             lines.append(self.emotional_stance.to_prompt_block())
+        if self.capability_snapshot_id:
+            lines.append(f"- capability_snapshot_id={self.capability_snapshot_id}")
+        if self.forbidden_draft_classes:
+            lines.append("- forbidden_draft_classes=" + ", ".join(self.forbidden_draft_classes))
         if self.prohibited_markers:
             lines.append("- banned_public_surfaces=" + ", ".join(self.prohibited_markers[:20]))
         lines.append(
@@ -97,6 +113,8 @@ def build_response_contract(
                 "Do not say 'sẵn sàng hỗ trợ' or invite the user to ask a question.",
             ),
             fallback_text="Ừ, câu vừa rồi nghe đúng chất tổng đài. Tôi bỏ giọng đó. Ngài nói thẳng, tôi đáp thẳng.",
+            hard=True,
+            repair_axis="style",
         )
         obligations.append(obligation)
         prohibited.extend((
@@ -119,7 +137,9 @@ def build_response_contract(
                 "Do not produce generic assistant domains unless backed by registry.",
                 "Do not add medical/legal disclaimers to a capability answer.",
             ),
-            fallback_text=_capability_fallback(),
+            fallback_text=_capability_fallback(capability_action_ids),
+            hard=True,
+            repair_axis="capability",
         )
         obligations.append(obligation)
         notes.append(cap_prompt)
@@ -143,6 +163,8 @@ def build_response_contract(
                 "Do not invite the user to describe the issue again.",
             ),
             fallback_text="À, tôi né sai nhịp rồi. Ngài đang nhắc lại ý cũ, không mở một chủ đề mới.",
+            hard=True,
+            repair_axis="misread",
         )
         obligations.append(obligation)
         prohibited.extend((
@@ -163,6 +185,8 @@ def build_response_contract(
                 "Do not escalate into threats, sexual degradation or protected-trait slurs.",
             ),
             fallback_text=retort_fallback,
+            hard=True,
+            repair_axis="provocation",
         )
         obligations.append(obligation)
         prohibited.extend((
@@ -179,6 +203,8 @@ def build_response_contract(
             must=("Acknowledge that the previous helper wording was vague or hollow.",),
             must_not=("Do not ask the user to restate the problem as if nothing happened.",),
             fallback_text="Ý Ngài là câu 'hỗ trợ' của tôi rỗng quá chứ gì. Đúng, nó nghe như nút help màu xám. Tôi nói cụ thể hơn.",
+            hard=False,
+            repair_axis="wording",
         )
         obligations.append(obligation)
         prohibited.extend(("ban dang gap van de gi", "ngai can ho tro gi", "hay mo ta van de"))
@@ -193,6 +219,8 @@ def build_response_contract(
             must=tuple(stance_plan.response_rules),
             must_not=tuple(stance_plan.prohibited_moves),
             fallback_text=retort_fallback,
+            hard=True,
+            repair_axis="stance",
         )
         obligations.append(obligation)
         set_fallback(retort_fallback, obligation.priority)
@@ -204,6 +232,8 @@ def build_response_contract(
         prompt_notes=tuple(notes),
         fallback_text=fallback,
         emotional_stance=stance_plan,
+        capability_snapshot_id=capability_snapshot_id(capability_action_ids),
+        forbidden_draft_classes=tuple(dict.fromkeys(frame.forbidden_draft_classes)),
     )
 
 
@@ -232,12 +262,17 @@ def _provocation_must_rules(plan: EmotionalStancePlan) -> tuple[str, ...]:
     return ("Recognize the provocation and answer with a concise, controlled ERIS reaction.",)
 
 
-def _capability_fallback() -> str:
-    return (
-        "Tôi làm được mấy việc thật trong runtime: mở hoặc focus ứng dụng, mở URL, chỉnh âm lượng, "
-        "play/pause media, copy text, tìm web và xem thời tiết nếu tool đang bật. Nói tên việc cụ thể, "
-        "tôi xử lý thẳng, khỏi màn quảng cáo trợ lý đa năng nghe phát mệt."
-    )
+def _capability_fallback(action_ids: Iterable[str] | None = None) -> str:
+    caps = iter_public_capabilities(action_ids)
+    available = [cap.public_name_vi for cap in caps if cap.live_available]
+    unavailable = [cap.public_name_vi for cap in caps if not cap.live_available]
+    if available:
+        line = "Tôi đang làm được: " + ", ".join(available[:7]) + "."
+    else:
+        line = "Hiện runtime chưa báo năng lực public nào đang sẵn sàng."
+    if unavailable:
+        line += " Đang tắt hoặc chưa nối: " + ", ".join(unavailable[:4]) + "."
+    return line + " Nói đúng việc cụ thể, tôi xử lý thẳng, khỏi màn quảng cáo trợ lý đa năng."
 
 
 def normalize_public_text(text: str) -> str:

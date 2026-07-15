@@ -17,7 +17,8 @@ def stage_protocol_enabled() -> bool:
     Nếu client cũ quá nhạy với message lạ, đặt ERIS_STAGE_PROTOCOL=0.
     """
 
-    return os.environ.get("ERIS_STAGE_PROTOCOL", "1").strip().lower() in {"1", "true", "yes", "on", "y"}
+    from runtime.runtime_settings_store import runtime_bool
+    return runtime_bool("stage", "protocol_enabled", default=True)
 
 
 class StageEventBus:

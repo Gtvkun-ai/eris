@@ -136,7 +136,7 @@ class _StandaloneOllamaClient:
 
 @dataclass(frozen=True, slots=True)
 class MemorySemanticParserConfig:
-    enabled: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_SEMANTIC_PARSER", False))
+    enabled: bool = field(default_factory=lambda: _runtime_bool("memory", "semantic_parser", False))
     provider: str = field(default_factory=lambda: os.getenv("ERIS_MEMORY_SEMANTIC_PROVIDER", "ollama").strip().lower() or "ollama")
     model: str = field(default_factory=lambda: os.getenv("ERIS_MEMORY_SEMANTIC_MODEL", "qwen3:0.6b").strip() or "qwen3:0.6b")
     timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_SEMANTIC_TIMEOUT", 4.0))
@@ -339,6 +339,14 @@ def _env_flag(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+def _runtime_bool(section: str, key: str, default: bool) -> bool:
+    try:
+        from runtime.runtime_settings_store import runtime_bool
+        return runtime_bool(section, key, default=default)
+    except Exception:
+        return default
+
 
 
 def _env_float(name: str, default: float) -> float:

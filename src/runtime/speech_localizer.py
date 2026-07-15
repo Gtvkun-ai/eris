@@ -24,12 +24,8 @@ _JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 
 
 def _enabled() -> bool:
-    return os.environ.get("ERIS_TTS_STAGE_LOCALIZE", "1").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    from runtime.runtime_settings_store import runtime_bool
+    return runtime_bool("tts", "stage_localize", default=True)
 
 
 def _remote_provider_is_gemini() -> bool:
@@ -58,7 +54,8 @@ def _get_api_key() -> str:
 
         pool = get_key_pool("gemini")
         if pool and pool.size > 0:
-            return pool.current_key()
+            lease = pool.acquire(allow_cooling=True)
+            return lease.key if lease is not None else ""
     except Exception:
         pass
     return ""

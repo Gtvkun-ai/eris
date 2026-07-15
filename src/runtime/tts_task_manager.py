@@ -512,11 +512,8 @@ def _read_audio_asset(frame: Any) -> bytes | None:
 
 
 def _prefetch_workers() -> int:
-    raw = os.environ.get("ERIS_TTS_PREFETCH_WORKERS", "2").strip()
-    try:
-        return max(1, min(6, int(raw)))
-    except ValueError:
-        return 2
+    from runtime.runtime_settings_store import runtime_int
+    return max(1, min(6, runtime_int("stage", "prefetch_workers", default=2)))
 
 
 def _dispatch_policy(tasks: list[TtsSegmentTask]) -> TtsDispatchPolicy:

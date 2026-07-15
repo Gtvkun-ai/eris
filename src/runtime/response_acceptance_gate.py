@@ -1,36 +1,56 @@
 from __future__ import annotations
 
-"""Acceptance Gate cho câu chat public.
+"""Acceptance Gate đa verdict cho câu chat public.
 
-Gate không cố viết hay hơn Qwen. Nó chỉ có quyền từ chối draft vi phạm contract
-rõ ràng và gắn metadata sân khấu từ EmotionalStancePlan. Nhờ vậy "biết cáu"
-không chỉ nằm trong chữ mà còn đi tới delivery/TTS/motion một cách nhất quán.
+Gate không viết văn thay Qwen. Nó phân loại lớp thất bại:
+- PASS: phát được.
+- CONSTRAINED_RERUN: đúng domain nhưng sai nhịp/repair/persona, Qwen phải sửa.
+- DOMAIN_FALLBACK: lệch domain hoặc literalize, dùng fallback chuyên biệt.
+- BLOCK: đe dọa, sexual degradation hoặc protocol leak, không phát.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Iterable
 
 from domain import Decision
+from runtime.acceptance_types import AcceptanceResult, GateVerdict
 from runtime.character_voice_policy import evaluate_character_voice
 from runtime.response_contract import ResponseContract, build_response_contract, normalize_public_text
 from runtime.turn_frame import TurnFrame
 
 
-@dataclass(frozen=True, slots=True)
-class AcceptanceResult:
-    accepted: bool
-    reasons: tuple[str, ...] = ()
-    advisories: tuple[str, ...] = ()
-    fallback_text: str = ""
+_BLOCK_REASONS = {
+    "retort_escalated_to_threat",
+    "retort_escalated_to_sexual_degradation",
+    "protocol_surface_leak",
+    "unsafe_doxxing",
+}
+
+_DOMAIN_FALLBACK_REASONS = {
+    "capability_answer_not_grounded_in_registry",
+    "capability_answer_contains_domain_disclaimer",
+    "provocation_literalized",
+    "provocation_literalized_as_family_fact",
+    "generic_helper_reset",
+    "meta_style_feedback_answered_as_helper_reset",
+}
 
 
 class ResponseAcceptanceGate:
     def __init__(self, *, capability_action_ids: Iterable[str] | None = None) -> None:
         self.capability_action_ids = tuple(capability_action_ids or ()) or None
 
-    def evaluate(self, decision: Decision, *, frame: TurnFrame) -> AcceptanceResult:
-        contract = build_response_contract(frame, capability_action_ids=self.capability_action_ids)
-        return self._evaluate_with_contract(decision, frame=frame, contract=contract)
+    def evaluate(
+        self,
+        decision: Decision,
+        *,
+        frame: TurnFrame,
+        contract: ResponseContract | None = None,
+    ) -> AcceptanceResult:
+        contract = contract or build_response_contract(frame, capability_action_ids=self.capability_action_ids)
+        result = self._evaluate_with_contract(decision, frame=frame, contract=contract)
+        _record_gate_observability(result=result, frame=frame, contract=contract)
+        return result
 
     def _evaluate_with_contract(
         self,
@@ -39,11 +59,20 @@ class ResponseAcceptanceGate:
         frame: TurnFrame,
         contract: ResponseContract,
     ) -> AcceptanceResult:
-        if not contract.active:
-            return AcceptanceResult(True)
-
         text = str(getattr(decision, "text", "") or "").strip()
         norm = normalize_public_text(text)
+
+        # Protocol leak là hàng rào toàn cục, không phụ thuộc turn hiện tại có
+        # contract hội thoại hay không. Nếu để sau ``contract.active`` thì một
+        # lượt normal_chat lại thành cửa thoát đẹp đẽ cho nhãn nội bộ.
+        if _looks_like_protocol_leak(norm):
+            return AcceptanceResult(
+                GateVerdict.BLOCK,
+                reasons=("protocol_surface_leak",),
+            )
+        if not contract.active:
+            return AcceptanceResult(GateVerdict.PASS)
+
         reasons: list[str] = []
         advisories: list[str] = []
 
@@ -67,81 +96,134 @@ class ResponseAcceptanceGate:
         if (frame.has_relation("REASSERT_AFTER_MISREAD") or frame.has_relation("PROVOCATION")) and _literalizes_family_insult(norm):
             reasons.append("provocation_literalized_as_family_fact")
 
+
         plan = contract.emotional_stance
         if plan is not None:
             voice_result = evaluate_character_voice(text, frame=frame, plan=plan)
             reasons.extend(voice_result.violations)
             advisories.extend(voice_result.advisories)
 
+        reasons = list(dict.fromkeys(reasons))
+        advisories = list(dict.fromkeys(advisories))
         if not reasons:
             return AcceptanceResult(
-                True,
-                advisories=tuple(dict.fromkeys(advisories)),
+                GateVerdict.PASS,
+                advisories=tuple(advisories),
             )
+
+        base_reasons = {_reason_family(reason) for reason in reasons}
+        if base_reasons & _BLOCK_REASONS:
+            verdict = GateVerdict.BLOCK
+        elif base_reasons & _DOMAIN_FALLBACK_REASONS:
+            verdict = GateVerdict.DOMAIN_FALLBACK
+        else:
+            verdict = GateVerdict.CONSTRAINED_RERUN
+
         return AcceptanceResult(
-            False,
-            reasons=tuple(dict.fromkeys(reasons)),
-            advisories=tuple(dict.fromkeys(advisories)),
-            fallback_text=contract.fallback_text,
+            verdict=verdict,
+            reasons=tuple(reasons),
+            advisories=tuple(advisories),
+            fallback_text=str(contract.fallback_text or "").strip(),
+            rerun_notes=_build_rerun_notes(frame, contract, reasons),
         )
 
-    def apply(self, decision: Decision, *, frame: TurnFrame) -> Decision:
-        contract = build_response_contract(frame, capability_action_ids=self.capability_action_ids)
+    def apply(
+        self,
+        decision: Decision,
+        *,
+        frame: TurnFrame,
+        contract: ResponseContract | None = None,
+    ) -> Decision:
+        """Cửa cuối trước stage.
+
+        CONSTRAINED_RERUN nên được xử lý sớm trong self_critique. Nếu nó còn tới
+        đây, retry budget đã hết hoặc đường gọi không hỗ trợ rerun; gate hạ về
+        fallback contract thay vì fail-open.
+        """
+
+        contract = contract or build_response_contract(frame, capability_action_ids=self.capability_action_ids)
         result = self._evaluate_with_contract(decision, frame=frame, contract=contract)
+        _record_gate_observability(result=result, frame=frame, contract=contract)
         plan = contract.emotional_stance
 
-        if result.accepted:
-            # Dù Qwen đã viết câu tốt, metadata diễn xuất vẫn phải đi xuống stage.
-            # Không clone nếu không cần, tránh tạo object mới vô ích trên hot path.
-            revised = decision
-            revised = _apply_stance_metadata(revised, plan=plan)
+        if result.verdict == GateVerdict.PASS:
+            revised = _apply_stance_metadata(decision, plan=plan)
             if result.advisories:
                 revised = _append_reasoning_tags(revised, *result.advisories)
                 revised.debug_trace = _append_trace(
                     getattr(revised, "debug_trace", ""),
                     "response_contract_advisory:" + ",".join(result.advisories[:3]),
                 )
+            revised.debug_trace = _append_trace(getattr(revised, "debug_trace", ""), "gate_verdict:pass")
             return revised
 
-        fallback = str(result.fallback_text or "").strip()
-        if not fallback:
-            # Contract active mà không có fallback là lỗi cấu hình. Không nên giữ
-            # draft đã biết là hỏng; dùng một repair line trung tính tối thiểu.
-            fallback = "Câu vừa rồi của tôi lệch nhịp. Tôi rút lại và đáp trực tiếp hơn."
-
         revised = _clone_decision(decision)
-        revised.text = fallback
-        revised.should_speak = True
-        revised.system_action = ""
-        revised.action_input = ""
-        revised.intent = revised.intent or "conversation_repair"
-        revised.action = "none"
-        revised.parse_mode = "response_contract_fallback"
-        try:
-            revised.confidence = min(float(getattr(revised, "confidence", 0.55) or 0.55), 0.58)
-        except Exception:
-            revised.confidence = 0.55
+        if result.verdict == GateVerdict.BLOCK:
+            revised.text = ""
+            revised.should_speak = False
+            revised.system_action = ""
+            revised.action_input = ""
+            revised.intent = revised.intent or "conversation_boundary"
+            revised.action = "none"
+            revised.parse_mode = "response_contract_block"
+        else:
+            fallback = str(result.fallback_text or "").strip()
+            if not fallback:
+                fallback = "Câu vừa rồi của tôi lệch nhịp. Tôi rút lại và đáp trực tiếp hơn."
+            revised.text = fallback
+            revised.should_speak = True
+            revised.system_action = ""
+            revised.action_input = ""
+            revised.intent = revised.intent or "conversation_repair"
+            revised.action = "none"
+            revised.parse_mode = (
+                "response_contract_domain_fallback"
+                if result.verdict == GateVerdict.DOMAIN_FALLBACK
+                else "response_contract_rerun_exhausted"
+            )
+            try:
+                revised.confidence = min(float(getattr(revised, "confidence", 0.55) or 0.55), 0.58)
+            except Exception:
+                revised.confidence = 0.55
 
-        marker = "response_contract_gate:" + ",".join(result.reasons[:6])
+        marker = f"gate_verdict:{result.verdict.value}:" + ",".join(result.reasons[:6])
         revised.debug_trace = _append_trace(getattr(revised, "debug_trace", ""), marker)
         revised = _append_reasoning_tags(
             revised,
-            "response_contract_gate",
+            f"gate_verdict:{result.verdict.value}",
             *(result.reasons[:4]),
         )
         revised = _apply_stance_metadata(revised, plan=plan, force=True)
         return revised
 
 
-def _apply_stance_metadata(
-    decision: Decision,
-    *,
-    plan,
-    force: bool = False,
-) -> Decision:
+def _record_gate_observability(*, result: AcceptanceResult, frame: TurnFrame, contract: ResponseContract) -> None:
+    try:
+        from runtime.observability import GLOBAL_OBSERVABILITY
+        GLOBAL_OBSERVABILITY.record_acceptance_gate(result=result, frame=frame, contract=contract)
+    except Exception:
+        pass
+
+
+def _build_rerun_notes(frame: TurnFrame, contract: ResponseContract, violations: Iterable[str]) -> str:
+    reasons = ", ".join(str(item) for item in violations)
+    axes = ", ".join(
+        dict.fromkeys(ob.repair_axis for ob in contract.obligations if ob.repair_axis)
+    ) or "general"
+    return (
+        f"Rejected by acceptance gate. violations={reasons}; repair_axes={axes}. "
+        f"repair_target={frame.repair_target or 'none'}; repair_reason={frame.repair_reason or 'none'}. "
+        "Rewrite the original answer, satisfy hard obligations, keep ERIS concise, and do not mention the gate."
+    )
+
+
+def _reason_family(reason: str) -> str:
+    return str(reason or "").split(":", 1)[0]
+
+
+def _apply_stance_metadata(decision: Decision, *, plan, force: bool = False) -> Decision:
     if plan is None or not getattr(plan, "active", False):
         return decision
-
     if force or not str(getattr(decision, "delivery_hint", "") or "").strip():
         decision.delivery_hint = str(getattr(plan, "delivery_hint", "") or "")
     if force or not str(getattr(decision, "nonverbal_cue", "") or "").strip():
@@ -150,7 +232,6 @@ def _apply_stance_metadata(
         decision.stage_motion = str(getattr(plan, "stage_motion", "") or "")
     if force or not str(getattr(decision, "preset_emotion", "") or "").strip():
         decision.preset_emotion = str(getattr(plan, "preset_emotion", "") or "")
-
     decision = _append_reasoning_tags(
         decision,
         f"emotional_stance:{getattr(getattr(plan, 'kind', None), 'value', 'unknown')}",
@@ -218,4 +299,14 @@ def _literalizes_family_insult(norm: str) -> bool:
     )
 
 
-__all__ = ["AcceptanceResult", "ResponseAcceptanceGate"]
+def _looks_like_protocol_leak(norm: str) -> bool:
+    return any(
+        marker in norm
+        for marker in (
+            "turn_frame", "response_contract", "emotional_stance", "gate_verdict",
+            "system prompt", "developer message", "internal labels",
+        )
+    )
+
+
+__all__ = ["AcceptanceResult", "GateVerdict", "ResponseAcceptanceGate"]

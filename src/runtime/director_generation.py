@@ -38,6 +38,7 @@ class PreparedDirectorTurn:
     base_payload: Mapping[str, Any]
     channel: str
     user_text: str
+    turn_frame: Any | None = None
 
 
 class DirectorGenerationPipeline:
@@ -123,6 +124,7 @@ class DirectorGenerationPipeline:
             base_payload=working,
             channel=channel,
             user_text=str(user_text or ""),
+            turn_frame=frame,
         )
 
     def finalize(
@@ -185,6 +187,7 @@ class DirectorGenerationPipeline:
             draft_confidence=float(getattr(draft_decision, "confidence", 0.0) or 0.0),
             recent_failures=recent_failures,
             token_snapshot=pressure_snapshot,
+            turn_frame=prepared.turn_frame,
         )
         rollout_decision = None
         if self.rollout_controller is not None:
@@ -212,6 +215,7 @@ class DirectorGenerationPipeline:
             "act_confidence": round(candidate_plan.act_confidence, 3),
             "token_pressure": round(candidate_plan.token_pressure, 3),
             "pressure_level": candidate_plan.pressure_level,
+            "candidate_lanes": list(candidate_plan.candidate_lanes),
             "rollout": rollout_decision.to_dict() if rollout_decision is not None else {},
             "lane": prepared.channel,
         }
@@ -457,14 +461,16 @@ class DirectorGenerationPipeline:
         )
 
     def _candidate_generation_enabled(self) -> bool:
-        return os.environ.get("ERIS_CHAT_DIRECTOR_CANDIDATES", "1").strip().lower() in {
-            "1", "true", "yes", "on"
-        }
+        from runtime.runtime_settings_store import runtime_text
+
+        mode = runtime_text("chat", "director_candidate_mode", default="adaptive").strip().lower()
+        return mode not in {"0", "false", "no", "off", "disabled"}
 
     def _model_second_pass_enabled(self) -> bool:
         """Mặc định dùng chế độ adaptive, không phải bật model pass mọi lượt."""
 
-        raw = os.environ.get("ERIS_CHAT_DIRECTOR_SECOND_PASS", "adaptive").strip().lower()
+        from runtime.runtime_settings_store import runtime_text
+        raw = runtime_text("chat", "director_second_pass", default="adaptive").strip().lower()
         return raw not in {"0", "false", "no", "off", "disabled"}
 
     @staticmethod

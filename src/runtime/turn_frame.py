@@ -32,6 +32,13 @@ class TurnFrame:
     interrupt_event: Any = None
     spoken_assistant_text: str = ""
     pending_assistant_text: str = ""
+    # Trục repair/grounding được tính một lần và đi cùng frame tới prompt,
+    # critique, acceptance gate và TTS metadata.
+    repair_target: str = ""
+    repair_reason: str = ""
+    capability_snapshot_id: str = ""
+    relationship_exposure: str = "neutral"
+    forbidden_draft_classes: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def has_relation(self, kind: str, *, threshold: float = 0.50) -> bool:
@@ -50,6 +57,10 @@ class TurnFrame:
             f"- social_stances={stance}\n"
             f"- previous_assistant_text={_clip(self.previous_assistant_text, 220)}\n"
             f"- previous_user_text={_clip(self.previous_user_text, 160)}\n"
+            f"- repair_target={self.repair_target or 'none'}; repair_reason={self.repair_reason or 'none'}\n"
+            f"- relationship_exposure={self.relationship_exposure}\n"
+            f"- capability_snapshot_id={self.capability_snapshot_id or 'none'}\n"
+            f"- forbidden_draft_classes={','.join(self.forbidden_draft_classes) or 'none'}\n"
             "Use this as evidence. Do not mention TURN_FRAME or labels publicly."
         )
 
@@ -121,6 +132,43 @@ def build_turn_frame(
 
     spoken = str(getattr(interrupt_event, "spoken_text_so_far", "") or "") if interrupt_event is not None else ""
     pending = str(getattr(interrupt_event, "pending_text", "") or "") if interrupt_event is not None else ""
+
+    repair_target = ""
+    repair_reason = ""
+    if replacement and interrupt_event is not None:
+        repair_target = "interrupted_tail"
+        repair_reason = "reassert_after_interrupt"
+    elif replacement:
+        repair_target = "previous_assistant_turn"
+        repair_reason = "misread" if _assistant_looked_generic(prev_assistant_norm) or _assistant_literalized_family(prev_assistant_norm) else "reasserted_meaning"
+    elif _is_meta_style_feedback(user_norm):
+        repair_target = "previous_assistant_turn"
+        repair_reason = "generic_reset"
+
+    forbidden: list[str] = []
+    if _is_meta_style_feedback(user_norm) or _assistant_looked_generic(prev_assistant_norm):
+        forbidden.append("generic_helper_reset")
+    if _is_family_provocation(user_norm) or replacement:
+        forbidden.append("literalize_family_insult")
+    if interrupt_event is not None:
+        forbidden.append("continue_interrupted_tail")
+    if _looks_like_threat_or_coercion(user_norm):
+        forbidden.extend(("retort_threat", "sexual_degradation"))
+
+    relationship_exposure = "neutral"
+    if any(h.kind == "HOSTILE_PROVOCATION" and h.confidence >= 0.5 for h in stances):
+        relationship_exposure = "engaged_hostile"
+    elif any(h.kind == "PLAYFUL_PROVOCATION" and h.confidence >= 0.5 for h in stances):
+        relationship_exposure = "playful"
+    elif _is_meta_style_feedback(user_norm):
+        relationship_exposure = "repair"
+
+    try:
+        from actions.capability_registry import capability_snapshot_id
+        cap_snapshot = capability_snapshot_id()
+    except Exception:
+        cap_snapshot = ""
+
     return TurnFrame(
         user_text=raw_user,
         previous_assistant_text=prev_assistant,
@@ -132,6 +180,11 @@ def build_turn_frame(
         interrupt_event=interrupt_event,
         spoken_assistant_text=spoken,
         pending_assistant_text=pending,
+        repair_target=repair_target,
+        repair_reason=repair_reason,
+        capability_snapshot_id=cap_snapshot,
+        relationship_exposure=relationship_exposure,
+        forbidden_draft_classes=tuple(dict.fromkeys(forbidden)),
     )
 
 
@@ -193,6 +246,13 @@ def _looks_like_threat_or_coercion(norm: str) -> bool:
     )
     return any(marker in norm for marker in markers)
 
+
+
+def _assistant_literalized_family(norm: str) -> bool:
+    return any(m in norm for m in (
+        "toi khong co me", "toi khong co bo", "toi khong co gia dinh",
+        "toi chi la mot ai",
+    ))
 
 def _assistant_looked_generic(norm: str) -> bool:
     markers = (

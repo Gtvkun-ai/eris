@@ -341,6 +341,22 @@ class RuntimeCoordinator(
     ):
         self.logger = logger
         self.transport = transport
+        # Nạp nguồn settings duy nhất trước khi dựng subsystem. Từ bản này
+        # runtime_settings.json là authority thật; env không còn được materialize
+        # ngược trên hot path. Các module policy đọc store trực tiếp.
+        try:
+            from runtime.runtime_settings_store import get_runtime_settings_store
+            self.runtime_settings_store = get_runtime_settings_store(logger=self.logger)
+            self.runtime_settings = self.runtime_settings_store.load(materialize_env=False)
+            self.logger.info(
+                "[runtime-settings] loaded path=%s version=%s",
+                self.runtime_settings_store.path,
+                self.runtime_settings.get("version", 0),
+            )
+        except Exception as exc:
+            self.runtime_settings_store = None
+            self.runtime_settings = {}
+            self.logger.warning("Không khởi tạo được RuntimeSettingsStore: %s", exc)
         # Cờ chiều-sâu (N1–N3) tự BẬT lúc khởi động — không bắt người dùng gạt tay.
         # Live qua control-file; lựa chọn tắt/bật về sau của người dùng vẫn thắng.
         try:
@@ -371,7 +387,15 @@ class RuntimeCoordinator(
         self.avatar_ready = False
         self.last_stage_inbound_event = None
         self.memory_core = memory_core
-        if memory_semantic_parser is None and str(os.getenv("ERIS_MEMORY_SEMANTIC_PARSER", "")).strip().lower() in {"1", "true", "yes", "on", "y"}:
+        if memory_semantic_parser is None:
+            try:
+                from runtime.runtime_settings_store import runtime_bool
+                semantic_parser_enabled = runtime_bool("memory", "semantic_parser", default=False)
+            except Exception:
+                semantic_parser_enabled = False
+        else:
+            semantic_parser_enabled = False
+        if memory_semantic_parser is None and semantic_parser_enabled:
             try:
                 from runtime.memory_semantic_parser_adapter import build_runtime_memory_semantic_parser
             except Exception:
@@ -408,6 +432,12 @@ class RuntimeCoordinator(
         self.action_executor = action_executor
         self.action_router = action_router
         self.memory_semantic_parser = memory_semantic_parser
+        try:
+            from actions.capability_runtime import bind_runtime_owner
+
+            bind_runtime_owner(self)
+        except Exception as exc:
+            self.logger.debug("[capability] runtime bind failed: %s", exc)
         self.background_memory_digest = None
         if memory_semantic_parser is not None:
             try:
@@ -574,6 +604,14 @@ class RuntimeCoordinator(
             self.logger.warning("Không dựng được Curiosity Tutor daemon: %s", exc)
             self.tutor_daemon = None
         self._state_lock = threading.RLock()
+        # Danger Zone dùng service riêng để reset đúng cả RAM lẫn store trên đĩa.
+        # Không cho Body tự File.Delete() vì daemon đang sống có thể ghi state cũ trở lại.
+        try:
+            from runtime.maintenance_service import MaintenanceService
+            self.maintenance_service = MaintenanceService(self, logger=self.logger)
+        except Exception as exc:
+            self.maintenance_service = None
+            self.logger.warning("Không khởi tạo được MaintenanceService: %s", exc)
 
         '''Các biến này lưu trạng thái hội thoại:
         có đang chat không,
@@ -1708,8 +1746,8 @@ class RuntimeCoordinator(
                 )
             except Exception as exc:
                 self.logger.debug("[director] stage scoring skipped: %s", exc)
-        refresh_runtime_preferences("ERIS_TTS_LANGUAGE")
-        stage_language = os.environ.get("ERIS_TTS_LANGUAGE", "auto").strip()
+        from runtime.runtime_settings_store import runtime_text
+        stage_language = runtime_text("tts", "language", default="vi").strip() or "vi"
         stage_builder = getattr(self, "stage_frame_builder", None)
         if stage_builder is None or str(getattr(stage_builder, "language_hint", "auto")) != stage_language:
             # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để
@@ -5518,6 +5556,17 @@ class RuntimeCoordinator(
 
     def _handle_incoming(self, msg: dict):
         msg_type = msg.get("type", "")
+        if getattr(self, "_maintenance_in_progress", False) and msg_type in {"chat", "chat_start", "force_speak"}:
+            try:
+                self.transport.send_json({
+                    "type": "maintenance_busy",
+                    "parse_mode": "maintenance_busy",
+                    "should_speak": False,
+                    "maintenance_busy": {"message": "Brain đang bảo trì; lượt mới chưa được nhận."},
+                })
+            except Exception:
+                pass
+            return
         if is_stage_inbound_type(msg_type):
             self._handle_stage_inbound_event(msg)
             return
@@ -5556,6 +5605,14 @@ class RuntimeCoordinator(
             self._handle_settings_health()
             return
 
+        if msg_type == "maintenance_catalog":
+            self._handle_maintenance_catalog(msg)
+            return
+
+        if msg_type in {"maintenance_request", "maintenance_execute"}:
+            self._handle_maintenance_request(msg)
+            return
+
         if msg_type == "debug_command":
             self._handle_debug_command(msg)
             return
@@ -5565,6 +5622,79 @@ class RuntimeCoordinator(
             return
         if msg_type:
             self.logger.debug("[incoming] ignored unknown msg_type=%s", msg_type)
+
+    def _handle_maintenance_catalog(self, msg: dict | None = None) -> None:
+        """Trả danh sách thao tác Danger Zone và thống kê cache hiện tại."""
+
+        service = getattr(self, "maintenance_service", None)
+        try:
+            payload = service.catalog() if service is not None else {"actions": [], "error": "maintenance_service_unavailable"}
+            self.transport.send_json({
+                "type": "maintenance_catalog_ack",
+                "parse_mode": "maintenance_catalog_ack",
+                "should_speak": False,
+                "maintenance_catalog_ack": payload,
+            })
+        except Exception as exc:
+            self.logger.warning("[maintenance] catalog failed: %s", exc)
+
+    def _handle_maintenance_request(self, msg: dict) -> None:
+        """Preview hoặc thực thi command Danger Zone.
+
+        Protocol hai bước ngăn một click lệch tay xóa state ngay lập tức:
+        ``dry_run=true`` trả manifest + token; Body chỉ execute bằng token đó.
+        """
+
+        service = getattr(self, "maintenance_service", None)
+        request_id = str(msg.get("request_id", "") or "")
+        action = str(msg.get("action", "") or "").strip().lower()
+        dry_run = str(msg.get("type", "") or "") != "maintenance_execute" and bool(msg.get("dry_run", True))
+        options = msg.get("options") if isinstance(msg.get("options"), dict) else {}
+        try:
+            if service is None:
+                raise RuntimeError("maintenance_service_unavailable")
+            if dry_run:
+                result = service.preview(action, options=options)
+                envelope_type = "maintenance_preview_ack"
+                field = "maintenance_preview_ack"
+            else:
+                token = str(msg.get("confirmation_token", "") or "")
+                typed_confirmation = str(msg.get("typed_confirmation", "") or "")
+                result = service.execute(
+                    action, confirmation_token=token,
+                    typed_confirmation=typed_confirmation, options=options,
+                )
+                envelope_type = "maintenance_execute_ack"
+                field = "maintenance_execute_ack"
+            self.transport.send_json({
+                "type": envelope_type,
+                "parse_mode": envelope_type,
+                "should_speak": False,
+                field: {
+                    "request_id": request_id,
+                    "protocol_phase": "preview" if dry_run else "execute",
+                    **result,
+                },
+            })
+        except Exception as exc:
+            self.logger.warning("[maintenance] request action=%s dry_run=%s failed: %s", action, dry_run, exc)
+            try:
+                self.transport.send_json({
+                    "type": "maintenance_execute_ack",
+                    "parse_mode": "maintenance_execute_ack",
+                    "should_speak": False,
+                    "maintenance_execute_ack": {
+                        "request_id": request_id,
+                        "action": action,
+                        "ok": False,
+                        "changed": [],
+                        "warnings": [],
+                        "errors": [str(exc)[:320]],
+                        "backup_dir": "",
+                    },
+                })
+            except Exception:
+                pass
 
     def _handle_settings_health(self) -> None:
         """Gửi trạng thái hai key pool cho Settings UI mà không lộ API key.
@@ -5581,6 +5711,18 @@ class RuntimeCoordinator(
                 "gemini": get_key_pool("gemini").snapshot(),
                 "groq": get_key_pool("groq").snapshot(),
             }
+            try:
+                from actions.capability_runtime import runtime_capability_snapshot
+                capability_health = runtime_capability_snapshot(refresh=True)
+            except Exception as capability_exc:
+                capability_health = {"error": f"{type(capability_exc).__name__}: {capability_exc}"}
+            try:
+                from runtime.observability import ensure_observability
+                telemetry = ensure_observability(self)
+                for provider_name, snapshot in pools.items():
+                    telemetry.record_provider_pool(provider=provider_name, snapshot=snapshot, event="settings_health")
+            except Exception:
+                pass
             tts = getattr(self, "tts_engine", None)
             tts_ready = bool(tts is not None and getattr(tts, "_ok", False))
             ack = {
@@ -5590,6 +5732,7 @@ class RuntimeCoordinator(
                 "settings_health_ack": {
                     "pools": pools,
                     "tts": {"ready": tts_ready},
+                    "capabilities": capability_health,
                 },
             }
         except Exception as exc:
@@ -5611,63 +5754,116 @@ class RuntimeCoordinator(
             self.logger.debug("[settings] health ack send failed: %s", exc)
 
     def _handle_settings_update(self, msg: dict) -> None:
-        """Áp dụng TTS setting do panel Body gửi qua UDP mà không restart brain."""
+        """Áp dụng settings live qua schema, persist trước rồi mới refresh runtime."""
 
-        scope = str(msg.get("scope", "tts") or "tts").strip().lower()
-        if scope != "tts":
-            self.logger.debug("[settings] ignored unsupported scope=%s", scope)
-            return
-
-        raw_language = str(msg.get("tts_language", "") or "").strip().lower()
-        language_aliases = {
-            "auto": "ja", "jp": "ja", "japanese": "ja", "ja-jp": "ja",
-            "vi-vn": "vi", "vietnamese": "vi",
-            "en-us": "en", "english": "en",
-        }
-        language = language_aliases.get(raw_language, raw_language)
-        if language not in {"vi", "ja", "en"}:
-            self.logger.warning("[settings] rejected invalid tts_language=%r", raw_language)
-            return
-
-        voice = str(msg.get("tts_voice", "") or "").strip()
-        quality = str(msg.get("tts_quality", "") or "").strip().lower()
-        if voice and len(voice) <= 64 and all(ch.isalnum() or ch in {"-", "_"} for ch in voice):
-            os.environ["ERIS_TTS_VOICE"] = voice
-        if quality in {"balanced", "high"}:
-            os.environ["ERIS_TTS_QUALITY"] = quality
-        os.environ["ERIS_TTS_LANGUAGE"] = language
-
-        self.stage_frame_builder = None
-        changed = False
-        tts = getattr(self, "tts_engine", None)
-        refresh = getattr(tts, "refresh_configuration", None) if tts is not None else None
-        if callable(refresh):
-            try:
-                changed = bool(refresh())
-            except Exception as exc:
-                self.logger.warning("[settings] TTS refresh failed: %s", exc)
-
-        effective_voice = os.environ.get("ERIS_TTS_VOICE", "Aoede")
-        effective_quality = os.environ.get("ERIS_TTS_QUALITY", "high")
-        self.logger.info(
-            "[settings] TTS live update Language=%s Voice=%s Quality=%s worker_rebuilt=%s",
-            language, effective_voice, effective_quality, changed,
-        )
+        scope = str(msg.get("scope", "runtime") or "runtime").strip().lower()
         try:
-            self.transport.send_json(
-                {
+            from runtime.runtime_settings_store import get_runtime_settings_store
+            from runtime.settings_protocol import normalize_settings_message
+
+            store = getattr(self, "runtime_settings_store", None) or get_runtime_settings_store(logger=self.logger)
+            normalized = normalize_settings_message(msg)
+            if normalized.scope not in {"tts", "advanced", "personality", "runtime"}:
+                raise ValueError(f"unsupported settings scope: {normalized.scope}")
+            if not normalized.patch:
+                raise ValueError("settings payload không có field hợp lệ")
+
+            result = store.apply_patch(
+                normalized.patch,
+                restart_required_paths=set(normalized.restart_required_paths),
+                materialize_env=False,
+            )
+            self.runtime_settings_store = store
+            self.runtime_settings = result.settings
+            rejected = list(normalized.rejected_fields) + list(result.rejected)
+
+            refresh_meta = self._refresh_runtime_after_settings(
+                scope=normalized.scope,
+                applied_paths=set(result.applied),
+            )
+            ack_payload = result.to_ack(scope=normalized.scope)
+            ack_payload["rejected"] = list(dict.fromkeys(rejected))
+            ack_payload["legacy_payload"] = bool(normalized.legacy_payload)
+            ack_payload.update(refresh_meta)
+            if normalized.scope == "tts":
+                tts_settings = result.settings.get("tts", {})
+                ack_payload.update({
+                    "language": tts_settings.get("language", "vi"),
+                    "voice": tts_settings.get("voice", "Aoede"),
+                    "quality": tts_settings.get("quality", "high"),
+                    "volume": tts_settings.get("volume", 1.0),
+                    "speed": tts_settings.get("speed", 1.0),
+                })
+
+            self.logger.info(
+                "[runtime-settings] live scope=%s applied=%d rejected=%d restart=%d",
+                normalized.scope, len(result.applied), len(rejected), len(result.restart_required),
+            )
+            self.transport.send_json({
+                "type": "settings_update_ack",
+                "parse_mode": "settings_update_ack",
+                "should_speak": False,
+                "settings_update_ack": ack_payload,
+            })
+        except Exception as exc:
+            self.logger.warning("[runtime-settings] update scope=%s failed: %s", scope, exc)
+            try:
+                self.transport.send_json({
                     "type": "settings_update_ack",
                     "parse_mode": "settings_update_ack",
                     "should_speak": False,
                     "settings_update_ack": {
-                        "scope": "tts", "language": language,
-                        "voice": effective_voice, "quality": effective_quality,
-                        "worker_rebuilt": changed,
+                        "scope": scope,
+                        "applied": [],
+                        "rejected": [str(exc)[:240]],
+                        "restart_required": [],
+                        "ok": False,
                     },
-                }
-            )
-        except Exception as exc:
-            self.logger.debug("[settings] ack send failed: %s", exc)
+                })
+            except Exception:
+                pass
+
+    def _refresh_runtime_after_settings(self, *, scope: str, applied_paths: set[str]) -> dict:
+        """Refresh các component có contract live; mục bootstrap vẫn báo restart."""
+
+        meta = {"worker_rebuilt": False, "engine_ready": False, "live_refreshed": []}
+        self.stage_frame_builder = None
+        meta["live_refreshed"].append("stage_frame_builder")
+
+        if any(path.startswith("tts.") or path.startswith("stage.") for path in applied_paths):
+            tts = getattr(self, "tts_engine", None)
+            refresh = getattr(tts, "refresh_configuration", None) if tts is not None else None
+            if callable(refresh):
+                try:
+                    meta["worker_rebuilt"] = bool(refresh())
+                    meta["live_refreshed"].append("tts_engine")
+                except Exception as exc:
+                    self.logger.warning("[runtime-settings] TTS refresh failed: %s", exc)
+            meta["engine_ready"] = bool(tts is not None and getattr(tts, "_ok", False))
+
+        if "chat.max_concurrency" in applied_paths:
+            try:
+                from llm.key_pool import reset_concurrency_limits
+                reset_concurrency_limits()
+                meta["live_refreshed"].append("provider_concurrency")
+            except Exception as exc:
+                self.logger.debug("[runtime-settings] concurrency refresh failed: %s", exc)
+
+        # Policy modules đọc store mỗi lượt nên không cần reconstruct. Ghi rõ để
+        # observability/UI biết live apply không phải một cái nút trang trí.
+        if any(path.startswith("chat.") or path.startswith("personality.") for path in applied_paths):
+            meta["live_refreshed"].append("conversation_policy")
+        if any(path.startswith("prompt.") for path in applied_paths):
+            meta["live_refreshed"].append("prompt_budget_policy")
+        if any(path.startswith("capabilities.") for path in applied_paths):
+            try:
+                from actions.capability_runtime import refresh_runtime_capabilities
+
+                refresh_runtime_capabilities(owner=self, settings=self.runtime_settings)
+                meta["live_refreshed"].append("capability_runtime_snapshot")
+            except Exception as exc:
+                self.logger.debug("[capability] live refresh failed: %s", exc)
+        return meta
 
     def _handle_stage_inbound_event(self, msg: dict) -> None:
         """Nhận event ngược từ frontend/sân khấu.

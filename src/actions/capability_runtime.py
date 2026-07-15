@@ -1,0 +1,223 @@
+# -*- coding: utf-8 -*-
+"""Snapshot availability runtime cho CapabilityRegistry.
+
+Registry public không được đoán tool đang sống chỉ từ việc một id tồn tại trong
+``VALID_SYSTEM_ACTION_LIST``. Module này chụp trạng thái thật từ Coordinator,
+ActionRouter/ActionExecutor, settings và credential presence. Snapshot chỉ giữ
+bool/reason, tuyệt đối không giữ raw API key.
+"""
+
+from __future__ import annotations
+
+import os
+import threading
+import time
+import weakref
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+from actions.contracts import VALID_SYSTEM_ACTION_LIST
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityRuntimeStatus:
+    capability_id: str
+    available: bool
+    reason: str = ""
+    source: str = "runtime"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.capability_id,
+            "available": self.available,
+            "reason": self.reason,
+            "source": self.source,
+        }
+
+
+_LOCK = threading.RLock()
+_OWNER_REF: weakref.ReferenceType[Any] | None = None
+_STATUSES: dict[str, CapabilityRuntimeStatus] = {}
+_REVISION = 0
+_UPDATED_AT = 0.0
+
+_WINDOWS_ONLY = {
+    "focus_window",
+    "set_volume",
+    "play_pause_media",
+    "copy_text",
+    "get_now_playing",
+}
+
+_SETTING_KEYS = {
+    "launch_app": "launch_app_enabled",
+    "focus_window": "focus_window_enabled",
+    "set_volume": "set_volume_enabled",
+    "play_pause_media": "media_enabled",
+    "copy_text": "copy_text_enabled",
+    "open_url": "open_url_enabled",
+    "search_web": "search_web_enabled",
+    "get_weather": "weather_enabled",
+    "get_now_playing": "now_playing_enabled",
+}
+
+
+def bind_runtime_owner(owner: Any | None) -> None:
+    """Đăng ký owner bằng weakref rồi refresh snapshot ngay."""
+
+    global _OWNER_REF
+    with _LOCK:
+        try:
+            _OWNER_REF = weakref.ref(owner) if owner is not None else None
+        except TypeError:
+            _OWNER_REF = None
+    refresh_runtime_capabilities(owner=owner)
+
+
+def refresh_runtime_capabilities(
+    *, owner: Any | None = None, settings: Mapping[str, Any] | None = None
+) -> dict[str, CapabilityRuntimeStatus]:
+    """Tính lại availability từ object runtime đang sống.
+
+    Không ping mạng. Search/weather được coi là sẵn sàng khi executor có handler
+    và credential tương ứng tồn tại. Việc request thật vẫn có thể lỗi, nhưng câu
+    "em làm được gì" sẽ không khoe một tool còn chưa được nối hoặc chưa có key.
+    """
+
+    global _STATUSES, _REVISION, _UPDATED_AT
+    if owner is None:
+        with _LOCK:
+            owner = _OWNER_REF() if _OWNER_REF is not None else None
+    if settings is None:
+        settings = getattr(owner, "runtime_settings", None) if owner is not None else None
+    caps_settings = dict(settings.get("capabilities", {})) if isinstance(settings, Mapping) else {}
+    respect_runtime = bool(caps_settings.get("respect_runtime_availability", True))
+
+    router = getattr(owner, "action_router", None) if owner is not None else None
+    executor = getattr(owner, "action_executor", None) if owner is not None else None
+    statuses: dict[str, CapabilityRuntimeStatus] = {}
+
+    for capability_id in VALID_SYSTEM_ACTION_LIST:
+        enabled_key = _SETTING_KEYS.get(capability_id, "")
+        if enabled_key and caps_settings.get(enabled_key) is False:
+            statuses[capability_id] = CapabilityRuntimeStatus(
+                capability_id, False, "disabled_by_runtime_settings", "settings"
+            )
+            continue
+
+        if not respect_runtime:
+            statuses[capability_id] = CapabilityRuntimeStatus(
+                capability_id, True, "runtime_availability_check_disabled", "settings"
+            )
+            continue
+
+        if owner is None:
+            # Trước khi Coordinator bind, không nói dối là available. Registry vẫn
+            # hoạt động nhưng prompt sẽ ghi rõ snapshot chưa sẵn sàng.
+            statuses[capability_id] = CapabilityRuntimeStatus(
+                capability_id, False, "runtime_owner_not_bound", "runtime"
+            )
+            continue
+        if router is None:
+            statuses[capability_id] = CapabilityRuntimeStatus(
+                capability_id, False, "action_router_unavailable", "runtime"
+            )
+            continue
+        if executor is None:
+            statuses[capability_id] = CapabilityRuntimeStatus(
+                capability_id, False, "action_executor_unavailable", "runtime"
+            )
+            continue
+        if not callable(getattr(executor, f"_{capability_id}", None)):
+            statuses[capability_id] = CapabilityRuntimeStatus(
+                capability_id, False, "executor_handler_missing", "runtime"
+            )
+            continue
+        if capability_id in _WINDOWS_ONLY and os.name != "nt":
+            statuses[capability_id] = CapabilityRuntimeStatus(
+                capability_id, False, "windows_only", "platform"
+            )
+            continue
+        if capability_id in {"search_web", "get_weather"}:
+            available, reason = _remote_tool_credential_available(capability_id)
+            statuses[capability_id] = CapabilityRuntimeStatus(
+                capability_id, available, reason, "credentials"
+            )
+            continue
+
+        statuses[capability_id] = CapabilityRuntimeStatus(
+            capability_id, True, "router_and_executor_ready", "runtime"
+        )
+
+    with _LOCK:
+        _STATUSES = statuses
+        _REVISION += 1
+        _UPDATED_AT = time.time()
+        return dict(_STATUSES)
+
+
+def runtime_capability_snapshot(*, refresh: bool = False) -> dict[str, object]:
+    if refresh:
+        refresh_runtime_capabilities()
+    with _LOCK:
+        return {
+            "revision": _REVISION,
+            "updated_at": _UPDATED_AT,
+            "statuses": {key: value.to_dict() for key, value in _STATUSES.items()},
+        }
+
+
+def runtime_capability_flags(*, refresh: bool = False) -> dict[str, bool]:
+    """Mapping hỗ trợ cả capability id lẫn env-flag legacy."""
+
+    if refresh:
+        refresh_runtime_capabilities()
+    from actions.capability_registry import capability_definition
+
+    output: dict[str, bool] = {}
+    with _LOCK:
+        statuses = dict(_STATUSES)
+    for capability_id, status in statuses.items():
+        output[capability_id] = status.available
+        definition = capability_definition(capability_id)
+        if definition is not None and definition.runtime_flag:
+            output[definition.runtime_flag] = status.available
+    return output
+
+
+def capability_runtime_reason(capability_id: str) -> str:
+    with _LOCK:
+        status = _STATUSES.get(str(capability_id or ""))
+    return status.reason if status is not None else "runtime_snapshot_missing"
+
+
+def capability_runtime_revision() -> int:
+    with _LOCK:
+        return _REVISION
+
+
+def _remote_tool_credential_available(capability_id: str) -> tuple[bool, str]:
+    try:
+        from eris_secrets import get_agent_profile, get_secret
+
+        slot = "search_web" if capability_id == "search_web" else "weather"
+        profile = get_agent_profile(capability_id, default_provider="gemini", default_slot=slot)
+        key = str(profile.get("api_key") or "").strip() or str(
+            get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY") or ""
+        ).strip()
+        if not key:
+            return False, "credential_missing"
+        return True, "credential_present"
+    except Exception:
+        return False, "credential_probe_failed"
+
+
+__all__ = [
+    "CapabilityRuntimeStatus",
+    "bind_runtime_owner",
+    "refresh_runtime_capabilities",
+    "runtime_capability_snapshot",
+    "runtime_capability_flags",
+    "capability_runtime_reason",
+    "capability_runtime_revision",
+]

@@ -89,6 +89,13 @@ def hard_cap_for_provider(provider: str) -> int:
     per_provider = _safe_int_env(f"ERIS_LLM_PROMPT_HARD_CAP_TOKENS_{prov.upper()}", 0)
     if per_provider > 0:
         return per_provider
+    try:
+        from runtime.runtime_settings_store import runtime_int
+        runtime_cap = runtime_int("prompt", "hard_cap_tokens", default=0)
+    except Exception:
+        runtime_cap = 0
+    if runtime_cap > 0:
+        return runtime_cap
     override = _safe_int_env("ERIS_LLM_PROMPT_HARD_CAP_TOKENS", 0)
     if override > 0:
         return override
@@ -156,21 +163,123 @@ def _largest_text_index(messages: list[dict]) -> tuple[int | None, int]:
     return best_idx, best_len
 
 
+def _system_block_priority(block: str) -> int:
+    """Điểm càng cao càng phải sống sót khi prompt chịu token pressure."""
+
+    text = str(block or "").lower()
+    hard_markers = (
+        "turnframe", "turn frame", "responsecontract", "response contract",
+        "response_obligation", "forbidden_draft", "repair_target",
+        "[dynamic_policy]", "[grounding]", "latest visible",
+    )
+    medium_markers = (
+        "[state_style]", "capability", "semantic authority", "voice policy",
+        "conversation_context",
+    )
+    optional_markers = (
+        "private mind", "thought_stream", "nhật ký nội tâm", "inner diary",
+        "recently_resolved", "content seed", "ambient",
+    )
+    if any(marker in text for marker in hard_markers):
+        return 100
+    if any(marker in text for marker in medium_markers):
+        return 60
+    if any(marker in text for marker in optional_markers):
+        return 10
+    return 35
+
+
+def _shrink_system_by_blocks(content: str, target_tokens: int) -> str:
+    """Giữ nguyên khối contract/repair, bỏ khối tùy chọn trước khi cắt chữ."""
+
+    source = str(content or "")
+    if _text_token_estimate(source) <= target_tokens:
+        return source
+    blocks = [block.strip() for block in source.split("\n\n") if block.strip()]
+    if not blocks:
+        return truncate_text_to_budget(source, target_tokens, preserve_tail=True)
+
+    kept = list(blocks)
+    # Bỏ khối optional từ lớn tới nhỏ. Không xóa hard contract chỉ vì một khối
+    # diary dài quá mức, một bi kịch nhỏ nhưng rất hay xảy ra với prompt legacy.
+    removable = sorted(
+        range(len(kept)),
+        key=lambda idx: (_system_block_priority(kept[idx]), -len(kept[idx])),
+    )
+    removed: set[int] = set()
+    for idx in removable:
+        if _text_token_estimate("\n\n".join(block for i, block in enumerate(kept) if i not in removed)) <= target_tokens:
+            break
+        if _system_block_priority(kept[idx]) >= 100:
+            continue
+        removed.add(idx)
+
+    remaining = [block for i, block in enumerate(kept) if i not in removed]
+    joined = "\n\n".join(remaining)
+    if _text_token_estimate(joined) <= target_tokens:
+        return joined
+
+    # Chia quota theo trọng số. Hard blocks nhận phần lớn quota và không bị mất
+    # đầu/đuôi, thay vì cưa ngang chuỗi hợp nhất rồi làm contract thành xác chữ.
+    weights = [3.0 if _system_block_priority(b) >= 100 else 1.5 if _system_block_priority(b) >= 60 else 1.0 for b in remaining]
+    total_weight = max(1.0, sum(weights))
+    compacted: list[str] = []
+    for block, weight in zip(remaining, weights):
+        quota = max(48, int(target_tokens * weight / total_weight))
+        compacted.append(
+            truncate_text_to_budget(
+                block, quota, marker="…[block rút gọn]…", preserve_tail=True
+            )
+        )
+    return "\n\n".join(part for part in compacted if part)
+
+
 def _truncate_to_cap(messages: list[dict], cap: int) -> list[dict]:
-    """Cắt bớt nội dung text dài nhất cho tới khi xuống dưới cap (best-effort)."""
+    """Lưới an toàn block-preserving thay cho việc cưa message dài nhất."""
 
     msgs = [dict(m) if isinstance(m, dict) else m for m in messages]
-    for _ in range(400):
+    # Cắt history cũ trước, giữ user gần nhất và system contract.
+    for idx in range(max(0, len(msgs) - 2)):
+        if estimate_tokens(msgs) <= cap:
+            return msgs
+        msg = msgs[idx]
+        if not isinstance(msg, dict) or str(msg.get("role") or "") == "system":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str) and len(content) > 120:
+            msg["content"] = truncate_text_to_budget(
+                content, max(40, _text_token_estimate(content) // 3),
+                marker="…[history rút gọn]…", preserve_tail=True,
+            )
+
+    if estimate_tokens(msgs) <= cap:
+        return msgs
+
+    # System được xử theo block, không theo character-cut.
+    non_system_tokens = estimate_tokens([m for m in msgs if isinstance(m, dict) and str(m.get("role") or "") != "system"])
+    system_budget = max(160, cap - non_system_tokens)
+    system_indices = [i for i, m in enumerate(msgs) if isinstance(m, dict) and str(m.get("role") or "") == "system"]
+    per_system = max(80, system_budget // max(1, len(system_indices)))
+    for idx in system_indices:
+        content = msgs[idx].get("content")
+        if isinstance(content, str):
+            msgs[idx]["content"] = _shrink_system_by_blocks(content, per_system)
+
+    if estimate_tokens(msgs) <= cap:
+        return msgs
+
+    # Trường hợp cực đoan: rút từng message nhưng vẫn giữ cả đầu và đuôi.
+    for _ in range(80):
         if estimate_tokens(msgs) <= cap:
             break
         idx, size = _largest_text_index(msgs)
-        if idx is None or size <= 80:
+        if idx is None or size <= 100:
             break
-        content = msgs[idx].get("content", "")
-        new_len = max(80, int(len(content) * 0.8))
-        if new_len >= len(content):
-            new_len = len(content) - 80
-        msgs[idx]["content"] = content[:new_len] + "\n…[truncated by hard-cap]"
+        content = str(msgs[idx].get("content") or "")
+        target = max(40, int(_text_token_estimate(content) * 0.78))
+        msgs[idx]["content"] = truncate_text_to_budget(
+            content, target, marker="…[hard-cap cuối]…", preserve_tail=True
+        )
     return msgs
 
 
@@ -257,6 +366,24 @@ def enforce_prompt_cap(messages: Any, cap: int) -> tuple[list[dict], bool]:
     return trimmed, True
 
 
+def _retained_prompt_blocks(messages: Any) -> tuple[str, ...]:
+    found: list[str] = []
+    markers = {
+        "turn_frame": ("turnframe", "turn frame", "repair_target"),
+        "response_contract": ("responsecontract", "response contract", "response_obligation"),
+        "latest_visible_history": ("latest visible", "previous_assistant", "previous_user"),
+        "capability_grounding": ("capability", "available capabilities"),
+    }
+    for message in list(messages or []):
+        if not isinstance(message, dict):
+            continue
+        content = str(message.get("content") or "").lower()
+        for name, needles in markers.items():
+            if name not in found and any(needle in content for needle in needles):
+                found.append(name)
+    return tuple(found)
+
+
 def preflight(messages: Any, *, base_url: str | None = None, model: str | None = None) -> list[dict]:
     """Log token ước lượng và áp hard-cap trước khi gửi. Trả messages (đã cắt
     nếu cần). Không bao giờ raise — lỗi nội bộ → trả nguyên messages gốc."""
@@ -275,7 +402,16 @@ def preflight(messages: Any, *, base_url: str | None = None, model: str | None =
             cap,
         )
         if est <= cap:
-            return list(messages or [])
+            output = list(messages or [])
+            try:
+                from runtime.observability import GLOBAL_OBSERVABILITY
+                GLOBAL_OBSERVABILITY.record_prompt_budget(
+                    before_tokens=est, after_tokens=est, cap=cap,
+                    retained_blocks=_retained_prompt_blocks(output), trimmed=False,
+                )
+            except Exception:
+                pass
+            return output
         trimmed, did_trim = enforce_prompt_cap(messages, cap)
         if did_trim:
             _LOGGER.warning(
@@ -285,6 +421,14 @@ def preflight(messages: Any, *, base_url: str | None = None, model: str | None =
                 cap,
                 estimate_tokens(trimmed),
             )
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+            GLOBAL_OBSERVABILITY.record_prompt_budget(
+                before_tokens=est, after_tokens=estimate_tokens(trimmed), cap=cap,
+                retained_blocks=_retained_prompt_blocks(trimmed), trimmed=did_trim,
+            )
+        except Exception:
+            pass
         return trimmed
     except Exception:  # noqa: BLE001 — preflight không được làm hỏng hot path
         return list(messages or [])

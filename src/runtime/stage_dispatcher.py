@@ -21,12 +21,14 @@ from runtime.stage_contracts import StageFrame
 
 
 def _dispatch_mode() -> str:
-    value = os.environ.get("ERIS_TTS_SEGMENT_DISPATCH", "inline").strip().lower()
+    from runtime.runtime_settings_store import runtime_text
+    value = runtime_text("stage", "segment_dispatch", default="inline").strip().lower()
     return value if value in {"inline", "queued"} else "inline"
 
 
 def _task_manager_enabled() -> bool:
-    return os.environ.get("ERIS_TTS_TASK_MANAGER", "1").strip().lower() in {"1", "true", "yes", "on"}
+    from runtime.runtime_settings_store import runtime_bool
+    return runtime_bool("stage", "tts_task_manager", default=True)
 
 
 def _join_tts_segments(frames: list[StageFrame]) -> str:

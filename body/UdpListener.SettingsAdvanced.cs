@@ -12,6 +12,7 @@ public partial class UdpListener : Node2D
 	{
 		Basic,
 		Advanced,
+		Danger,
 	}
 
 	private SettingsModePage _settingsModePage = SettingsModePage.Basic;
@@ -23,6 +24,7 @@ public partial class UdpListener : Node2D
 	private OptionButton _advancedConcurrencySelect;
 	private OptionButton _advancedPromptCapSelect;
 	private OptionButton _advancedMaintenanceBudgetSelect;
+	private OptionButton _advancedRetortModeSelect;
 	private OptionButton _advancedDispatchSelect;
 	private OptionButton _advancedPrefetchWorkersSelect;
 	private OptionButton _advancedMaxSegmentsSelect;
@@ -35,6 +37,8 @@ public partial class UdpListener : Node2D
 	private TextureRect _advancedMemoryParserSwitch;
 	private TextureRect _advancedMemoryMaintenanceSwitch;
 	private TextureRect _advancedV3PipelineSwitch;
+	private TextureRect _advancedForbidFamilyLiteralizationSwitch;
+	private TextureRect _advancedForbidGenericHelperResetSwitch;
 	private TextureRect _advancedPerformanceSwitch;
 	private TextureRect _advancedInterruptSwitch;
 	private TextureRect _advancedStageProtocolSwitch;
@@ -59,6 +63,9 @@ public partial class UdpListener : Node2D
 	private bool _advancedMemoryMaintenance = true;
 	private string _advancedMemoryMaintenanceBudget = "small";
 	private bool _advancedV3Pipeline = true;
+	private string _advancedRetortMode = "balanced";
+	private bool _advancedForbidFamilyLiteralization = true;
+	private bool _advancedForbidGenericHelperReset = true;
 
 	private bool _advancedPerformanceActs = true;
 	private bool _advancedInterruptEnabled = true;
@@ -77,9 +84,12 @@ public partial class UdpListener : Node2D
 			return;
 		_settingsModePage = page;
 		BuildSettingsPanelUi();
-		SetSettingsStatus(page == SettingsModePage.Advanced
-			? "Advanced đang mở. Các mục có dấu restart sẽ áp dụng sau khi khởi động lại Brain."
-			: "Đã quay lại Basic.");
+		SetSettingsStatus(page switch
+		{
+			SettingsModePage.Advanced => "Advanced đang mở. Các mục có dấu restart sẽ áp dụng sau khi khởi động lại Brain.",
+			SettingsModePage.Danger => "Danger Zone chỉ chứa thao tác reset/bảo trì thật. Mọi lệnh phá dữ liệu đều preview trước.",
+			_ => "Đã quay lại Basic.",
+		});
 	}
 
 	private void ResetSettingsUiReferencesForRebuild()
@@ -128,6 +138,7 @@ public partial class UdpListener : Node2D
 		_advancedConcurrencySelect = null;
 		_advancedPromptCapSelect = null;
 		_advancedMaintenanceBudgetSelect = null;
+		_advancedRetortModeSelect = null;
 		_advancedDispatchSelect = null;
 		_advancedPrefetchWorkersSelect = null;
 		_advancedMaxSegmentsSelect = null;
@@ -139,6 +150,8 @@ public partial class UdpListener : Node2D
 		_advancedMemoryParserSwitch = null;
 		_advancedMemoryMaintenanceSwitch = null;
 		_advancedV3PipelineSwitch = null;
+		_advancedForbidFamilyLiteralizationSwitch = null;
+		_advancedForbidGenericHelperResetSwitch = null;
 		_advancedPerformanceSwitch = null;
 		_advancedInterruptSwitch = null;
 		_advancedStageProtocolSwitch = null;
@@ -146,6 +159,7 @@ public partial class UdpListener : Node2D
 		_advancedTaskManagerSwitch = null;
 		_advancedStageLocalizeSwitch = null;
 		_advancedAudioPolishSwitch = null;
+		ResetDangerSettingsUiReferences();
 	}
 
 	private void BuildAdvancedSettingsPage(Control root)
@@ -153,7 +167,7 @@ public partial class UdpListener : Node2D
 		var reasoningCard = AddSettingsCard(root, new Rect2(32f, 205f, 318f, 380f), "Suy luận");
 		BuildAdvancedReasoningCard(reasoningCard);
 
-		var memoryCard = AddSettingsCard(root, new Rect2(370f, 205f, 420f, 380f), "Ngữ cảnh & Memory");
+		var memoryCard = AddSettingsCard(root, new Rect2(370f, 205f, 420f, 380f), "Ngữ cảnh, Memory & Cá tính");
 		BuildAdvancedMemoryCard(memoryCard);
 
 		var stageCard = AddSettingsCard(root, new Rect2(810f, 205f, 338f, 380f), "Biểu diễn & Pipeline");
@@ -173,7 +187,7 @@ public partial class UdpListener : Node2D
 		noteHeart.Size = new Vector2(32f, 30f);
 		root.AddChild(noteHeart);
 
-		var note = CreateUiLabel("Advanced ghi config thật vào user settings + secrets/.env.", 13, SettingsInkSoft);
+		var note = CreateUiLabel("Advanced ghi policy vào runtime_settings.json và áp dụng qua UDP.", 13, SettingsInkSoft);
 		note.Position = new Vector2(112f, 628f);
 		note.Size = new Vector2(420f, 24f);
 		root.AddChild(note);
@@ -278,12 +292,14 @@ public partial class UdpListener : Node2D
 
 		_advancedV3PipelineSwitch = AddAdvancedToggleRow(parent, 258f, "Cognitive Pipeline V3", () => _advancedV3Pipeline, value => _advancedV3Pipeline = value, "V3 pipeline · cần restart");
 
-		var hint = CreateUiLabel("Parser memory, Grounding và V3 được khởi tạo lúc Brain start.", 9, SettingsInkSoft);
-		hint.Position = new Vector2(18f, 292f);
-		hint.Size = new Vector2(parent.Size.X - 36f, 34f);
-		hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		hint.VerticalAlignment = VerticalAlignment.Top;
-		parent.AddChild(hint);
+		_advancedRetortModeSelect = AddAdvancedOptionRow(parent, 292f, "Retort", new[] { "off", "restrained", "balanced", "sharp" }, _advancedRetortMode, value =>
+		{
+			_advancedRetortMode = value;
+			MarkAdvancedChanged("retort mode");
+		});
+
+		_advancedForbidFamilyLiteralizationSwitch = AddAdvancedMiniToggle(parent, new Vector2(18f, 336f), "Cấm hiểu literal", () => _advancedForbidFamilyLiteralization, value => _advancedForbidFamilyLiteralization = value, "family literalization guard");
+		_advancedForbidGenericHelperResetSwitch = AddAdvancedMiniToggle(parent, new Vector2(205f, 336f), "Cấm helper reset", () => _advancedForbidGenericHelperReset, value => _advancedForbidGenericHelperReset = value, "generic helper guard");
 	}
 
 	private void BuildAdvancedStageCard(Control parent)
@@ -461,6 +477,9 @@ public partial class UdpListener : Node2D
 		_advancedMemoryMaintenance = true;
 		_advancedMemoryMaintenanceBudget = "small";
 		_advancedV3Pipeline = true;
+		_advancedRetortMode = "balanced";
+		_advancedForbidFamilyLiteralization = true;
+		_advancedForbidGenericHelperReset = true;
 		_advancedPerformanceActs = true;
 		_advancedInterruptEnabled = true;
 		_advancedStageProtocol = true;
@@ -490,6 +509,8 @@ public partial class UdpListener : Node2D
 			_advancedPromptHardCapTokens = ParseAdvancedInt(_advancedPromptCapSelect.GetItemText(_advancedPromptCapSelect.Selected), _advancedPromptHardCapTokens, 1024, 12000);
 		if (_advancedMaintenanceBudgetSelect != null && _advancedMaintenanceBudgetSelect.Selected >= 0)
 			_advancedMemoryMaintenanceBudget = _advancedMaintenanceBudgetSelect.GetItemText(_advancedMaintenanceBudgetSelect.Selected);
+		if (_advancedRetortModeSelect != null && _advancedRetortModeSelect.Selected >= 0)
+			_advancedRetortMode = _advancedRetortModeSelect.GetItemText(_advancedRetortModeSelect.Selected);
 		if (_advancedDispatchSelect != null && _advancedDispatchSelect.Selected >= 0)
 			_advancedSegmentDispatch = _advancedDispatchSelect.GetItemText(_advancedDispatchSelect.Selected);
 		if (_advancedPrefetchWorkersSelect != null && _advancedPrefetchWorkersSelect.Selected >= 0)
@@ -515,6 +536,9 @@ public partial class UdpListener : Node2D
 		if (TryReadBool(root, "memory_maintenance", out bool maintenance)) _advancedMemoryMaintenance = maintenance;
 		_advancedMemoryMaintenanceBudget = ReadString(root, "memory_maintenance_budget", _advancedMemoryMaintenanceBudget);
 		if (TryReadBool(root, "v3_pipeline", out bool v3)) _advancedV3Pipeline = v3;
+		_advancedRetortMode = ReadString(root, "retort_mode", _advancedRetortMode);
+		if (TryReadBool(root, "forbid_family_literalization", out bool forbidFamily)) _advancedForbidFamilyLiteralization = forbidFamily;
+		if (TryReadBool(root, "forbid_generic_helper_reset", out bool forbidHelper)) _advancedForbidGenericHelperReset = forbidHelper;
 		if (TryReadBool(root, "performance_acts_enabled", out bool performance)) _advancedPerformanceActs = performance;
 		if (TryReadBool(root, "interrupt_enabled", out bool interrupt)) _advancedInterruptEnabled = interrupt;
 		if (TryReadBool(root, "stage_protocol", out bool stageProtocol)) _advancedStageProtocol = stageProtocol;
@@ -543,6 +567,9 @@ public partial class UdpListener : Node2D
 		_advancedMemoryMaintenance = IsTruthy(ReadSecretString(root, "ERIS_MEMORY_DIGEST_MAINTENANCE", _advancedMemoryMaintenance ? "1" : "0"));
 		_advancedMemoryMaintenanceBudget = ReadSecretString(root, "ERIS_MEMORY_MAINTENANCE_BUDGET", _advancedMemoryMaintenanceBudget);
 		_advancedV3Pipeline = IsTruthy(ReadSecretString(root, "ERIS_V3_PIPELINE", _advancedV3Pipeline ? "1" : "0"));
+		_advancedRetortMode = ReadSecretString(root, "ERIS_RETORT_MODE", _advancedRetortMode);
+		_advancedForbidFamilyLiteralization = IsTruthy(ReadSecretString(root, "ERIS_FORBID_FAMILY_LITERALIZATION", _advancedForbidFamilyLiteralization ? "1" : "0"));
+		_advancedForbidGenericHelperReset = IsTruthy(ReadSecretString(root, "ERIS_FORBID_GENERIC_HELPER_RESET", _advancedForbidGenericHelperReset ? "1" : "0"));
 		_advancedPerformanceActs = IsTruthy(ReadSecretString(root, "ERIS_PERFORMANCE_ACTS_ENABLED", _advancedPerformanceActs ? "1" : "0"));
 		_advancedInterruptEnabled = IsTruthy(ReadSecretString(root, "ERIS_INTERRUPT_ENABLED", _advancedInterruptEnabled ? "1" : "0"));
 		_advancedStageProtocol = IsTruthy(ReadSecretString(root, "ERIS_STAGE_PROTOCOL", _advancedStageProtocol ? "1" : "0"));
@@ -572,6 +599,9 @@ public partial class UdpListener : Node2D
 		state["memory_maintenance"] = _advancedMemoryMaintenance;
 		state["memory_maintenance_budget"] = _advancedMemoryMaintenanceBudget;
 		state["v3_pipeline"] = _advancedV3Pipeline;
+		state["retort_mode"] = _advancedRetortMode;
+		state["forbid_family_literalization"] = _advancedForbidFamilyLiteralization;
+		state["forbid_generic_helper_reset"] = _advancedForbidGenericHelperReset;
 		state["performance_acts_enabled"] = _advancedPerformanceActs;
 		state["interrupt_enabled"] = _advancedInterruptEnabled;
 		state["stage_protocol"] = _advancedStageProtocol;
@@ -603,6 +633,9 @@ public partial class UdpListener : Node2D
 			["ERIS_MEMORY_DIGEST_MAINTENANCE"] = _advancedMemoryMaintenance ? "1" : "0",
 			["ERIS_MEMORY_MAINTENANCE_BUDGET"] = NormalizeAdvancedMaintenanceBudget(_advancedMemoryMaintenanceBudget),
 			["ERIS_V3_PIPELINE"] = _advancedV3Pipeline ? "1" : "0",
+			["ERIS_RETORT_MODE"] = _advancedRetortMode,
+			["ERIS_FORBID_FAMILY_LITERALIZATION"] = _advancedForbidFamilyLiteralization ? "1" : "0",
+			["ERIS_FORBID_GENERIC_HELPER_RESET"] = _advancedForbidGenericHelperReset ? "1" : "0",
 			["ERIS_PERFORMANCE_ACTS_ENABLED"] = _advancedPerformanceActs ? "1" : "0",
 			["ERIS_INTERRUPT_ENABLED"] = _advancedInterruptEnabled ? "1" : "0",
 			["ERIS_STAGE_PROTOCOL"] = _advancedStageProtocol ? "1" : "0",
@@ -631,8 +664,102 @@ public partial class UdpListener : Node2D
 	private void ApplyAdvancedSettingsLive()
 	{
 		SyncAdvancedSettingsInputsToFields();
-		SaveSettingsState(false, writeSecrets: true);
+		// Advanced là policy runtime, không phải secret. Ghi schema riêng rồi live-apply.
+		SaveSettingsState(false, writeSecrets: false);
 		SendAdvancedRuntimeSettingsUpdate();
+	}
+
+	private JsonObject BuildAdvancedRuntimeSettingsPatch()
+	{
+		return new JsonObject
+		{
+			["chat"] = new JsonObject
+			{
+				["reasoning_effort"] = NormalizeAdvancedReasoning(_advancedReasoningEffort),
+				["completion_chat_tokens"] = _advancedCompletionTokens,
+				["chat_timeout_seconds"] = _advancedChatTimeoutSeconds,
+				["max_concurrency"] = _advancedMaxConcurrency,
+				["auto_fallback"] = _advancedAutoFallback,
+				["critique_mode"] = _advancedSelfCritique ? "bounded_refine" : "off",
+				["director_second_pass"] = _advancedDirectorSecondPass ? "always" : "adaptive",
+				["director_candidate_mode"] = _advancedDirectorSecondPass ? "always" : "adaptive",
+			},
+			["personality"] = new JsonObject
+			{
+				["retort_mode"] = _advancedRetortMode,
+				["forbid_family_literalization"] = _advancedForbidFamilyLiteralization,
+				["forbid_generic_helper_reset"] = _advancedForbidGenericHelperReset,
+			},
+			["prompt"] = new JsonObject
+			{
+				["hard_cap_tokens"] = _advancedPromptHardCapTokens,
+				["dds_enabled"] = _advancedDdsEnabled,
+				["strict_grounding"] = _advancedStrictGrounding,
+			},
+			["memory"] = new JsonObject
+			{
+				["semantic_parser"] = _advancedMemorySemanticParser,
+				["maintenance_enabled"] = _advancedMemoryMaintenance,
+				["maintenance_budget"] = NormalizeAdvancedMaintenanceBudget(_advancedMemoryMaintenanceBudget),
+			},
+			["pipeline"] = new JsonObject
+			{
+				["v3_enabled"] = _advancedV3Pipeline,
+			},
+			["stage"] = new JsonObject
+			{
+				["performance_acts_enabled"] = _advancedPerformanceActs,
+				["interrupt_enabled"] = _advancedInterruptEnabled,
+				["protocol_enabled"] = _advancedStageProtocol,
+				["segment_tts"] = _advancedSegmentTts,
+				["segment_dispatch"] = NormalizeAdvancedDispatch(_advancedSegmentDispatch),
+				["tts_task_manager"] = _advancedTtsTaskManager,
+				["prefetch_workers"] = _advancedPrefetchWorkers,
+				["max_tts_segments"] = _advancedMaxTtsSegments,
+			},
+			["tts"] = new JsonObject
+			{
+				["stage_localize"] = _advancedStageLocalize,
+				["audio_polish"] = _advancedAudioPolish,
+			},
+		};
+	}
+
+	private void PersistRuntimeSettingsJson()
+	{
+		try
+		{
+			string path = Path.Combine(GetRuntimeBaseDirForSettings(), "settings", "runtime_settings.json");
+			Directory.CreateDirectory(Path.GetDirectoryName(path) ?? GetRuntimeBaseDirForSettings());
+			JsonObject root = new JsonObject();
+			if (File.Exists(path))
+			{
+				try { root = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8))?.AsObject() ?? new JsonObject(); }
+				catch { root = new JsonObject(); }
+			}
+			root["version"] = 1;
+			JsonObject patch = BuildAdvancedRuntimeSettingsPatch();
+			foreach (var pair in patch)
+				root[pair.Key] = pair.Value?.DeepClone();
+
+			var tts = root["tts"] as JsonObject ?? new JsonObject();
+			tts["enabled"] = _settingsTtsEnabled;
+			tts["language"] = NormalizeSettingsTtsLanguage(_settingsTtsLanguage);
+			tts["voice"] = string.IsNullOrWhiteSpace(_settingsTtsVoice) ? "Aoede" : _settingsTtsVoice.Trim();
+			tts["quality"] = string.IsNullOrWhiteSpace(_settingsTtsQuality) ? "high" : _settingsTtsQuality.Trim().ToLowerInvariant();
+			tts["volume"] = Math.Round(_settingsTtsVolume, 2);
+			tts["speed"] = Math.Round(_settingsTtsSpeed, 2);
+			root["tts"] = tts;
+
+			string temp = path + ".tmp";
+			File.WriteAllText(temp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+			File.Move(temp, path, true);
+			RunLogger.Log($"[Settings] Da ghi runtime settings schema: {path}");
+		}
+		catch (Exception ex)
+		{
+			RunLogger.LogErr($"[Settings] Khong ghi duoc runtime_settings.json: {ex.Message}");
+		}
 	}
 
 	private void SendAdvancedRuntimeSettingsUpdate()
@@ -646,11 +773,11 @@ public partial class UdpListener : Node2D
 		{
 			type = "settings_update",
 			scope = "advanced",
-			advanced_env = BuildAdvancedEnvironmentValues(),
+			settings = BuildAdvancedRuntimeSettingsPatch(),
 		};
 		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
 		SetSettingsStatus(error == Error.Ok
-			? "Đã gửi Advanced xuống Brain. Chờ xác nhận; vài mục vẫn cần restart."
+			? "Đã gửi schema Advanced xuống Brain. Chờ ACK; mục bootstrap sẽ được đánh dấu cần restart."
 			: $"Không gửi được Advanced live: {error}");
 	}
 

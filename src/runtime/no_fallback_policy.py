@@ -6,10 +6,16 @@ from typing import Iterable
 
 
 def no_fallback_mode_enabled() -> bool:
-    raw = os.getenv("ERIS_NO_FALLBACK_MODE")
-    if raw is None:
-        return False
-    return raw.strip().lower() in {"1", "true", "yes", "on", "y"}
+    try:
+        from runtime.runtime_settings_store import runtime_bool
+
+        # Store lưu chiều dương ``auto_fallback``; no-fallback là phủ định.
+        return not runtime_bool("chat", "auto_fallback", default=True)
+    except Exception:
+        raw = os.getenv("ERIS_NO_FALLBACK_MODE")
+        if raw is None:
+            return False
+        return raw.strip().lower() in {"1", "true", "yes", "on", "y"}
 
 
 def build_no_fallback_payload(

@@ -10,8 +10,10 @@ public partial class UdpListener : Node2D
 {
 	private sealed class SettingsKeyHealth
 	{
+		public int Index { get; init; } = -1;
 		public string Fingerprint { get; init; } = "";
 		public string Status { get; init; } = "unknown";
+		public string Reason { get; init; } = "";
 		public int CooldownMs { get; init; }
 		public bool Active { get; init; }
 	}
@@ -187,6 +189,14 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
+		if (_settingsModePage == SettingsModePage.Danger)
+		{
+			BuildDangerSettingsPage(root);
+			RefreshSettingsPanel();
+			RequestMaintenanceCatalog();
+			return;
+		}
+
 		var statusCard = AddSettingsCard(root, new Rect2(32f, 205f, 318f, 380f), "Runtime");
 		BuildSettingsStatusColumn(statusCard);
 
@@ -280,7 +290,7 @@ public partial class UdpListener : Node2D
 
 		AddSettingsSmallTab(root, new Rect2(690f, 168f, 132f, 32f), "Cơ bản", _settingsModePage == SettingsModePage.Basic, () => SwitchSettingsMode(SettingsModePage.Basic));
 		AddSettingsSmallTab(root, new Rect2(836f, 168f, 132f, 32f), "Advanced", _settingsModePage == SettingsModePage.Advanced, () => SwitchSettingsMode(SettingsModePage.Advanced));
-		AddSettingsSmallTab(root, new Rect2(982f, 168f, 156f, 32f), "△ Danger Zone", false, () => SetSettingsStatus("Danger Zone sẽ là màn riêng; chưa nhét thao tác phá dữ liệu vào Advanced."));
+		AddSettingsSmallTab(root, new Rect2(982f, 168f, 156f, 32f), "△ Danger Zone", _settingsModePage == SettingsModePage.Danger, () => SwitchSettingsMode(SettingsModePage.Danger));
 	}
 
 	private Panel AddSettingsCard(Control parent, Rect2 rect, string title)
@@ -1540,6 +1550,9 @@ public partial class UdpListener : Node2D
 			var state = BuildSanitizedSettingsNode();
 			state["saved_at"] = DateTime.Now.ToString("O");
 			File.WriteAllText(path, state.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+			// Ghi schema runtime riêng để Brain khởi động lại vẫn dùng đúng settings,
+			// không phải bói lại từ một rừng env key.
+			PersistRuntimeSettingsJson();
 			if (writeSecrets)
 			{
 				WriteRuntimeSettingsToSecrets(backup: true);
@@ -1549,7 +1562,7 @@ public partial class UdpListener : Node2D
 			}
 			if (showStatus)
 				SetSettingsStatus(writeSecrets
-					? (_settingsModePage == SettingsModePage.Advanced ? "Đã lưu Advanced. Dùng Áp dụng live hoặc Restart cho mục có cache." : "Đã lưu Basic và áp dụng TTS xuống runtime.")
+					? (_settingsModePage == SettingsModePage.Advanced ? "Đã lưu Advanced. Dùng Áp dụng live hoặc Restart cho mục có cache." : _settingsModePage == SettingsModePage.Danger ? "Danger Zone không dùng Lưu; thao tác được thực thi qua maintenance protocol." : "Đã lưu Basic và áp dụng TTS xuống runtime.")
 					: "Đã lưu user settings.");
 		}
 		catch (Exception ex)
@@ -1577,7 +1590,6 @@ public partial class UdpListener : Node2D
 		env["ERIS_TTS_QUALITY"] = _settingsTtsQuality ?? "high";
 		env["ERIS_TTS_VOLUME"] = _settingsTtsVolume.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
 		env["ERIS_TTS_SPEED"] = _settingsTtsSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
-		WriteAdvancedSettingsToSecrets(env);
 
 		// Ghi cả hai bản nháp. Đổi tab pool rồi lưu không còn làm mất phần đã sửa
 		// ở tab trước, cũng không bắt người dùng lưu riêng từng provider.
@@ -1602,7 +1614,6 @@ public partial class UdpListener : Node2D
 			["ERIS_TTS_VOLUME"] = _settingsTtsVolume.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
 			["ERIS_TTS_SPEED"] = _settingsTtsSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
 		};
-		AppendAdvancedSettingsToDotEnv(updates);
 
 		var lines = File.Exists(path)
 			? new List<string>(File.ReadAllLines(path))
@@ -1666,8 +1677,12 @@ public partial class UdpListener : Node2D
 		if (string.IsNullOrWhiteSpace(raw)
 			|| (!raw.Contains("settings_update_ack", StringComparison.Ordinal)
 				&& !raw.Contains("settings_health_ack", StringComparison.Ordinal)
-				&& !raw.Contains("tts_preview_ack", StringComparison.Ordinal)))
+				&& !raw.Contains("tts_preview_ack", StringComparison.Ordinal)
+				&& !raw.Contains("maintenance_", StringComparison.Ordinal)))
 			return;
+
+		if (raw.Contains("maintenance_", StringComparison.Ordinal))
+			TryApplyMaintenanceMessage(raw);
 
 		try
 		{
@@ -1723,8 +1738,10 @@ public partial class UdpListener : Node2D
 							{
 								keyHealth.Add(new SettingsKeyHealth
 								{
+									Index = key.TryGetProperty("index", out JsonElement indexEl) && indexEl.TryGetInt32(out int parsedIndex) ? parsedIndex : -1,
 									Fingerprint = key.TryGetProperty("fingerprint", out JsonElement fingerprintEl) ? fingerprintEl.GetString() ?? "" : "",
 									Status = key.TryGetProperty("status", out JsonElement statusEl) ? statusEl.GetString() ?? "unknown" : "unknown",
+									Reason = key.TryGetProperty("reason", out JsonElement reasonEl) ? reasonEl.GetString() ?? "" : "",
 									CooldownMs = key.TryGetProperty("cooldown_ms", out JsonElement keyCooldownEl) ? keyCooldownEl.GetInt32() : 0,
 									Active = key.TryGetProperty("active", out JsonElement activeEl) && activeEl.ValueKind == JsonValueKind.True,
 								});
@@ -2238,7 +2255,13 @@ public partial class UdpListener : Node2D
 				continue;
 			}
 
-			if (string.Equals(item.Status, "cooldown", StringComparison.OrdinalIgnoreCase))
+			if (string.Equals(item.Status, "quarantined", StringComparison.OrdinalIgnoreCase))
+			{
+				label.Text = $"● Cách ly · Ưu tiên {priority}";
+				label.AddThemeColorOverride("font_color", new Color(0.74f, 0.12f, 0.18f));
+				label.TooltipText = $"{displayName}: key bị cách ly trong runtime{(string.IsNullOrWhiteSpace(item.Reason) ? "" : $" · {item.Reason}")}";
+			}
+			else if (string.Equals(item.Status, "cooldown", StringComparison.OrdinalIgnoreCase))
 			{
 				label.Text = $"● Cooldown · Ưu tiên {priority}";
 				label.AddThemeColorOverride("font_color", new Color(0.78f, 0.43f, 0.08f));

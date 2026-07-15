@@ -5,6 +5,16 @@ from .client import GeminiClient, OpenAICompatibleClient, ChainedFallbackClient
 from .key_pool import get_key_pool
 
 
+def _bootstrap_pool_key(pool) -> str:
+    """Lấy key duy nhất để dựng client; request thật vẫn lease trong client."""
+    if pool is None:
+        return ""
+    try:
+        lease = pool.acquire(allow_cooling=True)
+        return lease.key if lease is not None else ""
+    except Exception:
+        return ""
+
 class RemoteModelProcessManager:
     def __init__(self, *, logger, project_root: str):
         self.logger = logger
@@ -19,7 +29,7 @@ class RemoteModelProcessManager:
         remote_profile = get_provider_profile(provider, slot="remote_main")
         if provider in {"openai", "openai_compatible", "compatible", "remote", "groq"}:
             pool = get_key_pool("groq")
-            pool_key = pool.current_key() if pool is not None else ""
+            pool_key = _bootstrap_pool_key(pool)
             api_key = (
                 str(remote_profile.get("api_key") or "").strip()
                 or pool_key
@@ -209,7 +219,7 @@ class RemoteModelProcessManager:
         is_groq = "groq" in agg_base.lower()
         if is_groq:
             pool = get_key_pool("groq")
-            agg_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY") or (pool.current_key() if pool else "")
+            agg_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY") or _bootstrap_pool_key(pool)
         else:
             pool = None
             agg_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY")

@@ -253,7 +253,7 @@ class AnchorSystem:
         switches = AnchorSwitches(
             shadow_enabled=_env_flag("ERIS_SHADOW_ENABLED", False),
             deception_enabled=_env_flag("ERIS_DECEPTION_ENABLED", False),
-            strict_grounding=_env_flag("ERIS_STRICT_GROUNDING", True),
+            strict_grounding=_runtime_strict_grounding(),
         )
         return cls(user_model_store=user_model_store, switches=switches, logger=logger)
 
@@ -263,3 +263,10 @@ def _env_flag(name: str, default: bool) -> bool:
     if not raw:
         return default
     return raw not in {"0", "false", "no", "off", "none"}
+
+def _runtime_strict_grounding() -> bool:
+    try:
+        from runtime.runtime_settings_store import runtime_bool
+        return runtime_bool("prompt", "strict_grounding", default=True)
+    except Exception:
+        return _env_flag("ERIS_STRICT_GROUNDING", True)

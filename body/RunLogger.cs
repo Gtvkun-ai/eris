@@ -2,6 +2,7 @@ using Godot;
 using System;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 
 /// <summary>
 /// Ghi lai toan bo output (giong cua so Output cua Godot) ra mot file .txt
@@ -66,6 +67,41 @@ public static class RunLogger
 	{
 		GD.Print(message);
 		WriteLine("INFO", message);
+	}
+
+	/// <summary>Ghi event JSON có cấu trúc nhưng đã loại field secret phổ biến.</summary>
+	public static void LogStructured(string eventName, string rawJson)
+	{
+		try
+		{
+			using JsonDocument doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(rawJson) ? "{}" : rawJson);
+			string safe = SanitizeJson(doc.RootElement);
+			Log($"[{eventName}] {safe}");
+		}
+		catch (Exception ex)
+		{
+			Log($"[{eventName}] <invalid-json:{ex.Message}>");
+		}
+	}
+
+	private static string SanitizeJson(JsonElement element)
+	{
+		if (element.ValueKind != JsonValueKind.Object)
+			return element.GetRawText();
+		var output = new System.Text.Json.Nodes.JsonObject();
+		foreach (JsonProperty property in element.EnumerateObject())
+		{
+			string name = property.Name;
+			if (name.Contains("api_key", StringComparison.OrdinalIgnoreCase)
+				|| name.Equals("key", StringComparison.OrdinalIgnoreCase)
+				|| name.Contains("secret", StringComparison.OrdinalIgnoreCase))
+			{
+				output[name] = "<redacted>";
+				continue;
+			}
+			output[name] = System.Text.Json.Nodes.JsonNode.Parse(property.Value.GetRawText());
+		}
+		return output.ToJsonString();
 	}
 
 	/// <summary>Ghi mot dong loi (mirror ra Godot Output + file).</summary>

@@ -46,11 +46,12 @@ class ShadowPipelineMixin:
     # ------------------------------------------------------------------
 
     def _v3_pipeline_enabled(self) -> bool:
-        """V3 chạy mặc định; env 0/false/off mới tắt."""
-        raw = os.getenv("ERIS_V3_PIPELINE")
-        if raw is None:
+        """V3 đọc policy trực tiếp từ RuntimeSettingsStore mỗi lượt."""
+        try:
+            from runtime.runtime_settings_store import runtime_bool
+            return runtime_bool("pipeline", "v3_enabled", default=True)
+        except Exception:
             return bool(getattr(self, "v3_pipeline_enabled", True))
-        return raw.strip().lower() not in {"0", "false", "no", "off", "n"}
 
     def _shadow_pipeline_enabled(self) -> bool:
         if getattr(self, "shadow_pipeline_enabled", False):

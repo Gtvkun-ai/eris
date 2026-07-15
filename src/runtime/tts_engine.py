@@ -58,11 +58,13 @@ class TtsPlaybackEvent:
 # ── Feature flag (runtime language reload) ───────────────────────────────────
 
 def _enabled() -> bool:
-    return os.environ.get("ERIS_TTS_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+    from runtime.runtime_settings_store import runtime_bool
+    return runtime_bool("tts", "enabled", default=True)
 
 def _voice() -> str:
     # Aoede = Breezy nữ; Leda = Youthful nữ; Achernar = Soft nữ
-    return os.environ.get("ERIS_TTS_VOICE", "Aoede").strip()
+    from runtime.runtime_settings_store import runtime_text
+    return runtime_text("tts", "voice", default="Aoede") or "Aoede"
 
 def _model() -> str:
     # gemini-2.5-flash-preview-tts = stable TTS model hiện tại (2025-06+)
@@ -81,7 +83,8 @@ def _normalize_language_hint(value: str) -> str:
 
 def _language_hint() -> str:
     # Eris nói tiếng Việt mặc định. Chỉ dịch/đọc Nhật khi cấu hình rõ ``ja``.
-    return _normalize_language_hint(os.environ.get("ERIS_TTS_LANGUAGE", "vi"))
+    from runtime.runtime_settings_store import runtime_text
+    return _normalize_language_hint(runtime_text("tts", "language", default="vi"))
 
 
 def _quality_mode() -> str:
@@ -90,24 +93,21 @@ def _quality_mode() -> str:
     ``high`` không gọi thêm API; nó chỉ đổi prompt/markup để Gemini diễn câu kỹ
     hơn. Nếu cần latency thấp hơn, set ERIS_TTS_QUALITY=balanced.
     """
-    value = os.environ.get("ERIS_TTS_QUALITY", "high").strip().lower()
+    from runtime.runtime_settings_store import runtime_text
+    value = runtime_text("tts", "quality", default="high").strip().lower()
     return value if value in {"balanced", "high"} else "high"
 
 
 
 def _output_volume() -> float:
-    try:
-        value = float(os.environ.get("ERIS_TTS_VOLUME", "1.0"))
-    except (TypeError, ValueError):
-        value = 1.0
+    from runtime.runtime_settings_store import runtime_float
+    value = runtime_float("tts", "volume", default=1.0)
     return max(0.0, min(1.0, value))
 
 
 def _speech_speed() -> float:
-    try:
-        value = float(os.environ.get("ERIS_TTS_SPEED", "1.0"))
-    except (TypeError, ValueError):
-        value = 1.0
+    from runtime.runtime_settings_store import runtime_float
+    value = runtime_float("tts", "speed", default=1.0)
     return max(0.85, min(1.15, value))
 
 
@@ -354,7 +354,8 @@ def _get_api_key() -> str:
         from llm.key_pool import get_key_pool
         pool = get_key_pool("gemini")
         if pool and pool.size > 0:
-            return pool.current_key()
+            lease = pool.acquire(allow_cooling=True)
+            return lease.key if lease is not None else ""
     except Exception:
         pass
 
@@ -1361,7 +1362,7 @@ class TtsEngine:
         self._config_signature = ""
 
         if not _enabled():
-            logger.info("[TTS] Đã tắt (ERIS_TTS_ENABLED=0).")
+            logger.info("[TTS] Đã tắt bởi runtime settings.")
             return
 
         # Kiểm tra google-genai
@@ -1393,11 +1394,6 @@ class TtsEngine:
         # đổi language. Chỉ hot-reload worker đã khởi động thành công.
         if self._closed or not self._ok or self._worker is None:
             return False
-        try:
-            from eris_secrets import refresh_runtime_preferences
-            refresh_runtime_preferences("ERIS_TTS_LANGUAGE")
-        except Exception as exc:
-            logger.debug("[TTS] Không thể reload runtime preference: %s", exc)
         voice = _voice()
         model = _model()
         lang = _language_hint()

@@ -573,7 +573,7 @@ class PostGenerationFiltersMixin:
             frame=frame,
             allow_reroll=allow_reroll,
         )
-        semantic_policy = SemanticAuthorityPolicy.from_env()
+        semantic_policy = SemanticAuthorityPolicy.from_runtime()
         if semantic_policy.hard_only_final_guards:
             # Qwen owns wording. The runtime only blocks protocol leakage and
             # unsupported factual claims; it no longer performs a parade of
@@ -653,7 +653,7 @@ class PostGenerationFiltersMixin:
         if callable(authority):
             decision = authority(decision, frame=frame, channel="chat")
         try:
-            policy = SemanticAuthorityPolicy.from_env()
+            policy = SemanticAuthorityPolicy.from_runtime()
             if policy.enforce_response_contract:
                 from actions.contracts import VALID_SYSTEM_ACTION_LIST
                 from runtime.turn_frame import build_turn_frame
@@ -676,7 +676,8 @@ class PostGenerationFiltersMixin:
                         interrupt_event=interrupt_event,
                     )
                 gate = ResponseAcceptanceGate(capability_action_ids=VALID_SYSTEM_ACTION_LIST)
-                decision = gate.apply(decision, frame=turn_frame)
+                contract = getattr(self, "current_response_contract", None)
+                decision = gate.apply(decision, frame=turn_frame, contract=contract)
         except Exception as exc:
             try:
                 decision = self._trace_only_guard(decision, f"response_contract_gate_skipped:{type(exc).__name__}")

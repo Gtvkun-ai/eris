@@ -337,6 +337,13 @@ public partial class UdpListener : Node2D
 	private void OnAnchorSwitchPressed(string action, bool newValue)
 	{
 		_bodyAutonomy?.RecordUserInteraction();
+		if (string.Equals(action, "reset_all", StringComparison.Ordinal))
+		{
+			ShowSettingsPanel();
+			SwitchSettingsMode(SettingsModePage.Danger);
+			RequestMaintenancePreview("reset_anchor_state");
+			return;
+		}
 		SendAnchorControl(action, newValue);
 		RememberAnchorSwitchOverride(action, newValue);
 		// Update lạc quan: phản hồi tức thì; digest thật kế tiếp sẽ xác nhận/ghi đè.
@@ -353,6 +360,18 @@ public partial class UdpListener : Node2D
 				break;
 		}
 		_anchorData.SafeMode = !_anchorData.ShadowEnabled && !_anchorData.DeceptionEnabled;
+		RenderAnchor();
+	}
+
+	private void ApplyAnchorResetAfterMaintenance()
+	{
+		if (_anchorData == null)
+			_anchorData = new AnchorData();
+		RememberAnchorSwitchOverride("reset_all", true);
+		_anchorData.ShadowEnabled = false;
+		_anchorData.DeceptionEnabled = false;
+		_anchorData.StrictGrounding = true;
+		_anchorData.SafeMode = true;
 		RenderAnchor();
 	}
 

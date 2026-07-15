@@ -15,6 +15,14 @@ from llm.key_pool import get_provider_circuit
 _LOGGER = logging.getLogger("LLM")
 
 
+def _runtime_reasoning_effort() -> str:
+    try:
+        from runtime.runtime_settings_store import runtime_text
+        return runtime_text("chat", "reasoning_effort", default="medium")
+    except Exception:
+        return str(os.environ.get("ERIS_REASONING_EFFORT", "medium") or "medium")
+
+
 def _pressure_provider(base_url: str, model_name: str) -> str:
     return _detect_provider(base_url, model_name)
 
@@ -177,7 +185,7 @@ def _normalize_reasoning_effort(model_name: str, requested: str | None) -> str |
     """
 
     name = (model_name or "").strip().lower()
-    raw = (requested or os.environ.get("ERIS_REASONING_EFFORT", "") or "").strip().lower()
+    raw = (requested or _runtime_reasoning_effort() or "").strip().lower()
     if "qwen3-32b" in name:
         return None
     if "qwen3.6" in name:
@@ -271,7 +279,8 @@ class OpenAICompatibleClient:
         self.base_url = base_url.rstrip("/")
         self.key_pool = key_pool
         if not (api_key or "").strip() and key_pool is not None:
-            api_key = key_pool.current_key()
+            lease = key_pool.acquire(allow_cooling=True)
+            api_key = lease.key if lease is not None else ""
         self.api_key = self._normalize_api_key(api_key)
         self.model_name = model_name.strip() or "gpt-5.4-nano"
         self.timeout = timeout
@@ -509,7 +518,8 @@ class GeminiClient:
         self.key_pool = key_pool
         # Nếu có pool dùng chung mà chưa truyền key cứng thì lấy key hiện tại của pool.
         if not (api_key or "").strip() and key_pool is not None:
-            api_key = key_pool.current_key()
+            lease = key_pool.acquire(allow_cooling=True)
+            api_key = lease.key if lease is not None else ""
         self.api_key = self._normalize_api_key(api_key)
         self.model_name = (model_name or "gemma-4-31b-it").strip()
         self.timeout = timeout
@@ -667,7 +677,7 @@ class GeminiClient:
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
-        effort = (reasoning_effort or os.environ.get("ERIS_REASONING_EFFORT", "medium") or "medium").strip().lower()
+        effort = (reasoning_effort or _runtime_reasoning_effort() or "medium").strip().lower()
         if "gemini-2.5" in self.model_name or "thinking" in self.model_name or "gemini-2.0" in self.model_name:
             if effort == "none" or effort == "off":
                 generation_config["thinkingConfig"] = {"thinkingBudget": 0}
@@ -740,7 +750,7 @@ class GeminiClient:
             elif status in (401, 403) and self.key_pool is not None:
                 try:
                     from llm.provider_errors import classify_provider_error
-                    kind = classify_provider_error(last_error or f"http {status}", status_code=status)
+                    kind = classify_provider_error(last_response.text or f"http {status}", status_code=status)
                 except Exception:
                     kind = None
                 if str(kind) == "key_revoked":

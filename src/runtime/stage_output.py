@@ -22,28 +22,18 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?。！？])\s+")
 
 
 def _enabled() -> bool:
-    return os.environ.get("ERIS_STAGE_SEGMENT_TTS", "1").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    from runtime.runtime_settings_store import runtime_bool
+    return runtime_bool("stage", "segment_tts", default=True)
 
 
 def _max_segments() -> int:
-    raw = os.environ.get("ERIS_STAGE_MAX_TTS_SEGMENTS", "4").strip()
-    try:
-        return max(1, min(8, int(raw)))
-    except ValueError:
-        return 4
+    from runtime.runtime_settings_store import runtime_int
+    return max(1, min(8, runtime_int("stage", "max_tts_segments", default=4)))
 
 
 def _min_split_chars() -> int:
-    raw = os.environ.get("ERIS_STAGE_MIN_SPLIT_CHARS", "72").strip()
-    try:
-        return max(24, min(160, int(raw)))
-    except ValueError:
-        return 72
+    from runtime.runtime_settings_store import runtime_int
+    return max(24, min(160, runtime_int("stage", "min_split_chars", default=72)))
 
 
 class SentenceSegmenter:

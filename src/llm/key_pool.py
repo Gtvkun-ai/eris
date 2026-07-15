@@ -49,7 +49,7 @@ class ApiKeyPool:
     mạch chạy song song không cùng đập vào một key đã hết quota.
     """
 
-    def __init__(self, keys: List[str]) -> None:
+    def __init__(self, keys: List[str], *, provider: str = "") -> None:
         seen: set[str] = set()
         ordered: list[str] = []
         for k in keys:
@@ -58,7 +58,9 @@ class ApiKeyPool:
                 seen.add(k)
                 ordered.append(k)
         self._keys = ordered
+        self.provider = str(provider or "unknown").strip().lower() or "unknown"
         self._dead_until: list[float] = [0.0] * len(ordered)
+        self._quarantine_reasons: list[str] = [""] * len(ordered)
         self._index = 0
         self._lock = threading.Lock()
         self._rotations = 0
@@ -173,6 +175,7 @@ class ApiKeyPool:
             target = lease.index if lease is not None else index
             if target is not None and 0 <= int(target) < len(self._dead_until):
                 self._dead_until[int(target)] = 0.0
+                self._quarantine_reasons[int(target)] = ""
             self._global_cooldown_until = 0.0
             self._rate_limit_events = [
                 (ts, idx) for ts, idx in self._rate_limit_events if now - ts <= 2.0 and idx != target
@@ -188,9 +191,9 @@ class ApiKeyPool:
     ) -> bool:
         """Cooldown key bị 429 và quyết định có nên xoay sang key khác hay không.
 
-        Trả ``False`` khi nhiều key khác nhau cùng dính 429 trong một cửa sổ ngắn.
-        Khi đó lỗi gần như thuộc quota project/model/provider, không phải riêng key;
-        tiếp tục xoay chỉ giết nốt phần pool còn lại và tạo thêm log như máy in lỗi.
+        Mặc định mỗi key là một project độc lập nên 429 chỉ cooldown đúng lease
+        và pool tiếp tục xoay. Emergency global guard có thể bật bằng env khi xác
+        định provider đang outage, nhưng không có logic đoán project trong hot path.
         """
 
         now = time.time()
@@ -207,6 +210,12 @@ class ApiKeyPool:
             global_cooldown_s = max(2.0, float(os.environ.get("ERIS_KEY_POOL_429_GLOBAL_COOLDOWN_S", "20")))
         except ValueError:
             global_cooldown_s = 20.0
+        # Mỗi key của Eris được cấu hình thuộc một project riêng. Vì vậy 429 ở
+        # nhiều key KHÔNG được mặc định suy diễn thành quota chung rồi khóa cả pool.
+        # Guard toàn pool chỉ là emergency override cho outage provider thực sự.
+        global_guard = str(os.environ.get("ERIS_KEY_POOL_429_GLOBAL_GUARD", "0") or "0").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
 
         with self._lock:
             if not self._keys:
@@ -223,7 +232,7 @@ class ApiKeyPool:
             self._rate_limit_events.append((now, target))
             unique_keys = {idx for _ts, idx in self._rate_limit_events}
             threshold = min(max(2, threshold), max(2, len(self._keys)))
-            burst = len(self._keys) > 1 and len(unique_keys) >= threshold
+            burst = global_guard and len(self._keys) > 1 and len(unique_keys) >= threshold
 
             alive = sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now)
             if burst:
@@ -303,7 +312,88 @@ class ApiKeyPool:
             seconds = float(os.environ.get("ERIS_KEY_POOL_PERMANENT_DEAD_S", str(30 * 24 * 3600)))
         except ValueError:
             seconds = float(30 * 24 * 3600)
-        self.mark_dead(seconds, index=index, lease=lease, reason=reason)
+        target = lease.index if lease is not None else index
+        self.quarantine(index=target, seconds=seconds, reason=reason)
+
+    def find_index_by_fingerprint(self, fingerprint: str) -> int | None:
+        needle = str(fingerprint or "").strip().lower()
+        if not needle:
+            return None
+        with self._lock:
+            for idx, raw_key in enumerate(self._keys):
+                current = hashlib.sha256(raw_key.encode("utf-8", "ignore")).hexdigest()[:12]
+                if current.lower() == needle:
+                    return idx
+        return None
+
+    def quarantine(
+        self,
+        *,
+        index: int | None = None,
+        fingerprint: str = "",
+        seconds: float | None = None,
+        reason: str = "manual_quarantine",
+    ) -> bool:
+        """Disable một key trong runtime mà không xóa secret khỏi đĩa."""
+
+        target = index if index is not None else self.find_index_by_fingerprint(fingerprint)
+        if target is None:
+            return False
+        try:
+            duration = float(seconds) if seconds is not None else float(30 * 24 * 3600)
+        except Exception:
+            duration = float(30 * 24 * 3600)
+        now = time.time()
+        with self._lock:
+            if not (0 <= int(target) < len(self._keys)):
+                return False
+            target = int(target)
+            self._dead_until[target] = max(self._dead_until[target], now + max(1.0, duration))
+            self._quarantine_reasons[target] = str(reason or "manual_quarantine")[:120]
+            if target == self._index:
+                nxt = self._next_alive_locked((target + 1) % max(1, len(self._keys)), now)
+                if nxt >= 0 and nxt != target:
+                    self._index = nxt
+                    self._rotations += 1
+        _LOGGER.warning("[KEY POOL] quarantine index=%d reason=%s", target, reason)
+        self._record_health("quarantine")
+        return True
+
+    def restore(
+        self, *, index: int | None = None, fingerprint: str = ""
+    ) -> bool:
+        """Bỏ quarantine/cooldown một key sau khi user đã kiểm tra nó."""
+
+        target = index if index is not None else self.find_index_by_fingerprint(fingerprint)
+        if target is None:
+            return False
+        with self._lock:
+            if not (0 <= int(target) < len(self._keys)):
+                return False
+            target = int(target)
+            self._dead_until[target] = 0.0
+            self._quarantine_reasons[target] = ""
+            self._global_cooldown_until = 0.0
+        _LOGGER.info("[KEY POOL] restore index=%d", target)
+        self._record_health("restore")
+        return True
+
+    def force_rotate(self, *, from_index: int | None = None) -> bool:
+        """Chuyển active pointer sang key sống kế tiếp, không đánh dấu key cũ lỗi."""
+
+        changed = self.rotate(from_index=from_index)
+        if changed:
+            self._record_health("manual_rotate")
+        return changed
+
+    def _record_health(self, event: str) -> None:
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+            GLOBAL_OBSERVABILITY.record_provider_pool(
+                provider=self.provider, snapshot=self.snapshot(), event=event
+            )
+        except Exception:
+            pass
 
     def next_available_in(self) -> float:
         """Số giây còn lại tới lúc ít nhất một key có thể được cấp."""
@@ -354,13 +444,16 @@ class ApiKeyPool:
             keys: list[dict[str, object]] = []
             for idx, raw_key in enumerate(self._keys):
                 cooldown_ms = int(max(0.0, self._dead_until[idx] - now) * 1000)
+                quarantine_reason = self._quarantine_reasons[idx] if idx < len(self._quarantine_reasons) else ""
+                status = "quarantined" if cooldown_ms > 0 and quarantine_reason else ("cooldown" if cooldown_ms > 0 else "ready")
                 keys.append(
                     {
                         "index": idx,
                         "fingerprint": hashlib.sha256(raw_key.encode("utf-8", "ignore")).hexdigest()[:12],
-                        "status": "cooldown" if cooldown_ms > 0 else "ready",
+                        "status": status,
                         "cooldown_ms": cooldown_ms,
                         "active": idx == active_index,
+                        "reason": quarantine_reason,
                     }
                 )
 
@@ -472,7 +565,7 @@ def get_key_pool(kind: str = "gemini") -> ApiKeyPool:
                 keys = _collect_groq_keys()
             else:
                 keys = _collect_gemini_keys()
-            _pools[k] = ApiKeyPool(keys)
+            _pools[k] = ApiKeyPool(keys, provider=k)
         return _pools[k]
 
 
@@ -498,8 +591,16 @@ _sem_lock = threading.Lock()
 def _max_concurrency(provider: str) -> int:
     kind = _normalize_kind(provider)
     specific = os.environ.get(f"ERIS_LLM_{kind.upper()}_MAX_CONCURRENCY", "").strip()
-    generic = os.environ.get("ERIS_LLM_MAX_CONCURRENCY", "").strip()
-    raw = specific or generic
+    if specific:
+        raw = specific
+    else:
+        try:
+            from runtime.runtime_settings_store import runtime_int
+
+            value = runtime_int("chat", "max_concurrency", default=4)
+            return max(1, value)
+        except Exception:
+            raw = os.environ.get("ERIS_LLM_MAX_CONCURRENCY", "").strip()
     try:
         value = int(raw) if raw else 4
     except ValueError:

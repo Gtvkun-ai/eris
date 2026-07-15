@@ -14,6 +14,7 @@ Các nguyên tắc cố ý:
   làm label metric. Con người đã đủ đau khổ vì cardinality explosion rồi.
 """
 
+import hashlib
 import json
 import os
 import threading
@@ -125,7 +126,14 @@ class ErisObservability:
         jsonl_path: str | os.PathLike[str] | None = None,
         ring_size: int = 2000,
     ) -> None:
-        self.enabled = _env_bool("ERIS_OBSERVABILITY_ENABLED", True) if enabled is None else bool(enabled)
+        if enabled is None:
+            try:
+                from runtime.runtime_settings_store import runtime_bool
+                self.enabled = runtime_bool("observability", "enabled", default=True)
+            except Exception:
+                self.enabled = _env_bool("ERIS_OBSERVABILITY_ENABLED", True)
+        else:
+            self.enabled = bool(enabled)
         default_path = os.getenv("ERIS_OBSERVABILITY_JSONL", "logs/eris_observability.jsonl")
         self.jsonl_path = Path(jsonl_path or default_path)
         self.write_jsonl = self.enabled and _env_bool("ERIS_OBSERVABILITY_WRITE_JSONL", not bool(os.getenv("PYTEST_CURRENT_TEST")))
@@ -391,12 +399,81 @@ class ErisObservability:
         lane = str(plan.get("lane", "chat") or "chat")
         self.observe("candidates_per_turn", float(candidate_count), tags={"lane": lane})
         self.observe("director_latency_ms", float(latency_ms), tags={"lane": lane})
+        reason = str(plan.get("reason") or plan.get("plan_reason") or "unspecified")
         self.increment("director_turn_total", tags={"lane": lane, "pressure": str(plan.get("pressure_level", "unknown"))})
+        self.log("candidate_plan", tags={"lane": lane}, fields={"candidate_lane": lane, "candidate_plan_reason": reason})
         if selected_index > 0:
             self.increment("director_non_draft_selection_total", tags={"lane": lane})
         folded = final_text.lower()
         if any(marker in folded for marker in ("ngài cho phép tôi", "ngài đã cho phép", "tôi sẽ làm phiền một cách hữu ích")):
             self.increment("literal_paraphrase_total", tags={"lane": lane})
+
+    @staticmethod
+    def _stable_hash(value: Any) -> str:
+        try:
+            if hasattr(value, "to_prompt_block") and callable(value.to_prompt_block):
+                raw = value.to_prompt_block()
+            elif hasattr(value, "to_dict") and callable(value.to_dict):
+                raw = value.to_dict()
+            elif hasattr(value, "__dict__"):
+                raw = vars(value)
+            else:
+                raw = str(value)
+            encoded = json.dumps(raw, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+        except Exception:
+            encoded = str(value)
+        return hashlib.sha256(encoded.encode("utf-8", "ignore")).hexdigest()[:16]
+
+    def record_acceptance_gate(self, *, result: Any, frame: Any, contract: Any) -> None:
+        verdict = str(getattr(getattr(result, "verdict", None), "value", getattr(result, "verdict", "unknown")) or "unknown")
+        reasons = tuple(str(item) for item in (getattr(result, "reasons", ()) or ()))[:12]
+        self.increment("gate_verdict_total", tags={"verdict": verdict})
+        for reason in reasons:
+            self.increment("gate_reason_total", tags={"reason": reason.split(":", 1)[0], "verdict": verdict})
+        self.log(
+            "acceptance_gate",
+            tags={"verdict": verdict},
+            fields={
+                "gate_verdict": verdict,
+                "gate_reasons": reasons,
+                "turn_frame_hash": self._stable_hash(frame),
+                "response_contract_hash": self._stable_hash(contract),
+            },
+            status="ok" if verdict == "pass" else "rejected",
+        )
+
+    def record_constrained_rerun(self, *, outcome: str, reasons: Any = (), count: int = 1) -> None:
+        self.increment("constrained_rerun_count", value=float(max(0, count)), tags={"outcome": str(outcome or "unknown")})
+        self.log("constrained_rerun", tags={"outcome": str(outcome or "unknown")}, fields={"gate_reasons": list(reasons or ())[:12]})
+
+    def record_prompt_budget(self, *, before_tokens: int, after_tokens: int, cap: int, retained_blocks: Any = (), trimmed: bool = False) -> None:
+        retained = tuple(str(item) for item in (retained_blocks or ()))[:16]
+        self.observe("prompt_tokens_before", float(before_tokens))
+        self.observe("prompt_tokens_after", float(after_tokens))
+        self.observe("prompt_hard_cap", float(cap))
+        if trimmed:
+            self.increment("prompt_trim_total")
+        self.log("prompt_budget", fields={"prompt_blocks_retained": retained, "before_tokens": before_tokens, "after_tokens": after_tokens, "cap": cap, "trimmed": trimmed})
+
+    def record_provider_pool(self, *, provider: str, snapshot: Mapping[str, Any], event: str = "snapshot") -> None:
+        dead = int(snapshot.get("dead", 0) or 0)
+        available = int(snapshot.get("available", 0) or 0)
+        self.gauge("provider_key_dead_count", float(dead), tags={"provider": provider})
+        self.gauge("provider_key_available_count", float(available), tags={"provider": provider})
+        self.log("provider_key_pool", tags={"provider": provider, "event": event}, fields={"provider_key_dead_count": dead, "available": available, "rotations": int(snapshot.get("rotations", 0) or 0)})
+
+    def record_maintenance(self, *, phase: str, payload: Mapping[str, Any]) -> None:
+        action = str(payload.get("action") or "unknown")
+        ok = bool(payload.get("ok", True))
+        preview_id = str(payload.get("preview_id") or payload.get("confirmation_token") or "")[:32]
+        self.increment("maintenance_operation_total", tags={"phase": phase, "action": action, "ok": str(ok).lower()})
+        fields = {
+            "maintenance_preview_id": preview_id,
+            "danger_zone_execute_result": "ok" if ok else "error",
+            "changed_count": len(payload.get("changed", []) or []),
+            "error_count": len(payload.get("errors", []) or []),
+        }
+        self.log("maintenance_" + str(phase), tags={"action": action}, fields=fields, status="ok" if ok else "error")
 
     def record_vision(self, report: Any, *, channel: str) -> None:
         recommendation = str(getattr(report, "recommendation", "silence") or "silence")

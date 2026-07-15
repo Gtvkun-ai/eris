@@ -43,6 +43,22 @@ def _env_flag(name: str, default: bool) -> bool:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "on", "y"}
 
+def _runtime_bool(section: str, key: str, default: bool) -> bool:
+    try:
+        from runtime.runtime_settings_store import runtime_bool
+        return runtime_bool(section, key, default=default)
+    except Exception:
+        return default
+
+def _runtime_text(section: str, key: str, default: str) -> str:
+    try:
+        from runtime.runtime_settings_store import runtime_text
+        return runtime_text(section, key, default=default).strip().lower() or default
+    except Exception:
+        return default
+
+
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -85,9 +101,9 @@ class BackgroundMemoryDigestKernelConfig:
     requeue_delay_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_DIGEST_REQUEUE_DELAY_SEC", 0.35))
     max_defer_count: int = field(default_factory=lambda: _env_int("ERIS_MEMORY_DIGEST_MAX_DEFER", 240))
     storage_permission: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_DIGEST_STORAGE_PERMISSION", True))
-    maintenance_enabled: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_DIGEST_MAINTENANCE", True))
+    maintenance_enabled: bool = field(default_factory=lambda: _runtime_bool("memory", "maintenance_enabled", True))
     maintenance_interval_seconds: float = field(default_factory=lambda: _env_float("ERIS_MEMORY_MAINTENANCE_INTERVAL_SEC", 300.0))
-    maintenance_budget: str = field(default_factory=lambda: os.getenv("ERIS_MEMORY_MAINTENANCE_BUDGET", "small").strip().lower() or "small")
+    maintenance_budget: str = field(default_factory=lambda: _runtime_text("memory", "maintenance_budget", "small"))
     maintenance_destructive: bool = field(default_factory=lambda: _env_flag("ERIS_MEMORY_MAINTENANCE_DESTRUCTIVE", False))
 
 

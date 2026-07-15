@@ -42,12 +42,8 @@ class AudioPolishResult:
 
 
 def audio_polish_enabled() -> bool:
-    return os.environ.get("ERIS_TTS_AUDIO_POLISH", "1").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    from runtime.runtime_settings_store import runtime_bool
+    return runtime_bool("tts", "audio_polish", default=True)
 
 
 def polish_pcm16_mono(

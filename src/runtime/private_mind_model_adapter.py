@@ -180,7 +180,8 @@ class RuntimePrivateMindModelAdapter:
 
     def _current_api_key(self) -> str:
         """Trả API key hiện tại. Ưu tiên config (test), rồi pool chung, rồi env."""
-        pool_key = self._key_pool.current_key() if self._key_pool is not None else ""
+        lease = self._key_pool.acquire(allow_cooling=True) if self._key_pool is not None else None
+        pool_key = lease.key if lease is not None else ""
         return (
             self.config.api_key
             or pool_key
@@ -1295,14 +1296,20 @@ class RuntimePrivateMindModelAdapter:
             if not api_key:
                 return None
             base_url = self.config.base_url or os.getenv("ERIS_REMOTE_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
-            self._provider_client = GeminiClient(base_url=base_url, api_key=api_key, model_name=self.config.model, timeout=timeout)
+            self._provider_client = GeminiClient(
+                base_url=base_url, api_key=api_key, model_name=self.config.model,
+                timeout=timeout, key_pool=self._key_pool,
+            )
             return self._provider_client
         if provider in {"openai", "openai_compatible", "compatible", "remote"}:
             api_key = self._current_api_key()
             if not api_key:
                 return None
             base_url = self.config.base_url or os.getenv("ERIS_REMOTE_BASE_URL", "https://api.openai.com/v1")
-            self._provider_client = OpenAICompatibleClient(base_url=base_url, api_key=api_key, model_name=self.config.model, timeout=timeout)
+            self._provider_client = OpenAICompatibleClient(
+                base_url=base_url, api_key=api_key, model_name=self.config.model,
+                timeout=timeout, key_pool=self._key_pool,
+            )
             return self._provider_client
         return None
 

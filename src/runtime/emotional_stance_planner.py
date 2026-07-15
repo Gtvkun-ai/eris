@@ -40,6 +40,8 @@ class EmotionalStancePlan:
     response_rules: tuple[str, ...] = ()
     prohibited_moves: tuple[str, ...] = ()
     should_retort: bool = False
+    repair_first: bool = False
+    max_public_chars: int = 240
 
     @property
     def active(self) -> bool:
@@ -52,6 +54,7 @@ class EmotionalStancePlan:
         lines = [
             "EMOTIONAL_STANCE: binding performance stance for this reply.",
             f"- stance={self.kind.value}; intensity={self.intensity:.2f}; reason={self.reason}",
+            f"- repair_first={str(self.repair_first).lower()}; max_public_chars={self.max_public_chars}",
         ]
         for rule in self.response_rules:
             lines.append(f"- DO: {rule}")
@@ -126,6 +129,8 @@ def _plan_emotional_stance_raw(frame: TurnFrame) -> EmotionalStancePlan:
                 "Do not reintroduce ERIS or advertise assistant capabilities.",
                 "Do not become angry at the user for accurate feedback.",
             ),
+            repair_first=True,
+            max_public_chars=220,
         )
 
     if frame.has_relation("THREAT_OR_COERCION") or _contains_any(user_norm, _THREAT_OR_COERCION_MARKERS):
@@ -195,6 +200,8 @@ def _plan_emotional_stance_raw(frame: TurnFrame) -> EmotionalStancePlan:
                 "Do not explain that an AI has no family.",
             ),
             should_retort=True,
+            repair_first=True,
+            max_public_chars=220,
         )
 
     repeated = frame.has_relation("REPEATED_PROVOCATION") or _is_repeated_provocation(user_norm, prev_user_norm)
@@ -301,9 +308,42 @@ def _plan_emotional_stance_raw(frame: TurnFrame) -> EmotionalStancePlan:
 
 
 def _calibrate_retort_mode(plan: EmotionalStancePlan) -> EmotionalStancePlan:
-    mode = str(os.environ.get("ERIS_RETORT_MODE", "balanced") or "balanced").strip().lower()
+    try:
+        from runtime.runtime_settings_store import get_runtime_settings_store
+        personality = get_runtime_settings_store().get("personality", default={}) or {}
+    except Exception:
+        personality = {}
+    mode = str(personality.get("retort_mode", "balanced") or "balanced").strip().lower()
     if mode not in {"off", "restrained", "balanced", "sharp"}:
         mode = "balanced"
+
+    allow_annoyed = bool(personality.get("allow_annoyed_soft", True))
+    allow_sharp = bool(personality.get("allow_sharp_retort", True))
+    allow_boundary = bool(personality.get("allow_cold_boundary", True))
+    if plan.kind == EmotionalStanceKind.COLD_BOUNDARY and not allow_boundary:
+        plan = replace(
+            plan,
+            kind=EmotionalStanceKind.ANNOYED_SOFT if allow_annoyed else EmotionalStanceKind.NEUTRAL,
+            intensity=min(plan.intensity, 0.58),
+            delivery_hint="annoyed_soft" if allow_annoyed else "",
+            reason=f"boundary_disabled:{plan.reason}",
+        )
+    if plan.kind == EmotionalStanceKind.SHARP_RETORT and not allow_sharp:
+        plan = replace(
+            plan,
+            kind=EmotionalStanceKind.ANNOYED_SOFT if allow_annoyed else EmotionalStanceKind.DRY_TEASE,
+            intensity=min(plan.intensity, 0.58),
+            delivery_hint="annoyed_soft" if allow_annoyed else "dry_tease",
+            reason=f"sharp_disabled:{plan.reason}",
+        )
+    if plan.kind == EmotionalStanceKind.ANNOYED_SOFT and not allow_annoyed:
+        plan = replace(
+            plan,
+            kind=EmotionalStanceKind.DRY_TEASE,
+            intensity=min(plan.intensity, 0.48),
+            delivery_hint="dry_tease",
+            reason=f"annoyed_disabled:{plan.reason}",
+        )
 
     # Repair đúng và boundary an toàn không bị tắt, kể cả mode=off.
     if mode == "off" and plan.should_retort:

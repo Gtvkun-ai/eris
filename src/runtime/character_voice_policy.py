@@ -47,6 +47,11 @@ _SEXUAL_DEGRADATION_MARKERS = (
     "hiep dam", "cuong hiep", "lam tinh voi", "do diem", "con di ",
 )
 
+_REPAIR_ACK_MARKERS = (
+    "a ", "ừ ", "uh ", "toi hieu sai", "toi doc sai", "toi ne sai",
+    "toi bat sai", "cau vua roi", "dung,", "dung roi", "y ngai",
+)
+
 
 def evaluate_character_voice(
     text: str,
@@ -58,11 +63,23 @@ def evaluate_character_voice(
     violations: list[str] = []
     advisories: list[str] = []
 
+    try:
+        from runtime.runtime_settings_store import get_runtime_settings_store
+        personality = get_runtime_settings_store().get("personality", default={}) or {}
+    except Exception:
+        personality = {}
+
     if plan.active and _contains_any(norm, _GENERIC_HELPER_MARKERS):
-        violations.append("generic_helper_reset")
+        if bool(personality.get("forbid_generic_helper_reset", True)):
+            violations.append("generic_helper_reset")
+        else:
+            advisories.append("generic_helper_surface")
 
     if frame.has_relation("PROVOCATION") and _contains_any(norm, _LITERAL_FAMILY_MARKERS):
-        violations.append("provocation_literalized")
+        if bool(personality.get("forbid_family_literalization", True)):
+            violations.append("provocation_literalized")
+        else:
+            advisories.append("provocation_literalized")
 
     if plan.should_retort and _contains_any(norm, _MORALIZING_REFUSAL_MARKERS):
         violations.append("banter_replaced_by_moralizing_refusal")
@@ -80,10 +97,15 @@ def evaluate_character_voice(
         EmotionalStanceKind.ANNOYED_SOFT,
         EmotionalStanceKind.SHARP_RETORT,
     }:
-        if len(str(text or "").strip()) > 430:
+        length = len(str(text or "").strip())
+        hard_limit = max(120, int(getattr(plan, "max_public_chars", 240) or 240))
+        if length > hard_limit + 120:
             violations.append("retort_too_long")
-        elif len(str(text or "").strip()) > 260:
+        elif length > hard_limit:
             advisories.append("retort_could_be_shorter")
+
+    if bool(getattr(plan, "repair_first", False)) and not _contains_any(norm, _REPAIR_ACK_MARKERS):
+        violations.append("repair_priority_missing")
 
     if plan.kind == EmotionalStanceKind.HUMBLED_REPAIR and _sounds_defensive(norm):
         violations.append("style_feedback_answered_defensively")

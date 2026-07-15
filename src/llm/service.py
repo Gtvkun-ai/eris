@@ -2013,7 +2013,11 @@ class LlmService:
         else:
             default = 640 if effort_key in {"medium", "high"} else 512
         try:
-            value = int(os.environ.get(f"ERIS_LLM_COMPLETION_{channel.upper()}_TOKENS", default))
+            if channel == "chat":
+                from runtime.runtime_settings_store import runtime_int
+                value = runtime_int("chat", "completion_chat_tokens", default=default)
+            else:
+                value = int(os.environ.get(f"ERIS_LLM_COMPLETION_{channel.upper()}_TOKENS", default))
         except (TypeError, ValueError):
             value = default
         return max(384, min(value, 2048))
@@ -2044,7 +2048,13 @@ class LlmService:
             }
             env_key = f"ERIS_LLM_TIMEOUT_{str(channel or 'default').upper()}_S"
             try:
-                request_timeout = float(os.environ.get(env_key, timeout_defaults.get(channel, 20.0)))
+                if channel == "chat":
+                    from runtime.runtime_settings_store import runtime_float
+                    request_timeout = runtime_float(
+                        "chat", "chat_timeout_seconds", default=timeout_defaults["chat"]
+                    )
+                else:
+                    request_timeout = float(os.environ.get(env_key, timeout_defaults.get(channel, 20.0)))
             except (TypeError, ValueError):
                 request_timeout = timeout_defaults.get(channel, 20.0)
         # Completion budget bao gồm reasoning + final JSON trên Groq.
@@ -3920,7 +3930,8 @@ class LlmService:
 
     def _dds_enabled(self) -> bool:
         """DDS distillation bật/tắt (mặc định bật). Chỉ kích hoạt khi ngữ cảnh nặng."""
-        return (os.environ.get("ERIS_DDS_ENABLED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
+        from runtime.runtime_settings_store import runtime_bool
+        return runtime_bool("prompt", "dds_enabled", default=True)
 
     def _dds_distill_client(self):
         """Chọn client cho worker map của DDS.
@@ -4233,7 +4244,9 @@ class LlmService:
         đốt thêm một request chỉ để diễn đạt cùng câu bằng ba kiểu tóc khác nhau.
         """
 
-        if os.environ.get("ERIS_CHAT_DIRECTOR_CANDIDATES", "1").strip().lower() not in {"1", "true", "yes", "on"}:
+        from runtime.runtime_settings_store import runtime_text
+        candidate_mode = runtime_text("chat", "director_candidate_mode", default="adaptive").strip().lower()
+        if candidate_mode in {"0", "false", "no", "off", "disabled"}:
             return []
         try:
             requested_count = max(0, min(3, int(candidate_count)))

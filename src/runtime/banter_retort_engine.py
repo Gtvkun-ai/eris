@@ -60,10 +60,22 @@ _VARIANTS: Mapping[EmotionalStanceKind, tuple[str, ...]] = {
 
 
 def build_retort_fallback(frame: TurnFrame, plan: EmotionalStancePlan) -> RetortFallback:
-    variants = _VARIANTS.get(plan.kind) or _VARIANTS[EmotionalStanceKind.NEUTRAL]
+    personality = _personality_policy()
+    kind = plan.kind
+    if kind == EmotionalStanceKind.SHARP_RETORT and not bool(personality.get("allow_sharp_retort", True)):
+        kind = EmotionalStanceKind.ANNOYED_SOFT
+    if kind == EmotionalStanceKind.ANNOYED_SOFT and not bool(personality.get("allow_annoyed_soft", True)):
+        kind = EmotionalStanceKind.DRY_TEASE
+    if kind == EmotionalStanceKind.COLD_BOUNDARY and not bool(personality.get("allow_cold_boundary", True)):
+        kind = EmotionalStanceKind.ANNOYED_SOFT
+    # Repair-first có lane riêng. Không được chọn câu phản công thuần rồi bỏ qua
+    # việc ERIS vừa hiểu sai, vì như vậy gate biết lỗi nhưng fallback vẫn lì.
+    if plan.repair_first and kind not in {EmotionalStanceKind.HUMBLED_REPAIR, EmotionalStanceKind.PLAYFUL_RETORT}:
+        kind = EmotionalStanceKind.PLAYFUL_RETORT
+    variants = _VARIANTS.get(kind) or _VARIANTS[EmotionalStanceKind.NEUTRAL]
     key = "|".join(
         (
-            plan.kind.value,
+            kind.value,
             str(frame.user_text or ""),
             str(frame.previous_user_text or ""),
             str(frame.previous_assistant_text or ""),
@@ -71,7 +83,20 @@ def build_retort_fallback(frame: TurnFrame, plan: EmotionalStancePlan) -> Retort
     )
     digest = hashlib.blake2s(key.encode("utf-8", errors="ignore"), digest_size=2).digest()
     index = int.from_bytes(digest, "big") % len(variants)
-    return RetortFallback(text=variants[index], reason=f"stance_fallback:{plan.kind.value}")
+    text = variants[index][: max(80, int(getattr(plan, "max_public_chars", 240) or 240))].rstrip()
+    return RetortFallback(
+        text=text,
+        reason=f"stance_fallback:{kind.value}:repair_first={str(bool(plan.repair_first)).lower()}",
+    )
+
+
+def _personality_policy() -> dict[str, object]:
+    try:
+        from runtime.runtime_settings_store import get_runtime_settings_store
+        value = get_runtime_settings_store().get("personality", default={})
+        return dict(value) if isinstance(value, Mapping) else {}
+    except Exception:
+        return {}
 
 
 __all__ = ["RetortFallback", "build_retort_fallback"]

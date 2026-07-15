@@ -8,6 +8,7 @@ public sealed class UdpDecisionPayload
 	public string Text { get; init; } = "";
 	public bool ParsedJson { get; init; }
 	public bool HasTextField { get; init; }
+	public bool IsControlEnvelope { get; init; }
 	public bool ShouldSpeak { get; init; } = true;
 	public bool HasRemoteMotion { get; init; }
 	public bool HasExplicitMotion { get; init; }
@@ -161,6 +162,7 @@ public sealed class UdpDecisionParser
 		string text = "";
 		bool parsedJson = false;
 		bool hasTextField = false;
+		bool isControlEnvelope = false;
 		bool shouldSpeak = true;
 		string animation = "stand";
 		int direction = 0;
@@ -188,6 +190,14 @@ public sealed class UdpDecisionParser
 			using var doc = JsonDocument.Parse(cleaned);
 			parsedJson = true;
 			var root = doc.RootElement;
+			string envelopeType = root.TryGetProperty("type", out var typeElement) && typeElement.ValueKind == JsonValueKind.String
+				? typeElement.GetString() ?? ""
+				: "";
+			isControlEnvelope = envelopeType.StartsWith("maintenance_", StringComparison.Ordinal)
+				|| envelopeType.StartsWith("settings_", StringComparison.Ordinal)
+				|| envelopeType.EndsWith("_ack", StringComparison.Ordinal);
+			if (isControlEnvelope)
+				shouldSpeak = false;
 
 			if (BodyBias.TryFromJson(root, out bodyBias))
 				hasBodyBias = true;
@@ -264,6 +274,7 @@ public sealed class UdpDecisionParser
 			Text = text,
 			ParsedJson = parsedJson,
 			HasTextField = hasTextField,
+			IsControlEnvelope = isControlEnvelope,
 			ShouldSpeak = shouldSpeak,
 			HasRemoteMotion = hasRemoteMotion,
 			HasExplicitMotion = explicitMotion,

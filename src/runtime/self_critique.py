@@ -28,6 +28,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from semantic_authority import SemanticAuthorityPolicy
+from runtime.acceptance_types import GateVerdict
 
 
 @dataclass(slots=True)
@@ -731,6 +732,107 @@ class SelfCritiqueEscalationMixin:
         return strong
 
 
+    def _qwen_first_gate_bundle(self, decision, *, user_text: str, chat_generation_kwargs: dict):
+        """Dùng đúng TurnFrame/ResponseContract hiện tại cho critique và gate."""
+        try:
+            from actions.contracts import VALID_SYSTEM_ACTION_LIST
+            from runtime.response_acceptance_gate import ResponseAcceptanceGate
+            from runtime.response_contract import build_response_contract
+            from runtime.turn_frame import build_turn_frame
+
+            frame = getattr(self, "current_elegant_turn_frame", None)
+            if frame is None or str(getattr(frame, "user_text", "") or "") != str(user_text or ""):
+                previous = str(getattr(self, "last_chat_answer", "") or "")
+                reply_context = chat_generation_kwargs.get("reply_context")
+                previous_turn = getattr(reply_context, "previous_public_turn", None) if reply_context is not None else None
+                if previous_turn is not None:
+                    previous = str(getattr(previous_turn, "text", "") or previous)
+                frame = build_turn_frame(
+                    user_text=user_text,
+                    previous_assistant_text=previous,
+                    previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
+                    interrupt_event=getattr(self, "pending_speech_interrupt_event", None),
+                )
+            contract = getattr(self, "current_response_contract", None)
+            if contract is None:
+                contract = build_response_contract(frame, capability_action_ids=VALID_SYSTEM_ACTION_LIST)
+            gate = ResponseAcceptanceGate(capability_action_ids=VALID_SYSTEM_ACTION_LIST)
+            result = gate.evaluate(decision, frame=frame, contract=contract)
+            return gate, frame, contract, result
+        except Exception as exc:
+            try:
+                self.logger.debug("[acceptance-gate] precheck failed: %s", exc)
+            except Exception:
+                pass
+            return None
+
+    def _qwen_first_resolve_gate_before_support(
+        self,
+        decision,
+        *,
+        user_text: str,
+        chat_generation_kwargs: dict,
+        ti_report,
+    ):
+        """Trả ``None`` khi PASS; trả Decision khi gate đã xử lý xong."""
+        bundle = self._qwen_first_gate_bundle(
+            decision, user_text=user_text, chat_generation_kwargs=chat_generation_kwargs
+        )
+        if bundle is None:
+            return None
+        gate, frame, contract, result = bundle
+        try:
+            decision.debug_trace = self._sc_join(
+                getattr(decision, "debug_trace", ""),
+                f"gate_precheck:{result.verdict.value}:{','.join(result.reasons[:3])}",
+            )
+        except Exception:
+            pass
+        if result.verdict == GateVerdict.PASS:
+            return None
+        if result.verdict in {GateVerdict.BLOCK, GateVerdict.DOMAIN_FALLBACK}:
+            return gate.apply(decision, frame=frame, contract=contract)
+
+        policy = SemanticAuthorityPolicy.from_runtime()
+        if result.verdict == GateVerdict.CONSTRAINED_RERUN and policy.bounded_refine_enabled:
+            critique = CritiqueResult(
+                quality=0.0,
+                reason="acceptance_gate:" + ",".join(result.reasons[:6]),
+                source="acceptance_gate",
+            )
+            try:
+                from runtime.observability import ensure_observability
+                ensure_observability(self).record_constrained_rerun(outcome="attempt", reasons=result.reasons, count=1)
+            except Exception:
+                pass
+            revised = self._qwen_first_constrained_rerun(
+                decision,
+                user_text=user_text,
+                critique=critique,
+                chat_generation_kwargs=chat_generation_kwargs,
+                ti_report=ti_report,
+                notes=result.rerun_notes,
+            )
+            if revised is not None:
+                second = gate.evaluate(revised, frame=frame, contract=contract)
+                revised.debug_trace = self._sc_join(
+                    getattr(revised, "debug_trace", ""),
+                    f"gate_after_rerun:{second.verdict.value}:{','.join(second.reasons[:3])}",
+                )
+                try:
+                    from runtime.observability import ensure_observability
+                    ensure_observability(self).record_constrained_rerun(
+                        outcome="pass" if second.verdict == GateVerdict.PASS else "fallback",
+                        reasons=second.reasons,
+                        count=0,
+                    )
+                except Exception:
+                    pass
+                if second.verdict == GateVerdict.PASS:
+                    return gate.apply(revised, frame=frame, contract=contract)
+                return gate.apply(revised, frame=frame, contract=contract)
+        return gate.apply(decision, frame=frame, contract=contract)
+
     def _qwen_first_contract_fallback_decision(self, decision, *, user_text: str, chat_generation_kwargs: dict):
         """Fallback nhỏ khi critique đã biết draft yếu nhưng mentor/rerun chết.
 
@@ -790,7 +892,9 @@ class SelfCritiqueEscalationMixin:
         chốt cửa. Nếu Qwen viết câu dở và mentor không online, ta vẫn ép Qwen tự sửa
         bằng violation report thay vì mở cửa cho câu dở đi ra loa.
         """
-        policy = SemanticAuthorityPolicy.from_env()
+        policy = SemanticAuthorityPolicy.from_runtime()
+        if not policy.bounded_refine_enabled:
+            return None
         kwargs = dict(chat_generation_kwargs)
         kwargs.pop("use_escalation_client", None)
         kwargs["reasoning_effort"] = policy.primary_reasoning_effort
@@ -857,6 +961,15 @@ class SelfCritiqueEscalationMixin:
                     ti_report=ti_report,
                 ),
             )
+
+        gate_resolved = self._qwen_first_resolve_gate_before_support(
+            decision,
+            user_text=user_text,
+            chat_generation_kwargs=chat_generation_kwargs,
+            ti_report=ti_report,
+        )
+        if gate_resolved is not None:
+            return gate_resolved
 
         if not self._self_critique_enabled():
             return decision
