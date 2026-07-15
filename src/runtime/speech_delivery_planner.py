@@ -189,6 +189,10 @@ class SpeechDeliveryPlanner:
             "curious_soft",
             "soft_tease",
             "dry_tease",
+            "self_aware_dry",
+            "annoyed_soft",
+            "sharp_deadpan",
+            "cold_boundary",
             "deadpan",
             "low_quiet",
         }:
@@ -197,6 +201,12 @@ class SpeechDeliveryPlanner:
             voice_style = hinted_style
             if hinted_style in {"dry_tease", "soft_tease"}:
                 emotion = "dry_tease" if hinted_style == "dry_tease" else "mischief_soft"
+            elif hinted_style == "self_aware_dry":
+                emotion = "flat_calm"
+            elif hinted_style in {"annoyed_soft", "sharp_deadpan"}:
+                emotion = "annoyed_soft"
+            elif hinted_style == "cold_boundary":
+                emotion = "flat_cold"
             elif hinted_style == "curious_soft":
                 emotion = "curious"
             elif hinted_style == "deadpan":

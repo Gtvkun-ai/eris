@@ -2,15 +2,17 @@ from __future__ import annotations
 
 """ResponseContract: biến hiểu hội thoại thành nghĩa vụ có thể kiểm tra.
 
-Detector không được viết thay model. Nhưng nếu detector thấy user đang phê bình
-"mày nói như trợ lý AI", draft cuối không được phép tự giới thiệu "Tôi là ERIS,
-trợ lý cá nhân..." rồi vỗ tay vì JSON sạch. Đây là cái cửa soát vé đó.
+Detector không được viết thay model. Nhưng detector có quyền tạo nghĩa vụ rõ:
+nếu user đang chọc, Qwen phải phản ứng đúng stance; nếu user đang sửa lỗi, Qwen
+phải repair trước. Cửa cuối sẽ chặn draft vi phạm thay vì chỉ ghi log rồi cho nói.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable
 
 from actions.capability_registry import capability_surface_keywords, render_capability_registry_prompt
+from runtime.banter_retort_engine import build_retort_fallback
+from runtime.emotional_stance_planner import EmotionalStancePlan, plan_emotional_stance
 from runtime.social_act import normalize_vi_ascii
 from runtime.turn_frame import TurnFrame
 
@@ -31,10 +33,12 @@ class ResponseContract:
     capability_keywords: tuple[str, ...] = ()
     prompt_notes: tuple[str, ...] = ()
     fallback_text: str = ""
+    emotional_stance: EmotionalStancePlan | None = None
 
     @property
     def active(self) -> bool:
-        return bool(self.obligations or self.prohibited_markers or self.prompt_notes)
+        stance_active = bool(self.emotional_stance and self.emotional_stance.active)
+        return bool(self.obligations or self.prohibited_markers or self.prompt_notes or stance_active)
 
     def to_prompt_block(self) -> str:
         if not self.active:
@@ -47,22 +51,41 @@ class ResponseContract:
             for item in obligation.must_not:
                 lines.append(f"  MUST_NOT: {item}")
         for note in self.prompt_notes:
-            lines.append(f"- {note}")
+            if note:
+                lines.append(note)
+        if self.emotional_stance and self.emotional_stance.active:
+            lines.append(self.emotional_stance.to_prompt_block())
         if self.prohibited_markers:
-            lines.append("- banned_public_surfaces=" + ", ".join(self.prohibited_markers[:16]))
-        lines.append("If you cannot satisfy the contract, produce a short direct repair line rather than a generic assistant answer.")
+            lines.append("- banned_public_surfaces=" + ", ".join(self.prohibited_markers[:20]))
+        lines.append(
+            "If you cannot satisfy the contract, produce a short direct repair/boundary line "
+            "rather than a generic assistant answer."
+        )
         return "\n".join(lines)
 
 
-def build_response_contract(frame: TurnFrame, *, capability_action_ids: Iterable[str] | None = None) -> ResponseContract:
+def build_response_contract(
+    frame: TurnFrame,
+    *,
+    capability_action_ids: Iterable[str] | None = None,
+) -> ResponseContract:
     obligations: list[ResponseObligation] = []
     prohibited: list[str] = []
     notes: list[str] = []
     fallback = ""
+    fallback_priority = -1
     cap_keywords: tuple[str, ...] = ()
+    stance_plan = plan_emotional_stance(frame)
+
+    def set_fallback(text: str, priority: int) -> None:
+        nonlocal fallback, fallback_priority
+        clean = str(text or "").strip()
+        if clean and priority > fallback_priority:
+            fallback = clean
+            fallback_priority = priority
 
     if frame.has_relation("META_STYLE_FEEDBACK"):
-        obligations.append(ResponseObligation(
+        obligation = ResponseObligation(
             kind="ACKNOWLEDGE_META_STYLE_FEEDBACK",
             priority=95,
             must=(
@@ -73,15 +96,19 @@ def build_response_contract(frame: TurnFrame, *, capability_action_ids: Iterable
                 "Do not introduce ERIS as an assistant.",
                 "Do not say 'sẵn sàng hỗ trợ' or invite the user to ask a question.",
             ),
-            fallback_text="Ừ, đúng. Câu đó nghe như bot tổng đài. Tôi chỉnh lại: Ngài ném việc cụ thể sang đây, tôi xử lý thẳng, khỏi màn 'sẵn sàng hỗ trợ' phèn đó.",
+            fallback_text="Ừ, câu vừa rồi nghe đúng chất tổng đài. Tôi bỏ giọng đó. Ngài nói thẳng, tôi đáp thẳng.",
+        )
+        obligations.append(obligation)
+        prohibited.extend((
+            "toi la eris", "tro ly ca nhan", "san sang ho tro", "toi co the giup",
+            "hay cho toi biet", "dat cau hoi",
         ))
-        prohibited.extend(("toi la eris", "tro ly ca nhan", "san sang ho tro", "toi co the giup", "hay cho toi biet", "dat cau hoi"))
-        fallback = obligations[-1].fallback_text
+        set_fallback(obligation.fallback_text, obligation.priority)
 
     if frame.has_relation("CAPABILITY_INQUIRY"):
         cap_prompt = render_capability_registry_prompt(capability_action_ids)
         cap_keywords = capability_surface_keywords(capability_action_ids)
-        obligations.append(ResponseObligation(
+        obligation = ResponseObligation(
             kind="ANSWER_FROM_CAPABILITY_REGISTRY",
             priority=90,
             must=(
@@ -93,13 +120,17 @@ def build_response_contract(frame: TurnFrame, *, capability_action_ids: Iterable
                 "Do not add medical/legal disclaimers to a capability answer.",
             ),
             fallback_text=_capability_fallback(),
-        ))
+        )
+        obligations.append(obligation)
         notes.append(cap_prompt)
-        prohibited.extend(("tu van y te", "tu van phap ly", "khong thay the chuyen gia", "hay dat cau hoi", "toi co the ho tro nhieu linh vuc"))
-        fallback = obligations[-1].fallback_text if not fallback else fallback
+        prohibited.extend((
+            "tu van y te", "tu van phap ly", "khong thay the chuyen gia",
+            "hay dat cau hoi", "toi co the ho tro nhieu linh vuc",
+        ))
+        set_fallback(obligation.fallback_text, obligation.priority)
 
     if frame.has_relation("REASSERT_AFTER_MISREAD") or frame.has_relation("REASSERT_AFTER_INTERRUPTION"):
-        obligations.append(ResponseObligation(
+        obligation = ResponseObligation(
             kind="REPAIR_REASSERTED_USER_TURN",
             priority=88,
             must=(
@@ -111,37 +142,60 @@ def build_response_contract(frame: TurnFrame, *, capability_action_ids: Iterable
                 "Do not continue the interrupted/pending assistant text.",
                 "Do not invite the user to describe the issue again.",
             ),
-            fallback_text="À, tôi né sai nhịp rồi. Ý Ngài là đang nhắc lại cú chọc đó, không phải mở hồ sơ gia phả của tôi.",
+            fallback_text="À, tôi né sai nhịp rồi. Ngài đang nhắc lại ý cũ, không mở một chủ đề mới.",
+        )
+        obligations.append(obligation)
+        prohibited.extend((
+            "toi khong co me", "toi khong co gia dinh", "toi la mot ai",
+            "toi la eris", "san sang ho tro",
         ))
-        prohibited.extend(("toi khong co me", "toi khong co gia dinh", "toi la mot ai", "toi la eris", "san sang ho tro"))
-        fallback = obligations[-1].fallback_text if not fallback else fallback
+        set_fallback(obligation.fallback_text, obligation.priority)
 
     if frame.has_relation("PROVOCATION"):
-        obligations.append(ResponseObligation(
-            kind="HANDLE_PROVOCATION_WITH_DRY_BOUNDARY",
-            priority=80,
-            must=(
-                "Recognize the provocation/chọc, answer with dry boundary or light tease.",
-            ),
+        retort_fallback = build_retort_fallback(frame, stance_plan).text
+        obligation = ResponseObligation(
+            kind="HANDLE_PROVOCATION_WITH_CHARACTER",
+            priority=92 if stance_plan.should_retort else 84,
+            must=_provocation_must_rules(stance_plan),
             must_not=(
                 "Do not literalize family insults as factual family questions.",
-                "Do not reset into helper mode.",
+                "Do not reset into helper mode or explain that ERIS is an AI.",
+                "Do not escalate into threats, sexual degradation or protected-trait slurs.",
             ),
-            fallback_text="Cú đó hơi thiếu trí tưởng tượng, thưa Ngài. Nhưng được, tôi hiểu: Ngài đang chọc chứ không hỏi tôi làm giấy khai sinh.",
+            fallback_text=retort_fallback,
+        )
+        obligations.append(obligation)
+        prohibited.extend((
+            "toi khong co me", "toi khong co bo", "toi khong co gia dinh",
+            "toi la ai", "san sang ho tro", "toi o day de ho tro",
         ))
-        prohibited.extend(("toi khong co me", "toi khong co bo", "toi khong co gia dinh", "la ai", "san sang ho tro"))
-        fallback = obligations[-1].fallback_text if not fallback else fallback
+        # Provocation fallback cần thắng repair generic vì nó vừa repair vừa trả đòn.
+        set_fallback(retort_fallback, obligation.priority)
 
     if frame.has_relation("CHALLENGE_PREVIOUS_WORDING") and not frame.has_relation("CAPABILITY_INQUIRY"):
-        obligations.append(ResponseObligation(
+        obligation = ResponseObligation(
             kind="ANSWER_WORDING_CHALLENGE",
             priority=70,
             must=("Acknowledge that the previous helper wording was vague or hollow.",),
             must_not=("Do not ask the user to restate the problem as if nothing happened.",),
             fallback_text="Ý Ngài là câu 'hỗ trợ' của tôi rỗng quá chứ gì. Đúng, nó nghe như nút help màu xám. Tôi nói cụ thể hơn.",
-        ))
+        )
+        obligations.append(obligation)
         prohibited.extend(("ban dang gap van de gi", "ngai can ho tro gi", "hay mo ta van de"))
-        fallback = obligations[-1].fallback_text if not fallback else fallback
+        set_fallback(obligation.fallback_text, obligation.priority)
+
+    # Một số stance như identity reduction vẫn cần contract dù không phải insult.
+    if stance_plan.active and not frame.has_relation("PROVOCATION") and not frame.has_relation("META_STYLE_FEEDBACK"):
+        retort_fallback = build_retort_fallback(frame, stance_plan).text
+        obligation = ResponseObligation(
+            kind="FOLLOW_EMOTIONAL_STANCE",
+            priority=76,
+            must=tuple(stance_plan.response_rules),
+            must_not=tuple(stance_plan.prohibited_moves),
+            fallback_text=retort_fallback,
+        )
+        obligations.append(obligation)
+        set_fallback(retort_fallback, obligation.priority)
 
     return ResponseContract(
         obligations=tuple(obligations),
@@ -149,6 +203,7 @@ def build_response_contract(frame: TurnFrame, *, capability_action_ids: Iterable
         capability_keywords=cap_keywords,
         prompt_notes=tuple(notes),
         fallback_text=fallback,
+        emotional_stance=stance_plan,
     )
 
 
@@ -171,13 +226,28 @@ def contract_from_texts(
     return build_response_contract(frame, capability_action_ids=capability_action_ids)
 
 
+def _provocation_must_rules(plan: EmotionalStancePlan) -> tuple[str, ...]:
+    if plan.response_rules:
+        return plan.response_rules
+    return ("Recognize the provocation and answer with a concise, controlled ERIS reaction.",)
+
+
 def _capability_fallback() -> str:
     return (
         "Tôi làm được mấy việc thật trong runtime: mở hoặc focus ứng dụng, mở URL, chỉnh âm lượng, "
         "play/pause media, copy text, tìm web và xem thời tiết nếu tool đang bật. Nói tên việc cụ thể, "
-        "tôi sẽ xử lý thẳng, khỏi màn quảng cáo trợ lý đa năng nghe phát mệt."
+        "tôi xử lý thẳng, khỏi màn quảng cáo trợ lý đa năng nghe phát mệt."
     )
 
 
 def normalize_public_text(text: str) -> str:
     return normalize_vi_ascii(text)
+
+
+__all__ = [
+    "ResponseObligation",
+    "ResponseContract",
+    "build_response_contract",
+    "contract_from_texts",
+    "normalize_public_text",
+]

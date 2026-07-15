@@ -750,11 +750,13 @@ class SelfCritiqueEscalationMixin:
                 previous = str(getattr(previous_turn, "text", "") or "")
             if not previous:
                 previous = str(getattr(self, "last_chat_answer", "") or "")
-            frame = build_turn_frame(
-                user_text=user_text,
-                previous_assistant_text=previous,
-                previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
-            )
+            frame = getattr(self, "current_elegant_turn_frame", None)
+            if frame is None or str(getattr(frame, "user_text", "") or "") != str(user_text or ""):
+                frame = build_turn_frame(
+                    user_text=user_text,
+                    previous_assistant_text=previous,
+                    previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
+                )
             contract = build_response_contract(frame, capability_action_ids=VALID_SYSTEM_ACTION_LIST)
             fallback = str(contract.fallback_text or "").strip()
         except Exception:

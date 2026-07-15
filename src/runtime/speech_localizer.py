@@ -194,6 +194,14 @@ def _style_line(style: str) -> str:
         return "Style hint: preserve a dry teasing edge; polite, short, slightly unimpressed."
     if style == "soft_tease":
         return "Style hint: preserve soft teasing warmth; playful but restrained."
+    if style == "self_aware_dry":
+        return "Style hint: quietly self-aware and dry; admit the miss briefly without sounding submissive."
+    if style == "annoyed_soft":
+        return "Style hint: controlled mild irritation; crisp and concise, never loud."
+    if style == "sharp_deadpan":
+        return "Style hint: one sharp deadpan retort; measured pace and a clean ending."
+    if style == "cold_boundary":
+        return "Style hint: cold, controlled boundary; direct, non-threatening, no apology tail."
     if style == "deadpan":
         return "Style hint: deadpan and concise; polite but a little flat."
     if style == "focused":

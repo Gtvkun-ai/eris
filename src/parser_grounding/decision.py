@@ -932,6 +932,10 @@ class ParserGroundingMixin:
                 "curious_soft",
                 "soft_tease",
                 "dry_tease",
+                "self_aware_dry",
+                "annoyed_soft",
+                "sharp_deadpan",
+                "cold_boundary",
                 "deadpan",
                 "low_quiet",
             },
@@ -941,6 +945,9 @@ class ParserGroundingMixin:
                 "dry": "dry_tease",
                 "curious": "curious_soft",
                 "quiet": "low_quiet",
+                "annoyed": "annoyed_soft",
+                "sharp": "sharp_deadpan",
+                "boundary": "cold_boundary",
             },
         )
 
@@ -952,6 +959,7 @@ class ParserGroundingMixin:
                 "laugh_soft",
                 "small_smile",
                 "sigh_soft",
+                "scoff_soft",
                 "soft_breath",
                 "tilt_head",
                 "look_away",

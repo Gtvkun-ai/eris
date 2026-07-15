@@ -659,20 +659,22 @@ class PostGenerationFiltersMixin:
                 from runtime.turn_frame import build_turn_frame
                 from runtime.response_acceptance_gate import ResponseAcceptanceGate
 
-                previous_user = str(getattr(self, "last_user_text_for_semantics", "") or "")
-                previous_assistant = str(getattr(self, "last_chat_answer", "") or "")
-                interrupt_event = None
-                ledger = getattr(self, "interrupt_ledger", None)
-                recent = getattr(ledger, "recent", None) if ledger is not None else None
-                if callable(recent):
-                    events = tuple(recent(1) or ())
-                    interrupt_event = events[-1] if events else None
-                turn_frame = build_turn_frame(
-                    user_text=user_text,
-                    previous_assistant_text=previous_assistant,
-                    previous_user_text=previous_user,
-                    interrupt_event=interrupt_event,
-                )
+                turn_frame = getattr(self, "current_elegant_turn_frame", None)
+                if turn_frame is None or str(getattr(turn_frame, "user_text", "") or "") != str(user_text or ""):
+                    previous_user = str(getattr(self, "last_user_text_for_semantics", "") or "")
+                    previous_assistant = str(getattr(self, "last_chat_answer", "") or "")
+                    interrupt_event = None
+                    ledger = getattr(self, "interrupt_ledger", None)
+                    recent = getattr(ledger, "recent", None) if ledger is not None else None
+                    if callable(recent):
+                        events = tuple(recent(1) or ())
+                        interrupt_event = events[-1] if events else None
+                    turn_frame = build_turn_frame(
+                        user_text=user_text,
+                        previous_assistant_text=previous_assistant,
+                        previous_user_text=previous_user,
+                        interrupt_event=interrupt_event,
+                    )
                 gate = ResponseAcceptanceGate(capability_action_ids=VALID_SYSTEM_ACTION_LIST)
                 decision = gate.apply(decision, frame=turn_frame)
         except Exception as exc:

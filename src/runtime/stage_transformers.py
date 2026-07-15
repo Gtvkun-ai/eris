@@ -102,11 +102,17 @@ _ACTION_ALIASES: dict[str, str] = {
     "small_smile": "small_smile",
     "laugh_soft": "laugh_soft",
     "sigh_soft": "sigh_soft",
+    "scoff_soft": "scoff_soft",
+    "soft_breath": "soft_breath",
 }
 
 _EMOTION_ALIASES = {
     "teasing",
     "dry_tease",
+    "self_aware_dry",
+    "annoyed_soft",
+    "sharp_deadpan",
+    "cold_boundary",
     "soft_tease",
     "mischief",
     "curious",
@@ -114,7 +120,6 @@ _EMOTION_ALIASES = {
     "deadpan",
     "warm_soft",
     "quiet_low",
-    "annoyed_soft",
 }
 
 

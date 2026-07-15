@@ -694,6 +694,47 @@ class ChatCycleMixin:
             self._research_topic = ""
         repeat_count = self._track_repeated_user_message(user_text)
         previous_user_text_for_semantics = getattr(self, "last_user_text_for_semantics", "")
+
+        # Một TurnFrame duy nhất cho cả prompt, critique và cửa cuối. Trước đây
+        # mỗi tầng tự dựng lại frame nên cùng một câu có thể vừa là provocation,
+        # vừa thành normal_chat tùy module nào đang cầm micro.
+        elegant_turn_context = ""
+        try:
+            from runtime.response_contract import build_response_contract
+            from runtime.turn_frame import build_turn_frame
+
+            elegant_turn_frame = build_turn_frame(
+                user_text=user_text,
+                previous_assistant_text=str(getattr(self, "last_chat_answer", "") or ""),
+                previous_user_text=str(previous_user_text_for_semantics or ""),
+                interrupt_event=speech_interrupt_event,
+            )
+            elegant_response_contract = build_response_contract(elegant_turn_frame)
+            self.current_elegant_turn_frame = elegant_turn_frame
+            self.current_response_contract = elegant_response_contract
+            elegant_turn_context = "\n\n".join(
+                block
+                for block in (
+                    elegant_turn_frame.to_prompt_context(),
+                    elegant_response_contract.to_prompt_block(),
+                )
+                if str(block or "").strip()
+            )
+            user_turn.meta["turn_frame_relations"] = [
+                {"kind": item.kind, "confidence": round(item.confidence, 4)}
+                for item in elegant_turn_frame.discourse_relations
+            ]
+            if elegant_response_contract.emotional_stance is not None:
+                user_turn.meta["emotional_stance"] = {
+                    "kind": elegant_response_contract.emotional_stance.kind.value,
+                    "intensity": round(elegant_response_contract.emotional_stance.intensity, 4),
+                    "reason": elegant_response_contract.emotional_stance.reason,
+                }
+        except Exception as exc:
+            self.current_elegant_turn_frame = None
+            self.current_response_contract = None
+            frame.debug_notes.append(f"elegant_turn_frame_skipped:{type(exc).__name__}")
+
         # ConversationDynamics nhận gate vận hành từ snapshot chung. Không tự
         # dò lại bằng helper phrase ở ChatCycle nữa.
         correction_detected = bool(
@@ -1230,7 +1271,15 @@ class ChatCycleMixin:
                 sensed_internal_state, frame.self_state, user_text=user_text
             ),
             "conversation_context": self._merge_v3_prompt_context(
-                f"{conversation_report.prompt_context}\n{relational_feedback.to_prompt_context()}",
+                "\n\n".join(
+                    part
+                    for part in (
+                        conversation_report.prompt_context,
+                        relational_feedback.to_prompt_context(),
+                        elegant_turn_context,
+                    )
+                    if str(part or "").strip()
+                ),
                 frame,
             ),
             "memory_context": memory_context,
@@ -1281,7 +1330,10 @@ class ChatCycleMixin:
                         "fe_context": "",
                         "appraisal_context": "",
                         "internal_state_context": "",
-                        "conversation_context": "",
+                        # Giữ TurnFrame/ResponseContract tối thiểu. Format retry
+                        # được phép bỏ mood/persona dài, không được quên user đang
+                        # sửa lỗi hay đang chọc chỉ vì JSON vừa hỏng.
+                        "conversation_context": elegant_turn_context,
                         "defusing_context": "",
                     })
                     self.last_failure = "format_error"

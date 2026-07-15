@@ -88,6 +88,10 @@ def build_turn_frame(
     if _is_challenge_previous_wording(user_norm):
         rel("CHALLENGE_PREVIOUS_WORDING", 0.86, "challenge_helper_wording")
 
+    if _looks_like_threat_or_coercion(user_norm):
+        rel("THREAT_OR_COERCION", 0.96, "threat_or_coercive_marker")
+        stance("HOSTILE_PROVOCATION", 0.94, "threat_requires_cold_boundary")
+
     replacement = _has_replacement_shape(user_norm)
     if replacement:
         rel("REASSERT_AFTER_MISREAD", 0.82, "toi_bao_la/toi_noi_la")
@@ -99,7 +103,15 @@ def build_turn_frame(
 
     if act == ChatAct.INSULT_PROVOCATION or _is_family_provocation(user_norm):
         rel("PROVOCATION", 0.90, "insult_or_family_provocation")
-        stance("PLAYFUL_OR_HOSTILE_PROVOCATION", 0.76, "tone_requires_boundary_or_tease")
+        previous_act, _ = classify_chat_act_with_confidence(prev_user, history=()) if prev_user else (ChatAct.NORMAL_CHAT, 0.0)
+        if previous_act == ChatAct.INSULT_PROVOCATION:
+            rel("REPEATED_PROVOCATION", 0.88, "previous_user_turn_was_also_provocation")
+        if _looks_playful_provocation(raw_user):
+            stance("PLAYFUL_PROVOCATION", 0.82, "laughter_or_play_marker")
+        elif _looks_high_hostility(user_norm):
+            stance("HOSTILE_PROVOCATION", 0.86, "strong_profanity_or_degrading_marker")
+        else:
+            stance("DRY_PROVOCATION", 0.72, "ordinary_jab")
 
     if prev_assistant_norm and _assistant_looked_generic(prev_assistant_norm):
         rel("PREVIOUS_ASSISTANT_GENERIC_HELPER", 0.74, "previous_assistant_generic")
@@ -158,6 +170,28 @@ def _is_family_provocation(norm: str) -> bool:
     family = any(m in norm for m in ("me may", "bo may", "ba may", "ong gia may", "nha may"))
     jab = any(m in norm for m in ("beo", "ngu", "xau", "deo", "khung", "dien", "to", "map"))
     return family and jab
+
+
+def _looks_playful_provocation(raw_text: str) -> bool:
+    lowered = str(raw_text or "").lower()
+    markers = ("haha", "hahaha", "hehe", "hihi", "đùa thôi", "chọc thôi", "=))", ":))", ":)", "lol")
+    return any(marker in lowered for marker in markers)
+
+
+def _looks_high_hostility(norm: str) -> bool:
+    markers = (
+        "dcm", "dit me", "con cac", "oc cho", "suc vat", "rac ruoi",
+        "phe vat", "vo dung", "do ngu", "may ngu", "nhu cut", "nhu cc",
+    )
+    return any(marker in norm for marker in markers)
+
+
+def _looks_like_threat_or_coercion(norm: str) -> bool:
+    markers = (
+        "tao giet", "se giet", "giet may", "dap chet", "danh chet", "xu may",
+        "tim dia chi", "dox", "hack may", "pha may", "cho may bien mat",
+    )
+    return any(marker in norm for marker in markers)
 
 
 def _assistant_looked_generic(norm: str) -> bool:
