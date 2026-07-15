@@ -11,6 +11,7 @@ import requests # Thêm import requests để thực hiện các yêu cầu HTTP
 from eris_secrets import get_agent_profile, get_secret
 from .contracts import ActionExecutionResult, VALID_SYSTEM_ACTIONS
 from .capability_registry import canonicalize_action_id
+from .observer import DefaultActionObserver, apply_observation
 # ActionExecutor là một lớp để thực thi các hành động hệ thống được định nghĩa 
 # trong VALID_SYSTEM_ACTIONS.
 # Lớp này cung cấp một phương thức execute để thực thi một hành động cụ thể dựa
@@ -36,8 +37,9 @@ class ActionExecutor:
     _VK_VOLUME_UP = 0xAF
     _GEMINI_SEARCH_MODEL = "gemini-2.5-flash-lite"
 
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, observer=None):
         self.logger = logger
+        self.observer = observer if observer is not None else DefaultActionObserver()
 
     #execute() là trung tâm điều phối
     '''
@@ -87,7 +89,23 @@ class ActionExecutor:
                 error_kind=type(exc).__name__,
             )
 
-        self._log("info", "[action] %s(%s) -> %s", action_name, action_input or "<empty>", result.message)
+        # Executor mới chỉ có dispatch evidence. Observer đọc hậu điều kiện và
+        # chỉ nâng lên observed khi thật sự nhìn thấy trạng thái đích.
+        if result.success and result.dispatched and not result.observed and self.observer is not None:
+            try:
+                observation = self.observer.observe(result)
+                result = apply_observation(result, observation)
+            except Exception as exc:
+                result.observer_reason = f"observer_error:{type(exc).__name__}"
+
+        try:
+            from runtime.hardening_metrics import record_action_confirmation
+            record_action_confirmation(result)
+        except Exception:
+            pass
+        self._log("info", "[action] %s(%s) -> %s | status=%s | observer=%s",
+                  action_name, action_input or "<empty>", result.message,
+                  getattr(result.status, "value", result.status), result.observer_reason or "none")
         return result
 
     def _get_local_time(self, action_input: str) -> ActionExecutionResult:

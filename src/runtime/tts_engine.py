@@ -39,6 +39,7 @@ from runtime.tts_audio_polish import audio_polish_enabled, polish_pcm16_mono
 from runtime.tts_markup import render_tts_markup
 from runtime.vocal_cache import VocalCache, VocalCacheKey, strip_audible_prefix, vocal_cache_enabled
 from runtime.speech_contract import normalize_language
+from runtime.addressing_policy import clean_public_addressing
 from runtime.tts_circuit_breaker import GLOBAL_TTS_BREAKER
 
 logger = logging.getLogger("TTS")
@@ -394,30 +395,22 @@ def _short_error(exc: Exception, *, limit: int = 220) -> str:
 
 
 def _edge_voice_candidates(language_hint: str = "") -> list[str]:
-    lang = str(language_hint or "").strip().lower()
-    ja_voice = os.environ.get("ERIS_TTS_EDGE_JA_VOICE", "ja-JP-NanamiNeural").strip()
-    vi_voice = os.environ.get("ERIS_TTS_EDGE_VI_VOICE", "vi-VN-HoaiMyNeural").strip()
-    en_voice = os.environ.get("ERIS_TTS_EDGE_EN_VOICE", "en-US-JennyNeural").strip()
-
-    # Không fallback chéo Nhật ⇄ Việt theo từng câu nữa. Đó là nguồn đổi giọng rất bẩn:
-    # câu trước Nhật, câu sau Việt, rồi user tưởng Eris bị nhập. Cũng dễ 429 hơn vì
-    # retry nhiều voice vô nghĩa.
-    if lang.startswith(("ja", "jp")) or lang == "japanese":
-        voices = [ja_voice]
-    elif lang.startswith("en"):
-        voices = [en_voice]
-    else:
-        voices = [vi_voice]
-
-    result: list[str] = []
-    for voice in voices:
-        if voice and voice not in result:
-            result.append(voice)
-    return result
+    lang = normalize_language(language_hint)
+    expected_prefix = {"ja": "ja-JP-", "vi": "vi-VN-", "en": "en-US-"}.get(lang, "")
+    configured = {
+        "ja": os.environ.get("ERIS_TTS_EDGE_JA_VOICE", "ja-JP-NanamiNeural").strip(),
+        "vi": os.environ.get("ERIS_TTS_EDGE_VI_VOICE", "vi-VN-HoaiMyNeural").strip(),
+        "en": os.environ.get("ERIS_TTS_EDGE_EN_VOICE", "en-US-JennyNeural").strip(),
+    }.get(lang, "")
+    # Config sai locale bị reject thay vì đọc tiếng Việt bằng voice Nhật rồi gọi đó
+    # là fallback. Một lỗi cấu hình không cần được biến thành tính cách mới của Eris.
+    if not configured or (expected_prefix and not configured.lower().startswith(expected_prefix.lower())):
+        return []
+    return [configured]
 
 
 def _edge_romaji_enabled() -> bool:
-    return os.environ.get("ERIS_TTS_EDGE_ROMAJI", "1").strip().lower() in {
+    return os.environ.get("ERIS_TTS_EDGE_ROMAJI", "0").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -430,11 +423,7 @@ def _contains_japanese_chars(text: str) -> bool:
 
 
 def _strip_tts_honorifics(text: str) -> str:
-    t = str(text or "")
-    t = re.sub(r"(?<![A-Za-zÀ-ỹ])(?:ng\u00e0i|ngai)(?![A-Za-zÀ-ỹ])", "bạn", t, flags=re.I)
-    t = re.sub(r"\bMaster\s*/\s*bạn\b", "bạn", t, flags=re.I)
-    t = re.sub(r"\bMaster\b", "bạn", t, flags=re.I)
-    return t
+    return clean_public_addressing(str(text or ""), surface="tts")
 
 
 def _ascii_for_edge(text: str) -> str:
@@ -455,9 +444,21 @@ def _clean_edge_romaji_output(text: str) -> str:
 
 
 def _edge_japanese_romaji_text(text: str) -> str:
+    """Chỉ transliterate câu Nhật đã có sẵn; tuyệt đối không dịch ở fallback."""
     clean = _clean_text(text)
-    if not clean or not _edge_romaji_enabled():
+    if not clean or not _edge_romaji_enabled() or not _contains_japanese_chars(clean):
         return ""
+
+    try:
+        from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+        plan = GLOBAL_TOKEN_PRESSURE_GOVERNOR.plan_request(
+            "gemini", lane="romaji_localizer", prompt_tokens=max(64, len(clean) // 3),
+            requested_output_tokens=160, optional_pass=True, min_prompt_tokens=64, min_output_tokens=64,
+        )
+        if not plan.allowed:
+            return ""
+    except Exception:
+        plan = None
 
     api_key = _get_api_key()
     if not api_key:
@@ -465,23 +466,29 @@ def _edge_japanese_romaji_text(text: str) -> str:
 
     try:
         from google import genai
-
         client = genai.Client(api_key=api_key)
         prompt = (
-            "Prepare this line for a Japanese neural TTS voice that cannot read kana/kanji in this runtime.\n"
-            "If the line is not Japanese, translate it into natural, gentle, polite Japanese for a soft anime girl "
-            "desktop companion. Never use old Vietnamese honorifics or 'Master'.\n"
-            "Then output ONLY Hepburn romaji, with simple punctuation and no kana, kanji, quotes, labels, notes, "
-            "stage directions, or original text.\n\n"
-            f"Line:\n{clean}"
+            "Transliterate the following Japanese text into Hepburn romaji. "
+            "Do not translate, paraphrase, add labels, stage directions, or original text. "
+            "Output only simple romaji and punctuation.\n\n"
+            f"Japanese text:\n{clean}"
         )
         response = client.models.generate_content(
             model=os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "gemini-2.5-flash").strip(),
             contents=prompt,
         )
+        if plan is not None:
+            try:
+                GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
+                    "gemini", lane="romaji_localizer", prompt_tokens=max(64, len(prompt) // 3),
+                    output_tokens=160,
+                )
+                GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
+            except Exception:
+                pass
         return _clean_edge_romaji_output(getattr(response, "text", "") or "")
     except Exception as exc:
-        logger.warning("[TTS] Edge JP romaji localizer loi: %s", _short_error(exc))
+        logger.warning("[TTS] Edge JP romaji transliterator loi: %s", _short_error(exc))
         return ""
 
 
@@ -490,16 +497,18 @@ def _edge_text_candidates(text: str, language_hint: str = "") -> list[tuple[str,
     if not clean:
         return []
 
-    lang = str(language_hint or "").strip().lower()
-    if lang.startswith(("ja", "jp")) or lang == "japanese":
+    lang = normalize_language(language_hint)
+    if lang == "ja":
+        # Contract Nhật chỉ được fallback nếu transcript thật sự đã là Nhật. Nếu
+        # Gemini chính định dịch trong prompt nhưng chết trước khi trả audio, Edge
+        # không được gọi một LLM phụ để dịch lại. Khi đó im lặng an toàn còn hơn
+        # đổi tiếng/giọng lén lút.
+        if not _contains_japanese_chars(clean):
+            return []
+        candidates: list[tuple[str, str]] = [("raw", clean)]
         romaji = _edge_japanese_romaji_text(clean)
-        candidates: list[tuple[str, str]] = []
         if romaji:
             candidates.append(("romaji", romaji))
-        # Japanese voice can usually read kana/kanji; raw fallback is safe only if the text is actually Japanese.
-        # Không đưa tiếng Việt ASCII cho voice Nhật nữa, nhất là các từ tiếng Việt. Thảm họa phát âm đã đủ ăn hành.
-        if _contains_japanese_chars(clean):
-            candidates.append(("raw", clean))
     else:
         candidates = [("raw", clean)]
 
@@ -591,12 +600,13 @@ try {
     $target = ""
     if ($lang.StartsWith("ja") -or $lang -eq "jp" -or $lang -eq "japanese") { $target = "ja" }
     elseif ($lang.StartsWith("vi")) { $target = "vi" }
-    if ($target) {
-        $voice = $speaker.GetInstalledVoices() |
-            Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name.ToLowerInvariant().StartsWith($target) } |
-            Select-Object -First 1
-        if ($voice) { $speaker.SelectVoice($voice.VoiceInfo.Name) }
-    }
+    elseif ($lang.StartsWith("en")) { $target = "en" }
+    if (-not $target) { throw "unsupported_language_contract" }
+    $voice = $speaker.GetInstalledVoices() |
+        Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name.ToLowerInvariant().StartsWith($target) } |
+        Select-Object -First 1
+    if (-not $voice) { throw "no_compatible_sapi_voice" }
+    $speaker.SelectVoice($voice.VoiceInfo.Name)
     $speaker.Rate = -1
     $speaker.Volume = 100
     $speaker.SetOutputToWaveFile($wavPath)
@@ -632,16 +642,32 @@ finally {
 def _try_local_tts_fallback(exc: Exception, *, fallback_text: str = "", language_hint: str = "") -> bytes:
     if not _local_tts_fallback_enabled() or not str(fallback_text or "").strip():
         return b""
+    expected_locale = _same_language_locale(language_hint)
     try:
         wav_bytes, voice = _synthesize_edge_tts_wav(fallback_text, language_hint=language_hint)
         if wav_bytes:
+            actual_locale = "-".join(str(voice).split("/", 1)[0].split("-")[:2])
+            try:
+                from runtime.hardening_metrics import record_tts_fallback
+                record_tts_fallback(provider="edge", locale=actual_locale, expected_locale=expected_locale, success=True, reason=type(exc).__name__)
+            except Exception:
+                pass
             logger.warning(
-                "[TTS] Gemini TTS loi/quota (%s). Dung Edge neural TTS fallback voice=%s.",
-                _short_error(exc),
-                voice,
+                "[TTS] Gemini TTS loi/quota (%s). Dung Edge fallback cung ngon ngu voice=%s.",
+                _short_error(exc), voice,
             )
             return wav_bytes
+        try:
+            from runtime.hardening_metrics import record_tts_fallback
+            record_tts_fallback(provider="edge", locale="", expected_locale=expected_locale, success=False, reason="same_language_candidate_unavailable")
+        except Exception:
+            pass
     except Exception as edge_exc:
+        try:
+            from runtime.hardening_metrics import record_tts_fallback
+            record_tts_fallback(provider="edge", locale="", expected_locale=expected_locale, success=False, reason=type(edge_exc).__name__)
+        except Exception:
+            pass
         logger.warning("[TTS] Edge neural TTS fallback loi: %s", _short_error(edge_exc))
 
     if not _sapi_tts_fallback_enabled():
@@ -650,9 +676,19 @@ def _try_local_tts_fallback(exc: Exception, *, fallback_text: str = "", language
     try:
         wav_bytes = _synthesize_windows_sapi_wav(fallback_text, language_hint=language_hint)
         if wav_bytes:
-            logger.warning("[TTS] Gemini TTS loi/quota (%s). Dung Windows SAPI fallback voice tam.", _short_error(exc))
+            try:
+                from runtime.hardening_metrics import record_tts_fallback
+                record_tts_fallback(provider="sapi", locale=expected_locale, expected_locale=expected_locale, success=True, reason=type(exc).__name__)
+            except Exception:
+                pass
+            logger.warning("[TTS] Gemini TTS loi/quota (%s). Dung Windows SAPI cung ngon ngu.", _short_error(exc))
             return wav_bytes
     except Exception as sapi_exc:
+        try:
+            from runtime.hardening_metrics import record_tts_fallback
+            record_tts_fallback(provider="sapi", locale="", expected_locale=expected_locale, success=False, reason=type(sapi_exc).__name__)
+        except Exception:
+            pass
         logger.warning("[TTS] Windows SAPI fallback loi: %s", _short_error(sapi_exc))
     return b""
 
@@ -700,6 +736,35 @@ def _synthesize_wav(
     """Gọi Gemini TTS, trả về WAV bytes (24kHz, mono, 16-bit PCM)."""
     from google import genai
     from google.genai import types
+
+    tts_budget_plan = None
+    try:
+        from llm.token_budget import estimate_tokens
+        from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+
+        estimated_prompt = estimate_tokens([{"role": "user", "content": prompt}])
+        tts_budget_plan = GLOBAL_TOKEN_PRESSURE_GOVERNOR.plan_request(
+            "gemini", lane="tts", prompt_tokens=estimated_prompt,
+            requested_output_tokens=768, optional_pass=False,
+            min_prompt_tokens=256, min_output_tokens=256,
+        )
+        # TTS là exact recitation. Cắt prompt âm thầm sẽ làm mất lời, nên khi một
+        # segment vượt hard budget phải fail rõ để StageOutputPipeline chia nhỏ.
+        if tts_budget_plan.prompt_limit < estimated_prompt:
+            exc = RuntimeError(
+                f"TTS segment vượt lane budget ({estimated_prompt}>{tts_budget_plan.prompt_limit}); "
+                "hãy chia segment ở stage trước khi synthesize"
+            )
+            fallback = _try_local_tts_fallback(
+                exc, fallback_text=fallback_text, language_hint=language_hint,
+            )
+            if fallback:
+                return fallback
+            raise exc
+    except RuntimeError:
+        raise
+    except Exception:
+        tts_budget_plan = None
 
     # Dùng key pool để tự động xoay key khi bị 429
     try:
@@ -764,6 +829,17 @@ def _synthesize_wav(
                 ),
             )
             pcm_data = _extract_gemini_tts_pcm(response)
+            if tts_budget_plan is not None:
+                try:
+                    from llm.token_budget import estimate_tokens
+                    from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
+                        "gemini", lane="tts",
+                        prompt_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
+                        output_tokens=tts_budget_plan.output_tokens,
+                    )
+                except Exception:
+                    pass
             if pool is not None and lease is not None:
                 pool.mark_success(lease=lease)
             if _tts_breaker_enabled():
@@ -820,7 +896,7 @@ def _synthesize_wav(
             if is_rate_limit:
                 try:
                     from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0)
+                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0, lane="tts")
                 except Exception:
                     pass
 
@@ -1091,7 +1167,8 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
         prompt = (
             "You are a translation assistant. Translate the following Vietnamese or English sentence "
             "into natural, gentle, and polite Japanese, suitable for a soft anime girl companion speaking "
-            "to her bạn (e.g., using polite forms like ご主人様, です, ます, etc.). "
+            "to the user. Avoid titles such as ご主人様 or マスター; prefer polite Japanese "
+            "that omits second-person address when possible. "
             "Output ONLY the Japanese translation, with absolutely no quotes, annotations, or English/Vietnamese explanations.\n\n"
             f"Sentence to translate: {text}"
         )

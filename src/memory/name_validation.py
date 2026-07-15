@@ -76,6 +76,9 @@ def has_explicit_user_name_declaration(text: str) -> bool:
         r"\bten\s+(?:that\s+)?day\s+du\s+(?:cua\s+)?(?:toi|minh|tui|tao|em)\s+(?:la\s+)?\S+",
         r"\bten\s+(?:that\s+)?(?:cua\s+)?(?:toi|minh|tui|tao|em)\s+(?:la\s+)?\S+",
         r"\b(?:goi|cu goi)\s+(?:toi|minh|tui|tao|em)\s+(?:la\s+)?\S+",
+        r"\b(?:toi|minh|tui|tao|em)\s+moi\s+doi\s+ten\s+(?:sang|thanh)\s+\S+",
+        r"\bdoi\s+ten\s+(?:sang|thanh)\s+\S+",
+        r"\btu\s+gio\s+(?:cu\s+)?goi\s+(?:toi|minh|tui|tao|em)\s+(?:la\s+)?\S+",
         r"\b(?:my name is|call me)\s+\S+",
         r"\b(?:nho|hay nho|remember)\s+(?:rang\s+)?(?:toi|minh|tui|em)\s+(?:ten\s+)?(?:la\s+)?\S+",
     )

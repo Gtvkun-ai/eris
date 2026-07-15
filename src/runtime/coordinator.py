@@ -4405,7 +4405,7 @@ class RuntimeCoordinator(
                 self.fe_style_memory = self.fe_renderer.remember_style(
                     self.fe_style_memory,
                     plan=fe_plan,
-                    rendered_text=decision.text,
+                    rendered_text=public_text,
                 )
                 self.last_text = decision.text
                 spoken_at = time.time()
@@ -4723,9 +4723,17 @@ class RuntimeCoordinator(
         authority = getattr(self, "_apply_v3_authority_guard", None)
         if callable(authority):
             decision = authority(decision, frame=None, channel="chat")
-        public_text = str(decision.text or "").strip()
+        try:
+            from runtime.public_surface_commit import GLOBAL_PUBLIC_SURFACE_COMMITTER
+            commit_surfaces = GLOBAL_PUBLIC_SURFACE_COMMITTER.build(decision.text)
+            public_text = commit_surfaces.display_text
+            memory_text = commit_surfaces.memory_text
+        except Exception:
+            public_text = str(decision.text or "").strip()
+            memory_text = public_text
         if public_text:
-            self._append_chat_history("assistant", public_text, invalid=False)
+            if memory_text:
+                self._append_chat_history("assistant", memory_text, invalid=False)
             self._ensure_session_turn_ledger().record_assistant(
                 public_text,
                 meta={"intent": decision.intent, "parse_mode": decision.parse_mode, "source": "tutor_followup"},
@@ -6301,17 +6309,49 @@ class RuntimeCoordinator(
 
         decision = self._apply_social_appraisal_memory_commit_gate(decision)
 
-        public_text = str(decision.text or "").strip()
+        try:
+            from runtime.public_surface_commit import GLOBAL_PUBLIC_SURFACE_COMMITTER
+            commit_surfaces = GLOBAL_PUBLIC_SURFACE_COMMITTER.build(decision.text)
+            public_text = commit_surfaces.display_text
+            memory_text = commit_surfaces.memory_text
+            blocked_kinds = commit_surfaces.blocked_kinds
+            if blocked_kinds:
+                decision.reasoning_tags = tuple(dict.fromkeys((
+                    *tuple(getattr(decision, "reasoning_tags", ()) or ()),
+                    "public_surface_sanitized",
+                    *(f"surface_blocked:{kind}" for kind in blocked_kinds),
+                )))
+                decision.debug_trace = " | ".join(
+                    part for part in (
+                        str(getattr(decision, "debug_trace", "") or "").strip(),
+                        "public_surface_sanitized:" + ",".join(blocked_kinds),
+                    ) if part
+                )
+            if str(getattr(decision, "extracted_fact", "") or "").strip():
+                decision.extracted_fact = GLOBAL_PUBLIC_SURFACE_COMMITTER.clean_fact(decision.extracted_fact)
+        except Exception as exc:
+            self.logger.warning("[surface commit] sanitizer failed: %s", exc)
+            public_text = str(decision.text or "").strip()
+            memory_text = public_text
+            blocked_kinds = ()
+        # Repair lifetime chỉ giảm khi câu repair thật sự được commit ra public.
+        repair_lifetime = getattr(self, "repair_state_controller", None)
+        repair_appraisal = getattr(self, "current_repair_appraisal", None)
+        if public_text and repair_lifetime is not None and bool(getattr(repair_appraisal, "active", False)):
+            try:
+                repair_lifetime.consume_public_turn()
+            except Exception:
+                pass
         if public_text:
             self.fe_style_memory = self.fe_renderer.remember_style(
                 self.fe_style_memory,
                 plan=fe_plan,
-                rendered_text=decision.text,
+                rendered_text=public_text,
             )
         if decision.extracted_fact and not self._has_structured_memory_store():
             self.long_term_memory.append(decision.extracted_fact)
 
-        self.last_chat_answer = decision.text
+        self.last_chat_answer = public_text
         self.last_system_action = decision.system_action
         invalid_for_semantic_history = _is_nonsemantic_fallback_decision(decision)
         # Fallback/service-error vẫn có thể hiện ra UI, nhưng không được đưa vào
@@ -6319,8 +6359,8 @@ class RuntimeCoordinator(
         # tự nhiễm câu "tôi bị lỗi định dạng" và TurnGraph nối nhầm ANSWERS.
         # Câu bị Director suppress/body-only thì không chèn một lượt assistant
         # rỗng vào history; im lặng cũng không nên giả dạng thành văn bản.
-        if public_text:
-            self._append_chat_history("assistant", decision.text, invalid=invalid_for_semantic_history)
+        if memory_text:
+            self._append_chat_history("assistant", memory_text, invalid=invalid_for_semantic_history)
         if bool(decision.should_speak) and public_text:
             assistant_meta = {
                 "intent": decision.intent,
@@ -6334,7 +6374,7 @@ class RuntimeCoordinator(
                     "invalid_for_semantic_context": True,
                 })
             self._ensure_session_turn_ledger().record_assistant(
-                decision.text,
+                public_text,
                 meta=assistant_meta,
             )
         if len(self.chat_history) > 32:
@@ -6356,11 +6396,11 @@ class RuntimeCoordinator(
             try:
                 trace_store.mark_committed(
                     trace_id,
-                    memory_committed=bool(public_text and not invalid_for_semantic_history),
+                    memory_committed=bool(memory_text and not invalid_for_semantic_history),
                 )
             except Exception:
                 pass
-        self.logger.info("ERIS: %s", decision.text)
+        self.logger.info("ERIS: %s", public_text)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
         self.logger.info("[chat parser] %s", decision.parser_trace or "<empty>")
 

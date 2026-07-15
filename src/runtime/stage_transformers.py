@@ -23,6 +23,7 @@ from typing import Iterable
 
 from actions.capability_registry import singing_capability_enabled
 from runtime.final_surface_sanitizer import FinalSurfaceSanitizer
+from runtime.addressing_policy import clean_public_addressing
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,16 +80,10 @@ _PARENS_ACTION_RE = re.compile(
     re.I,
 )
 
-_FORBIDDEN_HONORIFIC_RE = re.compile(r"(?<![A-Za-zÀ-ỹ])(?:ng\u00e0i|ngai)(?![A-Za-zÀ-ỹ])", re.I)
-
-
 def clean_forbidden_honorifics(text: str) -> str:
-    # Van cuối: dù prompt/candidate còn sót, UI/TTS/memory không được hồi sinh lối xưng hô cũ.
-    t = str(text or "")
-    t = _FORBIDDEN_HONORIFIC_RE.sub("bạn", t)
-    t = re.sub(r"\bMaster\s*/\s*bạn\b", "bạn", t, flags=re.I)
-    t = re.sub(r"\bMaster\b", "bạn", t, flags=re.I)
-    return _squash(t)
+    # Compatibility name giữ cho plugin/test cũ. Logic thật nằm ở addressing_policy,
+    # không còn vá global ``Ngài -> bạn`` ngay trong transformer.
+    return clean_public_addressing(str(text or ""), surface="stage")
 
 _ACTION_ALIASES: dict[str, str] = {
     "cười": "laugh_soft",

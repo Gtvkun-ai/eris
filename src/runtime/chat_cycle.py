@@ -556,6 +556,15 @@ class ChatCycleMixin:
         )
         self.current_repair_appraisal = repair_appraisal
         self.current_social_appraisal = repair_appraisal.social_snapshot
+        if repair_appraisal.active and str(getattr(self, "last_system_action", "") or "").strip():
+            try:
+                from runtime.hardening_metrics import record_user_correction_after_action
+                record_user_correction_after_action(
+                    action=str(self.last_system_action),
+                    strategy=str(getattr(repair_appraisal, "response_strategy", "") or ""),
+                )
+            except Exception:
+                pass
         ti_report = apply_repair_appraisal_to_ti_report(ti_report, repair_appraisal)
         from runtime.dual_axis_repair import calibrate_affect_for_repair
 
@@ -607,8 +616,10 @@ class ChatCycleMixin:
                 if repair_appraisal.active:
                     if not repair_lifetime.state.active and not repair_lifetime.state.exhausted:
                         repair_lifetime.begin(target=str(getattr(repair_appraisal, "response_strategy", "") or ""))
-                    if repair_lifetime.available():
-                        repair_lifetime.consume_public_turn()
+                    # Chỉ ghi nhận ở đây. Lượt repair chỉ bị consume sau khi
+                    # public text thật sự được commit, không phải ngay lúc bắt đầu
+                    # cognition rồi có thể fail giữa đường.
+                    repair_lifetime.available()
                     frame.metadata["repair_state"] = {
                         "active": bool(repair_lifetime.state.active),
                         "turns_left": int(repair_lifetime.state.turns_left),

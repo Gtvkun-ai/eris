@@ -75,18 +75,28 @@ class ContestedClaimStore:
 
 class MemoryProvenancePolicy:
     def decide(self, *, source: str, confidence: float, evidence: Iterable[str] = (), text: str = "") -> ProvenanceDecision:
-        if not _guard_enabled():
-            return ProvenanceDecision(PublicMemoryMode.ASSERT, "guard_disabled")
-        if GLOBAL_CONTESTED_CLAIMS.is_contested(text, consume_turn=True):
-            return ProvenanceDecision(PublicMemoryMode.ASK_CLARIFY, "contested_claim_ttl")
         source_key = str(source or "").lower()
-        evidence_count = len(tuple(evidence or ()))
         confidence = max(0.0, min(1.0, float(confidence or 0.0)))
-        if confidence >= 0.86 and evidence_count >= 1 and "semantic" in source_key:
-            return ProvenanceDecision(PublicMemoryMode.ASSERT, "stable_semantic_fact")
-        if confidence >= 0.55 and evidence_count >= 1:
-            return ProvenanceDecision(PublicMemoryMode.HEDGED, "limited_provenance")
-        return ProvenanceDecision(PublicMemoryMode.ASK_CLARIFY, "weak_or_missing_provenance")
+        if not _guard_enabled():
+            decision = ProvenanceDecision(PublicMemoryMode.ASSERT, "guard_disabled")
+        elif GLOBAL_CONTESTED_CLAIMS.is_contested(text, consume_turn=True):
+            decision = ProvenanceDecision(PublicMemoryMode.ASK_CLARIFY, "contested_claim_ttl")
+        else:
+            evidence_count = len(tuple(evidence or ()))
+            if confidence >= 0.86 and evidence_count >= 1 and "semantic" in source_key:
+                decision = ProvenanceDecision(PublicMemoryMode.ASSERT, "stable_semantic_fact")
+            elif confidence >= 0.55 and evidence_count >= 1:
+                decision = ProvenanceDecision(PublicMemoryMode.HEDGED, "limited_provenance")
+            else:
+                decision = ProvenanceDecision(PublicMemoryMode.ASK_CLARIFY, "weak_or_missing_provenance")
+        try:
+            from runtime.hardening_metrics import record_memory_provenance
+            record_memory_provenance(
+                mode=decision.mode.value, reason=decision.reason, source=source_key, confidence=confidence
+            )
+        except Exception:
+            pass
+        return decision
 
     @staticmethod
     def render(text: str, decision: ProvenanceDecision) -> str:

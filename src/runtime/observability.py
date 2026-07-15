@@ -299,6 +299,13 @@ class ErisObservability:
                 "session_retention_", "manual_disable_", "thumbs_down_", "rollback_", "canary_",
                 "user_accepted_", "user_corrected_", "user_intruded_", "relation_ruptured_",
             ),
+            "runtime_hardening": (
+                "director_semantic_", "false_success_action_", "action_confirmation_",
+                "memory_assert_without_provenance_", "memory_provenance_", "repair_loop_",
+                "surface_leak_", "tts_locale_switch_", "tts_fallback_same_language_",
+                "tts_breaker_", "429_per_provider_per_lane", "constrained_rerun_fail_",
+                "avg_prompt_tokens_by_lane", "user_correction_after_action_",
+            ),
         }
         dashboards: dict[str, dict[str, Any]] = {name: {} for name in groups}
         for metric_name, value in snapshot.items():
@@ -443,8 +450,11 @@ class ErisObservability:
         )
 
     def record_constrained_rerun(self, *, outcome: str, reasons: Any = (), count: int = 1) -> None:
-        self.increment("constrained_rerun_count", value=float(max(0, count)), tags={"outcome": str(outcome or "unknown")})
-        self.log("constrained_rerun", tags={"outcome": str(outcome or "unknown")}, fields={"gate_reasons": list(reasons or ())[:12]})
+        normalized = str(outcome or "unknown").lower()
+        self.increment("constrained_rerun_count", value=float(max(0, count)), tags={"outcome": normalized})
+        if normalized in {"failed", "fallback", "exception", "rejected"}:
+            self.increment("constrained_rerun_fail_rate", tags={"outcome": normalized})
+        self.log("constrained_rerun", tags={"outcome": normalized}, fields={"gate_reasons": list(reasons or ())[:12]})
 
     def record_prompt_budget(self, *, before_tokens: int, after_tokens: int, cap: int, retained_blocks: Any = (), trimmed: bool = False) -> None:
         retained = tuple(str(item) for item in (retained_blocks or ()))[:16]

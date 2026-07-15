@@ -106,7 +106,13 @@ class FinalSurfaceSanitizer:
             return match.group(0)
 
         out = _STAGE_PAREN_RE.sub(stage_repl, out)
-        return SanitizeResult(_squash(out), tuple(dict.fromkeys(blocked)))
+        blocked_kinds = tuple(dict.fromkeys(blocked))
+        try:
+            from runtime.hardening_metrics import record_surface_sanitizer
+            record_surface_sanitizer(surface=surface, blocked_kinds=blocked_kinds)
+        except Exception:
+            pass
+        return SanitizeResult(_squash(out), blocked_kinds)
 
 
 __all__ = ["FinalSurfaceSanitizer", "SanitizeResult"]

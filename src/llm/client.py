@@ -61,6 +61,7 @@ def _record_pressure_429(provider: str, response, default: float = 20.0) -> None
         GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit(
             provider,
             retry_after_s=retry_after,
+            lane="transport",
         )
         GLOBAL_OBSERVABILITY.increment("rate_limit_429_total", tags={"provider": provider})
         GLOBAL_OBSERVABILITY.observe("retry_after_seconds", retry_after, tags={"provider": provider})

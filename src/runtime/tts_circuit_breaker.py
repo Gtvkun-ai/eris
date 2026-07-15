@@ -37,6 +37,17 @@ class BreakerDecision:
     reason: str = ""
 
 
+def _record_metric(key: tuple[str, str, str, str], *, state: BreakerState, event: str, kind: str = "") -> None:
+    try:
+        from runtime.hardening_metrics import record_tts_breaker
+        provider, _model, _voice, locale = tuple(key)
+        record_tts_breaker(
+            state=state.value, event=event, provider=str(provider), locale=str(locale), kind=str(kind or "")
+        )
+    except Exception:
+        pass
+
+
 class TtsCircuitBreaker:
     def __init__(self, *, failure_threshold: int = 3, cooldown_s: float = 45.0, successful_probes: int = 2, max_half_open_probes: int = 1) -> None:
         self.failure_threshold = max(1, int(failure_threshold))
@@ -52,14 +63,18 @@ class TtsCircuitBreaker:
             entry = self._entries.setdefault(tuple(key), _Entry())
             if entry.state == BreakerState.OPEN:
                 if ts - entry.opened_at < self.cooldown_s:
+                    _record_metric(tuple(key), state=entry.state, event="blocked_cooldown", kind=entry.last_failure_kind)
                     return BreakerDecision(False, entry.state, "cooldown")
                 entry.state = BreakerState.HALF_OPEN
                 entry.probes_in_flight = 0
                 entry.successful_probes = 0
+                _record_metric(tuple(key), state=entry.state, event="cooldown_elapsed", kind=entry.last_failure_kind)
             if entry.state == BreakerState.HALF_OPEN:
                 if entry.probes_in_flight >= self.max_half_open_probes:
+                    _record_metric(tuple(key), state=entry.state, event="probe_blocked", kind=entry.last_failure_kind)
                     return BreakerDecision(False, entry.state, "probe_limit")
                 entry.probes_in_flight += 1
+                _record_metric(tuple(key), state=entry.state, event="probe_allowed", kind=entry.last_failure_kind)
                 return BreakerDecision(True, entry.state, "probe")
             return BreakerDecision(True, entry.state, "closed")
 
@@ -71,6 +86,7 @@ class TtsCircuitBreaker:
                 entry.successful_probes += 1
                 if entry.successful_probes >= self.successful_probes:
                     self._entries[tuple(key)] = _Entry()
+                    _record_metric(tuple(key), state=BreakerState.CLOSED, event="probe_recovered")
             else:
                 entry.failures = 0
                 entry.last_failure_kind = ""
@@ -85,11 +101,13 @@ class TtsCircuitBreaker:
                 entry.state = BreakerState.OPEN
                 entry.opened_at = ts
                 entry.failures = self.failure_threshold
+                _record_metric(tuple(key), state=entry.state, event="probe_failed", kind=entry.last_failure_kind)
                 return
             entry.failures += 1
             if entry.failures >= self.failure_threshold:
                 entry.state = BreakerState.OPEN
                 entry.opened_at = ts
+                _record_metric(tuple(key), state=entry.state, event="threshold_open", kind=entry.last_failure_kind)
 
     def state(self, key: tuple[str, str, str, str]) -> BreakerState:
         with self._lock:

@@ -43,6 +43,8 @@ class ActionExecutionResult:
     observed: bool = False
     evidence: tuple[str, ...] = ()
     error_kind: str = ""
+    observer_reason: str = ""
+    publicized: bool = False
 
     def __post_init__(self) -> None:
         try:
@@ -86,6 +88,8 @@ class ActionExecutionResult:
             "observed": bool(self.observed),
             "evidence": list(self.evidence),
             "error_kind": self.error_kind,
+            "observer_reason": self.observer_reason,
+            "publicized": bool(self.publicized),
         }
 
 

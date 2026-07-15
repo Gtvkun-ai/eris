@@ -129,6 +129,8 @@ class SpeechLocalizer:
         all_lane_budget = os.environ.get("ERIS_TOKEN_BUDGET_ALL_LANES", "1").strip().lower() not in {
             "0", "false", "off", "no",
         }
+        plan = None
+        budgeted_text = str(text or "")
         if all_lane_budget:
             try:
                 from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
@@ -143,14 +145,14 @@ class SpeechLocalizer:
                 if not plan.allowed:
                     logger.info("[TTS.Localizer] Bỏ pass dịch do token pressure: %s", plan.reason)
                     return text
-                GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
-                    "gemini",
-                    lane="speech_localizer",
-                    prompt_tokens=estimated_prompt,
-                    output_tokens=plan.output_tokens,
+                from llm.token_budget import truncate_text_to_budget
+                budgeted_text = truncate_text_to_budget(
+                    budgeted_text, max(80, plan.prompt_limit - 220),
+                    marker="…[transcript localizer rút gọn]…", preserve_tail=True,
                 )
             except Exception:
-                pass
+                plan = None
+                budgeted_text = str(text or "")
 
         api_key, pool, lease = _get_api_key_lease()
         if not api_key:
@@ -162,12 +164,13 @@ class SpeechLocalizer:
             style_line = _style_line(prosody_style)
             prompt = (
                 "Translate the transcript into natural, gentle, polite Japanese for a soft anime girl "
-                "desktop companion speaking to her bạn. Keep the meaning. Do not add stage "
+                "desktop companion speaking to the user. Avoid titles such as ご主人様 or マスター; "
+                "prefer natural Japanese that omits second-person address when possible. Keep the meaning. Do not add stage "
                 "directions, quotes, explanations, romanization, or the original text. Preserve line "
                 "breaks as short breath groups; keep the same line order whenever possible.\n"
                 f"{style_line}\n\n"
                 "Transcript:\n"
-                f"{text}"
+                f"{budgeted_text}"
             )
             response = client.models.generate_content(
                 model=os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "gemini-2.5-flash").strip(),
@@ -175,6 +178,14 @@ class SpeechLocalizer:
             )
             out = _clean_translation_output(getattr(response, "text", "") or "")
             try:
+                if plan is not None:
+                    from llm.token_budget import estimate_tokens
+                    from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
+                        "gemini", lane="speech_localizer",
+                        prompt_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
+                        output_tokens=plan.output_tokens,
+                    )
                 if pool is not None and lease is not None:
                     pool.mark_success(lease=lease)
                 from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
@@ -193,7 +204,7 @@ class SpeechLocalizer:
                         pool.mark_rate_limited(seconds=60.0, lease=lease, reason="localizer_http_429")
                         try:
                             from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-                            GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0)
+                            GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0, lane="speech_localizer")
                         except Exception:
                             pass
                     elif str(kind) == "project_permission":

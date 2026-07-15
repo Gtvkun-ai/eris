@@ -278,6 +278,62 @@ class SelfCritiqueEscalationMixin:
         except Exception:
             return str(os.environ.get("ERIS_SENTENCE_MENTOR", "1")).strip().lower() not in {"0", "false", "off", "no"}
 
+    def _optional_lane_plan(self, client, *, lane: str, messages: list[dict], output_tokens: int):
+        """Dùng cùng lane governor cho mentor/critic thay vì mỗi pass tự tiêu quota.
+
+        Trả ``(plan, governed_messages)`` hoặc ``(None, [])`` khi lane bị shed.
+        Fail-mềm để evaluator rule-based vẫn hoạt động khi telemetry lỗi.
+        """
+
+        try:
+            svc = getattr(self, "llm_service", None)
+            planner = getattr(svc, "_pressure_plan_for_client", None)
+            if callable(planner):
+                plan = planner(
+                    client, channel=lane, messages=messages,
+                    output_tokens=output_tokens, optional_pass=True,
+                )
+            else:
+                from llm.token_budget import detect_provider, estimate_tokens
+                from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+
+                provider = detect_provider(
+                    getattr(client, "base_url", ""), getattr(client, "model_name", "")
+                )
+                plan = GLOBAL_TOKEN_PRESSURE_GOVERNOR.plan_request(
+                    provider, lane=lane, prompt_tokens=estimate_tokens(messages),
+                    requested_output_tokens=output_tokens, optional_pass=True,
+                    min_prompt_tokens=128, min_output_tokens=64,
+                )
+            if not plan.allowed:
+                return None, []
+            from llm.token_budget import budget_existing_messages
+
+            governed = budget_existing_messages(
+                messages,
+                total_tokens=plan.prompt_limit + plan.output_tokens,
+                output_reserve=plan.output_tokens,
+            )
+            return plan, governed
+        except Exception:
+            return None, messages
+
+    @staticmethod
+    def _record_optional_lane_request(plan, messages: list[dict]) -> None:
+        if plan is None:
+            return
+        try:
+            from llm.token_budget import estimate_tokens
+            from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+
+            GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
+                plan.provider, lane=plan.lane, prompt_tokens=estimate_tokens(messages),
+                output_tokens=plan.output_tokens,
+            )
+            GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success(plan.provider)
+        except Exception:
+            pass
+
     def _mentor_critique_decision(
         self,
         decision,
@@ -327,19 +383,26 @@ class SelfCritiqueEscalationMixin:
             f"Evaluation context:\n{mentor_context[:1600]}\n\n"
             "Rubric: đúng frame > có duyên > ngắn. Một câu đúng mà nhạt vẫn hơn một câu vivid nhưng sai."
         )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        plan, governed_messages = self._optional_lane_plan(
+            client, lane="support_pass", messages=messages, output_tokens=180,
+        )
+        if not governed_messages:
+            return None
         try:
             response = client.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=governed_messages,
                 temperature=0.15,
                 frequency_penalty=0.1,
                 presence_penalty=0.0,
-                max_tokens=180,
+                max_tokens=plan.output_tokens if plan is not None else 180,
                 response_format={"type": "json_object"},
                 grammar=None,
             )
+            self._record_optional_lane_request(plan, governed_messages)
             raw = svc._extract_content(response) if hasattr(svc, "_extract_content") else str(response)
             extracted = svc._extract_first_json_object(raw) if hasattr(svc, "_extract_first_json_object") else None
             payload = json.loads(extracted or re.search(r"\{.*\}", raw, flags=re.DOTALL).group(0))
@@ -518,16 +581,23 @@ class SelfCritiqueEscalationMixin:
             + f"Câu nháp của trợ lý: {draft[:400]}\n"
             + "Chấm điểm câu nháp này."
         )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        plan, governed_messages = self._optional_lane_plan(
+            client, lane="self_critique", messages=messages, output_tokens=96,
+        )
+        if not governed_messages:
+            return None
         try:
             response = client.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=governed_messages,
                 temperature=0.0,
-                max_tokens=96,
+                max_tokens=plan.output_tokens if plan is not None else 96,
                 response_format={"type": "json_object"},
             )
+            self._record_optional_lane_request(plan, governed_messages)
             raw = svc._extract_content(response) if hasattr(svc, "_extract_content") else str(response)
             payload = json.loads(re.search(r"\{.*\}", raw, flags=re.DOTALL).group(0))
             quality = float(payload.get("quality", 0.7))
@@ -923,6 +993,13 @@ class SelfCritiqueEscalationMixin:
         except Exception as exc:
             try:
                 self.logger.warning("[qwen-first support] constrained rerun failed: %s", exc)
+            except Exception:
+                pass
+            try:
+                from runtime.observability import ensure_observability
+                ensure_observability(self).record_constrained_rerun(
+                    outcome="exception", reasons=(type(exc).__name__,), count=0
+                )
             except Exception:
                 pass
             return None

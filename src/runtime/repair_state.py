@@ -38,6 +38,7 @@ class RepairStateController:
             target=str(target or ""),
             exhausted=False,
         )
+        self._metric("begin")
         return self.state
 
     def available(self, *, now: float | None = None) -> bool:
@@ -54,7 +55,9 @@ class RepairStateController:
             return False
         self.state.turns_left -= 1
         if self.state.turns_left <= 0:
-            self.exhaust()
+            self.exhaust(event="public_turn_exhausted")
+        else:
+            self._metric("public_turn_consumed")
         return True
 
     def consume_fallback_once(self, *, now: float | None = None) -> bool:
@@ -63,16 +66,31 @@ class RepairStateController:
             return False
         self.state.fallback_used = True
         self.state.turns_left -= 1
+        self._metric("fallback_consumed")
         return True
 
-    def exhaust(self) -> None:
+    def exhaust(self, *, event: str = "exhaust") -> None:
         self.state.active = False
         self.state.turns_left = 0
         self.state.exhausted = True
+        self._metric(event)
 
     def clear(self) -> None:
         """Topic đã đổi hoặc user đã chấp nhận; cho phép repair mới sau đó."""
+        had_state = self.state.active or self.state.exhausted
         self.state = RepairState()
+        if had_state:
+            self._metric("clear")
+
+    def _metric(self, event: str) -> None:
+        try:
+            from runtime.hardening_metrics import record_repair_state
+            record_repair_state(
+                active=self.state.active, exhausted=self.state.exhausted,
+                turns_left=self.state.turns_left, event=event,
+            )
+        except Exception:
+            pass
 
 
 __all__ = ["RepairState", "RepairStateController"]
