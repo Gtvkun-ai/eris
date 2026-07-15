@@ -393,8 +393,8 @@ public partial class UdpListener : Node2D
 				SetSettingsStatus(ok
 					? $"Đã thực thi {action}: {changed} thành phần{(string.IsNullOrWhiteSpace(backup) ? "" : " · đã tạo backup")}"
 					: $"Maintenance {action} lỗi: {errors} lỗi. Xem log để biết chi tiết.");
-				if (ok && string.Equals(action, "reset_anchor_state", StringComparison.OrdinalIgnoreCase))
-					ApplyAnchorResetAfterMaintenance();
+				if (ok)
+					ApplyMaintenanceResultToUi(action, result);
 				RequestMaintenanceCatalog();
 			}
 		}

@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "chat": {
+    "semantic_authority_mode": "qwen_first",
+    "reasoning_effort": "medium",
+    "support_confidence_threshold": 0.48,
+    "critique_mode": "bounded_refine",
+    "max_constrained_reruns": 1,
+    "response_contract_gate": true,
+    "director_candidate_mode": "adaptive",
+    "director_second_pass": "adaptive",
+    "low_quality_fail_open": false,
+    "auto_fallback": true,
+    "completion_chat_tokens": 1280,
+    "chat_timeout_seconds": 30,
+    "max_concurrency": 4
+  },
+  "personality": {
+    "retort_mode": "balanced",
+    "provocation_policy": "character_safe",
+    "style_repair_mode": "self_aware_dry",
+    "allow_annoyed_soft": true,
+    "allow_sharp_retort": true,
+    "allow_cold_boundary": true,
+    "forbid_family_literalization": true,
+    "forbid_generic_helper_reset": true
+  },
+  "capabilities": {
+    "source": "registry",
+    "respect_runtime_availability": true,
+    "launch_app_enabled": true,
+    "focus_window_enabled": true,
+    "set_volume_enabled": true,
+    "media_enabled": true,
+    "copy_text_enabled": true,
+    "open_url_enabled": true,
+    "search_web_enabled": true,
+    "weather_enabled": true,
+    "now_playing_enabled": true
+  },
+  "prompt": {
+    "hard_cap_tokens": 4800,
+    "dds_enabled": true,
+    "strict_grounding": true
+  },
+  "memory": {
+    "semantic_parser": false,
+    "background_digest": true,
+    "maintenance_enabled": true,
+    "maintenance_budget": "small"
+  },
+  "stage": {
+    "performance_acts_enabled": true,
+    "interrupt_enabled": true,
+    "protocol_enabled": true,
+    "segment_tts": true,
+    "segment_dispatch": "inline",
+    "tts_task_manager": true,
+    "prefetch_workers": 2,
+    "max_tts_segments": 4,
+    "min_split_chars": 72
+  },
+  "tts": {
+    "enabled": true,
+    "language": "ja",
+    "voice": "Leda",
+    "quality": "high",
+    "volume": 1.0,
+    "speed": 1.0,
+    "stage_localize": true,
+    "audio_polish": true
+  },
+  "pipeline": {
+    "v3_enabled": true
+  },
+  "danger_zone": {
+    "require_preview_before_execute": true,
+    "typed_confirmation": true,
+    "allow_destructive_maintenance": false
+  }
+}
