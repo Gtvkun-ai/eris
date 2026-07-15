@@ -753,17 +753,12 @@ class RelationshipDynamicsEngine:
         boundary_repair = bool(retract_previous_claim and repair_boundary >= 0.55)
 
         # 1) Familiarity / ritual từ repeated_project_context score.
-        familiarity_gain = 0.006
-        
-        # FIX #3: Thêm session continuity — tăng familiarity theo số lượt trong session.
-        # Tránh trường hợp trò chuyện cảm xúc thuần không tăng familiarity.
-        # Có trần thấp (0.012 max ở turn 8) và decay nhanh giữa session.
-        if event.turn_index > 0:
-            session_continuity_bonus = min(0.012, (event.turn_index / 8.0) * 0.012)
-            familiarity_gain += session_continuity_bonus
-            if session_continuity_bonus >= 0.006:
-                notes.append(f"session_continuity:turn_{event.turn_index}:{session_continuity_bonus:.3f}")
-        
+        # Chỉ ở lại nói tiếp KHÔNG còn tự tăng familiarity/closeness. Nó là
+        # engagement/exposure, không phải bằng chứng ấm lên. Nếu user ở lại để
+        # chửi, cũ đã tính thành "continued investment" rồi kéo gần xuống. Rất
+        # thơ, nhưng thơ kiểu bug tình cảm.
+        familiarity_gain = 0.0
+
         if repeated_score > 0.0:
             familiarity_gain += 0.024 * repeated_score
             current.ritual_strength = _nudge(current.ritual_strength, 0.020 * repeated_score)
@@ -779,7 +774,14 @@ class RelationshipDynamicsEngine:
         # evidence engagement hợp lệ. Nó tăng investment/familiarity, nhưng không
         # tự biến thành "user yêu ERIS". Máy móc cũng nên biết phân biệt hai việc,
         # dù lịch sử chatbot đã chứng minh đây là một tham vọng khá lớn.
-        continuity_engagement = min(0.42, max(0, event.turn_index) * 0.035)
+        continuity_engagement = min(0.30, max(0, event.turn_index) * 0.020)
+        hostility_signal = max(
+            repair_irritation,
+            repair_boundary,
+            perceived_rejection,
+            _score(getattr(affect, "anger", 0.0)),
+            _score(getattr(affect, "hostility", 0.0)),
+        )
         engagement_signal = max(
             repair_engagement,
             repeated_score * 0.82,
@@ -787,10 +789,15 @@ class RelationshipDynamicsEngine:
             continuity_engagement,
         )
         if engagement_signal >= 0.12:
-            engagement_delta = min(0.026, 0.004 + engagement_signal * 0.020)
+            engagement_delta = min(0.022, 0.003 + engagement_signal * 0.016)
             current.engagement_investment = _nudge(current.engagement_investment, engagement_delta)
-            familiarity_gain += min(0.010, engagement_signal * 0.008)
-            notes.append(f"engagement:continued_investment:{engagement_signal:.2f}")
+            if hostility_signal < 0.32 and (repeated_score > 0.0 or accepted_action >= 0.15 or repair_engagement >= 0.30):
+                familiarity_gain += min(0.006, engagement_signal * 0.005)
+            notes.append(f"engagement:continued_not_closeness:{engagement_signal:.2f}")
+        if hostility_signal >= 0.32:
+            current.rupture = _nudge(current.rupture, 0.012 + hostility_signal * 0.024)
+            current.preferred_distance = _nudge(current.preferred_distance, 0.010 + hostility_signal * 0.020)
+            notes.append(f"friction:engaged_hostility:{hostility_signal:.2f}")
 
         if playful_repair:
             # Một correction có nhịp chọc là dấu hiệu user vẫn cho phép vùng đùa
@@ -1024,9 +1031,16 @@ class RelationshipDynamicsEngine:
             notes.append("repair:softens_rupture")
 
         # 11) Khoảng cách xã hội có quán tính.
-        # FIX #2b: Giảm hệ số quán tính để warmth/probe thật không bị triệt tiêu ngay.
-        closeness_pull = current.trust * 0.008 + current.familiarity * 0.005
-        defense_push = current.exposure_recoil * 0.010 + current.dignity_defense * 0.014 + current.rupture * 0.008
+        # Engagement/familiarity nền KHÔNG được kéo gần xuống. Chỉ warmth/trust đã
+        # được xác nhận ở các nhánh acceptance/intimacy phía trên mới có quyền đó.
+        confirmed_warmth = max(accepted_style * 0.50, accepted_answer * 0.35, intimacy_pressure * 0.55 if intimacy_pressure >= 0.30 else 0.0)
+        closeness_pull = confirmed_warmth * 0.010 + max(0.0, current.trust - 0.35) * 0.004
+        defense_push = (
+            current.exposure_recoil * 0.010
+            + current.dignity_defense * 0.014
+            + current.rupture * 0.011
+            + hostility_signal * 0.012
+        )
         current.preferred_distance = _nudge(current.preferred_distance, defense_push - closeness_pull)
 
         # 12) Debug/evidence notes.

@@ -652,6 +652,34 @@ class PostGenerationFiltersMixin:
         authority = getattr(self, "_apply_v3_authority_guard", None)
         if callable(authority):
             decision = authority(decision, frame=frame, channel="chat")
+        try:
+            policy = SemanticAuthorityPolicy.from_env()
+            if policy.enforce_response_contract:
+                from actions.contracts import VALID_SYSTEM_ACTION_LIST
+                from runtime.turn_frame import build_turn_frame
+                from runtime.response_acceptance_gate import ResponseAcceptanceGate
+
+                previous_user = str(getattr(self, "last_user_text_for_semantics", "") or "")
+                previous_assistant = str(getattr(self, "last_chat_answer", "") or "")
+                interrupt_event = None
+                ledger = getattr(self, "interrupt_ledger", None)
+                recent = getattr(ledger, "recent", None) if ledger is not None else None
+                if callable(recent):
+                    events = tuple(recent(1) or ())
+                    interrupt_event = events[-1] if events else None
+                turn_frame = build_turn_frame(
+                    user_text=user_text,
+                    previous_assistant_text=previous_assistant,
+                    previous_user_text=previous_user,
+                    interrupt_event=interrupt_event,
+                )
+                gate = ResponseAcceptanceGate(capability_action_ids=VALID_SYSTEM_ACTION_LIST)
+                decision = gate.apply(decision, frame=turn_frame)
+        except Exception as exc:
+            try:
+                decision = self._trace_only_guard(decision, f"response_contract_gate_skipped:{type(exc).__name__}")
+            except Exception:
+                pass
         return decision
 
     def _append_trace(self, trace: str, marker: str) -> str:

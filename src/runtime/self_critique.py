@@ -730,6 +730,97 @@ class SelfCritiqueEscalationMixin:
             )
         return strong
 
+
+    def _qwen_first_contract_fallback_decision(self, decision, *, user_text: str, chat_generation_kwargs: dict):
+        """Fallback nhỏ khi critique đã biết draft yếu nhưng mentor/rerun chết.
+
+        Không dùng để làm văn hay. Chỉ dùng để tránh fail-open: câu q<ngưỡng không
+        được phát nguyên trạng như bản cũ. Nếu không có contract active thì trả
+        một repair line rất ngắn, ít tệ hơn việc để câu lỗi tự do đi du lịch.
+        """
+        try:
+            from actions.contracts import VALID_SYSTEM_ACTION_LIST
+            from runtime.turn_frame import build_turn_frame
+            from runtime.response_contract import build_response_contract
+
+            previous = ""
+            reply_context = chat_generation_kwargs.get("reply_context")
+            previous_turn = getattr(reply_context, "previous_public_turn", None) if reply_context is not None else None
+            if previous_turn is not None:
+                previous = str(getattr(previous_turn, "text", "") or "")
+            if not previous:
+                previous = str(getattr(self, "last_chat_answer", "") or "")
+            frame = build_turn_frame(
+                user_text=user_text,
+                previous_assistant_text=previous,
+                previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
+            )
+            contract = build_response_contract(frame, capability_action_ids=VALID_SYSTEM_ACTION_LIST)
+            fallback = str(contract.fallback_text or "").strip()
+        except Exception:
+            fallback = ""
+        if not fallback:
+            fallback = "Câu vừa rồi của tôi lệch nhịp. Tôi rút lại và trả lời gọn hơn: Ngài nói tiếp phần chính đi."
+        try:
+            from dataclasses import replace
+            revised = replace(decision)
+        except Exception:
+            revised = decision
+        revised.text = fallback
+        revised.should_speak = True
+        revised.system_action = ""
+        revised.action_input = ""
+        revised.intent = revised.intent or "conversation_repair"
+        revised.action = "none"
+        revised.parse_mode = "qwen_first_low_quality_fallback"
+        trace = str(getattr(revised, "debug_trace", "") or "").strip()
+        revised.debug_trace = self._sc_join(trace, "qwen_first_low_quality_no_fail_open")
+        try:
+            revised.confidence = min(float(getattr(revised, "confidence", 0.55) or 0.55), 0.55)
+        except Exception:
+            revised.confidence = 0.55
+        return revised
+
+    def _qwen_first_constrained_rerun(self, decision, *, user_text: str, critique, chat_generation_kwargs: dict, ti_report, notes: str = ""):
+        """Rerun bắt buộc bằng Qwen khi draft yếu, kể cả mentor chết.
+
+        Đây là khác biệt quan trọng: mentor chỉ là ý kiến. Acceptance/quality mới là
+        chốt cửa. Nếu Qwen viết câu dở và mentor không online, ta vẫn ép Qwen tự sửa
+        bằng violation report thay vì mở cửa cho câu dở đi ra loa.
+        """
+        policy = SemanticAuthorityPolicy.from_env()
+        kwargs = dict(chat_generation_kwargs)
+        kwargs.pop("use_escalation_client", None)
+        kwargs["reasoning_effort"] = policy.primary_reasoning_effort
+        draft = str(getattr(decision, "text", "") or "").strip()
+        violation = (
+            f"LOW_QUALITY_DRAFT: quality={getattr(critique, 'quality', 0.0):.2f}; "
+            f"reason={str(getattr(critique, 'reason', '') or '')[:220]}\n"
+            f"Rejected draft:\n{draft[:700]}\n\n"
+            "Rewrite the answer to the original user turn. Satisfy RESPONSE_CONTRACT/TURN_FRAME if present. "
+            "Do not mention critique, mentor, rerun, policy, or internal labels. Keep ERIS voice direct."
+        )
+        if notes:
+            violation += "\n\nPrivate advisory notes:\n" + str(notes).strip()[:1200]
+        kwargs["ti_context"] = (str(kwargs.get("ti_context", "") or "") + "\n\n" + violation).strip()
+        try:
+            raw = self.llm_service.generate_chat_reply(**kwargs, use_escalation_client=False)
+            revised = self.parser.parse(raw, user_hint=user_text)
+            revised = self.ti_governor.enforce_decision(
+                revised,
+                ti_report,
+                user_hint=user_text,
+                vision_grounded=bool(getattr(self, "vision_facts", None)),
+            )
+            revised.debug_trace = self._sc_join(getattr(revised, "debug_trace", ""), "qwen_constrained_rerun")
+            return revised
+        except Exception as exc:
+            try:
+                self.logger.warning("[qwen-first support] constrained rerun failed: %s", exc)
+            except Exception:
+                pass
+            return None
+
     def _qwen_first_support_cycle(
         self,
         decision,
@@ -793,6 +884,18 @@ class SelfCritiqueEscalationMixin:
             critique=critique,
             context=str(chat_generation_kwargs.get("conversation_context", "") or ""),
         )
+        if not notes and weak_draft and not policy.low_quality_fail_open:
+            revised = self._qwen_first_constrained_rerun(
+                decision,
+                user_text=user_text,
+                critique=critique,
+                chat_generation_kwargs=chat_generation_kwargs,
+                ti_report=ti_report,
+                notes="",
+            )
+            return revised or self._qwen_first_contract_fallback_decision(
+                decision, user_text=user_text, chat_generation_kwargs=chat_generation_kwargs
+            )
         if not notes:
             return decision
 
@@ -824,7 +927,27 @@ class SelfCritiqueEscalationMixin:
             )
         except Exception as exc:
             self.logger.warning("[qwen-first support] Qwen synthesis failed: %s", exc)
+            if weak_draft and not policy.low_quality_fail_open:
+                rerun = self._qwen_first_constrained_rerun(
+                    decision,
+                    user_text=user_text,
+                    critique=critique,
+                    chat_generation_kwargs=chat_generation_kwargs,
+                    ti_report=ti_report,
+                    notes=notes,
+                )
+                return rerun or self._qwen_first_contract_fallback_decision(
+                    decision, user_text=user_text, chat_generation_kwargs=chat_generation_kwargs
+                )
             return decision
+
+        if weak_draft and not policy.low_quality_fail_open:
+            # Mentor notes đã dùng để viết lại, nhưng vẫn không cho phép trả về
+            # nguyên draft cũ nếu revision rỗng/bị parse thành câu trống.
+            if not str(getattr(revised, "text", "") or "").strip():
+                return self._qwen_first_contract_fallback_decision(
+                    decision, user_text=user_text, chat_generation_kwargs=chat_generation_kwargs
+                )
 
         if getattr(revised, "system_action", ""):
             revised = self._run_tool_continuation(

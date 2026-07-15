@@ -64,6 +64,34 @@ def _get_api_key() -> str:
     return ""
 
 
+
+def _get_api_key_lease():
+    """Lấy key + lease cho localizer để pool biết đúng key nào vừa lỗi.
+
+    Env key riêng không có lease nên chỉ trả (key, None, None). Pool key phải đi
+    qua acquire(), tuyệt đối không current_key() trong request path nữa.
+    """
+    for env_name in ("ERIS_TTS_API_KEY", "ERIS_SPEECH_API_KEY", "GEMINI_SPEECH_API_KEY", "GEMINI_API_KEY"):
+        key = os.environ.get(env_name, "").strip()
+        if key and not key.startswith("PASTE_"):
+            return key, None, None
+    if _remote_provider_is_gemini():
+        key = os.environ.get("ERIS_REMOTE_API_KEY", "").strip()
+        if key and not key.startswith("PASTE_"):
+            return key, None, None
+    try:
+        from llm.key_pool import get_key_pool
+
+        pool = get_key_pool("gemini")
+        if pool and pool.size > 0:
+            lease = pool.acquire()
+            if lease is not None:
+                return lease.key, pool, lease
+    except Exception:
+        pass
+    return "", None, None
+
+
 def _already_japanese(text: str) -> bool:
     return bool(_JAPANESE_RE.search(text or ""))
 
@@ -99,7 +127,7 @@ class SpeechLocalizer:
         return self._cache[key]
 
     def _translate_to_japanese(self, text: str, *, prosody_style: str = "") -> str:
-        api_key = _get_api_key()
+        api_key, pool, lease = _get_api_key_lease()
         if not api_key:
             return text
         try:
@@ -121,8 +149,25 @@ class SpeechLocalizer:
                 contents=prompt,
             )
             out = _clean_translation_output(getattr(response, "text", "") or "")
+            try:
+                if pool is not None and lease is not None:
+                    pool.mark_success(lease=lease)
+            except Exception:
+                pass
             return out or text
         except Exception as exc:
+            try:
+                from llm.provider_errors import classify_provider_error
+                kind = classify_provider_error(exc)
+                if pool is not None and lease is not None:
+                    if str(kind) == "key_revoked":
+                        pool.mark_permanently_dead(lease=lease, reason="localizer_key_reported_leaked")
+                    elif str(kind) == "rate_limit":
+                        pool.mark_rate_limited(seconds=60.0, lease=lease, reason="localizer_http_429")
+                    elif str(kind) == "project_permission":
+                        pool.mark_dead(3600.0, lease=lease, reason="localizer_project_permission")
+            except Exception:
+                pass
             logger.warning("[TTS.Localizer] Dịch sang JP lỗi: %s", exc)
             return text
 

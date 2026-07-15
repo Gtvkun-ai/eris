@@ -151,7 +151,7 @@ public partial class UdpListener : Node2D
 	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 348f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
 	private static readonly Vector2 PrivateMindPanelMinSize = new(1040f, 624f);
-	private static readonly Vector2 SettingsPanelMinSize = new(1040f, 624f);
+	private static readonly Vector2 SettingsPanelMinSize = new(1180f, 680f);
 
 	// Tỉ lệ phần khung banner header nằm TRÊN viền card (nhô ra ngoài). 0.5 = 50/50; >0.5 = nổi hẳn lên.
 	private const float DiaryBannerAboveRatio = 0.6f;

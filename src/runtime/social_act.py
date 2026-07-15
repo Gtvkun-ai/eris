@@ -218,6 +218,9 @@ def classify_chat_act_with_confidence(
         "oc cho", "do dien", "do dan", "dan do", "vo dung", "phe vat",
         "rac ruoi", "nhu cut", "nhu cc", "con cac", "stupid", "idiot",
         "dumb", "useless", "trash",
+        # Chọc hướng vào gia đình/thân thế. Không literalize thành câu hỏi thật,
+        # kẻo Eris lại giải thích mình không có mẹ như một cái máy in giấy khai sinh.
+        "me may", "bo may", "ba may", "nha may", "me mi", "bo mi",
     )
     if any(pattern in normalized for pattern in insult_patterns):
         return ChatAct.INSULT_PROVOCATION, 0.96
@@ -241,6 +244,7 @@ def classify_chat_act_with_confidence(
 
     question_phrases = (
         "ban la ai", "ban nghi", "eris nghi", "nghi toi dang", "toi dang xem gi",
+        "ai tro ly", "tro ly", "chatbot", "chatgpt",
         "toi dang lam gi", "dang xem gi", "dang lam gi", "co phai", "la gi",
         "tai sao", "the nao", "vi sao",
     )

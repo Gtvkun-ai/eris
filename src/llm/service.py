@@ -449,6 +449,20 @@ class LlmService:
             clauses.append(
                 "voice_guard: do not collapse into generic assistant disclaimers; keep a direct answer and restrained ERIS voice."
             )
+        try:
+            from runtime.turn_frame import build_turn_frame
+            from runtime.response_contract import build_response_contract
+
+            # Raw-only contract: bắt được capability/meta-style/provocation ngay cả
+            # khi previous_public_turn chưa được nối ở service. Context có lượt
+            # trước sẽ được thêm phía dưới.
+            turn_frame = build_turn_frame(user_text=raw_user_text)
+            contract = build_response_contract(turn_frame)
+            block = contract.to_prompt_block()
+            if block:
+                clauses.append(block)
+        except Exception:
+            pass
         return " ".join(part for part in clauses if str(part or "").strip())
 
     def _chat_text_family(self, text: str) -> str:
@@ -4074,12 +4088,27 @@ class LlmService:
             )
         previous_public_turn = getattr(reply_context, "previous_public_turn", None)
         if previous_public_turn is not None:
+            previous_public_text = str(getattr(previous_public_turn, 'text', '') or '')
             dynamic_policy_parts.append(
                 "Reply context: the current user message may react to the latest visible assistant turn.\n"
                 f"previous_public_turn.channel={getattr(previous_public_turn, 'channel', '')}\n"
                 f"previous_public_turn.parse_mode={getattr(previous_public_turn, 'parse_mode', '')}\n"
-                f"previous_public_turn.text={getattr(previous_public_turn, 'text', '')}"
+                f"previous_public_turn.text={previous_public_text}"
             )
+            try:
+                from runtime.turn_frame import build_turn_frame
+                from runtime.response_contract import build_response_contract
+
+                tf = build_turn_frame(
+                    user_text=effective_user_text,
+                    previous_assistant_text=previous_public_text,
+                )
+                dynamic_policy_parts.append(tf.to_prompt_context())
+                rc_block = build_response_contract(tf).to_prompt_block()
+                if rc_block:
+                    dynamic_policy_parts.append(rc_block)
+            except Exception:
+                pass
 
         state_style_parts = [style_block]
         if ni_context:

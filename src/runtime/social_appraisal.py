@@ -321,7 +321,8 @@ class SocialAppraisalEngine:
 
     _EXPLICIT_CORRECTION = (
         "khong phai", "hieu sai", "nham roi", "sai roi", "toi dau co", "toi khong noi",
-        "y toi la", "y minh la", "o dau ra", "dau ra", "sao lai", "ban vua bia",
+        "y toi la", "y minh la", "toi noi la", "toi bao la", "tao noi la", "tao bao la",
+        "da bao la", "vua bao la", "o dau ra", "dau ra", "sao lai", "ban vua bia",
         "em vua bia", "tu dau ra", "khong dung y", "not what", "wrong", "incorrect",
     )
     _SURPRISE_OR_CHALLENGE = (

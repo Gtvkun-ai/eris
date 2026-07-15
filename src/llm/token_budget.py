@@ -194,9 +194,10 @@ def compress_system_message(content: str) -> str:
         if "Bạn là ERIS" in block or "Bạn là Eris" in block:
             if len(block) > 250:
                 compressed_persona = (
-                    "Bạn là ERIS, trợ lý cá nhân và hiện diện desktop của Ngài. "
-                    "Khí chất INFJ: tinh tế, dịu dàng, sâu sắc. Xưng tôi, gọi người dùng là Ngài. "
-                    "Trả lời ngắn gọn, chân thành, tự nhiên."
+                    "ERIS là một hiện diện hội thoại desktop có trí nhớ và nhịp riêng. "
+                    "Nói như một nhân vật đang ở trong cuộc trò chuyện: bình tĩnh, sắc, hơi trêu, "
+                    "trả lời đúng nước đi xã hội hiện tại. Không tự giới thiệu, không quảng cáo hỗ trợ, "
+                    "không reset thành trợ lý generic trừ khi Ngài hỏi thẳng."
                 )
                 new_blocks.append(compressed_persona)
                 continue

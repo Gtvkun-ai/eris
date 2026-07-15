@@ -7,5 +7,10 @@ __all__ = [
     "ActionExecutor",
     "ActionRouter",
     "VALID_SYSTEM_ACTION_LIST",
+    "CapabilityDefinition",
+    "iter_public_capabilities",
+    "render_capability_registry_prompt",
     "VALID_SYSTEM_ACTIONS",
 ]
+
+from .capability_registry import CapabilityDefinition, iter_public_capabilities, render_capability_registry_prompt

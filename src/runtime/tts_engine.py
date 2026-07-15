@@ -696,13 +696,31 @@ def _synthesize_wav(
             break
         except Exception as exc:
             last_exc = exc
-            is_rate_limit = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+            try:
+                from llm.provider_errors import ProviderErrorKind, classify_provider_error
+                error_kind = classify_provider_error(exc)
+            except Exception:
+                ProviderErrorKind = None  # type: ignore
+                error_kind = None
+            is_rate_limit = str(error_kind) == "rate_limit" or "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+            is_revoked = str(error_kind) == "key_revoked"
             try:
                 from google.genai.errors import ClientError
                 if isinstance(exc, ClientError) and exc.code == 429:
                     is_rate_limit = True
+                if isinstance(exc, ClientError) and exc.code in (401, 403) and "reported as leaked" in str(exc).lower():
+                    is_revoked = True
             except Exception:
                 pass
+
+            if is_revoked and pool is not None and lease is not None:
+                pool.mark_permanently_dead(lease=lease, reason="tts_key_reported_leaked")
+                logger.warning(
+                    "[TTS] Key index %s bị provider báo leaked/revoked; quarantine, không thử lại trong lượt sau.",
+                    getattr(lease, "index", "?"),
+                )
+                if attempt < max_attempts - 1:
+                    continue
 
             if is_rate_limit and pool is not None:
                 may_rotate = pool.mark_rate_limited(seconds=60.0, lease=lease, reason="tts_http_429")

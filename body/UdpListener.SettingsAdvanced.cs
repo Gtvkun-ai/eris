@@ -117,6 +117,7 @@ public partial class UdpListener : Node2D
 		_settingsTtsSpeedValueLabel = null;
 		_settingsImportSecretsDialog = null;
 		_settingsKeyRowsBox = null;
+		_settingsKeyNameInputs.Clear();
 		_settingsKeyInputs.Clear();
 		_settingsKeyStatusLabels.Clear();
 
@@ -149,64 +150,64 @@ public partial class UdpListener : Node2D
 
 	private void BuildAdvancedSettingsPage(Control root)
 	{
-		var reasoningCard = AddSettingsCard(root, new Rect2(32f, 205f, 302f, 342f), "Suy luận");
+		var reasoningCard = AddSettingsCard(root, new Rect2(32f, 205f, 318f, 380f), "Suy luận");
 		BuildAdvancedReasoningCard(reasoningCard);
 
-		var memoryCard = AddSettingsCard(root, new Rect2(356f, 205f, 328f, 342f), "Ngữ cảnh & Memory");
+		var memoryCard = AddSettingsCard(root, new Rect2(370f, 205f, 420f, 380f), "Ngữ cảnh & Memory");
 		BuildAdvancedMemoryCard(memoryCard);
 
-		var stageCard = AddSettingsCard(root, new Rect2(706f, 205f, 302f, 342f), "Biểu diễn & Pipeline");
+		var stageCard = AddSettingsCard(root, new Rect2(810f, 205f, 338f, 380f), "Biểu diễn & Pipeline");
 		BuildAdvancedStageCard(stageCard);
 
 		var divider = new ColorRect
 		{
 			Color = new Color(0.96f, 0.72f, 0.84f, 0.38f),
-			Position = new Vector2(32f, 566f),
-			Size = new Vector2(976f, 1.4f),
+			Position = new Vector2(32f, 604f),
+			Size = new Vector2(1116f, 1.4f),
 			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
 		root.AddChild(divider);
 
 		var noteHeart = CreateUiLabel("♡", 24, SettingsPink);
-		noteHeart.Position = new Vector2(72f, 586f);
+		noteHeart.Position = new Vector2(72f, 624f);
 		noteHeart.Size = new Vector2(32f, 30f);
 		root.AddChild(noteHeart);
 
 		var note = CreateUiLabel("Advanced ghi config thật vào user settings + secrets/.env.", 13, SettingsInkSoft);
-		note.Position = new Vector2(112f, 590f);
+		note.Position = new Vector2(112f, 628f);
 		note.Size = new Vector2(420f, 24f);
 		root.AddChild(note);
 
 		_settingsStatusNoteLabel = CreateUiLabel("", 10, SettingsInk);
-		_settingsStatusNoteLabel.Position = new Vector2(112f, 608f);
+		_settingsStatusNoteLabel.Position = new Vector2(112f, 646f);
 		_settingsStatusNoteLabel.Size = new Vector2(420f, 16f);
 		_settingsStatusNoteLabel.AutowrapMode = TextServer.AutowrapMode.Off;
 		_settingsStatusNoteLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		root.AddChild(_settingsStatusNoteLabel);
 
 		var defaults = CreateSettingsButton("Mặc định", ResetAdvancedSettingsDefaults, primary: false);
-		defaults.Position = new Vector2(548f, 584f);
+		defaults.Position = new Vector2(668f, 622f);
 		defaults.Size = new Vector2(82f, 38f);
 		root.AddChild(defaults);
 
 		var memory = CreateSettingsButton("Mở memory", OpenAdvancedMemoryDirectory, primary: false);
-		memory.Position = new Vector2(636f, 584f);
+		memory.Position = new Vector2(756f, 622f);
 		memory.Size = new Vector2(96f, 38f);
 		root.AddChild(memory);
 
 		var apply = CreateSettingsButton("Áp dụng live", ApplyAdvancedSettingsLive, primary: false);
-		apply.Position = new Vector2(738f, 584f);
+		apply.Position = new Vector2(858f, 622f);
 		apply.Size = new Vector2(100f, 38f);
 		apply.AddThemeFontSizeOverride("font_size", 10);
 		root.AddChild(apply);
 
 		var save = CreateSettingsButton("Lưu", SaveSettingsState, primary: true);
-		save.Position = new Vector2(844f, 582f);
+		save.Position = new Vector2(964f, 620f);
 		save.Size = new Vector2(76f, 42f);
 		root.AddChild(save);
 
 		var saveRestart = CreateSettingsButton("Lưu & Restart", SaveSettingsAndRestart, primary: true);
-		saveRestart.Position = new Vector2(926f, 582f);
+		saveRestart.Position = new Vector2(1046f, 620f);
 		saveRestart.Size = new Vector2(98f, 42f);
 		saveRestart.AddThemeFontSizeOverride("font_size", 9);
 		root.AddChild(saveRestart);

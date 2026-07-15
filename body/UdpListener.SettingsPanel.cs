@@ -50,14 +50,17 @@ public partial class UdpListener : Node2D
 	private Label _settingsTtsSpeedValueLabel;
 	private FileDialog _settingsImportSecretsDialog;
 	private VBoxContainer _settingsKeyRowsBox;
+	private readonly List<LineEdit> _settingsKeyNameInputs = new();
 	private readonly List<LineEdit> _settingsKeyInputs = new();
 	private readonly List<Label> _settingsKeyStatusLabels = new();
 	private readonly Dictionary<string, List<SettingsKeyHealth>> _settingsKeyHealth = new(StringComparer.OrdinalIgnoreCase);
 	private readonly Dictionary<string, string> _settingsPoolHealthSummary = new(StringComparer.OrdinalIgnoreCase);
 
-	// Giữ bản nháp riêng cho từng pool. Trước đây đổi Gemini/Groq là mất sạch
-	// phần vừa sửa vì UI rebuild ngay lập tức.
+	// Giữ bản nháp riêng cho từng pool. Tên hiển thị không ghi vào secrets.json;
+	// chúng được lưu an toàn trong user://eris_settings.json theo fingerprint của key.
 	private readonly Dictionary<string, List<string>> _settingsKeyDrafts = new(StringComparer.OrdinalIgnoreCase);
+	private readonly Dictionary<string, List<string>> _settingsKeyNameDrafts = new(StringComparer.OrdinalIgnoreCase);
+	private readonly Dictionary<string, string> _settingsKeyAliases = new(StringComparer.OrdinalIgnoreCase);
 	private bool _settingsSkipKeyDraftCaptureOnce;
 	private string _settingsKeyPoolKind = "";
 	private ulong _settingsNextRuntimeRefreshMs;
@@ -171,7 +174,7 @@ public partial class UdpListener : Node2D
 		root.AddChild(heart);
 
 		var controls = CreateWindowControlCapsule(() => _settingsPanel.Visible = false, CloseSettingsPanel);
-		controls.Position = new Vector2(900f, 34f);
+		controls.Position = new Vector2(1040f, 34f);
 		root.AddChild(controls);
 
 		AddSettingsMainTabs(root);
@@ -184,36 +187,36 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		var statusCard = AddSettingsCard(root, new Rect2(32f, 205f, 302f, 342f), "Runtime");
+		var statusCard = AddSettingsCard(root, new Rect2(32f, 205f, 318f, 380f), "Runtime");
 		BuildSettingsStatusColumn(statusCard);
 
-		var poolCard = AddSettingsCard(root, new Rect2(356f, 205f, 328f, 342f), "Key pool");
+		var poolCard = AddSettingsCard(root, new Rect2(370f, 205f, 420f, 380f), "Key pool");
 		BuildSettingsKeyPoolColumn(poolCard);
 
-		var displayCard = AddSettingsCard(root, new Rect2(706f, 205f, 302f, 342f), "Giọng & cửa sổ");
+		var displayCard = AddSettingsCard(root, new Rect2(810f, 205f, 338f, 380f), "Giọng & cửa sổ");
 		BuildSettingsDisplayColumn(displayCard);
 
 		var divider = new ColorRect
 		{
 			Color = new Color(0.96f, 0.72f, 0.84f, 0.38f),
-			Position = new Vector2(32f, 566f),
-			Size = new Vector2(976f, 1.4f),
+			Position = new Vector2(32f, 604f),
+			Size = new Vector2(1116f, 1.4f),
 			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
 		root.AddChild(divider);
 
 		var noteHeart = CreateUiLabel("♡", 24, SettingsPink);
-		noteHeart.Position = new Vector2(72f, 586f);
+		noteHeart.Position = new Vector2(72f, 624f);
 		noteHeart.Size = new Vector2(32f, 30f);
 		root.AddChild(noteHeart);
 
 		var note = CreateUiLabel("Basic ghi config thật: user settings + config/secrets.json local.", 13, SettingsInkSoft);
-		note.Position = new Vector2(112f, 592f);
+		note.Position = new Vector2(112f, 630f);
 		note.Size = new Vector2(420f, 24f);
 		root.AddChild(note);
 
 		_settingsStatusNoteLabel = CreateUiLabel("", 12, SettingsInk);
-		_settingsStatusNoteLabel.Position = new Vector2(112f, 608f);
+		_settingsStatusNoteLabel.Position = new Vector2(112f, 646f);
 		_settingsStatusNoteLabel.Size = new Vector2(420f, 16f);
 		_settingsStatusNoteLabel.AutowrapMode = TextServer.AutowrapMode.Off;
 		_settingsStatusNoteLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
@@ -221,27 +224,27 @@ public partial class UdpListener : Node2D
 		root.AddChild(_settingsStatusNoteLabel);
 
 		var backup = CreateSettingsButton("Sao lưu", BackupSettingsAndSecrets, primary: false);
-		backup.Position = new Vector2(548f, 584f);
+		backup.Position = new Vector2(668f, 622f);
 		backup.Size = new Vector2(92f, 38f);
 		root.AddChild(backup);
 
 		var export = CreateSettingsButton("Xuất config", ExportSanitizedSettings, primary: false);
-		export.Position = new Vector2(646f, 584f);
+		export.Position = new Vector2(766f, 622f);
 		export.Size = new Vector2(104f, 38f);
 		root.AddChild(export);
 
 		var cancel = CreateSettingsButton("Hủy", CloseSettingsPanel, primary: false);
-		cancel.Position = new Vector2(756f, 584f);
+		cancel.Position = new Vector2(876f, 622f);
 		cancel.Size = new Vector2(70f, 38f);
 		root.AddChild(cancel);
 
 		var save = CreateSettingsButton("Lưu", SaveSettingsState, primary: true);
-		save.Position = new Vector2(832f, 582f);
+		save.Position = new Vector2(952f, 620f);
 		save.Size = new Vector2(78f, 42f);
 		root.AddChild(save);
 
 		var saveRestart = CreateSettingsButton("Lưu & Restart", SaveSettingsAndRestart, primary: true);
-		saveRestart.Position = new Vector2(916f, 582f);
+		saveRestart.Position = new Vector2(1036f, 620f);
 		saveRestart.Size = new Vector2(108f, 42f);
 		saveRestart.AddThemeFontSizeOverride("font_size", 10);
 		root.AddChild(saveRestart);
@@ -263,9 +266,9 @@ public partial class UdpListener : Node2D
 
 	private void AddSettingsMainTabs(Control root)
 	{
-		AddSettingsTab(root, new Rect2(42f, 118f, 300f, 40f), "♡  Cơ bản", true);
-		AddSettingsTab(root, new Rect2(370f, 118f, 300f, 40f), "♬  Giọng nói", false);
-		AddSettingsTab(root, new Rect2(698f, 118f, 300f, 40f), "▤  Dữ liệu", false);
+		AddSettingsTab(root, new Rect2(42f, 118f, 340f, 40f), "♡  Cơ bản", true);
+		AddSettingsTab(root, new Rect2(420f, 118f, 340f, 40f), "♬  Giọng nói", false);
+		AddSettingsTab(root, new Rect2(798f, 118f, 340f, 40f), "▤  Dữ liệu", false);
 	}
 
 	private void AddSettingsModeStrip(Control root)
@@ -275,9 +278,9 @@ public partial class UdpListener : Node2D
 		label.Size = new Vector2(160f, 24f);
 		root.AddChild(label);
 
-		AddSettingsSmallTab(root, new Rect2(560f, 168f, 132f, 32f), "Cơ bản", _settingsModePage == SettingsModePage.Basic, () => SwitchSettingsMode(SettingsModePage.Basic));
-		AddSettingsSmallTab(root, new Rect2(706f, 168f, 132f, 32f), "Advanced", _settingsModePage == SettingsModePage.Advanced, () => SwitchSettingsMode(SettingsModePage.Advanced));
-		AddSettingsSmallTab(root, new Rect2(852f, 168f, 148f, 32f), "△ Danger Zone", false, () => SetSettingsStatus("Danger Zone sẽ là màn riêng; chưa nhét thao tác phá dữ liệu vào Advanced."));
+		AddSettingsSmallTab(root, new Rect2(690f, 168f, 132f, 32f), "Cơ bản", _settingsModePage == SettingsModePage.Basic, () => SwitchSettingsMode(SettingsModePage.Basic));
+		AddSettingsSmallTab(root, new Rect2(836f, 168f, 132f, 32f), "Advanced", _settingsModePage == SettingsModePage.Advanced, () => SwitchSettingsMode(SettingsModePage.Advanced));
+		AddSettingsSmallTab(root, new Rect2(982f, 168f, 156f, 32f), "△ Danger Zone", false, () => SetSettingsStatus("Danger Zone sẽ là màn riêng; chưa nhét thao tác phá dữ liệu vào Advanced."));
 	}
 
 	private Panel AddSettingsCard(Control parent, Rect2 rect, string title)
@@ -443,7 +446,7 @@ public partial class UdpListener : Node2D
 
 		var card = new Panel
 		{
-			Position = new Vector2(190f, 148f),
+			Position = new Vector2(260f, 171f),
 			Size = new Vector2(660f, 338f),
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
@@ -637,46 +640,58 @@ public partial class UdpListener : Node2D
 			? NormalizeSettingsKeyRows(groqRows).Count
 			: ReadEditableKeysForPool("groq").Count;
 
-		// Hai nút này là bộ chọn pool thật, không còn giả dạng thành nhãn thống kê.
 		_settingsPoolStatusLabel = CreateSettingsButton($"Gemini · {geminiCount}", () => SwitchSettingsKeyPool("gemini"), primary: _settingsKeyPoolKind == "gemini");
 		_settingsPoolStatusLabel.Position = new Vector2(18f, 46f);
-		_settingsPoolStatusLabel.Size = new Vector2(138f, 30f);
+		_settingsPoolStatusLabel.Size = new Vector2(184f, 30f);
 		_settingsPoolStatusLabel.TooltipText = "Chỉnh pool key Gemini";
 		parent.AddChild(_settingsPoolStatusLabel);
 
 		_settingsFallbackStatusLabel = CreateSettingsButton($"Groq · {groqCount}", () => SwitchSettingsKeyPool("groq"), primary: _settingsKeyPoolKind == "groq");
-		_settingsFallbackStatusLabel.Position = new Vector2(164f, 46f);
-		_settingsFallbackStatusLabel.Size = new Vector2(146f, 30f);
+		_settingsFallbackStatusLabel.Position = new Vector2(218f, 46f);
+		_settingsFallbackStatusLabel.Size = new Vector2(184f, 30f);
 		_settingsFallbackStatusLabel.TooltipText = "Chỉnh pool key Groq / OpenAI-compatible";
 		parent.AddChild(_settingsFallbackStatusLabel);
 
 		_settingsPoolHealthLabel = CreateUiLabel("Chưa đọc trạng thái runtime", 10, SettingsInkSoft);
 		_settingsPoolHealthLabel.Position = new Vector2(20f, 78f);
-		_settingsPoolHealthLabel.Size = new Vector2(288f, 18f);
+		_settingsPoolHealthLabel.Size = new Vector2(382f, 18f);
 		StyleSettingsSingleLineLabel(_settingsPoolHealthLabel);
 		parent.AddChild(_settingsPoolHealthLabel);
 
-		var orderNote = CreateUiLabel("Thứ tự từ trên xuống: key chính → fallback", 9, SettingsInkSoft);
-		orderNote.Position = new Vector2(20f, 97f);
-		orderNote.Size = new Vector2(286f, 16f);
-		StyleSettingsSingleLineLabel(orderNote);
-		parent.AddChild(orderNote);
+		var nameHeader = CreateUiLabel("Tên key", 9, SettingsInkSoft);
+		nameHeader.Position = new Vector2(28f, 97f);
+		nameHeader.Size = new Vector2(130f, 16f);
+		StyleSettingsSingleLineLabel(nameHeader);
+		parent.AddChild(nameHeader);
+
+		var keyHeader = CreateUiLabel("API key", 9, SettingsInkSoft);
+		keyHeader.Position = new Vector2(172f, 97f);
+		keyHeader.Size = new Vector2(120f, 16f);
+		StyleSettingsSingleLineLabel(keyHeader);
+		parent.AddChild(keyHeader);
+
+		var actionHeader = CreateUiLabel("Ưu tiên / xóa", 9, SettingsInkSoft);
+		actionHeader.Position = new Vector2(300f, 97f);
+		actionHeader.Size = new Vector2(100f, 16f);
+		StyleSettingsSingleLineLabel(actionHeader, HorizontalAlignment.Right);
+		parent.AddChild(actionHeader);
 
 		var list = new Panel
 		{
 			Position = new Vector2(18f, 116f),
-			Size = new Vector2(292f, 136f),
+			Size = new Vector2(384f, 194f),
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
 		list.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.72f), SettingsBorder, 14));
 		parent.AddChild(list);
 
+		_settingsKeyNameInputs.Clear();
 		_settingsKeyInputs.Clear();
 		_settingsKeyStatusLabels.Clear();
 		var scroller = new ScrollContainer
 		{
 			Position = new Vector2(6f, 6f),
-			Size = new Vector2(280f, 124f),
+			Size = new Vector2(372f, 182f),
 			HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
 			VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
 			MouseFilter = Control.MouseFilterEnum.Stop,
@@ -688,53 +703,57 @@ public partial class UdpListener : Node2D
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
-		_settingsKeyRowsBox.AddThemeConstantOverride("separation", 4);
+		_settingsKeyRowsBox.AddThemeConstantOverride("separation", 6);
 		scroller.AddChild(_settingsKeyRowsBox);
 
 		var keys = ReadSettingsKeysForEditor(_settingsKeyPoolKind);
-		foreach (string key in keys)
-			AddSettingsEditableKeyRow(key);
+		var names = ReadSettingsKeyNamesForEditor(_settingsKeyPoolKind, keys);
+		for (int i = 0; i < keys.Count; i++)
+			AddSettingsEditableKeyRow(keys[i], i < names.Count ? names[i] : "");
+
 		if (keys.Count == 0)
-			AddSettingsEditableKeyRow("");
+			AddSettingsEditableKeyRow("", DefaultSettingsKeyName(_settingsKeyPoolKind, 1));
 
 		var add = CreateSettingsButton("＋ Thêm key", () =>
 		{
-			AddSettingsEditableKeyRow("");
+			int next = _settingsKeyInputs.Count + 1;
+			AddSettingsEditableKeyRow("", DefaultSettingsKeyName(_settingsKeyPoolKind, next));
+			if (_settingsKeyNameInputs.Count > 0)
+			{
+				LineEdit newestName = _settingsKeyNameInputs[_settingsKeyNameInputs.Count - 1];
+				newestName.GrabFocus();
+				newestName.SelectAll();
+			}
 			CaptureCurrentSettingsKeyDraft();
 			RefreshSettingsPoolSelectorCounts();
-			SetSettingsStatus("Đã thêm key mới. Dán key rồi bấm Lưu & Restart để runtime nhận.");
+			SetSettingsStatus("Đã thêm một dòng đầy đủ. Điền Tên key và API key rồi bấm Lưu & Restart.");
 		}, primary: true);
-		add.Position = new Vector2(18f, 260f);
-		add.Size = new Vector2(98f, 30f);
+		add.Position = new Vector2(18f, 318f);
+		add.Size = new Vector2(124f, 30f);
 		parent.AddChild(add);
 
-		var paste = CreateSettingsButton("Dán hàng loạt", () => AddKeysFromClipboard(false), primary: false);
-		paste.Position = new Vector2(122f, 260f);
-		paste.Size = new Vector2(116f, 30f);
-		paste.TooltipText = "Đọc nhiều key từ clipboard, tự bỏ dòng trùng";
-		parent.AddChild(paste);
-
-		var import = CreateSettingsButton("Tệp…", OpenImportSecretsDialog, primary: false);
-		import.Position = new Vector2(244f, 260f);
-		import.Size = new Vector2(66f, 30f);
+		var import = CreateSettingsButton("Nhập tệp…", OpenImportSecretsDialog, primary: false);
+		import.Position = new Vector2(150f, 318f);
+		import.Size = new Vector2(112f, 30f);
 		import.TooltipText = "Nhập secrets.json; file cũ sẽ được sao lưu";
 		parent.AddChild(import);
 
 		var reload = CreateSettingsButton("↻ Đọc lại", () =>
 		{
 			_settingsKeyDrafts.Remove(_settingsKeyPoolKind);
+			_settingsKeyNameDrafts.Remove(_settingsKeyPoolKind);
 			_settingsSkipKeyDraftCaptureOnce = true;
 			BuildSettingsPanelUi();
 			SetSettingsStatus($"Đã bỏ bản nháp và đọc lại pool {_settingsKeyPoolKind} từ secrets.");
 		}, primary: false);
-		reload.Position = new Vector2(18f, 298f);
-		reload.Size = new Vector2(112f, 30f);
+		reload.Position = new Vector2(270f, 318f);
+		reload.Size = new Vector2(132f, 30f);
 		reload.TooltipText = "Bỏ thay đổi chưa lưu của pool đang mở";
 		parent.AddChild(reload);
 
-		var test = CreateSettingsButton("Kiểm tra trạng thái", TestSettingsPool, primary: false);
-		test.Position = new Vector2(138f, 298f);
-		test.Size = new Vector2(172f, 30f);
+		var test = CreateSettingsButton("Kiểm tra trạng thái key", TestSettingsPool, primary: false);
+		test.Position = new Vector2(18f, 354f);
+		test.Size = new Vector2(384f, 26f);
 		test.TooltipText = "Đọc key đang dùng, key sẵn sàng và cooldown từ Brain";
 		parent.AddChild(test);
 
@@ -770,12 +789,18 @@ public partial class UdpListener : Node2D
 			return;
 
 		var rows = new List<string>();
-		foreach (LineEdit input in _settingsKeyInputs)
+		var names = new List<string>();
+		for (int i = 0; i < _settingsKeyInputs.Count; i++)
 		{
-			if (input != null && IsInstanceValid(input))
-				rows.Add(input.Text ?? "");
+			LineEdit input = _settingsKeyInputs[i];
+			LineEdit nameInput = i < _settingsKeyNameInputs.Count ? _settingsKeyNameInputs[i] : null;
+			rows.Add(input != null && IsInstanceValid(input) ? input.Text ?? "" : "");
+			names.Add(nameInput != null && IsInstanceValid(nameInput) ? nameInput.Text ?? "" : "");
 		}
-		_settingsKeyDrafts[NormalizeSettingsPoolKind(_settingsKeyPoolKind)] = rows;
+
+		string kind = NormalizeSettingsPoolKind(_settingsKeyPoolKind);
+		_settingsKeyDrafts[kind] = rows;
+		_settingsKeyNameDrafts[kind] = names;
 	}
 
 	private List<string> ReadSettingsKeysForEditor(string poolKind)
@@ -787,6 +812,42 @@ public partial class UdpListener : Node2D
 		var loaded = ReadEditableKeysForPool(kind);
 		_settingsKeyDrafts[kind] = new List<string>(loaded);
 		return loaded;
+	}
+
+	private List<string> ReadSettingsKeyNamesForEditor(string poolKind, List<string> keys)
+	{
+		string kind = NormalizeSettingsPoolKind(poolKind);
+		if (_settingsKeyNameDrafts.TryGetValue(kind, out List<string> draft))
+		{
+			var copy = new List<string>(draft);
+			while (copy.Count < keys.Count)
+				copy.Add(DefaultSettingsKeyName(kind, copy.Count + 1));
+			return copy;
+		}
+
+		var names = new List<string>();
+		for (int i = 0; i < keys.Count; i++)
+		{
+			string fingerprint = SettingsKeyFingerprint(keys[i]);
+			string aliasKey = SettingsKeyAliasMapKey(kind, fingerprint);
+			string fallback = DefaultSettingsKeyName(kind, i + 1);
+			names.Add(!string.IsNullOrWhiteSpace(fingerprint) && _settingsKeyAliases.TryGetValue(aliasKey, out string alias) && !string.IsNullOrWhiteSpace(alias)
+				? alias.Trim()
+				: fallback);
+		}
+		_settingsKeyNameDrafts[kind] = new List<string>(names);
+		return names;
+	}
+
+	private static string DefaultSettingsKeyName(string poolKind, int rowNumber)
+	{
+		string provider = NormalizeSettingsPoolKind(poolKind) == "groq" ? "Groq" : "Gemini";
+		return $"{provider} {Math.Max(1, rowNumber):00}";
+	}
+
+	private static string SettingsKeyAliasMapKey(string poolKind, string fingerprint)
+	{
+		return $"{NormalizeSettingsPoolKind(poolKind)}:{(fingerprint ?? "").Trim().ToLowerInvariant()}";
 	}
 
 	private void RefreshSettingsPoolSelectorCounts()
@@ -1022,35 +1083,57 @@ public partial class UdpListener : Node2D
 		return option;
 	}
 
-	private void AddSettingsEditableKeyRow(string value)
+	private void AddSettingsEditableKeyRow(string value, string displayName = "")
 	{
 		if (_settingsKeyRowsBox == null)
 			return;
 
+		int rowNumber = _settingsKeyInputs.Count + 1;
 		var row = new Panel
 		{
-			CustomMinimumSize = new Vector2(272f, 46f),
+			CustomMinimumSize = new Vector2(356f, 68f),
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
-		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.58f), new Color(0.96f, 0.76f, 0.86f, 0.45f), 9));
+		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.58f), new Color(0.96f, 0.76f, 0.86f, 0.45f), 10));
 		_settingsKeyRowsBox.AddChild(row);
 
-		int rowNumber = _settingsKeyInputs.Count + 1;
-		var statusLabel = CreateUiLabel($"○ Key {rowNumber:00} · Chưa lưu", 8, new Color(0.56f, 0.50f, 0.54f));
-		statusLabel.Position = new Vector2(8f, 1f);
-		statusLabel.Size = new Vector2(176f, 20f);
+		var statusLabel = CreateUiLabel($"○ Chưa lưu · Ưu tiên {rowNumber}", 8, new Color(0.56f, 0.50f, 0.54f));
+		statusLabel.Position = new Vector2(8f, 2f);
+		statusLabel.Size = new Vector2(226f, 18f);
 		statusLabel.TooltipText = "Chưa có trạng thái runtime";
 		StyleSettingsSingleLineLabel(statusLabel);
 		row.AddChild(statusLabel);
 		_settingsKeyStatusLabels.Add(statusLabel);
 
+		var nameInput = new LineEdit
+		{
+			Text = string.IsNullOrWhiteSpace(displayName) ? DefaultSettingsKeyName(_settingsKeyPoolKind, rowNumber) : displayName.Trim(),
+			PlaceholderText = "Tên key",
+			Position = new Vector2(8f, 28f),
+			Size = new Vector2(138f, 28f),
+			Flat = false,
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		nameInput.AddThemeFontSizeOverride("font_size", 9);
+		nameInput.AddThemeColorOverride("font_color", SettingsInk);
+		nameInput.AddThemeColorOverride("font_placeholder_color", SettingsInkSoft);
+		nameInput.TooltipText = "Tên riêng để phân biệt key, ví dụ: Gemini chính, Groq dự phòng";
+		nameInput.TextChanged += _ =>
+		{
+			CaptureCurrentSettingsKeyDraft();
+			RefreshSettingsKeyRowHealthIndicators();
+			SetSettingsStatus("Đã sửa tên key. Tên chỉ lưu cục bộ, không gửi xuống provider.");
+		};
+		row.AddChild(nameInput);
+		_settingsKeyNameInputs.Add(nameInput);
+
 		var input = new LineEdit
 		{
 			Text = value ?? "",
-			PlaceholderText = "Dán API key",
-			Position = new Vector2(8f, 22f),
-			Size = new Vector2(194f, 22f),
-			Flat = true,
+			PlaceholderText = "API key",
+			Position = new Vector2(152f, 28f),
+			Size = new Vector2(144f, 28f),
+			Flat = false,
 			Secret = true,
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
@@ -1071,33 +1154,31 @@ public partial class UdpListener : Node2D
 
 		var moveUp = CreateSettingsCompactButton("↑", () => MoveSettingsKeyRow(input, row, -1), 10);
 		moveUp.TooltipText = "Tăng ưu tiên key";
-		moveUp.Position = new Vector2(188f, 2f);
+		moveUp.Position = new Vector2(244f, 2f);
 		moveUp.Size = new Vector2(24f, 18f);
-		moveUp.AddThemeFontSizeOverride("font_size", 10);
 		row.AddChild(moveUp);
 
 		var moveDown = CreateSettingsCompactButton("↓", () => MoveSettingsKeyRow(input, row, 1), 10);
 		moveDown.TooltipText = "Giảm ưu tiên key";
-		moveDown.Position = new Vector2(216f, 2f);
+		moveDown.Position = new Vector2(272f, 2f);
 		moveDown.Size = new Vector2(24f, 18f);
-		moveDown.AddThemeFontSizeOverride("font_size", 10);
 		row.AddChild(moveDown);
 
 		Button reveal = null;
-		reveal = CreateSettingsCompactButton("Hiện key", () =>
+		reveal = CreateSettingsCompactButton("Hiện", () =>
 		{
 			input.Secret = !input.Secret;
-			reveal.Text = input.Secret ? "Hiện key" : "Ẩn key";
-			SetSettingsStatus(input.Secret ? "Đã ẩn API key." : "Đang hiện API key để sửa; tránh chia sẻ màn hình lúc này.");
+			reveal.Text = input.Secret ? "Hiện" : "Ẩn";
+			SetSettingsStatus(input.Secret ? "Đã ẩn API key." : "Đang hiện API key; đừng chia sẻ màn hình lúc này.");
 		}, 8);
 		reveal.TooltipText = "Hiện/ẩn API key";
-		reveal.Position = new Vector2(206f, 22f);
-		reveal.Size = new Vector2(62f, 22f);
-		reveal.AddThemeFontSizeOverride("font_size", 8);
+		reveal.Position = new Vector2(302f, 28f);
+		reveal.Size = new Vector2(54f, 28f);
 		row.AddChild(reveal);
 
 		var remove = CreateSettingsCompactButton("×", () =>
 		{
+			_settingsKeyNameInputs.Remove(nameInput);
 			_settingsKeyInputs.Remove(input);
 			_settingsKeyStatusLabels.Remove(statusLabel);
 			row.QueueFree();
@@ -1107,9 +1188,8 @@ public partial class UdpListener : Node2D
 			SetSettingsStatus("Đã bỏ key khỏi bản nháp. Bấm Lưu để ghi thay đổi vào secrets.");
 		}, 11);
 		remove.TooltipText = "Xóa key này";
-		remove.Position = new Vector2(244f, 2f);
+		remove.Position = new Vector2(332f, 2f);
 		remove.Size = new Vector2(24f, 18f);
-		remove.AddThemeFontSizeOverride("font_size", 11);
 		row.AddChild(remove);
 
 		RefreshSettingsKeyRowHealthIndicators();
@@ -1130,6 +1210,9 @@ public partial class UdpListener : Node2D
 		LineEdit inputSwap = _settingsKeyInputs[target];
 		_settingsKeyInputs[target] = _settingsKeyInputs[index];
 		_settingsKeyInputs[index] = inputSwap;
+		LineEdit nameSwap = _settingsKeyNameInputs[target];
+		_settingsKeyNameInputs[target] = _settingsKeyNameInputs[index];
+		_settingsKeyNameInputs[index] = nameSwap;
 		Label statusSwap = _settingsKeyStatusLabels[target];
 		_settingsKeyStatusLabels[target] = _settingsKeyStatusLabels[index];
 		_settingsKeyStatusLabels[index] = statusSwap;
@@ -1389,6 +1472,7 @@ public partial class UdpListener : Node2D
 			_settingsTtsVoice = ReadString(root, "tts_voice", _settingsTtsVoice);
 			_settingsTtsLanguage = ReadString(root, "tts_language", _settingsTtsLanguage);
 			_settingsTtsQuality = ReadString(root, "tts_quality", _settingsTtsQuality);
+			LoadSettingsKeyAliases(root);
 			LoadAdvancedSettingsState(root);
 		}
 		catch (Exception ex)
@@ -1689,11 +1773,65 @@ public partial class UdpListener : Node2D
 		};
 	}
 
+	private void LoadSettingsKeyAliases(JsonElement root)
+	{
+		_settingsKeyAliases.Clear();
+		if (!root.TryGetProperty("key_aliases", out JsonElement aliasesRoot) || aliasesRoot.ValueKind != JsonValueKind.Object)
+			return;
+
+		foreach (JsonProperty poolProperty in aliasesRoot.EnumerateObject())
+		{
+			string kind = NormalizeSettingsPoolKind(poolProperty.Name);
+			if (poolProperty.Value.ValueKind != JsonValueKind.Object)
+				continue;
+			foreach (JsonProperty aliasProperty in poolProperty.Value.EnumerateObject())
+			{
+				if (aliasProperty.Value.ValueKind != JsonValueKind.String)
+					continue;
+				string fingerprint = (aliasProperty.Name ?? "").Trim().ToLowerInvariant();
+				string name = (aliasProperty.Value.GetString() ?? "").Trim();
+				if (!string.IsNullOrWhiteSpace(fingerprint) && !string.IsNullOrWhiteSpace(name))
+					_settingsKeyAliases[SettingsKeyAliasMapKey(kind, fingerprint)] = name;
+			}
+		}
+	}
+
+	private JsonObject BuildSettingsKeyAliasesNode()
+	{
+		var root = new JsonObject();
+		foreach (string kind in new[] { "gemini", "groq" })
+		{
+			List<string> values = _settingsKeyDrafts.TryGetValue(kind, out List<string> draftValues)
+				? new List<string>(draftValues)
+				: ReadEditableKeysForPool(kind);
+			List<string> names = _settingsKeyNameDrafts.TryGetValue(kind, out List<string> draftNames)
+				? new List<string>(draftNames)
+				: ReadSettingsKeyNamesForEditor(kind, values);
+
+			var pool = new JsonObject();
+			for (int i = 0; i < values.Count; i++)
+			{
+				string rawKey = (values[i] ?? "").Trim();
+				string fingerprint = SettingsKeyFingerprint(rawKey);
+				if (string.IsNullOrWhiteSpace(fingerprint))
+					continue;
+
+				string name = i < names.Count ? (names[i] ?? "").Trim() : "";
+				if (string.IsNullOrWhiteSpace(name))
+					name = DefaultSettingsKeyName(kind, i + 1);
+				pool[fingerprint] = name;
+				_settingsKeyAliases[SettingsKeyAliasMapKey(kind, fingerprint)] = name;
+			}
+			root[kind] = pool;
+		}
+		return root;
+	}
+
 	private JsonObject BuildSanitizedSettingsNode()
 	{
 		var state = new JsonObject
 		{
-			["version"] = 3,
+			["version"] = 4,
 			["remote_api_enabled"] = EnableRemoteCognitionApi,
 			["auto_start_brain"] = AutoStartVision,
 			["auto_restart_brain"] = AutoRestartVisionOnCrash,
@@ -1712,6 +1850,7 @@ public partial class UdpListener : Node2D
 			["lock_character_position"] = LockCharacterPosition,
 			["editing_key_pool"] = _settingsKeyPoolKind ?? "",
 			["editing_key_count"] = CollectEditedSettingsKeys().Count,
+			["key_aliases"] = BuildSettingsKeyAliasesNode(),
 		};
 		AddAdvancedSettingsToState(state);
 		return state;
@@ -1879,48 +2018,6 @@ public partial class UdpListener : Node2D
 		}
 	}
 
-	private void AddKeysFromClipboard(bool onlyFirst)
-	{
-		try
-		{
-			string raw = DisplayServer.ClipboardGet();
-			var keys = ExtractClipboardKeys(raw);
-			if (onlyFirst && keys.Count > 1)
-				keys.RemoveRange(1, keys.Count - 1);
-			if (keys.Count == 0)
-			{
-				SetSettingsStatus("Clipboard không có key hợp lệ.");
-				return;
-			}
-
-			int added = AppendKeysToEditor(keys);
-			SetSettingsStatus(added > 0 ? $"Đã dán {added} key vào pool {_settingsKeyPoolKind}. Bấm Lưu để ghi secrets." : "Key trong clipboard đã có sẵn trong editor.");
-		}
-		catch (Exception ex)
-		{
-			SetSettingsStatus($"Thêm key lỗi: {ex.Message}");
-		}
-	}
-
-	private int AppendKeysToEditor(List<string> keys)
-	{
-		var existing = new HashSet<string>(CollectEditedSettingsKeys(), StringComparer.Ordinal);
-		int added = 0;
-		foreach (string key in keys)
-		{
-			if (!existing.Add(key))
-				continue;
-			AddSettingsEditableKeyRow(key);
-			added++;
-		}
-		if (added > 0)
-		{
-			CaptureCurrentSettingsKeyDraft();
-			RefreshSettingsPoolSelectorCounts();
-		}
-		return added;
-	}
-
 	private void OpenImportSecretsDialog()
 	{
 		if (_settingsImportSecretsDialog == null)
@@ -1954,6 +2051,7 @@ public partial class UdpListener : Node2D
 			File.Copy(selectedPath, target, overwrite: true);
 			LoadSettingsFromSecrets();
 			_settingsKeyDrafts.Clear();
+			_settingsKeyNameDrafts.Clear();
 			_settingsSkipKeyDraftCaptureOnce = true;
 			BuildSettingsPanelUi();
 			SetSettingsStatus($"Đã nhập secrets.json: {target}");
@@ -2113,51 +2211,57 @@ public partial class UdpListener : Node2D
 			if (label == null || !IsInstanceValid(label))
 				continue;
 
-			int rowNumber = i + 1;
+			int priority = i + 1;
 			string rawKey = i < _settingsKeyInputs.Count && _settingsKeyInputs[i] != null ? (_settingsKeyInputs[i].Text ?? "").Trim() : "";
+			string displayName = i < _settingsKeyNameInputs.Count && _settingsKeyNameInputs[i] != null
+				? (_settingsKeyNameInputs[i].Text ?? "").Trim()
+				: DefaultSettingsKeyName(kind, priority);
+			if (string.IsNullOrWhiteSpace(displayName))
+				displayName = DefaultSettingsKeyName(kind, priority);
+
 			string fingerprint = SettingsKeyFingerprint(rawKey);
 			SettingsKeyHealth item = health?.Find(candidate => string.Equals(candidate.Fingerprint, fingerprint, StringComparison.OrdinalIgnoreCase));
 
 			if (string.IsNullOrWhiteSpace(rawKey))
 			{
-				label.Text = $"○ Key {rowNumber:00} · Trống";
+				label.Text = $"○ Trống · Ưu tiên {priority}";
 				label.AddThemeColorOverride("font_color", new Color(0.56f, 0.50f, 0.54f));
-				label.TooltipText = "Dòng key trống; dòng này sẽ không được lưu";
+				label.TooltipText = $"{displayName}: chưa nhập API key; dòng này sẽ không được lưu";
 				continue;
 			}
 
 			if (item == null)
 			{
-				label.Text = $"○ Key {rowNumber:00} · Chưa nạp";
+				label.Text = $"○ Chưa nạp · Ưu tiên {priority}";
 				label.AddThemeColorOverride("font_color", new Color(0.56f, 0.50f, 0.54f));
-				label.TooltipText = "Key chưa có trong runtime; Lưu & Restart để đồng bộ";
+				label.TooltipText = $"{displayName}: chưa có trong runtime; Lưu & Restart để đồng bộ";
 				continue;
 			}
 
 			if (string.Equals(item.Status, "cooldown", StringComparison.OrdinalIgnoreCase))
 			{
-				label.Text = $"● Key {rowNumber:00} · Cooldown";
+				label.Text = $"● Cooldown · Ưu tiên {priority}";
 				label.AddThemeColorOverride("font_color", new Color(0.78f, 0.43f, 0.08f));
-				label.TooltipText = $"Key đang cooldown, còn khoảng {Mathf.CeilToInt(item.CooldownMs / 1000f)} giây";
+				label.TooltipText = $"{displayName}: đang cooldown, còn khoảng {Mathf.CeilToInt(item.CooldownMs / 1000f)} giây";
 			}
 			else if (string.Equals(item.Status, "error", StringComparison.OrdinalIgnoreCase)
 				|| string.Equals(item.Status, "invalid", StringComparison.OrdinalIgnoreCase))
 			{
-				label.Text = $"● Key {rowNumber:00} · Lỗi";
+				label.Text = $"● Lỗi · Ưu tiên {priority}";
 				label.AddThemeColorOverride("font_color", new Color(0.74f, 0.12f, 0.18f));
-				label.TooltipText = "Runtime đánh dấu key lỗi hoặc không hợp lệ";
+				label.TooltipText = $"{displayName}: runtime đánh dấu key lỗi hoặc không hợp lệ";
 			}
 			else if (item.Active)
 			{
-				label.Text = $"● Key {rowNumber:00} · Đang dùng";
+				label.Text = $"● Đang dùng · Ưu tiên {priority}";
 				label.AddThemeColorOverride("font_color", new Color(0.08f, 0.58f, 0.18f));
-				label.TooltipText = "Key runtime đang dùng cho request kế tiếp";
+				label.TooltipText = $"{displayName}: runtime đang dùng cho request kế tiếp";
 			}
 			else
 			{
-				label.Text = $"● Key {rowNumber:00} · Sẵn sàng";
+				label.Text = $"● Sẵn sàng · Ưu tiên {priority}";
 				label.AddThemeColorOverride("font_color", new Color(0.20f, 0.46f, 0.24f));
-				label.TooltipText = "Key sẵn sàng trong pool";
+				label.TooltipText = $"{displayName}: key sẵn sàng trong pool";
 			}
 		}
 	}

@@ -437,7 +437,15 @@ class OpenAICompatibleClient:
                 if may_rotate and attempt < max_attempts - 1:
                     continue
             if auth_failed and self.key_pool is not None:
-                self.key_pool.mark_dead(3600.0, lease=lease, reason="http_auth")
+                try:
+                    from llm.provider_errors import ProviderErrorKind, classify_provider_error
+                    kind = classify_provider_error(last_error)
+                except Exception:
+                    kind = None
+                if str(kind) == "key_revoked":
+                    self.key_pool.mark_permanently_dead(lease=lease, reason="http_auth_key_revoked")
+                else:
+                    self.key_pool.mark_dead(3600.0, lease=lease, reason="http_auth_or_permission")
                 if attempt < max_attempts - 1:
                     continue
             if server_error:
@@ -730,7 +738,15 @@ class GeminiClient:
                     )
                     continue
             elif status in (401, 403) and self.key_pool is not None:
-                self.key_pool.mark_dead(3600.0, lease=lease, reason="http_auth")
+                try:
+                    from llm.provider_errors import classify_provider_error
+                    kind = classify_provider_error(last_error or f"http {status}", status_code=status)
+                except Exception:
+                    kind = None
+                if str(kind) == "key_revoked":
+                    self.key_pool.mark_permanently_dead(lease=lease, reason="http_auth_key_revoked")
+                else:
+                    self.key_pool.mark_dead(3600.0, lease=lease, reason="http_auth_or_permission")
                 if attempt < max_attempts - 1:
                     continue
             elif status in (500, 502, 503, 504):

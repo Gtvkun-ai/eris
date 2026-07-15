@@ -48,6 +48,10 @@ class SemanticAuthorityPolicy:
 
     @property
     def allow_pre_llm_intercepts(self) -> bool:
+        # Qwen-first nghĩa là Qwen viết/diễn giải trước, không phải cho các
+        # intercept cũ cướp lượt trả lời. Evidence/contract vẫn được đưa vào
+        # prompt ở các property bên dưới. Đừng lại biến runtime thành hội đồng
+        # regex giành micro.
         return not self.qwen_first
 
     @property
@@ -56,19 +60,38 @@ class SemanticAuthorityPolicy:
 
     @property
     def include_chat_act_markers(self) -> bool:
-        return not self.qwen_first
+        # Bật marker trong qwen_first: detector chỉ là bằng chứng và nghĩa vụ
+        # hội thoại, không được tự trả lời trước model. Đây là chỗ bản cũ tự rút
+        # điện SpeechAct, làm mọi lượt trông như normal_chat.
+        return True
 
     @property
     def include_director_prompt(self) -> bool:
-        return not self.qwen_first
+        # Director cần thấy contract/scene để chọn câu cuối; qwen_first chỉ cấm
+        # Director chiếm quyền semantic trước draft, không cấm hậu kiểm.
+        return True
 
     @property
     def generate_director_candidates(self) -> bool:
-        return not self.qwen_first
+        # Cho Director sinh candidate thích nghi khi contract/repair yêu cầu.
+        # Nếu token/key đang căng thì AdaptiveCandidateController vẫn tự hãm.
+        return _env_bool("ERIS_QWEN_FIRST_DIRECTOR_CANDIDATES", True)
 
     @property
     def hard_only_final_guards(self) -> bool:
-        return self.qwen_first
+        # Không còn nhánh "hard-only" cho qwen_first. Qwen được viết trước,
+        # nhưng câu public vẫn phải qua utterance evaluator, banter/novelty và
+        # ResponseAcceptanceGate. Model tự chấm thấp rồi vẫn nói ra là thứ xa xỉ
+        # chỉ chatbot thất nghiệp mới thích.
+        return False
+
+    @property
+    def enforce_response_contract(self) -> bool:
+        return _env_bool("ERIS_RESPONSE_CONTRACT_GATE", True)
+
+    @property
+    def low_quality_fail_open(self) -> bool:
+        return _env_bool("ERIS_QWEN_LOW_QUALITY_FAIL_OPEN", False)
 
     @property
     def primary_uses_escalation_client(self) -> bool:

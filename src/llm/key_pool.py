@@ -285,6 +285,26 @@ class ApiKeyPool:
                 suffix,
             )
 
+    def mark_permanently_dead(
+        self,
+        *,
+        index: int | None = None,
+        lease: ApiKeyLease | None = None,
+        reason: str = "key_revoked",
+    ) -> None:
+        """Quarantine key lỗi auth/leaked gần như vĩnh viễn trong process.
+
+        Google có lỗi 403 tạm do permission/project, nhưng thông báo leaked/revoked
+        thì không nên thử lại ở câu sau. 30 ngày ở runtime coi như chết cho tới
+        khi user sửa config/restart.
+        """
+
+        try:
+            seconds = float(os.environ.get("ERIS_KEY_POOL_PERMANENT_DEAD_S", str(30 * 24 * 3600)))
+        except ValueError:
+            seconds = float(30 * 24 * 3600)
+        self.mark_dead(seconds, index=index, lease=lease, reason=reason)
+
     def next_available_in(self) -> float:
         """Số giây còn lại tới lúc ít nhất một key có thể được cấp."""
 
