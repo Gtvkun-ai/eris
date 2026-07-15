@@ -501,6 +501,15 @@ class RuntimeCoordinator(
             self.hardening_health_gate = None
             self._hardening_health_eval_counter = 0
             self.logger.warning("Observability/rollout init skipped: %s", exc)
+        # Provider registry là authority cho bốn implementation rời nhau.
+        # Phase 4 mới có Protocol; từ Phase 5 coordinator thật sự đăng ký và gọi
+        # action qua registry, còn speech/memory/budget có binding dùng chung.
+        self.provider_registry = None
+        try:
+            self._initialize_provider_registry()
+        except Exception as exc:
+            self.logger.warning("Provider registry init skipped: %s", exc)
+
         epistemic_enabled = str(os.getenv("ERIS_EPISTEMIC_V2_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
         if epistemic_enabled:
             epistemic_mode = str(os.getenv("ERIS_EPISTEMIC_V2_MODE", "authoritative") or "authoritative").strip().lower()
@@ -1861,7 +1870,10 @@ class RuntimeCoordinator(
             self._handle_tts_playback_event(event, stage_frame=event_stage_frame)
 
         # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
-        _tts = getattr(self, "tts_engine", None)
+        speech_provider = self._get_runtime_provider("speech")
+        _tts = getattr(speech_provider, "engine", None) if speech_provider is not None else None
+        if _tts is None:
+            _tts = getattr(self, "tts_engine", None)
         has_scheduled_tts = False
         if not sync_text:
             # UI/chat không nên im vài giây chỉ vì remote TTS đang synthesize.
@@ -6411,13 +6423,26 @@ class RuntimeCoordinator(
             except Exception:
                 pass
         self.logger.info("ERIS: %s", public_text)
+        try:
+            if self.observability is not None:
+                self.observability.increment(
+                    "hardening_public_turn_total",
+                    tags={
+                        "spoken": str(bool(decision.should_speak and public_text)).lower(),
+                        "channel": "chat",
+                    },
+                )
+        except Exception:
+            pass
         # Đánh giá auto-rollback theo cửa sổ metric, mặc định mỗi 10 public turn.
         try:
             self._hardening_health_eval_counter = int(getattr(self, "_hardening_health_eval_counter", 0) or 0) + 1
             every = max(1, int(os.getenv("ERIS_HARDENING_HEALTH_EVAL_EVERY_TURNS", "10") or 10))
             gate = getattr(self, "hardening_health_gate", None)
-            if gate is not None and self._hardening_health_eval_counter % every == 0:
-                gate.evaluate_observability(self.observability, auto_kill=True)
+            if self._hardening_health_eval_counter % every == 0:
+                self._record_provider_health_snapshot(event="periodic")
+                if gate is not None:
+                    gate.evaluate_observability(self.observability, auto_kill=True)
         except Exception as exc:
             self.logger.warning("[hardening rollout] health evaluation failed: %s", exc)
         self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
@@ -9299,6 +9324,115 @@ class RuntimeCoordinator(
 
         return base_report
 
+    def _initialize_provider_registry(self) -> None:
+        """Bọc component hiện tại vào registry typed, không rewrite nóng toàn repo."""
+        from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+        from runtime.provider_adapters import build_provider_registry
+
+        memory_provider = self.memory_kernel or self.memory_core
+        self.provider_registry = build_provider_registry(
+            action_executor=self.action_executor,
+            speech_engine=getattr(self, "tts_engine", None),
+            memory=memory_provider,
+            budget_governor=GLOBAL_TOKEN_PRESSURE_GOVERNOR,
+        )
+        self._record_provider_health_snapshot(event="bootstrap")
+
+    def bind_tts_engine(self, tts_engine) -> None:
+        """Binding duy nhất khi TTS engine được tạo/hot-reload.
+
+        ``vision.py`` trước đây gán attribute trực tiếp, khiến registry và
+        VoiceManager không biết engine đã đổi. Giờ cả ba cùng nhận một instance.
+        """
+        self.tts_engine = tts_engine
+        try:
+            self.voice_manager.bind_tts_engine(tts_engine)
+        except Exception:
+            pass
+        try:
+            from runtime.provider_adapters import SpeechEngineProvider, register_or_replace
+            from runtime.provider_interfaces import ProviderRegistry
+
+            registry = getattr(self, "provider_registry", None)
+            if not isinstance(registry, ProviderRegistry):
+                self._initialize_provider_registry()
+                registry = self.provider_registry
+            register_or_replace(registry, "speech", SpeechEngineProvider(tts_engine))
+            self._record_provider_health_snapshot(event="speech_bind")
+        except Exception as exc:
+            self.logger.warning("Không bind được speech provider: %s", exc)
+
+    def _get_runtime_provider(self, kind: str):
+        registry = getattr(self, "provider_registry", None)
+        if registry is None:
+            return None
+        try:
+            return registry.get_optional(kind)
+        except Exception:
+            return None
+
+    def _execute_action_provider(self, action_name: str, action_input: str = ""):
+        provider = self._get_runtime_provider("action")
+        if provider is not None:
+            return provider.execute(action_name, action_input)
+        if self.action_executor is None:
+            raise RuntimeError("action_provider_unavailable")
+        return self.action_executor.execute(action_name, action_input)
+
+    def query_memory_provider(self, request):
+        provider = self._get_runtime_provider("memory")
+        if provider is None:
+            raise RuntimeError("memory_provider_unavailable")
+        return provider.query(request)
+
+    def commit_memory_provider(self, record):
+        provider = self._get_runtime_provider("memory")
+        if provider is None:
+            raise RuntimeError("memory_provider_unavailable")
+        return provider.commit(record)
+
+    def plan_budget_provider(self, *, provider: str, lane: str, prompt_tokens: int, output_tokens: int):
+        budget = self._get_runtime_provider("budget")
+        if budget is None:
+            raise RuntimeError("budget_provider_unavailable")
+        return budget.plan(
+            provider=provider, lane=lane, prompt_tokens=prompt_tokens, output_tokens=output_tokens
+        )
+
+    def provider_health_snapshot(self) -> dict[str, dict]:
+        registry = getattr(self, "provider_registry", None)
+        if registry is None:
+            return {}
+        output: dict[str, dict] = {}
+        try:
+            health = registry.health()
+        except Exception:
+            return output
+        for kind, item in health.items():
+            output[str(kind)] = {
+                "ready": bool(getattr(item, "ready", False)),
+                "provider": str(getattr(item, "provider", "") or ""),
+                "reason": str(getattr(item, "reason", "") or ""),
+                "details": dict(getattr(item, "details", {}) or {}),
+            }
+        return output
+
+    def _record_provider_health_snapshot(self, *, event: str) -> None:
+        snapshot = self.provider_health_snapshot()
+        obs = getattr(self, "observability", None)
+        if obs is None:
+            return
+        for kind, item in snapshot.items():
+            try:
+                obs.gauge(
+                    "provider_ready",
+                    1.0 if item.get("ready") else 0.0,
+                    tags={"kind": kind, "provider": item.get("provider", "unknown")},
+                    fields={"event": event, "reason": item.get("reason", "")},
+                )
+            except Exception:
+                pass
+
     def _build_direct_action_decision(self, user_text: str, ti_report, snapshot, *, repeat_count: int = 1) -> Decision | None:
         normalized = self._normalize_marker_text(user_text)
         identity_queries = {
@@ -9327,7 +9461,7 @@ class RuntimeCoordinator(
             return None
 
         action_name, action_input = routed
-        result = self.action_executor.execute(action_name, action_input)
+        result = self._execute_action_provider(action_name, action_input)
         action_name = result.action_name  # canonical schema từ executor
         text = self._action_result_to_text(result)
         if action_name == "get_now_playing" and not result.success:
@@ -9360,7 +9494,7 @@ class RuntimeCoordinator(
         if self.action_executor is None or not decision.system_action:
             return decision
 
-        result = self.action_executor.execute(decision.system_action, decision.action_input)
+        result = self._execute_action_provider(decision.system_action, decision.action_input)
         decision.action_result_meta = result.to_public_meta()
         if frame is not None:
             try:

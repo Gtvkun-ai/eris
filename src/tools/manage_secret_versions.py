@@ -12,9 +12,14 @@ CLI chỉ in version/fingerprint, không in payload bí mật. Loài người đ
 """
 from __future__ import annotations
 
+import sys
 import argparse
 import json
 from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from secret_versions import SecretVersionManager
 

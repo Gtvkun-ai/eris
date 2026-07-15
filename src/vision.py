@@ -145,7 +145,11 @@ class AttentionOverseer:
 
         # TTS engine — khởi động sau coordinator để biết cờ ERIS_TTS_ENABLED.
         self.tts_engine = build_tts_engine()
-        self.coordinator.tts_engine = self.tts_engine
+        bind_tts = getattr(self.coordinator, "bind_tts_engine", None)
+        if callable(bind_tts):
+            bind_tts(self.tts_engine)
+        else:
+            self.coordinator.tts_engine = self.tts_engine
 
     def _is_body_running(self) -> bool:
         try:

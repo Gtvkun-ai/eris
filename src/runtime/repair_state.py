@@ -11,6 +11,14 @@ import time
 from dataclasses import dataclass
 
 
+def _ttl_enabled() -> bool:
+    try:
+        from runtime.rollout_control import feature_enabled
+        return feature_enabled("repair_state_ttl")
+    except Exception:
+        return True
+
+
 @dataclass(slots=True)
 class RepairState:
     active: bool = False
@@ -44,6 +52,8 @@ class RepairStateController:
     def available(self, *, now: float | None = None) -> bool:
         if not self.state.active:
             return False
+        if not _ttl_enabled():
+            return True
         ts = time.monotonic() if now is None else float(now)
         if ts - self.state.started_at > self.ttl_s or self.state.turns_left <= 0:
             self.exhaust()
@@ -53,6 +63,9 @@ class RepairStateController:
     def consume_public_turn(self, *, now: float | None = None) -> bool:
         if not self.available(now=now):
             return False
+        if not _ttl_enabled():
+            self._metric("legacy_public_turn")
+            return True
         self.state.turns_left -= 1
         if self.state.turns_left <= 0:
             self.exhaust(event="public_turn_exhausted")

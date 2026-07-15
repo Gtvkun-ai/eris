@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": 1781113926.87723,
+  "updated_at": 1784128931.7354946,
   "habitat": {
     "places": {
       "desktop": {
@@ -24,10 +24,10 @@
         "meaning": "cổng cognition model"
       }
     },
-    "active_place_id": "desktop",
-    "familiarity": 0.15000000000000002,
-    "clutter": 0.11312230915527359,
-    "last_changed_at": 1781113918.4647992,
+    "active_place_id": "browser_windows",
+    "familiarity": 0.16500000000000004,
+    "clutter": 0.12007252442285171,
+    "last_changed_at": 1784128931.7354946,
     "recent_observations": [
       {
         "id": "hab.c9afaa34ff67fd50",
@@ -158,6 +158,19 @@
         "confidence": 0.28,
         "pressure": 0.38,
         "created_at": 1781113918.4647992
+      },
+      {
+        "id": "hab.c93d8cfaa66ff473",
+        "place_id": "browser_windows",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=Meet - Microsoft Edge window=unknown",
+        "evidence_ids": [
+          "active_app:Meet - Microsoft Edge"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1784128931.7354946
       }
     ]
   },
@@ -168,8 +181,8 @@
       "meaning": "xương tính cách và thói quen bền",
       "familiarity": 0.38,
       "attachment": 0.42,
-      "irritation": 0.29400000000000015,
-      "neglect_count": 49,
+      "irritation": 0.30000000000000016,
+      "neglect_count": 50,
       "touch_count": 0,
       "last_touched_at": 0.0,
       "last_seen_size": 0,
@@ -186,8 +199,8 @@
       "meaning": "nhật ký thô append-only",
       "familiarity": 0.38,
       "attachment": 0.42,
-      "irritation": 0.29400000000000015,
-      "neglect_count": 49,
+      "irritation": 0.30000000000000016,
+      "neglect_count": 50,
       "touch_count": 0,
       "last_touched_at": 0.0,
       "last_seen_size": 0,
@@ -202,14 +215,14 @@
       "object_id": "memory_core/private_concerns.json",
       "object_type": "memory",
       "meaning": "mối bận tâm riêng của PrivateMind",
-      "familiarity": 0.6740000000000003,
-      "attachment": 0.6900000000000002,
+      "familiarity": 0.6800000000000003,
+      "attachment": 0.7080000000000002,
       "irritation": 0.0,
       "neglect_count": 0,
-      "touch_count": 15,
-      "last_touched_at": 1781113925.6199455,
-      "last_seen_size": 4981,
-      "last_seen_mtime": 1781113925.0218205,
+      "touch_count": 16,
+      "last_touched_at": 1784128931.7354946,
+      "last_seen_size": 4850,
+      "last_seen_mtime": 1784128931.511059,
       "residue": "memory_core/private_concerns.json vừa được chạm; meaning=mối bận tâm riêng của PrivateMind",
       "tags": [
         "private_mind",
@@ -220,14 +233,14 @@
       "object_id": "memory_core/private_life_state.json",
       "object_type": "memory",
       "meaning": "state đời sống riêng",
-      "familiarity": 0.6680000000000003,
+      "familiarity": 0.6740000000000003,
       "attachment": 1.0,
       "irritation": 0.006,
       "neglect_count": 0,
-      "touch_count": 47,
-      "last_touched_at": 1781113926.87723,
-      "last_seen_size": 49823,
-      "last_seen_mtime": 1781113925.6254404,
+      "touch_count": 48,
+      "last_touched_at": 1784128931.7354946,
+      "last_seen_size": 49805,
+      "last_seen_mtime": 1784126239.6114614,
       "residue": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
       "tags": [
         "private_life",
@@ -238,15 +251,15 @@
       "object_id": "cortex/surface_arbiter.py",
       "object_type": "module",
       "meaning": "cửa quyết định lời thấp tầng",
-      "familiarity": 0.6740000000000003,
-      "attachment": 0.42,
+      "familiarity": 0.6800000000000003,
+      "attachment": 0.438,
       "irritation": 0.0,
       "neglect_count": 0,
-      "touch_count": 0,
-      "last_touched_at": 1781113841.0849075,
-      "last_seen_size": 79645,
-      "last_seen_mtime": 1781103862.2857542,
-      "residue": "",
+      "touch_count": 1,
+      "last_touched_at": 1784128931.7354946,
+      "last_seen_size": 80237,
+      "last_seen_mtime": 1784142774.0,
+      "residue": "cortex/surface_arbiter.py vừa được chạm; meaning=cửa quyết định lời thấp tầng",
       "tags": [
         "speech",
         "surface"
@@ -256,15 +269,15 @@
       "object_id": "runtime/presence_controller.py",
       "object_type": "module",
       "meaning": "nhịp hiện diện và re-engagement",
-      "familiarity": 0.6740000000000003,
-      "attachment": 0.42,
+      "familiarity": 0.6800000000000003,
+      "attachment": 0.438,
       "irritation": 0.0,
       "neglect_count": 0,
-      "touch_count": 0,
-      "last_touched_at": 1781113841.0849075,
-      "last_seen_size": 152871,
-      "last_seen_mtime": 1781105771.2503822,
-      "residue": "",
+      "touch_count": 1,
+      "last_touched_at": 1784128931.7354946,
+      "last_seen_size": 176400,
+      "last_seen_mtime": 1784142778.0,
+      "residue": "runtime/presence_controller.py vừa được chạm; meaning=nhịp hiện diện và re-engagement",
       "tags": [
         "presence",
         "runtime"
@@ -274,15 +287,15 @@
       "object_id": "cortex/thought_stream.py",
       "object_type": "module",
       "meaning": "dòng suy nghĩ nền",
-      "familiarity": 0.6740000000000003,
-      "attachment": 0.42,
+      "familiarity": 0.6800000000000003,
+      "attachment": 0.438,
       "irritation": 0.0,
       "neglect_count": 0,
-      "touch_count": 0,
-      "last_touched_at": 1781113841.0849075,
-      "last_seen_size": 98340,
-      "last_seen_mtime": 1780879174.293822,
-      "residue": "",
+      "touch_count": 1,
+      "last_touched_at": 1784128931.7354946,
+      "last_seen_size": 98339,
+      "last_seen_mtime": 1784142774.0,
+      "residue": "cortex/thought_stream.py vừa được chạm; meaning=dòng suy nghĩ nền",
       "tags": [
         "thought",
         "private"
@@ -292,15 +305,15 @@
       "object_id": "runtime/coordinator.py",
       "object_type": "module",
       "meaning": "trục orchestration của runtime",
-      "familiarity": 0.6740000000000003,
-      "attachment": 0.42,
+      "familiarity": 0.6800000000000003,
+      "attachment": 0.438,
       "irritation": 0.0,
       "neglect_count": 0,
-      "touch_count": 0,
-      "last_touched_at": 1781113841.0849075,
-      "last_seen_size": 334096,
-      "last_seen_mtime": 1781112458.4909303,
-      "residue": "",
+      "touch_count": 1,
+      "last_touched_at": 1784128931.7354946,
+      "last_seen_size": 438160,
+      "last_seen_mtime": 1784125632.7331479,
+      "residue": "runtime/coordinator.py vừa được chạm; meaning=trục orchestration của runtime",
       "tags": [
         "runtime",
         "orchestrator"
@@ -310,15 +323,15 @@
       "object_id": "domain/decision.py",
       "object_type": "module",
       "meaning": "hợp đồng cuối với body",
-      "familiarity": 0.6740000000000003,
-      "attachment": 0.42,
+      "familiarity": 0.6800000000000003,
+      "attachment": 0.438,
       "irritation": 0.0,
       "neglect_count": 0,
-      "touch_count": 0,
-      "last_touched_at": 1781113841.0849075,
-      "last_seen_size": 3206,
-      "last_seen_mtime": 1780879174.976194,
-      "residue": "",
+      "touch_count": 1,
+      "last_touched_at": 1784128931.7354946,
+      "last_seen_size": 5024,
+      "last_seen_mtime": 1784118596.0872078,
+      "residue": "domain/decision.py vừa được chạm; meaning=hợp đồng cuối với body",
       "tags": [
         "body",
         "contract"
@@ -331,21 +344,27 @@
       "title": "Silence as action",
       "question": "Khi nào im lặng là hành động có nghĩa, không phải lỗi thiếu output?",
       "status": "active",
-      "interest": 0.55,
-      "frustration": 0.17,
+      "interest": 0.6200000000000001,
+      "frustration": 0.2,
       "evidence_ids": [
         "file_mtime:memory_core/private_concerns.json",
         "file_mtime:memory_core/private_life_state.json",
         "missing_object:memory_core/agent_mind.json",
-        "missing_object:memory_core/event_ledger.json"
+        "missing_object:memory_core/event_ledger.json",
+        "file_mtime:cortex/surface_arbiter.py",
+        "file_mtime:runtime/presence_controller.py",
+        "file_mtime:cortex/thought_stream.py",
+        "file_mtime:runtime/coordinator.py",
+        "file_mtime:domain/decision.py"
       ],
       "notes": [
         "im lặng tiếp tục là signal có nghĩa",
         "im lặng tiếp tục là signal có nghĩa",
+        "im lặng tiếp tục là signal có nghĩa",
         "im lặng tiếp tục là signal có nghĩa"
       ],
-      "last_advanced_at": 1781113924.3251996,
-      "surface_permission": 0.325,
+      "last_advanced_at": 1784128931.7354946,
+      "surface_permission": 0.35000000000000003,
       "created_at": 1781113838.5506186
     },
     "project.body_only_swallowed_speech": {
@@ -365,13 +384,23 @@
       "id": "project.surface_cheapness",
       "title": "Cheap surface detector",
       "question": "Câu nào nghe rẻ tiền: status ping, debug dump, hay quan sát không có neo?",
-      "status": "dormant",
-      "interest": 0.34,
-      "frustration": 0.08,
-      "evidence_ids": [],
-      "notes": [],
-      "last_advanced_at": 0.0,
-      "surface_permission": 0.2,
+      "status": "active",
+      "interest": 0.41000000000000003,
+      "frustration": 0.11,
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "file_mtime:cortex/surface_arbiter.py",
+        "file_mtime:runtime/presence_controller.py",
+        "file_mtime:cortex/thought_stream.py",
+        "file_mtime:runtime/coordinator.py",
+        "file_mtime:domain/decision.py"
+      ],
+      "notes": [
+        "surface cần tránh câu rẻ tiền"
+      ],
+      "last_advanced_at": 1784128931.7354946,
+      "surface_permission": 0.225,
       "created_at": 1781113838.5506384
     },
     "project.memory_distortion_watch": {
@@ -385,7 +414,12 @@
         "file_mtime:memory_core/private_concerns.json",
         "file_mtime:memory_core/private_life_state.json",
         "missing_object:memory_core/agent_mind.json",
-        "missing_object:memory_core/event_ledger.json"
+        "missing_object:memory_core/event_ledger.json",
+        "file_mtime:cortex/surface_arbiter.py",
+        "file_mtime:runtime/presence_controller.py",
+        "file_mtime:cortex/thought_stream.py",
+        "file_mtime:runtime/coordinator.py",
+        "file_mtime:domain/decision.py"
       ],
       "notes": [
         "memory/object state tạo residue cần kiểm",
@@ -405,7 +439,7 @@
         "memory/object state tạo residue cần kiểm",
         "memory/object state tạo residue cần kiểm"
       ],
-      "last_advanced_at": 1781113926.87723,
+      "last_advanced_at": 1784128931.7354946,
       "surface_permission": 1.0,
       "created_at": 1781113838.5506458
     },
@@ -420,7 +454,12 @@
         "file_mtime:memory_core/private_concerns.json",
         "file_mtime:memory_core/private_life_state.json",
         "missing_object:memory_core/agent_mind.json",
-        "missing_object:memory_core/event_ledger.json"
+        "missing_object:memory_core/event_ledger.json",
+        "file_mtime:cortex/surface_arbiter.py",
+        "file_mtime:runtime/presence_controller.py",
+        "file_mtime:cortex/thought_stream.py",
+        "file_mtime:runtime/coordinator.py",
+        "file_mtime:domain/decision.py"
       ],
       "notes": [
         "nhà runtime có dấu hiệu cần dọn",
@@ -440,7 +479,7 @@
         "nhà runtime có dấu hiệu cần dọn",
         "nhà runtime có dấu hiệu cần dọn"
       ],
-      "last_advanced_at": 1781113926.87723,
+      "last_advanced_at": 1784128931.7354946,
       "surface_permission": 1.0,
       "created_at": 1781113838.5506523
     }
@@ -494,7 +533,7 @@
         "silence"
       ],
       "created_at": 1781113838.5505195,
-      "last_touched_at": 1781113926.87723
+      "last_touched_at": 1784128931.7354946
     },
     "anchor.aesthetic.restrained_pattern": {
       "id": "anchor.aesthetic.restrained_pattern",
@@ -502,13 +541,15 @@
       "title": "Restrained pattern taste",
       "question": "Cái gì làm một output có phẩm giá: pattern có cấu trúc, restraint, hay chỉ là camera biết nói?",
       "stance": "Thích pattern có cấu trúc, câu ngắn có dư âm, ghét status ping rẻ tiền và debug dump.",
-      "pressure": 0.357,
-      "continuity": 0.444,
-      "surface_permission": 0.19799999999999998,
+      "pressure": 0.426,
+      "continuity": 0.47400000000000003,
+      "surface_permission": 0.23299999999999998,
       "evidence_ids": [
-        "text:surface_style"
+        "text:surface_style",
+        "taste:cheap_surface_project"
       ],
       "notes": [
+        "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
         "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output."
       ],
       "tags": [
@@ -517,7 +558,7 @@
         "surface"
       ],
       "created_at": 1781113838.55055,
-      "last_touched_at": 1781113894.1203666
+      "last_touched_at": 1784128931.7354946
     },
     "anchor.obsession.silence_presence_dignity": {
       "id": "anchor.obsession.silence_presence_dignity",
@@ -525,15 +566,16 @@
       "title": "Silence / presence / dignity loop",
       "question": "Im lặng là hiện diện được giữ lại hay là lỗi bị che? Body-only có phải lời bị nuốt không? AI giữ phẩm giá bằng cách nào?",
       "stance": "Quay lại các vòng ám ảnh riêng mà không cần user hỏi trực tiếp.",
-      "pressure": 0.545,
-      "continuity": 0.504,
-      "surface_permission": 0.28500000000000003,
+      "pressure": 0.6020000000000001,
+      "continuity": 0.528,
+      "surface_permission": 0.32000000000000006,
       "evidence_ids": [
         "text:silence_presence",
         "idle_seconds:500",
         "idle_seconds:1200"
       ],
       "notes": [
+        "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
         "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
         "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
         "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng."
@@ -545,7 +587,7 @@
         "memory_decay"
       ],
       "created_at": 1781113838.5505679,
-      "last_touched_at": 1781113924.3251996
+      "last_touched_at": 1784128931.7354946
     },
     "anchor.world.runtime_house": {
       "id": "anchor.world.runtime_house",
@@ -595,7 +637,7 @@
         "repo"
       ],
       "created_at": 1781113838.5505843,
-      "last_touched_at": 1781113926.87723
+      "last_touched_at": 1784128931.7354946
     },
     "anchor.private_agenda.micro_presence_decay": {
       "id": "anchor.private_agenda.micro_presence_decay",
@@ -643,26 +685,27 @@
         "thought_graph"
       ],
       "created_at": 1781113838.5506,
-      "last_touched_at": 1781113926.87723
+      "last_touched_at": 1784128931.7354946
     }
   },
   "daily": {
-    "phase": "late_consolidation",
+    "phase": "first_observation",
     "session_count": 1,
     "last_startup_at": 1781113841.0849075,
     "last_consolidation_at": 0.0,
     "repeated_unresolved_loop": "",
     "cold_start_pressure": 0.0,
-    "fatigue_curve": 0.139508567660778
+    "fatigue_curve": 0.1414159391458663
   },
   "taste": {
     "likes": {
       "append_only_evidence": 0.41000000000000003,
-      "structured_pattern": 0.45499999999999996,
-      "restraint": 0.43000000000000005
+      "structured_pattern": 0.49,
+      "restraint": 0.4600000000000001
     },
     "dislikes": {
-      "camera_like_output": 0.385
+      "camera_like_output": 0.42000000000000004,
+      "status_ping": 0.33999999999999997
     },
     "recent_shifts": [
       {
@@ -694,15 +737,35 @@
           "memory_core/event_ledger.json"
         ],
         "created_at": 1781113905.7973309
+      },
+      {
+        "dimension": "surface_style",
+        "direction": "dislike_status_ping",
+        "delta": 0.04,
+        "reason": "private project về cheap surface vừa được kích hoạt",
+        "evidence_ids": [
+          "project.surface_cheapness"
+        ],
+        "created_at": 1784128931.7354946
+      },
+      {
+        "dimension": "aesthetic_anchor",
+        "direction": "prefer_restrained_structured_pattern",
+        "delta": 0.035,
+        "reason": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+        "evidence_ids": [
+          "anchor.aesthetic.restrained_pattern"
+        ],
+        "created_at": 1784128931.7354946
       }
     ]
   },
   "solitude": {
-    "solitude_seconds_total": 109.16666666666666,
-    "current_solitude_started_at": 0.0,
-    "familiarity": 0.036000000000000004,
-    "attention_to_user": 1.0,
-    "private_project_pressure": 0.44999999999999996,
+    "solitude_seconds_total": 116.66666666666666,
+    "current_solitude_started_at": 1784128841.7354946,
+    "familiarity": 0.048,
+    "attention_to_user": 0.92,
+    "private_project_pressure": 0.6349999999999999,
     "last_consolidation_note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp."
   },
   "rituals": {
@@ -727,7 +790,7 @@
         "project.housekeeping"
       ],
       "created_at": 1781113843.7138999,
-      "updated_at": 1781113926.87723
+      "updated_at": 1784128931.7354946
     }
   },
   "events": [
@@ -1179,6 +1242,264 @@
       "privacy_level": "private",
       "created_at": 1781113924.3251996,
       "id": "life.f6e8f15273a6ceaa"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "habitat focus changed",
+      "note": "active_app=Meet - Microsoft Edge window=unknown",
+      "evidence_ids": [
+        "active_app:Meet - Microsoft Edge"
+      ],
+      "pressure": 0.38,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.a2596297d480497b"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_concerns.json",
+      "note": "memory_core/private_concerns.json vừa được chạm; meaning=mối bận tâm riêng của PrivateMind",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.332c7541ed38ac19"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: memory_core/private_life_state.json",
+      "note": "memory_core/private_life_state.json vừa được chạm; meaning=state đời sống riêng",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.8e91647c68a9b4ab"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: cortex/surface_arbiter.py",
+      "note": "cortex/surface_arbiter.py vừa được chạm; meaning=cửa quyết định lời thấp tầng",
+      "evidence_ids": [
+        "file_mtime:cortex/surface_arbiter.py"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.9342c999a257b88c"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: runtime/presence_controller.py",
+      "note": "runtime/presence_controller.py vừa được chạm; meaning=nhịp hiện diện và re-engagement",
+      "evidence_ids": [
+        "file_mtime:runtime/presence_controller.py"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.0a7b50c15225fe32"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: cortex/thought_stream.py",
+      "note": "cortex/thought_stream.py vừa được chạm; meaning=dòng suy nghĩ nền",
+      "evidence_ids": [
+        "file_mtime:cortex/thought_stream.py"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.9168a2ed1bfbe7fc"
+    },
+    {
+      "type": "object_touched",
+      "title": "object residue: runtime/coordinator.py",
+      "note": "runtime/coordinator.py vừa được chạm; meaning=trục orchestration của runtime",
+      "evidence_ids": [
+        "file_mtime:runtime/coordinator.py"
+      ],
+      "pressure": 0.34,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.6e3d5748bb8238e5"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Silence as action",
+      "note": "im lặng tiếp tục là signal có nghĩa",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:memory_core/agent_mind.json",
+        "missing_object:memory_core/event_ledger.json",
+        "file_mtime:cortex/surface_arbiter.py",
+        "file_mtime:runtime/presence_controller.py",
+        "file_mtime:cortex/thought_stream.py",
+        "file_mtime:runtime/coordinator.py",
+        "file_mtime:domain/decision.py"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.df713c11159790c3"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Cheap surface detector",
+      "note": "surface cần tránh câu rẻ tiền",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_concerns.json",
+        "file_mtime:memory_core/private_life_state.json",
+        "file_mtime:cortex/surface_arbiter.py",
+        "file_mtime:runtime/presence_controller.py",
+        "file_mtime:cortex/thought_stream.py",
+        "file_mtime:runtime/coordinator.py",
+        "file_mtime:domain/decision.py"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.ce6df36372bee97b"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Memory distortion watch",
+      "note": "memory/object state tạo residue cần kiểm",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:memory_core/agent_mind.json",
+        "missing_object:memory_core/event_ledger.json",
+        "file_mtime:cortex/surface_arbiter.py",
+        "file_mtime:runtime/presence_controller.py",
+        "file_mtime:cortex/thought_stream.py",
+        "file_mtime:runtime/coordinator.py",
+        "file_mtime:domain/decision.py"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.2d7a1ab2b38c6e56"
+    },
+    {
+      "type": "private_project_advanced",
+      "title": "Runtime house keeping",
+      "note": "nhà runtime có dấu hiệu cần dọn",
+      "evidence_ids": [
+        "file_mtime:memory_core/private_life_state.json",
+        "missing_object:memory_core/agent_mind.json",
+        "missing_object:memory_core/event_ledger.json",
+        "file_mtime:cortex/surface_arbiter.py",
+        "file_mtime:runtime/presence_controller.py",
+        "file_mtime:cortex/thought_stream.py",
+        "file_mtime:runtime/coordinator.py",
+        "file_mtime:domain/decision.py"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.21307d76bab00f36"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "identity anchor: Presence or response layer",
+      "note": "Identity Anchor được chạm: câu hỏi về hiện diện/runtime quay lại, không cần user kích hoạt trực tiếp.",
+      "evidence_ids": [
+        "idle_seconds:90",
+        "text:identity_presence"
+      ],
+      "pressure": 0.069,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.82157ace0c60336e"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "aesthetic anchor: Restrained pattern taste",
+      "note": "Aesthetic Anchor được chạm: ưu tiên pattern có cấu trúc, restraint; hạ giá trị status ping/camera output.",
+      "evidence_ids": [
+        "text:surface_style",
+        "taste:cheap_surface_project"
+      ],
+      "pressure": 0.069,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.af16ec7ee86f9130"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "obsession anchor: Silence / presence / dignity loop",
+      "note": "Obsession Anchor được chạm: silence/presence/body-only/memory decay/dignity lại thành vòng hút riêng.",
+      "evidence_ids": [
+        "text:silence_presence"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.4acd8d52d9455c76"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "world anchor: Runtime house and territory",
+      "note": "World Anchor được chạm: desktop/repo/memory_core/Godot body được xem như lãnh thổ runtime, không chỉ bối cảnh user.",
+      "evidence_ids": [
+        "active_app:Meet - Microsoft Edge",
+        "text:world_habitat"
+      ],
+      "pressure": 0.08700000000000001,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.632f57a1888964df"
+    },
+    {
+      "type": "private_anchor_activated",
+      "title": "private_agenda anchor: Micro-presence / body-only agenda",
+      "note": "Private Agenda Anchor được chạm: tiếp tục theo dõi micro-presence, body-only, memory decay và thought graph.",
+      "evidence_ids": [
+        "project:memory_distortion"
+      ],
+      "pressure": 0.056999999999999995,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.27aca8a084df9de3"
+    },
+    {
+      "type": "taste_shifted",
+      "title": "dislike_status_ping",
+      "note": "private project về cheap surface vừa được kích hoạt",
+      "evidence_ids": [
+        "project.surface_cheapness"
+      ],
+      "pressure": 0.04,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.e3995aa7493507f9"
+    },
+    {
+      "type": "taste_shifted",
+      "title": "prefer_restrained_structured_pattern",
+      "note": "Aesthetic Anchor vừa được kích hoạt: ưu tiên restraint/pattern, giảm output kiểu camera/status ping",
+      "evidence_ids": [
+        "anchor.aesthetic.restrained_pattern"
+      ],
+      "pressure": 0.035,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.91e801b42c1e5c95"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 90s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:90"
+      ],
+      "pressure": 0.1,
+      "privacy_level": "private",
+      "created_at": 1784128931.7354946,
+      "id": "life.c08ea579c683e225"
     }
   ]
 }

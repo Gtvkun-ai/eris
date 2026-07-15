@@ -103,6 +103,14 @@ class TextRepeatGuardMixin:
             return False
         if left.normalized_text == right.normalized_text:
             return True
+        try:
+            from runtime.rollout_control import feature_enabled
+            semantic_enabled = feature_enabled("semantic_repeat_guard")
+        except Exception:
+            semantic_enabled = True
+        if not semantic_enabled:
+            # Rollback về exact fingerprint; không dùng semantic overlap.
+            return False
         left_tokens = set(left.normalized_text.split())
         right_tokens = set(right.normalized_text.split())
         if not left_tokens or not right_tokens:

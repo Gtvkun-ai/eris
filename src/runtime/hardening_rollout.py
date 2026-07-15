@@ -85,7 +85,7 @@ class HardeningHealthGate:
         repair_rate, repair_samples = self._rate(snapshot, "repair_loop_rate", "repair_state_event_total")
         repair_threshold = self.repair_loop_baseline * 1.20
         findings.append(RollbackFinding(
-            "memory_provenance_guard", "repair_loop_rate", repair_rate, repair_threshold,
+            "repair_state_ttl", "repair_loop_rate", repair_rate, repair_threshold,
             repair_samples >= self.min_samples and repair_rate > repair_threshold,
             f"rate={repair_rate:.4f}, baseline={self.repair_loop_baseline:.4f}, samples={int(repair_samples)}",
         ))

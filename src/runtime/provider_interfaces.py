@@ -58,19 +58,47 @@ class ProviderRegistry:
         self._providers: dict[str, Any] = {}
 
     def register(self, kind: str, provider: Any) -> None:
-        normalized = str(kind or "").strip().lower()
-        expected = self._KINDS.get(normalized)
-        if expected is None:
-            raise KeyError(f"Loại provider không hợp lệ: {kind}")
-        if not isinstance(provider, expected):
-            raise TypeError(f"Provider {normalized} không thỏa contract bắt buộc")
+        normalized = self._normalize_kind(kind)
+        if normalized in self._providers:
+            raise KeyError(f"Provider đã được đăng ký: {normalized}")
+        self._validate(normalized, provider)
         self._providers[normalized] = provider
 
+    def replace(self, kind: str, provider: Any) -> None:
+        """Đăng ký mới hoặc thay provider khi component hot-reload."""
+        normalized = self._normalize_kind(kind)
+        self._validate(normalized, provider)
+        self._providers[normalized] = provider
+
+    def unregister(self, kind: str) -> Any | None:
+        normalized = self._normalize_kind(kind)
+        return self._providers.pop(normalized, None)
+
     def get(self, kind: str) -> Any:
-        normalized = str(kind or "").strip().lower()
+        normalized = self._normalize_kind(kind)
         if normalized not in self._providers:
             raise LookupError(f"Chưa đăng ký provider: {normalized}")
         return self._providers[normalized]
+
+    def get_optional(self, kind: str) -> Any | None:
+        normalized = self._normalize_kind(kind)
+        return self._providers.get(normalized)
+
+    def kinds(self) -> tuple[str, ...]:
+        return tuple(sorted(self._providers))
+
+    @classmethod
+    def _normalize_kind(cls, kind: str) -> str:
+        normalized = str(kind or "").strip().lower()
+        if normalized not in cls._KINDS:
+            raise KeyError(f"Loại provider không hợp lệ: {kind}")
+        return normalized
+
+    @classmethod
+    def _validate(cls, normalized: str, provider: Any) -> None:
+        expected = cls._KINDS[normalized]
+        if not isinstance(provider, expected):
+            raise TypeError(f"Provider {normalized} không thỏa contract bắt buộc")
 
     def health(self) -> dict[str, ProviderHealth]:
         result: dict[str, ProviderHealth] = {}
