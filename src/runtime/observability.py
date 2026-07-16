@@ -412,6 +412,88 @@ class ErisObservability:
         return store
 
     # ---- Hook chuyên biệt cho các lane chính ---------------------------------
+    def record_autonomous_plan(self, plan: Any) -> None:
+        """Ghi lý do nói/im của autonomous mà không lưu nguyên câu hay prompt."""
+        if plan is None:
+            return
+        selected = getattr(plan, "selected_opportunity", None)
+        permit = getattr(plan, "permit", None)
+        directive = getattr(plan, "session_directive", None)
+        scene = getattr(getattr(plan, "scene", None), "name", "unknown")
+        kind = str(getattr(selected, "kind", "none") or "none")
+        reason = str(getattr(permit, "reason", "unknown") or "unknown")
+        allowed = bool(getattr(permit, "allowed", False))
+        phase = str(getattr(directive, "phase", "unknown") or "unknown")
+        cadence = str(getattr(directive, "cadence", "unknown") or "unknown")
+        fatigue = float(getattr(directive, "audience_fatigue", 0.0) or 0.0)
+        lines = int(getattr(directive, "lines_last_hour", 0) or 0)
+        score = float(getattr(directive, "selected_score", 0.0) or 0.0)
+
+        for opportunity in tuple(getattr(plan, "opportunities", ()) or ()):
+            self.increment(
+                "autonomous_opportunity_detected_total",
+                tags={"kind": str(getattr(opportunity, "kind", "unknown") or "unknown"), "scene": scene},
+            )
+        self.increment(
+            "autonomous_plan_total",
+            tags={"scene": scene, "kind": kind, "allowed": str(allowed).lower(), "phase": phase},
+            fields={"reason": reason, "cadence": cadence},
+        )
+        if allowed:
+            self.increment("autonomous_speak_permit_total", tags={"kind": kind, "scene": scene})
+            self.observe("autonomous_speak_budget_words", float(getattr(permit, "max_words", 0) or 0), tags={"kind": kind})
+        else:
+            self.increment("autonomous_opportunity_suppressed_total", tags={"kind": kind, "reason": reason[:80]})
+        self.gauge("autonomous_audience_fatigue", fatigue, tags={"phase": phase, "scene": scene})
+        self.gauge("autonomous_lines_last_hour", float(lines), tags={"scene": scene})
+        self.observe("autonomous_selected_opportunity_score", score, tags={"kind": kind, "scene": scene})
+        self.log(
+            "autonomous_plan",
+            tags={"scene": scene, "kind": kind, "phase": phase, "cadence": cadence},
+            fields={
+                "allowed": allowed,
+                "permit_mode": str(getattr(permit, "mode", "") or ""),
+                "permit_reason": reason,
+                "selected_score": score,
+                "body_only_bias": float(getattr(directive, "body_only_bias", 0.0) or 0.0),
+                "lines_last_hour": lines,
+            },
+        )
+
+    def record_autonomous_commit(
+        self,
+        *,
+        plan: Any,
+        intent: str = "",
+        hook_id: str = "",
+        session_snapshot: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Commit xảy ra sau khi lời public đã được dựng/gửi, không phải lúc chọn hook."""
+        selected = getattr(plan, "selected_opportunity", None)
+        scene = str(getattr(getattr(plan, "scene", None), "name", "unknown") or "unknown")
+        kind = str(getattr(selected, "kind", "unknown") or "unknown")
+        snapshot = dict(session_snapshot or {})
+        self.increment(
+            "autonomous_public_line_total",
+            tags={"scene": scene, "kind": kind, "intent": _safe_text(intent or "unknown", 48)},
+            fields={"hook_id": _safe_text(hook_id, 96)},
+        )
+        self.gauge(
+            "autonomous_lines_last_hour",
+            float(snapshot.get("lines_last_hour", 0) or 0),
+            tags={"scene": scene},
+        )
+        self.log(
+            "autonomous_public_commit",
+            tags={"scene": scene, "kind": kind},
+            fields={
+                "intent": _safe_text(intent, 64),
+                "hook_id": _safe_text(hook_id, 96),
+                "audience_fatigue": float(snapshot.get("audience_fatigue", 0.0) or 0.0),
+                "recent_kinds": list(snapshot.get("recent_kinds", []) or [])[-8:],
+            },
+        )
+
     def record_social_intercept(self, result: Any, rollout: Any = None) -> None:
         act = str(getattr(getattr(result, "act", None), "value", "normal_chat") or "normal_chat")
         confidence = float(getattr(result, "confidence", 0.0) or 0.0)

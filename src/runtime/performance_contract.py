@@ -198,11 +198,38 @@ class PerformanceContextBuilder:
 
         scene = director.scene_mode.name
         intent = _intent_from_payload(payload)
+        selected_opportunity = (
+            autonomous_plan.get("selected_opportunity")
+            if isinstance(autonomous_plan.get("selected_opportunity"), Mapping)
+            else {}
+        )
+        session_directive = (
+            autonomous_plan.get("session_directive")
+            if isinstance(autonomous_plan.get("session_directive"), Mapping)
+            else {}
+        )
+        if channel_name == "autonomous" and bool(permit.get("allowed", False)):
+            suggested_intent = _clean(selected_opportunity.get("suggested_intent")).lower()
+            # Opportunity đã qua evidence + session director. Dùng intent này làm
+            # hướng biểu diễn thay vì để một inner_whim cũ kéo new_error về body-only.
+            if suggested_intent:
+                intent = suggested_intent
         publicity = _publicity_for(director)
         reasons: list[str] = [f"scene={scene}", f"intent={intent or 'unknown'}"]
         if autonomous_budget_applied:
             reasons.append(f"autonomous_budget={director.speak_budget_words}w/{director.speak_budget_ms}ms")
-        hook = self.content_engine.select_hook(director, payload=payload, channel=channel)
+            reasons.append(
+                f"session={_clean(session_directive.get('phase')) or 'settled'}/"
+                f"{_clean(session_directive.get('cadence')) or 'balanced'}"
+            )
+        hook = self.content_engine.select_hook(
+            director,
+            payload=payload,
+            channel=channel,
+            # Chat commit theo hành vi cũ. Autonomous chỉ commit sau khi output
+            # public thật sự được gửi, tránh cooldown cho một câu bị scorer chặn.
+            commit_on_select=channel_name != "autonomous",
+        )
 
         if hook.family == "silence" and channel_name != "chat":
             reasons.append("content_cooldown_body_only")

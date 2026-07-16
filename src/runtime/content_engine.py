@@ -545,6 +545,7 @@ class ContentEngine:
         *,
         payload: Mapping[str, Any],
         channel: str | None = None,
+        commit_on_select: bool = True,
     ) -> ContentHook:
         """Chọn hook cho lượt hiện tại.
 
@@ -562,7 +563,8 @@ class ContentEngine:
         blob = _lower_blob(intent, user_text, director.machine_state.focus_kind, director.machine_state.active_app)
         seed_hook = self._hook_from_seed(director, scene=scene, intent=intent, seeds=seeds)
         if seed_hook is not None and self._seed_hook_available(seed_hook, now=now):
-            self._remember_use(seed_hook, now=now)
+            if commit_on_select:
+                self._remember_use(seed_hook, now=now)
             return seed_hook
         candidates = self._candidate_hooks(director, scene=scene, intent=intent, blob=blob)
         chosen = self._first_available(candidates, now=now)
@@ -580,7 +582,8 @@ class ContentEngine:
                 score_bonus=0.0,
                 max_uses_per_session=999,
             )
-        self._remember_use(chosen, now=now)
+        if commit_on_select:
+            self._remember_use(chosen, now=now)
         return chosen
 
     def topic_stack_payload(self, *, limit: int = 5) -> list[dict[str, Any]]:
@@ -824,10 +827,39 @@ class ContentEngine:
         self._session_id = current
         self._session_uses = {}
 
-    def _remember_use(self, hook: ContentHook, *, now: float) -> None:
-        self._last_used[hook.id] = now
-        self._session_uses[hook.id] = self._session_uses.get(hook.id, 0) + 1
+    def commit_hook_use(self, hook: ContentHook | Mapping[str, Any] | str, *, now: float | None = None) -> bool:
+        """Commit cooldown chỉ sau khi hook thật sự thành lời public.
+
+        Autonomous gọi ``select_hook(..., commit_on_select=False)`` vì candidate có
+        thể bị scorer kéo về body-only hoặc bị lỗi provider. Nếu ghi cooldown ngay
+        lúc chọn, Eris sẽ "quên" một bit chưa từng nói. Một kiểu mất trí nhớ rất
+        máy móc, nhưng vẫn là mất trí nhớ.
+        """
+        if isinstance(hook, ContentHook):
+            hook_id = hook.id
+        elif isinstance(hook, Mapping):
+            hook_id = _clean(hook.get("id"))
+        else:
+            hook_id = _clean(hook)
+        if not hook_id or hook_id == "cooldown_silence":
+            return False
+        when = float(time.time() if now is None else now)
+        self._last_used[hook_id] = when
+        self._session_uses[hook_id] = self._session_uses.get(hook_id, 0) + 1
         self._save_state()
+        return True
+
+    def hook_usage_snapshot(self, hook_id: str) -> dict[str, Any]:
+        """Snapshot nhỏ cho test/debug; không phơi raw seed hay prompt."""
+        key = _clean(hook_id)
+        return {
+            "hook_id": key,
+            "last_used": float(self._last_used.get(key, 0.0) or 0.0),
+            "session_uses": int(self._session_uses.get(key, 0) or 0),
+        }
+
+    def _remember_use(self, hook: ContentHook, *, now: float) -> None:
+        self.commit_hook_use(hook, now=now)
 
     def _load_state(self) -> None:
         try:

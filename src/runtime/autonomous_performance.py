@@ -60,6 +60,8 @@ class AutonomousPerformanceAct:
     opportunity_kind: str
     scene_mode: str
     intent: str
+    session_phase: str
+    cadence: str
     beats: tuple[PerformanceBeat, ...]
     total_budget_ms: int
     cooldown_ms: int
@@ -74,6 +76,8 @@ class AutonomousPerformanceAct:
             "opportunity_kind": self.opportunity_kind,
             "scene_mode": self.scene_mode,
             "intent": self.intent,
+            "session_phase": self.session_phase,
+            "cadence": self.cadence,
             "beats": [beat.to_payload() for beat in self.beats],
             "total_budget_ms": self.total_budget_ms,
             "cooldown_ms": self.cooldown_ms,
@@ -114,6 +118,7 @@ class AutonomousPerformancePlanner:
         permit = plan.get("permit") if isinstance(plan.get("permit"), Mapping) else {}
         opportunity = plan.get("selected_opportunity") if isinstance(plan.get("selected_opportunity"), Mapping) else {}
         scene = plan.get("scene") if isinstance(plan.get("scene"), Mapping) else {}
+        directive = plan.get("session_directive") if isinstance(plan.get("session_directive"), Mapping) else {}
         perf = performance_context if isinstance(performance_context, Mapping) else {}
 
         if not plan or not bool(permit.get("allowed", False)) or not line:
@@ -127,8 +132,18 @@ class AutonomousPerformancePlanner:
         stage_emotion = str(perf.get("stage_emotion", emotion) or emotion or "neutral")
         stage_motion = str(perf.get("stage_motion", motion) or motion or "none")
 
-        opening_hold = self._opening_hold(kind=kind, delivery=delivery, scene=scene_mode)
+        session_phase = str(directive.get("phase", "settled") or "settled")
+        cadence = str(directive.get("cadence", "balanced") or "balanced")
+        try:
+            hold_bias = int(directive.get("opening_hold_bias_ms", 0) or 0)
+        except (TypeError, ValueError):
+            hold_bias = 0
+        opening_hold = max(40, min(420, self._opening_hold(kind=kind, delivery=delivery, scene=scene_mode) + hold_bias))
         closing_hold = 420 if kind in {"dead_air", "return_after_idle"} else 300
+        if cadence == "sparse":
+            closing_hold = max(closing_hold, 500)
+        elif cadence == "restrained":
+            closing_hold = max(closing_hold, 360)
         sentence_parts = self._split_line(line)
         speech_beats: list[PerformanceBeat] = []
         for idx, part in enumerate(sentence_parts):
@@ -175,7 +190,7 @@ class AutonomousPerformancePlanner:
         total = opening_hold + closing_hold + sum(item.duration_ms + item.pause_after_ms for item in speech_beats)
         cooldown = int(permit.get("cooldown_after_ms", 24_000) or 24_000)
         note = (
-            f"Autonomous stage act. Hold {opening_hold}ms before the first word. "
+            f"Autonomous stage act ({session_phase}/{cadence}). Hold {opening_hold}ms before the first word. "
             f"Deliver {len(speech_beats)} deliberate speech beat(s); keep pauses short and intentional. "
             "Do not add filler, laughter, or stage directions that are not present in the text."
         )
@@ -185,6 +200,8 @@ class AutonomousPerformancePlanner:
             opportunity_kind=kind,
             scene_mode=scene_mode,
             intent=intent,
+            session_phase=session_phase,
+            cadence=cadence,
             beats=tuple(beats),
             total_budget_ms=total,
             cooldown_ms=cooldown,

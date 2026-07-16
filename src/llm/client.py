@@ -416,11 +416,16 @@ class OpenAICompatibleClient:
                         timeout=self.timeout if timeout is None else timeout,
                     )
                     response.raise_for_status()
+                    try:
+                        payload_json = response.json()
+                    except ValueError as exc:
+                        last_error = exc
+                        continue
                     self._provider_circuit.record_success()
                     _record_pressure_success(pressure_provider)
                     if self.key_pool is not None and lease is not None:
                         self.key_pool.mark_success(lease=lease)
-                    return response.json()
+                    return payload_json
                 except requests.HTTPError as exc:
                     last_error = _http_error_with_body(exc.response) if exc.response is not None else exc
                     status_code = exc.response.status_code if exc.response is not None else None

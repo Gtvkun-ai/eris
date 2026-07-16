@@ -19,6 +19,7 @@ from typing import Any
 from runtime.autonomous_opportunity import AutonomousOpportunity, AutonomousOpportunityDetector
 from runtime.autonomous_scene_runtime import AutonomousSceneRuntime, SceneRuntimeState
 from runtime.autonomous_speak_gate import AutonomousSpeakPermissionGate, SpeakPermit
+from runtime.autonomous_session_director import AutonomousSessionDirector, SessionDirective
 
 
 def _enabled() -> bool:
@@ -33,6 +34,7 @@ class AutonomousPlan:
     permit: SpeakPermit
     evaluated_at_ms: int
     enabled: bool = True
+    session_directive: SessionDirective | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -42,15 +44,18 @@ class AutonomousPlan:
             "opportunities": [item.to_payload() for item in self.opportunities],
             "selected_opportunity": self.selected_opportunity.to_payload() if self.selected_opportunity else None,
             "permit": self.permit.to_payload(),
+            "session_directive": self.session_directive.to_payload() if self.session_directive else None,
         }
 
 
 class AutonomousPerformerOrchestrator:
-    def __init__(self, *, logger: Any = None) -> None:
+    def __init__(self, *, logger: Any = None, observability: Any = None) -> None:
         self.logger = logger
+        self.observability = observability
         self.scene_runtime = AutonomousSceneRuntime()
         self.detector = AutonomousOpportunityDetector()
         self.speak_gate = AutonomousSpeakPermissionGate()
+        self.session_director = AutonomousSessionDirector()
         self.last_plan: AutonomousPlan | None = None
 
     def evaluate(
@@ -71,8 +76,10 @@ class AutonomousPerformerOrchestrator:
         )
         if not _enabled():
             permit = SpeakPermit(False, "suppress", 0, 0, "autonomous_stage_disabled", 0, 1.0)
-            plan = AutonomousPlan(scene, (), None, permit, now, enabled=False)
+            directive = self.session_director.direct(scene=scene, opportunities=(), now_ms=now)
+            plan = AutonomousPlan(scene, (), None, permit, now, enabled=False, session_directive=directive)
             self.last_plan = plan
+            self._record_plan(plan)
             return plan
 
         opportunities = self.detector.detect(
@@ -83,7 +90,15 @@ class AutonomousPerformerOrchestrator:
             wake_decision=wake_decision,
             now_ms=now,
         )
-        selected = opportunities[0] if opportunities else None
+        directive = self.session_director.direct(
+            scene=scene,
+            opportunities=opportunities,
+            now_ms=now,
+        )
+        selected = next(
+            (item for item in opportunities if item.opportunity_id == directive.selected_opportunity_id),
+            None,
+        )
         permit = self.speak_gate.evaluate(
             selected,
             scene=scene,
@@ -91,8 +106,21 @@ class AutonomousPerformerOrchestrator:
             wake_decision=wake_decision,
             now_ms=now,
         )
-        plan = AutonomousPlan(scene, opportunities, selected, permit, now)
+        permit = self.session_director.apply_to_permit(
+            permit,
+            directive,
+            opportunity=selected,
+        )
+        plan = AutonomousPlan(
+            scene,
+            opportunities,
+            selected,
+            permit,
+            now,
+            session_directive=directive,
+        )
         self.last_plan = plan
+        self._record_plan(plan)
         return plan
 
     def refine_wake_decision(self, wake_decision: Any, plan: AutonomousPlan) -> Any:
@@ -146,11 +174,46 @@ class AutonomousPerformerOrchestrator:
             setattr(wake_decision, "debug", debug)
             return wake_decision
 
-    def mark_spoken(self, plan: AutonomousPlan | None = None, *, at_ms: int | None = None) -> None:
+    def mark_spoken(
+        self,
+        plan: AutonomousPlan | None = None,
+        *,
+        at_ms: int | None = None,
+        intent: str = "",
+        hook_id: str = "",
+    ) -> None:
         current = plan or self.last_plan
         if current is None or current.selected_opportunity is None:
             return
-        self.speak_gate.record_spoken(kind=current.selected_opportunity.kind, at_ms=at_ms)
+        kind = current.selected_opportunity.kind
+        self.speak_gate.record_spoken(kind=kind, at_ms=at_ms)
+        self.session_director.record_spoken(
+            kind=kind,
+            intent=intent,
+            hook_id=hook_id,
+            at_ms=at_ms,
+        )
+        observer = self.observability
+        if observer is not None and callable(getattr(observer, "record_autonomous_commit", None)):
+            try:
+                observer.record_autonomous_commit(
+                    plan=current,
+                    intent=intent,
+                    hook_id=hook_id,
+                    session_snapshot=self.session_director.snapshot(now_ms=at_ms),
+                )
+            except Exception:
+                pass
+
+    def _record_plan(self, plan: AutonomousPlan) -> None:
+        observer = self.observability
+        if observer is None or not callable(getattr(observer, "record_autonomous_plan", None)):
+            return
+        try:
+            observer.record_autonomous_plan(plan)
+        except Exception:
+            # Observability không được phép chặn một tick autonomous.
+            pass
 
 
 __all__ = ["AutonomousPerformerOrchestrator", "AutonomousPlan"]

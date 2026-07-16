@@ -668,7 +668,7 @@ class RuntimeCoordinator(
         # Autonomous Performer là van trước main cognition: nó giữ scene liên tục,
         # tìm opportunity thật và cấp budget nói. Không có mic/ASR ở đây; text mới,
         # nút stop và scene change vẫn là các nguồn cancel hiện có.
-        self.autonomous_performer = AutonomousPerformerOrchestrator(logger=self.logger)
+        self.autonomous_performer = AutonomousPerformerOrchestrator(logger=self.logger, observability=self.observability)
         self.last_autonomous_plan: AutonomousPlan | None = None
         self.last_signal_snapshot: SignalSnapshot | None = None
         self.last_signal_diff = None
@@ -2158,8 +2158,25 @@ class RuntimeCoordinator(
             self._temporal_last_assistant_turn_at = time.time()
             if channel_name == "autonomous":
                 performer = getattr(self, "autonomous_performer", None)
+                performance_meta = payload.get("performance_context") if isinstance(payload.get("performance_context"), dict) else {}
+                hook_meta = performance_meta.get("content_hook") if isinstance(performance_meta.get("content_hook"), dict) else {}
+                hook_id = str(performance_meta.get("content_hook_id") or hook_meta.get("id") or "")
+                performance_intent = str(performance_meta.get("performance_intent") or payload.get("intent") or "")
                 if performer is not None:
-                    performer.mark_spoken(getattr(self, "last_autonomous_plan", None))
+                    performer.mark_spoken(
+                        getattr(self, "last_autonomous_plan", None),
+                        intent=performance_intent,
+                        hook_id=hook_id,
+                    )
+                # ContentEngine autonomous chỉ reserve khi chọn. Commit cooldown
+                # sau output public thật sự, tránh mất một bit chưa từng được nói.
+                performance_builder = getattr(self, "performance_context_builder", None)
+                content_engine = getattr(performance_builder, "content_engine", None) if performance_builder is not None else None
+                if content_engine is not None and callable(getattr(content_engine, "commit_hook_use", None)) and hook_id:
+                    try:
+                        content_engine.commit_hook_use(hook_id)
+                    except Exception as exc:
+                        self.logger.debug("[content-engine] autonomous hook commit skipped: %s", exc)
         if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip() and self.subconscious_runtime_enabled:
             try:
                 snapshot = self.telemetry_service.capture_snapshot(
@@ -7855,8 +7872,9 @@ class RuntimeCoordinator(
             return ""
 
         scene = getattr(plan, "scene", None)
+        directive = getattr(plan, "session_directive", None)
         contract = {
-            "contract": "autonomous_stage.v1",
+            "contract": "autonomous_stage.v2",
             "scene_mode": str(getattr(scene, "name", "private_idle") or "private_idle"),
             "opportunity": {
                 "kind": str(getattr(opportunity, "kind", "autonomous") or "autonomous"),
@@ -7868,6 +7886,13 @@ class RuntimeCoordinator(
                 "mode": mode,
                 "max_words": max(1, int(getattr(permit, "max_words", 12) or 12)),
                 "max_duration_ms": max(300, int(getattr(permit, "max_duration_ms", 2200) or 2200)),
+            },
+            "session_directive": {
+                "phase": str(getattr(directive, "phase", "settled") or "settled"),
+                "cadence": str(getattr(directive, "cadence", "balanced") or "balanced"),
+                "audience_fatigue": round(float(getattr(directive, "audience_fatigue", 0.0) or 0.0), 3),
+                "body_only_bias": round(float(getattr(directive, "body_only_bias", 0.0) or 0.0), 3),
+                "recent_kinds": list(getattr(directive, "recent_kinds", ()) or ())[-6:],
             },
             "surface_rules": [
                 "Viết đúng một câu thoại ngắn bằng tiếng Việt, có điểm rơi tự nhiên.",
