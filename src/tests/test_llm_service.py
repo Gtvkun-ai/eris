@@ -10,6 +10,7 @@ import requests
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from llm.service import ChatAct, FormatViolationException, LlmService, classify_chat_act
+from llm.key_pool import ProviderCircuitOpen
 
 
 def _norm(text: str) -> str:
@@ -442,6 +443,57 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("http_5xx_fallback", payload.get("debug_trace", ""))
         self.assertEqual(payload.get("failure_meta", {}).get("kind"), "provider_unavailable")
         self.assertEqual(len(client.calls), 2)
+
+    def test_retry_once_on_5xx_then_uses_fallback_client(self):
+        good = (
+            '{"text":"fallback ok","animation":"stand",'
+            '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+        )
+        client = _SequenceClient([_http_error(503), _http_error(503)])
+        fallback = _SequenceClient([good])
+        service = LlmService(client, fallback_client=fallback)
+
+        out = service.generate_directive(telemetry_data="focus=general")
+
+        payload = json.loads(out)
+        self.assertEqual(payload.get("text"), "fallback ok")
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(len(fallback.calls), 1)
+
+    def test_provider_circuit_open_uses_fallback_client(self):
+        good = (
+            '{"text":"circuit fallback ok","animation":"stand",'
+            '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+        )
+        client = _SequenceClient([ProviderCircuitOpen("primary circuit open")])
+        fallback = _SequenceClient([good])
+        service = LlmService(client, fallback_client=fallback)
+
+        out = service.generate_directive(telemetry_data="focus=general")
+
+        payload = json.loads(out)
+        self.assertEqual(payload.get("text"), "circuit fallback ok")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(len(fallback.calls), 1)
+
+    def test_connection_error_uses_fallback_client(self):
+        good = (
+            '{"text":"transport fallback ok","animation":"stand",'
+            '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
+            '"debug_trace":"","next_animation":"","system_action":"","action_input":""}'
+        )
+        client = _SequenceClient([requests.ConnectionError("primary endpoint down")])
+        fallback = _SequenceClient([good])
+        service = LlmService(client, fallback_client=fallback)
+
+        out = service.generate_directive(telemetry_data="focus=general")
+
+        payload = json.loads(out)
+        self.assertEqual(payload.get("text"), "transport fallback ok")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(len(fallback.calls), 1)
 
     def test_chat_retry_once_on_provider_unavailable_then_fallback_sets_failure_meta(self):
         body = '{"error":{"code":"model_not_found","message":"No available channel for model gpt-4o-mini"}}'

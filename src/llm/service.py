@@ -2188,6 +2188,13 @@ class LlmService:
         # Prefer the dedicated Groq fallback client for format recovery; fall back
         # to the speech/style client only if no fallback client was wired.
         recovery_client = getattr(self, "fallback_client", None) or self.style_client
+        def _is_recoverable_transport_exception(exc: Exception) -> bool:
+            name = type(exc).__name__
+            return (
+                name == "ProviderCircuitOpen"
+                or name in {"ConnectionError", "ConnectTimeout", "ReadTimeout", "Timeout"}
+                or isinstance(exc, requests.Timeout)
+            )
 
         try:
             response = _call(messages, stage=initial_stage, override_client=initial_client)
@@ -2258,30 +2265,86 @@ class LlmService:
                 # Retry once on transient upstream 5xx.
                 time.sleep(0.15)
                 try:
-                    response = _call(messages, stage="http_5xx_retry")
+                    response = _call(messages, stage="http_5xx_retry", override_client=initial_client)
                 except Exception as exc2:
-                    status = self._http_status_code(exc2) or self._http_status_code(exc)
-                    return self._build_service_error_fallback(
-                        channel=channel,
-                        reason=(
-                            f"http_5xx_fallback stage=complete_decision channel={channel} status={status}"
-                        ),
-                        fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
-                        kind=self._classify_http_failure(exc2 if isinstance(exc2, Exception) else exc),
-                        stage="complete_decision",
-                        origin="primary",
-                    )
+                    if recovery_client is not None and recovery_client is not initial_client:
+                        self.logger.warning(
+                            "[LLM] 5xx/provider unavailable on primary; chuyen sang fallback client."
+                        )
+                        try:
+                            response = _call(
+                                messages,
+                                stage="http_5xx_fallback_client",
+                                override_client=recovery_client,
+                            )
+                        except Exception as exc3:
+                            status = self._http_status_code(exc3) or self._http_status_code(exc2) or self._http_status_code(exc)
+                            return self._build_service_error_fallback(
+                                channel=channel,
+                                reason=(
+                                    f"http_5xx_fallback stage=complete_decision channel={channel} status={status}"
+                                ),
+                                fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
+                                kind=self._classify_http_failure(exc3) if isinstance(exc3, requests.HTTPError) else "unknown",
+                                stage="http_5xx_fallback_client",
+                                origin="fallback",
+                            )
+                    else:
+                        status = self._http_status_code(exc2) or self._http_status_code(exc)
+                        return self._build_service_error_fallback(
+                            channel=channel,
+                            reason=(
+                                f"http_5xx_fallback stage=complete_decision channel={channel} status={status}"
+                            ),
+                            fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
+                            kind=self._classify_http_failure(exc2 if isinstance(exc2, Exception) else exc),
+                            stage="complete_decision",
+                            origin="primary",
+                        )
             else:
                 raise
         except Exception as exc:
-            return self._build_service_error_fallback(
-                channel=channel,
-                reason=f"exception_fallback stage=complete_decision channel={channel} type={type(exc).__name__}",
-                fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
-                kind=self._classify_http_failure(exc) if isinstance(exc, requests.HTTPError) else "unknown",
-                stage="complete_decision",
-                origin="primary",
-            )
+            if (
+                recovery_client is not None
+                and recovery_client is not initial_client
+                and _is_recoverable_transport_exception(exc)
+            ):
+                fallback_stage = (
+                    "provider_circuit_fallback"
+                    if type(exc).__name__ == "ProviderCircuitOpen"
+                    else "transport_fallback_client"
+                )
+                self.logger.warning(
+                    "[LLM] primary transport unavailable (%s); chuyen sang fallback client.",
+                    type(exc).__name__,
+                )
+                try:
+                    response = _call(
+                        messages,
+                        stage=fallback_stage,
+                        override_client=recovery_client,
+                    )
+                except Exception as exc2:
+                    return self._build_service_error_fallback(
+                        channel=channel,
+                        reason=(
+                            f"exception_fallback stage={fallback_stage} channel={channel} "
+                            f"type={type(exc2).__name__}"
+                        ),
+                        fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
+                        kind=self._classify_http_failure(exc2) if isinstance(exc2, requests.HTTPError) else "unknown",
+                        stage=fallback_stage,
+                        origin="fallback",
+                    )
+            else:
+                return self._build_service_error_fallback(
+                    channel=channel,
+                    reason=f"exception_fallback stage=complete_decision channel={channel} type={type(exc).__name__}",
+                    fallback_text=self._contextual_service_fallback_text(messages, channel=channel),
+                    kind=self._classify_http_failure(exc) if isinstance(exc, requests.HTTPError) else "unknown",
+                    stage="complete_decision",
+                    origin="primary",
+                )
 
         finish_reason = self._extract_finish_reason(response)
         if finish_reason in {"length", "max_tokens"}:
