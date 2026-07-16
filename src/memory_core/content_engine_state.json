@@ -1,19 +1,162 @@
 {
   "version": 1,
-  "saved_at": 1784128931.8233035,
+  "saved_at": 1784167891.9072752,
   "last_used": {
-    "seed_thread_tug:3d40d508": 1784128931.823053
+    "seed_thread_tug:3d40d508": 1784128931.823053,
+    "seed_project_thread:8d8193da": 1784167880.1408875,
+    "seed_thread_tug:5a7f1a18": 1784167880.1982265,
+    "seed_thread_tug:030e227c": 1784167880.4918907,
+    "seed_thread_tug:e41b2c64": 1784167883.2228062,
+    "thread_tug": 1784167883.3031313,
+    "seed_thread_tug:e9deeda6": 1784167883.72931,
+    "seed_thread_tug:96cee5ff": 1784167883.958188,
+    "seed_thread_tug:e3fed1f1": 1784167884.2522106,
+    "seed_thread_tug:22539825": 1784167884.499605,
+    "seed_thread_tug:87a6ce30": 1784167884.7778265,
+    "seed_thread_tug:5dc9f8ec": 1784167884.9948123,
+    "seed_thread_tug:902fb9f1": 1784167885.1750405,
+    "seed_thread_tug:590d4b27": 1784167885.4570124,
+    "seed_thread_tug:00d50b4c": 1784167885.6590106,
+    "seed_thread_tug:b1f482f2": 1784167885.8487303,
+    "seed_thread_tug:770c8ecb": 1784167886.0398777,
+    "seed_thread_tug:b90bb0cb": 1784167886.261775,
+    "seed_thread_tug:66873b4e": 1784167886.6638246,
+    "seed_thread_tug:2882b7e8": 1784167886.9342022,
+    "seed_thread_tug:40ef6676": 1784167887.1891322,
+    "seed_thread_tug:223af797": 1784167887.3847392,
+    "seed_technical_thread:32cf21db": 1784167887.5804126,
+    "seed_thread_tug:8e6b930f": 1784167887.8116028,
+    "seed_thread_tug:a896f677": 1784167889.158438,
+    "seed_thread_tug:83fa11e2": 1784167889.686408,
+    "seed_thread_tug:7798c004": 1784167890.158518,
+    "seed_thread_tug:9d79fe66": 1784167890.3451946,
+    "seed_thread_tug:b1b519ce": 1784167890.5769928,
+    "seed_thread_tug:5f2ad862": 1784167890.7500756,
+    "seed_thread_tug:4ebf6046": 1784167891.0595388,
+    "seed_thread_tug:14d802de": 1784167891.0628564,
+    "seed_thread_tug:046c6915": 1784167891.065998,
+    "seed_thread_tug:94793677": 1784167891.0775764,
+    "seed_thread_tug:b3f6ca1a": 1784167891.304257,
+    "seed_thread_tug:d2952c41": 1784167891.8608444,
+    "seed_thread_tug:042747f6": 1784167891.9071846
   },
   "topic_stack": [
     {
+      "key": "technical_work",
+      "label": "đang gỡ/sửa kỹ thuật",
+      "strength": 0.9580767718950908,
+      "last_seen": 1784167887.5804126,
+      "source": "current_turn",
+      "tags": [
+        "chat"
+      ]
+    },
+    {
+      "key": "intent:grounding_clarification",
+      "label": "grounding_clarification",
+      "strength": 0.7837975725067988,
+      "last_seen": 1784167889.686408,
+      "source": "chat",
+      "tags": [
+        "grounding_clarification",
+        "chat"
+      ]
+    },
+    {
+      "key": "intent:memory_recall",
+      "label": "memory_recall",
+      "strength": 0.6253029361300999,
+      "last_seen": 1784167886.0398777,
+      "source": "chat",
+      "tags": [
+        "memory_recall",
+        "chat"
+      ]
+    },
+    {
+      "key": "intent:low_value_repeat",
+      "label": "low_value_repeat",
+      "strength": 0.5722206755479177,
+      "last_seen": 1784167890.3451946,
+      "source": "chat",
+      "tags": [
+        "low_value_repeat",
+        "chat"
+      ]
+    },
+    {
+      "key": "intent:repair_surface_leak",
+      "label": "repair_surface_leak",
+      "strength": 0.5140935852792525,
+      "last_seen": 1784167886.261775,
+      "source": "chat",
+      "tags": [
+        "repair_surface_leak",
+        "chat"
+      ]
+    },
+    {
+      "key": "intent:repair_previous_public_turn",
+      "label": "repair_previous_public_turn",
+      "strength": 0.4704708917935692,
+      "last_seen": 1784167884.499605,
+      "source": "chat",
+      "tags": [
+        "repair_previous_public_turn",
+        "chat"
+      ]
+    },
+    {
+      "key": "intent:session_ritual",
+      "label": "session_ritual",
+      "strength": 0.42,
+      "last_seen": 1784167891.9071846,
+      "source": "session_ritual",
+      "tags": [
+        "session_ritual",
+        "session_ritual"
+      ]
+    },
+    {
+      "key": "intent:micro_presence",
+      "label": "micro_presence",
+      "strength": 0.3814161637094285,
+      "last_seen": 1784167887.8116028,
+      "source": "",
+      "tags": [
+        "micro_presence"
+      ]
+    },
+    {
       "key": "intent:call_vision_compressor",
       "label": "call_vision_compressor",
-      "strength": 0.42,
-      "last_seen": 1784128931.823053,
+      "strength": 0.3767152852482269,
+      "last_seen": 1784167880.4918907,
       "source": "autonomous",
       "tags": [
         "call_vision_compressor",
         "autonomous"
+      ]
+    },
+    {
+      "key": "intent:micro_story",
+      "label": "micro_story",
+      "strength": 0.3736079694165123,
+      "last_seen": 1784167883.3031313,
+      "source": "",
+      "tags": [
+        "micro_story"
+      ]
+    },
+    {
+      "key": "eris_ui",
+      "label": "UI/debug panel của Eris",
+      "strength": 0.3683664643499584,
+      "last_seen": 1784167880.1408875,
+      "source": "thought_stream",
+      "tags": [
+        "thought_stream",
+        "ui"
       ]
     }
   ]

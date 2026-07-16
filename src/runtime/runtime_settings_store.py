@@ -98,6 +98,21 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "pipeline": {
         "v3_enabled": True,
     },
+    "hardening": {
+        # Phase 7/8: một nguồn cấu hình cho validation + release stable. Các env
+        # cũ vẫn được đọc để migration, nhưng runtime mới nên đi qua block này.
+        "profile": "development",
+        "production_validation_enabled": False,
+        "production_validation_turns": 24,
+        "production_validation_dir": "logs/phase7_validation",
+        "panel_ack_required": True,
+        "provider_registry_strict": True,
+        "release_manifest_path": "config/hardening_release.json",
+        "release_guard_enabled": True,
+        "release_guard_fail_closed": False,
+        "legacy_cross_language_tts": False,
+        "legacy_romaji_tts": False,
+    },
     "danger_zone": {
         "require_preview_before_execute": True,
         "typed_confirmation": True,
@@ -144,6 +159,17 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("tts", "stage_localize"): ("ERIS_TTS_STAGE_LOCALIZE", "bool"),
     ("tts", "audio_polish"): ("ERIS_TTS_AUDIO_POLISH", "bool"),
     ("pipeline", "v3_enabled"): ("ERIS_V3_PIPELINE", "bool"),
+    ("hardening", "profile"): ("ERIS_HARDENING_PROFILE", "str"),
+    ("hardening", "production_validation_enabled"): ("ERIS_PHASE7_VALIDATION_ENABLED", "bool"),
+    ("hardening", "production_validation_turns"): ("ERIS_PHASE7_VALIDATION_TURNS", "int"),
+    ("hardening", "production_validation_dir"): ("ERIS_PHASE7_VALIDATION_DIR", "str"),
+    ("hardening", "panel_ack_required"): ("ERIS_PANEL_ACK_REQUIRED", "bool"),
+    ("hardening", "provider_registry_strict"): ("ERIS_PROVIDER_REGISTRY_STRICT", "bool"),
+    ("hardening", "release_manifest_path"): ("ERIS_HARDENING_RELEASE_MANIFEST", "str"),
+    ("hardening", "release_guard_enabled"): ("ERIS_HARDENING_RELEASE_GUARD", "bool"),
+    ("hardening", "release_guard_fail_closed"): ("ERIS_HARDENING_RELEASE_FAIL_CLOSED", "bool"),
+    ("hardening", "legacy_cross_language_tts"): ("ERIS_TTS_LEGACY_CROSS_LANGUAGE", "bool"),
+    ("hardening", "legacy_romaji_tts"): ("ERIS_TTS_EDGE_ROMAJI", "bool"),
 }
 
 
@@ -519,6 +545,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "stage.segment_dispatch": {"inline", "queued"},
         "tts.language": {"vi", "ja", "en"},
         "tts.quality": {"balanced", "high"},
+        "hardening.profile": {"development", "canary", "stable"},
     }
     if path in enum_values and str(normalized).lower() not in enum_values[path]:
         return False, expected
@@ -532,6 +559,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "chat.chat_timeout_seconds": (5, 120),
         "chat.max_concurrency": (1, 16),
         "prompt.hard_cap_tokens": (1024, 12000),
+        "hardening.production_validation_turns": (20, 30),
         "stage.prefetch_workers": (1, 8),
         "stage.max_tts_segments": (1, 12),
         "stage.min_split_chars": (24, 160),

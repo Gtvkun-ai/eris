@@ -88,10 +88,17 @@ class _Appraisal:
 
 
 def test_snapshot_disabled_writes_nothing(snap_env, monkeypatch):
-    monkeypatch.delenv("ERIS_PANEL_SNAPSHOT", raising=False)
+    monkeypatch.setenv("ERIS_PANEL_SNAPSHOT", "0")
     import runtime.panel_snapshot as ps
     ps.write(appraisal=_Appraisal(), expression_gate={"want_to_say": 0.7})
     assert not (snap_env / "panel_snapshot.json").exists()
+
+
+def test_snapshot_enabled_by_default(snap_env, monkeypatch):
+    monkeypatch.delenv("ERIS_PANEL_SNAPSHOT", raising=False)
+    import runtime.panel_snapshot as ps
+    ps.write(appraisal=_Appraisal(), expression_gate={"want_to_say": 0.7})
+    assert (snap_env / "panel_snapshot.json").exists()
 
 
 def test_snapshot_writes_when_enabled(snap_env, monkeypatch):

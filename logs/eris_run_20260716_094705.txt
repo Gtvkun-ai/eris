@@ -1,0 +1,110 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-16 09:47:05
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+09:47:05.841 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+09:47:05.841 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+09:47:05.855 [INFO] [Vision] Da khoi chay vision.py PID=22232
+09:47:10.298 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=1
+09:47:11.316 [INFO] [Settings] Đang đọc trạng thái hai key pool...
+09:47:14.416 [INFO] [vision.py] [Loop][WARNING] affect_self_read gemma call failed: 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent | body: {
+09:47:14.519 [INFO] [vision.py] [Loop][ERROR] [session_ritual] failed; continuing
+09:47:14.519 [INFO] [vision.py] [Loop][INFO] [startup] fallback greeting sent
+09:47:14.520 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+09:47:14.634 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+09:47:14.797 [INFO] [Settings] Đã đọc trạng thái key pool thật từ Brain.
+09:47:15.480 [INFO] [Settings] Advanced đang mở. Các mục có dấu restart sẽ áp dụng sau khi khởi động lại Brain.
+09:47:16.292 [INFO] [Settings] Danger Zone chỉ chứa thao tác reset/bảo trì thật. Mọi lệnh phá dữ liệu đều preview trước.
+09:47:19.291 [INFO] [vision.py] [Loop][INFO] [autonomous stage] scene=private_active opportunity=none permit=False/suppress reason=no_opportunity
+09:47:27.553 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.53 pressure=0.32 surface=no mutations=2
+09:47:44.055 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.31 claims=3 grounded=0 contradictions=delta_without_distinct_scene_ids unknowns=scene_confidence_below_grounded_threshold,no_grounded_claim
+09:47:44.055 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=gpt-4o-mini:settings_configuration:affect=playful:delta=1;grounding=silence;strength=0.31;grounded=0 fact=<abstained>
+09:47:44.114 [INFO] [vision.py] [Loop][INFO] [wake route] level=call_vision_compressor reason=wake_governor_vision_only body_update=True sleep=5s
+09:47:44.114 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 29.34s. Nghỉ 5s.
+09:47:44.543 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+09:47:44.543 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+09:47:48.204 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+09:47:49.621 [INFO] [vision.py] [Loop][INFO] [ni light] mode=chat | local=0.00 | drift=0.08/thấp | conf=0.45 | reason=claim_guarded|focus_pattern_drift
+09:47:51.477 [INFO] [vision.py] [Loop][INFO] [shadow pipeline] budget=normal | v3_focus='em không chủ động chào tôi hả' | old_focus='em không chủ động chào tôi hả' | overlap=1.00 | ev=4 | 593.1ms
+09:47:51.487 [INFO] [vision.py] [Loop][INFO] Người dùng: em không chủ động chào tôi hả
+09:47:51.487 [INFO] [vision.py] [Loop][INFO] [ni chat] drift=0.08 | level=thấp | state=ON_GOAL | streak=1
+09:47:51.487 [INFO] [vision.py] [Loop][INFO] [ti chat] mode=chat_general | reason=Duy trì đối thoại trong giới hạn runtime.
+09:47:51.487 [INFO] [vision.py] [Loop][INFO] [fe chat] mode=grounded | tone=surface=cold_soft; stance=observant_guarded; attachment=guarded; instability=stable | intent=ordinary_dialogue | arc=quiet_observation
+09:47:51.779 [INFO] [vision.py] [Loop][INFO] [conversation dynamics] mode=settled | tension=0.00 | pressure=0.00 | flags=maintain_rhythm
+09:47:51.779 [INFO] [vision.py] [Loop][INFO] [relationship dynamics] event=repair:softens_rupture | trust=0.39 | familiarity=1.00 | attachment_vis=0.18 | rupture=0.53 | distance=1.00 | notes=engagement:continued_not_closeness:0.35,repair:softens_rupture
+09:47:51.780 [INFO] [vision.py] [Loop][INFO] [controlled slippage] mode=warm | lane=task | intuition=0.12 | misread=0.08 | notes=overread_correction=1.00,ordinary_chat_warm_floor
+09:47:51.780 [INFO] [vision.py] [Loop][INFO] [turn semantics/pre-grounding] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | identity=0.55 | correction=0.00
+09:47:51.783 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+09:47:51.787 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+09:47:51.787 [INFO] [vision.py] [Loop][INFO] [turn semantics] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | live=0.00 | prior_failure=0.00
+09:47:52.087 [INFO] [vision.py] [Loop][WARNING] affect_self_read gemma call failed: 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent | body: {
+09:47:52.141 [INFO] [vision.py] [Vision][INFO] [CHAT PROMPT K12] prefix=a6df718e6e44 input=10396 output=1280 unlimited=1
+09:47:52.145 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=initial
+09:47:56.260 [INFO] [vision.py] [Loop][INFO] [chat pre_parser] raw={"text": "Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại.", "intent": "fallback_reply", "action": {"type": "none"}, "reasoning_tags": ["fallback", "chat", "service_error"], "should_speak": true, "confidence": 0.1, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fac...
+09:47:56.282 [INFO] [vision.py] [Loop][INFO] [chat after_parser] text="Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại." | animation=stand | parse_mode=json | trace=exception_fallback stage=complete_decision channel=chat type=ConnectionError | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+09:47:56.282 [INFO] [vision.py] [Loop][INFO] [chat pre_ti] text="Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại." | animation=stand | parse_mode=json | trace=exception_fallback stage=complete_decision channel=chat type=ConnectionError | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+09:47:56.288 [INFO] [vision.py] [Loop][INFO] [chat after_ti] text="Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại." | animation=stand | parse_mode=json | trace=exception_fallback stage=complete_decision channel=chat type=ConnectionError | Ti guard_mode=log_only | Ti mode=chat_general | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+09:47:56.627 [INFO] [vision.py] [Vision][INFO] [CHAT PROMPT K12] prefix=a6df718e6e44 input=10509 output=1280 unlimited=1
+09:47:56.632 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=initial
+09:48:00.725 [INFO] [vision.py] [Loop][INFO] [chat after_escalation] text="Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại." | animation=stand | parse_mode=json | trace=exception_fallback stage=complete_decision channel=chat type=ConnectionError | Ti guard_mode=log_only | Ti mode=chat_general | qwen_constrained_rerun | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+09:48:01.633 [INFO] [vision.py] [Loop][INFO] [director final] trace=2d07beb0d222 scene=social_sidecar candidates=1 selected=0 action=keep text='Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại.'
+09:48:02.187 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=0 reason=tts_key_reported_leaked
+09:48:02.190 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị provider báo leaked/revoked; quarantine, không thử lại trong lượt sau.
+09:48:02.846 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=chat-1 | channel=chat | broadcast=user_message:0.50 | speech=freeform/mirror | appraisal=tender_under_cold | action=user_requested/mirror | final=Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại. | commits=6/6 rejected=0 errors=0
+09:48:02.846 [INFO] [vision.py] [Loop][INFO] ERIS: Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại.
+09:48:11.625 [INFO] [vision.py] [Loop][INFO] [chat] hội thoại im quá 20s; nhường lại cho autonomous (giữ nguyên buffer).
+09:48:11.626 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+09:48:12.910 [INFO] [vision.py] [Loop][INFO] [autonomous stage] scene=coding_partner opportunity=scene_transition permit=True/short_reply reason=scene_transition_short_act
+09:48:14.823 [INFO] [vision.py] [Loop][INFO] [autonomous stage] scene=coding_partner opportunity=none permit=False/suppress reason=no_opportunity
+09:48:14.848 [INFO] [vision.py] [Loop][INFO] [ni auto] drift=0.00 | level=thấp | state=ON_GOAL | streak=2
+09:48:14.848 [INFO] [vision.py] [Loop][INFO] [ti auto] mode=steady_observe | reason=Đang ở vùng code; chỉ quan sát nhẹ, có thể mỉa khẽ, không nhắc tập trung.
+09:48:14.848 [INFO] [vision.py] [Loop][INFO] [fe auto] mode=technical | tone=surface=cold_soft; stance=precise_with_subtext; attachment=guarded; instability=stable | intent=ordinary_dialogue | arc=quiet_observation
+09:48:14.851 [INFO] [vision.py] [Loop][INFO] [speech_intent] intent=inner_whim | reason=SpeechCore chose a wording impulse from MeaningLayer residue, not the internal meaning label. PrivateMind speech bias is active as a soft wording/style pressure; it must not add facts or expose private reasoning.
+09:48:15.153 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] state commits rejected=2/4 first=store concrete cognitive turn as episodic memory
+09:48:15.434 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=autonomous-2 | channel=autonomous | broadcast=evidence:0.42 | speech=meaning/inner_whim | appraisal=soft_uncertain | action=screen_observation/observe | final=<empty> | commits=2/4 rejected=2 errors=0
+09:48:15.434 [INFO] [vision.py] [Loop][INFO] [wake route] held main cognition after local planning; level=observe_only
+09:48:15.438 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.65 pressure=0.65 surface=yes mutations=1
+09:48:18.602 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=2 reason=enter_chat_mode
+09:48:18.602 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+09:48:21.570 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+09:48:23.300 [INFO] [vision.py] [Loop][INFO] [ni light] mode=chat | local=0.00 | drift=0.08/thấp | conf=0.45 | reason=claim_guarded|focus_pattern_drift
+09:48:25.335 [INFO] [vision.py] [Loop][INFO] [shadow pipeline] budget=normal | v3_focus='lỗi gì á' | old_focus='lỗi gì á' | overlap=1.00 | ev=4 | 524.8ms
+09:48:25.347 [INFO] [vision.py] [Loop][INFO] Người dùng: lỗi gì á
+09:48:25.347 [INFO] [vision.py] [Loop][INFO] [ni chat] drift=0.08 | level=thấp | state=ON_GOAL | streak=1
+09:48:25.347 [INFO] [vision.py] [Loop][INFO] [ti chat] mode=chat_general | reason=Duy trì đối thoại trong giới hạn runtime.
+09:48:25.347 [INFO] [vision.py] [Loop][INFO] [fe chat] mode=grounded | tone=surface=cold_soft; stance=observant_guarded; attachment=guarded; instability=stable | intent=ordinary_dialogue | arc=quiet_observation
+09:48:25.597 [INFO] [vision.py] [Loop][INFO] [conversation dynamics] mode=settled | tension=0.00 | pressure=0.00 | flags=maintain_rhythm
+09:48:25.597 [INFO] [vision.py] [Loop][INFO] [relationship dynamics] event=repair:softens_rupture | trust=0.39 | familiarity=1.00 | attachment_vis=0.18 | rupture=0.52 | distance=1.00 | notes=engagement:continued_not_closeness:0.27,repair:softens_rupture,evidence:acceptance_negative_gate@surface_or_affect
+09:48:25.598 [INFO] [vision.py] [Loop][INFO] [controlled slippage] mode=warm | lane=task | intuition=0.12 | misread=0.08 | notes=overread_correction=1.00,ordinary_chat_warm_floor
+09:48:25.598 [INFO] [vision.py] [Loop][INFO] [turn semantics/pre-grounding] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | identity=0.55 | correction=0.00
+09:48:25.600 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+09:48:25.604 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+09:48:25.604 [INFO] [vision.py] [Loop][INFO] [turn semantics] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | live=0.00 | prior_failure=0.00
+09:48:25.671 [INFO] [vision.py] [Vision][INFO] [CHAT PROMPT K12] prefix=a6df718e6e44 input=10687 output=1280 unlimited=1
+09:48:25.675 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=initial
+09:48:29.755 [INFO] [vision.py] [Loop][INFO] [chat pre_parser] raw={"text": "Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại.", "intent": "fallback_reply", "action": {"type": "none"}, "reasoning_tags": ["fallback", "chat", "service_error"], "should_speak": true, "confidence": 0.1, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fac...
+09:48:29.765 [INFO] [vision.py] [Loop][INFO] [chat after_parser] text="Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại." | animation=stand | parse_mode=json | trace=exception_fallback stage=complete_decision channel=chat type=ConnectionError | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+09:48:29.765 [INFO] [vision.py] [Loop][INFO] [chat pre_ti] text="Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại." | animation=stand | parse_mode=json | trace=exception_fallback stage=complete_decision channel=chat type=ConnectionError | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+09:48:29.769 [INFO] [vision.py] [Loop][INFO] [chat after_ti] text="Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại." | animation=stand | parse_mode=json | trace=exception_fallback stage=complete_decision channel=chat type=ConnectionError | Ti guard_mode=log_only | Ti mode=chat_general | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+09:48:32.274 [INFO] [vision.py] [Vision][INFO] [CHAT PROMPT K12] prefix=a6df718e6e44 input=10800 output=1280 unlimited=1
+09:48:32.277 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=initial
+09:48:36.371 [INFO] [vision.py] [Loop][INFO] [chat after_escalation] text="Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại." | animation=stand | parse_mode=json | trace=exception_fallback stage=complete_decision channel=chat type=ConnectionError | Ti guard_mode=log_only | Ti mode=chat_general | qwen_constrained_rerun | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+09:48:49.461 [INFO] [vision.py] [Loop][INFO] [director final] trace=81bd6b68769e scene=social_sidecar candidates=1 selected=0 action=keep text='Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại.'
+09:48:53.120 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=chat-3 | channel=chat | broadcast=user_message:0.43 | speech=freeform/mirror | appraisal=tender_under_cold | action=user_requested/mirror | final=Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại. | commits=6/6 rejected=0 errors=0
+09:48:53.121 [INFO] [vision.py] [Loop][INFO] ERIS: Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại.
+09:48:53.123 [INFO] [vision.py] [Loop][INFO] [chat] hội thoại im quá 20s; nhường lại cho autonomous (giữ nguyên buffer).
+09:48:53.124 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+09:48:55.092 [INFO] [vision.py] [Loop][INFO] [autonomous stage] scene=coding_partner opportunity=none permit=False/suppress reason=no_opportunity
+09:48:55.133 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=False reengagement_allowed=False
+09:48:55.134 [INFO] [vision.py] [Loop][INFO] [presence.micro] stage=pre_gate owner=presence_probe checked=True candidate=True allowed=False rejected_by=presence_blocked_until generation_mode=none
+09:48:55.135 [INFO] [vision.py] [Loop][INFO] [presence.reengagement] stage=pre_gate owner=reengagement_probe checked=True candidate=True allowed=False rejected_by=presence_blocked_until generation_mode=none
+09:48:55.135 [INFO] [vision.py] [Loop][INFO] [presence.surface] stage=pre_gate micro=reject:presence_blocked_until reengagement=reject:presence_blocked_until final=no_surface final_rejected_by=presence_blocked_until
+09:48:55.431 [INFO] [vision.py] [Loop][INFO] [wake route] level=observe_only reason=wake_governor_observe_only body_update=False sleep=17s
+09:48:55.431 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 2.31s. Nghỉ 17s.
+09:48:56.501 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.55 pressure=0.70 surface=yes mutations=2
+09:49:00.184 [INFO] [Vision] Dang dung vision.py PID=22232...
+09:49:00.207 [INFO] [Vision] vision.py da thoat (PID=22232, code=-1, unexpected=False).
+09:49:00.224 [INFO] [RunLogger] Ket thuc phien chay.

@@ -1049,7 +1049,11 @@ class PostGenerationFiltersMixin:
         """
 
         try:
-            from runtime.utterance_evaluator import UtteranceEvaluator, evaluator_enabled
+            from runtime.utterance_evaluator import (
+                UtteranceEvaluator,
+                evaluator_enabled,
+                is_direct_greeting,
+            )
         except Exception:
             return decision
         if not evaluator_enabled():
@@ -1074,6 +1078,31 @@ class PostGenerationFiltersMixin:
                 speech_core=speech_core,
                 grounding=grounding,
             )
+            greeting_probe = str(channel or "").strip().lower() == "chat" and is_direct_greeting(user_text)
+            if greeting_probe:
+                obs = getattr(self, "observability", None)
+                if obs is not None:
+                    obs.increment(
+                        "greeting_validation_total",
+                        tags={"result": "pass" if evaluation.ok else "fail"},
+                        fields={"issues": list(getattr(evaluation, "issues", ()) or ())[:8]},
+                    )
+                    if not evaluation.ok:
+                        obs.increment(
+                            "greeting_grounding_misfire_total",
+                            fields={"issues": list(getattr(evaluation, "issues", ()) or ())[:8]},
+                        )
+                phase7 = getattr(self, "phase7_validation", None)
+                if phase7 is not None:
+                    phase7.mark_scenario(
+                        "greeting",
+                        passed=evaluation.ok,
+                        detail=(
+                            "direct greeting accepted"
+                            if evaluation.ok
+                            else f"verdict={evaluation.verdict}; issues={','.join(evaluation.issues)}"
+                        ),
+                    )
         except Exception as exc:
             try:
                 self.logger.debug("[utterance_evaluator] postgen failed: %s", exc)

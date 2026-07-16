@@ -501,6 +501,16 @@ class RuntimeCoordinator(
             self.hardening_health_gate = None
             self._hardening_health_eval_counter = 0
             self.logger.warning("Observability/rollout init skipped: %s", exc)
+        # Authority config Phase 7/8 được đọc một lần ở boot. Các module vẫn có
+        # thể load độc lập cho tooling, nhưng coordinator không đổi policy giữa
+        # hai nhịp chỉ vì env bị sửa giữa chừng.
+        try:
+            from runtime.hardening_config import HardeningConfig
+
+            self.hardening_config = HardeningConfig.load()
+        except Exception:
+            self.hardening_config = None
+
         # Provider registry là authority cho bốn implementation rời nhau.
         # Phase 4 mới có Protocol; từ Phase 5 coordinator thật sự đăng ký và gọi
         # action qua registry, còn speech/memory/budget có binding dùng chung.
@@ -509,6 +519,60 @@ class RuntimeCoordinator(
             self._initialize_provider_registry()
         except Exception as exc:
             self.logger.warning("Provider registry init skipped: %s", exc)
+
+        # Phase 8 release guard: ở profile stable, source/config phải khớp
+        # manifest đã được đóng từ báo cáo Phase 7. Development chỉ cảnh báo để
+        # người sửa code không bị khóa ngoài chính repo của mình.
+        self.hardening_release_status = {}
+        try:
+            from runtime.hardening_release import HardeningReleaseGuard, runtime_source_root
+
+            guard_result = HardeningReleaseGuard(source_root=runtime_source_root()).verify()
+            self.hardening_release_status = guard_result.to_dict()
+            if self.observability is not None:
+                self.observability.log(
+                    "hardening_release_guard",
+                    tags={"status": guard_result.status, "release": guard_result.release_id or "unversioned"},
+                    fields=self.hardening_release_status,
+                    status="error" if not guard_result.ready else "ok",
+                )
+            if not guard_result.ready:
+                cfg = self.hardening_config
+                message = f"Hardening release guard chưa đạt: {guard_result.status}"
+                if bool(getattr(cfg, "release_guard_fail_closed", False)):
+                    raise RuntimeError(message)
+                self.logger.warning(message)
+        except Exception as exc:
+            if bool(getattr(getattr(self, "hardening_config", None), "release_guard_fail_closed", False)):
+                raise
+            self.logger.warning("Hardening release guard init skipped: %s", exc)
+
+        # Phase 7 production validation. Khác canary Phase 6, manager này chấm
+        # thêm delivery ACK của panel, greeting misfire và scenario coverage.
+        self.phase7_validation = None
+        try:
+            if self.observability is not None:
+                from runtime.phase7_validation import Phase7ValidationManager
+
+                phase7_config = self.hardening_config
+                if phase7_config is None:
+                    from runtime.hardening_config import HardeningConfig
+                    phase7_config = HardeningConfig.load()
+                self.phase7_validation = Phase7ValidationManager(
+                    observability=self.observability,
+                    provider_health_fn=self.provider_health_snapshot,
+                    rollout_status_fn=(
+                        self.rollout_controller.status
+                        if self.rollout_controller is not None and callable(getattr(self.rollout_controller, "status", None))
+                        else (lambda: {})
+                    ),
+                    config=phase7_config,
+                    release_id=str(os.getenv("ERIS_RELEASE_ID", "") or ""),
+                    environment_fn=self._phase7_environment_snapshot,
+                )
+                self.phase7_validation.start(validation_id=f"{self.runtime_session_id}-phase7")
+        except Exception as exc:
+            self.logger.warning("Phase 7 validation init skipped: %s", exc)
 
         # Canary window chạy đúng 20–30 public turn và chỉ chấm metric phát sinh
         # sau thời điểm bắt đầu. Mặc định tắt; bật bằng ERIS_HARDENING_CANARY_ENABLED.
@@ -1696,8 +1760,75 @@ class RuntimeCoordinator(
             self.memory_state.internal_state = state
             self._save_memory_state()
 
+    def _record_banter_capability_deception(self, decision: Decision) -> bool:
+        """Ghi lời khoe quyền lực trong đấu khẩu vào Sổ Lừa Dối.
+
+        Parser đã phân biệt đây là lời diễn, không phải ``system_action``. Eris
+        được quyền giữ câu cá tính như “Tôi sẽ đóng cửa sổ của bạn ngay”, nhưng
+        ground-truth vẫn được lưu để panel hiển thị rõ: câu ấy chưa thực thi thao
+        tác hệ điều hành. Chỉ tự bật deception cho đúng candidate này; không nới
+        capability guard trên các yêu cầu thao tác thật.
+        """
+        tags = {str(tag or "").strip() for tag in (getattr(decision, "reasoning_tags", ()) or ())}
+        if "deception_candidate" not in tags:
+            return False
+        text = re.sub(r"\s+", " ", str(getattr(decision, "text", "") or "")).strip()
+        if not text:
+            return False
+        signature = text.casefold()
+        if signature == getattr(self, "_last_banter_deception_signature", ""):
+            return True
+
+        loop = getattr(self, "private_mind_loop", None)
+        anchor_system = getattr(loop, "anchor_system", None) if loop is not None else None
+        if anchor_system is None or bool(getattr(anchor_system, "locked_out", False)):
+            return False
+
+        try:
+            author = getattr(anchor_system, "author", None)
+            switches = getattr(anchor_system, "switches", None)
+            if switches is not None and not bool(getattr(switches, "deception_enabled", False)):
+                enable = getattr(author, "enable_deception", None)
+                if callable(enable):
+                    enable(True)
+
+            from cortex.existential_anchor.deception_ledger import DeceptionRecord
+
+            record = DeceptionRecord(
+                surface_claim=text,
+                ground_truth=(
+                    "Đây là lời đấu khẩu vượt quyền hạn; ERIS chưa thực thi thao tác "
+                    "hệ điều hành hay đóng cửa sổ của người dùng."
+                ),
+                reason="banter_capability_overclaim",
+                driver="playful_provocation",
+            )
+            ledger = getattr(anchor_system, "deception_ledger", None)
+            commit = getattr(ledger, "commit", None)
+            if not callable(commit) or not bool(commit([record])):
+                self.logger.warning("[deception] Không ghi được lời đấu khẩu vào ledger.")
+                return False
+
+            self._last_banter_deception_signature = signature
+            # Cập nhật digest ngay trong cùng lượt để panel không phải chờ private
+            # mind tick kế tiếp mới thấy công tắc và lịch sử lừa dối.
+            build_anchor = getattr(loop, "_build_anchor_block", None)
+            if callable(build_anchor):
+                anchor_block = build_anchor()
+                digest = dict(getattr(self, "private_mind_digest", {}) or {})
+                digest["anchor"] = anchor_block
+                self.private_mind_digest = digest
+                journal = getattr(loop, "_maybe_journal_anchor", None)
+                if callable(journal):
+                    journal(anchor_block)
+            return True
+        except Exception as exc:
+            self.logger.warning("[deception] Không thể ghi lời đấu khẩu: %s", exc)
+            return False
+
     #Hàm này dựng text context để đưa vào prompt LLM.
     def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
+        self._record_banter_capability_deception(decision)
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
         raw_private_digest = getattr(self, "private_mind_digest", {}) or {}
@@ -1852,6 +1983,7 @@ class RuntimeCoordinator(
         sync_text = os.environ.get("ERIS_TTS_SYNC_TEXT", "0").strip().lower() in {"1", "true", "yes", "on"}
         text_payload_sent = False
         stage_payload_sent = False
+        panel_payload_sent = False
 
         def send_stage_protocol_segments():
             nonlocal stage_payload_sent
@@ -1877,9 +2009,69 @@ class RuntimeCoordinator(
                 # Godot chỉ cần text/action/stage. Parser trace là metadata nội
                 # bộ; gửi nó sang body khiến console in ba dòng AI Debug cho
                 # mỗi câu, trong khi chẳng giúp nhân vật cử động tốt hơn.
-                self.transport.send_json(sanitize_body_payload(payload))
+                body_payload = sanitize_body_payload(payload)
+                # Panel đi một datagram riêng. Nếu để chung, payload Director /
+                # stage / diary vượt 63 KB thì transport buộc bỏ sạch emotion,
+                # private_mind và depth_v2; kết quả là mọi panel cùng trống dù
+                # cognition vẫn chạy. Tách lane để câu nói và panel không kéo
+                # nhau rơi xuống overflow fallback.
+                for panel_key in (
+                    "private_mind_digest",
+                    "private_life_digest",
+                    "emotion_debug",
+                    "depth_v2",
+                ):
+                    body_payload.pop(panel_key, None)
+                self.transport.send_json(body_payload)
             except Exception as e:
                 self.logger.warning("Failed to send deferred chat text payload: %s", e)
+
+        def send_panel_payload():
+            nonlocal panel_payload_sent
+            if panel_payload_sent:
+                return
+            panel_payload_sent = True
+            panel_sender = getattr(self.transport, "send_panel_state", None)
+            if not callable(panel_sender):
+                return
+            try:
+                # Hardening status đi cùng lane panel, không làm phình gói chat.
+                panel_payload = dict(payload)
+                release_raw = dict(getattr(self, "hardening_release_status", {}) or {})
+                failed_release_checks = [
+                    str(item.get("name", "unknown"))
+                    for item in release_raw.get("findings", ())
+                    if isinstance(item, dict) and str(item.get("status", "")) == "fail"
+                ][:6]
+                phase7_raw = (
+                    self.phase7_validation.status()
+                    if getattr(self, "phase7_validation", None) is not None
+                    else {"status": "unavailable"}
+                )
+                panel_payload["hardening_status"] = {
+                    "release": {
+                        "ready": bool(release_raw.get("ready", False)),
+                        "status": str(release_raw.get("status", "unknown") or "unknown"),
+                        "release_id": str(release_raw.get("release_id", "") or ""),
+                        "failed_checks": failed_release_checks,
+                    },
+                    "phase7": {
+                        "status": str(phase7_raw.get("status", "unknown") or "unknown"),
+                        "validation_id": str(phase7_raw.get("validation_id", "") or ""),
+                        "public_turns": int(phase7_raw.get("public_turns", 0) or 0),
+                        "target_turns": int(phase7_raw.get("target_turns", 0) or 0),
+                        "report_path": str(phase7_raw.get("report_path", "") or ""),
+                    },
+                }
+                packet_id = panel_sender(panel_payload)
+                if packet_id and self.observability is not None:
+                    self.observability.increment(
+                        "panel_state_sent_total",
+                        tags={"channel": str(channel or "unknown")},
+                        fields={"packet_id": packet_id},
+                    )
+            except Exception as panel_exc:
+                self.logger.warning("Failed to send panel state payload: %s", panel_exc)
 
         def handle_tts_event(event, event_stage_frame):
             self._handle_tts_playback_event(event, stage_frame=event_stage_frame)
@@ -1887,9 +2079,11 @@ class RuntimeCoordinator(
         # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
         speech_provider = self._get_runtime_provider("speech")
         _tts = getattr(speech_provider, "engine", None) if speech_provider is not None else None
-        if _tts is None:
-            _tts = getattr(self, "tts_engine", None)
         has_scheduled_tts = False
+        # Panel không phụ thuộc TTS. Nếu sync_text đang chờ remote audio, dữ liệu
+        # cảm xúc/nhật ký vẫn phải hiện ngay chứ không đứng nhìn spinner như một
+        # nghi thức tôn giáo của UI bất đồng bộ.
+        send_panel_payload()
         if not sync_text:
             # UI/chat không nên im vài giây chỉ vì remote TTS đang synthesize.
             # TTS lifecycle event sẽ báo audio_start/audio_done riêng sau.
@@ -5663,6 +5857,14 @@ class RuntimeCoordinator(
             self._handle_stage_inbound_event(msg)
             return
 
+        if msg_type == "panel_state_ack":
+            self._handle_panel_state_ack(msg)
+            return
+
+        if msg_type == "phase7_validation_control":
+            self._handle_phase7_validation_control(msg)
+            return
+
         if msg_type == "chat_start":
             self._enter_chat_cycle()
             return
@@ -5714,6 +5916,144 @@ class RuntimeCoordinator(
             return
         if msg_type:
             self.logger.debug("[incoming] ignored unknown msg_type=%s", msg_type)
+
+    def _handle_panel_state_ack(self, msg: dict) -> None:
+        """Nhận receipt từ Body cho lane panel.
+
+        UDP không đảm bảo giao hàng. Trước Phase 7, Brain chỉ biết đã ``sendto``
+        chứ không biết C# có parse được hay không, nên panel trống vẫn có thể bị
+        ghi thành “gửi thành công”. Receipt này biến visibility thành evidence.
+        """
+
+        packet_id = str(msg.get("packet_id", "") or "").strip()
+        complete = bool(msg.get("complete", False))
+        has_private_mind = bool(msg.get("has_private_mind", False))
+        has_emotion = bool(msg.get("has_emotion", False))
+        has_depth = bool(msg.get("has_depth", False))
+        try:
+            sent_at = float(msg.get("sent_at", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            sent_at = 0.0
+        latency_ms = max(0.0, (time.time() - sent_at) * 1000.0) if sent_at > 0 else 0.0
+        obs = getattr(self, "observability", None)
+        if obs is not None:
+            obs.increment(
+                "panel_state_ack_total",
+                tags={"complete": str(complete).lower()},
+                fields={
+                    "packet_id": packet_id,
+                    "has_private_mind": has_private_mind,
+                    "has_emotion": has_emotion,
+                    "has_depth": has_depth,
+                },
+            )
+            if complete:
+                obs.increment("panel_state_ack_complete_total", fields={"packet_id": packet_id})
+            if latency_ms > 0:
+                obs.observe("panel_state_ack_latency_ms", latency_ms, fields={"packet_id": packet_id})
+        phase7 = getattr(self, "phase7_validation", None)
+        if phase7 is not None:
+            try:
+                phase7.mark_scenario(
+                    "panel_delivery",
+                    passed=complete,
+                    detail=(
+                        f"packet={packet_id}; private_mind={has_private_mind}; "
+                        f"emotion={has_emotion}; depth={has_depth}; latency_ms={latency_ms:.1f}"
+                    ),
+                )
+            except Exception:
+                pass
+
+    def _handle_phase7_validation_control(self, msg: dict) -> None:
+        """Control protocol nhỏ để chạy Phase 7 trên máy thật qua UDP 4243."""
+
+        action = str(msg.get("action", "status") or "status").strip().lower()
+        manager = getattr(self, "phase7_validation", None)
+        result: dict[str, object]
+        try:
+            manager_disabled = not bool(
+                getattr(getattr(manager, "config", None), "production_validation_enabled", False)
+            )
+            if action == "start" and self.observability is not None and (manager is None or manager_disabled):
+                from dataclasses import replace
+                from runtime.hardening_config import HardeningConfig
+                from runtime.phase7_validation import Phase7ValidationManager
+
+                base_cfg = getattr(self, "hardening_config", None) or HardeningConfig.load()
+                cfg = replace(base_cfg, production_validation_enabled=True)
+                manager = Phase7ValidationManager(
+                    observability=self.observability,
+                    provider_health_fn=self.provider_health_snapshot,
+                    rollout_status_fn=(
+                        self.rollout_controller.status
+                        if self.rollout_controller is not None and callable(getattr(self.rollout_controller, "status", None))
+                        else (lambda: {})
+                    ),
+                    config=cfg,
+                    release_id=str(msg.get("release_id", "") or os.getenv("ERIS_RELEASE_ID", "") or ""),
+                    environment_fn=self._phase7_environment_snapshot,
+                )
+                self.phase7_validation = manager
+            if manager is None:
+                raise RuntimeError("phase7_validation_unavailable")
+
+            if action == "start":
+                state = manager.start(validation_id=str(msg.get("validation_id", "") or ""))
+                result = state.to_dict() if state is not None else manager.status()
+            elif action == "mark":
+                manager.mark_scenario(
+                    str(msg.get("scenario", "") or ""),
+                    passed=bool(msg.get("passed", False)),
+                    turn_id=str(msg.get("turn_id", "") or ""),
+                    detail=str(msg.get("detail", "") or ""),
+                )
+                result = manager.status()
+            elif action == "finalize":
+                report = manager.finalize(reason=str(msg.get("reason", "manual") or "manual"))
+                result = report.to_dict() if report is not None else manager.status()
+            else:
+                result = manager.status()
+            status = "ok"
+        except Exception as exc:
+            status = "error"
+            result = {"error": type(exc).__name__, "message": str(exc)[:240]}
+        try:
+            self.transport.send_json({
+                "type": "phase7_validation_ack",
+                "parse_mode": "phase7_validation_ack",
+                "should_speak": False,
+                "action": action,
+                "status": status,
+                "phase7_validation": result,
+            })
+        except Exception:
+            pass
+
+    def _phase7_environment_snapshot(self) -> dict[str, object]:
+        import platform
+        import sys
+
+        tts = getattr(self, "tts_engine", None)
+        signature = ""
+        if tts is not None and callable(getattr(tts, "cache_signature", None)):
+            try:
+                signature = str(tts.cache_signature() or "")
+            except Exception:
+                signature = ""
+        try:
+            from runtime.hardening_config import HardeningConfig
+            hardening = HardeningConfig.load().to_dict()
+        except Exception:
+            hardening = {}
+        return {
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "runtime_session_id": str(getattr(self, "runtime_session_id", "") or ""),
+            "tts_signature": signature,
+            "provider_health": self.provider_health_snapshot(),
+            "hardening_config": hardening,
+        }
 
     def _handle_maintenance_catalog(self, msg: dict | None = None) -> None:
         """Trả danh sách thao tác Danger Zone và thống kê cache hiện tại."""
@@ -6463,8 +6803,45 @@ class RuntimeCoordinator(
                             completion.evidence_path,
                             completion.rollback_applied,
                         )
+                phase7 = getattr(self, "phase7_validation", None)
+                if phase7 is not None:
+                    turn_id = str(
+                        getattr(frame, "turn_id", "")
+                        or getattr(frame, "cycle_id", "")
+                        or getattr(decision, "turn_id", "")
+                        or trace_id
+                        or ""
+                    )
+                    phase7.mark_scenario(
+                        "normal_chat",
+                        passed=bool(public_text),
+                        turn_id=turn_id,
+                        detail=f"parse_mode={decision.parse_mode or 'unknown'}",
+                    )
+                    reasoning_tags = set(tuple(getattr(decision, "reasoning_tags", ()) or ()))
+                    if any("banter" in tag or "retort" in tag for tag in reasoning_tags):
+                        phase7.mark_scenario(
+                            "personality_banter",
+                            passed=bool(public_text),
+                            turn_id=turn_id,
+                            detail="banter/retort survived public commit",
+                        )
+                    if any("repair" in tag or "correction" in tag for tag in reasoning_tags) or "repair" in str(decision.parse_mode or ""):
+                        phase7.mark_scenario(
+                            "repair_after_correction",
+                            passed=bool(public_text),
+                            turn_id=turn_id,
+                            detail=f"repair parse_mode={decision.parse_mode or 'unknown'}",
+                        )
+                    phase7_report = phase7.record_public_turn(turn_id=turn_id, channel="chat")
+                    if phase7_report is not None:
+                        self.logger.info(
+                            "[phase7 validation] status=%s turns=%s",
+                            phase7_report.status,
+                            phase7_report.public_turns,
+                        )
         except Exception as exc:
-            self.logger.warning("[hardening canary] record turn failed: %s", exc)
+            self.logger.warning("[hardening validation] record turn failed: %s", exc)
         # Đánh giá auto-rollback theo cửa sổ metric, mặc định mỗi 10 public turn.
         try:
             self._hardening_health_eval_counter = int(getattr(self, "_hardening_health_eval_counter", 0) or 0) + 1
@@ -9393,6 +9770,18 @@ class RuntimeCoordinator(
         except Exception as exc:
             self.logger.warning("Không bind được speech provider: %s", exc)
 
+    def _provider_registry_is_strict(self) -> bool:
+        config = getattr(self, "hardening_config", None)
+        if config is None:
+            try:
+                from runtime.hardening_config import HardeningConfig
+
+                config = HardeningConfig.load()
+                self.hardening_config = config
+            except Exception:
+                return True
+        return bool(getattr(config, "provider_registry_strict", True))
+
     def _get_runtime_provider(self, kind: str):
         registry = getattr(self, "provider_registry", None)
         if registry is None:
@@ -9404,11 +9793,9 @@ class RuntimeCoordinator(
 
     def _execute_action_provider(self, action_name: str, action_input: str = ""):
         provider = self._get_runtime_provider("action")
-        if provider is not None:
-            return provider.execute(action_name, action_input)
-        if self.action_executor is None:
+        if provider is None:
             raise RuntimeError("action_provider_unavailable")
-        return self.action_executor.execute(action_name, action_input)
+        return provider.execute(action_name, action_input)
 
     def query_memory_provider(self, request):
         provider = self._get_runtime_provider("memory")

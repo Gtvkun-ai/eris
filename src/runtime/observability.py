@@ -354,7 +354,9 @@ class ErisObservability:
                 "surface_leak_", "tts_locale_switch_", "tts_fallback_same_language_",
                 "tts_breaker_", "429_per_provider_per_lane", "constrained_rerun_fail_",
                 "avg_prompt_tokens_by_lane", "user_correction_after_action_",
-                "provider_ready", "hardening_public_turn_",
+                "provider_ready", "hardening_public_turn_", "phase7_",
+                "panel_state_", "greeting_validation_", "greeting_grounding_",
+                "hardening_release_",
             ),
         }
         dashboards: dict[str, dict[str, Any]] = {name: {} for name in groups}

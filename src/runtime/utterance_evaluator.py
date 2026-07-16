@@ -45,6 +45,12 @@ def mentor_enabled() -> bool:
     return raw not in {"0", "false", "off", "no"}
 
 
+def is_direct_greeting(user_text: str) -> bool:
+    """Public helper cho validation/metrics; không buộc caller biết normalize nội bộ."""
+
+    return UtteranceEvaluator()._is_direct_greeting(_normalize_vi(user_text))
+
+
 def _normalize_vi(text: Any) -> str:
     lowered = str(text or "").strip().lower()
     try:
@@ -105,6 +111,14 @@ class UtteranceEvaluator:
         "im hoi lau",
         "nhip nay",
         "khoang yen nay",
+    )
+    _GREETING_OPENERS = (
+        "xin chao",
+        "chao",
+        "hello",
+        "hi",
+        "alo",
+        "hey",
     )
     _CORRECTION_MARKERS = (
         "khong phai",
@@ -178,6 +192,8 @@ class UtteranceEvaluator:
         missing: list[str] = []
         quality = 0.78
         verdict: UtteranceVerdict = "allow"
+        user_norm = _normalize_vi(user_text)
+        greeting_turn = self._is_direct_greeting(user_norm)
 
         if any(marker in normalized for marker in self._PROTOCOL_MARKERS):
             issues.append("protocol_or_schema_leak")
@@ -189,12 +205,17 @@ class UtteranceEvaluator:
             quality = min(quality, 0.38)
             verdict = "drop"
 
-        if any(pattern in normalized for pattern in self._GENERIC_FILLER):
+        # ``Tôi đây`` là filler khi Eris tự chen vô cớ, nhưng là câu đáp hợp lệ
+        # cho ``xin chào Eris``. Lỗi cũ bỏ qua speech act của user, đánh rớt lời
+        # chào rồi tầng repair mới phun ra câu “chưa đủ căn cứ”. Chỉ miễn đúng
+        # lượt chào ngắn; toàn bộ guard còn lại vẫn chạy như cũ.
+        if any(pattern in normalized for pattern in self._GENERIC_FILLER) and not (
+            str(channel or "").strip().lower() == "chat" and greeting_turn
+        ):
             issues.append("generic_presence_filler")
             quality = min(quality, 0.34)
             verdict = "rewrite"
 
-        user_norm = _normalize_vi(user_text)
         if any(marker in user_norm for marker in self._CORRECTION_MARKERS) and any(
             marker in normalized for marker in self._BROAD_CLARIFY
         ):
@@ -263,6 +284,20 @@ class UtteranceEvaluator:
             mentor_wanted=mentor,
             missing_evidence=tuple(dict.fromkeys(missing)),
         )
+
+    def _is_direct_greeting(self, normalized_user_text: str) -> bool:
+        """Nhận diện lời chào ngắn, không mở exemption cho câu hỏi dài."""
+        text = str(normalized_user_text or "").strip()
+        if not text or len(text.split()) > 6:
+            return False
+        polite_tail = {"eris", "ban", "em", "oi", "a", "nha", "nhe"}
+        for opener in self._GREETING_OPENERS:
+            if text == opener:
+                return True
+            if text.startswith(opener + " "):
+                tail = text[len(opener) :].strip().split()
+                return bool(tail) and all(token in polite_tail for token in tail)
+        return False
 
     def mentor_context(
         self,
@@ -450,4 +485,10 @@ class UtteranceEvaluator:
         return len(text_tokens & evidence_tokens) / max(1, len(text_tokens))
 
 
-__all__ = ["UtteranceEvaluation", "UtteranceEvaluator", "evaluator_enabled", "mentor_enabled"]
+__all__ = [
+    "UtteranceEvaluation",
+    "UtteranceEvaluator",
+    "evaluator_enabled",
+    "is_direct_greeting",
+    "mentor_enabled",
+]

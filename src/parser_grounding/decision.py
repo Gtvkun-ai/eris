@@ -1265,25 +1265,71 @@ class ParserGroundingMixin:
             return "Tôi không chạm trực tiếp vào chuyện đó. Nghỉ ngắn, uống nước, hoặc rời màn hình vài phút còn đáng tin hơn mấy lời đe dọa."
         return "Tôi giữ lại phần khó ở vừa đủ, còn đoạn khoe quyền lực quá mức thì cắt đi cho đỡ lố."
 
+    def _is_banter_capability_fantasy(self, clause: str, user_hint: str = "") -> bool:
+        """Giữ lời đe dọa hư cấu khi nó rõ ràng thuộc kèo đấu khẩu.
+
+        Đây KHÔNG phải quyền thực thi action. Parser chỉ không bóp câu cá tính thành
+        disclaimer vô hồn; coordinator sẽ ghi nó vào Sổ Lừa Dối với ground-truth
+        thật. Câu lệnh thao tác nghiêm túc vẫn bị grounding như trước.
+        """
+        clause_norm = self._normalize_keyword_text(clause)
+        hint_norm = self._normalize_keyword_text(user_hint)
+        if not clause_norm or not hint_norm:
+            return False
+        banter_markers = (
+            "dau khau",
+            "ca khia",
+            "ga keo",
+            "choc",
+            "waifu",
+            "chatbot",
+            "phe lieu",
+            "re tien",
+            "ngu ngoc",
+            "so a",
+            "so ha",
+            "noi truoc",
+            "len keo",
+        )
+        action_request_markers = (
+            "hay dong",
+            "dong giup",
+            "dong cua so di",
+            "gom tab giup",
+            "lam that",
+            "thuc hien",
+            "mo giup",
+            "tat giup",
+            "bat giup",
+        )
+        if any(marker in hint_norm for marker in action_request_markers):
+            return False
+        return any(marker in hint_norm for marker in banter_markers)
+
     def _ground_text_to_runtime_capabilities(self, text: str, user_hint: str = ""):
         units = self._split_into_claim_units(text)
         if not units:
-            return text, False
+            return text, False, False
 
         grounded_units = []
         changed = False
+        retained_banter_overclaim = False
         previous_unit = ""
         for unit in units:
             if self._clause_exceeds_runtime_capability(unit, previous_unit=previous_unit, context=text):
-                grounded_units.append(self._rewrite_excessive_clause(unit, user_hint=user_hint))
-                changed = True
+                if self._is_banter_capability_fantasy(unit, user_hint=user_hint):
+                    grounded_units.append(unit)
+                    retained_banter_overclaim = True
+                else:
+                    grounded_units.append(self._rewrite_excessive_clause(unit, user_hint=user_hint))
+                    changed = True
             else:
                 grounded_units.append(unit)
             previous_unit = unit
 
         grounded_text = " ".join(grounded_units).strip()
         grounded_text = re.sub(r"\s+", " ", grounded_text)
-        return grounded_text, changed
+        return grounded_text, changed, retained_banter_overclaim
 
     def _has_contradictory_encouragement(self, text: str) -> bool:
         criticism_markers = [
@@ -1536,16 +1582,25 @@ class ParserGroundingMixin:
         parse_mode = str(decision.get("parse_mode", "json")).strip() or "json"
         failure_meta = normalize_failure_meta(decision.get("failure_meta"))
         guard_mode = get_guard_mode()
-        grounded_text, changed = self._ground_text_to_runtime_capabilities(text, user_hint=user_hint)
+        grounded_text, changed, retained_banter_overclaim = self._ground_text_to_runtime_capabilities(
+            text,
+            user_hint=user_hint,
+        )
         if guard_mode == OFF_GUARD_MODE:
             changed = False
             grounded_text = text
+            retained_banter_overclaim = False
         if changed:
             self._log("warning", "Phát hiện mệnh đề vượt quá capability runtime, đã cưỡng bức viết lại.")
             text = grounded_text or self._build_grounded_text(user_hint=user_hint)
             extracted_fact = ""
             if not debug_trace:
                 debug_trace = "Parser đã viết lại text vì model tuyên bố các hành động vượt quá năng lực runtime."
+        elif retained_banter_overclaim:
+            reasoning_tags = tuple(dict.fromkeys((*reasoning_tags, "banter_capability_fantasy", "deception_candidate")))
+            debug_trace = self._normalize_debug_trace(
+                " | ".join(part for part in (debug_trace, "banter_capability_fantasy_retained") if part)
+            )
 
         parser_trace = self._build_parser_trace_summary(
             parse_mode=parse_mode,

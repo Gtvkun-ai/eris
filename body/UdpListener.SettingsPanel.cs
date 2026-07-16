@@ -2119,6 +2119,51 @@ public partial class UdpListener : Node2D
 	}
 
 
+	private string BuildHardeningRuntimeSummary()
+	{
+		if (string.IsNullOrWhiteSpace(_latestHardeningStatusJson))
+			return "";
+		try
+		{
+			using JsonDocument doc = JsonDocument.Parse(_latestHardeningStatusJson);
+			JsonElement root = doc.RootElement;
+			string releaseStatus = "";
+			string phase7Status = "";
+			int phase7Turns = 0;
+			int phase7Target = 0;
+
+			if (root.TryGetProperty("release", out JsonElement release)
+				&& release.ValueKind == JsonValueKind.Object
+				&& release.TryGetProperty("status", out JsonElement releaseNode))
+				releaseStatus = releaseNode.GetString() ?? "";
+
+			if (root.TryGetProperty("phase7", out JsonElement phase7)
+				&& phase7.ValueKind == JsonValueKind.Object)
+			{
+				if (phase7.TryGetProperty("status", out JsonElement statusNode))
+					phase7Status = statusNode.GetString() ?? "";
+				if (phase7.TryGetProperty("public_turns", out JsonElement turnsNode)
+					&& turnsNode.ValueKind == JsonValueKind.Number)
+					turnsNode.TryGetInt32(out phase7Turns);
+				if (phase7.TryGetProperty("target_turns", out JsonElement targetNode)
+					&& targetNode.ValueKind == JsonValueKind.Number)
+					targetNode.TryGetInt32(out phase7Target);
+			}
+
+			if (string.Equals(phase7Status, "running", StringComparison.OrdinalIgnoreCase))
+				return $"Phase 7 {phase7Turns}/{Math.Max(phase7Target, 1)}";
+			if (!string.IsNullOrWhiteSpace(releaseStatus))
+				return $"Hardening {releaseStatus}";
+			if (!string.IsNullOrWhiteSpace(phase7Status) && phase7Status != "disabled")
+				return $"Phase 7 {phase7Status}";
+		}
+		catch (Exception)
+		{
+			// Status chỉ là phụ trợ UI; payload hỏng không được phép kéo sập Settings.
+		}
+		return "";
+	}
+
 	private void TickSettingsPanelRuntimeStatus()
 	{
 		if (_settingsPanel == null || !_settingsPanel.Visible)
@@ -2161,7 +2206,9 @@ public partial class UdpListener : Node2D
 				string uptimeText = uptime.TotalHours >= 1d
 					? $"{(int)uptime.TotalHours} giờ {uptime.Minutes:00} phút"
 					: $"{uptime.Minutes:00} phút {uptime.Seconds:00} giây";
-				_settingsRuntimeDetailLabel.Text = $"PID {_processes.VisionProcessId} · Đã chạy {uptimeText}";
+				string hardeningSummary = BuildHardeningRuntimeSummary();
+				_settingsRuntimeDetailLabel.Text = $"PID {_processes.VisionProcessId} · Đã chạy {uptimeText}"
+					+ (string.IsNullOrWhiteSpace(hardeningSummary) ? "" : $" · {hardeningSummary}");
 				_settingsRuntimeDetailLabel.TooltipText = _processes.VisionStartedAtUtc.HasValue
 					? $"Khởi động lúc {_processes.VisionStartedAtUtc.Value.ToLocalTime():HH:mm:ss}"
 					: "Brain đang chạy";

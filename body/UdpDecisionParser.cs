@@ -195,6 +195,7 @@ public sealed class UdpDecisionParser
 				: "";
 			isControlEnvelope = envelopeType.StartsWith("maintenance_", StringComparison.Ordinal)
 				|| envelopeType.StartsWith("settings_", StringComparison.Ordinal)
+				|| string.Equals(envelopeType, "panel_state_update", StringComparison.Ordinal)
 				|| envelopeType.EndsWith("_ack", StringComparison.Ordinal);
 			if (isControlEnvelope)
 				shouldSpeak = false;

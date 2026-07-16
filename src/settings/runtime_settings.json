@@ -77,5 +77,18 @@
     "require_preview_before_execute": true,
     "typed_confirmation": true,
     "allow_destructive_maintenance": false
+  },
+  "hardening": {
+    "profile": "development",
+    "production_validation_enabled": false,
+    "production_validation_turns": 24,
+    "production_validation_dir": "logs/phase7_validation",
+    "panel_ack_required": true,
+    "provider_registry_strict": true,
+    "release_manifest_path": "config/hardening_release.json",
+    "release_guard_enabled": true,
+    "release_guard_fail_closed": false,
+    "legacy_cross_language_tts": false,
+    "legacy_romaji_tts": false
   }
 }

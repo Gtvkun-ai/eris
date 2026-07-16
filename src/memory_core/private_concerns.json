@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "saved_at": 1784129097.4772756,
+  "saved_at": 1784167892.3568413,
   "concerns": [
     {
       "id": "concern.5c84f09058ba3d9f",
@@ -19,16 +19,16 @@
         "Revise this hypothesis after outcome: negative outcome"
       ],
       "hypotheses": [],
-      "pressure": 0.819,
-      "uncertainty": 0.02000000000000013,
-      "recurrence": 30,
+      "pressure": 0.826,
+      "uncertainty": 0.0,
+      "recurrence": 56,
       "status": "open",
-      "last_reviewed_at": 1784128931.7435098,
+      "last_reviewed_at": 1784167892.2390745,
       "future_biases": [
         "lower confidence in this concern's current hypothesis until new evidence supports it"
       ],
       "created_at": 1781113848.0653079,
-      "updated_at": 1784128931.7435102,
+      "updated_at": 1784167892.2390745,
       "metadata": {
         "fragment_ids": [
           "tf.2bf3680142a12f4c",
@@ -54,7 +54,7 @@
           "correction_text": "",
           "at": 1781113919.273288
         },
-        "echo_streak": 0
+        "echo_streak": 26
       }
     },
     {
@@ -78,7 +78,7 @@
         "Revise this hypothesis after outcome: negative outcome"
       ],
       "hypotheses": [],
-      "pressure": 0.5330328742006686,
+      "pressure": 7.708126539393212e-05,
       "uncertainty": 1.0,
       "recurrence": 19,
       "status": "stale",
@@ -126,7 +126,7 @@
         "Người dùng muốn gì?"
       ],
       "hypotheses": [],
-      "pressure": 0.47972958678060196,
+      "pressure": 6.937313885453891e-05,
       "uncertainty": 0.12,
       "recurrence": 14,
       "status": "stale",

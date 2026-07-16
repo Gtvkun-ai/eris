@@ -8,7 +8,8 @@ panel_snapshot.json`` để Eris Panel hiển thị thật: cảm xúc (appraisa
 biểu đạt (N1), và lần đọc-bạn gần nhất (tom_read) + một nhật ký tín hiệu ngắn.
 
 Nguyên tắc:
-- MẶC ĐỊNH TẮT (cờ ``ERIS_PANEL_SNAPSHOT``). Tắt -> không ghi gì, zero I/O.
+- MẶC ĐỊNH BẬT để panel có dữ liệu ngay khi chạy. Có thể tắt rõ bằng
+  ``ERIS_PANEL_SNAPSHOT=0`` nếu cần zero I/O.
 - Throttle: ghi tối đa mỗi ``ERIS_PANEL_SNAPSHOT_MIN_SEC`` giây (mặc định 0.8s)
   để vòng nhận thức không biến thành máy ghi đĩa.
 - Atomic (tmp+replace), không bao giờ ném: lỗi gì cũng nuốt.
@@ -31,10 +32,17 @@ _signal_log: list[dict[str, str]] = []
 _MAX_SIGNALS = 8
 
 _TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off", "none"}
 
 
 def panel_snapshot_enabled() -> bool:
-    return str(os.getenv("ERIS_PANEL_SNAPSHOT", "")).strip().lower() in _TRUE
+    raw = os.getenv("ERIS_PANEL_SNAPSHOT")
+    if raw is None or not str(raw).strip():
+        return True
+    value = str(raw).strip().lower()
+    if value in _FALSE:
+        return False
+    return value in _TRUE
 
 
 def _min_interval() -> float:

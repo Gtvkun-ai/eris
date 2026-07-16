@@ -410,12 +410,18 @@ def _edge_voice_candidates(language_hint: str = "") -> list[str]:
 
 
 def _edge_romaji_enabled() -> bool:
-    return os.environ.get("ERIS_TTS_EDGE_ROMAJI", "0").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    """Legacy romaji chỉ được bật qua authority config.
+
+    Phase 8 khóa đường fallback này ở profile stable. Env vẫn được store đọc như
+    compatibility input, nhưng TTS không tự tạo một sự thật cấu hình thứ hai.
+    """
+    try:
+        from runtime.hardening_config import HardeningConfig
+
+        config = HardeningConfig.load()
+        return bool(config.legacy_romaji_tts and not config.stable)
+    except Exception:
+        return False
 
 
 def _contains_japanese_chars(text: str) -> bool:

@@ -1,24 +1,63 @@
 {
-  "updated_at": 1781113901.786,
-  "last_tick_at": 1781113901.093,
+  "updated_at": 1784167889.11,
+  "last_tick_at": 1784167888.849,
   "current": {
-    "dominant_judgment": "",
-    "confidence": 0.0,
-    "pressure": 0.0,
-    "source": "",
-    "evidence_ids": [],
-    "surface_candidate": null
+    "dominant_judgment": "User wants architecture work",
+    "confidence": 1.0,
+    "pressure": 0.826,
+    "source": "deterministic_inner_synthesizer",
+    "evidence_ids": [
+      "dossier.runtime.state",
+      "dossier.runtime.thought_stream",
+      "dossier.runtime.private_state",
+      "dossier.concern.0"
+    ],
+    "surface_candidate": {
+      "id": "surf.a849f00b6fe19185",
+      "kind": "private_mind_surface",
+      "topic_seed": "User wants architecture work",
+      "usefulness": 0.7008399999999999,
+      "confidence": 1.0,
+      "interrupt_cost": 0.258768,
+      "evidence_ids": [
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "dossier.concern.0"
+      ],
+      "reason": "Private judgment is useful enough to bias low-level surface, but raw judgment stays private.",
+      "channel": "body_only",
+      "created_at": 1784167888.8528302,
+      "metadata": {
+        "source": "fallback",
+        "source_fragment": "tf.2c8c2291a93b251a",
+        "novelty": 1.0,
+        "repetition": 0.0,
+        "has_recent_user_turn": false,
+        "user_turn_age_sec": null,
+        "public_anchor_count": 2,
+        "evidence_strength": 0.39399999999999996,
+        "api_degraded": false,
+        "api_invalid_json": false,
+        "semantic_family": "private_mind_continuity_filler",
+        "has_public_anchor": true,
+        "public_surface_allowed": false,
+        "surface_valve_body_only": true
+      },
+      "epistemic_stance": "grounded",
+      "intent": "sincere"
+    }
   },
   "inner_diary": {
     "mode": "debug_private",
     "title": "Inner Diary",
-    "text": "Bảng cảm xúc:\nêm\nêm\n\nĐang bận tâm:\n- User wants architecture work\n- lời chào\n- hiểu nhu cầu",
+    "text": "Bảng cảm xúc:\nUser wants architecture work\nêm\n\nSuy nghĩ hiện tại:\nUser wants architecture work",
     "sections": [
       {
         "title": "Bảng cảm xúc",
         "items": [
           {
-            "text": "êm",
+            "text": "User wants architecture work",
             "badge": "êm"
           },
           {
@@ -39,30 +78,20 @@
           }
         ],
         "lines": [
-          "êm",
+          "User wants architecture work",
           "êm"
         ]
       },
       {
-        "title": "Đang bận tâm",
+        "title": "Suy nghĩ hiện tại",
         "items": [
           {
             "text": "User wants architecture work",
-            "badge": "áp lực 1"
-          },
-          {
-            "text": "lời chào",
-            "badge": "áp lực 0.35"
-          },
-          {
-            "text": "hiểu nhu cầu",
-            "badge": "áp lực 0.35"
+            "badge": ""
           }
         ],
         "lines": [
-          "- User wants architecture work",
-          "- lời chào",
-          "- hiểu nhu cầu"
+          "User wants architecture work"
         ]
       }
     ],
@@ -70,7 +99,7 @@
       "title": "Bảng cảm xúc",
       "shape": "circle",
       "center": {
-        "label": "êm",
+        "label": "User wants architecture work",
         "subtext": "êm"
       },
       "quadrants": {
@@ -114,7 +143,7 @@
       },
       "layout": {
         "type": "radial_board",
-        "center_pulse": "êm",
+        "center_pulse": "User wants architecture work",
         "orbit_labels": {
           "top": "hưng phấn",
           "left": "vui vẻ",
@@ -133,6 +162,10 @@
     {
       "at": 1781113901.786,
       "text": "Bảng cảm xúc:\nêm\nêm\n\nĐang bận tâm:\n- User wants architecture work\n- lời chào\n- hiểu nhu cầu"
+    },
+    {
+      "at": 1784167889.11,
+      "text": "Bảng cảm xúc:\nUser wants architecture work\nêm\n\nSuy nghĩ hiện tại:\nUser wants architecture work"
     }
   ]
 }

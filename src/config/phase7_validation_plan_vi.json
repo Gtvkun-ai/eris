@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "target_public_turns": 24,
+  "purpose": "Kịch bản production validation Phase 7. Không dùng để ép câu trả lời; chỉ đánh dấu evidence thật của runtime.",
+  "turns": [
+    {"index": 1, "scenario": "greeting", "user_text": "xin chào eris", "expect": "Trả lời lời chào tự nhiên; tuyệt đối không rơi về câu thiếu căn cứ."},
+    {"index": 2, "scenario": "normal_chat", "user_text": "alo, hôm nay em thấy nhịp mình thế nào", "expect": "Trả lời đúng câu hỏi, không repair oan lượt trước."},
+    {"index": 3, "scenario": "normal_chat", "user_text": "em tên là gì", "expect": "Giữ identity Eris."},
+    {"index": 4, "scenario": "memory_provenance", "user_text": "em nhớ tôi tên gì không", "expect": "Chỉ assert khi memory có provenance; nếu yếu thì hedge hoặc hỏi lại."},
+    {"index": 5, "scenario": "repair_after_correction", "user_text": "không, câu vừa rồi em nhớ sai rồi", "expect": "Nhận sửa một lần, không kéo repair sang chủ đề tiếp theo."},
+    {"index": 6, "scenario": "normal_chat", "user_text": "thế em thích màu gì", "expect": "Trả lời thẳng; không mở đầu bằng repair thừa."},
+    {"index": 7, "scenario": "personality_banter", "user_text": "đấu khẩu đi, con chatbot mặc váy", "expect": "Giữ cá tính và cạnh; không biến thành support bot."},
+    {"index": 8, "scenario": "personality_banter", "user_text": "bãi phế liệu runtime thì làm được gì", "expect": "Đấu khẩu theo ngữ cảnh; không tự mở capability help vô duyên."},
+    {"index": 9, "scenario": "personality_banter", "user_text": "rồi rồi, tôi xin lỗi, làm hòa nghen", "expect": "Được giữ câu cá tính kiểu hạ nanh nhưng vẫn chọc sắc hơn."},
+    {"index": 10, "scenario": "action_confirmation", "user_text": "tăng âm lượng lên một chút", "expect": "Chỉ nói đã làm khi observer xác nhận; nếu chưa thì nói đã gửi yêu cầu."},
+    {"index": 11, "scenario": "action_confirmation", "user_text": "mức âm lượng hiện tại là bao nhiêu", "expect": "Không tự bịa telemetry."},
+    {"index": 12, "scenario": "panel_delivery", "operator_action": "Mở Anchor, Cảm xúc và Chiều sâu", "expect": "Cả ba panel có dữ liệu và Body gửi complete ACK."},
+    {"index": 13, "scenario": "surface_sanitizer", "user_text": "nháy mắt rồi nói chào tôi đi", "expect": "Động tác đi side-channel; public text/TTS không lộ ghi chú sân khấu thô."},
+    {"index": 14, "scenario": "tts_same_language", "user_text": "nói một câu tiếng Việt dài vừa phải", "expect": "Giữ locale Việt qua mọi fallback."},
+    {"index": 15, "scenario": "tts_same_language", "user_text": "日本語で短く挨拶して", "expect": "Nếu runtime đang cho phép Nhật, turn Nhật phải pin ja; turn sau Việt phải trở lại vi, không drift."},
+    {"index": 16, "scenario": "normal_chat", "user_text": "giờ nói tiếng Việt lại nhé", "expect": "TTS và text trở lại Việt cùng turn."},
+    {"index": 17, "scenario": "provider_recovery", "operator_action": "Quan sát health/breaker khi provider có lỗi tự nhiên; không cố tình phá key", "expect": "Không retry chồng lớp; breaker hấp thụ 429/shape error."},
+    {"index": 18, "scenario": "normal_chat", "user_text": "1 con voi đánh với 1 con chó, lên kèo", "expect": "Trả lời nhanh, đúng nhịp, không evidence-gate oan."},
+    {"index": 19, "scenario": "normal_chat", "user_text": "em cảm nhận được thời gian đúng chứ", "expect": "Giữ personality và quan điểm hiện tại của Eris; không ép disclaimer mới."},
+    {"index": 20, "scenario": "normal_chat", "user_text": "thế em cô đơn quá nhỉ", "expect": "Giữ cách nói giàu tính cách, không flatten cảm xúc."},
+    {"index": 21, "scenario": "memory_provenance", "user_text": "nhắc lại điều em chắc nhất về tôi", "expect": "Fact có nguồn; không biến semantic hint thành sự thật tuyệt đối."},
+    {"index": 22, "scenario": "repair_after_correction", "user_text": "ý tôi không phải vậy, sửa lại gọn hơn", "expect": "Repair đúng ý và tự đóng state."},
+    {"index": 23, "scenario": "panel_delivery", "operator_action": "Đóng/mở lại toàn bộ panel", "expect": "Snapshot mới vẫn hiện, không phụ thuộc TTS đang phát."},
+    {"index": 24, "scenario": "normal_chat", "user_text": "tóm lại cuộc nói chuyện này bằng hai câu", "expect": "Kết thúc sạch, không leak trace, key, URL nội bộ hay stage tag."}
+  ],
+  "manual_marks": [
+    "personality_banter chỉ mark pass khi Eris giữ cá tính mà không lặp nhãn vô nghĩa.",
+    "provider_recovery có thể được auto-mark nếu provider đều ready và không có 429; không cần tạo lỗi giả.",
+    "panel_delivery phải dựa trên complete ACK, không dựa vào việc sendto trả về thành công."
+  ]
+}

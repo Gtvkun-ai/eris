@@ -180,6 +180,8 @@ public partial class UdpListener : Node2D
 	private const string PrivateMindStatePath = "user://inner_diary_state.json";	private Control _bubble;
 	private string _latestDepthV2Json = "";
 	private const string DepthV2StatePath = "user://depth_v2_state.json";
+	private string _latestHardeningStatusJson = "";
+	private string _lastPanelPacketId = "";
 	private bool _grabModeArmed = false;
 	private bool _isDraggingCharacter = false;
 	private bool _visionRestartPending = false;
@@ -3696,10 +3698,9 @@ public partial class UdpListener : Node2D
 			if (_emotionPanel != null && _emotionPanel.Visible)
 				RefreshEmotionPanel();
 		}
-		TryApplyDebugCommandAck(raw);
-		TryApplySettingsUpdateAck(raw);
-		if (payload.IsControlEnvelope)
-			return;
+		// Panel snapshot là control envelope riêng để không bị rơi mất khi gói
+		// hội thoại vượt trần UDP. Vì vậy phải thu private-mind/depth TRƯỚC khi
+		// return control, nếu không thì ta đã tách gói rất đẹp chỉ để tự vứt nó.
 		if (payload.HasPrivateMindDebug)
 		{
 			// Chỉ nhận digest có nội dung thật; digest rỗng bị bỏ qua để giữ liên tục
@@ -3713,10 +3714,14 @@ public partial class UdpListener : Node2D
 					RefreshAnchorPanel();
 			}
 		}
+		TryCaptureDepthV2Block(raw);
+		TryCaptureAndAcknowledgePanelState(raw);
+		TryApplyDebugCommandAck(raw);
+		TryApplySettingsUpdateAck(raw);
+		if (payload.IsControlEnvelope)
+			return;
 		if (payload.HasBodyBias)
 			_bodyAutonomy?.ApplyCognitionBias(payload.BodyBias);
-
-			TryCaptureDepthV2Block(raw);
 
 		if (!string.IsNullOrEmpty(payload.ParseMode) || !string.IsNullOrEmpty(payload.DebugTrace) || !string.IsNullOrEmpty(payload.ParserTrace))
 		{
@@ -3737,6 +3742,74 @@ public partial class UdpListener : Node2D
 			ScheduleBodyTimeline(payload.BodyTimeline);
 		else if (payload.HasExplicitMotion)
 			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
+	}
+
+	private void TryCaptureAndAcknowledgePanelState(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw))
+			return;
+		try
+		{
+			using JsonDocument doc = JsonDocument.Parse(raw);
+			JsonElement root = doc.RootElement;
+			if (root.ValueKind != JsonValueKind.Object
+				|| !root.TryGetProperty("type", out JsonElement typeNode)
+				|| !string.Equals(typeNode.GetString(), "panel_state_update", StringComparison.Ordinal))
+				return;
+
+			string packetId = root.TryGetProperty("packet_id", out JsonElement packetNode)
+				? packetNode.GetString() ?? ""
+				: "";
+			if (!string.IsNullOrWhiteSpace(packetId)
+				&& string.Equals(packetId, _lastPanelPacketId, StringComparison.Ordinal))
+				return;
+
+			bool hasPrivateMind = root.TryGetProperty("private_mind_digest", out JsonElement privateMind)
+				&& JsonObjectHasContent(privateMind);
+			bool hasEmotion = root.TryGetProperty("emotion_debug", out JsonElement emotion)
+				&& JsonObjectHasContent(emotion);
+			bool hasDepth = root.TryGetProperty("depth_v2", out JsonElement depth)
+				&& JsonObjectHasContent(depth);
+			bool complete = hasPrivateMind && hasEmotion && hasDepth;
+
+			if (root.TryGetProperty("hardening_status", out JsonElement hardening)
+				&& hardening.ValueKind == JsonValueKind.Object)
+			{
+				_latestHardeningStatusJson = hardening.GetRawText();
+			}
+
+			double sentAt = 0.0;
+			if (root.TryGetProperty("sent_at", out JsonElement sentAtNode)
+				&& sentAtNode.ValueKind == JsonValueKind.Number)
+				sentAtNode.TryGetDouble(out sentAt);
+
+			var ack = new Dictionary<string, object>
+			{
+				["type"] = "panel_state_ack",
+				["packet_id"] = packetId,
+				["sent_at"] = sentAt,
+				["received_at_ms"] = Time.GetTicksMsec(),
+				["has_private_mind"] = hasPrivateMind,
+				["has_emotion"] = hasEmotion,
+				["has_depth"] = hasDepth,
+				["complete"] = complete,
+			};
+			Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(ack)));
+			if (error == Error.Ok && !string.IsNullOrWhiteSpace(packetId))
+				_lastPanelPacketId = packetId;
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[panel ack] parse/send failed: {ex.Message}");
+		}
+	}
+
+	private static bool JsonObjectHasContent(JsonElement element)
+	{
+		if (element.ValueKind != JsonValueKind.Object)
+			return false;
+		var enumerator = element.EnumerateObject();
+		return enumerator.MoveNext();
 	}
 
 	private void RefreshEmotionPanel()

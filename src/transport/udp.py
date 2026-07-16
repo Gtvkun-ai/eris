@@ -1,5 +1,6 @@
 import json
 import socket
+import time
 
 from failure_meta import build_failure_meta, mark_transport_truncated, normalize_failure_meta
 
@@ -8,6 +9,7 @@ from failure_meta import build_failure_meta, mark_transport_truncated, normalize
 # ngưỡng đó sendto() của OS sẽ lỗi và KHÔNG gửi được gì. 63000 chừa lề an toàn,
 # vẫn nằm gọn trong buffer nhận mặc định của Godot PacketPeerUdp (65536).
 MAX_UDP_PAYLOAD_BYTES = 63000
+PANEL_STATE_PACKET_TYPE = "panel_state_update"
 
 
 def _compact_private_mind_for_udp_overflow(value):
@@ -157,6 +159,144 @@ def _compact_scalar(value, limit: int):
     return text
 
 
+def _bounded_panel_value(
+    value,
+    *,
+    depth: int = 0,
+    dict_limit: int = 32,
+    list_limit: int = 16,
+    text_limit: int = 320,
+):
+    """Nén dữ liệu panel mà vẫn giữ cấu trúc JSON cho Godot.
+
+    Khác ``_compact_debug_value`` vốn chỉ giữ 6 key, panel cảm xúc/depth có hàng
+    chục mục hợp lệ. Hàm này cho quota rộng hơn nhưng có trần rõ để một dump thô
+    không nuốt cả datagram UDP. Con người đã phát minh panel debug rồi nhét cả
+    thế giới vào đó; ít nhất runtime không cần chết theo tham vọng ấy.
+    """
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if depth >= 6:
+        return _compact_scalar(value, text_limit)
+    if isinstance(value, dict):
+        out = {}
+        for idx, (key, item) in enumerate(value.items()):
+            if idx >= dict_limit:
+                out["..."] = "truncated"
+                break
+            out[str(key)[:80]] = _bounded_panel_value(
+                item,
+                depth=depth + 1,
+                dict_limit=dict_limit,
+                list_limit=list_limit,
+                text_limit=text_limit,
+            )
+        return out
+    if isinstance(value, (list, tuple)):
+        items = list(value)
+        out = [
+            _bounded_panel_value(
+                item,
+                depth=depth + 1,
+                dict_limit=dict_limit,
+                list_limit=list_limit,
+                text_limit=text_limit,
+            )
+            for item in items[:list_limit]
+        ]
+        if len(items) > list_limit:
+            out.append("... truncated")
+        return out
+    return _compact_scalar(value, text_limit)
+
+
+def _compact_emotion_debug_for_panel(value, *, aggressive: bool = False):
+    if not isinstance(value, dict):
+        return {}
+    # private_mind/private_life đã có kênh riêng. Giữ lại ở đây chỉ làm payload
+    # phình gấp đôi và là nguyên nhân panel biến mất khi vượt 63 KB.
+    summary = value.get("summary") if isinstance(value.get("summary"), dict) else {}
+    items = value.get("items") if isinstance(value.get("items"), dict) else {}
+    item_limit = 24 if aggressive else 48
+    compact_items = {}
+    for idx, (key, item) in enumerate(items.items()):
+        if idx >= item_limit:
+            break
+        compact_items[str(key)[:80]] = _bounded_panel_value(
+            item,
+            dict_limit=10,
+            list_limit=6,
+            text_limit=140 if aggressive else 240,
+        )
+    return {
+        "summary": _bounded_panel_value(
+            summary,
+            dict_limit=16,
+            list_limit=8,
+            text_limit=160 if aggressive else 260,
+        ),
+        "items": compact_items,
+        "udp_panel_compacted": True,
+    }
+
+
+def _compact_depth_v2_for_panel(value, *, aggressive: bool = False):
+    if not isinstance(value, dict):
+        return {}
+    return _bounded_panel_value(
+        value,
+        dict_limit=20 if aggressive else 48,
+        list_limit=8 if aggressive else 20,
+        text_limit=140 if aggressive else 320,
+    )
+
+
+def build_panel_state_payload(payload: dict, *, aggressive: bool = False) -> dict:
+    """Dựng envelope riêng cho panel, tách khỏi gói hội thoại/TTS.
+
+    Gói main có thể rất lớn vì Director, stage, trace và diary. Trước đây khi
+    vượt trần UDP, fallback giữ câu nói nhưng vứt sạch ``emotion_debug``,
+    ``private_mind_digest`` và ``depth_v2`` nên toàn bộ panel trống. Envelope này
+    biến panel thành một lane độc lập: câu nói không kéo panel chìm theo và ngược
+    lại.
+    """
+    private_mind = payload.get("private_mind_digest")
+    if aggressive:
+        private_mind = _slim_private_mind_core(private_mind)
+    else:
+        private_mind = _compact_private_mind_for_udp_overflow(private_mind)
+
+    panel = {
+        "type": PANEL_STATE_PACKET_TYPE,
+        "should_speak": False,
+        "private_mind_digest": private_mind,
+        "emotion_debug": _compact_emotion_debug_for_panel(
+            payload.get("emotion_debug"), aggressive=aggressive
+        ),
+        "depth_v2": _compact_depth_v2_for_panel(
+            payload.get("depth_v2"), aggressive=aggressive
+        ),
+        "udp_panel_compacted": True,
+    }
+    private_life = payload.get("private_life_digest")
+    if isinstance(private_life, dict) and private_life:
+        panel["private_life_digest"] = _bounded_panel_value(
+            private_life,
+            dict_limit=12 if aggressive else 24,
+            list_limit=6 if aggressive else 12,
+            text_limit=120 if aggressive else 240,
+        )
+    hardening_status = payload.get("hardening_status")
+    if isinstance(hardening_status, dict) and hardening_status:
+        panel["hardening_status"] = _bounded_panel_value(
+            hardening_status,
+            dict_limit=24,
+            list_limit=12,
+            text_limit=180 if aggressive else 320,
+        )
+    return panel
+
+
 def _compact_reasoning_tags(value):
     if isinstance(value, list):
         items = value
@@ -225,6 +365,7 @@ class UdpTransport:
         self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._recv_sock.bind((recv_host, recv_port))
         self._recv_sock.setblocking(False)
+        self._panel_seq = 0
 
     def send_text(self, message: str) -> None:
         self._send_sock.sendto(message.encode("utf-8"), self._send_target)
@@ -256,6 +397,73 @@ class UdpTransport:
         minimal = _core_udp_payload(payload, text_limit=80, debug_limit=80)
         message = json.dumps(minimal, ensure_ascii=False)
         self.send_text(message)
+
+    def send_panel_state(self, payload: dict) -> str | None:
+        """Gửi snapshot panel bằng datagram riêng, không làm mất câu hội thoại.
+
+        Thử bản compact thường trước, sau đó bản aggressive. Phao cuối vẫn giữ
+        anchor/deception + summary cảm xúc + depth_v2 lõi, thay vì im lặng hoàn
+        toàn như đường overflow cũ.
+        """
+        if not isinstance(payload, dict):
+            return None
+        has_panel_data = any(
+            isinstance(payload.get(key), dict) and bool(payload.get(key))
+            for key in ("private_mind_digest", "emotion_debug", "depth_v2", "private_life_digest")
+        )
+        if not has_panel_data:
+            return None
+
+        self._panel_seq += 1
+        sent_at = time.time()
+        packet_id = f"panel-{int(sent_at * 1000)}-{self._panel_seq}"
+
+        for aggressive in (False, True):
+            panel = build_panel_state_payload(payload, aggressive=aggressive)
+            panel["packet_id"] = packet_id
+            panel["sent_at"] = sent_at
+            message = json.dumps(panel, ensure_ascii=False)
+            if len(message.encode("utf-8")) <= MAX_UDP_PAYLOAD_BYTES:
+                self.send_text(message)
+                return packet_id
+
+        # Hiếm khi tới đây, trừ khi một trường con cố mang theo tiểu thuyết dài
+        # tập. Giữ đúng dữ liệu panel có giá trị nhất và luôn ở dưới trần UDP.
+        private_mind = _slim_private_mind_core(payload.get("private_mind_digest"))
+        anchor = private_mind.get("anchor") if isinstance(private_mind, dict) else {}
+        emotion = _compact_emotion_debug_for_panel(payload.get("emotion_debug"), aggressive=True)
+        depth = _compact_depth_v2_for_panel(payload.get("depth_v2"), aggressive=True)
+        minimal = {
+            "type": PANEL_STATE_PACKET_TYPE,
+            "should_speak": False,
+            "private_mind_digest": {
+                "anchor": anchor if isinstance(anchor, dict) else {},
+                "inner_diary": (private_mind.get("inner_diary", {}) if isinstance(private_mind, dict) else {}),
+                "menu": (private_mind.get("menu", {}) if isinstance(private_mind, dict) else {}),
+                "udp_debug_truncated": True,
+            },
+            "emotion_debug": emotion,
+            "depth_v2": depth,
+            "udp_panel_compacted": True,
+            "udp_debug_truncated": True,
+            "packet_id": packet_id,
+            "sent_at": sent_at,
+        }
+        hardening_status = payload.get("hardening_status")
+        if isinstance(hardening_status, dict) and hardening_status:
+            minimal["hardening_status"] = _bounded_panel_value(
+                hardening_status, dict_limit=16, list_limit=8, text_limit=120
+            )
+        message = json.dumps(minimal, ensure_ascii=False)
+        if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
+            minimal["private_mind_digest"] = {
+                "anchor": _bounded_panel_value(anchor, dict_limit=16, list_limit=6, text_limit=100),
+                "udp_debug_truncated": True,
+            }
+            minimal["depth_v2"] = _bounded_panel_value(depth, dict_limit=12, list_limit=5, text_limit=100)
+            message = json.dumps(minimal, ensure_ascii=False)
+        self.send_text(message)
+        return packet_id
 
     def poll_json(self):
         try:
