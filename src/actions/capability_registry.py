@@ -48,6 +48,42 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
         example_phrases=("mấy giờ rồi", "hôm nay ngày mấy"),
         visible_in_ui_group="observation",
     ),
+    "get_active_application": CapabilityDefinition(
+        id="get_active_application", public_name_vi="xem ứng dụng đang active",
+        description_vi="đọc app và tiêu đề cửa sổ từ telemetry thật; không tự suy ra nội dung file",
+        example_phrases=("app nào đang active", "cửa sổ nào đang focus"),
+        visible_in_ui_group="environment",
+    ),
+    "read_visible_ui_text": CapabilityDefinition(
+        id="read_visible_ui_text", public_name_vi="đọc text UI đang hiện",
+        description_vi="đọc block UIA/OCR đủ tươi, có confidence và privacy guard",
+        example_phrases=("đọc chữ đang hiện", "đọc text trên màn hình"),
+        visible_in_ui_group="environment",
+    ),
+    "inspect_runtime_log": CapabilityDefinition(
+        id="inspect_runtime_log", public_name_vi="đọc log runtime",
+        description_vi="đọc phần cuối log eris_run mới nhất và che khóa bí mật",
+        example_phrases=("đọc log chạy", "xem log runtime"),
+        visible_in_ui_group="environment",
+    ),
+    "read_current_error": CapabilityDefinition(
+        id="read_current_error", public_name_vi="đọc lỗi hiện tại",
+        description_vi="tìm traceback/error cụ thể gần nhất từ log hoặc text màn hình",
+        example_phrases=("lỗi hiện tại là gì", "đọc traceback đang hiện"),
+        visible_in_ui_group="environment",
+    ),
+    "inspect_selected_file": CapabilityDefinition(
+        id="inspect_selected_file", public_name_vi="xem file đang được chọn",
+        description_vi="xác định file từ bridge/path/title; chỉ đọc nội dung khi có path thật trong project",
+        example_phrases=("file nào đang mở", "đọc file đang chọn"),
+        visible_in_ui_group="environment",
+    ),
+    "get_project_status": CapabilityDefinition(
+        id="get_project_status", public_name_vi="xem trạng thái project",
+        description_vi="đọc Git branch và các mục staged/modified/untracked bằng lệnh read-only",
+        example_phrases=("git status", "repo đang bẩn không"),
+        visible_in_ui_group="environment",
+    ),
     "launch_app": CapabilityDefinition(
         id="launch_app", public_name_vi="mở ứng dụng",
         description_vi="mở app/chương trình có trong cấu hình runtime",
@@ -242,8 +278,17 @@ def iter_public_capabilities(
             if (_CAPABILITY_DATA.get(str(item)) is not None
                 and _CAPABILITY_DATA[str(item)].visible_in_ui_group == "cognition")
         )
-        regular = tuple(item for item in ids if item not in cognitive)
-        ids = (*regular, *_OBSERVATIONAL_CAPABILITY_IDS, *cognitive)
+        environment = tuple(
+            item for item in ids
+            if (_CAPABILITY_DATA.get(str(item)) is not None
+                and _CAPABILITY_DATA[str(item)].visible_in_ui_group == "environment")
+        )
+        deferred = set((*cognitive, *environment))
+        regular = tuple(item for item in ids if item not in deferred)
+        # Giữ toàn bộ giới hạn cảm biến (camera/Meet/UIA) trong snapshot nhỏ,
+        # rồi mới xếp environment/cognition. Một capability mới không được đẩy
+        # mất lời thú nhận "tôi không nhìn được Meet" khỏi prompt.
+        ids = (*regular, *_OBSERVATIONAL_CAPABILITY_IDS, *environment, *cognitive)
     else:
         ids = (*ids, *_OBSERVATIONAL_CAPABILITY_IDS)
     ids = tuple(dict.fromkeys(ids))

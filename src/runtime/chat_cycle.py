@@ -735,10 +735,23 @@ class ChatCycleMixin:
             fe_plan=fe_plan,
             ti_report=ti_report,
         )
-        # Curiosity Tutor: nếu Eris không hiểu/không phân loại nổi tin user → đi hỏi Gemini
-        # (chạy nền, không chặn trả lời). Chỉ chạy khi Master_Switch bật.
-        if semantic_policy.allow_tutor_prepass:
-            self._maybe_tutor_on_unclear_user(user_text, frame)
+        # Curiosity Tutor: trong qwen_first, không cho Tutor chen vào mọi câu mơ hồ.
+        # Nhưng nếu BẠN ra lệnh rõ kiểu "nghiên cứu sâu / hỏi sư phụ / Gemini search",
+        # thì đó là intent tất định, không phải semantic fallback. Cho nó đi theo
+        # đường Tutor nhẹ, tránh dựng cả lâu đài Deep Research API chỉ để đốt token
+        # như nhân loại đốt tiền cà phê.
+        explicit_tutor_research = False
+        try:
+            detector = getattr(self, "_looks_like_light_tutor_research_request", None)
+            explicit_tutor_research = bool(detector(user_text)) if callable(detector) else False
+        except Exception:
+            explicit_tutor_research = False
+        if semantic_policy.allow_tutor_prepass or explicit_tutor_research:
+            self._maybe_tutor_on_unclear_user(
+                user_text,
+                frame,
+                force_explicit_research=explicit_tutor_research,
+            )
         else:
             # Qwen must see the real turn before Tutor/clarification logic gets a
             # chance to redirect it. Clear stale flags from a previous legacy turn.

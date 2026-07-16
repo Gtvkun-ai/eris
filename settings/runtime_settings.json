@@ -58,7 +58,10 @@
     "tts_task_manager": true,
     "prefetch_workers": 2,
     "max_tts_segments": 4,
-    "min_split_chars": 72
+    "min_split_chars": 72,
+    "show_plan_enabled": true,
+    "stage_replay_enabled": true,
+    "stage_replay_size": 160
   },
   "tts": {
     "enabled": true,
@@ -72,6 +75,19 @@
   },
   "pipeline": {
     "v3_enabled": true
+  },
+  "hardening": {
+    "profile": "development",
+    "production_validation_enabled": false,
+    "production_validation_turns": 24,
+    "production_validation_dir": "logs/phase7_validation",
+    "panel_ack_required": true,
+    "provider_registry_strict": true,
+    "release_manifest_path": "config/hardening_release.json",
+    "release_guard_enabled": true,
+    "release_guard_fail_closed": false,
+    "legacy_cross_language_tts": false,
+    "legacy_romaji_tts": false
   },
   "danger_zone": {
     "require_preview_before_execute": true,

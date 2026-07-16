@@ -104,6 +104,7 @@ class ActionRouter:
 
         candidates: list[RouteCandidate] = [
             self._route_internal_cognition(raw, norm),
+            self._route_environment_read(raw, norm),
             self._route_open_url(raw, norm),
             self._route_local_time(raw, norm),
             self._route_now_playing(raw, norm),
@@ -149,6 +150,25 @@ class ActionRouter:
             if re.search(pattern, norm, flags=re.IGNORECASE):
                 return RouteCandidate(action, value, 0.95, ("explicit_internal_cognitive_command",))
         return self._no_candidate("internal_cognition")
+
+    def _route_environment_read(self, raw: str, norm: str) -> RouteCandidate:
+        """Route sáu năng lực đọc môi trường, không route câu bàn về code API."""
+        if self._starts_with_negation(norm):
+            return self._blocked("environment_read", "negated")
+
+        # Các câu này là truy vấn trạng thái thật, nên dạng hỏi tự nhiên vẫn được route.
+        patterns = (
+            ("get_active_application", r"^(?:eris\s+)?(?:(?:app|ung dung|cua so)\s+nao\s+(?:dang\s+)?(?:active|focus|mo)|dang\s+(?:active|focus)\s+(?:app|cua so)\s+gi|xem\s+(?:app|ung dung|cua so)\s+(?:dang\s+)?(?:active|focus)).*$", "current"),
+            ("read_visible_ui_text", r"^(?:eris\s+)?(?:doc|xem|kiem)\s+(?:chu|text|uia|ocr|giao dien)(?:\s+(?:tren man hinh|dang hien|hien tai|nay))?.*$", "current"),
+            ("inspect_runtime_log", r"^(?:eris\s+)?(?:doc|xem|kiem|ra)\s+(?:lai\s+)?(?:log runtime|log chay|log eris|runtime log)(?:\s+.*)?$", "latest"),
+            ("read_current_error", r"^(?:eris\s+)?(?:(?:doc|xem|kiem|tim)\s+(?:loi|traceback|exception)(?:\s+(?:hien tai|dang hien|gan nhat))?|loi\s+(?:hien tai|dang hien)\s+la\s+gi).*$", "current"),
+            ("inspect_selected_file", r"^(?:eris\s+)?(?:(?:file|tep)\s+nao\s+(?:dang\s+)?(?:mo|chon)|(?:doc|xem|kiem)\s+(?:file|tep)\s+(?:dang\s+)?(?:mo|chon|hien tai))(?:\s+.*)?$", "content" if any(token in norm for token in ("doc file", "doc tep", "noi dung", "preview")) else "metadata"),
+            ("get_project_status", r"^(?:eris\s+)?(?:git status|project status|repo status|(?:xem|kiem)\s+(?:trang thai\s+)?(?:project|repo)|repo\s+(?:dang\s+)?ban\s+khong|co\s+file\s+nao\s+thay\s+doi).*$", "current"),
+        )
+        for action, pattern, value in patterns:
+            if re.search(pattern, norm, flags=re.IGNORECASE):
+                return RouteCandidate(action, value, 0.95, ("explicit_environment_read",))
+        return self._no_candidate("environment_read")
 
     def _route_local_time(self, raw: str, norm: str) -> RouteCandidate:
         if self._looks_like_meta_question(norm):

@@ -41,6 +41,7 @@ class ActionExecutor:
         self.logger = logger
         self.observer = observer if observer is not None else DefaultActionObserver()
         self.cognitive_runtime = None
+        self.environment_runtime = None
 
     def bind_cognitive_runtime(self, runtime) -> None:
         """Nối executor với runtime nhận thức sau khi Coordinator đã dựng xong.
@@ -50,6 +51,10 @@ class ActionExecutor:
         vào repo vốn đã đông dân.
         """
         self.cognitive_runtime = runtime
+
+    def bind_environment_runtime(self, runtime) -> None:
+        """Nối executor với runtime đọc môi trường sau khi screen store đã dựng."""
+        self.environment_runtime = runtime
 
     #execute() là trung tâm điều phối
     '''
@@ -162,6 +167,34 @@ class ActionExecutor:
 
     def _inspect_capability_health(self, action_input: str) -> ActionExecutionResult:
         return self._execute_cognitive("inspect_capability_health", action_input)
+
+    def _execute_environment(self, capability_id: str, action_input: str) -> ActionExecutionResult:
+        runtime = self.environment_runtime
+        if runtime is None:
+            return ActionExecutionResult(
+                action_name=capability_id, action_input=action_input, success=False,
+                message="Runtime đọc môi trường chưa được nối.", error_kind="EnvironmentRuntimeUnavailable",
+            )
+        result = runtime.execute(capability_id, action_input)
+        return result.to_action_result(action_input=action_input)
+
+    def _get_active_application(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_environment("get_active_application", action_input)
+
+    def _read_visible_ui_text(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_environment("read_visible_ui_text", action_input)
+
+    def _inspect_runtime_log(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_environment("inspect_runtime_log", action_input)
+
+    def _read_current_error(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_environment("read_current_error", action_input)
+
+    def _inspect_selected_file(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_environment("inspect_selected_file", action_input)
+
+    def _get_project_status(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_environment("get_project_status", action_input)
 
     def _get_local_time(self, action_input: str) -> ActionExecutionResult:
         now = time.localtime()

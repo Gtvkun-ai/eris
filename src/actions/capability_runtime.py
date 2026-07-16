@@ -125,6 +125,19 @@ def refresh_runtime_capabilities(
                 )
             continue
 
+        if capability_id in _environment_capability_ids():
+            runtime = getattr(owner, "environment_capabilities", None) if owner is not None else None
+            if runtime is None:
+                statuses[capability_id] = CapabilityRuntimeStatus(
+                    capability_id, False, "environment_runtime_unavailable", "runtime"
+                )
+            else:
+                available, reason = runtime.availability(capability_id)
+                statuses[capability_id] = CapabilityRuntimeStatus(
+                    capability_id, bool(available), str(reason or ""), "environment_runtime"
+                )
+            continue
+
         if owner is None:
             # Trước khi Coordinator bind, không nói dối là available. Registry vẫn
             # hoạt động nhưng prompt sẽ ghi rõ snapshot chưa sẵn sàng.
@@ -216,6 +229,14 @@ def _cognitive_capability_ids() -> tuple[str, ...]:
     try:
         from runtime.internal_cognitive_capabilities import COGNITIVE_CAPABILITY_IDS
         return tuple(COGNITIVE_CAPABILITY_IDS)
+    except Exception:
+        return ()
+
+
+def _environment_capability_ids() -> tuple[str, ...]:
+    try:
+        from runtime.environment_capabilities import ENVIRONMENT_CAPABILITY_IDS
+        return tuple(ENVIRONMENT_CAPABILITY_IDS)
     except Exception:
         return ()
 

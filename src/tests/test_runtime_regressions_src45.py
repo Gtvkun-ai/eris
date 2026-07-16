@@ -184,9 +184,17 @@ def test_hot_memory_ingest_only_reports_success_after_real_commit():
 
 class _CoordinatorProbe:
     _MEMORY_SUCCESS_CLAIM_MARKERS = RuntimeCoordinator._MEMORY_SUCCESS_CLAIM_MARKERS
+    _LIGHT_TUTOR_RESEARCH_CUES = RuntimeCoordinator._LIGHT_TUTOR_RESEARCH_CUES
+    _LIGHT_TUTOR_COMMAND_WORDS = RuntimeCoordinator._LIGHT_TUTOR_COMMAND_WORDS
+    _LIGHT_TUTOR_REFERENT_ONLY = RuntimeCoordinator._LIGHT_TUTOR_REFERENT_ONLY
     _normalize_marker_text = ChatCycleMixin._normalize_marker_text
     _apply_memory_commit_truth_guard = RuntimeCoordinator._apply_memory_commit_truth_guard
+    _looks_like_light_tutor_research_request = RuntimeCoordinator._looks_like_light_tutor_research_request
     _is_tutor_delegation_only = RuntimeCoordinator._is_tutor_delegation_only
+    _is_tutor_research_delegation_only = RuntimeCoordinator._is_tutor_research_delegation_only
+    _strip_light_tutor_command = RuntimeCoordinator._strip_light_tutor_command
+    _topic_is_referent_only = RuntimeCoordinator._topic_is_referent_only
+    _build_light_tutor_research_prompt = RuntimeCoordinator._build_light_tutor_research_prompt
     _resolve_tutor_research_topic = RuntimeCoordinator._resolve_tutor_research_topic
     _looks_like_screen_vision_request = RuntimeCoordinator._looks_like_screen_vision_request
 
@@ -211,6 +219,29 @@ def test_tutor_delegation_reuses_previous_substantive_topic():
     current = "Hỏi sư phụ Gemini đi"
     assert owner._is_tutor_delegation_only(current)
     assert owner._resolve_tutor_research_topic(current) == "Điều tra vụ điểm thi vừa công bố"
+
+def test_light_tutor_research_detects_explicit_deep_cue_without_generic_la_gi():
+    owner = _CoordinatorProbe()
+    assert owner._looks_like_light_tutor_research_request("nghiên cứu sâu cách fix elegant vụ tutor đi")
+    assert owner._looks_like_light_tutor_research_request("Gemini hãy search web nghiên cứu cho tôi về Qwen reasoning")
+    assert owner._looks_like_light_tutor_research_request("@Nghiên cứu sâu")
+    assert not owner._looks_like_light_tutor_research_request("INTP 538 là gì")
+
+
+def test_light_tutor_research_reuses_previous_topic_for_bare_deep_command():
+    owner = _CoordinatorProbe()
+    current = "nghiên cứu sâu đi"
+    assert owner._is_tutor_research_delegation_only(current)
+    assert owner._resolve_tutor_research_topic(current) == "Điều tra vụ điểm thi vừa công bố"
+
+
+def test_light_tutor_prompt_is_passthrough_sized_and_actionable():
+    owner = _CoordinatorProbe()
+    prompt = owner._build_light_tutor_research_prompt("nghiên cứu cách fix elegant follow-up của Eris với Tutor")
+    assert len(prompt) <= 400
+    assert "Hãy tìm hiểu kỹ" in prompt
+    assert "tối đa 6 ý" in prompt
+    assert "Không chain-of-thought" in prompt
 
 
 def test_coordinator_uses_smart_vision_gate_not_broad_web_keyword():

@@ -27,6 +27,13 @@ VALID_SYSTEM_ACTION_LIST = (
     "detect_internal_contradictions",
     "summarize_open_loops",
     "inspect_capability_health",
+    # Năng lực đọc môi trường read-only có evidence.
+    "get_active_application",
+    "read_visible_ui_text",
+    "inspect_runtime_log",
+    "read_current_error",
+    "inspect_selected_file",
+    "get_project_status",
 )
 
 VALID_SYSTEM_ACTIONS = set(VALID_SYSTEM_ACTION_LIST)
@@ -44,6 +51,9 @@ _OBSERVED_ACTIONS = {
     "inspect_memory_candidates", "compare_recent_turns",
     "inspect_social_state", "detect_internal_contradictions",
     "summarize_open_loops", "inspect_capability_health",
+    "get_active_application", "read_visible_ui_text",
+    "inspect_runtime_log", "read_current_error",
+    "inspect_selected_file", "get_project_status",
 }
 
 

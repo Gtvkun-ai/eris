@@ -48,6 +48,17 @@ class QuestionFormulator:
     # ------------------------------------------------------------------
 
     def formulate(self, gap: KnowledgeGap) -> Optional[TutorQuestion]:
+        # Với request user-facing đã được coordinator đóng gói sẵn, đừng gọi thêm
+        # LLM để "viết lại câu hỏi" nữa. Tutor cần nhận nguyên lệnh ngắn: hãy tra,
+        # trả cô đọng. Viết lại thêm chỉ làm rò token và đôi khi làm mất target, một
+        # thành tựu rất người: sửa thứ chưa hỏng cho nó hỏng hẳn.
+        if str(getattr(gap, "kind_hint", "") or "").strip() in {"research_followup", "passthrough"}:
+            text = self._sanitize(str(getattr(gap, "description", "") or ""))
+            if not text:
+                return None
+            question = TutorQuestion(text=text[:400], gap_id=gap.gap_id)
+            return question if question.is_valid else None
+
         text = self._try_llm(
             _QUESTION_PROMPT.format(description=gap.description, context=gap.context)
         )

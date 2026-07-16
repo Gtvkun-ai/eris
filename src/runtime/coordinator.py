@@ -916,6 +916,31 @@ class RuntimeCoordinator(
             self.logger.warning("[screen text] không khởi tạo được index: %s", exc)
         self._chat_screen_route_decision = None
         self._chat_screen_text_evidence = ()
+
+        # Phase 16: năng lực đọc môi trường read-only. Khởi tạo sau Screen Text
+        # Index để availability phản ánh store/worker thật, không chỉ vì class tồn tại.
+        self.environment_capabilities = None
+        try:
+            from runtime.environment_capabilities import (
+                ENVIRONMENT_CAPABILITY_VERSION, EnvironmentCapabilityRuntime,
+            )
+            self.environment_capabilities = EnvironmentCapabilityRuntime(self, logger=self.logger)
+            binder = getattr(self.action_executor, "bind_environment_runtime", None)
+            if callable(binder):
+                binder(self.environment_capabilities)
+            self.logger.info(
+                "[environment-capability] loaded version=%s capabilities=%s status=read_only_verified",
+                ENVIRONMENT_CAPABILITY_VERSION,
+                len(self.environment_capabilities.contracts()),
+            )
+            try:
+                from actions.capability_runtime import refresh_runtime_capabilities
+                refresh_runtime_capabilities(owner=self)
+            except Exception:
+                pass
+        except Exception as exc:
+            self.logger.warning("Không khởi tạo được environment capabilities: %s", exc)
+
         # NiStateMachine giữ state drift rời rạc theo thời gian (ON_GOAL / BORDERLINE / OFF_GOAL)
         #  dựa trên chuỗi GoalDriftReport, thay vì chỉ nhìn một snapshot đơn lẻ.
         self.autonomous_ni_state = NiStateMachine()
@@ -4851,6 +4876,118 @@ class RuntimeCoordinator(
             self._preview_text(decision.parser_trace),
         )
 
+    _LIGHT_TUTOR_RESEARCH_CUES = (
+        "nghiên cứu sâu", "nghien cuu sau", "nghiên cứu kỹ", "nghien cuu ky",
+        "đào sâu", "dao sau", "đào kỹ", "dao ky", "tìm hiểu kỹ", "tim hieu ky",
+        "kiểm chứng", "kiem chung", "search web", "tra cứu", "tra cuu",
+        "tutor nghiên cứu", "tutor nghien cuu", "sư phụ nghiên cứu", "su phu nghien cuu",
+        "hỏi sư phụ", "hoi su phu", "hỏi gemini", "hoi gemini", "nhờ gemini", "nho gemini",
+        "gemini hãy search", "gemini hay search", "gemini nghiên cứu", "gemini nghien cuu",
+        "nghiên cứu cách fix", "nghien cuu cach fix", "fix elegant", "nghiên cứu hướng fix",
+    )
+
+    _LIGHT_TUTOR_COMMAND_WORDS = (
+        "nghiên cứu sâu", "nghien cuu sau", "nghiên cứu kỹ", "nghien cuu ky",
+        "nghiên cứu", "nghien cuu", "đào sâu", "dao sau", "đào kỹ", "dao ky",
+        "tìm hiểu kỹ", "tim hieu ky", "kiểm chứng", "kiem chung", "tra cứu", "tra cuu",
+        "hỏi sư phụ gemini", "hoi su phu gemini", "hỏi sư phụ", "hoi su phu",
+        "hỏi gemini", "hoi gemini", "nhờ gemini", "nho gemini", "kêu gemini", "keu gemini",
+        "tutor nghiên cứu", "tutor nghien cuu", "search web", "gemini hãy search", "gemini hay search",
+    )
+
+    _LIGHT_TUTOR_REFERENT_ONLY = (
+        "cái này", "cai nay", "cái đó", "cai do", "cái kia", "cai kia", "vụ này", "vu nay",
+        "vụ đó", "vu do", "phần này", "phan nay", "phần đó", "phan do", "ý trên", "y tren",
+        "ở trên", "o tren", "vừa nói", "vua noi", "kia", "này", "nay", "đó", "do",
+    )
+
+    def _looks_like_light_tutor_research_request(self, text: str) -> bool:
+        """Intent rõ: user muốn Eris mượn Tutor để tra/nghiên cứu.
+
+        Đây KHÔNG phải detector "câu nào khó cũng quăng ra web". Chỉ bắt cue rõ,
+        để qwen_first vẫn giữ quyền hiểu hội thoại thường. Nói cách khác: không còn
+        trò thấy "là gì" là bật máy xay token. Văn minh muộn còn hơn không.
+        """
+
+        normalized = self._normalize_marker_text(text)
+        if not normalized:
+            return False
+        if self._is_tutor_delegation_only(text):
+            return True
+        if self._is_tutor_research_delegation_only(text):
+            return True
+        return any(cue in normalized for cue in self._LIGHT_TUTOR_RESEARCH_CUES)
+
+    def _is_tutor_research_delegation_only(self, text: str) -> bool:
+        """True nếu câu chỉ là lệnh "nghiên cứu/đào sâu đi" không có topic mới."""
+
+        normalized = self._normalize_marker_text(text)
+        if not normalized:
+            return False
+        stripped = normalized
+        stripped = re.sub(r"^@\s*", "", stripped).strip()
+        for token in self._LIGHT_TUTOR_COMMAND_WORDS:
+            stripped = stripped.replace(token, " ")
+        for token in ("di", "dum", "giup", "cho toi", "cho minh", "cho ban", "thu", "xem", "nha", "nhe"):
+            stripped = re.sub(rf"\b{re.escape(token)}\b", " ", stripped)
+        stripped = re.sub(r"\s+", " ", stripped).strip()
+        if not stripped:
+            return True
+        return stripped in self._LIGHT_TUTOR_REFERENT_ONLY and len(stripped.split()) <= 3
+
+    def _strip_light_tutor_command(self, text: str) -> str:
+        """Bóc phần mệnh lệnh, giữ lại topic thực để đưa cho Tutor."""
+
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+        value = raw
+        # Xử lý cả bản có dấu lẫn không dấu ở mức nhẹ; normalize_marker chỉ dùng
+        # để so, còn output giữ tiếng Việt gốc cho Tutor đọc tự nhiên hơn.
+        patterns = (
+            r"^\s*@?\s*nghi[êe]n\s+c[ứu]u\s+s[âa]u\s*[:,\-–—]?\s*",
+            r"^\s*@?\s*nghien\s+cuu\s+sau\s*[:,\-–—]?\s*",
+            r"^\s*tutor\s+nghi[êe]n\s+c[ứu]u\s*[:,\-–—]?\s*",
+            r"^\s*tutor\s+nghien\s+cuu\s*[:,\-–—]?\s*",
+            r"^\s*(hỏi|hoi|nhờ|nho|kêu|keu)\s+(sư\s*phụ|su\s*phu|gemini)\s*[:,\-–—]?\s*",
+            r"^\s*gemini\s+(hãy|hay)?\s*(search\s+web|nghi[êe]n\s+c[ứu]u|nghien\s+cuu)\s*[:,\-–—]?\s*",
+            r"^\s*(đào|dao)\s+(sâu|sau|kỹ|ky)\s*[:,\-–—]?\s*",
+            r"^\s*(tìm|tim)\s+hiểu\s+kỹ\s*[:,\-–—]?\s*",
+        )
+        for pattern in patterns:
+            value = re.sub(pattern, "", value, flags=re.IGNORECASE).strip()
+        value = re.sub(r"\b(đi|dùm|giúp|cho tôi|cho mình|thử|xem|nhé|nha)\b\s*$", "", value, flags=re.IGNORECASE).strip()
+        return value
+
+    def _topic_is_referent_only(self, text: str) -> bool:
+        normalized = self._normalize_marker_text(text)
+        if not normalized:
+            return True
+        if normalized in self._LIGHT_TUTOR_REFERENT_ONLY:
+            return True
+        if len(normalized.split()) <= 4 and any(marker in normalized for marker in self._LIGHT_TUTOR_REFERENT_ONLY):
+            return True
+        return False
+
+    def _build_light_tutor_research_prompt(self, topic: str, *, context: str = "") -> str:
+        """Prompt gửi cho Tutor: rõ lệnh search/nghiên cứu, nhưng bị kẹp ngân sách.
+
+        Tutor web nhận tối đa 400 ký tự theo contract hiện tại, nên đừng nhét cả
+        manifesto vào đây. Một câu hỏi gọn còn hơn một tượng đài prompt chết yểu.
+        """
+
+        topic = " ".join(str(topic or "").split()).strip()
+        context = " ".join(str(context or "").split()).strip()
+        if context:
+            topic = f"{topic} | Ngữ cảnh: {context}"
+        prefix = "Hãy tìm hiểu kỹ/tra nhanh có kiểm chứng về: "
+        suffix = "\nTrả lời tiếng Việt cô đọng: tối đa 6 ý, có nguồn/từ khóa nguồn nếu có, ưu tiên hướng làm được. Không chain-of-thought."
+        max_len = 400
+        room = max(40, max_len - len(prefix) - len(suffix))
+        if len(topic) > room:
+            topic = topic[: room - 1].rstrip() + "…"
+        return f"{prefix}{topic}{suffix}"[:max_len]
+
     def _is_tutor_delegation_only(self, text: str) -> bool:
         normalized = self._normalize_marker_text(text)
         if not normalized:
@@ -4866,7 +5003,13 @@ class RuntimeCoordinator(
         return any(stripped == marker or stripped.startswith(marker + " ") for marker in markers) and len(stripped.split()) <= 6
 
     def _resolve_tutor_research_topic(self, current_text: str) -> str:
-        """Lấy yêu cầu chưa giải quyết trước đó, không hỏi Gemini chính câu ra lệnh."""
+        """Lấy topic thật cho Tutor, ưu tiên topic trong câu hiện tại rồi mới bám turn trước."""
+
+        current = str(current_text or "").strip()
+        delegation_only = self._is_tutor_delegation_only(current) or self._is_tutor_research_delegation_only(current)
+        stripped_current = "" if delegation_only else self._strip_light_tutor_command(current)
+        if stripped_current and not self._topic_is_referent_only(stripped_current):
+            return stripped_current
 
         candidates: list[str] = []
         previous = str(getattr(self, "last_user_text_for_semantics", "") or "").strip()
@@ -4881,12 +5024,12 @@ class RuntimeCoordinator(
         for candidate in candidates:
             if not candidate or self._normalize_marker_text(candidate) == current_norm:
                 continue
-            if self._is_tutor_delegation_only(candidate):
+            if self._is_tutor_delegation_only(candidate) or self._is_tutor_research_delegation_only(candidate):
                 continue
             return candidate
-        return ""
+        return stripped_current if stripped_current and not self._topic_is_referent_only(stripped_current) else ""
 
-    def _maybe_tutor_on_unclear_user(self, user_text, frame) -> None:
+    def _maybe_tutor_on_unclear_user(self, user_text, frame, *, force_explicit_research: bool = False) -> None:
         """Khi Eris không hiểu/không phân loại nổi tin user → định tuyến.
 
         NGUYÊN TẮC: mặc định TỰ HỌC (hỏi Gemini âm thầm) — bạn KHÔNG phải giải thích
@@ -4925,6 +5068,26 @@ class RuntimeCoordinator(
                 "ý m là sao", "ý mày là sao", "ý em là sao", "ý là sao", "sao cơ", "hả?",
             )
             is_personal_ambiguous = (len(words) <= 6 and any(m in low for m in personal_markers))
+
+            # Lệnh rõ của bạn: hỏi Tutor/nghiên cứu sâu. Dù qwen_first đang giữ quyền
+            # hiểu hội thoại, lệnh này vẫn được route nền vì đây là thao tác, không phải
+            # phỏng đoán nghĩa. Nếu topic chỉ là "vụ này/phần đó", resolver bám turn trước.
+            explicit_research = bool(force_explicit_research or self._looks_like_light_tutor_research_request(text))
+            if explicit_research and callable(getattr(self, "request_tutor_answer", None)):
+                topic = self._resolve_tutor_research_topic(text)
+                if topic and self._research_can_start():
+                    prompt = self._build_light_tutor_research_prompt(
+                        topic,
+                        context="follow-up nghiên cứu nhẹ qua Tutor; không dùng Gemini Deep Research API/Google AI grounding",
+                    )
+                    self._research_pending = True
+                    self._research_topic = topic
+                    self._fire_research_followup(
+                        topic,
+                        context="User yêu cầu Tutor nghiên cứu/tra cứu rõ ràng; gửi prompt cô đọng, giới hạn token.",
+                        tutor_question=prompt,
+                    )
+                    return
 
             if is_personal_ambiguous:
                 # Không hiểu bạn ám chỉ gì → hỏi lại bạn ngay trong câu trả lời lượt này.
@@ -5009,8 +5172,13 @@ class RuntimeCoordinator(
             return False
         return True
 
-    def _fire_research_followup(self, topic: str, *, context: str = "") -> None:
-        """Nhịp 2: thread nền đi hỏi gia sư rồi gửi đáp án về (không chặn trả lời lượt này)."""
+    def _fire_research_followup(self, topic: str, *, context: str = "", tutor_question: str = "") -> None:
+        """Nhịp 2: thread nền đi hỏi gia sư rồi gửi đáp án về (không chặn trả lời lượt này).
+
+        `topic` là thứ hiển thị/log theo hội thoại. `tutor_question` là prompt ngắn
+        thật sự gửi cho Tutor khi user yêu cầu nghiên cứu. Tách đôi vậy để Eris
+        không đọc lại nguyên cái prompt nội bộ như robot vừa nuốt nhầm file yaml.
+        """
 
         answerer = getattr(self, "request_tutor_answer", None)
         if not callable(answerer):
@@ -5023,7 +5191,13 @@ class RuntimeCoordinator(
             try:
                 # Để nhịp 1 ("đợi em tra chút") kịp ra trước câu trả lời.
                 time.sleep(1.5)
-                answer = answerer(topic, context=context)
+                question = str(tutor_question or topic).strip()
+                try:
+                    answer = answerer(question, context=context, kind_hint="research_followup")
+                except TypeError:
+                    # Tương thích adapter cũ nếu người dùng trộn file. Dự án người ta
+                    # đã đủ hỗn loạn, đừng để một kwarg làm sập cả lượt tra.
+                    answer = answerer(question, context=context)
                 if not answer:
                     self.logger.info("[tutor research] empty_answer topic=%r context=%r", str(topic)[:120], str(context)[:120])
             except Exception as exc:

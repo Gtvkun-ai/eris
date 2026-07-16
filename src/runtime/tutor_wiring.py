@@ -134,24 +134,19 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
 
     # API "tra rồi TRẢ LỜI ngay": dùng cho nhịp 2 của chat khi bạn hỏi câu kiến thức
     # mà Eris chưa biết. Trả về nội dung câu trả lời (str) hoặc None nếu tra không ra.
-    def request_tutor_answer(topic, *, context=""):
+    # Theo policy nhẹ: CHỈ nhắn Tutor web/daemon. Không fallback sang Gemini API
+    # grounding/search_web, không Deep Research, không Google AI background. Ví tiền của
+    # người dùng không phải vật hiến tế cho kiến trúc hoành tráng.
+    def request_tutor_answer(topic, *, context="", kind_hint="durable"):
         try:
-            answer = daemon.ask_now(topic, context=context)
+            answer = daemon.ask_now(topic, context=context, kind_hint=kind_hint)
             if answer:
                 return answer
-            # Fallback: câu hỏi kiến thức không nên phụ thuộc hoàn toàn vào Gemini Web
-            # (browser profile/captcha/selector rất dễ tật). Dùng Gemini grounding API
-            # qua ActionExecutor nếu có, để nhịp 2 vẫn có câu trả lời.
-            fallback = _ask_gemini_grounding_fallback(runtime_owner, topic, logger)
-            if fallback:
-                _info(logger, "tutor request_answer dùng fallback Gemini grounding API")
-                return fallback
             _warn(logger, f"tutor request_answer không có kết quả topic={str(topic)[:120]!r}")
             return None
         except Exception as exc:
             _warn(logger, f"tutor request_answer lỗi ({exc!r})")
-            fallback = _ask_gemini_grounding_fallback(runtime_owner, topic, logger)
-            return fallback or None
+            return None
 
     runtime_owner.request_tutor_answer = request_tutor_answer
 
@@ -163,34 +158,6 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
 
     return daemon
 
-
-def _ask_gemini_grounding_fallback(runtime_owner: Any, topic: Any, logger: Any) -> str:
-    """Fallback cho request_tutor_answer khi tutor web/browser chết.
-
-    Đây không thay thế Curiosity Tutor dài hạn; nó chỉ cứu đường user-facing
-    "bạn hỏi kiến thức -> Eris tra rồi trả lời". Nếu ActionExecutor có
-    search_web (Gemini grounding API), dùng nó để tránh phụ thuộc Playwright.
-    """
-
-    query = str(topic or "").strip()
-    if not query:
-        return ""
-    executor = getattr(runtime_owner, "action_executor", None)
-    execute = getattr(executor, "execute", None)
-    if callable(execute):
-        try:
-            result = execute("search_web", query)
-            if bool(getattr(result, "success", False)):
-                data = getattr(result, "data", {}) or {}
-                answer = str(data.get("answer") or getattr(result, "message", "") or "").strip()
-                sources = str(data.get("sources") or "").strip()
-                if answer and sources and "Nguon:" not in answer and "Nguồn:" not in answer:
-                    return f"{answer}\nNguồn:\n{sources}"
-                return answer
-            _warn(logger, f"tutor fallback search_web failed: {getattr(result, 'message', '')}")
-        except Exception as exc:
-            _warn(logger, f"tutor fallback search_web lỗi ({exc!r})")
-    return ""
 
 
 def _attach_knowledge_provider(runtime_owner: Any, logger: Any) -> None:

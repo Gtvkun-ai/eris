@@ -261,7 +261,7 @@ class TutorDaemon:
         self._remember_episode(episode)
         return episode
 
-    def ask_now(self, topic: str, *, context: str = "", now: Optional[float] = None) -> Optional[str]:
+    def ask_now(self, topic: str, *, context: str = "", now: Optional[float] = None, kind_hint: str = "durable") -> Optional[str]:
         """Hỏi gia sư NGAY và TRẢ VỀ nội dung câu trả lời (cho nhịp 2 của chat).
 
         Khác `run_once`: đây là lúc BẠN hỏi thẳng một câu kiến thức ⇒ luôn đi
@@ -292,7 +292,7 @@ class TutorDaemon:
                 created_ts=now,
                 updated_ts=now,
                 force=True,
-                kind_hint="durable",
+                kind_hint=str(kind_hint or "durable"),
             )
             episode = TutorEpisode(gap=gap, started_ts=now)
             self._emit(episode, "forming")
