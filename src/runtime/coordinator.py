@@ -4903,8 +4903,17 @@ class RuntimeCoordinator(
         except Exception:
             pass
         try:
-            from runtime.tutor_research_policy import resolve_research_topic
-            return resolve_research_topic(current_text, candidates)
+            from runtime.tutor_research_policy import resolve_research_anchor
+            resolution = resolve_research_anchor(current_text, candidates)
+            self._last_tutor_anchor_resolution = {
+                "topic": str(getattr(resolution, "topic", "") or "")[:900],
+                "confidence": float(getattr(resolution, "confidence", 0.0) or 0.0),
+                "anchor_text": str(getattr(resolution, "anchor_text", "") or "")[:900],
+                "anchor_index": int(getattr(resolution, "anchor_index", -1) or -1),
+                "assumption_note": str(getattr(resolution, "assumption_note", "") or ""),
+                "misread_risk": str(getattr(resolution, "misread_risk", "") or ""),
+            }
+            return str(getattr(resolution, "topic", "") or "")
         except Exception:
             # Fallback cũ: ít thông minh hơn nhưng vẫn không ném vào chat hot path.
             current_norm = self._normalize_marker_text(current_text)
@@ -4913,7 +4922,16 @@ class RuntimeCoordinator(
                     continue
                 if self._is_tutor_delegation_only(candidate):
                     continue
+                self._last_tutor_anchor_resolution = {
+                    "topic": candidate[:900],
+                    "confidence": 0.52,
+                    "anchor_text": candidate[:900],
+                    "anchor_index": -1,
+                    "assumption_note": "fallback_recent_context",
+                    "misread_risk": "medium",
+                }
                 return candidate
+            self._last_tutor_anchor_resolution = {"topic": "", "confidence": 0.0, "misread_risk": "high"}
             return ""
 
     def _maybe_tutor_on_unclear_user(self, user_text, frame) -> None:
@@ -4966,16 +4984,24 @@ class RuntimeCoordinator(
                     mode = str(getattr(tutor_decision, "mode", "research") or "research")
                     self._research_pending = True
                     self._research_topic = topic
+                    anchor_meta = dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {})
+                    anchor_note = (
+                        f"anchor_conf={anchor_meta.get('confidence', 0):.2f}; "
+                        f"anchor_risk={anchor_meta.get('misread_risk', '')}; "
+                        f"assumption={anchor_meta.get('assumption_note', '')}; "
+                    ) if anchor_meta else ""
                     if mode == "quick_search":
                         context = (
                             "Search nhanh qua Tutor web; trả lời cô đọng, ưu tiên nguồn/link nếu có. "
                             f"route={getattr(tutor_decision, 'reason', '')}; "
+                            f"{anchor_note}"
                             "không dùng Deep Research API hoặc Google grounding"
                         )
                     else:
                         context = (
                             "Tra cứu nhẹ qua Tutor web; trả lời cô đọng, ưu tiên nguồn chính. "
                             f"route={getattr(tutor_decision, 'reason', '')}; "
+                            f"{anchor_note}"
                             "không dùng Deep Research API hoặc Google grounding"
                         )
                     try:
@@ -5111,9 +5137,16 @@ class RuntimeCoordinator(
 
             self._research_pending = True
             self._research_topic = topic
+            anchor_meta = dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {})
+            anchor_note = (
+                f"anchor_conf={anchor_meta.get('confidence', 0):.2f}; "
+                f"anchor_risk={anchor_meta.get('misread_risk', '')}; "
+                f"assumption={anchor_meta.get('assumption_note', '')}; "
+            ) if anchor_meta else ""
             context = (
                 "Eris tự nhận ra câu này cần tra cứu sau khi pre-detector không bắt được; "
                 f"route={getattr(self_search_decision, 'reason', '')}; "
+                f"{anchor_note}"
                 "dùng Tutor/Gemini Web hiện có, trả lời cô đọng, ưu tiên nguồn/link; "
                 "không dùng Deep Research API hoặc Google grounding"
             )
@@ -5210,14 +5243,17 @@ class RuntimeCoordinator(
         artifact = {}
         research_thread = {}
         research_metrics = {}
+        memory_decision = {}
         try:
             artifact = dict(getattr(self, "_last_tutor_research_artifact", {}) or {})
             research_thread = dict(getattr(self, "_last_tutor_research_thread", {}) or {})
             research_metrics = dict(getattr(self, "_last_tutor_research_metrics", {}) or {})
+            memory_decision = dict(getattr(self, "_last_tutor_research_memory_decision", {}) or {})
         except Exception:
             artifact = {}
             research_thread = {}
             research_metrics = {}
+            memory_decision = {}
         verification_status = ""
         try:
             verification_status = str((artifact.get("verification") or {}).get("overall_status") or "")
@@ -5270,6 +5306,9 @@ class RuntimeCoordinator(
                 "source": "tutor_followup",
                 "research_mode": str(mode or "research"),
             }
+            anchor_meta = dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {})
+            if anchor_meta:
+                ledger_meta["anchor_resolution"] = anchor_meta
             if research_thread:
                 ledger_meta["research_thread"] = research_thread
             if artifact:
@@ -5277,6 +5316,8 @@ class RuntimeCoordinator(
                 ledger_meta["verification"] = dict(artifact.get("verification") or {})
             if research_metrics:
                 ledger_meta["research_metrics"] = research_metrics
+            if memory_decision:
+                ledger_meta["research_memory_policy"] = memory_decision
             self._ensure_session_turn_ledger().record_assistant(
                 public_text,
                 meta=ledger_meta,

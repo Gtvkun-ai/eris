@@ -188,30 +188,160 @@ def _looks_reference_only(text: object) -> bool:
     return len(tokens) <= 1 and is_explicit_research_request(text)
 
 
-def resolve_research_topic(current_text: object, prior_user_turns: Sequence[object] | Iterable[object] = ()) -> str:
-    """Resolve câu kiểu "nghiên cứu sâu phần này" về turn có nội dung trước đó.
 
-    Không dùng LLM. Nếu câu hiện tại đã chứa chủ đề thật, giữ nguyên để tránh rewrite
-    làm mất ý. Nếu chỉ là lệnh giao việc/tham chiếu mơ hồ, lấy user turn gần nhất có
-    nội dung và không phải một lệnh gọi Tutor khác.
+_CORRECTION_MARKERS = (
+    "khong y toi", "khong phai", "y toi la", "toi noi", "toi muon noi",
+    "y la", "dung hon", "chinh lai", "sua lai", "ý tôi", "không phải",
+)
+
+@dataclass(frozen=True, slots=True)
+class FollowupAnchorCandidate:
+    text: str
+    score: float
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class FollowupAnchorResolution:
+    topic: str
+    confidence: float
+    anchor_text: str = ""
+    anchor_index: int = -1
+    assumption_note: str = ""
+    misread_risk: str = "low"  # low | medium | high
+    candidates: tuple[FollowupAnchorCandidate, ...] = ()
+
+
+def _content_tokens(text: object) -> set[str]:
+    normalized = normalize_marker_text(text)
+    tokens: set[str] = set()
+    for token in normalized.split():
+        if token in _FILLER_WORDS:
+            continue
+        if len(token) < 3:
+            continue
+        # Những từ điều phối/research không giúp chọn anchor.
+        if token in {"nghien", "cuu", "search", "web", "tutor", "gemini", "hay", "giup", "kiem", "chung", "chi", "tiet", "hon"}:
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _candidate_items(prior_user_turns: Sequence[object] | Iterable[object]) -> list[str]:
+    out: list[str] = []
+    for item in list(prior_user_turns or ()):
+        text = str(getattr(item, "text", item) or "").strip()
+        if not text:
+            continue
+        if _looks_reference_only(text):
+            continue
+        out.append(text)
+    return out[-8:]
+
+
+def _anchor_score(current: str, candidate: str, *, recency_rank: int, current_tokens: set[str]) -> FollowupAnchorCandidate:
+    candidate_norm = normalize_marker_text(candidate)
+    candidate_tokens = _content_tokens(candidate)
+    overlap = len(current_tokens & candidate_tokens)
+    # recency_rank: 0 là gần nhất. Neo hội thoại thường gần đây, nhưng nếu user nêu
+    # "Gemma" thì candidate có Gemma phải thắng candidate gần hơn. Không thì Eris lại
+    # nghiên cứu nhầm dòng trên, một môn thể thao regex nguy hiểm.
+    score = 0.42 + max(0.0, 0.22 - 0.035 * recency_rank)
+    reasons = [f"recent={recency_rank}"]
+    if overlap:
+        score += min(0.42, 0.18 * overlap)
+        reasons.append(f"overlap={overlap}")
+    if any(tok in candidate_norm for tok in ("gemini", "gemma", "tutor", "eris", "tts", "qwen")):
+        score += 0.05
+        reasons.append("project_entity")
+    if len(candidate_tokens) >= 4:
+        score += 0.04
+        reasons.append("substantive")
+    return FollowupAnchorCandidate(text=candidate[:900], score=min(1.0, score), reason=",".join(reasons))
+
+
+def resolve_research_anchor(current_text: object, prior_user_turns: Sequence[object] | Iterable[object] = ()) -> FollowupAnchorResolution:
+    """Resolve follow-up research/search về anchor có confidence và rủi ro.
+
+    Bản cũ chỉ trả string nên dễ "lấy turn gần nhất". Bản này vẫn không gọi LLM,
+    nhưng giữ candidate score, correction focus và assumption_note để ledger/panel
+    biết Eris đang bám neo nào. Nhỏ gọn, ít token, bớt phong cách bói toán.
     """
 
     current = str(current_text or "").strip()
     current_norm = normalize_marker_text(current)
-    if current and not _looks_reference_only(current):
-        return current[:900]
+    candidates_raw = _candidate_items(prior_user_turns)
+    current_tokens = _content_tokens(current)
+    has_reference = _has_any_marker(current_norm, _REFERENCE_MARKERS)
+    has_correction = _has_any_marker(current_norm, _CORRECTION_MARKERS)
 
-    for item in reversed(list(prior_user_turns or ())):
-        candidate = str(getattr(item, "text", item) or "").strip()
-        if not candidate:
+    # Nếu câu hiện tại đã là một query độc lập, giữ nguyên. Nhưng nếu nó vừa có
+    # "phần/cái/ý" vừa có entity như Gemma, ta vẫn gắn anchor để không mất ngữ cảnh.
+    independent = bool(current and not _looks_reference_only(current))
+    if independent and not (has_reference or has_correction):
+        return FollowupAnchorResolution(
+            topic=current[:900],
+            confidence=0.93,
+            anchor_text="",
+            anchor_index=-1,
+            assumption_note="query_standalone",
+            misread_risk="low",
+            candidates=(),
+        )
+
+    scored: list[tuple[int, FollowupAnchorCandidate]] = []
+    for rev_idx, candidate in enumerate(reversed(candidates_raw)):
+        if normalize_marker_text(candidate) == current_norm:
             continue
-        candidate_norm = normalize_marker_text(candidate)
-        if candidate_norm == current_norm:
-            continue
-        if _looks_reference_only(candidate):
-            continue
-        return candidate[:900]
-    return ""
+        scored.append((len(candidates_raw) - 1 - rev_idx, _anchor_score(current, candidate, recency_rank=rev_idx, current_tokens=current_tokens)))
+    scored.sort(key=lambda item: item[1].score, reverse=True)
+    packed = tuple(candidate for _, candidate in scored[:4])
+
+    if not scored:
+        if current:
+            return FollowupAnchorResolution(
+                topic=current[:900],
+                confidence=0.48 if independent else 0.18,
+                assumption_note="no_prior_anchor_found",
+                misread_risk="medium" if independent else "high",
+                candidates=(),
+            )
+        return FollowupAnchorResolution(topic="", confidence=0.0, assumption_note="empty", misread_risk="high")
+
+    anchor_idx, best = scored[0]
+    confidence = max(0.0, min(0.96, best.score))
+    risk = "low" if confidence >= 0.72 else "medium" if confidence >= 0.52 else "high"
+    assumption = "resolved_from_recent_context"
+    topic = best.text
+
+    # Correction/focus: "không, ý tôi là phần Gemma" cần giữ cả focus hiện tại và
+    # anchor cũ. Nếu chỉ trả nguyên câu hiện tại, Tutor sẽ search một mẩu cụt ngủn.
+    focus_tokens = sorted(current_tokens)
+    if independent and (has_reference or has_correction) and focus_tokens:
+        focus = " ".join(focus_tokens[:8])
+        topic = f"{current} | Neo hội thoại: {best.text}"[:900]
+        assumption = f"focused_followup:{focus}"
+        confidence = min(0.96, max(confidence, 0.68))
+        risk = "medium" if confidence < 0.76 else "low"
+
+    if not independent and current:
+        assumption = "reference_followup_resolved"
+
+    return FollowupAnchorResolution(
+        topic=topic[:900],
+        confidence=confidence,
+        anchor_text=best.text,
+        anchor_index=anchor_idx,
+        assumption_note=assumption,
+        misread_risk=risk,
+        candidates=packed,
+    )
+
+
+def resolve_research_topic(current_text: object, prior_user_turns: Sequence[object] | Iterable[object] = ()) -> str:
+    """Backward-compatible wrapper: chỉ trả topic đã resolve."""
+
+    return resolve_research_anchor(current_text, prior_user_turns).topic
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,6 +528,8 @@ def compact_research_answer(text: object, *, max_words: int = 320) -> str:
 
 
 __all__ = [
+    "FollowupAnchorCandidate",
+    "FollowupAnchorResolution",
     "TutorDelegationDecision",
     "TutorResearchDecision",
     "build_lightweight_research_prompt",
@@ -408,6 +540,7 @@ __all__ = [
     "needs_external_verification",
     "needs_fresh_web",
     "normalize_marker_text",
+    "resolve_research_anchor",
     "resolve_research_topic",
     "score_research_need",
     "score_tutor_delegation",

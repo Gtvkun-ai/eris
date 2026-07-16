@@ -183,6 +183,7 @@ class TutorDaemon:
         self.last_research_bundle: dict[str, Any] = {}
         self.last_research_thread: dict[str, Any] = {}
         self.last_research_metrics: dict[str, Any] = {}
+        self.last_research_memory_decision: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
 
@@ -417,6 +418,7 @@ class TutorDaemon:
         self.last_research_bundle = bundle if isinstance(bundle, dict) else {}
         self.last_research_thread = thread if isinstance(thread, dict) else {}
         self.last_research_metrics = metrics if isinstance(metrics, dict) else {}
+        self.last_research_memory_decision = {}
         try:
             self.logger._emit({"kind": "research_thread", **self.last_research_thread})
             self.logger._emit({"kind": "research_metrics", **self.last_research_metrics})
@@ -530,14 +532,25 @@ class TutorDaemon:
             )
             answer.text = relay.answer_text
 
-            # Chỉ lưu khi chủ dự án chủ động bật. Mặc định false để một lượt tra cứu
-            # không đẻ thêm lượt distill/model và không biến mọi kết quả web thành ký ức.
-            if bool(getattr(self.config, "research_persist_answers", False)):
+            # Chỉ lưu khi policy cho phép. Mặc định false; nếu bật persist thì vẫn
+            # phải qua verification, không cho web rác chui vào trí nhớ dài hạn.
+            try:
+                from cortex.tutor.research_memory_policy import should_persist_research_answer
+                mem_decision = should_persist_research_answer(self.config, self.last_research_bundle, mode="research")
+                self.last_research_memory_decision = mem_decision.to_dict()
+            except Exception:
+                mem_decision = None
+                self.last_research_memory_decision = {"should_persist": False, "reason": "policy_error"}
+            if bool(getattr(mem_decision, "should_persist", False)):
                 self._emit(episode, "digesting")
                 try:
                     episode.claims_committed = self.digest.digest(episode)
                 except Exception:
                     episode.claims_committed = 0
+            try:
+                self.logger._emit({"kind": "research_memory_policy", **self.last_research_memory_decision})
+            except Exception:
+                pass
 
             episode.stage = "done"
             episode.ended_ts = float(time.time())
@@ -642,12 +655,23 @@ class TutorDaemon:
             )
             answer.text = relay.answer_text
 
-            if bool(getattr(self.config, "research_persist_answers", False)):
+            try:
+                from cortex.tutor.research_memory_policy import should_persist_research_answer
+                mem_decision = should_persist_research_answer(self.config, self.last_research_bundle, mode="quick_search")
+                self.last_research_memory_decision = mem_decision.to_dict()
+            except Exception:
+                mem_decision = None
+                self.last_research_memory_decision = {"should_persist": False, "reason": "policy_error"}
+            if bool(getattr(mem_decision, "should_persist", False)):
                 self._emit(episode, "digesting")
                 try:
                     episode.claims_committed = self.digest.digest(episode)
                 except Exception:
                     episode.claims_committed = 0
+            try:
+                self.logger._emit({"kind": "research_memory_policy", **self.last_research_memory_decision})
+            except Exception:
+                pass
 
             episode.stage = "done"
             episode.ended_ts = float(time.time())

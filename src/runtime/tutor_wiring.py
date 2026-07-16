@@ -150,6 +150,7 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
             runtime_owner._last_tutor_research_artifact = {}
             runtime_owner._last_tutor_research_thread = {}
             runtime_owner._last_tutor_research_metrics = {}
+            runtime_owner._last_tutor_research_memory_decision = {}
             if search and callable(getattr(daemon, "search_now", None)):
                 answer = daemon.search_now(safe_topic, context=safe_context, critic_fn=generate_fn)
             elif research and callable(getattr(daemon, "research_now", None)):
@@ -159,6 +160,7 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
             runtime_owner._last_tutor_research_artifact = dict(getattr(daemon, "last_research_bundle", {}) or {})
             runtime_owner._last_tutor_research_thread = dict(getattr(daemon, "last_research_thread", {}) or {})
             runtime_owner._last_tutor_research_metrics = dict(getattr(daemon, "last_research_metrics", {}) or {})
+            runtime_owner._last_tutor_research_memory_decision = dict(getattr(daemon, "last_research_memory_decision", {}) or {})
             if answer:
                 return scrub_secrets(answer)
             _warn(logger, f"tutor request_answer không có kết quả topic={str(safe_topic)[:120]!r}")

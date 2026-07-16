@@ -113,7 +113,8 @@ def test_research_now_bypasses_rewrite_and_does_not_digest_by_default():
 
 
 def test_research_persist_is_opt_in_only():
-    daemon, backend, digest = _daemon(answer="Một kết luận có nguồn.", persist=True)
+    answer = "Kết luận có nguồn chính thức. Nguồn: https://godotengine.org/releases"
+    daemon, backend, digest = _daemon(answer=answer, persist=True)
     assert daemon.research_now("Kiểm chứng điều này")
     assert digest.calls == 1
 
