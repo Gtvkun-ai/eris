@@ -18,6 +18,7 @@ from typing import Any
 
 from runtime.autonomous_performance import AutonomousPerformancePlanner
 from runtime.autonomous_surface_anchor import AutonomousSurfaceAnchorGuard
+from runtime.intention_authority import IntentionAuthorityGate
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
 from runtime.speech_contract import SpeechContractResolver
@@ -173,6 +174,7 @@ class StageFrameBuilder:
         self.performance_planner = PerformanceRequestPlanner()
         self.autonomous_performance_planner = AutonomousPerformancePlanner()
         self.autonomous_anchor_guard = AutonomousSurfaceAnchorGuard()
+        self.intention_authority_gate = IntentionAuthorityGate()
         self.show_runtime = StageShowRuntime()
 
     def build(
@@ -191,6 +193,32 @@ class StageFrameBuilder:
             verdict = self.autonomous_anchor_guard.validate(raw_text, plan_payload)
             payload["autonomous_anchor"] = verdict.to_payload()
             raw_text = verdict.text
+
+            # Phase 11: neo nội dung chưa đủ. Một câu như "tôi sẽ rà lại ký
+            # ức" còn ngầm hứa có target, handler và result. Nếu runtime không
+            # có execution contract thật, hạ nó thành trạng thái trung thực hoặc
+            # body-only. Siêu nhận thức dùng trước khi nói sẽ rẻ hơn xin lỗi sau.
+            opportunity = (
+                plan_payload.get("selected_opportunity")
+                if isinstance(plan_payload, dict) and isinstance(plan_payload.get("selected_opportunity"), dict)
+                else {}
+            )
+            intention_context = {
+                "kind": str(opportunity.get("kind", "") or payload.get("intent", "")),
+                "evidence_refs": tuple(opportunity.get("evidence_refs") or ()),
+                "system_action": payload.get("system_action", ""),
+                "action": payload.get("action", ""),
+                "action_input": payload.get("action_input", ""),
+                "action_result": payload.get("action_result") if isinstance(payload.get("action_result"), dict) else {},
+                "execution_handler": payload.get("execution_handler", ""),
+                "handler_available": payload.get("handler_available"),
+                "result_event": payload.get("result_event", ""),
+                "observable_result": payload.get("observable_result", ""),
+                "target_ref": payload.get("intent_target", ""),
+            }
+            intention_verdict = self.intention_authority_gate.validate(raw_text, intention_context)
+            payload["intention_authority"] = intention_verdict.to_payload()
+            raw_text = intention_verdict.text
             if not raw_text:
                 payload["should_speak"] = False
         surfaces = self.transformers.transform(raw_text)

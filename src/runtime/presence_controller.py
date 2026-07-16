@@ -18,6 +18,7 @@ from cortex.continuity_threat import evaluate_continuity_threat
 from domain import Decision
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.liveliness_config import LivelinessConfig, load_liveliness_config
+from runtime.intention_authority import IntentionAuthorityGate
 from runtime.sensor_visibility import SensorVisibilityState, derive_sensor_visibility_state
 from guard_config import guards_warn_only
 
@@ -577,6 +578,43 @@ class PresenceControllerMixin:
             return "", "blind_frustration_blame_blocked"
         if text and is_banned_filler(text) and not guards_warn_only():
             return "", "banned_filler_blocked"
+
+        # Phase 11 - Intention Authority: low-level presence không được tự kể
+        # rằng nó "sẽ rà/kiểm/sửa" nếu không có execution handler thật. Đây là
+        # chốt sớm trước SurfaceDecision; StageFrame còn kiểm lần cuối để những
+        # đường autonomous khác cũng không lọt. Hai lớp, nhưng cùng một authority,
+        # không phải hai hội đồng cùng bịa luật riêng như truyền thống repo này.
+        if text:
+            gate = getattr(self, "_intention_authority_gate", None)
+            if not isinstance(gate, IntentionAuthorityGate):
+                gate = IntentionAuthorityGate()
+                self._intention_authority_gate = gate
+            intention_verdict = gate.validate(
+                text,
+                {
+                    "kind": str(impulse.kind or impulse.speech_act or "surface"),
+                    "evidence_refs": tuple(impulse.evidence or ()),
+                    "target_ref": "",
+                    "execution_handler": "",
+                    "handler_available": False,
+                    "result_event": "",
+                },
+            )
+            if intention_verdict.rewritten or not intention_verdict.accepted:
+                self.logger.info(
+                    "[intention-authority] kind=%s mode=%s operation=%s missing=%s original=%r final=%r",
+                    str(impulse.kind or "surface"),
+                    intention_verdict.mode,
+                    intention_verdict.operation,
+                    ",".join(intention_verdict.missing_contract) or "none",
+                    intention_verdict.original_text,
+                    intention_verdict.text,
+                )
+            text = intention_verdict.text
+            if not text:
+                return "", f"intention_authority:{intention_verdict.reason}"
+            if intention_verdict.rewritten:
+                source = f"{source}|intention_authority_rewrite"
         return text, source
 
     def _blind_frustration_blames_user_without_evidence(self, text: str, impulse: SurfaceImpulse) -> bool:
