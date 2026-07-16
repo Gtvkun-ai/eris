@@ -6976,3 +6976,66 @@
 {"signal":"metric","name":"input_tokens_by_lane","timestamp":1784175276.3014662,"value":9.0,"tags":{"provider":"gemini","lane":"transport"},"trace_id":"b5ec8a6de356406cb97fe81f69bdd27a","status":"ok"}
 {"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175276.3027823,"value":16.0,"tags":{"provider":"gemini","lane":"transport"},"trace_id":"b5ec8a6de356406cb97fe81f69bdd27a","status":"ok"}
 {"signal":"gauge","name":"token_pressure_ratio","timestamp":1784175276.3038695,"value":0.000138,"tags":{"provider":"gemini"},"trace_id":"b5ec8a6de356406cb97fe81f69bdd27a","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1784175853.5572963,"value":73.0,"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1784175853.5580719,"value":73.0,"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1784175853.5588458,"value":1000000000.0,"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1784175853.559535,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:96061e92f58e]","after_tokens":"[đã ẩn:secret_field:96061e92f58e]","cap":1000000000,"trimmed":false},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"avg_prompt_tokens_by_lane","timestamp":1784175853.561471,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175853.5620499,"value":80.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"input_tokens_by_lane","timestamp":1784175853.562641,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175853.5632207,"value":80.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"gauge","name":"token_pressure_ratio","timestamp":1784175853.5638769,"value":0.0255,"tags":{"provider":"groq"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1784175854.0640194,"value":73.0,"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1784175854.064739,"value":73.0,"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1784175854.065384,"value":1000000000.0,"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1784175854.066003,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:96061e92f58e]","after_tokens":"[đã ẩn:secret_field:96061e92f58e]","cap":1000000000,"trimmed":false},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"avg_prompt_tokens_by_lane","timestamp":1784175854.066933,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175854.0682445,"value":80.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"input_tokens_by_lane","timestamp":1784175854.0693166,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175854.0701234,"value":80.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"gauge","name":"token_pressure_ratio","timestamp":1784175854.0710454,"value":0.051,"tags":{"provider":"groq"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1784175854.5746975,"value":73.0,"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1784175854.5765364,"value":73.0,"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1784175854.5775142,"value":1000000000.0,"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1784175854.5783226,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:96061e92f58e]","after_tokens":"[đã ẩn:secret_field:96061e92f58e]","cap":1000000000,"trimmed":false},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"avg_prompt_tokens_by_lane","timestamp":1784175854.5792935,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175854.5803885,"value":80.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"input_tokens_by_lane","timestamp":1784175854.5812883,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175854.5822313,"value":80.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"gauge","name":"token_pressure_ratio","timestamp":1784175854.582969,"value":0.0765,"tags":{"provider":"groq"},"trace_id":"a183526275c242c8b4e84ac8fd6daa49","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1784175874.0285783,"value":73.0,"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1784175874.0294862,"value":73.0,"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1784175874.030346,"value":1000000000.0,"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1784175874.03112,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:96061e92f58e]","after_tokens":"[đã ẩn:secret_field:96061e92f58e]","cap":1000000000,"trimmed":false},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"avg_prompt_tokens_by_lane","timestamp":1784175874.033027,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175874.0338094,"value":120.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"input_tokens_by_lane","timestamp":1784175874.034763,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175874.0355058,"value":120.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"gauge","name":"token_pressure_ratio","timestamp":1784175874.0361934,"value":0.03216666666666667,"tags":{"provider":"groq"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1784175874.5883126,"value":73.0,"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1784175874.590133,"value":73.0,"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1784175874.5917122,"value":1000000000.0,"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1784175874.594607,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:96061e92f58e]","after_tokens":"[đã ẩn:secret_field:96061e92f58e]","cap":1000000000,"trimmed":false},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"avg_prompt_tokens_by_lane","timestamp":1784175874.5968046,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175874.598887,"value":120.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"input_tokens_by_lane","timestamp":1784175874.600898,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175874.6027203,"value":120.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"gauge","name":"token_pressure_ratio","timestamp":1784175874.6047883,"value":0.06433333333333334,"tags":{"provider":"groq"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1784175875.5656216,"value":73.0,"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1784175875.566422,"value":73.0,"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1784175875.5673773,"value":1000000000.0,"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1784175875.568174,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:96061e92f58e]","after_tokens":"[đã ẩn:secret_field:96061e92f58e]","cap":1000000000,"trimmed":false},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"avg_prompt_tokens_by_lane","timestamp":1784175875.569225,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175875.5703971,"value":120.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"input_tokens_by_lane","timestamp":1784175875.5712407,"value":73.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175875.5719142,"value":120.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"gauge","name":"token_pressure_ratio","timestamp":1784175875.5728009,"value":0.0965,"tags":{"provider":"groq"},"trace_id":"95376be112d848fe97d0f2401f6c216e","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1784175964.7330842,"value":227.0,"trace_id":"019f6c1c81044064ba55e0c0ed21a057","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1784175964.733804,"value":227.0,"trace_id":"019f6c1c81044064ba55e0c0ed21a057","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1784175964.7345088,"value":1000000000.0,"trace_id":"019f6c1c81044064ba55e0c0ed21a057","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1784175964.7350605,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:dfe62e836a0a]","after_tokens":"[đã ẩn:secret_field:dfe62e836a0a]","cap":1000000000,"trimmed":false},"trace_id":"019f6c1c81044064ba55e0c0ed21a057","status":"ok"}
+{"signal":"metric","name":"avg_prompt_tokens_by_lane","timestamp":1784175964.7370977,"value":227.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"019f6c1c81044064ba55e0c0ed21a057","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175964.7381027,"value":320.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"019f6c1c81044064ba55e0c0ed21a057","status":"ok"}
+{"signal":"metric","name":"input_tokens_by_lane","timestamp":1784175964.7390552,"value":227.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"019f6c1c81044064ba55e0c0ed21a057","status":"ok"}
+{"signal":"metric","name":"output_tokens_by_lane","timestamp":1784175964.7396996,"value":320.0,"tags":{"provider":"groq","lane":"transport"},"trace_id":"019f6c1c81044064ba55e0c0ed21a057","status":"ok"}
+{"signal":"gauge","name":"token_pressure_ratio","timestamp":1784175964.7404633,"value":0.09116666666666666,"tags":{"provider":"groq"},"trace_id":"019f6c1c81044064ba55e0c0ed21a057","status":"ok"}

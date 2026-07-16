@@ -328,7 +328,7 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
             return generate_fn
 
     try:
-        from llm.local_llama_engine import build_local_or_ollama_client
+        from llm.ollama_client import OllamaClient
     except Exception:
         return None
 
@@ -336,7 +336,7 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
 
     def generate_fn(prompt: str) -> str:
         try:
-            client = build_local_or_ollama_client()
+            client = OllamaClient()
             messages = [
                 {"role": "system", "content": "Trả về JSON gọn dạng {\"text\": \"...\"} bằng tiếng Việt."},
                 {"role": "user", "content": prompt},
@@ -422,7 +422,7 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
             return distill_fn
 
     try:
-        from llm.local_llama_engine import build_local_or_ollama_client
+        from llm.ollama_client import OllamaClient
     except Exception:
         return None
 
@@ -433,7 +433,7 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
         if not text:
             return []
         try:
-            client = build_local_or_ollama_client()
+            client = OllamaClient()
             messages = [
                 {
                     "role": "system",

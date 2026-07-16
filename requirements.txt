@@ -3,7 +3,6 @@ Pillow
 psutil
 requests
 uiautomation
-llama-cpp-python  # engine local đọc gguf trong src/ (private-mind fragment chạy offline)
 # sentence-transformers==3.4.1  # optional — dùng transformers+torch đã có thay thế
 
 # TTS — Emotional voice (Gemini TTS API)

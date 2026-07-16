@@ -1,170 +1,118 @@
-# ERIS
+﻿# ERIS
 
-ERIS là một hiện diện desktop (desktop companion) chạy trên Godot: phần thân (body)
-vẽ bằng Godot/C#, phần nhận thức (cortex/runtime) viết bằng Python. Body và runtime
-nói chuyện với nhau qua UDP. Cognition dùng các model qua API miễn phí (Gemini / Groq),
-có cơ chế **xoay vòng nhiều key** để tận dụng free quota.
+ERIS lÃ  má»™t hiá»‡n diá»‡n desktop (desktop companion) cháº¡y trÃªn Godot: pháº§n thÃ¢n (body)
+váº½ báº±ng Godot/C#, pháº§n nháº­n thá»©c (cortex/runtime) viáº¿t báº±ng Python. Body vÃ  runtime
+nÃ³i chuyá»‡n vá»›i nhau qua UDP. Cognition dÃ¹ng cÃ¡c model qua API miá»…n phÃ­ (Gemini / Groq),
+cÃ³ cÆ¡ cháº¿ **xoay vÃ²ng nhiá»u key** Ä‘á»ƒ táº­n dá»¥ng free quota.
 
-> Bản beta. Cần chuẩn bị key API free của riêng bạn (xem phần Cấu hình key).
+> Báº£n beta. Cáº§n chuáº©n bá»‹ key API free cá»§a riÃªng báº¡n (xem pháº§n Cáº¥u hÃ¬nh key).
 
 ---
 
-## 1. Yêu cầu
+## 1. YÃªu cáº§u
 
-| Thành phần | Phiên bản | Ghi chú |
+| ThÃ nh pháº§n | PhiÃªn báº£n | Ghi chÃº |
 |---|---|---|
-| Godot | 4.6 (bản **.NET / C#**) | Chạy phần body. Phải là bản Mono/.NET, không phải bản standard. |
-| .NET SDK | 8.0+ | Để Godot build C#. |
-| Python | 3.10+ (đã test trên 3.13) | Chạy phần cortex/runtime. |
-| OS | Windows | Runtime dùng `mss`, `uiautomation`, `msvcrt` (hiện bám Windows). |
+| Godot | 4.6 (báº£n **.NET / C#**) | Cháº¡y pháº§n body. Pháº£i lÃ  báº£n Mono/.NET, khÃ´ng pháº£i báº£n standard. |
+| .NET SDK | 8.0+ | Äá»ƒ Godot build C#. |
+| Python | 3.10+ (Ä‘Ã£ test trÃªn 3.13) | Cháº¡y pháº§n cortex/runtime. |
+| OS | Windows | Runtime dÃ¹ng `mss`, `uiautomation`, `msvcrt` (hiá»‡n bÃ¡m Windows). |
 
-Bạn cũng cần ít nhất một **Gemini API key** (bắt buộc) và tùy chọn thêm **Groq API key**.
-Cả hai đều có bậc miễn phí.
+Báº¡n cÅ©ng cáº§n Ã­t nháº¥t má»™t **Gemini API key** (báº¯t buá»™c) vÃ  tÃ¹y chá»n thÃªm **Groq API key**.
+Cáº£ hai Ä‘á»u cÃ³ báº­c miá»…n phÃ­.
 
 ---
 
-## 2. Cài đặt
+## 2. CÃ i Ä‘áº·t
 
-### 2.1. Lấy mã nguồn
+### 2.1. Láº¥y mÃ£ nguá»“n
 ```powershell
 git clone <repo-url> eris
 cd eris
 ```
 
-### 2.2. Môi trường Python
+### 2.2. MÃ´i trÆ°á»ng Python
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-`requirements.txt` chỉ liệt kê các lib runtime cốt lõi (`mss`, `Pillow`, `psutil`,
-`requests`, `uiautomation`). Phần embedding/semantic dùng model
-`paraphrase-multilingual-MiniLM-L12-v2` (đã kèm trong repo) qua `transformers` + `torch`.
-Nếu import báo thiếu, cài thêm:
+`requirements.txt` chá»‰ liá»‡t kÃª cÃ¡c lib runtime cá»‘t lÃµi (`mss`, `Pillow`, `psutil`,
+`requests`, `uiautomation`). Pháº§n embedding/semantic dÃ¹ng model
+`paraphrase-multilingual-MiniLM-L12-v2` (Ä‘Ã£ kÃ¨m trong repo) qua `transformers` + `torch`.
+Náº¿u import bÃ¡o thiáº¿u, cÃ i thÃªm:
 ```powershell
 pip install transformers torch
 ```
 
-### 2.3. Build phía Godot
-Mở thư mục dự án bằng **Godot 4.6 .NET**. Lần đầu Godot sẽ tự khôi phục NuGet và
-build assembly `Eris`. Nếu build C# lỗi, kiểm tra .NET SDK đã cài đúng.
+### 2.3. Build phÃ­a Godot
+Má»Ÿ thÆ° má»¥c dá»± Ã¡n báº±ng **Godot 4.6 .NET**. Láº§n Ä‘áº§u Godot sáº½ tá»± khÃ´i phá»¥c NuGet vÃ 
+build assembly `Eris`. Náº¿u build C# lá»—i, kiá»ƒm tra .NET SDK Ä‘Ã£ cÃ i Ä‘Ãºng.
 
-### 2.4. Model local (llama-cpp + GPU) — chạy mọi mạch nội bộ offline
+### 2.4. Model runtime
 
-ERIS dồn các mạch model nội bộ (private-mind fragment/judgment/diary, background
-observer, vision compressor) qua **llama-cpp-python** đọc thẳng file `.gguf` đặt
-trong `src/` — **không cần Ollama/llama-server ngoài**. Mạch nói chính (main
-cognition) vẫn dùng remote API (Gemini) như cũ.
+GGUF / llama-cpp local inference has been removed. ERIS now uses remote providers for the main brain and private-mind fragment lanes. Ollama can still be used as a separate server-backed option for observer/tutor experiments, but there is no in-process GGUF backend in this repo.
 
-**Bước 1 — Tải các model gguf vào `src/`** (ngang hàng nhau):
-
-| File trong `src/` | Vai trò | Nguồn (HuggingFace) |
-|---|---|---|
-| `qwen3-1.7b-q4_k_m.gguf` | text: fragment + judgment + observer | `unsloth/Qwen3-1.7B-GGUF` → `Qwen3-1.7B-Q4_K_M.gguf` |
-| `moondream2-q4_k.gguf` | vision (model) | `vikhyatk/moondream2` (gguf) |
-| `moondream2-mmproj-f16.gguf` | vision (mmproj/clip) | `vikhyatk/moondream2` (mmproj) |
-
-```powershell
-# ví dụ tải qwen3 (đổi tên về đúng src/qwen3-1.7b-q4_k_m.gguf)
-curl.exe -L -o src\qwen3-1.7b-q4_k_m.gguf ^
-  https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
-```
-
-**Bước 2 — Cài `llama-cpp-python`.**
-
-- Chỉ CPU (portable, chậm hơn): `pip install llama-cpp-python` (đã nằm trong
-  `requirements.txt`).
-- **GPU NVIDIA (CUDA, khuyên dùng):** cần **CUDA Toolkit** + **Visual Studio
-  Build Tools (workload C++)**, rồi build từ nguồn. Có sẵn script
-  `build_llamacpp_cuda.bat` (chỉnh đường dẫn VS/CUDA cho máy bạn rồi chạy), hoặc
-  thủ công:
-  ```powershell
-  $env:CMAKE_ARGS = "-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=75"  # 75 = GTX 16xx/20xx; sửa theo GPU
-  $env:FORCE_CMAKE = "1"
-  pip install llama-cpp-python==0.3.16 --force-reinstall --no-cache-dir --no-binary llama-cpp-python
-  ```
-  > Build CUDA mất ~10–40 phút (compile kernel). Wheel ra ~100MB (bản CPU ~6MB).
-  > Nếu pip báo lỗi long-path khi giải nén bản mới, dùng `==0.3.16` và đặt
-  > `TMP=C:\t` (thư mục ngắn). Kiểm tra GPU đã bật:
-  > `python -c "import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"` → `True`.
-
-**Bước 3 — Bật trong `.env`** (xem `.env.example`):
-```dotenv
-ERIS_LOCAL_LLM_ENGINE=llamacpp
-ERIS_LLAMACPP_N_GPU_LAYERS=-1          # -1 = đẩy hết layer lên GPU; 0 = CPU
-ERIS_LLAMACPP_TEXT_MODEL=src/qwen3-1.7b-q4_k_m.gguf
-ERIS_LLAMACPP_VISION_MODEL=src/moondream2-q4_k.gguf
-ERIS_LLAMACPP_VISION_MMPROJ=src/moondream2-mmproj-f16.gguf
-ERIS_PRIVATE_MIND_API_ENABLED=1
-ERIS_PRIVATE_MIND_PROVIDER=llamacpp
-ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER=llamacpp
-ERIS_PRIVATE_MIND_FRAGMENT_FREETEXT=1
-```
-Đặt `ERIS_LOCAL_LLM_ENGINE=ollama` (hoặc bỏ trống) để quay về Ollama.
-
-> **VRAM:** GPU 4GB chạy được vì các model nạp/giải phóng theo lịch (vision
-> `unload` sau mỗi lần gọi). Máy yếu/không GPU thì để `ERIS_LLAMACPP_N_GPU_LAYERS=0`
-> (chạy CPU, chậm nhưng vẫn chạy).
 
 ---
 
-## 3. Cấu hình key (quan trọng)
+## 3. Cáº¥u hÃ¬nh key (quan trá»ng)
 
-ERIS đọc key từ `config/secrets.json`. File này **đã được .gitignore** nên sẽ không
-bị commit. Tạo nó từ file mẫu:
+ERIS Ä‘á»c key tá»« `config/secrets.json`. File nÃ y **Ä‘Ã£ Ä‘Æ°á»£c .gitignore** nÃªn sáº½ khÃ´ng
+bá»‹ commit. Táº¡o nÃ³ tá»« file máº«u:
 
 ```powershell
 copy config\secrets.example.json config\secrets.json
 ```
 
-Rồi mở `config/secrets.json` và dán key thật vào.
+Rá»“i má»Ÿ `config/secrets.json` vÃ  dÃ¡n key tháº­t vÃ o.
 
-### Lấy key free
-- **Gemini** (bắt buộc): tạo key tại Google AI Studio. Mỗi key thuộc một Google
-  project khác nhau, mỗi project có hũ free quota riêng.
-- **Groq** (tùy chọn, dùng cho mạch "private mind" / việc cần JSON chuẩn): tạo key tại
+### Láº¥y key free
+- **Gemini** (báº¯t buá»™c): táº¡o key táº¡i Google AI Studio. Má»—i key thuá»™c má»™t Google
+  project khÃ¡c nhau, má»—i project cÃ³ hÅ© free quota riÃªng.
+- **Groq** (tÃ¹y chá»n, dÃ¹ng cho máº¡ch "private mind" / viá»‡c cáº§n JSON chuáº©n): táº¡o key táº¡i
   Groq Console.
 
-### Vì sao nên dán NHIỀU key
-Free tier tính theo **project**, không theo key. ERIS giữ một pool key dùng chung cho
-mọi mạch gọi; khi một key dính lỗi `429` (hết quota tạm thời) nó **tự xoay sang key kế
-tiếp**. Càng nhiều key thuộc các project/tài khoản khác nhau → free quota tổng càng lớn,
-ERIS càng ít bị "câm".
+### VÃ¬ sao nÃªn dÃ¡n NHIá»€U key
+Free tier tÃ­nh theo **project**, khÃ´ng theo key. ERIS giá»¯ má»™t pool key dÃ¹ng chung cho
+má»i máº¡ch gá»i; khi má»™t key dÃ­nh lá»—i `429` (háº¿t quota táº¡m thá»i) nÃ³ **tá»± xoay sang key káº¿
+tiáº¿p**. CÃ ng nhiá»u key thuá»™c cÃ¡c project/tÃ i khoáº£n khÃ¡c nhau â†’ free quota tá»•ng cÃ ng lá»›n,
+ERIS cÃ ng Ã­t bá»‹ "cÃ¢m".
 
-- Key Gemini chính: `api_keys.ERIS_REMOTE_API_KEY`
-- Các key Gemini dự phòng (xoay vòng): thêm vào mảng `api_keys.ERIS_PRIVATE_MIND_FALLBACK_API_KEYS`
-- Key Groq chính + dự phòng: `api_keys.ERIS_GROQ_API_KEY` và `api_keys.ERIS_GROQ_FALLBACK_API_KEYS`
+- Key Gemini chÃ­nh: `api_keys.ERIS_REMOTE_API_KEY`
+- CÃ¡c key Gemini dá»± phÃ²ng (xoay vÃ²ng): thÃªm vÃ o máº£ng `api_keys.ERIS_PRIVATE_MIND_FALLBACK_API_KEYS`
+- Key Groq chÃ­nh + dá»± phÃ²ng: `api_keys.ERIS_GROQ_API_KEY` vÃ  `api_keys.ERIS_GROQ_FALLBACK_API_KEYS`
 
-Các giá trị bắt đầu bằng `PASTE_` được coi là placeholder và bị bỏ qua, nên cứ để
-nguyên slot nào chưa dùng.
+CÃ¡c giÃ¡ trá»‹ báº¯t Ä‘áº§u báº±ng `PASTE_` Ä‘Æ°á»£c coi lÃ  placeholder vÃ  bá»‹ bá» qua, nÃªn cá»© Ä‘á»ƒ
+nguyÃªn slot nÃ o chÆ°a dÃ¹ng.
 
-> Tinh chỉnh thêm (nhịp nói, timeout, vision...) có thể đặt qua biến môi trường —
-> xem mẫu trong `.env.example`. Env sẽ override `secrets.json`.
+> Tinh chá»‰nh thÃªm (nhá»‹p nÃ³i, timeout, vision...) cÃ³ thá»ƒ Ä‘áº·t qua biáº¿n mÃ´i trÆ°á»ng â€”
+> xem máº«u trong `.env.example`. Env sáº½ override `secrets.json`.
 
 ---
 
-## 4. Chạy
+## 4. Cháº¡y
 
-### Cách thường: qua Godot
-Bấm **Run** trong Godot (main scene). Khi body khởi động, nó tự spawn tiến trình
-Python runtime (`src/vision.py`) và inject env cần thiết. Body ↔ runtime trao đổi qua
-UDP **cổng 4242** (decision về body) và **4243** (event/chat lên runtime).
+### CÃ¡ch thÆ°á»ng: qua Godot
+Báº¥m **Run** trong Godot (main scene). Khi body khá»Ÿi Ä‘á»™ng, nÃ³ tá»± spawn tiáº¿n trÃ¬nh
+Python runtime (`src/vision.py`) vÃ  inject env cáº§n thiáº¿t. Body â†” runtime trao Ä‘á»•i qua
+UDP **cá»•ng 4242** (decision vá» body) vÃ  **4243** (event/chat lÃªn runtime).
 
-### Cách thủ công: chạy runtime riêng (để debug)
+### CÃ¡ch thá»§ cÃ´ng: cháº¡y runtime riÃªng (Ä‘á»ƒ debug)
 ```powershell
 $env:PYTHONPATH = "src"
 python src\vision.py
 ```
-Hữu ích khi muốn xem log cortex/LLM mà không phụ thuộc Godot.
+Há»¯u Ã­ch khi muá»‘n xem log cortex/LLM mÃ  khÃ´ng phá»¥ thuá»™c Godot.
 
 ---
 
-## 5. Chạy test
+## 5. Cháº¡y test
 ```powershell
 python run_tests.py
 ```
-hoặc trực tiếp:
+hoáº·c trá»±c tiáº¿p:
 ```powershell
 $env:PYTHONPATH = "src"
 python -m pytest tests/ -q
@@ -172,70 +120,70 @@ python -m pytest tests/ -q
 
 ---
 
-## 6. Xử lý sự cố
+## 6. Xá»­ lÃ½ sá»± cá»‘
 
-| Triệu chứng | Kiểm tra |
+| Triá»‡u chá»©ng | Kiá»ƒm tra |
 |---|---|
-| ERIS không nói gì | Key sai/hết quota. Xem log mạch `LLM`. Thêm key dự phòng vào pool. |
-| Body hiện nhưng không phản hồi | Runtime Python chưa chạy hoặc UDP 4242/4243 bị chặn (firewall). |
-| `ModuleNotFoundError` khi chạy test | Chưa set `PYTHONPATH=src`, hoặc thiếu dependency. |
-| Build C# fail trong Godot | Thiếu .NET SDK, hoặc đang dùng bản Godot không phải .NET. |
-| Import lỗi về embedding/torch | `pip install transformers torch`. |
+| ERIS khÃ´ng nÃ³i gÃ¬ | Key sai/háº¿t quota. Xem log máº¡ch `LLM`. ThÃªm key dá»± phÃ²ng vÃ o pool. |
+| Body hiá»‡n nhÆ°ng khÃ´ng pháº£n há»“i | Runtime Python chÆ°a cháº¡y hoáº·c UDP 4242/4243 bá»‹ cháº·n (firewall). |
+| `ModuleNotFoundError` khi cháº¡y test | ChÆ°a set `PYTHONPATH=src`, hoáº·c thiáº¿u dependency. |
+| Build C# fail trong Godot | Thiáº¿u .NET SDK, hoáº·c Ä‘ang dÃ¹ng báº£n Godot khÃ´ng pháº£i .NET. |
+| Import lá»—i vá» embedding/torch | `pip install transformers torch`. |
 
 ---
 
-## 7. Lưu ý cho beta
+## 7. LÆ°u Ã½ cho beta
 
-- **Không bao giờ commit `config/secrets.json` hay `.env`** — cả hai đã nằm trong
-  `.gitignore`. Chỉ chia sẻ `config/secrets.example.json`.
-- Nếu gửi build cho người khác, tuyệt đối không kèm file key của bạn; mỗi tester nên
-  tự tạo key free riêng.
-- Các file state runtime (`memory_core/`, `long_term_memory.json`, ...) là dữ liệu cá
-  nhân của từng lần chạy, không nên commit.
+- **KhÃ´ng bao giá» commit `config/secrets.json` hay `.env`** â€” cáº£ hai Ä‘Ã£ náº±m trong
+  `.gitignore`. Chá»‰ chia sáº» `config/secrets.example.json`.
+- Náº¿u gá»­i build cho ngÆ°á»i khÃ¡c, tuyá»‡t Ä‘á»‘i khÃ´ng kÃ¨m file key cá»§a báº¡n; má»—i tester nÃªn
+  tá»± táº¡o key free riÃªng.
+- CÃ¡c file state runtime (`memory_core/`, `long_term_memory.json`, ...) lÃ  dá»¯ liá»‡u cÃ¡
+  nhÃ¢n cá»§a tá»«ng láº§n cháº¡y, khÃ´ng nÃªn commit.
 
 ---
 
-## 8. Curiosity Tutor (gia sư web — tùy chọn, mặc định TẮT)
+## 8. Curiosity Tutor (gia sÆ° web â€” tÃ¹y chá»n, máº·c Ä‘á»‹nh Táº®T)
 
-ERIS có thể tự "đi hỏi gia sư" khi gặp lỗ hiểu biết: khi một vi phạm kỳ vọng
-(`SituationModel`) hoặc một tình huống màn hình không phân loại được xuất hiện, ERIS hình
-thành câu hỏi (bằng **local LLM**), **mở một cửa sổ trình duyệt thật** tới
-`gemini.google.com` bằng tài khoản Google đăng nhập sẵn, gõ câu hỏi như người, rồi chưng
-cất câu trả lời thành claim đưa vào trí nhớ ngữ nghĩa. Đôi khi ERIS sẽ tự nhiên "khoe"
-điều vừa học bằng giọng của chính nó (có tiết chế). Toàn bộ chạy ngoài hot path.
+ERIS cÃ³ thá»ƒ tá»± "Ä‘i há»i gia sÆ°" khi gáº·p lá»— hiá»ƒu biáº¿t: khi má»™t vi pháº¡m ká»³ vá»ng
+(`SituationModel`) hoáº·c má»™t tÃ¬nh huá»‘ng mÃ n hÃ¬nh khÃ´ng phÃ¢n loáº¡i Ä‘Æ°á»£c xuáº¥t hiá»‡n, ERIS hÃ¬nh
+thÃ nh cÃ¢u há»i (báº±ng **local LLM**), **má»Ÿ má»™t cá»­a sá»• trÃ¬nh duyá»‡t tháº­t** tá»›i
+`gemini.google.com` báº±ng tÃ i khoáº£n Google Ä‘Äƒng nháº­p sáºµn, gÃµ cÃ¢u há»i nhÆ° ngÆ°á»i, rá»“i chÆ°ng
+cáº¥t cÃ¢u tráº£ lá»i thÃ nh claim Ä‘Æ°a vÃ o trÃ­ nhá»› ngá»¯ nghÄ©a. ÄÃ´i khi ERIS sáº½ tá»± nhiÃªn "khoe"
+Ä‘iá»u vá»«a há»c báº±ng giá»ng cá»§a chÃ­nh nÃ³ (cÃ³ tiáº¿t cháº¿). ToÃ n bá»™ cháº¡y ngoÃ i hot path.
 
-> ⚠️ **Rủi ro cần biết.** Tự động hóa tài khoản Google tiêu dùng **vi phạm ToS của
-> Google** và tài khoản **có thể bị khóa**. Cửa sổ Gemini thật có thể **lộ email/tab
-> khác** trên màn hình. Mặc định tính năng **TẮT**; chỉ bật nếu bạn chấp nhận rủi ro này.
+> âš ï¸ **Rá»§i ro cáº§n biáº¿t.** Tá»± Ä‘á»™ng hÃ³a tÃ i khoáº£n Google tiÃªu dÃ¹ng **vi pháº¡m ToS cá»§a
+> Google** vÃ  tÃ i khoáº£n **cÃ³ thá»ƒ bá»‹ khÃ³a**. Cá»­a sá»• Gemini tháº­t cÃ³ thá»ƒ **lá»™ email/tab
+> khÃ¡c** trÃªn mÃ n hÃ¬nh. Máº·c Ä‘á»‹nh tÃ­nh nÄƒng **Táº®T**; chá»‰ báº­t náº¿u báº¡n cháº¥p nháº­n rá»§i ro nÃ y.
 
-### 8.1. Cài Playwright (chỉ khi dùng Tutor)
+### 8.1. CÃ i Playwright (chá»‰ khi dÃ¹ng Tutor)
 ```powershell
 pip install playwright
 playwright install chromium
 ```
 
-### 8.2. Đăng nhập profile một lần (bằng tay) — BẮT BUỘC
-Đã có sẵn script. Chạy **một lần**:
+### 8.2. ÄÄƒng nháº­p profile má»™t láº§n (báº±ng tay) â€” Báº®T BUá»˜C
+ÄÃ£ cÃ³ sáºµn script. Cháº¡y **má»™t láº§n**:
 ```powershell
 python tutor_login.py
 ```
-Cửa sổ Chromium mở `gemini.google.com` với profile bền vững
-(`C:\Users\Gtvkun\Documents\eris_tutor_profile`). Đăng nhập Google trong cửa sổ đó, rồi
-quay lại terminal nhấn Enter để lưu phiên. Từ đó ERIS dùng lại phiên này.
+Cá»­a sá»• Chromium má»Ÿ `gemini.google.com` vá»›i profile bá»n vá»¯ng
+(`C:\Users\Gtvkun\Documents\eris_tutor_profile`). ÄÄƒng nháº­p Google trong cá»­a sá»• Ä‘Ã³, rá»“i
+quay láº¡i terminal nháº¥n Enter Ä‘á»ƒ lÆ°u phiÃªn. Tá»« Ä‘Ã³ ERIS dÃ¹ng láº¡i phiÃªn nÃ y.
 
-> Nếu chưa đăng nhập, lượt hỏi đầu sẽ thấy màn login/captcha → Tutor **tạm ngưng** (không
-> tự vượt) cho tới khi bạn đăng nhập tay; nó không spam tài khoản.
+> Náº¿u chÆ°a Ä‘Äƒng nháº­p, lÆ°á»£t há»i Ä‘áº§u sáº½ tháº¥y mÃ n login/captcha â†’ Tutor **táº¡m ngÆ°ng** (khÃ´ng
+> tá»± vÆ°á»£t) cho tá»›i khi báº¡n Ä‘Äƒng nháº­p tay; nÃ³ khÃ´ng spam tÃ i khoáº£n.
 
-### 8.3. Bật trong `.env`
+### 8.3. Báº­t trong `.env`
 ```dotenv
 ERIS_TUTOR_ENABLED=1
 ERIS_TUTOR_PROFILE_DIR=C:\eris_tutor_profile
 ERIS_TUTOR_LOCAL_MODEL=qwen3:1.7b
 ```
-Các tinh chỉnh khác (nhịp hỏi, trần/giờ, selector, tần suất khoe) xem `.env.example`.
+CÃ¡c tinh chá»‰nh khÃ¡c (nhá»‹p há»i, tráº§n/giá», selector, táº§n suáº¥t khoe) xem `.env.example`.
 
-### 8.4. Lưu việc lưu claim
-Mặc định ERIS sẽ **hỏi + diễn cảnh** nhưng **chưa lưu claim** cho tới khi đường commit
-vào trí nhớ được nối (adapter `tutor_ingest_fn`). Đây là bước cố tình để ngỏ vì ghi vào
-trí nhớ dài hạn là thao tác nhạy cảm — gắn một callable `tutor_ingest_fn(text, *, source,
-gap_id, citations) -> int` lên runtime để bật lưu claim.
+### 8.4. LÆ°u viá»‡c lÆ°u claim
+Máº·c Ä‘á»‹nh ERIS sáº½ **há»i + diá»…n cáº£nh** nhÆ°ng **chÆ°a lÆ°u claim** cho tá»›i khi Ä‘Æ°á»ng commit
+vÃ o trÃ­ nhá»› Ä‘Æ°á»£c ná»‘i (adapter `tutor_ingest_fn`). ÄÃ¢y lÃ  bÆ°á»›c cá»‘ tÃ¬nh Ä‘á»ƒ ngá» vÃ¬ ghi vÃ o
+trÃ­ nhá»› dÃ i háº¡n lÃ  thao tÃ¡c nháº¡y cáº£m â€” gáº¯n má»™t callable `tutor_ingest_fn(text, *, source,
+gap_id, citations) -> int` lÃªn runtime Ä‘á»ƒ báº­t lÆ°u claim.

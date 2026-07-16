@@ -44,10 +44,9 @@ class RuntimeSensoryModelAdapter:
             self.client = ollama_client
         elif self.config.provider == "ollama":
             try:
-                from llm.local_llama_engine import build_local_or_ollama_client
-                self.client = build_local_or_ollama_client()
-            except Exception:
                 self.client = OllamaClient()
+            except Exception:
+                self.client = None
         else:
             self.client = None
 
