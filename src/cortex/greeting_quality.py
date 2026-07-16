@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from .greeting_cognition import GreetingFrame, GreetingCognitionEngine, clean_text, clamp01
+from .startup_anchor_gate import StartupAnchorGate
 
 
 def normalize_text(text: str) -> str:
@@ -28,11 +29,18 @@ class GreetingQuality:
     fake_evidence: float
     poetic_excess: float
     assistant_dna: float
+    anchorability: float
+    unsupported_presupposition: float
     reasons: tuple[str, ...]
 
     @property
     def accepted(self) -> bool:
-        return self.score >= 0.62 and self.meta_leak < 0.35 and self.fake_evidence < 0.35
+        return (
+            self.score >= 0.62
+            and self.meta_leak < 0.35
+            and self.fake_evidence < 0.35
+            and self.unsupported_presupposition < 0.35
+        )
 
 
 class GreetingQualityScorer:
@@ -65,13 +73,17 @@ class GreetingQualityScorer:
 
     def __init__(self, *, cognition: GreetingCognitionEngine | None = None):
         self.cognition = cognition or GreetingCognitionEngine()
+        self.anchor_gate = StartupAnchorGate()
 
     def score(self, text: str, frame: GreetingFrame) -> GreetingQuality:
         cleaned = clean_text(text, limit=220)
         normalized = normalize_text(cleaned)
         reasons: list[str] = []
+        anchor_verdict = self.anchor_gate.validate(cleaned, frame)
+        unsupported_presupposition = 0.0 if anchor_verdict.accepted else 1.0
+        anchorability = 1.0 if anchor_verdict.accepted else 0.0
         if not cleaned:
-            return GreetingQuality(cleaned, 0.0, 0, 0, 0, 0, 0, 1, 0, 0, 1, ("empty",))
+            return GreetingQuality(cleaned, 0.0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, ("empty",))
 
         word_count = len(normalized.split())
         has_return = any(token in normalized for token in ("quay lai", "mo toi", "lai gap", "tro lai", "ve roi"))
@@ -104,6 +116,9 @@ class GreetingQualityScorer:
             reasons.append("fake_screen_or_context_claim")
         if assistant_dna:
             reasons.append("assistant_dna")
+        if not anchor_verdict.accepted:
+            reasons.append("unsupported_presupposition")
+            reasons.extend(anchor_verdict.unsupported_presuppositions)
         if word_count > 24:
             reasons.append("too_long_for_startup")
         if cleaned.endswith("?"):
@@ -119,7 +134,9 @@ class GreetingQualityScorer:
             - 1.80 * fake_evidence
             - 1.40 * max(0.0, poetic_excess - frame.poetic_permission)
             - 1.20 * assistant_dna
-        ) / 5.20
+            - 2.40 * unsupported_presupposition
+            + 0.75 * anchorability
+        ) / 5.75
         score = clamp01(score)
 
         return GreetingQuality(
@@ -134,6 +151,8 @@ class GreetingQualityScorer:
             fake_evidence=clamp01(fake_evidence),
             poetic_excess=clamp01(poetic_excess),
             assistant_dna=clamp01(assistant_dna),
+            anchorability=clamp01(anchorability),
+            unsupported_presupposition=clamp01(unsupported_presupposition),
             reasons=tuple(dict.fromkeys(reasons)),
         )
 
@@ -153,7 +172,12 @@ class GreetingQualityScorer:
         if not best.accepted:
             fallback = self.cognition.deterministic_greeting(frame, avoid_text=avoid_text)
             fallback_quality = self.score(fallback, frame)
-            if fallback_quality.score >= best.score or best.meta_leak or best.fake_evidence:
+            if (
+                fallback_quality.score >= best.score
+                or best.meta_leak
+                or best.fake_evidence
+                or best.unsupported_presupposition
+            ):
                 return fallback_quality
         return best
 

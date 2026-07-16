@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from cortex.greeting_presets import GreetingPresetResolver
+from cortex.startup_anchor_gate import StartupAnchorGate
 from domain import Decision
 
 logger = logging.getLogger("GreetingPreset.Runtime")
@@ -21,6 +22,20 @@ def decision_from_session_ritual(report: Any) -> Decision | None:
     text = str(getattr(report, "greeting_preset_text", "") or "").strip()
     if not preset_id or not text:
         return None
+
+    # Defense in depth: resolver đã lọc preset, nhưng report có thể được tạo bởi
+    # code cũ hoặc dữ liệu cache. Nếu câu không có neo, rewrite về câu hiện diện
+    # an toàn và bỏ audio asset vì WAV cũ không còn khớp chữ.
+    frame = getattr(report, "greeting_frame", None)
+    rewritten = False
+    if frame is not None:
+        gate = StartupAnchorGate()
+        verdict = gate.validate(text, frame)
+        if not verdict.accepted:
+            text = gate.safe_rewrite(frame)
+            preset_id = f"{preset_id}:anchor_rewrite"
+            rewritten = True
+
     return Decision(
         text=text,
         animation="stand",
@@ -34,7 +49,7 @@ def decision_from_session_ritual(report: Any) -> Decision | None:
         stage_motion=str(getattr(report, "greeting_preset_motion", "") or ""),
         speech_act="greeting_start",
         preset_id=preset_id,
-        audio_asset=str(getattr(report, "greeting_audio_asset", "") or ""),
+        audio_asset=("" if rewritten else str(getattr(report, "greeting_audio_asset", "") or "")),
         preset_emotion=str(getattr(report, "greeting_preset_emotion", "") or ""),
     )
 

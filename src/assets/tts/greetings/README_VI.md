@@ -26,6 +26,17 @@ Biến cũ `ERIS_GREETING_PRESETS` vẫn được giữ để tương thích, nh
 `preset` là nguồn quyết định chính. Điều này ngăn một file `.env` cũ vô tình kéo
 runtime trở lại câu greeting deterministic nhạt.
 
+
+## Nguyên tắc neo của câu mở đầu
+
+Catalog này đã được viết lại theo `StartupAnchorGate`:
+
+- Không có task thật thì không nói “vào việc”, “giao tôi phần khó nhất” hoặc “tiếp đoạn trước”.
+- Không có event thật thì không gán người dùng đang “gây chuyện”, đang bận hay đang nhớ Eris.
+- Cá tính đến từ thái độ của Eris: khó tính, kiềm chế, trêu khô, hơi lười. Không đến từ bối cảnh bịa.
+- Mỗi câu phải chịu được câu hỏi ngược “cụ thể là cái gì?”. Nếu runtime không thể chỉ vào một anchor, câu bị loại hoặc rewrite.
+- Khi preset bị rewrite, audio asset cũ bị bỏ để tránh WAV đọc một câu khác với subtitle.
+
 ## Định dạng audio khuyến nghị
 
 - WAV PCM 16-bit mono.

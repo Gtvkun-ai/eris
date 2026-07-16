@@ -89,6 +89,18 @@ class SessionRitualEngine:
 
     def __init__(self, *, preset_resolver: GreetingPresetResolver | None = None) -> None:
         self.preset_resolver = preset_resolver or GreetingPresetResolver()
+        # Banner ngắn để log thực chiến xác nhận hotfix đã được load thật.
+        try:
+            from .startup_anchor_gate import StartupAnchorGate
+
+            logger.info(
+                "[startup-anchor] loaded version=%s presets=%s",
+                StartupAnchorGate.VERSION,
+                len(getattr(self.preset_resolver, "presets", ()) or ()),
+            )
+        except Exception:
+            # Banner debug không được phép phá startup.
+            pass
 
     def evaluate(
         self,
@@ -201,9 +213,11 @@ class SessionRitualEngine:
             except Exception as exc:
                 selection_error = selection_error or f"{type(exc).__name__}: {exc}"[:240]
 
-        greeting_text = (
-            greeting_preset.text if greeting_preset is not None else greeting_candidate
-        ) if should_greet else ""
+        # ``greeting_text`` giữ nghĩa continuity động (resume_goal/loop...).
+        # Preset public nằm ở greeting_preset_text. Tách hai field để code cũ
+        # không hiểu nhầm một câu preset thành continuity anchor và để test/debug
+        # phân biệt rõ "vì sao nói" với "nói câu gì".
+        greeting_text = greeting_candidate if should_greet else ""
         evidence = self._evidence(
             presence_restored=presence_restored,
             continuity_restored=continuity_restored,
@@ -288,7 +302,10 @@ class SessionRitualEngine:
                     "Use local time only when it naturally changes the greeting; do not announce the clock. "
                     "Lead with a bare 'chào' only when there is no continuity to lean on. "
                     "avoid phrases like 'tôi vẫn ở đây', 'tôi vẫn giữ mạch', 'mạch đã nối lại'. "
-                    "Do not over-explain telemetry."
+                    "Do not over-explain telemetry. "
+                    "Every implied object must be backed by the rehydrated goal/loop/attractor above. "
+                    "If no concrete anchor exists, do not invent a task, a hardest part, a bug, a schedule, "
+                    "or user mischief. Let personality come from Eris's self-attitude, not fake context."
                 ),
             ) if str(part or "").strip()
         )

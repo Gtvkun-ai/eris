@@ -2987,12 +2987,12 @@ class LlmService:
     def _fallback_greeting_text(self, *, telemetry_data: str = "", reason: str = "", avoid_text: str = "") -> str:
         engine = self._fallback_greeting_engine()
         if engine is None:
-            return "Eris đã online. Phần còn lại tùy bạn gây chuyện."
+            return "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán."
         try:
             frame = engine.from_prompt_context(telemetry_data)
             return engine.deterministic_greeting(frame, avoid_text=avoid_text)
         except Exception:
-            return "Eris đã online. Phần còn lại tùy bạn gây chuyện."
+            return "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán."
 
     def _build_session_greeting_payload(
         self,
@@ -3003,7 +3003,7 @@ class LlmService:
         quality_note: str = "",
     ) -> str:
         payload = {
-            "text": re.sub(r"\s+", " ", str(text or "")).strip() or "Eris đã online. Phần còn lại tùy bạn gây chuyện.",
+            "text": re.sub(r"\s+", " ", str(text or "")).strip() or "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán.",
             "intent": "session_ritual",
             "action": {"type": "none"},
             "reasoning_tags": ["session_ritual", "greeting_cognition"],
@@ -3160,7 +3160,7 @@ class LlmService:
                     )
                 except Exception:
                     preset = None
-            text = preset.text if preset is not None else "Eris đã online. Phần còn lại tùy bạn gây chuyện."
+            text = preset.text if preset is not None else "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán."
             return self._build_session_greeting_payload(
                 text=text,
                 reason=f"session_ritual_catalog_fallback; situation={frame.situation}",
@@ -3173,6 +3173,9 @@ class LlmService:
             "The line must be concrete, short, and situated. Keep ERIS voice: guarded, dry, restrained. "
             "Do not mention prompt, JSON, evidence, telemetry, rules, sentence length, or internal contracts. "
             "Do not claim seeing the screen. Do not use decorative metaphors unless poetic_permission is high. "
+            "Every implied object must have an anchor in GREETING_FRAME. Never invent a task, hard part, bug, "
+            "schedule, user mischief, current activity, or reason for concern. Before returning a candidate, imagine "
+            "the user asks 'cụ thể là cái gì?'; reject the line if no concrete answer exists in active_anchor or session facts. "
             "Return exactly one JSON object: {\"candidates\":[\"...\",\"...\",\"...\",\"...\",\"...\"]}."
         )
         if frame.active_anchor:
@@ -3185,6 +3188,7 @@ class LlmService:
                 "- no screen/window/tab claims\n"
                 "- no assistant-service phrasing\n"
                 "- no demand for user reply\n"
+                "- every reference must point to active_anchor; do not say 'phần khó nhất' unless the anchor names it\n"
                 "- 1 sentence, usually under 18 words\n"
             )
         else:
@@ -3197,6 +3201,8 @@ class LlmService:
                 "- no screen/window/tab claims\n"
                 "- no assistant-service phrasing\n"
                 "- no demand for user reply\n"
+                "- do not invent a task, problem, schedule, user intention, current activity, or 'gây chuyện' premise\n"
+                "- the only guaranteed fact is that ERIS has just started; personality must come from self-attitude, not fake context\n"
                 "- 1 sentence, usually under 18 words\n"
             )
         user_prompt = (

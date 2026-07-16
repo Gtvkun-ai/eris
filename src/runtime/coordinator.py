@@ -68,6 +68,7 @@ from cortex.subconscious import build_phase1234567_workers
 from cortex.self_observation import SelfObservationEngine
 from cortex.self_model import SelfModelEngine
 from cortex.session_ritual import SessionRitualEngine
+from cortex.startup_anchor_gate import StartupAnchorGate
 from cortex.speech_core import SpeechCoreEngine
 from cortex.thought_stream import ThoughtStream
 from cortex.user_context_stream import RollingUserContext, UserContextStream
@@ -4678,6 +4679,34 @@ class RuntimeCoordinator(
                     should_speak=False,
                     debug_trace="session_ritual_layer; fallback=silent_no_template",
                 )
+
+            # LLM greeting vẫn phải qua Challengeability Check. Một câu nghe hay
+            # nhưng không trả lời được "cụ thể là cái gì?" sẽ bị hạ về một câu
+            # hiện diện có cá tính và không dựng task/sự cố ảo.
+            if decision.text.strip() and getattr(report, "greeting_frame", None) is not None:
+                anchor_gate = StartupAnchorGate()
+                anchor_verdict = anchor_gate.validate(decision.text, report.greeting_frame)
+                if not anchor_verdict.accepted:
+                    original_text = decision.text
+                    decision.text = anchor_gate.safe_rewrite(
+                        report.greeting_frame,
+                        avoid_text=self.last_text,
+                    )
+                    decision.audio_asset = ""
+                    decision.preset_id = ""
+                    greeting_source = "anchor_rewrite"
+                    decision.debug_trace = (
+                        f"{decision.debug_trace} | startup_anchor_rewrite="
+                        f"{','.join(anchor_verdict.unsupported_presuppositions)}; "
+                        f"original={original_text[:120]}"
+                    ).strip(" |")
+                    self.logger.info(
+                        "[startup-anchor] rewrite unsupported=%s original=%r rewritten=%r",
+                        ",".join(anchor_verdict.unsupported_presuppositions),
+                        original_text,
+                        decision.text,
+                    )
+
             if decision.text.strip():
                 decision.intent = decision.intent or "session_ritual"
                 decision.reasoning_tags = tuple(dict.fromkeys((*decision.reasoning_tags, "session_ritual", "startup_greeting")))
@@ -4692,7 +4721,7 @@ class RuntimeCoordinator(
                 self.fe_style_memory = self.fe_renderer.remember_style(
                     self.fe_style_memory,
                     plan=fe_plan,
-                    rendered_text=public_text,
+                    rendered_text=decision.text,
                 )
                 self.last_text = decision.text
                 spoken_at = time.time()

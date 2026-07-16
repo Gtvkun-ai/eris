@@ -1,0 +1,20 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-16 19:58:10
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+19:58:11.795 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+19:58:11.795 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+19:58:11.819 [INFO] [Vision] Da khoi chay vision.py PID=18276
+19:58:15.358 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+19:58:15.358 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: qwen/qwen3-32b
+19:58:16.131 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=1
+19:58:17.127 [INFO] [vision.py] [Loop][INFO] [social cognition v2] loaded version=social_cognition.v2.0 parser=llama-3.1-8b-instant critic=qwen/qwen3-32b
+19:58:35.613 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+19:58:35.799 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+19:58:36.943 [INFO] [vision.py] [Loop][INFO] [autonomous stage] scene=private_active opportunity=none permit=False/suppress reason=no_opportunity
+19:58:37.382 [INFO] [Vision] Dang dung vision.py PID=18276...
+19:58:37.432 [INFO] [Vision] vision.py da thoat (PID=18276, code=-1, unexpected=False).
+19:58:37.449 [INFO] [RunLogger] Ket thuc phien chay.
