@@ -515,6 +515,15 @@ public partial class UdpListener : Node2D
 			rect = rect.Merge(bubbleRect);
 		}
 
+		// TutorPanel là panel trang trí/click xuyên, nhưng nút ẩn vẫn cần bắt chuột.
+		// Gộp vùng panel vào mouse region thay vì khóa toàn màn hình như các panel nặng.
+		bool tutorVisible = _tutorPanel != null && _tutorPanel.Visible && _tutorPanel.Size.X > 0f;
+		if (tutorVisible)
+		{
+			var tutorRect = new Rect2(_tutorPanel.GlobalPosition, _tutorPanel.Size);
+			rect = rect.Merge(tutorRect);
+		}
+
 		// Tránh gọi mỗi frame khi nhân vật đứng yên và bong bóng không đổi.
 		bool unchanged =
 			!_passthroughFullCapture

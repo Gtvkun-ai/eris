@@ -11,12 +11,37 @@ using System.Text.Json;
 // ─────────────────────────────────────────────────────────────────────────────
 public partial class UdpListener : Node2D
 {
-	private static readonly Vector2 TutorPanelMinSize = new(560f, 170f);
+	private sealed class ResearchPanelState
+	{
+		public string EpisodeId { get; init; } = "";
+		public string Mode { get; init; } = "";
+		public string Stage { get; init; } = "";
+		public string Topic { get; init; } = "";
+		public string VerificationStatus { get; init; } = "";
+		public int SourceCount { get; init; }
+		public int TrustedSourceCount { get; init; }
+		public int ClaimCount { get; init; }
+		public int OrphanClaimCount { get; init; }
+		public int ContestedClaimCount { get; init; }
+		public int WarningCount { get; init; }
+		public float CitationCoverage { get; init; }
+		public bool SurfaceCaution { get; init; }
+		public bool HasMetrics { get; init; }
+		public bool HasVerification { get; init; }
+	}
+
+	private static readonly Vector2 TutorPanelMinSize = new(560f, 190f);
 
 	private Panel _tutorPanel;
 	private VBoxContainer _tutorRoot;
 	private Label _tutorTitleLabel;
 	private Label _tutorStatusLabel;
+	private HBoxContainer _tutorResearchChipRow;
+	private ProgressBar _tutorResearchProgress;
+	private Label _tutorModeChipLabel;
+	private Label _tutorVerifyChipLabel;
+	private Label _tutorSourceChipLabel;
+	private Label _tutorCitationChipLabel;
 	private Button _tutorHideButton;
 	private RichTextLabel _tutorQuestionLabel;
 	private RichTextLabel _tutorAnswerLabel;
@@ -25,11 +50,15 @@ public partial class UdpListener : Node2D
 	private Tween _tutorPulseTween;
 	private ulong _tutorHideAtMs = 0;
 	private string _tutorEpisodeId = "";
+	private ResearchPanelState _tutorResearchState;
 
 	private static readonly Color TutorInk = new(0.50f, 0.12f, 0.34f);
 	private static readonly Color TutorInkSoft = new(0.66f, 0.40f, 0.56f);
 	private static readonly Color TutorPink = new(0.97f, 0.46f, 0.66f);
 	private static readonly Color TutorGold = new(0.90f, 0.62f, 0.26f);
+	private static readonly Color TutorGreen = new(0.34f, 0.58f, 0.40f);
+	private static readonly Color TutorWarn = new(0.83f, 0.47f, 0.20f);
+	private static readonly Color TutorRed = new(0.78f, 0.22f, 0.30f);
 
 	[Export] public float TutorPanelAutoHideSeconds = 14f;
 
@@ -107,6 +136,51 @@ public partial class UdpListener : Node2D
 		_tutorHideButton.Pressed += HideTutorPanel;
 		header.AddChild(_tutorHideButton);
 
+		_tutorResearchChipRow = new HBoxContainer
+		{
+			Visible = false,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		_tutorResearchChipRow.AddThemeConstantOverride("separation", 6);
+		root.AddChild(_tutorResearchChipRow);
+
+		_tutorModeChipLabel = MakeTutorChip("mode", TutorInkSoft);
+		_tutorVerifyChipLabel = MakeTutorChip("verify", TutorGold);
+		_tutorSourceChipLabel = MakeTutorChip("nguồn", TutorInkSoft);
+		_tutorCitationChipLabel = MakeTutorChip("cite", TutorInkSoft);
+		_tutorResearchChipRow.AddChild(_tutorModeChipLabel);
+		_tutorResearchChipRow.AddChild(_tutorVerifyChipLabel);
+		_tutorResearchChipRow.AddChild(_tutorSourceChipLabel);
+		_tutorResearchChipRow.AddChild(_tutorCitationChipLabel);
+
+		_tutorResearchProgress = new ProgressBar
+		{
+			Visible = false,
+			MinValue = 0,
+			MaxValue = 100,
+			Value = 0,
+			ShowPercentage = false,
+			CustomMinimumSize = new Vector2(0f, 5f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		var progressBg = new StyleBoxFlat
+		{
+			BgColor = new Color(0.96f, 0.82f, 0.88f, 0.55f),
+			CornerRadiusTopLeft = 5, CornerRadiusTopRight = 5,
+			CornerRadiusBottomRight = 5, CornerRadiusBottomLeft = 5,
+		};
+		var progressFill = new StyleBoxFlat
+		{
+			BgColor = new Color(0.97f, 0.46f, 0.66f, 0.82f),
+			CornerRadiusTopLeft = 5, CornerRadiusTopRight = 5,
+			CornerRadiusBottomRight = 5, CornerRadiusBottomLeft = 5,
+		};
+		_tutorResearchProgress.AddThemeStyleboxOverride("background", progressBg);
+		_tutorResearchProgress.AddThemeStyleboxOverride("fill", progressFill);
+		root.AddChild(_tutorResearchProgress);
+
 		root.AddChild(new ColorRect
 		{
 			Color = new Color(0.96f, 0.80f, 0.88f, 0.5f),
@@ -129,6 +203,24 @@ public partial class UdpListener : Node2D
 		lbl.AddThemeFontSizeOverride("font_size", size);
 		lbl.AddThemeColorOverride("font_color", color);
 		lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
+		return lbl;
+	}
+
+	private Label MakeTutorChip(string text, Color color)
+	{
+		var lbl = MakeTutorLabel(text, 11, color);
+		lbl.CustomMinimumSize = new Vector2(82f, 22f);
+		lbl.HorizontalAlignment = HorizontalAlignment.Center;
+		lbl.VerticalAlignment = VerticalAlignment.Center;
+		lbl.AddThemeStyleboxOverride("normal", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.92f, 0.95f, 0.78f),
+			BorderColor = new Color(0.96f, 0.76f, 0.84f, 0.85f),
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 9, CornerRadiusTopRight = 9,
+			CornerRadiusBottomRight = 9, CornerRadiusBottomLeft = 9,
+			ContentMarginLeft = 7, ContentMarginRight = 7, ContentMarginTop = 2, ContentMarginBottom = 2,
+		});
 		return lbl;
 	}
 
@@ -163,13 +255,32 @@ public partial class UdpListener : Node2D
 			if (!root.TryGetProperty("tutor", out var t) || t.ValueKind != JsonValueKind.Object)
 				return true;
 
+			string episodeId = TutorStr(t, "episode_id");
 			string stage = TutorStr(t, "stage");
 			string question = TutorStr(t, "question");
 			if (string.IsNullOrEmpty(question)) question = TutorStr(t, "question_preview");
 			string answer = TutorStr(t, "answer");
 			int claims = TutorInt(t, "claims");
 			string failReason = TutorStr(t, "fail_reason");
-			DriveTutorPanel(stage, question, answer, claims, failReason);
+
+			ResearchPanelState research = TryReadResearchState(root, episodeId, stage, question);
+			if (!string.IsNullOrWhiteSpace(episodeId) && episodeId != _tutorEpisodeId)
+			{
+				_tutorEpisodeId = episodeId;
+				if (research == null)
+					_tutorResearchState = null;
+			}
+			if (research != null)
+			{
+				_tutorResearchState = research;
+			}
+			else if (_tutorResearchState != null
+				&& (string.IsNullOrWhiteSpace(episodeId) || episodeId == _tutorResearchState.EpisodeId || episodeId == _tutorEpisodeId))
+			{
+				research = _tutorResearchState;
+			}
+
+			DriveTutorPanel(stage, question, answer, claims, failReason, research);
 			return true;
 		}
 		catch (Exception)
@@ -178,7 +289,7 @@ public partial class UdpListener : Node2D
 		}
 	}
 
-	private void DriveTutorPanel(string stage, string question, string answer, int claims, string failReason)
+	private void DriveTutorPanel(string stage, string question, string answer, int claims, string failReason, ResearchPanelState research)
 	{
 		if (_tutorPanel == null)
 			return;
@@ -187,9 +298,28 @@ public partial class UdpListener : Node2D
 			ShowTutorPanel();
 		_tutorHideAtMs = 0; // còn diễn tiến thì không tự ẩn
 		StartTutorPulse();  // "thở" nhẹ để Ngài biết Eris đang đi hỏi Gemini
+		UpdateTutorResearchChips(research);
 
 		switch (stage)
 		{
+			case "queued":
+				_tutorAnswerLabel.Visible = false;
+				_tutorAnswerLabel.Text = "";
+				SetTutorQuestion(TutorTopicForDisplay(research, question));
+				StartTutorDots(TutorModeVerb(research, "đang chuẩn bị tra"));
+				break;
+			case "asking_tutor":
+				SetTutorQuestion(TutorTopicForDisplay(research, question));
+				StartTutorDots(TutorModeVerb(research, "đang hỏi Tutor"));
+				break;
+			case "verifying":
+				SetTutorQuestion(TutorTopicForDisplay(research, question));
+				StartTutorDots("đang lọc nguồn");
+				break;
+			case "verified":
+				SetTutorQuestion(TutorTopicForDisplay(research, question));
+				StopTutorDots(TutorVerifiedText(research));
+				break;
 			case "forming":
 				_tutorAnswerLabel.Visible = false;
 				_tutorAnswerLabel.Text = "";
@@ -211,7 +341,7 @@ public partial class UdpListener : Node2D
 				break;
 			case "done":
 				StopTutorPulse();
-				StopTutorDots(claims > 0 ? $"đã học ✓ ({claims})" : "xong ✓");
+				StopTutorDots(TutorDoneText(claims, research));
 				if (!string.IsNullOrWhiteSpace(answer))
 				{
 					_tutorAnswerLabel.Visible = true;
@@ -229,6 +359,67 @@ public partial class UdpListener : Node2D
 		}
 	}
 
+	private static string TutorTopicForDisplay(ResearchPanelState research, string fallback)
+	{
+		string topic = research?.Topic ?? "";
+		if (!string.IsNullOrWhiteSpace(topic))
+			return topic;
+		return fallback ?? "";
+	}
+
+	private static string TutorModeVerb(ResearchPanelState research, string fallback)
+	{
+		string mode = research?.Mode ?? "";
+		if (mode == "quick_search")
+			return "đang search nhanh";
+		if (mode == "research")
+			return "đang hỏi Tutor";
+		return fallback;
+	}
+
+	private static string TutorVerifiedText(ResearchPanelState research)
+	{
+		if (research == null)
+			return "đã kiểm chứng ✓";
+		if (research.VerificationStatus == "passed")
+			return "đã kiểm chứng ✓";
+		if (research.VerificationStatus == "failed")
+			return "nguồn yếu ⚠";
+		if (research.WarningCount > 0 || research.SurfaceCaution)
+			return "có cảnh báo ⚠";
+		return "đã lọc xong ✓";
+	}
+
+	private static string TutorDoneText(int claims, ResearchPanelState research)
+	{
+		if (claims > 0)
+			return $"đã học ✓ ({claims})";
+		if (research != null)
+			return TutorVerifiedText(research);
+		return "xong ✓";
+	}
+
+	private static string TutorVerifyChipText(string verifyText, ResearchPanelState research)
+	{
+		if (string.IsNullOrWhiteSpace(verifyText))
+			return "đang tra";
+		if (verifyText == "passed")
+			return "đủ nguồn";
+		if (verifyText == "passed_with_warnings")
+			return "cảnh báo";
+		if (verifyText == "failed")
+			return "nguồn yếu";
+		if (verifyText == "queued")
+			return "xếp lượt";
+		if (verifyText == "asking_tutor")
+			return research != null && research.Mode == "quick_search" ? "đang search" : "đang hỏi";
+		if (verifyText == "verifying")
+			return "đang lọc";
+		if (verifyText == "verified")
+			return "đã lọc";
+		return verifyText.Length > 14 ? verifyText.Substring(0, 14) : verifyText;
+	}
+
 	private static string TutorFailText(string reason)
 	{
 		switch (reason)
@@ -244,6 +435,170 @@ public partial class UdpListener : Node2D
 			case "network_error": return "mạng trục trặc";
 			default: return "hỏi hụt rồi";
 		}
+	}
+
+	private void UpdateTutorResearchChips(ResearchPanelState research)
+	{
+		if (_tutorResearchChipRow == null)
+			return;
+		if (research == null)
+		{
+			_tutorResearchChipRow.Visible = false;
+			if (_tutorResearchProgress != null)
+			{
+				_tutorResearchProgress.Visible = false;
+				_tutorResearchProgress.Value = 0;
+			}
+			if (_tutorTitleLabel != null)
+				_tutorTitleLabel.Text = "✦ Eris hỏi trợ lý Gemini";
+			return;
+		}
+
+		_tutorResearchChipRow.Visible = true;
+		UpdateTutorResearchProgress(research);
+		if (_tutorTitleLabel != null)
+			_tutorTitleLabel.Text = research.Mode == "quick_search"
+				? "✦ Eris search nhanh qua Tutor"
+				: "✦ Eris hỏi Tutor rồi tự kiểm chứng";
+		string modeText = research.Mode == "quick_search" ? "search nhanh" : "research";
+		SetTutorChip(_tutorModeChipLabel, modeText, TutorInkSoft);
+
+		Color verifyColor = TutorGold;
+		string verifyText = string.IsNullOrWhiteSpace(research.VerificationStatus) ? research.Stage : research.VerificationStatus;
+		if (verifyText == "passed") verifyColor = TutorGreen;
+		else if (verifyText == "failed") verifyColor = TutorRed;
+		else if (research.WarningCount > 0 || research.SurfaceCaution) verifyColor = TutorWarn;
+		SetTutorChip(_tutorVerifyChipLabel, TutorVerifyChipText(verifyText, research), verifyColor);
+
+		if (research.HasMetrics)
+		{
+			string src = $"nguồn {research.SourceCount}";
+			if (research.TrustedSourceCount > 0)
+				src += $" / tin {research.TrustedSourceCount}";
+			SetTutorChip(_tutorSourceChipLabel, src, research.SourceCount > 0 ? TutorGreen : TutorWarn);
+			string citeText = $"cite {Mathf.RoundToInt(research.CitationCoverage * 100f)}%";
+			Color citeColor = research.CitationCoverage >= 0.75f ? TutorGreen : TutorWarn;
+			if (research.ContestedClaimCount > 0)
+			{
+				citeText = $"mâu thuẫn {research.ContestedClaimCount}";
+				citeColor = TutorRed;
+			}
+			else if (research.OrphanClaimCount > 0)
+			{
+				citeText = $"mồ côi {research.OrphanClaimCount}";
+				citeColor = TutorWarn;
+			}
+			SetTutorChip(_tutorCitationChipLabel, citeText, citeColor);
+		}
+		else
+		{
+			SetTutorChip(_tutorSourceChipLabel, "nguồn …", TutorInkSoft);
+			SetTutorChip(_tutorCitationChipLabel, "cite …", TutorInkSoft);
+		}
+
+		CallDeferred(nameof(FitTutorPanelHeight));
+	}
+
+	private void UpdateTutorResearchProgress(ResearchPanelState research)
+	{
+		if (_tutorResearchProgress == null)
+			return;
+		if (research == null)
+		{
+			_tutorResearchProgress.Visible = false;
+			_tutorResearchProgress.Value = 0;
+			return;
+		}
+		_tutorResearchProgress.Visible = true;
+		float value = 12f;
+		switch (research.Stage)
+		{
+			case "queued": value = 18f; break;
+			case "asking_tutor": value = 45f; break;
+			case "verifying": value = 72f; break;
+			case "verified": value = 92f; break;
+			case "done": value = 100f; break;
+		}
+		if (research.HasVerification)
+			value = Mathf.Max(value, 88f);
+		_tutorResearchProgress.Value = Mathf.Clamp(value, 0f, 100f);
+	}
+
+	private void SetTutorChip(Label label, string text, Color color)
+	{
+		if (label == null)
+			return;
+		label.Text = string.IsNullOrWhiteSpace(text) ? "…" : text;
+		label.AddThemeColorOverride("font_color", color);
+	}
+
+	private static ResearchPanelState TryReadResearchState(JsonElement root, string episodeId, string fallbackStage, string fallbackTopic)
+	{
+		if (!root.TryGetProperty("research", out var research) || research.ValueKind != JsonValueKind.Object)
+			return null;
+
+		string mode = TutorStr(research, "mode");
+		string stage = TutorStr(research, "stage");
+		string topic = TutorStr(research, "topic");
+		if (string.IsNullOrWhiteSpace(stage))
+			stage = fallbackStage ?? "";
+		if (string.IsNullOrWhiteSpace(topic))
+			topic = fallbackTopic ?? "";
+
+		string verificationStatus = "";
+		int orphanClaims = 0;
+		int contestedClaims = 0;
+		float citationCoverage = 0f;
+		bool surfaceCaution = false;
+		bool hasVerification = false;
+		if (research.TryGetProperty("verification", out var verification) && verification.ValueKind == JsonValueKind.Object)
+		{
+			hasVerification = true;
+			verificationStatus = TutorStr(verification, "overall_status");
+			orphanClaims = TutorInt(verification, "orphan_claim_count");
+			contestedClaims = TutorInt(verification, "contested_claim_count");
+			citationCoverage = TutorFloat(verification, "citation_coverage");
+			surfaceCaution = TutorBool(verification, "surface_caution");
+		}
+
+		int sourceCount = 0;
+		int trustedSourceCount = 0;
+		int claimCount = 0;
+		int warningCount = 0;
+		bool hasMetrics = false;
+		if (research.TryGetProperty("metrics", out var metrics) && metrics.ValueKind == JsonValueKind.Object)
+		{
+			hasMetrics = true;
+			if (string.IsNullOrWhiteSpace(mode)) mode = TutorStr(metrics, "mode");
+			sourceCount = TutorInt(metrics, "source_count");
+			trustedSourceCount = TutorInt(metrics, "trusted_source_count");
+			claimCount = TutorInt(metrics, "claim_count");
+			warningCount = TutorInt(metrics, "warning_count");
+			if (string.IsNullOrWhiteSpace(verificationStatus)) verificationStatus = TutorStr(metrics, "verification_status");
+			if (citationCoverage <= 0f) citationCoverage = TutorFloat(metrics, "citation_coverage");
+			if (orphanClaims == 0) orphanClaims = TutorInt(metrics, "orphan_claim_count");
+			if (contestedClaims == 0) contestedClaims = TutorInt(metrics, "contested_claim_count");
+			if (!surfaceCaution) surfaceCaution = TutorBool(metrics, "should_surface_cautiously");
+		}
+
+		return new ResearchPanelState
+		{
+			EpisodeId = episodeId ?? "",
+			Mode = string.IsNullOrWhiteSpace(mode) ? "research" : mode,
+			Stage = stage,
+			Topic = topic,
+			VerificationStatus = verificationStatus,
+			SourceCount = sourceCount,
+			TrustedSourceCount = trustedSourceCount,
+			ClaimCount = claimCount,
+			OrphanClaimCount = orphanClaims,
+			ContestedClaimCount = contestedClaims,
+			WarningCount = warningCount,
+			CitationCoverage = Mathf.Clamp(citationCoverage, 0f, 1f),
+			SurfaceCaution = surfaceCaution,
+			HasMetrics = hasMetrics,
+			HasVerification = hasVerification,
+		};
 	}
 
 	private void SetTutorQuestion(string question)
@@ -352,6 +707,8 @@ public partial class UdpListener : Node2D
 			return;
 		_tutorPanel.Visible = false;
 		_tutorHideAtMs = 0;
+		_tutorResearchState = null;
+		UpdateTutorResearchChips(null);
 		StopTutorDots("");
 		StopTutorPulse();
 		KillTutorTypeTween();
@@ -389,6 +746,8 @@ public partial class UdpListener : Node2D
 			return;
 		_tutorPanel.Visible = false;
 		_tutorHideAtMs = 0;
+		_tutorResearchState = null;
+		UpdateTutorResearchChips(null);
 		StopTutorDots("");
 		StopTutorPulse();
 		KillTutorTypeTween();
@@ -406,5 +765,28 @@ public partial class UdpListener : Node2D
 		if (obj.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out int n))
 			return n;
 		return 0;
+	}
+
+	private static float TutorFloat(JsonElement obj, string key)
+	{
+		if (obj.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetSingle(out float n))
+			return n;
+		return 0f;
+	}
+
+	private static bool TutorBool(JsonElement obj, string key)
+	{
+		if (!obj.TryGetProperty(key, out var v))
+			return false;
+		if (v.ValueKind == JsonValueKind.True) return true;
+		if (v.ValueKind == JsonValueKind.False) return false;
+		if (v.ValueKind == JsonValueKind.String)
+		{
+			string text = v.GetString() ?? "";
+			return text.Equals("true", StringComparison.OrdinalIgnoreCase)
+				|| text.Equals("1", StringComparison.OrdinalIgnoreCase)
+				|| text.Equals("yes", StringComparison.OrdinalIgnoreCase);
+		}
+		return false;
 	}
 }
