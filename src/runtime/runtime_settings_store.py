@@ -64,7 +64,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "now_playing_enabled": True,
     },
     "prompt": {
-        "hard_cap_tokens": 4800,
+        "hard_cap_tokens": 0,
         "dds_enabled": True,
         "strict_grounding": True,
     },
@@ -331,7 +331,8 @@ class RuntimeSettingsStore:
                 continue
             os.environ[env_name] = _format_env_value(value, kind)
         # Giữ alias tổng/hard cap đồng nhất cho nhánh token-budget cũ.
-        hard_cap = str(_get_path(payload, ("prompt", "hard_cap_tokens")) or 4800)
+        hard_cap_value = _get_path(payload, ("prompt", "hard_cap_tokens"))
+        hard_cap = str(0 if hard_cap_value is None else hard_cap_value)
         os.environ["ERIS_LLM_PROMPT_HARD_CAP_TOKENS"] = hard_cap
         os.environ["ERIS_LLM_PROMPT_TOTAL_TOKENS"] = hard_cap
 
@@ -558,7 +559,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "chat.completion_chat_tokens": (384, 4096),
         "chat.chat_timeout_seconds": (5, 120),
         "chat.max_concurrency": (1, 16),
-        "prompt.hard_cap_tokens": (1024, 12000),
+        "prompt.hard_cap_tokens": (0, 1_000_000),
         "hardening.production_validation_turns": (20, 30),
         "stage.prefetch_workers": (1, 8),
         "stage.max_tts_segments": (1, 12),

@@ -56,7 +56,7 @@ public partial class UdpListener : Node2D
 	private bool _advancedSelfCritique = true;
 	private bool _advancedDirectorSecondPass;
 
-	private int _advancedPromptHardCapTokens = 4800;
+	private int _advancedPromptHardCapTokens = 0;
 	private bool _advancedDdsEnabled = true;
 	private bool _advancedStrictGrounding = true;
 	private bool _advancedMemorySemanticParser;
@@ -273,9 +273,9 @@ public partial class UdpListener : Node2D
 
 	private void BuildAdvancedMemoryCard(Control parent)
 	{
-		_advancedPromptCapSelect = AddAdvancedOptionRow(parent, 48f, "Prompt tổng", new[] { "3600", "4200", "4800", "5200", "6000" }, _advancedPromptHardCapTokens.ToString(), value =>
+		_advancedPromptCapSelect = AddAdvancedOptionRow(parent, 48f, "Prompt tổng", new[] { "0", "3600", "4200", "4800", "5200", "6000" }, _advancedPromptHardCapTokens.ToString(), value =>
 		{
-			_advancedPromptHardCapTokens = ParseAdvancedInt(value, 4800, 1024, 12000);
+			_advancedPromptHardCapTokens = ParseAdvancedInt(value, 0, 0, 1000000);
 			MarkAdvancedChanged("prompt cap");
 		});
 
@@ -506,7 +506,7 @@ public partial class UdpListener : Node2D
 		if (_advancedConcurrencySelect != null && _advancedConcurrencySelect.Selected >= 0)
 			_advancedMaxConcurrency = ParseAdvancedInt(_advancedConcurrencySelect.GetItemText(_advancedConcurrencySelect.Selected), _advancedMaxConcurrency, 1, 16);
 		if (_advancedPromptCapSelect != null && _advancedPromptCapSelect.Selected >= 0)
-			_advancedPromptHardCapTokens = ParseAdvancedInt(_advancedPromptCapSelect.GetItemText(_advancedPromptCapSelect.Selected), _advancedPromptHardCapTokens, 1024, 12000);
+			_advancedPromptHardCapTokens = ParseAdvancedInt(_advancedPromptCapSelect.GetItemText(_advancedPromptCapSelect.Selected), _advancedPromptHardCapTokens, 0, 1000000);
 		if (_advancedMaintenanceBudgetSelect != null && _advancedMaintenanceBudgetSelect.Selected >= 0)
 			_advancedMemoryMaintenanceBudget = _advancedMaintenanceBudgetSelect.GetItemText(_advancedMaintenanceBudgetSelect.Selected);
 		if (_advancedRetortModeSelect != null && _advancedRetortModeSelect.Selected >= 0)
@@ -529,7 +529,7 @@ public partial class UdpListener : Node2D
 		if (TryReadBool(root, "auto_fallback", out bool autoFallback)) _advancedAutoFallback = autoFallback;
 		if (TryReadBool(root, "self_critique_enabled", out bool selfCritique)) _advancedSelfCritique = selfCritique;
 		if (TryReadBool(root, "director_second_pass", out bool secondPass)) _advancedDirectorSecondPass = secondPass;
-		_advancedPromptHardCapTokens = ReadAdvancedInt(root, "prompt_hard_cap_tokens", _advancedPromptHardCapTokens, 1024, 12000);
+		_advancedPromptHardCapTokens = ReadAdvancedInt(root, "prompt_hard_cap_tokens", _advancedPromptHardCapTokens, 0, 1000000);
 		if (TryReadBool(root, "dds_enabled", out bool dds)) _advancedDdsEnabled = dds;
 		if (TryReadBool(root, "strict_grounding", out bool grounding)) _advancedStrictGrounding = grounding;
 		if (TryReadBool(root, "memory_semantic_parser", out bool parser)) _advancedMemorySemanticParser = parser;
@@ -560,7 +560,7 @@ public partial class UdpListener : Node2D
 		_advancedAutoFallback = !IsTruthy(ReadSecretString(root, "ERIS_NO_FALLBACK_MODE", _advancedAutoFallback ? "0" : "1"));
 		_advancedSelfCritique = IsTruthy(ReadSecretString(root, "ERIS_SELF_CRITIQUE_ENABLED", _advancedSelfCritique ? "1" : "0"));
 		_advancedDirectorSecondPass = IsTruthy(ReadSecretString(root, "ERIS_CHAT_DIRECTOR_SECOND_PASS", _advancedDirectorSecondPass ? "1" : "0"));
-		_advancedPromptHardCapTokens = ParseAdvancedInt(ReadSecretString(root, "ERIS_LLM_PROMPT_HARD_CAP_TOKENS", _advancedPromptHardCapTokens.ToString()), _advancedPromptHardCapTokens, 1024, 12000);
+		_advancedPromptHardCapTokens = ParseAdvancedInt(ReadSecretString(root, "ERIS_LLM_PROMPT_HARD_CAP_TOKENS", _advancedPromptHardCapTokens.ToString()), _advancedPromptHardCapTokens, 0, 1000000);
 		_advancedDdsEnabled = IsTruthy(ReadSecretString(root, "ERIS_DDS_ENABLED", _advancedDdsEnabled ? "1" : "0"));
 		_advancedStrictGrounding = IsTruthy(ReadSecretString(root, "ERIS_STRICT_GROUNDING", _advancedStrictGrounding ? "1" : "0"));
 		_advancedMemorySemanticParser = IsTruthy(ReadSecretString(root, "ERIS_MEMORY_SEMANTIC_PARSER", _advancedMemorySemanticParser ? "1" : "0"));

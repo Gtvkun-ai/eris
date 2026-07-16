@@ -2187,7 +2187,9 @@ class LlmService:
                 initial_stage = _routed_stage
         # Prefer the dedicated Groq fallback client for format recovery; fall back
         # to the speech/style client only if no fallback client was wired.
-        recovery_client = getattr(self, "fallback_client", None) or self.style_client
+        recovery_client = None if no_fallback_mode_enabled() else (
+            getattr(self, "fallback_client", None) or self.style_client
+        )
         def _is_recoverable_transport_exception(exc: Exception) -> bool:
             name = type(exc).__name__
             return (

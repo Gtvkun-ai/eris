@@ -39,6 +39,7 @@ _PER_MESSAGE_OVERHEAD = 4
 _IMAGE_TOKEN_COST = 768
 # Tỉ lệ chừa headroom dưới trần TPM khi suy ra hard-cap mặc định.
 _DEFAULT_HEADROOM = 0.85
+_NO_HARD_CAP_TOKENS = 1_000_000_000
 
 
 def _safe_int_env(name: str, default: int) -> int:
@@ -108,12 +109,18 @@ def hard_cap_for_provider(provider: str) -> int:
 
     Lưu ý: ưu tiên (1) > (2). Nếu chỉ muốn siết Groq mà vẫn để shopaikey/gemini
     rộng, đặt ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS_GROQ=5200`` và BỎ biến chung.
+    Đặt ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS=0`` để tắt hard-cap prompt.
     """
 
     prov = (provider or "default").strip().lower()
+    if _truthy_env("ERIS_DISABLE_PROMPT_HARD_CAP") is True:
+        return _NO_HARD_CAP_TOKENS
     per_provider = _safe_int_env(f"ERIS_LLM_PROMPT_HARD_CAP_TOKENS_{prov.upper()}", 0)
     if per_provider > 0:
         return per_provider
+    if os.environ.get("ERIS_LLM_PROMPT_HARD_CAP_TOKENS") is not None:
+        override = _safe_int_env("ERIS_LLM_PROMPT_HARD_CAP_TOKENS", 0)
+        return override if override > 0 else _NO_HARD_CAP_TOKENS
     try:
         from runtime.runtime_settings_store import runtime_int
         runtime_cap = runtime_int("prompt", "hard_cap_tokens", default=0)
@@ -121,9 +128,8 @@ def hard_cap_for_provider(provider: str) -> int:
         runtime_cap = 0
     if runtime_cap > 0:
         return runtime_cap
-    override = _safe_int_env("ERIS_LLM_PROMPT_HARD_CAP_TOKENS", 0)
-    if override > 0:
-        return override
+    if runtime_cap <= 0:
+        return _NO_HARD_CAP_TOKENS
     return max(512, int(budget_for_provider(prov) * _DEFAULT_HEADROOM))
 
 

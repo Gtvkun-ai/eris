@@ -10,7 +10,7 @@
     "director_candidate_mode": "adaptive",
     "director_second_pass": "adaptive",
     "low_quality_fail_open": false,
-    "auto_fallback": true,
+    "auto_fallback": false,
     "completion_chat_tokens": 1280,
     "chat_timeout_seconds": 30,
     "max_concurrency": 4
@@ -39,7 +39,7 @@
     "now_playing_enabled": true
   },
   "prompt": {
-    "hard_cap_tokens": 12000,
+    "hard_cap_tokens": 0,
     "dds_enabled": false,
     "strict_grounding": true
   },

@@ -76,10 +76,10 @@ class RemoteModelProcessManager:
         else:
             api_key = (
                 str(remote_profile.get("api_key") or "").strip()
-                or get_secret("ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+                or get_secret("ERIS_REMOTE_API_KEY", "ERIS_AGGREGATOR_API_KEY", "OPENAI_API_KEY")
             )
         if not api_key:
-            raise RuntimeError("Remote API dang bat nhung chua co ERIS_REMOTE_API_KEY.")
+            raise RuntimeError("Remote API dang bat nhung chua co ERIS_REMOTE_API_KEY/ERIS_AGGREGATOR_API_KEY.")
         self.logger.info("Dung OpenAI-compatible API tai %s voi model %s", base_url, model_name)
         try:
             return OpenAICompatibleClient(
