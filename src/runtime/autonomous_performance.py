@@ -71,6 +71,10 @@ class AutonomousPerformanceAct:
     show_arc_id: str
     show_arc_family: str
     show_arc_stage: str
+    show_format_id: str
+    show_format_family: str
+    show_format_variant: int
+    stage_energy: float
     line_shape: str
     opening_mode: str
     closing_mode: str
@@ -99,6 +103,10 @@ class AutonomousPerformanceAct:
             "show_arc_id": self.show_arc_id,
             "show_arc_family": self.show_arc_family,
             "show_arc_stage": self.show_arc_stage,
+            "show_format_id": self.show_format_id,
+            "show_format_family": self.show_format_family,
+            "show_format_variant": self.show_format_variant,
+            "stage_energy": self.stage_energy,
             "line_shape": self.line_shape,
             "opening_mode": self.opening_mode,
             "closing_mode": self.closing_mode,
@@ -144,6 +152,7 @@ class AutonomousPerformancePlanner:
         scene = plan.get("scene") if isinstance(plan.get("scene"), Mapping) else {}
         directive = plan.get("session_directive") if isinstance(plan.get("session_directive"), Mapping) else {}
         show_arc = plan.get("show_arc_directive") if isinstance(plan.get("show_arc_directive"), Mapping) else {}
+        show_format = plan.get("show_format") if isinstance(plan.get("show_format"), Mapping) else {}
         stage_preset = plan.get("stage_preset") if isinstance(plan.get("stage_preset"), Mapping) else {}
         audience_feedback = plan.get("audience_feedback") if isinstance(plan.get("audience_feedback"), Mapping) else {}
         perf = performance_context if isinstance(performance_context, Mapping) else {}
@@ -176,9 +185,19 @@ class AutonomousPerformancePlanner:
         show_arc_id = str(show_arc.get("arc_id", "") or "")
         show_arc_family = str(show_arc.get("arc_family", "standalone") or "standalone")
         show_arc_stage = str(show_arc.get("arc_stage", "setup") or "setup")
+        show_format_id = str(show_format.get("format_id", "micro_reaction") or "micro_reaction")
+        show_format_family = str(show_format.get("family", "reaction") or "reaction")
+        try:
+            show_format_variant = max(1, int(show_format.get("variant", 1) or 1))
+        except (TypeError, ValueError):
+            show_format_variant = 1
+        try:
+            stage_energy = max(0.0, min(1.0, float(show_format.get("stage_energy", 0.32) or 0.32)))
+        except (TypeError, ValueError):
+            stage_energy = 0.32
         line_shape = str(show_arc.get("line_shape", "single_strike") or "single_strike")
-        opening_mode = str(show_arc.get("opening_mode", "scene_set") or "scene_set")
-        closing_mode = str(show_arc.get("closing_mode", "neutral_settle") or "neutral_settle")
+        opening_mode = str(show_format.get("opening_mode") or show_arc.get("opening_mode", "scene_set") or "scene_set")
+        closing_mode = str(show_format.get("closing_mode") or show_arc.get("closing_mode", "neutral_settle") or "neutral_settle")
         try:
             hold_bias = int(directive.get("opening_hold_bias_ms", 0) or 0)
             hold_bias += int(stage_preset.get("opening_hold_bias_ms", 0) or 0)
@@ -203,6 +222,17 @@ class AutonomousPerformancePlanner:
         elif cadence == "restrained":
             closing_hold = max(closing_hold, 360)
         sentence_parts = self._split_line(line)
+        try:
+            max_beats = max(1, min(3, int(show_format.get("max_beats", 2) or 2)))
+        except (TypeError, ValueError):
+            max_beats = 2
+        if len(sentence_parts) > max_beats:
+            sentence_parts = (*sentence_parts[: max_beats - 1], " ".join(sentence_parts[max_beats - 1:]).strip())
+        # Variant lặp hạ cử chỉ; energy cao mới cho phép nâng density một nấc.
+        if show_format_variant >= 2 and gesture_density in {"medium", "high"}:
+            gesture_density = "low"
+        elif stage_energy >= 0.70 and gesture_density == "low":
+            gesture_density = "medium"
         speech_beats: list[PerformanceBeat] = []
         for idx, part in enumerate(sentence_parts):
             pause = self._pause_after(
@@ -258,7 +288,8 @@ class AutonomousPerformancePlanner:
         note = (
             f"Autonomous stage act ({session_phase}/{cadence}; preset={stage_preset_id}; "
             f"lane={performance_lane}; feedback={audience_feedback_mode}; "
-            f"arc={show_arc_family}/{show_arc_stage}; shape={line_shape}). "
+            f"arc={show_arc_family}/{show_arc_stage}; format={show_format_id}/v{show_format_variant}; "
+            f"energy={stage_energy:.2f}; shape={line_shape}). "
             f"Hold {opening_hold}ms before the first word. "
             f"Deliver {len(speech_beats)} deliberate speech beat(s); keep pauses short and intentional. "
             "Do not add filler, laughter, or stage directions that are not present in the text."
@@ -280,6 +311,10 @@ class AutonomousPerformancePlanner:
             show_arc_id=show_arc_id,
             show_arc_family=show_arc_family,
             show_arc_stage=show_arc_stage,
+            show_format_id=show_format_id,
+            show_format_family=show_format_family,
+            show_format_variant=show_format_variant,
+            stage_energy=stage_energy,
             line_shape=line_shape,
             opening_mode=opening_mode,
             closing_mode=closing_mode,

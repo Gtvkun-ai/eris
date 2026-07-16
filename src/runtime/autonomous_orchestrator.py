@@ -31,6 +31,7 @@ from runtime.autonomous_speak_gate import AutonomousSpeakPermissionGate, SpeakPe
 from runtime.autonomous_session_director import AutonomousSessionDirector, SessionDirective
 from runtime.autonomous_show_arc import AutonomousShowArcDirector, ShowArcDirective
 from runtime.autonomous_stage_presets import AutonomousStagePreset, AutonomousStagePresetResolver
+from runtime.autonomous_show_formats import AutonomousShowFormatDirector, ShowFormatDirective
 
 
 def _enabled() -> bool:
@@ -50,8 +51,8 @@ class AutonomousPlan:
     stage_preset: AutonomousStagePreset | None = None
     audience_feedback: AudienceFeedbackDirective | None = None
     policy_decision: AutonomousPolicyDecision | None = None
+    show_format: ShowFormatDirective | None = None
     architecture_version: str = AUTONOMOUS_STAGE_ARCHITECTURE_VERSION
-    cycle_id: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -66,8 +67,8 @@ class AutonomousPlan:
             "stage_preset": self.stage_preset.to_payload() if self.stage_preset else None,
             "audience_feedback": self.audience_feedback.to_payload() if self.audience_feedback else None,
             "policy_decision": self.policy_decision.to_payload() if self.policy_decision else None,
+            "show_format": self.show_format.to_payload() if self.show_format else None,
             "architecture_version": self.architecture_version,
-            "cycle_id": self.cycle_id,
         }
 
 
@@ -80,6 +81,7 @@ class AutonomousPerformerOrchestrator:
         self.speak_gate = AutonomousSpeakPermissionGate()
         self.session_director = AutonomousSessionDirector()
         self.show_arc_director = AutonomousShowArcDirector()
+        self.show_format_director = AutonomousShowFormatDirector()
         self.stage_preset_resolver = AutonomousStagePresetResolver()
         self.audience_feedback_loop = AutonomousAudienceFeedbackLoop()
         # Phase 6: một resolver duy nhất hợp nhất quyền nói, audit dài hạn phát
@@ -88,9 +90,6 @@ class AutonomousPerformerOrchestrator:
         self.long_run_audit = AutonomousLongRunAudit()
         self.debug_store = AutonomousDebugSnapshotStore()
         self.last_plan: AutonomousPlan | None = None
-        # Phase 7: opportunity bị defer trong post-chat grace được giữ tới khi
-        # eligible; không chết sau 12–15 giây rồi biến mất khỏi lịch sử.
-        self._pending_opportunities: dict[str, AutonomousOpportunity] = {}
 
     def evaluate(
         self,
@@ -101,8 +100,6 @@ class AutonomousPerformerOrchestrator:
         user_context: Any = None,
         wake_decision: Any = None,
         now_ms: int | None = None,
-        cycle_id: str = "",
-        runtime_policy: dict[str, Any] | None = None,
     ) -> AutonomousPlan:
         now = int(now_ms if now_ms is not None else time.time() * 1000)
         scene = self.scene_runtime.update(
@@ -123,6 +120,10 @@ class AutonomousPerformerOrchestrator:
                 scene=scene, opportunity=None, session_directive=directive, now_ms=now
             )
             audience_feedback = self.audience_feedback_loop.directive(now_ms=now)
+            show_format = self.show_format_director.select(
+                scene=scene, opportunity=None, show_arc=show_arc, session_directive=directive,
+                stage_preset=stage_preset, audience_feedback=audience_feedback,
+            )
             policy_decision = self.policy_resolver.resolve(
                 base_permit=permit,
                 opportunity=None,
@@ -131,8 +132,6 @@ class AutonomousPerformerOrchestrator:
                 session_directive=directive,
                 audience_feedback_loop=self.audience_feedback_loop,
                 audience_directive=audience_feedback,
-                runtime_policy=runtime_policy,
-                now_ms=now,
             )
             plan = AutonomousPlan(
                 scene=scene,
@@ -146,7 +145,7 @@ class AutonomousPerformerOrchestrator:
                 stage_preset=stage_preset,
                 audience_feedback=audience_feedback,
                 policy_decision=policy_decision,
-                cycle_id=str(cycle_id or ""),
+                show_format=show_format,
             )
             self.last_plan = plan
             self._track_plan(plan)
@@ -159,12 +158,6 @@ class AutonomousPerformerOrchestrator:
             signal_diff=signal_diff,
             wake_decision=wake_decision,
             now_ms=now,
-        )
-        opportunities = self._merge_pending_opportunities(
-            opportunities,
-            scene=scene,
-            now_ms=now,
-            runtime_policy=runtime_policy,
         )
         eligible_opportunities = self.stage_preset_resolver.selectable_opportunities(
             opportunities,
@@ -202,6 +195,10 @@ class AutonomousPerformerOrchestrator:
         audience_feedback = self.audience_feedback_loop.directive(
             opportunity=selected, now_ms=now
         )
+        show_format = self.show_format_director.select(
+            scene=scene, opportunity=selected, show_arc=show_arc, session_directive=directive,
+            stage_preset=stage_preset, audience_feedback=audience_feedback,
+        )
         policy_decision = self.policy_resolver.resolve(
             base_permit=base_permit,
             opportunity=selected,
@@ -210,8 +207,6 @@ class AutonomousPerformerOrchestrator:
             session_directive=directive,
             audience_feedback_loop=self.audience_feedback_loop,
             audience_directive=audience_feedback,
-            runtime_policy=runtime_policy,
-            now_ms=now,
         )
         plan = AutonomousPlan(
             scene=scene,
@@ -224,72 +219,11 @@ class AutonomousPerformerOrchestrator:
             stage_preset=stage_preset,
             audience_feedback=audience_feedback,
             policy_decision=policy_decision,
-            cycle_id=str(cycle_id or ""),
+            show_format=show_format,
         )
         self.last_plan = plan
         self._track_plan(plan)
         return plan
-
-    def _merge_pending_opportunities(
-        self,
-        fresh: tuple[AutonomousOpportunity, ...],
-        *,
-        scene: SceneRuntimeState,
-        now_ms: int,
-        runtime_policy: dict[str, Any] | None,
-    ) -> tuple[AutonomousOpportunity, ...]:
-        """Giữ opportunity qua post-chat grace và dedupe transition mới nhất."""
-        blocked_until = int((runtime_policy or {}).get("presence_blocked_until_ms", 0) or 0)
-        # Dọn item đã hết hạn. Pending chỉ hết hạn sau cửa eligible của chính nó.
-        for opp_id, item in list(self._pending_opportunities.items()):
-            if now_ms >= int(item.expires_at_ms or 0):
-                self._pending_opportunities.pop(opp_id, None)
-
-        for item in fresh:
-            current = item
-            is_emergency = item.kind == "new_error" and float(item.urgency or 0.0) >= 0.92
-            if blocked_until > now_ms and not is_emergency:
-                ttl = max(1_000, int(item.expires_at_ms - item.created_at_ms))
-                current = replace(
-                    item,
-                    eligible_after_ms=blocked_until,
-                    expires_at_ms=blocked_until + ttl,
-                    status="pending",
-                )
-            # Scene transition chỉ giữ bản mới nhất. Không xếp hàng đọc biên bản
-            # mọi cửa sổ user đã lướt qua trong lúc grace.
-            if current.kind == "scene_transition":
-                for old_id, old in list(self._pending_opportunities.items()):
-                    if old.kind == "scene_transition" and old_id != current.opportunity_id:
-                        self._pending_opportunities.pop(old_id, None)
-            self._pending_opportunities[current.opportunity_id] = current
-
-        merged: list[AutonomousOpportunity] = []
-        for item in self._pending_opportunities.values():
-            if item.scene_mode != scene.name and item.kind not in {"scene_transition", "return_after_idle"}:
-                continue
-            if int(item.eligible_after_ms or 0) <= now_ms and item.status == "pending":
-                item = replace(item, status="eligible")
-                self._pending_opportunities[item.opportunity_id] = item
-            merged.append(item)
-        merged.sort(
-            key=lambda item: (
-                int(item.eligible_after_ms or 0) <= now_ms,
-                item.strength + item.urgency * 0.25 + item.novelty * 0.15,
-            ),
-            reverse=True,
-        )
-        return tuple(merged)
-
-    def cancel_plan(self, plan: AutonomousPlan | None, *, reason: str = "cancelled") -> None:
-        """Không consume opportunity khi user chen vào hoặc stage/TTS lỗi."""
-        current = plan or self.last_plan
-        if current is None or current.selected_opportunity is None:
-            return
-        # Opportunity lỗi hệ thống vẫn được giữ nếu chưa hết hạn; vòng sau có thể
-        # thử lại. User chat mới thì bỏ transition cũ vì scene xã hội đã thay đổi.
-        if reason in {"cancelled_by_user", "enter_chat_mode", "scene_changed"}:
-            self._pending_opportunities.pop(current.selected_opportunity.opportunity_id, None)
 
     def refine_wake_decision(self, wake_decision: Any, plan: AutonomousPlan) -> Any:
         """Ghép gate mới vào WakeDecision mà không đổi public contract của governor."""
@@ -389,7 +323,6 @@ class AutonomousPerformerOrchestrator:
         if current is None or current.selected_opportunity is None:
             return
         kind = current.selected_opportunity.kind
-        self._pending_opportunities.pop(current.selected_opportunity.opportunity_id, None)
         self.speak_gate.record_spoken(kind=kind, at_ms=at_ms)
         self.session_director.record_spoken(
             kind=kind,
@@ -405,6 +338,7 @@ class AutonomousPerformerOrchestrator:
             hook_id=hook_id,
             at_ms=at_ms,
         )
+        self.show_format_director.record_spoken(current.show_format)
         self.audience_feedback_loop.record_act(
             opportunity=current.selected_opportunity,
             scene_mode=current.scene.name,

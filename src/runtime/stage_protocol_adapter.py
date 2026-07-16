@@ -40,6 +40,9 @@ def stage_segment_event(stage_frame: Any, *, segment_count: int = 1) -> StagePro
         "speech_act": str(getattr(stage_frame, "speech_act", "") or ""),
         "preset_id": str(getattr(stage_frame, "preset_id", "") or ""),
         "audio_asset": str(getattr(stage_frame, "audio_asset", "") or ""),
+        "show_id": str((dict(getattr(stage_frame, "show_plan", {}) or {})).get("show_id", "") or ""),
+        "show_plan_version": str((dict(getattr(stage_frame, "show_plan", {}) or {})).get("version", "") or ""),
+        "segment_index": _seq(stage_frame),
     }
     return StageProtocolEvent(
         type="stage_segment",
@@ -54,6 +57,22 @@ def stage_segment_event(stage_frame: Any, *, segment_count: int = 1) -> StagePro
         data={key: value for key, value in data.items() if value not in ("", [], {}, None)},
     )
 
+
+
+def show_plan_event(stage_frame: Any) -> StageProtocolEvent:
+    """Phát timeline cue một lần trước các stage_segment của cùng turn."""
+    plan = dict(getattr(stage_frame, "show_plan", {}) or {})
+    return StageProtocolEvent(
+        type="show_plan",
+        turn_id=str(getattr(stage_frame, "turn_id", "") or ""),
+        seq=0,
+        display_text=str(getattr(stage_frame, "display_text", "") or ""),
+        emotion=str(getattr(stage_frame, "emotion", "") or ""),
+        motion=str(getattr(stage_frame, "motion", "") or ""),
+        interruptible=bool(getattr(stage_frame, "interruptible", True)),
+        source=str(getattr(stage_frame, "source", "") or ""),
+        data={"show_plan": plan, "segment_count": len(plan.get("cues", [])) if isinstance(plan, dict) else 0},
+    )
 
 def playback_event(event: Any, *, stage_frame: Any = None) -> StageProtocolEvent:
     """Dựng event protocol từ lifecycle event của TTS."""
@@ -108,4 +127,4 @@ def _event_seq(event: Any, stage_frame: Any) -> int:
         return 0
 
 
-__all__ = ["playback_event", "stage_segment_event", "stage_state_event"]
+__all__ = ["playback_event", "show_plan_event", "stage_segment_event", "stage_state_event"]

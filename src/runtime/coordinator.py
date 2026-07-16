@@ -126,7 +126,8 @@ from runtime.stage_dispatcher import StageDispatcher
 from runtime.stage_event_bus import StageEventBus
 from runtime.stage_output import StageOutputPipeline
 from runtime.stage_protocol import is_stage_inbound_type
-from runtime.stage_protocol_adapter import playback_event, stage_segment_event, stage_state_event
+from runtime.stage_protocol_adapter import playback_event, show_plan_event, stage_segment_event, stage_state_event
+from runtime.vtuber_stage_version import VTUBER_STAGE_PHASES, VTUBER_STAGE_STATUS, VTUBER_STAGE_VERSION
 from runtime.stage_scorer import StageScorer
 from runtime.shadow_pipeline import ShadowPipelineMixin
 from runtime.self_critique import SelfCritiqueEscalationMixin
@@ -386,6 +387,14 @@ class RuntimeCoordinator(
         # payload legacy. Nếu client cũ không thích message lạ, tắt bằng
         # ERIS_STAGE_PROTOCOL=0.
         self.stage_event_bus = StageEventBus(transport=transport, logger=logger)
+        try:
+            self.logger.info(
+                "[vtuber-stage] loaded version=%s phases=%s status=%s session=%s",
+                VTUBER_STAGE_VERSION, ",".join(str(x) for x in VTUBER_STAGE_PHASES),
+                VTUBER_STAGE_STATUS, self.stage_event_bus.session_snapshot().get("session_id", ""),
+            )
+        except Exception:
+            pass
         self.avatar_ready = False
         self.last_stage_inbound_event = None
         self.memory_core = memory_core
@@ -2032,6 +2041,11 @@ class RuntimeCoordinator(
             bus = getattr(self, "stage_event_bus", None)
             if bus is None:
                 return
+            try:
+                if isinstance(getattr(stage_frame, "show_plan", None), dict) and stage_frame.show_plan:
+                    bus.emit(show_plan_event(stage_frame))
+            except Exception as exc:
+                self.logger.debug("[stage-protocol] show_plan emit failed: %s", exc)
             for frame in stage_frames or (stage_frame,):
                 try:
                     bus.emit(stage_segment_event(frame, segment_count=len(stage_frames) or 1))
@@ -2087,6 +2101,9 @@ class RuntimeCoordinator(
                     if getattr(self, "phase7_validation", None) is not None
                     else {"status": "unavailable"}
                 )
+                stage_bus = getattr(self, "stage_event_bus", None)
+                if stage_bus is not None and callable(getattr(stage_bus, "session_snapshot", None)):
+                    panel_payload["stage_session"] = stage_bus.session_snapshot()
                 panel_payload["hardening_status"] = {
                     "release": {
                         "ready": bool(release_raw.get("ready", False)),
@@ -7974,6 +7991,7 @@ class RuntimeCoordinator(
         stage_preset = getattr(plan, "stage_preset", None)
         audience_feedback = getattr(plan, "audience_feedback", None)
         policy_decision = getattr(plan, "policy_decision", None)
+        show_format = getattr(plan, "show_format", None)
         preset_surface_rules = list(getattr(stage_preset, "surface_rules", ()) or ())
         feedback_mode = str(getattr(audience_feedback, "mode", "normal") or "normal")
         feedback_surface_rules: list[str] = []
@@ -8043,6 +8061,18 @@ class RuntimeCoordinator(
                 "poetic_drift_allowed": bool(getattr(stage_preset, "poetic_drift_allowed", True)),
                 "policy_tags": list(getattr(stage_preset, "policy_tags", ()) or ()),
             },
+            "show_format": {
+                "format_id": str(getattr(show_format, "format_id", "micro_reaction") or "micro_reaction"),
+                "family": str(getattr(show_format, "family", "reaction") or "reaction"),
+                "variant": int(getattr(show_format, "variant", 1) or 1),
+                "max_beats": int(getattr(show_format, "max_beats", 1) or 1),
+                "stage_energy": round(float(getattr(show_format, "stage_energy", 0.32) or 0.32), 3),
+                "audience_address": str(getattr(show_format, "audience_address", "direct") or "direct"),
+                "anchor_policy": str(getattr(show_format, "anchor_policy", "require_surface_anchor") or "require_surface_anchor"),
+                "required_evidence_refs": list(getattr(show_format, "required_evidence_refs", ()) or ()),
+                "fallback_mode": str(getattr(show_format, "fallback_mode", "body_only") or "body_only"),
+                "surface_rules": list(getattr(show_format, "surface_rules", ()) or ()),
+            },
             "show_arc": {
                 "arc_id": str(getattr(show_arc, "arc_id", "") or ""),
                 "family": str(getattr(show_arc, "arc_family", "standalone") or "standalone"),
@@ -8056,7 +8086,10 @@ class RuntimeCoordinator(
                 "escalation_level": int(getattr(show_arc, "escalation_level", 0) or 0),
             },
             "surface_rules": [
-                "Viết đúng một micro-line tiếng Việt theo show_arc.line_shape và shape_rule.",
+                "Viết đúng một micro-line tiếng Việt theo show_arc.line_shape, show_format và shape_rule.",
+                "Mọi tiền đề phải truy hồi được từ show_format.required_evidence_refs hoặc opportunity.evidence_refs.",
+                "Nếu user hỏi 'ý là cái gì?', câu phải chỉ được vào opportunity hiện tại; nếu không thì dùng show_format.fallback_mode.",
+                *list(getattr(show_format, "surface_rules", ()) or ()),
                 "permit là quyết định cuối sau policy resolver; không tự nới max_words hoặc đổi body-only thành lời nói.",
                 "Tuân theo stage_preset.performance_lane, delivery_style và policy_tags; không tự đổi vai.",
                 "Không mở câu bằng bất kỳ cụm nào trong show_arc.avoid_openings.",

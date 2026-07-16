@@ -13,15 +13,17 @@ chứ không phải nhét "(cười khẽ)" vào text.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from runtime.autonomous_performance import AutonomousPerformancePlanner
+from runtime.autonomous_surface_anchor import AutonomousSurfaceAnchorGuard
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
 from runtime.speech_contract import SpeechContractResolver
 from runtime.stage_performance_planner import PerformanceRequestPlanner
 from runtime.stage_transformers import StageTransformerChain
+from runtime.stage_show_runtime import StageShowRuntime
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +46,7 @@ class StageFrame:
     prosody_notes: str = ""
     delivery: dict[str, Any] = field(default_factory=dict)
     stage_act: dict[str, Any] = field(default_factory=dict)
+    show_plan: dict[str, Any] = field(default_factory=dict)
     speech_contract: dict[str, Any] = field(default_factory=dict)
     interruptible: bool = True
     body_only: bool = False
@@ -66,6 +69,7 @@ class StageFrame:
                 "prosody_style": self.prosody_style,
                 "delivery": self.delivery,
                 "stage_act": self.stage_act,
+                "show_plan": self.show_plan,
                 "speech_contract": self.speech_contract,
                 "interruptible": self.interruptible,
                 "body_only": self.body_only,
@@ -168,6 +172,8 @@ class StageFrameBuilder:
         self.delivery_planner = SpeechDeliveryPlanner()
         self.performance_planner = PerformanceRequestPlanner()
         self.autonomous_performance_planner = AutonomousPerformancePlanner()
+        self.autonomous_anchor_guard = AutonomousSurfaceAnchorGuard()
+        self.show_runtime = StageShowRuntime()
 
     def build(
         self,
@@ -180,6 +186,13 @@ class StageFrameBuilder:
         segment_id: int = 0,
     ) -> StageFrame:
         raw_text = str(payload.get("text", getattr(decision, "text", "")) or "")
+        if str(channel or "").strip().lower() == "autonomous":
+            plan_payload = payload.get("autonomous_plan") if isinstance(payload.get("autonomous_plan"), dict) else None
+            verdict = self.autonomous_anchor_guard.validate(raw_text, plan_payload)
+            payload["autonomous_anchor"] = verdict.to_payload()
+            raw_text = verdict.text
+            if not raw_text:
+                payload["should_speak"] = False
         surfaces = self.transformers.transform(raw_text)
         user_text = str(payload.get("user_text", "") or "")
         delivery_hint = str(payload.get("delivery_hint", getattr(decision, "delivery_hint", "")) or "").strip()
@@ -263,7 +276,7 @@ class StageFrameBuilder:
             style_hint=delivery.voice_style,
             notes_hint=prosody_notes,
         )
-        return StageFrame(
+        stage_frame = StageFrame(
             turn_id=str(turn_id or uuid.uuid4().hex),
             segment_id=int(segment_id),
             display_text=performance.display_text,
@@ -284,6 +297,8 @@ class StageFrameBuilder:
             preset_id=str(payload.get("preset_id", getattr(decision, "preset_id", "")) or ""),
             audio_asset=str(payload.get("audio_asset", getattr(decision, "audio_asset", "")) or ""),
         )
+        show_plan = self.show_runtime.compile(stage_frame)
+        return replace(stage_frame, show_plan=show_plan.to_payload())
 
 
 __all__ = [
