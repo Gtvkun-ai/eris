@@ -474,3 +474,201 @@ def test_coordinator_self_declared_search_does_not_duplicate_existing_worker():
 
     assert out is raw
     assert owner.calls == []
+
+
+def test_secret_scrubber_catches_bare_provider_keys_and_labeled_tokens():
+    from cortex.tutor.secret_scrubber import contains_secret_like, scrub_secrets
+
+    raw = (
+        "OpenAI sk-proj-abcdefghijklmnopqrstuvwxyz1234567890 "
+        "Google AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ123456 "
+        "GitHub ghp_abcdefghijklmnopqrstuvwxyz1234567890 "
+        "Codex agt_codex_kqOXnEHZd4bPNaBtx7evUY29223GI3BS "
+        "token=abc.def.ghi"
+    )
+    clean = scrub_secrets(raw)
+
+    assert "sk-proj" not in clean
+    assert "AIza" not in clean
+    assert "ghp_" not in clean
+    assert "agt_codex_" not in clean
+    assert "abc.def.ghi" not in clean
+    assert contains_secret_like(clean) is False
+
+
+def test_search_prompt_scrubs_secrets_before_tutor():
+    from cortex.tutor.research_relay import build_gemini_search_prompt
+
+    prompt = build_gemini_search_prompt(
+        "check key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890 còn sống không",
+        context="token=supersecretvalue",
+    )
+
+    assert "sk-proj" not in prompt
+    assert "supersecretvalue" not in prompt
+    assert "[redacted-secret]" in prompt
+
+
+def test_research_relay_builds_evidence_bundle_and_verification():
+    from cortex.tutor.research_relay import analyze_tutor_research_answer
+
+    raw = (
+        "Kết luận: Godot 4.6 là bản mới trong nhánh 4.x theo tài liệu chính thức. "
+        "Điểm chưa chắc: lịch release phụ thuộc kênh tải.\n"
+        "Nguồn: https://godotengine.org/releases"
+    )
+    relay = analyze_tutor_research_answer("Godot 4.6 mới chưa?", raw, mode="quick_search")
+
+    assert relay.evidence_bundle is not None
+    bundle = relay.evidence_bundle.to_dict()
+    assert bundle["sources"]
+    assert bundle["claims"]
+    assert bundle["verification"]["overall_status"] in {"passed", "passed_with_warnings"}
+    assert "godotengine.org" in relay.answer_text
+
+
+def test_search_now_exposes_research_thread_artifact_on_daemon():
+    answer = "Kết luận có thể kiểm qua nguồn.\nNguồn: https://ai.google.dev/gemini-api/docs/rate-limits"
+    daemon, backend, digest = _daemon(answer=answer, persist=False, max_words=180)
+
+    result = daemon.search_now("Gemini rate limit hiện tại", context="quick verify")
+
+    assert result
+    assert daemon.last_research_bundle.get("bundle_id")
+    assert daemon.last_research_thread.get("provider_path") == "tutor_gemini_web_quick_search"
+    assert daemon.last_research_thread.get("evidence_bundle_id") == daemon.last_research_bundle.get("bundle_id")
+
+
+def test_verification_handlers_report_source_policy_and_anchor_consistency():
+    from cortex.tutor.research_evidence import build_evidence_bundle
+
+    raw = (
+        "Godot 4.6 release notes nói bản này thuộc nhánh 4.x và có thay đổi engine. "
+        "Nguồn: https://godotengine.org/releases/4.6"
+    )
+    bundle = build_evidence_bundle(query="Godot 4.6 release notes", raw_answer=raw, mode="quick_search")
+    data = bundle.to_dict()
+    handlers = data["verification"]["handler_results"]
+
+    assert any(item["name"] == "verify_source_allowlist" for item in handlers)
+    assert any(item["name"] == "verify_anchor_consistency" for item in handlers)
+    assert data["verification"]["overall_status"] in {"passed", "passed_with_warnings"}
+    assert data["verification"]["surface_caution"] in {True, False}
+
+
+def test_research_metrics_and_thread_record_are_exposed():
+    answer = (
+        "Kết luận: Gemini API có rate limit theo tier và có thể trả RESOURCE_EXHAUSTED. "
+        "Nguồn: https://ai.google.dev/gemini-api/docs/rate-limits"
+    )
+    daemon, backend, digest = _daemon(answer=answer, persist=False, max_words=180)
+
+    result = daemon.search_now("Gemini API rate limit mới nhất", context="quick verify")
+
+    assert result
+    assert daemon.last_research_metrics.get("source_count", 0) >= 1
+    assert "verification_status" in daemon.last_research_metrics
+    assert "open_questions" in daemon.last_research_thread
+    assert "source_policy_pass" in daemon.last_research_thread
+
+
+def test_tutor_research_status_events_include_verification_payload():
+    from runtime.tutor_daemon import TutorStageEmitter
+
+    class _Transport:
+        def __init__(self):
+            self.payloads = []
+
+        def send_json(self, payload):
+            self.payloads.append(payload)
+
+    answer = "Kết luận có nguồn. Nguồn: https://godotengine.org/releases"
+    daemon, backend, digest = _daemon(answer=answer, persist=False, max_words=120)
+    transport = _Transport()
+    daemon.emitter = TutorStageEmitter(transport=transport, logger=None)
+
+    assert daemon.search_now("Godot release mới nhất")
+    research_events = [payload for payload in transport.payloads if payload.get("research")]
+
+    assert [payload["research"]["stage"] for payload in research_events][:2] == ["queued", "asking_tutor"]
+    assert any(payload["research"]["stage"] == "verified" for payload in research_events)
+    verified = [payload for payload in research_events if payload["research"]["stage"] == "verified"][-1]
+    assert verified["research"]["verification"].get("overall_status") in {"passed", "passed_with_warnings", "failed"}
+
+
+def test_gemma_critic_prompt_is_json_contract_and_does_not_ask_to_search():
+    from cortex.tutor.gemma_research_critic import build_gemma_critic_prompt
+
+    prompt = build_gemma_critic_prompt(
+        "kiểm chứng model mới",
+        "Kết luận chắc: A. Nguồn: https://example.com/doc",
+        max_chars=900,
+    )
+    assert len(prompt) <= 900
+    assert "KHÔNG search web" in prompt
+    assert '"supported_points"' in prompt
+    assert "Tutor/Gemini trả lời" in prompt
+
+
+def test_gemma_critic_parser_accepts_fenced_json():
+    from cortex.tutor.gemma_research_critic import parse_gemma_critic_response
+
+    critique = parse_gemma_critic_response(
+        '''```json
+        {
+          "usable_summary": "A dùng được nhưng cần nguồn.",
+          "supported_points": ["A có nguồn"],
+          "weak_points": ["B thiếu nguồn"],
+          "contradictions": ["C mâu thuẫn với D"],
+          "sources_seen": ["https://example.com/a"],
+          "confidence": "medium",
+          "caution": "Không chốt mạnh"
+        }
+        ```'''
+    )
+    assert critique is not None
+    assert critique.usable_summary.startswith("A dùng")
+    assert critique.confidence == "medium"
+    assert critique.contradictions
+    assert critique.sources_seen == ["https://example.com/a"]
+
+
+def test_relay_uses_structured_gemma_critic_and_marks_conflict():
+    from cortex.tutor.research_relay import analyze_tutor_research_answer
+
+    def critic(prompt: str) -> str:
+        assert '"contradictions"' in prompt
+        return '''{
+          "usable_summary": "Theo nguồn Tutor đưa, chính sách A đang áp dụng nhưng cần dè dặt.",
+          "supported_points": ["Chính sách A đang áp dụng"],
+          "weak_points": ["Chưa thấy ngày cập nhật rõ"],
+          "contradictions": ["Một đoạn nói áp dụng, đoạn khác nói chưa triển khai"],
+          "sources_seen": ["https://example.com/policy"],
+          "confidence": "medium",
+          "caution": "Có dấu hiệu mâu thuẫn"
+        }'''
+
+    relay = analyze_tutor_research_answer(
+        "policy A hiện tại",
+        "Kết luận: A đang áp dụng. Tuy nhiên có nguồn khác nói chưa triển khai. Nguồn: https://example.com/policy",
+        critic_fn=critic,
+    )
+    assert "Theo nguồn Tutor đưa" in relay.answer_text
+    assert relay.contradictions
+    assert "Mâu thuẫn" in relay.answer_text
+    assert relay.confidence in {"low", "medium"}
+    assert relay.evidence_bundle is not None
+    assert relay.evidence_bundle.verification.contested_claim_count >= 1
+
+
+def test_gemma_critic_heuristic_fallback_flags_missing_sources():
+    from cortex.tutor.gemma_research_critic import run_gemma_research_critic
+
+    critique = run_gemma_research_critic(
+        "thông tin mới",
+        "Có thể đã đổi chính sách, nhưng chưa xác minh được nguồn rõ ràng.",
+        critic_fn=None,
+    )
+    assert critique.confidence == "low"
+    assert critique.weak_points
+    assert "nguồn" in critique.caution.lower()

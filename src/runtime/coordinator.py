@@ -5207,16 +5207,36 @@ class RuntimeCoordinator(
                 "Em lục một vòng mà chưa ra cái gì chắc chắn về vụ này. Em chưa dám nói bừa đâu.",
                 "Hừm, vụ này em tra chưa tới nơi. Để em đào lại sau rồi nói bạn nghe.",
             ))
+        artifact = {}
+        research_thread = {}
+        research_metrics = {}
+        try:
+            artifact = dict(getattr(self, "_last_tutor_research_artifact", {}) or {})
+            research_thread = dict(getattr(self, "_last_tutor_research_thread", {}) or {})
+            research_metrics = dict(getattr(self, "_last_tutor_research_metrics", {}) or {})
+        except Exception:
+            artifact = {}
+            research_thread = {}
+            research_metrics = {}
+        verification_status = ""
+        try:
+            verification_status = str((artifact.get("verification") or {}).get("overall_status") or "")
+        except Exception:
+            verification_status = ""
         decision = Decision(
             text=text,
             animation="stand",
             intent="world_knowledge",
             action="tutor_search_followup" if str(mode or "research") == "quick_search" else "tutor_followup",
-            reasoning_tags=("tutor_grounded", "quick_search" if str(mode or "research") == "quick_search" else "research_followup"),
+            reasoning_tags=(
+                "tutor_grounded",
+                "quick_search" if str(mode or "research") == "quick_search" else "research_followup",
+                f"verification:{verification_status}" if verification_status else "verification:unknown",
+            ),
             should_speak=True,
             confidence=0.78 if answer else 0.35,
             parse_mode="chat",
-            debug_trace=f"{str(mode or 'research')}_followup; topic={str(topic)[:120]}",
+            debug_trace=f"{str(mode or 'research')}_followup; topic={str(topic)[:120]}; verification={verification_status or 'unknown'}",
         )
         # Tutor không được có cửa hậu đi thẳng vào TTS. Dùng cùng final guards,
         # Director precommit và V3 authority như chat chính, nhưng không mở thêm
@@ -5244,9 +5264,22 @@ class RuntimeCoordinator(
         if public_text:
             if memory_text:
                 self._append_chat_history("assistant", memory_text, invalid=False)
+            ledger_meta = {
+                "intent": decision.intent,
+                "parse_mode": decision.parse_mode,
+                "source": "tutor_followup",
+                "research_mode": str(mode or "research"),
+            }
+            if research_thread:
+                ledger_meta["research_thread"] = research_thread
+            if artifact:
+                ledger_meta["evidence_bundle_id"] = str(artifact.get("bundle_id") or "")
+                ledger_meta["verification"] = dict(artifact.get("verification") or {})
+            if research_metrics:
+                ledger_meta["research_metrics"] = research_metrics
             self._ensure_session_turn_ledger().record_assistant(
                 public_text,
-                meta={"intent": decision.intent, "parse_mode": decision.parse_mode, "source": "tutor_followup"},
+                meta=ledger_meta,
             )
             self.last_chat_answer = public_text
         self._send_decision_to_body(decision, channel="chat")

@@ -80,6 +80,60 @@ class TutorStageEmitter:
             except Exception:
                 pass
 
+    def emit_research_status(
+        self,
+        *,
+        episode: TutorEpisode,
+        stage: str,
+        mode: str,
+        topic: str = "",
+        verification: dict[str, Any] | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> None:
+        """Gửi status riêng cho panel research/search.
+
+        Body cũ không hiểu field `research` thì bỏ qua; body mới có thể hiện
+        “đang hỏi Tutor”, “đang kiểm chứng”, “xong nhưng nguồn yếu”. Một event
+        nhỏ thôi, không cần dựng rạp xiếc websocket.
+        """
+
+        try:
+            payload = {
+                "parse_mode": "tutor_event",
+                "should_speak": False,
+                "animation": "",
+                "tutor": {
+                    "episode_id": episode.episode_id,
+                    "stage": stage,
+                    "question_preview": scrub_identity(topic)[:_QUESTION_PREVIEW_LEN],
+                    "question": scrub_identity(topic)[:_MAX_QUESTION_LEN],
+                    "answer": "",
+                    "claims": int(getattr(episode, "claims_committed", 0) or 0),
+                    "fail_reason": getattr(episode, "fail_reason", "") or "",
+                },
+                "research": {
+                    "mode": mode,
+                    "stage": stage,
+                    "topic": scrub_identity(topic)[:260],
+                    "verification": dict(verification or {}),
+                    "metrics": dict(metrics or {}),
+                },
+            }
+            if self._logger is not None:
+                self._logger.log_stage(episode.episode_id, f"research:{stage}")
+            transport = self._transport
+            if transport is None:
+                return
+            send = getattr(transport, "send_json", None)
+            if callable(send):
+                send(payload)
+        except Exception:
+            try:
+                if self._logger is not None:
+                    self._logger.warn("research status emit failed")
+            except Exception:
+                pass
+
 
 # =============================================================================
 # Daemon
@@ -126,6 +180,9 @@ class TutorDaemon:
         self.last_answer_text: str = ""
         self.last_question_text: str = ""
         self.last_answer_ts: float = 0.0
+        self.last_research_bundle: dict[str, Any] = {}
+        self.last_research_thread: dict[str, Any] = {}
+        self.last_research_metrics: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
 
@@ -336,6 +393,52 @@ class TutorDaemon:
         finally:
             self._run_lock.release()
 
+    def _remember_research_artifact(self, *, topic: str, mode: str, relay: Any) -> None:
+        """Lưu artifact nghiên cứu nhẹ để runtime ghi vào session ledger/panel.
+
+        Không cần sửa dataclass TutorEpisode slots. Một slot riêng trên daemon là đủ,
+        đỡ biến contracts thành cây thông Noel.
+        """
+
+        try:
+            bundle_obj = getattr(relay, "evidence_bundle", None)
+            bundle = bundle_obj.to_dict() if hasattr(bundle_obj, "to_dict") else {}
+        except Exception:
+            bundle = {}
+        try:
+            from cortex.tutor.discourse_research_bridge import build_research_thread_record
+            from cortex.tutor.research_metrics import build_research_metrics
+
+            thread = build_research_thread_record(topic=topic, mode=mode, bundle=bundle)
+            metrics = build_research_metrics(bundle, mode=mode).to_dict()
+        except Exception:
+            thread = {}
+            metrics = {}
+        self.last_research_bundle = bundle if isinstance(bundle, dict) else {}
+        self.last_research_thread = thread if isinstance(thread, dict) else {}
+        self.last_research_metrics = metrics if isinstance(metrics, dict) else {}
+        try:
+            self.logger._emit({"kind": "research_thread", **self.last_research_thread})
+            self.logger._emit({"kind": "research_metrics", **self.last_research_metrics})
+        except Exception:
+            pass
+
+    def _emit_research_status(self, episode: TutorEpisode, stage: str, *, mode: str, topic: str, verification: dict[str, Any] | None = None) -> None:
+        emitter = getattr(self, "emitter", None)
+        emit_status = getattr(emitter, "emit_research_status", None)
+        if callable(emit_status):
+            try:
+                emit_status(
+                    episode=episode,
+                    stage=stage,
+                    mode=mode,
+                    topic=topic,
+                    verification=verification or {},
+                    metrics=getattr(self, "last_research_metrics", {}) or {},
+                )
+            except Exception:
+                pass
+
     def research_now(
         self,
         topic: str,
@@ -382,6 +485,7 @@ class TutorDaemon:
             )
             episode = TutorEpisode(gap=gap, started_ts=now)
             self._emit(episode, "forming")
+            self._emit_research_status(episode, "queued", mode="research", topic=topic)
 
             prompt = build_gemini_research_prompt(
                 topic,
@@ -395,6 +499,7 @@ class TutorDaemon:
                 return None
             episode.question = question
 
+            self._emit_research_status(episode, "asking_tutor", mode="research", topic=topic)
             try:
                 answer = self.backend.ask(question, on_stage=lambda stage: self._emit(episode, stage))
             except Exception:
@@ -406,12 +511,22 @@ class TutorDaemon:
                 self._fail(episode, reason, now)
                 return None
 
+            self._emit_research_status(episode, "verifying", mode="research", topic=topic)
             relay = analyze_tutor_research_answer(
                 topic,
                 getattr(answer, "text", ""),
                 tutor_prompt=prompt,
                 critic_fn=critic_fn,
                 max_words=getattr(self.config, "research_answer_max_words", 280),
+                mode="research",
+            )
+            self._remember_research_artifact(topic=topic, mode="research", relay=relay)
+            self._emit_research_status(
+                episode,
+                "verified",
+                mode="research",
+                topic=topic,
+                verification=(self.last_research_bundle.get("verification") or {}),
             )
             answer.text = relay.answer_text
 
@@ -482,6 +597,7 @@ class TutorDaemon:
             )
             episode = TutorEpisode(gap=gap, started_ts=now)
             self._emit(episode, "forming")
+            self._emit_research_status(episode, "queued", mode="quick_search", topic=topic)
 
             prompt = build_gemini_search_prompt(
                 topic,
@@ -495,6 +611,7 @@ class TutorDaemon:
                 return None
             episode.question = question
 
+            self._emit_research_status(episode, "asking_tutor", mode="quick_search", topic=topic)
             try:
                 answer = self.backend.ask(question, on_stage=lambda stage: self._emit(episode, stage))
             except Exception:
@@ -506,12 +623,22 @@ class TutorDaemon:
                 self._fail(episode, reason, now)
                 return None
 
+            self._emit_research_status(episode, "verifying", mode="quick_search", topic=topic)
             relay = analyze_tutor_research_answer(
                 topic,
                 getattr(answer, "text", ""),
                 tutor_prompt=prompt,
                 critic_fn=critic_fn,
                 max_words=min(220, int(getattr(self.config, "research_answer_max_words", 280) or 280)),
+                mode="quick_search",
+            )
+            self._remember_research_artifact(topic=topic, mode="quick_search", relay=relay)
+            self._emit_research_status(
+                episode,
+                "verified",
+                mode="quick_search",
+                topic=topic,
+                verification=(self.last_research_bundle.get("verification") or {}),
             )
             answer.text = relay.answer_text
 

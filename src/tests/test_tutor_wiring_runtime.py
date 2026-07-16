@@ -292,6 +292,27 @@ class TestTutorWiringRuntime(unittest.TestCase):
                 else:
                     self.assertEqual(context, "")
 
+    def test_request_tutor_answer_exposes_research_artifact_and_scrubs_key(self):
+        runtime, daemon = self._build_runtime(
+            answer_text="Kết luận kiểm được.\nNguồn: https://ai.google.dev/gemini-api/docs/rate-limits"
+        )
+        self.assertIsNotNone(daemon)
+
+        answer = runtime.request_tutor_answer(
+            "check key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890 Gemini rate limit",
+            context="token=supersecretvalue",
+            search=True,
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertNotIn("sk-proj", answer)
+        self.assertNotIn("supersecretvalue", answer)
+        self.assertTrue(getattr(runtime, "_last_tutor_research_artifact", {}).get("bundle_id"))
+        self.assertEqual(
+            getattr(runtime, "_last_tutor_research_thread", {}).get("provider_path"),
+            "tutor_gemini_web_quick_search",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

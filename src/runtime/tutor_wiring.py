@@ -17,6 +17,12 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Optional
 
+try:  # pragma: no cover
+    from cortex.tutor.secret_scrubber import scrub_secrets
+except Exception:  # pragma: no cover
+    def scrub_secrets(text: Any) -> str:  # type: ignore
+        return str(text or "")
+
 
 _GENERIC_TELEMETRY_PREFIXES = (
     "active window is ",
@@ -112,6 +118,8 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
         try:
             import time as _t
             now = _t.time()
+            topic = scrub_secrets(topic)
+            context = scrub_secrets(context)
             gap = collector.collect_from_uncertainty(
                 topic, context=context, stake=stake, now=now, kind_hint=kind_hint, force=True,
             )
@@ -137,15 +145,23 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
     # chấm lại trước khi trả cho Eris. Không gọi Gemini API/Google grounding fallback.
     def request_tutor_answer(topic, *, context="", research=False, search=False):
         try:
+            safe_topic = scrub_secrets(topic)
+            safe_context = scrub_secrets(context)
+            runtime_owner._last_tutor_research_artifact = {}
+            runtime_owner._last_tutor_research_thread = {}
+            runtime_owner._last_tutor_research_metrics = {}
             if search and callable(getattr(daemon, "search_now", None)):
-                answer = daemon.search_now(topic, context=context, critic_fn=generate_fn)
+                answer = daemon.search_now(safe_topic, context=safe_context, critic_fn=generate_fn)
             elif research and callable(getattr(daemon, "research_now", None)):
-                answer = daemon.research_now(topic, context=context, critic_fn=generate_fn)
+                answer = daemon.research_now(safe_topic, context=safe_context, critic_fn=generate_fn)
             else:
-                answer = daemon.ask_now(topic, context=context)
+                answer = daemon.ask_now(safe_topic, context=safe_context)
+            runtime_owner._last_tutor_research_artifact = dict(getattr(daemon, "last_research_bundle", {}) or {})
+            runtime_owner._last_tutor_research_thread = dict(getattr(daemon, "last_research_thread", {}) or {})
+            runtime_owner._last_tutor_research_metrics = dict(getattr(daemon, "last_research_metrics", {}) or {})
             if answer:
-                return answer
-            _warn(logger, f"tutor request_answer không có kết quả topic={str(topic)[:120]!r}")
+                return scrub_secrets(answer)
+            _warn(logger, f"tutor request_answer không có kết quả topic={str(safe_topic)[:120]!r}")
             return None
         except Exception as exc:
             _warn(logger, f"tutor request_answer lỗi ({exc!r})")

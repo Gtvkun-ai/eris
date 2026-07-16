@@ -14,6 +14,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+try:  # pragma: no cover - import mềm để module config vẫn sống khi chạy lẻ
+    from cortex.tutor.secret_scrubber import scrub_secrets
+except Exception:  # pragma: no cover
+    try:
+        from .secret_scrubber import scrub_secrets  # type: ignore
+    except Exception:  # pragma: no cover
+        def scrub_secrets(text: Any) -> str:  # type: ignore
+            return str(text or "")
+
 
 # ---------------------------------------------------------------------------
 # Lọc định danh — không bao giờ để email/cookie lọt vào log/record/popup.
@@ -23,11 +32,15 @@ _TOKENISH_RE = re.compile(r"\b(?:cookie|token|password|passwd|secret|session|sid
 
 
 def scrub_identity(text: Any) -> str:
-    """Bỏ email và cặp cookie/token=... khỏi văn bản. An toàn với None."""
+    """Bỏ email và secret/token/API key khỏi văn bản. An toàn với None.
 
-    value = str(text or "")
+    Đây là cổng cũ được nhiều module gọi, nên mở rộng nó thay vì tạo thêm một
+    hàm đẹp để rồi không ai dùng. Phần mềm loài người vốn đã có đủ đồ trang trí.
+    """
+
+    value = scrub_secrets(text)
     value = _EMAIL_RE.sub("[email]", value)
-    value = _TOKENISH_RE.sub("[redacted]", value)
+    value = _TOKENISH_RE.sub("[redacted-secret]", value)
     return value
 
 

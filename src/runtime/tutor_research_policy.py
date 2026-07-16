@@ -20,6 +20,12 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
+try:  # pragma: no cover
+    from cortex.tutor.secret_scrubber import scrub_secrets
+except Exception:  # pragma: no cover
+    def scrub_secrets(text: object) -> str:  # type: ignore
+        return str(text or "")
+
 
 _EXPLICIT_RESEARCH_MARKERS = (
     "nghien cuu", "dao sau", "tim hieu ky", "tra ky", "tra cuu ky",
@@ -313,8 +319,8 @@ def build_lightweight_search_prompt(
 ) -> str:
     """Prompt search nhanh cho Tutor web, rẻ hơn research-followup."""
 
-    topic_text = " ".join(str(topic or "").split())
-    context_text = " ".join(str(context or "").split())
+    topic_text = " ".join(scrub_secrets(topic).split())
+    context_text = " ".join(scrub_secrets(context).split())
     max_words = max(60, min(260, int(max_words or 160)))
     max_chars = max(220, min(395, int(max_chars or 395)))
     prefix = (
@@ -341,8 +347,8 @@ def build_lightweight_research_prompt(
 ) -> str:
     """Bọc chủ đề bằng lời nhắc nghiên cứu rẻ, vừa contract TutorQuestion 400 ký tự."""
 
-    topic_text = " ".join(str(topic or "").split())
-    context_text = " ".join(str(context or "").split())
+    topic_text = " ".join(scrub_secrets(topic).split())
+    context_text = " ".join(scrub_secrets(context).split())
     max_words = max(80, min(600, int(max_words or 280)))
     max_chars = max(220, min(395, int(max_chars or 395)))
 
@@ -364,7 +370,7 @@ def build_lightweight_research_prompt(
 def compact_research_answer(text: object, *, max_words: int = 320) -> str:
     """Hard cap không dùng model, cố giữ phần nguồn nếu Tutor trả lời quá dài."""
 
-    value = str(text or "").strip()
+    value = scrub_secrets(text).strip()
     if not value:
         return ""
     words = value.split()
