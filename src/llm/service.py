@@ -1947,6 +1947,16 @@ class LlmService:
         )
         return provider, hard_cap_for_provider(provider)
 
+    def _client_prompt_unlimited(self, client) -> bool:
+        try:
+            from llm.token_budget import unlimited_prompt_for
+
+            return unlimited_prompt_for(
+                getattr(client, "base_url", ""), getattr(client, "model_name", "")
+            )
+        except Exception:
+            return False
+
     def token_pressure_snapshot(self, *, client=None, channel: str = "chat"):
         """Snapshot public nhẹ để Director/presence cùng dùng một tín hiệu pressure."""
 
@@ -1993,6 +2003,8 @@ class LlmService:
             from llm.token_budget import estimate_tokens
 
             if primary is None:
+                return primary, "initial"
+            if self._client_prompt_unlimited(primary):
                 return primary, "initial"
             est = estimate_tokens(messages)
             prov, cap = self._client_provider_cap(primary)
@@ -2093,10 +2105,6 @@ class LlmService:
                 break
         else:
             messages.insert(0, {"role": "system", "content": no_cot_contract})
-        # Lưới an toàn cho parser/repair legacy. Chat/directive chính đã được
-        # block-budget trước khi tới đây; các đường cũ vẫn không được vượt 4800.
-        from llm.token_budget import budget_existing_messages
-        messages = budget_existing_messages(messages, total_tokens=4800, output_reserve=max_tokens)
         def _call(
             messages_value: list[dict],
             *,
@@ -2106,36 +2114,38 @@ class LlmService:
         ):
             target_client = override_client or self.client
             requested_completion = int(output_tokens or max_tokens)
-            pressure_plan = self._pressure_plan_for_client(
-                target_client,
-                channel=channel,
-                messages=messages_value,
-                output_tokens=requested_completion,
-                optional_pass=False,
-            )
-            completion_tokens = pressure_plan.output_tokens
             governed_messages = list(messages_value)
-            if pressure_plan.prompt_limit < estimate_tokens(governed_messages):
-                from llm.token_budget import budget_existing_messages
+            completion_tokens = requested_completion
+            if not self._client_prompt_unlimited(target_client):
+                pressure_plan = self._pressure_plan_for_client(
+                    target_client,
+                    channel=channel,
+                    messages=messages_value,
+                    output_tokens=requested_completion,
+                    optional_pass=False,
+                )
+                completion_tokens = pressure_plan.output_tokens
+                if pressure_plan.prompt_limit < estimate_tokens(governed_messages):
+                    from llm.token_budget import budget_existing_messages
 
-                governed_messages = budget_existing_messages(
-                    governed_messages,
-                    total_tokens=pressure_plan.prompt_limit + completion_tokens,
-                    output_reserve=completion_tokens,
-                )
-            if pressure_plan.snapshot.level != "normal":
-                self.logger.warning(
-                    "[TOKEN PRESSURE] provider=%s lane=%s level=%s pressure=%.2f stage=%s "
-                    "prompt<=%d output=%d reason=%s",
-                    pressure_plan.provider,
-                    channel,
-                    pressure_plan.snapshot.level,
-                    pressure_plan.snapshot.pressure,
-                    stage,
-                    pressure_plan.prompt_limit,
-                    completion_tokens,
-                    pressure_plan.reason,
-                )
+                    governed_messages = budget_existing_messages(
+                        governed_messages,
+                        total_tokens=pressure_plan.prompt_limit + completion_tokens,
+                        output_reserve=completion_tokens,
+                    )
+                if pressure_plan.snapshot.level != "normal":
+                    self.logger.warning(
+                        "[TOKEN PRESSURE] provider=%s lane=%s level=%s pressure=%.2f stage=%s "
+                        "prompt<=%d output=%d reason=%s",
+                        pressure_plan.provider,
+                        channel,
+                        pressure_plan.snapshot.level,
+                        pressure_plan.snapshot.pressure,
+                        stage,
+                        pressure_plan.prompt_limit,
+                        completion_tokens,
+                        pressure_plan.reason,
+                    )
             self._log_final_prompt(governed_messages, channel=channel, stage=stage)
             # Persona-as-params: channel-aware temperature thay vì prose.
             # chat: 0.45 — trả lời cụ thể trước, vẫn đủ tự nhiên.
@@ -4143,49 +4153,73 @@ class LlmService:
         if defusing_context:
             state_style_parts.append(f"Defusing context:\n{defusing_context}")
 
-        # Hard budget chat V2: từng block bị cắt trước khi ghép. Prefix tĩnh chỉ
-        # khoảng 520 token thay vì để rules nuốt gần nửa prompt.
-        from llm.token_budget import ChatPromptBudget, assemble_budgeted_chat_messages
-
+        # K12/gpt-5.5 keeps full context; limited providers use block-first budgeting.
         completion_reserve = self._decision_completion_budget(
             channel="chat",
             reasoning_effort=reasoning_effort,
         )
-        chat_budget = ChatPromptBudget(output_reserve=completion_reserve)
-        messages, budget_report = assemble_budgeted_chat_messages(
-            system_rules_text=CACHEABLE_CHAT_PREFIX_V2,
-            dynamic_policy_text="\n\n".join(
+        if self._client_prompt_unlimited(self.client):
+            dynamic_policy_text = "\n\n".join(
                 part for part in dynamic_policy_parts if str(part or "").strip()
-            ),
-            state_style_text="\n\n".join(part for part in state_style_parts if str(part or "").strip()),
-            grounding_text=grounding_block,
-            memory_text=memory_block,
-            conversation_context=conversation_context,
-            chat_history=chat_history,
-            user_message=user_message,
-            budget=chat_budget,
-        )
-        self.logger.info(
-            "[CHAT PROMPT V2] prefix=%s input=%d/%d output=%d static=%d/%d dynamic=%d/%d "
-            "history=%d/%d grounding=%d/%d memory=%d/%d state=%d/%d spare=%d",
-            cacheable_prefix_id(),
-            budget_report["assembled_input"],
-            budget_report["input_limit"],
-            budget_report["output_reserve"],
-            budget_report["system_rules"],
-            chat_budget.system_rules,
-            budget_report["dynamic_policy"],
-            chat_budget.dynamic_policy,
-            budget_report["user_history"],
-            chat_budget.user_history,
-            budget_report["grounding"],
-            chat_budget.grounding,
-            budget_report["memory"],
-            chat_budget.memory,
-            budget_report["state_style"],
-            chat_budget.state_style,
-            budget_report["spare"],
-        )
+            )
+            state_style_text = "\n\n".join(part for part in state_style_parts if str(part or "").strip())
+            sections = [
+                f"[CACHEABLE_STATIC_PREFIX]\n{CACHEABLE_CHAT_PREFIX_V2}",
+                f"[DYNAMIC_POLICY]\n{dynamic_policy_text}" if dynamic_policy_text else "",
+                f"[STATE_STYLE]\n{state_style_text}" if state_style_text else "",
+                f"[GROUNDING]\n{grounding_block}" if grounding_block else "",
+                f"[MEMORY]\n{memory_block}" if memory_block else "",
+                f"[CONVERSATION_CONTEXT]\n{conversation_context}" if conversation_context else "",
+            ]
+            messages = [
+                {"role": "system", "content": "\n\n".join(part for part in sections if part)},
+                *[dict(item) for item in (chat_history or []) if isinstance(item, dict)],
+                {"role": "user", "content": user_message},
+            ]
+            self.logger.info(
+                "[CHAT PROMPT K12] prefix=%s input=%d output=%d unlimited=1",
+                cacheable_prefix_id(),
+                estimate_tokens(messages),
+                completion_reserve,
+            )
+        else:
+            from llm.token_budget import ChatPromptBudget, assemble_budgeted_chat_messages
+
+            chat_budget = ChatPromptBudget(output_reserve=completion_reserve)
+            messages, budget_report = assemble_budgeted_chat_messages(
+                system_rules_text=CACHEABLE_CHAT_PREFIX_V2,
+                dynamic_policy_text="\n\n".join(
+                    part for part in dynamic_policy_parts if str(part or "").strip()
+                ),
+                state_style_text="\n\n".join(part for part in state_style_parts if str(part or "").strip()),
+                grounding_text=grounding_block,
+                memory_text=memory_block,
+                conversation_context=conversation_context,
+                chat_history=chat_history,
+                user_message=user_message,
+                budget=chat_budget,
+            )
+            self.logger.info(
+                "[CHAT PROMPT V2] prefix=%s input=%d/%d output=%d static=%d/%d dynamic=%d/%d "
+                "history=%d/%d grounding=%d/%d memory=%d/%d state=%d/%d spare=%d",
+                cacheable_prefix_id(),
+                budget_report["assembled_input"],
+                budget_report["input_limit"],
+                budget_report["output_reserve"],
+                budget_report["system_rules"],
+                chat_budget.system_rules,
+                budget_report["dynamic_policy"],
+                chat_budget.dynamic_policy,
+                budget_report["user_history"],
+                chat_budget.user_history,
+                budget_report["grounding"],
+                chat_budget.grounding,
+                budget_report["memory"],
+                chat_budget.memory,
+                budget_report["state_style"],
+                chat_budget.state_style,
+                budget_report["spare"],
+            )
 
         raw = self._complete_decision(
             messages=messages,

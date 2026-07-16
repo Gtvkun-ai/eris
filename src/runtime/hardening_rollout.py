@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from runtime.hardening_baseline import HardeningBaseline
 from runtime.rollout_control import RolloutController
 
 
@@ -54,14 +55,29 @@ class RollbackFinding:
 
 
 class HardeningHealthGate:
-    def __init__(self, controller: RolloutController) -> None:
+    def __init__(self, controller: RolloutController, baseline: HardeningBaseline | None = None) -> None:
         self.controller = controller
         self.min_samples = max(1, int(_env_float("ERIS_HARDENING_ROLLBACK_MIN_SAMPLES", 20)))
-        self.false_success_baseline = max(0.0, _env_float("ERIS_BASELINE_FALSE_SUCCESS_RATE", 0.02))
-        self.repair_loop_baseline = max(0.0, _env_float("ERIS_BASELINE_REPAIR_LOOP_RATE", 0.03))
+        self.baseline = baseline or self._load_baseline_from_env()
+        if self.baseline is not None:
+            self.false_success_baseline = max(0.0, float(self.baseline.false_success_action_rate))
+            self.repair_loop_baseline = max(0.0, float(self.baseline.repair_loop_rate))
+        else:
+            self.false_success_baseline = max(0.0, _env_float("ERIS_BASELINE_FALSE_SUCCESS_RATE", 0.02))
+            self.repair_loop_baseline = max(0.0, _env_float("ERIS_BASELINE_REPAIR_LOOP_RATE", 0.03))
         self.chat_p95_sla_ms = max(1.0, _env_float("ERIS_CHAT_P95_SLA_MS", 8000.0))
         self.tts_p95_sla_ms = max(1.0, _env_float("ERIS_TTS_P95_SLA_MS", 12000.0))
         self.last_evaluated_at = 0.0
+
+    @staticmethod
+    def _load_baseline_from_env() -> HardeningBaseline | None:
+        path = str(os.getenv("ERIS_HARDENING_BASELINE_FILE", "") or "").strip()
+        if not path:
+            return None
+        try:
+            return HardeningBaseline.load(path)
+        except Exception:
+            return None
 
     @staticmethod
     def _rate(snapshot: Mapping[str, Any], numerator: str, denominator: str) -> tuple[float, float]:

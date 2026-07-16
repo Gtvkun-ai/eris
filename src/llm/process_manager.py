@@ -27,23 +27,6 @@ class RemoteModelProcessManager:
         apply_secrets_to_environ()
         provider = os.environ.get("ERIS_REMOTE_PROVIDER", "gemini").strip().lower()
         remote_profile = get_provider_profile(provider, slot="remote_main")
-        if provider in {"openai", "openai_compatible", "compatible", "remote", "groq"}:
-            pool = get_key_pool("groq")
-            pool_key = _bootstrap_pool_key(pool)
-            api_key = (
-                str(remote_profile.get("api_key") or "").strip()
-                or pool_key
-                or get_secret(
-                    "ERIS_GROQ_API_KEY",
-                    "ERIS_REMOTE_API_KEY",
-                    "OPENAI_API_KEY",
-                )
-            )
-        else:
-            api_key = (
-                str(remote_profile.get("api_key") or "").strip()
-                or get_secret("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
-            )
 
         if provider == "gemini":
             base_url = (
@@ -59,6 +42,10 @@ class RemoteModelProcessManager:
                 or os.environ.get("ERIS_REMOTE_MODEL", "").strip()
                 or os.environ.get("GEMINI_MODEL", "").strip()
                 or "gemma-4-31b-it"
+            )
+            api_key = (
+                str(remote_profile.get("api_key") or "").strip()
+                or get_secret("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
             )
             if not api_key:
                 raise RuntimeError("Remote Gemini dang bat nhung chua co GEMINI_API_KEY hoac ERIS_REMOTE_API_KEY.")
@@ -77,6 +64,20 @@ class RemoteModelProcessManager:
             or str(remote_profile.get("model_name") or "").strip()
             or os.environ.get("ERIS_REMOTE_MODEL", "gemini-3-flash-preview").strip()
         )
+        is_groq_remote = provider == "groq" or "api.groq.com" in base_url.lower()
+        pool = get_key_pool("groq") if is_groq_remote else None
+        pool_key = _bootstrap_pool_key(pool) if pool is not None else ""
+        if is_groq_remote:
+            api_key = (
+                str(remote_profile.get("api_key") or "").strip()
+                or pool_key
+                or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+            )
+        else:
+            api_key = (
+                str(remote_profile.get("api_key") or "").strip()
+                or get_secret("ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+            )
         if not api_key:
             raise RuntimeError("Remote API dang bat nhung chua co ERIS_REMOTE_API_KEY.")
         self.logger.info("Dung OpenAI-compatible API tai %s voi model %s", base_url, model_name)
@@ -233,11 +234,12 @@ class RemoteModelProcessManager:
             except ValueError as exc:
                 self.logger.warning("Bo qua tang fallback: %s", exc)
 
-        gemini_key = (
-            get_secret("GEMINI_API_KEY")
-            or get_secret("ERIS_SPEECH_API_KEY")
-            or get_secret("ERIS_REMOTE_API_KEY")
-        )
+        remote_provider = os.environ.get("ERIS_REMOTE_PROVIDER", "").strip().lower()
+        remote_base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "").strip().lower()
+        remote_is_gemini = remote_provider == "gemini" or "generativelanguage.googleapis.com" in remote_base_url
+        gemini_key = get_secret("GEMINI_API_KEY") or get_secret("ERIS_SPEECH_API_KEY")
+        if not gemini_key and remote_is_gemini:
+            gemini_key = get_secret("ERIS_REMOTE_API_KEY")
         if gemini_key:
             try:
                 chain.append(

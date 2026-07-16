@@ -14,6 +14,8 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
+from runtime.hardening_baseline import HardeningBaseline
+
 
 def _env_float(name: str, default: float) -> float:
     try:
@@ -71,6 +73,7 @@ class HardeningVerificationReport:
     findings: tuple[VerificationFinding, ...]
     provider_health: Mapping[str, Any]
     rollout_status: Mapping[str, Any]
+    baseline: Mapping[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,20 +83,36 @@ class HardeningVerificationReport:
             "findings": [asdict(item) for item in self.findings],
             "provider_health": dict(self.provider_health),
             "rollout_status": dict(self.rollout_status),
+            "baseline": dict(self.baseline),
         }
 
 
 class HardeningVerifier:
     """Đánh giá canary theo metric/rollback criteria trong báo cáo."""
 
-    def __init__(self) -> None:
+    def __init__(self, baseline: HardeningBaseline | None = None) -> None:
         self.min_public_turns = max(1, int(_env_float("ERIS_HARDENING_VERIFY_MIN_TURNS", 20)))
         self.min_action_samples = max(1, int(_env_float("ERIS_HARDENING_VERIFY_MIN_ACTIONS", 5)))
-        self.false_success_baseline = max(0.0, _env_float("ERIS_BASELINE_FALSE_SUCCESS_RATE", 0.02))
-        self.repair_loop_baseline = max(0.0, _env_float("ERIS_BASELINE_REPAIR_LOOP_RATE", 0.03))
+        self.baseline = baseline or self._load_baseline_from_env()
+        if self.baseline is not None:
+            self.false_success_baseline = max(0.0, float(self.baseline.false_success_action_rate))
+            self.repair_loop_baseline = max(0.0, float(self.baseline.repair_loop_rate))
+        else:
+            self.false_success_baseline = max(0.0, _env_float("ERIS_BASELINE_FALSE_SUCCESS_RATE", 0.02))
+            self.repair_loop_baseline = max(0.0, _env_float("ERIS_BASELINE_REPAIR_LOOP_RATE", 0.03))
         self.same_language_fallback_min = min(1.0, max(0.0, _env_float("ERIS_TTS_SAME_LANGUAGE_FALLBACK_MIN", 0.95)))
         self.chat_p95_sla_ms = max(1.0, _env_float("ERIS_CHAT_P95_SLA_MS", 8000.0))
         self.tts_p95_sla_ms = max(1.0, _env_float("ERIS_TTS_P95_SLA_MS", 12000.0))
+
+    @staticmethod
+    def _load_baseline_from_env() -> HardeningBaseline | None:
+        path = str(os.getenv("ERIS_HARDENING_BASELINE_FILE", "") or "").strip()
+        if not path:
+            return None
+        try:
+            return HardeningBaseline.load(path)
+        except Exception:
+            return None
 
     def verify(
         self,
@@ -105,6 +124,15 @@ class HardeningVerifier:
         findings: list[VerificationFinding] = []
         public_turns = int(_sum(snapshot, "hardening_public_turn_total") or _count(snapshot, "director_turn_total"))
         findings.append(self._minimum_samples_finding(public_turns))
+        if self.baseline is not None:
+            findings.append(VerificationFinding(
+                "baseline_sample",
+                "pass" if self.baseline.public_turns >= self.min_public_turns else "warn",
+                self.baseline.public_turns,
+                f">={self.min_public_turns}",
+                self.baseline.public_turns,
+                f"source={self.baseline.source or '<unknown>'}",
+            ))
 
         false_rate, false_count, action_samples = _rate(
             snapshot, "false_success_action_rate", "action_confirmation_total"
@@ -177,6 +205,11 @@ class HardeningVerifier:
             findings=tuple(findings),
             provider_health=normalized_health,
             rollout_status=dict(rollout_status or {}),
+            baseline=self.baseline.to_dict() if self.baseline is not None else {
+                "source": "environment_defaults",
+                "false_success_action_rate": self.false_success_baseline,
+                "repair_loop_rate": self.repair_loop_baseline,
+            },
         )
 
     def _minimum_samples_finding(self, public_turns: int) -> VerificationFinding:

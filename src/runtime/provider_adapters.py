@@ -98,6 +98,7 @@ class SpeechEngineProvider:
             "worker_ready": worker_ready,
             "closed": closed,
             "cache_signature": _safe_call(self.engine, "cache_signature"),
+            "fallback_providers": _safe_call(self.engine, "fallback_health_snapshot"),
         }
         return ProviderHealth(ready, "speech_engine", reason, details)
 

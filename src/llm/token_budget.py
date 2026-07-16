@@ -68,6 +68,31 @@ def detect_provider(base_url: str | None, model: str | None) -> str:
     return "default"
 
 
+def _truthy_env(name: str) -> bool | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    text = str(raw or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def unlimited_prompt_for(base_url: str | None, model: str | None) -> bool:
+    """Return True for the K12/gpt-5.5 lane where prompt trimming is explicitly off."""
+
+    override = _truthy_env("ERIS_K12_UNLIMITED_PROMPT")
+    if override is False:
+        return False
+    url = (base_url or "").strip().lower()
+    name = (model or "").strip().lower()
+    is_k12_model = name == "gpt-5.5" or "gpt-5.5" in name
+    is_k12_endpoint = any(token in url for token in ("localhost", "127.0.0.1", "k12"))
+    return is_k12_model and is_k12_endpoint and (override is True or override is None)
+
+
 def budget_for_provider(provider: str) -> int:
     return PROVIDER_TPM_BUDGET.get((provider or "default").lower(), PROVIDER_TPM_BUDGET["default"])
 
@@ -389,6 +414,8 @@ def preflight(messages: Any, *, base_url: str | None = None, model: str | None =
     nếu cần). Không bao giờ raise — lỗi nội bộ → trả nguyên messages gốc."""
 
     try:
+        if unlimited_prompt_for(base_url, model):
+            return list(messages or [])
         provider = detect_provider(base_url, model)
         budget = budget_for_provider(provider)
         cap = hard_cap_for_provider(provider)

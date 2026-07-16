@@ -278,6 +278,49 @@ class ErisObservability:
             output[key] = {"gauge": round(float(value), 4)}
         return output
 
+    def events_since(self, timestamp: float, *, name: str = "", signal: str = "") -> list[TelemetryEvent]:
+        """Lấy event trong đúng cửa sổ canary, không trộn lịch sử stable cũ."""
+        lower = float(timestamp or 0.0)
+        with self._lock:
+            selected = [event for event in self._events if event.timestamp >= lower]
+        if name:
+            selected = [event for event in selected if event.name == name]
+        if signal:
+            selected = [event for event in selected if event.signal == signal]
+        return selected
+
+    def metric_snapshot_since(self, timestamp: float) -> dict[str, Any]:
+        """Tính lại metrics/gauges chỉ từ event sau ``timestamp``."""
+        metrics: dict[tuple[str, tuple[tuple[str, str], ...]], MetricSeries] = defaultdict(MetricSeries)
+        gauges: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
+        for event in self.events_since(timestamp):
+            key = (event.name, tuple(sorted(event.tags.items())))
+            if event.signal == "metric" and event.value is not None:
+                metrics[key].add(event.value)
+            elif event.signal == "gauge" and event.value is not None:
+                gauges[key] = event.value
+        output: dict[str, Any] = {}
+        for (name, tags), series in metrics.items():
+            output[self._series_key(name, tags)] = series.snapshot()
+        for (name, tags), value in gauges.items():
+            output[self._series_key(name, tags)] = {"gauge": round(float(value), 4)}
+        return output
+
+    def latest_fields(self, name: str, *, since: float = 0.0) -> dict[str, Any]:
+        events = self.events_since(since, name=name)
+        return dict(events[-1].fields) if events else {}
+
+    def export_window(self, path: str | os.PathLike[str], *, since: float) -> Path:
+        """Xuất evidence JSONL đã redaction cho riêng một canary window."""
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        with temporary.open("w", encoding="utf-8") as handle:
+            for event in self.events_since(since):
+                handle.write(json.dumps(event.to_dict(), ensure_ascii=False, separators=(",", ":")) + "\n")
+        temporary.replace(target)
+        return target
+
     @staticmethod
     def _series_key(name: str, tags: tuple[tuple[str, str], ...]) -> str:
         if not tags:

@@ -639,7 +639,39 @@ finally {
             return fh.read()
 
 
+def _build_local_fallback_chain():
+    """Dựng provider chain Edge/SAPI mà chưa gọi network hay PowerShell."""
+    from runtime.speech_provider_chain import (
+        CallableSpeechProvider,
+        SameLanguageSpeechFallbackChain,
+        SpeechFallbackRequest,
+    )
+
+    def edge_synthesize(request: SpeechFallbackRequest):
+        wav_bytes, voice = _synthesize_edge_tts_wav(request.text, language_hint=request.language)
+        voice_name = str(voice or "").strip()
+        voice_parts = voice_name.split("-", 2)
+        actual_locale = "-".join(voice_parts[:2]) if len(voice_parts) >= 2 else request.locale
+        return wav_bytes, {"voice": voice_name, "locale": actual_locale}
+
+    def sapi_synthesize(request: SpeechFallbackRequest):
+        wav_bytes = _synthesize_windows_sapi_wav(request.text, language_hint=request.language)
+        return wav_bytes, {"voice": "windows-sapi", "locale": request.locale}
+
+    return SameLanguageSpeechFallbackChain((
+        CallableSpeechProvider("edge", edge_synthesize, enabled_fn=_edge_tts_fallback_enabled),
+        CallableSpeechProvider("sapi", sapi_synthesize, enabled_fn=_sapi_tts_fallback_enabled),
+    ))
+
+
 def _try_local_tts_fallback(exc: Exception, *, fallback_text: str = "", language_hint: str = "") -> bytes:
+    """Fallback qua provider chain, luôn giữ nguyên ngôn ngữ của turn.
+
+    Edge và SAPI giờ là hai provider tách biệt. Router gọi mỗi provider tối đa một
+    lần, kiểm locale trước khi nhận audio và tự ghi metric từng attempt. Engine
+    không còn giữ hai khối retry lồng nhau, vốn là cách rất hiệu quả để giấu lỗi
+    contract dưới một núi ``try/except``.
+    """
     if not _local_tts_fallback_enabled() or not str(fallback_text or "").strip():
         return b""
     try:
@@ -649,54 +681,29 @@ def _try_local_tts_fallback(exc: Exception, *, fallback_text: str = "", language
         pin_enabled = str(os.environ.get("ERIS_TTS_LANGUAGE_PIN", "1") or "1").strip().lower() not in {"0", "false", "off", "no"}
     if not pin_enabled:
         language_hint = normalize_language("", text=fallback_text)
-    expected_locale = _same_language_locale(language_hint)
-    try:
-        wav_bytes, voice = _synthesize_edge_tts_wav(fallback_text, language_hint=language_hint)
-        if wav_bytes:
-            actual_locale = "-".join(str(voice).split("/", 1)[0].split("-")[:2])
-            try:
-                from runtime.hardening_metrics import record_tts_fallback
-                record_tts_fallback(provider="edge", locale=actual_locale, expected_locale=expected_locale, success=True, reason=type(exc).__name__)
-            except Exception:
-                pass
-            logger.warning(
-                "[TTS] Gemini TTS loi/quota (%s). Dung Edge fallback cung ngon ngu voice=%s.",
-                _short_error(exc), voice,
-            )
-            return wav_bytes
-        try:
-            from runtime.hardening_metrics import record_tts_fallback
-            record_tts_fallback(provider="edge", locale="", expected_locale=expected_locale, success=False, reason="same_language_candidate_unavailable")
-        except Exception:
-            pass
-    except Exception as edge_exc:
-        try:
-            from runtime.hardening_metrics import record_tts_fallback
-            record_tts_fallback(provider="edge", locale="", expected_locale=expected_locale, success=False, reason=type(edge_exc).__name__)
-        except Exception:
-            pass
-        logger.warning("[TTS] Edge neural TTS fallback loi: %s", _short_error(edge_exc))
+    language = normalize_language(language_hint, text=fallback_text)
+    expected_locale = _same_language_locale(language)
 
-    if not _sapi_tts_fallback_enabled():
-        return b""
+    from runtime.speech_provider_chain import SpeechFallbackRequest
 
-    try:
-        wav_bytes = _synthesize_windows_sapi_wav(fallback_text, language_hint=language_hint)
-        if wav_bytes:
-            try:
-                from runtime.hardening_metrics import record_tts_fallback
-                record_tts_fallback(provider="sapi", locale=expected_locale, expected_locale=expected_locale, success=True, reason=type(exc).__name__)
-            except Exception:
-                pass
-            logger.warning("[TTS] Gemini TTS loi/quota (%s). Dung Windows SAPI cung ngon ngu.", _short_error(exc))
-            return wav_bytes
-    except Exception as sapi_exc:
-        try:
-            from runtime.hardening_metrics import record_tts_fallback
-            record_tts_fallback(provider="sapi", locale="", expected_locale=expected_locale, success=False, reason=type(sapi_exc).__name__)
-        except Exception:
-            pass
-        logger.warning("[TTS] Windows SAPI fallback loi: %s", _short_error(sapi_exc))
+    chain = _build_local_fallback_chain()
+    outcome = chain.synthesize(SpeechFallbackRequest(
+        text=fallback_text,
+        language=language,
+        locale=expected_locale,
+        voice_family=str(os.environ.get("ERIS_TTS_VOICE_FAMILY", "") or ""),
+        cause=type(exc).__name__,
+    ))
+    if outcome.success:
+        logger.warning(
+            "[TTS] Provider chinh loi/quota (%s). Dung fallback=%s cung ngon ngu locale=%s voice=%s.",
+            _short_error(exc), outcome.provider, outcome.locale, outcome.voice or "<default>",
+        )
+        return outcome.audio
+    attempts = ", ".join(
+        f"{item.provider}:{item.error_kind or 'failed'}" for item in outcome.attempts
+    ) or "no_provider"
+    logger.warning("[TTS] Khong co fallback cung ngon ngu kha dung: %s", attempts)
     return b""
 
 
@@ -1824,6 +1831,21 @@ class TtsEngine:
         """Backend API mới: phát WAV bytes, có cờ dừng từ task manager."""
         if wav_bytes:
             _play_wav_bytes(wav_bytes, stop_event)
+
+    def fallback_health_snapshot(self) -> dict[str, dict]:
+        """Health của từng fallback provider để canary không coi TTS là một cục đen."""
+        output: dict[str, dict] = {}
+        try:
+            for name, item in _build_local_fallback_chain().health().items():
+                output[str(name)] = {
+                    "ready": bool(getattr(item, "ready", False)),
+                    "provider": str(getattr(item, "provider", name) or name),
+                    "reason": str(getattr(item, "reason", "") or ""),
+                    "details": dict(getattr(item, "details", {}) or {}),
+                }
+        except Exception as exc:
+            output["fallback_chain"] = {"ready": False, "provider": "fallback_chain", "reason": type(exc).__name__}
+        return output
 
     def cache_signature(self) -> str:
         """Chữ ký cấu hình TTS để task manager cache đúng voice/model/style."""

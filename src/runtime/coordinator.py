@@ -510,6 +510,21 @@ class RuntimeCoordinator(
         except Exception as exc:
             self.logger.warning("Provider registry init skipped: %s", exc)
 
+        # Canary window chạy đúng 20–30 public turn và chỉ chấm metric phát sinh
+        # sau thời điểm bắt đầu. Mặc định tắt; bật bằng ERIS_HARDENING_CANARY_ENABLED.
+        self.hardening_canary = None
+        try:
+            if self.observability is not None and self.rollout_controller is not None:
+                from runtime.hardening_canary import HardeningCanaryManager
+                self.hardening_canary = HardeningCanaryManager(
+                    observability=self.observability,
+                    rollout_controller=self.rollout_controller,
+                    provider_health_fn=self.provider_health_snapshot,
+                )
+                self.hardening_canary.start(session_id=f"{self.runtime_session_id}-canary")
+        except Exception as exc:
+            self.logger.warning("Hardening canary init skipped: %s", exc)
+
         epistemic_enabled = str(os.getenv("ERIS_EPISTEMIC_V2_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
         if epistemic_enabled:
             epistemic_mode = str(os.getenv("ERIS_EPISTEMIC_V2_MODE", "authoritative") or "authoritative").strip().lower()
@@ -6432,8 +6447,24 @@ class RuntimeCoordinator(
                         "channel": "chat",
                     },
                 )
-        except Exception:
-            pass
+                canary = getattr(self, "hardening_canary", None)
+                if canary is not None:
+                    turn_id = str(
+                        getattr(frame, "turn_id", "")
+                        or getattr(decision, "turn_id", "")
+                        or trace_id
+                        or ""
+                    )
+                    completion = canary.record_public_turn(turn_id=turn_id, channel="chat")
+                    if completion is not None:
+                        self.logger.info(
+                            "[hardening canary] status=%s evidence=%s rollback=%s",
+                            completion.report.get("status", "unknown"),
+                            completion.evidence_path,
+                            completion.rollback_applied,
+                        )
+        except Exception as exc:
+            self.logger.warning("[hardening canary] record turn failed: %s", exc)
         # Đánh giá auto-rollback theo cửa sổ metric, mặc định mỗi 10 public turn.
         try:
             self._hardening_health_eval_counter = int(getattr(self, "_hardening_health_eval_counter", 0) or 0) + 1
@@ -9432,6 +9463,15 @@ class RuntimeCoordinator(
                 )
             except Exception:
                 pass
+        try:
+            obs.log(
+                "provider_health_snapshot",
+                tags={"event": event},
+                fields={"providers": snapshot},
+                status="ok" if all(item.get("ready") for item in snapshot.values()) else "error",
+            )
+        except Exception:
+            pass
 
     def _build_direct_action_decision(self, user_text: str, ti_report, snapshot, *, repeat_count: int = 1) -> Decision | None:
         normalized = self._normalize_marker_text(user_text)

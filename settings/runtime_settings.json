@@ -39,8 +39,8 @@
     "now_playing_enabled": true
   },
   "prompt": {
-    "hard_cap_tokens": 4800,
-    "dds_enabled": true,
+    "hard_cap_tokens": 12000,
+    "dds_enabled": false,
     "strict_grounding": true
   },
   "memory": {
