@@ -17,9 +17,16 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from runtime.autonomous_opportunity import AutonomousOpportunity, AutonomousOpportunityDetector
+from runtime.autonomous_audience_feedback import (
+    AudienceFeedbackDirective,
+    AudienceOutcome,
+    AutonomousAudienceFeedbackLoop,
+)
 from runtime.autonomous_scene_runtime import AutonomousSceneRuntime, SceneRuntimeState
 from runtime.autonomous_speak_gate import AutonomousSpeakPermissionGate, SpeakPermit
 from runtime.autonomous_session_director import AutonomousSessionDirector, SessionDirective
+from runtime.autonomous_show_arc import AutonomousShowArcDirector, ShowArcDirective
+from runtime.autonomous_stage_presets import AutonomousStagePreset, AutonomousStagePresetResolver
 
 
 def _enabled() -> bool:
@@ -35,6 +42,9 @@ class AutonomousPlan:
     evaluated_at_ms: int
     enabled: bool = True
     session_directive: SessionDirective | None = None
+    show_arc_directive: ShowArcDirective | None = None
+    stage_preset: AutonomousStagePreset | None = None
+    audience_feedback: AudienceFeedbackDirective | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -45,6 +55,9 @@ class AutonomousPlan:
             "selected_opportunity": self.selected_opportunity.to_payload() if self.selected_opportunity else None,
             "permit": self.permit.to_payload(),
             "session_directive": self.session_directive.to_payload() if self.session_directive else None,
+            "show_arc_directive": self.show_arc_directive.to_payload() if self.show_arc_directive else None,
+            "stage_preset": self.stage_preset.to_payload() if self.stage_preset else None,
+            "audience_feedback": self.audience_feedback.to_payload() if self.audience_feedback else None,
         }
 
 
@@ -56,6 +69,9 @@ class AutonomousPerformerOrchestrator:
         self.detector = AutonomousOpportunityDetector()
         self.speak_gate = AutonomousSpeakPermissionGate()
         self.session_director = AutonomousSessionDirector()
+        self.show_arc_director = AutonomousShowArcDirector()
+        self.stage_preset_resolver = AutonomousStagePresetResolver()
+        self.audience_feedback_loop = AutonomousAudienceFeedbackLoop()
         self.last_plan: AutonomousPlan | None = None
 
     def evaluate(
@@ -74,10 +90,24 @@ class AutonomousPerformerOrchestrator:
             observer_frame=observer_frame,
             now_ms=now,
         )
+        # Đóng pending feedback đã hết hạn trước khi chấm lượt mới.
+        self.observe_audience(channel="autonomous", now_ms=now)
+        stage_preset = self.stage_preset_resolver.resolve(
+            scene=scene,
+            signal_snapshot=signal_snapshot,
+        )
         if not _enabled():
             permit = SpeakPermit(False, "suppress", 0, 0, "autonomous_stage_disabled", 0, 1.0)
             directive = self.session_director.direct(scene=scene, opportunities=(), now_ms=now)
-            plan = AutonomousPlan(scene, (), None, permit, now, enabled=False, session_directive=directive)
+            show_arc = self.show_arc_director.direct(
+                scene=scene, opportunity=None, session_directive=directive, now_ms=now
+            )
+            audience_feedback = self.audience_feedback_loop.directive(now_ms=now)
+            plan = AutonomousPlan(
+                scene, (), None, permit, now, enabled=False,
+                session_directive=directive, show_arc_directive=show_arc,
+                stage_preset=stage_preset, audience_feedback=audience_feedback,
+            )
             self.last_plan = plan
             self._record_plan(plan)
             return plan
@@ -90,26 +120,49 @@ class AutonomousPerformerOrchestrator:
             wake_decision=wake_decision,
             now_ms=now,
         )
+        eligible_opportunities = self.stage_preset_resolver.selectable_opportunities(
+            opportunities,
+            stage_preset,
+        )
+        # Phase 5: phản hồi sau act chỉ được hạ/đổi thứ tự cơ hội, không tự
+        # sinh cơ hội mới. Nhờ vậy một lần user cười không biến thành giấy phép
+        # để Eris nói tiếp như người vừa phát hiện nút phát lại.
+        eligible_opportunities = self.audience_feedback_loop.adjust_opportunities(
+            eligible_opportunities, now_ms=now
+        )
         directive = self.session_director.direct(
             scene=scene,
-            opportunities=opportunities,
+            opportunities=eligible_opportunities,
             now_ms=now,
         )
         selected = next(
-            (item for item in opportunities if item.opportunity_id == directive.selected_opportunity_id),
+            (item for item in eligible_opportunities if item.opportunity_id == directive.selected_opportunity_id),
             None,
+        )
+        show_arc = self.show_arc_director.direct(
+            scene=scene,
+            opportunity=selected,
+            session_directive=directive,
+            now_ms=now,
         )
         permit = self.speak_gate.evaluate(
             selected,
             scene=scene,
             user_context=user_context,
             wake_decision=wake_decision,
+            stage_preset=stage_preset,
             now_ms=now,
         )
         permit = self.session_director.apply_to_permit(
             permit,
             directive,
             opportunity=selected,
+        )
+        audience_feedback = self.audience_feedback_loop.directive(
+            opportunity=selected, now_ms=now
+        )
+        permit = self.audience_feedback_loop.apply_to_permit(
+            permit, audience_feedback, opportunity=selected
         )
         plan = AutonomousPlan(
             scene,
@@ -118,6 +171,9 @@ class AutonomousPerformerOrchestrator:
             permit,
             now,
             session_directive=directive,
+            show_arc_directive=show_arc,
+            stage_preset=stage_preset,
+            audience_feedback=audience_feedback,
         )
         self.last_plan = plan
         self._record_plan(plan)
@@ -174,6 +230,40 @@ class AutonomousPerformerOrchestrator:
             setattr(wake_decision, "debug", debug)
             return wake_decision
 
+    def observe_audience(
+        self,
+        *,
+        channel: str = "",
+        user_text: str = "",
+        signal_snapshot: Any = None,
+        observer_frame: Any = None,
+        now_ms: int | None = None,
+    ) -> AudienceOutcome | None:
+        """Đóng outcome của act gần nhất bằng tín hiệu hành vi quan sát được.
+
+        Chat được xử lý cả khi coordinator không chạy một lượt autonomous mới.
+        Với tick nền, scene state hiện tại đủ để kết luận continued_focus/ignored
+        sau khi cửa sổ phản hồi hết hạn.
+        """
+        now = int(now_ms if now_ms is not None else time.time() * 1000)
+        scene = self.scene_runtime.state if getattr(self.scene_runtime, "_initialized", False) else None
+        outcome = self.audience_feedback_loop.observe(
+            channel=channel,
+            user_text=user_text,
+            scene=scene,
+            now_ms=now,
+        )
+        observer = self.observability
+        if outcome is not None and observer is not None and callable(getattr(observer, "record_autonomous_feedback", None)):
+            try:
+                observer.record_autonomous_feedback(
+                    outcome=outcome,
+                    directive=self.audience_feedback_loop.directive(now_ms=now),
+                )
+            except Exception:
+                pass
+        return outcome
+
     def mark_spoken(
         self,
         plan: AutonomousPlan | None = None,
@@ -181,6 +271,7 @@ class AutonomousPerformerOrchestrator:
         at_ms: int | None = None,
         intent: str = "",
         hook_id: str = "",
+        text: str = "",
     ) -> None:
         current = plan or self.last_plan
         if current is None or current.selected_opportunity is None:
@@ -193,6 +284,22 @@ class AutonomousPerformerOrchestrator:
             hook_id=hook_id,
             at_ms=at_ms,
         )
+        self.show_arc_director.record_spoken(
+            text=text,
+            opportunity=current.selected_opportunity,
+            directive=current.show_arc_directive,
+            intent=intent,
+            hook_id=hook_id,
+            at_ms=at_ms,
+        )
+        self.audience_feedback_loop.record_act(
+            opportunity=current.selected_opportunity,
+            scene_mode=current.scene.name,
+            text=text,
+            intent=intent,
+            hook_id=hook_id,
+            at_ms=at_ms,
+        )
         observer = self.observability
         if observer is not None and callable(getattr(observer, "record_autonomous_commit", None)):
             try:
@@ -201,6 +308,8 @@ class AutonomousPerformerOrchestrator:
                     intent=intent,
                     hook_id=hook_id,
                     session_snapshot=self.session_director.snapshot(now_ms=at_ms),
+                    show_arc_snapshot=self.show_arc_director.snapshot(now_ms=at_ms),
+                    audience_feedback_snapshot=self.audience_feedback_loop.snapshot(now_ms=at_ms),
                 )
             except Exception:
                 pass

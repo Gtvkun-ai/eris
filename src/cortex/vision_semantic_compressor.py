@@ -4,7 +4,7 @@ VisionSemanticCompressor cho ERIS.
 
 Vai trÃ²:
 - Nháº­n screenshot/crop + OCR hint + ObserverFrame.
-- Gá»i Qwen vision qua Ollama khi tháº­t sá»± cáº§n.
+- Gá»i vision API remote khi tháº­t sá»± cáº§n.
 - NÃ©n mÃ n hÃ¬nh thÃ nh SemanticSceneNote nhá».
 - KhÃ´ng tráº£ lá»i user.
 - KhÃ´ng commit memory.
@@ -50,22 +50,23 @@ except Exception:  # pragma: no cover - fallback khi test rá»i file
         stable_hash,
     )
 
-try:
-    from llm.ollama_client import OllamaClient, OllamaResult
-except Exception:  # pragma: no cover - cho phÃ©p import file khi chÆ°a cÃ³ llm package
-    OllamaClient = Any  # type: ignore
-    OllamaResult = Any  # type: ignore
+@dataclass(slots=True)
+class ChatJsonResult:
+    ok: bool
+    parsed: dict[str, Any] | None = None
+    content: str = ""
+    error: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 class RemoteStructureClient:
     """Adapter: bá»c má»™t remote chat client (cÃ³ ``create_chat_completion``) Ä‘á»ƒ lá»™
     interface ``chat_json`` mÃ  VisionSemanticCompressor cáº§n cho Táº¦NG cáº¥u trÃºc-hoÃ¡.
 
-    Má»¥c Ä‘Ã­ch: trÃªn mÃ¡y Ã­t VRAM, moondream caption cháº¡y local cÃ²n viá»‡c Ã©p JSON Ä‘áº©y
-    sang remote (vd Gemma qua Gemini API) â€” khá»i náº¡p/swap text model local má»—i lÆ°á»£t.
+    Má»¥c Ä‘Ã­ch: Ä‘áº©y viá»‡c Ã©p JSON sang remote (vd Gemma qua Gemini API).
 
     Gemma KHÃ”NG nháº­n responseSchema nÃªn ta váº«n gá»­i response_format=json_object vÃ 
-    tá»± salvage JSON tá»« text tráº£ vá». Má»i lá»—i â‡’ tráº£ OllamaResult(ok=False) Ä‘á»ƒ compressor
+    tá»± salvage JSON tá»« text tráº£ vá». Má»i lá»—i â‡’ tráº£ ChatJsonResult(ok=False) Ä‘á»ƒ compressor
     degrade vá» fallback (giá»¯ caption), khÃ´ng bao giá» raise ra hot path.
     """
 
@@ -92,11 +93,6 @@ class RemoteStructureClient:
 
     @staticmethod
     def _parse_json_object(text: str) -> dict | None:
-        try:
-            if OllamaClient is not Any and callable(getattr(OllamaClient, "_parse_json_object", None)):
-                return OllamaClient._parse_json_object(text)  # type: ignore[attr-defined]
-        except Exception:
-            pass
         import json as _json
 
         raw = str(text or "").strip()
@@ -138,18 +134,18 @@ class RemoteStructureClient:
                 response_format=response_format,
             )
         except Exception as exc:  # pragma: no cover - lá»—i máº¡ng/remote
-            return OllamaResult(ok=False, error=f"{type(exc).__name__}:{exc}")
+            return ChatJsonResult(ok=False, error=f"{type(exc).__name__}:{exc}")
 
         content = self._extract_text(response)
         parsed = self._parse_json_object(content)
         if parsed is None:
-            return OllamaResult(ok=False, content=content, error="json_parse_failed")
-        return OllamaResult(ok=True, parsed=parsed, content=content)
+            return ChatJsonResult(ok=False, content=content, error="json_parse_failed")
+        return ChatJsonResult(ok=True, parsed=parsed, content=content)
 
 
 class RemoteCaptionClient:
     """Adapter: bá»c client OpenAI-compatible remote (vd shopaikey grok-3-image) Ä‘á»ƒ
-    lá»™ ``caption_image(image, ...)`` tráº£ caption text â€” thay cho moondream local.
+    lá»™ ``caption_image(image, ...)`` tráº£ caption text.
 
     Gá»­i áº£nh theo Ä‘á»‹nh dáº¡ng OpenAI multimodal (image_url data URI). Má»i lá»—i â‡’ tráº£ ""
     Ä‘á»ƒ compressor degrade (structuring váº«n cháº¡y tá»« OCR), khÃ´ng raise ra hot path.
@@ -326,16 +322,13 @@ class VisionCompressorConfig:
     Máº·c Ä‘á»‹nh táº¯t báº±ng env Ä‘á»ƒ báº¡n kiá»ƒm observer trÆ°á»›c rá»“i má»›i báº­t vision.
     CÃ³ thá»ƒ báº­t báº±ng:
         ERIS_VISION_COMPRESSOR=1
-        ERIS_VISION_COMPRESSOR_MODEL=<model vision trong Ollama>
     """
 
     enabled: bool = field(
         default_factory=lambda: os.getenv("ERIS_VISION_COMPRESSOR", "0").strip().lower()
         not in {"0", "false", "no", "off", ""}
     )
-    model: str = field(
-        default_factory=lambda: os.getenv("ERIS_VISION_COMPRESSOR_MODEL", "moondream").strip()
-    )
+    model: str = "remote_vision"
     structure_model: str = field(
         default_factory=lambda: os.getenv("ERIS_VISION_STRUCTURE_MODEL", "").strip()
     )
@@ -382,19 +375,18 @@ class VisionSemanticCompressor:
     def __init__(
         self,
         config: VisionCompressorConfig | None = None,
-        ollama_client: Any | None = None,
+        local_client: Any | None = None,
         logger: Any | None = None,
         structure_client: Any | None = None,
         caption_client: Any | None = None,
     ) -> None:
         self.config = config or VisionCompressorConfig()
-        self.client = ollama_client if ollama_client is not None else self._make_default_client()
-        # Client riÃªng cho Táº¦NG cáº¥u trÃºc-hoÃ¡ (caption â†’ JSON). Khi mÃ¡y Ã­t VRAM, ta
-        # Ä‘á»ƒ moondream caption local nhÆ°ng Ä‘áº©y structuring sang remote (Gemma) Ä‘á»ƒ
-        # khá»i náº¡p/swap text model local má»—i lÆ°á»£t. None â‡’ dÃ¹ng luÃ´n self.client.
+        self.client = local_client
+        # Client riÃªng cho Táº¦NG cáº¥u trÃºc-hoÃ¡ (caption â†’ JSON).
+        # None â‡’ dÃ¹ng luÃ´n self.client náº¿u caller inject client tá»± do.
         self.structure_client = structure_client
         # Client riÃªng cho Táº¦NG caption (áº£nh â†’ mÃ´ táº£). Khi set (vd shopaikey
-        # grok-3-image), caption cháº¡y REMOTE thay cho moondream local. None â‡’ self.client.
+        # grok-3-image), caption cháº¡y REMOTE. None â‡’ self.client.
         self.caption_client = caption_client
         self.logger = logger
         # Scene continuity: nhá»› scene trÆ°á»›c Ä‘á»ƒ delta/relation cÃ³ chá»— bÃ¡m. "Thay Ä‘á»•i"
@@ -445,7 +437,7 @@ class VisionSemanticCompressor:
     ) -> SemanticSceneNote:
         """Gá»i vision model vÃ  tráº£ SemanticSceneNote.
 
-        Náº¿u thiáº¿u áº£nh/model/Ollama, tráº£ fallback OCR-only thay vÃ¬ lÃ m cháº¿t loop.
+        Náº¿u thiáº¿u áº£nh/model/client, tráº£ fallback OCR-only thay vÃ¬ lÃ m cháº¿t loop.
         """
 
         image = self._resolve_image_base64(
@@ -480,14 +472,16 @@ class VisionSemanticCompressor:
                 signal_snapshot=signal_snapshot,
                 reason="missing_image",
             )
-        if self.client is None or not callable(getattr(self.client, "chat_json", None)):
+        has_caption_client = self.caption_client is not None and callable(getattr(self.caption_client, "caption_image", None))
+        has_generic_client = self.client is not None and callable(getattr(self.client, "chat_json", None))
+        if not has_caption_client and not has_generic_client:
             if no_fallback_mode_enabled():
-                raise RuntimeError("no_fallback_vision:missing_ollama_client")
+                raise RuntimeError("no_fallback_vision:missing_vision_client")
             return self._fallback_ocr_note(
                 ocr_text=ocr_text,
                 observer_frame=observer_frame,
                 signal_snapshot=signal_snapshot,
-                reason="missing_ollama_client",
+                reason="missing_vision_client",
             )
 
         # Hai táº§ng tÃ¡ch vai: caption_client (vd grok-3-image) chá»‰ Táº¢ báº±ng prompt Ä‘Æ¡n
@@ -504,7 +498,7 @@ class VisionSemanticCompressor:
                 extra_context=extra_context,
             )
 
-        # â”€â”€ Táº§ng 1: caption Tá»° DO báº±ng vision model (moondream/local hoáº·c remote) â”€â”€
+        # â”€â”€ Táº§ng 1: caption Tá»° DO báº±ng vision model â”€â”€
         caption = ""
         caption_error = ""
         try:
@@ -587,7 +581,7 @@ class VisionSemanticCompressor:
         extra_context: str,
     ) -> SemanticSceneNote:
         """ÄÆ°á»ng cÅ©: gá»i vision model má»™t phÃ¡t vá»›i schema (cho client khÃ´ng cÃ³
-        caption_image, vd OllamaClient + VLM Ä‘á»§ máº¡nh)."""
+        caption_image)."""
         messages = [
             {"role": "system", "content": self._system_prompt()},
             {"role": "user", "content": self._user_prompt(
@@ -607,14 +601,14 @@ class VisionSemanticCompressor:
         )
 
         if not getattr(result, "ok", False):
-            self._log_warning("Vision compressor Ollama failed: %s", getattr(result, "error", "unknown"))
+            self._log_warning("Vision compressor client failed: %s", getattr(result, "error", "unknown"))
             if no_fallback_mode_enabled():
-                raise RuntimeError(f"no_fallback_vision:ollama_failed:{getattr(result, 'error', 'unknown')}")
+                raise RuntimeError(f"no_fallback_vision:client_failed:{getattr(result, 'error', 'unknown')}")
             return self._fallback_ocr_note(
                 ocr_text=ocr_text,
                 observer_frame=observer_frame,
                 signal_snapshot=signal_snapshot,
-                reason=f"ollama_failed:{getattr(result, 'error', 'unknown')}",
+                reason=f"client_failed:{getattr(result, 'error', 'unknown')}",
             )
 
         parsed = getattr(result, "parsed", {}) or {}
@@ -624,7 +618,7 @@ class VisionSemanticCompressor:
             signal_snapshot=signal_snapshot,
             raw_debug={
                 "model": self.config.model,
-                "ollama_content_preview": compact_text(str(getattr(result, "content", "") or ""), 500),
+                "client_content_preview": compact_text(str(getattr(result, "content", "") or ""), 500),
             },
         )
 
@@ -672,8 +666,8 @@ class VisionSemanticCompressor:
         )
 
     def _structure_model(self) -> str:
-        """Model for the text-structuring stage when using OllamaClient."""
-        return self.config.structure_model or "qwen3"
+        """Model/source label for the text-structuring stage."""
+        return self.config.structure_model or "remote_structure"
 
     @staticmethod
     def _caption_prompt() -> str:
@@ -1150,15 +1144,6 @@ class VisionSemanticCompressor:
         """Tráº£ source label tá»« model name, dÃ¹ng cho SemanticSceneNote.source."""
         model = str(self.config.model or "").strip().lower().split(":")[0]
         return model or "vision_model"
-
-    @staticmethod
-    def _make_default_client() -> Any | None:
-        if OllamaClient is Any:  # type: ignore[comparison-overlap]
-            return None
-        try:
-            return OllamaClient()
-        except Exception:
-            return None
 
     def _log_warning(self, msg: str, *args: Any) -> None:
         if self.logger is not None and callable(getattr(self.logger, "warning", None)):

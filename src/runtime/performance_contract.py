@@ -208,6 +208,24 @@ class PerformanceContextBuilder:
             if isinstance(autonomous_plan.get("session_directive"), Mapping)
             else {}
         )
+        show_arc_directive = (
+            autonomous_plan.get("show_arc_directive")
+            if isinstance(autonomous_plan.get("show_arc_directive"), Mapping)
+            else {}
+        )
+        stage_preset = (
+            autonomous_plan.get("stage_preset")
+            if isinstance(autonomous_plan.get("stage_preset"), Mapping)
+            else {}
+        )
+        audience_feedback = (
+            autonomous_plan.get("audience_feedback")
+            if isinstance(autonomous_plan.get("audience_feedback"), Mapping)
+            else {}
+        )
+        selected_kind = _clean(selected_opportunity.get("kind")).lower()
+        arc_stage = _clean(show_arc_directive.get("arc_stage")).lower()
+        line_shape = _clean(show_arc_directive.get("line_shape")).lower()
         if channel_name == "autonomous" and bool(permit.get("allowed", False)):
             suggested_intent = _clean(selected_opportunity.get("suggested_intent")).lower()
             # Opportunity đã qua evidence + session director. Dùng intent này làm
@@ -222,6 +240,14 @@ class PerformanceContextBuilder:
                 f"session={_clean(session_directive.get('phase')) or 'settled'}/"
                 f"{_clean(session_directive.get('cadence')) or 'balanced'}"
             )
+            if arc_stage:
+                reasons.append(f"show_arc={arc_stage}/{line_shape or 'unspecified'}")
+            if stage_preset:
+                reasons.append(f"stage_preset={_clean(stage_preset.get('preset_id')) or 'scene'}")
+                reasons.append(f"performance_lane={_clean(stage_preset.get('performance_lane')) or 'default'}")
+            if audience_feedback:
+                reasons.append(f"audience_feedback={_clean(audience_feedback.get('mode')) or 'normal'}")
+                reasons.append(f"audience_recent={_clean(audience_feedback.get('recent_outcome')) or 'none'}")
         hook = self.content_engine.select_hook(
             director,
             payload=payload,
@@ -298,8 +324,89 @@ class PerformanceContextBuilder:
                 reasons=tuple(reasons),
             )
 
+        if channel_name == "autonomous" and stage_preset and bool(permit.get("allowed", False)):
+            # Phase 4: scene playbook có quyền chốt lane/style sau khi repair và
+            # chat đã được xử lý. LLM vẫn viết câu, nhưng không được tự đổi một
+            # game reaction thành độc thoại trầm tư chỉ vì prompt hôm đó buồn.
+            intent_overrides = stage_preset.get("intent_overrides") if isinstance(stage_preset.get("intent_overrides"), Mapping) else {}
+            performance_overrides = (
+                stage_preset.get("performance_overrides")
+                if isinstance(stage_preset.get("performance_overrides"), Mapping)
+                else {}
+            )
+            override = performance_overrides.get(selected_kind)
+            override = override if isinstance(override, Mapping) else {}
+            resolved_intent = _clean(
+                intent_overrides.get(selected_kind)
+                or intent
+                or stage_preset.get("default_intent")
+                or "micro_presence"
+            ).lower()
+            delivery_style = _clean(override.get("delivery_style") or stage_preset.get("delivery_style") or "soft_near")
+            stage_emotion = _clean(override.get("stage_emotion") or stage_preset.get("stage_emotion") or "neutral_warm")
+            stage_motion = _clean(override.get("stage_motion") or stage_preset.get("stage_motion") or "blink_slow")
+            preset_tts = _clean(override.get("tts_style") or stage_preset.get("tts_style") or "low_warm")
+            feedback_mode = _clean(audience_feedback.get("mode")).lower()
+            # Khi user vừa từ chối/correct autonomous, một lỗi khẩn vẫn có thể
+            # được nói nhưng phải bỏ màu mè. Đây là recovery lane, không phải
+            # màn xin lỗi dài hơn chính lỗi ban đầu.
+            if feedback_mode == "recovery":
+                delivery_style = "cold_precision"
+                stage_emotion = "focused"
+                stage_motion = "tiny_nod"
+                preset_tts = "clipped_clear"
+                reasons.append("audience_recovery_lane")
+            elif feedback_mode == "low_intrusion":
+                reasons.append("audience_low_intrusion_lane")
+            try:
+                preset_words = max(1, int(stage_preset.get("max_words", director.speak_budget_words) or director.speak_budget_words))
+                feedback_words = int(audience_feedback.get("max_words_cap", preset_words) or preset_words)
+                preset_words = min(preset_words, max(1, feedback_words))
+            except (TypeError, ValueError):
+                preset_words = director.speak_budget_words
+            reasons.append(f"preset_intent={resolved_intent}")
+            if bool(stage_preset.get("anti_spoiler", False)):
+                reasons.append("anti_spoiler")
+            if not bool(stage_preset.get("public_memory_allowed", True)):
+                reasons.append("private_memory_off")
+            if not bool(stage_preset.get("poetic_drift_allowed", True)):
+                reasons.append("no_poetic_drift")
+            return PerformanceContext(
+                performance_intent=resolved_intent,  # type: ignore[arg-type]
+                delivery_style=delivery_style,
+                stage_emotion=stage_emotion,
+                stage_motion=stage_motion,
+                tts_style=preset_tts,
+                publicity=publicity,
+                content_hook_id=hook.id,
+                content_hook=hook.to_payload(),
+                body_only_ok=bool(stage_preset.get("body_first", True)),
+                max_words=min(preset_words, director.speak_budget_words),
+                candidate_count=3 if _clean(stage_preset.get("gesture_density")) == "minimal" else 4,
+                reasons=tuple(reasons),
+            )
+
         if scene == "coding_partner":
             reasons.append("protect_focus")
+            # Progress/payoff là một beat sân khấu, không phải technical help.
+            # Trước đây mọi intent khác random_chatter đều bị ép về technical_help,
+            # khiến test vừa pass xong Eris vẫn nói như đang chẩn đoán bug mới.
+            if selected_kind == "task_progress" or arc_stage == "payoff":
+                reasons.append("coding_progress_payoff")
+                return PerformanceContext(
+                    performance_intent="react",
+                    delivery_style="dry_payoff",
+                    stage_emotion="satisfied_soft",
+                    stage_motion="tiny_nod",
+                    tts_style="clear_low",
+                    publicity=publicity,
+                    content_hook_id=hook.id,
+                    content_hook=hook.to_payload(),
+                    body_only_ok=True,
+                    max_words=min(14, director.speak_budget_words),
+                    candidate_count=3,
+                    reasons=tuple(reasons),
+                )
             return PerformanceContext(
                 performance_intent="body_only" if intent in {"random_chatter", "inner_whim", ""} else "technical_help",
                 delivery_style="quiet_focus",

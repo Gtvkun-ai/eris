@@ -419,6 +419,9 @@ class ErisObservability:
         selected = getattr(plan, "selected_opportunity", None)
         permit = getattr(plan, "permit", None)
         directive = getattr(plan, "session_directive", None)
+        show_arc = getattr(plan, "show_arc_directive", None)
+        stage_preset = getattr(plan, "stage_preset", None)
+        audience_feedback = getattr(plan, "audience_feedback", None)
         scene = getattr(getattr(plan, "scene", None), "name", "unknown")
         kind = str(getattr(selected, "kind", "none") or "none")
         reason = str(getattr(permit, "reason", "unknown") or "unknown")
@@ -428,6 +431,15 @@ class ErisObservability:
         fatigue = float(getattr(directive, "audience_fatigue", 0.0) or 0.0)
         lines = int(getattr(directive, "lines_last_hour", 0) or 0)
         score = float(getattr(directive, "selected_score", 0.0) or 0.0)
+        arc_stage = str(getattr(show_arc, "arc_stage", "hold") or "hold")
+        arc_family = str(getattr(show_arc, "arc_family", "none") or "none")
+        line_shape = str(getattr(show_arc, "line_shape", "silent_presence") or "silent_presence")
+        preset_id = str(getattr(stage_preset, "preset_id", "legacy.default") or "legacy.default")
+        performance_lane = str(getattr(stage_preset, "performance_lane", "default") or "default")
+        feedback_mode = str(getattr(audience_feedback, "mode", "normal") or "normal")
+        intrusion_pressure = float(getattr(audience_feedback, "intrusion_pressure", 0.0) or 0.0)
+        engagement_score = float(getattr(audience_feedback, "engagement_score", 0.0) or 0.0)
+        recent_outcome = str(getattr(audience_feedback, "recent_outcome", "none") or "none")
 
         for opportunity in tuple(getattr(plan, "opportunities", ()) or ()):
             self.increment(
@@ -436,8 +448,15 @@ class ErisObservability:
             )
         self.increment(
             "autonomous_plan_total",
-            tags={"scene": scene, "kind": kind, "allowed": str(allowed).lower(), "phase": phase},
-            fields={"reason": reason, "cadence": cadence},
+            tags={
+                "scene": scene, "kind": kind, "allowed": str(allowed).lower(),
+                "phase": phase, "arc_stage": arc_stage, "preset": preset_id,
+                "feedback": feedback_mode,
+            },
+            fields={
+                "reason": reason, "cadence": cadence, "arc_family": arc_family,
+                "line_shape": line_shape, "performance_lane": performance_lane,
+            },
         )
         if allowed:
             self.increment("autonomous_speak_permit_total", tags={"kind": kind, "scene": scene})
@@ -447,9 +466,27 @@ class ErisObservability:
         self.gauge("autonomous_audience_fatigue", fatigue, tags={"phase": phase, "scene": scene})
         self.gauge("autonomous_lines_last_hour", float(lines), tags={"scene": scene})
         self.observe("autonomous_selected_opportunity_score", score, tags={"kind": kind, "scene": scene})
+        self.increment(
+            "autonomous_show_arc_directive_total",
+            tags={"family": arc_family, "stage": arc_stage, "shape": line_shape},
+        )
+        self.increment(
+            "autonomous_stage_preset_total",
+            tags={"preset": preset_id, "lane": performance_lane, "scene": scene},
+        )
+        self.gauge("autonomous_intrusion_pressure", intrusion_pressure, tags={"scene": scene})
+        self.gauge("autonomous_engagement_score", engagement_score, tags={"scene": scene})
+        self.increment(
+            "autonomous_feedback_directive_total",
+            tags={"mode": feedback_mode, "recent_outcome": recent_outcome, "scene": scene},
+        )
         self.log(
             "autonomous_plan",
-            tags={"scene": scene, "kind": kind, "phase": phase, "cadence": cadence},
+            tags={
+                "scene": scene, "kind": kind, "phase": phase, "cadence": cadence,
+                "arc_stage": arc_stage, "line_shape": line_shape,
+                "preset": preset_id,
+            },
             fields={
                 "allowed": allowed,
                 "permit_mode": str(getattr(permit, "mode", "") or ""),
@@ -457,6 +494,46 @@ class ErisObservability:
                 "selected_score": score,
                 "body_only_bias": float(getattr(directive, "body_only_bias", 0.0) or 0.0),
                 "lines_last_hour": lines,
+                "arc_family": arc_family,
+                "arc_stage": arc_stage,
+                "line_shape": line_shape,
+                "stage_preset_id": preset_id,
+                "performance_lane": performance_lane,
+                "feedback_mode": feedback_mode,
+                "intrusion_pressure": intrusion_pressure,
+                "engagement_score": engagement_score,
+                "recent_outcome": recent_outcome,
+            },
+        )
+
+    def record_autonomous_feedback(self, *, outcome: Any, directive: Any) -> None:
+        """Ghi vòng phản hồi hành vi sau act; không lưu nguyên văn user text."""
+        if outcome is None:
+            return
+        kind = str(getattr(outcome, "kind", "unknown") or "unknown")
+        opportunity_kind = str(getattr(outcome, "opportunity_kind", "unknown") or "unknown")
+        valence = float(getattr(outcome, "valence", 0.0) or 0.0)
+        confidence = float(getattr(outcome, "confidence", 0.0) or 0.0)
+        mode = str(getattr(directive, "mode", "normal") or "normal")
+        intrusion = float(getattr(directive, "intrusion_pressure", 0.0) or 0.0)
+        engagement = float(getattr(directive, "engagement_score", 0.0) or 0.0)
+        self.increment(
+            "autonomous_audience_outcome_total",
+            tags={"outcome": kind, "opportunity_kind": opportunity_kind, "mode": mode},
+        )
+        self.observe("autonomous_audience_outcome_valence", valence, tags={"outcome": kind})
+        self.observe("autonomous_audience_outcome_confidence", confidence, tags={"outcome": kind})
+        self.gauge("autonomous_intrusion_pressure", intrusion)
+        self.gauge("autonomous_engagement_score", engagement)
+        self.log(
+            "autonomous_audience_feedback",
+            tags={"outcome": kind, "opportunity_kind": opportunity_kind, "mode": mode},
+            fields={
+                "reason": _safe_text(getattr(outcome, "reason", ""), 160),
+                "valence": valence,
+                "confidence": confidence,
+                "intrusion_pressure": intrusion,
+                "engagement_score": engagement,
             },
         )
 
@@ -467,15 +544,30 @@ class ErisObservability:
         intent: str = "",
         hook_id: str = "",
         session_snapshot: Mapping[str, Any] | None = None,
+        show_arc_snapshot: Mapping[str, Any] | None = None,
+        audience_feedback_snapshot: Mapping[str, Any] | None = None,
     ) -> None:
         """Commit xảy ra sau khi lời public đã được dựng/gửi, không phải lúc chọn hook."""
         selected = getattr(plan, "selected_opportunity", None)
         scene = str(getattr(getattr(plan, "scene", None), "name", "unknown") or "unknown")
         kind = str(getattr(selected, "kind", "unknown") or "unknown")
         snapshot = dict(session_snapshot or {})
+        arc_snapshot = dict(show_arc_snapshot or {})
+        feedback_snapshot = dict(audience_feedback_snapshot or {})
+        feedback_directive = feedback_snapshot.get("directive") if isinstance(feedback_snapshot.get("directive"), Mapping) else {}
+        active_arc = arc_snapshot.get("active_arc") if isinstance(arc_snapshot.get("active_arc"), Mapping) else {}
+        arc_directive = getattr(plan, "show_arc_directive", None)
+        stage_preset = getattr(plan, "stage_preset", None)
+        preset_id = str(getattr(stage_preset, "preset_id", "legacy.default") or "legacy.default")
+        performance_lane = str(getattr(stage_preset, "performance_lane", "default") or "default")
+        arc_stage = str(getattr(arc_directive, "arc_stage", "unknown") or "unknown")
+        line_shape = str(getattr(arc_directive, "line_shape", "unknown") or "unknown")
         self.increment(
             "autonomous_public_line_total",
-            tags={"scene": scene, "kind": kind, "intent": _safe_text(intent or "unknown", 48)},
+            tags={
+                "scene": scene, "kind": kind, "intent": _safe_text(intent or "unknown", 48),
+                "arc_stage": arc_stage, "line_shape": line_shape, "preset": preset_id,
+            },
             fields={"hook_id": _safe_text(hook_id, 96)},
         )
         self.gauge(
@@ -491,6 +583,16 @@ class ErisObservability:
                 "hook_id": _safe_text(hook_id, 96),
                 "audience_fatigue": float(snapshot.get("audience_fatigue", 0.0) or 0.0),
                 "recent_kinds": list(snapshot.get("recent_kinds", []) or [])[-8:],
+                "arc_stage": arc_stage,
+                "line_shape": line_shape,
+                "arc_beat_count": int(active_arc.get("beat_count", 0) or 0),
+                "arc_resolved": bool(active_arc.get("resolved", False)),
+                "recent_openings": list(arc_snapshot.get("recent_openings", []) or [])[-6:],
+                "stage_preset_id": preset_id,
+                "performance_lane": performance_lane,
+                "feedback_mode": str(feedback_directive.get("mode", "normal") or "normal"),
+                "intrusion_pressure": float(feedback_directive.get("intrusion_pressure", 0.0) or 0.0),
+                "engagement_score": float(feedback_directive.get("engagement_score", 0.0) or 0.0),
             },
         )
 

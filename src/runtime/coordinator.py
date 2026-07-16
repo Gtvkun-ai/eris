@@ -1085,6 +1085,16 @@ class RuntimeCoordinator(
             # Ghép opportunity/speak gate vào wake decision. Khi có permit thật,
             # performer mở đúng một lượt main cognition; nếu không thì veto lời chen.
             performer = getattr(self, "autonomous_performer", None)
+            if performer is not None:
+                # Phase 5: chat mới cũng là phản hồi cho act autonomous trước đó.
+                # Không cần chạy một lượt autonomous mới để biết user vừa bảo
+                # "đừng chen" hay vừa nối tiếp câu đùa.
+                performer.observe_audience(
+                    channel=channel or "autonomous",
+                    user_text=user_text,
+                    signal_snapshot=signal_snapshot,
+                    observer_frame=observer_frame,
+                )
             if performer is not None and str(channel or "autonomous").strip().lower() != "chat":
                 plan = performer.evaluate(
                     signal_snapshot=signal_snapshot,
@@ -2167,6 +2177,7 @@ class RuntimeCoordinator(
                         getattr(self, "last_autonomous_plan", None),
                         intent=performance_intent,
                         hook_id=hook_id,
+                        text=str(payload.get("memory_text", payload.get("text", "")) or ""),
                     )
                 # ContentEngine autonomous chỉ reserve khi chọn. Commit cooldown
                 # sau output public thật sự, tránh mất một bit chưa từng được nói.
@@ -7873,8 +7884,31 @@ class RuntimeCoordinator(
 
         scene = getattr(plan, "scene", None)
         directive = getattr(plan, "session_directive", None)
+        show_arc = getattr(plan, "show_arc_directive", None)
+        stage_preset = getattr(plan, "stage_preset", None)
+        audience_feedback = getattr(plan, "audience_feedback", None)
+        preset_surface_rules = list(getattr(stage_preset, "surface_rules", ()) or ())
+        feedback_mode = str(getattr(audience_feedback, "mode", "normal") or "normal")
+        feedback_surface_rules: list[str] = []
+        if feedback_mode == "recovery":
+            feedback_surface_rules.extend([
+                "User vừa có tín hiệu không muốn bị chen hoặc đã sửa autonomous: không callback, không khịa, chỉ nói nếu sự kiện thật sự khẩn.",
+                "Nếu vẫn được permit vì lỗi khẩn, nói trực tiếp và cực ngắn; không xin phép dài dòng.",
+            ])
+        elif feedback_mode == "low_intrusion":
+            feedback_surface_rules.append(
+                "Giữ câu ngắn hơn bình thường, không mở chủ đề mới và không lặp opportunity vừa bị bỏ qua hoặc sửa."
+            )
+        line_shape = str(getattr(show_arc, "line_shape", "single_strike") or "single_strike")
+        shape_rule = {
+            "single_strike": "Một câu ngắn, một ý, kết thúc gọn; không thêm vế giải thích.",
+            "observation_turn": "Mở bằng quan sát có evidence rồi bẻ nhẹ ở vế sau; không bịa chi tiết màn hình.",
+            "setup_payoff": "Dùng hai nhịp ngắn: setup rồi payoff sắc hơn; tổng vẫn nằm trong max_words.",
+            "quiet_callback": "Callback kín đáo vào anchor gần đây, không kể lại nguyên câu cũ và không biến ký ức thành fact hiện tại.",
+            "technical_two_step": "Nêu chẩn đoán cực ngắn rồi hướng xử lý; không giảng dài và không claim đã sửa thay user.",
+        }.get(line_shape, "Một micro-line ngắn, có điểm rơi rõ và không lan man.")
         contract = {
-            "contract": "autonomous_stage.v2",
+            "contract": "autonomous_stage.v5",
             "scene_mode": str(getattr(scene, "name", "private_idle") or "private_idle"),
             "opportunity": {
                 "kind": str(getattr(opportunity, "kind", "autonomous") or "autonomous"),
@@ -7894,12 +7928,54 @@ class RuntimeCoordinator(
                 "body_only_bias": round(float(getattr(directive, "body_only_bias", 0.0) or 0.0), 3),
                 "recent_kinds": list(getattr(directive, "recent_kinds", ()) or ())[-6:],
             },
+            "audience_feedback": {
+                "mode": feedback_mode,
+                "engagement_score": round(float(getattr(audience_feedback, "engagement_score", 0.0) or 0.0), 3),
+                "intrusion_pressure": round(float(getattr(audience_feedback, "intrusion_pressure", 0.0) or 0.0), 3),
+                "recent_outcome": str(getattr(audience_feedback, "recent_outcome", "none") or "none"),
+                "suppressed_kinds": list(getattr(audience_feedback, "suppressed_kinds", ()) or ()),
+            },
+            "stage_preset": {
+                "preset_id": str(getattr(stage_preset, "preset_id", "legacy.default") or "legacy.default"),
+                "performance_lane": str(getattr(stage_preset, "performance_lane", "default") or "default"),
+                "body_first": bool(getattr(stage_preset, "body_first", True)),
+                "default_intent": str(getattr(stage_preset, "default_intent", "micro_presence") or "micro_presence"),
+                "delivery_style": str(getattr(stage_preset, "delivery_style", "soft_near") or "soft_near"),
+                "stage_emotion": str(getattr(stage_preset, "stage_emotion", "neutral_warm") or "neutral_warm"),
+                "stage_motion": str(getattr(stage_preset, "stage_motion", "blink_slow") or "blink_slow"),
+                "tts_style": str(getattr(stage_preset, "tts_style", "low_warm") or "low_warm"),
+                "gesture_density": str(getattr(stage_preset, "gesture_density", "low") or "low"),
+                "anti_spoiler": bool(getattr(stage_preset, "anti_spoiler", False)),
+                "public_memory_allowed": bool(getattr(stage_preset, "public_memory_allowed", True)),
+                "poetic_drift_allowed": bool(getattr(stage_preset, "poetic_drift_allowed", True)),
+                "policy_tags": list(getattr(stage_preset, "policy_tags", ()) or ()),
+            },
+            "show_arc": {
+                "arc_id": str(getattr(show_arc, "arc_id", "") or ""),
+                "family": str(getattr(show_arc, "arc_family", "standalone") or "standalone"),
+                "stage": str(getattr(show_arc, "arc_stage", "setup") or "setup"),
+                "continuity_mode": str(getattr(show_arc, "continuity_mode", "new_arc") or "new_arc"),
+                "line_shape": line_shape,
+                "shape_rule": shape_rule,
+                "callback_anchor": str(getattr(show_arc, "callback_anchor", "") or ""),
+                "avoid_openings": list(getattr(show_arc, "avoid_openings", ()) or ())[-6:],
+                "novelty_target": round(float(getattr(show_arc, "novelty_target", 0.62) or 0.62), 3),
+                "escalation_level": int(getattr(show_arc, "escalation_level", 0) or 0),
+            },
             "surface_rules": [
-                "Viết đúng một câu thoại ngắn bằng tiếng Việt, có điểm rơi tự nhiên.",
+                "Viết đúng một micro-line tiếng Việt theo show_arc.line_shape và shape_rule.",
+                "Tuân theo stage_preset.performance_lane, delivery_style và policy_tags; không tự đổi vai.",
+                "Không mở câu bằng bất kỳ cụm nào trong show_arc.avoid_openings.",
+                "Nếu có callback_anchor, chỉ callback ý gần đây; không trích nguyên câu và không bịa continuity.",
                 "Không viết chỉ dẫn sân khấu, action tag, ngoặc diễn xuất hoặc âm thanh giả vào text.",
                 "Không khẳng định điều nhìn/nghe/cảm xúc nếu evidence_refs không cho phép.",
                 "Không chào lại, không hỏi giúp gì, không tự giải thích vì sao đang nói.",
+                "Nếu public_memory_allowed=false, tuyệt đối không surface ký ức riêng tư.",
+                "Nếu anti_spoiler=true, không đoán hoặc tiết lộ diễn biến media.",
+                "Nếu poetic_drift_allowed=false, ưu tiên nghĩa trực tiếp và bỏ ẩn dụ trang trí.",
                 "Giữ delivery_hint, nonverbal_cue và stage_motion ở field JSON riêng.",
+                *feedback_surface_rules,
+                *preset_surface_rules,
             ],
         }
         return "AUTONOMOUS_STAGE_CONTRACT\n" + json.dumps(contract, ensure_ascii=False, separators=(",", ":"))

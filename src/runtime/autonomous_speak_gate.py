@@ -30,6 +30,15 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
     return getattr(obj, name, default)
 
 
+def _tuple_value(obj: Any, name: str) -> tuple[str, ...]:
+    value = _get(obj, name, ()) or ()
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item or "") for item in value if str(item or "").strip())
+    return ()
+
+
 def _clamp01(value: Any, default: float = 0.0) -> float:
     try:
         return max(0.0, min(1.0, float(value)))
@@ -92,6 +101,7 @@ class AutonomousSpeakPermissionGate:
         scene: SceneRuntimeState,
         user_context: Any = None,
         wake_decision: Any = None,
+        stage_preset: Any = None,
         now_ms: int | None = None,
     ) -> SpeakPermit:
         now = int(now_ms if now_ms is not None else _now_ms())
@@ -100,8 +110,15 @@ class AutonomousSpeakPermissionGate:
         if now >= opportunity.expires_at_ms:
             return self._deny("suppress", "opportunity_expired")
 
+        allowed_kinds = set(_tuple_value(stage_preset, "allowed_opportunity_kinds"))
+        if allowed_kinds and opportunity.kind not in allowed_kinds:
+            emergency = opportunity.kind == "new_error" and opportunity.urgency >= 0.90
+            if not emergency:
+                return self._deny("body_only", "stage_preset_prefers_body_only", confidence=0.94)
+
         since_boot = now - self.started_at_ms
-        if since_boot < self.config.startup_quiet_ms and opportunity.kind not in {"new_error", "return_after_idle"}:
+        startup_quiet_ms = int(_get(stage_preset, "startup_quiet_ms", self.config.startup_quiet_ms) or 0)
+        if since_boot < max(0, startup_quiet_ms) and opportunity.kind not in {"new_error", "return_after_idle"}:
             return self._deny("body_only", "startup_presence_before_speech", confidence=0.92)
 
         if scene.user_typing:
@@ -117,7 +134,10 @@ class AutonomousSpeakPermissionGate:
 
         if self.last_performance_at_ms:
             gap = now - self.last_performance_at_ms
-            required_gap = self.config.min_gap_ms
+            required_gap = max(
+                self.config.min_gap_ms,
+                int(_get(stage_preset, "min_gap_ms", 0) or 0),
+            )
             if opportunity.kind == "dead_air":
                 required_gap = max(required_gap, 35_000)
             if gap < required_gap and opportunity.kind not in {"new_error", "return_after_idle"}:
@@ -126,22 +146,29 @@ class AutonomousSpeakPermissionGate:
         cutoff = now - 3_600_000
         while self._spoken_history_ms and self._spoken_history_ms[0] < cutoff:
             self._spoken_history_ms.popleft()
-        if len(self._spoken_history_ms) >= self.config.max_lines_per_hour:
+        preset_hourly_limit = int(_get(stage_preset, "max_lines_per_hour", self.config.max_lines_per_hour) or self.config.max_lines_per_hour)
+        hourly_limit = max(1, min(self.config.max_lines_per_hour, preset_hourly_limit))
+        if len(self._spoken_history_ms) >= hourly_limit:
             return self._deny("body_only", "hourly_speech_budget_exhausted", confidence=0.98)
 
         if self.same_kind_streak >= self.config.max_same_kind_streak and opportunity.kind == self.last_kind:
             return self._deny("body_only", "same_opportunity_streak", confidence=0.90)
 
-        if opportunity.strength < 0.46:
-            return self._deny("body_only", "opportunity_too_weak", confidence=0.76)
+        preset_threshold = _clamp01(_get(stage_preset, "min_opportunity_strength", 0.46), 0.46)
+        threshold = max(0.46, preset_threshold)
+        if opportunity.kind in {"return_after_idle", "task_progress"}:
+            threshold = max(0.40, threshold - 0.08)
+        if opportunity.strength < threshold:
+            return self._deny("body_only", "opportunity_too_weak_for_stage_preset", confidence=0.80)
 
-        # Game/media active ưu tiên presence không lời. Chỉ lỗi thật hoặc user vừa
-        # quay lại mới đủ quyền chen câu. Avatar chưa làm cũng vẫn giữ contract này.
-        if scene.name in {"game_companion", "media_companion"} and opportunity.kind not in {"new_error", "return_after_idle"}:
+        # Không có preset thì giữ compatibility cũ. Khi preset tồn tại, chính
+        # playbook scene quyết định high_salience game/media có đáng thành lời hay
+        # không; tránh hard-code hai tầng cùng tranh quyền đạo diễn.
+        if stage_preset is None and scene.name in {"game_companion", "media_companion"} and opportunity.kind not in {"new_error", "return_after_idle"}:
             return self._deny("body_only", "scene_prefers_silent_presence", confidence=0.84)
 
         if opportunity.kind == "dead_air":
-            return SpeakPermit(
+            return self._cap_with_preset(SpeakPermit(
                 allowed=True,
                 mode="short_reply",
                 max_words=10,
@@ -149,9 +176,9 @@ class AutonomousSpeakPermissionGate:
                 reason="dead_air_micro_line",
                 cooldown_after_ms=40_000,
                 confidence=0.72,
-            )
+            ), stage_preset)
         if opportunity.kind in {"scene_transition", "return_after_idle", "task_progress"}:
-            return SpeakPermit(
+            return self._cap_with_preset(SpeakPermit(
                 allowed=True,
                 mode="short_reply",
                 max_words=14,
@@ -159,10 +186,10 @@ class AutonomousSpeakPermissionGate:
                 reason=f"{opportunity.kind}_short_act",
                 cooldown_after_ms=24_000,
                 confidence=0.80,
-            )
+            ), stage_preset)
         if opportunity.kind == "new_error":
             mode = "full_line" if opportunity.strength >= 0.82 else "short_reply"
-            return SpeakPermit(
+            return self._cap_with_preset(SpeakPermit(
                 allowed=True,
                 mode=mode,
                 max_words=18 if mode == "full_line" else 13,
@@ -170,8 +197,8 @@ class AutonomousSpeakPermissionGate:
                 reason="new_error_has_actionable_value",
                 cooldown_after_ms=22_000,
                 confidence=max(0.78, opportunity.strength),
-            )
-        return SpeakPermit(
+            ), stage_preset)
+        return self._cap_with_preset(SpeakPermit(
             allowed=True,
             mode="short_reply",
             max_words=12,
@@ -179,6 +206,26 @@ class AutonomousSpeakPermissionGate:
             reason="autonomous_opportunity_allowed",
             cooldown_after_ms=28_000,
             confidence=0.70,
+        ), stage_preset)
+
+    @staticmethod
+    def _cap_with_preset(permit: SpeakPermit, stage_preset: Any) -> SpeakPermit:
+        if stage_preset is None or not permit.allowed:
+            return permit
+        try:
+            max_words = max(1, min(permit.max_words, int(_get(stage_preset, "max_words", permit.max_words) or permit.max_words)))
+            max_duration = max(500, min(permit.max_duration_ms, int(_get(stage_preset, "max_duration_ms", permit.max_duration_ms) or permit.max_duration_ms)))
+            preset_gap = max(0, int(_get(stage_preset, "min_gap_ms", 0) or 0))
+        except (TypeError, ValueError):
+            return permit
+        return SpeakPermit(
+            allowed=permit.allowed,
+            mode=permit.mode,
+            max_words=max_words,
+            max_duration_ms=max_duration,
+            reason=f"{permit.reason}|preset={str(_get(stage_preset, 'preset_id', '') or 'scene')}",
+            cooldown_after_ms=max(permit.cooldown_after_ms, preset_gap),
+            confidence=permit.confidence,
         )
 
     def record_spoken(self, *, kind: str, at_ms: int | None = None) -> None:

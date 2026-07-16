@@ -1,6 +1,6 @@
 pyc_count = 638
 py_remaining = vision.py
-gguf = moondream2-mmproj-f16.gguf,moondream2-q4_k.gguf,qwen3-1.7b-q4_k_m.gguf
+gguf = none
 env_lines = 132
 secrets = True
 Eris_exe = True

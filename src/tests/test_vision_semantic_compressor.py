@@ -12,8 +12,8 @@ class VisionSemanticCompressorNoFallbackTests(unittest.TestCase):
         os.environ["ERIS_NO_FALLBACK_MODE"] = "1"
         try:
             compressor = VisionSemanticCompressor(
-                VisionCompressorConfig(enabled=True, model="qwen3.5-4b-vision"),
-                ollama_client=None,
+                VisionCompressorConfig(enabled=True, model="remote_vision"),
+                local_client=None,
             )
             with self.assertRaises(RuntimeError) as ctx:
                 compressor.compress(image_data_uri="", ocr_text="Traceback visible")

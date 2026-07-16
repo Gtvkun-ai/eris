@@ -141,7 +141,7 @@ class DaydreamResult:
 @dataclass(slots=True)
 class DaydreamConsolidationConfig:
     enabled: bool = field(default_factory=lambda: os.getenv("ERIS_DAYDREAM_CONSOLIDATION", "1").strip().lower() not in {"0", "false", "no", "off"})
-    model: str = field(default_factory=lambda: os.getenv("ERIS_DAYDREAM_MODEL", "qwen3.5:4b").strip())
+    model: str = field(default_factory=lambda: os.getenv("ERIS_DAYDREAM_MODEL", "remote_daydream").strip())
     min_interval_seconds: float = field(default_factory=lambda: float(os.getenv("ERIS_DAYDREAM_MIN_INTERVAL", "300")))
     max_packets: int = field(default_factory=lambda: int(os.getenv("ERIS_DAYDREAM_MAX_PACKETS", "20")))
     max_prompt_chars: int = field(default_factory=lambda: int(os.getenv("ERIS_DAYDREAM_MAX_PROMPT_CHARS", "12000")))
@@ -267,7 +267,7 @@ class DaydreamConsolidator:
 
     def _call_json(self, prompt: str) -> dict[str, Any]:
         messages = [
-            {"role": "system", "content": "You are ERIS local 4B daydream consolidator. Return JSON only."},
+            {"role": "system", "content": "You are ERIS daydream consolidator. Return JSON only."},
             {"role": "user", "content": prompt},
         ]
         if callable(getattr(self.client, "chat_json", None)):

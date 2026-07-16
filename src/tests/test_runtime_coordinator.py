@@ -597,9 +597,9 @@ class _SearchActionExecutor:
         )
 
 
-class _ExplodingOllamaClient:
+class _ExplodingLocalClient:
     def chat_json(self, *args, **kwargs):
-        raise AssertionError("Ollama should not be called when ERIS_BACKGROUND_OBSERVER_LLM=0")
+        raise AssertionError("Local model client should not be called when ERIS_BACKGROUND_OBSERVER_LLM=0")
 
 
 class RuntimeCoordinatorTests(unittest.TestCase):
@@ -1036,7 +1036,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertIn("social_presence_event", {item.kind for item in percepts})
         self.assertNotEqual(broadcast.label, "social_presence_event")
 
-    def test_background_observer_phase1_runs_end_to_end_without_ollama(self):
+    def test_background_observer_phase1_runs_end_to_end_without_local_model(self):
         with patch.dict(
             os.environ,
             {
@@ -1047,7 +1047,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         ):
             coordinator = self._make_coordinator(telemetry_service=_PressureSignalTelemetry())
 
-        coordinator.background_observer.ollama_client = _ExplodingOllamaClient()
+        coordinator.background_observer.sensory_adapter = _ExplodingLocalClient()
         snapshot = coordinator.telemetry_service.capture_snapshot()
 
         frame = coordinator._run_background_observer(
@@ -1108,7 +1108,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 salience=0.92,
                 possible_error=0.95,
                 confidence=0.86,
-                source="moondream",
+                source="remote_vision",
             ),
             should_compress=True,
         )
@@ -1130,7 +1130,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(compressor.compress_calls, 1)
         self.assertEqual(coordinator.llm_service.screen_fact_calls, 0)
         self.assertIn("Terminal shows a Python traceback", facts[0])
-        self.assertEqual(coordinator.vision_last_trace, "moondream:test_failure_loop:delta=0")
+        self.assertEqual(coordinator.vision_last_trace, "remote_vision:test_failure_loop:delta=0")
 
     def test_chat_screen_request_refreshes_screen_facts_via_vision_compressor(self):
         coordinator = self._make_coordinator(
@@ -1146,7 +1146,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 salience=0.82,
                 possible_error=0.74,
                 confidence=0.79,
-                source="moondream",
+                source="remote_vision",
             ),
             should_compress=False,
         )
@@ -1161,7 +1161,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(compressor.compress_calls, 1)
         self.assertTrue(coordinator.vision_facts)
         self.assertIn("main.py", coordinator.vision_facts[0].lower())
-        self.assertEqual(coordinator.vision_last_trace, "moondream:code_workspace:delta=0")
+        self.assertEqual(coordinator.vision_last_trace, "remote_vision:code_workspace:delta=0")
 
     def test_vision_soft_queue_failures_use_short_backoff(self):
         coordinator = self._make_coordinator()
@@ -1188,7 +1188,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 salience=0.92,
                 possible_error=0.95,
                 confidence=0.86,
-                source="moondream",
+                source="remote_vision",
             ),
             should_compress=True,
         )

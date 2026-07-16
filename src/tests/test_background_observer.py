@@ -7,44 +7,19 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from cortex.background_observer import BackgroundObserver, BackgroundObserverConfig
 from cortex.observer_contracts import SignalDiff, SignalSnapshot
-from llm.ollama_client import OllamaClient, OllamaResult
 
 
-class _FakeOllamaClient:
-    def __init__(self, result: OllamaResult | None = None):
-        self.result = result or OllamaResult(ok=False, error="no_result")
-        self.calls: list[dict[str, object]] = []
+class _FakeObserverAdapter:
+    def __init__(self, data=None):
+        self.data = data or {}
+        self.calls = []
 
-    def chat_json(self, model, messages, **kwargs):
-        self.calls.append(
-            {
-                "model": model,
-                "messages": messages,
-                "kwargs": kwargs,
-            }
-        )
-        return self.result
+    def observe(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.data
 
 
 class BackgroundObserverConfigTests(unittest.TestCase):
-    def test_sensory_env_names_enable_small_model_path(self):
-        with patch.dict(
-            os.environ,
-            {
-                "ERIS_SENSORY_ENABLED": "1",
-                "ERIS_SENSORY_PROVIDER": "ollama",
-                "ERIS_SENSORY_MODEL": "qwen3:0.6b",
-                "ERIS_SENSORY_KEEP_ALIVE": "45m",
-            },
-            clear=False,
-        ):
-            config = BackgroundObserverConfig()
-
-        self.assertTrue(config.llm_enabled)
-        self.assertEqual(config.provider, "ollama")
-        self.assertEqual(config.ollama_model, "qwen3:0.6b")
-        self.assertEqual(config.keep_alive, "45m")
-
     def test_rule_based_rollout_env_keeps_llm_off(self):
         with patch.dict(
             os.environ,
@@ -58,29 +33,20 @@ class BackgroundObserverConfigTests(unittest.TestCase):
 
         self.assertTrue(config.enabled)
         self.assertFalse(config.llm_enabled)
-        self.assertEqual(config.ollama_model, "qwen3:0.6b")
-        self.assertEqual(config.keep_alive, "30m")
 
-    def test_llm_rollout_env_reads_observer_model_settings(self):
+    def test_injected_adapter_flag_enables_llm_path(self):
         with patch.dict(
             os.environ,
             {
                 "ERIS_BACKGROUND_OBSERVER": "1",
                 "ERIS_BACKGROUND_OBSERVER_LLM": "1",
-                "ERIS_OBSERVER_MODEL": "qwen3:0.6b",
-                "ERIS_OBSERVER_KEEP_ALIVE": "30m",
-                "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
             },
             clear=False,
         ):
             config = BackgroundObserverConfig()
-            client = OllamaClient()
 
         self.assertTrue(config.enabled)
         self.assertTrue(config.llm_enabled)
-        self.assertEqual(config.ollama_model, "qwen3:0.6b")
-        self.assertEqual(config.keep_alive, "30m")
-        self.assertEqual(client.base_url, "http://127.0.0.1:11434/api")
 
 
 class BackgroundObserverRuntimeTests(unittest.TestCase):
@@ -104,71 +70,61 @@ class BackgroundObserverRuntimeTests(unittest.TestCase):
             reason=["ocr_changed", "event_changed"],
         )
 
-    def test_rule_based_mode_does_not_call_ollama(self):
-        fake_client = _FakeOllamaClient(
-            OllamaResult(
-                ok=True,
-                parsed={
-                    "focus_kind": "browser",
-                    "activity_intent": "reading",
-                    "salience": 0.2,
-                    "novelty": 0.2,
-                    "repetition": 0.1,
-                    "ambiguity": 0.1,
-                    "possible_error": 0.1,
-                    "user_presence": 0.2,
-                    "recommended_action": "observe_only",
-                    "confidence": 0.5,
-                },
-            )
+    def test_rule_based_mode_does_not_call_adapter(self):
+        adapter = _FakeObserverAdapter(
+            {
+                "focus_kind": "browser",
+                "activity_intent": "reading",
+                "salience": 0.2,
+                "novelty": 0.2,
+                "repetition": 0.1,
+                "ambiguity": 0.1,
+                "possible_error": 0.1,
+                "user_presence": 0.2,
+                "recommended_action": "observe_only",
+                "confidence": 0.5,
+            }
         )
         observer = BackgroundObserver(
             BackgroundObserverConfig(enabled=True, llm_enabled=False),
-            ollama_client=fake_client,
+            sensory_adapter=adapter,
         )
 
         frame = observer.observe(self._snapshot(), self._diff(), recent_summary="recent summary")
 
-        self.assertEqual(fake_client.calls, [])
+        self.assertEqual(adapter.calls, [])
         self.assertIn("rule_based_observer", frame.notes)
         self.assertNotIn("llm_observer", frame.notes)
         self.assertFalse(frame.debug.get("llm_used", False))
 
-    def test_llm_mode_uses_ollama_only_when_enabled(self):
-        fake_client = _FakeOllamaClient(
-            OllamaResult(
-                ok=True,
-                parsed={
-                    "focus_kind": "code",
-                    "activity_intent": "debugging",
-                    "salience": 0.74,
-                    "novelty": 0.61,
-                    "repetition": 0.11,
-                    "ambiguity": 0.12,
-                    "possible_error": 0.81,
-                    "user_presence": 0.72,
-                    "recommended_action": "update_body_bias",
-                    "confidence": 0.77,
-                    "notes": ["llm_debug_signal"],
-                },
-            )
+    def test_llm_mode_uses_injected_adapter_only_when_enabled(self):
+        adapter = _FakeObserverAdapter(
+            {
+                "focus_kind": "code",
+                "activity_intent": "debugging",
+                "salience": 0.74,
+                "novelty": 0.61,
+                "repetition": 0.11,
+                "ambiguity": 0.12,
+                "possible_error": 0.81,
+                "user_presence": 0.72,
+                "recommended_action": "update_body_bias",
+                "confidence": 0.77,
+                "notes": ["adapter_debug_signal"],
+            }
         )
         observer = BackgroundObserver(
             BackgroundObserverConfig(
                 enabled=True,
                 llm_enabled=True,
-                ollama_model="qwen3:0.6b",
-                keep_alive="30m",
                 llm_cooldown_seconds=0.0,
             ),
-            ollama_client=fake_client,
+            sensory_adapter=adapter,
         )
 
         frame = observer.observe(self._snapshot(), self._diff(), recent_summary="recent summary")
 
-        self.assertEqual(len(fake_client.calls), 1)
-        self.assertEqual(fake_client.calls[0]["model"], "qwen3:0.6b")
-        self.assertEqual(fake_client.calls[0]["kwargs"]["keep_alive"], "30m")
+        self.assertEqual(len(adapter.calls), 1)
         self.assertTrue(frame.debug.get("llm_used"))
         self.assertIn("rule_based_observer", frame.notes)
         self.assertIn("llm_observer", frame.notes)

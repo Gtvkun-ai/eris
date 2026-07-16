@@ -52,7 +52,7 @@ build assembly `Eris`. Náº¿u build C# lá»—i, kiá»ƒm tra .NET SDK Ä‘
 
 ### 2.4. Model runtime
 
-GGUF / llama-cpp local inference has been removed. ERIS now uses remote providers for the main brain and private-mind fragment lanes. Ollama can still be used as a separate server-backed option for observer/tutor experiments, but there is no in-process GGUF backend in this repo.
+Local inference backends have been removed. ERIS now uses remote providers for the main brain, private-mind fragment lanes, vision API, tutor helpers, and style/interoception.
 
 
 ---
@@ -178,7 +178,7 @@ quay láº¡i terminal nháº¥n Enter Ä‘á»ƒ lÆ°u phiÃªn. Tá»« Ä�
 ```dotenv
 ERIS_TUTOR_ENABLED=1
 ERIS_TUTOR_PROFILE_DIR=C:\eris_tutor_profile
-ERIS_TUTOR_LOCAL_MODEL=qwen3:1.7b
+ERIS_TUTOR_USE_REMOTE_LLM=1
 ```
 CÃ¡c tinh chá»‰nh khÃ¡c (nhá»‹p há»i, tráº§n/giá», selector, táº§n suáº¥t khoe) xem `.env.example`.
 

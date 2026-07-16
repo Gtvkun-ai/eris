@@ -326,7 +326,7 @@ class RemoteModelProcessManager:
 
     def build_vision_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
         """Build client vision REMOTE (OpenAI-compatible, vd shopaikey grok-3-image)
-        thay cho captioner moondream local. Bat bang ERIS_VISION_API_ENABLED=1.
+        cho captioner remote. Bat bang ERIS_VISION_API_ENABLED=1.
 
         Key/base_url mac dinh dung aggregator (shopaikey) da co san trong secrets:
         ERIS_AGGREGATOR_API_KEY + ERIS_AGGREGATOR_BASE_URL. Co the override rieng

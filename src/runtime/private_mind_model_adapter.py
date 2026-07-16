@@ -113,19 +113,14 @@ class PrivateMindModelAdapterConfig:
     @classmethod
     def fragment_overlay_from_env(cls, base: "PrivateMindModelAdapterConfig") -> "PrivateMindModelAdapterConfig":
         """Config riÃªng cho fragment: náº¿u khai ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER thÃ¬
-        trá» fragment sang má»™t provider local (vd Ollama qwen3) + báº­t free-text;
+        trá» fragment sang provider riÃªng + báº­t free-text;
         náº¿u khÃ´ng khai gÃ¬ thÃ¬ dÃ¹ng chung config (giá»¯ hÃ nh vi cÅ©)."""
         provider = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER", "") or "").strip().lower()
         if not provider:
             return base
         base_url = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_BASE_URL", "") or "").strip()
         model = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_MODEL", "") or "").strip() or base.model
-        # Chá»‰ provider LOCAL má»›i dÃ¹ng placeholder "local-no-key". Provider remote
-        # (gemini/openaiâ€¦) pháº£i Ä‘á»ƒ trá»‘ng â†’ adapter tá»± láº¥y key tháº­t tá»« key-pool/secret;
-        # náº¿u nhÃ©t "local-no-key" lÃªn Gemini sáº½ bá»‹ 400 API_KEY_INVALID.
         api_key = str(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_API_KEY", "") or "").strip()
-        if not api_key and provider == "ollama":
-            api_key = "local-no-key"
         return replace(
             base,
             enabled=True,
@@ -1582,7 +1577,7 @@ class PrivateMindAdapterPool:
         self._config = config or PrivateMindModelAdapterConfig()
         self._llm_service = llm_service
         self._logger = logger
-        # Fragment cÃ³ thá»ƒ cháº¡y trÃªn provider local (vd Ollama qwen3) tÃ¡ch khá»i synthesis.
+        # Fragment cÃ³ thá»ƒ cháº¡y trÃªn provider riÃªng tÃ¡ch khá»i synthesis.
         # Náº¿u khÃ´ng khai ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER thÃ¬ dÃ¹ng chung config.
         fragment_config = PrivateMindModelAdapterConfig.fragment_overlay_from_env(self._config)
         # Khi fragment cÃ³ provider local riÃªng (khÃ¡c config chung), KHÃ”NG Ä‘Æ°a llm_service

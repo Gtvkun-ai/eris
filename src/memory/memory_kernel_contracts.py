@@ -28,7 +28,7 @@ fast:
     Chỉ dùng rule/policy rẻ để lưu fact rõ như tên, tháng sinh, style trả lời.
 
 semantic_digest:
-    Đường nền. Có thể dùng parser model.gguf/Ollama/llama-server đã inject.
+    Đường nền. Có thể dùng parser remote đã inject.
     Dùng để phân rã meaning sâu hơn khi remote API đang pending hoặc lúc idle.
 
 reflection:

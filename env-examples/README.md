@@ -5,7 +5,6 @@ root as `.env`, then fill in the required API keys.
 
 | Preset | File | Best for | Local engine | API quota |
 |--------|------|----------|--------------|-----------|
-| Ollama | `.env.ollama.example` | Existing Ollama setup | Ollama server | medium |
 | Cloud | `.env.cloud.example` | No GPU / laptop | off, full remote | high |
 | Minimal | `.env.minimal.example` | Quick tests / weak machines | off | lowest |
 
@@ -16,6 +15,5 @@ copy env-examples\.env.cloud.example .env
 ```
 
 Notes:
-- GGUF / llama-cpp presets have been removed from this repo.
-- Ollama presets require `ollama serve` and pulled Ollama models.
+- Local inference presets have been removed from this repo.
 - Do not commit a real `.env` with keys.

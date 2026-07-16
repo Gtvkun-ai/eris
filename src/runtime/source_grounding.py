@@ -205,7 +205,7 @@ class SourceGroundingReport:
     # bằng chứng thuần, độc lập với việc user có nhắc tới màn hình. Guard chống ảo
     # giác dùng field này để chặn claim "tôi thấy trên màn hình" khi thực ra không có.
     screen_evidence_present: bool = False
-    # Tóm tắt văn bản từ vision model (OCR/moondream) — luôn render vào prompt dù
+    # Tóm tắt văn bản từ vision model/OCR — luôn render vào prompt dù
     # user không hỏi màn hình, để LLM có ngữ cảnh nền mà không cần nhận ảnh thô.
     screen_facts_preview: list[str] = field(default_factory=list)
     # True khi facts màn hình là từ lượt TRƯỚC (không chụp tươi lượt này). ERIS vẫn
@@ -1135,7 +1135,7 @@ class SourceGroundingEngine:
                 lines.append(f"- {rule}")
 
         # Luôn render vision/screen facts vào grounding context — dù user không hỏi
-        # màn hình. Đây là tóm tắt văn bản từ vision model nhỏ (OCR/moondream), KHÔNG
+        # màn hình. Đây là tóm tắt văn bản từ vision model/OCR, KHÔNG
         # phải ảnh thô. Llama đọc text này để biết ngữ cảnh nền mà không cần nhận ảnh.
         screen_previews = [str(f).strip() for f in (getattr(report, "screen_facts_preview", None) or []) if str(f).strip()]
         if screen_previews:

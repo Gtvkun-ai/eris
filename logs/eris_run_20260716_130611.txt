@@ -1,0 +1,95 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-16 13:06:11
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+13:06:12.682 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:06:12.683 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:06:12.705 [INFO] [Vision] Da khoi chay vision.py PID=4200
+13:06:15.110 [ERR ] [vision.py][ERR] Traceback (most recent call last):
+13:06:15.111 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\vision.py", line 16, in <module>
+13:06:15.111 [ERR ] [vision.py][ERR]     from runtime.coordinator import RuntimeCoordinator
+13:06:15.111 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\runtime\coordinator.py", line 94, in <module>
+13:06:15.111 [ERR ] [vision.py][ERR]     from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
+13:06:15.111 [ERR ] [vision.py][ERR] ModuleNotFoundError: No module named 'runtime.daydream_model_adapter'
+13:06:15.301 [INFO] [Vision] vision.py da thoat (PID=4200, code=1, unexpected=True).
+13:06:15.317 [INFO] [Settings] Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.
+13:06:17.297 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:06:17.297 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:06:17.301 [INFO] [Vision] Da khoi chay vision.py PID=18012
+13:06:17.301 [INFO] [Settings] Đã tự khởi động lại Brain sau lỗi.
+13:06:18.691 [ERR ] [vision.py][ERR] Traceback (most recent call last):
+13:06:18.834 [INFO] [Vision] vision.py da thoat (PID=18012, code=1, unexpected=True).
+13:06:18.843 [INFO] [Settings] Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.
+13:06:20.846 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:06:20.846 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:06:20.850 [INFO] [Vision] Da khoi chay vision.py PID=14364
+13:06:20.850 [INFO] [Settings] Đã tự khởi động lại Brain sau lỗi.
+13:06:21.811 [ERR ] [vision.py][ERR] Traceback (most recent call last):
+13:06:21.812 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\vision.py", line 16, in <module>
+13:06:21.812 [ERR ] [vision.py][ERR]     from runtime.coordinator import RuntimeCoordinator
+13:06:21.812 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\runtime\coordinator.py", line 94, in <module>
+13:06:21.812 [ERR ] [vision.py][ERR]     from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
+13:06:21.812 [ERR ] [vision.py][ERR] ModuleNotFoundError: No module named 'runtime.daydream_model_adapter'
+13:06:21.954 [INFO] [Vision] vision.py da thoat (PID=14364, code=1, unexpected=True).
+13:06:21.963 [INFO] [Settings] Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.
+13:06:23.945 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:06:23.945 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:06:23.948 [INFO] [Vision] Da khoi chay vision.py PID=24220
+13:06:23.948 [INFO] [Settings] Đã tự khởi động lại Brain sau lỗi.
+13:06:25.124 [ERR ] [vision.py][ERR] Traceback (most recent call last):
+13:06:25.229 [INFO] [Vision] vision.py da thoat (PID=24220, code=1, unexpected=True).
+13:06:25.246 [INFO] [Settings] Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.
+13:06:27.227 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:06:27.227 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:06:27.230 [INFO] [Vision] Da khoi chay vision.py PID=25324
+13:06:27.230 [INFO] [Settings] Đã tự khởi động lại Brain sau lỗi.
+13:06:28.577 [ERR ] [vision.py][ERR] Traceback (most recent call last):
+13:06:28.577 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\vision.py", line 16, in <module>
+13:06:28.577 [ERR ] [vision.py][ERR]     from runtime.coordinator import RuntimeCoordinator
+13:06:28.577 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\runtime\coordinator.py", line 94, in <module>
+13:06:28.577 [ERR ] [vision.py][ERR]     from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
+13:06:28.577 [ERR ] [vision.py][ERR] ModuleNotFoundError: No module named 'runtime.daydream_model_adapter'
+13:06:28.726 [INFO] [Vision] vision.py da thoat (PID=25324, code=1, unexpected=True).
+13:06:28.732 [INFO] [Settings] Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.
+13:06:30.717 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:06:30.717 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:06:30.720 [INFO] [Vision] Da khoi chay vision.py PID=10408
+13:06:30.720 [INFO] [Settings] Đã tự khởi động lại Brain sau lỗi.
+13:06:32.058 [ERR ] [vision.py][ERR] Traceback (most recent call last):
+13:06:32.209 [INFO] [Vision] vision.py da thoat (PID=10408, code=1, unexpected=True).
+13:06:32.218 [INFO] [Settings] Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.
+13:06:34.197 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:06:34.197 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:06:34.200 [INFO] [Vision] Da khoi chay vision.py PID=16640
+13:06:34.200 [INFO] [Settings] Đã tự khởi động lại Brain sau lỗi.
+13:06:35.453 [ERR ] [vision.py][ERR] Traceback (most recent call last):
+13:06:35.454 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\vision.py", line 16, in <module>
+13:06:35.454 [ERR ] [vision.py][ERR]     from runtime.coordinator import RuntimeCoordinator
+13:06:35.454 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\runtime\coordinator.py", line 94, in <module>
+13:06:35.454 [ERR ] [vision.py][ERR]     from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
+13:06:35.454 [ERR ] [vision.py][ERR] ModuleNotFoundError: No module named 'runtime.daydream_model_adapter'
+13:06:35.607 [INFO] [Vision] vision.py da thoat (PID=16640, code=1, unexpected=True).
+13:06:35.617 [INFO] [Settings] Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.
+13:06:37.598 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:06:37.599 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:06:37.601 [INFO] [Vision] Da khoi chay vision.py PID=19636
+13:06:37.601 [INFO] [Settings] Đã tự khởi động lại Brain sau lỗi.
+13:06:39.323 [ERR ] [vision.py][ERR] Traceback (most recent call last):
+13:06:39.521 [INFO] [Vision] vision.py da thoat (PID=19636, code=1, unexpected=True).
+13:06:39.528 [INFO] [Settings] Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.
+13:06:41.513 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+13:06:41.513 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+13:06:41.516 [INFO] [Vision] Da khoi chay vision.py PID=10548
+13:06:41.516 [INFO] [Settings] Đã tự khởi động lại Brain sau lỗi.
+13:06:43.473 [ERR ] [vision.py][ERR] Traceback (most recent call last):
+13:06:43.473 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\vision.py", line 16, in <module>
+13:06:43.473 [ERR ] [vision.py][ERR]     from runtime.coordinator import RuntimeCoordinator
+13:06:43.473 [ERR ] [vision.py][ERR]   File "C:\Users\Gtvkun\Documents\GitHub\eris\src\runtime\coordinator.py", line 94, in <module>
+13:06:43.473 [ERR ] [vision.py][ERR]     from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
+13:06:43.473 [ERR ] [vision.py][ERR] ModuleNotFoundError: No module named 'runtime.daydream_model_adapter'
+13:06:43.622 [INFO] [Vision] vision.py da thoat (PID=10548, code=1, unexpected=True).
+13:06:43.640 [INFO] [Settings] Brain vừa thoát bất thường. Eris sẽ thử khởi động lại sau 2 giây.
+13:06:44.693 [INFO] [RunLogger] Ket thuc phien chay.

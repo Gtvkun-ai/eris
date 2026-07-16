@@ -62,6 +62,18 @@ class AutonomousPerformanceAct:
     intent: str
     session_phase: str
     cadence: str
+    stage_preset_id: str
+    performance_lane: str
+    gesture_density: str
+    body_first: bool
+    audience_feedback_mode: str
+    intrusion_pressure: float
+    show_arc_id: str
+    show_arc_family: str
+    show_arc_stage: str
+    line_shape: str
+    opening_mode: str
+    closing_mode: str
     beats: tuple[PerformanceBeat, ...]
     total_budget_ms: int
     cooldown_ms: int
@@ -78,6 +90,18 @@ class AutonomousPerformanceAct:
             "intent": self.intent,
             "session_phase": self.session_phase,
             "cadence": self.cadence,
+            "stage_preset_id": self.stage_preset_id,
+            "performance_lane": self.performance_lane,
+            "gesture_density": self.gesture_density,
+            "body_first": self.body_first,
+            "audience_feedback_mode": self.audience_feedback_mode,
+            "intrusion_pressure": self.intrusion_pressure,
+            "show_arc_id": self.show_arc_id,
+            "show_arc_family": self.show_arc_family,
+            "show_arc_stage": self.show_arc_stage,
+            "line_shape": self.line_shape,
+            "opening_mode": self.opening_mode,
+            "closing_mode": self.closing_mode,
             "beats": [beat.to_payload() for beat in self.beats],
             "total_budget_ms": self.total_budget_ms,
             "cooldown_ms": self.cooldown_ms,
@@ -119,6 +143,9 @@ class AutonomousPerformancePlanner:
         opportunity = plan.get("selected_opportunity") if isinstance(plan.get("selected_opportunity"), Mapping) else {}
         scene = plan.get("scene") if isinstance(plan.get("scene"), Mapping) else {}
         directive = plan.get("session_directive") if isinstance(plan.get("session_directive"), Mapping) else {}
+        show_arc = plan.get("show_arc_directive") if isinstance(plan.get("show_arc_directive"), Mapping) else {}
+        stage_preset = plan.get("stage_preset") if isinstance(plan.get("stage_preset"), Mapping) else {}
+        audience_feedback = plan.get("audience_feedback") if isinstance(plan.get("audience_feedback"), Mapping) else {}
         perf = performance_context if isinstance(performance_context, Mapping) else {}
 
         if not plan or not bool(permit.get("allowed", False)) or not line:
@@ -134,12 +161,43 @@ class AutonomousPerformancePlanner:
 
         session_phase = str(directive.get("phase", "settled") or "settled")
         cadence = str(directive.get("cadence", "balanced") or "balanced")
+        stage_preset_id = str(stage_preset.get("preset_id", "legacy.default") or "legacy.default")
+        performance_lane = str(stage_preset.get("performance_lane", "default") or "default")
+        gesture_density = str(stage_preset.get("gesture_density", "low") or "low")
+        body_first = bool(stage_preset.get("body_first", True))
+        audience_feedback_mode = str(audience_feedback.get("mode", "normal") or "normal")
+        try:
+            intrusion_pressure = max(0.0, min(1.0, float(audience_feedback.get("intrusion_pressure", 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            intrusion_pressure = 0.0
+        if audience_feedback_mode == "recovery":
+            gesture_density = "minimal"
+            body_first = True
+        show_arc_id = str(show_arc.get("arc_id", "") or "")
+        show_arc_family = str(show_arc.get("arc_family", "standalone") or "standalone")
+        show_arc_stage = str(show_arc.get("arc_stage", "setup") or "setup")
+        line_shape = str(show_arc.get("line_shape", "single_strike") or "single_strike")
+        opening_mode = str(show_arc.get("opening_mode", "scene_set") or "scene_set")
+        closing_mode = str(show_arc.get("closing_mode", "neutral_settle") or "neutral_settle")
         try:
             hold_bias = int(directive.get("opening_hold_bias_ms", 0) or 0)
+            hold_bias += int(stage_preset.get("opening_hold_bias_ms", 0) or 0)
         except (TypeError, ValueError):
             hold_bias = 0
-        opening_hold = max(40, min(420, self._opening_hold(kind=kind, delivery=delivery, scene=scene_mode) + hold_bias))
-        closing_hold = 420 if kind in {"dead_air", "return_after_idle"} else 300
+        opening_hold = max(40, min(460, self._opening_hold(
+            kind=kind, delivery=delivery, scene=scene_mode, opening_mode=opening_mode
+        ) + hold_bias))
+        if audience_feedback_mode == "recovery":
+            opening_hold = min(opening_hold, 90)
+        elif audience_feedback_mode == "low_intrusion":
+            opening_hold = min(opening_hold, 130)
+        closing_hold = self._closing_hold(kind=kind, closing_mode=closing_mode)
+        if audience_feedback_mode == "recovery":
+            closing_hold = min(closing_hold, 300)
+        try:
+            closing_hold = max(closing_hold, int(stage_preset.get("closing_hold_min_ms", 0) or 0))
+        except (TypeError, ValueError):
+            pass
         if cadence == "sparse":
             closing_hold = max(closing_hold, 500)
         elif cadence == "restrained":
@@ -147,7 +205,10 @@ class AutonomousPerformancePlanner:
         sentence_parts = self._split_line(line)
         speech_beats: list[PerformanceBeat] = []
         for idx, part in enumerate(sentence_parts):
-            pause = self._pause_after(part, index=idx, count=len(sentence_parts), kind=kind)
+            pause = self._pause_after(
+                part, index=idx, count=len(sentence_parts), kind=kind,
+                line_shape=line_shape, arc_stage=show_arc_stage,
+            )
             speech_beats.append(
                 PerformanceBeat(
                     beat_index=idx + 1,
@@ -159,9 +220,9 @@ class AutonomousPerformancePlanner:
                     tts_style=style,
                     emotion=stage_emotion,
                     motion_intent=stage_motion if idx == 0 else "hold_pose",
-                    gaze_intent=self._gaze_for(delivery, kind),
+                    gaze_intent=self._gaze_for(delivery, kind, show_arc_stage),
                     head_intent=self._head_for(stage_motion),
-                    gesture_intent="none",
+                    gesture_intent=self._gesture_for(line_shape, show_arc_stage, idx, gesture_density),
                     actions=(),
                 )
             )
@@ -173,7 +234,7 @@ class AutonomousPerformancePlanner:
                 duration_ms=opening_hold,
                 emotion=stage_emotion,
                 motion_intent=stage_motion,
-                gaze_intent=self._gaze_for(delivery, kind),
+                gaze_intent=self._gaze_for(delivery, kind, show_arc_stage),
                 head_intent=self._head_for(stage_motion),
             ),
             *speech_beats,
@@ -183,14 +244,22 @@ class AutonomousPerformancePlanner:
                 duration_ms=closing_hold,
                 emotion="settle",
                 motion_intent="settle",
-                gaze_intent="scene_focus",
+                gaze_intent="soft_attention" if closing_mode == "soft_return" else "scene_focus",
                 head_intent="neutral_small",
+                gesture_intent=(
+                    "small_release"
+                    if closing_mode == "clean_release" and gesture_density != "minimal"
+                    else "none"
+                ),
             ),
         ]
         total = opening_hold + closing_hold + sum(item.duration_ms + item.pause_after_ms for item in speech_beats)
         cooldown = int(permit.get("cooldown_after_ms", 24_000) or 24_000)
         note = (
-            f"Autonomous stage act ({session_phase}/{cadence}). Hold {opening_hold}ms before the first word. "
+            f"Autonomous stage act ({session_phase}/{cadence}; preset={stage_preset_id}; "
+            f"lane={performance_lane}; feedback={audience_feedback_mode}; "
+            f"arc={show_arc_family}/{show_arc_stage}; shape={line_shape}). "
+            f"Hold {opening_hold}ms before the first word. "
             f"Deliver {len(speech_beats)} deliberate speech beat(s); keep pauses short and intentional. "
             "Do not add filler, laughter, or stage directions that are not present in the text."
         )
@@ -202,6 +271,18 @@ class AutonomousPerformancePlanner:
             intent=intent,
             session_phase=session_phase,
             cadence=cadence,
+            stage_preset_id=stage_preset_id,
+            performance_lane=performance_lane,
+            gesture_density=gesture_density,
+            body_first=body_first,
+            audience_feedback_mode=audience_feedback_mode,
+            intrusion_pressure=intrusion_pressure,
+            show_arc_id=show_arc_id,
+            show_arc_family=show_arc_family,
+            show_arc_stage=show_arc_stage,
+            line_shape=line_shape,
+            opening_mode=opening_mode,
+            closing_mode=closing_mode,
             beats=tuple(beats),
             total_budget_ms=total,
             cooldown_ms=cooldown,
@@ -222,7 +303,17 @@ class AutonomousPerformancePlanner:
         return parts or (text,)
 
     @staticmethod
-    def _opening_hold(*, kind: str, delivery: str, scene: str) -> int:
+    def _opening_hold(*, kind: str, delivery: str, scene: str, opening_mode: str) -> int:
+        mode_values = {
+            "quick_focus": 60,
+            "release_hold": 120,
+            "recognition_hold": 190,
+            "ambient_hold": 205,
+            "reentry_hold": 145,
+            "scene_set": 110,
+        }
+        if opening_mode in mode_values:
+            return mode_values[opening_mode]
         if kind == "new_error":
             return 70
         if "dry" in delivery or kind == "dead_air":
@@ -234,9 +325,26 @@ class AutonomousPerformancePlanner:
         return 110
 
     @staticmethod
-    def _pause_after(text: str, *, index: int, count: int, kind: str) -> int:
+    def _closing_hold(*, kind: str, closing_mode: str) -> int:
+        mode_values = {
+            "clean_release": 460,
+            "soft_return": 410,
+            "focused_hold": 280,
+            "linger_short": 500,
+            "neutral_settle": 300,
+        }
+        return mode_values.get(closing_mode, 420 if kind in {"dead_air", "return_after_idle"} else 300)
+
+    @staticmethod
+    def _pause_after(
+        text: str, *, index: int, count: int, kind: str, line_shape: str, arc_stage: str
+    ) -> int:
         if index >= count - 1:
             return 0
+        if line_shape in {"setup_payoff", "technical_two_step"}:
+            return 220 if arc_stage == "payoff" else 180
+        if line_shape == "quiet_callback":
+            return 205
         if text.endswith(("?", "!")):
             return 210
         if kind in {"dead_air", "scene_transition"}:
@@ -249,12 +357,36 @@ class AutonomousPerformancePlanner:
         return max(420, min(4_000, 260 + words * 255))
 
     @staticmethod
-    def _gaze_for(delivery: str, kind: str) -> str:
+    def _gaze_for(delivery: str, kind: str, arc_stage: str = "setup") -> str:
+        if arc_stage == "payoff":
+            return "scene_focus_then_release"
+        if arc_stage == "callback":
+            return "recognition_then_return"
         if "dry" in delivery:
             return "look_aside_then_return"
         if kind == "new_error":
             return "scene_focus"
         return "soft_attention"
+
+    @staticmethod
+    def _gesture_for(line_shape: str, arc_stage: str, index: int, density: str = "low") -> str:
+        if index > 0:
+            return "none"
+        density = str(density or "low").lower()
+        # Preset minimal giữ body yên để không phá focus. Payoff vẫn được quyền
+        # có một release nhỏ nếu scene cho gesture, thay vì mọi câu đều vẫy tay
+        # như nhân viên quảng cáo đứng trước siêu thị.
+        if density == "minimal":
+            return "none"
+        if arc_stage == "payoff":
+            return "small_release"
+        if arc_stage == "escalation" and density in {"medium", "high"}:
+            return "micro_emphasis"
+        if line_shape == "technical_two_step" and density in {"medium", "high"}:
+            return "point_small"
+        if line_shape == "observation_turn":
+            return "open_small" if density in {"medium", "high"} else "none"
+        return "none"
 
     @staticmethod
     def _head_for(motion: str) -> str:

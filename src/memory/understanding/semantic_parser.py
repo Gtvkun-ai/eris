@@ -37,7 +37,7 @@ class ModelSemanticParser:
     """Adapter cho model/LLM parser bên ngoài.
 
     `parse_callable` là hàm của bạn. Nó nhận text và trả dict/list đã parse.
-    File này không biết llama.cpp, Ollama hay GGUF. Nó chỉ biết verify output.
+    File này không biết backend inference. Nó chỉ biết verify output.
 
     Expected JSON gợi ý:
     {

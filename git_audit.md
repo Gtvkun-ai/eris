@@ -33,7 +33,7 @@ Trục thay đổi chính theo git:
 - `MeaningLayer` được đẩy thêm nhánh `prolonged_activity`: cùng semantic family kéo dài đủ lâu giờ có thể trở thành meaning shift riêng, thay vì mọi thứ mắc kẹt mãi ở `ambient_idle`.
 - `continuity_threat.py` là module mới tách riêng “im lâu” khỏi “đứt gãy hiện diện”; continuity anxiety giờ được tính như prediction error theo ngữ cảnh, không phải đồng hồ im lặng cosplay cảm xúc.
 - `contracts.py` giờ đã mang `content_metadata` ngay trong `TelemetrySnapshot`, nên các downstream layer không cần tự đoán metadata foreground qua title thô nữa.
-- `sensory_model_adapter.py` được khóa rõ vai trò thành lane `sensory_0_6b`: observer 0.6B qua Ollama chỉ được phân loại snapshot thành JSON, không được trả lời user hay bịa inner life.
+- Local sensory adapter lane has been removed; observer uses rule-based signals unless a remote adapter is explicitly injected.
 - `coordinator.py` tiếp tục phình thành nơi hợp mạch runtime thật sự; sau pull này nó còn bọc queue cho `sensory_model_adapter.observe`, ghi `surface_override`, và suppress wake-main hint từ background observer thay vì để observer tự cướp quyền.
 - `event_ledger.json` và `src/memory/event_ledger.py` được nâng tầm thành raw audit layer append-only rõ nghĩa hơn; đây không còn là file phụ mờ nhạt trong memory core.
 - test coverage mới bám theo các trục trên: `tests/test_surface_arbiter.py`, `tests/test_runtime_coordinator.py`, `tests/test_blind_frustration_surface.py`, cùng các test observer/scheduler/memory hiện phản ánh HEAD mới hơn snapshot cũ.

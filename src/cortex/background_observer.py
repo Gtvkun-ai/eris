@@ -1,16 +1,16 @@
-# src/cortex/background_observer.py
+﻿# src/cortex/background_observer.py
 """
 BackgroundObserver cho ERIS.
 
-Bản này có 2 tầng:
-1. Rule-based observer luôn chạy được, không phụ thuộc model.
-2. Optional Ollama text observer để phân loại mềm hơn về sau.
+Báº£n nÃ y cÃ³ 2 táº§ng:
+1. Rule-based observer luÃ´n cháº¡y Ä‘Æ°á»£c, khÃ´ng phá»¥ thuá»™c model.
+2. Optional injected observer adapter de phan loai mem hon ve sau.
 
-Luật cứng:
-- Không trả lời user.
-- Không commit memory.
-- Không tạo Decision public.
-- Chỉ trả ObserverFrame để Attention/WorkingMemory/BodyBias dùng.
+Luáº­t cá»©ng:
+- KhÃ´ng tráº£ lá»i user.
+- KhÃ´ng commit memory.
+- KhÃ´ng táº¡o Decision public.
+- Chá»‰ tráº£ ObserverFrame Ä‘á»ƒ Attention/WorkingMemory/BodyBias dÃ¹ng.
 """
 
 from __future__ import annotations
@@ -51,19 +51,6 @@ except Exception:
         normalize_ascii_fold,
     )
 
-try:
-    from llm.ollama_client import OllamaClient, OllamaResult
-except Exception:  # tests có thể chưa copy ollama_client vào PYTHONPATH
-    OllamaClient = None  # type: ignore
-    OllamaResult = Any  # type: ignore
-
-try:
-    from runtime.sensory_model_adapter import RuntimeSensoryModelAdapter
-except Exception:  # pragma: no cover
-    try:
-        from src.runtime.sensory_model_adapter import RuntimeSensoryModelAdapter  # type: ignore
-    except Exception:  # pragma: no cover
-        RuntimeSensoryModelAdapter = None  # type: ignore
 
 
 _ERROR_PATTERNS = [
@@ -166,16 +153,6 @@ class BackgroundObserverConfig:
             os.getenv("ERIS_SENSORY_ENABLED", os.getenv("ERIS_BACKGROUND_OBSERVER_LLM", "0"))
         ).strip().lower() in {"1", "true", "yes", "on"}
     )
-    provider: str = field(default_factory=lambda: str(os.getenv("ERIS_SENSORY_PROVIDER", "ollama") or "ollama").strip().lower())
-    ollama_model: str = field(
-        default_factory=lambda: str(
-            os.getenv("ERIS_SENSORY_MODEL", os.getenv("ERIS_OBSERVER_MODEL", "qwen3:0.6b")) or "qwen3:0.6b"
-        ).strip()
-    )
-    keep_alive: str | int = field(
-        default_factory=lambda: os.getenv("ERIS_SENSORY_KEEP_ALIVE", os.getenv("ERIS_OBSERVER_KEEP_ALIVE", "30m"))
-    )
-
     min_diff_for_llm: float = field(default_factory=lambda: float(os.getenv("ERIS_OBSERVER_LLM_MIN_DIFF", "0.18")))
     llm_cooldown_seconds: float = field(default_factory=lambda: float(os.getenv("ERIS_OBSERVER_LLM_COOLDOWN", "8")))
 
@@ -186,7 +163,7 @@ class BackgroundObserverConfig:
     wake_main_min_error: float = field(default_factory=lambda: float(os.getenv("ERIS_WAKE_MAIN_MIN_ERROR", "0.90")))
 
     max_llm_confidence: float = 0.82
-    max_observer_interrupt: bool = False  # observer không được tự interrupt ở bản này
+    max_observer_interrupt: bool = False  # observer khÃ´ng Ä‘Æ°á»£c tá»± interrupt á»Ÿ báº£n nÃ y
 
 
 class BackgroundObserver:
@@ -194,21 +171,9 @@ class BackgroundObserver:
         self,
         config: Optional[BackgroundObserverConfig] = None,
         sensory_adapter: Any = None,
-        ollama_client: Any = None,
     ):
         self.config = config or BackgroundObserverConfig()
         self.sensory_adapter = sensory_adapter
-        self.ollama_client = ollama_client
-        if self.sensory_adapter is None and self.config.llm_enabled and RuntimeSensoryModelAdapter is not None:
-            try:
-                self.sensory_adapter = RuntimeSensoryModelAdapter.from_env()
-            except Exception:
-                self.sensory_adapter = None
-        if self.ollama_client is None and self.sensory_adapter is None and self.config.llm_enabled and OllamaClient is not None:
-            try:
-                self.ollama_client = OllamaClient()
-            except Exception:
-                self.ollama_client = None
         self._last_llm_time: float = 0.0
 
     def observe(
@@ -218,10 +183,10 @@ class BackgroundObserver:
         *,
         recent_summary: str = "",
     ) -> ObserverFrame:
-        """Trả ObserverFrame.
+        """Tráº£ ObserverFrame.
 
-        Nếu LLM bị lỗi, fallback rule-based. Runtime không nên chết vì con model gác cổng
-        ho khan một cái, đời đã đủ phiền.
+        Náº¿u LLM bá»‹ lá»—i, fallback rule-based. Runtime khÃ´ng nÃªn cháº¿t vÃ¬ con model gÃ¡c cá»•ng
+        ho khan má»™t cÃ¡i, Ä‘á»i Ä‘Ã£ Ä‘á»§ phiá»n.
         """
 
         if not self.config.enabled:
@@ -333,7 +298,7 @@ class BackgroundObserver:
     def _should_use_llm(self, diff: SignalDiff) -> bool:
         if not self.config.llm_enabled:
             return False
-        if self.sensory_adapter is None and not self.ollama_client:
+        if self.sensory_adapter is None:
             return False
         if diff.diff_score < self.config.min_diff_for_llm and not diff.ocr_changed and not diff.event_changed:
             return False
@@ -359,53 +324,7 @@ class BackgroundObserver:
             if isinstance(data, dict):
                 return self._frame_from_llm_data(data)
             return None
-        if not self.ollama_client:
-            return None
-
-        prompt = self._build_llm_prompt(snapshot, diff, recent_summary=recent_summary)
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are ERIS BackgroundObserver. "
-                    "Classify lightweight runtime signals. "
-                    "Do not answer the user. Do not infer hidden emotions. "
-                    "Return compact JSON only."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
-
-        result = self.ollama_client.chat_json(
-            self.config.ollama_model,
-            messages,
-            keep_alive=self.config.keep_alive,
-            temperature=0.0,
-        )
-        self._last_llm_time = time.time()
-
-        if not getattr(result, "ok", False):
-            return None
-
-        data = getattr(result, "parsed", {}) or {}
-        return self._frame_from_llm_data(data)
-
-    def _build_llm_prompt(self, snapshot: SignalSnapshot, diff: SignalDiff, *, recent_summary: str) -> str:
-        return (
-            "Classify this runtime signal snapshot.\n"
-            "Return JSON with fields:\n"
-            "focus_kind, activity_intent, salience, novelty, repetition, ambiguity, "
-            "possible_error, user_presence, recommended_action, confidence, notes.\n\n"
-            "Allowed focus_kind: code, docs, browser, chat, media, game, system, unknown.\n"
-            "Allowed activity_intent: debugging, designing, reading, searching, communicating, "
-            "resting, fragmented, idle, unknown.\n"
-            "Allowed recommended_action: observe_only, update_body_bias, "
-            "call_vision_compressor, wake_main_cognition, suppress.\n\n"
-            f"Current snapshot:\n{snapshot.compact_summary()}\n\n"
-            f"Diff: score={diff.diff_score:.2f}; novelty={diff.novelty:.2f}; "
-            f"repetition={diff.repetition:.2f}; reasons={diff.reason}\n\n"
-            f"Recent snapshots:\n{recent_summary or '(none)'}"
-        )
+        return None
 
     def _frame_from_llm_data(self, data: dict[str, Any]) -> ObserverFrame:
         notes = data.get("notes") or []
@@ -431,7 +350,7 @@ class BackgroundObserver:
         )
 
     def _merge_frames(self, rule: ObserverFrame, llm: ObserverFrame) -> ObserverFrame:
-        """Merge rule và LLM theo kiểu rule là xương sống an toàn."""
+        """Merge rule vÃ  LLM theo kiá»ƒu rule lÃ  xÆ°Æ¡ng sá»‘ng an toÃ n."""
 
         focus_kind = llm.focus_kind if llm.focus_kind != "unknown" else rule.focus_kind
         activity_intent = llm.activity_intent if llm.activity_intent != "unknown" else rule.activity_intent
@@ -442,7 +361,7 @@ class BackgroundObserver:
         ambiguity = max(rule.ambiguity, llm.ambiguity)
         user_presence = max(rule.user_presence * 0.70, llm.user_presence * 0.85)
 
-        # LLM được ảnh hưởng salience, nhưng không được tự thổi quá xa rule.
+        # LLM Ä‘Æ°á»£c áº£nh hÆ°á»Ÿng salience, nhÆ°ng khÃ´ng Ä‘Æ°á»£c tá»± thá»•i quÃ¡ xa rule.
         salience = max(rule.salience, min(1.0, llm.salience * 0.92))
         if possible_error >= 0.75:
             salience = max(salience, rule.salience + 0.08)
@@ -452,7 +371,7 @@ class BackgroundObserver:
         if llm.recommended_action == "call_vision_compressor" and salience >= self.config.vision_min_salience:
             action = "call_vision_compressor"
         elif llm.recommended_action == "wake_main_cognition" and salience >= self.config.wake_main_min_salience:
-            # Wake main chỉ khi rule cũng thấy error/salience cao. Không cho model nhỏ lên đồng.
+            # Wake main chá»‰ khi rule cÅ©ng tháº¥y error/salience cao. KhÃ´ng cho model nhá» lÃªn Ä‘á»“ng.
             if possible_error >= self.config.wake_main_min_error or rule.should_wake_main:
                 action = "wake_main_cognition"
         elif action == "observe_only" and salience >= 0.42:
@@ -479,7 +398,7 @@ class BackgroundObserver:
         )
 
     def _apply_action_gates(self, frame: ObserverFrame, diff: SignalDiff) -> None:
-        """Gắn các cờ cuối sau khi merge."""
+        """Gáº¯n cÃ¡c cá» cuá»‘i sau khi merge."""
 
         frame.should_call_vision = (
             frame.recommended_action == "call_vision_compressor"
@@ -493,7 +412,7 @@ class BackgroundObserver:
             and frame.possible_error >= self.config.wake_main_min_error
         )
 
-        # Ở bản này observer tuyệt đối không tự chen lời public.
+        # á»ž báº£n nÃ y observer tuyá»‡t Ä‘á»‘i khÃ´ng tá»± chen lá»i public.
         frame.should_interrupt_user = False
 
         if frame.should_call_vision:
@@ -646,7 +565,7 @@ class BackgroundObserver:
         if snapshot.idle_seconds >= 25 and possible_error >= 0.55:
             salience += 0.12
 
-        # Lặp cao thì novelty giảm, nhưng error loop vẫn giữ một phần salience.
+        # Láº·p cao thÃ¬ novelty giáº£m, nhÆ°ng error loop váº«n giá»¯ má»™t pháº§n salience.
         salience -= 0.18 * diff.repetition
         if possible_error >= 0.70 and diff.repetition >= 0.50:
             salience += 0.08

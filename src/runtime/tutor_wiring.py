@@ -1,15 +1,15 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 runtime/tutor_wiring.py
 =======================
 
-Nối Curiosity Tutor vào runtime thật. Mọi adapter đều phòng thủ: Master_Switch tắt ⇒
-`build_tutor_daemon_from_runtime` trả None (không tác động gì); thiếu subsystem ⇒ adapter
-đó None/no-op chứ không bao giờ ném vào hot path.
+Ná»‘i Curiosity Tutor vÃ o runtime tháº­t. Má»i adapter Ä‘á»u phÃ²ng thá»§: Master_Switch táº¯t â‡’
+`build_tutor_daemon_from_runtime` tráº£ None (khÃ´ng tÃ¡c Ä‘á»™ng gÃ¬); thiáº¿u subsystem â‡’ adapter
+Ä‘Ã³ None/no-op chá»© khÃ´ng bao giá» nÃ©m vÃ o hot path.
 
-LƯU Ý AN TOÀN: đường ghi vào trí nhớ dài hạn là nhạy cảm. Adapter commit claim
-(`_build_ingest_fn`) chỉ chạy khi tìm thấy đường commit rõ ràng; nếu không, nó trả 0 và
-ghi cảnh báo một lần — KHÔNG đoán API rồi ghi rác vào memory.
+LÆ¯U Ã AN TOÃ€N: Ä‘Æ°á»ng ghi vÃ o trÃ­ nhá»› dÃ i háº¡n lÃ  nháº¡y cáº£m. Adapter commit claim
+(`_build_ingest_fn`) chá»‰ cháº¡y khi tÃ¬m tháº¥y Ä‘Æ°á»ng commit rÃµ rÃ ng; náº¿u khÃ´ng, nÃ³ tráº£ 0 vÃ 
+ghi cáº£nh bÃ¡o má»™t láº§n â€” KHÃ”NG Ä‘oÃ¡n API rá»“i ghi rÃ¡c vÃ o memory.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ _GENERIC_TELEMETRY_PREFIXES = (
 
 
 def _is_generic_telemetry_line(text: str) -> bool:
-    """True nếu một dòng chỉ là telemetry chung chung, KHÔNG phải nội dung màn hình thật."""
+    """True náº¿u má»™t dÃ²ng chá»‰ lÃ  telemetry chung chung, KHÃ”NG pháº£i ná»™i dung mÃ n hÃ¬nh tháº­t."""
 
     lowered = str(text or "").strip().lower()
     if not lowered:
@@ -43,7 +43,7 @@ def _is_generic_telemetry_line(text: str) -> bool:
 
 
 def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
-    """Dựng TutorDaemon đã nối adapter, hoặc None nếu Master_Switch tắt / lỗi build."""
+    """Dá»±ng TutorDaemon Ä‘Ã£ ná»‘i adapter, hoáº·c None náº¿u Master_Switch táº¯t / lá»—i build."""
 
     logger = getattr(runtime_owner, "logger", None)
 
@@ -59,16 +59,16 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
         from cortex.tutor.knowledge_classifier import KnowledgeClassifier
         from cortex.tutor.curiosity_router import CuriosityRouter
     except Exception as exc:  # pragma: no cover
-        _warn(logger, f"tutor: không import được module ({exc!r})")
+        _warn(logger, f"tutor: khÃ´ng import Ä‘Æ°á»£c module ({exc!r})")
         return None
 
     tutor_logger = TutorLogger(sink=logger)
     config = TutorConfig.from_env(tutor_logger)
     if not config.enabled:
-        # Master_Switch tắt: không dựng gì, không mở trình duyệt, không truy cập mạng.
+        # Master_Switch táº¯t: khÃ´ng dá»±ng gÃ¬, khÃ´ng má»Ÿ trÃ¬nh duyá»‡t, khÃ´ng truy cáº­p máº¡ng.
         return None
 
-    _info(logger, "tutor: Master_Switch BẬT — đang dựng Curiosity Tutor daemon")
+    _info(logger, "tutor: Master_Switch Báº¬T â€” Ä‘ang dá»±ng Curiosity Tutor daemon")
 
     generate_fn = _build_generate_fn(runtime_owner, logger)
     ingest_fn = _build_ingest_fn(runtime_owner, tutor_logger, logger)
@@ -104,10 +104,10 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
         logger=tutor_logger,
         drive_fn=drive_fn,
     )
-    # Cho tick truy cập collector để nạp gap.
+    # Cho tick truy cáº­p collector Ä‘á»ƒ náº¡p gap.
     runtime_owner._tutor_collector = collector
 
-    # API "đi hỏi theo yêu cầu": cognition gọi khi không chắc / user bảo tra cứu.
+    # API "Ä‘i há»i theo yÃªu cáº§u": cognition gá»i khi khÃ´ng cháº¯c / user báº£o tra cá»©u.
     def request_tutor_lookup(topic, *, context="", kind_hint="durable", stake=0.7):
         try:
             import time as _t
@@ -118,58 +118,58 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
             if gap is None:
                 return False
             collector.push(gap)
-            # Chạy ngay (forced bỏ qua idle/rate-limit; vẫn tôn trọng risk guard).
+            # Cháº¡y ngay (forced bá» qua idle/rate-limit; váº«n tÃ´n trá»ng risk guard).
             ep = daemon.run_once(idle=False, now=now)
             if ep is None:
-                _warn(logger, f"tutor request_lookup không chạy được episode topic={str(topic)[:120]!r}")
+                _warn(logger, f"tutor request_lookup khÃ´ng cháº¡y Ä‘Æ°á»£c episode topic={str(topic)[:120]!r}")
                 return False
             if getattr(ep, "fail_reason", None):
                 _warn(logger, f"tutor request_lookup failed reason={getattr(ep, 'fail_reason', '')} topic={str(topic)[:120]!r}")
             return ep is not None
         except Exception as exc:
-            _warn(logger, f"tutor request_lookup lỗi ({exc!r})")
+            _warn(logger, f"tutor request_lookup lá»—i ({exc!r})")
             return False
 
     runtime_owner.request_tutor_lookup = request_tutor_lookup
 
-    # API "tra rồi TRẢ LỜI ngay": dùng cho nhịp 2 của chat khi bạn hỏi câu kiến thức
-    # mà Eris chưa biết. Trả về nội dung câu trả lời (str) hoặc None nếu tra không ra.
+    # API "tra rá»“i TRáº¢ Lá»œI ngay": dÃ¹ng cho nhá»‹p 2 cá»§a chat khi báº¡n há»i cÃ¢u kiáº¿n thá»©c
+    # mÃ  Eris chÆ°a biáº¿t. Tráº£ vá» ná»™i dung cÃ¢u tráº£ lá»i (str) hoáº·c None náº¿u tra khÃ´ng ra.
     def request_tutor_answer(topic, *, context=""):
         try:
             answer = daemon.ask_now(topic, context=context)
             if answer:
                 return answer
-            # Fallback: câu hỏi kiến thức không nên phụ thuộc hoàn toàn vào Gemini Web
-            # (browser profile/captcha/selector rất dễ tật). Dùng Gemini grounding API
-            # qua ActionExecutor nếu có, để nhịp 2 vẫn có câu trả lời.
+            # Fallback: cÃ¢u há»i kiáº¿n thá»©c khÃ´ng nÃªn phá»¥ thuá»™c hoÃ n toÃ n vÃ o Gemini Web
+            # (browser profile/captcha/selector ráº¥t dá»… táº­t). DÃ¹ng Gemini grounding API
+            # qua ActionExecutor náº¿u cÃ³, Ä‘á»ƒ nhá»‹p 2 váº«n cÃ³ cÃ¢u tráº£ lá»i.
             fallback = _ask_gemini_grounding_fallback(runtime_owner, topic, logger)
             if fallback:
-                _info(logger, "tutor request_answer dùng fallback Gemini grounding API")
+                _info(logger, "tutor request_answer dÃ¹ng fallback Gemini grounding API")
                 return fallback
-            _warn(logger, f"tutor request_answer không có kết quả topic={str(topic)[:120]!r}")
+            _warn(logger, f"tutor request_answer khÃ´ng cÃ³ káº¿t quáº£ topic={str(topic)[:120]!r}")
             return None
         except Exception as exc:
-            _warn(logger, f"tutor request_answer lỗi ({exc!r})")
+            _warn(logger, f"tutor request_answer lá»—i ({exc!r})")
             fallback = _ask_gemini_grounding_fallback(runtime_owner, topic, logger)
             return fallback or None
 
     runtime_owner.request_tutor_answer = request_tutor_answer
 
-    # Nối KnowledgeProvider (đọc claim đã học) vào SituationModel nếu reachable.
+    # Ná»‘i KnowledgeProvider (Ä‘á»c claim Ä‘Ã£ há»c) vÃ o SituationModel náº¿u reachable.
     try:
         _attach_knowledge_provider(runtime_owner, logger)
     except Exception as exc:
-        _warn(logger, f"tutor: không nối được knowledge provider ({exc!r})")
+        _warn(logger, f"tutor: khÃ´ng ná»‘i Ä‘Æ°á»£c knowledge provider ({exc!r})")
 
     return daemon
 
 
 def _ask_gemini_grounding_fallback(runtime_owner: Any, topic: Any, logger: Any) -> str:
-    """Fallback cho request_tutor_answer khi tutor web/browser chết.
+    """Fallback cho request_tutor_answer khi tutor web/browser cháº¿t.
 
-    Đây không thay thế Curiosity Tutor dài hạn; nó chỉ cứu đường user-facing
-    "bạn hỏi kiến thức -> Eris tra rồi trả lời". Nếu ActionExecutor có
-    search_web (Gemini grounding API), dùng nó để tránh phụ thuộc Playwright.
+    ÄÃ¢y khÃ´ng thay tháº¿ Curiosity Tutor dÃ i háº¡n; nÃ³ chá»‰ cá»©u Ä‘Æ°á»ng user-facing
+    "báº¡n há»i kiáº¿n thá»©c -> Eris tra rá»“i tráº£ lá»i". Náº¿u ActionExecutor cÃ³
+    search_web (Gemini grounding API), dÃ¹ng nÃ³ Ä‘á»ƒ trÃ¡nh phá»¥ thuá»™c Playwright.
     """
 
     query = str(topic or "").strip()
@@ -184,23 +184,23 @@ def _ask_gemini_grounding_fallback(runtime_owner: Any, topic: Any, logger: Any) 
                 data = getattr(result, "data", {}) or {}
                 answer = str(data.get("answer") or getattr(result, "message", "") or "").strip()
                 sources = str(data.get("sources") or "").strip()
-                if answer and sources and "Nguon:" not in answer and "Nguồn:" not in answer:
-                    return f"{answer}\nNguồn:\n{sources}"
+                if answer and sources and "Nguon:" not in answer and "Nguá»“n:" not in answer:
+                    return f"{answer}\nNguá»“n:\n{sources}"
                 return answer
             _warn(logger, f"tutor fallback search_web failed: {getattr(result, 'message', '')}")
         except Exception as exc:
-            _warn(logger, f"tutor fallback search_web lỗi ({exc!r})")
+            _warn(logger, f"tutor fallback search_web lá»—i ({exc!r})")
     return ""
 
 
 def _attach_knowledge_provider(runtime_owner: Any, logger: Any) -> None:
-    """Gắn KnowledgeProvider vào SituationModel để dự đoán dùng tri thức đã học."""
+    """Gáº¯n KnowledgeProvider vÃ o SituationModel Ä‘á»ƒ dá»± Ä‘oÃ¡n dÃ¹ng tri thá»©c Ä‘Ã£ há»c."""
 
     from cortex.tutor.knowledge_provider import KnowledgeProvider
 
     store = _reach_semantic_store(runtime_owner)
     if store is None or not callable(getattr(store, "recall", None)):
-        _warn(logger, "tutor: không tìm thấy semantic store cho knowledge provider")
+        _warn(logger, "tutor: khÃ´ng tÃ¬m tháº¥y semantic store cho knowledge provider")
         return
 
     def recall_fn(query: str):
@@ -215,13 +215,13 @@ def _attach_knowledge_provider(runtime_owner: Any, logger: Any) -> None:
     sm = _reach_situation_model(runtime_owner)
     if sm is not None and callable(getattr(sm, "set_knowledge_provider", None)):
         sm.set_knowledge_provider(provider)
-        _info(logger, "tutor: đã nối KnowledgeProvider vào SituationModel")
+        _info(logger, "tutor: Ä‘Ã£ ná»‘i KnowledgeProvider vÃ o SituationModel")
     else:
-        _info(logger, "tutor: KnowledgeProvider sẵn sàng (SituationModel sẽ nối khi pipeline dựng)")
+        _info(logger, "tutor: KnowledgeProvider sáºµn sÃ ng (SituationModel sáº½ ná»‘i khi pipeline dá»±ng)")
 
 
 def tutor_tick(runtime_owner: Any, *, observer_frame: Any = None, channel: str = "", snapshot: Any = None) -> None:
-    """Nạp gap (observer + violation) rồi chạy một episode nếu đủ điều kiện. Không bao giờ ném."""
+    """Náº¡p gap (observer + violation) rá»“i cháº¡y má»™t episode náº¿u Ä‘á»§ Ä‘iá»u kiá»‡n. KhÃ´ng bao giá» nÃ©m."""
 
     import time as _time
 
@@ -231,7 +231,7 @@ def tutor_tick(runtime_owner: Any, *, observer_frame: Any = None, channel: str =
         return
     try:
         now = _time.time()
-        # Lazy-attach KnowledgeProvider vào SituationModel (shadow pipeline tạo nó lazily).
+        # Lazy-attach KnowledgeProvider vÃ o SituationModel (shadow pipeline táº¡o nÃ³ lazily).
         sm = _reach_situation_model(runtime_owner)
         if sm is not None:
             prov = getattr(runtime_owner, "tutor_knowledge_provider", None)
@@ -242,14 +242,14 @@ def tutor_tick(runtime_owner: Any, *, observer_frame: Any = None, channel: str =
                     sm.set_knowledge_provider(prov)
                 except Exception:
                     pass
-        # Nguồn 1: observer 'unknown' — kèm đóng gói nội dung màn hình thật để Gemini đoán.
+        # Nguá»“n 1: observer 'unknown' â€” kÃ¨m Ä‘Ã³ng gÃ³i ná»™i dung mÃ n hÃ¬nh tháº­t Ä‘á»ƒ Gemini Ä‘oÃ¡n.
         if observer_frame is not None:
             try:
                 screen_ctx = _screen_context_from_snapshot(snapshot)
                 collector.push(collector.collect_from_observer(observer_frame, now=now, screen_context=screen_ctx))
             except Exception:
                 pass
-        # Nguồn 2: vi phạm kỳ vọng của SituationModel (nếu reachable).
+        # Nguá»“n 2: vi pháº¡m ká»³ vá»ng cá»§a SituationModel (náº¿u reachable).
         violation = None
         if sm is not None:
             expose = getattr(sm, "expose_violation", None)
@@ -271,11 +271,11 @@ def tutor_tick(runtime_owner: Any, *, observer_frame: Any = None, channel: str =
 
 
 # ---------------------------------------------------------------------------
-# Adapters (phòng thủ)
+# Adapters (phÃ²ng thá»§)
 # ---------------------------------------------------------------------------
 
 def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str], str]]:
-    """Local hoặc Remote LLM text gen để sinh câu hỏi/phân loại. None ⇒ heuristic fallback."""
+    """Local hoáº·c Remote LLM text gen Ä‘á»ƒ sinh cÃ¢u há»i/phÃ¢n loáº¡i. None â‡’ heuristic fallback."""
 
     import os
     import json as _json
@@ -284,7 +284,6 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
     llm_service = getattr(runtime_owner, "llm_service", None)
     use_remote = (
         os.getenv("ERIS_TUTOR_USE_REMOTE_LLM", "0").strip().lower() in {"1", "true", "yes", "on"}
-        or os.getenv("ERIS_TUTOR_LOCAL_MODEL", "").strip().lower() in {"remote", "api", "gemini", "fallback"}
     )
 
     if use_remote and llm_service is not None:
@@ -293,7 +292,7 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
             def generate_fn(prompt: str) -> str:
                 try:
                     messages = [
-                        {"role": "system", "content": "Trả về JSON gọn dạng {\"text\": \"...\"} bằng tiếng Việt. Tuyệt đối không thêm lời dẫn hay giải thích ngoài JSON."},
+                        {"role": "system", "content": "Tráº£ vá» JSON gá»n dáº¡ng {\"text\": \"...\"} báº±ng tiáº¿ng Viá»‡t. Tuyá»‡t Ä‘á»‘i khÃ´ng thÃªm lá»i dáº«n hay giáº£i thÃ­ch ngoÃ i JSON."},
                         {"role": "user", "content": prompt},
                     ]
                     resp = remote_client.create_chat_completion(
@@ -323,40 +322,17 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
                     data = _json.loads(content)
                     return str(data.get("text", "") or "").strip()
                 except Exception as exc:
-                    _warn(logger, f"tutor remote generate_fn lỗi ({exc!r})")
+                    _warn(logger, f"tutor remote generate_fn lá»—i ({exc!r})")
                     return ""
             return generate_fn
 
-    try:
-        from llm.ollama_client import OllamaClient
-    except Exception:
-        return None
-
-    model = os.getenv("ERIS_TUTOR_LOCAL_MODEL", os.getenv("ERIS_OBSERVER_MODEL", "qwen3:1.7b"))
-
-    def generate_fn(prompt: str) -> str:
-        try:
-            client = OllamaClient()
-            messages = [
-                {"role": "system", "content": "Trả về JSON gọn dạng {\"text\": \"...\"} bằng tiếng Việt."},
-                {"role": "user", "content": prompt},
-            ]
-            res = client.chat_json(model, messages, temperature=0.4)
-            if getattr(res, "ok", False):
-                data = getattr(res, "parsed", {}) or {}
-                return str(data.get("text", "") or "").strip()
-        except Exception:
-            return ""
-        return ""
-
-    return generate_fn
 
 
 def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str], list]]:
-    """Tách câu trả lời gia sư thành các fact ngắn, atomic qua local hoặc remote LLM.
+    """TÃ¡ch cÃ¢u tráº£ lá»i gia sÆ° thÃ nh cÃ¡c fact ngáº¯n, atomic qua local hoáº·c remote LLM.
 
-    None ⇒ ClaimDigest tự fallback tách câu bằng heuristic. Lỗi LLM không bao giờ
-    ném vào hot path — trả [] để digest dùng fallback.
+    None â‡’ ClaimDigest tá»± fallback tÃ¡ch cÃ¢u báº±ng heuristic. Lá»—i LLM khÃ´ng bao giá»
+    nÃ©m vÃ o hot path â€” tráº£ [] Ä‘á»ƒ digest dÃ¹ng fallback.
     """
 
     import os
@@ -366,7 +342,6 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
     llm_service = getattr(runtime_owner, "llm_service", None)
     use_remote = (
         os.getenv("ERIS_TUTOR_USE_REMOTE_LLM", "0").strip().lower() in {"1", "true", "yes", "on"}
-        or os.getenv("ERIS_TUTOR_LOCAL_MODEL", "").strip().lower() in {"remote", "api", "gemini", "fallback"}
     )
 
     if use_remote and llm_service is not None:
@@ -381,12 +356,12 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
                         {
                             "role": "system",
                             "content": (
-                                "Bạn tách kiến thức thành các sự thật ngắn, độc lập, không trùng. "
-                                "Trả JSON dạng {\"facts\": [\"...\", ...]} bằng tiếng Việt, mỗi fact một câu "
-                                "tự đứng được, tối đa 5 fact. Bỏ phần khách sáo/giải thích vòng vo."
+                                "Báº¡n tÃ¡ch kiáº¿n thá»©c thÃ nh cÃ¡c sá»± tháº­t ngáº¯n, Ä‘á»™c láº­p, khÃ´ng trÃ¹ng. "
+                                "Tráº£ JSON dáº¡ng {\"facts\": [\"...\", ...]} báº±ng tiáº¿ng Viá»‡t, má»—i fact má»™t cÃ¢u "
+                                "tá»± Ä‘á»©ng Ä‘Æ°á»£c, tá»‘i Ä‘a 5 fact. Bá» pháº§n khÃ¡ch sÃ¡o/giáº£i thÃ­ch vÃ²ng vo."
                             ),
                         },
-                        {"role": "user", "content": f"Tách đoạn sau thành các sự thật atomic:\n{text[:1200]}"},
+                        {"role": "user", "content": f"TÃ¡ch Ä‘oáº¡n sau thÃ nh cÃ¡c sá»± tháº­t atomic:\n{text[:1200]}"},
                     ]
                     resp = remote_client.create_chat_completion(
                         messages=messages,
@@ -417,63 +392,28 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
                     if isinstance(facts, (list, tuple)):
                         return [str(f).strip() for f in facts if str(f or "").strip()][:5]
                 except Exception as exc:
-                    _warn(logger, f"tutor remote distill lỗi ({exc!r})")
+                    _warn(logger, f"tutor remote distill lá»—i ({exc!r})")
                 return []
             return distill_fn
 
-    try:
-        from llm.ollama_client import OllamaClient
-    except Exception:
-        return None
-
-    model = os.getenv("ERIS_TUTOR_LOCAL_MODEL", os.getenv("ERIS_OBSERVER_MODEL", "qwen3:1.7b"))
-
-    def distill_fn(answer_text: str) -> list:
-        text = str(answer_text or "").strip()
-        if not text:
-            return []
-        try:
-            client = OllamaClient()
-            messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "Bạn tách kiến thức thành các sự thật ngắn, độc lập, không trùng. "
-                        "Trả JSON dạng {\"facts\": [\"...\", ...]} bằng tiếng Việt, mỗi fact một câu "
-                        "tự đứng được, tối đa 5 fact. Bỏ phần khách sáo/giải thích vòng vo."
-                    ),
-                },
-                {"role": "user", "content": f"Tách đoạn sau thành các sự thật atomic:\n{text[:1200]}"},
-            ]
-            res = client.chat_json(model, messages, temperature=0.2)
-            if getattr(res, "ok", False):
-                data = getattr(res, "parsed", {}) or {}
-                facts = data.get("facts") or []
-                if isinstance(facts, (list, tuple)):
-                    return [str(f).strip() for f in facts if str(f or "").strip()][:5]
-        except Exception as exc:
-            _warn(logger, f"tutor distill lỗi ({exc!r})")
-        return []
-
-    return distill_fn
 
 
 def _build_ingest_fn(runtime_owner: Any, tutor_logger: Any, logger: Any) -> Optional[Callable[..., int]]:
-    """Đường commit claim vào trí nhớ ngữ nghĩa (có embedding) qua memory core/kernel.
+    """ÄÆ°á»ng commit claim vÃ o trÃ­ nhá»› ngá»¯ nghÄ©a (cÃ³ embedding) qua memory core/kernel.
 
-    Claim được lưu với tag "tutor"/"learned" + source provenance, confidence vừa phải, và
-    storage_permission=True (commit nội bộ tin cậy). Store ngữ nghĩa đã gắn embedding_index
-    ⇒ bài học có embedding, recall lần sau dùng được.
+    Claim Ä‘Æ°á»£c lÆ°u vá»›i tag "tutor"/"learned" + source provenance, confidence vá»«a pháº£i, vÃ 
+    storage_permission=True (commit ná»™i bá»™ tin cáº­y). Store ngá»¯ nghÄ©a Ä‘Ã£ gáº¯n embedding_index
+    â‡’ bÃ i há»c cÃ³ embedding, recall láº§n sau dÃ¹ng Ä‘Æ°á»£c.
     """
 
-    # Cho phép người dùng override hoàn toàn nếu muốn.
+    # Cho phÃ©p ngÆ°á»i dÃ¹ng override hoÃ n toÃ n náº¿u muá»‘n.
     custom = getattr(runtime_owner, "tutor_ingest_fn", None)
     if callable(custom):
         return custom
 
     committer = _reach_memory_commit(runtime_owner)
     if committer is None:
-        _warn(logger, "tutor: không tìm thấy đường commit memory — claim sẽ không được lưu")
+        _warn(logger, "tutor: khÃ´ng tÃ¬m tháº¥y Ä‘Æ°á»ng commit memory â€” claim sáº½ khÃ´ng Ä‘Æ°á»£c lÆ°u")
         return None
 
     def ingest_fn(text: str, *, source: str = "tutor", gap_id: str = "", citations=(), confidence: float = 0.66) -> int:
@@ -513,7 +453,7 @@ def _build_ingest_fn(runtime_owner: Any, tutor_logger: Any, logger: Any) -> Opti
         try:
             decision = committer(request)
         except Exception as exc:
-            _warn(logger, f"tutor: commit claim lỗi ({exc!r})")
+            _warn(logger, f"tutor: commit claim lá»—i ({exc!r})")
             return 0
         outcome = str(getattr(decision, "outcome", "") or "")
         stored = str(getattr(decision, "stored_id", "") or "")
@@ -523,7 +463,7 @@ def _build_ingest_fn(runtime_owner: Any, tutor_logger: Any, logger: Any) -> Opti
 
 
 def _build_thought_sink(runtime_owner: Any, logger: Any) -> Optional[Any]:
-    """Đẩy Share_Impulse vào internal_agenda nếu có. None ⇒ không khoe (an toàn)."""
+    """Äáº©y Share_Impulse vÃ o internal_agenda náº¿u cÃ³. None â‡’ khÃ´ng khoe (an toÃ n)."""
 
     agenda = _reach_internal_agenda(runtime_owner)
     if agenda is None or not callable(getattr(agenda, "add", None)):
@@ -547,7 +487,7 @@ def _build_thought_sink(runtime_owner: Any, logger: Any) -> Optional[Any]:
 
 
 def _build_already_known_fn(runtime_owner: Any) -> Optional[Callable[[str], bool]]:
-    """True nếu Eris đã biết topic (recall trí nhớ trúng) ⇒ router skip, đỡ hỏi lại."""
+    """True náº¿u Eris Ä‘Ã£ biáº¿t topic (recall trÃ­ nhá»› trÃºng) â‡’ router skip, Ä‘á»¡ há»i láº¡i."""
 
     store = _reach_semantic_store(runtime_owner)
     if store is None or not callable(getattr(store, "recall", None)):
@@ -578,7 +518,7 @@ def _build_drive_fn(runtime_owner: Any) -> Optional[Callable[[], float]]:
 
 
 # ---------------------------------------------------------------------------
-# Reach helpers — dò mềm vào subsystem, không bám cứng.
+# Reach helpers â€” dÃ² má»m vÃ o subsystem, khÃ´ng bÃ¡m cá»©ng.
 # ---------------------------------------------------------------------------
 
 def _reach_internal_agenda(runtime_owner: Any) -> Optional[Any]:
@@ -595,13 +535,13 @@ def _reach_internal_agenda(runtime_owner: Any) -> Optional[Any]:
 
 
 def _screen_context_from_snapshot(snapshot: Any) -> str:
-    """Đóng gói nội dung màn hình THẬT cho Gemini đoán ngữ cảnh.
+    """ÄÃ³ng gÃ³i ná»™i dung mÃ n hÃ¬nh THáº¬T cho Gemini Ä‘oÃ¡n ngá»¯ cáº£nh.
 
-    Chỉ trả về context khi có nội dung màn hình thực sự (OCR/đường dẫn/vision facts) —
-    KHÔNG dựng câu hỏi chỉ từ tên app/cửa sổ của một app chạy ngầm đang idle, và KHÔNG
-    nhồi telemetry chung chung (active window is.../focus kind is.../no input...) như thể
-    đó là chữ trên màn hình. Mục tiêu: ưu tiên vision thật thay vì hỏi suông vô nghĩa.
-    LƯU Ý RIÊNG TƯ: nội dung màn hình (OCR) sẽ được gửi tới Gemini ở nhánh này.
+    Chá»‰ tráº£ vá» context khi cÃ³ ná»™i dung mÃ n hÃ¬nh thá»±c sá»± (OCR/Ä‘Æ°á»ng dáº«n/vision facts) â€”
+    KHÃ”NG dá»±ng cÃ¢u há»i chá»‰ tá»« tÃªn app/cá»­a sá»• cá»§a má»™t app cháº¡y ngáº§m Ä‘ang idle, vÃ  KHÃ”NG
+    nhá»“i telemetry chung chung (active window is.../focus kind is.../no input...) nhÆ° thá»ƒ
+    Ä‘Ã³ lÃ  chá»¯ trÃªn mÃ n hÃ¬nh. Má»¥c tiÃªu: Æ°u tiÃªn vision tháº­t thay vÃ¬ há»i suÃ´ng vÃ´ nghÄ©a.
+    LÆ¯U Ã RIÃŠNG TÆ¯: ná»™i dung mÃ n hÃ¬nh (OCR) sáº½ Ä‘Æ°á»£c gá»­i tá»›i Gemini á»Ÿ nhÃ¡nh nÃ y.
     """
 
     if snapshot is None:
@@ -617,7 +557,7 @@ def _screen_context_from_snapshot(snapshot: Any) -> str:
     url = str(getattr(snapshot, "url_or_path_hint", "") or "").strip()
     ocr_raw = str(getattr(snapshot, "ocr_text", "") or "").strip()
 
-    # Lọc telemetry chung chung khỏi phần OCR: chỉ giữ dòng là nội dung màn hình thật.
+    # Lá»c telemetry chung chung khá»i pháº§n OCR: chá»‰ giá»¯ dÃ²ng lÃ  ná»™i dung mÃ n hÃ¬nh tháº­t.
     ocr_lines = [line.strip() for line in ocr_raw.splitlines() if line.strip()]
     real_ocr_lines = [line for line in ocr_lines if not _is_generic_telemetry_line(line)]
     ocr = "\n".join(real_ocr_lines).strip()
@@ -628,7 +568,7 @@ def _screen_context_from_snapshot(snapshot: Any) -> str:
         if str(item).strip() and not _is_generic_telemetry_line(str(item))
     ]
 
-    # Không có nội dung màn hình thật ⇒ không hỏi Gemini, để vision pipeline lo.
+    # KhÃ´ng cÃ³ ná»™i dung mÃ n hÃ¬nh tháº­t â‡’ khÃ´ng há»i Gemini, Ä‘á»ƒ vision pipeline lo.
     has_real_content = bool(ocr or url or vision_facts)
     if not has_real_content:
         return ""
@@ -637,13 +577,13 @@ def _screen_context_from_snapshot(snapshot: Any) -> str:
     if app:
         parts.append(f"app={app}")
     if title:
-        parts.append(f"cửa sổ={title}")
+        parts.append(f"cá»­a sá»•={title}")
     if url:
-        parts.append(f"đường dẫn={url}")
+        parts.append(f"Ä‘Æ°á»ng dáº«n={url}")
     if vision_facts:
         parts.append("vision: " + " | ".join(vision_facts[:3])[:300])
     if ocr:
-        parts.append(f"chữ trên màn hình: {ocr[:300]}")
+        parts.append(f"chá»¯ trÃªn mÃ n hÃ¬nh: {ocr[:300]}")
     return scrub_identity(" | ".join(parts))[:500]
 
 
@@ -673,7 +613,7 @@ def _reach_situation_violation(runtime_owner: Any) -> Optional[Any]:
 
 
 def _reach_memory_commit(runtime_owner: Any) -> Optional[Callable[[Any], Any]]:
-    """Trả callable commit(request) từ memory_kernel/memory_core nếu có."""
+    """Tráº£ callable commit(request) tá»« memory_kernel/memory_core náº¿u cÃ³."""
 
     for attr in ("memory_kernel", "memory_core"):
         obj = getattr(runtime_owner, attr, None)
@@ -683,7 +623,7 @@ def _reach_memory_commit(runtime_owner: Any) -> Optional[Callable[[Any], Any]]:
 
 
 def _reach_semantic_store(runtime_owner: Any) -> Optional[Any]:
-    """Trả semantic store (có recall + embedding_index) từ memory core/kernel."""
+    """Tráº£ semantic store (cÃ³ recall + embedding_index) tá»« memory core/kernel."""
 
     candidates = []
     for attr in ("memory_core", "memory_kernel"):
@@ -691,7 +631,7 @@ def _reach_semantic_store(runtime_owner: Any) -> Optional[Any]:
         if obj is None:
             continue
         candidates.append(obj)
-        # kernel có thể bọc core qua .core/.cognition/.memory_cognition
+        # kernel cÃ³ thá»ƒ bá»c core qua .core/.cognition/.memory_cognition
         for inner in ("core", "cognition", "memory_cognition"):
             nested = getattr(obj, inner, None)
             if nested is not None:
