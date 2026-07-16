@@ -16,6 +16,16 @@ def public_action_text(result: ActionExecutionResult) -> str:
         return _finish(result, result.message or "Action chưa thực thi được.")
 
     action = result.action_name
+    cognitive_actions = {
+        "review_discourse_claim", "inspect_unresolved_questions",
+        "inspect_memory_candidates", "compare_recent_turns",
+        "inspect_social_state", "detect_internal_contradictions",
+        "summarize_open_loops", "inspect_capability_health",
+    }
+    if action in cognitive_actions:
+        # Kết quả đã được verifier nội bộ xác nhận. Không format lại thành câu
+        # chung chung rồi làm mất claim/evidence vừa kiểm tra.
+        return _finish(result, result.message)
     if result.observed:
         if action == "set_volume":
             level = result.data.get("observed_level") or result.data.get("level")

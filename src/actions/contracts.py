@@ -17,6 +17,16 @@ VALID_SYSTEM_ACTION_LIST = (
     "launch_app",
     "search_web",
     "get_weather",
+    # Năng lực nhận thức nội bộ read-only. Đây là action thật có evidence,
+    # không phải prompt khoe rằng Eris "có thể tự kiểm tra".
+    "review_discourse_claim",
+    "inspect_unresolved_questions",
+    "inspect_memory_candidates",
+    "compare_recent_turns",
+    "inspect_social_state",
+    "detect_internal_contradictions",
+    "summarize_open_loops",
+    "inspect_capability_health",
 )
 
 VALID_SYSTEM_ACTIONS = set(VALID_SYSTEM_ACTION_LIST)
@@ -28,7 +38,13 @@ class ActionExecutionStatus(str, Enum):
     OBSERVED = "observed"
 
 
-_OBSERVED_ACTIONS = {"get_local_time", "get_now_playing", "search_web", "get_weather"}
+_OBSERVED_ACTIONS = {
+    "get_local_time", "get_now_playing", "search_web", "get_weather",
+    "review_discourse_claim", "inspect_unresolved_questions",
+    "inspect_memory_candidates", "compare_recent_turns",
+    "inspect_social_state", "detect_internal_contradictions",
+    "summarize_open_loops", "inspect_capability_health",
+}
 
 
 @dataclass(slots=True)

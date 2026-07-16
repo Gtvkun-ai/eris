@@ -144,6 +144,54 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
         description_vi="đọc snapshot như active app, idle, scene và health nội bộ đã được runtime cấp",
         visible_in_ui_group="observation",
     ),
+    "review_discourse_claim": CapabilityDefinition(
+        id="review_discourse_claim", public_name_vi="kiểm lại claim hội thoại",
+        description_vi="đọc claim public đang bị sửa và nêu đúng phần Eris đã hiểu lệch",
+        example_phrases=("kiểm lại chỗ vừa hiểu sai", "rà claim vừa rồi"),
+        visible_in_ui_group="cognition",
+    ),
+    "inspect_unresolved_questions": CapabilityDefinition(
+        id="inspect_unresolved_questions", public_name_vi="xem câu hỏi còn bỏ ngỏ",
+        description_vi="kiểm tra discourse focus để tìm câu hỏi hoặc correction chưa được đóng",
+        example_phrases=("còn câu nào chưa trả lời",),
+        visible_in_ui_group="cognition",
+    ),
+    "inspect_memory_candidates": CapabilityDefinition(
+        id="inspect_memory_candidates", public_name_vi="kiểm tra memory candidate",
+        description_vi="đếm mảnh ký ức chưa consolidation mà không coi chúng là fact",
+        example_phrases=("kiểm tra mảnh ký ức còn sót",),
+        visible_in_ui_group="cognition",
+    ),
+    "compare_recent_turns": CapabilityDefinition(
+        id="compare_recent_turns", public_name_vi="so sánh lượt nói gần đây",
+        description_vi="đối chiếu hai câu public gần nhất để phát hiện lặp ý",
+        example_phrases=("so sánh hai câu vừa nói",),
+        visible_in_ui_group="cognition",
+    ),
+    "inspect_social_state": CapabilityDefinition(
+        id="inspect_social_state", public_name_vi="xem social state của Eris",
+        description_vi="đọc warmth, irritation, play-contract và mức cáu của chính Eris",
+        example_phrases=("xem trạng thái xã hội của em",),
+        visible_in_ui_group="cognition",
+    ),
+    "detect_internal_contradictions": CapabilityDefinition(
+        id="detect_internal_contradictions", public_name_vi="tìm mâu thuẫn trong lời Eris",
+        description_vi="đối chiếu claim public gần đây để phát hiện cặp phủ định mâu thuẫn",
+        example_phrases=("kiểm tra em có tự mâu thuẫn không",),
+        visible_in_ui_group="cognition",
+    ),
+    "summarize_open_loops": CapabilityDefinition(
+        id="summarize_open_loops", public_name_vi="tổng kết open loop nhận thức",
+        description_vi="gom claim bị sửa, câu hỏi bỏ ngỏ và memory candidate chưa xử lý",
+        example_phrases=("còn gì dang dở", "tổng kết open loop"),
+        visible_in_ui_group="cognition",
+    ),
+    "inspect_capability_health": CapabilityDefinition(
+        id="inspect_capability_health", public_name_vi="kiểm tra capability health",
+        description_vi="đọc snapshot năng lực nào đang available hoặc unavailable",
+        example_phrases=("năng lực nào đang chết",),
+        visible_in_ui_group="cognition",
+    ),
 }
 
 
@@ -185,7 +233,20 @@ def iter_public_capabilities(
     include_unavailable: bool = True,
 ) -> tuple[CapabilityDefinition, ...]:
     ids = tuple(action_ids or VALID_SYSTEM_ACTION_LIST)
-    ids = tuple(dict.fromkeys((*ids, *_OBSERVATIONAL_CAPABILITY_IDS)))
+    if action_ids is None:
+        # Giữ các năng lực quan sát ở phần đầu snapshot như bản cũ. Cognitive
+        # capabilities được xếp sau để max_items nhỏ không vô tình đẩy camera/
+        # Meet ra khỏi prompt và làm Eris quên luôn giới hạn cảm biến của mình.
+        cognitive = tuple(
+            item for item in ids
+            if (_CAPABILITY_DATA.get(str(item)) is not None
+                and _CAPABILITY_DATA[str(item)].visible_in_ui_group == "cognition")
+        )
+        regular = tuple(item for item in ids if item not in cognitive)
+        ids = (*regular, *_OBSERVATIONAL_CAPABILITY_IDS, *cognitive)
+    else:
+        ids = (*ids, *_OBSERVATIONAL_CAPABILITY_IDS)
+    ids = tuple(dict.fromkeys(ids))
     out: list[CapabilityDefinition] = []
     for action_id in ids:
         cap = _CAPABILITY_DATA.get(str(action_id))
@@ -234,6 +295,7 @@ def capability_surface_keywords(action_ids: Iterable[str] | None = None) -> tupl
     words.extend((
         "ứng dụng", "cửa sổ", "âm lượng", "volume", "media", "clipboard", "web", "thời tiết",
         "thời gian", "giờ", "telemetry", "runtime", "idle", "UI Automation", "OCR", "màn hình", "Meet", "camera",
+        "claim", "câu hỏi bỏ ngỏ", "memory candidate", "social state", "mâu thuẫn", "open loop",
     ))
     return tuple(dict.fromkeys(w for w in words if str(w or "").strip()))
 

@@ -40,6 +40,16 @@ class ActionExecutor:
     def __init__(self, logger=None, observer=None):
         self.logger = logger
         self.observer = observer if observer is not None else DefaultActionObserver()
+        self.cognitive_runtime = None
+
+    def bind_cognitive_runtime(self, runtime) -> None:
+        """Nối executor với runtime nhận thức sau khi Coordinator đã dựng xong.
+
+        ActionExecutor được tạo trước Coordinator trong vision.py, nên dependency
+        này phải bind muộn. Không dùng global singleton, đỡ thêm một bóng ma nữa
+        vào repo vốn đã đông dân.
+        """
+        self.cognitive_runtime = runtime
 
     #execute() là trung tâm điều phối
     '''
@@ -117,6 +127,41 @@ class ActionExecutor:
                   action_name, action_input or "<empty>", result.message,
                   getattr(result.status, "value", result.status), result.observer_reason or "none")
         return result
+
+
+    def _execute_cognitive(self, capability_id: str, action_input: str) -> ActionExecutionResult:
+        runtime = self.cognitive_runtime
+        if runtime is None:
+            return ActionExecutionResult(
+                action_name=capability_id, action_input=action_input, success=False,
+                message="Runtime nhận thức nội bộ chưa được nối.", error_kind="CognitiveRuntimeUnavailable",
+            )
+        result = runtime.execute(capability_id, action_input)
+        return result.to_action_result(action_input=action_input)
+
+    def _review_discourse_claim(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_cognitive("review_discourse_claim", action_input)
+
+    def _inspect_unresolved_questions(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_cognitive("inspect_unresolved_questions", action_input)
+
+    def _inspect_memory_candidates(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_cognitive("inspect_memory_candidates", action_input)
+
+    def _compare_recent_turns(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_cognitive("compare_recent_turns", action_input)
+
+    def _inspect_social_state(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_cognitive("inspect_social_state", action_input)
+
+    def _detect_internal_contradictions(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_cognitive("detect_internal_contradictions", action_input)
+
+    def _summarize_open_loops(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_cognitive("summarize_open_loops", action_input)
+
+    def _inspect_capability_health(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_cognitive("inspect_capability_health", action_input)
 
     def _get_local_time(self, action_input: str) -> ActionExecutionResult:
         now = time.localtime()

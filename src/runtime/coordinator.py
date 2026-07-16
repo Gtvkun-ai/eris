@@ -443,6 +443,25 @@ class RuntimeCoordinator(
         self.action_executor = action_executor
         self.action_router = action_router
         self.memory_semantic_parser = memory_semantic_parser
+        # Phase 12-15: runtime nhận thức nội bộ read-only. Executor được tạo
+        # trước Coordinator nên bind muộn tại đây, sau khi memory/public ledger
+        # đã tồn tại. Social engine được đọc qua owner động khi handler chạy.
+        self.internal_cognitive_capabilities = None
+        try:
+            from runtime.internal_cognitive_capabilities import (
+                INTERNAL_COGNITIVE_VERSION, InternalCognitiveCapabilityRuntime,
+            )
+            self.internal_cognitive_capabilities = InternalCognitiveCapabilityRuntime(self, logger=self.logger)
+            binder = getattr(self.action_executor, "bind_cognitive_runtime", None)
+            if callable(binder):
+                binder(self.internal_cognitive_capabilities)
+            self.logger.info(
+                "[internal-cognitive] loaded version=%s capabilities=%s status=read_only_verified",
+                INTERNAL_COGNITIVE_VERSION,
+                len(self.internal_cognitive_capabilities.contracts()),
+            )
+        except Exception as exc:
+            self.logger.warning("Không khởi tạo được internal cognitive capabilities: %s", exc)
         try:
             from actions.capability_runtime import bind_runtime_owner
 
@@ -789,6 +808,11 @@ class RuntimeCoordinator(
             self.social_model_router = None
             self.social_cognition_v2 = None
             self.logger.warning("Không khởi tạo được Social Cognition V2: %s", exc)
+        try:
+            from actions.capability_runtime import refresh_runtime_capabilities
+            refresh_runtime_capabilities(owner=self)
+        except Exception:
+            pass
         self.current_social_contract = None
         self.last_user_intent = ""
         self.active_conversational_topic = ""
@@ -10179,6 +10203,14 @@ class RuntimeCoordinator(
             "play_pause_media",
             "copy_text",
             "launch_app",
+            "review_discourse_claim",
+            "inspect_unresolved_questions",
+            "inspect_memory_candidates",
+            "compare_recent_turns",
+            "inspect_social_state",
+            "detect_internal_contradictions",
+            "summarize_open_loops",
+            "inspect_capability_health",
         }
         if (not result.success) or (result.action_name in action_owns_text) or (not decision.text.strip()):
             decision.text = result_text
@@ -10192,6 +10224,13 @@ class RuntimeCoordinator(
 
     def _action_animation_hint(self, action_name: str, fallback: str) -> str:
         if action_name == "get_now_playing":
+            return "read"
+        if action_name in {
+            "review_discourse_claim", "inspect_unresolved_questions",
+            "inspect_memory_candidates", "compare_recent_turns",
+            "inspect_social_state", "detect_internal_contradictions",
+            "summarize_open_loops", "inspect_capability_health",
+        }:
             return "read"
         if action_name in {"open_url", "focus_window", "launch_app"}:
             return "stand_walk"

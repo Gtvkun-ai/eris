@@ -103,6 +103,7 @@ class ActionRouter:
         norm = self._normalize_vi(raw)
 
         candidates: list[RouteCandidate] = [
+            self._route_internal_cognition(raw, norm),
             self._route_open_url(raw, norm),
             self._route_local_time(raw, norm),
             self._route_now_playing(raw, norm),
@@ -124,6 +125,30 @@ class ActionRouter:
         # vẫn là tie-breaker vì max giữ phần tử đầu khi bằng điểm.
         winner = max(valid, key=lambda c: c.confidence)
         return winner.action, winner.value
+
+    def _route_internal_cognition(self, raw: str, norm: str) -> RouteCandidate:
+        """Chỉ route câu lệnh tự kiểm tra có động từ rõ ràng.
+
+        Câu hỏi xã hội tự nhiên như "em hiểu sai gì?" vẫn đi qua chat repair;
+        chỉ "kiểm/rà/xem lại" mới biến thành action. Không cướp miệng của social
+        cognition chỉ vì regex nhìn thấy chữ "sai" rồi phấn khích.
+        """
+        if self._starts_with_negation(norm):
+            return self._blocked("review_discourse_claim", "negated")
+        patterns = (
+            ("review_discourse_claim", r"^(?:eris\s+)?(?:kiem tra|kiem|ra|xem lai|doi chieu)\s+(?:lai\s+)?(?:cho|cau|claim|loi)\s+(?:vua\s+)?(?:hieu sai|noi sai|bi sua|vua roi).*$", "latest_challenged"),
+            ("inspect_unresolved_questions", r"^(?:eris\s+)?(?:kiem tra|kiem|xem|liet ke)\s+(?:lai\s+)?(?:cau hoi|correction)\s+(?:con\s+)?(?:bo ngo|chua tra loi|dang do).*$", "current"),
+            ("inspect_memory_candidates", r"^(?:eris\s+)?(?:kiem tra|kiem|ra|xem|dem)\s+(?:lai\s+)?(?:memory candidate|manh ky uc|ky uc|manh nho)(?:\s+con sot|\s+chua xu ly|\s+di)?.*$", "summary_only"),
+            ("compare_recent_turns", r"^(?:eris\s+)?(?:so sanh|doi chieu|kiem tra|kiem)\s+(?:hai|2)?\s*(?:cau|luot noi|phan hoi)\s+(?:gan nhat|vua roi|vua noi).*$", "recent"),
+            ("inspect_social_state", r"^(?:eris\s+)?(?:kiem tra|kiem|xem|doc)\s+(?:social state|trang thai xa hoi|muc cau|muc buc)(?:\s+cua em|\s+hien tai)?.*$", "current"),
+            ("detect_internal_contradictions", r"^(?:eris\s+)?(?:kiem tra|kiem|tim|xem)\s+(?:lai\s+)?(?:em co\s+)?(?:tu\s+)?mau thuan(?:\s+khong|\s+gi)?.*$", "recent"),
+            ("summarize_open_loops", r"^(?:eris\s+)?(?:tong ket|kiem tra|kiem|xem|ra)\s+(?:lai\s+)?(?:open loop|viec nhan thuc|nhung gi)\s*(?:con dang do|con sot|bo ngo|chua xu ly)?.*$", "summary_only"),
+            ("inspect_capability_health", r"^(?:eris\s+)?(?:kiem tra|kiem|xem|doc)\s+(?:lai\s+)?(?:capability|nang luc)(?:\s+health|\s+nao dang chet|\s+nao chua san sang|\s+hien tai)?.*$", "current"),
+        )
+        for action, pattern, value in patterns:
+            if re.search(pattern, norm, flags=re.IGNORECASE):
+                return RouteCandidate(action, value, 0.95, ("explicit_internal_cognitive_command",))
+        return self._no_candidate("internal_cognition")
 
     def _route_local_time(self, raw: str, norm: str) -> RouteCandidate:
         if self._looks_like_meta_question(norm):

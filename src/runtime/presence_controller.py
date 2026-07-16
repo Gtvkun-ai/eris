@@ -579,12 +579,37 @@ class PresenceControllerMixin:
         if text and is_banned_filler(text) and not guards_warn_only():
             return "", "banned_filler_blocked"
 
+        # Phase 12-15 - Internal Cognitive Actions: nếu câu lẩm bẩm thật sự
+        # map được sang một capability read-only, chạy action trước rồi surface
+        # KẾT QUẢ đã verify. Không phát câu "tôi sẽ rà" rồi đứng đó tạo dáng.
+        cognitive_action_verified = False
+        if text:
+            cognitive_runtime = getattr(self, "internal_cognitive_capabilities", None)
+            executor = getattr(cognitive_runtime, "execute_intention", None)
+            if callable(executor):
+                cognitive_result = executor(text)
+                if cognitive_result is not None:
+                    if cognitive_result.success and cognitive_result.observed:
+                        self.logger.info(
+                            "[internal-cognitive] autonomous_intention capability=%s verified=true evidence=%s",
+                            cognitive_result.action_name, len(tuple(cognitive_result.evidence or ())),
+                        )
+                        text = str(cognitive_result.message or "").strip()
+                        source = f"{source}|internal_cognitive_verified"
+                        cognitive_action_verified = True
+                    else:
+                        self.logger.warning(
+                            "[internal-cognitive] autonomous_intention capability=%s verified=false error=%s",
+                            cognitive_result.action_name, cognitive_result.error_kind or cognitive_result.message,
+                        )
+                        return "", "internal_cognitive_unverified"
+
         # Phase 11 - Intention Authority: low-level presence không được tự kể
         # rằng nó "sẽ rà/kiểm/sửa" nếu không có execution handler thật. Đây là
         # chốt sớm trước SurfaceDecision; StageFrame còn kiểm lần cuối để những
         # đường autonomous khác cũng không lọt. Hai lớp, nhưng cùng một authority,
         # không phải hai hội đồng cùng bịa luật riêng như truyền thống repo này.
-        if text:
+        if text and not cognitive_action_verified:
             gate = getattr(self, "_intention_authority_gate", None)
             if not isinstance(gate, IntentionAuthorityGate):
                 gate = IntentionAuthorityGate()
