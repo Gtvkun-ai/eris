@@ -1453,7 +1453,7 @@ public partial class UdpListener : Node2D
 			if (!File.Exists(path))
 				return;
 
-			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path, Encoding.UTF8));
 			JsonElement root = doc.RootElement;
 			if (root.ValueKind != JsonValueKind.Object)
 				return;
@@ -1498,7 +1498,7 @@ public partial class UdpListener : Node2D
 			string path = GetSecretsPath();
 			if (!File.Exists(path))
 				return;
-			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path, Encoding.UTF8));
 			JsonElement root = doc.RootElement;
 			if (root.ValueKind != JsonValueKind.Object)
 				return;
@@ -1616,7 +1616,7 @@ public partial class UdpListener : Node2D
 		};
 
 		var lines = File.Exists(path)
-			? new List<string>(File.ReadAllLines(path))
+			? new List<string>(File.ReadAllLines(path, Encoding.UTF8))
 			: new List<string>();
 		var written = new HashSet<string>(StringComparer.Ordinal);
 		for (int i = 0; i < lines.Count; i++)
@@ -2055,7 +2055,7 @@ public partial class UdpListener : Node2D
 				return;
 			}
 
-			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(selectedPath));
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(selectedPath, Encoding.UTF8));
 			if (doc.RootElement.ValueKind != JsonValueKind.Object)
 			{
 				SetSettingsStatus("secrets.json phải là JSON object.");
@@ -2485,7 +2485,7 @@ public partial class UdpListener : Node2D
 			if (!File.Exists(path))
 				return keys;
 
-			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path, Encoding.UTF8));
 			JsonElement root = doc.RootElement;
 			if (root.ValueKind != JsonValueKind.Object)
 				return keys;
@@ -2513,7 +2513,7 @@ public partial class UdpListener : Node2D
 			if (!File.Exists(path))
 				return keys;
 
-			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path, Encoding.UTF8));
 			JsonElement root = doc.RootElement;
 			if (root.ValueKind != JsonValueKind.Object)
 				return keys;
@@ -2601,7 +2601,7 @@ public partial class UdpListener : Node2D
 		string path = GetSecretsPath();
 		if (!File.Exists(path))
 			return new JsonObject();
-		JsonNode parsed = JsonNode.Parse(File.ReadAllText(path));
+		JsonNode parsed = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8));
 		return parsed as JsonObject ?? new JsonObject();
 	}
 

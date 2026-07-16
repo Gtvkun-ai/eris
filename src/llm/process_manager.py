@@ -265,6 +265,53 @@ class RemoteModelProcessManager:
         )
         return ChainedFallbackClient(chain, logger=self.logger)
 
+
+    def _build_groq_social_client(self, *, model_name: str, enabled_env: str):
+        """Dựng lane Groq riêng cho social parser/critic.
+
+        Lane dùng chung key pool Groq nhưng tách model, nên parser 8B không vô tình
+        chạy Qwen 32B và ngược lại. Không có key thì trả None, runtime deterministic
+        vẫn hoạt động bình thường.
+        """
+        apply_secrets_to_environ()
+        if not self._env_flag(enabled_env, "1"):
+            return None
+        pool = get_key_pool("groq")
+        api_key = _bootstrap_pool_key(pool) or get_secret("ERIS_GROQ_API_KEY")
+        if not api_key:
+            return None
+        base_url = os.environ.get("ERIS_GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip()
+        try:
+            return OpenAICompatibleClient(
+                base_url=base_url,
+                api_key=api_key,
+                model_name=model_name,
+                key_pool=pool,
+            )
+        except ValueError as exc:
+            self.logger.warning("Không dựng được social lane %s: %s", model_name, exc)
+            return None
+
+    def build_social_parser_client(self):
+        model = os.environ.get("ERIS_SOCIAL_PARSER_MODEL", "llama-3.1-8b-instant").strip()
+        client = self._build_groq_social_client(
+            model_name=model,
+            enabled_env="ERIS_SOCIAL_PARSER_ENABLED",
+        )
+        if client is not None:
+            self.logger.info("Social parser client sẵn sàng: %s", model)
+        return client
+
+    def build_social_critic_client(self):
+        model = os.environ.get("ERIS_SOCIAL_CRITIC_MODEL", "qwen/qwen3-32b").strip()
+        client = self._build_groq_social_client(
+            model_name=model,
+            enabled_env="ERIS_SOCIAL_CRITIC_ENABLED",
+        )
+        if client is not None:
+            self.logger.info("Social deliberator/critic client sẵn sàng: %s", model)
+        return client
+
     def build_escalation_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
         """Build a DEDICATED "strong" client cho self-critique escalation (bái sư).
 

@@ -16,7 +16,7 @@ def _norm(text: str) -> str:
     lowered = unicodedata.normalize("NFD", text.lower())
     lowered = "".join(ch for ch in lowered if unicodedata.category(ch) != "Mn")
     lowered = lowered.replace("đ", "d")
-    lowered = lowered.replace("Ä‘", "d")
+    lowered = lowered.replace("đ", "d")
     return " ".join(lowered.split())
 
 
@@ -272,7 +272,7 @@ class LlmServiceTests(unittest.TestCase):
 
     def _test_chat_insult_no_fallback_mode_keeps_second_dodge(self):
         dodge = (
-            '{"text":"TÃ´i chÆ°a Ä‘á»§ cháº¯c Ä‘á»ƒ Ä‘oÃ¡n Ã½ NgÃ i.","animation":"stand",'
+            '{"text":"Tôi chưa đủ chắc để đoán ý Ngài.","animation":"stand",'
             '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
             '"debug_trace":"dodge","next_animation":"","system_action":"","action_input":""}'
         )
@@ -281,10 +281,10 @@ class LlmServiceTests(unittest.TestCase):
             client = _FakeClient([dodge, dodge])
             service = LlmService(client)
 
-            raw = service.generate_chat_reply(chat_history=[], user_message="mÃ y ngu tháº­t")
+            raw = service.generate_chat_reply(chat_history=[], user_message="mày ngu thật")
 
             payload = json.loads(raw)
-            self.assertEqual(payload["text"], "TÃ´i chÆ°a Ä‘á»§ cháº¯c Ä‘á»ƒ Ä‘oÃ¡n Ã½ NgÃ i.")
+            self.assertEqual(payload["text"], "Tôi chưa đủ chắc để đoán ý Ngài.")
             self.assertEqual(payload["debug_trace"], "dodge")
             self.assertEqual(len(client.calls), 2)
         finally:
@@ -801,7 +801,7 @@ class LlmServiceTests(unittest.TestCase):
         client = _FakeClient([truncated])
         service = LlmService(client)
 
-        raw = service.generate_chat_reply(chat_history=[], user_message="nÃ³i tiáº¿p Ä‘i")
+        raw = service.generate_chat_reply(chat_history=[], user_message="nói tiếp đi")
 
         payload = json.loads(raw)
         self.assertEqual(payload["intent"], "fallback_reply")
@@ -820,7 +820,7 @@ class LlmServiceTests(unittest.TestCase):
         client = _FakeClient([truncated])
         service = LlmService(client)
 
-        raw = service.generate_chat_reply(chat_history=[], user_message="nÃ³i tiáº¿p Ä‘i")
+        raw = service.generate_chat_reply(chat_history=[], user_message="nói tiếp đi")
 
         payload = json.loads(raw)
         self.assertEqual(payload["intent"], "protocol_repair")

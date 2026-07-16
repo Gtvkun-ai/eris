@@ -15,7 +15,7 @@ def _norm(text: str) -> str:
     lowered = unicodedata.normalize("NFD", text.lower())
     lowered = "".join(ch for ch in lowered if unicodedata.category(ch) != "Mn")
     lowered = lowered.replace("đ", "d")
-    lowered = lowered.replace("Ä‘", "d")
+    lowered = lowered.replace("đ", "d")
     return " ".join(lowered.split())
 
 

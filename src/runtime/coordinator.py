@@ -85,18 +85,15 @@ from runtime.public_payload_policy import sanitize_body_payload
 from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
 from runtime.autonomous_orchestrator import AutonomousPerformerOrchestrator, AutonomousPlan
 from runtime.autonomous_cycle import AutonomousCycleMixin
-from runtime.autonomous_cycle_context import AutonomousCycleContext
 from runtime.ambient_silence_policy import (
     ambient_silence_cooldown_seconds,
     should_hold_ambient_silence,
 )
 from runtime.body_bias import BodyBiasProjector
 from runtime.contextual_autonomy_loop import ContextualAutonomyLoop
-from runtime.daydream_model_adapter import RuntimeDaydreamModelAdapter
 from runtime.thought_model_adapter import RuntimeThoughtModelAdapter
 from runtime.model_budget_policy import ModelBudgetPolicy
 from runtime.no_fallback_policy import no_fallback_mode_enabled
-from runtime.sensory_model_adapter import RuntimeSensoryModelAdapter
 from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.cognitive_cycle import CognitiveCycleMixin
@@ -628,7 +625,7 @@ class RuntimeCoordinator(
         self.body_bias_projector = BodyBiasProjector(self._get_internal_state)
         self._debug_overrides: dict[str, tuple[float, float]] = {}
         self.signal_buffer = SignalBuffer(SignalBufferConfig())
-        self.sensory_model_adapter = RuntimeSensoryModelAdapter.from_env(logger=self.logger)
+        self.sensory_model_adapter = None
         self.background_observer = BackgroundObserver(
             BackgroundObserverConfig(),
             sensory_adapter=self.sensory_model_adapter,
@@ -651,9 +648,9 @@ class RuntimeCoordinator(
         self.wake_governor = AutonomousWakeGovernor()
         self.last_wake_decision: WakeDecision | None = None
         self.last_daydream_result = None
-        self.daydream_model_adapter = RuntimeDaydreamModelAdapter.from_env(logger=self.logger)
+        self.daydream_model_adapter = None
         self.daydream_consolidator = DaydreamConsolidator(
-            llm_client=self.daydream_model_adapter or getattr(llm_service, "style_client", None),
+            llm_client=getattr(llm_service, "style_client", None),
             logger=self.logger,
         )
         self.contextual_autonomy_loop = ContextualAutonomyLoop(
@@ -671,10 +668,6 @@ class RuntimeCoordinator(
         # nút stop và scene change vẫn là các nguồn cancel hiện có.
         self.autonomous_performer = AutonomousPerformerOrchestrator(logger=self.logger, observability=self.observability)
         self.last_autonomous_plan: AutonomousPlan | None = None
-        # Phase 7: plan được freeze theo cycle để observer refresh không evaluate
-        # opportunity lần hai rồi ghi đè permit đang dùng.
-        self.active_autonomous_cycle: AutonomousCycleContext | None = None
-        self.last_autonomous_cycle: AutonomousCycleContext | None = None
         self.last_signal_snapshot: SignalSnapshot | None = None
         self.last_signal_diff = None
         self.last_observer_frame: ObserverFrame | None = None
@@ -757,6 +750,36 @@ class RuntimeCoordinator(
         self.chat_history = []
         self.last_chat_answer = ""
         self.repair_state_controller = RepairStateController()
+        # Social Cognition V2 giữ discourse claim, social state và response move
+        # theo phiên. Model nhỏ chỉ advisory; lỗi provider không làm mất contract.
+        social_v2_enabled = str(os.getenv("ERIS_SOCIAL_COGNITION_V2_ENABLED", "1") or "1").lower() not in {"0", "false", "off", "no"}
+        try:
+            if not social_v2_enabled:
+                self.social_model_router = None
+                self.social_cognition_v2 = None
+                self.logger.info("[social cognition v2] disabled by ERIS_SOCIAL_COGNITION_V2_ENABLED")
+            else:
+                from runtime.social_cognition_v2 import SOCIAL_COGNITION_VERSION, SocialCognitionEngine
+                from runtime.social_model_router import SocialModelRouter
+
+                self.social_model_router = SocialModelRouter(llm_service, logger=self.logger)
+                self.social_cognition_v2 = SocialCognitionEngine(
+                    model_router=self.social_model_router,
+                    logger=self.logger,
+                )
+                parser_name = str(getattr(getattr(llm_service, "social_parser_client", None), "model_name", "deterministic") or "deterministic")
+                critic_name = str(getattr(getattr(llm_service, "social_critic_client", None), "model_name", "disabled") or "disabled")
+                self.logger.info(
+                    "[social cognition v2] loaded version=%s parser=%s critic=%s",
+                    SOCIAL_COGNITION_VERSION,
+                    parser_name,
+                    critic_name,
+                )
+        except Exception as exc:
+            self.social_model_router = None
+            self.social_cognition_v2 = None
+            self.logger.warning("Không khởi tạo được Social Cognition V2: %s", exc)
+        self.current_social_contract = None
         self.last_user_intent = ""
         self.active_conversational_topic = ""
         self.last_system_action = ""
@@ -977,75 +1000,6 @@ class RuntimeCoordinator(
             pass
 
 
-    def _begin_autonomous_cycle_context(self) -> AutonomousCycleContext:
-        previous = getattr(self, "active_autonomous_cycle", None)
-        if previous is not None and not previous.final:
-            previous.mark("suppressed", "new_cycle_started")
-            self.last_autonomous_cycle = previous
-        context = AutonomousCycleContext.create()
-        self.active_autonomous_cycle = context
-        try:
-            self.logger.info("[autonomous cycle] id=%s status=created", context.cycle_id)
-        except Exception:
-            pass
-        return context
-
-    def _active_autonomous_plan(self):
-        context = getattr(self, "active_autonomous_cycle", None)
-        if context is not None and context.plan is not None:
-            return context.plan
-        return getattr(self, "last_autonomous_plan", None)
-
-    def _finalize_autonomous_cycle_context(self, status: str, reason: str = "") -> None:
-        context = getattr(self, "active_autonomous_cycle", None)
-        if context is None:
-            return
-        context.mark(status, reason)
-        self.last_autonomous_cycle = context
-        try:
-            self.logger.info(
-                "[autonomous cycle] id=%s status=%s reason=%s observer_refresh=%d",
-                context.cycle_id,
-                context.status,
-                context.final_reason or "none",
-                context.observer_refresh_count,
-            )
-        except Exception:
-            pass
-        if context.final:
-            self.active_autonomous_cycle = None
-
-    def _cancel_active_autonomous_cycle(self, reason: str = "cancelled") -> None:
-        context = getattr(self, "active_autonomous_cycle", None)
-        if context is None:
-            return
-        performer = getattr(self, "autonomous_performer", None)
-        if performer is not None:
-            try:
-                performer.cancel_plan(context.plan, reason=reason)
-            except Exception:
-                pass
-        context.mark("cancelled", reason)
-        self.last_autonomous_cycle = context
-        try:
-            self.logger.info(
-                "[autonomous cycle] id=%s status=cancelled reason=%s observer_refresh=%d",
-                context.cycle_id,
-                reason or "cancelled",
-                context.observer_refresh_count,
-            )
-        except Exception:
-            pass
-        self.active_autonomous_cycle = None
-
-    def _autonomous_runtime_policy(self, signal_snapshot=None) -> dict[str, object]:
-        blocked_until = float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0)
-        return {
-            "presence_blocked_until_ms": int(blocked_until * 1000),
-            "user_typing": bool(getattr(signal_snapshot, "user_typing", False)),
-            "tts_available": bool(getattr(getattr(self, "tts_engine", None), "_ok", True)),
-        }
-
     def _run_background_observer(
         self,
         *,
@@ -1170,35 +1124,13 @@ class RuntimeCoordinator(
                     observer_frame=observer_frame,
                 )
             if performer is not None and str(channel or "autonomous").strip().lower() != "chat":
-                cycle = getattr(self, "active_autonomous_cycle", None)
-                if cycle is None:
-                    cycle = self._begin_autonomous_cycle_context()
-                if cycle.frozen:
-                    # Observer lần hai chỉ refresh evidence. Opportunity/permit của
-                    # cycle đang chạy là bất biến cho tới stage commit/cancel.
-                    cycle.note_observer_refresh()
-                    plan = cycle.plan
-                else:
-                    plan = performer.evaluate(
-                        signal_snapshot=signal_snapshot,
-                        observer_frame=observer_frame,
-                        signal_diff=signal_diff,
-                        user_context=result.user_context,
-                        wake_decision=result.wake_decision,
-                        cycle_id=cycle.cycle_id,
-                        runtime_policy=self._autonomous_runtime_policy(signal_snapshot),
-                    )
-                    cycle.freeze(plan)
-                    try:
-                        self.logger.info(
-                            "[autonomous cycle] id=%s status=frozen opportunity=%s permit=%s/%s",
-                            cycle.cycle_id,
-                            str(getattr(getattr(plan, "selected_opportunity", None), "kind", "none") or "none"),
-                            bool(getattr(getattr(plan, "permit", None), "allowed", False)),
-                            str(getattr(getattr(plan, "permit", None), "mode", "suppress") or "suppress"),
-                        )
-                    except Exception:
-                        pass
+                plan = performer.evaluate(
+                    signal_snapshot=signal_snapshot,
+                    observer_frame=observer_frame,
+                    signal_diff=signal_diff,
+                    user_context=result.user_context,
+                    wake_decision=result.wake_decision,
+                )
                 result.wake_decision = performer.refine_wake_decision(result.wake_decision, plan)
                 self.last_autonomous_plan = plan
                 selected = plan.selected_opportunity
@@ -1949,7 +1881,7 @@ class RuntimeCoordinator(
         payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
         channel_name = str(channel or "").strip().lower()
         if channel_name == "autonomous":
-            plan = self._active_autonomous_plan()
+            plan = getattr(self, "last_autonomous_plan", None)
             if plan is not None:
                 # Payload này đi tới Director/Stage, không đi vào prompt như raw fact.
                 # Nó nói "vì sao được diễn", không tự bịa nội dung màn hình.
@@ -2270,12 +2202,11 @@ class RuntimeCoordinator(
                 performance_intent = str(performance_meta.get("performance_intent") or payload.get("intent") or "")
                 if performer is not None:
                     performer.mark_spoken(
-                        self._active_autonomous_plan(),
+                        getattr(self, "last_autonomous_plan", None),
                         intent=performance_intent,
                         hook_id=hook_id,
                         text=str(payload.get("memory_text", payload.get("text", "")) or ""),
                     )
-                    self._finalize_autonomous_cycle_context("spoken", "public_output_committed")
                 # ContentEngine autonomous chỉ reserve khi chọn. Commit cooldown
                 # sau output public thật sự, tránh mất một bit chưa từng được nói.
                 performance_builder = getattr(self, "performance_context_builder", None)
@@ -4761,7 +4692,7 @@ class RuntimeCoordinator(
                 self.fe_style_memory = self.fe_renderer.remember_style(
                     self.fe_style_memory,
                     plan=fe_plan,
-                    rendered_text=decision.text,
+                    rendered_text=public_text,
                 )
                 self.last_text = decision.text
                 spoken_at = time.time()
@@ -6875,10 +6806,22 @@ class RuntimeCoordinator(
                     "counts_as_answer": False,
                     "invalid_for_semantic_context": True,
                 })
-            self._ensure_session_turn_ledger().record_assistant(
+            assistant_turn = self._ensure_session_turn_ledger().record_assistant(
                 public_text,
                 meta=assistant_meta,
             )
+            # Chỉ câu public thật mới được vào discourse ledger. Candidate bị loại
+            # không có quyền ám lượt sau như một ký ức ma.
+            social_engine = getattr(self, "social_cognition_v2", None)
+            if social_engine is not None:
+                try:
+                    social_engine.record_public_response(
+                        public_text,
+                        move=str(getattr(getattr(self, "current_social_contract", None), "response_move", "") or ""),
+                        turn_id=str(getattr(assistant_turn, "turn_id", "") or getattr(assistant_turn, "index", "") or ""),
+                    )
+                except Exception as exc:
+                    self.logger.debug("[social cognition v2] public commit failed: %s", exc)
         if len(self.chat_history) > 32:
             self.chat_history = self.chat_history[-32:]
 
@@ -7985,7 +7928,7 @@ class RuntimeCoordinator(
         raw telemetry hay suy đoán màn hình vào prompt, nhờ vậy model nhỏ
         không biến một tín hiệu mơ hồ thành câu khẳng định chắc nịch.
         """
-        plan = self._active_autonomous_plan()
+        plan = getattr(self, "last_autonomous_plan", None)
         if plan is None or not bool(getattr(plan, "enabled", True)):
             return ""
         permit = getattr(plan, "permit", None)
@@ -8023,8 +7966,7 @@ class RuntimeCoordinator(
             "technical_two_step": "Nêu chẩn đoán cực ngắn rồi hướng xử lý; không giảng dài và không claim đã sửa thay user.",
         }.get(line_shape, "Một micro-line ngắn, có điểm rơi rõ và không lan man.")
         contract = {
-            "contract": str(getattr(plan, "architecture_version", "autonomous_stage.v7") or "autonomous_stage.v7"),
-            "cycle_id": str(getattr(plan, "cycle_id", "") or ""),
+            "contract": str(getattr(plan, "architecture_version", "autonomous_stage.v6") or "autonomous_stage.v6"),
             "scene_mode": str(getattr(scene, "name", "private_idle") or "private_idle"),
             "opportunity": {
                 "kind": str(getattr(opportunity, "kind", "autonomous") or "autonomous"),
@@ -8038,7 +7980,7 @@ class RuntimeCoordinator(
                 "max_duration_ms": max(300, int(getattr(permit, "max_duration_ms", 2200) or 2200)),
             },
             "policy_decision": {
-                "version": str(getattr(policy_decision, "version", "autonomous_stage.v7") or "autonomous_stage.v7"),
+                "version": str(getattr(policy_decision, "version", "autonomous_stage.v6") or "autonomous_stage.v6"),
                 "blockers": list(getattr(policy_decision, "blockers", ()) or ()),
                 "conflict_flags": list(getattr(policy_decision, "conflict_flags", ()) or ()),
                 "emergency_override": bool(getattr(policy_decision, "emergency_override", False)),
@@ -8530,57 +8472,6 @@ class RuntimeCoordinator(
         if rẻ tiền, cũng không để candidate chết âm thầm ở wake route.
         """
 
-        # Phase 7: autonomous performer là owner duy nhất của public speech.
-        # Pipeline presence cũ vẫn được phép gửi body update ở caller, nhưng không
-        # được tự gọi LLM/cướp loa cạnh opportunity pipeline.
-        if os.environ.get("ERIS_AUTONOMOUS_STAGE_EXCLUSIVE_PUBLIC_SPEECH", "1").strip().lower() in {"1", "true", "yes", "on"}:
-            # Vẫn ghi truth-table cho debug/panel. “Không chạy legacy surface”
-            # không đồng nghĩa xóa sạch dấu vết rồi bắt người sửa đoán mò.
-            rejected_by = "autonomous_stage_exclusive_owner"
-            presence_status = {
-                "checked": True,
-                "candidate": False,
-                "cooldown_ok": True,
-                "allowed": False,
-                "rejected_by": rejected_by,
-                "stage": "pre_gate",
-                "owner": "presence_probe",
-                "generation_mode": "none",
-            }
-            reengagement_status = {
-                "checked": bool(check_reengagement),
-                "candidate": False,
-                "cooldown_ok": True,
-                "allowed": False,
-                "rejected_by": rejected_by if check_reengagement else "not_checked",
-                "stage": "pre_gate",
-                "owner": "reengagement_probe",
-                "generation_mode": "none",
-            }
-            self._update_wake_gate_debug(
-                wake_decision,
-                micro_presence_checked=True,
-                reengagement_checked=bool(check_reengagement),
-                presence_probe=presence_status,
-                reengagement_probe=reengagement_status,
-                allow_surface=False,
-                surface_budget_source=reason,
-                surface_rejected_by=rejected_by,
-            )
-            self.logger.info(
-                "[presence] wake=%s source=%s micro_presence=False reengagement_checked=%s "
-                "presence_allowed=False reengagement_allowed=False owner=autonomous_stage_v7",
-                wake_decision.level,
-                reason,
-                bool(check_reengagement),
-            )
-            self._log_presence_surface_statuses(
-                presence_status=presence_status,
-                reengagement_status=reengagement_status,
-                final_rejected_by=rejected_by,
-            )
-            return False
-
         internal_state = self._get_internal_state()
         ti_report = self._wake_gate_ti_report(reason=reason)
         social_presence_event = self._detect_social_presence_event(
@@ -8805,12 +8696,6 @@ class RuntimeCoordinator(
         reason: str = "",
         note_silence: bool = True,
     ) -> bool:
-        context = getattr(self, "active_autonomous_cycle", None)
-        if context is not None and not context.final:
-            plan = context.plan
-            permit = getattr(plan, "permit", None) if plan is not None else None
-            final_reason = str(getattr(permit, "reason", "") or reason or getattr(decision, "reason", ""))
-            self._finalize_autonomous_cycle_context("suppressed", final_reason)
         if note_silence:
             self._note_autonomous_silence()
         if send_body_update:
@@ -9010,7 +8895,6 @@ class RuntimeCoordinator(
                 return True
 
         cycle_start = time.time()
-        self._begin_autonomous_cycle_context()
         self.logger.info("Bắt đầu tạo chỉ thị AI...")
         self.idle_cycles += 1
 

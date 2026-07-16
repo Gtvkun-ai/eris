@@ -1,18 +1,18 @@
-﻿# src/cortex/vision_semantic_compressor.py
+# src/cortex/vision_semantic_compressor.py
 """
 VisionSemanticCompressor cho ERIS.
 
-Vai trÃ²:
-- Nháº­n screenshot/crop + OCR hint + ObserverFrame.
-- Gá»i vision API remote khi tháº­t sá»± cáº§n.
-- NÃ©n mÃ n hÃ¬nh thÃ nh SemanticSceneNote nhá».
-- KhÃ´ng tráº£ lá»i user.
-- KhÃ´ng commit memory.
-- KhÃ´ng tá»± báº­t speech/action.
+Vai trò:
+- Nhận screenshot/crop + OCR hint + ObserverFrame.
+- Gọi vision API remote khi thật sự cần.
+- Nén màn hình thành SemanticSceneNote nhỏ.
+- Không trả lời user.
+- Không commit memory.
+- Không tự bật speech/action.
 
-NÃ³i ngáº¯n: Ä‘Ã¢y lÃ  máº¯t Ä‘á»c sÃ¢u theo yÃªu cáº§u cá»§a BackgroundObserver,
-khÃ´ng pháº£i má»™t cÃ¡i miá»‡ng thá»© hai. Náº¿u module vision báº¯t Ä‘áº§u nÃ³i chuyá»‡n,
-thÃ¬ repo Ä‘Ã£ má»c thÃªm má»™t nhÃ¢n váº­t phá»¥ khÃ´ng ai má»i.
+Nói ngắn: đây là mắt đọc sâu theo yêu cầu của BackgroundObserver,
+không phải một cái miệng thứ hai. Nếu module vision bắt đầu nói chuyện,
+thì repo đã mọc thêm một nhân vật phụ không ai mời.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ try:
         normalize_ascii_fold,
         stable_hash,
     )
-except Exception:  # pragma: no cover - fallback khi test rá»i file
+except Exception:  # pragma: no cover - fallback khi test rời file
     from .observer_contracts import (  # type: ignore
         ObserverFrame,
         SemanticSceneNote,
@@ -60,14 +60,14 @@ class ChatJsonResult:
 
 
 class RemoteStructureClient:
-    """Adapter: bá»c má»™t remote chat client (cÃ³ ``create_chat_completion``) Ä‘á»ƒ lá»™
-    interface ``chat_json`` mÃ  VisionSemanticCompressor cáº§n cho Táº¦NG cáº¥u trÃºc-hoÃ¡.
+    """Adapter: bọc một remote chat client (có ``create_chat_completion``) để lộ
+    interface ``chat_json`` mà VisionSemanticCompressor cần cho TẦNG cấu trúc-hoá.
 
-    Má»¥c Ä‘Ã­ch: Ä‘áº©y viá»‡c Ã©p JSON sang remote (vd Gemma qua Gemini API).
+    Mục đích: đẩy việc ép JSON sang remote (vd Gemma qua Gemini API).
 
-    Gemma KHÃ”NG nháº­n responseSchema nÃªn ta váº«n gá»­i response_format=json_object vÃ 
-    tá»± salvage JSON tá»« text tráº£ vá». Má»i lá»—i â‡’ tráº£ ChatJsonResult(ok=False) Ä‘á»ƒ compressor
-    degrade vá» fallback (giá»¯ caption), khÃ´ng bao giá» raise ra hot path.
+    Gemma KHÔNG nhận responseSchema nên ta vẫn gửi response_format=json_object và
+    tự salvage JSON từ text trả về. Mọi lỗi ⇒ trả ChatJsonResult(ok=False) để compressor
+    degrade về fallback (giữ caption), không bao giờ raise ra hot path.
     """
 
     def __init__(self, client: Any, *, max_tokens: int = 512, logger: Any | None = None) -> None:
@@ -82,7 +82,7 @@ class RemoteStructureClient:
             return str(extract_text(response) or "")
         except Exception:
             pass
-        # Fallback tá»‘i thiá»ƒu: OpenAI-shape.
+        # Fallback tối thiểu: OpenAI-shape.
         if isinstance(response, dict):
             choices = response.get("choices")
             if isinstance(choices, list) and choices:
@@ -113,11 +113,11 @@ class RemoteStructureClient:
 
     def chat_json(
         self,
-        model: str,  # bá»‹ bá» qua: remote client dÃ¹ng model_name cá»§a chÃ­nh nÃ³
+        model: str,  # bị bỏ qua: remote client dùng model_name của chính nó
         messages: list[dict],
         *,
         schema: dict | None = None,
-        keep_alive: Any | None = None,  # khÃ´ng Ã¡p dá»¥ng cho remote
+        keep_alive: Any | None = None,  # không áp dụng cho remote
         temperature: float = 0.0,
         **_: Any,
     ) -> Any:
@@ -133,7 +133,7 @@ class RemoteStructureClient:
                 max_tokens=self._max_tokens,
                 response_format=response_format,
             )
-        except Exception as exc:  # pragma: no cover - lá»—i máº¡ng/remote
+        except Exception as exc:  # pragma: no cover - lỗi mạng/remote
             return ChatJsonResult(ok=False, error=f"{type(exc).__name__}:{exc}")
 
         content = self._extract_text(response)
@@ -144,11 +144,11 @@ class RemoteStructureClient:
 
 
 class RemoteCaptionClient:
-    """Adapter: bá»c client OpenAI-compatible remote (vd shopaikey grok-3-image) Ä‘á»ƒ
-    lá»™ ``caption_image(image, ...)`` tráº£ caption text.
+    """Adapter: bọc client OpenAI-compatible remote (vd shopaikey grok-3-image) để
+    lộ ``caption_image(image, ...)`` trả caption text.
 
-    Gá»­i áº£nh theo Ä‘á»‹nh dáº¡ng OpenAI multimodal (image_url data URI). Má»i lá»—i â‡’ tráº£ ""
-    Ä‘á»ƒ compressor degrade (structuring váº«n cháº¡y tá»« OCR), khÃ´ng raise ra hot path.
+    Gá»­i ảnh theo định dạng OpenAI multimodal (image_url data URI). Mọi lỗi ⇒ trả ""
+    để compressor degrade (structuring vẫn chạy từ OCR), không raise ra hot path.
     """
 
     def __init__(self, client: Any, *, max_tokens: int = 320, logger: Any | None = None) -> None:
@@ -156,8 +156,8 @@ class RemoteCaptionClient:
         self._max_tokens = max_tokens
         self._logger = logger
         self.model_name = str(getattr(client, "model_name", "") or "vision_api")
-        # Thu nhá» áº£nh trÆ°á»›c khi gá»­i API: full-screen PNG base64 ráº¥t to â†’ upload + suy
-        # luáº­n cháº­m. Háº¡ vá» JPEG â‰¤ max_width giÃºp cáº¯t Ä‘á»™ trá»…. 0 = táº¯t downscale.
+        # Thu nhỏ ảnh trước khi gửi API: full-screen PNG base64 rất to → upload + suy
+        # luận chậm. Hạ về JPEG ≤ max_width giúp cắt độ trễ. 0 = tắt downscale.
         try:
             self._max_width = int(os.getenv("ERIS_VISION_API_MAX_WIDTH", "1280") or 1280)
         except (TypeError, ValueError):
@@ -219,7 +219,7 @@ class RemoteCaptionClient:
         prompt: str = "Describe what is visible on this screen in concrete detail.",
         temperature: float = 0.2,
         max_tokens: int | None = None,
-        keep_alive: Any | None = None,  # khÃ´ng Ã¡p dá»¥ng cho remote
+        keep_alive: Any | None = None,  # không áp dụng cho remote
     ) -> str:
         data_uri = self._maybe_downscale(self._to_data_uri(image))
         if not data_uri:
@@ -241,10 +241,10 @@ class RemoteCaptionClient:
                 presence_penalty=0.0,
                 max_tokens=int(max_tokens or self._max_tokens),
             )
-        except Exception as exc:  # pragma: no cover - lá»—i máº¡ng/remote
+        except Exception as exc:  # pragma: no cover - lỗi mạng/remote
             if self._logger is not None and callable(getattr(self._logger, "warning", None)):
                 try:
-                    self._logger.warning("[vision caption remote] lá»—i: %s", exc)
+                    self._logger.warning("[vision caption remote] lỗi: %s", exc)
                 except Exception:
                     pass
             return ""
@@ -263,9 +263,9 @@ _ERROR_MARKERS = (
     "build failed",
     "panic",
     "fatal",
-    "lá»—i",
+    "lỗi",
     "loi",
-    "khÃ´ng cháº¡y",
+    "không chạy",
     "khong chay",
     "test failed",
     "pytest failed",
@@ -317,10 +317,10 @@ _COMM_MARKERS = (
 
 @dataclass(slots=True)
 class VisionCompressorConfig:
-    """Cáº¥u hÃ¬nh cho VisionSemanticCompressor.
+    """Cấu hình cho VisionSemanticCompressor.
 
-    Máº·c Ä‘á»‹nh táº¯t báº±ng env Ä‘á»ƒ báº¡n kiá»ƒm observer trÆ°á»›c rá»“i má»›i báº­t vision.
-    CÃ³ thá»ƒ báº­t báº±ng:
+    Mặc định tắt bằng env để bạn kiểm observer trước rồi mới bật vision.
+    Có thể bật bằng:
         ERIS_VISION_COMPRESSOR=1
     """
 
@@ -360,14 +360,14 @@ class VisionCompressorConfig:
 
 
 class VisionSemanticCompressor:
-    """NÃ©n áº£nh mÃ n hÃ¬nh thÃ nh SemanticSceneNote.
+    """Nén ảnh màn hình thành SemanticSceneNote.
 
-    Public API chÃ­nh:
+    Public API chính:
         should_compress(observer_frame, signal_diff)
         compress(image_data_uri=..., ocr_text=..., observer_frame=...)
 
-    File nÃ y khÃ´ng tá»± capture screenshot. Runtime/telemetry lÃ m chuyá»‡n Ä‘Ã³.
-    Cáº¯t trÃ¡ch nhiá»‡m ra nhÆ° váº­y Ä‘á»ƒ khá»i cÃ³ thÃªm má»™t con daemon tá»± tiá»‡n nhÃ¬n mÃ n hÃ¬nh.
+    File này không tự capture screenshot. Runtime/telemetry làm chuyện đó.
+    Cắt trách nhiệm ra như vậy để khỏi có thêm một con daemon tự tiện nhìn màn hình.
     """
 
     module_name = "vision_semantic_compressor"
@@ -382,15 +382,15 @@ class VisionSemanticCompressor:
     ) -> None:
         self.config = config or VisionCompressorConfig()
         self.client = local_client
-        # Client riÃªng cho Táº¦NG cáº¥u trÃºc-hoÃ¡ (caption â†’ JSON).
-        # None â‡’ dÃ¹ng luÃ´n self.client náº¿u caller inject client tá»± do.
+        # Client riêng cho TẦNG cấu trúc-hoá (caption → JSON).
+        # None ⇒ dùng luôn self.client nếu caller inject client tự do.
         self.structure_client = structure_client
-        # Client riÃªng cho Táº¦NG caption (áº£nh â†’ mÃ´ táº£). Khi set (vd shopaikey
-        # grok-3-image), caption cháº¡y REMOTE. None â‡’ self.client.
+        # Client riêng cho TẦNG caption (ảnh → mô tả). Khi set (vd shopaikey
+        # grok-3-image), caption chạy REMOTE. None ⇒ self.client.
         self.caption_client = caption_client
         self.logger = logger
-        # Scene continuity: nhá»› scene trÆ°á»›c Ä‘á»ƒ delta/relation cÃ³ chá»— bÃ¡m. "Thay Ä‘á»•i"
-        # chá»‰ pháº£n á»©ng Ä‘Æ°á»£c náº¿u cÃ³ cÃ¡i trÆ°á»›c Ä‘á»ƒ so.
+        # Scene continuity: nhớ scene trước để delta/relation có chỗ bám. "Thay đổi"
+        # chỉ phản ứng được nếu có cái trước để so.
         self._last_scene: dict[str, str] = {}
 
     def should_compress(
@@ -399,9 +399,9 @@ class VisionSemanticCompressor:
         observer_frame: ObserverFrame | None = None,
         signal_diff: SignalDiff | None = None,
     ) -> bool:
-        """Quyáº¿t Ä‘á»‹nh cÃ³ nÃªn gá»i vision model khÃ´ng.
+        """Quyết định có nên gọi vision model không.
 
-        ÄÃ¢y chá»‰ lÃ  policy cá»¥c bá»™. Coordinator váº«n nÃªn cÃ³ cooldown riÃªng.
+        Đây chỉ là policy cục bộ. Coordinator vẫn nên có cooldown riêng.
         """
 
         if not self.config.enabled:
@@ -435,9 +435,9 @@ class VisionSemanticCompressor:
         signal_snapshot: SignalSnapshot | None = None,
         extra_context: str = "",
     ) -> SemanticSceneNote:
-        """Gá»i vision model vÃ  tráº£ SemanticSceneNote.
+        """Gọi vision model và trả SemanticSceneNote.
 
-        Náº¿u thiáº¿u áº£nh/model/client, tráº£ fallback OCR-only thay vÃ¬ lÃ m cháº¿t loop.
+        Nếu thiếu ảnh/model/client, trả fallback OCR-only thay vì làm chết loop.
         """
 
         image = self._resolve_image_base64(
@@ -484,9 +484,9 @@ class VisionSemanticCompressor:
                 reason="missing_vision_client",
             )
 
-        # Hai táº§ng tÃ¡ch vai: caption_client (vd grok-3-image) chá»‰ Táº¢ báº±ng prompt Ä‘Æ¡n
-        # giáº£n (nÃ³ lÃ m tá»‘t), structure_client (vd glm-4.5-flash) lo NÃ‰N captionâ†’JSON.
-        # KHÃ”NG single-shot: nhá»“i schema vÃ o VLM vision khiáº¿n nÃ³ váº¹t láº¡i input.
+        # Hai tầng tách vai: caption_client (vd grok-3-image) chỉ TẢ bằng prompt đơn
+        # giản (nó làm tốt), structure_client (vd glm-4.5-flash) lo NÉN caption→JSON.
+        # KHÔNG single-shot: nhồi schema vào VLM vision khiến nó vẹt lại input.
         caption_client = self.caption_client or self.client
         caption_backend = "remote" if self.caption_client is not None else "local"
         if not callable(getattr(caption_client, "caption_image", None)):
@@ -498,7 +498,7 @@ class VisionSemanticCompressor:
                 extra_context=extra_context,
             )
 
-        # â”€â”€ Táº§ng 1: caption Tá»° DO báº±ng vision model â”€â”€
+        # ── Tầng 1: caption TỰ DO bằng vision model ──
         caption = ""
         caption_error = ""
         try:
@@ -508,13 +508,13 @@ class VisionSemanticCompressor:
                 temperature=max(self.config.temperature, 0.1),
                 keep_alive=self.config.keep_alive if self.config.unload_after_call else None,
             )
-        except Exception as exc:  # caption lá»—i â†’ váº«n cáº¥u trÃºc hoÃ¡ tá»« OCR
+        except Exception as exc:  # caption lỗi → vẫn cấu trúc hoá từ OCR
             caption_error = f"{type(exc).__name__}:{exc}"
             self._log_warning("Vision caption stage failed: %s", caption_error)
 
-        # â”€â”€ Táº§ng 2: text model cáº¥u trÃºc caption + OCR thÃ nh SemanticSceneNote â”€â”€
-        # CÃ³ structure_client (remote, vd Gemma) â†’ cáº¥u trÃºc-hoÃ¡ cháº¡y remote, mÃ¡y
-        # local KHá»ŽI náº¡p/swap text model. None â‡’ dÃ¹ng client local nhÆ° cÅ©.
+        # ── Tầng 2: text model cấu trúc caption + OCR thành SemanticSceneNote ──
+        # Có structure_client (remote, vd Gemma) → cấu trúc-hoá chạy remote, máy
+        # local KHỎI nạp/swap text model. None ⇒ dùng client local như cũ.
         structure_client = self.structure_client or self.client
         structure_backend = "remote" if self.structure_client is not None else "local"
         messages = [
@@ -540,7 +540,7 @@ class VisionSemanticCompressor:
             self._log_warning("Vision structuring failed: %s", err)
             if no_fallback_mode_enabled():
                 raise RuntimeError(f"no_fallback_vision:structure_failed:{err}")
-            # Táº§ng cáº¥u trÃºc lá»—i nhÆ°ng caption tháº­t váº«n cÃ²n giÃ¡ trá»‹ tri giÃ¡c.
+            # Tầng cấu trúc lỗi nhưng caption thật vẫn còn giá trị tri giác.
             return self._fallback_ocr_note(
                 ocr_text=ocr_text,
                 observer_frame=observer_frame,
@@ -580,7 +580,7 @@ class VisionSemanticCompressor:
         signal_snapshot: SignalSnapshot | None,
         extra_context: str,
     ) -> SemanticSceneNote:
-        """ÄÆ°á»ng cÅ©: gá»i vision model má»™t phÃ¡t vá»›i schema (cho client khÃ´ng cÃ³
+        """Đường cÅ©: gọi vision model một phát với schema (cho client không có
         caption_image)."""
         messages = [
             {"role": "system", "content": self._system_prompt()},
@@ -625,7 +625,7 @@ class VisionSemanticCompressor:
         if self.config.unload_after_call and callable(getattr(self.client, "unload", None)):
             try:
                 self.client.unload(self.config.model)
-            except Exception as exc:  # pragma: no cover - unload lá»—i khÃ´ng nÃªn phÃ¡ runtime
+            except Exception as exc:  # pragma: no cover - unload lỗi không nên phá runtime
                 self._log_warning("Vision compressor unload failed: %s", exc)
 
         return note
@@ -637,7 +637,7 @@ class VisionSemanticCompressor:
         observer_frame: ObserverFrame | None = None,
         signal_snapshot: SignalSnapshot | None = None,
     ) -> SemanticSceneNote:
-        """Public fallback khi runtime chÆ°a cÃ³ áº£nh nhÆ°ng cÃ³ OCR."""
+        """Public fallback khi runtime chưa có ảnh nhưng có OCR."""
 
         return self._fallback_ocr_note(
             ocr_text=ocr_text,
@@ -657,7 +657,7 @@ class VisionSemanticCompressor:
             "Your job is to read a screenshot/crop and compress it into a small runtime note.\n"
             "Do not answer the user.\n"
             "Describe the world content on screen and its affect honestly (a sad video is sad, "
-            "a failing test is an error) â€” that is a fact about the screen.\n"
+            "a failing test is an error) — that is a fact about the screen.\n"
             "Do not infer the USER's hidden emotions, identity, private intent, or personality.\n"
             "Do not produce prose outside JSON.\n"
             "Prefer visible, grounded facts.\n"
@@ -845,15 +845,15 @@ class VisionSemanticCompressor:
         if signal_snapshot is not None and getattr(signal_snapshot, "screen_hash", ""):
             evidence.append(f"screen_hash:{getattr(signal_snapshot, 'screen_hash')}")
 
-        # visible_context pháº£i mang ná»™i dung tháº­t. Náº¿u model tráº£ rá»—ng hoáº·c nháº£ láº¡i
-        # mÃ´ táº£ field (parrot), rÆ¡i vá» caption tá»± do cá»§a vision model.
+        # visible_context phải mang nội dung thật. Nếu model trả rỗng hoặc nhả lại
+        # mô tả field (parrot), rơi về caption tự do của vision model.
         visible = compact_text(str(data.get("visible_context", "") or ""), 260)
         if self._looks_like_echo(visible) or not visible:
             visible = compact_text(caption, 260) or visible or "visible screen context"
         if caption:
             evidence.append(f"vision_caption:{compact_text(caption, 90)}")
 
-        # Táº¦NG-1: nghÄ©a + thay Ä‘á»•i. Lá»c echo cho cÃ¡c trÆ°á»ng text.
+        # TẦNG-1: nghĩa + thay đổi. Lọc echo cho các trường text.
         content_summary = self._clean_meaning(data.get("content_summary", ""), 260)
         if not content_summary:
             content_summary = visible
@@ -904,7 +904,7 @@ class VisionSemanticCompressor:
         possible_error = max(observer_error, 0.78 if text_error else 0.0)
         intent = observer_intent if observer_intent != "unknown" else self._infer_intent_from_text(f"{source_text} {caption}", observer_focus)
         family = self._infer_family_from_text(f"{source_text} {caption}", possible_error=possible_error, focus_kind=observer_focus)
-        # CÃ³ caption tháº­t tá»« vision model â†’ giá»¯ lÃ m visible_context, Ä‘á»«ng vá»©t.
+        # Có caption thật từ vision model → giữ làm visible_context, đừng vứt.
         clean_caption = compact_text(caption, 260)
         if clean_caption and not self._looks_like_echo(clean_caption):
             visible = clean_caption
@@ -944,20 +944,20 @@ class VisionSemanticCompressor:
         return note
 
     def _clean_meaning(self, value: Any, limit: int) -> str:
-        """Compact + loáº¡i echo cho cÃ¡c trÆ°á»ng nghÄ©a (content/affect/relation/delta)."""
+        """Compact + loại echo cho các trường nghĩa (content/affect/relation/delta)."""
         text = compact_text(str(value or ""), limit)
         if not text or self._looks_like_echo(text):
             return ""
         return text
 
     def _assign_scene_continuity(self, note: SemanticSceneNote) -> None:
-        """GÃ¡n scene_id + prev_scene_id Ä‘á»ƒ 'thay Ä‘á»•i' cÃ³ chá»— bÃ¡m, cáº­p nháº­t scene cuá»‘i."""
+        """Gán scene_id + prev_scene_id để 'thay đổi' có chỗ bám, cập nhật scene cuối."""
         key = note.content_summary or note.visible_context
         scene_id = stable_hash(f"{note.semantic_family}|{key}")
         note.prev_scene_id = self._last_scene.get("scene_id", "")
         note.scene_id = scene_id
-        # Model khÃ´ng cho delta nhÆ°ng scene Ä‘á»•i rÃµ â†’ ghi delta tá»‘i thiá»ƒu Ä‘á»ƒ runtime
-        # váº«n tháº¥y cÃ³ chuyá»ƒn cáº£nh.
+        # Model không cho delta nhưng scene đổi rõ → ghi delta tối thiểu để runtime
+        # vẫn thấy có chuyển cảnh.
         if not note.delta and note.prev_scene_id and note.prev_scene_id != scene_id:
             prev_summary = self._last_scene.get("content_summary", "")
             if prev_summary and prev_summary != key:
@@ -971,7 +971,7 @@ class VisionSemanticCompressor:
 
     @staticmethod
     def _looks_like_echo(text: str) -> bool:
-        """Báº¯t trÆ°á»ng há»£p model nhá» nháº£ láº¡i mÃ´ táº£ field/instruction thay vÃ¬ ná»™i dung."""
+        """Bắt trường hợp model nhỏ nhả lại mô tả field/instruction thay vì nội dung."""
         if not text:
             return False
         folded = normalize_ascii_fold(text)
@@ -1141,7 +1141,7 @@ class VisionSemanticCompressor:
         return compact_text(text or "unknown", 80)
 
     def _source_label(self) -> str:
-        """Tráº£ source label tá»« model name, dÃ¹ng cho SemanticSceneNote.source."""
+        """Trả source label từ model name, dùng cho SemanticSceneNote.source."""
         model = str(self.config.model or "").strip().lower().split(":")[0]
         return model or "vision_model"
 

@@ -87,7 +87,7 @@ class SurfaceArbiterTests(unittest.TestCase):
 
         def fake_llm(*, impulse, snapshot, force_llm=False):
             calls.append(impulse)
-            return "Má»™t nhá»‹p yÃªn hÆ¡i dÃ i.", "fake_llm"
+            return "Một nhịp yên hơi dài.", "fake_llm"
 
         arbiter = SurfaceArbiter(policy=self._policy(), llm_micro_gen=fake_llm)
         decision = arbiter.arbitrate(presence_cue=Cue(confidence=0.34), silent_cycles=4, surface_kind="presence_maintenance")

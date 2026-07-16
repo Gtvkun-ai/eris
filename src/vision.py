@@ -74,6 +74,8 @@ class AttentionOverseer:
             n_ctx=min(n_ctx, 4096),
             n_gpu_layers=n_gpu_layers,
         )
+        social_parser_client = self.process_manager.build_social_parser_client()
+        social_critic_client = self.process_manager.build_social_critic_client()
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
             self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)
@@ -83,6 +85,8 @@ class AttentionOverseer:
             vision_client=vision_client,
             fallback_client=fallback_client,
             escalation_client=escalation_client,
+            social_parser_client=social_parser_client,
+            social_critic_client=social_critic_client,
             logger=self.logger,
         )
         self.logger.info("Mô hình đã sẵn sàng.")

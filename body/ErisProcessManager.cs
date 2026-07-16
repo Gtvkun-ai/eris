@@ -243,7 +243,7 @@ public sealed class ErisProcessManager
 
 		try
 		{
-			using JsonDocument document = JsonDocument.Parse(File.ReadAllText(secretsPath));
+			using JsonDocument document = JsonDocument.Parse(File.ReadAllText(secretsPath, Encoding.UTF8));
 			JsonElement root = document.RootElement;
 			if (root.ValueKind != JsonValueKind.Object)
 				return values;

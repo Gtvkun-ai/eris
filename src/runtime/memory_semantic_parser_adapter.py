@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import logging
@@ -14,41 +14,41 @@ from memory.understanding.semantic_parser import (
 )
 
 
-_SYSTEM_PROMPT = """Báº¡n lÃ  memory classification engine cho ERIS.
-Nhiá»‡m vá»¥: nháº­n user_text vÃ  quyáº¿t Ä‘á»‹nh nÃ³ nÃªn Ä‘Æ°á»£c lÆ°u vÃ o memory nhÆ° tháº¿ nÃ o.
+_SYSTEM_PROMPT = """Bạn là memory classification engine cho ERIS.
+Nhiệm vụ: nhận user_text và quyết định nó nên được lưu vào memory như thế nào.
 
-Báº¡n pháº£i quyáº¿t Ä‘á»‹nh hoÃ n toÃ n â€” khÃ´ng cáº§n theo schema cá»©ng. Má»—i máº£nh thÃ´ng tin cÃ³ thá»ƒ:
-- LÃ  fact á»•n Ä‘á»‹nh (tÃªn, sinh nháº­t, quÃª, sá»Ÿ thÃ­ch lÃ¢u dÃ i)
-- LÃ  sá»± kiá»‡n (chuyá»‡n xáº£y ra, cÃ³ thá»i gian, cÃ³ ngá»¯ cáº£nh)
-- LÃ  cáº£m xÃºc/tÃ¢m tráº¡ng thoÃ¡ng qua (buá»“n hÃ´m nay, má»‡t, vui vÃ¬ Ä‘iá»u gÃ¬)
-- LÃ  kiáº¿n thá»©c (dáº¡y ERIS biáº¿t Ä‘iá»u gÃ¬ vá» tháº¿ giá»›i, ká»¹ thuáº­t, khÃ¡i niá»‡m)
-- LÃ  thá»±c thá»ƒ (ngÆ°á»i, váº­t, Ä‘á»‹a Ä‘iá»ƒm user Ä‘á» cáº­p â€” con mÃ¨o hÃ ng xÃ³m, báº¡n tÃªn X, quÃ¡n Äƒn)
-- LÃ  niá»m tin/quan Ä‘iá»ƒm (user nghÄ© A lÃ  Ä‘Ãºng, khÃ´ng Ä‘á»“ng Ã½ vá»›i B)
-- LÃ  má»¥c tiÃªu (user muá»‘n lÃ m gÃ¬, dá»± Ä‘á»‹nh gÃ¬)
-- LÃ  pháº£n há»“i vá» ERIS (khen, chÃª, sá»­a, hÆ°á»›ng dáº«n cÃ¡ch pháº£n há»“i)
-- LÃ  quy Æ°á»›c (tá»« giá» X nghÄ©a lÃ  Y, gá»i tÃ´i lÃ  Z)
-- LÃ  ngá»¯ cáº£nh thoÃ¡ng qua (khÃ´ng quan trá»ng lÃ¢u dÃ i)
+Bạn phải quyết định hoàn toàn — không cần theo schema cứng. Mỗi mảnh thông tin có thể:
+- Là fact ổn định (tên, sinh nhật, quê, sở thích lâu dài)
+- Là sự kiện (chuyện xảy ra, có thời gian, có ngữ cảnh)
+- Là cảm xúc/tâm trạng thoáng qua (buồn hôm nay, mệt, vui vì điều gì)
+- Là kiến thức (dạy ERIS biết điều gì về thế giới, kỹ thuật, khái niệm)
+- Là thực thể (người, vật, địa điểm user đề cập — con mèo hàng xóm, bạn tên X, quán ăn)
+- Là niềm tin/quan điểm (user nghĩ A là đúng, không đồng ý với B)
+- Là mục tiêu (user muốn làm gì, dự định gì)
+- Là phản hồi về ERIS (khen, chê, sửa, hướng dẫn cách phản hồi)
+- Là quy ước (từ giờ X nghĩa là Y, gọi tôi là Z)
+- Là ngữ cảnh thoáng qua (không quan trọng lâu dài)
 
-Vá»›i má»—i frame, báº¡n quyáº¿t Ä‘á»‹nh:
-- memory_type: loáº¡i memory (fact, event, emotion, knowledge, entity, belief, goal, feedback, convention, context)
-- storage_target: nÆ¡i lÆ°u (semantic, episodic, procedural, affective_residue, relational, candidate)
-- importance: 0.0-1.0 (fact tÃªn=0.95, cáº£m xÃºc thoÃ¡ng=0.3, kiáº¿n thá»©c chung=0.6)
-- decay: slow (nÄƒm+) | normal (thÃ¡ng) | fast (tuáº§n) | ephemeral (ngÃ y/session)
-- surface_fn: can_answer (tráº£ lá»i trá»±c tiáº¿p khi há»i) | background (áº£nh hÆ°á»Ÿng context) | never (khÃ´ng surface)
-- fact_key: key ngáº¯n náº¿u lÃ  fact rÃµ (user.name, user.hometown, ...) hoáº·c Ä‘á»ƒ trá»‘ng
+Với mỗi frame, bạn quyết định:
+- memory_type: loại memory (fact, event, emotion, knowledge, entity, belief, goal, feedback, convention, context)
+- storage_target: nơi lưu (semantic, episodic, procedural, affective_residue, relational, candidate)
+- importance: 0.0-1.0 (fact tên=0.95, cảm xúc thoáng=0.3, kiến thức chung=0.6)
+- decay: slow (năm+) | normal (tháng) | fast (tuần) | ephemeral (ngày/session)
+- surface_fn: can_answer (trả lời trá»±c tiếp khi hỏi) | background (ảnh hưởng context) | never (không surface)
+- fact_key: key ngắn nếu là fact rõ (user.name, user.hometown, ...) hoặc để trống
 
-Quy táº¯c storage_target:
-- semantic: fact á»•n Ä‘á»‹nh, kiáº¿n thá»©c, niá»m tin, thá»±c thá»ƒ quan trá»ng
-- episodic: sá»± kiá»‡n cá»¥ thá»ƒ cÃ³ thá»i gian/ngá»¯ cáº£nh
-- procedural: quy táº¯c hÃ nh vi, convention, cÃ¡ch xá»­ lÃ½
-- affective_residue: cáº£m xÃºc, tÃ¢m tráº¡ng (KHÃ”NG surface nhÆ° fact)
-- relational: pattern quan há»‡ vá»›i user, ngÆ°á»i khÃ¡c
-- candidate: khÃ´ng cháº¯c cháº¯n, cáº§n xem xÃ©t thÃªm
+Quy tắc storage_target:
+- semantic: fact ổn định, kiến thức, niềm tin, thực thể quan trọng
+- episodic: sá»± kiện cụ thể có thời gian/ngữ cảnh
+- procedural: quy tắc hành vi, convention, cách xử lý
+- affective_residue: cảm xúc, tâm trạng (KHÔNG surface như fact)
+- relational: pattern quan hệ với user, người khác
+- candidate: không chắc chắn, cần xem xét thêm
 
-KhÃ´ng táº¡o frame cho: cÃ¢u há»i recall ("tÃ´i tÃªn gÃ¬"), chÃ o há»i Ä‘Æ¡n giáº£n, cÃ¢u vÃ´ nghÄ©a.
-Chá»‰ tráº£ JSON."""
+Không tạo frame cho: câu hỏi recall ("tôi tên gì"), chào hỏi đơn giản, câu vô nghĩa.
+Chỉ trả JSON."""
 
-_USER_PROMPT_TEMPLATE = """PhÃ¢n tÃ­ch vÃ  phÃ¢n loáº¡i memory cho cÃ¢u sau.
+_USER_PROMPT_TEMPLATE = """Phân tích và phân loại memory cho câu sau.
 
 Output schema:
 {
@@ -57,27 +57,27 @@ Output schema:
       "memory_type": "fact|event|emotion|knowledge|entity|belief|goal|feedback|convention|context",
       "storage_target": "semantic|episodic|procedural|affective_residue|relational|candidate",
       "subject": "user|eris|world|other:<name>",
-      "claim": "cÃ¢u tÃ³m táº¯t ngáº¯n gá»n cÃ¡i cáº§n nhá»› (khÃ´ng pháº£i raw text)",
-      "value": "giÃ¡ trá»‹ cá»‘t lÃµi náº¿u lÃ  fact/entity (tÃªn ngÆ°á»i, Ä‘á»‹a Ä‘iá»ƒm, ...) hoáº·c null",
-      "fact_key": "user.name | user.hometown | ... hoáº·c '' náº¿u khÃ´ng cÃ³ key chuáº©n",
+      "claim": "câu tóm tắt ngắn gọn cái cần nhớ (không phải raw text)",
+      "value": "giá trị cốt lõi nếu là fact/entity (tên người, địa điểm, ...) hoặc null",
+      "fact_key": "user.name | user.hometown | ... hoặc '' nếu không có key chuẩn",
       "importance": 0.0,
       "decay": "slow|normal|fast|ephemeral",
       "surface_fn": "can_answer|background|never",
       "time_scope": "stable|current|past|future|session",
       "confidence": 0.0,
-      "why": "lÃ½ do ngáº¯n â€” táº¡i sao phÃ¢n loáº¡i tháº¿ nÃ y"
+      "why": "lý do ngắn — tại sao phân loại thế này"
     }
   ]
 }
 
-VÃ­ dá»¥:
-- "tÃ´i tÃªn HÃ²a" â†’ memory_type=fact, storage_target=semantic, fact_key=user.name, value=HÃ²a, importance=0.95, decay=slow, surface_fn=can_answer
-- "con mÃ¨o nhÃ  hÃ ng xÃ³m tÃªn Miso hay sang Äƒn trá»™m Ä‘á»“" â†’ memory_type=entity, storage_target=episodic, fact_key='', importance=0.45, decay=normal, surface_fn=background
-- "tÃ´i Ä‘ang buá»“n vÃ¬ dá»± Ã¡n bá»‹ delay" â†’ memory_type=emotion, storage_target=affective_residue, importance=0.35, decay=fast, surface_fn=never
-- "Python lÃ  ngÃ´n ngá»¯ láº­p trÃ¬nh hÆ°á»›ng Ä‘á»‘i tÆ°á»£ng" â†’ memory_type=knowledge, storage_target=semantic, importance=0.55, decay=slow, surface_fn=background
-- "tá»« giá» khi tÃ´i nÃ³i 'loi' tá»©c lÃ  bug" â†’ memory_type=convention, storage_target=procedural, importance=0.88, decay=slow, surface_fn=background
-- "tÃ´i muá»‘n build game nháº­p vai nÄƒm nay" â†’ memory_type=goal, storage_target=semantic, importance=0.72, decay=normal, surface_fn=background
-- "tráº£ lá»i ngáº¯n thÃ´i Ä‘á»«ng dÃ i dÃ²ng" â†’ memory_type=feedback, storage_target=procedural, fact_key=user.response_style, importance=0.85, decay=slow, surface_fn=background
+Ví dụ:
+- "tôi tên Hòa" → memory_type=fact, storage_target=semantic, fact_key=user.name, value=Hòa, importance=0.95, decay=slow, surface_fn=can_answer
+- "con mèo nhà hàng xóm tên Miso hay sang ăn trộm đồ" → memory_type=entity, storage_target=episodic, fact_key='', importance=0.45, decay=normal, surface_fn=background
+- "tôi đang buồn vì dự án bị delay" → memory_type=emotion, storage_target=affective_residue, importance=0.35, decay=fast, surface_fn=never
+- "Python là ngôn ngữ lập trình hướng đối tượng" → memory_type=knowledge, storage_target=semantic, importance=0.55, decay=slow, surface_fn=background
+- "từ giờ khi tôi nói 'loi' tức là bug" → memory_type=convention, storage_target=procedural, importance=0.88, decay=slow, surface_fn=background
+- "tôi muốn build game nhập vai năm nay" → memory_type=goal, storage_target=semantic, importance=0.72, decay=normal, surface_fn=background
+- "trả lời ngắn thôi đừng dài dòng" → memory_type=feedback, storage_target=procedural, fact_key=user.response_style, importance=0.85, decay=slow, surface_fn=background
 
 user_text:
 {text}

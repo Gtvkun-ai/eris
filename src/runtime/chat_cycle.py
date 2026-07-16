@@ -43,9 +43,6 @@ _FORMAT_REPAIR_FALLBACK_LINES = (
 class ChatCycleMixin:
     def _enter_chat_cycle(self) -> None:
         self._chat_last_activity_at = time.time()
-        cancel_cycle = getattr(self, "_cancel_active_autonomous_cycle", None)
-        if callable(cancel_cycle):
-            cancel_cycle("enter_chat_mode")
         if not self.chat_mode:
             cancel_generation = getattr(getattr(self, "llm_service", None), "cancel_pending_requests", None)
             if callable(cancel_generation):
@@ -397,6 +394,7 @@ class ChatCycleMixin:
             self.current_repair_appraisal = None
             self.current_social_appraisal = None
             self.current_feedback_social_appraisal = None
+            self.current_social_contract = None
             self._chat_processing = False
 
     def _run_chat_cycle_inner(
@@ -455,6 +453,30 @@ class ChatCycleMixin:
         self.current_repair_appraisal = preliminary_repair
         self.current_social_appraisal = preliminary_repair.social_snapshot
         user_turn.meta["social_appraisal_preliminary"] = preliminary_repair.social_snapshot.to_dict()
+
+        # Social Cognition V2 chọn response move trước khi model chính viết câu.
+        # Lịch sử chỉ lấy text public; private mind không được giả làm bằng chứng xã hội.
+        social_contract = None
+        social_engine = getattr(self, "social_cognition_v2", None)
+        if social_engine is not None:
+            try:
+                social_history = tuple(
+                    str(item.get("content", "") or "")
+                    for item in (getattr(self, "chat_history", ()) or ())[-10:]
+                    if isinstance(item, dict) and str(item.get("content", "") or "").strip()
+                )
+                social_contract = social_engine.analyze(
+                    user_text,
+                    previous_assistant_text=str(getattr(self, "last_chat_answer", "") or ""),
+                    history=social_history,
+                    social_snapshot=preliminary_repair.social_snapshot,
+                    now=cycle_start,
+                )
+                self.current_social_contract = social_contract
+                user_turn.meta["social_cognition_v2"] = social_contract.to_dict()
+            except Exception as exc:
+                self.logger.warning("[social cognition v2] analyze failed: %s", exc)
+                self.current_social_contract = None
 
         pragmatic_result = self._prepare_pragmatic_social_turn(
             user_text,
@@ -1144,10 +1166,14 @@ class ChatCycleMixin:
         turn_semantics_context = str(getattr(turn_semantics_report, "prompt_context", "") or "")
         pragmatic_context = pragmatic_result.to_prompt_context() if pragmatic_result.intercepted else ""
         repair_context = repair_appraisal.to_prompt_context()
+        social_context = social_contract.to_prompt_block() if social_contract is not None else ""
         planned_ti_context = (
             f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n"
-            f"{turn_semantics_context}\n{pragmatic_context}\n{repair_context}"
+            f"{turn_semantics_context}\n{pragmatic_context}\n{repair_context}\n{social_context}"
         )
+        if social_contract is not None:
+            frame.metadata["social_cognition_v2"] = social_contract.to_dict()
+            frame.debug_notes.append(f"social_move={social_contract.response_move}")
         semantic_authority_context = semantic_policy.prompt_block()
         if semantic_authority_context:
             planned_ti_context = f"{semantic_authority_context}\n\n{planned_ti_context}"
@@ -1492,6 +1518,7 @@ class ChatCycleMixin:
         self._log_decision_stage("chat", "after_escalation", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
+        decision = self._apply_social_cognition_review(decision, user_text=user_text)
         from runtime.dual_axis_repair import apply_repair_output_guard
 
         decision = apply_repair_output_guard(decision, repair_appraisal)
@@ -1507,9 +1534,68 @@ class ChatCycleMixin:
                 or (not semantic_policy.generate_director_candidates and not repair_candidate_override)
             ),
         )
+        decision = self._apply_social_cognition_surface(decision, user_text=user_text, after_director=True)
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return
+
+    def _apply_social_cognition_review(self, decision: Decision, *, user_text: str) -> Decision:
+        """Critic Qwen chỉ chạy ở lượt xã hội khó; Terra rewrite khi lỗi nặng.
+
+        Dù model phụ hỏng, deterministic surface policy vẫn chạy. Đây là fail-open
+        có kiểm soát, không phải fail-open kiểu phát đại một câu rồi cầu nguyện.
+        """
+        engine = getattr(self, "social_cognition_v2", None)
+        contract = getattr(self, "current_social_contract", None)
+        if engine is None or contract is None:
+            return decision
+        decision = engine.apply_surface_policy(decision, user_text=user_text)
+        enabled = str(os.environ.get("ERIS_SOCIAL_CRITIC_REWRITE_ENABLED", "1") or "1").lower() not in {"0", "false", "off", "no"}
+        if not enabled or not bool(getattr(contract, "critic_required", False)):
+            return decision
+        router = getattr(self, "social_model_router", None)
+        if router is None:
+            return decision
+        try:
+            deterministic = engine.review_text(str(getattr(decision, "text", "") or ""), contract=contract, user_text=user_text)
+            model_critique = router.critique(
+                candidate_text=str(getattr(decision, "text", "") or ""),
+                user_text=user_text,
+                contract=contract.to_dict(),
+            )
+            severity = max(float(getattr(deterministic, "severity", 0.0) or 0.0), float(getattr(model_critique, "severity", 0.0) or 0.0))
+            issues = tuple(dict.fromkeys((*tuple(getattr(deterministic, "issues", ()) or ()), *tuple(getattr(model_critique, "issues", ()) or ()))))
+            if severity < 0.62 or not issues:
+                return decision
+            instruction = str(getattr(model_critique, "rewrite_instruction", "") or getattr(deterministic, "rewrite_instruction", "") or "")
+            rewrite = router.rewrite_with_main(
+                candidate_text=str(getattr(decision, "text", "") or ""),
+                user_text=user_text,
+                contract=contract.to_dict(),
+                instruction=instruction,
+            )
+            if rewrite.get("text"):
+                decision.text = rewrite["text"]
+                for field_name in ("delivery_hint", "nonverbal_cue", "stage_motion"):
+                    value = str(rewrite.get(field_name, "") or "").strip()
+                    if value:
+                        setattr(decision, field_name, value)
+                decision.reasoning_tags = tuple(dict.fromkeys((*tuple(getattr(decision, "reasoning_tags", ()) or ()), "social_qwen_critic", "terra_social_rewrite")))
+                decision.debug_trace = " | ".join(part for part in (str(getattr(decision, "debug_trace", "") or ""), f"social_rewrite:{','.join(issues)}") if part)
+            return engine.apply_surface_policy(decision, user_text=user_text)
+        except Exception as exc:
+            self.logger.debug("[social cognition v2] critic/rewrite skipped: %s", exc)
+            return engine.apply_surface_policy(decision, user_text=user_text)
+
+    def _apply_social_cognition_surface(self, decision: Decision, *, user_text: str, after_director: bool = False) -> Decision:
+        engine = getattr(self, "social_cognition_v2", None)
+        if engine is None:
+            return decision
+        try:
+            return engine.apply_surface_policy(decision, user_text=user_text, after_director=after_director)
+        except Exception as exc:
+            self.logger.debug("[social cognition v2] surface policy failed: %s", exc)
+            return decision
 
     def _finalize_chat_director_decision(
         self,
@@ -2261,31 +2347,44 @@ class ChatCycleMixin:
                     "đáng lẽ tôi phải nuốt lại trước khi gửi ra ngoài."
                 )
         elif previous_public_turn is not None:
+            # Social Cognition V2 ưu tiên repair cụ thể bằng claim id. Không dùng
+            # template "tôi bỏ frame đó" khi user đang hỏi thẳng Eris đã hiểu sai gì.
+            social_contract = getattr(self, "current_social_contract", None)
+            social_engine = getattr(self, "social_cognition_v2", None)
+            if (
+                social_contract is not None
+                and str(getattr(social_contract, "response_move", "") or "") == "specific_repair"
+                and str(getattr(social_contract, "failed_claim_text", "") or "").strip()
+                and social_engine is not None
+            ):
+                text = social_engine.deterministic_repair_text(social_contract)
+                repair_kind = "social_cognition_specific_repair"
             # Misread repair tổng quát: user phủ định câu public trước ("tôi có code đâu",
             # "hả", "tôi chỉ nghe nhạc...") thì không thả qua LLM hỏi vòng. Sửa frame sai
             # trước, vì đó là nhịp người hơn: bị bắt lỗi -> nhận lỗi -> bỏ giả định cũ.
-            try:
-                from runtime.banter_arbiter import BanterArbiter
-                arbiter = getattr(self, "_banter_arbiter", None)
-                if not isinstance(arbiter, BanterArbiter):
-                    arbiter = BanterArbiter()
-                    self._banter_arbiter = arbiter
-                banter = arbiter.repair_correction(
-                    user_text=user_text,
-                    previous_text=str(getattr(previous_public_turn, "text", "") or ""),
-                    grounding=grounding_report,
-                    frame=frame,
-                    speech_core=speech_core,
-                    social_appraisal=getattr(self, "current_social_appraisal", None),
-                )
-                if banter.changed:
-                    text = banter.text
-                    repair_kind = banter.mode
-            except Exception as exc:
+            if not text:
                 try:
-                    self.logger.warning("[previous_public_turn_repair] banter repair failed: %s", exc)
-                except Exception:
-                    pass
+                    from runtime.banter_arbiter import BanterArbiter
+                    arbiter = getattr(self, "_banter_arbiter", None)
+                    if not isinstance(arbiter, BanterArbiter):
+                        arbiter = BanterArbiter()
+                        self._banter_arbiter = arbiter
+                    banter = arbiter.repair_correction(
+                        user_text=user_text,
+                        previous_text=str(getattr(previous_public_turn, "text", "") or ""),
+                        grounding=grounding_report,
+                        frame=frame,
+                        speech_core=speech_core,
+                        social_appraisal=getattr(self, "current_social_appraisal", None),
+                    )
+                    if banter.changed:
+                        text = banter.text
+                        repair_kind = banter.mode
+                except Exception as exc:
+                    try:
+                        self.logger.warning("[previous_public_turn_repair] banter repair failed: %s", exc)
+                    except Exception:
+                        pass
         if not text:
             return None
         decision = Decision(

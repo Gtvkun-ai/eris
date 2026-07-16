@@ -213,6 +213,17 @@ def classify_chat_act_with_confidence(
     except Exception:
         pass
 
+    # Câu đùa/phép tính có từ tục phải được đọc hết trước khi dựng boundary.
+    # Ví dụ "mẹ mày béo + mẹ mày béo ra gì" là task literal bọc banter, không
+    # phải hai chữ đầu có quyền kết án cả câu. Social Cognition V2 sẽ giữ cả
+    # hypothesis joke và provocation ở tầng sau.
+    wordplay_math = (
+        any(marker in normalized for marker in ("me may", "bo may", "me mi", "bo mi"))
+        and ("+" in str(raw_user_text or "") or " ra gi" in normalized or bool(re.search(r"\d", normalized)))
+    )
+    if wordplay_math:
+        return ChatAct.DIRECT_QUESTION, 0.78
+
     insult_patterns = (
         "do ngu", "may ngu", "ban ngu", "eris ngu", "ngu vcl", "ngu vai",
         "oc cho", "do dien", "do dan", "dan do", "vo dung", "phe vat",

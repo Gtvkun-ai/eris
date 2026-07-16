@@ -192,7 +192,17 @@ def _safe_candidate_confidence(value) -> float:
 class LlmService:
     _RETRYABLE_HTTP_STATUS = {500, 502, 503, 504}
 
-    def __init__(self, client, style_client=None, vision_client=None, fallback_client=None, escalation_client=None, logger=None):
+    def __init__(
+        self,
+        client,
+        style_client=None,
+        vision_client=None,
+        fallback_client=None,
+        escalation_client=None,
+        social_parser_client=None,
+        social_critic_client=None,
+        logger=None,
+    ):
         self.client = client
         self.style_client = style_client
         self.vision_client = vision_client
@@ -203,6 +213,10 @@ class LlmService:
         # cheap draft scores low / cần tool, ta chạy lại lượt trên client này. Để
         # None thì tự dùng fallback_client (đã là model mạnh hơn trong cấu hình hiện tại).
         self.escalation_client = escalation_client
+        # Hai lane advisory cho Social Cognition V2. Chúng không thay model chính
+        # và không được phép làm turn chết nếu Groq lỗi.
+        self.social_parser_client = social_parser_client
+        self.social_critic_client = social_critic_client
         self.logger = logger or logging.getLogger(__name__)
         # Một governor dùng chung cho mọi LlmService instance trong process. Nó chỉ
         # giữ số token/429 ước lượng, tuyệt đối không giữ nội dung prompt hay API key.
